@@ -157,6 +157,7 @@ interface FileEditorGitActionsProps {
   onCommitRequest: () => void
   onSaveAll: () => void | Promise<void>
   onSave: () => void | Promise<void>
+  onReloadSelected: () => void | Promise<void>
   onToggleLineWrap: () => void
   onOpenQuickOpen: () => void
   onRevealInTree: () => void | Promise<void>
@@ -1361,6 +1362,57 @@ export function FileEditorPanel({
     }
   }
 
+  const reloadBufferFromDisk = useCallback(
+    async (path: string): Promise<boolean> => {
+      if (!workspacePath || !path) return false
+
+      setIsLoading(true)
+      setStatus(`Reloading ${path}`)
+      try {
+        const result = await editorApi.readFile(workspacePath, path)
+        const nextBuffer = bufferFromReadResult(result)
+        setBuffers((current) => upsertBuffer(current, nextBuffer))
+        setSelectedPath(result.path)
+        setCursorStatus(DEFAULT_CURSOR_STATUS)
+        setPendingClosePath('')
+        setStatus(`Reloaded ${result.path} from disk`)
+        void loadDirectory(parentDirectoryForPath(result.path))
+        void refreshGitSnapshot()
+        return true
+      } catch (error) {
+        setSelectedPath(path)
+        setStatus(error instanceof Error ? error.message : 'Could not reload file')
+        return false
+      } finally {
+        setIsLoading(false)
+      }
+    },
+    [loadDirectory, refreshGitSnapshot, workspacePath]
+  )
+
+  const discardBufferChanges = useCallback(
+    (path: string) => {
+      const buffer = buffers.find((item) => item.path === path)
+      if (!buffer) return
+      if (!isBufferDirty(buffer)) {
+        setSelectedPath(path)
+        setStatus(`${path} has no local changes`)
+        return
+      }
+      setBuffers((current) =>
+        updateBuffer(current, path, (currentBuffer) => ({
+          ...currentBuffer,
+          content: currentBuffer.savedContent
+        }))
+      )
+      setSelectedPath(path)
+      setCursorStatus(DEFAULT_CURSOR_STATUS)
+      setPendingClosePath('')
+      setStatus(`Discarded local changes in ${path}`)
+    },
+    [buffers]
+  )
+
   const closeEditorBuffer = (path: string) => {
     const result = closeBuffer(buffers, path)
     const nextSelectedPath = path === selectedPath ? result.nextSelectedPath : selectedPath
@@ -1430,6 +1482,19 @@ export function FileEditorPanel({
         shortcut: 'Cmd S',
         disabled: !tabDirty,
         onSelect: () => void saveBuffer(contextMenuSelection.path)
+      },
+      {
+        id: 'reload',
+        label: 'Reload From Disk',
+        disabled: !buffer || isLoading,
+        onSelect: () => void reloadBufferFromDisk(contextMenuSelection.path)
+      },
+      {
+        id: 'discard',
+        label: 'Discard Changes',
+        disabled: !tabDirty,
+        danger: true,
+        onSelect: () => discardBufferChanges(contextMenuSelection.path)
       },
       {
         id: 'close',
@@ -1667,6 +1732,9 @@ export function FileEditorPanel({
             onCommitRequest={() => setShowCommitDialog(true)}
             onSaveAll={saveAllFiles}
             onSave={saveFile}
+            onReloadSelected={() => {
+              if (selectedPath) void reloadBufferFromDisk(selectedPath)
+            }}
             onToggleLineWrap={() => setLineWrapEnabled((enabled) => !enabled)}
             onOpenQuickOpen={openQuickOpen}
             onRevealInTree={revealSelectedFileInTree}
@@ -2098,7 +2166,7 @@ function WorkspaceFileTree({
   )
 }
 
-function FileEditorGitActions({
+export function FileEditorGitActions({
   workspacePath,
   selectedPath,
   isDirty,
@@ -2115,6 +2183,7 @@ function FileEditorGitActions({
   onCommitRequest,
   onSaveAll,
   onSave,
+  onReloadSelected,
   onToggleLineWrap,
   onOpenQuickOpen,
   onRevealInTree
@@ -2173,6 +2242,20 @@ function FileEditorGitActions({
         title={commitTitle}
       >
         Commit
+      </button>
+      <button
+        className="btn btn-sm btn-ghost"
+        type="button"
+        onClick={() => void onReloadSelected()}
+        disabled={!workspacePath || !selectedPath || isLoading}
+        aria-label="Reload editor file from disk"
+        title={
+          isDirty
+            ? 'Reload from disk and discard unsaved changes'
+            : 'Reload editor file from disk'
+        }
+      >
+        Reload
       </button>
       <button
         className="btn btn-sm btn-ghost"

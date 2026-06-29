@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
-import { EditorTabStrip } from './FileEditorPanel'
+import { EditorTabStrip, FileEditorGitActions } from './FileEditorPanel'
 
 describe('EditorTabStrip', () => {
   it('renders a roving tablist with the active tab as the only tab stop', () => {
@@ -36,5 +36,38 @@ describe('EditorTabStrip', () => {
     expect(html).toContain('aria-selected="true" tabindex="0"')
     expect(html).toContain('Close src/Editor.tsx')
     expect(html).toContain('file-editor-dirty-dot')
+  })
+})
+
+describe('FileEditorGitActions', () => {
+  it('renders reload-from-disk recovery for the selected file', () => {
+    const html = renderToStaticMarkup(
+      <FileEditorGitActions
+        workspacePath="/repo"
+        selectedPath="src/App.tsx"
+        isDirty={true}
+        isLoading={false}
+        selectedHasUnstagedChanges={false}
+        selectedHasStagedChanges={false}
+        stagedCount={0}
+        outOfScopeStagedCount={0}
+        dirtyBufferCount={1}
+        lineWrapEnabled={false}
+        onDeleteRequest={vi.fn()}
+        onStage={vi.fn()}
+        onUnstage={vi.fn()}
+        onCommitRequest={vi.fn()}
+        onSaveAll={vi.fn()}
+        onSave={vi.fn()}
+        onReloadSelected={vi.fn()}
+        onToggleLineWrap={vi.fn()}
+        onOpenQuickOpen={vi.fn()}
+        onRevealInTree={vi.fn()}
+      />
+    )
+
+    expect(html).toContain('Reload')
+    expect(html).toContain('aria-label="Reload editor file from disk"')
+    expect(html).toContain('Reload from disk and discard unsaved changes')
   })
 })
