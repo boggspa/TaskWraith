@@ -1,4 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent
+} from 'react'
 import type { DiffFileSummary, DiffPreviewKind } from '../../../main/store/types'
 import type {
   GitFileStatus,
@@ -450,6 +457,42 @@ function DiffFileList({
       ...rows
     ]
   }, [rows, summaries.length, useVirtualization])
+  const fileRows = useMemo(
+    () =>
+      rows.filter(
+        (row): row is Extract<DiffFileListRow, { kind: 'file' }> => row.kind === 'file'
+      ),
+    [rows]
+  )
+  const selectedFileIndex = selectedPath
+    ? fileRows.findIndex((row) => row.summary.path === selectedPath)
+    : -1
+
+  const focusFileRow = useCallback((path: string) => {
+    const focus = () => {
+      const buttons = Array.from(
+        listRef.current?.querySelectorAll<HTMLButtonElement>('.diff-file-row') ?? []
+      )
+      const button = buttons.find((item) => item.dataset.diffFilePath === path)
+      button?.focus()
+      return Boolean(button)
+    }
+    window.requestAnimationFrame(() => {
+      if (!focus()) {
+        window.requestAnimationFrame(focus)
+      }
+    })
+  }, [])
+
+  const selectFileAt = useCallback(
+    (index: number) => {
+      const row = fileRows[index]
+      if (!row) return
+      onSelectPath(row.summary.path)
+      focusFileRow(row.summary.path)
+    },
+    [fileRows, focusFileRow, onSelectPath]
+  )
 
   useEffect(() => {
     const listElement = listRef.current
@@ -525,10 +568,35 @@ function DiffFileList({
     })
   }
 
+  const handleKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (fileRows.length === 0 || event.defaultPrevented) return
+    const currentIndex = selectedFileIndex >= 0 ? selectedFileIndex : 0
+    if (event.key === 'ArrowDown' || event.key === 'ArrowRight') {
+      event.preventDefault()
+      selectFileAt(Math.min(fileRows.length - 1, currentIndex + 1))
+      return
+    }
+    if (event.key === 'ArrowUp' || event.key === 'ArrowLeft') {
+      event.preventDefault()
+      selectFileAt(Math.max(0, currentIndex - 1))
+      return
+    }
+    if (event.key === 'Home') {
+      event.preventDefault()
+      selectFileAt(0)
+      return
+    }
+    if (event.key === 'End') {
+      event.preventDefault()
+      selectFileAt(fileRows.length - 1)
+    }
+  }
+
   return (
     <div
       ref={listRef}
       className={`diff-file-list ${useVirtualization ? 'virtualized' : ''}`}
+      onKeyDown={handleKeyDown}
       onScroll={handleScroll}
       aria-label="Changed files"
       role="listbox"
@@ -592,7 +660,9 @@ function DiffFileRow({
       onClick={() => onSelectPath(summary.path)}
       aria-label={buildDiffFileRowLabel(summary, gitStatus)}
       aria-selected={isSelected}
+      data-diff-file-path={summary.path}
       role="option"
+      tabIndex={isSelected ? 0 : -1}
       title={`Show diff for ${summary.path}`}
     >
       <FileTypeIcon
