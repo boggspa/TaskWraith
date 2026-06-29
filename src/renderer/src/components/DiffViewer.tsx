@@ -73,6 +73,10 @@ interface DiffLinesProps {
   parsed: ParsedUnifiedDiff | null
   viewMode: DiffViewMode
   onShowMore?: () => void
+  renderCapReached?: boolean
+  showMoreLineCount?: number
+  sourceOmittedLineCount?: number
+  sourceTruncated?: boolean
 }
 
 interface DiffRenderRow {
@@ -85,6 +89,7 @@ interface DiffRenderRow {
 type DiffViewMode = 'inline' | 'split'
 
 const DIFF_DETAIL_RENDER_LINE_LIMIT = DEFAULT_DIFF_RENDER_LINE_LIMIT
+const DIFF_DETAIL_MAX_RENDER_LINE_LIMIT = 10_000
 const DIFF_VIRTUALIZATION_THRESHOLD = 800
 const DIFF_VIRTUAL_ROW_HEIGHT = 22
 const DIFF_VIRTUAL_OVERSCAN = 24
@@ -468,8 +473,20 @@ function DiffDetail({
   }, [summary.diffText, summary.path])
 
   const showMoreDiffLines = () => {
-    setRenderLineLimit((current) => current + DIFF_DETAIL_RENDER_LINE_LIMIT)
+    setRenderLineLimit((current) =>
+      Math.min(current + DIFF_DETAIL_RENDER_LINE_LIMIT, DIFF_DETAIL_MAX_RENDER_LINE_LIMIT)
+    )
   }
+  const showMoreLineCount = Math.max(
+    0,
+    Math.min(
+      DIFF_DETAIL_RENDER_LINE_LIMIT,
+      DIFF_DETAIL_MAX_RENDER_LINE_LIMIT - renderLineLimit,
+      parsedDiff?.omittedLineCount ?? 0
+    )
+  )
+  const renderCapReached =
+    Boolean(parsedDiff?.truncated) && renderLineLimit >= DIFF_DETAIL_MAX_RENDER_LINE_LIMIT
 
   const renderPreview = () => {
     switch (previewKind) {
@@ -503,7 +520,11 @@ function DiffDetail({
           <DiffLines
             parsed={parsedDiff}
             viewMode={viewMode}
-            onShowMore={showMoreDiffLines}
+            onShowMore={showMoreLineCount > 0 ? showMoreDiffLines : undefined}
+            renderCapReached={renderCapReached}
+            showMoreLineCount={showMoreLineCount}
+            sourceOmittedLineCount={summary.diffTextOmittedLines}
+            sourceTruncated={summary.diffTextTruncated}
           />
         ) : (
           <div
@@ -625,7 +646,15 @@ const buildDiffRows = (parsed: ParsedUnifiedDiff): DiffRenderRow[] => {
   return rows
 }
 
-function DiffLines({ parsed, viewMode, onShowMore }: DiffLinesProps) {
+function DiffLines({
+  parsed,
+  viewMode,
+  onShowMore,
+  renderCapReached = false,
+  showMoreLineCount,
+  sourceOmittedLineCount,
+  sourceTruncated = false
+}: DiffLinesProps) {
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const [viewport, setViewport] = useState({ height: 0, scrollTop: 0 })
   const rows = useMemo(() => (parsed ? buildDiffRows(parsed) : []), [parsed])
@@ -655,8 +684,9 @@ function DiffLines({ parsed, viewMode, onShowMore }: DiffLinesProps) {
     return <div className="diff-lines-section">No diff hunks to display.</div>
   }
 
-  const nextLineCount = Math.min(DIFF_DETAIL_RENDER_LINE_LIMIT, parsed.omittedLineCount)
   const useVirtualization = rows.length > DIFF_VIRTUALIZATION_THRESHOLD
+  const nextLineCount =
+    showMoreLineCount ?? Math.min(DIFF_DETAIL_RENDER_LINE_LIMIT, parsed.omittedLineCount)
   const visibleRange = (() => {
     if (!useVirtualization) {
       return {
@@ -702,13 +732,24 @@ function DiffLines({ parsed, viewMode, onShowMore }: DiffLinesProps) {
 
   return (
     <div className="diff-lines-root">
+      {sourceTruncated && (
+        <div className="diff-lines-truncated diff-lines-source-truncated" role="note">
+          <span>
+            Preview capped before rendering.
+            {sourceOmittedLineCount
+              ? ` ${sourceOmittedLineCount.toLocaleString()} source lines were omitted.`
+              : ' Some source lines may be omitted.'}
+          </span>
+        </div>
+      )}
       {parsed.truncated && (
         <div className="diff-lines-truncated" role="note">
           <span>
             Showing first {parsed.renderedLineCount.toLocaleString()} lines.{' '}
             {parsed.omittedLineCount.toLocaleString()} more omitted.
+            {renderCapReached ? ' Rendering capped for performance.' : ''}
           </span>
-          {onShowMore && (
+          {onShowMore && nextLineCount > 0 && (
             <button
               className="diff-lines-show-more"
               type="button"

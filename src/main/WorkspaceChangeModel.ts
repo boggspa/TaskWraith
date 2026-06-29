@@ -86,7 +86,10 @@ function fileFromDiffSummary(
     isNoise: summary.isNoise,
     isSensitive: summary.isSensitive,
     previewKind: summary.previewKind,
-    diffText: summary.diffText
+    diffText: summary.diffText,
+    diffTextTruncated: summary.diffTextTruncated,
+    diffTextOmittedLines: summary.diffTextOmittedLines,
+    diffTextOriginalBytes: summary.diffTextOriginalBytes
   }
 }
 
@@ -325,6 +328,9 @@ export function compactWorkspaceChangeSet(record: WorkspaceChangeSet): Workspace
         changed = true
         return {
           ...file,
+          diffTextOriginalBytes:
+            file.diffTextOriginalBytes ?? Buffer.byteLength(file.diffText, 'utf8'),
+          diffTextTruncated: true,
           diffText:
             file.diffText.slice(0, WORKSPACE_CHANGE_RETENTION.maxDiffTextChars) +
             `\n… diff truncated for storage (${file.diffText.length.toLocaleString()} chars total)`

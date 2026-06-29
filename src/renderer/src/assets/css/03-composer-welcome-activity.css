@@ -9557,6 +9557,12 @@ button.diff-file-row {
   outline: 0;
 }
 
+.diff-lines-source-truncated {
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  border-bottom-color: color-mix(in srgb, var(--accent) 24%, transparent);
+}
+
 .diff-lines-section {
   border-top: 1px solid color-mix(in srgb, var(--text-primary) 6%, transparent);
   background: color-mix(in srgb, var(--app-bg-sunken) 70%, transparent);
@@ -9570,7 +9576,7 @@ button.diff-file-row {
   position: sticky;
   top: 0;
   z-index: 1;
-  min-height: 22px;
+  height: 22px;
   box-sizing: border-box;
   padding: 3px var(--space-md);
   font-size: var(--font-size-xs);
@@ -9596,7 +9602,8 @@ button.diff-file-row {
 .diff-line {
   display: grid;
   grid-template-columns: 4ch 4ch minmax(0, 1fr);
-  min-height: 22px;
+  height: 22px;
+  box-sizing: border-box;
   min-width: max-content;
   padding: 0;
   white-space: pre;
@@ -9619,7 +9626,8 @@ button.diff-file-row {
 .diff-line-split {
   display: grid;
   grid-template-columns: 4ch minmax(320px, 1fr) 4ch minmax(320px, 1fr);
-  min-height: 22px;
+  height: 22px;
+  box-sizing: border-box;
   min-width: 780px;
   padding: 0;
   white-space: pre;

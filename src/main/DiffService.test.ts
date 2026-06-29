@@ -8,6 +8,7 @@ import {
   classifyStatus,
   generateSyntheticNewFileDiff,
   getWorkspaceDiff,
+  buildBoundedWorkspaceDiff,
   computeRunDiff
 } from './DiffService'
 
@@ -177,6 +178,65 @@ describe('DiffService', () => {
       } finally {
         fs.rmSync(baseDir, { recursive: true, force: true })
       }
+    })
+
+    it('caps large tracked diff previews while keeping exact numstat counts', async () => {
+      const { baseDir, repoDir } = makeGitRepo()
+      try {
+        const filePath = path.join(repoDir, 'large.txt')
+        fs.writeFileSync(filePath, 'base\n')
+        runGit(repoDir, ['add', 'large.txt'])
+        runGit(repoDir, ['commit', '-m', 'initial'])
+
+        const addedLines = Array.from(
+          { length: 6500 },
+          (_, index) => `line ${String(index).padStart(4, '0')}`
+        )
+        fs.writeFileSync(filePath, ['base', ...addedLines].join('\n'))
+
+        const diff = await getWorkspaceDiff(repoDir)
+        const summary = diff.summaries?.find((file) => file.path === 'large.txt')
+        expect(diff.diffText).toBeUndefined()
+        expect(summary?.previewKind).toBe('git_diff')
+        expect(summary?.additions).toBe(6500)
+        expect(summary?.deletions).toBe(0)
+        expect(summary?.diffTextTruncated).toBe(true)
+        expect(summary?.diffTextOmittedLines).toBeGreaterThan(0)
+        expect(summary?.diffText).toContain('+line 0000')
+        expect(summary?.diffText).not.toContain('+line 6499')
+      } finally {
+        fs.rmSync(baseDir, { recursive: true, force: true })
+      }
+    })
+  })
+
+  describe('buildBoundedWorkspaceDiff', () => {
+    it('keeps iOS diff projection bounded for source-capped desktop summaries', () => {
+      const diffText = [
+        'diff --git a/large.txt b/large.txt',
+        '--- a/large.txt',
+        '+++ b/large.txt',
+        '@@ -1,1 +1,260 @@',
+        ...Array.from({ length: 260 }, (_, index) => `+line ${index}`)
+      ].join('\n')
+
+      const bounded = buildBoundedWorkspaceDiff([
+        {
+          path: 'large.txt',
+          status: 'modified',
+          additions: 260,
+          deletions: 0,
+          previewKind: 'git_diff',
+          diffText,
+          diffTextOmittedLines: 400,
+          diffTextTruncated: true
+        }
+      ])
+
+      expect(bounded.totalFiles).toBe(1)
+      expect(bounded.truncated).toBe(true)
+      expect(bounded.files[0].hunks[0].lines).toHaveLength(200)
+      expect(bounded.files[0].truncated).toBe(true)
     })
   })
 

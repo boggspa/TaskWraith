@@ -43,9 +43,18 @@ describe('parseUnifiedDiff', () => {
 
     expect(parsed.truncated).toBe(true)
     expect(parsed.renderedLineCount).toBe(2)
-    expect(parsed.omittedLineCount).toBe(4)
+    expect(parsed.omittedLineCount).toBe(2)
     expect(parsed.sections).toHaveLength(1)
     expect(parsed.sections[0].lines.map((line) => line.text)).toEqual(['-one', '+two'])
+  })
+
+  it('does not count hunk headers as omitted render lines', () => {
+    const parsed = parseUnifiedDiff(['@@ -1,1 +1,1 @@', '-old', '+new'].join('\n'))
+
+    expect(parsed.truncated).toBe(false)
+    expect(parsed.totalLineCount).toBe(2)
+    expect(parsed.renderedLineCount).toBe(2)
+    expect(parsed.omittedLineCount).toBe(0)
   })
 
   it('returns no sections when a blank diff is capped to zero lines', () => {

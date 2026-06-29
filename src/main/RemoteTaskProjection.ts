@@ -336,6 +336,8 @@ export interface MobileDiffFile {
   previewKind: DiffFileSummary['previewKind']
   hunks?: MobileDiffHunk[]
   truncated?: boolean
+  diffTextOmittedLines?: number
+  diffTextOriginalBytes?: number
   isBinary?: boolean
   binary?: boolean
   isNoise?: boolean
@@ -1380,8 +1382,14 @@ function projectDiffFile(file: DiffFileSummary): MobileDiffFile {
     previewKind: file.previewKind
   }
   if (hunks.length > 0) projected.hunks = hunks
-  const truncated = hunks.some((hunk) => hunk.truncated)
+  const truncated = Boolean(file.diffTextTruncated) || hunks.some((hunk) => hunk.truncated)
   if (truncated) projected.truncated = true
+  if (file.diffTextOmittedLines !== undefined) {
+    projected.diffTextOmittedLines = file.diffTextOmittedLines
+  }
+  if (file.diffTextOriginalBytes !== undefined) {
+    projected.diffTextOriginalBytes = file.diffTextOriginalBytes
+  }
   if (file.isBinary !== undefined) {
     projected.isBinary = file.isBinary
     projected.binary = file.isBinary

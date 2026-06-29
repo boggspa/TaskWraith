@@ -13,6 +13,10 @@ import type {
 const NOISE_PATHS = ['.DS_Store', 'Thumbs.db', 'node_modules', 'dist', 'build', '.vite']
 const SENSITIVE_PATTERNS = [/\.env$/i, /\.pem$/i, /\.key$/i, /secret/i, /password/i, /token/i]
 const MAX_PREVIEW_SIZE = 1024 * 100 // 100KB
+const MAX_GIT_DIFF_PREVIEW_BYTES = 256 * 1024
+const MAX_GIT_DIFF_PREVIEW_LINES = 5000
+const MAX_GIT_DIFF_PREVIEW_LINE_CHARS = 1200
+const GIT_DIFF_PREVIEW_MAX_BUFFER = MAX_GIT_DIFF_PREVIEW_BYTES + 64 * 1024
 
 function isNoiseFile(filePath: string): boolean {
   const basename = path.basename(filePath)
@@ -85,13 +89,22 @@ async function spawnGit(
 
 function spawnGitSync(
   cwd: string,
-  args: string[]
-): { stdout: string; stderr: string; code: number } {
-  const result = spawnSync('git', args, { cwd, shell: false, encoding: 'utf-8' })
+  args: string[],
+  options: { maxBuffer?: number } = {}
+): { stdout: string; stderr: string; code: number; truncated?: boolean } {
+  const result = spawnSync('git', args, {
+    cwd,
+    shell: false,
+    encoding: 'utf-8',
+    ...(options.maxBuffer ? { maxBuffer: options.maxBuffer } : {})
+  })
   return {
     stdout: result.stdout || '',
     stderr: result.stderr || '',
-    code: result.status ?? 0
+    code: result.status ?? 0,
+    truncated:
+      Boolean(result.error && 'code' in result.error && result.error.code === 'ENOBUFS') ||
+      (options.maxBuffer !== undefined && (result.stdout || '').length >= options.maxBuffer)
   }
 }
 
@@ -130,13 +143,117 @@ function repoPathToWorkspacePath(repoPath: string, workspacePrefix: string): str
 }
 
 function countDiffLines(diffText: string): { additions?: number; deletions?: number } {
-  if (!diffText.trim()) {
-    return {}
+  if (!diffText.trim()) return {}
+  let additions = 0
+  let deletions = 0
+  let index = 0
+  while (index <= diffText.length) {
+    const nextBreak = diffText.indexOf('\n', index)
+    const lineEnd = nextBreak === -1 ? diffText.length : nextBreak
+    const line = diffText.slice(index, lineEnd)
+    if (line.startsWith('+') && !line.startsWith('+++')) additions += 1
+    if (line.startsWith('-') && !line.startsWith('---')) deletions += 1
+    if (nextBreak === -1) break
+    index = nextBreak + 1
   }
-  const lines = diffText.split('\n')
+  return { additions, deletions }
+}
+
+function parseNumstat(stdout: string): { additions?: number; deletions?: number } {
+  let additions = 0
+  let deletions = 0
+  let sawTextStats = false
+  for (const line of stdout.split(/\r?\n/)) {
+    if (!line.trim()) continue
+    const [rawAdditions, rawDeletions] = line.split(/\s+/, 2)
+    const nextAdditions = Number(rawAdditions)
+    const nextDeletions = Number(rawDeletions)
+    if (!Number.isFinite(nextAdditions) || !Number.isFinite(nextDeletions)) continue
+    additions += nextAdditions
+    deletions += nextDeletions
+    sawTextStats = true
+  }
+  return sawTextStats ? { additions, deletions } : {}
+}
+
+function countGitFileDiffLines(
+  gitCwd: string,
+  gitPath: string
+): { additions?: number; deletions?: number } {
+  const unstaged = parseNumstat(
+    spawnGitSync(gitCwd, ['diff', '--numstat', '--no-ext-diff', '--', gitPath]).stdout
+  )
+  const staged = parseNumstat(
+    spawnGitSync(gitCwd, [
+      'diff',
+      '--cached',
+      '--numstat',
+      '--no-ext-diff',
+      '--',
+      gitPath
+    ]).stdout
+  )
+  const additions =
+    unstaged.additions !== undefined || staged.additions !== undefined
+      ? (unstaged.additions ?? 0) + (staged.additions ?? 0)
+      : undefined
+  const deletions =
+    unstaged.deletions !== undefined || staged.deletions !== undefined
+      ? (unstaged.deletions ?? 0) + (staged.deletions ?? 0)
+      : undefined
+  return { additions, deletions }
+}
+
+function capDiffPreviewText(text: string): {
+  text: string
+  truncated: boolean
+  omittedLines?: number
+} {
+  if (!text) return { text, truncated: false }
+  const output: string[] = []
+  let omittedLines = 0
+  let truncated = false
+  let usedBytes = 0
+  let index = 0
+
+  while (index <= text.length) {
+    const nextBreak = text.indexOf('\n', index)
+    const lineEnd = nextBreak === -1 ? text.length : nextBreak
+    const rawLine = text.slice(index, lineEnd)
+    const clippedLine =
+      rawLine.length > MAX_GIT_DIFF_PREVIEW_LINE_CHARS
+        ? rawLine.slice(0, MAX_GIT_DIFF_PREVIEW_LINE_CHARS)
+        : rawLine
+    if (clippedLine.length < rawLine.length) truncated = true
+    const nextBytes = Buffer.byteLength(clippedLine, 'utf8') + 1
+    if (
+      output.length >= MAX_GIT_DIFF_PREVIEW_LINES ||
+      usedBytes + nextBytes > MAX_GIT_DIFF_PREVIEW_BYTES
+    ) {
+      truncated = true
+      omittedLines += 1
+    } else {
+      output.push(clippedLine)
+      usedBytes += nextBytes
+    }
+    if (nextBreak === -1) break
+    index = nextBreak + 1
+  }
+
+  if (omittedLines === 0) return { text: output.join('\n'), truncated }
+  return { text: output.join('\n'), truncated, omittedLines }
+}
+
+function readGitDiffPreview(
+  gitCwd: string,
+  args: string[]
+): { text: string; truncated: boolean; omittedLines?: number } {
+  const result = spawnGitSync(gitCwd, args, { maxBuffer: GIT_DIFF_PREVIEW_MAX_BUFFER })
+  const capped = capDiffPreviewText(result.stdout)
   return {
-    additions: lines.filter((line) => line.startsWith('+') && !line.startsWith('+++')).length,
-    deletions: lines.filter((line) => line.startsWith('-') && !line.startsWith('---')).length
+    text: capped.text,
+    truncated: Boolean(result.truncated || capped.truncated),
+    omittedLines: capped.omittedLines
   }
 }
 
@@ -210,6 +327,9 @@ function buildCurrentFileSummary(
   const sizeBytes = exists ? fs.statSync(fullPath).size : 0
   let previewKind: DiffPreviewKind = 'none'
   let diffText: string | undefined
+  let diffTextTruncated: boolean | undefined
+  let diffTextOmittedLines: number | undefined
+  let diffTextOriginalBytes: number | undefined
   let isBinary = false
   let additions: number | undefined
   let deletions: number | undefined
@@ -234,25 +354,44 @@ function buildCurrentFileSummary(
   } else if (status === 'modified' || status === 'deleted' || status === 'renamed') {
     const gitCwd = repoRoot || workspace
     const gitPath = repoRoot ? repoPath : displayPath
-    const unstagedDiff = spawnGitSync(gitCwd, ['diff', '--no-ext-diff', '--', gitPath]).stdout
-    const stagedDiff = spawnGitSync(gitCwd, [
+    const exactCounts = countGitFileDiffLines(gitCwd, gitPath)
+    additions = exactCounts.additions
+    deletions = exactCounts.deletions
+    const unstagedDiff = readGitDiffPreview(gitCwd, [
+      'diff',
+      '--no-ext-diff',
+      '--',
+      gitPath
+    ])
+    const stagedDiff = readGitDiffPreview(gitCwd, [
       'diff',
       '--cached',
       '--no-ext-diff',
       '--',
       gitPath
-    ]).stdout
-    const currentDiff = [stagedDiff, unstagedDiff].filter((text) => text.trim()).join('\n')
+    ])
+    const currentDiff = [stagedDiff.text, unstagedDiff.text].filter((text) => text.trim()).join('\n')
     if (currentDiff.trim()) {
       if (/^Binary files /m.test(currentDiff) || /^GIT binary patch$/m.test(currentDiff)) {
         isBinary = true
         previewKind = 'binary'
       } else {
         diffText = currentDiff
+        diffTextTruncated = Boolean(stagedDiff.truncated || unstagedDiff.truncated)
+        diffTextOmittedLines = [stagedDiff.omittedLines, unstagedDiff.omittedLines].reduce(
+          (sum: number, count) => sum + (count ?? 0),
+          0
+        )
+        if (diffTextOmittedLines === 0) diffTextOmittedLines = undefined
+        if (!diffTextTruncated) {
+          diffTextOriginalBytes = Buffer.byteLength(currentDiff, 'utf8')
+        }
         previewKind = 'git_diff'
-        const counts = countDiffLines(currentDiff)
-        additions = counts.additions
-        deletions = counts.deletions
+        if (additions === undefined || deletions === undefined) {
+          const counts = countDiffLines(currentDiff)
+          additions = counts.additions
+          deletions = counts.deletions
+        }
       }
     }
   }
@@ -264,6 +403,9 @@ function buildCurrentFileSummary(
     isBinary,
     previewKind,
     diffText,
+    diffTextTruncated,
+    diffTextOmittedLines,
+    diffTextOriginalBytes,
     sizeBytes
   }
 }
@@ -306,13 +448,7 @@ export async function getWorkspaceDiff(workspace: string): Promise<{
     }
   }
 
-  const { stdout: diffOut } = await spawnGit(scope.repoRoot, [
-    'diff',
-    '--no-ext-diff',
-    ...pathspec
-  ])
-
-  if (!statusOut.trim() && !diffOut.trim()) {
+  if (!statusOut.trim()) {
     return { type: 'no_changes', text: 'No changes were made.' }
   }
 
@@ -335,7 +471,6 @@ export async function getWorkspaceDiff(workspace: string): Promise<{
   return {
     type: 'changes',
     statusText: statusOut,
-    diffText: diffOut,
     summaries
   }
 }
@@ -393,10 +528,10 @@ export async function captureWorkspaceSnapshot(workspace: string): Promise<Works
 }
 
 // ── Bounded workspace diff (iOS Diff Studio) ─────────────────────────────────
-// The `workspaceDiff` bridge action returns the SAME git diff the desktop
-// Diff Studio renders ('get-diff' IPC → getWorkspaceDiff), projected through
-// hard caps so the ack stays inside the relay frame budget: ≤40 files, ≤200
-// hunk lines per file, line text clipped to 400 chars. Anything dropped is
+// The `workspaceDiff` bridge action projects the same safe per-file previews
+// desktop Diff Studio receives (`get-diff` IPC → getWorkspaceDiff), then applies
+// tighter mobile caps so the ack stays inside the relay frame budget: ≤40 files,
+// ≤200 hunk lines per file, line text clipped to 400 chars. Anything dropped is
 // flagged with `truncated` (per file and on the total).
 
 export const BOUNDED_DIFF_MAX_FILES = 40

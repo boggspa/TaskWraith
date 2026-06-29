@@ -28,6 +28,20 @@ export const DEFAULT_DIFF_RENDER_LINE_LIMIT = 2500
 
 const HUNK_HEADER_PATTERN = /@@\s+-(\d+)(?:,\d+)?\s+\+(\d+)(?:,\d+)?\s+@@/
 
+const countRenderLines = (text: string, startIndex: number): number => {
+  if (startIndex > text.length) return 0
+  let count = 1
+  let lineStart = startIndex
+  for (let index = startIndex; index < text.length; index += 1) {
+    if (text.charCodeAt(index) !== 10) continue
+    if (text.startsWith('@@', lineStart)) count -= 1
+    count += 1
+    lineStart = index + 1
+  }
+  if (text.startsWith('@@', lineStart)) count -= 1
+  return count
+}
+
 export const isDiffMetadataLine = (line: string): boolean => {
   return (
     line.startsWith('diff --git') ||
@@ -96,11 +110,11 @@ export const parseUnifiedDiff = (
   options: ParseUnifiedDiffOptions = {}
 ): ParsedUnifiedDiff => {
   const maxLines = Math.max(0, options.maxLines ?? DEFAULT_DIFF_RENDER_LINE_LIMIT)
-  const rawLines = text.split('\n')
   const sections: ParsedDiffSection[] = []
   let current: ParsedDiffSection = { lines: [] }
   let counters = getHunkStartLines()
   let renderedLineCount = 0
+  let totalLineCount = 0
 
   const pushCurrent = (): void => {
     if (current.lines.length > 0 || current.header) {
@@ -108,27 +122,38 @@ export const parseUnifiedDiff = (
     }
   }
 
-  for (const line of rawLines) {
-    if (renderedLineCount >= maxLines) continue
+  let index = 0
+  while (index <= text.length) {
+    if (renderedLineCount >= maxLines) {
+      totalLineCount += countRenderLines(text, index)
+      break
+    }
+
+    const nextBreak = text.indexOf('\n', index)
+    const lineEnd = nextBreak === -1 ? text.length : nextBreak
+    const line = text.slice(index, lineEnd)
 
     if (line.startsWith('@@')) {
       pushCurrent()
       current = { header: line, lines: [] }
       counters = getHunkStartLines(line)
-      continue
+    } else {
+      totalLineCount += 1
+      current.lines.push(classifyLine(line, counters))
+      renderedLineCount += 1
     }
 
-    current.lines.push(classifyLine(line, counters))
-    renderedLineCount += 1
+    if (nextBreak === -1) break
+    index = nextBreak + 1
   }
 
   pushCurrent()
 
   return {
     sections,
-    totalLineCount: rawLines.length,
+    totalLineCount,
     renderedLineCount,
-    omittedLineCount: Math.max(0, rawLines.length - renderedLineCount),
-    truncated: renderedLineCount < rawLines.length
+    omittedLineCount: Math.max(0, totalLineCount - renderedLineCount),
+    truncated: renderedLineCount < totalLineCount
   }
 }
