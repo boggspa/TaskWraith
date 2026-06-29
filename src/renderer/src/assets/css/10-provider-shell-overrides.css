@@ -1027,7 +1027,7 @@
 [data-theme="alabaster"][data-composer-style="codex"]
   .composer-above-bar
   .composer-diff-add {
-  color: #3fbf83 !important;
+  color: #2db777 !important;
 }
 
 [data-theme="alabaster"][data-composer-style="codex"]
@@ -1039,7 +1039,7 @@
 [data-theme="alabaster"][data-composer-style="codex"]
   .composer-above-bar
   .composer-diff-del {
-  color: #e2655f !important;
+  color: #ec3d35 !important;
 }
 
 [data-theme="alabaster"][data-composer-style="codex"]

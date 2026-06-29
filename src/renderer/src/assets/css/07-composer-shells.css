@@ -1310,10 +1310,10 @@
    Alabaster keeps its own !important pair in 10-provider-shell-overrides,
    updated to the same hues so every theme stays in step. */
 [data-composer-style="codex"] .composer-diff-add {
-  color: #3fbf83;
+  color: #2db777;
 }
 [data-composer-style="codex"] .composer-diff-del {
-  color: #e2655f;
+  color: #ec3d35;
 }
 .composer-above-bar-action {
   margin-left: auto;
