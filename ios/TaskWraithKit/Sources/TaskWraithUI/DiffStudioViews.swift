@@ -71,6 +71,11 @@ final class MobileDiffStudioState: ObservableObject {
         selectedFile?.name ?? "Diff Studio"
     }
 
+    var selectedFileCanOpenInEditor: Bool {
+        guard let selectedFile else { return false }
+        return selectedFile.kind != "deleted"
+    }
+
     /// "Showing 40 of N" / relay-budget clipping — rendered as the list footer.
     var truncationFootnote: String? {
         guard let diff else { return nil }
@@ -152,6 +157,7 @@ struct DiffStudioSplitView: View {
     @ObservedObject var model: RemoteSessionModel
     @ObservedObject var state: MobileDiffStudioState
     let onBack: () -> Void
+    let onOpenSelectedFile: (String) -> Void
 
     var body: some View {
         NavigationSplitView {
@@ -166,7 +172,12 @@ struct DiffStudioSplitView: View {
                     }
                 }
         } detail: {
-            DiffViewerPane(model: model, state: state, onBack: onBack, compact: false)
+            DiffViewerPane(
+                model: model,
+                state: state,
+                onBack: onBack,
+                onOpenSelectedFile: onOpenSelectedFile,
+                compact: false)
         }
     }
 }
@@ -175,17 +186,20 @@ struct DiffStudioCompactView: View {
     @ObservedObject var model: RemoteSessionModel
     @ObservedObject var state: MobileDiffStudioState
     let onExpand: (() -> Void)?
+    let onOpenSelectedFile: (String) -> Void
     let onClose: () -> Void
 
     init(
         model: RemoteSessionModel,
         state: MobileDiffStudioState,
         onExpand: (() -> Void)? = nil,
+        onOpenSelectedFile: @escaping (String) -> Void,
         onClose: @escaping () -> Void
     ) {
         self.model = model
         self.state = state
         self.onExpand = onExpand
+        self.onOpenSelectedFile = onOpenSelectedFile
         self.onClose = onClose
     }
 
@@ -218,6 +232,7 @@ struct DiffStudioCompactView: View {
                     state: state,
                     onBack: onClose,
                     onExpand: onExpand,
+                    onOpenSelectedFile: onOpenSelectedFile,
                     compact: true)
             }
         }
@@ -373,6 +388,7 @@ private struct DiffViewerPane: View {
     @ObservedObject var state: MobileDiffStudioState
     let onBack: () -> Void
     var onExpand: (() -> Void)? = nil
+    var onOpenSelectedFile: ((String) -> Void)? = nil
     let compact: Bool
 
     var body: some View {
@@ -451,6 +467,24 @@ private struct DiffViewerPane: View {
                 }
                 .buttonStyle(.bordered)
                 .accessibilityLabel("Open full Diff Studio")
+            }
+            if let onOpenSelectedFile {
+                Button {
+                    if let selectedPath = state.selectedPath {
+                        onOpenSelectedFile(selectedPath)
+                    }
+                } label: {
+                    if compact {
+                        Image(systemName: "doc.text.magnifyingglass")
+                            .accessibilityLabel("Open in Files")
+                    } else {
+                        Label("Open in Files", systemImage: "doc.text.magnifyingglass")
+                    }
+                }
+                .buttonStyle(.bordered)
+                .disabled(
+                    !state.selectedFileCanOpenInEditor
+                        || !model.workspaceCanEditFiles(state.selectedWorkspaceId))
             }
             if let file = state.selectedFile {
                 DiffStatChips(additions: file.additions, deletions: file.deletions)

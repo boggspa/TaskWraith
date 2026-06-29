@@ -1835,6 +1835,13 @@ struct ThreadDetailView: View {
                         DispatchQueue.main.async {
                             model.requestDiffMode(workspaceId: workspaceId)
                         }
+                    },
+                    onOpenSelectedFile: { path in
+                        let workspaceId = composerDiffSheetState.selectedWorkspaceId
+                        composerDiffSheetPresented = false
+                        DispatchQueue.main.async {
+                            model.requestFilesMode(workspaceId: workspaceId, targetPath: path)
+                        }
                     }
                 ) {
                     composerDiffSheetPresented = false

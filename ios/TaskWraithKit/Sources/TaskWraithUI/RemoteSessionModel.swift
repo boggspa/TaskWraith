@@ -738,6 +738,7 @@ public final class RemoteSessionModel: ObservableObject {
     public struct FileModeRequest: Identifiable, Sendable {
         public let id = UUID()
         public let workspaceId: String?
+        public let targetPath: String?
     }
 
     public struct DiffModeRequest: Identifiable, Sendable {
@@ -3058,8 +3059,8 @@ public final class RemoteSessionModel: ObservableObject {
             && capabilities.fileWrite == true
     }
 
-    public func requestFilesMode(workspaceId: String? = nil) {
-        fileModeRequest = FileModeRequest(workspaceId: workspaceId)
+    public func requestFilesMode(workspaceId: String? = nil, targetPath: String? = nil) {
+        fileModeRequest = FileModeRequest(workspaceId: workspaceId, targetPath: targetPath)
     }
 
     public var diffReviewableWorkspaces: [WorkspaceSummary] {

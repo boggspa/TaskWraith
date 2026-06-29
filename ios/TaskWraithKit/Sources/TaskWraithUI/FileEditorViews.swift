@@ -52,6 +52,7 @@ import TaskWraithKit
 final class MobileFileEditorState: ObservableObject {
     enum PendingAction {
         case select(WorkspaceFileEntry)
+        case selectPath(String)
         case workspace(String)
         case close
         case clearSelection
@@ -201,6 +202,17 @@ final class MobileFileEditorState: ObservableObject {
         Task { await open(entry, model: model) }
     }
 
+    func requestPath(_ path: String, model: RemoteSessionModel) {
+        let normalizedPath = Self.normalizedDirectoryPath(path)
+        guard !normalizedPath.isEmpty else { return }
+        if isDirty {
+            pendingAction = .selectPath(normalizedPath)
+            showDirtyDialog = true
+            return
+        }
+        Task { await openPath(normalizedPath, model: model) }
+    }
+
     func toggleDirectory(_ entry: WorkspaceFileEntry, model: RemoteSessionModel) {
         let wasSearching = searchIsActive
         if wasSearching {
@@ -260,6 +272,27 @@ final class MobileFileEditorState: ObservableObject {
             savedContent = file.content
             baseEtag = file.etag
             status = "\(file.path) · \(Self.formatBytes(file.sizeBytes))"
+        } catch {
+            status = error.localizedDescription
+        }
+        isLoading = false
+    }
+
+    func openPath(_ path: String, model: RemoteSessionModel) async {
+        guard let workspaceId = selectedWorkspaceId else { return }
+        let normalizedPath = Self.normalizedDirectoryPath(path)
+        guard !normalizedPath.isEmpty else { return }
+        isLoading = true
+        status = "Opening \(normalizedPath)"
+        do {
+            let file = try await model.readWorkspaceFile(workspaceId: workspaceId, path: normalizedPath)
+            selectedPath = file.path
+            content = file.content
+            savedContent = file.content
+            baseEtag = file.etag
+            status = "\(file.path) · \(Self.formatBytes(file.sizeBytes))"
+            expandAncestors(for: file.path)
+            await loadAncestorDirectories(for: file.path, model: model)
         } catch {
             status = error.localizedDescription
         }
@@ -385,6 +418,8 @@ final class MobileFileEditorState: ObservableObject {
         switch pending {
         case .select(let entry):
             Task { await open(entry, model: model) }
+        case .selectPath(let path):
+            Task { await openPath(path, model: model) }
         case .workspace(let workspaceId):
             selectedWorkspaceId = workspaceId
             clearEditor()
@@ -493,6 +528,17 @@ final class MobileFileEditorState: ObservableObject {
 
     private func refreshParentDirectory(for path: String, model: RemoteSessionModel) async {
         await loadDirectory(Self.parentDirectory(of: path), model: model, force: true)
+    }
+
+    private func loadAncestorDirectories(for path: String, model: RemoteSessionModel) async {
+        let parts = path.split(separator: "/").map(String.init)
+        guard !parts.isEmpty else { return }
+        await loadDirectory("", model: model)
+        guard parts.count > 1 else { return }
+        for index in 1..<parts.count {
+            let directory = parts.prefix(index).joined(separator: "/")
+            await loadDirectory(directory, model: model)
+        }
     }
 
     private static func parentDirectory(of path: String) -> String {

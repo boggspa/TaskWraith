@@ -56,6 +56,20 @@ struct MobileDiffStudioStateTests {
         ])
         #expect(state.fileFilterStatus == nil)
     }
+
+    @MainActor
+    @Test func editorHandoffSkipsDeletedAndMissingSelections() throws {
+        let state = MobileDiffStudioState()
+        state.diff = try decodeFilterableWorkspaceDiff()
+
+        #expect(state.selectedFileCanOpenInEditor == false)
+
+        state.selectedPath = "src/App.swift"
+        #expect(state.selectedFileCanOpenInEditor == true)
+
+        state.selectedPath = "docs/Old.md"
+        #expect(state.selectedFileCanOpenInEditor == false)
+    }
 }
 
 private func decodeWorkspaceDiff() throws -> WorkspaceDiffResult {
