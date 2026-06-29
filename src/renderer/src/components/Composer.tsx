@@ -179,6 +179,7 @@ export interface ComposerProps {
   effectiveSelectedParticipantId: any
   ensembleBlendStyle: any
   ensembleConcurrentLanesAvailable: any
+  ensembleConcurrentWriteLanesAvailable: any
   ensembleEnabledParticipantsForCurrent: any
   ensembleOllamaContextWarning: any
   externalGitSnapshots: any
@@ -455,6 +456,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     effectiveSelectedParticipantId,
     ensembleBlendStyle,
     ensembleConcurrentLanesAvailable,
+    ensembleConcurrentWriteLanesAvailable,
     ensembleEnabledParticipantsForCurrent,
     ensembleOllamaContextWarning,
     externalGitSnapshots,
@@ -3177,22 +3179,49 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               ollamaContextWarning={ensembleOllamaContextWarning}
                               concurrentLanesAvailable={ensembleConcurrentLanesAvailable}
                             />
-                            <button
-                              type="button"
-                              className={`composer-ensemble-mode-button ${
-                                currentEnsembleConcurrentMode ? 'is-active' : ''
-                              }`}
-                              onClick={() =>
-                                updateCurrentEnsembleConcurrentMode(!currentEnsembleConcurrentMode)
-                              }
-                              title={
-                                ensembleConcurrentLanesAvailable
-                                  ? 'Fan out read-only participants in parallel before any writer-capable participants run. Locked writer lanes require TASKWRAITH_CONCURRENT_WRITE_LANES.'
-                                  : 'Fan-out requested, but parallel lanes are disabled (TASKWRAITH_CONCURRENT_LANES=0) — rounds run serially.'
-                              }
-                            >
-                              Fan-out
-                            </button>
+                            <span className="composer-fanout-policy" aria-label="Fan-out policy">
+                              <button
+                                type="button"
+                                className={`composer-ensemble-mode-button ${
+                                  !currentEnsembleConcurrentMode ? 'is-active' : ''
+                                }`}
+                                onClick={() => updateCurrentEnsembleConcurrentMode(false)}
+                                title="Run participants serially."
+                              >
+                                Off
+                              </button>
+                              <button
+                                type="button"
+                                className={`composer-ensemble-mode-button ${
+                                  currentEnsembleConcurrentMode ? 'is-active' : ''
+                                }`}
+                                onClick={() => updateCurrentEnsembleConcurrentMode(true)}
+                                title={
+                                  ensembleConcurrentLanesAvailable
+                                    ? ensembleConcurrentWriteLanesAvailable &&
+                                      !currentChat?.ensemble?.bossmanParticipantId
+                                      ? 'Fan out read-only participants; when no Boss is assigned, multiple writer-capable participants must pass write-scope claim and ack preflight before parallel writes.'
+                                      : 'Fan out read-only participants in parallel before writer-capable participants run serially.'
+                                    : 'Parallel lanes are disabled (TASKWRAITH_CONCURRENT_LANES=0); rounds run serially.'
+                                }
+                              >
+                                Read
+                              </button>
+                              <button
+                                type="button"
+                                className="composer-ensemble-mode-button is-locked"
+                                disabled
+                                title={
+                                  ensembleConcurrentWriteLanesAvailable
+                                    ? currentChat?.ensemble?.bossmanParticipantId
+                                      ? 'Writer fan-out is available only when the assigned Boss calls ensemble_fanout with explicit writeScopes.'
+                                      : 'Writer fan-out is mediated by user-enabled write-scope preflight: claim scopes, host conflict matrix, then ack.'
+                                    : 'Writer fan-out is disabled (TASKWRAITH_CONCURRENT_WRITE_LANES=0).'
+                                }
+                              >
+                                Writers
+                              </button>
+                            </span>
                             {activeEnsembleOrchestrationMode === 'continuous' && (
                               <ContinuousHopsLimitChip
                                 hops={currentEnsembleContinuationHops}

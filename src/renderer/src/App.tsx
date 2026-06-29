@@ -1939,6 +1939,8 @@ function App(): React.JSX.Element {
   )
   const ensembleConcurrentLanesAvailable =
     nativeCapabilities?.featureGates?.concurrentLanes ?? true
+  const ensembleConcurrentWriteLanesAvailable =
+    nativeCapabilities?.featureGates?.concurrentWriteLanes ?? false
   // 1.0.5-AU — Track which chat owns the current attachment so we
   // can auto-detach when the user switches away. Pre-AU the
   // `attachedWindow` state was app-global: attach in Chat A, switch
@@ -18686,8 +18688,9 @@ function App(): React.JSX.Element {
             kind: 'action' as const,
             id: 'taskwraith-ensemble-fanout',
             command: '/ensemble-fanout',
-            label: 'Toggle ensemble fanout',
-            description: 'Toggle or set concurrent fanout. Usage: /ensemble-fanout on|off|toggle.',
+            label: 'Toggle safe fanout',
+            description:
+              'Toggle or set safe concurrent fanout. Usage: /ensemble-fanout on|off|toggle.',
             group: 'Custom' as const,
             run: (ctx: SlashCommandRunContext) => {
               if (!chat || chat.chatKind !== 'ensemble' || !chat.ensemble) {
@@ -20864,6 +20867,7 @@ function App(): React.JSX.Element {
       effectiveSelectedParticipantId,
       ensembleBlendStyle,
       ensembleConcurrentLanesAvailable,
+      ensembleConcurrentWriteLanesAvailable,
       ensembleEnabledParticipantsForCurrent,
       ensembleOllamaContextWarning,
       externalGitSnapshots,
@@ -20998,6 +21002,7 @@ function App(): React.JSX.Element {
       effectiveSelectedParticipantId,
       ensembleBlendStyle,
       ensembleConcurrentLanesAvailable,
+      ensembleConcurrentWriteLanesAvailable,
       ensembleEnabledParticipantsForCurrent,
       ensembleOllamaContextWarning,
       externalGitSnapshots,
