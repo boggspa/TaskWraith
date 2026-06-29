@@ -1,6 +1,7 @@
 import React, { memo, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { MAX_ACTIVE_GOAL_OBJECTIVE_CHARS } from '../../../main/GoalState'
 import {
+  AgenticServiceId,
   AgenticWorkspaceGrant,
   EnsembleFanoutPolicy,
   EnsembleParticipant,
@@ -48,7 +49,7 @@ import { GitCiChip, GitMergeBadge, GitSyncChip, branchTone } from '../components
 import { LiveThreadTokenTally } from '../components/LiveThreadTokenTally'
 import { MultiviewLayoutPicker } from '../components/MultiviewLayoutPicker'
 import { CanvasComposerButton } from '../components/CanvasComposerButton'
-import { OllamaTierPicker } from '../components/OllamaTierPicker'
+import { OllamaPermissionRuntimePicker } from '../components/OllamaPermissionRuntimePicker'
 import { ollamaProviderParityWorkspaceGranted } from '../../../main/ollama/OllamaToolTiers'
 import { QueuedMessagesAboveRow } from '../components/QueuedMessagesAboveRow'
 import { ProviderBadgeIcon } from '../components/Sidebar'
@@ -710,17 +711,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     settings || {},
     currentWorkspacePath
   )
-
-  // The composer's EFFECTIVE provider. For an ensemble this is the SELECTED
-  // participant (the provider the footer + model picker actually target), NOT
-  // the chat-level host provider — `currentProvider` = getChatProvider(chat)
-  // returns the ensemble's host, so gating the Ollama tier picker on it made the
-  // picker appear for EVERY participant of an Ollama-hosted ensemble. Gate on
-  // this instead so it shows only when Ollama is the selected provider.
-  const effectiveComposerProvider =
-    isCurrentEnsembleChat && selectedParticipant
-      ? selectedParticipant.provider
-      : currentProvider
 
   // ---------------------------------------------------------------------------
   // Composer-local editor state (Slices B + C of the multiview composer-parity
@@ -3906,87 +3896,121 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             currentWorkspace && !isCurrentGlobalChat
                               ? WORKSPACE_POLICY_SERVICES
                               : []
+                          const handlePermissionSelection = (nextApprovalMode: string): void => {
+                            if (ensembleBinding) {
+                              updateSelectedParticipant({
+                                permissionPresetId: modeToPreset(nextApprovalMode)
+                              })
+                              return
+                            }
+                            // The actual mode change, deferred so an
+                            // elevation warning can gate it (see below).
+                            const applyMainSelection = (): void => {
+                              setApprovalMode(nextApprovalMode)
+                              rememberCurrentChatComposerSelection({
+                                approvalMode: nextApprovalMode
+                              })
+                              if (
+                                currentProvider === 'gemini' &&
+                                nextApprovalMode !== approvalMode
+                              ) {
+                                markPersistentSessionRestartNeeded(
+                                  'Gemini approval mode changed. Restart the persistent session to apply the correct tool permissions.'
+                                )
+                              }
+                            }
+                            const elevation = decideApprovalElevation({
+                              from: approvalMode,
+                              to: nextApprovalMode,
+                              provider: effectiveProvider,
+                              workspacePath: currentWorkspacePath,
+                              acknowledgedDefault: acknowledgedElevationDefaults
+                            })
+                            if (!elevation) {
+                              applyMainSelection()
+                              return
+                            }
+                            setPendingElevation({
+                              tier: elevation.tier,
+                              provider: effectiveProvider,
+                              workspaceLabel: currentWorkspace?.displayName ?? null,
+                              ackKey: elevation.ackKey,
+                              persistAck: elevation.persistAckOnConfirm,
+                              toMode: nextApprovalMode,
+                              apply: applyMainSelection
+                            })
+                          }
+                          const handleToggleGrantForPicker = (
+                            service: AgenticServiceId,
+                            enabled: boolean
+                          ): void => {
+                            if (ensembleBinding) {
+                              updateSelectedParticipant(
+                                buildParticipantToolGrantPatch(ensembleBinding, service, enabled)
+                              )
+                              return
+                            }
+                            void handleSetAgenticWorkspaceGrant(service, enabled, effectiveProvider)
+                          }
+                          const applyAllParticipants =
+                            ensembleBinding && (currentChat?.ensemble?.participants.length || 0) > 1
+                              ? applyEnsemblePermissionsToAllParticipants
+                              : undefined
+                          const pickerDisabled =
+                            isCurrentComposerLocked ||
+                            (effectiveProvider === 'gemini' && !geminiWorkspaceTrustReady)
+                          if (effectiveProvider === 'ollama') {
+                            return (
+                              <OllamaPermissionRuntimePicker
+                                provider={effectiveProvider}
+                                composerStyle={appearance.composerStyle}
+                                permissionOptions={permissionPickerOptions}
+                                selectedPermission={effectiveSelectedPermission}
+                                onSelectPermission={handlePermissionSelection}
+                                grantServices={grantServicesForPicker}
+                                enabledGrantIds={enabledGrantIds}
+                                agenticServices={agenticServices}
+                                onToggleGrant={handleToggleGrantForPicker}
+                                grantScopeLabel={ensembleBinding ? 'participant' : 'workspace'}
+                                onApplyToAllParticipants={applyAllParticipants}
+                                selectedTier={chatOllamaTier}
+                                onSelectTier={(tier) =>
+                                  rememberCurrentChatComposerSelection({
+                                    ollamaToolControlTier: tier
+                                  })
+                                }
+                                selectedRunProfile={chatOllamaRunProfile}
+                                onSelectRunProfile={(profile) =>
+                                  rememberCurrentChatComposerSelection({
+                                    ollamaRunProfile: profile
+                                  })
+                                }
+                                tier4Granted={ollamaTier4GrantedForWorkspace}
+                                tier4Unavailable={isCurrentGlobalChat || !currentWorkspacePath}
+                                onRequestTier4Ack={() =>
+                                  onRequestOllamaTier4Ack(
+                                    currentChat?.appChatId,
+                                    currentWorkspacePath
+                                  )
+                                }
+                                disabled={pickerDisabled}
+                              />
+                            )
+                          }
                           return (
                             <CombinedPermissionsPicker
                               provider={effectiveProvider}
                               composerStyle={appearance.composerStyle}
                               permissionOptions={permissionPickerOptions}
                               selectedPermission={effectiveSelectedPermission}
-                              onSelectPermission={(nextApprovalMode) => {
-                                if (ensembleBinding) {
-                                  updateSelectedParticipant({
-                                    permissionPresetId: modeToPreset(nextApprovalMode)
-                                  })
-                                  return
-                                }
-                                // The actual mode change, deferred so an
-                                // elevation warning can gate it (see below).
-                                const applyMainSelection = (): void => {
-                                  setApprovalMode(nextApprovalMode)
-                                  rememberCurrentChatComposerSelection({
-                                    approvalMode: nextApprovalMode
-                                  })
-                                  if (
-                                    currentProvider === 'gemini' &&
-                                    nextApprovalMode !== approvalMode
-                                  ) {
-                                    markPersistentSessionRestartNeeded(
-                                      'Gemini approval mode changed. Restart the persistent session to apply the correct tool permissions.'
-                                    )
-                                  }
-                                }
-                                const elevation = decideApprovalElevation({
-                                  from: approvalMode,
-                                  to: nextApprovalMode,
-                                  provider: effectiveProvider,
-                                  workspacePath: currentWorkspacePath,
-                                  acknowledgedDefault: acknowledgedElevationDefaults
-                                })
-                                if (!elevation) {
-                                  applyMainSelection()
-                                  return
-                                }
-                                setPendingElevation({
-                                  tier: elevation.tier,
-                                  provider: effectiveProvider,
-                                  workspaceLabel: currentWorkspace?.displayName ?? null,
-                                  ackKey: elevation.ackKey,
-                                  persistAck: elevation.persistAckOnConfirm,
-                                  toMode: nextApprovalMode,
-                                  apply: applyMainSelection
-                                })
-                              }}
+                              onSelectPermission={handlePermissionSelection}
                               grantServices={grantServicesForPicker}
                               enabledGrantIds={enabledGrantIds}
                               agenticServices={agenticServices}
-                              onToggleGrant={(service, enabled) => {
-                                if (ensembleBinding) {
-                                  updateSelectedParticipant(
-                                    buildParticipantToolGrantPatch(
-                                      ensembleBinding,
-                                      service,
-                                      enabled
-                                    )
-                                  )
-                                  return
-                                }
-                                void handleSetAgenticWorkspaceGrant(
-                                  service,
-                                  enabled,
-                                  effectiveProvider
-                                )
-                              }}
+                              onToggleGrant={handleToggleGrantForPicker}
                               grantScopeLabel={ensembleBinding ? 'participant' : 'workspace'}
-                              onApplyToAllParticipants={
-                                ensembleBinding &&
-                                (currentChat?.ensemble?.participants.length || 0) > 1
-                                  ? applyEnsemblePermissionsToAllParticipants
-                                  : undefined
-                              }
-                              disabled={
-                                isCurrentComposerLocked ||
-                                (effectiveProvider === 'gemini' && !geminiWorkspaceTrustReady)
-                              }
+                              onApplyToAllParticipants={applyAllParticipants}
+                              disabled={pickerDisabled}
                             />
                           )
                         })()}
@@ -4015,27 +4039,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             <span className="composer-yolo-chip-label">YOLO</span>
                           </button>
                         )}
-                        {effectiveComposerProvider === 'ollama' && (
-                          <OllamaTierPicker
-                            provider={effectiveComposerProvider}
-                            composerStyle={appearance.composerStyle}
-                            selectedTier={chatOllamaTier}
-                            onSelectTier={(tier) =>
-                              rememberCurrentChatComposerSelection({ ollamaToolControlTier: tier })
-                            }
-                            selectedRunProfile={chatOllamaRunProfile}
-                            onSelectRunProfile={(profile) =>
-                              rememberCurrentChatComposerSelection({ ollamaRunProfile: profile })
-                            }
-                            tier4Granted={ollamaTier4GrantedForWorkspace}
-                            tier4Unavailable={isCurrentGlobalChat || !currentWorkspacePath}
-                            onRequestTier4Ack={() =>
-                              onRequestOllamaTier4Ack(currentChat?.appChatId, currentWorkspacePath)
-                            }
-                            disabled={isCurrentComposerLocked}
-                          />
-                        )}
-
                         {currentProvider === 'gemini' && !isCurrentGlobalChat && (
                           <label className="composer-picker-label" title="Workspace trust">
                             <TrustSymbolIcon />

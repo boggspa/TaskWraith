@@ -8648,6 +8648,29 @@
 .composer-ollama-tier-trigger:hover:not(:disabled) {
   background: color-mix(in srgb, var(--text-primary) 8%, transparent) !important;
 }
+.composer-combined-picker-popover.composer-ollama-permission-runtime-popover {
+  max-width: min(760px, calc(100vw - 16px));
+}
+.composer-ollama-permission-runtime-popover .composer-combined-picker-column {
+  min-width: 184px;
+}
+.composer-ollama-permission-runtime-popover .composer-combined-picker-ollama-runtime {
+  min-width: 230px;
+}
+.composer-combined-picker-column-note,
+.composer-combined-picker-section-label {
+  color: color-mix(in srgb, var(--text-tertiary) 92%, transparent);
+  font-size: 10px;
+  line-height: 1.2;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.composer-combined-picker-column-note {
+  margin: -2px 8px 8px;
+}
+.composer-combined-picker-section-label {
+  margin: 8px 8px 4px;
+}
 
 /* Popover ------------------------------------------------------ */
 
