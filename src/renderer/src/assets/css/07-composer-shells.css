@@ -650,63 +650,36 @@
   color: color-mix(in srgb, #ffffff 58%, transparent);
 }
 
-/* 1.0.5-EW31 + EW31a — Nudge the Claude shell's send / stop /
- * steer glyphs upward. the maintainer caught: the ↵ return-arrow
- * (`ClaudeReturnSymbolIcon`'s SVG path-pair) sat slightly low
- * inside its action button's bounding box in both light and
- * dark mode. Cause is the SVG's own optical balance — the
- * arrow tip sits at y=8.5–10.5 inside a 16x16 viewBox, so
- * visual center is below geometric center.
- *
- * Iteration history:
- *   - EW31  (1.5px) — too subtle to perceive at Retina scale.
- *   - EW31a (3px + !important) — visible, but the maintainer pushed
- *     for more punch; specificity flags retained from here
- *     forward to defeat the base hover rule at
- *     main.css:7674 which has (0,4,0) and would otherwise
- *     beat the EW31-family rule's (0,3,0) on hover.
- *   - EW31b (9px) — clearly nudged the glyph upward.
- *   - EW31c (26px + 1.25x) — recentres the glyph in the taller
- *     Claude composer field and improves legibility.
- *   - EW31d (stop 2x) — keeps the stop square legible next to the
- *     enlarged send glyph.
- * `!important` sidesteps the specificity battle entirely so
- * any future transform with higher source-order or unforeseen
- * specificity can't sneak past. Hover combines nudge + scale
- * via the second selector below. */
+/* Claude's send / stop / steer glyphs are optically scaled, but layout
+ * movement belongs on the button box itself. Earlier builds translated the
+ * child icon upward by 26px, leaving the hover/focus rectangle behind at the
+ * pre-offset location. Keep the icon centered inside the real hit target so
+ * glyph, hover fill, focus ring, and pointer box stay in sync. */
 [data-composer-style="claude"] .composer-action-btn .sf-symbol-icon {
-  transform: translateY(calc(-1 * var(--claude-send-glyph-nudge))) scale(var(--claude-send-glyph-scale)) !important;
+  transform: scale(var(--claude-send-glyph-scale)) !important;
 }
 [data-composer-style="claude"] .composer-action-btn:hover:not(:disabled) .sf-symbol-icon {
-  transform: translateY(calc(-1 * var(--claude-send-glyph-nudge))) scale(var(--claude-send-glyph-hover-scale)) !important;
+  transform: scale(var(--claude-send-glyph-hover-scale)) !important;
 }
 [data-composer-style="claude"] .composer-action-btn.stop-btn .sf-symbol-icon {
-  transform: translateY(calc(-1 * var(--claude-send-glyph-nudge))) scale(var(--claude-stop-glyph-scale)) !important;
+  transform: scale(var(--claude-stop-glyph-scale)) !important;
 }
 [data-composer-style="claude"] .composer-action-btn.stop-btn:hover:not(:disabled) .sf-symbol-icon {
-  transform: translateY(calc(-1 * var(--claude-send-glyph-nudge))) scale(var(--claude-stop-glyph-hover-scale)) !important;
+  transform: scale(var(--claude-stop-glyph-hover-scale)) !important;
 }
 
-/* 1.0.6 — Claude send/stop/steer focus ring sync. The global focus-visible
- * outline (main.css:~142) is `outline`, which always hugs the button BORDER-BOX
- * and ignores child transforms. Because the Claude glyph is floated upward,
- * the square blue ring read as vertically out of sync with the glyph. `outline`
- * can't be offset vertically, so for the Claude shell only we replace it with a
- * box-shadow ring shifted up by the SAME amount the glyph is
- * nudged, tracking it. `--claude-send-glyph-nudge` keeps the ring offset and the
- * glyph nudge in lock-step (tunable in one place). Scoped to the Claude shell,
- * so no other shell's focus ring changes. */
 [data-composer-style="claude"] .composer-action-btn {
-  --claude-send-glyph-nudge: 26px;
+  --claude-send-button-lift: 26px;
   --claude-send-glyph-scale: 1.25;
   --claude-send-glyph-hover-scale: 1.325;
   --claude-stop-glyph-scale: 2;
   --claude-stop-glyph-hover-scale: 2.12;
 }
 [data-composer-style="claude"] .composer-action-btn:focus-visible {
-  outline: none;
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
   border-radius: 8px;
-  box-shadow: 0 calc(-1 * var(--claude-send-glyph-nudge)) 0 2px var(--focus-ring);
+  box-shadow: none;
 }
 
 [data-composer-style="claude"] .composer-action-btn.run-btn:not(:disabled) {

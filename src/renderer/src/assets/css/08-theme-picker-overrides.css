@@ -8378,7 +8378,7 @@
 [data-composer-style="claude"] .composer-action-btn.stop-btn,
 [data-composer-style="claude"] .composer-action-btn.steer-btn {
   top: auto !important;
-  bottom: 82px !important;
+  bottom: calc(82px + var(--claude-send-button-lift, 0px)) !important;
   right: 14px !important;
 }
 
