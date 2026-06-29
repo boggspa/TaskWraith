@@ -61,6 +61,7 @@ import {
   WorkflowDefinition,
   WorkspaceBoardCard,
   WorkspaceBoardDefinition,
+  WorkspaceBoardProvenance,
   PinnedMessageSummary,
   AgenticServicesSettings,
   AgenticWorkspaceGrant,
@@ -634,6 +635,25 @@ interface WorkspaceBoardCaptureInput {
   columnId?: WorkspaceBoardCard['columnId']
   blockedReason?: string
   nextStep?: string
+  provenance?: WorkspaceBoardProvenance
+}
+
+function createWorkspaceBoardProvenance(
+  sourceKind: WorkspaceBoardProvenance['sourceKind'],
+  input: Omit<WorkspaceBoardProvenance, 'actor' | 'sourceKind' | 'at' | 'trust'> &
+    Partial<Pick<WorkspaceBoardProvenance, 'actor' | 'at' | 'trust'>> = {}
+): WorkspaceBoardProvenance {
+  return {
+    actor: input.actor || 'user',
+    sourceKind,
+    at: input.at || new Date().toISOString(),
+    trust: input.trust || 'user-confirmed',
+    sourceId: input.sourceId,
+    sourceTitle: input.sourceTitle,
+    provider: input.provider,
+    runId: input.runId,
+    note: input.note
+  }
 }
 
 const STREAM_FLUSH_ITEM_KEY_SEPARATOR = '\u0000'
@@ -12561,7 +12581,12 @@ function App(): React.JSX.Element {
       workspaceId: workspace.id,
       workspacePath: workspace.path,
       name,
-      columns: []
+      columns: [],
+      provenance: createWorkspaceBoardProvenance('manual', {
+        sourceId: workspace.id,
+        sourceTitle: workspace.displayName,
+        note: 'Created from the workspace boards sidebar.'
+      })
     })
     if (currentWorkspace?.id !== workspace.id) {
       setCurrentWorkspace(workspace)
@@ -12616,7 +12641,12 @@ function App(): React.JSX.Element {
       name: nextName,
       description: board.description,
       columns: board.columns,
-      pinned: false
+      pinned: false,
+      provenance: createWorkspaceBoardProvenance('duplicate', {
+        sourceId: board.id,
+        sourceTitle: board.name,
+        note: 'Duplicated from an existing workspace board.'
+      })
     })
     const sourceCards = workspaceBoardCards.filter((card) => card.boardId === board.id && !card.archived)
     const savedCards: WorkspaceBoardCard[] = []
@@ -12633,7 +12663,12 @@ function App(): React.JSX.Element {
         link: card.link,
         blockedReason: card.blockedReason,
         nextStep: card.nextStep,
-        reminderAt: card.reminderAt
+        reminderAt: card.reminderAt,
+        provenance: createWorkspaceBoardProvenance('duplicate', {
+          sourceId: card.id,
+          sourceTitle: card.title,
+          note: `Copied from board "${board.name}".`
+        })
       })
       savedCards.push(savedCard)
     }
@@ -12715,7 +12750,12 @@ function App(): React.JSX.Element {
         workspaceId: workspace.id,
         workspacePath: workspace.path,
         name: `${workspace.displayName} Board`,
-        columns: []
+        columns: [],
+        provenance: createWorkspaceBoardProvenance('capture', {
+          sourceId: input.link ? `${input.link.kind}:${input.link.id}` : undefined,
+          sourceTitle: input.title,
+          note: 'Created automatically while capturing work to a board.'
+        })
       })
       setWorkspaceBoards((prev) => [board!, ...prev.filter((item) => item.id !== board!.id)])
     }
@@ -12737,6 +12777,7 @@ function App(): React.JSX.Element {
         labels: input.labels || existing.labels,
         blockedReason: input.blockedReason || existing.blockedReason,
         nextStep: input.nextStep || existing.nextStep,
+        provenance: input.provenance || existing.provenance,
         archived: false,
         columnId: input.columnId || existing.columnId,
         sortOrder: Date.now()
@@ -12759,6 +12800,13 @@ function App(): React.JSX.Element {
       link: input.link,
       blockedReason: input.blockedReason,
       nextStep: input.nextStep,
+      provenance:
+        input.provenance ||
+        createWorkspaceBoardProvenance('capture', {
+          sourceId: input.link ? `${input.link.kind}:${input.link.id}` : undefined,
+          sourceTitle: input.title,
+          note: 'Captured from an existing TaskWraith surface.'
+        }),
       sortOrder: Date.now()
     })
     setWorkspaceBoardCards((prev) => [...prev.filter((item) => item.id !== saved.id), saved])
@@ -12810,7 +12858,13 @@ function App(): React.JSX.Element {
       labels: compactBoardLabels('thread', chat.provider),
       link: { kind: 'chat', id: chat.appChatId },
       columnId: chatBoardColumn(chat),
-      blockedReason: chat.activeGoal?.status === 'blocked' ? chat.activeGoal.blockedReason : undefined
+      blockedReason: chat.activeGoal?.status === 'blocked' ? chat.activeGoal.blockedReason : undefined,
+      provenance: createWorkspaceBoardProvenance('thread', {
+        sourceId: chat.appChatId,
+        sourceTitle: chat.title,
+        provider: chat.provider,
+        note: 'Captured from a chat row.'
+      })
     })
   }
 
@@ -12822,7 +12876,13 @@ function App(): React.JSX.Element {
       body: workflow.lastError || workflow.template.prompt,
       labels: compactBoardLabels('workflow', workflow.template.provider, workflow.lastStatus),
       link: { kind: 'workflow', id: workflow.id },
-      columnId: workflowBoardColumn(workflow)
+      columnId: workflowBoardColumn(workflow),
+      provenance: createWorkspaceBoardProvenance('capture', {
+        sourceId: workflow.id,
+        sourceTitle: workflow.name,
+        provider: workflow.template.provider,
+        note: 'Captured from a workflow row.'
+      })
     })
   }
 
@@ -12835,7 +12895,14 @@ function App(): React.JSX.Element {
       body: job.lastError || job.statusReason || job.request?.prompt,
       labels: compactBoardLabels('run', job.provider, job.status),
       link: { kind: 'run-queue-job', id: job.id },
-      columnId: runQueueJobBoardColumn(job)
+      columnId: runQueueJobBoardColumn(job),
+      provenance: createWorkspaceBoardProvenance('capture', {
+        sourceId: job.id,
+        sourceTitle: job.promptPreview || job.runId,
+        provider: job.provider,
+        runId: job.runId,
+        note: 'Captured from a run queue job.'
+      })
     })
   }
 
@@ -12853,7 +12920,14 @@ function App(): React.JSX.Element {
         .join('\n'),
       labels: compactBoardLabels('local-server', server.origin),
       link: { kind: 'local-server', id: server.id },
-      columnId: 'running'
+      columnId: 'running',
+      provenance: createWorkspaceBoardProvenance('capture', {
+        sourceId: server.id,
+        sourceTitle: server.name,
+        provider: server.provider,
+        runId: server.runId,
+        note: 'Captured from the local servers list.'
+      })
     })
   }
 
@@ -12866,7 +12940,13 @@ function App(): React.JSX.Element {
       body: message.content.slice(0, 1200),
       labels: compactBoardLabels('pinned-message', message.role),
       link: { kind: 'chat', id: currentChat.appChatId },
-      columnId: 'inbox'
+      columnId: 'inbox',
+      provenance: createWorkspaceBoardProvenance('capture', {
+        sourceId: currentChat.appChatId,
+        sourceTitle: currentChat.title,
+        provider: currentChat.provider,
+        note: 'Captured from a pinned message.'
+      })
     })
   }
 

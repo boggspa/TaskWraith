@@ -51,6 +51,8 @@ import {
   WorkspaceBoardColumn,
   WorkspaceBoardColumnId,
   WorkspaceBoardDefinition,
+  WorkspaceBoardProvenance,
+  WorkspaceBoardProvenanceSourceKind,
   PinnedMessageGroup,
   AuditRunRecord,
   AuditFinding,
@@ -408,6 +410,16 @@ const WORKSPACE_BOARD_DEFAULT_COLUMNS: WorkspaceBoardColumn[] = [
 const WORKSPACE_BOARD_COLUMN_IDS = new Set<WorkspaceBoardColumnId>(
   WORKSPACE_BOARD_DEFAULT_COLUMNS.map((column) => column.id)
 )
+const WORKSPACE_BOARD_PROVENANCE_SOURCE_KINDS = new Set<WorkspaceBoardProvenanceSourceKind>([
+  'manual',
+  'capture',
+  'seed',
+  'duplicate',
+  'thread',
+  'goal',
+  'plan',
+  'agent'
+])
 
 function isWorkspaceBoardColumnId(value: unknown): value is WorkspaceBoardColumnId {
   return typeof value === 'string' && WORKSPACE_BOARD_COLUMN_IDS.has(value as WorkspaceBoardColumnId)
@@ -428,6 +440,28 @@ function normalizeWorkspaceBoardActivityEntry(
     actor: input.actor === 'system' ? 'system' : 'user',
     action,
     detail: typeof input.detail === 'string' && input.detail.trim() ? input.detail.trim() : undefined
+  }
+}
+
+function normalizeWorkspaceBoardProvenance(value: unknown, nowIso: string): WorkspaceBoardProvenance | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const input = value as Partial<WorkspaceBoardProvenance>
+  const sourceKind = WORKSPACE_BOARD_PROVENANCE_SOURCE_KINDS.has(input.sourceKind as WorkspaceBoardProvenanceSourceKind)
+    ? (input.sourceKind as WorkspaceBoardProvenanceSourceKind)
+    : 'manual'
+  return {
+    actor: input.actor === 'agent' || input.actor === 'system' ? input.actor : 'user',
+    sourceKind,
+    at: typeof input.at === 'string' && input.at ? input.at : nowIso,
+    trust:
+      input.trust === 'agent-proposed' || input.trust === 'system-derived' || input.trust === 'user-confirmed'
+        ? input.trust
+        : undefined,
+    sourceId: typeof input.sourceId === 'string' && input.sourceId.trim() ? input.sourceId.trim() : undefined,
+    sourceTitle: typeof input.sourceTitle === 'string' && input.sourceTitle.trim() ? input.sourceTitle.trim() : undefined,
+    provider: typeof input.provider === 'string' && input.provider.trim() ? input.provider.trim() : undefined,
+    runId: typeof input.runId === 'string' && input.runId.trim() ? input.runId.trim() : undefined,
+    note: typeof input.note === 'string' && input.note.trim() ? input.note.trim() : undefined
   }
 }
 
@@ -492,6 +526,7 @@ function normalizeWorkspaceBoardDefinitionRecord(
         ? input.description.trim()
         : undefined,
     columns: normalizeWorkspaceBoardColumns(input.columns),
+    provenance: normalizeWorkspaceBoardProvenance(input.provenance, nowIso),
     pinned: input.pinned === true,
     archived: input.archived === true,
     createdAt: typeof input.createdAt === 'string' && input.createdAt ? input.createdAt : nowIso,
@@ -550,6 +585,7 @@ function normalizeWorkspaceBoardCardRecord(
       typeof input.reminderAt === 'string' && input.reminderAt.trim()
         ? input.reminderAt.trim()
         : undefined,
+    provenance: normalizeWorkspaceBoardProvenance(input.provenance, nowIso),
     archived: input.archived === true,
     createdAt: typeof input.createdAt === 'string' && input.createdAt ? input.createdAt : nowIso,
     updatedAt: typeof input.updatedAt === 'string' && input.updatedAt ? input.updatedAt : nowIso,
@@ -2950,6 +2986,7 @@ export class AppStore {
         name: partial.name ?? source.name,
         description: 'description' in partial ? partial.description : source.description,
         columns: partial.columns ?? source.columns,
+        provenance: 'provenance' in partial ? partial.provenance : source.provenance,
         pinned: partial.pinned ?? source.pinned,
         archived: partial.archived ?? source.archived,
         workspaceId: source.workspaceId,
@@ -3119,6 +3156,7 @@ export class AppStore {
         blockedReason: 'blockedReason' in partial ? partial.blockedReason : source.blockedReason,
         nextStep: 'nextStep' in partial ? partial.nextStep : source.nextStep,
         reminderAt: 'reminderAt' in partial ? partial.reminderAt : source.reminderAt,
+        provenance: 'provenance' in partial ? partial.provenance : source.provenance,
         archived: 'archived' in partial ? partial.archived : source.archived,
         boardId: source.boardId,
         workspaceId: source.workspaceId,

@@ -8,6 +8,7 @@ import type {
   WorkspaceBoardCardLink,
   WorkspaceBoardColumnId,
   WorkspaceBoardDefinition,
+  WorkspaceBoardProvenance,
   WorkspaceRecord
 } from '../../../main/store/types'
 import type { LocalServerEntry } from '../../../main/localServers/types'
@@ -143,6 +144,38 @@ function labelsFromText(value: string): string[] | undefined {
     .filter(Boolean)
     .slice(0, 12)
   return labels.length > 0 ? labels : undefined
+}
+
+function createWorkspaceBoardCardProvenance(
+  sourceKind: WorkspaceBoardProvenance['sourceKind'],
+  input: Omit<WorkspaceBoardProvenance, 'actor' | 'sourceKind' | 'at' | 'trust'> &
+    Partial<Pick<WorkspaceBoardProvenance, 'actor' | 'at' | 'trust'>> = {}
+): WorkspaceBoardProvenance {
+  return {
+    actor: input.actor || 'user',
+    sourceKind,
+    at: input.at || new Date().toISOString(),
+    trust: input.trust || (input.actor === 'system' ? 'system-derived' : 'user-confirmed'),
+    sourceId: input.sourceId,
+    sourceTitle: input.sourceTitle,
+    provider: input.provider,
+    runId: input.runId,
+    note: input.note
+  }
+}
+
+function formatProvenanceSource(value: WorkspaceBoardProvenance['sourceKind']): string {
+  return value
+    .split('-')
+    .map((part) => part.slice(0, 1).toUpperCase() + part.slice(1))
+    .join(' ')
+}
+
+function formatProvenanceSummary(provenance?: WorkspaceBoardProvenance): string | undefined {
+  if (!provenance) return undefined
+  const source = formatProvenanceSource(provenance.sourceKind)
+  const actor = provenance.actor === 'agent' ? 'Agent' : provenance.actor === 'system' ? 'System' : 'User'
+  return `${actor} · ${source}`
 }
 
 function draftFromCard(card: WorkspaceBoardCard): DetailDraft {
@@ -605,7 +638,12 @@ export function WorkspaceBoardView({
         title: trimmedTitle,
         body: body.trim() || undefined,
         sortOrder: Date.now(),
-        link: parseLink(linkValue)
+        link: parseLink(linkValue),
+        provenance: createWorkspaceBoardCardProvenance('manual', {
+          sourceId: board.id,
+          sourceTitle: board.name,
+          note: 'Created manually on the workspace board.'
+        })
       })
       setTitle('')
       setBody('')
@@ -634,7 +672,14 @@ export function WorkspaceBoardView({
           labels: candidate.labels,
           link: candidate.link,
           blockedReason: candidate.blockedReason,
-          nextStep: candidate.nextStep
+          nextStep: candidate.nextStep,
+          provenance: createWorkspaceBoardCardProvenance('seed', {
+            actor: 'system',
+            trust: 'system-derived',
+            sourceId: candidate.key,
+            sourceTitle: candidate.title,
+            note: 'Created from live workspace board intake.'
+          })
         })
       }
     } catch (err) {
@@ -868,6 +913,7 @@ export function WorkspaceBoardView({
           <span>{activeProjectedCards.length} cards</span>
           <span>{workspaceChats.length} workspace threads</span>
           <span>{workspaceWorkflows.length} workflows</span>
+          {formatProvenanceSummary(board.provenance) && <span>{formatProvenanceSummary(board.provenance)}</span>}
         </div>
       </header>
 
@@ -1234,6 +1280,17 @@ export function WorkspaceBoardView({
                   Unlink
                 </button>
               </div>
+            </div>
+          )}
+          {selectedProjected.card.provenance && (
+            <div className="workspace-board-activity">
+              <strong>Provenance</strong>
+              <span>{formatProvenanceSummary(selectedProjected.card.provenance)}</span>
+              {selectedProjected.card.provenance.sourceTitle && (
+                <span>{selectedProjected.card.provenance.sourceTitle}</span>
+              )}
+              {selectedProjected.card.provenance.note && <span>{selectedProjected.card.provenance.note}</span>}
+              <span>{new Date(selectedProjected.card.provenance.at).toLocaleString()}</span>
             </div>
           )}
           <div className="workspace-board-activity">

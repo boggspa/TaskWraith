@@ -3136,6 +3136,29 @@ export interface WorkspaceBoardActivityEntry {
   detail?: string
 }
 
+export type WorkspaceBoardProvenanceActor = 'user' | 'agent' | 'system'
+export type WorkspaceBoardProvenanceSourceKind =
+  | 'manual'
+  | 'capture'
+  | 'seed'
+  | 'duplicate'
+  | 'thread'
+  | 'goal'
+  | 'plan'
+  | 'agent'
+
+export interface WorkspaceBoardProvenance {
+  actor: WorkspaceBoardProvenanceActor
+  sourceKind: WorkspaceBoardProvenanceSourceKind
+  at: string
+  trust?: 'user-confirmed' | 'agent-proposed' | 'system-derived'
+  sourceId?: string
+  sourceTitle?: string
+  provider?: ProviderId | string
+  runId?: string
+  note?: string
+}
+
 export interface WorkspaceBoardDefinition {
   id: string
   workspaceId: string
@@ -3143,6 +3166,7 @@ export interface WorkspaceBoardDefinition {
   name: string
   description?: string
   columns: WorkspaceBoardColumn[]
+  provenance?: WorkspaceBoardProvenance
   pinned?: boolean
   archived?: boolean
   createdAt: string
@@ -3164,6 +3188,7 @@ export interface WorkspaceBoardCard {
   blockedReason?: string
   nextStep?: string
   reminderAt?: string
+  provenance?: WorkspaceBoardProvenance
   archived?: boolean
   createdAt: string
   updatedAt: string

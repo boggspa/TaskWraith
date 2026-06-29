@@ -24,6 +24,13 @@ const board: WorkspaceBoardDefinition = {
     { id: 'inbox', name: 'Inbox', sortOrder: 0 },
     { id: 'ready', name: 'Ready', sortOrder: 1 }
   ],
+  provenance: {
+    actor: 'user',
+    sourceKind: 'manual',
+    at: '2026-06-29T00:00:00.000Z',
+    trust: 'user-confirmed',
+    note: 'Created from test'
+  },
   createdAt: '2026-06-29T00:00:00.000Z',
   updatedAt: '2026-06-29T00:00:00.000Z',
   activity: []
@@ -85,6 +92,7 @@ describe('WorkspaceBoardView', () => {
     )
 
     expect(html).toContain('Repo Board')
+    expect(html).toContain('User · Manual')
     expect(html).toContain('Add card')
     expect(html).toContain('Search cards')
     expect(html).toContain('Needs attention')

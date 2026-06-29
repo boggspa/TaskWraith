@@ -18,6 +18,8 @@ import type {
   WorkspaceBoardCardLinkKind,
   WorkspaceBoardColumnId,
   WorkspaceBoardDefinition,
+  WorkspaceBoardProvenance,
+  WorkspaceBoardProvenanceSourceKind,
   WorkflowDefinition,
   WorkflowRunTemplate,
   WorkflowTrigger,
@@ -772,6 +774,38 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
     'done',
     'archived'
   ])
+  const workspaceBoardProvenanceSourceKinds = new Set<WorkspaceBoardProvenanceSourceKind>([
+    'manual',
+    'capture',
+    'seed',
+    'duplicate',
+    'thread',
+    'goal',
+    'plan',
+    'agent'
+  ])
+
+  function sanitizeWorkspaceBoardProvenance(value: unknown): WorkspaceBoardProvenance | undefined {
+    if (!isRecord(value)) return undefined
+    const trimmed = (input: unknown) => optionalString(input)?.trim() || undefined
+    const sourceKind = workspaceBoardProvenanceSourceKinds.has(value.sourceKind as WorkspaceBoardProvenanceSourceKind)
+      ? (value.sourceKind as WorkspaceBoardProvenanceSourceKind)
+      : 'manual'
+    return {
+      actor: value.actor === 'agent' || value.actor === 'system' ? value.actor : 'user',
+      sourceKind,
+      at: optionalString(value.at) || new Date().toISOString(),
+      trust:
+        value.trust === 'agent-proposed' || value.trust === 'system-derived' || value.trust === 'user-confirmed'
+          ? value.trust
+          : undefined,
+      sourceId: trimmed(value.sourceId),
+      sourceTitle: trimmed(value.sourceTitle),
+      provider: trimmed(value.provider),
+      runId: trimmed(value.runId),
+      note: trimmed(value.note)
+    }
+  }
 
   function assertWorkspaceBoardWorkspaceIdentity(
     workspacePath: string,
@@ -803,6 +837,7 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
       workspacePath: deps.canonicalPath(workspace.path),
       name: requireNonEmptyString(input.name, 'Workspace board name'),
       description: optionalString(input.description),
+      provenance: sanitizeWorkspaceBoardProvenance(input.provenance),
       pinned: input.pinned === true,
       archived: input.archived === true,
       columns: Array.isArray(input.columns)
@@ -830,6 +865,7 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
     const sanitized: Partial<WorkspaceBoardDefinition> = {}
     if ('name' in input) sanitized.name = requireNonEmptyString(input.name, 'Workspace board name')
     if ('description' in input) sanitized.description = optionalString(input.description)
+    if ('provenance' in input) sanitized.provenance = sanitizeWorkspaceBoardProvenance(input.provenance)
     if ('pinned' in input) sanitized.pinned = input.pinned === true
     if ('archived' in input) sanitized.archived = input.archived === true
     if ('columns' in input && Array.isArray(input.columns)) {
@@ -885,6 +921,7 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
       blockedReason: optionalString(input.blockedReason),
       nextStep: optionalString(input.nextStep),
       reminderAt: optionalString(input.reminderAt),
+      provenance: sanitizeWorkspaceBoardProvenance(input.provenance),
       archived: input.archived === true
     }
   }
@@ -919,6 +956,7 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
     if ('blockedReason' in input) sanitized.blockedReason = optionalString(input.blockedReason)
     if ('nextStep' in input) sanitized.nextStep = optionalString(input.nextStep)
     if ('reminderAt' in input) sanitized.reminderAt = optionalString(input.reminderAt)
+    if ('provenance' in input) sanitized.provenance = sanitizeWorkspaceBoardProvenance(input.provenance)
     if ('archived' in input) sanitized.archived = input.archived === true
     return sanitized
   }

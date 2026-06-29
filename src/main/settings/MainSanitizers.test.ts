@@ -168,6 +168,52 @@ describe('MainSanitizers scheduled tasks', () => {
   })
 })
 
+describe('MainSanitizers workspace boards', () => {
+  it('sanitizes board and card provenance metadata', () => {
+    const { sanitizeWorkspaceBoardForSave, sanitizeWorkspaceBoardCardForSave } = makeSanitizers(makeSettings())
+    const provenance = {
+      actor: 'agent',
+      sourceKind: 'goal',
+      at: '2026-06-29T00:00:00.000Z',
+      trust: 'agent-proposed',
+      sourceId: 'goal-1',
+      sourceTitle: 'Launch plan',
+      provider: 'codex',
+      runId: 'run-1',
+      note: 'Generated from goal'
+    }
+
+    expect(
+      sanitizeWorkspaceBoardForSave({
+        workspaceId: 'workspace-1',
+        workspacePath: '/tmp/taskwraith-workspace',
+        name: 'Goal board',
+        columns: [],
+        provenance
+      }).provenance
+    ).toEqual(provenance)
+
+    expect(
+      sanitizeWorkspaceBoardCardForSave({
+        boardId: 'board-1',
+        workspaceId: 'workspace-1',
+        columnId: 'ready',
+        title: 'Review',
+        provenance: {
+          actor: 'unknown',
+          sourceKind: 'surprise',
+          trust: 'nope',
+          sourceTitle: '  Captured  '
+        }
+      }).provenance
+    ).toMatchObject({
+      actor: 'user',
+      sourceKind: 'manual',
+      sourceTitle: 'Captured'
+    })
+  })
+})
+
 describe('MainSanitizers settings patches', () => {
   it('preserves General dashboard, heatmap, and approval timeout preferences', () => {
     const settings = makeSettings({
