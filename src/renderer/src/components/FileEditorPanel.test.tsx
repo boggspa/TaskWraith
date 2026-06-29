@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 import { FileEditorGitActions } from './FileEditorGitActions'
 import { FileEditorStatusBar } from './FileEditorStatusBar'
-import { EditorTabStrip } from './FileEditorPanel'
+import { EditorTabStrip } from './FileEditorTabStrip'
 
 describe('EditorTabStrip', () => {
   it('renders a roving tablist with the active tab as the only tab stop', () => {
