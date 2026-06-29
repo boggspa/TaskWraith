@@ -6,9 +6,18 @@ import {
   TASKWRAITH_PLUGIN_MANIFEST_SCHEMA_VERSION,
   pluginToolNamespace,
   validateTaskWraithPluginManifest,
+  type TaskWraithPluginConnectorBinding,
+  type TaskWraithPluginLocalServiceDefinition,
+  type TaskWraithPluginMcpServerPreset,
+  type TaskWraithPluginMobileProjectionMetadata,
+  type TaskWraithPluginProviderSetupMetadata,
+  type TaskWraithPluginRuntimeProfile,
+  type TaskWraithPluginToolBundle,
+  type TaskWraithPluginWorkflowTemplate,
   type TaskWraithPluginCapabilityKind,
   type TaskWraithPluginManifest
 } from './PluginManifest'
+import type { UserMcpServerConfig } from '../store/types'
 
 export type TaskWraithPluginSource = 'builtin' | 'local' | 'marketplace'
 export type TaskWraithPluginInstallSource = TaskWraithPluginSource | 'unknown'
@@ -62,6 +71,69 @@ export interface TaskWraithPluginCatalogSnapshot {
     blocked: number
     repairable: number
     byCapability: Partial<Record<TaskWraithPluginCapabilityKind, number>>
+  }
+}
+
+export interface TaskWraithPluginContributionProvenance {
+  pluginId: string
+  publisher: string
+  version: string
+  source: TaskWraithPluginSource
+  namespace: string
+  manifestHash: string
+}
+
+export interface TaskWraithPluginMcpServerContribution {
+  plugin: TaskWraithPluginContributionProvenance
+  preset: TaskWraithPluginMcpServerPreset
+  userMcpServerConfig: UserMcpServerConfig
+}
+
+export interface TaskWraithPluginContributionSnapshot {
+  schemaVersion: 1
+  generatedAt: string
+  mcpServers: TaskWraithPluginMcpServerContribution[]
+  taskwraithToolBundles: Array<{
+    plugin: TaskWraithPluginContributionProvenance
+    bundle: TaskWraithPluginToolBundle
+  }>
+  workflowTemplates: Array<{
+    plugin: TaskWraithPluginContributionProvenance
+    template: TaskWraithPluginWorkflowTemplate
+  }>
+  runtimeProfiles: Array<{
+    plugin: TaskWraithPluginContributionProvenance
+    profile: TaskWraithPluginRuntimeProfile
+    runtimeProfileId: string
+  }>
+  connectors: Array<{
+    plugin: TaskWraithPluginContributionProvenance
+    connector: TaskWraithPluginConnectorBinding
+  }>
+  localServices: Array<{
+    plugin: TaskWraithPluginContributionProvenance
+    service: TaskWraithPluginLocalServiceDefinition
+    serviceId: string
+  }>
+  providerSetup: Array<{
+    plugin: TaskWraithPluginContributionProvenance
+    setup: TaskWraithPluginProviderSetupMetadata
+  }>
+  mobileRemoteProjection: Array<{
+    plugin: TaskWraithPluginContributionProvenance
+    projection: TaskWraithPluginMobileProjectionMetadata
+    projectionId: string
+  }>
+  counts: {
+    enabledPlugins: number
+    mcpServers: number
+    taskwraithToolBundles: number
+    workflowTemplates: number
+    runtimeProfiles: number
+    connectors: number
+    localServices: number
+    providerSetup: number
+    mobileRemoteProjection: number
   }
 }
 
@@ -136,6 +208,30 @@ function writeJson<T>(filePath: string, data: T): void {
 
 function stableHash(value: unknown): string {
   return createHash('sha256').update(JSON.stringify(value)).digest('hex')
+}
+
+function pluginObjectId(pluginId: string, kind: string, objectId: string): string {
+  return `plugin:${pluginId}:${kind}:${objectId}`
+}
+
+function toDisabledUserMcpServerConfig(
+  pluginId: string,
+  pluginName: string,
+  preset: TaskWraithPluginMcpServerPreset
+): UserMcpServerConfig {
+  return {
+    id: pluginObjectId(pluginId, 'mcp', preset.id),
+    name: `${pluginName}: ${preset.name}`,
+    enabled: false,
+    transport: preset.transport,
+    ...(preset.command ? { command: preset.command } : {}),
+    ...(preset.args ? { args: [...preset.args] } : {}),
+    ...(preset.url ? { url: preset.url } : {}),
+    ...(preset.env ? { env: { ...preset.env } } : {}),
+    ...(preset.headers ? { headers: { ...preset.headers } } : {}),
+    ...(preset.bearerTokenEnvVar ? { bearerTokenEnvVar: preset.bearerTokenEnvVar } : {}),
+    ...(preset.description ? { description: preset.description } : {})
+  }
 }
 
 function normalizeInstallState(value: unknown): TaskWraithPluginInstallState | null {
@@ -341,6 +437,103 @@ export class PluginHost {
     }
   }
 
+  getContributionSnapshot(): TaskWraithPluginContributionSnapshot {
+    const catalog = this.getCatalogSnapshot()
+    const activeEntries = catalog.plugins.filter(
+      (entry) => entry.enabled && entry.preflight.status !== 'blocked'
+    )
+    const provenanceFor = (
+      entry: TaskWraithPluginCatalogEntry
+    ): TaskWraithPluginContributionProvenance => ({
+      pluginId: entry.manifest.id,
+      publisher: entry.manifest.publisher,
+      version: entry.manifest.version,
+      source: entry.source,
+      namespace: entry.namespace,
+      manifestHash: entry.manifestHash
+    })
+    const mcpServers: TaskWraithPluginMcpServerContribution[] = []
+    const taskwraithToolBundles: TaskWraithPluginContributionSnapshot['taskwraithToolBundles'] = []
+    const workflowTemplates: TaskWraithPluginContributionSnapshot['workflowTemplates'] = []
+    const runtimeProfiles: TaskWraithPluginContributionSnapshot['runtimeProfiles'] = []
+    const connectors: TaskWraithPluginContributionSnapshot['connectors'] = []
+    const localServices: TaskWraithPluginContributionSnapshot['localServices'] = []
+    const providerSetup: TaskWraithPluginContributionSnapshot['providerSetup'] = []
+    const mobileRemoteProjection: TaskWraithPluginContributionSnapshot['mobileRemoteProjection'] = []
+
+    for (const entry of activeEntries) {
+      const plugin = provenanceFor(entry)
+      for (const preset of entry.manifest.mcpServers ?? []) {
+        mcpServers.push({
+          plugin,
+          preset,
+          userMcpServerConfig: toDisabledUserMcpServerConfig(
+            entry.manifest.id,
+            entry.manifest.name,
+            preset
+          )
+        })
+      }
+      for (const bundle of entry.manifest.taskwraithToolBundles ?? []) {
+        taskwraithToolBundles.push({ plugin, bundle })
+      }
+      for (const template of entry.manifest.workflowTemplates ?? []) {
+        workflowTemplates.push({ plugin, template })
+      }
+      for (const profile of entry.manifest.runtimeProfiles ?? []) {
+        runtimeProfiles.push({
+          plugin,
+          profile,
+          runtimeProfileId: pluginObjectId(entry.manifest.id, 'runtime', profile.id)
+        })
+      }
+      for (const connector of entry.manifest.connectors ?? []) {
+        connectors.push({ plugin, connector })
+      }
+      for (const service of entry.manifest.localServices ?? []) {
+        localServices.push({
+          plugin,
+          service,
+          serviceId: pluginObjectId(entry.manifest.id, 'service', service.id)
+        })
+      }
+      for (const setup of entry.manifest.providerSetup ?? []) {
+        providerSetup.push({ plugin, setup })
+      }
+      for (const projection of entry.manifest.mobileRemoteProjection ?? []) {
+        mobileRemoteProjection.push({
+          plugin,
+          projection,
+          projectionId: pluginObjectId(entry.manifest.id, 'remote', projection.id)
+        })
+      }
+    }
+
+    return {
+      schemaVersion: 1,
+      generatedAt: this.now().toISOString(),
+      mcpServers,
+      taskwraithToolBundles,
+      workflowTemplates,
+      runtimeProfiles,
+      connectors,
+      localServices,
+      providerSetup,
+      mobileRemoteProjection,
+      counts: {
+        enabledPlugins: activeEntries.length,
+        mcpServers: mcpServers.length,
+        taskwraithToolBundles: taskwraithToolBundles.length,
+        workflowTemplates: workflowTemplates.length,
+        runtimeProfiles: runtimeProfiles.length,
+        connectors: connectors.length,
+        localServices: localServices.length,
+        providerSetup: providerSetup.length,
+        mobileRemoteProjection: mobileRemoteProjection.length
+      }
+    }
+  }
+
   installPlugin(pluginId: string): TaskWraithPluginCatalogSnapshot {
     const entry = this.requireAvailableEntry(pluginId)
     const state = this.readState()
@@ -455,4 +648,3 @@ export class PluginHost {
     }
   }
 }
-

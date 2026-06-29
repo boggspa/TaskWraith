@@ -118,6 +118,36 @@ describe('PluginHost', () => {
     expect(plugin(reloaded.getCatalogSnapshot()).enabled).toBe(true)
   })
 
+  it('projects enabled plugin contributions without auto-enabling MCP presets', () => {
+    const host = makeHost()
+    expect(host.getContributionSnapshot().counts.enabledPlugins).toBe(0)
+
+    host.installPlugin('demo-bundle')
+    host.setPluginEnabled('demo-bundle', true)
+    const contributions = host.getContributionSnapshot()
+
+    expect(contributions.counts).toMatchObject({
+      enabledPlugins: 1,
+      mcpServers: 1
+    })
+    expect(contributions.mcpServers[0]).toMatchObject({
+      plugin: {
+        pluginId: 'demo-bundle',
+        publisher: 'acme',
+        source: 'builtin',
+        namespace: 'plugin.acme.demo-bundle'
+      },
+      userMcpServerConfig: {
+        id: 'plugin:demo-bundle:mcp:docs-stdio',
+        name: 'Demo Bundle: Docs',
+        enabled: false,
+        transport: 'stdio',
+        command: 'node',
+        args: ['server.js']
+      }
+    })
+  })
+
   it('does not enable blocked plugins', () => {
     const blockedManifest: TaskWraithPluginManifest = {
       ...BASE_MANIFEST,
@@ -162,4 +192,3 @@ describe('PluginPreflightService', () => {
     )
   })
 })
-

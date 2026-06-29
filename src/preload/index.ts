@@ -38,7 +38,10 @@ import type {
   PromoteQueuedJobForSteerInput,
   PromoteQueuedJobForSteerResult
 } from '../main/services/RunLifecycleCoordinator'
-import type { TaskWraithPluginCatalogSnapshot } from '../main/plugins/PluginHost'
+import type {
+  TaskWraithPluginCatalogSnapshot,
+  TaskWraithPluginContributionSnapshot
+} from '../main/plugins/PluginHost'
 
 type ComposerImageAttachment = {
   id?: string
@@ -818,6 +821,10 @@ const api = {
   deleteHandoffCard: (id: string) => ipcRenderer.invoke('delete-handoff-card', id),
   getPluginCatalog: () =>
     ipcRenderer.invoke('plugins:get-catalog') as Promise<TaskWraithPluginCatalogSnapshot>,
+  getPluginContributions: () =>
+    ipcRenderer.invoke(
+      'plugins:get-contributions'
+    ) as Promise<TaskWraithPluginContributionSnapshot>,
   installPlugin: (pluginId: string) =>
     ipcRenderer.invoke('plugins:install', pluginId) as Promise<TaskWraithPluginCatalogSnapshot>,
   setPluginEnabled: (pluginId: string, enabled: boolean) =>

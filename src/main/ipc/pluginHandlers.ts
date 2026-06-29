@@ -2,12 +2,20 @@ import { ipcMain } from 'electron'
 import type { PluginHost } from '../plugins/PluginHost'
 
 export interface PluginHandlerDeps {
-  pluginHost: Pick<PluginHost, 'getCatalogSnapshot' | 'installPlugin' | 'setPluginEnabled' | 'uninstallPlugin'>
+  pluginHost: Pick<
+    PluginHost,
+    | 'getCatalogSnapshot'
+    | 'getContributionSnapshot'
+    | 'installPlugin'
+    | 'setPluginEnabled'
+    | 'uninstallPlugin'
+  >
   requireNonEmptyString: (value: unknown, label: string) => string
 }
 
 export function registerPluginHandlers(deps: PluginHandlerDeps): void {
   ipcMain.handle('plugins:get-catalog', () => deps.pluginHost.getCatalogSnapshot())
+  ipcMain.handle('plugins:get-contributions', () => deps.pluginHost.getContributionSnapshot())
   ipcMain.handle('plugins:install', (_event, pluginId: string) =>
     deps.pluginHost.installPlugin(deps.requireNonEmptyString(pluginId, 'Plugin id'))
   )
@@ -21,4 +29,3 @@ export function registerPluginHandlers(deps: PluginHandlerDeps): void {
     deps.pluginHost.uninstallPlugin(deps.requireNonEmptyString(pluginId, 'Plugin id'))
   )
 }
-

@@ -1,7 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ipcMain } from 'electron'
 import { registerPluginHandlers } from './pluginHandlers'
-import type { TaskWraithPluginCatalogSnapshot } from '../plugins/PluginHost'
+import type {
+  TaskWraithPluginCatalogSnapshot,
+  TaskWraithPluginContributionSnapshot
+} from '../plugins/PluginHost'
 
 vi.mock('electron', () => ({
   ipcMain: {
@@ -43,15 +46,43 @@ function snapshot(overrides: Partial<TaskWraithPluginCatalogSnapshot> = {}): Tas
   }
 }
 
+function contributions(): TaskWraithPluginContributionSnapshot {
+  return {
+    schemaVersion: 1,
+    generatedAt: '2026-06-29T12:00:00.000Z',
+    mcpServers: [],
+    taskwraithToolBundles: [],
+    workflowTemplates: [],
+    runtimeProfiles: [],
+    connectors: [],
+    localServices: [],
+    providerSetup: [],
+    mobileRemoteProjection: [],
+    counts: {
+      enabledPlugins: 0,
+      mcpServers: 0,
+      taskwraithToolBundles: 0,
+      workflowTemplates: 0,
+      runtimeProfiles: 0,
+      connectors: 0,
+      localServices: 0,
+      providerSetup: 0,
+      mobileRemoteProjection: 0
+    }
+  }
+}
+
 describe('registerPluginHandlers', () => {
   it('registers read and lifecycle handlers against the plugin host', () => {
     const catalog = snapshot()
+    const contributionSnapshot = contributions()
     const installed = snapshot({ counts: { ...catalog.counts, installed: 1 } })
     const enabled = snapshot({ counts: { ...catalog.counts, enabled: 1, installed: 1 } })
     const uninstalled = snapshot({ counts: { ...catalog.counts, installed: 0 } })
     const deps = {
       pluginHost: {
         getCatalogSnapshot: vi.fn(() => catalog),
+        getContributionSnapshot: vi.fn(() => contributionSnapshot),
         installPlugin: vi.fn(() => installed),
         setPluginEnabled: vi.fn(() => enabled),
         uninstallPlugin: vi.fn(() => uninstalled)
@@ -62,6 +93,7 @@ describe('registerPluginHandlers', () => {
     registerPluginHandlers(deps)
 
     expect(handlerFor('plugins:get-catalog')({})).toBe(catalog)
+    expect(handlerFor('plugins:get-contributions')({})).toBe(contributionSnapshot)
     expect(handlerFor('plugins:install')({}, 'demo-bundle')).toBe(installed)
     expect(deps.requireNonEmptyString).toHaveBeenCalledWith('demo-bundle', 'Plugin id')
     expect(deps.pluginHost.installPlugin).toHaveBeenCalledWith('demo-bundle')
@@ -73,4 +105,3 @@ describe('registerPluginHandlers', () => {
     expect(deps.pluginHost.uninstallPlugin).toHaveBeenCalledWith('demo-bundle')
   })
 })
-
