@@ -2011,6 +2011,14 @@ function App(): React.JSX.Element {
   const [workspaceBoards, setWorkspaceBoards] = useState<WorkspaceBoardDefinition[]>([])
   const [workspaceBoardCards, setWorkspaceBoardCards] = useState<WorkspaceBoardCard[]>([])
   const [activeWorkspaceBoardId, setActiveWorkspaceBoardId] = useState<string | null>(null)
+  const workspaceBoardApiReady =
+    typeof window.api.getWorkspaceBoards === 'function' &&
+    typeof window.api.getWorkspaceBoardCards === 'function' &&
+    typeof window.api.saveWorkspaceBoard === 'function' &&
+    typeof window.api.deleteWorkspaceBoard === 'function' &&
+    typeof window.api.saveWorkspaceBoardCard === 'function' &&
+    typeof window.api.updateWorkspaceBoardCard === 'function' &&
+    typeof window.api.deleteWorkspaceBoardCard === 'function'
   // First-class Workflows compose state. A workflow's chat is an ordinary
   // ChatRecord; while it's being set up (before the WorkflowDefinition is saved
   // on first send) we hold a transient draft keyed to that chat so the welcome
@@ -7181,9 +7189,15 @@ function App(): React.JSX.Element {
   useEffect(() => {
     void window.api.getScheduledTasks(currentWorkspace?.id).then(setScheduledTasks)
     void window.api.getWorkflowDefinitions(currentWorkspace?.id).then(setWorkflowDefinitions)
-    void window.api.getWorkspaceBoards(currentWorkspace?.id).then(setWorkspaceBoards)
-    void window.api.getWorkspaceBoardCards().then(setWorkspaceBoardCards)
-  }, [currentWorkspace?.id])
+    if (workspaceBoardApiReady) {
+      void window.api.getWorkspaceBoards(currentWorkspace?.id).then(setWorkspaceBoards)
+      void window.api.getWorkspaceBoardCards().then(setWorkspaceBoardCards)
+    } else {
+      setWorkspaceBoards([])
+      setWorkspaceBoardCards([])
+      setActiveWorkspaceBoardId(null)
+    }
+  }, [currentWorkspace?.id, workspaceBoardApiReady])
 
   useEffect(() => {
     scheduledTasksRef.current = scheduledTasks
@@ -8156,7 +8170,7 @@ function App(): React.JSX.Element {
       })
     }
 
-    if (typeof window.api.onWorkspaceBoardsChanged === 'function') {
+    if (workspaceBoardApiReady && typeof window.api.onWorkspaceBoardsChanged === 'function') {
       window.api.onWorkspaceBoardsChanged((payload) => {
         const workspaceId = currentWorkspaceIdRef.current || currentWorkspace?.id
         setWorkspaceBoards(
@@ -12232,7 +12246,7 @@ function App(): React.JSX.Element {
   }
 
   const handleCreateWorkspaceBoard = async () => {
-    if (!currentWorkspace) return
+    if (!currentWorkspace || !workspaceBoardApiReady) return
     const saved = await window.api.saveWorkspaceBoard({
       workspaceId: currentWorkspace.id,
       workspacePath: currentWorkspace.path,
@@ -12258,6 +12272,7 @@ function App(): React.JSX.Element {
   }
 
   const handleDeleteWorkspaceBoard = async (boardId: string) => {
+    if (!workspaceBoardApiReady) return
     const board = workspaceBoards.find((item) => item.id === boardId)
     const confirmed = window.confirm(board ? `Remove board "${board.name}"?` : 'Remove this board?')
     if (!confirmed) return
@@ -12270,6 +12285,7 @@ function App(): React.JSX.Element {
   const handleAddWorkspaceBoardCard = async (
     card: Omit<WorkspaceBoardCard, 'id' | 'createdAt' | 'updatedAt' | 'activity'>
   ) => {
+    if (!workspaceBoardApiReady) return
     const saved = await window.api.saveWorkspaceBoardCard(card)
     setWorkspaceBoardCards((prev) => [...prev.filter((item) => item.id !== saved.id), saved])
   }
@@ -12278,12 +12294,14 @@ function App(): React.JSX.Element {
     id: string,
     partial: Partial<WorkspaceBoardCard>
   ) => {
+    if (!workspaceBoardApiReady) return
     const updated = await window.api.updateWorkspaceBoardCard(id, partial)
     if (!updated) return
     setWorkspaceBoardCards((prev) => prev.map((item) => (item.id === id ? updated : item)))
   }
 
   const handleDeleteWorkspaceBoardCard = async (id: string) => {
+    if (!workspaceBoardApiReady) return
     await window.api.deleteWorkspaceBoardCard(id)
     setWorkspaceBoardCards((prev) => prev.filter((item) => item.id !== id))
   }
@@ -21750,8 +21768,8 @@ function App(): React.JSX.Element {
                 }}
                 runningChatIds={runningChatIdsArray}
                 workflows={workflowDefinitions}
-                workspaceBoards={workspaceBoards}
-                activeWorkspaceBoardId={activeWorkspaceBoardId}
+                workspaceBoards={workspaceBoardApiReady ? workspaceBoards : []}
+                activeWorkspaceBoardId={workspaceBoardApiReady ? activeWorkspaceBoardId : null}
                 scheduledTasks={scheduledTasks}
                 collaboratingChatIds={collaboratingChatIds}
                 showOnboardingHint={showOnboardingHint}
@@ -21792,9 +21810,9 @@ function App(): React.JSX.Element {
                 onDeleteChat={handleDeleteChat}
                 onRenameChat={handleRenameChat}
                 onCreateWorkflow={handleOpenWorkflowCompose}
-                onCreateWorkspaceBoard={handleCreateWorkspaceBoard}
-                onOpenWorkspaceBoard={handleOpenWorkspaceBoard}
-                onDeleteWorkspaceBoard={handleDeleteWorkspaceBoard}
+                onCreateWorkspaceBoard={workspaceBoardApiReady ? handleCreateWorkspaceBoard : undefined}
+                onOpenWorkspaceBoard={workspaceBoardApiReady ? handleOpenWorkspaceBoard : undefined}
+                onDeleteWorkspaceBoard={workspaceBoardApiReady ? handleDeleteWorkspaceBoard : undefined}
                 onCreateSharedChat={handleStartSharedChat}
                 onJoinSharedChat={() => setJoinSharedChatOpen(true)}
                 onRunWorkflowNow={handleRunWorkflowNow}
@@ -21991,7 +22009,7 @@ function App(): React.JSX.Element {
           </div>
         )}
 
-        {!isChatPopoutWindow && !showSettings && activeWorkspaceBoardId && (
+        {!isChatPopoutWindow && !showSettings && workspaceBoardApiReady && activeWorkspaceBoardId && (
           <WorkspaceBoardView
             board={activeWorkspaceBoard}
             workspace={activeWorkspaceBoardWorkspace}
@@ -22081,7 +22099,9 @@ function App(): React.JSX.Element {
         <div
           ref={chatSplitRegionRef}
           className={`chat-split-region ${sidePanelLayoutClass} ${
-            showSettings || activeWorkspaceBoardId ? 'chat-split-hidden-for-settings' : ''
+            showSettings || (workspaceBoardApiReady && activeWorkspaceBoardId)
+              ? 'chat-split-hidden-for-settings'
+              : ''
           }`}
           style={chatSplitStyle}
         >
