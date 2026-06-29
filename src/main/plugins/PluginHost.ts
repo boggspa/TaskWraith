@@ -22,6 +22,8 @@ import {
   type TaskWraithPluginStateFile,
   type TaskWraithPluginCapabilityDiff,
   type TaskWraithPluginCapabilitySnapshot,
+  type TaskWraithPluginLifecycleEvent,
+  type TaskWraithPluginUninstallTombstone,
   type TaskWraithPluginUserMcpServerConfig
 } from './PluginManifest'
 
@@ -38,8 +40,29 @@ export interface PluginHostOptions {
 
 const EMPTY_STATE: TaskWraithPluginStateFile = {
   schemaVersion: 1,
-  plugins: {}
+  plugins: {},
+  tombstones: {},
+  lifecycleEvents: []
 }
+const MAX_PLUGIN_STATE_RECORDS = 512
+const MAX_PLUGIN_LIFECYCLE_EVENTS = 1024
+const PLUGIN_LIFECYCLE_ACTIONS = new Set([
+  'install',
+  'enable',
+  'disable',
+  'update',
+  'uninstall',
+  'materialize-mcp-preset'
+])
+const PLUGIN_RESOURCE_KINDS = new Set([
+  'mcpServer',
+  'workflowTemplate',
+  'runtimeProfile',
+  'connector',
+  'localService',
+  'remoteProjection'
+])
+const PLUGIN_EVENT_RESULTS = new Set(['applied', 'prepared', 'blocked'])
 
 function readJson<T>(filePath: string, defaultData: T): T {
   try {
@@ -206,6 +229,91 @@ function normalizeInstallState(value: unknown): TaskWraithPluginInstallState | n
   }
 }
 
+function normalizeLifecycleEvent(value: unknown): TaskWraithPluginLifecycleEvent | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const input = value as Partial<TaskWraithPluginLifecycleEvent>
+  if (!input.id?.trim() || !input.pluginId?.trim() || !input.timestamp?.trim()) return null
+  if (typeof input.action !== 'string' || !PLUGIN_LIFECYCLE_ACTIONS.has(input.action)) return null
+  return {
+    id: input.id.trim(),
+    pluginId: input.pluginId.trim(),
+    action: input.action,
+    timestamp: input.timestamp.trim(),
+    source:
+      input.source === 'builtin' || input.source === 'local' || input.source === 'marketplace'
+        ? input.source
+        : 'unknown',
+    ...(typeof input.version === 'string' && input.version.trim()
+      ? { version: input.version.trim() }
+      : {}),
+    ...(typeof input.manifestHash === 'string' && input.manifestHash.trim()
+      ? { manifestHash: input.manifestHash.trim() }
+      : {}),
+    ...(typeof input.enabled === 'boolean' ? { enabled: input.enabled } : {}),
+    ...(typeof input.objectKind === 'string' && PLUGIN_RESOURCE_KINDS.has(input.objectKind)
+      ? { objectKind: input.objectKind }
+      : {}),
+    ...(typeof input.objectId === 'string' && input.objectId.trim()
+      ? { objectId: input.objectId.trim() }
+      : {}),
+    ...(input.capabilityDiff ? { capabilityDiff: input.capabilityDiff } : {}),
+    ...(typeof input.result === 'string' && PLUGIN_EVENT_RESULTS.has(input.result)
+      ? { result: input.result }
+      : {}),
+    ...(typeof input.message === 'string' && input.message.trim()
+      ? { message: input.message.trim().slice(0, 4096) }
+      : {})
+  }
+}
+
+function normalizeUninstallTombstone(value: unknown): TaskWraithPluginUninstallTombstone | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const input = value as Partial<TaskWraithPluginUninstallTombstone>
+  if (!input.pluginId?.trim() || !input.uninstalledAt?.trim()) return null
+  const capabilities = Array.isArray(input.capabilities)
+    ? input.capabilities
+        .filter(
+          (capability): capability is TaskWraithPluginCapabilitySnapshot =>
+            Boolean(
+              capability &&
+                typeof capability.id === 'string' &&
+                typeof capability.kind === 'string' &&
+                typeof capability.label === 'string'
+            )
+        )
+        .slice(0, 128)
+    : undefined
+  return {
+    pluginId: input.pluginId.trim(),
+    ...(typeof input.publisher === 'string' && input.publisher.trim()
+      ? { publisher: input.publisher.trim() }
+      : {}),
+    ...(typeof input.name === 'string' && input.name.trim() ? { name: input.name.trim() } : {}),
+    ...(typeof input.version === 'string' && input.version.trim()
+      ? { version: input.version.trim() }
+      : {}),
+    source:
+      input.source === 'builtin' || input.source === 'local' || input.source === 'marketplace'
+        ? input.source
+        : 'unknown',
+    ...(typeof input.namespace === 'string' && input.namespace.trim()
+      ? { namespace: input.namespace.trim() }
+      : {}),
+    ...(typeof input.manifestHash === 'string' && input.manifestHash.trim()
+      ? { manifestHash: input.manifestHash.trim() }
+      : {}),
+    ...(typeof input.installedAt === 'string' && input.installedAt.trim()
+      ? { installedAt: input.installedAt.trim() }
+      : {}),
+    ...(typeof input.updatedAt === 'string' && input.updatedAt.trim()
+      ? { updatedAt: input.updatedAt.trim() }
+      : {}),
+    uninstalledAt: input.uninstalledAt.trim(),
+    enabledAtUninstall: input.enabledAtUninstall === true,
+    ...(capabilities ? { capabilities } : {})
+  }
+}
+
 function normalizePluginStateFile(value: unknown): TaskWraithPluginStateFile {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return EMPTY_STATE
   const input = value as Partial<TaskWraithPluginStateFile>
@@ -214,14 +322,35 @@ function normalizePluginStateFile(value: unknown): TaskWraithPluginStateFile {
       ? input.plugins
       : {}
   const plugins: Record<string, TaskWraithPluginInstallState> = {}
-  for (const [pluginId, rawState] of Object.entries(rawPlugins).slice(0, 512)) {
+  for (const [pluginId, rawState] of Object.entries(rawPlugins).slice(0, MAX_PLUGIN_STATE_RECORDS)) {
     if (!pluginId.trim()) continue
     const state = normalizeInstallState(rawState)
     if (state) plugins[pluginId] = state
   }
+  const rawTombstones =
+    input.tombstones && typeof input.tombstones === 'object' && !Array.isArray(input.tombstones)
+      ? input.tombstones
+      : {}
+  const tombstones: Record<string, TaskWraithPluginUninstallTombstone> = {}
+  for (const [pluginId, rawTombstone] of Object.entries(rawTombstones).slice(
+    0,
+    MAX_PLUGIN_STATE_RECORDS
+  )) {
+    if (!pluginId.trim()) continue
+    const tombstone = normalizeUninstallTombstone(rawTombstone)
+    if (tombstone) tombstones[pluginId] = tombstone
+  }
+  const lifecycleEvents = Array.isArray(input.lifecycleEvents)
+    ? input.lifecycleEvents
+        .map(normalizeLifecycleEvent)
+        .filter((event): event is TaskWraithPluginLifecycleEvent => Boolean(event))
+        .slice(-MAX_PLUGIN_LIFECYCLE_EVENTS)
+    : []
   return {
     schemaVersion: 1,
-    plugins
+    plugins,
+    tombstones,
+    lifecycleEvents
   }
 }
 
@@ -397,6 +526,7 @@ export class PluginHost {
         installed: installState?.installed === true,
         enabled: installState?.installed === true && installState.enabled === true,
         ...(installState ? { installState } : {}),
+        ...(state.tombstones?.[manifest.id] ? { tombstone: state.tombstones[manifest.id] } : {}),
         preflight: this.preflight.evaluate(manifest),
         ...(update ? { update } : {})
       } satisfies TaskWraithPluginCatalogEntry
@@ -546,6 +676,19 @@ export class PluginHost {
     )
     userMcpServerConfig.createdAt = materializedAt
     userMcpServerConfig.updatedAt = materializedAt
+    const state = this.readState()
+    this.appendLifecycleEvent(state, {
+      pluginId: entry.manifest.id,
+      action: 'materialize-mcp-preset',
+      timestamp: materializedAt,
+      source: entry.source,
+      version: entry.manifest.version,
+      manifestHash: entry.manifestHash,
+      objectKind: 'mcpServer',
+      objectId: preset.id,
+      result: 'prepared'
+    })
+    this.writeState(state)
     return {
       plugin,
       preset,
@@ -558,6 +701,7 @@ export class PluginHost {
     const state = this.readState()
     const now = this.now().toISOString()
     const current = state.plugins[entry.manifest.id]
+    const manifestHash = stableHash(entry.manifest)
     state.plugins[entry.manifest.id] = {
       installed: true,
       enabled: current?.enabled === true,
@@ -565,9 +709,20 @@ export class PluginHost {
       installedAt: current?.installedAt || now,
       updatedAt: now,
       version: entry.manifest.version,
-      manifestHash: stableHash(entry.manifest),
+      manifestHash,
       capabilities: capabilitySnapshot(entry.manifest)
     }
+    if (state.tombstones?.[entry.manifest.id]) delete state.tombstones[entry.manifest.id]
+    this.appendLifecycleEvent(state, {
+      pluginId: entry.manifest.id,
+      action: 'install',
+      timestamp: now,
+      source: entry.source,
+      version: entry.manifest.version,
+      manifestHash,
+      enabled: current?.enabled === true,
+      result: 'applied'
+    })
     this.writeState(state)
     return this.getCatalogSnapshot()
   }
@@ -584,12 +739,27 @@ export class PluginHost {
       throw new Error('Plugin update must be reviewed before enabling this plugin.')
     }
     const preflight = this.preflight.evaluate(entry.manifest)
+    const now = this.now().toISOString()
+    const nextEnabled = Boolean(enabled && preflight.status !== 'blocked')
     state.plugins[entry.manifest.id] = {
       ...current,
-      enabled: Boolean(enabled && preflight.status !== 'blocked'),
-      updatedAt: this.now().toISOString(),
+      enabled: nextEnabled,
+      updatedAt: now,
       source: entry.source
     }
+    this.appendLifecycleEvent(state, {
+      pluginId: entry.manifest.id,
+      action: enabled ? 'enable' : 'disable',
+      timestamp: now,
+      source: entry.source,
+      version: current.version,
+      manifestHash: current.manifestHash,
+      enabled: nextEnabled,
+      result: enabled && !nextEnabled ? 'blocked' : 'applied',
+      ...(enabled && !nextEnabled
+        ? { message: 'Plugin preflight blocked enablement.' }
+        : {})
+    })
     this.writeState(state)
     return this.getCatalogSnapshot()
   }
@@ -600,22 +770,73 @@ export class PluginHost {
     const current = state.plugins[entry.manifest.id]
     if (!current?.installed) throw new Error('Plugin must be installed before it can be updated.')
     const preflight = this.preflight.evaluate(entry.manifest)
+    const now = this.now().toISOString()
+    const capabilities = capabilitySnapshot(entry.manifest)
+    const manifestHash = stableHash(entry.manifest)
+    const capabilityDiff = diffCapabilitySnapshots(current.capabilities, capabilities)
     state.plugins[entry.manifest.id] = {
       ...current,
       enabled: Boolean(current.enabled && preflight.status !== 'blocked'),
       source: entry.source,
-      updatedAt: this.now().toISOString(),
+      updatedAt: now,
       version: entry.manifest.version,
-      manifestHash: stableHash(entry.manifest),
-      capabilities: capabilitySnapshot(entry.manifest)
+      manifestHash,
+      capabilities
     }
+    this.appendLifecycleEvent(state, {
+      pluginId: entry.manifest.id,
+      action: 'update',
+      timestamp: now,
+      source: entry.source,
+      version: entry.manifest.version,
+      manifestHash,
+      enabled: Boolean(current.enabled && preflight.status !== 'blocked'),
+      ...(capabilityDiff ? { capabilityDiff } : {}),
+      result: 'applied'
+    })
     this.writeState(state)
     return this.getCatalogSnapshot()
   }
 
   uninstallPlugin(pluginId: string): TaskWraithPluginCatalogSnapshot {
     const state = this.readState()
-    if (state.plugins[pluginId]) {
+    const current = state.plugins[pluginId]
+    if (current) {
+      const now = this.now().toISOString()
+      const availableEntry = this.getAvailableManifests().find(
+        (candidate) => candidate.manifest.id === pluginId
+      )
+      const manifest = availableEntry?.manifest
+      const source = availableEntry?.source ?? current.source
+      state.tombstones = state.tombstones ?? {}
+      state.tombstones[pluginId] = {
+        pluginId,
+        ...(manifest?.publisher ? { publisher: manifest.publisher } : {}),
+        ...(manifest?.name ? { name: manifest.name } : {}),
+        ...(manifest?.version || current.version ? { version: manifest?.version || current.version } : {}),
+        source,
+        ...(manifest ? { namespace: pluginToolNamespace(manifest) } : {}),
+        ...(manifest ? { manifestHash: stableHash(manifest) } : current.manifestHash ? { manifestHash: current.manifestHash } : {}),
+        ...(current.installedAt ? { installedAt: current.installedAt } : {}),
+        ...(current.updatedAt ? { updatedAt: current.updatedAt } : {}),
+        uninstalledAt: now,
+        enabledAtUninstall: current.enabled === true,
+        ...(current.capabilities
+          ? { capabilities: current.capabilities }
+          : manifest
+            ? { capabilities: capabilitySnapshot(manifest) }
+            : {})
+      }
+      this.appendLifecycleEvent(state, {
+        pluginId,
+        action: 'uninstall',
+        timestamp: now,
+        source,
+        ...(manifest?.version || current.version ? { version: manifest?.version || current.version } : {}),
+        ...(manifest ? { manifestHash: stableHash(manifest) } : current.manifestHash ? { manifestHash: current.manifestHash } : {}),
+        enabled: current.enabled === true,
+        result: 'applied'
+      })
       delete state.plugins[pluginId]
       this.writeState(state)
     }
@@ -628,6 +849,15 @@ export class PluginHost {
 
   private writeState(state: TaskWraithPluginStateFile): void {
     writeJson(this.statePath, normalizePluginStateFile(state))
+  }
+
+  private appendLifecycleEvent(
+    state: TaskWraithPluginStateFile,
+    event: Omit<TaskWraithPluginLifecycleEvent, 'id'>
+  ): void {
+    const lifecycleEvents = state.lifecycleEvents ?? []
+    const id = `${event.timestamp}:${lifecycleEvents.length}:${event.action}:${event.pluginId}`
+    state.lifecycleEvents = [...lifecycleEvents, { id, ...event }].slice(-MAX_PLUGIN_LIFECYCLE_EVENTS)
   }
 
   private getAvailableManifests(): Array<{

@@ -100,7 +100,8 @@ describe('PluginHost', () => {
     expect(plugin(snapshot).enabled).toBe(true)
 
     const statePath = path.join(tmpDir, 'plugins', 'plugins.json')
-    expect(JSON.parse(fs.readFileSync(statePath, 'utf-8'))).toMatchObject({
+    const stateFile = JSON.parse(fs.readFileSync(statePath, 'utf-8'))
+    expect(stateFile).toMatchObject({
       schemaVersion: 1,
       plugins: {
         'demo-bundle': {
@@ -112,6 +113,18 @@ describe('PluginHost', () => {
           version: '1.0.0'
         }
       }
+    })
+    expect(stateFile.lifecycleEvents.map((event: { action: string }) => event.action)).toEqual([
+      'install',
+      'enable'
+    ])
+    expect(stateFile.lifecycleEvents[1]).toMatchObject({
+      pluginId: 'demo-bundle',
+      action: 'enable',
+      source: 'builtin',
+      version: '1.0.0',
+      result: 'applied',
+      enabled: true
     })
 
     const reloaded = makeHost()
@@ -174,6 +187,23 @@ describe('PluginHost', () => {
       createdAt: '2026-06-29T12:00:00.000Z',
       updatedAt: '2026-06-29T12:00:00.000Z'
     })
+    expect(JSON.parse(fs.readFileSync(path.join(tmpDir, 'plugins', 'plugins.json'), 'utf-8'))).toMatchObject({
+      lifecycleEvents: [
+        {
+          pluginId: 'demo-bundle',
+          action: 'install'
+        },
+        {
+          pluginId: 'demo-bundle',
+          action: 'materialize-mcp-preset',
+          source: 'builtin',
+          version: '1.0.0',
+          objectKind: 'mcpServer',
+          objectId: 'docs-stdio',
+          result: 'prepared'
+        }
+      ]
+    })
   })
 
   it('refuses to materialize MCP presets before plugin install', () => {
@@ -227,6 +257,26 @@ describe('PluginHost', () => {
     expect(acceptedEntry.update?.status).toBe('current')
     expect(acceptedEntry.installState?.version).toBe('1.1.0')
     expect(updatedHost.getContributionSnapshot().counts.enabledPlugins).toBe(1)
+    const stateFile = JSON.parse(fs.readFileSync(path.join(tmpDir, 'plugins', 'plugins.json'), 'utf-8'))
+    const updateEvent = stateFile.lifecycleEvents.find(
+      (event: { action: string }) => event.action === 'update'
+    )
+    expect(updateEvent).toMatchObject({
+      pluginId: 'demo-bundle',
+      action: 'update',
+      source: 'builtin',
+      version: '1.1.0',
+      result: 'applied',
+      capabilityDiff: {
+        added: [{ id: 'docs-workflow', kind: 'workflowTemplates' }],
+        changed: [
+          {
+            before: { id: 'docs-server', label: 'Docs server' },
+            after: { id: 'docs-server', label: 'Docs server updated' }
+          }
+        ]
+      }
+    })
   })
 
   it('does not enable blocked plugins', () => {
@@ -251,9 +301,29 @@ describe('PluginHost', () => {
 
     const snapshot = host.uninstallPlugin('demo-bundle')
     const entry = plugin(snapshot)
+    const stateFile = JSON.parse(fs.readFileSync(path.join(tmpDir, 'plugins', 'plugins.json'), 'utf-8'))
 
     expect(entry.installed).toBe(false)
     expect(entry.enabled).toBe(false)
+    expect(entry.tombstone).toMatchObject({
+      pluginId: 'demo-bundle',
+      publisher: 'acme',
+      name: 'Demo Bundle',
+      version: '1.0.0',
+      source: 'builtin',
+      namespace: 'plugin.acme.demo-bundle',
+      installedAt: '2026-06-29T12:00:00.000Z',
+      updatedAt: '2026-06-29T12:00:00.000Z',
+      uninstalledAt: '2026-06-29T12:00:00.000Z',
+      enabledAtUninstall: true
+    })
+    expect(stateFile.plugins).toEqual({})
+    expect(stateFile.tombstones['demo-bundle']).toMatchObject(entry.tombstone)
+    expect(stateFile.lifecycleEvents.map((event: { action: string }) => event.action)).toEqual([
+      'install',
+      'enable',
+      'uninstall'
+    ])
     expect(snapshot.counts.available).toBe(1)
   })
 })

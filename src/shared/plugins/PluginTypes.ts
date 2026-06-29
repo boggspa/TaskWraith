@@ -238,9 +238,50 @@ export interface TaskWraithPluginInstallState {
   capabilities?: TaskWraithPluginCapabilitySnapshot[]
 }
 
+export type TaskWraithPluginLifecycleAction =
+  | 'install'
+  | 'enable'
+  | 'disable'
+  | 'update'
+  | 'uninstall'
+  | 'materialize-mcp-preset'
+
+export interface TaskWraithPluginLifecycleEvent {
+  id: string
+  pluginId: string
+  action: TaskWraithPluginLifecycleAction
+  timestamp: string
+  source: TaskWraithPluginInstallSource
+  version?: string
+  manifestHash?: string
+  enabled?: boolean
+  objectKind?: TaskWraithPluginResourceKind
+  objectId?: string
+  capabilityDiff?: TaskWraithPluginCapabilityDiff
+  result?: 'applied' | 'prepared' | 'blocked'
+  message?: string
+}
+
+export interface TaskWraithPluginUninstallTombstone {
+  pluginId: string
+  publisher?: string
+  name?: string
+  version?: string
+  source: TaskWraithPluginInstallSource
+  namespace?: string
+  manifestHash?: string
+  installedAt?: string
+  updatedAt?: string
+  uninstalledAt: string
+  enabledAtUninstall: boolean
+  capabilities?: TaskWraithPluginCapabilitySnapshot[]
+}
+
 export interface TaskWraithPluginStateFile {
   schemaVersion: 1
   plugins: Record<string, TaskWraithPluginInstallState>
+  tombstones?: Record<string, TaskWraithPluginUninstallTombstone>
+  lifecycleEvents?: TaskWraithPluginLifecycleEvent[]
 }
 
 export interface TaskWraithPluginPreflightIssue {
@@ -262,6 +303,7 @@ export interface TaskWraithPluginCatalogEntry {
   installed: boolean
   enabled: boolean
   installState?: TaskWraithPluginInstallState
+  tombstone?: TaskWraithPluginUninstallTombstone
   preflight: TaskWraithPluginPreflightResult
   update?: {
     status: 'current' | 'available'
