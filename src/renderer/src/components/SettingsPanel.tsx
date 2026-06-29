@@ -2358,6 +2358,136 @@ export function settingsTabMatchesQuery(tab: SettingsTabDefinition, query: strin
   return haystack.includes(normalized)
 }
 
+export function pluginMcpPresetServerId(pluginId: string, presetId: string): string {
+  return `plugin:${pluginId}:mcp:${presetId}`
+}
+
+export function pluginSettingsEntryMatchesQuery(
+  entry: TaskWraithPluginCatalogEntry,
+  query: string
+): boolean {
+  const normalized = query.trim().toLowerCase()
+  if (!normalized) return true
+  const haystack = [
+    entry.manifest.id,
+    entry.manifest.publisher,
+    entry.manifest.name,
+    entry.manifest.description,
+    entry.manifest.marketplace?.category || '',
+    ...(entry.manifest.marketplace?.tags || []),
+    entry.source,
+    entry.namespace,
+    entry.preflight.status,
+    entry.installed ? 'installed' : 'available',
+    entry.enabled ? 'enabled' : 'disabled',
+    ...(entry.update?.status === 'available' ? ['update available'] : []),
+    ...entry.manifest.capabilities.flatMap((capability) => [
+      capability.kind,
+      capability.id,
+      capability.label,
+      capability.description || ''
+    ])
+  ]
+    .join(' ')
+    .toLowerCase()
+  return haystack.includes(normalized)
+}
+
+export function pluginSettingsProvenancePayload(entry: TaskWraithPluginCatalogEntry): {
+  pluginId: string
+  publisher: string
+  version: string
+  source: string
+  namespace: string
+  manifestHash: string
+  installed: boolean
+  enabled: boolean
+  preflight: TaskWraithPluginCatalogEntry['preflight']
+  capabilities: Array<{
+    id: string
+    kind: string
+    agenticServices: string[]
+    fileScopes: string[]
+    networkScopes: string[]
+    remoteCapabilities: string[]
+  }>
+} {
+  return {
+    pluginId: entry.manifest.id,
+    publisher: entry.manifest.publisher,
+    version: entry.manifest.version,
+    source: entry.source,
+    namespace: entry.namespace,
+    manifestHash: entry.manifestHash,
+    installed: entry.installed,
+    enabled: entry.enabled,
+    preflight: entry.preflight,
+    capabilities: entry.manifest.capabilities.map((capability) => ({
+      id: capability.id,
+      kind: capability.kind,
+      agenticServices: capability.agenticServices || [],
+      fileScopes: capability.fileScopes || [],
+      networkScopes: capability.networkScopes || [],
+      remoteCapabilities: capability.remoteCapabilities || []
+    }))
+  }
+}
+
+export interface PluginSettingsMcpPresetActionState {
+  serverId: string
+  busy: boolean
+  materialized: boolean
+  disabled: boolean
+}
+
+export interface PluginSettingsActionState {
+  busy: boolean
+  updateAvailable: boolean
+  installDisabled: boolean
+  enableDisabled: boolean
+  updateDisabled: boolean
+  uninstallDisabled: boolean
+  mcpPresets: Record<string, PluginSettingsMcpPresetActionState>
+}
+
+export function pluginSettingsActionState(
+  entry: TaskWraithPluginCatalogEntry,
+  userMcpServers: Pick<UserMcpServerConfig, 'id'>[],
+  pluginBusyId: string | null
+): PluginSettingsActionState {
+  const pluginId = entry.manifest.id
+  const busy = pluginBusyId === pluginId
+  const updateAvailable = entry.update?.status === 'available'
+  const blocked = entry.preflight.status === 'blocked'
+  const userMcpServerIds = new Set(userMcpServers.map((server) => server.id))
+  const mcpPresets = Object.fromEntries(
+    (entry.manifest.mcpServers || []).map((preset) => {
+      const serverId = pluginMcpPresetServerId(pluginId, preset.id)
+      const presetBusy = pluginBusyId === `mcp:${pluginId}:${preset.id}`
+      const materialized = userMcpServerIds.has(serverId)
+      return [
+        preset.id,
+        {
+          serverId,
+          busy: presetBusy,
+          materialized,
+          disabled: presetBusy || materialized || !entry.installed || updateAvailable || blocked
+        }
+      ]
+    })
+  )
+
+  return {
+    busy,
+    updateAvailable,
+    installDisabled: busy || blocked,
+    enableDisabled: busy || blocked || updateAvailable,
+    updateDisabled: busy,
+    uninstallDisabled: busy,
+    mcpPresets
+  }
+}
+
 type LocalFontData = {
   family?: string
   fullName?: string
@@ -3489,31 +3619,9 @@ export function SettingsPanel({
   )
   const pluginEntries = pluginCatalog?.plugins ?? []
   const pluginSearch = pluginQuery.trim().toLowerCase()
-  const filteredPluginEntries = pluginEntries.filter((entry) => {
-    if (!pluginSearch) return true
-    const haystack = [
-      entry.manifest.id,
-      entry.manifest.publisher,
-      entry.manifest.name,
-      entry.manifest.description,
-      entry.manifest.marketplace?.category || '',
-      ...(entry.manifest.marketplace?.tags || []),
-      entry.source,
-      entry.namespace,
-      entry.preflight.status,
-      entry.installed ? 'installed' : 'available',
-      entry.enabled ? 'enabled' : 'disabled',
-      ...entry.manifest.capabilities.flatMap((capability) => [
-        capability.kind,
-        capability.id,
-        capability.label,
-        capability.description || ''
-      ])
-    ]
-      .join(' ')
-      .toLowerCase()
-    return haystack.includes(pluginSearch)
-  })
+  const filteredPluginEntries = pluginEntries.filter((entry) =>
+    pluginSettingsEntryMatchesQuery(entry, pluginSearch)
+  )
   const installedPluginCount =
     pluginCatalog?.counts.installed ?? pluginEntries.filter((entry) => entry.installed).length
   const enabledPluginCount =
@@ -7554,32 +7662,19 @@ export function SettingsPanel({
                 <div className="settings-user-mcp-list">
                   {filteredPluginEntries.map((entry: TaskWraithPluginCatalogEntry) => {
                     const pluginId = entry.manifest.id
-                    const busy = pluginBusyId === pluginId
+                    const actionState = pluginSettingsActionState(
+                      entry,
+                      userMcpServers,
+                      pluginBusyId
+                    )
+                    const busy = actionState.busy
                     const capabilities = entry.manifest.capabilities || []
                     const mcpPresets = entry.manifest.mcpServers || []
                     const category = entry.manifest.marketplace?.category || 'Uncategorized'
                     const tags = entry.manifest.marketplace?.tags || []
-                    const updateAvailable = entry.update?.status === 'available'
+                    const updateAvailable = actionState.updateAvailable
                     const capabilityDiff = entry.update?.capabilityDiff
-                    const provenance = {
-                      pluginId,
-                      publisher: entry.manifest.publisher,
-                      version: entry.manifest.version,
-                      source: entry.source,
-                      namespace: entry.namespace,
-                      manifestHash: entry.manifestHash,
-                      installed: entry.installed,
-                      enabled: entry.enabled,
-                      preflight: entry.preflight,
-                      capabilities: capabilities.map((capability) => ({
-                        id: capability.id,
-                        kind: capability.kind,
-                        agenticServices: capability.agenticServices || [],
-                        fileScopes: capability.fileScopes || [],
-                        networkScopes: capability.networkScopes || [],
-                        remoteCapabilities: capability.remoteCapabilities || []
-                      }))
-                    }
+                    const provenance = pluginSettingsProvenancePayload(entry)
                     return (
                       <article key={pluginId} className="settings-user-mcp-row">
                         <div className="settings-user-mcp-main">
@@ -7630,29 +7725,19 @@ export function SettingsPanel({
                           {mcpPresets.length > 0 && (
                             <div className="settings-mcp-server-meta">
                               {mcpPresets.map((preset) => {
-                                const serverId = `plugin:${pluginId}:mcp:${preset.id}`
-                                const materialized = userMcpServers.some(
-                                  (server) => server.id === serverId
-                                )
-                                const busy = pluginBusyId === `mcp:${pluginId}:${preset.id}`
+                                const presetState = actionState.mcpPresets[preset.id]
                                 return (
                                   <button
                                     key={preset.id}
                                     type="button"
                                     className="btn btn-sm btn-ghost"
-                                    disabled={
-                                      busy ||
-                                      materialized ||
-                                      !entry.installed ||
-                                      updateAvailable ||
-                                      entry.preflight.status === 'blocked'
-                                    }
+                                    disabled={presetState?.disabled ?? true}
                                     onClick={() => addPluginMcpPreset(pluginId, preset.id)}
                                     title={`${preset.transport} MCP preset`}
                                   >
-                                    {materialized
+                                    {presetState?.materialized
                                       ? `Added ${preset.name}`
-                                      : busy
+                                      : presetState?.busy
                                         ? `Adding ${preset.name}`
                                         : `Add MCP preset: ${preset.name}`}
                                   </button>
@@ -7692,9 +7777,7 @@ export function SettingsPanel({
                               <input
                                 type="checkbox"
                                 checked={entry.enabled}
-                                disabled={
-                                  busy || entry.preflight.status === 'blocked' || updateAvailable
-                                }
+                                disabled={actionState.enableDisabled}
                                 onChange={(event) =>
                                   setPluginEnabled(pluginId, event.target.checked)
                                 }
@@ -7705,7 +7788,7 @@ export function SettingsPanel({
                             <button
                               type="button"
                               className="btn btn-sm"
-                              disabled={busy || entry.preflight.status === 'blocked'}
+                              disabled={actionState.installDisabled}
                               onClick={() => installPlugin(pluginId)}
                             >
                               {busy ? 'Installing' : 'Install'}
@@ -7716,7 +7799,7 @@ export function SettingsPanel({
                                 <button
                                   type="button"
                                   className="btn btn-sm"
-                                  disabled={busy}
+                                  disabled={actionState.updateDisabled}
                                   onClick={() => updatePlugin(pluginId)}
                                 >
                                   {busy ? 'Updating' : 'Update'}
@@ -7725,7 +7808,7 @@ export function SettingsPanel({
                               <button
                                 type="button"
                                 className="btn btn-sm btn-ghost"
-                                disabled={busy}
+                                disabled={actionState.uninstallDisabled}
                                 onClick={() => uninstallPlugin(pluginId)}
                               >
                                 {busy ? 'Updating' : 'Uninstall'}
