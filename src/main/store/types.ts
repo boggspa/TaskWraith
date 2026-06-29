@@ -3131,7 +3131,7 @@ export interface WorkspaceBoardCardLink {
 export interface WorkspaceBoardActivityEntry {
   id: string
   at: string
-  actor: 'user' | 'system'
+  actor: 'user' | 'agent' | 'system'
   action: string
   detail?: string
 }

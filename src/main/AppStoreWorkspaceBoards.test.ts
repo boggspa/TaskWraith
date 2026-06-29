@@ -114,4 +114,52 @@ describe('AppStore workspace boards', () => {
       link: { kind: 'chat', id: chatA.appChatId }
     })
   })
+
+  it('records agent activity only when the current write carries agent provenance', () => {
+    const provenance = {
+      actor: 'agent' as const,
+      sourceKind: 'goal' as const,
+      at: '2026-06-29T18:00:00.000Z',
+      trust: 'agent-proposed' as const,
+      provider: 'codex',
+      runId: 'run-1'
+    }
+    const board = AppStore.saveWorkspaceBoard({
+      id: 'board-agent',
+      workspaceId: 'ws-a',
+      workspacePath: '/repo-a',
+      name: 'Agent board',
+      columns: [],
+      provenance
+    })
+    expect(board.activity.at(-1)?.actor).toBe('agent')
+
+    const userUpdatedBoard = AppStore.updateWorkspaceBoard(board.id, { name: 'User rename' })
+    expect(userUpdatedBoard?.activity.at(-1)?.actor).toBe('user')
+
+    const agentUpdatedBoard = AppStore.updateWorkspaceBoard(board.id, {
+      description: 'Agent-authored description',
+      provenance
+    })
+    expect(agentUpdatedBoard?.activity.at(-1)?.actor).toBe('agent')
+
+    const card = AppStore.saveWorkspaceBoardCard({
+      boardId: board.id,
+      workspaceId: board.workspaceId,
+      columnId: 'ready',
+      title: 'Agent card',
+      sortOrder: 1,
+      provenance
+    })
+    expect(card.activity.at(-1)?.actor).toBe('agent')
+
+    const userUpdatedCard = AppStore.updateWorkspaceBoardCard(card.id, { title: 'User card edit' })
+    expect(userUpdatedCard?.activity.at(-1)?.actor).toBe('user')
+
+    const agentUpdatedCard = AppStore.updateWorkspaceBoardCard(card.id, {
+      nextStep: 'Agent next step',
+      provenance
+    })
+    expect(agentUpdatedCard?.activity.at(-1)?.actor).toBe('agent')
+  })
 })

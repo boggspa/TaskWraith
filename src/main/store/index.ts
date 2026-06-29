@@ -437,10 +437,18 @@ function normalizeWorkspaceBoardActivityEntry(
   return {
     id: typeof input.id === 'string' && input.id ? input.id : randomUUID(),
     at: typeof input.at === 'string' && input.at ? input.at : nowIso,
-    actor: input.actor === 'system' ? 'system' : 'user',
+    actor: input.actor === 'agent' || input.actor === 'system' ? input.actor : 'user',
     action,
     detail: typeof input.detail === 'string' && input.detail.trim() ? input.detail.trim() : undefined
   }
+}
+
+function workspaceBoardActivityActorFromProvenance(
+  provenance: unknown
+): WorkspaceBoardActivityEntry['actor'] {
+  if (!provenance || typeof provenance !== 'object') return 'user'
+  const actor = (provenance as Partial<WorkspaceBoardProvenance>).actor
+  return actor === 'agent' || actor === 'system' ? actor : 'user'
 }
 
 function normalizeWorkspaceBoardProvenance(value: unknown, nowIso: string): WorkspaceBoardProvenance | undefined {
@@ -2923,10 +2931,11 @@ export class AppStore {
     const boards = this.getWorkspaceBoards()
     const nowMs = Date.now()
     const nowIso = new Date(nowMs).toISOString()
+    const activityActor = workspaceBoardActivityActorFromProvenance(board.provenance)
     const createdActivity: WorkspaceBoardActivityEntry = {
       id: randomUUID(),
       at: nowIso,
-      actor: 'user',
+      actor: activityActor,
       action: 'created'
     }
     const normalized = normalizeWorkspaceBoardDefinitionRecord(
@@ -2953,7 +2962,7 @@ export class AppStore {
       const updatedActivity: WorkspaceBoardActivityEntry = {
         id: randomUUID(),
         at: nowIso,
-        actor: 'user',
+        actor: activityActor,
         action: 'updated'
       }
       boards[index] = {
@@ -2983,6 +2992,8 @@ export class AppStore {
     const source = boards[index]
     const nowMs = Date.now()
     const nowIso = new Date(nowMs).toISOString()
+    const activityActor =
+      'provenance' in partial ? workspaceBoardActivityActorFromProvenance(partial.provenance) : 'user'
     const normalized = normalizeWorkspaceBoardDefinitionRecord(
       {
         ...source,
@@ -2997,7 +3008,7 @@ export class AppStore {
         updatedAt: nowIso,
         activity: [
           ...(source.activity || []),
-          { id: randomUUID(), at: nowIso, actor: 'user', action: 'updated' }
+          { id: randomUUID(), at: nowIso, actor: activityActor, action: 'updated' }
         ].slice(-100)
       },
       nowMs
@@ -3085,10 +3096,11 @@ export class AppStore {
     if (!board) throw new Error('Workspace board could not be loaded.')
     const nowMs = Date.now()
     const nowIso = new Date(nowMs).toISOString()
+    const activityActor = workspaceBoardActivityActorFromProvenance(card.provenance)
     const createdActivity: WorkspaceBoardActivityEntry = {
       id: randomUUID(),
       at: nowIso,
-      actor: 'user',
+      actor: activityActor,
       action: 'created'
     }
     const normalized = normalizeWorkspaceBoardCardRecord(
@@ -3113,7 +3125,7 @@ export class AppStore {
       const updatedActivity: WorkspaceBoardActivityEntry = {
         id: randomUUID(),
         at: nowIso,
-        actor: 'user',
+        actor: activityActor,
         action: 'updated'
       }
       cards[existingIndex] = {
@@ -3147,6 +3159,8 @@ export class AppStore {
     if (!board) return null
     const nowMs = Date.now()
     const nowIso = new Date(nowMs).toISOString()
+    const activityActor =
+      'provenance' in partial ? workspaceBoardActivityActorFromProvenance(partial.provenance) : 'user'
     const normalized = normalizeWorkspaceBoardCardRecord(
       {
         ...source,
@@ -3170,7 +3184,7 @@ export class AppStore {
         updatedAt: nowIso,
         activity: [
           ...(source.activity || []),
-          { id: randomUUID(), at: nowIso, actor: 'user', action: 'updated' }
+          { id: randomUUID(), at: nowIso, actor: activityActor, action: 'updated' }
         ].slice(-100)
       },
       nowMs
