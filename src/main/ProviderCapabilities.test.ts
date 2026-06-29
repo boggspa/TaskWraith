@@ -347,6 +347,9 @@ describe('ProviderCapabilities', () => {
     expect(contract.tools.elicit.requiresApproval).toBe(false)
     expect(contract.tools.shellCommands.state).toBe('unavailable')
     expect(contract.tools.fileChanges.state).toBe('unavailable')
+    expect(contract.approvals.effectiveMode).toBe('read_only')
+    expect(contract.approvals.providerMode).toContain('read-only')
+    expect(contract.approvals.notes.join(' ')).toContain('higher governed tier')
   })
 
   it('advertises Ollama approved edit and shell tiers through TaskWraith gates', () => {
@@ -364,6 +367,10 @@ describe('ProviderCapabilities', () => {
     expect(approvedEdits.tools.fileChanges.state).toBe('gated')
     expect(approvedEdits.tools.fileChanges.enforcedByTaskWraith).toBe(true)
     expect(approvedEdits.tools.shellCommands.state).toBe('unavailable')
+    expect(approvedEdits.approvals.effectiveMode).toBe('approved_edits')
+    expect(approvedEdits.approvals.providerMode).toContain('approved file-edit')
+    expect(approvedEdits.approvals.notes.join(' ')).toContain('File edits and shell commands are exposed only by the selected tier')
+    expect(approvedEdits.approvals.notes.join(' ')).not.toContain('shell commands and file mutations are not exposed')
 
     const approvedShell = buildProviderCapabilityContract({
       provider: 'ollama',
@@ -375,6 +382,8 @@ describe('ProviderCapabilities', () => {
     expect(approvedShell.mcp.tools).toContain('get_diagnostics')
     expect(approvedShell.tools.shellCommands.state).toBe('gated')
     expect(approvedShell.tools.shellCommands.enforcedByTaskWraith).toBe(true)
+    expect(approvedShell.approvals.effectiveMode).toBe('approved_shell')
+    expect(approvedShell.approvals.providerMode).toContain('approved shell')
   })
 
   it('warns when Tier 4 is selected but the workspace is not granted parity', () => {

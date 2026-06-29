@@ -537,17 +537,24 @@ function cliTaskWraithMcpCapability(
 function approvalContract(
   provider: ProviderId,
   requestedMode: string,
-  effectiveMode: string
+  effectiveMode: string,
+  options?: {
+    ollamaTier?: ReturnType<typeof effectiveOllamaToolControlTier>
+  }
 ): ProviderApprovalCapability {
   if (provider === 'ollama') {
+    const tier = options?.ollamaTier || 'read_only'
+    const mutatingTier = tier === 'approved_edits' || tier === 'approved_shell' || tier === 'provider_parity'
     return {
       requestedMode,
-      effectiveMode: 'plan',
-      providerMode: 'local read-only + TaskWraith tools',
+      effectiveMode: tier,
+      providerMode: `local TaskWraith-controlled ${ollamaTierLabel(tier)} tools`,
       inAppApprovals: true,
-      supportsWorkspaceGrants: false,
+      supportsWorkspaceGrants: tier === 'provider_parity',
       notes: [
-        'Ollama runs through TaskWraith local HTTP. Read-only workspace list/read/search tools are mediated by TaskWraith; shell commands and file mutations are not exposed.'
+        mutatingTier
+          ? 'Ollama runs through TaskWraith local HTTP. File edits and shell commands are exposed only by the selected tier and route through TaskWraith intent checks, approval policy, and audit events.'
+          : 'Ollama runs through TaskWraith local HTTP. Workspace list/read/search tools are mediated by TaskWraith; edit and shell tools require a higher governed tier.'
       ]
     }
   }
@@ -1043,7 +1050,10 @@ export function buildProviderCapabilityContract({
       elicit,
       delegate
     },
-    approvals: approvalContract(provider, requestedMode, effectiveMode),
+    approvals: approvalContract(provider, requestedMode, effectiveMode, {
+      ollamaTier:
+        provider === 'ollama' ? effectiveOllamaToolControlTier(settings, workspacePath) : undefined
+    }),
     mcp,
     warnings
   }
