@@ -216,6 +216,8 @@ export function TaskWraithWorkbench({
     activeView === 'editor' || activeView === 'split'
       ? editorState.status || editorState.gitMessage || status
       : status
+  const editorDiffActionPath =
+    activeView === 'editor' || activeView === 'split' ? editorState.selectedPath : ''
   const diffEditorActionPath =
     activeView === 'diff' || activeView === 'split' ? diffSelectedPath : ''
 
@@ -586,6 +588,28 @@ export function TaskWraithWorkbench({
             >
               Save All
             </button>
+            {(activeView === 'editor' || activeView === 'split') && (
+              <button
+                className="btn btn-sm btn-ghost"
+                type="button"
+                onClick={() => {
+                  if (editorDiffActionPath) showFileInDiff(editorDiffActionPath)
+                }}
+                disabled={!editorDiffActionPath || editorBusy}
+                aria-label={
+                  editorDiffActionPath
+                    ? `Show ${editorDiffActionPath} in Diff Studio`
+                    : 'Show selected file in Diff Studio'
+                }
+                title={
+                  editorDiffActionPath
+                    ? `Show ${editorDiffActionPath} in Diff Studio`
+                    : 'Select a file to show its diff'
+                }
+              >
+                Show in Diff
+              </button>
+            )}
             {diffEditorActionPath && (
               <button
                 className="btn btn-sm btn-ghost"
