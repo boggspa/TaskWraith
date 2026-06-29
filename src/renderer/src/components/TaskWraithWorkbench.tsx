@@ -16,6 +16,7 @@ interface TaskWraithWorkbenchProps {
   workspacePath: string
   workspaceName: string
   refreshTick: number
+  onDirtyChange?: (dirtyBufferCount: number) => void
 }
 
 const viewLabel = (view: WorkbenchView): string =>
@@ -24,7 +25,8 @@ const viewLabel = (view: WorkbenchView): string =>
 export function TaskWraithWorkbench({
   workspacePath,
   workspaceName,
-  refreshTick
+  refreshTick,
+  onDirtyChange
 }: TaskWraithWorkbenchProps) {
   const [activeView, setActiveView] = useState<WorkbenchView>('editor')
   const [diff, setDiff] = useState<WorkspaceDiff | null>(null)
@@ -194,6 +196,7 @@ export function TaskWraithWorkbench({
               workspacePath={workspacePath}
               refreshTick={editorRefreshTick}
               openRequest={editorOpenRequest}
+              onDirtyChange={onDirtyChange}
             />
           </div>
           <div className="workbench-pane" hidden={activeView !== 'diff'}>

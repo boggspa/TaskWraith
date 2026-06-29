@@ -30,6 +30,7 @@ interface FileEditorPanelProps {
   width?: number
   refreshTick?: number
   openRequest?: FileEditorOpenRequest | null
+  onDirtyChange?: (dirtyBufferCount: number) => void
 }
 
 interface FileEditorOpenRequest {
@@ -394,7 +395,8 @@ export function FileEditorPanel({
   workspacePath,
   width,
   refreshTick = 0,
-  openRequest
+  openRequest,
+  onDirtyChange
 }: FileEditorPanelProps) {
   const [childrenByDirectory, setChildrenByDirectory] = useState<
     Record<string, WorkspaceFileEntry[]>
@@ -437,6 +439,10 @@ export function FileEditorPanel({
   const trimmedFilter = filter.trim()
   const isFiltering = trimmedFilter.length > 0
   const dirtyBufferCount = buffers.filter(isBufferDirty).length
+
+  useEffect(() => {
+    onDirtyChange?.(dirtyBufferCount)
+  }, [dirtyBufferCount, onDirtyChange])
 
   const browseFiles = useMemo(() => {
     const rows: WorkspaceFileEntry[] = []

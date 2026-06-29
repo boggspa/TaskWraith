@@ -34,6 +34,7 @@ export function PopoutApp() {
   const workspacePath = params.get('workspace') || ''
   const [diff, setDiff] = useState<WorkspaceDiff | null>(null)
   const [status, setStatus] = useState('')
+  const [dirtyBufferCount, setDirtyBufferCount] = useState(0)
   // File Editor receives this as an in-place refresh signal. Do not
   // remount the panel here: open tabs and dirty buffers live inside it.
   const [fileEditorRefreshTick, setFileEditorRefreshTick] = useState(0)
@@ -89,6 +90,26 @@ export function PopoutApp() {
     }
   }, [kind, workspacePath, refreshDiff])
 
+  useEffect(() => {
+    if (kind !== 'file-editor' && kind !== 'workbench') {
+      setDirtyBufferCount(0)
+    }
+  }, [kind])
+
+  useEffect(() => {
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      if (dirtyBufferCount <= 0) return
+      event.preventDefault()
+      event.returnValue = ''
+      return ''
+    }
+
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload)
+    }
+  }, [dirtyBufferCount])
+
   if (kind === 'permission-helper') {
     return <PermissionHelperPopout />
   }
@@ -107,6 +128,10 @@ export function PopoutApp() {
   const title =
     kind === 'file-editor' ? 'File Editor' : kind === 'diff-studio' ? 'Diff Studio' : 'Workbench'
   const workspaceName = basename(workspacePath)
+  const dirtyStatus =
+    dirtyBufferCount > 0
+      ? `${dirtyBufferCount} unsaved ${dirtyBufferCount === 1 ? 'file' : 'files'}`
+      : ''
 
   return (
     <main className="popout-root" data-popout-kind={kind}>
@@ -125,10 +150,21 @@ export function PopoutApp() {
             </button>
           </div>
         )}
+        {(kind === 'file-editor' || kind === 'workbench') && dirtyStatus && (
+          <div className="popout-actions">
+            <span className="popout-status" role="status" aria-live="polite">
+              {dirtyStatus}
+            </span>
+          </div>
+        )}
       </header>
       <section className="popout-body">
         {kind === 'file-editor' ? (
-          <FileEditorPanel workspacePath={workspacePath} refreshTick={fileEditorRefreshTick} />
+          <FileEditorPanel
+            workspacePath={workspacePath}
+            refreshTick={fileEditorRefreshTick}
+            onDirtyChange={setDirtyBufferCount}
+          />
         ) : kind === 'diff-studio' ? (
           <div className="diff-studio popout-diff-studio">
             <DiffViewer diff={diff} workspacePath={workspacePath} />
@@ -138,6 +174,7 @@ export function PopoutApp() {
             workspacePath={workspacePath}
             workspaceName={workspaceName}
             refreshTick={fileEditorRefreshTick}
+            onDirtyChange={setDirtyBufferCount}
           />
         )}
       </section>
