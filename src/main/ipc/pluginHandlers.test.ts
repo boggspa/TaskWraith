@@ -4,7 +4,7 @@ import { registerPluginHandlers } from './pluginHandlers'
 import type {
   TaskWraithPluginCatalogSnapshot,
   TaskWraithPluginContributionSnapshot
-} from '../plugins/PluginHost'
+} from '../../shared/plugins/PluginTypes'
 
 vi.mock('electron', () => ({
   ipcMain: {

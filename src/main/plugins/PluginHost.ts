@@ -6,136 +6,21 @@ import {
   TASKWRAITH_PLUGIN_MANIFEST_SCHEMA_VERSION,
   pluginToolNamespace,
   validateTaskWraithPluginManifest,
-  type TaskWraithPluginConnectorBinding,
-  type TaskWraithPluginLocalServiceDefinition,
   type TaskWraithPluginMcpServerPreset,
-  type TaskWraithPluginMobileProjectionMetadata,
-  type TaskWraithPluginProviderSetupMetadata,
-  type TaskWraithPluginRuntimeProfile,
-  type TaskWraithPluginToolBundle,
-  type TaskWraithPluginWorkflowTemplate,
   type TaskWraithPluginCapabilityKind,
-  type TaskWraithPluginManifest
+  type TaskWraithPluginCatalogEntry,
+  type TaskWraithPluginCatalogSnapshot,
+  type TaskWraithPluginContributionProvenance,
+  type TaskWraithPluginContributionSnapshot,
+  type TaskWraithPluginInstallState,
+  type TaskWraithPluginManifest,
+  type TaskWraithPluginMcpServerContribution,
+  type TaskWraithPluginPreflightIssue,
+  type TaskWraithPluginPreflightResult,
+  type TaskWraithPluginSource,
+  type TaskWraithPluginStateFile,
+  type TaskWraithPluginUserMcpServerConfig
 } from './PluginManifest'
-import type { UserMcpServerConfig } from '../store/types'
-
-export type TaskWraithPluginSource = 'builtin' | 'local' | 'marketplace'
-export type TaskWraithPluginInstallSource = TaskWraithPluginSource | 'unknown'
-export type TaskWraithPluginPreflightStatus = 'ready' | 'repairable' | 'blocked'
-
-export interface TaskWraithPluginInstallState {
-  installed: boolean
-  enabled: boolean
-  source: TaskWraithPluginInstallSource
-  installedAt?: string
-  updatedAt?: string
-  version?: string
-  manifestHash?: string
-}
-
-export interface TaskWraithPluginStateFile {
-  schemaVersion: 1
-  plugins: Record<string, TaskWraithPluginInstallState>
-}
-
-export interface TaskWraithPluginPreflightIssue {
-  severity: 'info' | 'warning' | 'error'
-  code: string
-  message: string
-}
-
-export interface TaskWraithPluginPreflightResult {
-  status: TaskWraithPluginPreflightStatus
-  issues: TaskWraithPluginPreflightIssue[]
-}
-
-export interface TaskWraithPluginCatalogEntry {
-  manifest: TaskWraithPluginManifest
-  source: TaskWraithPluginSource
-  namespace: string
-  manifestHash: string
-  installed: boolean
-  enabled: boolean
-  installState?: TaskWraithPluginInstallState
-  preflight: TaskWraithPluginPreflightResult
-}
-
-export interface TaskWraithPluginCatalogSnapshot {
-  schemaVersion: 1
-  generatedAt: string
-  plugins: TaskWraithPluginCatalogEntry[]
-  counts: {
-    available: number
-    installed: number
-    enabled: number
-    blocked: number
-    repairable: number
-    byCapability: Partial<Record<TaskWraithPluginCapabilityKind, number>>
-  }
-}
-
-export interface TaskWraithPluginContributionProvenance {
-  pluginId: string
-  publisher: string
-  version: string
-  source: TaskWraithPluginSource
-  namespace: string
-  manifestHash: string
-}
-
-export interface TaskWraithPluginMcpServerContribution {
-  plugin: TaskWraithPluginContributionProvenance
-  preset: TaskWraithPluginMcpServerPreset
-  userMcpServerConfig: UserMcpServerConfig
-}
-
-export interface TaskWraithPluginContributionSnapshot {
-  schemaVersion: 1
-  generatedAt: string
-  mcpServers: TaskWraithPluginMcpServerContribution[]
-  taskwraithToolBundles: Array<{
-    plugin: TaskWraithPluginContributionProvenance
-    bundle: TaskWraithPluginToolBundle
-  }>
-  workflowTemplates: Array<{
-    plugin: TaskWraithPluginContributionProvenance
-    template: TaskWraithPluginWorkflowTemplate
-  }>
-  runtimeProfiles: Array<{
-    plugin: TaskWraithPluginContributionProvenance
-    profile: TaskWraithPluginRuntimeProfile
-    runtimeProfileId: string
-  }>
-  connectors: Array<{
-    plugin: TaskWraithPluginContributionProvenance
-    connector: TaskWraithPluginConnectorBinding
-  }>
-  localServices: Array<{
-    plugin: TaskWraithPluginContributionProvenance
-    service: TaskWraithPluginLocalServiceDefinition
-    serviceId: string
-  }>
-  providerSetup: Array<{
-    plugin: TaskWraithPluginContributionProvenance
-    setup: TaskWraithPluginProviderSetupMetadata
-  }>
-  mobileRemoteProjection: Array<{
-    plugin: TaskWraithPluginContributionProvenance
-    projection: TaskWraithPluginMobileProjectionMetadata
-    projectionId: string
-  }>
-  counts: {
-    enabledPlugins: number
-    mcpServers: number
-    taskwraithToolBundles: number
-    workflowTemplates: number
-    runtimeProfiles: number
-    connectors: number
-    localServices: number
-    providerSetup: number
-    mobileRemoteProjection: number
-  }
-}
 
 export interface PluginHostOptions {
   userDataPath?: string
@@ -218,7 +103,7 @@ function toDisabledUserMcpServerConfig(
   pluginId: string,
   pluginName: string,
   preset: TaskWraithPluginMcpServerPreset
-): UserMcpServerConfig {
+): TaskWraithPluginUserMcpServerConfig {
   return {
     id: pluginObjectId(pluginId, 'mcp', preset.id),
     name: `${pluginName}: ${preset.name}`,

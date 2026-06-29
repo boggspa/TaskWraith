@@ -41,7 +41,7 @@ import type {
 import type {
   TaskWraithPluginCatalogSnapshot,
   TaskWraithPluginContributionSnapshot
-} from '../main/plugins/PluginHost'
+} from '../shared/plugins/PluginTypes'
 
 type ComposerImageAttachment = {
   id?: string

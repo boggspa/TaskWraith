@@ -4,13 +4,13 @@ import * as path from 'path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   PluginHost,
-  PluginPreflightService,
-  type TaskWraithPluginCatalogSnapshot
+  PluginPreflightService
 } from './PluginHost'
 import {
   validateTaskWraithPluginManifest,
   type TaskWraithPluginManifest
 } from './PluginManifest'
+import type { TaskWraithPluginCatalogSnapshot } from '../../shared/plugins/PluginTypes'
 
 const BASE_MANIFEST: TaskWraithPluginManifest = {
   schemaVersion: 1,

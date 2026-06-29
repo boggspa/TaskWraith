@@ -68,7 +68,7 @@ import type { LaunchTargetsSnapshot } from '../main/launchTargets/types'
 import type {
   TaskWraithPluginCatalogSnapshot,
   TaskWraithPluginContributionSnapshot
-} from '../main/plugins/PluginHost'
+} from '../shared/plugins/PluginTypes'
 import type {
   LaunchSnapshot,
   LaunchStartInput,

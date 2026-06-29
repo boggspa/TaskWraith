@@ -105,7 +105,7 @@ import type { RemoteWorkspaceEntry } from '../../../shared/remoteWorkspaceDefaul
 import type {
   TaskWraithPluginCatalogEntry,
   TaskWraithPluginCatalogSnapshot
-} from '../../../main/plugins/PluginHost'
+} from '../../../shared/plugins/PluginTypes'
 import { GrokTelemetryCard } from './GrokTelemetryCard'
 import { ProviderLogoTile } from './ProviderLogoTile'
 import { ProviderInstallCommands } from './ProviderInstallCommands'
