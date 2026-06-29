@@ -1,4 +1,5 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import type { ReactElement } from 'react'
 import type {
   ChatMessage,
   ChatRecord,
@@ -36,6 +37,11 @@ import {
   type VirtualWindow
 } from '../lib/TranscriptVirtualWindow'
 import { buildTranscriptUserGutterMarkers } from '../lib/TranscriptUserMessageGutter'
+import {
+  transcriptChatRenderSignature,
+  transcriptRowRenderSignatureEqual,
+  type TranscriptRowRenderSignature
+} from '../lib/transcriptRowRenderCache'
 import type { PlanChoiceState } from '../lib/planModeChoice'
 import type { DisplayCurrency } from '../lib/formatCost'
 import type { RendererProviderRates } from '../lib/providerRateEstimate'
@@ -905,6 +911,12 @@ export const TranscriptPanel = memo(
     }, [isWelcomeChat, messages, pendingQueuedAppRunIds, queuedRunStatusByAppRunId])
     const [messageContextMenu, setMessageContextMenu] =
       useState<TranscriptMessageContextMenuSelection | null>(null)
+    // Row-level render cache: stream updates replace one message object, so
+    // unchanged rows can reuse their previous element instead of rebuilding all
+    // markdown/tool row JSX on every chat-level commit. Pruned to mounted rows.
+    const rowElementCacheRef = useRef<
+      Map<string, { signature: TranscriptRowRenderSignature; element: ReactElement }>
+    >(new Map())
     const closeMessageContextMenu = useCallback(() => {
       setMessageContextMenu(null)
     }, [])
@@ -1018,7 +1030,7 @@ export const TranscriptPanel = memo(
     // message.id so toggling one brief does not collapse others. Default for
     // every long message is collapsed — see UserMessageCollapse for thresholds.
     const [expandedUserMessages, setExpandedUserMessages] = useState<Set<string>>(new Set())
-    const toggleUserMessageExpanded = (id: string) => {
+    const toggleUserMessageExpanded = useCallback((id: string) => {
       setExpandedUserMessages((prev) => {
         const next = new Set(prev)
         if (next.has(id)) {
@@ -1028,7 +1040,7 @@ export const TranscriptPanel = memo(
         }
         return next
       })
-    }
+    }, [])
 
     // 1.0.6-TV2 — lifted ActivityStack expansion. Keyed by message id
     // (the tool row's id), value is the stack's set of open activity
@@ -1186,6 +1198,10 @@ export const TranscriptPanel = memo(
     } | null>(null)
     const highlightTimerRef = useRef<number | null>(null)
     const chatId = currentChat?.appChatId ?? null
+    const currentChatRenderSignature = useMemo(
+      () => transcriptChatRenderSignature(currentChat),
+      [currentChat]
+    )
     const previousChatIdRef = useRef<string | null>(chatId)
     useLayoutEffect(() => {
       if (previousChatIdRef.current === chatId) return
@@ -1194,6 +1210,7 @@ export const TranscriptPanel = memo(
       setExpandedUserMessages(new Set())
       setActivityExpansionByRow(new Map())
       setExpandedSubThreadResults(new Set())
+      rowElementCacheRef.current.clear()
       setHighlightedMessageTarget(null)
       setPendingFocusTarget(null)
       if (highlightTimerRef.current !== null) {
@@ -1353,6 +1370,13 @@ export const TranscriptPanel = memo(
           .filter((r): r is { msg: ChatMessage; rowKey: string } => Boolean(r))
       : displayMessages.map((msg, index) => ({ msg, rowKey: `${msg.id}#${index}` }))
 
+    useEffect(() => {
+      const mountedRowKeys = new Set(renderedRows.map((row) => row.rowKey))
+      for (const rowKey of rowElementCacheRef.current.keys()) {
+        if (!mountedRowKeys.has(rowKey)) rowElementCacheRef.current.delete(rowKey)
+      }
+    }, [renderedRows])
+
     useLayoutEffect(() => {
       if (!pendingFocusTarget) return
       if (focusMessageBlock(pendingFocusTarget.messageId, pendingFocusTarget.rowKey)) return
@@ -1437,7 +1461,87 @@ export const TranscriptPanel = memo(
                 ? highlightedMessageTarget.rowKey === rowKey
                 : highlightedMessageTarget.messageId === msg.id
               : false
-            return (
+            const activityExpansionIds = activityExpansionByRow.get(msg.id)
+            const pendingQuestionsForRow = pendingAgentQuestions.filter(
+              (question) => question.messageId === msg.id
+            )
+            const pendingPlanChoiceKey =
+              pendingPlanChoice && pendingPlanChoice.messageId === msg.id
+                ? [
+                    pendingPlanChoice.messageId,
+                    pendingPlanChoice.question,
+                    pendingPlanChoice.options.join('\u0000')
+                  ].join(':')
+                : ''
+            const pendingAgentQuestionsKey = pendingQuestionsForRow
+              .map((question) => `${question.questionId}:${question.askedAt}`)
+              .join('\u0000')
+            const auxiliaryKey =
+              isDelegationCard || isReturnCard
+                ? `${runningChatIds.join('\u0000')}|${chats
+                    .map((chat) => `${chat.appChatId}:${chat.title || ''}:${chat.updatedAt || ''}`)
+                    .join('\u0000')}`
+                : ''
+            const revealKey =
+              revealEnabled &&
+              revealChatIsRunning &&
+              (msg.id === lastDisplayedMessageId ||
+                (Boolean(revealRunId) && msg.runId === revealRunId))
+                ? `live:${revealRunId || ''}`
+                : 'plain'
+            const rowSignature: TranscriptRowRenderSignature = {
+              rowKey,
+              message: msg,
+              ...(boundaryRun ? { boundaryRun } : {}),
+              chatSignature: currentChatRenderSignature,
+              providerLabel: currentProviderLabel,
+              provider: currentProvider,
+              ...(currentWorkspacePath ? { workspacePath: currentWorkspacePath } : {}),
+              compactDensity,
+              liveActivityViewport,
+              isGlobal,
+              sideChatSeed: isSideChatSeedMessage,
+              highlighted: isPinnedMessageTarget,
+              copied: copiedId === msg.id,
+              pinned: isPinned,
+              expandedUser: expandedUserMessages.has(msg.id),
+              activityExpansionKey: activityExpansionIds
+                ? Array.from(activityExpansionIds).sort().join('\u0000')
+                : '',
+              subThreadExpanded: expandedSubThreadResults.has(msg.id),
+              pendingPlanChoiceKey,
+              pendingAgentQuestionsKey,
+              auxiliaryKey,
+              revealKey,
+              callbackRefs: [
+                onMessageSelectionCandidate,
+                onOpenSubThread,
+                onOpenSubThreadInSidePanel,
+                onInspectRun,
+                onOpenSideChatFromRun,
+                onCopyMessage,
+                onTogglePinMessage,
+                onDeleteMessage,
+                onOpenSideChatFromMessage,
+                onPromoteCollaboratorComment,
+                onPlanChoiceSubmit,
+                onProposedPlanApprove,
+                onProposedPlanDismiss,
+                onProposedPlanCustom,
+                onAgentQuestionSubmit,
+                onAgentQuestionDismiss,
+                onPreviewImage,
+                onDetachToPane,
+                setActivityExpansionForRow,
+                setSubThreadResultExpanded,
+                toggleUserMessageExpanded
+              ]
+            }
+            const cachedRow = rowElementCacheRef.current.get(rowKey)
+            if (cachedRow && transcriptRowRenderSignatureEqual(cachedRow.signature, rowSignature)) {
+              return cachedRow.element
+            }
+            const element = (
               <div
                 key={`message-block-${rowKey}`}
                 className={`transcript-message-block${
@@ -1517,9 +1621,7 @@ export const TranscriptPanel = memo(
                     chat={currentChat || undefined}
                     compactDensity={compactDensity}
                     liveActivityViewport={liveActivityViewport}
-                    expandedActivityIds={
-                      activityExpansionByRow.get(msg.id) ?? EMPTY_ACTIVITY_EXPANSION
-                    }
+                    expandedActivityIds={activityExpansionIds ?? EMPTY_ACTIVITY_EXPANSION}
                     onExpandedActivityIdsChange={(next) => setActivityExpansionForRow(msg.id, next)}
                   />
                 ) : msg.role === 'tool' ? (
@@ -1900,18 +2002,16 @@ export const TranscriptPanel = memo(
                         onCustom={(feedback) => onProposedPlanCustom(msg.id, feedback)}
                       />
                     )}
-                    {pendingAgentQuestions
-                      .filter((question) => question.messageId === msg.id)
-                      .map((question) => (
-                        <AgentQuestionCard
-                          key={question.questionId}
-                          state={question}
-                          onAnswer={(answer, isCustom) =>
-                            onAgentQuestionSubmit(question.questionId, answer, isCustom)
-                          }
-                          onDismiss={() => onAgentQuestionDismiss(question.questionId)}
-                        />
-                      ))}
+                    {pendingQuestionsForRow.map((question) => (
+                      <AgentQuestionCard
+                        key={question.questionId}
+                        state={question}
+                        onAnswer={(answer, isCustom) =>
+                          onAgentQuestionSubmit(question.questionId, answer, isCustom)
+                        }
+                        onDismiss={() => onAgentQuestionDismiss(question.questionId)}
+                      />
+                    ))}
                   </div>
                 )}
                 <TranscriptMessageFooter
@@ -1928,6 +2028,8 @@ export const TranscriptPanel = memo(
                 />
               </div>
             )
+            rowElementCacheRef.current.set(rowKey, { signature: rowSignature, element })
+            return element
           })}
           {virtualizeEnabled && (
             <div
