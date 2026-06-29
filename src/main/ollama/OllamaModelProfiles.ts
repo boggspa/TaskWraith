@@ -291,22 +291,3 @@ export function ollamaTierAwareWorkflowHint(
     'Do not attempt repo-wide refactors or full test-suite repair loops alone on a local model.'
   ].join(' ')
 }
-
-export function ollamaStruggleHandoffMessage(
-  modelLabel: string,
-  modelId?: string | null
-): string {
-  const family = resolveOllamaModelFamily(modelId || '')
-  if (family === 'ornith_9b' || family === 'ornith_35b' || /ornith/i.test(modelLabel)) {
-    return [
-      `${modelLabel} hit a local reliability limit (tool-loop cap or repeated malformed/tool-intent turns).`,
-      'I stopped the loop before burning more turns; keep the next attempt local and narrower rather than handing off to another provider.',
-      'Use concrete workspace tools for the next step, or ask the user which smaller local slice to tackle first.'
-    ].join(' ')
-  }
-  return [
-    `${modelLabel} hit a local reliability limit (tool-loop cap or repeated malformed/tool-intent turns).`,
-    'Consider delegating the remainder to Codex or Claude via ↪ delegate on this chat.',
-    'Attach your scout notes/plan in the delegation prompt so the cloud agent can implement without re-exploring.'
-  ].join(' ')
-}

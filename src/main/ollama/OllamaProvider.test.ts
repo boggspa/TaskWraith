@@ -20,7 +20,6 @@ import {
   ollamaRepeatedToolCallNudge,
   isOllamaNoActiveGoalToolResult,
   ollamaNoActiveGoalToolNudge,
-  advanceOllamaStallStreak,
   ollamaGoalLifecycleStopContent,
   shouldStopOllamaAfterGoalLifecycleTool,
   isDegenerateOllamaTurn,
@@ -230,23 +229,6 @@ function makeProviderDeps(
 afterEach(() => {
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
-})
-
-describe('advanceOllamaStallStreak', () => {
-  it('increments the streak and halts once consecutive non-progress turns reach the limit', () => {
-    expect(advanceOllamaStallStreak(0)).toEqual({ streak: 1, halt: false })
-    expect(advanceOllamaStallStreak(1)).toEqual({ streak: 2, halt: false })
-    expect(advanceOllamaStallStreak(2)).toEqual({ streak: 3, halt: true })
-  })
-
-  it('respects a custom limit', () => {
-    expect(advanceOllamaStallStreak(0, 2)).toEqual({ streak: 1, halt: false })
-    expect(advanceOllamaStallStreak(1, 2)).toEqual({ streak: 2, halt: true })
-  })
-
-  it('keeps halting once past the limit (resetting to 0 is the loop owner job)', () => {
-    expect(advanceOllamaStallStreak(3).halt).toBe(true)
-  })
 })
 
 describe('ollamaUsageStats', () => {
@@ -550,6 +532,7 @@ describe('runOllamaProvider streaming', () => {
   })
 
   it('does not stream raw JSON fallback tool protocol blobs', async () => {
+    let chatCalls = 0
     const fetchMock = vi.fn(async (url: string) => {
       if (String(url).endsWith('/api/tags')) {
         return jsonResponse({
@@ -567,6 +550,18 @@ describe('runOllamaProvider streaming', () => {
         return jsonResponse({ details: { family: 'qwen' }, capabilities: ['tools'] })
       }
       if (String(url).endsWith('/api/chat')) {
+        chatCalls += 1
+        if (chatCalls > 1) {
+          return ollamaStreamResponse([
+            JSON.stringify({
+              message: {
+                role: 'assistant',
+                content: 'README was read without leaking the tool blob.'
+              }
+            }),
+            JSON.stringify({ done: true, prompt_eval_count: 6, eval_count: 12 })
+          ])
+        }
         return ollamaStreamResponse([
           JSON.stringify({
             message: {
@@ -595,11 +590,13 @@ describe('runOllamaProvider streaming', () => {
     const contentTexts = lines
       .filter((line) => line.payload.type === 'content')
       .map((line) => line.payload.text)
+    expect(chatCalls).toBe(2)
     expect(contentTexts.some((text) => /taskwraith_tool|read_file/.test(text))).toBe(false)
     expect(lines.some((line) => line.payload.type === 'tool_use')).toBe(true)
   })
 
   it('does not leak split-prefix JSON fallback tool protocol blobs', async () => {
+    let chatCalls = 0
     const fetchMock = vi.fn(async (url: string) => {
       if (String(url).endsWith('/api/tags')) {
         return jsonResponse({
@@ -617,6 +614,18 @@ describe('runOllamaProvider streaming', () => {
         return jsonResponse({ details: { family: 'qwen' }, capabilities: ['tools'] })
       }
       if (String(url).endsWith('/api/chat')) {
+        chatCalls += 1
+        if (chatCalls > 1) {
+          return ollamaStreamResponse([
+            JSON.stringify({
+              message: {
+                role: 'assistant',
+                content: 'README was read without leaking the split tool blob.'
+              }
+            }),
+            JSON.stringify({ done: true, prompt_eval_count: 6, eval_count: 12 })
+          ])
+        }
         return ollamaStreamResponse([
           JSON.stringify({
             message: {
@@ -651,6 +660,7 @@ describe('runOllamaProvider streaming', () => {
     const contentTexts = lines
       .filter((line) => line.payload.type === 'content')
       .map((line) => line.payload.text)
+    expect(chatCalls).toBe(2)
     expect(contentTexts.join('\n')).not.toMatch(/I will use|taskwraith_tool|read_file/)
     expect(lines.some((line) => line.payload.type === 'tool_use')).toBe(true)
   })
@@ -1056,7 +1066,8 @@ describe('runOllamaProvider streaming', () => {
     expect(lines.some((line) => line.payload.tool_name === 'ollama_thinking')).toBe(false)
   })
 
-  it('does not leak tool-enabled thinking-only loops as final content', async () => {
+  it('keeps nudging tool-enabled thinking-only loops past the old local cap until final content', async () => {
+    let chatCalls = 0
     const fetchMock = vi.fn(async (url: string) => {
       if (String(url).endsWith('/api/tags')) {
         return jsonResponse({
@@ -1074,6 +1085,18 @@ describe('runOllamaProvider streaming', () => {
         return jsonResponse({ details: { family: 'qwen' }, capabilities: ['tools'] })
       }
       if (String(url).endsWith('/api/chat')) {
+        chatCalls += 1
+        if (chatCalls >= 10) {
+          return ollamaStreamResponse([
+            JSON.stringify({
+              message: {
+                role: 'assistant',
+                content: 'I inspected enough context and can now answer without cancelling.'
+              }
+            }),
+            JSON.stringify({ done: true, prompt_eval_count: 18, eval_count: 12 })
+          ])
+        }
         return ollamaStreamResponse([
           JSON.stringify({
             message: {
@@ -1093,10 +1116,10 @@ describe('runOllamaProvider streaming', () => {
     const contentTexts = lines
       .filter((line) => line.payload.type === 'content')
       .map((line) => line.payload.text)
-    expect(contentTexts).toEqual([
-      'stream-model:latest hit a local reliability limit (tool-loop cap or repeated malformed/tool-intent turns). Consider delegating the remainder to Codex or Claude via ↪ delegate on this chat. Attach your scout notes/plan in the delegation prompt so the cloud agent can implement without re-exploring.'
-    ])
+    expect(chatCalls).toBe(10)
+    expect(contentTexts).toEqual(['I inspected enough context and can now answer without cancelling.'])
     expect(contentTexts.join('\n')).not.toContain('Workspace coding task')
+    expect(lines.some((line) => line.payload.type === 'provider_warning')).toBe(false)
   })
 })
 

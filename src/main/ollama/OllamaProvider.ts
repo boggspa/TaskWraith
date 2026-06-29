@@ -48,7 +48,6 @@ import {
 import {
   ollamaLocalToolSystemPrompt,
   ollamaModelFamilyTemperature,
-  ollamaStruggleHandoffMessage
 } from './OllamaModelProfiles'
 import { buildOllamaMidRunTierBumpWarning } from './OllamaTierSuggestion'
 import {
@@ -299,30 +298,8 @@ export interface OllamaToolRequest {
   arguments: Record<string, unknown>
 }
 
-const OLLAMA_TOOL_LOOP_LIMIT = 8
 const OLLAMA_TOOL_RESULT_MAX_CHARS = 2400
 const OLLAMA_CHAT_TRANSPORT_RETRY_DELAYS_MS = [250, 750]
-
-// Consecutive non-progress turns (malformed JSON, tool-intent stub, empty /
-// reasoning-only, or degenerate) before a local run bails early to the
-// cloud-handoff instead of grinding the full OLLAMA_TOOL_LOOP_LIMIT. Distinct
-// from the repeated-identical-call guard (which redirects same-call loops) —
-// this catches a model emitting DIFFERENT malformed/tool-intent turns in a row.
-const OLLAMA_STALL_LIMIT = 3
-
-/**
- * Advance the consecutive-stall streak by one non-progress turn and decide
- * whether the local run should bail early to the cloud-handoff. Pure so it is
- * unit-testable; the run loop owns the counter and resets it to 0 on any
- * productive turn (a valid tool call dispatched, or final content emitted).
- */
-export function advanceOllamaStallStreak(
-  current: number,
-  limit = OLLAMA_STALL_LIMIT
-): { streak: number; halt: boolean } {
-  const streak = current + 1
-  return { streak, halt: streak >= limit }
-}
 const OLLAMA_LOCAL_TOOL_SERVER = 'TaskWraith-local'
 
 export interface OllamaOpeningMessagesInput {
@@ -1933,36 +1910,11 @@ export async function runOllamaProvider(
     let toolCallCount = 0
     let forceJsonToolFallback =
       toolProtocolEnabled && (!nativeToolsSupported || runProfile.protocolMode === 'json_only')
-    let finalContentEmitted = false
-    let loopLimitReached = false
     // Per-run (toolName+args) → result-signature store for the
     // repeated-tool-call guard: a model that re-issues an identical call
     // with an unchanged result gets a redirect instead of the re-dumped
     // output, so it stops burning its tool-loop budget re-reading files.
     const toolCallSignatures = new Map<string, string>()
-    // Consecutive non-progress turns this run; reset to 0 on any productive
-    // turn. After OLLAMA_STALL_LIMIT in a row, bail to the graceful
-    // cloud-handoff early instead of burning the rest of the tool-loop budget.
-    let consecutiveStallTurns = 0
-    const registerStallAndMaybeHalt = (): boolean => {
-      const { streak, halt } = advanceOllamaStallStreak(consecutiveStallTurns)
-      consecutiveStallTurns = streak
-      if (!halt) return false
-      loopLimitReached = true
-      deps.sendAgentCompatLine(
-        event.sender,
-        'ollama',
-        {
-          type: 'provider_warning',
-          id: 'ollama-tool-loop-limit',
-          severity: 'warning',
-          title: 'Ollama tool loop limit reached',
-          message: ollamaStruggleHandoffMessage(modelLabel, model)
-        },
-        route
-      )
-      return true
-    }
     const emitOllamaContent = (text: string): void => {
       if (!text) return
       deps.sendAgentCompatLine(
@@ -1989,7 +1941,7 @@ export async function runOllamaProvider(
       }
       return text
     }
-    for (let turnIndex = 0; turnIndex <= OLLAMA_TOOL_LOOP_LIMIT; turnIndex += 1) {
+    for (let turnIndex = 0; ; turnIndex += 1) {
       const jsonToolFallback =
         forceJsonToolFallback ||
         runProfile.protocolMode === 'json_fallback' ||
@@ -2180,8 +2132,7 @@ export async function runOllamaProvider(
         // Reasoning-only (or empty) turn while tools are available: nudge the
         // model to either call a tool or answer in prose rather than surfacing
         // hidden chain-of-thought as the final answer.
-        if (!hasContent && toolProtocolEnabled && turnIndex < OLLAMA_TOOL_LOOP_LIMIT) {
-          if (registerStallAndMaybeHalt()) break
+        if (!hasContent && toolProtocolEnabled) {
           messages.push({
             role: 'user',
             content:
@@ -2191,8 +2142,7 @@ export async function runOllamaProvider(
           })
           continue
         }
-        if (!visibleText.trim() && turnIndex < OLLAMA_TOOL_LOOP_LIMIT) {
-          if (registerStallAndMaybeHalt()) break
+        if (!visibleText.trim()) {
           messages.push({
             role: 'user',
             content:
@@ -2209,10 +2159,8 @@ export async function runOllamaProvider(
         if (
           hasContent &&
           toolProtocolEnabled &&
-          turnIndex < OLLAMA_TOOL_LOOP_LIMIT &&
           looksLikeLeakedOllamaToolProtocol(turn.content)
         ) {
-          if (registerStallAndMaybeHalt()) break
           forceJsonToolFallback = true
           messages.push({ role: 'assistant', content: turn.content })
           messages.push({ role: 'user', content: ollamaMalformedToolJsonNudgePrompt() })
@@ -2225,10 +2173,8 @@ export async function runOllamaProvider(
         if (
           hasContent &&
           toolProtocolEnabled &&
-          turnIndex < OLLAMA_TOOL_LOOP_LIMIT &&
           looksLikeOllamaToolIntent(turn.content, availableToolNames)
         ) {
-          if (registerStallAndMaybeHalt()) break
           forceJsonToolFallback = true
           messages.push({ role: 'assistant', content: turn.content })
           messages.push({
@@ -2239,64 +2185,18 @@ export async function runOllamaProvider(
         }
         const outputTokens =
           typeof lastDone?.eval_count === 'number' ? lastDone.eval_count : null
-        if (
-          turnIndex < OLLAMA_TOOL_LOOP_LIMIT &&
-          isDegenerateOllamaTurn(turn, visibleText, toolRequests.length, outputTokens)
-        ) {
-          if (registerStallAndMaybeHalt()) break
+        if (isDegenerateOllamaTurn(turn, visibleText, toolRequests.length, outputTokens)) {
           if (turn.content.trim()) {
             messages.push({ role: 'assistant', content: turn.content })
           }
           messages.push({ role: 'user', content: ollamaDegenerateResponseNudgePrompt() })
           continue
         }
-        if (
-          turnIndex >= OLLAMA_TOOL_LOOP_LIMIT &&
-          toolProtocolEnabled &&
-          (!visibleText.trim() ||
-            looksLikeLeakedOllamaToolProtocol(turn.content) ||
-            looksLikeOllamaToolIntent(turn.content, availableToolNames) ||
-            isDegenerateOllamaTurn(turn, visibleText, toolRequests.length, outputTokens))
-        ) {
-          loopLimitReached = true
-          deps.sendAgentCompatLine(
-            event.sender,
-            'ollama',
-            {
-              type: 'provider_warning',
-              id: 'ollama-tool-loop-limit',
-              severity: 'warning',
-              title: 'Ollama tool loop limit reached',
-              message: ollamaStruggleHandoffMessage(modelLabel, model)
-            },
-            route
-          )
-          break
-        }
         if (visibleText) {
-          finalContentEmitted = true
           emitOllamaContent(unstreamedOllamaContent(visibleText, turn.streamedContent))
         }
         break
       }
-      if (turnIndex >= OLLAMA_TOOL_LOOP_LIMIT) {
-        loopLimitReached = true
-        deps.sendAgentCompatLine(
-          event.sender,
-          'ollama',
-          {
-            type: 'provider_warning',
-            id: 'ollama-tool-loop-limit',
-            severity: 'warning',
-            title: 'Ollama tool loop limit reached',
-            message: ollamaStruggleHandoffMessage(modelLabel, model)
-          },
-          route
-        )
-        break
-      }
-      // A productive turn (a valid tool call this iteration) resets the stall streak.
-      consecutiveStallTurns = 0
       // Echo the assistant's native tool-call turn so the model keeps a coherent
       // transcript across the stateless HTTP loop.
       let goalLifecycleStopContent: string | null = null
@@ -2431,7 +2331,6 @@ export async function runOllamaProvider(
           ? ollamaGoalLifecycleStopContent(toolRequest.toolName)
           : null
         if (goalLifecycleStopContent) {
-          finalContentEmitted = true
           deps.sendAgentCompatLine(
             event.sender,
             'ollama',
@@ -2490,27 +2389,6 @@ export async function runOllamaProvider(
       if (goalLifecycleStopContent) {
         break
       }
-    }
-
-    if (loopLimitReached && !finalContentEmitted) {
-      // Graceful local-model handoff instead of throwing. The model exhausted
-      // its tool budget / stalled out with no final answer; surface the handoff
-      // guidance as the run's CONTENT so the user gets an actionable
-      // "delegate to Codex/Claude" message rather than an opaque STDERR error.
-      // (The provider_warning chip already fired at the loop-limit branch.)
-      deps.sendAgentCompatLine(
-        event.sender,
-        'ollama',
-        {
-          type: 'content',
-          text: ollamaStruggleHandoffMessage(modelLabel, model),
-          model,
-          modelLabel,
-          timestamp: new Date().toISOString()
-        },
-        route
-      )
-      finalContentEmitted = true
     }
 
     if (chatId && deps.saveOllamaSessionMemory && sessionMemory.toolTurnCount > 0) {

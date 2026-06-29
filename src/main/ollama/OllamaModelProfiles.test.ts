@@ -3,7 +3,6 @@ import {
   ollamaLocalToolSystemPrompt,
   ollamaModelFamilyPromptLines,
   ollamaScoutDelegateWorkflowHint,
-  ollamaStruggleHandoffMessage,
   ollamaTierAwareWorkflowHint
 } from './OllamaModelProfiles'
 
@@ -114,12 +113,5 @@ describe('workflow hints', () => {
     expect(ollamaTierAwareWorkflowHint('ornith:9b', 'provider_parity')).toContain(
       'Ornith should attempt scoped coding work locally first'
     )
-  })
-
-  it('suggests cloud handoff after struggle', () => {
-    expect(ollamaStruggleHandoffMessage('Qwen 3.5 (9B Param)')).toContain('Codex or Claude')
-    const ornith = ollamaStruggleHandoffMessage('Ornith 1.0 (9B Param)', 'ornith:9b')
-    expect(ornith).toContain('keep the next attempt local')
-    expect(ornith).not.toContain('Codex or Claude')
   })
 })
