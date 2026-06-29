@@ -18418,6 +18418,7 @@ function parseWorkspacePopoutInput(input: unknown): {
   kind: WorkspacePopoutKind
   workspacePath?: string
   chatId?: string
+  targetPath?: string
 } {
   if (!isRecord(input)) {
     throw new Error('Popout request is invalid.')
@@ -18445,38 +18446,72 @@ function parseWorkspacePopoutInput(input: unknown): {
     requireNonEmptyString(input.workspacePath, 'Workspace'),
     'Workspace'
   )
-  return { kind, workspacePath }
+  return {
+    kind,
+    workspacePath,
+    targetPath:
+      kind === 'file-editor' || kind === 'workbench'
+        ? normalizeWorkspacePopoutTargetPath(input.targetPath)
+        : undefined
+  }
 }
 
 async function loadWorkspacePopoutWindow(
   win: BrowserWindow,
   kind: WorkspacePopoutKind,
   workspacePath: string | undefined,
-  chatId?: string
+  chatId?: string,
+  targetPath?: string
 ): Promise<void> {
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
     const target = new URL(process.env['ELECTRON_RENDERER_URL'])
     target.searchParams.set('popout', kind)
     if (workspacePath) target.searchParams.set('workspace', workspacePath)
     if (chatId) target.searchParams.set('chat', chatId)
+    if (targetPath) target.searchParams.set('file', targetPath)
     await win.loadURL(target.toString())
     return
   }
   const query: Record<string, string> = { popout: kind }
   if (workspacePath) query.workspace = workspacePath
   if (chatId) query.chat = chatId
+  if (targetPath) query.file = targetPath
   await win.loadFile(join(__dirname, '../renderer/index.html'), {
     query
   })
 }
 
+function normalizeWorkspacePopoutTargetPath(input: unknown): string | undefined {
+  if (input === undefined || input === null || input === '') return undefined
+  const raw = requireNonEmptyString(input, 'Target file').replace(/\\/g, '/')
+  if (raw.includes('\0') || isAbsolute(raw) || /^[A-Za-z]:\//.test(raw)) {
+    throw new Error('Target file must be a workspace-relative path.')
+  }
+  const segments = raw.split('/').filter((segment) => segment && segment !== '.')
+  if (segments.length === 0 || segments.some((segment) => segment === '..')) {
+    throw new Error('Target file must be a workspace-relative path.')
+  }
+  return segments.join('/')
+}
+
+function sendWorkspacePopoutOpenFile(
+  win: BrowserWindow,
+  workspacePath: string,
+  path: string
+): void {
+  safeSendToWebContents(win, 'workspace-popout-open-file', { workspacePath, path })
+}
+
 async function openWorkspacePopout(input: unknown): Promise<{ ok: true }> {
-  const { kind, workspacePath, chatId } = parseWorkspacePopoutInput(input)
+  const { kind, workspacePath, chatId, targetPath } = parseWorkspacePopoutInput(input)
   const key = kind === 'chat' ? `chat:${chatId}` : `${kind}:${workspacePath}`
   const existing = workspacePopoutWindows.get(key)
   if (existing && !existing.isDestroyed()) {
     if (existing.isMinimized()) existing.restore()
     existing.focus()
+    if (workspacePath && targetPath && (kind === 'file-editor' || kind === 'workbench')) {
+      sendWorkspacePopoutOpenFile(existing, workspacePath, targetPath)
+    }
     return { ok: true }
   }
 
@@ -18542,7 +18577,7 @@ async function openWorkspacePopout(input: unknown): Promise<{ ok: true }> {
       workspacePopoutWindows.delete(key)
     }
   })
-  await loadWorkspacePopoutWindow(win, kind, workspacePath, chatId)
+  await loadWorkspacePopoutWindow(win, kind, workspacePath, chatId, targetPath)
   return { ok: true }
 }
 

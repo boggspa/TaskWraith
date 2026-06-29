@@ -298,7 +298,11 @@ const api = {
   getDiff: (workspace: string) => ipcRenderer.invoke('get-diff', workspace),
   openWorkspacePopout: (
     input:
-      | { kind: 'file-editor' | 'diff-studio' | 'workbench'; workspacePath: string }
+      | {
+          kind: 'file-editor' | 'diff-studio' | 'workbench'
+          workspacePath: string
+          targetPath?: string
+        }
       | { kind: 'chat'; chatId: string; workspacePath?: string }
   ) => ipcRenderer.invoke('open-workspace-popout', input) as Promise<{ ok: true }>,
   dockSideChatPopout: (input: {
@@ -1434,6 +1438,14 @@ const api = {
     ipcRenderer.on('workspace-popout-refresh', wrapped)
     return () => ipcRenderer.removeListener('workspace-popout-refresh', wrapped)
   },
+  onWorkspacePopoutOpenFile: (
+    callback: (payload: { workspacePath: string; path: string }) => void
+  ) => {
+    const wrapped = (_event: unknown, payload: { workspacePath: string; path: string }): void =>
+      callback(payload)
+    ipcRenderer.on('workspace-popout-open-file', wrapped)
+    return () => ipcRenderer.removeListener('workspace-popout-open-file', wrapped)
+  },
   onSideChatDockRequest: (
     callback: (payload: {
       chatId: string
@@ -1512,6 +1524,7 @@ const api = {
     ipcRenderer.removeAllListeners('run-trusted-media-refs')
     ipcRenderer.removeAllListeners('app-shell-stats-changed')
     ipcRenderer.removeAllListeners('workspace-popout-refresh')
+    ipcRenderer.removeAllListeners('workspace-popout-open-file')
     ipcRenderer.removeAllListeners('side-chat:dock-request')
     ipcRenderer.removeAllListeners('creative-action:request')
   }

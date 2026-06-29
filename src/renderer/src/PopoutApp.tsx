@@ -8,6 +8,11 @@ type PopoutKind = 'file-editor' | 'diff-studio' | 'workbench' | 'permission-help
 
 type WorkspaceDiff = Awaited<ReturnType<typeof window.api.getDiff>>
 
+interface PopoutOpenFileRequest {
+  path: string
+  nonce: number
+}
+
 const parsePopoutKind = (value: string | null): PopoutKind | null => {
   return value === 'file-editor' ||
     value === 'diff-studio' ||
@@ -32,9 +37,13 @@ export function PopoutApp() {
   const params = useMemo(() => new URLSearchParams(window.location.search), [])
   const kind = parsePopoutKind(params.get('popout'))
   const workspacePath = params.get('workspace') || ''
+  const targetFilePath = params.get('file') || ''
   const [diff, setDiff] = useState<WorkspaceDiff | null>(null)
   const [status, setStatus] = useState('')
   const [dirtyBufferCount, setDirtyBufferCount] = useState(0)
+  const [openFileRequest, setOpenFileRequest] = useState<PopoutOpenFileRequest | null>(() =>
+    targetFilePath ? { path: targetFilePath, nonce: 1 } : null
+  )
   // File Editor receives this as an in-place refresh signal. Do not
   // remount the panel here: open tabs and dirty buffers live inside it.
   const [fileEditorRefreshTick, setFileEditorRefreshTick] = useState(0)
@@ -94,6 +103,20 @@ export function PopoutApp() {
       unsubscribe?.()
     }
   }, [kind, workspacePath, refreshDiff])
+
+  useEffect(() => {
+    if (!workspacePath || (kind !== 'file-editor' && kind !== 'workbench')) return
+    const unsubscribe = window.api.onWorkspacePopoutOpenFile((payload) => {
+      if (payload.workspacePath !== workspacePath || !payload.path) return
+      setOpenFileRequest((current) => ({
+        path: payload.path,
+        nonce: (current?.nonce ?? 0) + 1
+      }))
+    })
+    return () => {
+      unsubscribe?.()
+    }
+  }, [kind, workspacePath])
 
   useEffect(() => {
     if (kind !== 'file-editor' && kind !== 'workbench') {
@@ -168,6 +191,7 @@ export function PopoutApp() {
           <FileEditorPanel
             workspacePath={workspacePath}
             refreshTick={fileEditorRefreshTick}
+            openRequest={openFileRequest}
             onDirtyChange={setDirtyBufferCount}
           />
         ) : kind === 'diff-studio' ? (
@@ -179,6 +203,7 @@ export function PopoutApp() {
             workspacePath={workspacePath}
             workspaceName={workspaceName}
             refreshTick={fileEditorRefreshTick}
+            openFileRequest={openFileRequest}
             onDirtyChange={setDirtyBufferCount}
           />
         )}

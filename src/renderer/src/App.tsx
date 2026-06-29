@@ -14346,11 +14346,12 @@ function App(): React.JSX.Element {
   )
 
   const openFileChangeInWorkbench = useCallback(
-    () => {
+    (summary: DiffFileSummary) => {
       if (!currentWorkspacePopoutPath) return
       void window.api.openWorkspacePopout({
         kind: 'workbench',
-        workspacePath: currentWorkspacePopoutPath
+        workspacePath: currentWorkspacePopoutPath,
+        targetPath: summary.status === 'deleted' ? undefined : summary.path
       })
     },
     [currentWorkspacePopoutPath]

@@ -23,6 +23,7 @@ interface TaskWraithWorkbenchProps {
   workspacePath: string
   workspaceName: string
   refreshTick: number
+  openFileRequest?: EditorOpenRequest | null
   onDirtyChange?: (dirtyBufferCount: number) => void
 }
 
@@ -33,6 +34,7 @@ export function TaskWraithWorkbench({
   workspacePath,
   workspaceName,
   refreshTick,
+  openFileRequest,
   onDirtyChange
 }: TaskWraithWorkbenchProps) {
   const [activeView, setActiveView] = useState<WorkbenchView>('editor')
@@ -121,6 +123,11 @@ export function TaskWraithWorkbench({
     }))
     setStatus(`Opening ${path}`)
   }, [])
+
+  useEffect(() => {
+    if (!openFileRequest) return
+    openFileInEditor(openFileRequest.path)
+  }, [openFileInEditor, openFileRequest])
 
   const stageDiffFile = useCallback(
     async (path: string) => {

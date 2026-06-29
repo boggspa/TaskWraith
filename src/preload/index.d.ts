@@ -621,6 +621,7 @@ declare global {
           | {
               kind: 'file-editor' | 'diff-studio' | 'workbench'
               workspacePath: string
+              targetPath?: string
             }
           | {
               kind: 'chat'
@@ -1639,6 +1640,9 @@ declare global {
       onAppShellStatsChanged: (callback: (snapshot: AppShellStatsSnapshot) => void) => () => void
       onWorkspacePopoutRefresh: (
         callback: (payload: { workspacePath: string; reason: string }) => void
+      ) => () => void
+      onWorkspacePopoutOpenFile: (
+        callback: (payload: { workspacePath: string; path: string }) => void
       ) => () => void
       onSideChatDockRequest: (
         callback: (payload: {
