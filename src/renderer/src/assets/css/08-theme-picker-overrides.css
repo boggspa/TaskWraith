@@ -664,6 +664,31 @@
   opacity: 0.5;
   cursor: not-allowed;
 }
+.ollama-model-install-modal {
+  max-width: 560px;
+}
+.ollama-model-install-command {
+  display: grid;
+  gap: 6px;
+  margin: 4px 0 18px;
+  font-size: var(--font-size-xs);
+  color: color-mix(in srgb, var(--text-tertiary) 92%, transparent);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.ollama-model-install-command input {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid color-mix(in srgb, var(--panel-border) 58%, transparent);
+  border-radius: 7px;
+  padding: 10px 12px;
+  background: color-mix(in srgb, var(--text-primary) 8%, var(--panel-elevated-bg));
+  color: var(--text-primary);
+  font-family: var(--font-family-mono);
+  font-size: calc(var(--font-size-sm) - 1px);
+  text-transform: none;
+  letter-spacing: 0;
+}
 
 .creative-approval-modal-eyebrow {
   font-size: 10px;

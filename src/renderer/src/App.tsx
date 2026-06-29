@@ -30,6 +30,11 @@ import { coerceLiveProvider, DEFAULT_PROVIDER, isRetiredProvider } from '../../s
 import { sanitizeRawProviderMediaRefs } from '../../shared/transcriptMediaRefSanitize'
 import { normalizeThreadTitle } from '../../shared/threadTitles'
 import {
+  buildOllamaPullCommand,
+  isOllamaModelInstalled,
+  normalizeOllamaModelKey
+} from '../../shared/ollamaModelAvailability'
+import {
   mergeRunStreamRenderMetrics,
   recordRunFlushMetric,
   recordRunItemMetric,
@@ -991,6 +996,48 @@ interface AuditRunNoticeState {
   message: string
 }
 
+interface OllamaModelInstallPrompt {
+  modelId: string
+  modelLabel: string
+  command: string | null
+  status: 'missing' | 'offline' | 'unknown'
+  error?: string
+}
+
+function mergeOllamaModelCatalog(models?: CodexModelOption[] | null): CodexModelOption[] {
+  const byKey = new Map<string, CodexModelOption>()
+  const add = (model: CodexModelOption): void => {
+    if (!model?.id || model.id === 'custom') return
+    const key = normalizeOllamaModelKey(model.id)
+    if (!key) return
+    const previous = byKey.get(key)
+    byKey.set(key, {
+      ...previous,
+      ...model,
+      label: model.label || previous?.label || model.id
+    })
+  }
+  for (const model of OLLAMA_DEFAULT_MODELS) add(model)
+  const liveDefaultKey = Array.isArray(models)
+    ? normalizeOllamaModelKey(models.find((model) => model.isDefault)?.id)
+    : ''
+  if (liveDefaultKey) {
+    for (const [key, model] of byKey) {
+      byKey.set(key, { ...model, isDefault: key === liveDefaultKey })
+    }
+  }
+  if (Array.isArray(models)) {
+    for (const model of models) add(model)
+  }
+  return [
+    ...byKey.values(),
+    OLLAMA_DEFAULT_MODELS.find((model) => model.id === 'custom') || {
+      id: 'custom',
+      label: 'Custom model ID'
+    }
+  ]
+}
+
 function App(): React.JSX.Element {
   // Shared copy-to-clipboard feedback for every in-app copy affordance
   // (message chips, latest-response button). One instance keeps the
@@ -1341,6 +1388,10 @@ function App(): React.JSX.Element {
   const [agentModelsByProvider, setAgentModelsByProvider] = useState<
     Partial<Record<ProviderId, CodexModelOption[]>>
   >({})
+  const [ollamaModelInstallPrompt, setOllamaModelInstallPrompt] =
+    useState<OllamaModelInstallPrompt | null>(null)
+  const ollamaInstalledModelKeysRef = useRef<Set<string>>(new Set())
+  const ollamaAvailabilityRequestSeqRef = useRef(0)
   const [providerCapabilitiesByProvider, setProviderCapabilitiesByProvider] = useState<
     Partial<Record<ProviderId, ProviderCapabilityContract>>
   >({})
@@ -3666,7 +3717,7 @@ function App(): React.JSX.Element {
     if (provider === 'gemini') return GEMINI_DEFAULT_MODELS
     if (provider === 'grok') return GROK_DEFAULT_MODELS
     if (provider === 'cursor') return CURSOR_DEFAULT_MODELS
-    if (provider === 'ollama') return agentModelsByProvider.ollama || OLLAMA_DEFAULT_MODELS
+    if (provider === 'ollama') return mergeOllamaModelCatalog(agentModelsByProvider.ollama)
     return []
   }
 
@@ -3677,9 +3728,12 @@ function App(): React.JSX.Element {
     if (provider === 'grok') return GROK_DEFAULT_MODEL
     if (provider === 'cursor') return 'composer-2.5-fast'
     if (provider === 'ollama') {
-      return agentModelsByProvider.ollama?.find((model) => model.isDefault)?.id ||
-        agentModelsByProvider.ollama?.[0]?.id ||
+      const ollamaModels = mergeOllamaModelCatalog(agentModelsByProvider.ollama)
+      return (
+        ollamaModels.find((model) => model.isDefault)?.id ||
+        ollamaModels.find((model) => model.id !== 'custom')?.id ||
         OLLAMA_DEFAULT_MODEL
+      )
     }
     return GEMINI_DEFAULT_MODEL
   }
@@ -3701,6 +3755,116 @@ function App(): React.JSX.Element {
     if (provider === 'ollama') return isOllamaModelId(modelId)
     return isGeminiModelId(modelId)
   }
+
+  const rememberOllamaInstalledModels = useCallback((models: unknown): string[] => {
+    if (!Array.isArray(models)) return []
+    const ids = models
+      .map((model) => String((model as { id?: unknown })?.id || '').trim())
+      .filter(Boolean)
+    const installedKeys = ollamaInstalledModelKeysRef.current
+    for (const id of ids) installedKeys.add(normalizeOllamaModelKey(id))
+    return ids
+  }, [])
+
+  const refreshOllamaModelsFromStatus = useCallback((status: any): string[] => {
+    const installedIds = rememberOllamaInstalledModels(status?.models)
+    if (Array.isArray(status?.models)) {
+      setAgentModelsByProvider((prev) => ({
+        ...prev,
+        ollama: mergeOllamaModelCatalog(
+          status.models.map((model: CodexModelOption) => ({
+            ...model,
+            label: model.label || model.id
+          }))
+        )
+      }))
+    }
+    return installedIds
+  }, [rememberOllamaInstalledModels])
+
+  const getOllamaModelLabel = useCallback(
+    (modelId: string, label?: string): string => {
+      const explicit = String(label || '').trim()
+      if (explicit) return explicit
+      return (
+        mergeOllamaModelCatalog(agentModelsByProvider.ollama).find((model) =>
+          isOllamaModelInstalled(modelId, [model.id])
+        )?.label ||
+        humaniseModelId('ollama', modelId) ||
+        modelId
+      )
+    },
+    [agentModelsByProvider.ollama]
+  )
+
+  const checkOllamaModelAvailability = useCallback(
+    async (modelId: string, label?: string): Promise<void> => {
+      const trimmedModelId = String(modelId || '').trim()
+      if (!trimmedModelId || trimmedModelId === 'custom') return
+      const requestedKey = normalizeOllamaModelKey(trimmedModelId)
+      if (ollamaInstalledModelKeysRef.current.has(requestedKey)) return
+
+      const cachedInstalledIds = rememberOllamaInstalledModels(agentStatusByProvider.ollama?.models)
+      if (isOllamaModelInstalled(trimmedModelId, cachedInstalledIds)) {
+        ollamaInstalledModelKeysRef.current.add(requestedKey)
+        return
+      }
+
+      if (typeof window.api.getAgentStatus !== 'function') return
+      const requestSeq = ++ollamaAvailabilityRequestSeqRef.current
+      const modelLabel = getOllamaModelLabel(trimmedModelId, label)
+      try {
+        const status = await window.api.getAgentStatus('ollama')
+        if (requestSeq !== ollamaAvailabilityRequestSeqRef.current) return
+        setAgentStatusByProvider((prev) => ({ ...prev, ollama: status }))
+        const installedIds = refreshOllamaModelsFromStatus(status)
+        if (isOllamaModelInstalled(trimmedModelId, installedIds)) {
+          ollamaInstalledModelKeysRef.current.add(requestedKey)
+          return
+        }
+        if (!status?.available) {
+          setOllamaModelInstallPrompt({
+            modelId: trimmedModelId,
+            modelLabel,
+            command: null,
+            status: 'offline',
+            error: status?.error
+          })
+          return
+        }
+        if (!Array.isArray(status?.models)) {
+          setOllamaModelInstallPrompt({
+            modelId: trimmedModelId,
+            modelLabel,
+            command: null,
+            status: 'unknown'
+          })
+          return
+        }
+        setOllamaModelInstallPrompt({
+          modelId: trimmedModelId,
+          modelLabel,
+          command: buildOllamaPullCommand(trimmedModelId),
+          status: 'missing'
+        })
+      } catch (error) {
+        if (requestSeq !== ollamaAvailabilityRequestSeqRef.current) return
+        setOllamaModelInstallPrompt({
+          modelId: trimmedModelId,
+          modelLabel,
+          command: null,
+          status: 'offline',
+          error: error instanceof Error ? error.message : String(error)
+        })
+      }
+    },
+    [
+      agentStatusByProvider.ollama?.models,
+      getOllamaModelLabel,
+      refreshOllamaModelsFromStatus,
+      rememberOllamaInstalledModels
+    ]
+  )
 
   const getLastRequestedModelForProvider = (
     chat: ChatRecord,
@@ -4008,9 +4172,11 @@ function App(): React.JSX.Element {
             provider === 'kimi'
               ? KIMI_DEFAULT_MODELS
               : provider === 'ollama'
-                ? Array.isArray(models) && models.length > 0
-                  ? models.map((model) => ({ ...model, label: model.label || model.id }))
-                  : OLLAMA_DEFAULT_MODELS
+                ? mergeOllamaModelCatalog(
+                    Array.isArray(models)
+                      ? models.map((model) => ({ ...model, label: model.label || model.id }))
+                      : []
+                  )
               : Array.isArray(models) && models.length > 0
                 ? models.map((model) => ({ ...model, label: model.label || model.id }))
                 : provider === 'claude'
@@ -4029,7 +4195,7 @@ function App(): React.JSX.Element {
           if (provider === 'kimi')
             setAgentModelsByProvider((prev) => ({ ...prev, kimi: KIMI_DEFAULT_MODELS }))
           if (provider === 'ollama')
-            setAgentModelsByProvider((prev) => ({ ...prev, ollama: OLLAMA_DEFAULT_MODELS }))
+            setAgentModelsByProvider((prev) => ({ ...prev, ollama: mergeOllamaModelCatalog([]) }))
         })
     }
     window.api
@@ -5052,6 +5218,9 @@ function App(): React.JSX.Element {
     setPendingAgentApproval(null)
     window.api.updateSettings({ activeProvider: provider }).catch(() => {})
     void refreshProviderMetadata(provider, isCurrentGlobalChat ? null : undefined)
+    if (provider === 'ollama') {
+      void checkOllamaModelAvailability(nextModel, getOllamaModelLabel(nextModel))
+    }
     const usageWorkspaceId =
       getUsageWorkspaceIdForChat(currentChat) || currentWorkspaceIdRef.current || undefined
     if (usageWorkspaceId) {
@@ -15786,6 +15955,9 @@ function App(): React.JSX.Element {
       ? sideComposerSelection.selectedModelType
       : getDefaultModelForProvider(sideComposerProvider)
     : getDefaultModelForProvider(sideComposerProvider)
+  const sideShouldAppendCustomModelOption =
+    sideComposerProvider !== 'kimi' &&
+    !sideComposerModelOptionsRaw.some((model) => model.id === 'custom')
   const sideComposerModelOptions: CombinedModelPickerModelOption[] = [
     ...sideComposerModelOptionsRaw.map((model) => {
       const retiresAtRaw = (model as { retiresAt?: unknown }).retiresAt
@@ -15800,7 +15972,7 @@ function App(): React.JSX.Element {
         ...(retiresAt ? { retiresAt } : {})
       }
     }),
-    ...(sideComposerProvider !== 'kimi' ? [{ id: 'custom', label: 'Custom…' }] : [])
+    ...(sideShouldAppendCustomModelOption ? [{ id: 'custom', label: 'Custom…' }] : [])
   ]
   const sideCodexModelOption =
     sideComposerProvider === 'codex'
@@ -15962,9 +16134,15 @@ function App(): React.JSX.Element {
       updatedAt: Date.now()
     }))
     void refreshProviderMetadata(provider, sideWorkspace?.path)
+    if (provider === 'ollama') {
+      void checkOllamaModelAvailability(nextModel, getOllamaModelLabel(nextModel))
+    }
   }
   const handleSideModelChange = (nextModel: string): void => {
     if (!sideChat) return
+    if (sideComposerProvider === 'ollama') {
+      void checkOllamaModelAvailability(nextModel, getOllamaModelLabel(nextModel))
+    }
     const metadataPatch: Record<string, unknown> = { selectedModelType: nextModel }
     if (sideComposerProvider === 'codex') {
       const modelOption = codexModels.find((model) => model.id === nextModel)
@@ -16568,6 +16746,9 @@ function App(): React.JSX.Element {
     isValidModelForProvider(guestComposerProvider, currentGuestParticipant.selectedModelType)
       ? currentGuestParticipant.selectedModelType
       : getDefaultModelForProvider(guestComposerProvider)
+  const guestShouldAppendCustomModelOption =
+    guestComposerProvider !== 'kimi' &&
+    !guestComposerModelOptionsRaw.some((model) => model.id === 'custom')
   const guestComposerModelOptions: CombinedModelPickerModelOption[] = [
     ...guestComposerModelOptionsRaw.map((model) => {
       const retiresAtRaw = (model as { retiresAt?: unknown }).retiresAt
@@ -16582,7 +16763,7 @@ function App(): React.JSX.Element {
         ...(retiresAt ? { retiresAt } : {})
       }
     }),
-    ...(guestComposerProvider !== 'kimi' ? [{ id: 'custom', label: 'Custom…' }] : [])
+    ...(guestShouldAppendCustomModelOption ? [{ id: 'custom', label: 'Custom…' }] : [])
   ]
   const guestCodexModelOption =
     guestComposerProvider === 'codex'
@@ -16761,6 +16942,9 @@ function App(): React.JSX.Element {
   }
   const handleGuestProviderChange = (provider: ProviderId): void => {
     const model = getDefaultModelForProvider(provider)
+    if (provider === 'ollama') {
+      void checkOllamaModelAvailability(model, getOllamaModelLabel(model))
+    }
     void setGuestParticipantForCurrentChat({
       provider,
       selectedModelType: model,
@@ -16783,6 +16967,9 @@ function App(): React.JSX.Element {
     })
   }
   const handleGuestModelChange = (nextModel: string): void => {
+    if (guestComposerProvider === 'ollama') {
+      void checkOllamaModelAvailability(nextModel, getOllamaModelLabel(nextModel))
+    }
     const patch: Partial<NonNullable<ChatRecord['guestParticipant']>> = {
       selectedModelType: nextModel
     }
@@ -19827,8 +20014,11 @@ function App(): React.JSX.Element {
         updatedAt: Date.now()
       }))
       void refreshProviderMetadata(provider, paneWorkspace?.path)
+      if (provider === 'ollama') {
+        void checkOllamaModelAvailability(nextModel, getOllamaModelLabel(nextModel))
+      }
     },
-    [updateChatById]
+    [checkOllamaModelAvailability, getOllamaModelLabel, updateChatById]
   )
   const handleMultiviewPaneToggleGrant = useCallback(
     async (_paneIndex: number, chatId: string, service: AgenticServiceId, enabled: boolean) => {
@@ -21225,6 +21415,7 @@ function App(): React.JSX.Element {
       multiview,
       ollamaProviderParityActiveForCurrentWorkspace,
       ollamaToolControlTier,
+      onOllamaModelSelected: checkOllamaModelAvailability,
       overestimatePercent,
       patchEnsembleParticipantById,
       pendingApprovalQueueByChatId,
@@ -21294,6 +21485,7 @@ function App(): React.JSX.Element {
       applyEnsemblePermissionsToAllParticipants,
       applyEnsembleRosterPreset,
       chatByIdRef,
+      checkOllamaModelAvailability,
       codexModels,
       composerAboveBarStackAuraClass,
       composerAgentAuraClass,
@@ -24370,6 +24562,90 @@ function App(): React.JSX.Element {
             void next()
           }}
         />
+      )}
+      {ollamaModelInstallPrompt && (
+        <div
+          className="creative-approval-backdrop"
+          role="presentation"
+          onMouseDown={() => setOllamaModelInstallPrompt(null)}
+        >
+          <div
+            className="creative-approval-modal ollama-model-install-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="ollama-model-install-title"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <header className="creative-approval-modal-header">
+              <span className="creative-approval-modal-eyebrow" aria-hidden>
+                Ollama model check
+              </span>
+              <h2 id="ollama-model-install-title" className="creative-approval-modal-title">
+                {ollamaModelInstallPrompt.status === 'missing'
+                  ? `${ollamaModelInstallPrompt.modelLabel} is not installed`
+                  : `Could not verify ${ollamaModelInstallPrompt.modelLabel}`}
+              </h2>
+            </header>
+            {ollamaModelInstallPrompt.status === 'missing' ? (
+              <p className="creative-approval-modal-description">
+                TaskWraith checked Ollama at <code>{ollamaBaseUrl}</code> and did not find{' '}
+                <code>{ollamaModelInstallPrompt.modelId}</code>. Run this on the machine hosting
+                Ollama, then select the model again.
+              </p>
+            ) : (
+              <p className="creative-approval-modal-description">
+                TaskWraith could not read Ollama&apos;s installed model list at{' '}
+                <code>{ollamaBaseUrl}</code>. Start Ollama or update the endpoint in Settings, then
+                select the model again.
+              </p>
+            )}
+            {ollamaModelInstallPrompt.error && (
+              <p className="creative-approval-modal-description approval-elevation-caution">
+                {ollamaModelInstallPrompt.error}
+              </p>
+            )}
+            {ollamaModelInstallPrompt.command ? (
+              <label className="ollama-model-install-command">
+                <span>Install command</span>
+                <input
+                  readOnly
+                  value={ollamaModelInstallPrompt.command}
+                  onFocus={(event) => event.currentTarget.select()}
+                  aria-label="Ollama install command"
+                />
+              </label>
+            ) : (
+              <p className="creative-approval-modal-description approval-elevation-caution">
+                No install command was generated because the model could not be confirmed missing.
+              </p>
+            )}
+            <footer className="creative-approval-modal-actions">
+              <button
+                type="button"
+                className="creative-approval-modal-reject"
+                onClick={() => setOllamaModelInstallPrompt(null)}
+              >
+                Close
+              </button>
+              {ollamaModelInstallPrompt.command && (
+                <button
+                  type="button"
+                  className="creative-approval-modal-approve-once"
+                  onClick={() =>
+                    copy(
+                      `ollama-model-install:${ollamaModelInstallPrompt.modelId}`,
+                      ollamaModelInstallPrompt.command || ''
+                    )
+                  }
+                >
+                  {copiedId === `ollama-model-install:${ollamaModelInstallPrompt.modelId}`
+                    ? 'Copied'
+                    : 'Copy command'}
+                </button>
+              )}
+            </footer>
+          </div>
+        </div>
       )}
       {ollamaComposerParityAck && (
         <div

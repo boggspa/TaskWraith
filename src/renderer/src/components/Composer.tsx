@@ -294,6 +294,7 @@ export interface ComposerProps {
   multiview: any
   ollamaProviderParityActiveForCurrentWorkspace: any
   ollamaToolControlTier: any
+  onOllamaModelSelected?: (modelId: string, modelLabel?: string) => void
   onRequestOllamaTier4Ack: (chatId?: string | null, workspacePath?: string | null) => void
   openDiscordContextPicker: any
   openGoalPopover: any
@@ -570,6 +571,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     markPersistentSessionRestartNeeded,
     multiview,
     ollamaToolControlTier,
+    onOllamaModelSelected,
     onRequestOllamaTier4Ack,
     openDiscordContextPicker,
     openGoalPopover,
@@ -3389,6 +3391,9 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             ensembleResolved?.provider === 'claude'
                               ? ensembleResolved.fastModeEnabled
                               : claudeFastMode
+                          const shouldAppendCustomModelOption =
+                            effectiveProvider !== 'kimi' &&
+                            !effectiveModelOptionsRaw.some((model) => model.id === 'custom')
 
                           const combinedModelOptions: CombinedModelPickerModelOption[] = [
                             ...effectiveModelOptionsRaw.map((model) => {
@@ -3412,7 +3417,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                 ...(retiresAt ? { retiresAt } : {})
                               }
                             }),
-                            ...(effectiveProvider !== 'kimi'
+                            ...(shouldAppendCustomModelOption
                               ? [{ id: 'custom', label: 'Custom…' }]
                               : [])
                           ]
@@ -3462,6 +3467,13 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                           }
 
                           const handleCombinedModelChange = (nextModel: string) => {
+                            if (effectiveProvider === 'ollama') {
+                              onOllamaModelSelected?.(
+                                nextModel,
+                                combinedModelOptions.find((option) => option.id === nextModel)
+                                  ?.label
+                              )
+                            }
                             if (ensembleBinding) {
                               const patch: Partial<EnsembleParticipant> = { model: nextModel }
                               // Drop fast-mode if the new model can't support
