@@ -1855,12 +1855,13 @@ public enum BridgeAction {
     }
 
     public static func workspaceFileDelete(
-        workspaceId: String, path: String,
+        workspaceId: String, path: String, baseEtag: String,
         actionId: String = UUID().uuidString
     ) -> [String: Any] {
         encode([
             "kind": "workspaceFileDelete", "actionId": actionId,
             "workspaceId": workspaceId, "path": path,
+            "baseEtag": baseEtag,
         ])
     }
 

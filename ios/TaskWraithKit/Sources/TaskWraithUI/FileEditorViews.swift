@@ -315,12 +315,12 @@ final class MobileFileEditorState: ObservableObject {
     }
 
     func deleteSelected(model: RemoteSessionModel) async {
-        guard let workspaceId = selectedWorkspaceId, let selectedPath, !isDirty else { return }
+        guard let workspaceId = selectedWorkspaceId, let selectedPath, let baseEtag, !isDirty else { return }
         isLoading = true
         status = "Deleting \(selectedPath)"
         do {
             let deletedPath = try await model.deleteWorkspaceFile(
-                workspaceId: workspaceId, path: selectedPath)
+                workspaceId: workspaceId, path: selectedPath, baseEtag: baseEtag)
             clearEditor()
             status = "Deleted \(deletedPath)"
             await refreshParentDirectory(for: deletedPath, model: model)

@@ -226,6 +226,7 @@ export interface BridgeWorkspaceFileDeleteAction extends BridgeActionMetadata {
   kind: 'workspaceFileDelete'
   workspaceId: string
   path: string
+  baseEtag: string
 }
 
 /** On-demand bounded workspace diff (the iOS Diff Studio). Read-only —
@@ -1030,7 +1031,7 @@ function coerceToPayload(parsed: unknown): BridgeActionPayload {
         ? (parsed as unknown as BridgeWorkspaceFileWriteAction)
         : { kind: 'unknown', rawKind: 'workspaceFileWrite', raw: parsed }
     case 'workspaceFileDelete':
-      return isWorkspaceFileRead(parsed)
+      return isWorkspaceFileDelete(parsed)
         ? (parsed as unknown as BridgeWorkspaceFileDeleteAction)
         : { kind: 'unknown', rawKind: 'workspaceFileDelete', raw: parsed }
     case 'workspaceDiff':
@@ -1472,6 +1473,14 @@ function isWorkspaceFileWrite(v: Record<string, unknown>): boolean {
     isWorkspaceRelativeFilePath(v.path) &&
     typeof v.content === 'string' &&
     v.content.length <= BRIDGE_WORKSPACE_FILE_WRITE_MAX_CHARS &&
+    typeof v.baseEtag === 'string' &&
+    v.baseEtag.trim().length > 0
+  )
+}
+
+function isWorkspaceFileDelete(v: Record<string, unknown>): boolean {
+  return (
+    isWorkspaceFileRead(v) &&
     typeof v.baseEtag === 'string' &&
     v.baseEtag.trim().length > 0
   )

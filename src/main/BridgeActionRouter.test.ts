@@ -1866,7 +1866,12 @@ describe('BridgeActionRouter', () => {
           baseEtag: 'sha256:abc',
           method: 'executeWorkspaceFileWrite'
         },
-        { kind: 'workspaceFileDelete', path: 'README.md', method: 'executeWorkspaceFileDelete' },
+        {
+          kind: 'workspaceFileDelete',
+          path: 'README.md',
+          baseEtag: 'sha256:def',
+          method: 'executeWorkspaceFileDelete'
+        },
         { kind: 'workspaceDiff', method: 'executeWorkspaceDiff' }
       ]
 
@@ -1900,6 +1905,7 @@ describe('BridgeActionRouter', () => {
         payloadBase64: encodeFileAction({
           kind: 'workspaceFileDelete',
           path: 'README.md',
+          baseEtag: 'sha256:def',
         })
       })) as { accepted: boolean; reasonCode?: string; message?: string }
 

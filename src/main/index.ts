@@ -21423,6 +21423,7 @@ if (isGeminiMcpBridgeProcess) {
             workspaceId: workspace.id,
             workspacePath: workspace.path,
             filePath: action.path,
+            baseEtag: action.baseEtag,
             origin: 'ios-file-editor',
             recordChange: (input) => AppStore.recordWorkspaceEditorChange(input)
           })

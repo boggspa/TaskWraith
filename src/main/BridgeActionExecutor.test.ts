@@ -197,7 +197,8 @@ const sample = {
   workspaceFileDelete: {
     kind: 'workspaceFileDelete',
     workspaceId: 'ws-1',
-    path: 'README.md'
+    path: 'README.md',
+    baseEtag: 'sha256:def'
   } satisfies BridgeWorkspaceFileDeleteAction,
   workspaceDiff: {
     kind: 'workspaceDiff',

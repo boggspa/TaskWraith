@@ -3168,14 +3168,14 @@ public final class RemoteSessionModel: ObservableObject {
         return file
     }
 
-    public func deleteWorkspaceFile(workspaceId: String, path: String) async throws -> String {
+    public func deleteWorkspaceFile(workspaceId: String, path: String, baseEtag: String) async throws -> String {
         if isDemo {
             demoFileEdits.removeValue(forKey: path)
             lastActionMessage = "Deleted (demo)."
             return path
         }
         let ack = try await requestFileAction(
-            BridgeAction.workspaceFileDelete(workspaceId: workspaceId, path: path),
+            BridgeAction.workspaceFileDelete(workspaceId: workspaceId, path: path, baseEtag: baseEtag),
             timeoutMs: 16_000)
         return ack.data?.path ?? path
     }
