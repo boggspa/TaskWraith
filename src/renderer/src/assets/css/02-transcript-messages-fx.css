@@ -2014,7 +2014,7 @@
 .transcript-user-gutter-marker {
   appearance: none;
   position: absolute;
-  left: -5px;
+  left: -3px;
   width: 32px;
   height: 18px;
   margin: 0;
@@ -2062,14 +2062,14 @@
 .transcript-user-gutter-edge {
   appearance: none;
   position: absolute;
-  left: -1px;
+  left: -5px;
   width: 24px;
   height: 24px;
   margin: 0;
   padding: 0;
-  border: 1px solid color-mix(in srgb, var(--panel-border) 72%, transparent);
+  border: 0;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--app-bg-elevated) 74%, transparent);
+  background: transparent;
   color: color-mix(in srgb, var(--text-primary) 78%, var(--accent) 22%);
   cursor: pointer;
   pointer-events: auto;
@@ -2080,17 +2080,12 @@
   font-size: 13px;
   font-weight: 700;
   line-height: 1;
-  box-shadow:
-    0 8px 20px rgba(0, 0, 0, 0.18),
-    inset 0 1px 0 color-mix(in srgb, white 12%, transparent);
-  backdrop-filter: blur(18px) saturate(1.12);
-  -webkit-backdrop-filter: blur(18px) saturate(1.12);
+  text-shadow: 0 0 10px color-mix(in srgb, var(--accent) 42%, transparent);
   transition:
     transform 120ms ease,
-    border-color 120ms ease,
-    background 120ms ease,
     color 120ms ease,
-    box-shadow 120ms ease;
+    opacity 120ms ease,
+    text-shadow 120ms ease;
 }
 
 .transcript-user-gutter-edge--top {
@@ -2099,19 +2094,15 @@
 }
 
 .transcript-user-gutter-edge--bottom {
-  bottom: 0;
-  transform: translateY(50%);
+  bottom: auto;
+  transform: translateY(-50%);
 }
 
 .transcript-user-gutter-edge:hover,
 .transcript-user-gutter-edge:focus-visible {
-  border-color: color-mix(in srgb, var(--accent) 52%, var(--panel-border));
-  background: color-mix(in srgb, var(--app-bg-elevated) 66%, var(--accent) 18%);
   color: color-mix(in srgb, var(--text-primary) 92%, var(--accent) 8%);
-  box-shadow:
-    0 10px 24px rgba(0, 0, 0, 0.24),
-    0 0 0 1px color-mix(in srgb, var(--accent) 20%, transparent),
-    inset 0 1px 0 color-mix(in srgb, white 16%, transparent);
+  opacity: 1;
+  text-shadow: 0 0 14px color-mix(in srgb, var(--accent) 58%, transparent);
 }
 
 .transcript-user-gutter-edge--top:hover,
@@ -2121,7 +2112,7 @@
 
 .transcript-user-gutter-edge--bottom:hover,
 .transcript-user-gutter-edge--bottom:focus-visible {
-  transform: translateY(50%) scale(1.04);
+  transform: translateY(-50%) scale(1.04);
 }
 
 .transcript-user-gutter-edge:focus-visible {

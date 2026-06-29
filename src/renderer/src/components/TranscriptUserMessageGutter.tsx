@@ -23,6 +23,7 @@ interface ActiveMarkerState {
 }
 
 const EDGE_CONTROL_SLOT_PX = 24
+const EDGE_CONTROL_GAP_PX = 22
 
 interface TranscriptUserMessageGutterProps {
   markers: readonly TranscriptUserGutterMarker[]
@@ -180,13 +181,33 @@ export function TranscriptUserMessageGutter({
 
   useLayoutEffect(() => {
     updateFrame()
-    if (typeof ResizeObserver === 'undefined') return
+    const frameIds: number[] = []
+    let timeoutId: number | null = null
+    if (typeof window !== 'undefined') {
+      const scheduleFrame = () => {
+        frameIds.push(window.requestAnimationFrame(updateFrame))
+      }
+      frameIds.push(
+        window.requestAnimationFrame(() => {
+          updateFrame()
+          scheduleFrame()
+        })
+      )
+      timeoutId = window.setTimeout(updateFrame, 160)
+    }
+    let observer: ResizeObserver | null = null
     const scroller = scrollRef.current
     const content = contentRef.current
-    const observer = new ResizeObserver(() => updateFrame())
-    if (scroller) observer.observe(scroller)
-    if (content) observer.observe(content)
-    return () => observer.disconnect()
+    if (typeof ResizeObserver !== 'undefined') {
+      observer = new ResizeObserver(() => updateFrame())
+      if (scroller) observer.observe(scroller)
+      if (content) observer.observe(content)
+    }
+    return () => {
+      observer?.disconnect()
+      for (const frameId of frameIds) window.cancelAnimationFrame(frameId)
+      if (timeoutId !== null) window.clearTimeout(timeoutId)
+    }
   }, [contentRef, scrollRef, updateFrame])
 
   useEffect(() => {
@@ -201,15 +222,26 @@ export function TranscriptUserMessageGutter({
   )
   const markerTrackTop = frame ? EDGE_CONTROL_SLOT_PX : 0
   const markerTrackHeight = frame ? Math.max(60, frame.height - EDGE_CONTROL_SLOT_PX * 2) : 0
-  const markerLayoutByKey = useMemo(() => {
+  const markerLayout = useMemo(() => {
     if (!frame) return null
-    return new Map(
-      layoutTranscriptUserGutterMarkers(markers, markerTrackHeight).map((layout) => [
-        layout.key,
-        layout.topPx
-      ])
-    )
+    return layoutTranscriptUserGutterMarkers(markers, markerTrackHeight)
   }, [frame, markerTrackHeight, markers])
+  const markerLayoutByKey = useMemo(() => {
+    if (!markerLayout) return null
+    return new Map(markerLayout.map((layout) => [layout.key, layout.topPx]))
+  }, [markerLayout])
+  const markerStackBounds = useMemo(() => {
+    if (!frame || !markerLayout || markerLayout.length === 0) return null
+    const markerCenters = markerLayout.map((layout) => markerTrackTop + layout.topPx)
+    const first = Math.min(...markerCenters)
+    const last = Math.max(...markerCenters)
+    return {
+      first,
+      last,
+      topEdge: clamp(first - EDGE_CONTROL_GAP_PX, 0, frame.height),
+      bottomEdge: clamp(last + EDGE_CONTROL_GAP_PX, 0, frame.height)
+    }
+  }, [frame, markerLayout, markerTrackTop])
 
   const cancelDismiss = useCallback(() => {
     if (dismissTimerRef.current !== null) {
@@ -272,6 +304,7 @@ export function TranscriptUserMessageGutter({
       <button
         type="button"
         className="transcript-user-gutter-edge transcript-user-gutter-edge--top"
+        style={markerStackBounds ? { top: markerStackBounds.topEdge } : undefined}
         onClick={onJumpToStart}
         aria-label="Jump to beginning of thread"
         title="Jump to beginning"
@@ -327,6 +360,7 @@ export function TranscriptUserMessageGutter({
       <button
         type="button"
         className="transcript-user-gutter-edge transcript-user-gutter-edge--bottom"
+        style={markerStackBounds ? { top: markerStackBounds.bottomEdge } : undefined}
         onClick={onJumpToEnd}
         aria-label="Jump to latest message"
         title="Jump to latest"

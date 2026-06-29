@@ -1403,6 +1403,7 @@ export const TranscriptPanel = memo(
       >
         {userMessageGutterEnabled !== false && (
           <TranscriptUserMessageGutter
+            key={currentChat?.appChatId || 'transcript-user-gutter'}
             markers={userGutterMarkers}
             scrollRef={scrollRef}
             contentRef={contentRef}
