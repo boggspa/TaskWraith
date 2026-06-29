@@ -97,7 +97,7 @@
   background:
     radial-gradient(
       125% 65% at 50% -10%,
-      var(--tw-glass-sheen, rgba(168, 194, 255, 0.26)),
+      var(--tw-glass-sheen, rgba(196, 200, 208, 0.18)),
       transparent 55%
     ),
     linear-gradient(

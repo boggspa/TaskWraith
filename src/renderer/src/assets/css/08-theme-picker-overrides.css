@@ -2005,7 +2005,7 @@
   background:
     radial-gradient(
       130% 80% at 50% -8%,
-      var(--tw-glass-sheen, rgba(168, 194, 255, 0.26)),
+      var(--tw-glass-sheen, rgba(196, 200, 208, 0.18)),
       transparent 58%
     ),
     linear-gradient(
@@ -8718,7 +8718,7 @@
   background:
     radial-gradient(
       120% 80% at 50% -8%,
-      var(--tw-glass-sheen, rgba(150, 178, 255, 0.16)),
+      var(--tw-glass-sheen, rgba(196, 200, 208, 0.11)),
       transparent 62%
     ),
     linear-gradient(
@@ -8751,7 +8751,7 @@
 }
 
 /* Light-theme specular INVERSION for the sheen. The dark base sheen is
- * a cool tint; on light themes the tokens already flip to near-white
+ * a neutral tint; on light themes the tokens already flip to near-white
  * low-alpha (see theme.css light block), but we slightly soften the
  * diagonal so the bright frosted surface never blows out. */
 :root[data-advanced-fx-refraction="true"]
