@@ -13,11 +13,19 @@ import type {
 import {
   buildWorkspaceBoardProjectedCards,
   workspaceBoardColumnLabel,
+  type WorkspaceBoardAttentionState,
   type WorkspaceBoardProjectedCard
 } from '../lib/workspaceBoardProjection'
 
 const ACTIVE_RUN_QUEUE_STATUSES = new Set(['queued', 'starting', 'active', 'steer_promoting', 'cancelling'])
 const STALE_THREAD_AGE_MS = 7 * 24 * 60 * 60 * 1000
+const ATTENTION_FILTER_STATES = new Set<WorkspaceBoardAttentionState>([
+  'running',
+  'needs-input',
+  'blocked',
+  'review-ready',
+  'stale'
+])
 
 interface LinkOption {
   value: string
@@ -184,6 +192,50 @@ function titleForJob(job: RunQueueJob): string {
   return job.promptPreview || job.request?.displayPrompt || job.request?.prompt || job.runId || 'Run queue job'
 }
 
+function normalizeCardSearch(value: string): string[] {
+  return value
+    .trim()
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(Boolean)
+}
+
+export function isWorkspaceBoardAttentionMatch(projected: WorkspaceBoardProjectedCard): boolean {
+  return ATTENTION_FILTER_STATES.has(projected.attentionState)
+}
+
+export function workspaceBoardProjectedCardMatchesSearch(
+  projected: WorkspaceBoardProjectedCard,
+  query: string
+): boolean {
+  const tokens = normalizeCardSearch(query)
+  if (tokens.length === 0) return true
+  const link = projected.card.link
+  const searchable = [
+    projected.card.title,
+    projected.card.body,
+    projected.card.humanOwner,
+    projected.card.blockedReason,
+    projected.card.nextStep,
+    projected.card.reminderAt,
+    projected.card.labels?.join(' '),
+    projected.laneLabel,
+    projected.statusLabel,
+    projected.derivedStatus,
+    projected.linkedTitle,
+    projected.linkedSubtitle,
+    projected.linkedKindLabel,
+    projected.liveStatusDetail,
+    projected.staleReason,
+    projected.badges.map((badge) => `${badge.label} ${badge.title || ''}`).join(' '),
+    link ? `${link.kind} ${link.id}` : undefined
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase()
+  return tokens.every((token) => searchable.includes(token))
+}
+
 export function WorkspaceBoardView({
   board,
   workspace,
@@ -202,6 +254,8 @@ export function WorkspaceBoardView({
   const [title, setTitle] = useState('')
   const [body, setBody] = useState('')
   const [linkValue, setLinkValue] = useState('')
+  const [cardSearch, setCardSearch] = useState('')
+  const [showAttentionOnly, setShowAttentionOnly] = useState(false)
   const [isAdding, setIsAdding] = useState(false)
   const [isSeeding, setIsSeeding] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -294,6 +348,19 @@ export function WorkspaceBoardView({
       }),
     [cards, chats, workflows, scheduledTasks, runQueueJobs, runningChatIds]
   )
+  const activeProjectedCards = useMemo(
+    () => projectedCards.filter((projected) => !projected.card.archived && projected.columnId !== 'archived'),
+    [projectedCards]
+  )
+  const filteredProjectedCards = useMemo(
+    () =>
+      activeProjectedCards.filter((projected) => {
+        if (showAttentionOnly && !isWorkspaceBoardAttentionMatch(projected)) return false
+        return workspaceBoardProjectedCardMatchesSearch(projected, cardSearch)
+      }),
+    [activeProjectedCards, cardSearch, showAttentionOnly]
+  )
+  const isFiltered = cardSearch.trim().length > 0 || showAttentionOnly
 
   const seedCandidates = useMemo<SeedCandidate[]>(() => {
     if (!board) return []
@@ -369,7 +436,7 @@ export function WorkspaceBoardView({
 
   const cardsByColumn = new Map<WorkspaceBoardColumnId, WorkspaceBoardProjectedCard[]>()
   for (const column of board.columns) cardsByColumn.set(column.id, [])
-  for (const card of projectedCards) {
+  for (const card of filteredProjectedCards) {
     const bucket = cardsByColumn.get(card.columnId) || []
     bucket.push(card)
     cardsByColumn.set(card.columnId, bucket)
@@ -587,7 +654,7 @@ export function WorkspaceBoardView({
           <h2>{board.name}</h2>
         </div>
         <div className="workspace-board-summary" aria-label="Board summary">
-          <span>{cards.filter((card) => !card.archived).length} cards</span>
+          <span>{activeProjectedCards.length} cards</span>
           <span>{workspaceChats.length} workspace threads</span>
           <span>{workspaceWorkflows.length} workflows</span>
         </div>
@@ -652,6 +719,42 @@ export function WorkspaceBoardView({
         </button>
       </form>
 
+      <div className="workspace-board-toolbar" aria-label="Board card filters">
+        <label className="workspace-board-search">
+          <span>Search cards</span>
+          <input
+            type="search"
+            value={cardSearch}
+            onChange={(event) => setCardSearch(event.currentTarget.value)}
+            placeholder="Search cards, links, owners"
+          />
+        </label>
+        <button
+          type="button"
+          className={`workspace-board-filter-toggle ${showAttentionOnly ? 'active' : ''}`}
+          aria-pressed={showAttentionOnly}
+          onClick={() => setShowAttentionOnly((value) => !value)}
+        >
+          Needs attention
+        </button>
+        {isFiltered && (
+          <button
+            type="button"
+            className="workspace-board-filter-clear"
+            onClick={() => {
+              setCardSearch('')
+              setShowAttentionOnly(false)
+            }}
+          >
+            Clear
+          </button>
+        )}
+        <span className="workspace-board-visible-count">
+          {filteredProjectedCards.length} shown
+          {isFiltered ? ` of ${activeProjectedCards.length}` : ''}
+        </span>
+      </div>
+
       <div className="workspace-board-columns">
         {board.columns
           .filter((column) => column.id !== 'archived')
@@ -678,7 +781,9 @@ export function WorkspaceBoardView({
                 </div>
                 <div className="workspace-board-card-stack">
                   {columnCards.length === 0 ? (
-                    <div className="workspace-board-column-empty">No cards</div>
+                    <div className="workspace-board-column-empty">
+                      {isFiltered ? 'No matching cards' : 'No cards'}
+                    </div>
                   ) : (
                     columnCards.map((projected) => (
                       <article

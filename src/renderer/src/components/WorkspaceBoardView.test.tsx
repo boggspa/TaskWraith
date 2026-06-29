@@ -6,7 +6,12 @@ import type {
   WorkspaceBoardDefinition,
   WorkspaceRecord
 } from '../../../main/store/types'
-import { WorkspaceBoardView } from './WorkspaceBoardView'
+import { buildWorkspaceBoardProjectedCards } from '../lib/workspaceBoardProjection'
+import {
+  isWorkspaceBoardAttentionMatch,
+  WorkspaceBoardView,
+  workspaceBoardProjectedCardMatchesSearch
+} from './WorkspaceBoardView'
 
 const board: WorkspaceBoardDefinition = {
   id: 'board-1',
@@ -79,6 +84,9 @@ describe('WorkspaceBoardView', () => {
 
     expect(html).toContain('Repo Board')
     expect(html).toContain('Add card')
+    expect(html).toContain('Search cards')
+    expect(html).toContain('Needs attention')
+    expect(html).toContain('1 shown')
     expect(html).toContain('Open')
     expect(html).toContain('Archive')
     expect(html).toContain('Details')
@@ -87,5 +95,41 @@ describe('WorkspaceBoardView', () => {
     }
     expect(html).not.toContain('Remove')
     expect(html).not.toContain('&gt;Run&lt;')
+  })
+
+  it('matches card filters against linked metadata and attention state', () => {
+    const projected = buildWorkspaceBoardProjectedCards({
+      cards: [
+        {
+          ...card,
+          title: 'Fix launch checklist',
+          body: 'Needs visual QA',
+          humanOwner: 'Avery',
+          labels: ['release'],
+          nextStep: 'Review screenshots'
+        }
+      ],
+      chats: [
+        {
+          ...chat,
+          title: 'Screenshot QA thread',
+          runs: [
+            {
+              runId: 'run-1',
+              startedAt: '2026-06-29T00:00:00.000Z',
+              status: 'success'
+            }
+          ]
+        }
+      ],
+      workflows: [],
+      scheduledTasks: [],
+      runQueueJobs: []
+    })[0]
+
+    expect(workspaceBoardProjectedCardMatchesSearch(projected, 'screenshot codex')).toBe(true)
+    expect(workspaceBoardProjectedCardMatchesSearch(projected, 'avery release')).toBe(true)
+    expect(workspaceBoardProjectedCardMatchesSearch(projected, 'billing')).toBe(false)
+    expect(isWorkspaceBoardAttentionMatch(projected)).toBe(true)
   })
 })
