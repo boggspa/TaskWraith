@@ -143,6 +143,7 @@ import {
   formatKeyCommandBinding,
   getKeyCommandForEvent,
   resolveKeyCommandBindings,
+  shouldSuppressKeyCommandForTarget,
   type KeyCommandId
 } from './lib/keyCommands'
 import {
@@ -15056,7 +15057,11 @@ function App(): React.JSX.Element {
         tagName === 'select'
       )
       const command = getKeyCommandForEvent(event, resolvedKeyCommandBindings)
-      if (!command || (isEditableTarget && !command.allowWhenEditable)) {
+      if (
+        !command ||
+        shouldSuppressKeyCommandForTarget(command, target) ||
+        (isEditableTarget && !command.allowWhenEditable)
+      ) {
         return
       }
 

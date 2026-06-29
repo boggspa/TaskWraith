@@ -5,7 +5,8 @@ import {
   findKeyCommandConflict,
   formatKeyCommandBinding,
   getKeyCommandForEvent,
-  resolveKeyCommandBindings
+  resolveKeyCommandBindings,
+  shouldSuppressKeyCommandForTarget
 } from './keyCommands'
 
 function keyEvent(input: {
@@ -16,6 +17,13 @@ function keyEvent(input: {
   altKey?: boolean
 }): KeyboardEvent {
   return input as KeyboardEvent
+}
+
+function closestTarget(matches: boolean): EventTarget {
+  return {
+    closest: (selector: string) =>
+      selector.includes('.file-editor-code-surface') && matches ? ({} as Element) : null
+  } as unknown as EventTarget
 }
 
 describe('key command bindings', () => {
@@ -90,5 +98,18 @@ describe('key command bindings', () => {
     )
 
     expect(conflict?.id).toBe('command-palette')
+  })
+
+  it('suppresses app shortcuts inside the file editor CodeMirror surface', () => {
+    expect(shouldSuppressKeyCommandForTarget({ id: 'run-prompt' }, closestTarget(true))).toBe(true)
+    expect(shouldSuppressKeyCommandForTarget({ id: 'command-palette' }, closestTarget(true))).toBe(
+      true
+    )
+    expect(shouldSuppressKeyCommandForTarget({ id: 'close-overlays' }, closestTarget(true))).toBe(
+      false
+    )
+    expect(shouldSuppressKeyCommandForTarget({ id: 'run-prompt' }, closestTarget(false))).toBe(
+      false
+    )
   })
 })

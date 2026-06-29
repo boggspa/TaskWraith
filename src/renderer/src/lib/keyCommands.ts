@@ -309,6 +309,24 @@ export const getKeyCommandForEvent = (
   return null
 }
 
+export const isFileEditorCodeTarget = (target: EventTarget | null): boolean => {
+  const candidate = target as
+    | (EventTarget & { closest?: (selector: string) => Element | null })
+    | null
+  if (typeof candidate?.closest !== 'function') return false
+  return Boolean(
+    candidate.closest('.file-editor-code-surface .cm-editor, .file-editor-code-surface .cm-content')
+  )
+}
+
+export const shouldSuppressKeyCommandForTarget = (
+  command: Pick<KeyCommandDefinition, 'id'> | null,
+  target: EventTarget | null
+): boolean => {
+  if (!command || command.id === 'close-overlays') return false
+  return isFileEditorCodeTarget(target)
+}
+
 export const formatKeyCommandBinding = (
   binding: KeyCommandBinding | null | undefined
 ): string[] => {
