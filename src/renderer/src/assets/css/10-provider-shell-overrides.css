@@ -3639,6 +3639,81 @@
   opacity: 0 !important;
 }
 
+/* Native default — propagate the refractive composer material to
+ * the merged above-row cap. The main composer body owns a real
+ * `.composer-refraction-lens` child; these rows are siblings outside
+ * that surface, so the stack gets its own static, pointer-inert lens.
+ * Guard with `:not(:empty)` because React always renders the stack. */
+[data-composer-style="default"] .app-transcript .composer-above-bar-stack:empty {
+  display: none;
+}
+:root[data-advanced-fx-refraction="true"][data-composer-style="default"]
+  .app-transcript
+  .composer-area
+  > .composer-above-bar-stack:not(:empty) {
+  position: relative;
+  isolation: isolate;
+}
+:root[data-advanced-fx-refraction="true"][data-composer-style="default"]
+  .app-transcript
+  .composer-area
+  > .composer-above-bar-stack:not(:empty)::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: 0;
+  background:
+    radial-gradient(
+      140% 100% at 50% -12%,
+      var(--tw-glass-sheen, rgba(168, 194, 255, 0.26)),
+      transparent 58%
+    ),
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--tw-glass-sheen, #fff) 85%, transparent) 0%,
+      transparent 32%,
+      transparent 68%,
+      color-mix(in srgb, var(--tw-glass-sheen, #fff) 45%, transparent) 100%
+    );
+  box-shadow:
+    inset 0 1px 0 var(--tw-glass-rim-light, rgba(255, 255, 255, 0.58)),
+    inset 0 0 0 1px color-mix(in srgb, var(--tw-glass-rim-light, #fff) 12%, transparent);
+  contain: layout paint;
+}
+:root[data-advanced-fx-refraction="true"][data-composer-style="default"]:is(
+    [data-theme="light"],
+    [data-theme="mist"],
+    [data-theme="sage"]
+  )
+  .app-transcript
+  .composer-area
+  > .composer-above-bar-stack:not(:empty)::before {
+  mix-blend-mode: screen;
+}
+:root[data-reduce-transparency="true"][data-composer-style="default"]
+  .app-transcript
+  .composer-area
+  > .composer-above-bar-stack::before {
+  display: none;
+}
+[data-composer-style="default"]
+  .app-transcript
+  .composer-area
+  > .composer-above-bar-stack:not(:empty)
+  > * {
+  position: relative;
+  z-index: 1;
+}
+[data-composer-style="default"]
+  .app-transcript
+  .composer-area
+  > .composer-above-bar-stack:not(:empty)
+  > * + * {
+  border-top: 1px solid color-mix(in srgb, var(--text-primary) 12%, transparent) !important;
+}
+
 /* Codex/Grok workspace rows — use the same three-zone alignment for
  * primary and secondary workspace metadata. The center zone is only the
  * files-changed + diff group; left/right zones absorb the spacer. */
