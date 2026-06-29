@@ -1561,6 +1561,12 @@ export interface AppSettings {
    * cards. Defaults to true; optional so older settings files keep showing the
    * card until the user explicitly disables it. */
   showRunCompleteSummary?: boolean
+  /** Settings → General toggle: collapse older Ensemble rounds into
+   * expandable round cards in the transcript (the most recent / active
+   * round stays expanded). Defaults to true; optional so older settings
+   * files default to the collapsed-card behaviour. Set false to restore
+   * the flat per-message transcript. */
+  ensembleCollapseOlderRounds?: boolean
   /**
    * Sidebar Model Usage card view toggle. `'plan'` (default) shows the
    * PLAN-subsidised quota meters; `'spend'` shows per-provider API/SDK

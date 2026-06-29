@@ -98,6 +98,7 @@ const SETTINGS_PATCH_KEYS = new Set<keyof AppSettings>([
   'currency',
   'currencyOverestimatePercent',
   'showRunCompleteSummary',
+  'ensembleCollapseOlderRounds',
   'modelUsagePanelView',
   'modelUsageExternalUsage',
   'dashboardStatPrefs',
@@ -1253,6 +1254,10 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
     if ('showRunCompleteSummary' in sanitized) {
       const value = sanitized.showRunCompleteSummary
       sanitized.showRunCompleteSummary = typeof value === 'boolean' ? value : Boolean(value)
+    }
+    if ('ensembleCollapseOlderRounds' in sanitized) {
+      const value = sanitized.ensembleCollapseOlderRounds
+      sanitized.ensembleCollapseOlderRounds = typeof value === 'boolean' ? value : Boolean(value)
     }
     if ('modelUsagePanelView' in sanitized) {
       const value = sanitized.modelUsagePanelView

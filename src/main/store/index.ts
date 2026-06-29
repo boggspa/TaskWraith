@@ -698,6 +698,7 @@ const defaultSettings: AppSettings = {
   // before FX conversion so the bias is currency-agnostic.
   currencyOverestimatePercent: 0,
   showRunCompleteSummary: true,
+  ensembleCollapseOlderRounds: true,
   dashboardStatPrefs: {
     dashboardSize: 'small'
   },

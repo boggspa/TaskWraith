@@ -4513,6 +4513,9 @@ function App(): React.JSX.Element {
     if (next.showRunCompleteSummary !== undefined) {
       settingsPatch.showRunCompleteSummary = next.showRunCompleteSummary
     }
+    if (next.ensembleCollapseOlderRounds !== undefined) {
+      settingsPatch.ensembleCollapseOlderRounds = next.ensembleCollapseOlderRounds
+    }
     // Sidebar Model Usage card view toggle (plan quota meters vs API
     // spend). Persist-only — the sidebar reads `settings.modelUsagePanelView`
     // directly when rendering the card.
@@ -22017,6 +22020,7 @@ function App(): React.JSX.Element {
               currency={displayCurrency}
               currencyOverestimatePercent={overestimatePercent}
               showRunCompleteSummary={settings?.showRunCompleteSummary}
+              ensembleCollapseOlderRounds={settings?.ensembleCollapseOlderRounds}
               dashboardStatPrefs={settings?.dashboardStatPrefs}
               welcomeHeatmapPrefs={settings?.welcomeHeatmapPrefs}
               providerRunPauses={settings?.providerRunPauses}
@@ -23072,6 +23076,7 @@ function App(): React.JSX.Element {
                 currency={displayCurrency}
                 currencyOverestimatePercent={overestimatePercent}
                 showRunCompleteSummary={settings?.showRunCompleteSummary}
+                collapseOlderRounds={settings?.ensembleCollapseOlderRounds}
                 providerRates={providerRates}
               />
           </>
@@ -23419,6 +23424,7 @@ function App(): React.JSX.Element {
               currency={displayCurrency}
               currencyOverestimatePercent={overestimatePercent}
               showRunCompleteSummary={settings?.showRunCompleteSummary}
+              collapseOlderRounds={settings?.ensembleCollapseOlderRounds}
               providerRates={providerRates}
             />
             <form

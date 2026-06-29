@@ -153,6 +153,8 @@ interface SettingsPanelProps {
   currencyOverestimatePercent?: number
   /** Settings → General toggle for Task Complete / Final Summary cards. */
   showRunCompleteSummary?: AppSettings['showRunCompleteSummary']
+  /** Settings → General toggle: collapse older Ensemble rounds into cards. */
+  ensembleCollapseOlderRounds?: AppSettings['ensembleCollapseOlderRounds']
   /**
    * 1.0.5-EW49 — Dashboard statistics preferences. Per-stat
    * show/hide map + a global "reset all" timestamp. See
@@ -265,6 +267,8 @@ interface SettingsPanelProps {
     currencyOverestimatePercent?: number
     /** Settings → General toggle for Task Complete / Final Summary cards. */
     showRunCompleteSummary?: AppSettings['showRunCompleteSummary']
+    /** Settings → General toggle: collapse older Ensemble rounds into cards. */
+    ensembleCollapseOlderRounds?: AppSettings['ensembleCollapseOlderRounds']
     /**
      * 1.0.5-EW49 — Per-stat visibility map / global "reset all"
      * timestamp. Patches merge into AppSettings; passing a
@@ -2850,6 +2854,7 @@ export function SettingsPanel({
   currency,
   currencyOverestimatePercent,
   showRunCompleteSummary,
+  ensembleCollapseOlderRounds,
   dashboardStatPrefs,
   welcomeHeatmapPrefs,
   providerRunPauses,
@@ -4890,6 +4895,23 @@ export function SettingsPanel({
                 <p className="settings-hint">
                   Controls the Final Summary / Task Complete section after a run finishes. Turning
                   this off hides the completion card while keeping the transcript and run telemetry.
+                </p>
+              </div>
+
+              <div className="settings-group">
+                <label className="settings-checkbox">
+                  <input
+                    type="checkbox"
+                    checked={ensembleCollapseOlderRounds !== false}
+                    onChange={(e) => onChange({ ensembleCollapseOlderRounds: e.target.checked })}
+                  />
+                  <span>Collapse older Ensemble rounds</span>
+                </label>
+                <p className="settings-hint">
+                  In Ensemble chats, fold completed rounds into compact, expandable round cards (the
+                  most recent and any in-progress round stay open). Click a round card to reveal its
+                  full transcript. Turn this off to always show every round expanded, like the
+                  classic flat transcript.
                 </p>
               </div>
 

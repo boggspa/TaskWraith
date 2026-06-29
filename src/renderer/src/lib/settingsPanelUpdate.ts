@@ -41,6 +41,8 @@ export type SettingsPanelUpdate = {
   currencyOverestimatePercent?: AppSettings['currencyOverestimatePercent']
   /** Settings → General toggle for Task Complete / Final Summary cards. */
   showRunCompleteSummary?: AppSettings['showRunCompleteSummary']
+  /** Settings → General toggle: collapse older Ensemble rounds into cards. */
+  ensembleCollapseOlderRounds?: AppSettings['ensembleCollapseOlderRounds']
   /** Sidebar Model Usage card view ('plan' quota meters | 'spend' API cost). */
   modelUsagePanelView?: AppSettings['modelUsagePanelView']
   /** Settings → Model usage table "External Usage" toggle (provider-wide vs
