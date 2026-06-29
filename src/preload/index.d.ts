@@ -68,7 +68,9 @@ import type { LaunchTargetsSnapshot } from '../main/launchTargets/types'
 import type {
   TaskWraithPluginCatalogSnapshot,
   TaskWraithPluginContributionSnapshot,
-  TaskWraithPluginMcpPresetMaterializationResult
+  TaskWraithPluginMcpPresetMaterializationResult,
+  TaskWraithPluginSecretMutationResult,
+  TaskWraithPluginSecretStatusSnapshot
 } from '../shared/plugins/PluginTypes'
 import type {
   LaunchSnapshot,
@@ -1151,6 +1153,16 @@ declare global {
       deleteHandoffCard: (id: string) => Promise<void>
       getPluginCatalog: () => Promise<TaskWraithPluginCatalogSnapshot>
       getPluginContributions: () => Promise<TaskWraithPluginContributionSnapshot>
+      getPluginSecretStatus: () => Promise<TaskWraithPluginSecretStatusSnapshot>
+      setPluginSecret: (
+        pluginId: string,
+        secretId: string,
+        value: string
+      ) => Promise<TaskWraithPluginSecretMutationResult>
+      clearPluginSecret: (
+        pluginId: string,
+        secretId: string
+      ) => Promise<TaskWraithPluginSecretMutationResult>
       materializePluginMcpPreset: (
         pluginId: string,
         presetId: string

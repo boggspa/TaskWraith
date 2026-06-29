@@ -320,6 +320,7 @@ import {
 } from './UpdateService'
 import { LocalServersService } from './LocalServersService'
 import { PluginHost } from './plugins/PluginHost'
+import { PluginSecretStore } from './plugins/PluginSecretStore'
 import { LaunchAttemptStore } from './launch/LaunchAttemptStore'
 import { LaunchManager, type LaunchLifecycleRecord } from './launch/LaunchManager'
 import { SpawnRegistry } from './localServers/SpawnRegistry'
@@ -23545,7 +23546,12 @@ if (isGeminiMcpBridgeProcess) {
       userDataPath: app.getPath('userData'),
       log: (line) => console.log(line)
     })
-    registerPluginHandlers({ pluginHost, requireNonEmptyString })
+    const pluginSecretStore = new PluginSecretStore({
+      userDataPath: app.getPath('userData'),
+      safeStorage,
+      log: (line) => console.log(line)
+    })
+    registerPluginHandlers({ pluginHost, pluginSecretStore, requireNonEmptyString })
     const launchManager = new LaunchManager({
       store: new LaunchAttemptStore(join(app.getPath('userData'), 'launch-attempts.json')),
       platform: process.platform,

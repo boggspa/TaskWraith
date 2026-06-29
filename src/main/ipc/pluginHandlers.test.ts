@@ -3,7 +3,8 @@ import { ipcMain } from 'electron'
 import { registerPluginHandlers } from './pluginHandlers'
 import type {
   TaskWraithPluginCatalogSnapshot,
-  TaskWraithPluginContributionSnapshot
+  TaskWraithPluginContributionSnapshot,
+  TaskWraithPluginSecretStatusSnapshot
 } from '../../shared/plugins/PluginTypes'
 
 vi.mock('electron', () => ({
@@ -72,10 +73,30 @@ function contributions(): TaskWraithPluginContributionSnapshot {
   }
 }
 
+function secretStatus(): TaskWraithPluginSecretStatusSnapshot {
+  return {
+    schemaVersion: 1,
+    generatedAt: '2026-06-29T12:00:00.000Z',
+    encryptionAvailable: true,
+    secrets: [
+      {
+        pluginId: 'demo-bundle',
+        secretId: 'token',
+        label: 'Token',
+        required: true,
+        configured: false,
+        installed: true,
+        enabled: false
+      }
+    ]
+  }
+}
+
 describe('registerPluginHandlers', () => {
   it('registers read and lifecycle handlers against the plugin host', () => {
     const catalog = snapshot()
     const contributionSnapshot = contributions()
+    const secretSnapshot = secretStatus()
     const installed = snapshot({ counts: { ...catalog.counts, installed: 1 } })
     const enabled = snapshot({ counts: { ...catalog.counts, enabled: 1, installed: 1 } })
     const updated = snapshot({ counts: { ...catalog.counts, installed: 1 } })
@@ -110,6 +131,12 @@ describe('registerPluginHandlers', () => {
         updatePlugin: vi.fn(() => updated),
         uninstallPlugin: vi.fn(() => uninstalled)
       },
+      pluginSecretStore: {
+        getSecretStatusSnapshot: vi.fn(() => secretSnapshot),
+        setSecret: vi.fn(() => ({ ok: true, snapshot: secretSnapshot })),
+        clearSecret: vi.fn(() => ({ ok: true, snapshot: secretSnapshot })),
+        clearPluginSecrets: vi.fn(() => 1)
+      },
       requireNonEmptyString: vi.fn((value: unknown) => String(value))
     }
 
@@ -117,6 +144,23 @@ describe('registerPluginHandlers', () => {
 
     expect(handlerFor('plugins:get-catalog')({})).toBe(catalog)
     expect(handlerFor('plugins:get-contributions')({})).toBe(contributionSnapshot)
+    expect(handlerFor('plugins:get-secret-status')({})).toBe(secretSnapshot)
+    expect(deps.pluginSecretStore.getSecretStatusSnapshot).toHaveBeenCalledWith(catalog)
+    expect(handlerFor('plugins:set-secret')({}, 'demo-bundle', 'token', 'secret-value')).toEqual({
+      ok: true,
+      snapshot: secretSnapshot
+    })
+    expect(deps.pluginSecretStore.setSecret).toHaveBeenCalledWith(
+      catalog,
+      'demo-bundle',
+      'token',
+      'secret-value'
+    )
+    expect(handlerFor('plugins:clear-secret')({}, 'demo-bundle', 'token')).toEqual({
+      ok: true,
+      snapshot: secretSnapshot
+    })
+    expect(deps.pluginSecretStore.clearSecret).toHaveBeenCalledWith(catalog, 'demo-bundle', 'token')
     expect(handlerFor('plugins:materialize-mcp-preset')({}, 'demo-bundle', 'docs')).toEqual({
       plugin: {
         pluginId: 'demo-bundle',
@@ -154,5 +198,6 @@ describe('registerPluginHandlers', () => {
 
     expect(handlerFor('plugins:uninstall')({}, 'demo-bundle')).toBe(uninstalled)
     expect(deps.pluginHost.uninstallPlugin).toHaveBeenCalledWith('demo-bundle')
+    expect(deps.pluginSecretStore.clearPluginSecrets).toHaveBeenCalledWith('demo-bundle')
   })
 })

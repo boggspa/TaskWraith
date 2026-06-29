@@ -316,6 +316,32 @@ export interface TaskWraithPluginTrustResult {
   signedAt?: string
 }
 
+export interface TaskWraithPluginSecretStatus {
+  pluginId: string
+  secretId: string
+  label: string
+  required: boolean
+  configured: boolean
+  installed: boolean
+  enabled: boolean
+  envVar?: string
+  description?: string
+  updatedAt?: string
+}
+
+export interface TaskWraithPluginSecretStatusSnapshot {
+  schemaVersion: 1
+  generatedAt: string
+  encryptionAvailable: boolean
+  secrets: TaskWraithPluginSecretStatus[]
+}
+
+export interface TaskWraithPluginSecretMutationResult {
+  ok: boolean
+  error?: string
+  snapshot?: TaskWraithPluginSecretStatusSnapshot
+}
+
 export interface TaskWraithPluginCatalogEntry {
   manifest: TaskWraithPluginManifest
   source: TaskWraithPluginSource

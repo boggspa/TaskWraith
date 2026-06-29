@@ -41,7 +41,9 @@ import type {
 import type {
   TaskWraithPluginCatalogSnapshot,
   TaskWraithPluginContributionSnapshot,
-  TaskWraithPluginMcpPresetMaterializationResult
+  TaskWraithPluginMcpPresetMaterializationResult,
+  TaskWraithPluginSecretMutationResult,
+  TaskWraithPluginSecretStatusSnapshot
 } from '../shared/plugins/PluginTypes'
 
 type ComposerImageAttachment = {
@@ -826,6 +828,21 @@ const api = {
     ipcRenderer.invoke(
       'plugins:get-contributions'
     ) as Promise<TaskWraithPluginContributionSnapshot>,
+  getPluginSecretStatus: () =>
+    ipcRenderer.invoke('plugins:get-secret-status') as Promise<TaskWraithPluginSecretStatusSnapshot>,
+  setPluginSecret: (pluginId: string, secretId: string, value: string) =>
+    ipcRenderer.invoke(
+      'plugins:set-secret',
+      pluginId,
+      secretId,
+      value
+    ) as Promise<TaskWraithPluginSecretMutationResult>,
+  clearPluginSecret: (pluginId: string, secretId: string) =>
+    ipcRenderer.invoke(
+      'plugins:clear-secret',
+      pluginId,
+      secretId
+    ) as Promise<TaskWraithPluginSecretMutationResult>,
   materializePluginMcpPreset: (pluginId: string, presetId: string) =>
     ipcRenderer.invoke(
       'plugins:materialize-mcp-preset',
