@@ -8777,6 +8777,26 @@
   cursor: pointer;
 }
 
+.diff-file-filter {
+  height: 24px;
+  min-width: 160px;
+  flex: 1 1 180px;
+  max-width: 280px;
+  padding: 0 var(--space-sm);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--panel-border);
+  outline: none;
+  background: color-mix(in srgb, var(--panel-elevated-bg) 76%, transparent);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--font-size-xs);
+}
+
+.diff-file-filter:focus {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--panel-border));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
 .diff-file-list {
   flex: 0 0 auto;
   max-height: 35%;
@@ -9235,6 +9255,29 @@
   transition: background 0.1s ease;
 }
 
+.diff-file-section-header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  min-height: 24px;
+  padding: 4px var(--space-md);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--panel-elevated-bg) 82%, var(--app-bg));
+  border-bottom: 1px solid color-mix(in srgb, var(--panel-border) 80%, transparent);
+  font-size: var(--font-size-xs);
+  font-weight: 650;
+}
+
+.diff-file-section-header small {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+}
+
 .diff-file-row:nth-child(odd) {
   background: color-mix(in srgb, var(--text-primary) 2%, transparent);
 }
@@ -9280,6 +9323,16 @@ button.diff-file-row {
   font-size: var(--font-size-xs);
   padding: 1px 6px;
   border-radius: 100px;
+  font-variant-numeric: tabular-nums;
+}
+
+.diff-file-state {
+  width: 28px;
+  flex: 0 0 28px;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  text-align: center;
   font-variant-numeric: tabular-nums;
 }
 

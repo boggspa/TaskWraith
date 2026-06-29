@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import type { GitRepositorySnapshot } from '../../../main/services/GitService'
 import { DiffViewer } from './DiffViewer'
 import { FileEditorPanel } from './FileEditorPanel'
 
@@ -27,9 +28,11 @@ export function TaskWraithWorkbench({
 }: TaskWraithWorkbenchProps) {
   const [activeView, setActiveView] = useState<WorkbenchView>('editor')
   const [diff, setDiff] = useState<WorkspaceDiff | null>(null)
+  const [diffGitSnapshot, setDiffGitSnapshot] = useState<GitRepositorySnapshot | null>(null)
   const [status, setStatus] = useState('Workbench ready')
   const [editorRefreshTick, setEditorRefreshTick] = useState(refreshTick)
   const [editorOpenRequest, setEditorOpenRequest] = useState<EditorOpenRequest | null>(null)
+  const [diffActionPath, setDiffActionPath] = useState('')
 
   const breadcrumbs = useMemo(
     () => [workspaceName, viewLabel(activeView)],
@@ -40,14 +43,19 @@ export function TaskWraithWorkbench({
     if (!workspacePath) return
     setStatus('Refreshing diff')
     try {
-      const nextDiff = await window.api.getDiff(workspacePath)
+      const [nextDiff, nextGitSnapshot] = await Promise.all([
+        window.api.getDiff(workspacePath),
+        window.api.gitSnapshot({ workspacePath })
+      ])
       setDiff(nextDiff)
+      setDiffGitSnapshot(nextGitSnapshot.ok ? nextGitSnapshot.data : null)
       setStatus('Diff refreshed')
     } catch (error) {
       setDiff({
         type: 'error',
         text: error instanceof Error ? error.message : 'Could not load workspace diff'
       })
+      setDiffGitSnapshot(null)
       setStatus('Diff refresh failed')
     }
   }, [workspacePath])
@@ -69,6 +77,50 @@ export function TaskWraithWorkbench({
     }))
     setStatus(`Opening ${path}`)
   }, [])
+
+  const stageDiffFile = useCallback(
+    async (path: string) => {
+      if (!workspacePath) return
+      setDiffActionPath(path)
+      setStatus(`Staging ${path}`)
+      try {
+        const result = await window.api.gitStage({ workspacePath, paths: [path] })
+        if (result.ok) {
+          setDiffGitSnapshot(result.data)
+          await refreshDiff()
+        } else {
+          setStatus(result.error)
+        }
+      } catch (error) {
+        setStatus(error instanceof Error ? error.message : 'Could not stage file')
+      } finally {
+        setDiffActionPath('')
+      }
+    },
+    [refreshDiff, workspacePath]
+  )
+
+  const unstageDiffFile = useCallback(
+    async (path: string) => {
+      if (!workspacePath) return
+      setDiffActionPath(path)
+      setStatus(`Unstaging ${path}`)
+      try {
+        const result = await window.api.gitUnstage({ workspacePath, paths: [path] })
+        if (result.ok) {
+          setDiffGitSnapshot(result.data)
+          await refreshDiff()
+        } else {
+          setStatus(result.error)
+        }
+      } catch (error) {
+        setStatus(error instanceof Error ? error.message : 'Could not unstage file')
+      } finally {
+        setDiffActionPath('')
+      }
+    },
+    [refreshDiff, workspacePath]
+  )
 
   useEffect(() => {
     let cancelled = false
@@ -149,7 +201,11 @@ export function TaskWraithWorkbench({
               <DiffViewer
                 diff={diff}
                 workspacePath={workspacePath}
+                gitSnapshot={diffGitSnapshot}
+                busyPath={diffActionPath}
                 onOpenFile={openFileInEditor}
+                onStageFile={stageDiffFile}
+                onUnstageFile={unstageDiffFile}
               />
             </div>
           </div>

@@ -56,6 +56,10 @@ function resolveWorkspacePath(workspace: string, filePath: string): string | nul
   return resolved
 }
 
+function toGitPath(filePath: string): string {
+  return filePath.split(path.sep).join('/')
+}
+
 async function spawnGit(
   cwd: string,
   args: string[]
@@ -89,6 +93,40 @@ function spawnGitSync(
     stderr: result.stderr || '',
     code: result.status ?? 0
   }
+}
+
+async function resolveGitWorkspaceScope(
+  workspace: string
+): Promise<{ workspaceRoot: string; repoRoot: string; workspacePrefix: string } | null> {
+  const workspaceRoot = fs.realpathSync.native(path.resolve(workspace))
+  const repoResult = await spawnGit(workspaceRoot, ['rev-parse', '--show-toplevel'])
+  if (repoResult.code !== 0) return null
+  const repoRoot = fs.realpathSync.native(path.resolve(repoResult.stdout.trim()))
+  const relativePrefix = path.relative(repoRoot, workspaceRoot)
+  if (
+    relativePrefix === '..' ||
+    relativePrefix.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relativePrefix)
+  ) {
+    return null
+  }
+  return {
+    workspaceRoot,
+    repoRoot,
+    workspacePrefix: relativePrefix ? toGitPath(relativePrefix) : ''
+  }
+}
+
+function workspacePathspec(workspacePrefix: string): string[] {
+  return workspacePrefix ? ['--', workspacePrefix] : []
+}
+
+function repoPathToWorkspacePath(repoPath: string, workspacePrefix: string): string | null {
+  if (!workspacePrefix) return repoPath
+  if (repoPath === workspacePrefix) return ''
+  const prefix = `${workspacePrefix}/`
+  if (!repoPath.startsWith(prefix)) return null
+  return repoPath.slice(prefix.length)
 }
 
 function countDiffLines(diffText: string): { additions?: number; deletions?: number } {
@@ -146,22 +184,24 @@ export function generateSyntheticNewFileDiff(filePath: string, content: string):
 
 function buildCurrentFileSummary(
   workspace: string | undefined,
-  filePath: string,
+  repoRoot: string | undefined,
+  repoPath: string,
+  displayPath: string,
   status: DiffFileStatus
 ): DiffFileSummary {
   const baseSummary: DiffFileSummary = {
-    path: filePath,
+    path: displayPath,
     status,
     previewKind: 'none',
-    isNoise: isNoiseFile(filePath),
-    isSensitive: isSensitiveFile(filePath)
+    isNoise: isNoiseFile(displayPath),
+    isSensitive: isSensitiveFile(displayPath)
   }
 
   if (!workspace) {
     return baseSummary
   }
 
-  const fullPath = resolveWorkspacePath(workspace, filePath)
+  const fullPath = resolveWorkspacePath(workspace, displayPath)
   if (!fullPath) {
     return baseSummary
   }
@@ -186,27 +226,34 @@ function buildCurrentFileSummary(
       previewKind = 'binary'
     } else if (sizeBytes <= MAX_PREVIEW_SIZE) {
       const content = fs.readFileSync(fullPath, 'utf-8')
-      diffText = generateSyntheticNewFileDiff(filePath, content)
+      diffText = generateSyntheticNewFileDiff(displayPath, content)
       previewKind = 'synthetic_new_file'
       additions = content.split('\n').length
       deletions = 0
     }
   } else if (status === 'modified' || status === 'deleted' || status === 'renamed') {
-    const unstagedDiff = spawnGitSync(workspace, ['diff', '--no-ext-diff', '--', filePath]).stdout
-    const stagedDiff = spawnGitSync(workspace, [
+    const gitCwd = repoRoot || workspace
+    const gitPath = repoRoot ? repoPath : displayPath
+    const unstagedDiff = spawnGitSync(gitCwd, ['diff', '--no-ext-diff', '--', gitPath]).stdout
+    const stagedDiff = spawnGitSync(gitCwd, [
       'diff',
       '--cached',
       '--no-ext-diff',
       '--',
-      filePath
+      gitPath
     ]).stdout
     const currentDiff = [stagedDiff, unstagedDiff].filter((text) => text.trim()).join('\n')
     if (currentDiff.trim()) {
-      diffText = currentDiff
-      previewKind = 'git_diff'
-      const counts = countDiffLines(currentDiff)
-      additions = counts.additions
-      deletions = counts.deletions
+      if (/^Binary files /m.test(currentDiff) || /^GIT binary patch$/m.test(currentDiff)) {
+        isBinary = true
+        previewKind = 'binary'
+      } else {
+        diffText = currentDiff
+        previewKind = 'git_diff'
+        const counts = countDiffLines(currentDiff)
+        additions = counts.additions
+        deletions = counts.deletions
+      }
     }
   }
 
@@ -221,6 +268,14 @@ function buildCurrentFileSummary(
   }
 }
 
+function buildRunFileSummary(
+  workspace: string | undefined,
+  filePath: string,
+  status: DiffFileStatus
+): DiffFileSummary {
+  return buildCurrentFileSummary(workspace, workspace, filePath, filePath, status)
+}
+
 export async function getWorkspaceDiff(workspace: string): Promise<{
   type: string
   text?: string
@@ -228,11 +283,21 @@ export async function getWorkspaceDiff(workspace: string): Promise<{
   diffText?: string
   summaries?: DiffFileSummary[]
 }> {
-  const { stdout: statusOut, stderr: statusErr } = await spawnGit(workspace, [
+  const scope = await resolveGitWorkspaceScope(workspace)
+  if (!scope) {
+    return {
+      type: 'not_repo',
+      text: 'This folder is not a git repository. Run git init if you want diff tracking.'
+    }
+  }
+
+  const pathspec = workspacePathspec(scope.workspacePrefix)
+  const { stdout: statusOut, stderr: statusErr } = await spawnGit(scope.repoRoot, [
     'status',
     '--porcelain=v1',
     '-z',
-    '--untracked-files=all'
+    '--untracked-files=all',
+    ...pathspec
   ])
   if (statusErr.includes('not a git repository')) {
     return {
@@ -241,7 +306,11 @@ export async function getWorkspaceDiff(workspace: string): Promise<{
     }
   }
 
-  const { stdout: diffOut } = await spawnGit(workspace, ['diff', '--no-ext-diff'])
+  const { stdout: diffOut } = await spawnGit(scope.repoRoot, [
+    'diff',
+    '--no-ext-diff',
+    ...pathspec
+  ])
 
   if (!statusOut.trim() && !diffOut.trim()) {
     return { type: 'no_changes', text: 'No changes were made.' }
@@ -249,9 +318,19 @@ export async function getWorkspaceDiff(workspace: string): Promise<{
 
   const statusEntries = parseGitStatusZ(statusOut)
 
-  const summaries = statusEntries.map((entry) =>
-    buildCurrentFileSummary(workspace, entry.filePath, classifyStatus(entry.statusCode))
-  )
+  const summaries = statusEntries.flatMap((entry) => {
+    const displayPath = repoPathToWorkspacePath(entry.filePath, scope.workspacePrefix)
+    if (!displayPath) return []
+    return [
+      buildCurrentFileSummary(
+        scope.workspaceRoot,
+        scope.repoRoot,
+        entry.filePath,
+        displayPath,
+        classifyStatus(entry.statusCode)
+      )
+    ]
+  })
 
   return {
     type: 'changes',
@@ -485,9 +564,9 @@ export function computeRunDiff(
       if (!preEntry) {
         // Didn't exist before run
         if (status === 'untracked' || status === 'created') {
-          createdFiles.push(buildCurrentFileSummary(workspace, filePath, 'created'))
+          createdFiles.push(buildRunFileSummary(workspace, filePath, 'created'))
         } else {
-          modifiedFiles.push(buildCurrentFileSummary(workspace, filePath, 'modified'))
+          modifiedFiles.push(buildRunFileSummary(workspace, filePath, 'modified'))
         }
       } else {
         const preStatus = classifyStatus(preEntry.statusCode)
@@ -496,14 +575,14 @@ export function computeRunDiff(
           preExistingFiles.push({ path: filePath, status, previewKind: 'none' })
         } else {
           // Changed during run
-          modifiedFiles.push(buildCurrentFileSummary(workspace, filePath, 'modified'))
+          modifiedFiles.push(buildRunFileSummary(workspace, filePath, 'modified'))
         }
       }
     }
 
     for (const [filePath] of preMap) {
       if (!postMap.has(filePath)) {
-        deletedFiles.push(buildCurrentFileSummary(workspace, filePath, 'deleted'))
+        deletedFiles.push(buildRunFileSummary(workspace, filePath, 'deleted'))
       }
     }
   } else if (!pre.isGitRepo && !post.isGitRepo && pre.files && post.files) {
@@ -513,15 +592,15 @@ export function computeRunDiff(
     for (const [filePath, postFile] of postMap) {
       const preFile = preMap.get(filePath)
       if (!preFile) {
-        createdFiles.push(buildCurrentFileSummary(workspace, filePath, 'created'))
+        createdFiles.push(buildRunFileSummary(workspace, filePath, 'created'))
       } else if (preFile.mtimeMs !== postFile.mtimeMs || preFile.sizeBytes !== postFile.sizeBytes) {
-        modifiedFiles.push(buildCurrentFileSummary(workspace, filePath, 'modified'))
+        modifiedFiles.push(buildRunFileSummary(workspace, filePath, 'modified'))
       }
     }
 
     for (const [filePath] of preMap) {
       if (!postMap.has(filePath)) {
-        deletedFiles.push(buildCurrentFileSummary(workspace, filePath, 'deleted'))
+        deletedFiles.push(buildRunFileSummary(workspace, filePath, 'deleted'))
       }
     }
   }

@@ -107,6 +107,57 @@ describe('DiffService', () => {
       }
     })
 
+    it('scopes nested workspace diffs to workspace-relative files', async () => {
+      const { baseDir, repoDir } = makeGitRepo()
+      try {
+        const appDir = path.join(repoDir, 'app')
+        const siblingDir = path.join(repoDir, 'sibling')
+        fs.mkdirSync(appDir)
+        fs.mkdirSync(siblingDir)
+        fs.writeFileSync(path.join(appDir, 'tracked.txt'), 'app before\n')
+        fs.writeFileSync(path.join(siblingDir, 'tracked.txt'), 'sibling before\n')
+        runGit(repoDir, ['add', '.'])
+        runGit(repoDir, ['commit', '-m', 'initial'])
+
+        fs.writeFileSync(path.join(appDir, 'tracked.txt'), 'app after\n')
+        fs.writeFileSync(path.join(appDir, 'new.txt'), 'new app file\n')
+        fs.writeFileSync(path.join(siblingDir, 'tracked.txt'), 'sibling after\n')
+
+        const diff = await getWorkspaceDiff(appDir)
+        const paths = diff.summaries?.map((file) => file.path).sort()
+        expect(paths).toEqual(['new.txt', 'tracked.txt'])
+        expect(diff.summaries?.some((file) => file.path.includes('sibling'))).toBe(false)
+        expect(diff.summaries?.find((file) => file.path === 'tracked.txt')?.diffText).toContain(
+          '+app after'
+        )
+        expect(diff.summaries?.find((file) => file.path === 'new.txt')?.diffText).toContain(
+          'diff --git a/new.txt b/new.txt'
+        )
+      } finally {
+        fs.rmSync(baseDir, { recursive: true, force: true })
+      }
+    })
+
+    it('marks modified binary files as binary previews', async () => {
+      const { baseDir, repoDir } = makeGitRepo()
+      try {
+        const binaryPath = path.join(repoDir, 'asset.bin')
+        fs.writeFileSync(binaryPath, Buffer.from([0, 1, 2, 3]))
+        runGit(repoDir, ['add', 'asset.bin'])
+        runGit(repoDir, ['commit', '-m', 'initial'])
+
+        fs.writeFileSync(binaryPath, Buffer.from([0, 4, 5, 6]))
+
+        const diff = await getWorkspaceDiff(repoDir)
+        const summary = diff.summaries?.find((file) => file.path === 'asset.bin')
+        expect(summary?.isBinary).toBe(true)
+        expect(summary?.previewKind).toBe('binary')
+        expect(summary?.diffText).toBeUndefined()
+      } finally {
+        fs.rmSync(baseDir, { recursive: true, force: true })
+      }
+    })
+
     it('does not preview untracked symlink targets outside the workspace', async () => {
       const { baseDir, repoDir } = makeGitRepo()
       try {
