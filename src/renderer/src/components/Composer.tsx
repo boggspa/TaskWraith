@@ -590,7 +590,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     renderPlanImportFileGroundings,
     renderPlanImportItems,
     resumeAppWatchSnapshot,
-    runtimeProfileControl,
     scheduleControls,
     screenWatchUnavailableReason,
     selectedComposerModelType,
@@ -1975,12 +1974,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                 </div>
               )}
               {/*
-                Composer-unification (Phase J1): one uniform top-toggles row
-                for every provider: session indicator + permission indicator
-                + schedule + runtime profile. Provider identity is expressed
-                through theme tokens only.
-              */}
-              {/*
                 Phase K-followup — Removed the informational "New X
                 thread" + permission-mode chips from the top-toggles
                 row. They were styled identically to the actual
@@ -1989,15 +1982,12 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                 two were actionable. The thread/session state is
                 already visible in the sidebar's chat tile + active
                 tab indicator; permission mode is set via the
-                runtime-profile picker that stays in this row.
-                Runtime-profile controls remain here; Schedule moved to
-                the inline composer row as a first-class prompt modifier.
+                composer controls below. Schedule moved to the inline
+                composer row as a first-class prompt modifier.
+                Runtime-profile selection still resolves at dispatch; the
+                composer intentionally hides the built-in local/global selector
+                so it does not read like a day-to-day action chip.
               */}
-              {runtimeProfileControl && (
-                <div className="composer-top-toggles">
-                  {runtimeProfileControl}
-                </div>
-              )}
 
               {(imageAttachments.length > 0 || currentDiscordContextSelection) && (
                 <div
