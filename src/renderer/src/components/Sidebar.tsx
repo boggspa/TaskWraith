@@ -1172,6 +1172,24 @@ function ChatBubbleSymbolIcon() {
   )
 }
 
+function BoardSymbolIcon() {
+  return (
+    <span className="sf-symbol-icon" aria-hidden>
+      <svg
+        viewBox="0 0 16 16"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <path d="M3 3.5h10M3 8h10M3 12.5h10" />
+        <path d="M5.5 2.5v11M10.5 2.5v11" />
+      </svg>
+    </span>
+  )
+}
+
 /** Two-person glyph for the "Shared" / People collaboration affordances. */
 function PeopleSymbolIcon() {
   return (
@@ -2475,6 +2493,11 @@ export function Sidebar({
     expandSidebarSection('workflows')
     onCreateWorkflow?.()
   }
+  const handleNewWorkspaceBoard = () => {
+    setNewMenuOpen(false)
+    expandSidebarSection('workspace-boards')
+    onCreateWorkspaceBoard?.()
+  }
   const sharedChatCreateOptions = getSharedChatCreateOptions({
     hasWorkspace: Boolean(currentWorkspace),
     ensembleModeEnabled
@@ -3287,6 +3310,23 @@ export function Sidebar({
                     <span className="sidebar-new-menu-item-label">New Workflow</span>
                   </button>
                 )}
+                {onCreateWorkspaceBoard && (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="sidebar-new-menu-item"
+                    onClick={handleNewWorkspaceBoard}
+                    disabled={!currentWorkspace}
+                    title={
+                      currentWorkspace
+                        ? 'New workspace board'
+                        : 'Open a workspace first to create a board'
+                    }
+                  >
+                    <BoardSymbolIcon />
+                    <span className="sidebar-new-menu-item-label">New Workspace Board</span>
+                  </button>
+                )}
                 {onCreateSharedChat && (
                   <>
                     {sharedChatCreateOptions.map((option) => (
@@ -3677,7 +3717,7 @@ export function Sidebar({
                 <button
                   type="button"
                   className="sidebar-section-header-action sidebar-workspace-board-create"
-                  onClick={onCreateWorkspaceBoard}
+                  onClick={handleNewWorkspaceBoard}
                   disabled={!onCreateWorkspaceBoard || !currentWorkspace}
                   title={
                     currentWorkspace

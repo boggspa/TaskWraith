@@ -12323,6 +12323,7 @@ function App(): React.JSX.Element {
     })
     setWorkspaceBoards((prev) => [saved, ...prev.filter((board) => board.id !== saved.id)])
     setActiveWorkspaceBoardId(saved.id)
+    setActiveSidebarChatId(null)
   }
 
   const handleOpenWorkspaceBoard = async (board: WorkspaceBoardDefinition) => {
