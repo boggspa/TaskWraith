@@ -15,6 +15,7 @@ struct ContextWindowsTests {
         #expect(ContextWindows.resolve(provider: "ollama", model: "ornith") == 262_144)
         #expect(ContextWindows.resolve(provider: "ollama", model: "ornith:latest") == 262_144)
         #expect(ContextWindows.resolve(provider: "ollama", model: "ornith:35b") == 262_144)
+        #expect(ContextWindows.resolve(provider: "ollama", model: "lfm2.5:8b") == 131_072)
         #expect(ContextWindows.resolve(provider: "codex", model: "gpt-5.5") == 1_050_000)
         #expect(ContextWindows.resolve(provider: "codex", model: "gpt-5.4") == 1_050_000)
         #expect(ContextWindows.resolve(provider: "codex", model: "gpt-5.4-mini") == 400_000)

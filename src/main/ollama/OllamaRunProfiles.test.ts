@@ -57,6 +57,9 @@ describe('OllamaRunProfiles', () => {
     expect(
       resolveOllamaRunProfile({}, 'provider_parity', 'gpt-oss:20b').contextCapTokens
     ).toBe(131_072)
+    expect(
+      resolveOllamaRunProfile({}, 'provider_parity', 'lfm2.5:8b').contextCapTokens
+    ).toBe(131_072)
   })
 
   it('keeps unknown local tags conservative unless the user customizes the cap', () => {
@@ -88,6 +91,9 @@ describe('OllamaRunProfiles', () => {
     ).toBe('medium')
     expect(
       resolveOllamaThinkingLevel('minicpm-v4.5:8b', OLLAMA_RUN_PROFILE_PRESETS.local_scout)
+    ).toBe('medium')
+    expect(
+      resolveOllamaThinkingLevel('lfm2.5:8b', OLLAMA_RUN_PROFILE_PRESETS.local_scout)
     ).toBe('medium')
     expect(
       resolveOllamaThinkingLevel('nemotron3:33b', OLLAMA_RUN_PROFILE_PRESETS.local_scout)

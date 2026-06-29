@@ -20,6 +20,7 @@ describe('OllamaEnsembleContext', () => {
     expect(resolveOllamaContextTokenLimit('ornith:35b')).toBe(262_144)
     expect(resolveOllamaContextTokenLimit('qwen3.6:35b')).toBe(262_144)
     expect(resolveOllamaContextTokenLimit('gpt-oss:20b')).toBe(131_072)
+    expect(resolveOllamaContextTokenLimit('lfm2.5:8b')).toBe(131_072)
     expect(resolveOllamaContextTokenLimit('minicpm-v4.5:8b')).toBe(40_960)
     expect(resolveOllamaContextTokenLimit('granite4.1:30b')).toBe(131_072)
     expect(resolveOllamaContextTokenLimit('nemotron3:33b')).toBe(131_072)
@@ -30,6 +31,7 @@ describe('OllamaEnsembleContext', () => {
     expect(hasKnownOllamaContextTokenLimit('unknown:7b')).toBe(false)
     expect(hasKnownOllamaContextTokenLimit('unknown:7b', 8192)).toBe(true)
     expect(hasKnownOllamaContextTokenLimit('ornith:35b')).toBe(true)
+    expect(hasKnownOllamaContextTokenLimit('lfm2.5:8b')).toBe(true)
   })
 
   it('keeps the default shared-history budget for known large-context Ollama models', () => {

@@ -21,6 +21,9 @@ describe('resolveOllamaContextBudget', () => {
       resolveOllamaContextBudget('ornith:9b').maxBlockChars
     )
     expect(resolveOllamaContextBudget('ornith:35b').maxBlockChars).toBeGreaterThanOrEqual(30_000)
+    expect(resolveOllamaContextBudget('lfm2.5:8b').maxBlockChars).toBeGreaterThan(
+      resolveOllamaContextBudget('unknown-local:latest').maxBlockChars
+    )
   })
 
   it('keeps unknown local tags conservative until live model metadata is known', () => {

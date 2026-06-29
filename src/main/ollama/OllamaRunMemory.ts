@@ -91,6 +91,7 @@ export function resolveOllamaWorkingMemoryLimits(modelId?: string | null): Ollam
     case 'qwen3_5_9b':
     case 'gemma4_12b':
     case 'ornith_9b':
+    case 'lfm2_5_8b':
     case 'gpt_oss_20b':
     case 'granite4_1_30b':
       return scaledWorkingMemoryLimits(trimmedModelId, {

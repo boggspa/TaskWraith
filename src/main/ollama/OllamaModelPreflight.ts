@@ -9,6 +9,7 @@ export type OllamaModelFamily =
   | 'ornith_9b'
   | 'ornith_35b'
   | 'gpt_oss_20b'
+  | 'lfm2_5_8b'
   | 'minicpm_v45_8b'
   | 'granite4_1_3b'
   | 'granite4_1_30b'
@@ -93,9 +94,20 @@ export function resolveOllamaModelFamily(
   ) {
     return 'gpt_oss_20b'
   }
+  if (
+    key === 'lfm2.5' ||
+    key === 'lfm2.5:latest' ||
+    key === 'lfm2.5:8b' ||
+    key.startsWith('lfm2.5:8b-')
+  ) {
+    return 'lfm2_5_8b'
+  }
   const meta = metadataText(modelInfo)
   if (meta.includes('gptoss') || meta.includes('gpt-oss')) {
     return 'gpt_oss_20b'
+  }
+  if (meta.includes('lfm2.5') || meta.includes('lfm 2.5') || meta.includes('lfm2')) {
+    return 'lfm2_5_8b'
   }
   if (meta.includes('ornith') && meta.includes('35b')) return 'ornith_35b'
   if (meta.includes('ornith') && meta.includes('9b')) return 'ornith_9b'
@@ -127,6 +139,11 @@ export function ollamaModelIdAliases(modelId: string): string[] {
     aliases.add('ornith')
     aliases.add('ornith:latest')
     aliases.add('ornith:9b')
+  }
+  if (lower === 'lfm2.5' || lower === 'lfm2.5:latest' || lower === 'lfm2.5:8b') {
+    aliases.add('lfm2.5')
+    aliases.add('lfm2.5:latest')
+    aliases.add('lfm2.5:8b')
   }
   return [...aliases]
 }
@@ -225,6 +242,12 @@ function familyGuidance(family: OllamaModelFamily, modelLabel: string): {
         delegateHint:
           'For release-critical changes, pair it with an explicit verification pass before landing broad edits.'
       }
+    case 'lfm2_5_8b':
+      return {
+        guidance: `${modelLabel} is a compact local model with a long context window and tool-chaining training.`,
+        delegateHint:
+          'Use it for scoped local analysis, tool-assisted review, and focused patches; keep broad refactors sliced with explicit verification.'
+      }
     case 'granite4_1_3b':
       return {
         guidance: `${modelLabel} is a lightweight tool-capable local model for fast reads and small planning tasks.`,
@@ -274,6 +297,8 @@ function defaultParameterBillionsForFamily(family: OllamaModelFamily): number | 
       return 9
     case 'ornith_35b':
       return 35
+    case 'lfm2_5_8b':
+      return 8
     case 'granite4_1_3b':
       return 3
     case 'granite4_1_30b':

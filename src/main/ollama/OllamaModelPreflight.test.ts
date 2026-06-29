@@ -22,6 +22,9 @@ describe('resolveOllamaModelFamily', () => {
     expect(resolveOllamaModelFamily('ornith:9b')).toBe('ornith_9b')
     expect(resolveOllamaModelFamily('ornith:35b')).toBe('ornith_35b')
     expect(resolveOllamaModelFamily('ornith:35b-q4_K_M')).toBe('ornith_35b')
+    expect(resolveOllamaModelFamily('lfm2.5')).toBe('lfm2_5_8b')
+    expect(resolveOllamaModelFamily('lfm2.5:8b')).toBe('lfm2_5_8b')
+    expect(resolveOllamaModelFamily('lfm2.5:8b-q4_K_M')).toBe('lfm2_5_8b')
     expect(resolveOllamaModelFamily('granite4.1:3b')).toBe('granite4_1_3b')
     expect(resolveOllamaModelFamily('granite4.1:30b')).toBe('granite4_1_30b')
     expect(resolveOllamaModelFamily('nemotron3:33b')).toBe('nemotron3_33b')
@@ -60,6 +63,17 @@ describe('resolveOllamaModelFamily', () => {
         parameterSize: '35B'
       })
     ).toBe('ornith_35b')
+  })
+
+  it('detects LFM 2.5 from Ollama metadata', () => {
+    expect(
+      resolveOllamaModelFamily('local-custom:latest', {
+        id: 'local-custom:latest',
+        label: 'Local Custom',
+        family: 'lfm2',
+        parameterSize: '8B'
+      })
+    ).toBe('lfm2_5_8b')
   })
 })
 
@@ -122,6 +136,25 @@ describe('evaluateOllamaModelPreflight', () => {
     })
     expect(result.family).toBe('nemotron3_33b')
     expect(result.guidance).toContain('multimodal')
+    expect(result.checks.find((c) => c.id === 'tools')?.ok).toBe(true)
+  })
+
+  it('surfaces LFM 2.5 as a known tool-capable long-context local model', () => {
+    const result = evaluateOllamaModelPreflight({
+      modelId: 'lfm2.5:8b',
+      modelLabel: 'LFM 2.5 (8B-A1B)',
+      modelInfo: {
+        id: 'lfm2.5:8b',
+        label: 'LFM 2.5 (8B-A1B)',
+        parameterSize: '8B',
+        quantizationLevel: 'Q4_K_M',
+        capabilities: ['completion', 'tools']
+      },
+      installedModelIds: ['lfm2.5:8b'],
+      totalMemoryBytes: 32 * GB
+    })
+    expect(result.family).toBe('lfm2_5_8b')
+    expect(result.guidance).toContain('long context')
     expect(result.checks.find((c) => c.id === 'tools')?.ok).toBe(true)
   })
 

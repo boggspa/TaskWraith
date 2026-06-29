@@ -44,6 +44,9 @@ describe('OllamaRunMemory', () => {
     const limits = resolveOllamaWorkingMemoryLimits('ornith:35b')
     expect(limits.toolResultMaxChars).toBeGreaterThanOrEqual(1000)
     expect(limits.workingMemoryMaxChars).toBeGreaterThan(10_000)
+    expect(resolveOllamaWorkingMemoryLimits('lfm2.5:8b').workingMemoryMaxChars).toBeGreaterThan(
+      resolveOllamaWorkingMemoryLimits('unknown-local:latest').workingMemoryMaxChars
+    )
 
     const output = 'A'.repeat(1600)
     const memory = appendOllamaTrajectoryEntry(createEmptyOllamaSessionMemory('ornith:35b'), {

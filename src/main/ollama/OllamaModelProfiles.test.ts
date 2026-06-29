@@ -49,6 +49,12 @@ describe('ollamaModelFamilyPromptLines', () => {
     expect(lines.join(' ')).toContain('verification gaps')
   })
 
+  it('adds LFM 2.5 long-context tool guidance', () => {
+    const lines = ollamaModelFamilyPromptLines('lfm2.5:8b')
+    expect(lines.join(' ')).toContain('long-context')
+    expect(lines.join(' ')).toContain('tool-chaining')
+  })
+
   it('keeps only tool-call discipline for conversational GPT-OSS turns', () => {
     const lines = ollamaModelFamilyPromptLines('gpt-oss:latest', 'conversational')
     expect(lines.join(' ')).toContain('tool-intent stub')
@@ -105,6 +111,7 @@ describe('workflow hints', () => {
   it('documents scout escalation without defaulting to cloud implementation', () => {
     expect(ollamaScoutDelegateWorkflowHint('qwen3.5:9b')).toContain('continue locally')
     expect(ollamaScoutDelegateWorkflowHint('ornith:35b')).toContain('higher tier/profile')
+    expect(ollamaScoutDelegateWorkflowHint('lfm2.5:8b')).toContain('continue locally')
     expect(ollamaScoutDelegateWorkflowHint('ornith:35b')).not.toContain('Codex or Claude')
   })
 

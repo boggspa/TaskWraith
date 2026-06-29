@@ -73,6 +73,11 @@ export function ollamaModelFamilyPromptLines(
         'Read targeted files before editing, keep each tool call concrete, and call out verification gaps before release-sensitive changes.',
         'Stay local for scoped coding work; prefer a smaller concrete next step over a delegation handoff.'
       ]
+    case 'lfm2_5_8b':
+      return [
+        'Model profile (LFM 2.5 8B-A1B): long-context local model with tool-chaining training; search/read before editing and keep each tool step concrete.',
+        'Use the long context for grounded local review, but keep broad implementation work sliced with explicit verification notes.'
+      ]
     case 'granite4_1_3b':
       return [
         'Model profile (Granite 4.1 3B): use it as a fast local scout; list/search first and read the files relevant to the task.',
@@ -312,6 +317,7 @@ export function ollamaTierAwareWorkflowHint(
     family === 'gemma4_12b' ||
     family === 'ornith_9b' ||
     family === 'ornith_35b' ||
+    family === 'lfm2_5_8b' ||
     family === 'granite4_1_3b' ||
     family === 'granite4_1_30b' ||
     family === 'nemotron3_33b'
