@@ -72,6 +72,23 @@ describe('workspace board projection', () => {
     ).toBe('stale')
   })
 
+  it('marks cross-workspace links stale without projecting foreign metadata', () => {
+    const card = makeCard({ link: { kind: 'chat', id: 'chat-1' } })
+    const projected = buildWorkspaceBoardProjectedCards({
+      cards: [card],
+      chats: [makeChat({ workspaceId: 'ws-2', title: 'Other workspace thread' })],
+      workflows: [],
+      scheduledTasks: [],
+      runQueueJobs: []
+    })[0]
+
+    expect(projected.derivedStatus).toBe('stale')
+    expect(projected.isStale).toBe(true)
+    expect(projected.staleReason).toContain('belongs to another workspace')
+    expect(projected.linkedTitle).toBeUndefined()
+    expect(projected.badges.some((badge) => badge.label === 'Codex')).toBe(false)
+  })
+
   it('marks successful chat runs review-ready and exposes live badges', () => {
     const card = makeCard({ link: { kind: 'chat', id: 'chat-1' }, columnId: 'ready' })
     const projected = buildWorkspaceBoardProjectedCards({

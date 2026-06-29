@@ -66,6 +66,10 @@ export interface WorkspaceBoardProjectionInput {
   runningChatIds?: Set<string>
 }
 
+interface WorkspaceScopedRecord {
+  workspaceId?: string | null
+}
+
 const COLUMN_LABELS: Record<WorkspaceBoardColumnId, string> = {
   inbox: 'Inbox',
   ready: 'Ready',
@@ -146,6 +150,12 @@ function attentionForStatus(status: WorkspaceBoardDerivedStatus): WorkspaceBoard
   return status
 }
 
+function isCrossWorkspaceLink(card: WorkspaceBoardCard, target?: WorkspaceScopedRecord | null): boolean {
+  const cardWorkspaceId = String(card.workspaceId || '').trim()
+  const targetWorkspaceId = String(target?.workspaceId || '').trim()
+  return Boolean(cardWorkspaceId && targetWorkspaceId && cardWorkspaceId !== targetWorkspaceId)
+}
+
 export function workspaceBoardColumnLabel(columnId: WorkspaceBoardColumnId): string {
   return COLUMN_LABELS[columnId] || columnId
 }
@@ -166,7 +176,7 @@ export function deriveWorkspaceBoardStatus(
   }
   if (link.kind === 'chat') {
     const chat = input.chats.find((item) => item.appChatId === link.id)
-    if (!chat || chat.archived) return 'stale'
+    if (!chat || chat.archived || isCrossWorkspaceLink(card, chat)) return 'stale'
     if (input.runningChatIds?.has(chat.appChatId)) return 'running'
     if (chat.activeGoal?.status === 'blocked') return 'blocked'
     const run = latestRun(chat)
@@ -177,7 +187,7 @@ export function deriveWorkspaceBoardStatus(
   }
   if (link.kind === 'workflow') {
     const workflow = input.workflows.find((item) => item.id === link.id)
-    if (!workflow) return 'stale'
+    if (!workflow || isCrossWorkspaceLink(card, workflow)) return 'stale'
     if (workflow.activeExecutionId || workflow.lastStatus === 'running' || workflow.lastStatus === 'queued') {
       return 'running'
     }
@@ -188,7 +198,7 @@ export function deriveWorkspaceBoardStatus(
   }
   if (link.kind === 'scheduled-task') {
     const task = input.scheduledTasks.find((item) => item.id === link.id)
-    if (!task) return 'stale'
+    if (!task || isCrossWorkspaceLink(card, task)) return 'stale'
     if (task.status === 'running' || task.status === 'due') return 'running'
     if (task.status === 'failed' || task.status === 'cancelled') return 'needs-input'
     if (task.status === 'completed') return 'done'
@@ -196,7 +206,7 @@ export function deriveWorkspaceBoardStatus(
   }
   if (link.kind === 'run-queue-job') {
     const job = input.runQueueJobs.find((item) => item.id === link.id || item.runId === link.id)
-    if (!job) return 'stale'
+    if (!job || isCrossWorkspaceLink(card, job)) return 'stale'
     if (ACTIVE_RUN_QUEUE_STATUSES.has(job.status) || job.status === 'queued') return 'running'
     if (job.status === 'failed' || job.status === 'cancelled') return 'needs-input'
     if (job.status === 'completed') return 'done'
@@ -220,10 +230,19 @@ export function buildWorkspaceBoardProjectedCards(
   return input.cards.map((card) => {
     const derivedStatus = deriveWorkspaceBoardStatus(card, input)
     const link = card.link
-    const chat = link?.kind === 'chat' ? chatsById.get(link.id) || null : null
-    const workflow = link?.kind === 'workflow' ? workflowsById.get(link.id) || null : null
-    const task = link?.kind === 'scheduled-task' ? tasksById.get(link.id) || null : null
-    const job = link?.kind === 'run-queue-job' ? jobsById.get(link.id) || null : null
+    const linkedChat = link?.kind === 'chat' ? chatsById.get(link.id) || null : null
+    const linkedWorkflow = link?.kind === 'workflow' ? workflowsById.get(link.id) || null : null
+    const linkedTask = link?.kind === 'scheduled-task' ? tasksById.get(link.id) || null : null
+    const linkedJob = link?.kind === 'run-queue-job' ? jobsById.get(link.id) || null : null
+    const crossWorkspaceLink =
+      isCrossWorkspaceLink(card, linkedChat) ||
+      isCrossWorkspaceLink(card, linkedWorkflow) ||
+      isCrossWorkspaceLink(card, linkedTask) ||
+      isCrossWorkspaceLink(card, linkedJob)
+    const chat = linkedChat && !linkedChat.archived && !crossWorkspaceLink ? linkedChat : null
+    const workflow = linkedWorkflow && !crossWorkspaceLink ? linkedWorkflow : null
+    const task = linkedTask && !crossWorkspaceLink ? linkedTask : null
+    const job = linkedJob && !crossWorkspaceLink ? linkedJob : null
     const badges: WorkspaceBoardProjectedBadge[] = []
     let linkedKindLabel: string | undefined
     let liveStatusDetail: string | undefined
@@ -320,7 +339,9 @@ export function buildWorkspaceBoardProjectedCards(
       liveStatusDetail = job.lastError || job.statusReason || job.resumeHint
     } else if (link) {
       linkedKindLabel = link.kind
-      staleReason = `${link.kind} ${link.id} is missing or no longer belongs to this workspace.`
+      staleReason = crossWorkspaceLink
+        ? `${link.kind} ${link.id} belongs to another workspace.`
+        : `${link.kind} ${link.id} is missing or no longer belongs to this workspace.`
     }
 
     if (card.labels?.length) {
