@@ -1,6 +1,6 @@
 import * as fs from 'fs'
 import * as path from 'path'
-import { createHash } from 'crypto'
+import { createHash, createPublicKey, verify as verifySignature } from 'crypto'
 import { BUILT_IN_TASKWRAITH_PLUGIN_MANIFESTS } from './BuiltInPluginCatalog'
 import {
   TASKWRAITH_PLUGIN_MANIFEST_SCHEMA_VERSION,
@@ -23,15 +23,23 @@ import {
   type TaskWraithPluginCapabilityDiff,
   type TaskWraithPluginCapabilitySnapshot,
   type TaskWraithPluginLifecycleEvent,
+  type TaskWraithPluginManifestSignature,
+  type TaskWraithPluginTrustResult,
   type TaskWraithPluginUninstallTombstone,
   type TaskWraithPluginUserMcpServerConfig
 } from './PluginManifest'
+
+export interface PluginTrustedPublisherKey {
+  keyId: string
+  publicKeyPem: string
+}
 
 export interface PluginHostOptions {
   userDataPath?: string
   pluginsDir?: string
   statePath?: string
   builtInManifests?: TaskWraithPluginManifest[]
+  trustedPublisherKeys?: Record<string, PluginTrustedPublisherKey[]>
   now?: () => Date
   env?: NodeJS.ProcessEnv
   platform?: NodeJS.Platform
@@ -117,8 +125,32 @@ function writeJson<T>(filePath: string, data: T): void {
   }
 }
 
+function stableJsonValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stableJsonValue)
+  if (!value || typeof value !== 'object') return value
+  const output: Record<string, unknown> = {}
+  for (const key of Object.keys(value as Record<string, unknown>).sort()) {
+    const child = (value as Record<string, unknown>)[key]
+    if (typeof child !== 'undefined') output[key] = stableJsonValue(child)
+  }
+  return output
+}
+
+function stableStringify(value: unknown): string {
+  return JSON.stringify(stableJsonValue(value))
+}
+
 function stableHash(value: unknown): string {
-  return createHash('sha256').update(JSON.stringify(value)).digest('hex')
+  return createHash('sha256').update(stableStringify(value)).digest('hex')
+}
+
+function manifestSigningPayload(manifest: TaskWraithPluginManifest): string {
+  const { signatures: _signatures, ...unsignedManifest } = manifest
+  return stableStringify(unsignedManifest)
+}
+
+function manifestContentHash(manifest: TaskWraithPluginManifest): string {
+  return createHash('sha256').update(manifestSigningPayload(manifest)).digest('hex')
 }
 
 function capabilitySnapshot(manifest: TaskWraithPluginManifest): TaskWraithPluginCapabilitySnapshot[] {
@@ -470,6 +502,7 @@ export class PluginHost {
   private readonly pluginsDir: string
   private readonly statePath: string
   private readonly builtInManifests: TaskWraithPluginManifest[]
+  private readonly trustedPublisherKeys: Record<string, PluginTrustedPublisherKey[]>
   private readonly now: () => Date
   private readonly log: (line: string) => void
   private readonly preflight: PluginPreflightService
@@ -481,6 +514,7 @@ export class PluginHost {
     this.pluginsDir = basePluginsDir
     this.statePath = options.statePath || path.join(basePluginsDir, 'plugins.json')
     this.builtInManifests = options.builtInManifests ?? BUILT_IN_TASKWRAITH_PLUGIN_MANIFESTS
+    this.trustedPublisherKeys = options.trustedPublisherKeys ?? {}
     this.now = options.now ?? (() => new Date())
     this.log = options.log ?? (() => {})
     this.preflight = new PluginPreflightService({
@@ -489,11 +523,123 @@ export class PluginHost {
     })
   }
 
+  private evaluateManifestTrust(
+    manifest: TaskWraithPluginManifest,
+    source: TaskWraithPluginSource
+  ): TaskWraithPluginTrustResult {
+    if (source === 'builtin') {
+      return {
+        status: 'trusted',
+        source,
+        reason: 'Built-in plugin manifests are packaged with TaskWraith.'
+      }
+    }
+
+    const signatures = manifest.signatures ?? []
+    if (signatures.length === 0) {
+      return {
+        status: 'unsigned',
+        source,
+        reason: `${source} plugin manifest is unsigned.`
+      }
+    }
+
+    const trustedKeys = this.trustedPublisherKeys[manifest.publisher] ?? []
+    let sawTrustedKey = false
+    let firstSignature: TaskWraithPluginManifestSignature | undefined
+    for (const signature of signatures) {
+      firstSignature = firstSignature ?? signature
+      const trustedKey = trustedKeys.find((key) => key.keyId === signature.keyId)
+      if (!trustedKey) continue
+      sawTrustedKey = true
+      if (this.verifyManifestSignature(manifest, signature, trustedKey.publicKeyPem)) {
+        return {
+          status: 'trusted',
+          source,
+          reason: `Manifest signature verified for publisher ${manifest.publisher}.`,
+          keyId: signature.keyId,
+          algorithm: signature.algorithm,
+          ...(signature.signedAt ? { signedAt: signature.signedAt } : {})
+        }
+      }
+    }
+
+    if (sawTrustedKey) {
+      return {
+        status: 'invalid',
+        source,
+        reason: 'Manifest signature did not verify with the trusted publisher key.',
+        ...(firstSignature
+          ? {
+              keyId: firstSignature.keyId,
+              algorithm: firstSignature.algorithm,
+              ...(firstSignature.signedAt ? { signedAt: firstSignature.signedAt } : {})
+            }
+          : {})
+      }
+    }
+
+    return {
+      status: 'untrusted',
+      source,
+      reason: `No trusted publisher key is registered for ${manifest.publisher}.`,
+      ...(firstSignature
+        ? {
+            keyId: firstSignature.keyId,
+            algorithm: firstSignature.algorithm,
+            ...(firstSignature.signedAt ? { signedAt: firstSignature.signedAt } : {})
+          }
+        : {})
+    }
+  }
+
+  private verifyManifestSignature(
+    manifest: TaskWraithPluginManifest,
+    signature: TaskWraithPluginManifestSignature,
+    publicKeyPem: string
+  ): boolean {
+    if (signature.algorithm !== 'ed25519') return false
+    try {
+      return verifySignature(
+        null,
+        Buffer.from(manifestSigningPayload(manifest), 'utf-8'),
+        createPublicKey(publicKeyPem),
+        Buffer.from(signature.signatureBase64, 'base64')
+      )
+    } catch {
+      return false
+    }
+  }
+
+  private withTrustPreflightIssues(
+    preflight: TaskWraithPluginPreflightResult,
+    trust: TaskWraithPluginTrustResult
+  ): TaskWraithPluginPreflightResult {
+    if (trust.status === 'trusted') return preflight
+    const severity = trust.status === 'invalid' ? 'error' : 'warning'
+    const issues: TaskWraithPluginPreflightIssue[] = [
+      ...preflight.issues,
+      {
+        severity,
+        code: `source-trust-${trust.status}`,
+        message: trust.reason
+      }
+    ]
+    const hasErrors = issues.some((issue) => issue.severity === 'error')
+    const hasWarnings = issues.some((issue) => issue.severity === 'warning')
+    return {
+      status: hasErrors ? 'blocked' : hasWarnings ? 'repairable' : 'ready',
+      issues
+    }
+  }
+
   getCatalogSnapshot(): TaskWraithPluginCatalogSnapshot {
     const state = this.readState()
     const entries = this.getAvailableManifests().map(({ manifest, source }) => {
       const installState = state.plugins[manifest.id]
-      const manifestHash = stableHash(manifest)
+      const manifestHash = manifestContentHash(manifest)
+      const trust = this.evaluateManifestTrust(manifest, source)
+      const preflight = this.withTrustPreflightIssues(this.preflight.evaluate(manifest), trust)
       const currentCapabilities = capabilitySnapshot(manifest)
       const update =
         installState?.installed === true
@@ -523,11 +669,12 @@ export class PluginHost {
         source,
         namespace: pluginToolNamespace(manifest),
         manifestHash,
+        trust,
         installed: installState?.installed === true,
         enabled: installState?.installed === true && installState.enabled === true,
         ...(installState ? { installState } : {}),
         ...(state.tombstones?.[manifest.id] ? { tombstone: state.tombstones[manifest.id] } : {}),
-        preflight: this.preflight.evaluate(manifest),
+        preflight,
         ...(update ? { update } : {})
       } satisfies TaskWraithPluginCatalogEntry
     })
@@ -543,7 +690,10 @@ export class PluginHost {
     const catalog = this.getCatalogSnapshot()
     const activeEntries = catalog.plugins.filter(
       (entry) =>
-        entry.enabled && entry.preflight.status !== 'blocked' && entry.update?.status !== 'available'
+        entry.enabled &&
+        entry.trust.status === 'trusted' &&
+        entry.preflight.status !== 'blocked' &&
+        entry.update?.status !== 'available'
     )
     const provenanceFor = (
       entry: TaskWraithPluginCatalogEntry
@@ -652,6 +802,9 @@ export class PluginHost {
     if (entry.preflight.status === 'blocked') {
       throw new Error('Blocked plugins cannot materialize MCP presets.')
     }
+    if (entry.trust.status !== 'trusted') {
+      throw new Error('Plugin source trust must be verified before MCP presets can be added.')
+    }
     const preset = entry.manifest.mcpServers?.find((candidate) => candidate.id === presetId)
     if (!preset) throw new Error('MCP preset is not available for this plugin.')
     const materializedAt = this.now().toISOString()
@@ -701,7 +854,7 @@ export class PluginHost {
     const state = this.readState()
     const now = this.now().toISOString()
     const current = state.plugins[entry.manifest.id]
-    const manifestHash = stableHash(entry.manifest)
+    const manifestHash = manifestContentHash(entry.manifest)
     state.plugins[entry.manifest.id] = {
       installed: true,
       enabled: current?.enabled === true,
@@ -734,13 +887,16 @@ export class PluginHost {
     if (!current?.installed) {
       throw new Error('Plugin must be installed before it can be enabled.')
     }
-    const manifestHash = stableHash(entry.manifest)
+    const manifestHash = manifestContentHash(entry.manifest)
     if (enabled && (current.version !== entry.manifest.version || current.manifestHash !== manifestHash)) {
       throw new Error('Plugin update must be reviewed before enabling this plugin.')
     }
     const preflight = this.preflight.evaluate(entry.manifest)
+    const trust = this.evaluateManifestTrust(entry.manifest, entry.source)
     const now = this.now().toISOString()
-    const nextEnabled = Boolean(enabled && preflight.status !== 'blocked')
+    const nextEnabled = Boolean(
+      enabled && preflight.status !== 'blocked' && trust.status === 'trusted'
+    )
     state.plugins[entry.manifest.id] = {
       ...current,
       enabled: nextEnabled,
@@ -757,7 +913,12 @@ export class PluginHost {
       enabled: nextEnabled,
       result: enabled && !nextEnabled ? 'blocked' : 'applied',
       ...(enabled && !nextEnabled
-        ? { message: 'Plugin preflight blocked enablement.' }
+        ? {
+            message:
+              trust.status !== 'trusted'
+                ? trust.reason
+                : 'Plugin preflight blocked enablement.'
+          }
         : {})
     })
     this.writeState(state)
@@ -772,7 +933,7 @@ export class PluginHost {
     const preflight = this.preflight.evaluate(entry.manifest)
     const now = this.now().toISOString()
     const capabilities = capabilitySnapshot(entry.manifest)
-    const manifestHash = stableHash(entry.manifest)
+    const manifestHash = manifestContentHash(entry.manifest)
     const capabilityDiff = diffCapabilitySnapshots(current.capabilities, capabilities)
     state.plugins[entry.manifest.id] = {
       ...current,
@@ -816,7 +977,7 @@ export class PluginHost {
         ...(manifest?.version || current.version ? { version: manifest?.version || current.version } : {}),
         source,
         ...(manifest ? { namespace: pluginToolNamespace(manifest) } : {}),
-        ...(manifest ? { manifestHash: stableHash(manifest) } : current.manifestHash ? { manifestHash: current.manifestHash } : {}),
+        ...(manifest ? { manifestHash: manifestContentHash(manifest) } : current.manifestHash ? { manifestHash: current.manifestHash } : {}),
         ...(current.installedAt ? { installedAt: current.installedAt } : {}),
         ...(current.updatedAt ? { updatedAt: current.updatedAt } : {}),
         uninstalledAt: now,
@@ -833,7 +994,7 @@ export class PluginHost {
         timestamp: now,
         source,
         ...(manifest?.version || current.version ? { version: manifest?.version || current.version } : {}),
-        ...(manifest ? { manifestHash: stableHash(manifest) } : current.manifestHash ? { manifestHash: current.manifestHash } : {}),
+        ...(manifest ? { manifestHash: manifestContentHash(manifest) } : current.manifestHash ? { manifestHash: current.manifestHash } : {}),
         enabled: current.enabled === true,
         result: 'applied'
       })

@@ -2377,6 +2377,8 @@ export function pluginSettingsEntryMatchesQuery(
     ...(entry.manifest.marketplace?.tags || []),
     entry.source,
     entry.namespace,
+    entry.trust.status,
+    entry.trust.reason,
     entry.preflight.status,
     entry.installed ? 'installed' : 'available',
     entry.enabled ? 'enabled' : 'disabled',
@@ -2400,6 +2402,7 @@ export function pluginSettingsProvenancePayload(entry: TaskWraithPluginCatalogEn
   source: string
   namespace: string
   manifestHash: string
+  trust: TaskWraithPluginCatalogEntry['trust']
   installed: boolean
   enabled: boolean
   preflight: TaskWraithPluginCatalogEntry['preflight']
@@ -2419,6 +2422,7 @@ export function pluginSettingsProvenancePayload(entry: TaskWraithPluginCatalogEn
     source: entry.source,
     namespace: entry.namespace,
     manifestHash: entry.manifestHash,
+    trust: entry.trust,
     installed: entry.installed,
     enabled: entry.enabled,
     preflight: entry.preflight,
@@ -2459,6 +2463,7 @@ export function pluginSettingsActionState(
   const busy = pluginBusyId === pluginId
   const updateAvailable = entry.update?.status === 'available'
   const blocked = entry.preflight.status === 'blocked'
+  const trusted = entry.trust.status === 'trusted'
   const userMcpServerIds = new Set(userMcpServers.map((server) => server.id))
   const mcpPresets = Object.fromEntries(
     (entry.manifest.mcpServers || []).map((preset) => {
@@ -2471,7 +2476,8 @@ export function pluginSettingsActionState(
           serverId,
           busy: presetBusy,
           materialized,
-          disabled: presetBusy || materialized || !entry.installed || updateAvailable || blocked
+          disabled:
+            presetBusy || materialized || !entry.installed || updateAvailable || blocked || !trusted
         }
       ]
     })
@@ -2481,7 +2487,7 @@ export function pluginSettingsActionState(
     busy,
     updateAvailable,
     installDisabled: busy || blocked,
-    enableDisabled: busy || blocked || updateAvailable,
+    enableDisabled: busy || blocked || updateAvailable || !trusted,
     updateDisabled: busy,
     uninstallDisabled: busy,
     mcpPresets
@@ -7684,6 +7690,7 @@ export function SettingsPanel({
                             <span>{entry.installed ? 'installed' : 'available'}</span>
                             <span>{entry.enabled ? 'enabled' : 'disabled'}</span>
                             {updateAvailable && <span>update available</span>}
+                            <span>trust: {entry.trust.status}</span>
                             <span>{entry.source}</span>
                             <span>{entry.manifest.publisher}</span>
                             <span>{entry.manifest.version}</span>

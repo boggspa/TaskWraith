@@ -1,10 +1,12 @@
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
+import { generateKeyPairSync, sign as signData, type KeyObject } from 'crypto'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   PluginHost,
-  PluginPreflightService
+  PluginPreflightService,
+  type PluginHostOptions
 } from './PluginHost'
 import {
   validateTaskWraithPluginManifest,
@@ -55,13 +57,54 @@ afterEach(() => {
   tmpDir = ''
 })
 
-function makeHost(manifests: TaskWraithPluginManifest[] = [BASE_MANIFEST]): PluginHost {
+function stableJsonValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stableJsonValue)
+  if (!value || typeof value !== 'object') return value
+  const output: Record<string, unknown> = {}
+  for (const key of Object.keys(value as Record<string, unknown>).sort()) {
+    const child = (value as Record<string, unknown>)[key]
+    if (typeof child !== 'undefined') output[key] = stableJsonValue(child)
+  }
+  return output
+}
+
+function signedManifest(
+  manifest: TaskWraithPluginManifest,
+  privateKey: KeyObject,
+  keyId = 'dev-key'
+): TaskWraithPluginManifest {
+  const { signatures: _signatures, ...unsignedManifest } = manifest
+  const payload = JSON.stringify(stableJsonValue(unsignedManifest))
+  return {
+    ...manifest,
+    signatures: [
+      {
+        algorithm: 'ed25519',
+        keyId,
+        signatureBase64: signData(null, Buffer.from(payload, 'utf-8'), privateKey).toString('base64'),
+        signedAt: '2026-06-29T12:00:00.000Z'
+      }
+    ]
+  }
+}
+
+function writeLocalManifest(manifest: TaskWraithPluginManifest): void {
+  const pluginsDir = path.join(tmpDir, 'plugins')
+  fs.mkdirSync(pluginsDir, { recursive: true })
+  fs.writeFileSync(path.join(pluginsDir, `${manifest.id}.json`), JSON.stringify(manifest, null, 2))
+}
+
+function makeHost(
+  manifests: TaskWraithPluginManifest[] = [BASE_MANIFEST],
+  overrides: Partial<PluginHostOptions> = {}
+): PluginHost {
   return new PluginHost({
     userDataPath: tmpDir,
     builtInManifests: manifests,
     now: () => new Date('2026-06-29T12:00:00.000Z'),
     platform: 'darwin',
-    env: {}
+    env: {},
+    ...overrides
   })
 }
 
@@ -83,6 +126,10 @@ describe('PluginHost', () => {
     expect(entry.installed).toBe(false)
     expect(entry.enabled).toBe(false)
     expect(entry.namespace).toBe('plugin.acme.demo-bundle')
+    expect(entry.trust).toMatchObject({
+      status: 'trusted',
+      source: 'builtin'
+    })
     expect(entry.preflight.status).toBe('ready')
     expect(entry.preflight.issues.some((issue) => issue.code === 'stdio-requires-explicit-install')).toBe(
       true
@@ -210,6 +257,102 @@ describe('PluginHost', () => {
     const host = makeHost()
     expect(() => host.materializeMcpServerPreset('demo-bundle', 'docs-stdio')).toThrow(
       'Plugin must be installed before MCP presets can be added.'
+    )
+  })
+
+  it('keeps unsigned local manifests visible but inert until source trust is verified', () => {
+    writeLocalManifest(BASE_MANIFEST)
+    const host = makeHost([])
+    const entry = plugin(host.getCatalogSnapshot())
+
+    expect(entry.source).toBe('local')
+    expect(entry.trust).toMatchObject({
+      status: 'unsigned',
+      source: 'local',
+      reason: 'local plugin manifest is unsigned.'
+    })
+    expect(entry.preflight.status).toBe('repairable')
+    expect(entry.preflight.issues.some((issue) => issue.code === 'source-trust-unsigned')).toBe(
+      true
+    )
+
+    host.installPlugin('demo-bundle')
+    const enabled = plugin(host.setPluginEnabled('demo-bundle', true))
+
+    expect(enabled.enabled).toBe(false)
+    expect(host.getContributionSnapshot().counts.enabledPlugins).toBe(0)
+    expect(() => host.materializeMcpServerPreset('demo-bundle', 'docs-stdio')).toThrow(
+      'Plugin source trust must be verified before MCP presets can be added.'
+    )
+    const stateFile = JSON.parse(fs.readFileSync(path.join(tmpDir, 'plugins', 'plugins.json'), 'utf-8'))
+    expect(stateFile.lifecycleEvents.at(-1)).toMatchObject({
+      pluginId: 'demo-bundle',
+      action: 'enable',
+      result: 'blocked',
+      message: 'local plugin manifest is unsigned.'
+    })
+  })
+
+  it('trusts signed local manifests when the publisher key verifies', () => {
+    const { publicKey, privateKey } = generateKeyPairSync('ed25519')
+    writeLocalManifest(signedManifest(BASE_MANIFEST, privateKey))
+    const host = makeHost([], {
+      trustedPublisherKeys: {
+        acme: [
+          {
+            keyId: 'dev-key',
+            publicKeyPem: publicKey.export({ type: 'spki', format: 'pem' }).toString()
+          }
+        ]
+      }
+    })
+    const entry = plugin(host.getCatalogSnapshot())
+
+    expect(entry.source).toBe('local')
+    expect(entry.trust).toMatchObject({
+      status: 'trusted',
+      source: 'local',
+      keyId: 'dev-key',
+      algorithm: 'ed25519'
+    })
+    expect(entry.preflight.status).toBe('ready')
+
+    host.installPlugin('demo-bundle')
+    const enabled = plugin(host.setPluginEnabled('demo-bundle', true))
+    expect(enabled.enabled).toBe(true)
+    expect(host.getContributionSnapshot().counts.enabledPlugins).toBe(1)
+    expect(host.materializeMcpServerPreset('demo-bundle', 'docs-stdio').plugin).toMatchObject({
+      pluginId: 'demo-bundle',
+      source: 'local'
+    })
+  })
+
+  it('blocks tampered signed manifests when a trusted publisher key is registered', () => {
+    const { publicKey, privateKey } = generateKeyPairSync('ed25519')
+    writeLocalManifest({
+      ...signedManifest(BASE_MANIFEST, privateKey),
+      description: 'Tampered after signing.'
+    })
+    const host = makeHost([], {
+      trustedPublisherKeys: {
+        acme: [
+          {
+            keyId: 'dev-key',
+            publicKeyPem: publicKey.export({ type: 'spki', format: 'pem' }).toString()
+          }
+        ]
+      }
+    })
+    const entry = plugin(host.getCatalogSnapshot())
+
+    expect(entry.trust).toMatchObject({
+      status: 'invalid',
+      source: 'local',
+      keyId: 'dev-key'
+    })
+    expect(entry.preflight.status).toBe('blocked')
+    expect(entry.preflight.issues.some((issue) => issue.code === 'source-trust-invalid')).toBe(
+      true
     )
   })
 
@@ -421,7 +564,19 @@ describe('PluginPreflightService', () => {
         category: 'Bad',
         tags: [],
         homepageUrl: 'file:///tmp/plugin.html'
-      }
+      },
+      signatures: [
+        {
+          algorithm: 'rsa',
+          keyId: 'bad key',
+          signatureBase64: 'not base64!'
+        },
+        {
+          algorithm: 'ed25519',
+          keyId: 'bad key',
+          signatureBase64: ''
+        }
+      ]
     } as unknown as TaskWraithPluginManifest
 
     const errors = validateTaskWraithPluginManifest(manifest)
@@ -452,5 +607,9 @@ describe('PluginPreflightService', () => {
     expect(errors).toContain('Local service "service" health check URL must be a valid URL.')
     expect(errors).toContain('Provider setup has unsupported provider "unknown-provider".')
     expect(errors).toContain('Marketplace homepage URL must be an http(s) URL.')
+    expect(errors).toContain('Manifest signature has unsupported algorithm "rsa".')
+    expect(errors).toContain('Manifest signature key id "bad key" is invalid.')
+    expect(errors).toContain('Manifest signature key id "bad key" is duplicated.')
+    expect(errors).toContain('Manifest signature "bad key" must include base64 signature material.')
   })
 })

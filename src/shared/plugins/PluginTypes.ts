@@ -205,6 +205,15 @@ export interface TaskWraithPluginMarketplaceMetadata {
   icon?: string
 }
 
+export type TaskWraithPluginSignatureAlgorithm = 'ed25519'
+
+export interface TaskWraithPluginManifestSignature {
+  algorithm: TaskWraithPluginSignatureAlgorithm
+  keyId: string
+  signatureBase64: string
+  signedAt?: string
+}
+
 export interface TaskWraithPluginManifest {
   schemaVersion: typeof TASKWRAITH_PLUGIN_MANIFEST_SCHEMA_VERSION
   id: string
@@ -225,6 +234,7 @@ export interface TaskWraithPluginManifest {
   providerSetup?: TaskWraithPluginProviderSetupMetadata[]
   mobileRemoteProjection?: TaskWraithPluginMobileProjectionMetadata[]
   marketplace?: TaskWraithPluginMarketplaceMetadata
+  signatures?: TaskWraithPluginManifestSignature[]
 }
 
 export interface TaskWraithPluginInstallState {
@@ -295,11 +305,23 @@ export interface TaskWraithPluginPreflightResult {
   issues: TaskWraithPluginPreflightIssue[]
 }
 
+export type TaskWraithPluginTrustStatus = 'trusted' | 'unsigned' | 'untrusted' | 'invalid'
+
+export interface TaskWraithPluginTrustResult {
+  status: TaskWraithPluginTrustStatus
+  source: TaskWraithPluginSource
+  reason: string
+  keyId?: string
+  algorithm?: TaskWraithPluginSignatureAlgorithm
+  signedAt?: string
+}
+
 export interface TaskWraithPluginCatalogEntry {
   manifest: TaskWraithPluginManifest
   source: TaskWraithPluginSource
   namespace: string
   manifestHash: string
+  trust: TaskWraithPluginTrustResult
   installed: boolean
   enabled: boolean
   installState?: TaskWraithPluginInstallState

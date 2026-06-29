@@ -52,6 +52,11 @@ function makePluginEntry(
     source: 'builtin',
     namespace: 'plugin.taskwraith.github-dev-bundle',
     manifestHash: 'sha256:abc123',
+    trust: {
+      status: 'trusted',
+      source: 'builtin',
+      reason: 'Built-in plugin manifests are packaged with TaskWraith.'
+    },
     installed: false,
     enabled: false,
     preflight: {
@@ -111,6 +116,7 @@ describe('Settings Plugins UI helpers', () => {
     expect(pluginSettingsEntryMatchesQuery(entry, 'pull request tools')).toBe(true)
     expect(pluginSettingsEntryMatchesQuery(entry, 'code-review')).toBe(true)
     expect(pluginSettingsEntryMatchesQuery(entry, 'installed')).toBe(true)
+    expect(pluginSettingsEntryMatchesQuery(entry, 'trusted')).toBe(true)
     expect(pluginSettingsEntryMatchesQuery(entry, 'update available')).toBe(true)
     expect(pluginSettingsEntryMatchesQuery(entry, 'figma')).toBe(false)
   })
@@ -131,6 +137,23 @@ describe('Settings Plugins UI helpers', () => {
     expect(state.enableDisabled).toBe(true)
     expect(state.updateDisabled).toBe(false)
     expect(state.uninstallDisabled).toBe(false)
+    expect(state.mcpPresets.github.disabled).toBe(true)
+  })
+
+  it('keeps untrusted plugin sources from enabling or adding MCP presets', () => {
+    const entry = makePluginEntry({
+      installed: true,
+      trust: {
+        status: 'unsigned',
+        source: 'local',
+        reason: 'local plugin manifest is unsigned.'
+      }
+    })
+
+    const state = pluginSettingsActionState(entry, [], null)
+
+    expect(state.installDisabled).toBe(false)
+    expect(state.enableDisabled).toBe(true)
     expect(state.mcpPresets.github.disabled).toBe(true)
   })
 
@@ -181,6 +204,11 @@ describe('Settings Plugins UI helpers', () => {
       source: 'builtin',
       namespace: 'plugin.taskwraith.github-dev-bundle',
       manifestHash: 'sha256:abc123',
+      trust: {
+        status: 'trusted',
+        source: 'builtin',
+        reason: 'Built-in plugin manifests are packaged with TaskWraith.'
+      },
       installed: true,
       enabled: true
     })

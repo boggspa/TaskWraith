@@ -15,6 +15,7 @@ export type {
   TaskWraithPluginProviderSetupMetadata,
   TaskWraithPluginMobileProjectionMetadata,
   TaskWraithPluginMarketplaceMetadata,
+  TaskWraithPluginManifestSignature,
   TaskWraithPluginManifest,
   TaskWraithPluginInstallState,
   TaskWraithPluginLifecycleAction,
@@ -23,6 +24,7 @@ export type {
   TaskWraithPluginUninstallTombstone,
   TaskWraithPluginPreflightIssue,
   TaskWraithPluginPreflightResult,
+  TaskWraithPluginTrustResult,
   TaskWraithPluginCatalogEntry,
   TaskWraithPluginCatalogSnapshot,
   TaskWraithPluginContributionProvenance,
@@ -100,6 +102,7 @@ const RUNTIME_WORKSPACE_MODES = new Set(['local', 'worktree', 'container'])
 const RUNTIME_NETWORK_POLICIES = new Set(['inherit', 'allow', 'deny'])
 const RUNTIME_PERSISTENCE = new Set(['reusable', 'ephemeral'])
 const CONNECTOR_KINDS = new Set(['mcp', 'oauth', 'api-key', 'remote', 'desktop-app'])
+const SIGNATURE_ALGORITHMS = new Set(['ed25519'])
 const PLATFORM_IDS = new Set([
   'android',
   'aix',
@@ -360,6 +363,29 @@ export function validateTaskWraithPluginManifest(manifest: TaskWraithPluginManif
   if (manifest.marketplace) {
     validateHttpUrl(errors, 'Marketplace homepage URL', manifest.marketplace.homepageUrl)
     validateHttpUrl(errors, 'Marketplace support URL', manifest.marketplace.supportUrl)
+  }
+  validateArrayCap(errors, 'Manifest signatures', manifest.signatures)
+  const signatureKeys = new Set<string>()
+  for (const signature of manifest.signatures ?? []) {
+    if (!SIGNATURE_ALGORITHMS.has(String(signature.algorithm))) {
+      errors.push(`Manifest signature has unsupported algorithm "${String(signature.algorithm)}".`)
+    }
+    if (!TASKWRAITH_PLUGIN_COMPONENT_ID_PATTERN.test(signature.keyId)) {
+      errors.push(`Manifest signature key id "${signature.keyId || '(missing)'}" is invalid.`)
+    }
+    if (signatureKeys.has(signature.keyId)) {
+      errors.push(`Manifest signature key id "${signature.keyId}" is duplicated.`)
+    }
+    signatureKeys.add(signature.keyId)
+    if (
+      typeof signature.signatureBase64 !== 'string' ||
+      !signature.signatureBase64.trim() ||
+      !/^[A-Za-z0-9+/]+={0,2}$/.test(signature.signatureBase64.trim())
+    ) {
+      errors.push(`Manifest signature "${signature.keyId}" must include base64 signature material.`)
+    }
+    validateStringLength(errors, `Manifest signature "${signature.keyId}"`, signature.signatureBase64)
+    validateStringLength(errors, `Manifest signature "${signature.keyId}" signedAt`, signature.signedAt)
   }
   return errors
 }
