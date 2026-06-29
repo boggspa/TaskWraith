@@ -253,6 +253,24 @@ describe('RemoteTaskProjection', () => {
     })
   })
 
+  it('strips diff hunks from task-card diff summaries', () => {
+    const diffText = ['@@ -1,1 +1,1 @@', '-old', '+new'].join('\n')
+    const latestRun = run({
+      status: 'success',
+      runDiffByPath: {
+        '/repo': [{ ...file('src/App.ts', 'modified', 1, 1), diffText }]
+      }
+    })
+    const directSummary = buildMobileDiffSummary(latestRun)
+    const card = buildRemoteTaskCard(chat({ runs: [latestRun] }))
+
+    expect(directSummary?.hunks.length).toBeGreaterThan(0)
+    expect(directSummary?.files[0]?.hunks?.length).toBeGreaterThan(0)
+    expect(card.diffSummary?.hunks).toEqual([])
+    expect(card.diffSummary?.files[0]).not.toHaveProperty('hunks')
+    expect(card.diffSummary?.workspaces[0]?.files[0]).not.toHaveProperty('hunks')
+  })
+
   it('projects optional shared-chat metadata for remote Shared sections', () => {
     const card = buildRemoteTaskCard(chat(), {
       isShared: true,

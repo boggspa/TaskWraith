@@ -926,7 +926,7 @@ export function buildRemoteTaskCard(
         generatedAt: options.generatedAt
       })
     : undefined
-  if (diffSummary) card.diffSummary = diffSummary
+  if (diffSummary) card.diffSummary = compactDiffSummaryForTaskCard(diffSummary)
   const additionalWorkspaces = buildRemoteAdditionalWorkspaces(chat)
   if (additionalWorkspaces.length > 0) card.additionalWorkspaces = additionalWorkspaces
   const ensembleState = buildRemoteEnsembleState(chat)
@@ -934,6 +934,18 @@ export function buildRemoteTaskCard(
   const queuedComposerPrompts = buildRemoteQueuedComposerPrompts(options.queuedComposerJobs)
   if (queuedComposerPrompts.length > 0) card.queuedComposerPrompts = queuedComposerPrompts
   return card
+}
+
+function compactDiffSummaryForTaskCard(summary: MobileDiffSummary): MobileDiffSummary {
+  return {
+    ...summary,
+    files: summary.files.map(({ hunks: _hunks, ...file }) => file),
+    hunks: [],
+    workspaces: summary.workspaces.map((workspace) => ({
+      ...workspace,
+      files: workspace.files.map(({ hunks: _hunks, ...file }) => file)
+    }))
+  }
 }
 
 export function buildRemoteQueuedComposerPrompts(
