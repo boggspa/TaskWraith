@@ -405,7 +405,7 @@ import { WORKSPACE_POLICY_SERVICES } from './lib/workspacePolicyServices'
 import { applyStateAction, usePerChatState } from './hooks/usePerChatState'
 import { DEFAULT_CONTEXT_TURNS, clampContextTurns } from '../../main/PromptComposition'
 import {
-  estimateOllamaEnsembleUiPressure,
+  estimateWorstOllamaEnsembleUiPressure,
   ollamaContextPressureMessage
 } from '../../main/ollama/OllamaEnsembleContext'
 import { resolveRuntimeProfileIdForChat } from '../../main/RuntimeProfileResolution'
@@ -15391,21 +15391,23 @@ function App(): React.JSX.Element {
       (participant) => participant.enabled && participant.provider === 'ollama'
     )
     if (ollamaParticipants.length === 0) return null
-    const primaryOllama = ollamaParticipants[0]
-    const primaryOllamaContextLength = Array.isArray(agentStatusByProvider.ollama?.models)
-      ? agentStatusByProvider.ollama.models.find(
-          (model: { id?: string; contextLength?: number }) =>
-            model.id && isOllamaModelInstalled(primaryOllama.model || '', [model.id])
-        )?.contextLength
-      : undefined
-    const pressure = estimateOllamaEnsembleUiPressure({
+    const installedOllamaModels = Array.isArray(agentStatusByProvider.ollama?.models)
+      ? agentStatusByProvider.ollama.models
+      : []
+    const pressure = estimateWorstOllamaEnsembleUiPressure({
       configuredContextChars: currentChat.ensemble.ensembleContextChars,
       participantCount: currentChat.ensemble.participants.filter((participant) => participant.enabled)
         .length,
-      ollamaModelId: primaryOllama.model,
-      ollamaContextLength: primaryOllamaContextLength,
+      ollamaParticipants: ollamaParticipants.map((participant) => ({
+        modelId: participant.model,
+        ollamaContextLength: installedOllamaModels.find(
+          (model: { id?: string; contextLength?: number }) =>
+            model.id && isOllamaModelInstalled(participant.model || '', [model.id])
+        )?.contextLength
+      })),
       toolsEnabled: currentChat.scope !== 'global'
     })
+    if (!pressure) return null
     return {
       severity: pressure.severity,
       message: ollamaContextPressureMessage(pressure),

@@ -4,6 +4,7 @@ import {
   compactOllamaEnsemblePromptText,
   estimateOllamaEnsemblePromptTokens,
   estimateOllamaEnsembleUiPressure,
+  estimateWorstOllamaEnsembleUiPressure,
   resolveOllamaContextTokenLimit,
   resolveOllamaEnsembleTranscriptCharsForBudget
 } from './OllamaEnsembleContext'
@@ -63,6 +64,21 @@ describe('OllamaEnsembleContext', () => {
     expect(pressure.contextLimit).toBe(262_144)
     expect(pressure.effectiveTranscriptChars).toBe(24_000)
     expect(pressure.severity).toBe('ok')
+  })
+
+  it('uses the tightest Ollama participant when estimating UI pressure', () => {
+    const pressure = estimateWorstOllamaEnsembleUiPressure({
+      configuredContextChars: 24_000,
+      participantCount: 6,
+      ollamaParticipants: [
+        { modelId: 'qwen3:4b-instruct', ollamaContextLength: 262_144 },
+        { modelId: 'unknown-local:latest', ollamaContextLength: 4096 }
+      ],
+      toolsEnabled: true
+    })
+    expect(pressure?.contextLimit).toBe(4096)
+    expect(pressure?.severity).toBe('critical')
+    expect(pressure?.effectiveTranscriptChars).toBeLessThan(24_000)
   })
 
   it('flags critical pressure near the context ceiling', () => {

@@ -36,6 +36,17 @@ export interface OllamaContextPressure {
   autoCompacted: boolean
 }
 
+export interface OllamaEnsembleUiPressureCandidate {
+  modelId?: string | null
+  ollamaContextLength?: number
+}
+
+const OLLAMA_CONTEXT_PRESSURE_SEVERITY_RANK: Record<OllamaContextPressureSeverity, number> = {
+  ok: 0,
+  warn: 1,
+  critical: 2
+}
+
 export function estimateTextTokens(text: string): number {
   const chars = (text || '').length
   if (!chars) return 0
@@ -200,6 +211,35 @@ export function estimateOllamaEnsembleUiPressure(input: {
     effectiveTranscriptChars: budget.contextChars,
     autoCompacted: budget.autoCompacted
   }
+}
+
+export function estimateWorstOllamaEnsembleUiPressure(input: {
+  configuredContextChars?: number
+  participantCount: number
+  ollamaParticipants: OllamaEnsembleUiPressureCandidate[]
+  toolsEnabled?: boolean
+  /** Approximate chars of ensemble shell (rules/roster) without transcript. */
+  promptShellChars?: number
+}): OllamaContextPressure | null {
+  if (input.ollamaParticipants.length === 0) return null
+  return input.ollamaParticipants.reduce<OllamaContextPressure | null>((worst, participant) => {
+    const pressure = estimateOllamaEnsembleUiPressure({
+      configuredContextChars: input.configuredContextChars,
+      participantCount: input.participantCount,
+      ollamaModelId: participant.modelId,
+      ollamaContextLength: participant.ollamaContextLength,
+      toolsEnabled: input.toolsEnabled,
+      promptShellChars: input.promptShellChars
+    })
+    if (!worst) return pressure
+    const pressureRank = OLLAMA_CONTEXT_PRESSURE_SEVERITY_RANK[pressure.severity]
+    const worstRank = OLLAMA_CONTEXT_PRESSURE_SEVERITY_RANK[worst.severity]
+    if (pressureRank !== worstRank) return pressureRank > worstRank ? pressure : worst
+    if (pressure.usagePercent !== worst.usagePercent) {
+      return pressure.usagePercent > worst.usagePercent ? pressure : worst
+    }
+    return pressure.contextLimit < worst.contextLimit ? pressure : worst
+  }, null)
 }
 
 export function ollamaContextPressureMessage(pressure: OllamaContextPressure): string {
