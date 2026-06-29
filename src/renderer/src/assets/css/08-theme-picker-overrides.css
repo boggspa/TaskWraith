@@ -8382,6 +8382,35 @@
   right: 14px !important;
 }
 
+/* Claude positions the send affordance inside the textarea while the rest
+ * of its controls sit in the footer. Keep the cluster as the positioned
+ * object and reset the child button to normal flow so the hover/focus box,
+ * pointer target, and glyph share the same coordinate system. */
+[data-composer-style="claude"]
+  .composer-surface:not(.side-chat-composer)
+  .composer-send-cluster {
+  --claude-send-cluster-lift: 26px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  position: absolute;
+  right: 14px;
+  bottom: calc(82px + var(--claude-send-cluster-lift));
+  z-index: 4;
+}
+
+[data-composer-style="claude"]
+  .composer-surface:not(.side-chat-composer)
+  .composer-send-cluster
+  > .composer-action-btn {
+  position: static !important;
+  inset: auto !important;
+  top: auto !important;
+  right: auto !important;
+  bottom: auto !important;
+  transform: none;
+}
+
 /* 3) Files-changed + diff chips — gray button chrome, linear row order
  *    (workspace → branch → upstream → files → diff → action). Inherits
  *    the shared flex `order` ladder from shard 07; only the visual skin
