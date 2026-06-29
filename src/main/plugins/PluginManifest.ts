@@ -22,6 +22,7 @@ export type {
   TaskWraithPluginCatalogSnapshot,
   TaskWraithPluginContributionProvenance,
   TaskWraithPluginMcpServerContribution,
+  TaskWraithPluginMcpPresetMaterializationResult,
   TaskWraithPluginContributionSnapshot,
   TaskWraithPluginSource,
   TaskWraithPluginUserMcpServerConfig

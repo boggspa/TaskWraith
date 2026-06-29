@@ -3,6 +3,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 import { coerceLiveProvider, DEFAULT_PROVIDER } from '../../shared/retiredProviders'
 import { redactSecrets } from '../../shared/secretRedaction'
+import type { TaskWraithPluginResourceProvenance } from '../../shared/plugins/PluginTypes'
 import type { UnattendedElevationAck } from '../UnattendedPostureGate'
 import {
   AppSettings,
@@ -837,6 +838,61 @@ function isValidUserMcpRemoteUrl(value: string): boolean {
   }
 }
 
+function normalizePluginResourceProvenance(
+  value: unknown
+): TaskWraithPluginResourceProvenance | undefined {
+  const record = objectOrUndefined(value as Record<string, unknown> | null | undefined)
+  if (!record) return undefined
+  const stringField = (key: string): string => {
+    const raw = record[key]
+    return typeof raw === 'string' ? raw.trim() : ''
+  }
+  const source =
+    record.source === 'builtin' || record.source === 'local' || record.source === 'marketplace'
+      ? record.source
+      : undefined
+  const kind =
+    record.kind === 'mcpServer' ||
+    record.kind === 'workflowTemplate' ||
+    record.kind === 'runtimeProfile' ||
+    record.kind === 'connector' ||
+    record.kind === 'localService' ||
+    record.kind === 'remoteProjection'
+      ? record.kind
+      : undefined
+  const pluginId = stringField('pluginId')
+  const publisher = stringField('publisher')
+  const version = stringField('version')
+  const namespace = stringField('namespace')
+  const manifestHash = stringField('manifestHash')
+  const objectId = stringField('objectId')
+  const materializedAt = stringField('materializedAt')
+  if (
+    !pluginId ||
+    !publisher ||
+    !version ||
+    !source ||
+    !namespace ||
+    !manifestHash ||
+    !kind ||
+    !objectId ||
+    !materializedAt
+  ) {
+    return undefined
+  }
+  return {
+    pluginId,
+    publisher,
+    version,
+    source,
+    namespace,
+    manifestHash,
+    kind,
+    objectId,
+    materializedAt
+  }
+}
+
 function normalizeUserMcpServers(value: unknown): UserMcpServerConfig[] {
   if (!Array.isArray(value)) return []
   const seen = new Set<string>()
@@ -888,6 +944,7 @@ function normalizeUserMcpServers(value: unknown): UserMcpServerConfig[] {
       /^[A-Za-z_][A-Za-z0-9_]*$/.test(record.bearerTokenEnvVar.trim())
         ? record.bearerTokenEnvVar.trim()
         : ''
+    const pluginProvenance = normalizePluginResourceProvenance(record.pluginProvenance)
     const canEnable = transport === 'stdio' ? Boolean(command) : Boolean(url)
     const normalized: UserMcpServerConfig = {
       id,
@@ -904,6 +961,7 @@ function normalizeUserMcpServers(value: unknown): UserMcpServerConfig[] {
     if (typeof record.description === 'string' && record.description.trim()) {
       normalized.description = record.description.trim()
     }
+    if (pluginProvenance) normalized.pluginProvenance = pluginProvenance
     if (typeof record.createdAt === 'string' && record.createdAt.trim()) {
       normalized.createdAt = record.createdAt.trim()
     }

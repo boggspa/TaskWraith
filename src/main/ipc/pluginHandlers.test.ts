@@ -83,6 +83,27 @@ describe('registerPluginHandlers', () => {
       pluginHost: {
         getCatalogSnapshot: vi.fn(() => catalog),
         getContributionSnapshot: vi.fn(() => contributionSnapshot),
+        materializeMcpServerPreset: vi.fn(() => ({
+          plugin: {
+            pluginId: 'demo-bundle',
+            publisher: 'acme',
+            version: '1.0.0',
+            source: 'builtin' as const,
+            namespace: 'plugin.acme.demo-bundle',
+            manifestHash: 'abc'
+          },
+          preset: {
+            id: 'docs',
+            name: 'Docs',
+            transport: 'stdio' as const
+          },
+          userMcpServerConfig: {
+            id: 'plugin:demo-bundle:mcp:docs',
+            name: 'Demo: Docs',
+            enabled: false,
+            transport: 'stdio' as const
+          }
+        })),
         installPlugin: vi.fn(() => installed),
         setPluginEnabled: vi.fn(() => enabled),
         uninstallPlugin: vi.fn(() => uninstalled)
@@ -94,6 +115,31 @@ describe('registerPluginHandlers', () => {
 
     expect(handlerFor('plugins:get-catalog')({})).toBe(catalog)
     expect(handlerFor('plugins:get-contributions')({})).toBe(contributionSnapshot)
+    expect(handlerFor('plugins:materialize-mcp-preset')({}, 'demo-bundle', 'docs')).toEqual({
+      plugin: {
+        pluginId: 'demo-bundle',
+        publisher: 'acme',
+        version: '1.0.0',
+        source: 'builtin',
+        namespace: 'plugin.acme.demo-bundle',
+        manifestHash: 'abc'
+      },
+      preset: {
+        id: 'docs',
+        name: 'Docs',
+        transport: 'stdio'
+      },
+      userMcpServerConfig: {
+        id: 'plugin:demo-bundle:mcp:docs',
+        name: 'Demo: Docs',
+        enabled: false,
+        transport: 'stdio'
+      }
+    })
+    expect(deps.pluginHost.materializeMcpServerPreset).toHaveBeenCalledWith(
+      'demo-bundle',
+      'docs'
+    )
     expect(handlerFor('plugins:install')({}, 'demo-bundle')).toBe(installed)
     expect(deps.requireNonEmptyString).toHaveBeenCalledWith('demo-bundle', 'Plugin id')
     expect(deps.pluginHost.installPlugin).toHaveBeenCalledWith('demo-bundle')

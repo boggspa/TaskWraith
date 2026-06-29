@@ -339,7 +339,18 @@ describe('MainSanitizers settings patches', () => {
             PROJECT_ROOT: '/repo',
             'bad-key': 'drop'
           },
-          description: ' Local files '
+          description: ' Local files ',
+          pluginProvenance: {
+            pluginId: 'demo-bundle',
+            publisher: 'acme',
+            version: '1.0.0',
+            source: 'builtin',
+            namespace: 'plugin.acme.demo-bundle',
+            manifestHash: 'abc123',
+            kind: 'mcpServer',
+            objectId: 'filesystem',
+            materializedAt: '2026-06-29T12:00:00.000Z'
+          }
         },
         {
           id: 'server-1',
@@ -382,7 +393,18 @@ describe('MainSanitizers settings patches', () => {
         env: {
           PROJECT_ROOT: '/repo'
         },
-        description: 'Local files'
+        description: 'Local files',
+        pluginProvenance: {
+          pluginId: 'demo-bundle',
+          publisher: 'acme',
+          version: '1.0.0',
+          source: 'builtin',
+          namespace: 'plugin.acme.demo-bundle',
+          manifestHash: 'abc123',
+          kind: 'mcpServer',
+          objectId: 'filesystem',
+          materializedAt: '2026-06-29T12:00:00.000Z'
+        }
       },
       {
         id: 'server-2',

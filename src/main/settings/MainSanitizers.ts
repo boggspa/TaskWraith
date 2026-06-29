@@ -23,6 +23,7 @@ import type {
   WorkflowTrigger,
   WorkspaceRecord
 } from '../store/types'
+import type { TaskWraithPluginResourceProvenance } from '../../shared/plugins/PluginTypes'
 import { sanitizeProviderRunPauses } from '../ProviderRunPause'
 import { coerceLiveProvider, isRetiredProvider } from '../../shared/retiredProviders'
 import { isAppIconVariant, isWwdc26IconAvailable } from '../../shared/iconVariants'
@@ -262,6 +263,7 @@ function sanitizeUserMcpServers(value: unknown): UserMcpServerConfig[] {
     const description = optionalString(record.description)?.trim()
     const createdAt = optionalString(record.createdAt)?.trim()
     const updatedAt = optionalString(record.updatedAt)?.trim()
+    const pluginProvenance = sanitizePluginResourceProvenance(record.pluginProvenance)
     const canEnable = transport === 'stdio' ? Boolean(command) : Boolean(url)
     const sanitized: UserMcpServerConfig = {
       id,
@@ -278,11 +280,50 @@ function sanitizeUserMcpServers(value: unknown): UserMcpServerConfig[] {
       sanitized.bearerTokenEnvVar = bearerTokenEnvVar
     }
     if (description) sanitized.description = description
+    if (pluginProvenance) sanitized.pluginProvenance = pluginProvenance
     if (createdAt) sanitized.createdAt = createdAt
     if (updatedAt) sanitized.updatedAt = updatedAt
     servers.push(sanitized)
   }
   return servers
+}
+
+function sanitizePluginResourceProvenance(value: unknown): TaskWraithPluginResourceProvenance | undefined {
+  if (!isRecord(value)) return undefined
+  const pluginId = optionalString(value.pluginId)?.trim()
+  const publisher = optionalString(value.publisher)?.trim()
+  const version = optionalString(value.version)?.trim()
+  const namespace = optionalString(value.namespace)?.trim()
+  const manifestHash = optionalString(value.manifestHash)?.trim()
+  const objectId = optionalString(value.objectId)?.trim()
+  const materializedAt = optionalString(value.materializedAt)?.trim()
+  const source =
+    value.source === 'builtin' || value.source === 'local' || value.source === 'marketplace'
+      ? value.source
+      : undefined
+  const kind =
+    value.kind === 'mcpServer' ||
+    value.kind === 'workflowTemplate' ||
+    value.kind === 'runtimeProfile' ||
+    value.kind === 'connector' ||
+    value.kind === 'localService' ||
+    value.kind === 'remoteProjection'
+      ? value.kind
+      : undefined
+  if (
+    !pluginId ||
+    !publisher ||
+    !version ||
+    !source ||
+    !namespace ||
+    !manifestHash ||
+    !kind ||
+    !objectId ||
+    !materializedAt
+  ) {
+    return undefined
+  }
+  return { pluginId, publisher, version, source, namespace, manifestHash, kind, objectId, materializedAt }
 }
 
 export function imageAttachmentSnapshots(

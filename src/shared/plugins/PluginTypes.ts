@@ -24,6 +24,18 @@ export type TaskWraithPluginRuntimeWorkspaceMode = 'local' | 'worktree' | 'conta
 export type TaskWraithPluginRuntimeNetworkPolicy = 'inherit' | 'allow' | 'deny'
 export type TaskWraithPluginRuntimePersistence = 'reusable' | 'ephemeral'
 export type TaskWraithPluginToolName = string
+export type TaskWraithPluginPlatform =
+  | 'android'
+  | 'aix'
+  | 'darwin'
+  | 'freebsd'
+  | 'linux'
+  | 'openbsd'
+  | 'sunos'
+  | 'win32'
+  | 'cygwin'
+  | 'haiku'
+  | 'netbsd'
 
 export type TaskWraithPluginSource = 'builtin' | 'local' | 'marketplace'
 export type TaskWraithPluginInstallSource = TaskWraithPluginSource | 'unknown'
@@ -47,7 +59,7 @@ export type TaskWraithPluginRemoteCapability = 'startTurn' | 'approve' | 'cancel
 export interface TaskWraithPluginCompatibility {
   minTaskWraithVersion?: string
   maxTaskWraithVersion?: string
-  platforms?: Array<NodeJS.Platform | 'all'>
+  platforms?: Array<TaskWraithPluginPlatform | 'all'>
   providers?: TaskWraithPluginProviderId[]
 }
 
@@ -255,6 +267,21 @@ export interface TaskWraithPluginContributionProvenance {
   manifestHash: string
 }
 
+export type TaskWraithPluginResourceKind =
+  | 'mcpServer'
+  | 'workflowTemplate'
+  | 'runtimeProfile'
+  | 'connector'
+  | 'localService'
+  | 'remoteProjection'
+
+export interface TaskWraithPluginResourceProvenance
+  extends TaskWraithPluginContributionProvenance {
+  kind: TaskWraithPluginResourceKind
+  objectId: string
+  materializedAt: string
+}
+
 export interface TaskWraithPluginUserMcpServerConfig {
   id: string
   name: string
@@ -267,11 +294,18 @@ export interface TaskWraithPluginUserMcpServerConfig {
   headers?: Record<string, string>
   bearerTokenEnvVar?: string
   description?: string
+  pluginProvenance?: TaskWraithPluginResourceProvenance
   createdAt?: string
   updatedAt?: string
 }
 
 export interface TaskWraithPluginMcpServerContribution {
+  plugin: TaskWraithPluginContributionProvenance
+  preset: TaskWraithPluginMcpServerPreset
+  userMcpServerConfig: TaskWraithPluginUserMcpServerConfig
+}
+
+export interface TaskWraithPluginMcpPresetMaterializationResult {
   plugin: TaskWraithPluginContributionProvenance
   preset: TaskWraithPluginMcpServerPreset
   userMcpServerConfig: TaskWraithPluginUserMcpServerConfig
@@ -334,4 +368,3 @@ export function pluginToolNamespace(
 ): string {
   return `plugin.${manifest.publisher}.${manifest.id}`
 }
-

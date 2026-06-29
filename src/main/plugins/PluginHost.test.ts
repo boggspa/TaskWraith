@@ -148,6 +148,41 @@ describe('PluginHost', () => {
     })
   })
 
+  it('materializes an installed MCP preset as a disabled server with provenance', () => {
+    const host = makeHost()
+    host.installPlugin('demo-bundle')
+
+    const result = host.materializeMcpServerPreset('demo-bundle', 'docs-stdio')
+
+    expect(result.userMcpServerConfig).toMatchObject({
+      id: 'plugin:demo-bundle:mcp:docs-stdio',
+      name: 'Demo Bundle: Docs',
+      enabled: false,
+      transport: 'stdio',
+      command: 'node',
+      args: ['server.js'],
+      pluginProvenance: {
+        pluginId: 'demo-bundle',
+        publisher: 'acme',
+        version: '1.0.0',
+        source: 'builtin',
+        namespace: 'plugin.acme.demo-bundle',
+        kind: 'mcpServer',
+        objectId: 'docs-stdio',
+        materializedAt: '2026-06-29T12:00:00.000Z'
+      },
+      createdAt: '2026-06-29T12:00:00.000Z',
+      updatedAt: '2026-06-29T12:00:00.000Z'
+    })
+  })
+
+  it('refuses to materialize MCP presets before plugin install', () => {
+    const host = makeHost()
+    expect(() => host.materializeMcpServerPreset('demo-bundle', 'docs-stdio')).toThrow(
+      'Plugin must be installed before MCP presets can be added.'
+    )
+  })
+
   it('does not enable blocked plugins', () => {
     const blockedManifest: TaskWraithPluginManifest = {
       ...BASE_MANIFEST,

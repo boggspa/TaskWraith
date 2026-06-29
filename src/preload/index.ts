@@ -40,7 +40,8 @@ import type {
 } from '../main/services/RunLifecycleCoordinator'
 import type {
   TaskWraithPluginCatalogSnapshot,
-  TaskWraithPluginContributionSnapshot
+  TaskWraithPluginContributionSnapshot,
+  TaskWraithPluginMcpPresetMaterializationResult
 } from '../shared/plugins/PluginTypes'
 
 type ComposerImageAttachment = {
@@ -56,8 +57,7 @@ const api = {
   selectWorkspace: () => ipcRenderer.invoke('select-workspace'),
   selectImageFiles: () => ipcRenderer.invoke('select-image-files'),
   saveClipboardImageAttachment: () => ipcRenderer.invoke('save-clipboard-image-attachment'),
-  authorizeImagePreview: (paths: string[]) =>
-    ipcRenderer.invoke('authorize-image-preview', paths),
+  authorizeImagePreview: (paths: string[]) => ipcRenderer.invoke('authorize-image-preview', paths),
   readImagePreview: (path: string) => ipcRenderer.invoke('read-image-preview', path),
   imageGenerationGetStatus: () => ipcRenderer.invoke('image-generation:get-status'),
   imageGenerationSetEnabled: (input: { enabled: boolean; provider?: 'openai' | 'xai' }) =>
@@ -84,8 +84,7 @@ const api = {
       } | null
     }) => void
   ) => {
-    const wrapped = (_event: unknown, payload: Parameters<typeof callback>[0]) =>
-      callback(payload)
+    const wrapped = (_event: unknown, payload: Parameters<typeof callback>[0]) => callback(payload)
     ipcRenderer.on('spellcheck:context-menu', wrapped)
     return () => ipcRenderer.removeListener('spellcheck:context-menu', wrapped)
   },
@@ -297,10 +296,9 @@ const api = {
   getDiff: (workspace: string) => ipcRenderer.invoke('get-diff', workspace),
   openWorkspacePopout: (
     input:
-      | { kind: 'file-editor' | 'diff-studio'; workspacePath: string }
+      | { kind: 'file-editor' | 'diff-studio' | 'workbench'; workspacePath: string }
       | { kind: 'chat'; chatId: string; workspacePath?: string }
-  ) =>
-    ipcRenderer.invoke('open-workspace-popout', input) as Promise<{ ok: true }>,
+  ) => ipcRenderer.invoke('open-workspace-popout', input) as Promise<{ ok: true }>,
   dockSideChatPopout: (input: {
     chatId: string
     presentation?: 'split' | 'drawer'
@@ -321,8 +319,12 @@ const api = {
   ) => ipcRenderer.invoke('list-workspace-files-for-editor', workspace, options),
   readWorkspaceFile: (workspace: string, path: string) =>
     ipcRenderer.invoke('read-workspace-file', workspace, path),
-  writeWorkspaceFile: (workspace: string, path: string, content: string, baseEtag?: string | null) =>
-    ipcRenderer.invoke('write-workspace-file', workspace, path, content, baseEtag),
+  writeWorkspaceFile: (
+    workspace: string,
+    path: string,
+    content: string,
+    baseEtag?: string | null
+  ) => ipcRenderer.invoke('write-workspace-file', workspace, path, content, baseEtag),
   deleteWorkspaceFile: (workspace: string, path: string) =>
     ipcRenderer.invoke('delete-workspace-file', workspace, path),
   captureSnapshot: (workspace: string) => ipcRenderer.invoke('capture-snapshot', workspace),
@@ -619,8 +621,7 @@ const api = {
     relayUrl?: string
     manualRelayUrl?: string
     openAtLogin?: boolean
-  }) =>
-    ipcRenderer.invoke('set-ios-remote-config', config),
+  }) => ipcRenderer.invoke('set-ios-remote-config', config),
   iosRemoteTailscaleStatus: () => ipcRenderer.invoke('ios-remote-tailscale-status'),
   iosRemoteTailscaleEnable: () => ipcRenderer.invoke('ios-remote-tailscale-enable'),
   iosRemoteTailscaleTest: () => ipcRenderer.invoke('ios-remote-tailscale-test'),
@@ -825,6 +826,12 @@ const api = {
     ipcRenderer.invoke(
       'plugins:get-contributions'
     ) as Promise<TaskWraithPluginContributionSnapshot>,
+  materializePluginMcpPreset: (pluginId: string, presetId: string) =>
+    ipcRenderer.invoke(
+      'plugins:materialize-mcp-preset',
+      pluginId,
+      presetId
+    ) as Promise<TaskWraithPluginMcpPresetMaterializationResult>,
   installPlugin: (pluginId: string) =>
     ipcRenderer.invoke('plugins:install', pluginId) as Promise<TaskWraithPluginCatalogSnapshot>,
   setPluginEnabled: (pluginId: string, enabled: boolean) =>
@@ -887,16 +894,16 @@ const api = {
     textPrefix?: string
     concurrentMode?: boolean
   }) => ipcRenderer.invoke('steer-queued-ensemble-prompt', payload),
-  removeQueuedEnsemblePrompt: (payload: {
-    chatId: string
-    index: number
-    textPrefix?: string
-  }) => ipcRenderer.invoke('remove-queued-ensemble-prompt', payload),
+  removeQueuedEnsemblePrompt: (payload: { chatId: string; index: number; textPrefix?: string }) =>
+    ipcRenderer.invoke('remove-queued-ensemble-prompt', payload),
   cancelEnsembleRound: (chatId: string) => ipcRenderer.invoke('cancel-ensemble-round', chatId),
   skipEnsembleParticipant: (chatId: string) =>
     ipcRenderer.invoke('skip-ensemble-participant', chatId),
   getLatestSessionCheckpoint: (chatId: string) =>
-    ipcRenderer.invoke('session-checkpoints:latest', chatId) as Promise<SessionCheckpointRecord | null>,
+    ipcRenderer.invoke(
+      'session-checkpoints:latest',
+      chatId
+    ) as Promise<SessionCheckpointRecord | null>,
   acceptSessionCheckpoint: (checkpointId: string) =>
     ipcRenderer.invoke('session-checkpoints:accept', checkpointId) as Promise<
       | { ok: true; checkpoint: SessionCheckpointRecord; resumePrompt: string }
@@ -904,8 +911,7 @@ const api = {
     >,
   dismissSessionCheckpoint: (checkpointId: string) =>
     ipcRenderer.invoke('session-checkpoints:dismiss', checkpointId) as Promise<
-      | { ok: true; checkpoint: SessionCheckpointRecord }
-      | { ok: false; error: string }
+      { ok: true; checkpoint: SessionCheckpointRecord } | { ok: false; error: string }
     >,
   wakeEnsembleParticipantNow: (wakeupId: string) =>
     ipcRenderer.invoke('wake-ensemble-participant-now', wakeupId) as Promise<boolean>,
@@ -1043,9 +1049,8 @@ const api = {
     confirmCode: string
     collaboratorTranscriptSigB64: string
   }) => ipcRenderer.invoke('human-collaboration-runtime:confirm-sas', input),
-  humanCollaborationRuntimeSubscribeProjection: (input: {
-    sessionId: string
-  }) => ipcRenderer.invoke('human-collaboration-runtime:subscribe-projection', input),
+  humanCollaborationRuntimeSubscribeProjection: (input: { sessionId: string }) =>
+    ipcRenderer.invoke('human-collaboration-runtime:subscribe-projection', input),
   humanCollaborationRuntimeAppendComment: (input: {
     sessionId: string
     clientMessageId: string
@@ -1121,21 +1126,28 @@ const api = {
     ipcRenderer.invoke('save-workflow-definition', workflow),
   updateWorkflowDefinition: (id: string, partial: any) =>
     ipcRenderer.invoke('update-workflow-definition', id, partial),
-  deleteWorkflowDefinition: (id: string) =>
-    ipcRenderer.invoke('delete-workflow-definition', id),
+  deleteWorkflowDefinition: (id: string) => ipcRenderer.invoke('delete-workflow-definition', id),
   getWorkspaceBoards: (workspaceId?: string) =>
     ipcRenderer.invoke('get-workspace-boards', workspaceId) as Promise<WorkspaceBoardDefinition[]>,
   saveWorkspaceBoard: (board: any) =>
     ipcRenderer.invoke('save-workspace-board', board) as Promise<WorkspaceBoardDefinition>,
   updateWorkspaceBoard: (id: string, partial: any) =>
-    ipcRenderer.invoke('update-workspace-board', id, partial) as Promise<WorkspaceBoardDefinition | null>,
+    ipcRenderer.invoke(
+      'update-workspace-board',
+      id,
+      partial
+    ) as Promise<WorkspaceBoardDefinition | null>,
   deleteWorkspaceBoard: (id: string) => ipcRenderer.invoke('delete-workspace-board', id),
   getWorkspaceBoardCards: (boardId?: string) =>
     ipcRenderer.invoke('get-workspace-board-cards', boardId) as Promise<WorkspaceBoardCard[]>,
   saveWorkspaceBoardCard: (card: any) =>
     ipcRenderer.invoke('save-workspace-board-card', card) as Promise<WorkspaceBoardCard>,
   updateWorkspaceBoardCard: (id: string, partial: any) =>
-    ipcRenderer.invoke('update-workspace-board-card', id, partial) as Promise<WorkspaceBoardCard | null>,
+    ipcRenderer.invoke(
+      'update-workspace-board-card',
+      id,
+      partial
+    ) as Promise<WorkspaceBoardCard | null>,
   deleteWorkspaceBoardCard: (id: string) => ipcRenderer.invoke('delete-workspace-board-card', id),
   runWorkflowNow: (id: string) => ipcRenderer.invoke('run-workflow-now', id),
   setWorkflowUnattendedElevation: (id: string, level: string) =>
@@ -1317,10 +1329,8 @@ const api = {
   onHumanCollaborationRuntimeProjectionUpdate: (
     callback: (payload: { sessionId: string; projection: unknown }) => void
   ) => {
-    const wrapped = (
-      _event: unknown,
-      payload: { sessionId: string; projection: unknown }
-    ): void => callback(payload)
+    const wrapped = (_event: unknown, payload: { sessionId: string; projection: unknown }): void =>
+      callback(payload)
     ipcRenderer.on('human-collaboration-runtime-projection-update', wrapped)
     return () =>
       ipcRenderer.removeListener('human-collaboration-runtime-projection-update', wrapped)
@@ -1331,8 +1341,7 @@ const api = {
     const wrapped = (_event: unknown, payload: { sessionId: string; frame: unknown }): void =>
       callback(payload)
     ipcRenderer.on('human-collaboration-runtime-encrypted-frame', wrapped)
-    return () =>
-      ipcRenderer.removeListener('human-collaboration-runtime-encrypted-frame', wrapped)
+    return () => ipcRenderer.removeListener('human-collaboration-runtime-encrypted-frame', wrapped)
   },
   // Host side: a collaborator began admission — surface the 6-digit SAS to compare.
   onHumanCollaborationAdmissionBegan: (
@@ -1363,8 +1372,7 @@ const api = {
   ) => {
     const wrapped = (_event: unknown, payload: { projection: unknown }): void => callback(payload)
     ipcRenderer.on('human-collaboration-collaborator-projection', wrapped)
-    return () =>
-      ipcRenderer.removeListener('human-collaboration-collaborator-projection', wrapped)
+    return () => ipcRenderer.removeListener('human-collaboration-collaborator-projection', wrapped)
   },
   // Collaborator side: connection/error status for the active join.
   onHumanCollaborationCollaboratorStatus: (
@@ -1380,11 +1388,7 @@ const api = {
   // the renderer attaches them WITHOUT the image-only RAW-provider sanitizer
   // (a provider's stdout cannot forge this IPC). See applyAssistantMediaRefsToChat.
   onRunTrustedMediaRefs: (
-    callback: (payload: {
-      appChatId: string
-      appRunId: string
-      mediaRefs: unknown[]
-    }) => void
+    callback: (payload: { appChatId: string; appRunId: string; mediaRefs: unknown[] }) => void
   ) => {
     const wrapped = (
       _event: unknown,

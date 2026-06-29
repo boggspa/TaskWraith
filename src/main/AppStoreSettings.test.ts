@@ -58,7 +58,18 @@ describe('AppStore settings defaults', () => {
           name: ' docs ',
           enabled: true,
           transport: 'http',
-          url: ' https://example.test/mcp '
+          url: ' https://example.test/mcp ',
+          pluginProvenance: {
+            pluginId: 'demo-bundle',
+            publisher: 'acme',
+            version: '1.0.0',
+            source: 'builtin',
+            namespace: 'plugin.acme.demo-bundle',
+            manifestHash: 'abc123',
+            kind: 'mcpServer',
+            objectId: 'docs',
+            materializedAt: '2026-06-29T12:00:00.000Z'
+          }
         },
         {
           id: 'bad',
@@ -76,7 +87,18 @@ describe('AppStore settings defaults', () => {
         name: 'docs',
         enabled: true,
         transport: 'http',
-        url: 'https://example.test/mcp'
+        url: 'https://example.test/mcp',
+        pluginProvenance: {
+          pluginId: 'demo-bundle',
+          publisher: 'acme',
+          version: '1.0.0',
+          source: 'builtin',
+          namespace: 'plugin.acme.demo-bundle',
+          manifestHash: 'abc123',
+          kind: 'mcpServer',
+          objectId: 'docs',
+          materializedAt: '2026-06-29T12:00:00.000Z'
+        }
       },
       {
         id: 'bad',

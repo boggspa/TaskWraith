@@ -15,6 +15,7 @@ import {
   type TaskWraithPluginInstallState,
   type TaskWraithPluginManifest,
   type TaskWraithPluginMcpServerContribution,
+  type TaskWraithPluginMcpPresetMaterializationResult,
   type TaskWraithPluginPreflightIssue,
   type TaskWraithPluginPreflightResult,
   type TaskWraithPluginSource,
@@ -102,7 +103,8 @@ function pluginObjectId(pluginId: string, kind: string, objectId: string): strin
 function toDisabledUserMcpServerConfig(
   pluginId: string,
   pluginName: string,
-  preset: TaskWraithPluginMcpServerPreset
+  preset: TaskWraithPluginMcpServerPreset,
+  provenance?: TaskWraithPluginUserMcpServerConfig['pluginProvenance']
 ): TaskWraithPluginUserMcpServerConfig {
   return {
     id: pluginObjectId(pluginId, 'mcp', preset.id),
@@ -115,7 +117,8 @@ function toDisabledUserMcpServerConfig(
     ...(preset.env ? { env: { ...preset.env } } : {}),
     ...(preset.headers ? { headers: { ...preset.headers } } : {}),
     ...(preset.bearerTokenEnvVar ? { bearerTokenEnvVar: preset.bearerTokenEnvVar } : {}),
-    ...(preset.description ? { description: preset.description } : {})
+    ...(preset.description ? { description: preset.description } : {}),
+    ...(provenance ? { pluginProvenance: provenance } : {})
   }
 }
 
@@ -416,6 +419,49 @@ export class PluginHost {
         providerSetup: providerSetup.length,
         mobileRemoteProjection: mobileRemoteProjection.length
       }
+    }
+  }
+
+  materializeMcpServerPreset(
+    pluginId: string,
+    presetId: string
+  ): TaskWraithPluginMcpPresetMaterializationResult {
+    const entry = this.getCatalogSnapshot().plugins.find(
+      (candidate) => candidate.manifest.id === pluginId
+    )
+    if (!entry) throw new Error('Plugin is not available.')
+    if (!entry.installed) throw new Error('Plugin must be installed before MCP presets can be added.')
+    if (entry.preflight.status === 'blocked') {
+      throw new Error('Blocked plugins cannot materialize MCP presets.')
+    }
+    const preset = entry.manifest.mcpServers?.find((candidate) => candidate.id === presetId)
+    if (!preset) throw new Error('MCP preset is not available for this plugin.')
+    const materializedAt = this.now().toISOString()
+    const plugin: TaskWraithPluginContributionProvenance = {
+      pluginId: entry.manifest.id,
+      publisher: entry.manifest.publisher,
+      version: entry.manifest.version,
+      source: entry.source,
+      namespace: entry.namespace,
+      manifestHash: entry.manifestHash
+    }
+    const userMcpServerConfig = toDisabledUserMcpServerConfig(
+      entry.manifest.id,
+      entry.manifest.name,
+      preset,
+      {
+        ...plugin,
+        kind: 'mcpServer',
+        objectId: preset.id,
+        materializedAt
+      }
+    )
+    userMcpServerConfig.createdAt = materializedAt
+    userMcpServerConfig.updatedAt = materializedAt
+    return {
+      plugin,
+      preset,
+      userMcpServerConfig
     }
   }
 

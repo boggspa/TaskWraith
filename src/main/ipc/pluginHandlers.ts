@@ -6,6 +6,7 @@ export interface PluginHandlerDeps {
     PluginHost,
     | 'getCatalogSnapshot'
     | 'getContributionSnapshot'
+    | 'materializeMcpServerPreset'
     | 'installPlugin'
     | 'setPluginEnabled'
     | 'uninstallPlugin'
@@ -16,6 +17,12 @@ export interface PluginHandlerDeps {
 export function registerPluginHandlers(deps: PluginHandlerDeps): void {
   ipcMain.handle('plugins:get-catalog', () => deps.pluginHost.getCatalogSnapshot())
   ipcMain.handle('plugins:get-contributions', () => deps.pluginHost.getContributionSnapshot())
+  ipcMain.handle('plugins:materialize-mcp-preset', (_event, pluginId: string, presetId: string) =>
+    deps.pluginHost.materializeMcpServerPreset(
+      deps.requireNonEmptyString(pluginId, 'Plugin id'),
+      deps.requireNonEmptyString(presetId, 'MCP preset id')
+    )
+  )
   ipcMain.handle('plugins:install', (_event, pluginId: string) =>
     deps.pluginHost.installPlugin(deps.requireNonEmptyString(pluginId, 'Plugin id'))
   )

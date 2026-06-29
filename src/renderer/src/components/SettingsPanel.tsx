@@ -1415,7 +1415,8 @@ function formatUserMcpServerAuditJson(server: UserMcpServerConfig): string {
       },
       taskwraith: {
         id: server.id,
-        enabled: server.enabled
+        enabled: server.enabled,
+        ...(server.pluginProvenance ? { pluginProvenance: server.pluginProvenance } : {})
       }
     },
     null,
@@ -1437,7 +1438,8 @@ export function formatUserMcpServersAuditJson(servers: readonly UserMcpServerCon
         servers: servers.map((server) => ({
           id: server.id,
           name: server.name,
-          enabled: server.enabled
+          enabled: server.enabled,
+          ...(server.pluginProvenance ? { pluginProvenance: server.pluginProvenance } : {})
         }))
       }
     },
@@ -2970,6 +2972,34 @@ export function SettingsPanel({
       return
     }
     runPluginMutation(pluginId, () => window.api.uninstallPlugin(pluginId))
+  }
+
+  const addPluginMcpPreset = (pluginId: string, presetId: string): void => {
+    if (
+      typeof window === 'undefined' ||
+      typeof window.api?.materializePluginMcpPreset !== 'function'
+    ) {
+      setPluginCatalogError('Plugin MCP preset materialization unavailable.')
+      return
+    }
+    const busyKey = `mcp:${pluginId}:${presetId}`
+    setPluginBusyId(busyKey)
+    setPluginCatalogError('')
+    void window.api
+      .materializePluginMcpPreset(pluginId, presetId)
+      .then((result) => {
+        const server = result.userMcpServerConfig as UserMcpServerConfig
+        if (userMcpServers.some((existing) => existing.id === server.id)) return
+        if (hasUserMcpServerNameConflict(userMcpServers, server.name, server.id)) {
+          setPluginCatalogError('Another MCP server already uses that plugin preset name.')
+          return
+        }
+        persistUserMcpServers([...userMcpServers, server])
+      })
+      .catch((error) => setPluginCatalogError(String(error)))
+      .finally(() => {
+        setPluginBusyId((current) => (current === busyKey ? null : current))
+      })
   }
 
   const resetMcpServerForm = (): void => {
@@ -7510,6 +7540,7 @@ export function SettingsPanel({
                     const pluginId = entry.manifest.id
                     const busy = pluginBusyId === pluginId
                     const capabilities = entry.manifest.capabilities || []
+                    const mcpPresets = entry.manifest.mcpServers || []
                     const category = entry.manifest.marketplace?.category || 'Uncategorized'
                     const tags = entry.manifest.marketplace?.tags || []
                     const provenance = {
@@ -7569,6 +7600,38 @@ export function SettingsPanel({
                                   {capability.kind}: {capability.label}
                                 </span>
                               ))}
+                            </div>
+                          )}
+                          {mcpPresets.length > 0 && (
+                            <div className="settings-mcp-server-meta">
+                              {mcpPresets.map((preset) => {
+                                const serverId = `plugin:${pluginId}:mcp:${preset.id}`
+                                const materialized = userMcpServers.some(
+                                  (server) => server.id === serverId
+                                )
+                                const busy = pluginBusyId === `mcp:${pluginId}:${preset.id}`
+                                return (
+                                  <button
+                                    key={preset.id}
+                                    type="button"
+                                    className="btn btn-sm btn-ghost"
+                                    disabled={
+                                      busy ||
+                                      materialized ||
+                                      !entry.installed ||
+                                      entry.preflight.status === 'blocked'
+                                    }
+                                    onClick={() => addPluginMcpPreset(pluginId, preset.id)}
+                                    title={`${preset.transport} MCP preset`}
+                                  >
+                                    {materialized
+                                      ? `Added ${preset.name}`
+                                      : busy
+                                        ? `Adding ${preset.name}`
+                                        : `Add MCP preset: ${preset.name}`}
+                                  </button>
+                                )
+                              })}
                             </div>
                           )}
                           <details className="settings-user-mcp-config">

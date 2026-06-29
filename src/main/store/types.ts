@@ -1,6 +1,7 @@
 import type { TodoItem } from '../TodoList'
 import type { AppIconVariant } from '../../shared/iconVariants'
 import type { UnattendedElevationAck } from '../UnattendedPostureGate'
+import type { TaskWraithPluginResourceProvenance } from '../../shared/plugins/PluginTypes'
 
 export type AppearanceMode = 'solid' | 'soft_glass' | 'native_glass'
 export type VisualEffectStyle = 'auto' | 'liquid_glass' | 'thin_material' | 'classic'
@@ -1333,6 +1334,7 @@ export interface UserMcpServerConfig {
   headers?: Record<string, string>
   bearerTokenEnvVar?: string
   description?: string
+  pluginProvenance?: TaskWraithPluginResourceProvenance
   createdAt?: string
   updatedAt?: string
 }

@@ -67,7 +67,8 @@ import type { LocalServersSnapshot } from '../main/localServers/types'
 import type { LaunchTargetsSnapshot } from '../main/launchTargets/types'
 import type {
   TaskWraithPluginCatalogSnapshot,
-  TaskWraithPluginContributionSnapshot
+  TaskWraithPluginContributionSnapshot,
+  TaskWraithPluginMcpPresetMaterializationResult
 } from '../shared/plugins/PluginTypes'
 import type {
   LaunchSnapshot,
@@ -613,14 +614,18 @@ declare global {
         diffText?: string
         summaries?: any[]
       }>
-      openWorkspacePopout: (input: {
-        kind: 'file-editor' | 'diff-studio'
-        workspacePath: string
-      } | {
-        kind: 'chat'
-        chatId: string
-        workspacePath?: string
-      }) => Promise<{ ok: true }>
+      openWorkspacePopout: (
+        input:
+          | {
+              kind: 'file-editor' | 'diff-studio' | 'workbench'
+              workspacePath: string
+            }
+          | {
+              kind: 'chat'
+              chatId: string
+              workspacePath?: string
+            }
+      ) => Promise<{ ok: true }>
       dockSideChatPopout: (input: {
         chatId: string
         presentation?: 'split' | 'drawer'
@@ -681,10 +686,7 @@ declare global {
         handler: (state: { enabled: boolean; enabledAt: string | null }) => void
       ) => () => void
       canvas: {
-        openWindow: (args: {
-          url: string
-          originAllowlist?: string[]
-        }) => Promise<
+        openWindow: (args: { url: string; originAllowlist?: string[] }) => Promise<
           | {
               ok: true
               canvasId: string
@@ -694,10 +696,7 @@ declare global {
             }
           | { ok: false; error: string }
         >
-        openEmbedded: (args: {
-          url: string
-          originAllowlist?: string[]
-        }) => Promise<
+        openEmbedded: (args: { url: string; originAllowlist?: string[] }) => Promise<
           | {
               ok: true
               canvasId: string
@@ -730,21 +729,21 @@ declare global {
       onAgentQuestionCancelled: (
         handler: (info: { questionId: string; appChatId: string; reason: string }) => void
       ) => () => void
-	      answerAgentQuestion: (payload: {
-	        questionId: string
-	        answer: string
-	        isCustom?: boolean
-	        appChatId?: string
-	        appRunId?: string
-	        workspaceId?: string | null
-	      }) => Promise<{ ok: boolean; error?: string }>
-	      cancelAgentQuestion: (payload: {
-	        questionId: string
-	        reason?: string
-	        appChatId?: string
-	        appRunId?: string
-	        workspaceId?: string | null
-	      }) => Promise<{ ok: boolean; error?: string }>
+      answerAgentQuestion: (payload: {
+        questionId: string
+        answer: string
+        isCustom?: boolean
+        appChatId?: string
+        appRunId?: string
+        workspaceId?: string | null
+      }) => Promise<{ ok: boolean; error?: string }>
+      cancelAgentQuestion: (payload: {
+        questionId: string
+        reason?: string
+        appChatId?: string
+        appRunId?: string
+        workspaceId?: string | null
+      }) => Promise<{ ok: boolean; error?: string }>
       openExternalOrPath: (href: string) => Promise<{ ok: boolean; error?: string }>
       revealPathInFinder: (path: string) => Promise<{ ok: boolean; error?: string }>
       revealMediaAsset: (sha256: string, mimeType: string) => Promise<{ ok: boolean }>
@@ -769,7 +768,9 @@ declare global {
       >
       openProviderLoginTerminal: (provider: ProviderId) => Promise<{ ok: boolean; error?: string }>
       openProviderLogoutTerminal: (provider: ProviderId) => Promise<{ ok: boolean; error?: string }>
-      openProviderUpgradeTerminal: (provider: ProviderId) => Promise<{ ok: boolean; error?: string }>
+      openProviderUpgradeTerminal: (
+        provider: ProviderId
+      ) => Promise<{ ok: boolean; error?: string }>
       startPty: (workspacePath: string, sessionId?: string) => Promise<void>
       stopPty: (sessionId?: string) => Promise<void>
       ptyWrite: (data: string, sessionId?: string) => Promise<void>
@@ -1150,6 +1151,10 @@ declare global {
       deleteHandoffCard: (id: string) => Promise<void>
       getPluginCatalog: () => Promise<TaskWraithPluginCatalogSnapshot>
       getPluginContributions: () => Promise<TaskWraithPluginContributionSnapshot>
+      materializePluginMcpPreset: (
+        pluginId: string,
+        presetId: string
+      ) => Promise<TaskWraithPluginMcpPresetMaterializationResult>
       installPlugin: (pluginId: string) => Promise<TaskWraithPluginCatalogSnapshot>
       setPluginEnabled: (
         pluginId: string,
@@ -1207,10 +1212,7 @@ declare global {
       >
       dismissSessionCheckpoint: (
         checkpointId: string
-      ) => Promise<
-        | { ok: true; checkpoint: SessionCheckpointRecord }
-        | { ok: false; error: string }
-      >
+      ) => Promise<{ ok: true; checkpoint: SessionCheckpointRecord } | { ok: false; error: string }>
       wakeEnsembleParticipantNow: (wakeupId: string) => Promise<boolean>
       cancelEnsembleParticipantWakeup: (
         wakeupId: string
@@ -1293,10 +1295,7 @@ declare global {
         message: MessagesBridgePollResult['messages'][number]
         summary: MessageChannelPollSummary
       }>
-      drainLocalWebChannelOutbox: (params?: {
-        accountId?: string
-        chatGuid?: string
-      }) => Promise<{
+      drainLocalWebChannelOutbox: (params?: { accountId?: string; chatGuid?: string }) => Promise<{
         ok: true
         messages: LocalWebChannelOutboundMessage[]
       }>
@@ -1587,9 +1586,7 @@ declare global {
       onEnsembleRosterPresetSaveRequested: (
         callback: (payload: { name: string; participants: unknown[] }) => void
       ) => () => void
-      onEnsembleRosterPresetDeleteRequested: (
-        callback: (presetId: string) => void
-      ) => () => void
+      onEnsembleRosterPresetDeleteRequested: (callback: (presetId: string) => void) => () => void
       onWorkflowDefinitionsChanged: (callback: (payload: WorkflowDefinition[]) => void) => void
       onWorkspaceBoardsChanged: (
         callback: (payload: {
@@ -1623,11 +1620,7 @@ declare global {
         callback: (payload: { connected?: boolean; error?: string }) => void
       ) => () => void
       onRunTrustedMediaRefs: (
-        callback: (payload: {
-          appChatId: string
-          appRunId: string
-          mediaRefs: unknown[]
-        }) => void
+        callback: (payload: { appChatId: string; appRunId: string; mediaRefs: unknown[] }) => void
       ) => () => void
       onAppShellStatsChanged: (callback: (snapshot: AppShellStatsSnapshot) => void) => () => void
       onWorkspacePopoutRefresh: (
