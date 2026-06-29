@@ -5501,6 +5501,24 @@ input:disabled, select:disabled, textarea:disabled {
   background: rgba(255, 255, 255, 0.03);
 }
 
+.file-change-summary-item.has-diff-preview {
+  width: 100%;
+  border-right: 0;
+  border-bottom: 0;
+  border-left: 0;
+  appearance: none;
+  text-align: left;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.file-change-summary-item.has-diff-preview:hover,
+.file-change-summary-item.has-diff-preview:focus-visible {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  outline: 1px solid color-mix(in srgb, var(--accent) 46%, transparent);
+  outline-offset: -1px;
+}
+
 .file-change-summary-header strong {
   color: var(--text-primary);
   font-size: var(--font-size-sm);
@@ -5708,6 +5726,126 @@ input:disabled, select:disabled, textarea:disabled {
 .file-change-summary-overflow {
   font-style: italic;
   color: var(--text-muted);
+}
+
+.file-change-diff-preview {
+  position: fixed;
+  z-index: 10080;
+  width: min(640px, calc(100vw - 16px));
+  max-height: min(360px, calc(100vh - 16px));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--border) 74%, transparent);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--surface-elevated, var(--surface-base)) 96%, transparent);
+  box-shadow: 0 18px 48px color-mix(in srgb, var(--text-primary) 24%, transparent);
+  pointer-events: none;
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+
+.file-change-diff-preview-header {
+  flex: 0 0 auto;
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  padding: 0 var(--space-md);
+  border-bottom: 1px solid var(--panel-border);
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+}
+
+.file-change-diff-preview-header span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-change-diff-preview-header strong {
+  flex: 0 0 auto;
+  color: var(--success);
+  font-size: var(--font-size-sm);
+}
+
+.file-change-diff-preview-body {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--app-bg-sunken) 68%, transparent);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.file-change-diff-preview-section + .file-change-diff-preview-section {
+  border-top: 1px solid color-mix(in srgb, var(--text-primary) 8%, transparent);
+}
+
+.file-change-diff-preview-hunk {
+  padding: 2px var(--space-sm);
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--text-primary) 5%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--text-primary) 6%, transparent);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.file-change-diff-preview-line {
+  display: grid;
+  grid-template-columns: 4ch 4ch minmax(0, 1fr);
+  min-width: max-content;
+  min-height: 18px;
+  white-space: pre;
+}
+
+.file-change-diff-preview-gutter {
+  padding: 1px 5px;
+  color: var(--text-tertiary);
+  text-align: right;
+  user-select: none;
+  border-right: 1px solid color-mix(in srgb, var(--text-primary) 6%, transparent);
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+}
+
+.file-change-diff-preview-code {
+  padding: 1px var(--space-sm);
+}
+
+.file-change-diff-preview-line.meta {
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--text-primary) 3%, transparent);
+}
+
+.file-change-diff-preview-line.add .file-change-diff-preview-code,
+.file-change-diff-preview-line.add .file-change-diff-preview-gutter {
+  background: var(--diff-add-bg);
+  color: var(--diff-add-text);
+}
+
+.file-change-diff-preview-line.del .file-change-diff-preview-code,
+.file-change-diff-preview-line.del .file-change-diff-preview-gutter {
+  background: var(--diff-del-bg);
+  color: var(--diff-del-text);
+}
+
+.file-change-diff-preview-empty,
+.file-change-diff-preview-footer {
+  flex: 0 0 auto;
+  padding: 5px var(--space-md);
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.file-change-diff-preview-footer {
+  border-top: 1px solid color-mix(in srgb, var(--warning) 24%, transparent);
+  background: color-mix(in srgb, var(--warning) 10%, transparent);
+  color: var(--warning);
 }
 
 .composer-discovery-card {

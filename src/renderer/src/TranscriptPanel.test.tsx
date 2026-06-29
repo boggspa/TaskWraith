@@ -377,6 +377,47 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
     expect(html).toContain('Side chat')
   })
 
+  it('renders exact file-change diffs as keyboard-preview buttons', () => {
+    const html = renderToStaticMarkup(
+      <TranscriptPanel
+        {...makeProps({
+          virtualize: false,
+          runCompleteNotice: {
+            timestamp: '2026-01-01T00:00:10.000Z',
+            exitCode: 0
+          },
+          displayFileChangeSummaries: [
+            {
+              path: 'src/example.ts',
+              status: 'modified',
+              additions: 1,
+              deletions: 1,
+              previewKind: 'git_diff',
+              diffText: ['@@ -1,1 +1,1 @@', '-old', '+new'].join('\n')
+            },
+            {
+              path: 'src/stats-only.ts',
+              status: 'modified',
+              additions: 2,
+              deletions: 0,
+              previewKind: 'none'
+            }
+          ],
+          fileChangeSummaryText: 'Created 0 · Edited 2 · Deleted 0',
+          fileChangeShouldShowStats: true,
+          fileChangeDisplayAdds: 3,
+          fileChangeDisplayDels: 1
+        })}
+      />
+    )
+
+    expect(html).toContain('<button')
+    expect(html).toContain('class="file-change-summary-item has-diff-preview"')
+    expect(html).toContain('aria-label="Preview diff for src/example.ts"')
+    expect(html).toContain('src/stats-only.ts')
+    expect(html).not.toContain('Preview diff for src/stats-only.ts')
+  })
+
   it('renders run-complete summary for plain stop/cancel when not suppressed', () => {
     const html = renderToStaticMarkup(
       <TranscriptPanel
