@@ -1797,6 +1797,12 @@
 [data-composer-style="claude"]
   .composer-above-bar-stack
   > .ensemble-roster-preset-picker.is-compact
+  + .ensemble-above-row {
+  margin-top: 4px;
+}
+[data-composer-style="claude"]
+  .composer-above-bar-stack
+  > .ensemble-roster-preset-picker.is-compact
   .ensemble-roster-preset-picker-chip {
   background: color-mix(in srgb, #ffffff 5%, transparent);
   border-color: color-mix(in srgb, #ffffff 14%, transparent);
