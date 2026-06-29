@@ -1,6 +1,38 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import { TaskWraithWorkbench } from './TaskWraithWorkbench'
+import {
+  buildDiffWorkbenchNavMeta,
+  buildEditorWorkbenchNavMeta,
+  TaskWraithWorkbench
+} from './TaskWraithWorkbench'
+
+describe('TaskWraithWorkbench nav metadata', () => {
+  it('summarizes editor tab and dirty state for the navigator', () => {
+    expect(buildEditorWorkbenchNavMeta({ dirtyBufferCount: 2, openBufferCount: 4 })).toBe(
+      '2 dirty'
+    )
+    expect(buildEditorWorkbenchNavMeta({ dirtyBufferCount: 0, openBufferCount: 3 })).toBe(
+      '3 open'
+    )
+    expect(buildEditorWorkbenchNavMeta({ dirtyBufferCount: 0, openBufferCount: 0 })).toBe(
+      'Editor'
+    )
+  })
+
+  it('summarizes diff load and changed-file state for the navigator', () => {
+    expect(buildDiffWorkbenchNavMeta(null)).toBe('Review')
+    expect(
+      buildDiffWorkbenchNavMeta({
+        counts: { changed: 0, staged: 0, unstaged: 0, untracked: 0 }
+      })
+    ).toBe('Clean')
+    expect(
+      buildDiffWorkbenchNavMeta({
+        counts: { changed: 7, staged: 2, unstaged: 5, untracked: 0 }
+      })
+    ).toBe('7 changed')
+  })
+})
 
 describe('TaskWraithWorkbench shell', () => {
   it('renders editor command controls and lifted status summary', () => {

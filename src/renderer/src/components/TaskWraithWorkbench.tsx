@@ -54,6 +54,25 @@ interface TaskWraithWorkbenchProps {
 const viewLabel = (view: WorkbenchView): string =>
   view === 'editor' ? 'File Editor' : 'Diff Studio'
 
+export const buildEditorWorkbenchNavMeta = (
+  state: Pick<FileEditorPanelState, 'dirtyBufferCount' | 'openBufferCount'>
+): string => {
+  if (state.dirtyBufferCount > 0) {
+    return `${state.dirtyBufferCount} dirty`
+  }
+  if (state.openBufferCount > 0) {
+    return `${state.openBufferCount} open`
+  }
+  return 'Editor'
+}
+
+export const buildDiffWorkbenchNavMeta = (
+  gitSnapshot: Pick<GitRepositorySnapshot, 'counts'> | null
+): string => {
+  if (!gitSnapshot) return 'Review'
+  return gitSnapshot.counts.changed > 0 ? `${gitSnapshot.counts.changed} changed` : 'Clean'
+}
+
 function WorkbenchNavIcon({ view }: { view: WorkbenchView }) {
   return (
     <span className="workbench-nav-icon" aria-hidden="true">
@@ -133,6 +152,8 @@ export function TaskWraithWorkbench({
           editorState.dirtyBufferCount === 1 ? 'file' : 'files'
         }`
       : ''
+  const editorNavMeta = buildEditorWorkbenchNavMeta(editorState)
+  const diffNavMeta = buildDiffWorkbenchNavMeta(diffGitSnapshot)
   const editorBusy = editorState.isLoading || editorState.isListLoading
   const workbenchStatus =
     activeView === 'editor' ? editorState.status || editorState.gitMessage || status : status
@@ -393,7 +414,7 @@ export function TaskWraithWorkbench({
         >
           <WorkbenchNavIcon view="editor" />
           <span>Files</span>
-          <small>Editor</small>
+          <small>{editorNavMeta}</small>
         </button>
         <button
           ref={diffNavRef}
@@ -410,7 +431,7 @@ export function TaskWraithWorkbench({
         >
           <WorkbenchNavIcon view="diff" />
           <span>Diff</span>
-          <small>Review</small>
+          <small>{diffNavMeta}</small>
         </button>
       </aside>
       <div className="workbench-main">
