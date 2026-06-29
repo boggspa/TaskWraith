@@ -1020,11 +1020,14 @@
 
 [data-theme="alabaster"][data-composer-style="codex"]
   .composer-above-bar
-  .composer-above-bar-secondary-branch.git-tone-release,
+  .composer-above-bar-secondary-branch.git-tone-release {
+  color: #6ddfa8 !important;
+}
+
 [data-theme="alabaster"][data-composer-style="codex"]
   .composer-above-bar
   .composer-diff-add {
-  color: #6ddfa8 !important;
+  color: #3fbf83 !important;
 }
 
 [data-theme="alabaster"][data-composer-style="codex"]
@@ -1036,7 +1039,7 @@
 [data-theme="alabaster"][data-composer-style="codex"]
   .composer-above-bar
   .composer-diff-del {
-  color: #f08080 !important;
+  color: #e2655f !important;
 }
 
 [data-theme="alabaster"][data-composer-style="codex"]

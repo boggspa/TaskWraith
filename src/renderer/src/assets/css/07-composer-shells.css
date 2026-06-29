@@ -1305,6 +1305,16 @@
   color: #f08080;
   font-feature-settings: 'tnum';
 }
+/* Codex shell — darker, more saturated diff hues to match the Codex App
+   reference; the shared pastels above read too light on the Codex pill.
+   Alabaster keeps its own !important pair in 10-provider-shell-overrides,
+   updated to the same hues so every theme stays in step. */
+[data-composer-style="codex"] .composer-diff-add {
+  color: #3fbf83;
+}
+[data-composer-style="codex"] .composer-diff-del {
+  color: #e2655f;
+}
 .composer-above-bar-action {
   margin-left: auto;
   appearance: none;
