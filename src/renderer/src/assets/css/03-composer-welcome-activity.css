@@ -9366,6 +9366,43 @@
   transition: background 0.1s ease;
 }
 
+.diff-file-list.virtualized {
+  position: relative;
+}
+
+.diff-file-list-virtual-window {
+  min-width: 0;
+}
+
+.diff-file-list.virtualized .diff-file-section-header,
+.diff-file-list.virtualized .diff-file-row,
+.diff-file-list.virtualized .diff-file-list-virtual-note {
+  height: 34px;
+  min-height: 34px;
+  box-sizing: border-box;
+}
+
+.diff-file-list.virtualized .diff-file-section-header {
+  position: static;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+.diff-file-list.virtualized .diff-file-row {
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+.diff-file-list-virtual-note {
+  display: flex;
+  align-items: center;
+  padding: 0 var(--space-md);
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 20%, transparent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
 .diff-file-section-header {
   position: sticky;
   top: 0;
