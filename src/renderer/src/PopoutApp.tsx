@@ -37,6 +37,38 @@ const parseTargetView = (
   return value === 'diff' ? 'diff' : 'editor'
 }
 
+function PopoutChromeIcon({ kind }: { kind: PopoutKind }) {
+  if (kind === 'diff-studio') {
+    return (
+      <span className="popout-title-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" focusable="false">
+          <path d="M6 5h7M6 9h5M6 15h6M6 19h9" />
+          <path d="M17 7l2 2-2 2M19 9h-6M15 13l-2 2 2 2M13 15h6" />
+        </svg>
+      </span>
+    )
+  }
+
+  if (kind === 'workbench') {
+    return (
+      <span className="popout-title-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" focusable="false">
+          <path d="M5 5h6v6H5zM13 5h6v4h-6zM13 11h6v8h-6zM5 13h6v6H5z" />
+        </svg>
+      </span>
+    )
+  }
+
+  return (
+    <span className="popout-title-icon" aria-hidden="true">
+      <svg viewBox="0 0 24 24" focusable="false">
+        <path d="M7 4h7l3 3v13H7z" />
+        <path d="M14 4v4h4M10 12h5M10 15h6M10 18h4" />
+      </svg>
+    </span>
+  )
+}
+
 // 1.0.5-PO2 — Debounce window for live-refresh signals. A burst of
 // chat-updated events (e.g. during a tool-call sequence) collapses
 // into a single getDiff fetch.
@@ -172,12 +204,19 @@ export function PopoutApp() {
     dirtyBufferCount > 0
       ? `${dirtyBufferCount} unsaved ${dirtyBufferCount === 1 ? 'file' : 'files'}`
       : ''
+  const popoutFamily =
+    kind === 'file-editor' || kind === 'diff-studio' || kind === 'workbench'
+      ? 'workspace'
+      : undefined
 
   return (
-    <main className="popout-root" data-popout-kind={kind}>
+    <main className="popout-root" data-popout-kind={kind} data-popout-family={popoutFamily}>
       <header className="popout-header">
         <div className="popout-title-block">
-          <strong>{title}</strong>
+          <div className="popout-title-line">
+            <PopoutChromeIcon kind={kind} />
+            <strong>{title}</strong>
+          </div>
           <span title={workspacePath}>{workspaceName}</span>
         </div>
         {kind === 'diff-studio' && (

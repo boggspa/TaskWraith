@@ -18042,6 +18042,20 @@ function resolvePopoutBackgroundColor(useGlassWindow: boolean): string {
   const theme = AppStore.getSettings().themeAppearance
   return LIGHT_THEME_POPOUT_BACKDROPS[theme] ?? '#1e1e1e'
 }
+
+function isSolidWorkspaceChromePopout(targetWindow: BrowserWindow): boolean {
+  for (const [key, win] of workspacePopoutWindows.entries()) {
+    if (win === targetWindow) {
+      return (
+        key.startsWith('file-editor:') ||
+        key.startsWith('diff-studio:') ||
+        key.startsWith('workbench:')
+      )
+    }
+  }
+  return false
+}
+
 function appendGeminiCliSessionArgs(
   args: string[],
   model: string = 'cli-default',
@@ -18152,13 +18166,18 @@ function appendGeminiCliSessionArgs(
 const applyNativeGlassToWindow = (targetWindow: BrowserWindow, settings: AppSettings): void => {
   const isMac = process.platform === 'darwin'
   const isWindows = process.platform === 'win32'
+  const forceSolidWorkspaceChrome = isSolidWorkspaceChromePopout(targetWindow)
   const useMaterialWindow =
     (settings.appearanceMode === 'native_glass' || settings.appearanceMode === 'soft_glass') &&
-    !settings.reduceTransparency
+    !settings.reduceTransparency &&
+    !forceSolidWorkspaceChrome
   const useGlassWindow =
     isMac && useMaterialWindow
   const windowsMaterial: BrowserWindowConstructorOptions['backgroundMaterial'] =
     isWindows && useMaterialWindow ? (targetWindow === mainWindow ? 'mica' : 'tabbed') : undefined
+  const solidBackground = forceSolidWorkspaceChrome
+    ? resolvePopoutBackgroundColor(false)
+    : '#1e1e1e'
   const nextState = `${useGlassWindow ? NATIVE_GLASS_VIBRANCY : windowsMaterial || 'off'}:${settings.appearanceMode}:${settings.reduceTransparency ? 'reduced' : 'normal'}`
   if (targetWindow === mainWindow && appliedNativeGlassState === nextState) {
     return
@@ -18166,13 +18185,13 @@ const applyNativeGlassToWindow = (targetWindow: BrowserWindow, settings: AppSett
   if (isWindows) {
     targetWindow.setVibrancy(null)
     targetWindow.setBackgroundMaterial?.(windowsMaterial || 'none')
-    targetWindow.setBackgroundColor(windowsMaterial ? '#00000000' : '#1e1e1e')
+    targetWindow.setBackgroundColor(windowsMaterial ? '#00000000' : solidBackground)
   } else if (useGlassWindow) {
     targetWindow.setVibrancy(NATIVE_GLASS_VIBRANCY)
     targetWindow.setBackgroundColor('#00000000')
   } else {
     targetWindow.setVibrancy(null)
-    targetWindow.setBackgroundColor('#1e1e1e')
+    targetWindow.setBackgroundColor(solidBackground)
   }
   if (targetWindow === mainWindow) {
     appliedNativeGlassState = nextState
@@ -18539,9 +18558,12 @@ async function openWorkspacePopout(input: unknown): Promise<{ ok: true }> {
 
   const isMac = process.platform === 'darwin'
   const settings = AppStore.getSettings()
+  const forceSolidWorkspaceChrome =
+    kind === 'file-editor' || kind === 'diff-studio' || kind === 'workbench'
   const useMaterialWindow =
     (settings.appearanceMode === 'native_glass' || settings.appearanceMode === 'soft_glass') &&
-    !settings.reduceTransparency
+    !settings.reduceTransparency &&
+    !forceSolidWorkspaceChrome
   const useGlassWindow =
     isMac && useMaterialWindow
   const title =

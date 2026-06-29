@@ -2589,6 +2589,214 @@
   }
 }
 
+/* Workspace utility popouts use app-palette chrome, not native-window glass.
+ * The earlier popout block still provides legacy fallbacks; this later
+ * family-scoped block is the authoritative File Editor / Diff Studio /
+ * Workbench surface. */
+.popout-root[data-popout-family="workspace"] {
+  --text-secondary: color-mix(in srgb, var(--text-primary) 78%, transparent);
+  --text-tertiary: color-mix(in srgb, var(--text-primary) 58%, transparent);
+  --text-muted: color-mix(in srgb, var(--text-primary) 46%, transparent);
+  --popout-window-bg: var(--app-bg);
+  --popout-panel-bg: var(--app-bg-elevated);
+  --popout-toolbar-bg: var(--surface-2);
+  --popout-list-bg: var(--surface-1);
+  --popout-editor-bg: var(--app-bg-sunken);
+  --popout-control-bg: color-mix(in srgb, var(--text-primary) 7%, var(--popout-toolbar-bg));
+  --popout-row-hover-bg: color-mix(in srgb, var(--text-primary) 7%, transparent);
+  --popout-row-selected-bg: color-mix(in srgb, var(--accent) 20%, var(--popout-list-bg));
+  --popout-pill-bg: color-mix(in srgb, var(--text-primary) 8%, transparent);
+  --popout-pill-border: color-mix(in srgb, var(--text-primary) 13%, transparent);
+  --popout-rim: color-mix(in srgb, var(--text-primary) 13%, transparent);
+  --popout-top-rim: color-mix(in srgb, var(--text-primary) 11%, transparent);
+  --popout-shadow: color-mix(in srgb, #000 32%, transparent);
+  --popout-primary-action-text: rgba(6, 8, 12, 0.92);
+  color: var(--text-primary);
+  background: var(--popout-window-bg) !important;
+  background-image: none !important;
+  box-shadow:
+    inset 0 1px 0 var(--popout-top-rim),
+    inset 0 0 0 1px var(--popout-rim);
+}
+
+:is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"])
+  .popout-root[data-popout-family="workspace"] {
+  --text-secondary: color-mix(in srgb, var(--text-primary) 82%, transparent);
+  --text-tertiary: color-mix(in srgb, var(--text-primary) 64%, transparent);
+  --text-muted: color-mix(in srgb, var(--text-primary) 52%, transparent);
+  --popout-window-bg: var(--app-bg);
+  --popout-panel-bg: color-mix(in srgb, var(--surface-1) 94%, white 6%);
+  --popout-toolbar-bg: color-mix(in srgb, var(--surface-2) 88%, white 12%);
+  --popout-list-bg: color-mix(in srgb, var(--surface-1) 92%, white 8%);
+  --popout-editor-bg: color-mix(in srgb, var(--surface-3) 88%, white 12%);
+  --popout-control-bg: color-mix(in srgb, var(--text-primary) 6%, white);
+  --popout-row-hover-bg: color-mix(in srgb, var(--text-primary) 6%, transparent);
+  --popout-row-selected-bg: color-mix(in srgb, var(--accent) 16%, white 84%);
+  --popout-pill-bg: color-mix(in srgb, var(--text-primary) 5%, white);
+  --popout-pill-border: color-mix(in srgb, var(--text-primary) 16%, transparent);
+  --popout-rim: color-mix(in srgb, var(--text-primary) 14%, transparent);
+  --popout-top-rim: color-mix(in srgb, white 70%, transparent);
+  --popout-shadow: color-mix(in srgb, #6f7480 18%, transparent);
+  --popout-primary-action-text: #fff;
+}
+
+[data-theme="obsidian"] .popout-root[data-popout-family="workspace"] {
+  --popout-window-bg: #08070a;
+  --popout-panel-bg: #0f0d12;
+  --popout-toolbar-bg: #18161c;
+  --popout-list-bg: #121016;
+  --popout-editor-bg: #09080b;
+}
+
+[data-theme="alabaster"] .popout-root[data-popout-family="workspace"] {
+  --popout-window-bg: #f4f3ef;
+  --popout-panel-bg: #fbfaf6;
+  --popout-toolbar-bg: #fffefa;
+  --popout-list-bg: #fffefa;
+  --popout-editor-bg: #efeee8;
+}
+
+.popout-root[data-popout-family="workspace"] .popout-header {
+  min-height: 54px;
+  background: var(--popout-toolbar-bg) !important;
+  background-image: none !important;
+  border-color: var(--popout-rim) !important;
+  box-shadow:
+    inset 0 1px 0 var(--popout-top-rim),
+    0 1px 0 color-mix(in srgb, #000 18%, transparent);
+}
+
+.popout-root[data-popout-family="workspace"] .popout-title-line {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.popout-root[data-popout-family="workspace"] .popout-title-icon,
+.popout-root[data-popout-family="workspace"] .workbench-nav-icon {
+  flex: 0 0 auto;
+  display: inline-grid;
+  place-items: center;
+  color: var(--text-primary);
+  background: var(--popout-pill-bg);
+  border: 1px solid var(--popout-pill-border);
+  box-shadow:
+    inset 0 1px 0 var(--popout-top-rim),
+    0 8px 22px var(--popout-shadow);
+}
+
+.popout-root[data-popout-family="workspace"] .popout-title-icon {
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  overflow: visible;
+  white-space: normal;
+}
+
+.popout-root[data-popout-family="workspace"] .popout-title-icon svg,
+.popout-root[data-popout-family="workspace"] .workbench-nav-icon svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.popout-root[data-popout-family="workspace"]
+  :is(.popout-body .app-file-editor, .popout-diff-studio, .popout-diff-studio > div, .workbench-shell) {
+  background: var(--popout-panel-bg) !important;
+  background-image: none !important;
+}
+
+.popout-root[data-popout-family="workspace"]
+  :is(.popout-header, .file-editor-header, .diff-studio-toolbar, .diff-detail-header, .workbench-toolbar, .workbench-bottom-bar) {
+  background-color: var(--popout-toolbar-bg) !important;
+  background-image: none !important;
+  border-color: var(--popout-rim) !important;
+  box-shadow: inset 0 1px 0 var(--popout-top-rim);
+  color: var(--text-primary);
+}
+
+.popout-root[data-popout-family="workspace"]
+  :is(.file-editor-files, .diff-file-list, .workbench-navigator) {
+  background-color: var(--popout-list-bg) !important;
+  background-image: none !important;
+  border-color: var(--popout-rim) !important;
+}
+
+.popout-root[data-popout-family="workspace"]
+  :is(.diff-detail, .file-editor-code-surface, .workbench-stage) {
+  background-color: var(--popout-editor-bg) !important;
+  background-image: none !important;
+}
+
+.popout-root[data-popout-family="workspace"] .diff-lines-section {
+  background-color: var(--popout-editor-bg) !important;
+  background-image: none !important;
+}
+
+.popout-root[data-popout-family="workspace"]
+  :is(.file-editor-filter, .btn-ghost, .diff-file-badge, .workbench-nav-item) {
+  color: var(--text-primary);
+  background-color: var(--popout-control-bg) !important;
+  border-color: var(--popout-pill-border);
+}
+
+.popout-root[data-popout-family="workspace"] .btn:not(.btn-ghost) {
+  color: var(--popout-primary-action-text);
+  border-color: color-mix(in srgb, var(--accent) 70%, var(--popout-rim));
+}
+
+.popout-root[data-popout-family="workspace"] .workbench-navigator {
+  padding: 12px 9px;
+  gap: 8px;
+}
+
+.popout-root[data-popout-family="workspace"] .workbench-nav-item {
+  min-height: 78px;
+  align-items: center;
+  text-align: center;
+  border-radius: 10px;
+  box-shadow: inset 0 1px 0 var(--popout-top-rim);
+}
+
+.popout-root[data-popout-family="workspace"] .workbench-nav-icon {
+  width: 32px;
+  height: 32px;
+  margin-bottom: 2px;
+  border-radius: 10px;
+  overflow: visible;
+}
+
+.popout-root[data-popout-family="workspace"] .workbench-nav-item.active {
+  border-color: color-mix(in srgb, var(--accent) 58%, var(--popout-pill-border));
+  background-color: var(--popout-row-selected-bg) !important;
+}
+
+.popout-root[data-popout-family="workspace"] .workbench-nav-item.active .workbench-nav-icon {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 48%, var(--popout-pill-border));
+  background: color-mix(in srgb, var(--accent) 14%, var(--popout-pill-bg));
+}
+
+.popout-root[data-popout-family="workspace"]
+  :is(.file-editor-row.file:hover:not(:disabled), .diff-file-row:hover, .workbench-nav-item:hover) {
+  background-color: var(--popout-row-hover-bg) !important;
+}
+
+.popout-root[data-popout-family="workspace"]
+  :is(.file-editor-row.active, .diff-file-row.selected) {
+  background-color: var(--popout-row-selected-bg) !important;
+}
+
+.popout-root[data-popout-family="workspace"]
+  :is(.diff-line + .diff-line, .diff-file-row + .diff-file-row, .file-editor-row + .file-editor-row) {
+  border-color: var(--popout-rim);
+}
+
 .settings-panel-header {
   background-image:
     linear-gradient(90deg, color-mix(in srgb, var(--theme-chroma-2) 10%, transparent), transparent 60%);

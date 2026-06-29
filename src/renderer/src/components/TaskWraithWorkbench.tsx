@@ -34,6 +34,24 @@ interface TaskWraithWorkbenchProps {
 const viewLabel = (view: WorkbenchView): string =>
   view === 'editor' ? 'File Editor' : 'Diff Studio'
 
+function WorkbenchNavIcon({ view }: { view: WorkbenchView }) {
+  return (
+    <span className="workbench-nav-icon" aria-hidden="true">
+      {view === 'editor' ? (
+        <svg viewBox="0 0 24 24" focusable="false">
+          <path d="M6 5h5l2 2h5v12H6z" />
+          <path d="M9 11h6M9 14h5M9 17h7" />
+        </svg>
+      ) : (
+        <svg viewBox="0 0 24 24" focusable="false">
+          <path d="M6 6h5M6 10h4M6 15h6M6 19h5" />
+          <path d="M15 7l2 2-2 2M17 9h-5M17 14l-2 2 2 2M12 16h5" />
+        </svg>
+      )}
+    </span>
+  )
+}
+
 export function TaskWraithWorkbench({
   workspacePath,
   workspaceName,
@@ -225,6 +243,7 @@ export function TaskWraithWorkbench({
           onClick={() => setActiveView('editor')}
           aria-pressed={activeView === 'editor'}
         >
+          <WorkbenchNavIcon view="editor" />
           <span>Files</span>
           <small>Editor</small>
         </button>
@@ -234,6 +253,7 @@ export function TaskWraithWorkbench({
           onClick={() => setActiveView('diff')}
           aria-pressed={activeView === 'diff'}
         >
+          <WorkbenchNavIcon view="diff" />
           <span>Diff</span>
           <small>Review</small>
         </button>
