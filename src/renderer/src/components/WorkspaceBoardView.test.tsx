@@ -9,7 +9,9 @@ import type {
 import { buildWorkspaceBoardProjectedCards } from '../lib/workspaceBoardProjection'
 import {
   isWorkspaceBoardAttentionMatch,
+  sortWorkspaceBoardProjectedCards,
   WorkspaceBoardView,
+  workspaceBoardInsertionSortOrder,
   workspaceBoardProjectedCardMatchesSearch
 } from './WorkspaceBoardView'
 
@@ -87,6 +89,8 @@ describe('WorkspaceBoardView', () => {
     expect(html).toContain('Search cards')
     expect(html).toContain('Needs attention')
     expect(html).toContain('1 shown')
+    expect(html).toContain('Move Review implementation up')
+    expect(html).toContain('Move Review implementation down')
     expect(html).toContain('Open')
     expect(html).toContain('Archive')
     expect(html).toContain('Details')
@@ -131,5 +135,34 @@ describe('WorkspaceBoardView', () => {
     expect(workspaceBoardProjectedCardMatchesSearch(projected, 'avery release')).toBe(true)
     expect(workspaceBoardProjectedCardMatchesSearch(projected, 'billing')).toBe(false)
     expect(isWorkspaceBoardAttentionMatch(projected)).toBe(true)
+  })
+
+  it('orders cards by sort order and computes insertion points', () => {
+    const projected = buildWorkspaceBoardProjectedCards({
+      cards: [
+        {
+          ...card,
+          id: 'card-2',
+          title: 'Second',
+          sortOrder: 30
+        },
+        {
+          ...card,
+          id: 'card-1',
+          title: 'First',
+          sortOrder: 10
+        }
+      ],
+      chats: [chat],
+      workflows: [],
+      scheduledTasks: [],
+      runQueueJobs: []
+    })
+    const sorted = sortWorkspaceBoardProjectedCards(projected)
+
+    expect(sorted.map((item) => item.card.title)).toEqual(['First', 'Second'])
+    expect(workspaceBoardInsertionSortOrder(sorted, 'card-2', 'before')).toBe(20)
+    expect(workspaceBoardInsertionSortOrder(sorted, 'card-1', 'before')).toBe(-1014)
+    expect(workspaceBoardInsertionSortOrder(sorted)).toBe(1054)
   })
 })

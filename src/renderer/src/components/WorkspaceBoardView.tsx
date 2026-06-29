@@ -19,6 +19,7 @@ import {
 
 const ACTIVE_RUN_QUEUE_STATUSES = new Set(['queued', 'starting', 'active', 'steer_promoting', 'cancelling'])
 const STALE_THREAD_AGE_MS = 7 * 24 * 60 * 60 * 1000
+const WORKSPACE_BOARD_SORT_GAP = 1024
 const ATTENTION_FILTER_STATES = new Set<WorkspaceBoardAttentionState>([
   'running',
   'needs-input',
@@ -60,6 +61,8 @@ interface LastArchivedCard {
   title: string
   columnId: WorkspaceBoardColumnId
 }
+
+type WorkspaceBoardDropEdge = 'before' | 'after'
 
 interface WorkspaceBoardViewProps {
   board: WorkspaceBoardDefinition | null
@@ -236,6 +239,65 @@ export function workspaceBoardProjectedCardMatchesSearch(
   return tokens.every((token) => searchable.includes(token))
 }
 
+export function sortWorkspaceBoardProjectedCards(
+  cards: WorkspaceBoardProjectedCard[]
+): WorkspaceBoardProjectedCard[] {
+  return [...cards].sort((a, b) => {
+    const sortOrderDelta = (a.card.sortOrder || 0) - (b.card.sortOrder || 0)
+    if (sortOrderDelta !== 0) return sortOrderDelta
+    const updatedDelta = a.card.updatedAt.localeCompare(b.card.updatedAt)
+    if (updatedDelta !== 0) return updatedDelta
+    return a.card.id.localeCompare(b.card.id)
+  })
+}
+
+export function workspaceBoardInsertionSortOrder(
+  columnCards: WorkspaceBoardProjectedCard[],
+  targetCardId?: string,
+  edge: WorkspaceBoardDropEdge = 'after',
+  movingCardId?: string
+): number {
+  const sortedCards = sortWorkspaceBoardProjectedCards(
+    movingCardId ? columnCards.filter((projected) => projected.card.id !== movingCardId) : columnCards
+  )
+  if (sortedCards.length === 0) return WORKSPACE_BOARD_SORT_GAP
+  const targetIndex = targetCardId
+    ? sortedCards.findIndex((projected) => projected.card.id === targetCardId)
+    : -1
+  if (targetIndex < 0) return (sortedCards[sortedCards.length - 1]?.card.sortOrder || 0) + WORKSPACE_BOARD_SORT_GAP
+  const beforeIndex = edge === 'before' ? targetIndex - 1 : targetIndex
+  const afterIndex = edge === 'before' ? targetIndex : targetIndex + 1
+  const beforeSortOrder = beforeIndex >= 0 ? sortedCards[beforeIndex]?.card.sortOrder : undefined
+  const afterSortOrder =
+    afterIndex >= 0 && afterIndex < sortedCards.length ? sortedCards[afterIndex]?.card.sortOrder : undefined
+  if (typeof beforeSortOrder !== 'number' && typeof afterSortOrder !== 'number') {
+    return WORKSPACE_BOARD_SORT_GAP
+  }
+  if (typeof beforeSortOrder !== 'number') return (afterSortOrder || 0) - WORKSPACE_BOARD_SORT_GAP
+  if (typeof afterSortOrder !== 'number') return beforeSortOrder + WORKSPACE_BOARD_SORT_GAP
+  if (beforeSortOrder === afterSortOrder) return beforeSortOrder + 1
+  return beforeSortOrder + (afterSortOrder - beforeSortOrder) / 2
+}
+
+function buildCardsByColumn(
+  columns: WorkspaceBoardDefinition['columns'],
+  projectedCards: WorkspaceBoardProjectedCard[]
+): Map<WorkspaceBoardColumnId, WorkspaceBoardProjectedCard[]> {
+  const cardsByColumn = new Map<WorkspaceBoardColumnId, WorkspaceBoardProjectedCard[]>()
+  for (const column of columns) cardsByColumn.set(column.id, [])
+  for (const card of sortWorkspaceBoardProjectedCards(projectedCards)) {
+    const bucket = cardsByColumn.get(card.columnId) || []
+    bucket.push(card)
+    cardsByColumn.set(card.columnId, bucket)
+  }
+  return cardsByColumn
+}
+
+function dropEdgeFromEvent(event: DragEvent<HTMLElement>): WorkspaceBoardDropEdge {
+  const rect = event.currentTarget.getBoundingClientRect()
+  return event.clientY < rect.top + rect.height / 2 ? 'before' : 'after'
+}
+
 export function WorkspaceBoardView({
   board,
   workspace,
@@ -265,6 +327,10 @@ export function WorkspaceBoardView({
   const [lastArchivedCard, setLastArchivedCard] = useState<LastArchivedCard | null>(null)
   const [draggingCardId, setDraggingCardId] = useState<string | null>(null)
   const [dragOverColumnId, setDragOverColumnId] = useState<WorkspaceBoardColumnId | null>(null)
+  const [dragOverCard, setDragOverCard] = useState<{
+    cardId: string
+    edge: WorkspaceBoardDropEdge
+  } | null>(null)
 
   const workspaceChats = useMemo(
     () =>
@@ -434,13 +500,8 @@ export function WorkspaceBoardView({
     )
   }
 
-  const cardsByColumn = new Map<WorkspaceBoardColumnId, WorkspaceBoardProjectedCard[]>()
-  for (const column of board.columns) cardsByColumn.set(column.id, [])
-  for (const card of filteredProjectedCards) {
-    const bucket = cardsByColumn.get(card.columnId) || []
-    bucket.push(card)
-    cardsByColumn.set(card.columnId, bucket)
-  }
+  const activeCardsByColumn = buildCardsByColumn(board.columns, activeProjectedCards)
+  const visibleCardsByColumn = buildCardsByColumn(board.columns, filteredProjectedCards)
 
   const selectedProjected = selectedCardId
     ? projectedCards.find((projected) => projected.card.id === selectedCardId) || null
@@ -557,17 +618,48 @@ export function WorkspaceBoardView({
     }
   }
 
-  const moveCard = async (projected: WorkspaceBoardProjectedCard, columnId: WorkspaceBoardColumnId) => {
-    if (projected.card.columnId === columnId) return
+  const moveCard = async (
+    projected: WorkspaceBoardProjectedCard,
+    columnId: WorkspaceBoardColumnId,
+    sortOrder?: number
+  ) => {
+    if (projected.card.columnId === columnId && typeof sortOrder !== 'number') return
     setError(null)
     try {
       await onUpdateCard(projected.card.id, {
         columnId,
-        sortOrder: Date.now()
+        sortOrder:
+          typeof sortOrder === 'number'
+            ? sortOrder
+            : workspaceBoardInsertionSortOrder(
+                activeCardsByColumn.get(columnId) || [],
+                undefined,
+                'after',
+                projected.card.id
+              )
       })
     } catch (err) {
       setError(formatError(err))
     }
+  }
+
+  const moveCardRelativeToTarget = async (
+    projected: WorkspaceBoardProjectedCard,
+    target: WorkspaceBoardProjectedCard,
+    edge: WorkspaceBoardDropEdge
+  ) => {
+    if (projected.card.id === target.card.id) return
+    const columnCards = activeCardsByColumn.get(target.card.columnId) || []
+    const sortOrder = workspaceBoardInsertionSortOrder(columnCards, target.card.id, edge, projected.card.id)
+    await moveCard(projected, target.card.columnId, sortOrder)
+  }
+
+  const moveCardWithinColumn = async (projected: WorkspaceBoardProjectedCard, direction: -1 | 1) => {
+    const columnCards = activeCardsByColumn.get(projected.card.columnId) || []
+    const currentIndex = columnCards.findIndex((item) => item.card.id === projected.card.id)
+    const target = currentIndex >= 0 ? columnCards[currentIndex + direction] : undefined
+    if (!target) return
+    await moveCardRelativeToTarget(projected, target, direction < 0 ? 'before' : 'after')
   }
 
   const archiveCard = async (projected: WorkspaceBoardProjectedCard) => {
@@ -636,14 +728,40 @@ export function WorkspaceBoardView({
     setDraggingCardId(projected.card.id)
   }
 
+  const clearDragState = () => {
+    setDraggingCardId(null)
+    setDragOverColumnId(null)
+    setDragOverCard(null)
+  }
+
   const onColumnDrop = (event: DragEvent<HTMLElement>, columnId: WorkspaceBoardColumnId) => {
     event.preventDefault()
     const cardId =
       event.dataTransfer.getData('application/x-taskwraith-workspace-board-card-id') || draggingCardId
-    setDraggingCardId(null)
-    setDragOverColumnId(null)
-    const projected = projectedCards.find((item) => item.card.id === cardId)
+    clearDragState()
+    const projected = activeProjectedCards.find((item) => item.card.id === cardId)
     if (projected) void moveCard(projected, columnId)
+  }
+
+  const onCardDragOver = (event: DragEvent<HTMLElement>, projected: WorkspaceBoardProjectedCard) => {
+    if (!draggingCardId || draggingCardId === projected.card.id) return
+    event.preventDefault()
+    event.stopPropagation()
+    event.dataTransfer.dropEffect = 'move'
+    const edge = dropEdgeFromEvent(event)
+    setDragOverColumnId(projected.card.columnId)
+    setDragOverCard({ cardId: projected.card.id, edge })
+  }
+
+  const onCardDrop = (event: DragEvent<HTMLElement>, target: WorkspaceBoardProjectedCard) => {
+    event.preventDefault()
+    event.stopPropagation()
+    const cardId =
+      event.dataTransfer.getData('application/x-taskwraith-workspace-board-card-id') || draggingCardId
+    const edge = dragOverCard?.cardId === target.card.id ? dragOverCard.edge : dropEdgeFromEvent(event)
+    clearDragState()
+    const projected = activeProjectedCards.find((item) => item.card.id === cardId)
+    if (projected) void moveCardRelativeToTarget(projected, target, edge)
   }
 
   return (
@@ -759,7 +877,7 @@ export function WorkspaceBoardView({
         {board.columns
           .filter((column) => column.id !== 'archived')
           .map((column) => {
-            const columnCards = cardsByColumn.get(column.id) || []
+            const columnCards = visibleCardsByColumn.get(column.id) || []
             return (
               <section
                 key={column.id}
@@ -785,101 +903,128 @@ export function WorkspaceBoardView({
                       {isFiltered ? 'No matching cards' : 'No cards'}
                     </div>
                   ) : (
-                    columnCards.map((projected) => (
-                      <article
-                        key={projected.card.id}
-                        className={`workspace-board-card attention-${projected.attentionState} ${
-                          draggingCardId === projected.card.id ? 'dragging' : ''
-                        }`}
-                        draggable
-                        onDragStart={(event) => onCardDragStart(event, projected)}
-                        onDragEnd={() => {
-                          setDraggingCardId(null)
-                          setDragOverColumnId(null)
-                        }}
-                        onDoubleClick={() => openDetails(projected)}
-                      >
-                        <div className="workspace-board-card-topline">
-                          <span className={`workspace-board-status status-${projected.attentionState}`}>
-                            {projected.derivedStatus === 'manual' ? projected.laneLabel : projected.statusLabel}
-                          </span>
-                          {projected.laneStatusMismatch && (
-                            <span className="workspace-board-lane-pill">Lane: {projected.laneLabel}</span>
-                          )}
-                          {projected.card.humanOwner && (
-                            <span className="workspace-board-owner">{projected.card.humanOwner}</span>
-                          )}
-                        </div>
-                        <h4>{projected.card.title}</h4>
-                        {projected.card.body && <p>{projected.card.body}</p>}
-                        {projected.card.nextStep && (
-                          <p className="workspace-board-card-note">Next: {projected.card.nextStep}</p>
-                        )}
-                        {projected.card.blockedReason && (
-                          <p className="workspace-board-card-blocker">Blocked: {projected.card.blockedReason}</p>
-                        )}
-                        {projected.linkedTitle && (
-                          <button
-                            type="button"
-                            className="workspace-board-link"
-                            onClick={() => openDetails(projected)}
-                            aria-label={`Show linked ${projected.linkedKindLabel || 'item'} details for ${projected.card.title}`}
-                          >
-                            <span className="workspace-board-link-title">{projected.linkedTitle}</span>
-                            {projected.linkedSubtitle && <span>{projected.linkedSubtitle}</span>}
-                          </button>
-                        )}
-                        {projected.liveStatusDetail && (
-                          <div className="workspace-board-live-detail">{projected.liveStatusDetail}</div>
-                        )}
-                        {projected.badges.length > 0 && (
-                          <div className="workspace-board-badges" aria-label="Card badges">
-                            {projected.badges.map((badge) => (
-                              <span
-                                key={`${projected.card.id}-${badge.label}`}
-                                className={`workspace-board-badge tone-${badge.tone}`}
-                                title={badge.title}
-                              >
-                                {badge.label}
-                              </span>
-                            ))}
+                    columnCards.map((projected) => {
+                      const allColumnCards = activeCardsByColumn.get(projected.card.columnId) || []
+                      const cardIndex = allColumnCards.findIndex((item) => item.card.id === projected.card.id)
+                      const dropClass =
+                        dragOverCard?.cardId === projected.card.id ? `drop-${dragOverCard.edge}` : ''
+                      return (
+                        <article
+                          key={projected.card.id}
+                          className={`workspace-board-card attention-${projected.attentionState} ${dropClass} ${
+                            draggingCardId === projected.card.id ? 'dragging' : ''
+                          }`}
+                          draggable
+                          onDragStart={(event) => onCardDragStart(event, projected)}
+                          onDragOver={(event) => onCardDragOver(event, projected)}
+                          onDrop={(event) => onCardDrop(event, projected)}
+                          onDragLeave={(event) => {
+                            if (event.currentTarget.contains(event.relatedTarget as Node | null)) return
+                            if (dragOverCard?.cardId === projected.card.id) setDragOverCard(null)
+                          }}
+                          onDragEnd={clearDragState}
+                          onDoubleClick={() => openDetails(projected)}
+                        >
+                          <div className="workspace-board-card-topline">
+                            <span className={`workspace-board-status status-${projected.attentionState}`}>
+                              {projected.derivedStatus === 'manual' ? projected.laneLabel : projected.statusLabel}
+                            </span>
+                            {projected.laneStatusMismatch && (
+                              <span className="workspace-board-lane-pill">Lane: {projected.laneLabel}</span>
+                            )}
+                            {projected.card.humanOwner && (
+                              <span className="workspace-board-owner">{projected.card.humanOwner}</span>
+                            )}
                           </div>
-                        )}
-                        <div className="workspace-board-card-actions">
-                          <select
-                            value={projected.card.columnId}
-                            onChange={(event) =>
-                              void moveCard(projected, event.currentTarget.value as WorkspaceBoardColumnId)
-                            }
-                            aria-label={`Move ${projected.card.title}`}
-                          >
-                            {board.columns
-                              .filter((item) => item.id !== 'archived')
-                              .map((item) => (
-                                <option key={item.id} value={item.id}>
-                                  {item.name}
-                                </option>
-                              ))}
-                          </select>
-                          <button type="button" onClick={() => openDetails(projected)}>
-                            Details
-                          </button>
-                          {projected.card.link && (
+                          <h4>{projected.card.title}</h4>
+                          {projected.card.body && <p>{projected.card.body}</p>}
+                          {projected.card.nextStep && (
+                            <p className="workspace-board-card-note">Next: {projected.card.nextStep}</p>
+                          )}
+                          {projected.card.blockedReason && (
+                            <p className="workspace-board-card-blocker">Blocked: {projected.card.blockedReason}</p>
+                          )}
+                          {projected.linkedTitle && (
                             <button
                               type="button"
-                              onClick={() => openLinked(projected)}
-                              disabled={projected.isStale}
-                              aria-label={`Open linked item for ${projected.card.title}`}
+                              className="workspace-board-link"
+                              onClick={() => openDetails(projected)}
+                              aria-label={`Show linked ${projected.linkedKindLabel || 'item'} details for ${projected.card.title}`}
                             >
-                              Open
+                              <span className="workspace-board-link-title">{projected.linkedTitle}</span>
+                              {projected.linkedSubtitle && <span>{projected.linkedSubtitle}</span>}
                             </button>
                           )}
-                          <button type="button" className="secondary" onClick={() => void archiveCard(projected)}>
-                            Archive
-                          </button>
-                        </div>
-                      </article>
-                    ))
+                          {projected.liveStatusDetail && (
+                            <div className="workspace-board-live-detail">{projected.liveStatusDetail}</div>
+                          )}
+                          {projected.badges.length > 0 && (
+                            <div className="workspace-board-badges" aria-label="Card badges">
+                              {projected.badges.map((badge) => (
+                                <span
+                                  key={`${projected.card.id}-${badge.label}`}
+                                  className={`workspace-board-badge tone-${badge.tone}`}
+                                  title={badge.title}
+                                >
+                                  {badge.label}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                          <div className="workspace-board-card-actions">
+                            <select
+                              value={projected.card.columnId}
+                              onChange={(event) =>
+                                void moveCard(projected, event.currentTarget.value as WorkspaceBoardColumnId)
+                              }
+                              aria-label={`Move ${projected.card.title}`}
+                            >
+                              {board.columns
+                                .filter((item) => item.id !== 'archived')
+                                .map((item) => (
+                                  <option key={item.id} value={item.id}>
+                                    {item.name}
+                                  </option>
+                                ))}
+                            </select>
+                            <button
+                              type="button"
+                              className="secondary"
+                              onClick={() => void moveCardWithinColumn(projected, -1)}
+                              disabled={cardIndex <= 0}
+                              aria-label={`Move ${projected.card.title} up`}
+                            >
+                              Up
+                            </button>
+                            <button
+                              type="button"
+                              className="secondary"
+                              onClick={() => void moveCardWithinColumn(projected, 1)}
+                              disabled={cardIndex < 0 || cardIndex >= allColumnCards.length - 1}
+                              aria-label={`Move ${projected.card.title} down`}
+                            >
+                              Down
+                            </button>
+                            <button type="button" onClick={() => openDetails(projected)}>
+                              Details
+                            </button>
+                            {projected.card.link && (
+                              <button
+                                type="button"
+                                onClick={() => openLinked(projected)}
+                                disabled={projected.isStale}
+                                aria-label={`Open linked item for ${projected.card.title}`}
+                              >
+                                Open
+                              </button>
+                            )}
+                            <button type="button" className="secondary" onClick={() => void archiveCard(projected)}>
+                              Archive
+                            </button>
+                          </div>
+                        </article>
+                      )
+                    })
                   )}
                 </div>
               </section>

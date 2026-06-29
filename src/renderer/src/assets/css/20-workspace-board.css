@@ -312,6 +312,7 @@
 }
 
 .workspace-board-card {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -320,6 +321,26 @@
 
 .workspace-board-card.dragging {
   opacity: 0.58;
+}
+
+.workspace-board-card.drop-before::before,
+.workspace-board-card.drop-after::after {
+  content: '';
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  height: 2px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 72%, white 12%);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.workspace-board-card.drop-before::before {
+  top: -6px;
+}
+
+.workspace-board-card.drop-after::after {
+  bottom: -6px;
 }
 
 .workspace-board-card.attention-needs-input,
