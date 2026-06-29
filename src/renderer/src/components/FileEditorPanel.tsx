@@ -26,6 +26,10 @@ import type { WorkspaceFileEntry, WorkspaceFileReadResult } from '../../../main/
 import type { GitFileStatus, GitRepositorySnapshot } from '../../../main/services/GitService'
 import { FileTypeIcon } from './FileTypeIcon'
 import { FileEditorGitActions } from './FileEditorGitActions'
+import {
+  FileEditorStatusBar,
+  type EditorCursorStatus
+} from './FileEditorStatusBar'
 
 interface FileEditorPanelProps {
   workspacePath?: string
@@ -106,12 +110,6 @@ interface FileEditorContextMenuProps {
   onClose: () => void
 }
 
-export interface EditorCursorStatus {
-  line: number
-  column: number
-  selectedChars: number
-}
-
 export interface FileEditorPanelState {
   selectedPath: string
   dirtyBufferCount: number
@@ -156,18 +154,6 @@ interface EditorPaneProps {
   isLoading: boolean
   editorExtensions: Extension[]
   onContentChange: (value: string) => void
-}
-
-interface EditorStatusBarProps {
-  activeBuffer: EditorBuffer | null
-  isDirty: boolean
-  status: string
-  gitMessage: string
-  cursorStatus: EditorCursorStatus
-  selectedGitFile?: GitFileStatus
-  selectedHasStagedChanges: boolean
-  selectedHasUnstagedChanges: boolean
-  lineWrapEnabled: boolean
 }
 
 interface QuickOpenPaletteProps {
@@ -1869,7 +1855,7 @@ export function FileEditorPanel({
             )
           }}
         />
-        <EditorStatusBar
+        <FileEditorStatusBar
           activeBuffer={activeBuffer}
           isDirty={isDirty}
           status={status}
@@ -2375,50 +2361,6 @@ function QuickOpenPalette({
           )}
         </div>
       </div>
-    </div>
-  )
-}
-
-function EditorStatusBar({
-  activeBuffer,
-  isDirty,
-  status,
-  gitMessage,
-  cursorStatus,
-  selectedGitFile,
-  selectedHasStagedChanges,
-  selectedHasUnstagedChanges,
-  lineWrapEnabled
-}: EditorStatusBarProps) {
-  return (
-    <div className="file-editor-status">
-      <span role="status" aria-live="polite">
-        {isDirty ? 'Unsaved changes' : status}
-        {!isDirty && gitMessage ? ` · ${gitMessage}` : ''}
-      </span>
-      <span className="file-editor-status-spacer" aria-hidden="true" />
-      {activeBuffer && (
-        <>
-          <span title={activeBuffer.path}>{activeBuffer.path}</span>
-          <span>{formatBytes(activeBuffer.sizeBytes)}</span>
-          <span>
-            Ln {cursorStatus.line}, Col {cursorStatus.column}
-            {cursorStatus.selectedChars > 0 ? ` · ${cursorStatus.selectedChars} selected` : ''}
-          </span>
-          <span>{lineWrapEnabled ? 'Wrap' : 'No wrap'}</span>
-          {selectedGitFile && (
-            <span>
-              {selectedHasStagedChanges && selectedHasUnstagedChanges
-                ? 'staged + unstaged'
-                : selectedHasStagedChanges
-                  ? 'staged'
-                  : selectedHasUnstagedChanges
-                    ? 'unstaged'
-                    : selectedGitFile.kind}
-            </span>
-          )}
-        </>
-      )}
     </div>
   )
 }
