@@ -69,7 +69,7 @@ describe('ProviderCapabilities', () => {
     })
 
     expect(contract.tools.shellCommands.state).toBe('gated')
-    expect(contract.tools.shellCommands.tools).toEqual(['run_shell_command'])
+    expect(contract.tools.shellCommands.tools).toEqual(['run_shell_command', 'get_diagnostics'])
     expect(contract.tools.fileChanges.tools).toEqual(['write_file', 'replace'])
     expect(contract.tools.creativeApps.tools).toEqual([
       'creative_app_status',
@@ -372,6 +372,7 @@ describe('ProviderCapabilities', () => {
       status: { provider: 'ollama', available: true }
     })
     expect(approvedShell.mcp.tools).toContain('run_shell_command')
+    expect(approvedShell.mcp.tools).toContain('get_diagnostics')
     expect(approvedShell.tools.shellCommands.state).toBe('gated')
     expect(approvedShell.tools.shellCommands.enforcedByTaskWraith).toBe(true)
   })

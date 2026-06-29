@@ -1301,6 +1301,21 @@ function ollamaNativeToolParameters(
         },
         required: ['command', 'intent']
       }
+    case 'get_diagnostics':
+      return {
+        description: compact ? 'Run diagnostics (intent required).' : 'Run fixed workspace diagnostics. Requires a short intent.',
+        properties: {
+          source: {
+            ...STRING,
+            description: compact ? 'typescript|eslint|all.' : 'Diagnostic source: typescript, eslint, or all.'
+          },
+          path: { ...STRING, description: compact ? 'Optional relative path.' : 'Optional workspace-relative file or directory filter.' },
+          project: { ...STRING, description: compact ? 'Optional tsconfig.' : 'Optional workspace-relative tsconfig path.' },
+          maxDiagnostics: { type: 'number', description: 'Maximum diagnostics to return.' },
+          intent: { ...STRING, description: compact ? 'Short reason.' : 'Short reason for running diagnostics.' }
+        },
+        required: ['intent']
+      }
     default:
       return {
         description: `Invoke the TaskWraith ${toolName} tool using its documented MCP argument schema.`,

@@ -83,6 +83,7 @@ export const WORKSPACE_MCP_TOOL_NAMES = [
   'git_stage',
   'git_commit',
   'run_task',
+  'get_diagnostics',
   'list_subthreads',
   'read_subthread_result',
   'cancel_subthread',
@@ -156,6 +157,11 @@ export interface WorkspaceToolExecutors {
   ) => Promise<unknown>
   executeGitCommit: (args: Record<string, any>, cwd: string) => Promise<unknown>
   executeRunTask: (args: Record<string, any>, cwd: string) => Promise<unknown>
+  executeGetDiagnostics: (
+    args: Record<string, any>,
+    context: WorkspaceToolContext,
+    cwd: string
+  ) => Promise<unknown>
   executeListSubthreads: (context: WorkspaceToolContext, args: Record<string, any>) => unknown
   executeReadSubthreadResult: (
     context: WorkspaceToolContext,
@@ -193,6 +199,49 @@ const FIND_FILES_DEFAULT_EXCLUDE_GLOBS = [
   '!.next/**',
   '!out/**'
 ] as const
+const DIAGNOSTIC_DEFAULT_TSCONFIGS = [
+  'tsconfig.json',
+  'tsconfig.node.json',
+  'tsconfig.web.json'
+] as const
+
+type DiagnosticSource = 'typescript' | 'eslint'
+type DiagnosticSourceMode = DiagnosticSource | 'all'
+type DiagnosticSeverity = 'error' | 'warning' | 'info'
+
+interface WorkspaceDiagnostic {
+  source: DiagnosticSource
+  severity: DiagnosticSeverity
+  path?: string
+  line?: number
+  column?: number
+  endLine?: number
+  endColumn?: number
+  message: string
+  code?: string
+}
+
+interface DiagnosticRunSummary {
+  source: DiagnosticSource
+  command?: string[]
+  cwd: string
+  project?: string
+  target?: string
+  exitCode?: number | null
+  timedOut?: boolean
+  durationMs?: number
+  diagnosticCount: number
+  ok: boolean
+  skipped?: boolean
+  error?: string
+  stderr?: string
+}
+
+interface DiagnosticsPathFilter {
+  targetPath: string
+  displayPath: string
+  isDirectory: boolean
+}
 
 type SubThreadLifecycleState =
   | 'created'
@@ -221,6 +270,8 @@ export function createWorkspaceToolExecutors(
     executeGitStage: (args, context, cwd) => executeGitStage(deps, args, context, cwd),
     executeGitCommit: (args, cwd) => executeGitCommit(deps, args, cwd),
     executeRunTask: (args, cwd) => executeRunTask(deps, args, cwd),
+    executeGetDiagnostics: (args, context, cwd) =>
+      executeGetDiagnostics(deps, args, context, cwd),
     executeListSubthreads: (context, args) => executeListSubthreads(deps, context, args),
     executeReadSubthreadResult: (context, args) => executeReadSubthreadResult(deps, context, args),
     executeCancelSubthread: (context, args) => executeCancelSubthread(deps, context, args),
@@ -304,6 +355,10 @@ export async function executeWorkspaceMcpTool(
       result,
       isError: (result.exitCode !== null && result.exitCode !== 0) || result.timedOut === true
     }
+  }
+  if (toolName === 'get_diagnostics') {
+    const result = await executeGetDiagnostics(deps, args, context, cwd)
+    return { result, isError: result.ok === false }
   }
   if (toolName === 'list_subthreads') {
     return { result: executeListSubthreads(deps, context, args), isError: false }
@@ -853,6 +908,132 @@ export async function executeRunTask(
     stdout: truncateText(result.stdout),
     stderr: truncateText(result.stderr),
     summary: summarizeTestOutput(`${result.stdout}\n${result.stderr}`)
+  }
+}
+
+export async function executeGetDiagnostics(
+  deps: WorkspaceToolExecutorDependencies,
+  args: Record<string, any>,
+  context: WorkspaceToolContext,
+  cwd: string
+) {
+  if (context.scope !== 'workspace') {
+    throw new Error('This tool requires an active workspace.')
+  }
+  const workspaceRoot = resolve(context.workspacePath || cwd)
+  const source = normalizeDiagnosticSourceMode(args.source || args.kind || args.tool, args)
+  const maxDiagnostics = clampInteger(args.maxDiagnostics ?? args.maxResults ?? args.limit, 100, 1, 500)
+  const timeoutMs = clampInteger(args.timeoutMs, 120_000, 5_000, 10 * 60_000)
+  const pathFilter = await resolveDiagnosticsPathFilter(context, args.path || args.file)
+  const requestedSources: DiagnosticSource[] =
+    source === 'all' ? ['typescript', 'eslint'] : [source]
+  const runs: DiagnosticRunSummary[] = []
+  const diagnostics: WorkspaceDiagnostic[] = []
+
+  if (requestedSources.includes('typescript')) {
+    const projects = resolveDiagnosticTsconfigs(context, args.project || args.tsconfig)
+    if (projects.length === 0) {
+      runs.push({
+        source: 'typescript',
+        cwd: workspaceRoot,
+        diagnosticCount: 0,
+        ok: source === 'all',
+        skipped: true,
+        error: 'No TypeScript project file found.'
+      })
+    }
+    for (const projectPath of projects) {
+      const command = [
+        'npx',
+        '--no-install',
+        'tsc',
+        '--noEmit',
+        '--pretty',
+        'false',
+        '--project',
+        projectPath
+      ]
+      const result = await runCommandArgs(deps, command, workspaceRoot, timeoutMs)
+      const parsed = parseTypeScriptDiagnostics(
+        `${result.stdout || ''}\n${result.stderr || ''}`,
+        context
+      )
+      const filtered = filterDiagnosticsByPath(parsed, context, pathFilter)
+      diagnostics.push(...filtered)
+      runs.push({
+        source: 'typescript',
+        command: redactDiagnosticCommand(command, context),
+        cwd: workspaceRoot,
+        project: workspaceRelativeForContext(context, projectPath),
+        exitCode: result.exitCode,
+        timedOut: result.timedOut,
+        durationMs: result.durationMs,
+        diagnosticCount: filtered.length,
+        ok:
+          result.timedOut !== true &&
+          !result.error &&
+          (result.exitCode === 0 || parsed.length > 0),
+        error: result.error,
+        stderr:
+          result.exitCode !== 0 && parsed.length === 0
+            ? truncateText(result.stderr || result.stdout || '', 4000)
+            : undefined
+      })
+    }
+  }
+
+  if (requestedSources.includes('eslint')) {
+    const targetPath = pathFilter?.targetPath || workspaceRoot
+    const command = [
+      'npx',
+      '--no-install',
+      'eslint',
+      '--format',
+      'json',
+      '--no-error-on-unmatched-pattern',
+      targetPath
+    ]
+    const result = await runCommandArgs(deps, command, workspaceRoot, timeoutMs)
+    const parsed = parseEslintDiagnostics(result.stdout || '', context)
+    const filtered = filterDiagnosticsByPath(parsed, context, pathFilter)
+    diagnostics.push(...filtered)
+    runs.push({
+      source: 'eslint',
+      command: redactDiagnosticCommand(command, context),
+      cwd: workspaceRoot,
+      target: pathFilter?.displayPath || '.',
+      exitCode: result.exitCode,
+      timedOut: result.timedOut,
+      durationMs: result.durationMs,
+      diagnosticCount: filtered.length,
+      ok:
+        result.timedOut !== true &&
+        !result.error &&
+        (result.exitCode === 0 || parsed.length > 0),
+      error: result.error,
+      stderr:
+        result.exitCode !== 0 && parsed.length === 0
+          ? truncateText(result.stderr || result.stdout || '', 4000)
+          : undefined
+    })
+  }
+
+  const deduped = dedupeDiagnostics(diagnostics)
+  const limited = deduped.slice(0, maxDiagnostics)
+  const ranSuccessfully = runs.some((run) => !run.skipped && run.ok)
+  const ok = ranSuccessfully && runs.every((run) => run.ok || run.skipped)
+  return {
+    ok,
+    tool: 'get_diagnostics',
+    status: ok ? (deduped.length > 0 ? 'problems' : 'clean') : 'failed',
+    hasProblems: deduped.length > 0,
+    source,
+    path: pathFilter?.displayPath,
+    count: limited.length,
+    totalDiagnostics: deduped.length,
+    truncated: deduped.length > limited.length,
+    diagnostics: limited,
+    runs
   }
 }
 
@@ -1505,6 +1686,187 @@ export function truncateText(value: string, max = MAX_MCP_TEXT_CHARS): string {
   return value.length <= max
     ? value
     : `${value.slice(0, max)}\n...truncated ${value.length - max} chars`
+}
+
+function normalizeDiagnosticSourceMode(value: unknown, args: Record<string, any>): DiagnosticSourceMode {
+  if (args.includeLint === true) return 'all'
+  const source = typeof value === 'string' ? value.trim().toLowerCase() : ''
+  if (source === 'eslint' || source === 'lint') return 'eslint'
+  if (source === 'all' || source === 'both') return 'all'
+  return 'typescript'
+}
+
+async function resolveDiagnosticsPathFilter(
+  context: WorkspaceToolContext,
+  value: unknown
+): Promise<DiagnosticsPathFilter | undefined> {
+  const rawPath = optionalString(value)
+  if (!rawPath) return undefined
+  const targetPath = resolveMcpWorkspacePath(context, rawPath, { allowWorkspaceRoot: true })
+  const stat = await fs.stat(targetPath)
+  return {
+    targetPath,
+    displayPath: formatScopedPath(context, targetPath),
+    isDirectory: stat.isDirectory()
+  }
+}
+
+function resolveDiagnosticTsconfigs(
+  context: WorkspaceToolContext,
+  projectValue: unknown
+): string[] {
+  const project = optionalString(projectValue)
+  if (project) return [resolveMcpWorkspacePath(context, project)]
+  const workspaceRoot = resolve(context.workspacePath || context.cwd)
+  return DIAGNOSTIC_DEFAULT_TSCONFIGS.map((name) => join(workspaceRoot, name)).filter((path) =>
+    fsSync.existsSync(path)
+  )
+}
+
+function parseTypeScriptDiagnostics(
+  output: string,
+  context: WorkspaceToolContext
+): WorkspaceDiagnostic[] {
+  const diagnostics: WorkspaceDiagnostic[] = []
+  let current: WorkspaceDiagnostic | null = null
+  for (const rawLine of output.split(/\r?\n/)) {
+    const line = stripAnsi(rawLine)
+    if (!line.trim()) continue
+    const fileMatch = line.match(
+      /^(.+?)\((\d+),(\d+)\):\s+(error|warning)\s+TS(\d+):\s+(.*)$/
+    )
+    if (fileMatch) {
+      current = {
+        source: 'typescript',
+        severity: fileMatch[4] === 'warning' ? 'warning' : 'error',
+        path: normalizeDiagnosticPath(context, fileMatch[1]),
+        line: Number(fileMatch[2]),
+        column: Number(fileMatch[3]),
+        code: `TS${fileMatch[5]}`,
+        message: fileMatch[6].trim()
+      }
+      diagnostics.push(current)
+      continue
+    }
+    const globalMatch = line.match(/^(error|warning)\s+TS(\d+):\s+(.*)$/)
+    if (globalMatch) {
+      current = {
+        source: 'typescript',
+        severity: globalMatch[1] === 'warning' ? 'warning' : 'error',
+        code: `TS${globalMatch[2]}`,
+        message: globalMatch[3].trim()
+      }
+      diagnostics.push(current)
+      continue
+    }
+    if (current && /^\s+/.test(rawLine)) {
+      current.message = `${current.message}\n${line.trim()}`
+    }
+  }
+  return diagnostics
+}
+
+function parseEslintDiagnostics(output: string, context: WorkspaceToolContext): WorkspaceDiagnostic[] {
+  const text = stripAnsi(output).trim()
+  if (!text) return []
+  let rows: unknown
+  try {
+    rows = JSON.parse(text)
+  } catch {
+    return []
+  }
+  if (!Array.isArray(rows)) return []
+  const diagnostics: WorkspaceDiagnostic[] = []
+  for (const fileResult of rows) {
+    if (!isRecord(fileResult) || !Array.isArray(fileResult.messages)) continue
+    const filePath = optionalString(fileResult.filePath)
+    for (const message of fileResult.messages) {
+      if (!isRecord(message)) continue
+      const severityNumber = Number(message.severity || 0)
+      diagnostics.push({
+        source: 'eslint',
+        severity: severityNumber >= 2 ? 'error' : severityNumber === 1 ? 'warning' : 'info',
+        path: filePath ? normalizeDiagnosticPath(context, filePath) : undefined,
+        line: finitePositiveInteger(message.line),
+        column: finitePositiveInteger(message.column),
+        endLine: finitePositiveInteger(message.endLine),
+        endColumn: finitePositiveInteger(message.endColumn),
+        code: optionalString(message.ruleId),
+        message: String(message.message || '').trim() || 'ESLint reported a problem.'
+      })
+    }
+  }
+  return diagnostics
+}
+
+function filterDiagnosticsByPath(
+  diagnostics: WorkspaceDiagnostic[],
+  context: WorkspaceToolContext,
+  filter?: DiagnosticsPathFilter
+): WorkspaceDiagnostic[] {
+  if (!filter) return diagnostics
+  const workspaceRoot = resolve(context.workspacePath || context.cwd)
+  return diagnostics.filter((diagnostic) => {
+    if (!diagnostic.path) return false
+    const diagnosticPath = isAbsolute(diagnostic.path)
+      ? resolve(diagnostic.path)
+      : resolve(workspaceRoot, diagnostic.path)
+    if (filter.isDirectory) {
+      const rel = relative(filter.targetPath, diagnosticPath)
+      return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))
+    }
+    return resolve(diagnosticPath) === resolve(filter.targetPath)
+  })
+}
+
+function dedupeDiagnostics(diagnostics: WorkspaceDiagnostic[]): WorkspaceDiagnostic[] {
+  const seen = new Set<string>()
+  const deduped: WorkspaceDiagnostic[] = []
+  for (const diagnostic of diagnostics) {
+    const key = [
+      diagnostic.source,
+      diagnostic.path || '',
+      diagnostic.line || '',
+      diagnostic.column || '',
+      diagnostic.code || '',
+      diagnostic.message
+    ].join('\0')
+    if (seen.has(key)) continue
+    seen.add(key)
+    deduped.push(diagnostic)
+  }
+  return deduped
+}
+
+function normalizeDiagnosticPath(context: WorkspaceToolContext, rawPath: string): string | undefined {
+  const trimmed = rawPath.trim()
+  if (!trimmed) return undefined
+  const workspaceRoot = resolve(context.workspacePath || context.cwd)
+  const resolvedPath = isAbsolute(trimmed) ? resolve(trimmed) : resolve(workspaceRoot, trimmed)
+  if (isPathInsideWorkspace(workspaceRoot, resolvedPath)) {
+    return toWorkspaceRelativePath(workspaceRoot, resolvedPath)
+  }
+  const home = process.env.HOME ? resolve(process.env.HOME) : ''
+  if (home && isPathInsideWorkspace(home, resolvedPath)) {
+    return `~/${relative(home, resolvedPath).replace(/\\/g, '/')}`
+  }
+  return trimmed
+}
+
+function redactDiagnosticCommand(command: string[], context: WorkspaceToolContext): string[] {
+  return command.map((part) => {
+    if (!isAbsolute(part)) return part
+    return formatScopedPath(context, part) || '.'
+  })
+}
+
+function stripAnsi(value: string): string {
+  return value.replace(/\u001b\[[0-9;]*m/g, '')
+}
+
+function finitePositiveInteger(value: unknown): number | undefined {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) && parsed > 0 ? Math.trunc(parsed) : undefined
 }
 
 function sanitizeGitRef(value: unknown): string {

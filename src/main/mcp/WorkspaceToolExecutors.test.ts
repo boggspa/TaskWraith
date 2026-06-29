@@ -6,6 +6,7 @@ import {
   executeCreateDirectory,
   executeDeletePath,
   executeFindFiles,
+  executeGetDiagnostics,
   executeGitBlame,
   executeGitLog,
   executeGitShow,
@@ -161,6 +162,157 @@ describe('executeFindFiles', () => {
       executeFindFiles(
         deps,
         { pattern: '*.ts', path: '../outside' },
+        { scope: 'workspace', cwd: workspace, workspacePath: workspace },
+        workspace
+      )
+    ).rejects.toThrow('Path is outside the workspace.')
+  })
+})
+
+describe('executeGetDiagnostics', () => {
+  it('runs TypeScript with fixed argv and returns structured problems without marking findings as tool failure', async () => {
+    const workspace = resolve('/tmp/taskwraith-workspace-tools')
+    const commands: string[][] = []
+    const deps = makeDeps(async (command) => {
+      commands.push(command as string[])
+      return commandResult(
+        [
+          `${resolve(workspace, 'src/App.ts')}(10,5): error TS2322: Type 'string' is not assignable to type 'number'.`,
+          '  Assignment came from test data.'
+        ].join('\n'),
+        2
+      )
+    })
+
+    const result = await executeGetDiagnostics(
+      deps,
+      { project: 'tsconfig.json', maxDiagnostics: 10 },
+      { scope: 'workspace', cwd: workspace, workspacePath: workspace },
+      workspace
+    )
+
+    expect(commands[0]).toEqual([
+      'npx',
+      '--no-install',
+      'tsc',
+      '--noEmit',
+      '--pretty',
+      'false',
+      '--project',
+      resolve(workspace, 'tsconfig.json')
+    ])
+    expect(result).toMatchObject({
+      ok: true,
+      tool: 'get_diagnostics',
+      status: 'problems',
+      hasProblems: true,
+      count: 1,
+      diagnostics: [
+        {
+          source: 'typescript',
+          severity: 'error',
+          path: 'src/App.ts',
+          line: 10,
+          column: 5,
+          code: 'TS2322'
+        }
+      ],
+      runs: [
+        {
+          source: 'typescript',
+          command: [
+            'npx',
+            '--no-install',
+            'tsc',
+            '--noEmit',
+            '--pretty',
+            'false',
+            '--project',
+            'tsconfig.json'
+          ],
+          project: 'tsconfig.json',
+          exitCode: 2,
+          ok: true
+        }
+      ]
+    })
+    expect(result.diagnostics[0].message).toContain('Assignment came from test data.')
+  })
+
+  it('parses ESLint JSON and filters diagnostics by workspace path', async () => {
+    const workspace = await mkdtemp(resolve(tmpdir(), 'taskwraith-mcp-diagnostics-'))
+    try {
+      await mkdir(resolve(workspace, 'src'))
+      await writeFile(resolve(workspace, 'src/App.ts'), 'const value = 1\n')
+      const deps = makeDeps(async () =>
+        commandResult(
+          JSON.stringify([
+            {
+              filePath: resolve(workspace, 'src/App.ts'),
+              messages: [
+                {
+                  ruleId: 'no-unused-vars',
+                  severity: 2,
+                  message: 'value is assigned a value but never used.',
+                  line: 1,
+                  column: 7,
+                  endLine: 1,
+                  endColumn: 12
+                }
+              ]
+            },
+            {
+              filePath: resolve(workspace, 'other.ts'),
+              messages: [{ ruleId: 'semi', severity: 1, message: 'Missing semicolon.', line: 1 }]
+            }
+          ]),
+          1
+        )
+      )
+
+      const result = await executeGetDiagnostics(
+        deps,
+        { source: 'eslint', path: 'src', maxDiagnostics: 10 },
+        { scope: 'workspace', cwd: workspace, workspacePath: workspace },
+        workspace
+      )
+
+      expect(result).toMatchObject({
+        ok: true,
+        status: 'problems',
+        source: 'eslint',
+        path: 'src',
+        totalDiagnostics: 1,
+        diagnostics: [
+          {
+            source: 'eslint',
+            severity: 'error',
+            path: 'src/App.ts',
+            line: 1,
+            column: 7,
+            endLine: 1,
+            endColumn: 12,
+            code: 'no-unused-vars'
+          }
+        ]
+      })
+    } finally {
+      await rm(workspace, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects global scope and outside-workspace path filters', async () => {
+    const workspace = resolve('/tmp/taskwraith-workspace-tools')
+    const deps = makeDeps(async () => commandResult(''))
+
+    await expect(
+      executeGetDiagnostics(deps, {}, { scope: 'global', cwd: workspace }, workspace)
+    ).rejects.toThrow('This tool requires an active workspace.')
+
+    await expect(
+      executeGetDiagnostics(
+        deps,
+        { path: '../outside' },
         { scope: 'workspace', cwd: workspace, workspacePath: workspace },
         workspace
       )

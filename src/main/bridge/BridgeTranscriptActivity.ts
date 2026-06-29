@@ -13,7 +13,7 @@ const BRIDGE_TOOL_CATEGORY_RULES: Array<{
   { pattern: /read|list|cat|view|open/i, category: 'read' },
   { pattern: /search|grep|glob|find/i, category: 'search' },
   { pattern: /shell|bash|terminal|command|exec/i, category: 'shell' },
-  { pattern: /task|agent|delegate/i, category: 'task' }
+  { pattern: /task|agent|delegate|diagnostic|problems/i, category: 'task' }
 ]
 
 function stringValue(value: unknown): string {

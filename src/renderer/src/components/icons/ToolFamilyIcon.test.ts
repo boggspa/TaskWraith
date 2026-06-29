@@ -129,6 +129,7 @@ describe('toolNameToFamily', () => {
   it('maps diagnostic / status tools to the diagnostic family', () => {
     expect(toolNameToFamily('approval_status')).toBe('diagnostic')
     expect(toolNameToFamily('provider_auth_status')).toBe('diagnostic')
+    expect(toolNameToFamily('get_diagnostics')).toBe('diagnostic')
     expect(toolNameToFamily('run_timeline')).toBe('diagnostic')
     expect(toolNameToFamily('raw_provider_events')).toBe('diagnostic')
     expect(toolNameToFamily('switch_auth_profile')).toBe('diagnostic')

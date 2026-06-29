@@ -42,7 +42,8 @@ export const OLLAMA_FILE_EDIT_TOOL_NAMES = [
 
 export const OLLAMA_SHELL_TOOL_NAMES = [
   'run_shell_command',
-  'run_task'
+  'run_task',
+  'get_diagnostics'
 ] as const satisfies readonly OllamaToolName[]
 
 /** Non-mutating coordination tools unlocked at tier 3 (approved edits) and above. */

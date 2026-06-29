@@ -62,6 +62,9 @@ describe('canonicalTaskWraithToolName', () => {
 describe('taskWraithToolServiceIfKnown', () => {
   it('maps native TaskWraith MCP approvals to their real agentic service', () => {
     expect(taskWraithToolServiceIfKnown('mcp__taskwraith__run_shell_command')).toBe('shellCommands')
+    expect(taskWraithToolServiceIfKnown('mcp__taskwraith__get_diagnostics')).toBe(
+      'shellCommands'
+    )
     expect(taskWraithToolServiceIfKnown('mcp__other_server__write_file')).toBe('fileChanges')
     expect(taskWraithToolServiceIfKnown('taskwraith__write_file')).toBe('fileChanges')
     expect(taskWraithToolServiceIfKnown('taskwraith__delete_path')).toBe('fileChanges')

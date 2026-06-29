@@ -1917,6 +1917,14 @@ const MCP_TOOL_OVERRIDES: Partial<
     iconRef: 'tool:frames',
     policyKey: 'mcpTools',
     description: 'Returns a bounded batch of recent attached-window frames.'
+  },
+  get_diagnostics: {
+    label: 'Get diagnostics',
+    transcript: 'Checked diagnostics',
+    group: 'diagnostics',
+    iconRef: 'tool:diagnostics',
+    policyKey: 'shellCommands',
+    description: 'Runs fixed workspace diagnostic tools and returns structured problems.'
   }
 }
 
@@ -1965,7 +1973,9 @@ function inferMcpToolGroup(tool: TaskWraithMcpToolName): McpToolGroup {
 }
 
 function inferMcpPolicyKey(tool: TaskWraithMcpToolName): McpToolPolicyKey {
-  if (tool === 'run_shell_command' || tool === 'run_task') return 'shellCommands'
+  if (tool === 'run_shell_command' || tool === 'run_task' || tool === 'get_diagnostics') {
+    return 'shellCommands'
+  }
   // Audio/video media tools share the dedicated mediaEditing policy bucket
   // (parity with the runtime classifier). Checked before the creative_/fileChanges
   // branches so the per-tool Settings policy chip reflects the real gate.

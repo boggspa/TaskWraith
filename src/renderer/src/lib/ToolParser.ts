@@ -448,6 +448,8 @@ const TASK_LIKE_TOOL_NAMES = new Set([
   'goalcomplete',
   'goal_blocked',
   'goalblocked',
+  'get_diagnostics',
+  'getdiagnostics',
   // Cursor / Grok-ACP plan-tracking tool surface.
   'todo_write',
   'todowrite',
@@ -643,6 +645,9 @@ export function getToolDisplayName(toolName: string, parameters?: Record<string,
       }
       if (unqualifiedName === 'ask_user_question' || unqualifiedName === 'askuserquestion') {
         return 'Asked user'
+      }
+      if (unqualifiedName === 'get_diagnostics' || unqualifiedName === 'getdiagnostics') {
+        return 'Checked diagnostics'
       }
       return (params.title as string) || 'Task update'
     case 'read':

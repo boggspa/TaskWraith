@@ -524,6 +524,43 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
       }
     },
     {
+      name: 'get_diagnostics',
+      description:
+        'Run fixed workspace diagnostic tools and return structured TypeScript/ESLint problems.',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          source: {
+            type: 'string',
+            enum: ['typescript', 'eslint', 'all'],
+            description: 'Diagnostic source to run. Defaults to TypeScript.'
+          },
+          path: {
+            type: 'string',
+            description: 'Optional workspace-relative file or directory filter.'
+          },
+          project: {
+            type: 'string',
+            description: 'Optional workspace-relative tsconfig path for TypeScript diagnostics.'
+          },
+          maxDiagnostics: {
+            type: 'number',
+            description: 'Maximum structured diagnostics to return.'
+          },
+          timeoutMs: {
+            type: 'number',
+            description: 'Per-source timeout in milliseconds.'
+          }
+        }
+      }
+    },
+    {
       name: 'test_result_summary',
       description: 'Summarize test failures from supplied output or a durable run id.',
       annotations: {

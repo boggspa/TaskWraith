@@ -35,6 +35,7 @@ describe('classifyTool', () => {
     expect(classifyTool('write_file')).toBe('workspace_write')
     expect(classifyTool('apply_patch')).toBe('workspace_write')
     expect(classifyTool('run_shell_command')).toBe('workspace_write')
+    expect(classifyTool('get_diagnostics')).toBe('workspace_write')
     expect(classifyTool('something_brand_new')).toBe('workspace_write')
   })
 })
@@ -99,6 +100,7 @@ describe('workspace_write is exactly the read-only deny set', () => {
         'creative_timeline_import',
         'delete_path',
         'delegate_to_subthread',
+        'get_diagnostics',
         'git_commit',
         'git_stage',
         'image_edit',

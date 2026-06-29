@@ -1652,8 +1652,11 @@ describe('ollamaNativeToolDefinitions', () => {
     const names = defs.map((def) => def.function.name)
     expect(names).toContain('write_file')
     expect(names).toContain('run_shell_command')
+    expect(names).toContain('get_diagnostics')
     const shell = defs.find((def) => def.function.name === 'run_shell_command')
     expect(shell?.function.parameters.required).toEqual(['command', 'intent'])
+    const diagnostics = defs.find((def) => def.function.name === 'get_diagnostics')
+    expect(diagnostics?.function.parameters.required).toEqual(['intent'])
   })
 })
 
@@ -1721,8 +1724,10 @@ describe('Ollama tool tiers', () => {
     expect(ollamaToolAllowedInTier('run_shell_command', 'approved_edits')).toBe(false)
     expect(ollamaToolAllowedInTier('run_shell_command', 'approved_shell')).toBe(true)
     expect(ollamaToolAllowedInTier('run_task', 'approved_shell')).toBe(true)
+    expect(ollamaToolAllowedInTier('get_diagnostics', 'approved_shell')).toBe(true)
     expect(ollamaToolRequiresIntent('write_file')).toBe(true)
     expect(ollamaToolRequiresIntent('run_shell_command')).toBe(true)
+    expect(ollamaToolRequiresIntent('get_diagnostics')).toBe(true)
   })
 
   it('advertises the full TaskWraith tool surface for acknowledged parity mode', () => {

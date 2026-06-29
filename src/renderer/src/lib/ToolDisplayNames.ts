@@ -94,6 +94,7 @@ export const TOOL_DISPLAY_NAMES: Record<string, string> = {
   // ── System / runtime introspection ───────────────────────────
   approval_status: 'Approval status',
   provider_auth_status: 'Provider auth status',
+  get_diagnostics: 'Checked diagnostics',
   run_task: 'Ran task',
   run_timeline: 'Run timeline',
   run_events: 'Run events',

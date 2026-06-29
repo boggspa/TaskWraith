@@ -665,7 +665,7 @@ export function buildProviderCapabilityContract({
         'shellCommands',
         services.shellCommands,
         'bridge',
-        ['run_shell_command'],
+        ['run_shell_command', 'get_diagnostics'],
         'Gemini uses the TaskWraith MCP bridge for host shell commands.'
       )
       fileChanges = serviceCapability(
@@ -753,7 +753,7 @@ export function buildProviderCapabilityContract({
       'shellCommands',
       services.shellCommands,
       'taskwraith',
-      ['run_shell_command'],
+      ['run_shell_command', 'get_diagnostics'],
       'Codex command approvals are routed through TaskWraith.'
     )
     fileChanges = serviceCapability(
@@ -799,7 +799,9 @@ export function buildProviderCapabilityContract({
         'apply_patch'
       ].includes(tool)
     )
-    const ollamaShellTools = ollamaTierTools.filter((tool) => tool === 'run_shell_command')
+    const ollamaShellTools = ollamaTierTools.filter((tool) =>
+      ['run_shell_command', 'run_task', 'get_diagnostics'].includes(tool)
+    )
     mcp = ollamaLocalMcpCapability({
       enabled: services.mcpTools !== 'deny',
       blocked: services.mcpTools === 'deny',
@@ -886,7 +888,7 @@ export function buildProviderCapabilityContract({
           'shellCommands',
           services.shellCommands,
           'bridge',
-          ['run_shell_command'],
+          ['run_shell_command', 'get_diagnostics'],
           `${label} should use the TaskWraith MCP bridge for host shell commands.`
         )
       : delegatedCapability(

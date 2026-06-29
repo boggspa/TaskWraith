@@ -195,6 +195,9 @@ function describeTool(toolName: OllamaToolName): string | null {
   if (toolName === 'run_task') {
     return '- run_task: {"task":"test","intent":"verify the focused change"} — run a configured task/test through TaskWraith policy.'
   }
+  if (toolName === 'get_diagnostics') {
+    return '- get_diagnostics: {"source":"typescript","path":"src","intent":"check focused diagnostics"} — run fixed workspace diagnostics through TaskWraith policy.'
+  }
   if (toolName === 'test_result_summary') {
     return '- test_result_summary: {"path":"optional/result/path"} — summarize available test output without editing files.'
   }

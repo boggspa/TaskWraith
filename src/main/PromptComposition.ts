@@ -100,7 +100,7 @@ const TASKWRAITH_IMAGE_TOOLS_NOTE =
  */
 const CLOUD_EDIT_DISCIPLINE_NOTE = [
   'Read before you edit: before you replace or apply_patch an existing file — or write_file over one that already exists — open it with read_file (or open_workspace_file) so you edit against its current contents, especially for a partial edit. Never modify a file you have not read this run. Creating a genuinely new file with write_file needs no prior read.',
-  'After making code changes, verify them when the project has checks: if run_task exposes a relevant lint/build/test task, run it and summarize the outcome with test_result_summary before declaring the task done. If no such task exists, say so plainly rather than inventing a result.',
+  'After making code changes, verify them when the project has checks: use get_diagnostics for structured type/lint problems, and if run_task exposes a relevant lint/build/test task, run it and summarize the outcome with test_result_summary before declaring the task done. If no such task exists, say so plainly rather than inventing a result.',
   'Never claim tests, builds, or lint passed without actually running them — report real tool output, not a fabricated success.'
 ].join('\n')
 

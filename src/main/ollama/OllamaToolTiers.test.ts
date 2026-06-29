@@ -199,6 +199,7 @@ describe('ollamaToolNamesForTier (edit-tool gating sanity)', () => {
     expect(names).not.toContain('move_path')
     expect(names).not.toContain('rename_path')
     expect(names).not.toContain('apply_patch')
+    expect(names).not.toContain('get_diagnostics')
   })
 
   it('includes file-edit tools at approved_edits and provider_parity', () => {
@@ -214,5 +215,7 @@ describe('ollamaToolNamesForTier (edit-tool gating sanity)', () => {
     }
     expect(ollamaToolRequiresIntent('move_path')).toBe(true)
     expect(ollamaToolRequiresIntent('delete_path')).toBe(true)
+    expect(ollamaToolNamesForTier('approved_shell')).toContain('get_diagnostics')
+    expect(ollamaToolRequiresIntent('get_diagnostics')).toBe(true)
   })
 })

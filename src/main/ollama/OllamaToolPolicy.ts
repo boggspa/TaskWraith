@@ -49,7 +49,8 @@ const OLLAMA_FORCE_PROMPT_TOOLS = new Set([
   'rename_path',
   'apply_patch',
   'run_shell_command',
-  'run_task'
+  'run_task',
+  'get_diagnostics'
 ])
 
 export function ollamaShellRiskLabels(command: string): string[] {

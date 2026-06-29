@@ -151,7 +151,8 @@ export function canonicalTaskWraithToolName(toolName: string): string {
 }
 
 export function taskWraithToolAgenticService(toolName: string): AgenticServiceId {
-  if (toolName === 'run_shell_command' || toolName === 'run_task') return 'shellCommands'
+  if (toolName === 'run_shell_command' || toolName === 'run_task' || toolName === 'get_diagnostics')
+    return 'shellCommands'
   if (
     toolName === 'write_file' ||
     toolName === 'replace' ||

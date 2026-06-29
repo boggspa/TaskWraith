@@ -21,6 +21,7 @@ export const TASKWRAITH_MCP_TOOLS = [
   'git_stage',
   'git_commit',
   'run_task',
+  'get_diagnostics',
   'workspace_board_snapshot',
   'workspace_board_preview_plan',
   'workspace_board_apply_plan',

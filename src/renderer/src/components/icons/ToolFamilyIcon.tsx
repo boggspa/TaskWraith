@@ -145,6 +145,7 @@ export function toolNameToFamily(name: string | undefined | null): ToolFamily | 
     case 'provider_auth_status':
     case 'run_timeline':
     case 'raw_provider_events':
+    case 'get_diagnostics':
     case 'switch_auth_profile':
     case 'agent_delegation_role':
     case 'creative_app_status':
