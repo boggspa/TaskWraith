@@ -2947,6 +2947,9 @@ export class AppStore {
     const index = boards.findIndex((item) => item.id === normalized.id)
     if (index >= 0) {
       const prior = boards[index]
+      if (prior.workspaceId !== normalized.workspaceId || prior.workspacePath !== normalized.workspacePath) {
+        throw new Error('Workspace board cannot move workspaces.')
+      }
       const updatedActivity: WorkspaceBoardActivityEntry = {
         id: randomUUID(),
         at: nowIso,
@@ -3072,7 +3075,13 @@ export class AppStore {
     card: Omit<WorkspaceBoardCard, 'id' | 'createdAt' | 'updatedAt' | 'activity'> &
       Partial<Pick<WorkspaceBoardCard, 'id' | 'createdAt' | 'updatedAt' | 'activity'>>
   ): WorkspaceBoardCard {
-    const board = this.getWorkspaceBoard(card.boardId)
+    const cards = this.getWorkspaceBoardCards()
+    const existingIndex = card.id ? cards.findIndex((item) => item.id === card.id) : -1
+    const existingCard = existingIndex >= 0 ? cards[existingIndex] : null
+    if (existingCard && existingCard.boardId !== card.boardId) {
+      throw new Error('Workspace board card cannot move boards.')
+    }
+    const board = this.getWorkspaceBoard(existingCard?.boardId || card.boardId)
     if (!board) throw new Error('Workspace board could not be loaded.')
     const nowMs = Date.now()
     const nowIso = new Date(nowMs).toISOString()
@@ -3099,17 +3108,15 @@ export class AppStore {
       nowMs
     )
     if (!normalized) throw new Error('Workspace board card is invalid.')
-    const cards = this.getWorkspaceBoardCards()
-    const index = cards.findIndex((item) => item.id === normalized.id)
-    if (index >= 0) {
-      const prior = cards[index]
+    if (existingIndex >= 0) {
+      const prior = cards[existingIndex]
       const updatedActivity: WorkspaceBoardActivityEntry = {
         id: randomUUID(),
         at: nowIso,
         actor: 'user',
         action: 'updated'
       }
-      cards[index] = {
+      cards[existingIndex] = {
         ...prior,
         ...normalized,
         boardId: prior.boardId,
@@ -3125,7 +3132,7 @@ export class AppStore {
       cards.push(normalized)
     }
     writeJson(workspaceBoardCardsPath, cards)
-    return index >= 0 ? cards[index] : normalized
+    return existingIndex >= 0 ? cards[existingIndex] : normalized
   }
 
   static updateWorkspaceBoardCard(
