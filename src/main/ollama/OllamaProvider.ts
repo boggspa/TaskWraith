@@ -97,6 +97,7 @@ export interface OllamaModelShowInfo {
     families?: string[]
     parameter_size?: string
     quantization_level?: string
+    context_length?: number
   }
   model_info?: Record<string, unknown>
   capabilities?: string[]
@@ -836,12 +837,40 @@ async function fetchOllamaModelShow(
   }
 }
 
+function positiveInteger(value: unknown): number | undefined {
+  const numeric = typeof value === 'string' ? Number(value.trim()) : Number(value)
+  if (!Number.isFinite(numeric) || numeric < 2048) return undefined
+  return Math.floor(numeric)
+}
+
+export function extractOllamaShowContextLength(show: OllamaModelShowInfo | null | undefined): number | undefined {
+  const detailsContext = positiveInteger(show?.details?.context_length)
+  if (detailsContext) return detailsContext
+
+  const modelInfo = show?.model_info || {}
+  for (const [key, value] of Object.entries(modelInfo)) {
+    const normalizedKey = key.toLowerCase()
+    if (normalizedKey.endsWith('.context_length') || normalizedKey.endsWith('_context_length')) {
+      const contextLength = positiveInteger(value)
+      if (contextLength) return contextLength
+    }
+  }
+
+  const parameters = String(show?.parameters || '')
+  const match = parameters.match(/(?:^|\n)\s*num_ctx\s*[= ]\s*(\d+)\b/i)
+  return match ? positiveInteger(match[1]) : undefined
+}
+
 function mergeOllamaModelShow(
   modelInfo: OllamaModelInfo | null,
   show: OllamaModelShowInfo | null
 ): OllamaModelInfo | null {
   if (!modelInfo || !show) return modelInfo
   const next: OllamaModelInfo = { ...modelInfo, show }
+  if (!next.contextLength) {
+    const contextLength = extractOllamaShowContextLength(show)
+    if (contextLength) next.contextLength = contextLength
+  }
   if (!next.format && show.details?.format) next.format = show.details.format
   if (!next.family && show.details?.family) next.family = show.details.family
   if (!next.families && Array.isArray(show.details?.families)) {
@@ -863,12 +892,31 @@ function mergeOllamaModelShow(
   return next
 }
 
+async function enrichOllamaModelsWithShowInfo(
+  baseUrl: string,
+  models: OllamaModelInfo[]
+): Promise<OllamaModelInfo[]> {
+  const targets = models.filter((model) => !model.contextLength).slice(0, 16)
+  if (targets.length === 0) return models
+  const showResults = await Promise.all(
+    targets.map(async (model) => ({
+      id: model.id,
+      show: await fetchOllamaModelShow(baseUrl, model.id, { timeoutMs: 750 })
+    }))
+  )
+  const showById = new Map(showResults.map((result) => [result.id, result.show]))
+  return models.map((model) => mergeOllamaModelShow(model, showById.get(model.id) || null) || model)
+}
+
 export async function getOllamaStatusSnapshot(
   settings: Pick<AppSettings, 'ollamaBaseUrl' | 'ollamaDefaultModel'>
 ): Promise<OllamaStatusSnapshot> {
   const baseUrl = normalizeOllamaBaseUrl(settings.ollamaBaseUrl)
   try {
-    const models = await fetchOllamaModels({ ...settings, ollamaBaseUrl: baseUrl })
+    const models = await enrichOllamaModelsWithShowInfo(
+      baseUrl,
+      await fetchOllamaModels({ ...settings, ollamaBaseUrl: baseUrl })
+    )
     const defaultModel =
       String(settings.ollamaDefaultModel || '').trim() || models.find((model) => model.isDefault)?.id
     return {

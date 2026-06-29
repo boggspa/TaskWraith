@@ -40,6 +40,8 @@ import {
   shouldReleaseOllamaContentDelta,
   unwrapOllamaStructuredResponseText,
   accumulateOllamaUsageStats,
+  extractOllamaShowContextLength,
+  getOllamaStatusSnapshot,
   ollamaUsageStats,
   type OllamaProviderDeps
 } from './OllamaProvider'
@@ -1191,6 +1193,55 @@ describe('normalizeOllamaBaseUrl', () => {
 })
 
 describe('normalizeOllamaModels', () => {
+  it('extracts context length from Ollama show metadata variants', () => {
+    expect(
+      extractOllamaShowContextLength({
+        model_info: { 'llama.context_length': 65_536 }
+      })
+    ).toBe(65_536)
+    expect(
+      extractOllamaShowContextLength({
+        model_info: { qwen3_context_length: '131072' }
+      })
+    ).toBe(131_072)
+    expect(
+      extractOllamaShowContextLength({
+        parameters: 'temperature 0.2\nnum_ctx 32768\n'
+      })
+    ).toBe(32_768)
+  })
+
+  it('enriches status models with context length from /api/show when /api/tags omits it', async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).endsWith('/api/tags')) {
+        return jsonResponse({
+          models: [
+            {
+              model: 'custom-local:latest',
+              details: { family: 'qwen3', parameter_size: '9B' },
+              capabilities: ['completion', 'tools']
+            }
+          ]
+        })
+      }
+      if (String(url).endsWith('/api/show')) {
+        return jsonResponse({
+          model_info: { 'qwen3.context_length': 98_304 },
+          capabilities: ['completion', 'tools']
+        })
+      }
+      throw new Error(`Unexpected fetch ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const status = await getOllamaStatusSnapshot({
+      ollamaBaseUrl: 'http://127.0.0.1:11434',
+      ollamaDefaultModel: 'custom-local:latest'
+    })
+
+    expect(status.models?.[0]?.contextLength).toBe(98_304)
+  })
+
   it('maps common local model ids to human-readable labels', () => {
     expect(humanizeOllamaModelId('qwen3:4b-instruct')).toBe('Qwen 3 (4B Param)')
     expect(humanizeOllamaModelId('qwen3.5:9b')).toBe('Qwen 3.5 (9B Param)')
