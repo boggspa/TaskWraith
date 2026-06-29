@@ -3,6 +3,8 @@ import {
   appendOllamaTrajectoryEntry,
   compressOllamaMessagesWithWorkingMemory,
   createEmptyOllamaSessionMemory,
+  pruneOllamaSessionMemoryForPersist,
+  resolveOllamaWorkingMemoryLimits,
   shouldRollOllamaRunSummary
 } from './OllamaRunMemory'
 
@@ -30,5 +32,40 @@ describe('OllamaRunMemory', () => {
     )
     expect(compressed).toHaveLength(3)
     expect(compressed[2]?.content).toContain('working memory')
+  })
+
+  it('keeps unknown local tags on conservative working-memory limits', () => {
+    const limits = resolveOllamaWorkingMemoryLimits('unknown-local:latest')
+    expect(limits.toolResultMaxChars).toBe(220)
+    expect(limits.workingMemoryMaxChars).toBe(1800)
+  })
+
+  it('retains more tool trajectory for known large-context Ollama models', () => {
+    const limits = resolveOllamaWorkingMemoryLimits('ornith:35b')
+    expect(limits.toolResultMaxChars).toBeGreaterThanOrEqual(1000)
+    expect(limits.workingMemoryMaxChars).toBeGreaterThan(10_000)
+
+    const output = 'A'.repeat(1600)
+    const memory = appendOllamaTrajectoryEntry(createEmptyOllamaSessionMemory('ornith:35b'), {
+      toolName: 'read_file',
+      args: { path: 'src/main/ollama/OllamaProvider.ts' },
+      ok: true,
+      resultSummary: output
+    })
+
+    expect(memory.trajectory?.[0]?.resultSummary.length).toBeGreaterThan(1000)
+    expect(memory.trajectory?.[0]?.resultSummary.length).toBeLessThan(output.length)
+  })
+
+  it('persists model-scaled working memory instead of the legacy fixed cap', () => {
+    const memory = {
+      ...createEmptyOllamaSessionMemory('ornith:35b'),
+      workingMemory: 'x'.repeat(6000),
+      toolTurnCount: 4
+    }
+
+    const pruned = pruneOllamaSessionMemoryForPersist(memory)
+
+    expect(pruned.workingMemory).toHaveLength(6000)
   })
 })
