@@ -5,6 +5,7 @@ import {
   estimateOllamaEnsemblePromptTokens,
   estimateOllamaEnsembleUiPressure,
   estimateWorstOllamaEnsembleUiPressure,
+  hasKnownOllamaContextTokenLimit,
   resolveOllamaContextTokenLimit,
   resolveOllamaEnsembleTranscriptCharsForBudget
 } from './OllamaEnsembleContext'
@@ -23,6 +24,12 @@ describe('OllamaEnsembleContext', () => {
     expect(resolveOllamaContextTokenLimit('granite4.1:30b')).toBe(131_072)
     expect(resolveOllamaContextTokenLimit('nemotron3:33b')).toBe(131_072)
     expect(resolveOllamaContextTokenLimit('custom-local', 300_000)).toBe(300_000)
+  })
+
+  it('distinguishes unknown metadata from a genuinely small live context', () => {
+    expect(hasKnownOllamaContextTokenLimit('unknown:7b')).toBe(false)
+    expect(hasKnownOllamaContextTokenLimit('unknown:7b', 8192)).toBe(true)
+    expect(hasKnownOllamaContextTokenLimit('ornith:35b')).toBe(true)
   })
 
   it('keeps the default shared-history budget for known large-context Ollama models', () => {
@@ -79,6 +86,27 @@ describe('OllamaEnsembleContext', () => {
     expect(pressure?.contextLimit).toBe(4096)
     expect(pressure?.severity).toBe('critical')
     expect(pressure?.effectiveTranscriptChars).toBeLessThan(24_000)
+  })
+
+  it('does not treat missing context metadata for an unknown local tag as UI pressure', () => {
+    const pressure = estimateWorstOllamaEnsembleUiPressure({
+      configuredContextChars: 24_000,
+      participantCount: 6,
+      ollamaParticipants: [{ modelId: 'custom-local:latest' }],
+      toolsEnabled: true
+    })
+    expect(pressure).toBeNull()
+  })
+
+  it('still warns when an unknown local tag reports a small live context', () => {
+    const pressure = estimateWorstOllamaEnsembleUiPressure({
+      configuredContextChars: 24_000,
+      participantCount: 6,
+      ollamaParticipants: [{ modelId: 'custom-local:latest', ollamaContextLength: 4096 }],
+      toolsEnabled: true
+    })
+    expect(pressure?.contextKnown).toBe(true)
+    expect(pressure?.severity).toBe('critical')
   })
 
   it('flags critical pressure near the context ceiling', () => {

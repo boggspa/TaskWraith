@@ -29,6 +29,7 @@ export type OllamaContextPressureSeverity = 'ok' | 'warn' | 'critical'
 export interface OllamaContextPressure {
   estimatedPromptTokens: number
   contextLimit: number
+  contextKnown: boolean
   reservedForGeneration: number
   usagePercent: number
   severity: OllamaContextPressureSeverity
@@ -67,6 +68,17 @@ export function resolveOllamaContextTokenLimit(
     return OLLAMA_CONSERVATIVE_CONTEXT_TOKENS
   }
   return resolveContextWindow('ollama', trimmedModelId)
+}
+
+export function hasKnownOllamaContextTokenLimit(
+  modelId?: string | null,
+  contextLength?: number
+): boolean {
+  if (typeof contextLength === 'number' && Number.isFinite(contextLength) && contextLength >= 2048) {
+    return true
+  }
+  const trimmedModelId = String(modelId || '').trim()
+  return Boolean(trimmedModelId) && resolveOllamaModelFamily(trimmedModelId) !== 'unknown'
 }
 
 export function estimateOllamaEnsemblePromptTokens(input: {
@@ -198,6 +210,10 @@ export function estimateOllamaEnsembleUiPressure(input: {
     input.ollamaModelId,
     input.ollamaContextLength
   )
+  const contextKnown = hasKnownOllamaContextTokenLimit(
+    input.ollamaModelId,
+    input.ollamaContextLength
+  )
   const { usagePercent, severity } = assessOllamaContextPressure({
     estimatedPromptTokens,
     contextLimit
@@ -205,6 +221,7 @@ export function estimateOllamaEnsembleUiPressure(input: {
   return {
     estimatedPromptTokens,
     contextLimit,
+    contextKnown,
     reservedForGeneration: OLLAMA_GENERATION_RESERVE_TOKENS,
     usagePercent,
     severity,
@@ -231,6 +248,7 @@ export function estimateWorstOllamaEnsembleUiPressure(input: {
       toolsEnabled: input.toolsEnabled,
       promptShellChars: input.promptShellChars
     })
+    if (!pressure.contextKnown) return worst
     if (!worst) return pressure
     const pressureRank = OLLAMA_CONTEXT_PRESSURE_SEVERITY_RANK[pressure.severity]
     const worstRank = OLLAMA_CONTEXT_PRESSURE_SEVERITY_RANK[worst.severity]
@@ -243,6 +261,9 @@ export function estimateWorstOllamaEnsembleUiPressure(input: {
 }
 
 export function ollamaContextPressureMessage(pressure: OllamaContextPressure): string {
+  if (!pressure.contextKnown) {
+    return 'Ollama context metadata is not available yet. Refresh local models so TaskWraith can size shared history from the installed model window.'
+  }
   if (pressure.severity === 'critical') {
     return `Ollama context ~${pressure.usagePercent}% full (~${pressure.estimatedPromptTokens}/${pressure.contextLimit} tokens). Transcript auto-compacts to ~${formatK(
       pressure.effectiveTranscriptChars
