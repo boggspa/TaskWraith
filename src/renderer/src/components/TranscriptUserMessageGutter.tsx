@@ -24,6 +24,7 @@ interface ActiveMarkerState {
 
 const EDGE_CONTROL_SLOT_PX = 24
 const EDGE_CONTROL_GAP_PX = 22
+const GUTTER_VERTICAL_OFFSET_PX = 35
 
 interface TranscriptUserMessageGutterProps {
   markers: readonly TranscriptUserGutterMarker[]
@@ -160,9 +161,9 @@ export function TranscriptUserMessageGutter({
     const left = Math.max(scrollerRect.left + 8, contentRect.left - 34)
     const topInset = clamp(scrollerRect.height * 0.12, 64, 104)
     const bottomInset = clamp(scrollerRect.height * 0.08, 56, 96)
-    const top = scrollerRect.top + topInset
+    const top = scrollerRect.top + topInset + GUTTER_VERTICAL_OFFSET_PX
     const right = Math.min(scrollerRect.right - 8, contentRect.left + 420)
-    const bottom = scrollerRect.bottom - bottomInset
+    const bottom = scrollerRect.bottom - bottomInset + GUTTER_VERTICAL_OFFSET_PX
     const height = Math.max(120, scrollerRect.height - topInset - bottomInset)
     setFrame((current) => {
       if (
