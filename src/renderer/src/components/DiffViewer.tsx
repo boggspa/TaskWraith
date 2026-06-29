@@ -34,8 +34,10 @@ interface DiffToolbarProps {
   totalCount: number
   hideNoise: boolean
   fileFilter: string
+  viewMode: DiffViewMode
   onHideNoiseChange: (hideNoise: boolean) => void
   onFileFilterChange: (fileFilter: string) => void
+  onViewModeChange: (viewMode: DiffViewMode) => void
 }
 
 interface DiffFileListProps {
@@ -51,6 +53,7 @@ interface DiffDetailProps {
   summary: DiffFileSummary
   gitStatus?: GitFileStatus
   busyPath?: string
+  viewMode: DiffViewMode
   onOpenFile?: (path: string) => void
   onStageFile?: (path: string) => void | Promise<void>
   onUnstageFile?: (path: string) => void | Promise<void>
@@ -62,8 +65,11 @@ interface DiffLineRowProps {
 
 interface DiffLinesProps {
   parsed: ParsedUnifiedDiff | null
+  viewMode: DiffViewMode
   onShowMore?: () => void
 }
+
+type DiffViewMode = 'inline' | 'split'
 
 const DIFF_DETAIL_RENDER_LINE_LIMIT = DEFAULT_DIFF_RENDER_LINE_LIMIT
 
@@ -124,6 +130,7 @@ export function DiffViewer({
   const [hideNoise, setHideNoise] = useState(true)
   const [fileFilter, setFileFilter] = useState('')
   const [selectedPath, setSelectedPath] = useState<string | null>(null)
+  const [viewMode, setViewMode] = useState<DiffViewMode>('inline')
 
   const summaries = diff?.summaries || []
   const normalizedFileFilter = fileFilter.trim().toLowerCase()
@@ -205,8 +212,10 @@ export function DiffViewer({
         totalCount={summaries.length}
         hideNoise={hideNoise}
         fileFilter={fileFilter}
+        viewMode={viewMode}
         onHideNoiseChange={setHideNoise}
         onFileFilterChange={setFileFilter}
+        onViewModeChange={setViewMode}
       />
 
       {filteredSummaries.length === 0 ? (
@@ -235,6 +244,7 @@ export function DiffViewer({
               summary={selectedSummary}
               gitStatus={selectedGitStatus}
               busyPath={busyPath}
+              viewMode={viewMode}
               onOpenFile={onOpenFile}
               onStageFile={onStageFile}
               onUnstageFile={onUnstageFile}
@@ -251,8 +261,10 @@ function DiffToolbar({
   totalCount,
   hideNoise,
   fileFilter,
+  viewMode,
   onHideNoiseChange,
-  onFileFilterChange
+  onFileFilterChange,
+  onViewModeChange
 }: DiffToolbarProps) {
   return (
     <div className="diff-studio-toolbar">
@@ -284,6 +296,24 @@ function DiffToolbar({
         />
         Hide noise
       </label>
+      <div className="diff-view-toggle" role="group" aria-label="Diff view mode">
+        <button
+          type="button"
+          className={viewMode === 'inline' ? 'active' : ''}
+          aria-pressed={viewMode === 'inline'}
+          onClick={() => onViewModeChange('inline')}
+        >
+          Inline
+        </button>
+        <button
+          type="button"
+          className={viewMode === 'split' ? 'active' : ''}
+          aria-pressed={viewMode === 'split'}
+          onClick={() => onViewModeChange('split')}
+        >
+          Split
+        </button>
+      </div>
     </div>
   )
 }
@@ -381,6 +411,7 @@ function DiffDetail({
   summary,
   gitStatus,
   busyPath,
+  viewMode,
   onOpenFile,
   onStageFile,
   onUnstageFile
@@ -443,7 +474,11 @@ function DiffDetail({
       case 'synthetic_new_file':
       case 'git_diff':
         return summary.diffText ? (
-          <DiffLines parsed={parsedDiff} onShowMore={showMoreDiffLines} />
+          <DiffLines
+            parsed={parsedDiff}
+            viewMode={viewMode}
+            onShowMore={showMoreDiffLines}
+          />
         ) : (
           <div
             style={{
@@ -534,7 +569,7 @@ function DiffDetail({
   )
 }
 
-function DiffLines({ parsed, onShowMore }: DiffLinesProps) {
+function DiffLines({ parsed, viewMode, onShowMore }: DiffLinesProps) {
   if (!parsed || parsed.sections.length === 0) {
     return <div className="diff-lines-section">No diff hunks to display.</div>
   }
@@ -568,7 +603,13 @@ function DiffLines({ parsed, onShowMore }: DiffLinesProps) {
           {section.lines.length === 0 ? (
             <div className="diff-line">No content in this section.</div>
           ) : (
-            section.lines.map((line, index) => <DiffLineRow key={index} line={line} />)
+            section.lines.map((line, index) =>
+              viewMode === 'split' ? (
+                <SplitDiffLineRow key={index} line={line} />
+              ) : (
+                <DiffLineRow key={index} line={line} />
+              )
+            )
           )}
         </div>
       ))}
@@ -583,6 +624,31 @@ function DiffLineRow({ line }: DiffLineRowProps) {
       <span className="diff-line-gutter old">{line.oldLine ?? ''}</span>
       <span className="diff-line-gutter new">{line.newLine ?? ''}</span>
       <span className="diff-line-code">{line.text || ' '}</span>
+    </div>
+  )
+}
+
+const splitDiffText = (line: ParsedDiffLine, side: 'old' | 'new'): string => {
+  if (line.kind === 'add' && side === 'old') return ''
+  if (line.kind === 'del' && side === 'new') return ''
+  if (line.kind === 'add') return line.text.replace(/^\+/, '')
+  if (line.kind === 'del') return line.text.replace(/^-/, '')
+  if (line.kind === 'context') return line.text.replace(/^ /, '')
+  return line.text
+}
+
+function SplitDiffLineRow({ line }: DiffLineRowProps) {
+  if (line.kind === 'meta') {
+    return <div className="diff-line-split meta">{line.text || ' '}</div>
+  }
+
+  const className = `diff-line-split ${line.kind === 'context' ? '' : line.kind}`.trim()
+  return (
+    <div className={className}>
+      <span className="diff-line-gutter old">{line.oldLine ?? ''}</span>
+      <span className="diff-line-split-code old">{splitDiffText(line, 'old') || ' '}</span>
+      <span className="diff-line-gutter new">{line.newLine ?? ''}</span>
+      <span className="diff-line-split-code new">{splitDiffText(line, 'new') || ' '}</span>
     </div>
   )
 }

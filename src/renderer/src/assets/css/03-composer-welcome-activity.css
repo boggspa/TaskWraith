@@ -8867,6 +8867,40 @@
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
 }
 
+.diff-view-toggle {
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
+  padding: 2px;
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--panel-elevated-bg) 74%, transparent);
+}
+
+.diff-view-toggle button {
+  height: 18px;
+  min-width: 48px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: calc(var(--radius-sm) - 2px);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--font-size-xs);
+}
+
+.diff-view-toggle button:hover,
+.diff-view-toggle button:focus-visible {
+  color: var(--text-primary);
+  outline: 0;
+}
+
+.diff-view-toggle button.active {
+  background: color-mix(in srgb, var(--accent) 24%, transparent);
+  color: var(--text-primary);
+}
+
 .diff-file-list {
   flex: 0 0 auto;
   max-height: 35%;
@@ -9537,6 +9571,31 @@ button.diff-file-row {
   padding: 1px var(--space-md);
 }
 
+.diff-line-split {
+  display: grid;
+  grid-template-columns: 4ch minmax(320px, 1fr) 4ch minmax(320px, 1fr);
+  min-width: 780px;
+  padding: 0;
+  white-space: pre;
+  word-break: normal;
+}
+
+.diff-line-split.meta {
+  display: block;
+  padding: 1px var(--space-md);
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--text-primary) 2.5%, transparent);
+}
+
+.diff-line-split-code {
+  padding: 1px var(--space-md);
+  border-right: 1px solid color-mix(in srgb, var(--text-primary) 5%, transparent);
+}
+
+.diff-line-split-code.new {
+  border-right: 0;
+}
+
 .diff-line.meta {
   color: var(--text-muted);
   background: color-mix(in srgb, var(--text-primary) 2.5%, transparent);
@@ -9554,7 +9613,25 @@ button.diff-file-row {
   color: var(--diff-del-text);
 }
 
+.diff-line-split.add .diff-line-gutter.new,
+.diff-line-split.add .diff-line-split-code.new {
+  background: var(--diff-add-bg);
+  color: var(--diff-add-text);
+}
+
+.diff-line-split.del .diff-line-gutter.old,
+.diff-line-split.del .diff-line-split-code.old {
+  background: var(--diff-del-bg);
+  color: var(--diff-del-text);
+}
+
 .diff-line + .diff-line {
+  border-top: 1px solid color-mix(in srgb, var(--text-primary) 5%, transparent);
+}
+
+.diff-line-split + .diff-line-split,
+.diff-line + .diff-line-split,
+.diff-line-split + .diff-line {
   border-top: 1px solid color-mix(in srgb, var(--text-primary) 5%, transparent);
 }
 
