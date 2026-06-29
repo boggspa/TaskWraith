@@ -3960,6 +3960,38 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             isCurrentComposerLocked ||
                             (effectiveProvider === 'gemini' && !geminiWorkspaceTrustReady)
                           if (effectiveProvider === 'ollama') {
+                            const effectiveOllamaTier =
+                              ensembleBinding?.provider === 'ollama' &&
+                              ensembleBinding.ollamaToolControlTier
+                                ? ensembleBinding.ollamaToolControlTier
+                                : chatOllamaTier
+                            const effectiveOllamaRunProfile =
+                              ensembleBinding?.provider === 'ollama' &&
+                              ensembleBinding.ollamaRunProfile
+                                ? ensembleBinding.ollamaRunProfile
+                                : chatOllamaRunProfile
+                            const handleOllamaTierSelection = (
+                              tier: typeof chatOllamaTier
+                            ): void => {
+                              if (ensembleBinding) {
+                                updateSelectedParticipant({ ollamaToolControlTier: tier })
+                                return
+                              }
+                              rememberCurrentChatComposerSelection({
+                                ollamaToolControlTier: tier
+                              })
+                            }
+                            const handleOllamaRunProfileSelection = (
+                              profile: typeof chatOllamaRunProfile
+                            ): void => {
+                              if (ensembleBinding) {
+                                updateSelectedParticipant({ ollamaRunProfile: profile })
+                                return
+                              }
+                              rememberCurrentChatComposerSelection({
+                                ollamaRunProfile: profile
+                              })
+                            }
                             return (
                               <OllamaPermissionRuntimePicker
                                 provider={effectiveProvider}
@@ -3973,18 +4005,10 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                 onToggleGrant={handleToggleGrantForPicker}
                                 grantScopeLabel={ensembleBinding ? 'participant' : 'workspace'}
                                 onApplyToAllParticipants={applyAllParticipants}
-                                selectedTier={chatOllamaTier}
-                                onSelectTier={(tier) =>
-                                  rememberCurrentChatComposerSelection({
-                                    ollamaToolControlTier: tier
-                                  })
-                                }
-                                selectedRunProfile={chatOllamaRunProfile}
-                                onSelectRunProfile={(profile) =>
-                                  rememberCurrentChatComposerSelection({
-                                    ollamaRunProfile: profile
-                                  })
-                                }
+                                selectedTier={effectiveOllamaTier}
+                                onSelectTier={handleOllamaTierSelection}
+                                selectedRunProfile={effectiveOllamaRunProfile}
+                                onSelectRunProfile={handleOllamaRunProfileSelection}
                                 tier4Granted={ollamaTier4GrantedForWorkspace}
                                 tier4Unavailable={isCurrentGlobalChat || !currentWorkspacePath}
                                 onRequestTier4Ack={() =>

@@ -390,7 +390,11 @@ export function OllamaPermissionRuntimePicker({
         className={`composer-combined-picker-column composer-combined-picker-ollama-runtime ${focusedColumn === 'runtime' ? 'is-focused' : ''}`}
       >
         <div className="composer-combined-picker-column-header">Ollama Runtime</div>
-        <div className="composer-combined-picker-column-note">Chat-scoped tier and run profile</div>
+        <div className="composer-combined-picker-column-note">
+          {grantScopeLabel === 'participant'
+            ? 'Participant tier and run profile'
+            : 'Chat-scoped tier and run profile'}
+        </div>
         <div className="composer-combined-picker-section-label">Tool tier</div>
         {OLLAMA_TOOL_CONTROL_TIERS.map((option, idx) => {
           const isSelected = option.value === selectedTier
