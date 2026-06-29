@@ -9028,6 +9028,11 @@
   font-size: var(--font-size-xs);
 }
 
+.workbench-nav-item:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 72%, white 18%);
+  outline-offset: 2px;
+}
+
 .workbench-nav-item.active {
   border-color: color-mix(in srgb, var(--accent) 45%, transparent);
   background: color-mix(in srgb, var(--accent) 14%, transparent);

@@ -28,6 +28,8 @@ interface WorkbenchOpenRequest extends EditorOpenRequest {
   view?: WorkbenchView
 }
 
+const WORKBENCH_VIEWS: WorkbenchView[] = ['editor', 'diff']
+
 const DEFAULT_EDITOR_STATE: FileEditorPanelState = {
   selectedPath: '',
   dirtyBufferCount: 0,
@@ -89,6 +91,8 @@ export function TaskWraithWorkbench({
   const [editorState, setEditorState] = useState<FileEditorPanelState>(DEFAULT_EDITOR_STATE)
   const [diffActionPath, setDiffActionPath] = useState('')
   const diffRefreshSeqRef = useRef(0)
+  const editorNavRef = useRef<HTMLButtonElement | null>(null)
+  const diffNavRef = useRef<HTMLButtonElement | null>(null)
 
   const breadcrumbs = useMemo(
     () =>
@@ -133,8 +137,23 @@ export function TaskWraithWorkbench({
   const workbenchStatus =
     activeView === 'editor' ? editorState.status || editorState.gitMessage || status : status
 
+  const focusNavItem = useCallback((view: WorkbenchView) => {
+    const navButton = view === 'editor' ? editorNavRef.current : diffNavRef.current
+    navButton?.focus()
+  }, [])
+
+  const selectWorkbenchView = useCallback(
+    (view: WorkbenchView, options?: { focusNav?: boolean }) => {
+      setActiveView(view)
+      if (options?.focusNav) {
+        window.requestAnimationFrame(() => focusNavItem(view))
+      }
+    },
+    [focusNavItem]
+  )
+
   const dispatchEditorCommand = useCallback((kind: FileEditorCommandKind) => {
-    setActiveView('editor')
+    selectWorkbenchView('editor')
     setEditorCommandRequest((current) => ({
       kind,
       nonce: (current?.nonce ?? 0) + 1
@@ -150,7 +169,7 @@ export function TaskWraithWorkbench({
               ? 'Revealing selected file'
               : 'Toggling line wrap'
     )
-  }, [])
+  }, [selectWorkbenchView])
 
   const refreshDiff = useCallback(async () => {
     if (!workspacePath) return
@@ -198,28 +217,72 @@ export function TaskWraithWorkbench({
       if (key === 's') {
         event.preventDefault()
         dispatchEditorCommand(event.shiftKey ? 'save-all' : 'save-current')
+        return
+      }
+      if (key === '1') {
+        event.preventDefault()
+        selectWorkbenchView('editor', { focusNav: true })
+        setStatus('Showing File Editor')
+        return
+      }
+      if (key === '2') {
+        event.preventDefault()
+        selectWorkbenchView('diff', { focusNav: true })
+        setStatus('Showing Diff Studio')
       }
     },
-    [dispatchEditorCommand]
+    [dispatchEditorCommand, selectWorkbenchView]
   )
 
   const openFileInEditor = useCallback((path: string) => {
-    setActiveView('editor')
+    selectWorkbenchView('editor')
     setEditorOpenRequest((current) => ({
       path,
       nonce: (current?.nonce ?? 0) + 1
     }))
     setStatus(`Opening ${path}`)
-  }, [])
+  }, [selectWorkbenchView])
 
   const showFileInDiff = useCallback((path: string) => {
-    setActiveView('diff')
+    selectWorkbenchView('diff')
     setDiffSelectionRequest((current) => ({
       path,
       nonce: (current?.nonce ?? 0) + 1
     }))
     setStatus(`Showing diff for ${path}`)
-  }, [])
+  }, [selectWorkbenchView])
+
+  const handleNavKeyDown = useCallback(
+    (event: ReactKeyboardEvent<HTMLButtonElement>, view: WorkbenchView) => {
+      const currentIndex = WORKBENCH_VIEWS.indexOf(view)
+      if (currentIndex < 0) return
+      if (event.key === 'ArrowDown' || event.key === 'ArrowRight') {
+        event.preventDefault()
+        selectWorkbenchView(WORKBENCH_VIEWS[(currentIndex + 1) % WORKBENCH_VIEWS.length], {
+          focusNav: true
+        })
+        return
+      }
+      if (event.key === 'ArrowUp' || event.key === 'ArrowLeft') {
+        event.preventDefault()
+        selectWorkbenchView(
+          WORKBENCH_VIEWS[(currentIndex - 1 + WORKBENCH_VIEWS.length) % WORKBENCH_VIEWS.length],
+          { focusNav: true }
+        )
+        return
+      }
+      if (event.key === 'Home') {
+        event.preventDefault()
+        selectWorkbenchView(WORKBENCH_VIEWS[0], { focusNav: true })
+        return
+      }
+      if (event.key === 'End') {
+        event.preventDefault()
+        selectWorkbenchView(WORKBENCH_VIEWS[WORKBENCH_VIEWS.length - 1], { focusNav: true })
+      }
+    },
+    [selectWorkbenchView]
+  )
 
   useEffect(() => {
     if (!openFileRequest) return
@@ -309,22 +372,41 @@ export function TaskWraithWorkbench({
       aria-label="TaskWraith Workbench"
       onKeyDown={handleWorkbenchKeyDown}
     >
-      <aside className="workbench-navigator" aria-label="Workbench navigator">
+      <aside
+        className="workbench-navigator"
+        role="tablist"
+        aria-label="Workbench views"
+        aria-orientation="vertical"
+      >
         <button
+          ref={editorNavRef}
           className={`workbench-nav-item ${activeView === 'editor' ? 'active' : ''}`}
           type="button"
-          onClick={() => setActiveView('editor')}
-          aria-pressed={activeView === 'editor'}
+          role="tab"
+          id="workbench-editor-tab"
+          aria-selected={activeView === 'editor'}
+          aria-controls="workbench-editor-panel"
+          aria-keyshortcuts="Meta+1 Control+1"
+          tabIndex={activeView === 'editor' ? 0 : -1}
+          onClick={() => selectWorkbenchView('editor')}
+          onKeyDown={(event) => handleNavKeyDown(event, 'editor')}
         >
           <WorkbenchNavIcon view="editor" />
           <span>Files</span>
           <small>Editor</small>
         </button>
         <button
+          ref={diffNavRef}
           className={`workbench-nav-item ${activeView === 'diff' ? 'active' : ''}`}
           type="button"
-          onClick={() => setActiveView('diff')}
-          aria-pressed={activeView === 'diff'}
+          role="tab"
+          id="workbench-diff-tab"
+          aria-selected={activeView === 'diff'}
+          aria-controls="workbench-diff-panel"
+          aria-keyshortcuts="Meta+2 Control+2"
+          tabIndex={activeView === 'diff' ? 0 : -1}
+          onClick={() => selectWorkbenchView('diff')}
+          onKeyDown={(event) => handleNavKeyDown(event, 'diff')}
         >
           <WorkbenchNavIcon view="diff" />
           <span>Diff</span>
@@ -387,7 +469,13 @@ export function TaskWraithWorkbench({
           </div>
         </div>
         <div className="workbench-stage">
-          <div className="workbench-pane" hidden={activeView !== 'editor'}>
+          <div
+            className="workbench-pane"
+            role="tabpanel"
+            id="workbench-editor-panel"
+            aria-labelledby="workbench-editor-tab"
+            hidden={activeView !== 'editor'}
+          >
             <FileEditorPanel
               workspacePath={workspacePath}
               refreshTick={editorRefreshTick}
@@ -397,7 +485,13 @@ export function TaskWraithWorkbench({
               onEditorStateChange={setEditorState}
             />
           </div>
-          <div className="workbench-pane" hidden={activeView !== 'diff'}>
+          <div
+            className="workbench-pane"
+            role="tabpanel"
+            id="workbench-diff-panel"
+            aria-labelledby="workbench-diff-tab"
+            hidden={activeView !== 'diff'}
+          >
             <div className="diff-studio popout-diff-studio">
               <DiffViewer
                 diff={diff}
