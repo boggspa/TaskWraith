@@ -15,12 +15,15 @@ describe('classifyTool', () => {
     expect(classifyTool('read_file')).toBe('workspace_read')
     expect(classifyTool('find_files')).toBe('workspace_read')
     expect(classifyTool('grep')).toBe('workspace_read')
-    expect(classifyTool('web_search')).toBe('web_read')
-    expect(classifyTool('web_fetch')).toBe('web_read')
-    expect(classifyTool('ask_user_question')).toBe('ui_elicitation')
+    expect(classifyTool('git_log')).toBe('workspace_read')
+    expect(classifyTool('git_show')).toBe('workspace_read')
+    expect(classifyTool('git_blame')).toBe('workspace_read')
     expect(classifyTool('workspace_board_snapshot')).toBe('orchestration')
     expect(classifyTool('workspace_board_preview_plan')).toBe('orchestration')
     expect(classifyTool('workspace_board_apply_plan')).toBe('orchestration')
+    expect(classifyTool('web_search')).toBe('web_read')
+    expect(classifyTool('web_fetch')).toBe('web_read')
+    expect(classifyTool('ask_user_question')).toBe('ui_elicitation')
     expect(classifyTool('ensemble_yield')).toBe('orchestration')
     expect(classifyTool('provider_usage_status')).toBe('orchestration')
     // video_decode_frame = native daemon capture (like appwatch_latest_frame /
@@ -122,6 +125,9 @@ describe('workspace_write is exactly the read-only deny set', () => {
       'web_fetch',
       'git_status',
       'git_diff',
+      'git_log',
+      'git_show',
+      'git_blame',
       'workspace_board_snapshot',
       'workspace_board_preview_plan',
       'workspace_board_apply_plan',

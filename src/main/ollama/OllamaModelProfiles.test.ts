@@ -97,6 +97,7 @@ describe('ollamaLocalToolSystemPrompt', () => {
     const prompt = ollamaLocalToolSystemPrompt('read_only', 'qwen3.5:9b')
     expect(prompt).toContain('ask_user_question')
     expect(prompt).toContain('pause and ask the user for clarification')
+    expect(prompt).toContain('git_blame')
   })
 })
 

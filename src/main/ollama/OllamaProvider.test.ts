@@ -1598,6 +1598,9 @@ describe('ollamaNativeToolDefinitions', () => {
       'workspace_symbols',
       'git_status',
       'git_diff',
+      'git_log',
+      'git_show',
+      'git_blame',
       'test_result_summary',
       'web_search',
       'web_fetch',
@@ -1659,6 +1662,9 @@ describe('Ollama tool tiers', () => {
       'workspace_symbols',
       'git_status',
       'git_diff',
+      'git_log',
+      'git_show',
+      'git_blame',
       'test_result_summary',
       'web_search',
       'web_fetch',
@@ -1675,6 +1681,7 @@ describe('Ollama tool tiers', () => {
     expect(ollamaToolAllowedInTier('goal_read', 'read_only')).toBe(true)
     expect(ollamaToolAllowedInTier('goal_complete', 'read_only')).toBe(true)
     expect(ollamaToolAllowedInTier('git_status', 'read_only')).toBe(true)
+    expect(ollamaToolAllowedInTier('git_blame', 'read_only')).toBe(true)
     expect(ollamaToolAllowedInTier('test_result_summary', 'read_only')).toBe(true)
     expect(ollamaToolAllowedInTier('write_file', 'read_only')).toBe(false)
   })

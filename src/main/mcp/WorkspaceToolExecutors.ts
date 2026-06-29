@@ -73,6 +73,9 @@ export const WORKSPACE_MCP_TOOL_NAMES = [
   'apply_patch',
   'git_status',
   'git_diff',
+  'git_log',
+  'git_show',
+  'git_blame',
   'git_stage',
   'git_commit',
   'run_task',
@@ -111,6 +114,21 @@ export interface WorkspaceToolExecutors {
     context: WorkspaceToolContext,
     cwd: string
   ) => Promise<unknown>
+  executeGitLog: (
+    args: Record<string, any>,
+    context: WorkspaceToolContext,
+    cwd: string
+  ) => Promise<unknown>
+  executeGitShow: (
+    args: Record<string, any>,
+    context: WorkspaceToolContext,
+    cwd: string
+  ) => Promise<unknown>
+  executeGitBlame: (
+    args: Record<string, any>,
+    context: WorkspaceToolContext,
+    cwd: string
+  ) => Promise<unknown>
   executeGitStage: (
     args: Record<string, any>,
     context: WorkspaceToolContext,
@@ -141,6 +159,8 @@ export interface WorkspaceToolExecutors {
 }
 
 const MAX_MCP_TEXT_CHARS = 200_000
+const GIT_FIELD_SEPARATOR = '\x1f'
+const GIT_COMMIT_FORMAT = `%H%x1f%h%x1f%an%x1f%ae%x1f%ad%x1f%s`
 const FIND_FILES_DEFAULT_EXCLUDE_GLOBS = [
   '!.git/**',
   '!node_modules/**',
@@ -171,6 +191,9 @@ export function createWorkspaceToolExecutors(
     executeApplyPatch: (args, context, cwd) => executeApplyPatch(deps, args, context, cwd),
     executeGitStatus: (cwd) => executeGitStatus(deps, cwd),
     executeGitDiff: (args, context, cwd) => executeGitDiff(deps, args, context, cwd),
+    executeGitLog: (args, context, cwd) => executeGitLog(deps, args, context, cwd),
+    executeGitShow: (args, context, cwd) => executeGitShow(deps, args, context, cwd),
+    executeGitBlame: (args, context, cwd) => executeGitBlame(deps, args, context, cwd),
     executeGitStage: (args, context, cwd) => executeGitStage(deps, args, context, cwd),
     executeGitCommit: (args, cwd) => executeGitCommit(deps, args, cwd),
     executeRunTask: (args, cwd) => executeRunTask(deps, args, cwd),
@@ -209,6 +232,18 @@ export async function executeWorkspaceMcpTool(
   }
   if (toolName === 'git_diff') {
     const result = await executeGitDiff(deps, args, context, cwd)
+    return { result, isError: result.exitCode !== 0 || result.timedOut === true }
+  }
+  if (toolName === 'git_log') {
+    const result = await executeGitLog(deps, args, context, cwd)
+    return { result, isError: result.exitCode !== 0 || result.timedOut === true }
+  }
+  if (toolName === 'git_show') {
+    const result = await executeGitShow(deps, args, context, cwd)
+    return { result, isError: result.exitCode !== 0 || result.timedOut === true }
+  }
+  if (toolName === 'git_blame') {
+    const result = await executeGitBlame(deps, args, context, cwd)
     return { result, isError: result.exitCode !== 0 || result.timedOut === true }
   }
   if (toolName === 'git_stage') {
@@ -447,6 +482,126 @@ export async function executeGitDiff(
     stdout: truncateText(result.stdout),
     stderr: truncateText(result.stderr, 20_000),
     timedOut: result.timedOut
+  }
+}
+
+export async function executeGitLog(
+  deps: WorkspaceToolExecutorDependencies,
+  args: Record<string, any>,
+  context: WorkspaceToolContext,
+  cwd: string
+) {
+  const maxCount = clampInteger(args.maxCount ?? args.limit, 20, 1, 100)
+  const ref = optionalString(args.ref || args.rev || args.revision)
+  const gitArgs = [
+    'git',
+    'log',
+    `--max-count=${maxCount}`,
+    '--date=iso-strict',
+    `--pretty=format:${GIT_COMMIT_FORMAT}`
+  ]
+  if (args.grep) gitArgs.push('--grep', String(args.grep).slice(0, 200))
+  if (args.author) gitArgs.push('--author', String(args.author).slice(0, 200))
+  if (ref) gitArgs.push(sanitizeGitRef(ref))
+  const paths = toStringArray(args.paths || (args.path ? [args.path] : []))
+  if (paths.length) {
+    gitArgs.push(
+      '--',
+      ...paths.map((pathArg) =>
+        resolveMcpScopedPath(context, pathArg, { allowWorkspaceRoot: true })
+      )
+    )
+  }
+  const result = await runCommandArgs(deps, gitArgs, cwd, 60_000)
+  const commits = parseGitLogEntries(result.stdout)
+  return {
+    cwd,
+    command: redactGitLogCommand(gitArgs),
+    exitCode: result.exitCode,
+    timedOut: result.timedOut,
+    count: commits.length,
+    commits,
+    stderr: truncateText(result.stderr, 20_000),
+    error: result.error
+  }
+}
+
+export async function executeGitShow(
+  deps: WorkspaceToolExecutorDependencies,
+  args: Record<string, any>,
+  context: WorkspaceToolContext,
+  cwd: string
+) {
+  const ref = sanitizeGitRef(args.ref || args.commit || args.revision)
+  const includePatch = args.includePatch === true || args.patch === true
+  const includeStat = args.stat !== false
+  const gitArgs = ['git', 'show', '--no-ext-diff', '--date=iso-strict', `--format=${GIT_COMMIT_FORMAT}`]
+  if (includePatch) {
+    gitArgs.push('--patch', '--unified=3')
+  } else if (includeStat) {
+    gitArgs.push('--stat')
+  } else {
+    gitArgs.push('--no-patch')
+  }
+  gitArgs.push(ref)
+  const pathArg = optionalString(args.path || args.file)
+  if (pathArg) {
+    gitArgs.push('--', resolveMcpScopedPath(context, pathArg, { allowWorkspaceRoot: true }))
+  }
+  const result = await runCommandArgs(deps, gitArgs, cwd, 60_000)
+  const stdout = truncateText(result.stdout)
+  return {
+    cwd,
+    command: gitArgs,
+    ref,
+    includePatch,
+    includeStat,
+    exitCode: result.exitCode,
+    timedOut: result.timedOut,
+    commit: parseGitCommitLine(firstNonEmptyLine(result.stdout)),
+    stdout,
+    stderr: truncateText(result.stderr, 20_000),
+    error: result.error
+  }
+}
+
+export async function executeGitBlame(
+  deps: WorkspaceToolExecutorDependencies,
+  args: Record<string, any>,
+  context: WorkspaceToolContext,
+  cwd: string
+) {
+  const targetPath = resolveMcpScopedPath(
+    context,
+    requireNonEmptyString(args.path || args.file, 'Path')
+  )
+  const startLine = clampInteger(args.startLine ?? args.lineStart, 1, 1, 1_000_000)
+  const maxLines = clampInteger(args.maxLines ?? args.limit, 120, 1, 500)
+  const requestedEnd = clampInteger(args.endLine ?? args.lineEnd, startLine + maxLines - 1, 1, 1_000_000)
+  const endLine = Math.max(startLine, Math.min(requestedEnd, startLine + maxLines - 1))
+  const gitArgs = [
+    'git',
+    'blame',
+    '--line-porcelain',
+    '-L',
+    `${startLine},${endLine}`,
+    '--',
+    targetPath
+  ]
+  const result = await runCommandArgs(deps, gitArgs, cwd, 60_000)
+  const entries = parseGitBlamePorcelain(result.stdout, context)
+  return {
+    cwd,
+    command: gitArgs,
+    path: workspaceRelativeForContext(context, targetPath),
+    startLine,
+    endLine,
+    exitCode: result.exitCode,
+    timedOut: result.timedOut,
+    count: entries.length,
+    entries,
+    stderr: truncateText(result.stderr, 20_000),
+    error: result.error
   }
 }
 
@@ -1067,6 +1222,107 @@ export function truncateText(value: string, max = MAX_MCP_TEXT_CHARS): string {
   return value.length <= max
     ? value
     : `${value.slice(0, max)}\n...truncated ${value.length - max} chars`
+}
+
+function sanitizeGitRef(value: unknown): string {
+  const ref = requireNonEmptyString(value, 'Git ref')
+  if (
+    ref.startsWith('-') ||
+    ref.includes('\0') ||
+    /\s/.test(ref) ||
+    ref.length > 160 ||
+    !/^[A-Za-z0-9._/@:+~^-]+$/.test(ref)
+  ) {
+    throw new Error('Git ref contains unsupported characters.')
+  }
+  return ref
+}
+
+function parseGitCommitLine(line: string): Record<string, unknown> | null {
+  if (!line.includes(GIT_FIELD_SEPARATOR)) return null
+  const [hash, shortHash, authorName, authorEmail, date, ...subjectParts] =
+    line.split(GIT_FIELD_SEPARATOR)
+  if (!hash) return null
+  return {
+    hash,
+    shortHash,
+    authorName,
+    authorEmail,
+    date,
+    subject: subjectParts.join(GIT_FIELD_SEPARATOR)
+  }
+}
+
+function parseGitLogEntries(stdout: string): Array<Record<string, unknown>> {
+  return stdout
+    .split(/\r?\n/)
+    .map((line) => parseGitCommitLine(line.trim()))
+    .filter((entry): entry is Record<string, unknown> => Boolean(entry))
+}
+
+function firstNonEmptyLine(value: string): string {
+  return value.split(/\r?\n/).find((line) => line.trim())?.trim() || ''
+}
+
+function redactGitLogCommand(command: string[]): string[] {
+  return command.map((part, index) => {
+    const previous = command[index - 1]
+    if (previous === '--grep') return '[grep]'
+    if (previous === '--author') return '[author]'
+    return part
+  })
+}
+
+function parseGitBlamePorcelain(
+  stdout: string,
+  context: WorkspaceToolContext
+): Array<Record<string, unknown>> {
+  const entries: Array<Record<string, unknown>> = []
+  let current: Record<string, unknown> | null = null
+  for (const line of stdout.split(/\r?\n/)) {
+    const header = line.match(/^([0-9a-f]{40})\s+(\d+)\s+(\d+)(?:\s+\d+)?$/i)
+    if (header) {
+      current = {
+        hash: header[1],
+        originalLine: Number(header[2]),
+        finalLine: Number(header[3])
+      }
+      continue
+    }
+    if (!current) continue
+    if (line.startsWith('author ')) {
+      current.author = line.slice('author '.length)
+      continue
+    }
+    if (line.startsWith('author-mail ')) {
+      current.authorMail = line.slice('author-mail '.length).replace(/^<|>$/g, '')
+      continue
+    }
+    if (line.startsWith('author-time ')) {
+      current.authorTime = Number(line.slice('author-time '.length))
+      continue
+    }
+    if (line.startsWith('summary ')) {
+      current.summary = line.slice('summary '.length)
+      continue
+    }
+    if (line.startsWith('filename ')) {
+      const filename = line.slice('filename '.length)
+      const filenamePath = isAbsolute(filename)
+        ? filename
+        : resolve(context.workspacePath || context.cwd, filename)
+      current.path = workspaceRelativeForContext(context, filenamePath)
+      continue
+    }
+    if (line.startsWith('\t')) {
+      entries.push({
+        ...current,
+        content: line.slice(1)
+      })
+      current = null
+    }
+  }
+  return entries
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

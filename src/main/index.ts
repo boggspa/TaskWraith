@@ -14440,6 +14440,45 @@ async function executeOllamaLocalTool(
       }
     }
 
+    if (request.toolName === 'git_log') {
+      const result = await workspaceToolExecutors.executeGitLog(
+        request.arguments,
+        context,
+        workspacePath
+      )
+      return {
+        ok: isRecord(result) ? result.exitCode === 0 && result.timedOut !== true : true,
+        output: mcpJson(result),
+        structuredContent: result
+      }
+    }
+
+    if (request.toolName === 'git_show') {
+      const result = await workspaceToolExecutors.executeGitShow(
+        request.arguments,
+        context,
+        workspacePath
+      )
+      return {
+        ok: isRecord(result) ? result.exitCode === 0 && result.timedOut !== true : true,
+        output: mcpJson(result),
+        structuredContent: result
+      }
+    }
+
+    if (request.toolName === 'git_blame') {
+      const result = await workspaceToolExecutors.executeGitBlame(
+        request.arguments,
+        context,
+        workspacePath
+      )
+      return {
+        ok: isRecord(result) ? result.exitCode === 0 && result.timedOut !== true : true,
+        output: mcpJson(result),
+        structuredContent: result
+      }
+    }
+
     if (request.toolName === 'read_file') {
       const targetPath = resolveWorkspaceToolScopedPath(
         context,

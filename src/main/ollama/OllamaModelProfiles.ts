@@ -138,6 +138,15 @@ function describeTool(toolName: OllamaToolName): string | null {
   if (toolName === 'git_diff') {
     return '- git_diff: {"path":"relative/path.txt"} — inspect unstaged changes or a focused path diff without changing files.'
   }
+  if (toolName === 'git_log') {
+    return '- git_log: {"path":"relative/path.txt","maxCount":20} — inspect recent commit history, optionally scoped to a path.'
+  }
+  if (toolName === 'git_show') {
+    return '- git_show: {"ref":"HEAD","path":"relative/path.txt","includePatch":false} — inspect one commit/ref without changing files.'
+  }
+  if (toolName === 'git_blame') {
+    return '- git_blame: {"path":"relative/path.txt","startLine":1,"maxLines":80} — inspect who last changed a bounded line range.'
+  }
   if (toolName === 'web_search') {
     return '- web_search: {"query":"current information to search for"} — returns a ranked list of result titles and URLs from the live web.'
   }

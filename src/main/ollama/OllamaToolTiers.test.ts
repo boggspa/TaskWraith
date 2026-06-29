@@ -190,6 +190,7 @@ describe('chatOllamaToolControlTier (mid-run gate reader)', () => {
 describe('ollamaToolNamesForTier (edit-tool gating sanity)', () => {
   it('excludes file-edit tools at read_only', () => {
     const names = ollamaToolNamesForTier('read_only')
+    expect(names).toEqual(expect.arrayContaining(['git_log', 'git_show', 'git_blame']))
     expect(names).not.toContain('write_file')
     expect(names).not.toContain('replace')
     expect(names).not.toContain('apply_patch')

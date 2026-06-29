@@ -239,6 +239,69 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
       }
     },
     {
+      name: 'git_log',
+      description:
+        'Return bounded structured commit history for the active workspace, optionally scoped to a path.',
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          ref: { type: 'string', description: 'Optional branch, tag, or commit ref.' },
+          path: { type: 'string', description: 'Optional workspace-relative path filter.' },
+          maxCount: { type: 'number', description: 'Maximum commits to return. Defaults to 20.' },
+          grep: { type: 'string', description: 'Optional commit-message grep.' },
+          author: { type: 'string', description: 'Optional author filter.' }
+        }
+      }
+    },
+    {
+      name: 'git_show',
+      description:
+        'Show bounded metadata, stats, and optionally patch output for a single git ref.',
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          ref: { type: 'string', description: 'Commit, tag, or other git ref to inspect.' },
+          path: { type: 'string', description: 'Optional workspace-relative path filter.' },
+          includePatch: { type: 'boolean', description: 'Include bounded patch output.' },
+          stat: { type: 'boolean', description: 'Include diffstat. Defaults to true.' }
+        },
+        required: ['ref']
+      }
+    },
+    {
+      name: 'git_blame',
+      description:
+        'Return bounded structured git blame information for a workspace file and line range.',
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'Workspace-relative file path.' },
+          startLine: { type: 'number' },
+          endLine: { type: 'number' },
+          maxLines: { type: 'number', description: 'Maximum lines to blame. Defaults to 120.' }
+        },
+        required: ['path']
+      }
+    },
+    {
       name: 'workspace_board_snapshot',
       description:
         'Return a bounded snapshot of workspace boards and cards for the active TaskWraith workspace. Current-workspace scoped; no transcript bodies.',

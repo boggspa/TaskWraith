@@ -1177,6 +1177,49 @@ function ollamaNativeToolParameters(
         properties: { url: { ...STRING, description: compact ? 'http(s) URL.' : 'Absolute http(s) URL to fetch.' } },
         required: ['url']
       }
+    case 'git_log':
+      return compact
+        ? {
+            description: 'Read recent git commits.',
+            properties: {
+              path: { ...STRING, description: 'Optional relative path.' },
+              maxCount: { type: 'number', description: 'Maximum commits.' }
+            },
+            required: []
+          }
+        : {
+            description: 'Read bounded structured commit history for the active workspace.',
+            properties: {
+              ref: { ...STRING, description: 'Optional branch, tag, or commit ref.' },
+              path: { ...STRING, description: 'Optional workspace-relative path filter.' },
+              maxCount: { type: 'number', description: 'Maximum commits to return.' },
+              grep: { ...STRING, description: 'Optional commit-message grep.' },
+              author: { ...STRING, description: 'Optional author filter.' }
+            },
+            required: []
+          }
+    case 'git_show':
+      return {
+        description: compact ? 'Inspect a git commit/ref.' : 'Inspect metadata, stats, or patch for a git ref.',
+        properties: {
+          ref: { ...STRING, description: compact ? 'Commit/ref.' : 'Commit, tag, or git ref to inspect.' },
+          path: { ...STRING, description: 'Optional workspace-relative path filter.' },
+          includePatch: { type: 'boolean', description: 'Include patch output.' },
+          stat: { type: 'boolean', description: 'Include diffstat.' }
+        },
+        required: ['ref']
+      }
+    case 'git_blame':
+      return {
+        description: compact ? 'Blame file lines.' : 'Read bounded git blame information for a workspace file.',
+        properties: {
+          path: { ...STRING, description: compact ? 'Relative file path.' : 'Workspace-relative file path.' },
+          startLine: { type: 'number', description: 'Optional first line.' },
+          endLine: { type: 'number', description: 'Optional last line.' },
+          maxLines: { type: 'number', description: 'Maximum lines to return.' }
+        },
+        required: ['path']
+      }
     case 'write_file':
       return {
         description: compact ? 'Write workspace file (intent required).' : 'Create or overwrite a workspace file. Requires a short intent.',

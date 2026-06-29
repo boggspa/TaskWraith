@@ -99,6 +99,9 @@ const WORKSPACE_READ_TOOLS = new Set<string>([
   // git state + file surfacing — read-only repo / file reads
   'git_status',
   'git_diff',
+  'git_log',
+  'git_show',
+  'git_blame',
   'open_workspace_file'
 ])
 

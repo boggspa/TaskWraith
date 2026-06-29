@@ -43,6 +43,12 @@ describe('MCP_AUTO_ALLOWED_TOOLS', () => {
       expect(autoAllowedTools.has(tool)).toBe(false)
     }
   })
+
+  it('does not auto-allow git history reads that can expose repository history', () => {
+    for (const tool of ['git_log', 'git_show', 'git_blame'] as const) {
+      expect(autoAllowedTools.has(tool)).toBe(false)
+    }
+  })
 })
 
 describe('READ_ONLY_MCP_ADVERTISE_TOOLS', () => {
@@ -73,6 +79,12 @@ describe('READ_ONLY_MCP_ADVERTISE_TOOLS', () => {
       'workspace_board_apply_plan',
       ...MCP_APP_STATE_MUTATION_TOOLS
     ]) {
+      expect(READ_ONLY_MCP_ADVERTISE_TOOLS).not.toContain(tool)
+    }
+  })
+
+  it('does not advertise git history reads to read-only gate-skipping seats', () => {
+    for (const tool of ['git_log', 'git_show', 'git_blame'] as const) {
       expect(READ_ONLY_MCP_ADVERTISE_TOOLS).not.toContain(tool)
     }
   })
