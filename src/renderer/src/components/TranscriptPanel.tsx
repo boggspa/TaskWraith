@@ -2563,7 +2563,7 @@ export const TranscriptPanel = memo(
                             )}
                           </>
                         )
-                        if (!item.diffText) {
+                        if (!item.diffText && !onOpenFileChangeInWorkbench) {
                           return (
                             <div
                               key={`${item.path}-${item.status}`}
@@ -2573,25 +2573,36 @@ export const TranscriptPanel = memo(
                             </div>
                           )
                         }
+                        const hasDiffPreview = Boolean(item.diffText)
                         const fileChangeActionLabel = onOpenFileChangeInWorkbench
-                          ? `Open Workbench for ${item.path}`
+                          ? `Open Workbench diff for ${item.path}`
                           : `Preview diff for ${item.path}`
                         return (
                           <button
                             key={`${item.path}-${item.status}`}
-                            className="file-change-summary-item has-diff-preview"
+                            className={`file-change-summary-item ${
+                              hasDiffPreview ? 'has-diff-preview' : 'has-workbench-link'
+                            }`}
                             type="button"
                             aria-describedby={
-                              fileChangeDiffPreview?.summary.path === item.path
+                              hasDiffPreview && fileChangeDiffPreview?.summary.path === item.path
                                 ? FILE_CHANGE_DIFF_PREVIEW_TOOLTIP_ID
                                 : undefined
                             }
                             aria-label={fileChangeActionLabel}
                             title={fileChangeActionLabel}
-                            onMouseEnter={(event) => openFileChangeDiffPreview(event, item)}
-                            onMouseLeave={closeFileChangeDiffPreview}
-                            onFocus={(event) => openFileChangeDiffPreview(event, item)}
-                            onBlur={closeFileChangeDiffPreview}
+                            onMouseEnter={
+                              hasDiffPreview
+                                ? (event) => openFileChangeDiffPreview(event, item)
+                                : undefined
+                            }
+                            onMouseLeave={hasDiffPreview ? closeFileChangeDiffPreview : undefined}
+                            onFocus={
+                              hasDiffPreview
+                                ? (event) => openFileChangeDiffPreview(event, item)
+                                : undefined
+                            }
+                            onBlur={hasDiffPreview ? closeFileChangeDiffPreview : undefined}
                             onClick={(event) => activateFileChangeSummary(event, item)}
                           >
                             {rowContent}

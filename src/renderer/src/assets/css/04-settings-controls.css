@@ -5501,7 +5501,8 @@ input:disabled, select:disabled, textarea:disabled {
   background: rgba(255, 255, 255, 0.03);
 }
 
-.file-change-summary-item.has-diff-preview {
+.file-change-summary-item.has-diff-preview,
+.file-change-summary-item.has-workbench-link {
   width: 100%;
   border-right: 0;
   border-bottom: 0;
@@ -5513,7 +5514,9 @@ input:disabled, select:disabled, textarea:disabled {
 }
 
 .file-change-summary-item.has-diff-preview:hover,
-.file-change-summary-item.has-diff-preview:focus-visible {
+.file-change-summary-item.has-diff-preview:focus-visible,
+.file-change-summary-item.has-workbench-link:hover,
+.file-change-summary-item.has-workbench-link:focus-visible {
   background: color-mix(in srgb, var(--accent) 12%, transparent);
   outline: 1px solid color-mix(in srgb, var(--accent) 46%, transparent);
   outline-offset: -1px;

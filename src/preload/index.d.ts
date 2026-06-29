@@ -622,6 +622,7 @@ declare global {
               kind: 'file-editor' | 'diff-studio' | 'workbench'
               workspacePath: string
               targetPath?: string
+              targetView?: 'editor' | 'diff'
             }
           | {
               kind: 'chat'
@@ -1642,7 +1643,7 @@ declare global {
         callback: (payload: { workspacePath: string; reason: string }) => void
       ) => () => void
       onWorkspacePopoutOpenFile: (
-        callback: (payload: { workspacePath: string; path: string }) => void
+        callback: (payload: { workspacePath: string; path: string; view?: 'editor' | 'diff' }) => void
       ) => () => void
       onSideChatDockRequest: (
         callback: (payload: {

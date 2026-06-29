@@ -302,6 +302,7 @@ const api = {
           kind: 'file-editor' | 'diff-studio' | 'workbench'
           workspacePath: string
           targetPath?: string
+          targetView?: 'editor' | 'diff'
         }
       | { kind: 'chat'; chatId: string; workspacePath?: string }
   ) => ipcRenderer.invoke('open-workspace-popout', input) as Promise<{ ok: true }>,
@@ -1439,10 +1440,12 @@ const api = {
     return () => ipcRenderer.removeListener('workspace-popout-refresh', wrapped)
   },
   onWorkspacePopoutOpenFile: (
-    callback: (payload: { workspacePath: string; path: string }) => void
+    callback: (payload: { workspacePath: string; path: string; view?: 'editor' | 'diff' }) => void
   ) => {
-    const wrapped = (_event: unknown, payload: { workspacePath: string; path: string }): void =>
-      callback(payload)
+    const wrapped = (
+      _event: unknown,
+      payload: { workspacePath: string; path: string; view?: 'editor' | 'diff' }
+    ): void => callback(payload)
     ipcRenderer.on('workspace-popout-open-file', wrapped)
     return () => ipcRenderer.removeListener('workspace-popout-open-file', wrapped)
   },

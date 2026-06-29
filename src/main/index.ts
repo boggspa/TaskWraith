@@ -18419,6 +18419,7 @@ function parseWorkspacePopoutInput(input: unknown): {
   workspacePath?: string
   chatId?: string
   targetPath?: string
+  targetView?: WorkspacePopoutTargetView
 } {
   if (!isRecord(input)) {
     throw new Error('Popout request is invalid.')
@@ -18450,18 +18451,22 @@ function parseWorkspacePopoutInput(input: unknown): {
     kind,
     workspacePath,
     targetPath:
-      kind === 'file-editor' || kind === 'workbench'
+      kind === 'file-editor' || kind === 'diff-studio' || kind === 'workbench'
         ? normalizeWorkspacePopoutTargetPath(input.targetPath)
-        : undefined
+        : undefined,
+    targetView: normalizeWorkspacePopoutTargetView(kind, input.targetView)
   }
 }
+
+type WorkspacePopoutTargetView = 'editor' | 'diff'
 
 async function loadWorkspacePopoutWindow(
   win: BrowserWindow,
   kind: WorkspacePopoutKind,
   workspacePath: string | undefined,
   chatId?: string,
-  targetPath?: string
+  targetPath?: string,
+  targetView?: WorkspacePopoutTargetView
 ): Promise<void> {
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
     const target = new URL(process.env['ELECTRON_RENDERER_URL'])
@@ -18469,6 +18474,7 @@ async function loadWorkspacePopoutWindow(
     if (workspacePath) target.searchParams.set('workspace', workspacePath)
     if (chatId) target.searchParams.set('chat', chatId)
     if (targetPath) target.searchParams.set('file', targetPath)
+    if (targetView) target.searchParams.set('view', targetView)
     await win.loadURL(target.toString())
     return
   }
@@ -18476,6 +18482,7 @@ async function loadWorkspacePopoutWindow(
   if (workspacePath) query.workspace = workspacePath
   if (chatId) query.chat = chatId
   if (targetPath) query.file = targetPath
+  if (targetView) query.view = targetView
   await win.loadFile(join(__dirname, '../renderer/index.html'), {
     query
   })
@@ -18494,23 +18501,38 @@ function normalizeWorkspacePopoutTargetPath(input: unknown): string | undefined 
   return segments.join('/')
 }
 
+function normalizeWorkspacePopoutTargetView(
+  kind: WorkspacePopoutKind,
+  input: unknown
+): WorkspacePopoutTargetView | undefined {
+  if (kind === 'diff-studio') return 'diff'
+  if (kind === 'file-editor') return 'editor'
+  if (input === undefined || input === null || input === '') return undefined
+  return input === 'editor' || input === 'diff' ? input : undefined
+}
+
 function sendWorkspacePopoutOpenFile(
   win: BrowserWindow,
   workspacePath: string,
-  path: string
+  path: string,
+  view?: WorkspacePopoutTargetView
 ): void {
-  safeSendToWebContents(win, 'workspace-popout-open-file', { workspacePath, path })
+  safeSendToWebContents(win, 'workspace-popout-open-file', { workspacePath, path, view })
 }
 
 async function openWorkspacePopout(input: unknown): Promise<{ ok: true }> {
-  const { kind, workspacePath, chatId, targetPath } = parseWorkspacePopoutInput(input)
+  const { kind, workspacePath, chatId, targetPath, targetView } = parseWorkspacePopoutInput(input)
   const key = kind === 'chat' ? `chat:${chatId}` : `${kind}:${workspacePath}`
   const existing = workspacePopoutWindows.get(key)
   if (existing && !existing.isDestroyed()) {
     if (existing.isMinimized()) existing.restore()
     existing.focus()
-    if (workspacePath && targetPath && (kind === 'file-editor' || kind === 'workbench')) {
-      sendWorkspacePopoutOpenFile(existing, workspacePath, targetPath)
+    if (
+      workspacePath &&
+      targetPath &&
+      (kind === 'file-editor' || kind === 'diff-studio' || kind === 'workbench')
+    ) {
+      sendWorkspacePopoutOpenFile(existing, workspacePath, targetPath, targetView)
     }
     return { ok: true }
   }
@@ -18577,7 +18599,7 @@ async function openWorkspacePopout(input: unknown): Promise<{ ok: true }> {
       workspacePopoutWindows.delete(key)
     }
   })
-  await loadWorkspacePopoutWindow(win, kind, workspacePath, chatId, targetPath)
+  await loadWorkspacePopoutWindow(win, kind, workspacePath, chatId, targetPath, targetView)
   return { ok: true }
 }
 

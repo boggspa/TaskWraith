@@ -12,6 +12,10 @@ interface EditorOpenRequest {
   nonce: number
 }
 
+interface WorkbenchOpenRequest extends EditorOpenRequest {
+  view?: WorkbenchView
+}
+
 const DEFAULT_EDITOR_STATE: FileEditorPanelState = {
   selectedPath: '',
   dirtyBufferCount: 0,
@@ -23,7 +27,7 @@ interface TaskWraithWorkbenchProps {
   workspacePath: string
   workspaceName: string
   refreshTick: number
-  openFileRequest?: EditorOpenRequest | null
+  openFileRequest?: WorkbenchOpenRequest | null
   onDirtyChange?: (dirtyBufferCount: number) => void
 }
 
@@ -43,6 +47,7 @@ export function TaskWraithWorkbench({
   const [status, setStatus] = useState('Workbench ready')
   const [editorRefreshTick, setEditorRefreshTick] = useState(refreshTick)
   const [editorOpenRequest, setEditorOpenRequest] = useState<EditorOpenRequest | null>(null)
+  const [diffSelectionRequest, setDiffSelectionRequest] = useState<EditorOpenRequest | null>(null)
   const [editorState, setEditorState] = useState<FileEditorPanelState>(DEFAULT_EDITOR_STATE)
   const [diffActionPath, setDiffActionPath] = useState('')
   const diffRefreshSeqRef = useRef(0)
@@ -124,10 +129,23 @@ export function TaskWraithWorkbench({
     setStatus(`Opening ${path}`)
   }, [])
 
+  const showFileInDiff = useCallback((path: string) => {
+    setActiveView('diff')
+    setDiffSelectionRequest((current) => ({
+      path,
+      nonce: (current?.nonce ?? 0) + 1
+    }))
+    setStatus(`Showing diff for ${path}`)
+  }, [])
+
   useEffect(() => {
     if (!openFileRequest) return
+    if (openFileRequest.view === 'diff') {
+      showFileInDiff(openFileRequest.path)
+      return
+    }
     openFileInEditor(openFileRequest.path)
-  }, [openFileInEditor, openFileRequest])
+  }, [openFileInEditor, openFileRequest, showFileInDiff])
 
   const stageDiffFile = useCallback(
     async (path: string) => {
@@ -266,6 +284,7 @@ export function TaskWraithWorkbench({
                 workspacePath={workspacePath}
                 gitSnapshot={diffGitSnapshot}
                 busyPath={diffActionPath}
+                selectionRequest={diffSelectionRequest}
                 onOpenFile={openFileInEditor}
                 onStageFile={stageDiffFile}
                 onUnstageFile={unstageDiffFile}

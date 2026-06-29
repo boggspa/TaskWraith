@@ -24,9 +24,15 @@ interface DiffViewerProps {
   workspacePath?: string
   gitSnapshot?: GitRepositorySnapshot | null
   busyPath?: string
+  selectionRequest?: DiffSelectionRequest | null
   onOpenFile?: (path: string) => void
   onStageFile?: (path: string) => void | Promise<void>
   onUnstageFile?: (path: string) => void | Promise<void>
+}
+
+interface DiffSelectionRequest {
+  path: string
+  nonce: number
 }
 
 interface DiffToolbarProps {
@@ -133,6 +139,7 @@ export function DiffViewer({
   workspacePath,
   gitSnapshot,
   busyPath,
+  selectionRequest,
   onOpenFile,
   onStageFile,
   onUnstageFile
@@ -177,6 +184,13 @@ export function DiffViewer({
     : hiddenNoiseCount > 0
       ? `0 shown; ${hiddenNoiseCount} hidden by Hide noise.`
       : 'No changes to display.'
+
+  useEffect(() => {
+    if (!selectionRequest?.path) return
+    setSelectedPath(selectionRequest.path)
+    setFileFilter('')
+    setHideNoise(false)
+  }, [selectionRequest])
 
   if (!diff)
     return (

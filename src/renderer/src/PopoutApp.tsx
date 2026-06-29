@@ -11,6 +11,7 @@ type WorkspaceDiff = Awaited<ReturnType<typeof window.api.getDiff>>
 interface PopoutOpenFileRequest {
   path: string
   nonce: number
+  view: 'editor' | 'diff'
 }
 
 const parsePopoutKind = (value: string | null): PopoutKind | null => {
@@ -27,6 +28,15 @@ const basename = (path: string): string => {
   return cleaned.split(/[\\/]/).filter(Boolean).pop() || path
 }
 
+const parseTargetView = (
+  value: string | null,
+  kind: PopoutKind | null
+): 'editor' | 'diff' => {
+  if (kind === 'diff-studio') return 'diff'
+  if (kind === 'file-editor') return 'editor'
+  return value === 'diff' ? 'diff' : 'editor'
+}
+
 // 1.0.5-PO2 — Debounce window for live-refresh signals. A burst of
 // chat-updated events (e.g. during a tool-call sequence) collapses
 // into a single getDiff fetch.
@@ -38,11 +48,12 @@ export function PopoutApp() {
   const kind = parsePopoutKind(params.get('popout'))
   const workspacePath = params.get('workspace') || ''
   const targetFilePath = params.get('file') || ''
+  const targetView = parseTargetView(params.get('view'), kind)
   const [diff, setDiff] = useState<WorkspaceDiff | null>(null)
   const [status, setStatus] = useState('')
   const [dirtyBufferCount, setDirtyBufferCount] = useState(0)
   const [openFileRequest, setOpenFileRequest] = useState<PopoutOpenFileRequest | null>(() =>
-    targetFilePath ? { path: targetFilePath, nonce: 1 } : null
+    targetFilePath ? { path: targetFilePath, nonce: 1, view: targetView } : null
   )
   // File Editor receives this as an in-place refresh signal. Do not
   // remount the panel here: open tabs and dirty buffers live inside it.
@@ -110,7 +121,8 @@ export function PopoutApp() {
       if (payload.workspacePath !== workspacePath || !payload.path) return
       setOpenFileRequest((current) => ({
         path: payload.path,
-        nonce: (current?.nonce ?? 0) + 1
+        nonce: (current?.nonce ?? 0) + 1,
+        view: payload.view === 'diff' ? 'diff' : 'editor'
       }))
     })
     return () => {
@@ -196,7 +208,11 @@ export function PopoutApp() {
           />
         ) : kind === 'diff-studio' ? (
           <div className="diff-studio popout-diff-studio">
-            <DiffViewer diff={diff} workspacePath={workspacePath} />
+            <DiffViewer
+              diff={diff}
+              workspacePath={workspacePath}
+              selectionRequest={openFileRequest}
+            />
           </div>
         ) : (
           <TaskWraithWorkbench

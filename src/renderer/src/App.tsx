@@ -14347,14 +14347,16 @@ function App(): React.JSX.Element {
 
   const openFileChangeInWorkbench = useCallback(
     (summary: DiffFileSummary) => {
-      if (!currentWorkspacePopoutPath) return
+      const workspacePath = currentChat?.workspacePath || currentWorkspacePopoutPath
+      if (!workspacePath) return
       void window.api.openWorkspacePopout({
         kind: 'workbench',
-        workspacePath: currentWorkspacePopoutPath,
-        targetPath: summary.status === 'deleted' ? undefined : summary.path
+        workspacePath,
+        targetPath: summary.path,
+        targetView: 'diff'
       })
     },
-    [currentWorkspacePopoutPath]
+    [currentChat?.workspacePath, currentWorkspacePopoutPath]
   )
 
   const openChatPopoutWindow = useCallback(() => {
