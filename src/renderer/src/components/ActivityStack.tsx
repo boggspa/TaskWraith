@@ -10,9 +10,12 @@ import {
 import {
   ChatRecord,
   ChildAgentThread,
+  DiffFileStatus,
+  DiffFileSummary,
   EnsembleParticipant,
   ProviderId,
   ToolActivity,
+  ToolDiffFileSummary,
   ToolDiffSummary
 } from '../../../main/store/types'
 import {
@@ -94,6 +97,7 @@ interface ActivityStackProps {
    */
   expandedActivityIds?: Set<string>
   onExpandedActivityIdsChange?: (next: Set<string>) => void
+  onOpenFileChangeInWorkbench?: (summary: DiffFileSummary) => void
 }
 
 function providerFromPlanLane(lane: string): ProviderId | undefined {
@@ -476,6 +480,69 @@ function getActivityDiffPreviewPath(
     activity.toolName ||
     'Tool diff'
   )
+}
+
+const WORKBENCH_DIFF_STATUSES = new Set<DiffFileStatus>([
+  'modified',
+  'created',
+  'deleted',
+  'renamed',
+  'untracked',
+  'binary',
+  'too_large',
+  'hidden_sensitive',
+  'noise'
+])
+
+const normalizeActivityWorkbenchPath = (
+  filePath: string | undefined,
+  workspacePath?: string
+): string => {
+  const normalizedPath = filePath?.trim().replace(/\\/g, '/')
+  if (!normalizedPath) return ''
+  if (!normalizedPath.startsWith('/')) return normalizedPath.replace(/^\.\/+/, '')
+  if (!workspacePath) return ''
+
+  const normalizedWorkspace = workspacePath.trim().replace(/\\/g, '/').replace(/\/+$/, '')
+  if (!normalizedWorkspace) return ''
+  if (normalizedPath === normalizedWorkspace) return ''
+  if (normalizedPath.startsWith(`${normalizedWorkspace}/`)) {
+    return normalizedPath.slice(normalizedWorkspace.length + 1)
+  }
+  return ''
+}
+
+const normalizeActivityWorkbenchStatus = (
+  status: ToolDiffFileSummary['status'] | undefined
+): DiffFileStatus => {
+  if (status && WORKBENCH_DIFF_STATUSES.has(status as DiffFileStatus)) {
+    return status as DiffFileStatus
+  }
+  return status === 'deleted' ? 'deleted' : 'modified'
+}
+
+export const buildActivityWorkbenchDiffSummary = ({
+  activityFilePath,
+  diffSummary,
+  diffText,
+  workspacePath
+}: {
+  activityFilePath?: string
+  diffSummary?: ToolDiffSummary
+  diffText?: string
+  workspacePath?: string
+}): DiffFileSummary | null => {
+  const diffFile = diffSummary?.files?.find((file) => file.path?.trim())
+  const path = normalizeActivityWorkbenchPath(activityFilePath || diffFile?.path, workspacePath)
+  if (!path) return null
+  return {
+    path,
+    status: normalizeActivityWorkbenchStatus(diffFile?.status),
+    additions: diffFile?.additions ?? diffSummary?.additions,
+    deletions: diffFile?.deletions ?? diffSummary?.deletions,
+    previewKind: diffText ? 'git_diff' : 'none',
+    diffText
+  }
 }
 
 function getBaseName(path: string): string {
@@ -1048,7 +1115,8 @@ function ActivityCompactGroup({
   workspacePath,
   provider,
   participants,
-  shimmerNow
+  shimmerNow,
+  onOpenFileChangeInWorkbench
 }: {
   activities: ToolActivity[]
   workspacePath?: string
@@ -1058,6 +1126,7 @@ function ActivityCompactGroup({
   /** 1.0.4 — forwarded to ActivityRow for ensemble_yield chip tinting. */
   participants?: EnsembleParticipant[]
   shimmerNow: number
+  onOpenFileChangeInWorkbench?: (summary: DiffFileSummary) => void
 }) {
   const [expanded, setExpanded] = useState(false)
   const searchCount = activities.filter(isSearchActivity).length
@@ -1197,6 +1266,7 @@ function ActivityCompactGroup({
               provider={provider}
               participants={participants}
               shimmerNow={shimmerNow}
+              onOpenFileChangeInWorkbench={onOpenFileChangeInWorkbench}
             />
           ))}
         </div>
@@ -1690,7 +1760,8 @@ export function ActivityStack({
   compactDensity = false,
   liveActivityViewport = false,
   expandedActivityIds,
-  onExpandedActivityIdsChange
+  onExpandedActivityIdsChange,
+  onOpenFileChangeInWorkbench
 }: ActivityStackProps) {
   // 1.0.4-AS1 — drive the shimmer/pulse staleness check. The
   // returned `now` is consumed by InlineActivityRow via `Date.now()`
@@ -1826,6 +1897,7 @@ export function ActivityStack({
           provider={provider}
           participants={participants}
           shimmerNow={shimmerNow}
+          onOpenFileChangeInWorkbench={onOpenFileChangeInWorkbench}
         />
       )
     }
@@ -1861,6 +1933,7 @@ export function ActivityStack({
         isExpanded={expandedIds.has(item.activity.id)}
         onToggleExpand={(modKey) => toggleExpand(item.activity.id, modKey)}
         shimmerNow={shimmerNow}
+        onOpenFileChangeInWorkbench={onOpenFileChangeInWorkbench}
       />
     )
   })
@@ -2127,7 +2200,8 @@ function ActivityRow({
   todoItems,
   isExpanded,
   onToggleExpand,
-  shimmerNow
+  shimmerNow,
+  onOpenFileChangeInWorkbench
 }: {
   activity: ToolActivity
   workspacePath?: string
@@ -2157,6 +2231,7 @@ function ActivityRow({
   isExpanded?: boolean
   onToggleExpand?: (modKey: boolean) => void
   shimmerNow?: number
+  onOpenFileChangeInWorkbench?: (summary: DiffFileSummary) => void
 }) {
   // Phase L5 slice 3 — when the parent passes `isExpanded` +
   // `onToggleExpand`, use them (the parent coordinates single-open
@@ -2230,6 +2305,16 @@ function ActivityRow({
   const activityDiffPreviewDeletions = inlineStats.visible
     ? inlineStats.deletions
     : diffSummary?.deletions
+  const workbenchDiffSummary = useMemo(
+    () =>
+      buildActivityWorkbenchDiffSummary({
+        activityFilePath,
+        diffSummary,
+        diffText: activityDiffPreviewText,
+        workspacePath
+      }),
+    [activityDiffPreviewText, activityFilePath, diffSummary, workspacePath]
+  )
   const openActivityDiffHoverPreview = useCallback(
     (event: ReactFocusEvent<HTMLElement> | ReactMouseEvent<HTMLElement>) => {
       if (!activityDiffPreviewText) return
@@ -2243,7 +2328,17 @@ function ActivityRow({
           additions: activityDiffPreviewAdditions,
           deletions: activityDiffPreviewDeletions,
           diffText: activityDiffPreviewText
-        }
+        },
+        action:
+          onOpenFileChangeInWorkbench && workbenchDiffSummary
+            ? {
+                label: 'Open Diff Studio',
+                onActivate: () => {
+                  closeActivityDiffHoverPreview()
+                  onOpenFileChangeInWorkbench(workbenchDiffSummary)
+                }
+              }
+            : undefined
       })
     },
     [
@@ -2252,7 +2347,10 @@ function ActivityRow({
       activityDiffPreviewPath,
       activityDiffPreviewStatus,
       activityDiffPreviewText,
-      showActivityDiffHoverPreview
+      closeActivityDiffHoverPreview,
+      onOpenFileChangeInWorkbench,
+      showActivityDiffHoverPreview,
+      workbenchDiffSummary
     ]
   )
   useDiffHoverPreviewDismiss(activityDiffHoverPreview, closeActivityDiffHoverPreview)

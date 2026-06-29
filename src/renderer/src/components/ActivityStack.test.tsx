@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import { ActivityStack } from './ActivityStack'
+import { ActivityStack, buildActivityWorkbenchDiffSummary } from './ActivityStack'
 import type { ChatRecord, EnsembleParticipant, ToolActivity } from '../../../main/store/types'
 
 function makeEnsembleYieldActivity(overrides: Partial<ToolActivity> = {}): ToolActivity {
@@ -324,6 +324,52 @@ describe('ActivityStack compactDensity routing', () => {
 })
 
 describe('ActivityStack diff hover previews', () => {
+  it('builds Workbench diff targets from tool diff summaries', () => {
+    expect(
+      buildActivityWorkbenchDiffSummary({
+        diffText: ['@@ -1,1 +1,1 @@', '-old', '+new'].join('\n'),
+        workspacePath: '/repo',
+        diffSummary: {
+          additions: 1,
+          deletions: 1,
+          confidence: 'exact',
+          source: 'patch_preview',
+          files: [
+            {
+              path: '/repo/src/foo.ts',
+              status: 'updated',
+              additions: 1,
+              deletions: 1
+            }
+          ]
+        }
+      })
+    ).toMatchObject({
+      path: 'src/foo.ts',
+      status: 'modified',
+      additions: 1,
+      deletions: 1,
+      previewKind: 'git_diff'
+    })
+
+    expect(
+      buildActivityWorkbenchDiffSummary({
+        activityFilePath: 'src/local.ts',
+        workspacePath: '/repo'
+      })
+    ).toMatchObject({
+      path: 'src/local.ts',
+      status: 'modified'
+    })
+
+    expect(
+      buildActivityWorkbenchDiffSummary({
+        activityFilePath: '/outside/src/foo.ts',
+        workspacePath: '/repo'
+      })
+    ).toBeNull()
+  })
+
   it('marks successful write rows with patch previews for hover diff preview', () => {
     const html = renderToStaticMarkup(
       <ActivityStack

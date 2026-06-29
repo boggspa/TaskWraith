@@ -1785,6 +1785,7 @@ export const TranscriptPanel = memo(
                     liveActivityViewport={liveActivityViewport}
                     expandedActivityIds={activityExpansionIds ?? EMPTY_ACTIVITY_EXPANSION}
                     onExpandedActivityIdsChange={(next) => setActivityExpansionForRow(msg.id, next)}
+                    onOpenFileChangeInWorkbench={onOpenFileChangeInWorkbench}
                   />
                 ) : msg.role === 'tool' ? (
                   <div key={msg.id} className="message-group tool-message-fallback">
