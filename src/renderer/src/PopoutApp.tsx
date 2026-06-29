@@ -38,15 +38,20 @@ export function PopoutApp() {
   // File Editor receives this as an in-place refresh signal. Do not
   // remount the panel here: open tabs and dirty buffers live inside it.
   const [fileEditorRefreshTick, setFileEditorRefreshTick] = useState(0)
+  const diffRefreshSeqRef = useRef(0)
 
   const refreshDiff = useCallback(async () => {
     if (kind !== 'diff-studio' || !workspacePath) return
+    const requestId = diffRefreshSeqRef.current + 1
+    diffRefreshSeqRef.current = requestId
     setStatus('Refreshing diff...')
     try {
       const nextDiff = await window.api.getDiff(workspacePath)
+      if (requestId !== diffRefreshSeqRef.current) return
       setDiff(nextDiff)
       setStatus('Diff refreshed')
     } catch (error) {
+      if (requestId !== diffRefreshSeqRef.current) return
       setDiff({
         type: 'error',
         text: error instanceof Error ? error.message : 'Could not load workspace diff'

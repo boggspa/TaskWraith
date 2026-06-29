@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { GitRepositorySnapshot } from '../../../main/services/GitService'
 import { DiffViewer } from './DiffViewer'
 import { FileEditorPanel, type FileEditorPanelState } from './FileEditorPanel'
@@ -43,6 +43,7 @@ export function TaskWraithWorkbench({
   const [editorOpenRequest, setEditorOpenRequest] = useState<EditorOpenRequest | null>(null)
   const [editorState, setEditorState] = useState<FileEditorPanelState>(DEFAULT_EDITOR_STATE)
   const [diffActionPath, setDiffActionPath] = useState('')
+  const diffRefreshSeqRef = useRef(0)
 
   const breadcrumbs = useMemo(
     () =>
@@ -80,16 +81,20 @@ export function TaskWraithWorkbench({
 
   const refreshDiff = useCallback(async () => {
     if (!workspacePath) return
+    const requestId = diffRefreshSeqRef.current + 1
+    diffRefreshSeqRef.current = requestId
     setStatus('Refreshing diff')
     try {
       const [nextDiff, nextGitSnapshot] = await Promise.all([
         window.api.getDiff(workspacePath),
         window.api.gitSnapshot({ workspacePath })
       ])
+      if (requestId !== diffRefreshSeqRef.current) return
       setDiff(nextDiff)
       setDiffGitSnapshot(nextGitSnapshot.ok ? nextGitSnapshot.data : null)
       setStatus('Diff refreshed')
     } catch (error) {
+      if (requestId !== diffRefreshSeqRef.current) return
       setDiff({
         type: 'error',
         text: error instanceof Error ? error.message : 'Could not load workspace diff'
