@@ -153,6 +153,8 @@ interface QuickOpenPaletteProps {
   onClose: () => void
 }
 
+export const quickOpenOptionId = (index: number): string => `file-editor-quick-open-option-${index}`
+
 const ROOT_DIR_KEY = ''
 const FILE_EDITOR_DIRECTORY_LIMIT = 500
 const FILE_EDITOR_SEARCH_LIMIT = 500
@@ -2025,7 +2027,7 @@ function FileEditorContextMenu({
   return typeof document === 'undefined' ? menu : createPortal(menu, document.body)
 }
 
-function QuickOpenPalette({
+export function QuickOpenPalette({
   workspacePath,
   query,
   results,
@@ -2039,6 +2041,9 @@ function QuickOpenPalette({
 }: QuickOpenPaletteProps) {
   const clampedIndex = results.length === 0 ? 0 : Math.min(selectedIndex, results.length - 1)
   const selectedEntry = results[clampedIndex]
+  const inputId = 'file-editor-quick-open-input'
+  const listboxId = 'file-editor-quick-open-results'
+  const statusId = 'file-editor-quick-open-status'
 
   const moveSelection = (delta: number) => {
     if (results.length === 0) return
@@ -2075,29 +2080,49 @@ function QuickOpenPalette({
         }}
       >
         <input
+          id={inputId}
           className="file-editor-quick-open-input"
           aria-label="Quick open file path"
+          aria-autocomplete="list"
+          aria-controls={listboxId}
+          aria-activedescendant={selectedEntry ? quickOpenOptionId(clampedIndex) : undefined}
+          aria-describedby={statusId}
+          aria-expanded="true"
           value={query}
           onChange={(event) => onQueryChange(event.target.value)}
           placeholder="Search files"
+          role="combobox"
           disabled={!workspacePath}
           autoFocus
         />
-        <div className="file-editor-quick-open-status" role="status" aria-live="polite">
+        <div
+          id={statusId}
+          className="file-editor-quick-open-status"
+          role="status"
+          aria-live="polite"
+        >
           {status}
         </div>
-        <div className="file-editor-quick-open-list">
+        <div
+          id={listboxId}
+          className="file-editor-quick-open-list"
+          role="listbox"
+          aria-label="Quick open results"
+        >
           {results.length > 0 ? (
             results.map((entry, index) => {
               const isSelected = index === clampedIndex
               return (
                 <button
                   key={entry.path}
+                  id={quickOpenOptionId(index)}
                   className={`file-editor-quick-open-row ${isSelected ? 'active' : ''}`}
                   type="button"
                   onMouseEnter={() => onSelectedIndexChange(index)}
                   onClick={() => void onOpenPath(entry.path)}
-                  aria-pressed={isSelected}
+                  aria-selected={isSelected}
+                  role="option"
+                  tabIndex={-1}
                   title={entry.path}
                 >
                   <FileTypeIcon

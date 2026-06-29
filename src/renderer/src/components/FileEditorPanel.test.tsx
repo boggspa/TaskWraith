@@ -3,7 +3,9 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   explicitOnlyCompletionSource,
   fileEditorDirtyActionCopy,
-  isFileEditorPromptDismissKey
+  isFileEditorPromptDismissKey,
+  QuickOpenPalette,
+  quickOpenOptionId
 } from './FileEditorPanel'
 import { EditorPane } from './FileEditorPane'
 import { FileEditorGitActions } from './FileEditorGitActions'
@@ -184,6 +186,48 @@ describe('EditorPane', () => {
 
     expect(html).toContain('file-editor-code-surface')
     expect(html).toContain('Select a text file')
+  })
+})
+
+describe('QuickOpenPalette', () => {
+  it('renders an accessible combobox with a selected result option', () => {
+    const html = renderToStaticMarkup(
+      <QuickOpenPalette
+        workspacePath="/repo"
+        query="app"
+        results={[
+          {
+            path: 'src/App.tsx',
+            name: 'App.tsx',
+            isDirectory: false,
+            depth: 1,
+            sizeBytes: 2048
+          },
+          {
+            path: 'src/App.test.tsx',
+            name: 'App.test.tsx',
+            isDirectory: false,
+            depth: 1,
+            sizeBytes: 4096
+          }
+        ]}
+        status="2 matches"
+        isLoading={false}
+        selectedIndex={1}
+        onQueryChange={vi.fn()}
+        onSelectedIndexChange={vi.fn()}
+        onOpenPath={vi.fn()}
+        onClose={vi.fn()}
+      />
+    )
+
+    expect(html).toContain('role="combobox"')
+    expect(html).toContain('aria-controls="file-editor-quick-open-results"')
+    expect(html).toContain(`aria-activedescendant="${quickOpenOptionId(1)}"`)
+    expect(html).toContain('role="listbox"')
+    expect(html).toContain('role="option"')
+    expect(html).toContain('aria-selected="true"')
+    expect(html).toContain('src/App.test.tsx')
   })
 })
 
