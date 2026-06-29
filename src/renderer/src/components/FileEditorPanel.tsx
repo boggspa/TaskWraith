@@ -98,6 +98,13 @@ type FileEditorContextMenuSelection =
       path: string
     }
 
+export type FileEditorDirtyActionKind = 'reload' | 'discard'
+
+interface FileEditorPendingDirtyAction {
+  kind: FileEditorDirtyActionKind
+  path: string
+}
+
 interface FileEditorContextMenuItem {
   id: string
   label: string
@@ -381,6 +388,26 @@ const isBufferDirty = (buffer: EditorBuffer | null | undefined): boolean => {
   return Boolean(buffer && buffer.content !== buffer.savedContent)
 }
 
+export const fileEditorDirtyActionCopy = (
+  kind: FileEditorDirtyActionKind,
+  path: string
+): { title: string; body: string; confirmLabel: string; danger: boolean } => {
+  if (kind === 'reload') {
+    return {
+      title: 'Reload from disk?',
+      body: `Reloading ${path} will replace your unsaved edits with the file on disk.`,
+      confirmLabel: 'Reload',
+      danger: false
+    }
+  }
+  return {
+    title: 'Discard changes?',
+    body: `Discard unsaved edits in ${path}?`,
+    confirmLabel: 'Discard',
+    danger: true
+  }
+}
+
 function focusFileEditorContextMenuButton(
   menu: HTMLDivElement,
   direction: 'first' | 'last' | 'next' | 'previous'
@@ -435,6 +462,8 @@ export function FileEditorPanel({
   const [isLoading, setIsLoading] = useState(false)
   const [isListLoading, setIsListLoading] = useState(false)
   const [pendingClosePath, setPendingClosePath] = useState('')
+  const [pendingDirtyAction, setPendingDirtyAction] =
+    useState<FileEditorPendingDirtyAction | null>(null)
   const [lineWrapEnabled, setLineWrapEnabled] = useState(false)
   const [showQuickOpen, setShowQuickOpen] = useState(false)
   const [quickOpenQuery, setQuickOpenQuery] = useState('')
@@ -1299,6 +1328,7 @@ export function FileEditorPanel({
         setSelectedPath(result.path)
         setCursorStatus(DEFAULT_CURSOR_STATUS)
         setPendingClosePath('')
+        setPendingDirtyAction(null)
         setStatus(`Reloaded ${result.path} from disk`)
         void loadDirectory(parentDirectoryForPath(result.path))
         void refreshGitSnapshot()
@@ -1314,7 +1344,21 @@ export function FileEditorPanel({
     [loadDirectory, refreshGitSnapshot, workspacePath]
   )
 
-  const discardBufferChanges = useCallback(
+  const requestReloadBufferFromDisk = useCallback(
+    (path: string) => {
+      const buffer = buffers.find((item) => item.path === path)
+      if (isBufferDirty(buffer)) {
+        setSelectedPath(path)
+        setPendingDirtyAction({ kind: 'reload', path })
+        setStatus(`Confirm reload for ${path}`)
+        return
+      }
+      void reloadBufferFromDisk(path)
+    },
+    [buffers, reloadBufferFromDisk]
+  )
+
+  const applyDiscardBufferChanges = useCallback(
     (path: string) => {
       const buffer = buffers.find((item) => item.path === path)
       if (!buffer) return
@@ -1332,10 +1376,36 @@ export function FileEditorPanel({
       setSelectedPath(path)
       setCursorStatus(DEFAULT_CURSOR_STATUS)
       setPendingClosePath('')
+      setPendingDirtyAction(null)
       setStatus(`Discarded local changes in ${path}`)
     },
     [buffers]
   )
+
+  const requestDiscardBufferChanges = useCallback(
+    (path: string) => {
+      const buffer = buffers.find((item) => item.path === path)
+      if (isBufferDirty(buffer)) {
+        setSelectedPath(path)
+        setPendingDirtyAction({ kind: 'discard', path })
+        setStatus(`Confirm discard for ${path}`)
+        return
+      }
+      applyDiscardBufferChanges(path)
+    },
+    [applyDiscardBufferChanges, buffers]
+  )
+
+  const confirmPendingDirtyAction = useCallback(() => {
+    if (!pendingDirtyAction) return
+    const action = pendingDirtyAction
+    setPendingDirtyAction(null)
+    if (action.kind === 'reload') {
+      void reloadBufferFromDisk(action.path)
+      return
+    }
+    applyDiscardBufferChanges(action.path)
+  }, [applyDiscardBufferChanges, pendingDirtyAction, reloadBufferFromDisk])
 
   const closeEditorBuffer = (path: string) => {
     const result = closeBuffer(buffers, path)
@@ -1344,6 +1414,7 @@ export function FileEditorPanel({
     setSelectedPath(nextSelectedPath)
     if (path === selectedPath) setCursorStatus(DEFAULT_CURSOR_STATUS)
     setPendingClosePath('')
+    setPendingDirtyAction(null)
     if (path === selectedPath) {
       setStatus(nextSelectedPath ? `${nextSelectedPath} · selected` : 'No file selected')
     }
@@ -1411,14 +1482,14 @@ export function FileEditorPanel({
         id: 'reload',
         label: 'Reload From Disk',
         disabled: !buffer || isLoading,
-        onSelect: () => void reloadBufferFromDisk(contextMenuSelection.path)
+        onSelect: () => requestReloadBufferFromDisk(contextMenuSelection.path)
       },
       {
         id: 'discard',
         label: 'Discard Changes',
         disabled: !tabDirty,
         danger: true,
-        onSelect: () => discardBufferChanges(contextMenuSelection.path)
+        onSelect: () => requestDiscardBufferChanges(contextMenuSelection.path)
       },
       {
         id: 'close',
@@ -1584,6 +1655,10 @@ export function FileEditorPanel({
     })
   }, [commandRequest])
 
+  const pendingDirtyActionCopy = pendingDirtyAction
+    ? fileEditorDirtyActionCopy(pendingDirtyAction.kind, pendingDirtyAction.path)
+    : null
+
   return (
     <aside className="app-file-editor" style={width ? { width } : undefined}>
       <WorkspaceFileTree
@@ -1657,7 +1732,7 @@ export function FileEditorPanel({
             onSaveAll={saveAllFiles}
             onSave={saveFile}
             onReloadSelected={() => {
-              if (selectedPath) void reloadBufferFromDisk(selectedPath)
+              if (selectedPath) requestReloadBufferFromDisk(selectedPath)
             }}
             onToggleLineWrap={() => setLineWrapEnabled((enabled) => !enabled)}
             onOpenQuickOpen={openQuickOpen}
@@ -1796,6 +1871,32 @@ export function FileEditorPanel({
                 className="btn btn-sm btn-ghost"
                 type="button"
                 onClick={() => setPendingClosePath('')}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+        {pendingDirtyAction && pendingDirtyActionCopy && (
+          <div
+            className="file-editor-unsaved-card"
+            role="alertdialog"
+            aria-label={pendingDirtyActionCopy.title}
+          >
+            <strong>{pendingDirtyActionCopy.title}</strong>
+            <span>{pendingDirtyActionCopy.body}</span>
+            <div className="file-editor-unsaved-actions">
+              <button
+                className={`btn btn-sm${pendingDirtyActionCopy.danger ? ' btn-danger' : ''}`}
+                type="button"
+                onClick={confirmPendingDirtyAction}
+              >
+                {pendingDirtyActionCopy.confirmLabel}
+              </button>
+              <button
+                className="btn btn-sm btn-ghost"
+                type="button"
+                onClick={() => setPendingDirtyAction(null)}
               >
                 Cancel
               </button>

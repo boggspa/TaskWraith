@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
-import { explicitOnlyCompletionSource } from './FileEditorPanel'
+import { explicitOnlyCompletionSource, fileEditorDirtyActionCopy } from './FileEditorPanel'
 import { EditorPane } from './FileEditorPane'
 import { FileEditorGitActions } from './FileEditorGitActions'
 import { FileEditorStatusBar } from './FileEditorStatusBar'
@@ -216,5 +216,25 @@ describe('file editor completion sources', () => {
       options: [{ label: 'workspaceWord' }]
     })
     expect(source).toHaveBeenCalledWith(explicitContext)
+  })
+})
+
+describe('file editor dirty action prompts', () => {
+  it('warns before replacing dirty buffers from disk', () => {
+    expect(fileEditorDirtyActionCopy('reload', 'src/App.tsx')).toEqual({
+      title: 'Reload from disk?',
+      body: 'Reloading src/App.tsx will replace your unsaved edits with the file on disk.',
+      confirmLabel: 'Reload',
+      danger: false
+    })
+  })
+
+  it('marks discard as destructive', () => {
+    expect(fileEditorDirtyActionCopy('discard', 'src/App.tsx')).toEqual({
+      title: 'Discard changes?',
+      body: 'Discard unsaved edits in src/App.tsx?',
+      confirmLabel: 'Discard',
+      danger: true
+    })
   })
 })
