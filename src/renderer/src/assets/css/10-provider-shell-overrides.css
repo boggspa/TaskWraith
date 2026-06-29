@@ -2041,11 +2041,11 @@
  * −N red (the canonical `.composer-diff-add/del` hues). Keep the
  * heavier Grok weight for crispness against the monochrome chrome. */
 [data-composer-style="grok"] .composer-diff-add {
-  color: #6ddfa8 !important;
+  color: #2db777 !important;
   font-weight: 600;
 }
 [data-composer-style="grok"] .composer-diff-del {
-  color: #f08080 !important;
+  color: #ec3d35 !important;
   font-weight: 600;
 }
 
@@ -2762,11 +2762,11 @@
 
 /* Diff signal — canonical +N/−N hues (kept coloured across all shells). */
 [data-composer-style="cursor"] .composer-diff-add {
-  color: #6ddfa8 !important;
+  color: #2db777 !important;
   font-weight: 600;
 }
 [data-composer-style="cursor"] .composer-diff-del {
-  color: #f08080 !important;
+  color: #ec3d35 !important;
   font-weight: 600;
 }
 

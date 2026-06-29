@@ -1297,23 +1297,17 @@
   font-weight: 600;
   color: color-mix(in srgb, #ffffff 92%, transparent);
 }
+/* Diff stat hues, shared by every composer shell: a darker, more saturated
+   green/red than the old pastels so the +add/-del counts read clearly on both
+   dark and light composer chrome. Per-shell/-theme overrides below keep these
+   same hues in step. */
 .composer-diff-add {
-  color: #6ddfa8;
+  color: #2db777;
   font-feature-settings: 'tnum';
 }
 .composer-diff-del {
-  color: #f08080;
-  font-feature-settings: 'tnum';
-}
-/* Codex shell — darker, more saturated diff hues to match the Codex App
-   reference; the shared pastels above read too light on the Codex pill.
-   Alabaster keeps its own !important pair in 10-provider-shell-overrides,
-   updated to the same hues so every theme stays in step. */
-[data-composer-style="codex"] .composer-diff-add {
-  color: #2db777;
-}
-[data-composer-style="codex"] .composer-diff-del {
   color: #ec3d35;
+  font-feature-settings: 'tnum';
 }
 .composer-above-bar-action {
   margin-left: auto;
