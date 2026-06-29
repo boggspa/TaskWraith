@@ -135,7 +135,11 @@ export function liveOutputTokensForParticipant(
 export function buildParticipantContextRows(
   runs: ReadonlyArray<ChatRun>,
   participants: ReadonlyArray<EnsembleParticipant>,
-  live?: { participantId?: string; outputTokens?: number }
+  live?: {
+    participantId?: string
+    outputTokens?: number
+    resolveWindowTokens?: (participant: EnsembleParticipant) => number | undefined
+  }
 ): ContextMeterRow[] {
   return participants.map((participant) => {
     const latest = latestRunContext(runs, participant.id)
@@ -143,7 +147,13 @@ export function buildParticipantContextRows(
     if (live?.participantId && participant.id === live.participantId) {
       usedTokens += Math.max(0, live.outputTokens ?? 0)
     }
-    const windowTokens = resolveContextWindow(participant.provider, participant.model)
+    const liveWindowTokens = live?.resolveWindowTokens?.(participant)
+    const windowTokens = resolveContextWindow(
+      participant.provider,
+      participant.model,
+      undefined,
+      liveWindowTokens
+    )
     return {
       id: participant.id,
       provider: participant.provider,

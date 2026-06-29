@@ -16480,11 +16480,24 @@ function App(): React.JSX.Element {
     chatTokenTally.totalTokens + (isCurrentChatRunning ? liveRunOutputTokens : 0)
   const latestRunLimits = extractUsageLimits(currentRun?.stats)
   const contextModelId = currentRun?.actualModel || currentRun?.requestedModel || selectedModelType
+  const installedOllamaModelsForContext = useMemo(
+    () =>
+      Array.isArray(agentStatusByProvider.ollama?.models)
+        ? agentStatusByProvider.ollama.models
+        : [],
+    [agentStatusByProvider.ollama?.models]
+  )
+  const resolveLiveOllamaContextLength = useCallback(
+    (modelId?: string | null): number | undefined =>
+      installedOllamaModelsForContext.find(
+        (model: { id?: string; contextLength?: number }) =>
+          model.id && isOllamaModelInstalled(modelId || '', [model.id])
+      )?.contextLength,
+    [installedOllamaModelsForContext]
+  )
   const ollamaLiveContextLength =
-    currentProvider === 'ollama' && Array.isArray(agentStatusByProvider.ollama?.models)
-      ? agentStatusByProvider.ollama.models.find((model: { id?: string; contextLength?: number }) =>
-          model.id === contextModelId
-        )?.contextLength
+    currentProvider === 'ollama'
+      ? resolveLiveOllamaContextLength(contextModelId)
       : undefined
   const contextWindowSize = resolveContextWindow(
     currentProvider,
@@ -16532,7 +16545,11 @@ function App(): React.JSX.Element {
         currentChat?.ensemble?.participants || [],
         {
           participantId: liveContextParticipantId,
-          outputTokens: liveActiveParticipantOutputTokens
+          outputTokens: liveActiveParticipantOutputTokens,
+          resolveWindowTokens: (participant) =>
+            participant.provider === 'ollama'
+              ? resolveLiveOllamaContextLength(participant.model)
+              : undefined
         }
       )
     : undefined
@@ -22090,12 +22107,22 @@ function App(): React.JSX.Element {
       }
       // Per-pane context meter — the donut + its popover must reflect THIS pane's
       // chat, not the focused chat's (which composerStableBase carries). Mirrors
-      // the focused computation; panes use the static window table (no live limits).
+      // the focused computation, including live Ollama context lengths when
+      // /api/tags metadata is available.
       const paneContextUsedTokens = currentContextTokens(viewerChat.runs || [], {
         liveOutputTokens: viewerLiveOutputTokens,
         isRunning: viewerIsRunning
       })
-      const paneContextWindow = resolveContextWindow(viewerProvider, viewerContextModelId)
+      const paneLiveOllamaContextLength =
+        viewerProvider === 'ollama'
+          ? resolveLiveOllamaContextLength(viewerContextModelId)
+          : undefined
+      const paneContextWindow = resolveContextWindow(
+        viewerProvider,
+        viewerContextModelId,
+        undefined,
+        paneLiveOllamaContextLength
+      )
       const paneContextPercent = contextPercent(paneContextUsedTokens, paneContextWindow)
       const paneContextLabel = `${formatContextTokens(paneContextUsedTokens)} / ${formatContextTokens(paneContextWindow)} context`
       // Live tick for THIS pane's actively-running participant (same scoping as the
@@ -22125,7 +22152,11 @@ function App(): React.JSX.Element {
                     viewerChat.messages || [],
                     paneLiveParticipantId,
                     estimateLiveOutputTokensFromChars
-                  )
+                  ),
+                  resolveWindowTokens: (participant) =>
+                    participant.provider === 'ollama'
+                      ? resolveLiveOllamaContextLength(participant.model)
+                      : undefined
                 }
               )
             : undefined

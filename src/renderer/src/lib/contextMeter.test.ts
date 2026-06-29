@@ -107,6 +107,37 @@ describe('buildParticipantContextRows — per-participant honest context', () =>
     const rows = buildParticipantContextRows(runs, participants, { outputTokens: 600 })
     expect(rows.find((r) => r.id === 'p1')?.usedTokens).toBe(82_000)
   })
+
+  it('uses live Ollama context windows supplied by the app for participant rows', () => {
+    const rows = buildParticipantContextRows(
+      [],
+      [
+        {
+          id: 'ollama-custom',
+          provider: 'ollama',
+          model: 'custom-local:latest',
+          enabled: true,
+          role: 'Local',
+          order: 0
+        } as EnsembleParticipant,
+        {
+          id: 'claude',
+          provider: 'claude',
+          model: 'claude-sonnet-4-6',
+          enabled: true,
+          role: 'Reviewer',
+          order: 1
+        } as EnsembleParticipant
+      ],
+      {
+        resolveWindowTokens: (participant) =>
+          participant.provider === 'ollama' ? 65_536 : undefined
+      }
+    )
+
+    expect(rows.find((r) => r.id === 'ollama-custom')?.windowTokens).toBe(65_536)
+    expect(rows.find((r) => r.id === 'claude')?.windowTokens).toBe(200_000)
+  })
 })
 
 describe('liveOutputTokensForParticipant — scoped to the active participant only', () => {
