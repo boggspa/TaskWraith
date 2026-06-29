@@ -2803,6 +2803,19 @@
   flex: 1 1 auto;
   min-width: 0;
 }
+[data-composer-style="cursor"]
+  .composer-area
+  > .composer-above-bar--cursor-lead:not(.composer-above-bar-secondary)
+  > .composer-above-bar-pill--git {
+  flex: 0 1 auto;
+  max-width: min(100%, 38rem);
+}
+[data-composer-style="cursor"]
+  .composer-area
+  > .composer-above-bar--cursor-lead:not(.composer-above-bar-secondary)
+  > .composer-above-bar-pill--changes {
+  margin-left: auto;
+}
 [data-composer-style="cursor"] .composer-above-bar-pill--changes {
   order: 30;
 }
