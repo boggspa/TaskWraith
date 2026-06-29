@@ -302,10 +302,13 @@ describe('PluginHost', () => {
     const snapshot = host.uninstallPlugin('demo-bundle')
     const entry = plugin(snapshot)
     const stateFile = JSON.parse(fs.readFileSync(path.join(tmpDir, 'plugins', 'plugins.json'), 'utf-8'))
+    const tombstone = entry.tombstone
+    expect(tombstone).toBeTruthy()
+    if (!tombstone) throw new Error('Expected uninstall tombstone')
 
     expect(entry.installed).toBe(false)
     expect(entry.enabled).toBe(false)
-    expect(entry.tombstone).toMatchObject({
+    expect(tombstone).toMatchObject({
       pluginId: 'demo-bundle',
       publisher: 'acme',
       name: 'Demo Bundle',
@@ -318,7 +321,7 @@ describe('PluginHost', () => {
       enabledAtUninstall: true
     })
     expect(stateFile.plugins).toEqual({})
-    expect(stateFile.tombstones['demo-bundle']).toMatchObject(entry.tombstone)
+    expect(stateFile.tombstones['demo-bundle']).toMatchObject(tombstone)
     expect(stateFile.lifecycleEvents.map((event: { action: string }) => event.action)).toEqual([
       'install',
       'enable',
