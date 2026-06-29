@@ -414,7 +414,7 @@ describe('Sidebar workspace boards', () => {
 
     expect(html).toContain('Release board')
     expect(html).toContain('sidebar-workspace-board-item active')
-    expect(html).toContain('Remove')
+    expect(html).toContain('Archive')
     expect(html).not.toContain('application/x-taskwraith-chat-id')
   })
 

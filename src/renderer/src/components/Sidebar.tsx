@@ -3920,10 +3920,10 @@ export function Sidebar({
                               type="button"
                               className="sidebar-workspace-board-remove"
                               onClick={() => onDeleteWorkspaceBoard(board.id)}
-                              title={`Remove ${board.name}`}
-                              aria-label={`Remove ${board.name}`}
+                              title={`Archive ${board.name}`}
+                              aria-label={`Archive ${board.name}`}
                             >
-                              Remove
+                              Archive
                             </button>
                           )}
                         </div>

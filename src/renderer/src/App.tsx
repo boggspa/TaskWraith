@@ -12422,11 +12422,14 @@ function App(): React.JSX.Element {
   const handleDeleteWorkspaceBoard = async (boardId: string) => {
     if (!workspaceBoardApiReady) return
     const board = workspaceBoards.find((item) => item.id === boardId)
-    const confirmed = window.confirm(board ? `Remove board "${board.name}"?` : 'Remove this board?')
+    const confirmed = window.confirm(
+      board ? `Archive board "${board.name}"? Cards will stay recoverable.` : 'Archive this board?'
+    )
     if (!confirmed) return
-    await window.api.deleteWorkspaceBoard(boardId)
-    setWorkspaceBoards((prev) => prev.filter((item) => item.id !== boardId))
-    setWorkspaceBoardCards((prev) => prev.filter((item) => item.boardId !== boardId))
+    const updated = await window.api.updateWorkspaceBoard(boardId, { archived: true })
+    if (updated) {
+      setWorkspaceBoards((prev) => prev.map((item) => (item.id === boardId ? updated : item)))
+    }
     if (activeWorkspaceBoardId === boardId) setActiveWorkspaceBoardId(null)
   }
 
