@@ -71,6 +71,9 @@ describe('toolNameToFamily', () => {
   it('maps git_* tools to the git family', () => {
     expect(toolNameToFamily('git_status')).toBe('git')
     expect(toolNameToFamily('git_diff')).toBe('git')
+    expect(toolNameToFamily('git_log')).toBe('git')
+    expect(toolNameToFamily('git_show')).toBe('git')
+    expect(toolNameToFamily('git_blame')).toBe('git')
     expect(toolNameToFamily('git_stage')).toBe('git')
     expect(toolNameToFamily('git_commit')).toBe('git')
   })
@@ -81,6 +84,8 @@ describe('toolNameToFamily', () => {
   })
 
   it('maps workspace search/symbols to the search family', () => {
+    expect(toolNameToFamily('find_files')).toBe('search')
+    expect(toolNameToFamily('findfiles')).toBe('search')
     expect(toolNameToFamily('workspace_search')).toBe('search')
     expect(toolNameToFamily('workspace_symbols')).toBe('search')
   })
