@@ -684,7 +684,7 @@ export function composeRunPrompt(input: ComposeRunPromptInput): ComposeRunPrompt
         : provider === 'ollama' && ollamaPromptIntent !== 'workspace'
           ? 'Context turns: 0 (Ollama: conversational turn; skipping compact workspace context)'
           : ollamaNeedsContextInjection
-            ? `Context turns: ${contextTurnsApplied} (Ollama: compact local context — search/read narrowly; ${contextBudget.maxBlockChars} char cap)`
+            ? `Context turns: ${contextTurnsApplied} (Ollama: model-aware local context; ${contextBudget.maxBlockChars} char cap)`
             : provider !== 'gemini'
               ? `Context turns: 0 (${providerLabel} provider/session history is authoritative when available)`
               : resumeSessionId

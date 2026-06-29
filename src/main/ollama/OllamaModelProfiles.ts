@@ -54,7 +54,7 @@ export function ollamaModelFamilyPromptLines(
       ]
     case 'minicpm_v45_8b':
       return [
-        'Model profile (MiniCPM-V 4.5 8B): stay scoped; search/read narrowly and use native tools when available.',
+        'Model profile (MiniCPM-V 4.5 8B): stay scoped; search/read with a concrete intent and use native tools when available.',
         'For code edits, prefer a concise plan or a single localized patch rather than broad autonomous changes.'
       ]
     case 'gemma4_12b':
@@ -237,7 +237,7 @@ export function ollamaLocalToolSystemPrompt(
     ...familyLines,
     ...(normalizedTier === 'provider_parity' && tools.includes('delegate_to_subthread')
       ? [
-          'Provider parity includes delegation tools in this workspace. Use delegate_to_subthread only for work that clearly exceeds the local model or needs another provider; otherwise keep the run local and scoped.'
+          'Provider parity includes delegation tools in this workspace. Use delegate_to_subthread only when the task explicitly needs a separate participant, hosted execution, or an independent verification lane; otherwise keep the run local and scoped.'
         ]
       : []),
     'Available tools:'
@@ -312,6 +312,6 @@ export function ollamaTierAwareWorkflowHint(
     'TaskWraith local-scout workflow:',
     scout,
     'When the plan is ready, ask the user whether to continue locally with a higher tier/profile, assign another participant, or delegate the prepared plan.',
-    'Do not attempt repo-wide refactors or full test-suite repair loops alone on a local model.'
+    'Do not attempt repo-wide refactors or full test-suite repair loops without confirming scope, tier, context, and verification path.'
   ].join(' ')
 }
