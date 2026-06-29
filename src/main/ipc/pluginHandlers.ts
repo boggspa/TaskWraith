@@ -9,6 +9,7 @@ export interface PluginHandlerDeps {
     | 'materializeMcpServerPreset'
     | 'installPlugin'
     | 'setPluginEnabled'
+    | 'updatePlugin'
     | 'uninstallPlugin'
   >
   requireNonEmptyString: (value: unknown, label: string) => string
@@ -31,6 +32,9 @@ export function registerPluginHandlers(deps: PluginHandlerDeps): void {
       deps.requireNonEmptyString(pluginId, 'Plugin id'),
       Boolean(enabled)
     )
+  )
+  ipcMain.handle('plugins:update', (_event, pluginId: string) =>
+    deps.pluginHost.updatePlugin(deps.requireNonEmptyString(pluginId, 'Plugin id'))
   )
   ipcMain.handle('plugins:uninstall', (_event, pluginId: string) =>
     deps.pluginHost.uninstallPlugin(deps.requireNonEmptyString(pluginId, 'Plugin id'))

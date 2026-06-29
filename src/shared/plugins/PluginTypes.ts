@@ -75,6 +75,26 @@ export interface TaskWraithPluginCapability {
   remoteCapabilities?: TaskWraithPluginRemoteCapability[]
 }
 
+export interface TaskWraithPluginCapabilitySnapshot {
+  id: string
+  kind: TaskWraithPluginCapabilityKind
+  label: string
+  risk?: TaskWraithPluginPermissionRisk
+  agenticServices?: TaskWraithPluginAgenticServiceId[]
+  fileScopes?: TaskWraithPluginFileScope[]
+  networkScopes?: TaskWraithPluginNetworkScope[]
+  remoteCapabilities?: TaskWraithPluginRemoteCapability[]
+}
+
+export interface TaskWraithPluginCapabilityDiff {
+  added: TaskWraithPluginCapabilitySnapshot[]
+  removed: TaskWraithPluginCapabilitySnapshot[]
+  changed: Array<{
+    before: TaskWraithPluginCapabilitySnapshot
+    after: TaskWraithPluginCapabilitySnapshot
+  }>
+}
+
 export interface TaskWraithPluginPermissions {
   agenticServices?: Partial<
     Record<TaskWraithPluginAgenticServiceId, TaskWraithPluginAgenticServicePolicy>
@@ -215,6 +235,7 @@ export interface TaskWraithPluginInstallState {
   updatedAt?: string
   version?: string
   manifestHash?: string
+  capabilities?: TaskWraithPluginCapabilitySnapshot[]
 }
 
 export interface TaskWraithPluginStateFile {
@@ -242,6 +263,14 @@ export interface TaskWraithPluginCatalogEntry {
   enabled: boolean
   installState?: TaskWraithPluginInstallState
   preflight: TaskWraithPluginPreflightResult
+  update?: {
+    status: 'current' | 'available'
+    installedVersion?: string
+    availableVersion: string
+    installedManifestHash?: string
+    availableManifestHash: string
+    capabilityDiff?: TaskWraithPluginCapabilityDiff
+  }
 }
 
 export interface TaskWraithPluginCatalogSnapshot {

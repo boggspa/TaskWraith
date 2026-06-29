@@ -2974,6 +2974,14 @@ export function SettingsPanel({
     runPluginMutation(pluginId, () => window.api.uninstallPlugin(pluginId))
   }
 
+  const updatePlugin = (pluginId: string): void => {
+    if (typeof window === 'undefined' || typeof window.api?.updatePlugin !== 'function') {
+      setPluginCatalogError('Plugin update unavailable.')
+      return
+    }
+    runPluginMutation(pluginId, () => window.api.updatePlugin(pluginId))
+  }
+
   const addPluginMcpPreset = (pluginId: string, presetId: string): void => {
     if (
       typeof window === 'undefined' ||
@@ -3516,6 +3524,9 @@ export function SettingsPanel({
   const repairablePluginCount =
     pluginCatalog?.counts.repairable ??
     pluginEntries.filter((entry) => entry.preflight.status === 'repairable').length
+  const pluginUpdateCount = pluginEntries.filter(
+    (entry) => entry.update?.status === 'available'
+  ).length
   const mcpToolSearch = mcpToolQuery.trim().toLowerCase()
   const filteredMcpToolCatalog = MCP_TOOL_CATALOG.filter((tool) => {
     if (!mcpToolSearch) return true
@@ -7476,6 +7487,11 @@ export function SettingsPanel({
                   <small>needs setup input</small>
                 </article>
                 <article className="settings-mcp-summary-card">
+                  <span>Updates</span>
+                  <strong>{pluginUpdateCount}</strong>
+                  <small>need review</small>
+                </article>
+                <article className="settings-mcp-summary-card">
                   <span>Blocked</span>
                   <strong>{blockedPluginCount}</strong>
                   <small>cannot enable</small>
@@ -7543,6 +7559,8 @@ export function SettingsPanel({
                     const mcpPresets = entry.manifest.mcpServers || []
                     const category = entry.manifest.marketplace?.category || 'Uncategorized'
                     const tags = entry.manifest.marketplace?.tags || []
+                    const updateAvailable = entry.update?.status === 'available'
+                    const capabilityDiff = entry.update?.capabilityDiff
                     const provenance = {
                       pluginId,
                       publisher: entry.manifest.publisher,
@@ -7570,6 +7588,7 @@ export function SettingsPanel({
                           <div className="settings-mcp-server-meta">
                             <span>{entry.installed ? 'installed' : 'available'}</span>
                             <span>{entry.enabled ? 'enabled' : 'disabled'}</span>
+                            {updateAvailable && <span>update available</span>}
                             <span>{entry.source}</span>
                             <span>{entry.manifest.publisher}</span>
                             <span>{entry.manifest.version}</span>
@@ -7584,6 +7603,12 @@ export function SettingsPanel({
                             className={`settings-user-mcp-readiness settings-user-mcp-readiness-${entry.preflight.status}`}
                           >
                             <strong>{entry.preflight.status}</strong>
+                            {updateAvailable && (
+                              <span>
+                                Update {entry.update?.installedVersion || 'installed'} to{' '}
+                                {entry.update?.availableVersion}
+                              </span>
+                            )}
                             {entry.preflight.issues.length > 0 && (
                               <span>
                                 {entry.preflight.issues
@@ -7619,6 +7644,7 @@ export function SettingsPanel({
                                       busy ||
                                       materialized ||
                                       !entry.installed ||
+                                      updateAvailable ||
                                       entry.preflight.status === 'blocked'
                                     }
                                     onClick={() => addPluginMcpPreset(pluginId, preset.id)}
@@ -7634,6 +7660,24 @@ export function SettingsPanel({
                               })}
                             </div>
                           )}
+                          {updateAvailable && capabilityDiff && (
+                            <details className="settings-user-mcp-config">
+                              <summary>Capability changes</summary>
+                              <pre>
+                                <code>
+                                  {JSON.stringify(
+                                    {
+                                      added: capabilityDiff.added,
+                                      removed: capabilityDiff.removed,
+                                      changed: capabilityDiff.changed
+                                    },
+                                    null,
+                                    2
+                                  )}
+                                </code>
+                              </pre>
+                            </details>
+                          )}
                           <details className="settings-user-mcp-config">
                             <summary>Provenance JSON</summary>
                             <pre>
@@ -7648,7 +7692,9 @@ export function SettingsPanel({
                               <input
                                 type="checkbox"
                                 checked={entry.enabled}
-                                disabled={busy || entry.preflight.status === 'blocked'}
+                                disabled={
+                                  busy || entry.preflight.status === 'blocked' || updateAvailable
+                                }
                                 onChange={(event) =>
                                   setPluginEnabled(pluginId, event.target.checked)
                                 }
@@ -7665,14 +7711,26 @@ export function SettingsPanel({
                               {busy ? 'Installing' : 'Install'}
                             </button>
                           ) : (
-                            <button
-                              type="button"
-                              className="btn btn-sm btn-ghost"
-                              disabled={busy}
-                              onClick={() => uninstallPlugin(pluginId)}
-                            >
-                              {busy ? 'Updating' : 'Uninstall'}
-                            </button>
+                            <>
+                              {updateAvailable && (
+                                <button
+                                  type="button"
+                                  className="btn btn-sm"
+                                  disabled={busy}
+                                  onClick={() => updatePlugin(pluginId)}
+                                >
+                                  {busy ? 'Updating' : 'Update'}
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                className="btn btn-sm btn-ghost"
+                                disabled={busy}
+                                onClick={() => uninstallPlugin(pluginId)}
+                              >
+                                {busy ? 'Updating' : 'Uninstall'}
+                              </button>
+                            </>
                           )}
                         </div>
                       </article>

@@ -183,6 +183,52 @@ describe('PluginHost', () => {
     )
   })
 
+  it('detects plugin updates and blocks updated contributions until review', () => {
+    const host = makeHost()
+    host.installPlugin('demo-bundle')
+    host.setPluginEnabled('demo-bundle', true)
+
+    const updatedManifest: TaskWraithPluginManifest = {
+      ...BASE_MANIFEST,
+      version: '1.1.0',
+      capabilities: [
+        {
+          kind: 'mcpServers',
+          id: 'docs-server',
+          label: 'Docs server updated',
+          agenticServices: ['mcpTools'],
+          networkScopes: ['configured-origin']
+        },
+        {
+          kind: 'workflowTemplates',
+          id: 'docs-workflow',
+          label: 'Docs workflow'
+        }
+      ]
+    }
+    const updatedHost = makeHost([updatedManifest])
+    const entry = plugin(updatedHost.getCatalogSnapshot())
+
+    expect(entry.update?.status).toBe('available')
+    expect(entry.update?.installedVersion).toBe('1.0.0')
+    expect(entry.update?.availableVersion).toBe('1.1.0')
+    expect(entry.update?.capabilityDiff?.added).toHaveLength(1)
+    expect(entry.update?.capabilityDiff?.changed).toHaveLength(1)
+    expect(updatedHost.getContributionSnapshot().counts.enabledPlugins).toBe(0)
+    expect(() => updatedHost.setPluginEnabled('demo-bundle', true)).toThrow(
+      'Plugin update must be reviewed before enabling this plugin.'
+    )
+    expect(() => updatedHost.materializeMcpServerPreset('demo-bundle', 'docs-stdio')).toThrow(
+      'Plugin update must be reviewed before MCP presets can be added.'
+    )
+
+    const accepted = updatedHost.updatePlugin('demo-bundle')
+    const acceptedEntry = plugin(accepted)
+    expect(acceptedEntry.update?.status).toBe('current')
+    expect(acceptedEntry.installState?.version).toBe('1.1.0')
+    expect(updatedHost.getContributionSnapshot().counts.enabledPlugins).toBe(1)
+  })
+
   it('does not enable blocked plugins', () => {
     const blockedManifest: TaskWraithPluginManifest = {
       ...BASE_MANIFEST,

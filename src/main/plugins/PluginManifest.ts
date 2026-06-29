@@ -2,6 +2,8 @@ export type {
   TaskWraithPluginCapabilityKind,
   TaskWraithPluginCompatibility,
   TaskWraithPluginCapability,
+  TaskWraithPluginCapabilitySnapshot,
+  TaskWraithPluginCapabilityDiff,
   TaskWraithPluginPermissions,
   TaskWraithPluginSecret,
   TaskWraithPluginMcpServerPreset,

@@ -20,6 +20,8 @@ import {
   type TaskWraithPluginPreflightResult,
   type TaskWraithPluginSource,
   type TaskWraithPluginStateFile,
+  type TaskWraithPluginCapabilityDiff,
+  type TaskWraithPluginCapabilitySnapshot,
   type TaskWraithPluginUserMcpServerConfig
 } from './PluginManifest'
 
@@ -96,6 +98,49 @@ function stableHash(value: unknown): string {
   return createHash('sha256').update(JSON.stringify(value)).digest('hex')
 }
 
+function capabilitySnapshot(manifest: TaskWraithPluginManifest): TaskWraithPluginCapabilitySnapshot[] {
+  return (manifest.capabilities ?? []).map((capability) => ({
+    id: capability.id,
+    kind: capability.kind,
+    label: capability.label,
+    ...(capability.risk ? { risk: capability.risk } : {}),
+    ...(capability.agenticServices ? { agenticServices: [...capability.agenticServices] } : {}),
+    ...(capability.fileScopes ? { fileScopes: [...capability.fileScopes] } : {}),
+    ...(capability.networkScopes ? { networkScopes: [...capability.networkScopes] } : {}),
+    ...(capability.remoteCapabilities
+      ? { remoteCapabilities: [...capability.remoteCapabilities] }
+      : {})
+  }))
+}
+
+function capabilitySnapshotKey(capability: TaskWraithPluginCapabilitySnapshot): string {
+  return `${capability.kind}:${capability.id}`
+}
+
+function diffCapabilitySnapshots(
+  before: readonly TaskWraithPluginCapabilitySnapshot[] | undefined,
+  after: readonly TaskWraithPluginCapabilitySnapshot[]
+): TaskWraithPluginCapabilityDiff | undefined {
+  if (!before) return undefined
+  const beforeByKey = new Map(before.map((capability) => [capabilitySnapshotKey(capability), capability]))
+  const afterByKey = new Map(after.map((capability) => [capabilitySnapshotKey(capability), capability]))
+  const added: TaskWraithPluginCapabilitySnapshot[] = []
+  const removed: TaskWraithPluginCapabilitySnapshot[] = []
+  const changed: TaskWraithPluginCapabilityDiff['changed'] = []
+  for (const [key, capability] of afterByKey) {
+    const previous = beforeByKey.get(key)
+    if (!previous) {
+      added.push(capability)
+    } else if (stableHash(previous) !== stableHash(capability)) {
+      changed.push({ before: previous, after: capability })
+    }
+  }
+  for (const [key, capability] of beforeByKey) {
+    if (!afterByKey.has(key)) removed.push(capability)
+  }
+  return { added, removed, changed }
+}
+
 function pluginObjectId(pluginId: string, kind: string, objectId: string): string {
   return `plugin:${pluginId}:${kind}:${objectId}`
 }
@@ -125,6 +170,19 @@ function toDisabledUserMcpServerConfig(
 function normalizeInstallState(value: unknown): TaskWraithPluginInstallState | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null
   const input = value as Partial<TaskWraithPluginInstallState>
+  const capabilities = Array.isArray(input.capabilities)
+    ? input.capabilities
+        .filter(
+          (capability): capability is TaskWraithPluginCapabilitySnapshot =>
+            Boolean(
+              capability &&
+                typeof capability.id === 'string' &&
+                typeof capability.kind === 'string' &&
+                typeof capability.label === 'string'
+            )
+        )
+        .slice(0, 128)
+    : undefined
   return {
     installed: input.installed === true,
     enabled: input.installed === true && input.enabled === true,
@@ -143,7 +201,8 @@ function normalizeInstallState(value: unknown): TaskWraithPluginInstallState | n
       : {}),
     ...(typeof input.manifestHash === 'string' && input.manifestHash.trim()
       ? { manifestHash: input.manifestHash.trim() }
-      : {})
+      : {}),
+    ...(capabilities ? { capabilities } : {})
   }
 }
 
@@ -306,6 +365,30 @@ export class PluginHost {
     const entries = this.getAvailableManifests().map(({ manifest, source }) => {
       const installState = state.plugins[manifest.id]
       const manifestHash = stableHash(manifest)
+      const currentCapabilities = capabilitySnapshot(manifest)
+      const update =
+        installState?.installed === true
+          ? {
+              status:
+                installState.version !== manifest.version || installState.manifestHash !== manifestHash
+                  ? ('available' as const)
+                  : ('current' as const),
+              ...(installState.version ? { installedVersion: installState.version } : {}),
+              availableVersion: manifest.version,
+              ...(installState.manifestHash
+                ? { installedManifestHash: installState.manifestHash }
+                : {}),
+              availableManifestHash: manifestHash,
+              ...(installState.version !== manifest.version || installState.manifestHash !== manifestHash
+                ? {
+                    capabilityDiff: diffCapabilitySnapshots(
+                      installState.capabilities,
+                      currentCapabilities
+                    )
+                  }
+                : {})
+            }
+          : undefined
       return {
         manifest,
         source,
@@ -314,7 +397,8 @@ export class PluginHost {
         installed: installState?.installed === true,
         enabled: installState?.installed === true && installState.enabled === true,
         ...(installState ? { installState } : {}),
-        preflight: this.preflight.evaluate(manifest)
+        preflight: this.preflight.evaluate(manifest),
+        ...(update ? { update } : {})
       } satisfies TaskWraithPluginCatalogEntry
     })
     return {
@@ -328,7 +412,8 @@ export class PluginHost {
   getContributionSnapshot(): TaskWraithPluginContributionSnapshot {
     const catalog = this.getCatalogSnapshot()
     const activeEntries = catalog.plugins.filter(
-      (entry) => entry.enabled && entry.preflight.status !== 'blocked'
+      (entry) =>
+        entry.enabled && entry.preflight.status !== 'blocked' && entry.update?.status !== 'available'
     )
     const provenanceFor = (
       entry: TaskWraithPluginCatalogEntry
@@ -431,6 +516,9 @@ export class PluginHost {
     )
     if (!entry) throw new Error('Plugin is not available.')
     if (!entry.installed) throw new Error('Plugin must be installed before MCP presets can be added.')
+    if (entry.update?.status === 'available') {
+      throw new Error('Plugin update must be reviewed before MCP presets can be added.')
+    }
     if (entry.preflight.status === 'blocked') {
       throw new Error('Blocked plugins cannot materialize MCP presets.')
     }
@@ -477,7 +565,8 @@ export class PluginHost {
       installedAt: current?.installedAt || now,
       updatedAt: now,
       version: entry.manifest.version,
-      manifestHash: stableHash(entry.manifest)
+      manifestHash: stableHash(entry.manifest),
+      capabilities: capabilitySnapshot(entry.manifest)
     }
     this.writeState(state)
     return this.getCatalogSnapshot()
@@ -490,14 +579,35 @@ export class PluginHost {
     if (!current?.installed) {
       throw new Error('Plugin must be installed before it can be enabled.')
     }
+    const manifestHash = stableHash(entry.manifest)
+    if (enabled && (current.version !== entry.manifest.version || current.manifestHash !== manifestHash)) {
+      throw new Error('Plugin update must be reviewed before enabling this plugin.')
+    }
     const preflight = this.preflight.evaluate(entry.manifest)
     state.plugins[entry.manifest.id] = {
       ...current,
       enabled: Boolean(enabled && preflight.status !== 'blocked'),
       updatedAt: this.now().toISOString(),
+      source: entry.source
+    }
+    this.writeState(state)
+    return this.getCatalogSnapshot()
+  }
+
+  updatePlugin(pluginId: string): TaskWraithPluginCatalogSnapshot {
+    const entry = this.requireAvailableEntry(pluginId)
+    const state = this.readState()
+    const current = state.plugins[entry.manifest.id]
+    if (!current?.installed) throw new Error('Plugin must be installed before it can be updated.')
+    const preflight = this.preflight.evaluate(entry.manifest)
+    state.plugins[entry.manifest.id] = {
+      ...current,
+      enabled: Boolean(current.enabled && preflight.status !== 'blocked'),
+      source: entry.source,
+      updatedAt: this.now().toISOString(),
       version: entry.manifest.version,
       manifestHash: stableHash(entry.manifest),
-      source: entry.source
+      capabilities: capabilitySnapshot(entry.manifest)
     }
     this.writeState(state)
     return this.getCatalogSnapshot()

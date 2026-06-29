@@ -78,6 +78,7 @@ describe('registerPluginHandlers', () => {
     const contributionSnapshot = contributions()
     const installed = snapshot({ counts: { ...catalog.counts, installed: 1 } })
     const enabled = snapshot({ counts: { ...catalog.counts, enabled: 1, installed: 1 } })
+    const updated = snapshot({ counts: { ...catalog.counts, installed: 1 } })
     const uninstalled = snapshot({ counts: { ...catalog.counts, installed: 0 } })
     const deps = {
       pluginHost: {
@@ -106,6 +107,7 @@ describe('registerPluginHandlers', () => {
         })),
         installPlugin: vi.fn(() => installed),
         setPluginEnabled: vi.fn(() => enabled),
+        updatePlugin: vi.fn(() => updated),
         uninstallPlugin: vi.fn(() => uninstalled)
       },
       requireNonEmptyString: vi.fn((value: unknown) => String(value))
@@ -146,6 +148,9 @@ describe('registerPluginHandlers', () => {
 
     expect(handlerFor('plugins:set-enabled')({}, 'demo-bundle', 1)).toBe(enabled)
     expect(deps.pluginHost.setPluginEnabled).toHaveBeenCalledWith('demo-bundle', true)
+
+    expect(handlerFor('plugins:update')({}, 'demo-bundle')).toBe(updated)
+    expect(deps.pluginHost.updatePlugin).toHaveBeenCalledWith('demo-bundle')
 
     expect(handlerFor('plugins:uninstall')({}, 'demo-bundle')).toBe(uninstalled)
     expect(deps.pluginHost.uninstallPlugin).toHaveBeenCalledWith('demo-bundle')
