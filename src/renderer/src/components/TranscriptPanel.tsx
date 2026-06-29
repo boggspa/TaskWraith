@@ -186,6 +186,7 @@ export type TranscriptPanelProps = {
   onProposedPlanCustom: (messageId: string, feedback: string) => void
   onOpenSubThread: (chatId: string) => void
   onOpenSubThreadInSidePanel?: (chatId: string, presentation?: 'split' | 'drawer') => void
+  onOpenFileChangeInWorkbench?: (summary: DiffFileSummary) => void
   /** Phase K1B: when set, RunCard's "Inspect →" affordance enters Run
    * mode for the clicked run. Plumbed from App.tsx down. */
   onInspectRun?: (runId: string) => void
@@ -1005,6 +1006,7 @@ export const TranscriptPanel = memo(
     onProposedPlanCustom,
     onOpenSubThread,
     onOpenSubThreadInSidePanel,
+    onOpenFileChangeInWorkbench,
     onInspectRun,
     onOpenSideChatFromRun,
     compactDensity,
@@ -1083,6 +1085,17 @@ export const TranscriptPanel = memo(
         })
       },
       []
+    )
+    const activateFileChangeSummary = useCallback(
+      (event: React.MouseEvent<HTMLElement>, summary: DiffFileSummary) => {
+        if (!onOpenFileChangeInWorkbench) {
+          openFileChangeDiffPreview(event, summary)
+          return
+        }
+        setFileChangeDiffPreview(null)
+        onOpenFileChangeInWorkbench(summary)
+      },
+      [onOpenFileChangeInWorkbench, openFileChangeDiffPreview]
     )
     useEffect(() => {
       if (!fileChangeDiffPreview) return
@@ -2560,6 +2573,9 @@ export const TranscriptPanel = memo(
                             </div>
                           )
                         }
+                        const fileChangeActionLabel = onOpenFileChangeInWorkbench
+                          ? `Open Workbench for ${item.path}`
+                          : `Preview diff for ${item.path}`
                         return (
                           <button
                             key={`${item.path}-${item.status}`}
@@ -2570,12 +2586,13 @@ export const TranscriptPanel = memo(
                                 ? FILE_CHANGE_DIFF_PREVIEW_TOOLTIP_ID
                                 : undefined
                             }
-                            aria-label={`Preview diff for ${item.path}`}
+                            aria-label={fileChangeActionLabel}
+                            title={fileChangeActionLabel}
                             onMouseEnter={(event) => openFileChangeDiffPreview(event, item)}
                             onMouseLeave={closeFileChangeDiffPreview}
                             onFocus={(event) => openFileChangeDiffPreview(event, item)}
                             onBlur={closeFileChangeDiffPreview}
-                            onClick={(event) => openFileChangeDiffPreview(event, item)}
+                            onClick={(event) => activateFileChangeSummary(event, item)}
                           >
                             {rowContent}
                           </button>
@@ -2645,6 +2662,7 @@ export const TranscriptPanel = memo(
     previous.fileChangeDisplayDels === next.fileChangeDisplayDels &&
     previous.chats === next.chats &&
     previous.runningChatIds === next.runningChatIds &&
+    previous.onOpenFileChangeInWorkbench === next.onOpenFileChangeInWorkbench &&
     previous.pendingQueuedAppRunIds === next.pendingQueuedAppRunIds &&
     previous.queuedRunStatusByAppRunId === next.queuedRunStatusByAppRunId &&
     previous.onCopyMessage === next.onCopyMessage &&

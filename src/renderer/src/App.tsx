@@ -14345,6 +14345,17 @@ function App(): React.JSX.Element {
     [currentWorkspacePopoutPath]
   )
 
+  const openFileChangeInWorkbench = useCallback(
+    () => {
+      if (!currentWorkspacePopoutPath) return
+      void window.api.openWorkspacePopout({
+        kind: 'workbench',
+        workspacePath: currentWorkspacePopoutPath
+      })
+    },
+    [currentWorkspacePopoutPath]
+  )
+
   const openChatPopoutWindow = useCallback(() => {
     if (!currentChat?.appChatId) return
     writeChatPopoutHandoff(currentChat.appChatId, {
@@ -23037,6 +23048,7 @@ function App(): React.JSX.Element {
                 onProposedPlanCustom={handleProposedPlanCustom}
                 onOpenSubThread={handleOpenCockpitThread}
                 onOpenSubThreadInSidePanel={handleOpenLinkedChatInSidePanelById}
+                onOpenFileChangeInWorkbench={openFileChangeInWorkbench}
                 onInspectRun={(runId) => {
                   setInspectingRunId(runId)
                   setShowCockpit(true)

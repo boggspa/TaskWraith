@@ -377,7 +377,7 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
     expect(html).toContain('Side chat')
   })
 
-  it('renders exact file-change diffs as keyboard-preview buttons', () => {
+  it('renders exact file-change diffs as Workbench-linked preview buttons', () => {
     const html = renderToStaticMarkup(
       <TranscriptPanel
         {...makeProps({
@@ -406,16 +406,18 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
           fileChangeSummaryText: 'Created 0 · Edited 2 · Deleted 0',
           fileChangeShouldShowStats: true,
           fileChangeDisplayAdds: 3,
-          fileChangeDisplayDels: 1
+          fileChangeDisplayDels: 1,
+          onOpenFileChangeInWorkbench: () => {}
         })}
       />
     )
 
     expect(html).toContain('<button')
     expect(html).toContain('class="file-change-summary-item has-diff-preview"')
-    expect(html).toContain('aria-label="Preview diff for src/example.ts"')
+    expect(html).toContain('aria-label="Open Workbench for src/example.ts"')
+    expect(html).toContain('title="Open Workbench for src/example.ts"')
     expect(html).toContain('src/stats-only.ts')
-    expect(html).not.toContain('Preview diff for src/stats-only.ts')
+    expect(html).not.toContain('Open Workbench for src/stats-only.ts')
   })
 
   it('renders run-complete summary for plain stop/cancel when not suppressed', () => {
