@@ -2,6 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import type { GitRepositorySnapshot } from '../../../main/services/GitService'
 import type { DiffFileSummary } from '../../../main/store/types'
+import { DiffToolbar } from './DiffToolbar'
 import { DiffViewer } from './DiffViewer'
 
 const makeLargeUnifiedDiff = (lineCount: number): string => {
@@ -212,6 +213,31 @@ describe('DiffViewer large diff safety', () => {
     expect(html).toContain('Preview capped before rendering.')
     expect(html).toContain('42 source lines were omitted.')
     expect(html).not.toContain('Showing first')
+  })
+})
+
+describe('DiffToolbar', () => {
+  it('renders counts, filtering, hide-noise state, and view-mode controls', () => {
+    const html = renderToStaticMarkup(
+      <DiffToolbar
+        changedCount={3}
+        totalCount={5}
+        hideNoise={true}
+        fileFilter="src"
+        viewMode="split"
+        onHideNoiseChange={() => {}}
+        onFileFilterChange={() => {}}
+        onViewModeChange={() => {}}
+      />
+    )
+
+    expect(html).toContain('3 of 5 changed')
+    expect(html).toContain('aria-label="Filter changed files"')
+    expect(html).toContain('value="src"')
+    expect(html).toMatch(/type="checkbox"[^>]*checked/)
+    expect(html).toContain('role="group" aria-label="Diff view mode"')
+    expect(html).toContain('aria-pressed="false"')
+    expect(html).toContain('aria-pressed="true"')
   })
 })
 
