@@ -12,6 +12,7 @@ import type {
   ProviderId
 } from './store/types'
 import { coalesceExternalPathGrants, stripExternalPathGrantOrder } from './store/ExternalPathGrants'
+import { isPreviewRiskModel } from '../shared/previewModelCatalog'
 
 const AGENTIC_SERVICE_IDS: AgenticServiceId[] = [
   'shellCommands',
@@ -103,19 +104,31 @@ export const DEFAULT_PERMISSION_PRESETS: Record<PermissionPresetId, PermissionPr
 export interface ResolveEffectiveRunPermissionsInput {
   provider: ProviderId
   workspacePath?: string
+  model?: string | null
   settings: Pick<AppSettings, 'agenticServices' | 'agenticWorkspaceGrants'>
   presetId?: PermissionPresetId | string | null
   overrides?: PermissionOverrides | null
   explicitExternalPathGrants?: ExternalPathGrant[]
 }
 
+const PREVIEW_RISK_PROMPT_SERVICES: AgenticServiceId[] = [
+  'shellCommands',
+  'fileChanges',
+  'mcpTools',
+  'subThreadDelegation',
+  'canvasInteraction',
+  'crossThreadRead',
+  'mediaEditing'
+]
+
 export function resolveEffectiveRunPermissions(
   input: ResolveEffectiveRunPermissionsInput
 ): EffectiveRunPermissions {
   const presetId = normalizePresetId(input.presetId)
   const preset = DEFAULT_PERMISSION_PRESETS[presetId]
+  const previewRiskModel = isPreviewRiskModel(input.provider, input.model)
   const baseServices = servicesFromSettings(input.settings.agenticServices)
-  const workspaceGrantServiceIds = workspaceGrantServiceIdsFor(
+  let workspaceGrantServiceIds = workspaceGrantServiceIdsFor(
     input.settings.agenticWorkspaceGrants || [],
     input.provider,
     input.workspacePath
@@ -131,18 +144,35 @@ export function resolveEffectiveRunPermissions(
     }
   }
 
+  if (previewRiskModel) {
+    const promptServices = new Set(PREVIEW_RISK_PROMPT_SERVICES)
+    for (const service of promptServices) {
+      if (agenticServices[service] !== 'deny') {
+        agenticServices[service] = 'ask'
+      }
+    }
+    workspaceGrantServiceIds = workspaceGrantServiceIds.filter(
+      (service) => !promptServices.has(service)
+    )
+  }
+
   const networkAccess =
-    input.settings.agenticServices?.networkAccess === 'deny'
+    previewRiskModel
+      ? 'deny'
+      : input.settings.agenticServices?.networkAccess === 'deny'
       ? 'deny'
       : input.overrides?.networkAccess ||
         preset.networkAccess ||
         input.settings.agenticServices?.networkAccess ||
         'allow'
 
-  const approvalMode =
+  let approvalMode =
     input.overrides?.approvalMode ||
     preset.approvalMode ||
     (presetId === 'read_only' ? 'plan' : 'default')
+  if (previewRiskModel && approvalMode !== 'plan') {
+    approvalMode = 'default'
+  }
 
   // 1.0.6-EW66 — strip the renderer-only `order` field: effective
   // run permissions feed execution, not the composer workspace list.

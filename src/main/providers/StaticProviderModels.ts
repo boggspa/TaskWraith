@@ -1,4 +1,13 @@
 import type { ProviderId } from '../store/types'
+import {
+  isPreviewModelPlaceholder,
+  previewModelsForProvider,
+  type PreviewModelCatalogEntry
+} from '../../shared/previewModelCatalog'
+
+export interface StaticProviderModelOptions {
+  includePreviewModels?: boolean
+}
 
 // Codex models the provider has announced for SOFT retirement, keyed by
 // canonical model id. Surfaced to the renderer as `retiresAt` (ISO yyyy-mm-dd)
@@ -152,16 +161,6 @@ const CLAUDE_STATIC_MODELS = [
     additionalSpeedTiers: ['fast']
   },
   {
-    id: 'claude-fable-5-1m',
-    label: 'Claude Fable 5 1M',
-    description: 'Temporarily unavailable from Anthropic',
-    supportedReasoningEfforts: CLAUDE_OPUS_REASONING_EFFORTS,
-    defaultReasoningEffort: 'medium',
-    additionalSpeedTiers: ['fast'],
-    disabled: true,
-    disabledReason: 'Temporarily unavailable from Anthropic'
-  },
-  {
     id: CLAUDE_DEFAULT_MODEL,
     label: 'Claude Sonnet 4.6',
     description: 'Balanced — extended thinking',
@@ -297,19 +296,38 @@ const KIMI_CLI_MODEL_ALIASES = new Map<string, string>([
   ['kimi-k2-turbo', KIMI_DEFAULT_MODEL]
 ])
 
-export function getStaticProviderModels(provider: ProviderId) {
-  if (provider === 'claude') return CLAUDE_STATIC_MODELS
-  if (provider === 'kimi') return KIMI_STATIC_MODELS
-  if (provider === 'ollama') return OLLAMA_STATIC_MODELS
-  if (provider === 'gemini') return GEMINI_STATIC_MODELS
-  if (provider === 'grok') return GROK_STATIC_MODELS
-  if (provider === 'cursor') return CURSOR_STATIC_MODELS
-  return GEMINI_STATIC_MODELS
+export function getStaticProviderModels(
+  provider: ProviderId,
+  options: StaticProviderModelOptions = {}
+) {
+  const models =
+    provider === 'codex'
+      ? CODEX_STATIC_MODELS
+      : provider === 'claude'
+        ? CLAUDE_STATIC_MODELS
+        : provider === 'kimi'
+          ? KIMI_STATIC_MODELS
+          : provider === 'ollama'
+            ? OLLAMA_STATIC_MODELS
+            : provider === 'gemini'
+              ? GEMINI_STATIC_MODELS
+              : provider === 'grok'
+                ? GROK_STATIC_MODELS
+                : provider === 'cursor'
+                  ? CURSOR_STATIC_MODELS
+                  : GEMINI_STATIC_MODELS
+  if (!options.includePreviewModels) return models
+  const previews = previewModelsForProvider(provider)
+  if (previews.length === 0) return models
+  return [...models, ...previews.map(previewModelForPicker)]
 }
 
 export function normalizeCliProviderModel(provider: ProviderId, model?: string | null): string {
   const trimmed = typeof model === 'string' ? model.trim() : ''
   const lowered = trimmed.toLowerCase()
+  if (provider === 'codex') {
+    return normalizeCodexModel(trimmed)
+  }
   if (provider === 'kimi') {
     if (!lowered) return KIMI_DEFAULT_MODEL
     const alias = KIMI_CLI_MODEL_ALIASES.get(lowered)
@@ -347,6 +365,7 @@ export function normalizeCliProviderModel(provider: ProviderId, model?: string |
     ) {
       return CLAUDE_DEFAULT_MODEL
     }
+    if (isPreviewModelPlaceholder(lowered)) return CLAUDE_DEFAULT_MODEL
     if (CLAUDE_TEMPORARILY_UNAVAILABLE_MODEL_IDS.has(lowered)) return CLAUDE_DEFAULT_MODEL
     if (['sonnet', 'opus', 'haiku'].includes(lowered)) return lowered
     if (trimmed.startsWith('claude-')) {
@@ -389,7 +408,8 @@ export function normalizeCodexModel(model?: string | null): string {
   const trimmed = typeof model === 'string' ? model.trim() : ''
   if (
     !trimmed ||
-    ['cli-default', 'auto', 'pro', 'flash', 'flash-lite', 'custom'].includes(trimmed)
+    ['cli-default', 'auto', 'pro', 'flash', 'flash-lite', 'custom'].includes(trimmed) ||
+    isPreviewModelPlaceholder(trimmed)
   ) {
     return CODEX_STATIC_MODELS[0].id
   }
@@ -399,4 +419,19 @@ export function normalizeCodexModel(model?: string | null): string {
 export function codexModelContextConfig(model?: string | null): CodexModelContextConfig | null {
   const config = CODEX_MODEL_CONTEXT_CONFIGS[normalizeCodexModel(model)]
   return config ? { ...config } : null
+}
+
+function previewModelForPicker(entry: PreviewModelCatalogEntry) {
+  return {
+    id: entry.id,
+    label: entry.label,
+    description: entry.description,
+    disabled: entry.disabled,
+    disabledReason: entry.disabledReason,
+    hidden: false,
+    runnable: entry.runnable,
+    accessState: entry.accessState,
+    previewFamily: entry.previewFamily,
+    previewRole: entry.previewRole
+  }
 }

@@ -8,6 +8,11 @@ import type {
 } from './store/types'
 import { toolingControlRows } from './ProviderCapabilities'
 import { isRetiredProvider } from '../shared/retiredProviders'
+import {
+  isPreviewModelPlaceholder,
+  isPreviewRiskModel,
+  previewModelAccessReason
+} from '../shared/previewModelCatalog'
 
 export type ProviderPreflightState = 'ready' | 'repairable' | 'blocked'
 export type ProviderPreflightRepairAction =
@@ -21,6 +26,7 @@ export interface ProviderPreflightInput {
   workspacePath?: string
   approvalMode?: string
   model?: string | null
+  previewModelAccessProven?: boolean
   /** Ollama /api/tags metadata for the requested model (when known). */
   ollamaModelInfo?: OllamaModelInfo | null
   ollamaInstalledModelIds?: string[]
@@ -89,6 +95,31 @@ export class ProviderPreflightService {
         contract,
         chips: [
           warning(`${input.provider}-preflight-blocked`, 'error', `${label} blocked`, reason),
+          ...chips
+        ]
+      }
+    }
+
+    if (
+      input.model &&
+      (isPreviewModelPlaceholder(input.model) ||
+        (isPreviewRiskModel(input.provider, input.model) && !input.previewModelAccessProven))
+    ) {
+      const reason = previewModelAccessReason(input.provider)
+      return {
+        provider: input.provider,
+        state: 'blocked',
+        reason,
+        repairAction: 'none',
+        fallbackAvailable: false,
+        contract,
+        chips: [
+          warning(
+            `${input.provider}-preview-model-access`,
+            'warning',
+            'Preview model unavailable',
+            reason
+          ),
           ...chips
         ]
       }

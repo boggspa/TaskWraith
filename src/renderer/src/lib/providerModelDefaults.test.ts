@@ -13,15 +13,13 @@ import {
 } from './providerModelDefaults'
 
 describe('Claude provider model defaults', () => {
-  it('marks temporarily unavailable Fable 1M disabled in the renderer fallback picker list', () => {
+  it('keeps unavailable Fable rows out of the renderer fallback picker list', () => {
     const ids = CLAUDE_DEFAULT_MODELS.map((model) => model.id)
     expect(ids).not.toContain('default')
     expect(ids).not.toContain('claude-fable-5')
-    expect(ids).toContain('claude-fable-5-1m')
-    expect(CLAUDE_DEFAULT_MODELS.find((model) => model.id === 'claude-fable-5-1m')).toMatchObject({
-      disabled: true,
-      disabledReason: 'Temporarily unavailable from Anthropic'
-    })
+    expect(ids).not.toContain('claude-fable-5-1m')
+    expect(ids).not.toContain('preview:anthropic:claude-fable-5')
+    expect(ids).not.toContain('preview:anthropic:claude-mythos-5')
   })
 
   it('uses Sonnet 4.6 as the concrete Claude fallback model', () => {

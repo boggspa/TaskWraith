@@ -42,6 +42,7 @@ import type {
   ProviderRunReroute,
   ProviderId
 } from '../store/types'
+import { isPreviewRiskModel } from '../../shared/previewModelCatalog'
 
 // Grok + Cursor are first-class providers; no eligibility gate (see ProviderId).
 const PROVIDER_IDS = new Set<ProviderId>(['gemini', 'codex', 'claude', 'kimi', 'grok', 'cursor', 'ollama'])
@@ -204,6 +205,7 @@ export class ComposerService {
     const selfReflectiveRequested = planParsed.selfReflective
 
     const requestedModel = resolveRequestedModel(provider, effectiveInput, chat)
+    const previewRiskModel = isPreviewRiskModel(provider, requestedModel)
     const requestedApprovalMode = planParsed.planMode ? 'plan' : effectiveInput.approvalMode
     const appRunId = optionalString(input.appRunId)
     let approvalMode =
@@ -236,6 +238,12 @@ export class ComposerService {
         : null
     if (unattended) {
       approvalMode = resolveUnattendedApprovalMode(unattendedElevation?.ack, approvalMode)
+      if (previewRiskModel) {
+        approvalMode = 'plan'
+      }
+    }
+    if (previewRiskModel && approvalMode !== 'plan') {
+      approvalMode = 'default'
     }
     const imagePaths = normalizeImagePaths(
       effectiveInput.imageAttachments || effectiveInput.attachments || []
@@ -342,6 +350,7 @@ export class ComposerService {
             provider,
             workspacePath:
               scope === 'global' ? undefined : effectiveInput.workspace || chat.workspacePath,
+            model: requestedModel,
             settings,
             presetId: 'read_only'
           })
@@ -350,6 +359,7 @@ export class ComposerService {
               provider,
               workspacePath:
                 scope === 'global' ? undefined : effectiveInput.workspace || chat.workspacePath,
+              model: requestedModel,
               settings,
               presetId: elevatedPresetId,
               // Unattended elevation NEVER gets network egress (exfiltration risk on
@@ -357,6 +367,15 @@ export class ComposerService {
               // (→ settings default 'allow'), so force-deny it here.
               overrides: { networkAccess: 'deny' }
             })
+          : previewRiskModel
+            ? resolveEffectiveRunPermissions({
+                provider,
+                workspacePath:
+                  scope === 'global' ? undefined : effectiveInput.workspace || chat.workspacePath,
+                model: requestedModel,
+                settings,
+                presetId: 'default'
+              })
           : undefined
     const runtimeProfileId = optionalString(effectiveInput.runtimeProfileId)
     const payload: ComposerRunPayload = {

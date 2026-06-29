@@ -849,6 +849,26 @@ describe('composeRun effectivePermissions (single-run read-only enforcement)', (
     expect(compose({}, { approvalMode: 'default' }).effectivePermissions).toBeUndefined()
     expect(compose({}, { approvalMode: 'auto_edit' }).effectivePermissions).toBeUndefined()
   })
+
+  it('forces preview-risk interactive runs down to prompt-first permissions', () => {
+    const payload = compose(
+      { provider: 'codex', providerMetadata: { approvalMode: 'auto_edit' } },
+      {
+        provider: 'codex',
+        selectedModelType: 'gpt-5.6-sol',
+        approvalMode: 'auto_edit',
+        appRunId: 'run-preview'
+      }
+    )
+
+    expect(payload.approvalMode).toBe('default')
+    expect(payload.effectivePermissions?.readOnly).toBe(false)
+    expect(payload.effectivePermissions?.approvalMode).toBe('default')
+    expect(payload.effectivePermissions?.agenticServices.shellCommands).toBe('ask')
+    expect(payload.effectivePermissions?.agenticServices.fileChanges).toBe('ask')
+    expect(payload.effectivePermissions?.agenticServices.mcpTools).toBe('ask')
+    expect(payload.effectivePermissions?.networkAccess).toBe('deny')
+  })
 })
 
 describe('composeRun ↔ normalize posture clamp contract', () => {
@@ -1175,6 +1195,18 @@ describe('composeRun unattended ELEVATION (P2 verified ack honoring)', () => {
         }
       )
     ).toBe(true)
+  })
+
+  it('keeps preview-risk scheduled runs read-only even with a verified full-access ack', () => {
+    const payload = composeUnattended({ level: 'full_access', mode: 'auto_edit' }, undefined, {
+      selectedModelType: 'gpt-5.6-sol'
+    })
+
+    expect(payload.approvalMode).toBe('plan')
+    expect(payload.effectivePermissions?.presetId).toBe('read_only')
+    expect(payload.effectivePermissions?.readOnly).toBe(true)
+    expect(payload.effectivePermissions?.agenticServices.shellCommands).toBe('deny')
+    expect(payload.effectivePermissions?.agenticServices.fileChanges).toBe('deny')
   })
 
   it('verified default → default preset', () => {

@@ -133,6 +133,56 @@ describe('ProviderPreflightService', () => {
     expect(result.reason).toContain('Claude login required')
   })
 
+  it('blocks non-runnable preview placeholder models before provider launch', () => {
+    const result = service.evaluate(
+      {
+        provider: 'codex',
+        workspacePath: '/repo',
+        model: 'preview:openai:gpt-5.6:sol'
+      },
+      contract(),
+      defaultProviderDescriptor('codex')
+    )
+
+    expect(result.state).toBe('blocked')
+    expect(result.reason).toBe('Requires OpenAI preview access')
+    expect(result.fallbackAvailable).toBe(false)
+    expect(result.chips[0]).toMatchObject({
+      id: 'codex-preview-model-access',
+      title: 'Preview model unavailable'
+    })
+  })
+
+  it('blocks preview-risk model ids unless access is proven', () => {
+    const result = service.evaluate(
+      {
+        provider: 'claude',
+        workspacePath: '/repo',
+        model: 'claude-mythos-5'
+      },
+      contract({ provider: 'claude', label: 'Claude' }),
+      defaultProviderDescriptor('claude')
+    )
+
+    expect(result.state).toBe('blocked')
+    expect(result.reason).toBe('Requires Claude preview access')
+  })
+
+  it('allows preview-risk model ids when access has been proven by the caller', () => {
+    const result = service.evaluate(
+      {
+        provider: 'codex',
+        workspacePath: '/repo',
+        model: 'gpt-5.6-sol',
+        previewModelAccessProven: true
+      },
+      contract(),
+      defaultProviderDescriptor('codex')
+    )
+
+    expect(result.state).toBe('ready')
+  })
+
   it('adds honest Ollama model guidance when a model is selected', () => {
     const result = service.evaluate(
       {

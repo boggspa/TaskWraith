@@ -1,3 +1,5 @@
+import { isPreviewModelPlaceholder } from '../../../shared/previewModelCatalog'
+
 interface CodexModelOption {
   id: string
   label?: string
@@ -110,16 +112,6 @@ const CLAUDE_DEFAULT_MODELS = [
     supportedReasoningEfforts: CLAUDE_OPUS_REASONING_EFFORTS,
     defaultReasoningEffort: 'medium',
     additionalSpeedTiers: ['fast']
-  },
-  {
-    id: 'claude-fable-5-1m',
-    label: 'Claude Fable 5 1M',
-    description: 'Temporarily unavailable from Anthropic',
-    supportedReasoningEfforts: CLAUDE_OPUS_REASONING_EFFORTS,
-    defaultReasoningEffort: 'medium',
-    additionalSpeedTiers: ['fast'],
-    disabled: true,
-    disabledReason: 'Temporarily unavailable from Anthropic'
   },
   {
     id: CLAUDE_DEFAULT_MODEL,
@@ -258,6 +250,7 @@ const isCodexModelId = (modelId: string): boolean =>
   modelId.startsWith('gpt-') || modelId.includes('codex')
 const isClaudeModelId = (modelId: string): boolean =>
   !CLAUDE_TEMPORARILY_HIDDEN_MODEL_IDS.has(normalizeProviderModelKey(modelId)) &&
+  !isPreviewModelPlaceholder(modelId) &&
   (CLAUDE_MODEL_IDS.has(modelId) || modelId.includes('claude'))
 const isKimiModelId = (modelId: string): boolean => KIMI_MODEL_IDS.has(modelId)
 const isOllamaModelId = (modelId: string): boolean =>

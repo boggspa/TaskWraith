@@ -48,6 +48,15 @@ describe('normalizeCliProviderModel (claude)', () => {
     expect(normalizeCliProviderModel('claude', 'claude-fable-5-1m')).toBe('claude-sonnet-4-6')
   })
 
+  it('maps non-runnable Claude preview placeholders back to the concrete default', () => {
+    expect(normalizeCliProviderModel('claude', 'preview:anthropic:claude-fable-5')).toBe(
+      'claude-sonnet-4-6'
+    )
+    expect(normalizeCliProviderModel('claude', 'preview:anthropic:claude-mythos-5')).toBe(
+      'claude-sonnet-4-6'
+    )
+  })
+
   it('maps empty / sentinel ids to Sonnet 4.6', () => {
     expect(normalizeCliProviderModel('claude', '')).toBe('claude-sonnet-4-6')
     expect(normalizeCliProviderModel('claude', 'default')).toBe('claude-sonnet-4-6')
@@ -58,6 +67,7 @@ describe('normalizeCliProviderModel (claude)', () => {
 
 interface StaticModelShape {
   id: string
+  isDefault?: boolean
   disabled?: boolean
   disabledReason?: string
   additionalSpeedTiers?: string[]
@@ -131,6 +141,43 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
       'custom'
     ])
   })
+
+  it('keeps GPT-5.5 as the Codex default and hides GPT-5.6 previews by default', () => {
+    const models = getStaticProviderModels('codex') as StaticModelShape[]
+    expect(models.find((model) => model.isDefault)?.id).toBe('gpt-5.5')
+    expect(models.map((model) => model.id)).not.toEqual(
+      expect.arrayContaining([
+        'preview:openai:gpt-5.6:sol',
+        'preview:openai:gpt-5.6:terra',
+        'preview:openai:gpt-5.6:luna'
+      ])
+    )
+  })
+
+  it('can expose disabled OpenAI preview placeholders behind the preview catalog flag', () => {
+    const models = getStaticProviderModels('codex', {
+      includePreviewModels: true
+    }) as StaticModelShape[]
+    expect(models.find((model) => model.isDefault)?.id).toBe('gpt-5.5')
+    expect(models.find((model) => model.id === 'preview:openai:gpt-5.6:sol')).toMatchObject({
+      disabled: true,
+      disabledReason: 'Requires OpenAI preview access'
+    })
+    expect(models.find((model) => model.id === 'preview:openai:gpt-5.6:terra')).toMatchObject({
+      disabled: true,
+      disabledReason: 'Requires OpenAI preview access'
+    })
+    expect(models.find((model) => model.id === 'preview:openai:gpt-5.6:luna')).toMatchObject({
+      disabled: true,
+      disabledReason: 'Requires OpenAI preview access'
+    })
+  })
+
+  it('maps non-runnable OpenAI preview placeholder IDs back to GPT-5.5', () => {
+    expect(normalizeCliProviderModel('codex', 'preview:openai:gpt-5.6:sol')).toBe(
+      'gpt-5.5'
+    )
+  })
 })
 
 describe('normalizeCliProviderModel (kimi)', () => {
@@ -146,16 +193,29 @@ describe('getStaticProviderModels (claude)', () => {
   const models = getStaticProviderModels('claude') as StaticModelShape[]
   const byId = new Map(models.map((m) => [m.id, m]))
 
-  it('marks temporarily unavailable Fable 1M disabled in the picker catalog', () => {
+  it('hides Claude preview placeholders unless explicitly requested', () => {
     const ids = models.map((m) => m.id)
     expect(ids).not.toContain('default')
     expect(ids).not.toContain('claude-fable-5')
-    expect(ids).toContain('claude-fable-5-1m')
+    expect(ids).not.toContain('claude-fable-5-1m')
+    expect(ids).not.toContain('preview:anthropic:claude-fable-5')
+    expect(ids).not.toContain('preview:anthropic:claude-mythos-5')
     expect(ids).not.toContain('claude-opus-4-8')
     expect(ids).toContain('claude-opus-4-8-1m')
-    expect(byId.get('claude-fable-5-1m')).toMatchObject({
+  })
+
+  it('can expose disabled Claude preview placeholders behind the preview catalog flag', () => {
+    const previewModels = getStaticProviderModels('claude', {
+      includePreviewModels: true
+    }) as StaticModelShape[]
+    const previewById = new Map(previewModels.map((m) => [m.id, m]))
+    expect(previewById.get('preview:anthropic:claude-fable-5')).toMatchObject({
       disabled: true,
-      disabledReason: 'Temporarily unavailable from Anthropic'
+      disabledReason: 'Requires Claude preview access'
+    })
+    expect(previewById.get('preview:anthropic:claude-mythos-5')).toMatchObject({
+      disabled: true,
+      disabledReason: 'Requires Claude preview access'
     })
   })
 

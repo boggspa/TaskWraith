@@ -599,6 +599,11 @@ import {
   normalizeCliProviderModel,
   normalizeCodexModel
 } from './providers/StaticProviderModels'
+import {
+  isPreviewRiskModel,
+  previewModelAccessFlagEnabledForProvider,
+  previewModelCatalogEnabledForProvider
+} from '../shared/previewModelCatalog'
 import { buildCodexStatusSnapshot } from './CodexStatusSnapshot'
 import { resolveEffectiveRunPermissions } from './EffectiveRunPermissions'
 import {
@@ -3957,7 +3962,8 @@ async function ensureProviderRunPreflight(
       provider: payload.provider,
       workspacePath: payload.workspace,
       approvalMode: payload.approvalMode,
-      model: payload.model
+      model: payload.model,
+      previewModelAccessProven: await previewModelAccessProvenForPayload(payload)
     },
     contract,
     adapter
@@ -3968,6 +3974,39 @@ async function ensureProviderRunPreflight(
   sendAgentCompatError(sender, payload.provider, preflight.reason, route)
   sendAgentCompatExit(sender, payload.provider, -1, route)
   return false
+}
+
+async function previewModelAccessProvenForPayload(payload: AgentRunPayload): Promise<boolean> {
+  const model = typeof payload.model === 'string' ? payload.model.trim() : ''
+  if (!isPreviewRiskModel(payload.provider, model)) return false
+  if (previewModelAccessFlagEnabledForProvider(payload.provider, process.env)) return true
+  if (payload.provider !== 'codex') return false
+  try {
+    const client = getCodexClient(payload.runtimeProfile)
+    await client.ensureStarted(app.getVersion())
+    const response: any = await client.request('model/list', {}, 15_000)
+    const models = Array.isArray(response?.data) ? response.data : []
+    return models.some((entry: any) => entry && entry.hidden !== true && entry.id === model)
+  } catch {
+    return false
+  }
+}
+
+function normalizeCodexDefaultModelRows<T extends { id?: string; isDefault?: boolean; disabled?: boolean }>(
+  models: T[]
+): T[] {
+  const hasGpt55 = models.some((model) => model.id === 'gpt-5.5' && model.disabled !== true)
+  const normalized = models
+    .map((model) => ({
+      ...model,
+      isDefault: hasGpt55 ? model.id === 'gpt-5.5' : Boolean(model.isDefault && model.disabled !== true)
+    }))
+    .sort((a, b) => {
+      if (a.id === 'gpt-5.5') return -1
+      if (b.id === 'gpt-5.5') return 1
+      return 0
+    })
+  return normalized as T[]
 }
 
 
@@ -7470,6 +7509,22 @@ function previewForGeminiMcpTool(
         kind: 'command',
         command,
         cwd
+      }
+    }
+  }
+
+  if (toolName === 'get_diagnostics') {
+    const source = String(args.source || args.kind || (args.includeLint ? 'all' : 'typescript'))
+    const target = String(args.path || args.file || args.project || '.')
+    return {
+      title: 'Approve diagnostics run',
+      body: `${intentBody}${source} diagnostics for ${target}\n${cwd}`,
+      service: 'shellCommands' as AgenticServiceId,
+      preview: {
+        kind: 'command',
+        command: `get_diagnostics ${source} ${target}`.trim(),
+        cwd,
+        ...intentPreview
       }
     }
   }
@@ -14574,6 +14629,7 @@ async function executeOllamaLocalTool(
       request.toolName === 'apply_patch' ||
       request.toolName === 'run_shell_command' ||
       request.toolName === 'run_task' ||
+      request.toolName === 'get_diagnostics' ||
       request.toolName === 'test_result_summary' ||
       request.toolName === 'todo_write' ||
       tier === 'provider_parity'
@@ -27701,13 +27757,17 @@ if (isGeminiMcpBridgeProcess) {
         }
       }
       if (provider !== 'codex') {
-        return getStaticProviderModels(provider)
+        return getStaticProviderModels(provider, {
+          includePreviewModels: previewModelCatalogEnabledForProvider(provider, process.env)
+        })
       }
 
       // Strip HARD-retired ids from any list before it reaches the renderer.
       // The live CLI `model/list` can still return retired models until it's
       // updated, so this guards both the live path and the static fallbacks.
-      const codexStaticFallback = CODEX_STATIC_MODELS.filter(
+      const codexStaticFallback = getStaticProviderModels('codex', {
+        includePreviewModels: previewModelCatalogEnabledForProvider('codex', process.env)
+      }).filter(
         (model) => !CODEX_RETIRED_MODEL_IDS.has(model.id)
       )
       try {
@@ -27738,7 +27798,19 @@ if (isGeminiMcpBridgeProcess) {
               ? { retiresAt: CODEX_MODEL_RETIREMENTS[model.id] }
               : {})
           }))
-        return normalized.length > 0 ? normalized : codexStaticFallback
+        const codexPreviewRows = codexStaticFallback.filter((model) =>
+          String(model.id || '').startsWith('preview:')
+        )
+        const liveModels =
+          previewModelCatalogEnabledForProvider('codex', process.env)
+            ? [
+                ...normalized,
+                ...codexPreviewRows.filter(
+                  (preview) => !normalized.some((model) => model.id === preview.id)
+                )
+              ]
+            : normalized
+        return liveModels.length > 0 ? normalizeCodexDefaultModelRows(liveModels) : codexStaticFallback
       } catch {
         return codexStaticFallback
       }

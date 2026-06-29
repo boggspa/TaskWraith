@@ -287,4 +287,62 @@ describe('resolveEffectiveRunPermissions', () => {
     expect(resolved.agenticServices.fileChanges).toBe('workspace')
     expect(resolved.externalPathGrants).toEqual([grant])
   })
+
+  it('clamps preview-risk Codex models to explicit approvals and denies network access', () => {
+    const resolved = resolveEffectiveRunPermissions({
+      provider: 'codex',
+      workspacePath: '/repo',
+      model: 'gpt-5.6-sol',
+      settings: settings({
+        agenticServices: {
+          shellCommands: 'ask',
+          fileChanges: 'ask',
+          mcpTools: 'ask',
+          subThreadDelegation: 'ask',
+          canvasInteraction: 'ask',
+          canvasEval: 'ask',
+          mediaEditing: 'ask',
+          mediaRecording: 'deny',
+          networkAccess: 'allow'
+        },
+        agenticWorkspaceGrants: [
+          {
+            id: 'workspace-grant-shell',
+            provider: 'codex',
+            workspacePath: '/repo',
+            service: 'shellCommands',
+            createdAt: '2026-06-29T00:00:00.000Z',
+            updatedAt: '2026-06-29T00:00:00.000Z'
+          }
+        ]
+      }),
+      presetId: 'full_access'
+    })
+
+    expect(resolved.approvalMode).toBe('default')
+    expect(resolved.networkAccess).toBe('deny')
+    expect(resolved.workspaceGrantServiceIds).toEqual([])
+    expect(resolved.agenticServices.shellCommands).toBe('ask')
+    expect(resolved.agenticServices.fileChanges).toBe('ask')
+    expect(resolved.agenticServices.mcpTools).toBe('ask')
+    expect(resolved.agenticServices.subThreadDelegation).toBe('ask')
+    expect(resolved.agenticServices.canvasInteraction).toBe('ask')
+    expect(resolved.agenticServices.mediaEditing).toBe('ask')
+  })
+
+  it('preserves read-only posture for preview-risk models', () => {
+    const resolved = resolveEffectiveRunPermissions({
+      provider: 'claude',
+      workspacePath: '/repo',
+      model: 'claude-mythos-5',
+      settings: settings(),
+      presetId: 'read_only'
+    })
+
+    expect(resolved.approvalMode).toBe('plan')
+    expect(resolved.readOnly).toBe(true)
+    expect(resolved.agenticServices.shellCommands).toBe('deny')
+    expect(resolved.agenticServices.fileChanges).toBe('deny')
+    expect(resolved.networkAccess).toBe('deny')
+  })
 })

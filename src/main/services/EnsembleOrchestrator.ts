@@ -83,6 +83,7 @@ import {
   type DiscordContextSnapshot
 } from '../channels/DiscordContextService'
 import { contextPercent, resolveContextWindow } from '../../shared/contextWindows'
+import { isPreviewRiskModel } from '../../shared/previewModelCatalog'
 
 export type EnsembleRunMode = 'normal' | 'queue' | 'steer'
 export type EnsembleQueuedSteerResult = {
@@ -1062,7 +1063,7 @@ function getEnsembleToolCategory(toolName: string, toolKind = ''): ToolActivity[
   if (FILE_WRITE_TOOL_NAMES.has(name)) return 'write'
   if (name === 'grep_search' || name === 'grep' || name === 'rg' || name === 'web_search')
     return 'search'
-  if (name === 'run_shell_command' || name === 'shell') return 'shell'
+  if (name === 'run_shell_command' || name === 'shell' || name === 'get_diagnostics') return 'shell'
   return 'unknown'
 }
 
@@ -1116,6 +1117,7 @@ function getEnsembleToolDisplayName(
     const path = getStringParameter(parameters, ['file_path', 'path'])
     return path ? `Edited ${path}` : 'Edited file'
   }
+  if (name === 'get_diagnostics') return 'Checked diagnostics'
   if (name === 'run_shell_command' || name === 'shell') return 'Shell command'
   return titleCaseToolName(name) || toolName || 'Used tool'
 }
@@ -6341,12 +6343,14 @@ export class EnsembleOrchestrator {
       // verified elevation ⇒ P1b read-only. The level was HMAC-verified main-side
       // before reaching the runtime, so it's a trusted capability here; the preset
       // still flows through resolveEffectiveRunPermissions (approval gates intact).
-      const elevatedPreset = round?.unattendedElevationLevel
+      const previewRiskModel = isPreviewRiskModel(participant.provider, participant.model)
+      const elevatedPreset = round?.unattendedElevationLevel && !previewRiskModel
         ? unattendedElevationPresetId(round.unattendedElevationLevel)
         : undefined
       return resolveEffectiveRunPermissions({
         provider: participant.provider,
         workspacePath: chat.scope === 'global' ? undefined : chat.workspacePath,
+        model: participant.model,
         settings: this.deps.getSettings(),
         presetId: elevatedPreset || 'read_only',
         // Elevated → force-deny network egress (workspace_write/default don't set
@@ -6384,6 +6388,7 @@ export class EnsembleOrchestrator {
     return resolveEffectiveRunPermissions({
       provider: participant.provider,
       workspacePath: chat.scope === 'global' ? undefined : chat.workspacePath,
+      model: participant.model,
       settings: this.deps.getSettings(),
       presetId,
       overrides: options.ignoreOverrides ? null : participant.permissionOverrides || null,

@@ -6795,6 +6795,34 @@ Next action:
     expect(harness.dispatched[1].effectivePermissions?.readOnly).toBe(false)
   })
 
+  it('keeps preview-risk participants read-only during elevated unattended rounds', async () => {
+    const harness = makeHarness()
+    harness.chat.ensemble!.participants = harness.chat.ensemble!.participants.map((participant) =>
+      participant.provider === 'codex' ? { ...participant, model: 'gpt-5.6-sol' } : participant
+    )
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Run the elevated scheduled occurrence.',
+      event: { sender: {} as Electron.WebContents },
+      unattended: true,
+      unattendedElevationLevel: 'full_access'
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    harness.orchestrator.handleProviderOutput(
+      'claude',
+      { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'result', status: 'success', stats: { total_tokens: 5 } }
+    )
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+
+    expect(harness.dispatched[1].provider).toBe('codex')
+    expect(harness.dispatched[1].model).toBe('gpt-5.6-sol')
+    expect(harness.dispatched[1].effectivePermissions?.presetId).toBe('read_only')
+    expect(harness.dispatched[1].approvalMode).toBe('plan')
+    expect(harness.dispatched[1].effectivePermissions?.readOnly).toBe(true)
+  })
+
   it('P2: verified default → the default preset', async () => {
     const harness = makeHarness()
     harness.orchestrator.startRound({
