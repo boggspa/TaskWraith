@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import CodeMirror from '@uiw/react-codemirror'
 import { keymap, EditorView, type ViewUpdate } from '@codemirror/view'
 import type { Extension } from '@codemirror/state'
 import { HighlightStyle, StreamLanguage, syntaxHighlighting } from '@codemirror/language'
@@ -25,14 +24,13 @@ import { tags } from '@lezer/highlight'
 import type { WorkspaceFileEntry, WorkspaceFileReadResult } from '../../../main/store/types'
 import type { GitFileStatus, GitRepositorySnapshot } from '../../../main/services/GitService'
 import { FileTypeIcon } from './FileTypeIcon'
+import { EditorPane } from './FileEditorPane'
 import { FileEditorGitActions } from './FileEditorGitActions'
 import {
   FileEditorStatusBar,
   type EditorCursorStatus
 } from './FileEditorStatusBar'
-import {
-  EditorTabStrip,
-} from './FileEditorTabStrip'
+import { EditorTabStrip } from './FileEditorTabStrip'
 import {
   fileNameForPath,
   formatBytes,
@@ -126,14 +124,6 @@ export interface FileEditorPanelState {
   isListLoading: boolean
   status: string
   gitMessage: string
-}
-
-interface EditorPaneProps {
-  selectedPath: string
-  content: string
-  isLoading: boolean
-  editorExtensions: Extension[]
-  onContentChange: (value: string) => void
 }
 
 interface QuickOpenPaletteProps {
@@ -1928,43 +1918,6 @@ function FileEditorContextMenu({
   )
 
   return typeof document === 'undefined' ? menu : createPortal(menu, document.body)
-}
-
-function EditorPane({
-  selectedPath,
-  content,
-  isLoading,
-  editorExtensions,
-  onContentChange
-}: EditorPaneProps) {
-  return (
-    <div className="file-editor-code-surface">
-      {selectedPath ? (
-        <CodeMirror
-          key={selectedPath}
-          value={content}
-          height="100%"
-          basicSetup={{
-            lineNumbers: true,
-            foldGutter: true,
-            highlightActiveLine: true,
-            highlightActiveLineGutter: true,
-            bracketMatching: true,
-            closeBrackets: true,
-            autocompletion: false,
-            rectangularSelection: false,
-            crosshairCursor: false
-          }}
-          editable={!isLoading}
-          readOnly={isLoading}
-          extensions={editorExtensions}
-          onChange={onContentChange}
-        />
-      ) : (
-        <div className="file-editor-placeholder">Select a text file</div>
-      )}
-    </div>
-  )
 }
 
 function QuickOpenPalette({

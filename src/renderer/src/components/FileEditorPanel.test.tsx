@@ -1,5 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
+import { EditorPane } from './FileEditorPane'
 import { FileEditorGitActions } from './FileEditorGitActions'
 import { FileEditorStatusBar } from './FileEditorStatusBar'
 import { EditorTabStrip } from './FileEditorTabStrip'
@@ -115,6 +116,23 @@ describe('WorkspaceFileTree', () => {
     expect(html).toContain('aria-current="true"')
     expect(html).toContain('App.tsx')
     expect(html).toContain('2 KB')
+  })
+})
+
+describe('EditorPane', () => {
+  it('renders the empty editor placeholder before a file is selected', () => {
+    const html = renderToStaticMarkup(
+      <EditorPane
+        selectedPath=""
+        content=""
+        isLoading={false}
+        editorExtensions={[]}
+        onContentChange={vi.fn()}
+      />
+    )
+
+    expect(html).toContain('file-editor-code-surface')
+    expect(html).toContain('Select a text file')
   })
 })
 
