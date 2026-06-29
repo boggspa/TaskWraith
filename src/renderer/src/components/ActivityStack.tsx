@@ -2327,7 +2327,8 @@ function ActivityRow({
           status: activityDiffPreviewStatus,
           additions: activityDiffPreviewAdditions,
           deletions: activityDiffPreviewDeletions,
-          diffText: activityDiffPreviewText
+          diffText: activityDiffPreviewText,
+          source: 'tool-call'
         },
         action:
           onOpenFileChangeInWorkbench && workbenchDiffSummary

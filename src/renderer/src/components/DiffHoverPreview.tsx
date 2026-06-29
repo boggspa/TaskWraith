@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { parseUnifiedDiff, type ParsedDiffLine } from '../lib/unifiedDiffParser'
 
+export type DiffHoverPreviewSource = 'run-summary' | 'tool-call'
+
 export interface DiffHoverPreviewSummary {
   actionLabel?: string
   path: string
@@ -9,6 +11,7 @@ export interface DiffHoverPreviewSummary {
   additions?: number
   deletions?: number
   diffText: string
+  source?: DiffHoverPreviewSource
 }
 
 export interface DiffHoverPreviewState {
@@ -33,6 +36,12 @@ const DIFF_HOVER_PREVIEW_MARGIN = 12
 const DIFF_HOVER_PREVIEW_CLOSE_DELAY_MS = 140
 
 type DiffHoverPreviewRect = Pick<DOMRect, 'bottom' | 'left' | 'right' | 'top' | 'width'>
+
+export function diffHoverPreviewSourceLabel(source?: DiffHoverPreviewSource): string {
+  if (source === 'run-summary') return 'Task complete'
+  if (source === 'tool-call') return 'Tool edit'
+  return 'Diff preview'
+}
 
 export interface DiffHoverPreviewLayout {
   left: number
@@ -257,6 +266,10 @@ export function DiffHoverPreviewOverlay({
       ? `+${preview.summary.additions || 0} -${preview.summary.deletions || 0}`
       : ''
   const statusText = preview.summary.status || 'modified'
+  const sourceLabel = diffHoverPreviewSourceLabel(preview.summary.source)
+  const badgeLabel = changeText
+    ? `${sourceLabel} ${statusText} ${changeText}`
+    : `${sourceLabel} ${statusText}`
   const hiddenLineCount =
     parsed.omittedLineCount > 0 || preparedDiff?.capped
       ? Math.max(parsed.omittedLineCount, 1)
@@ -266,6 +279,7 @@ export function DiffHoverPreviewOverlay({
     <div
       id={DIFF_HOVER_PREVIEW_TOOLTIP_ID}
       className="diff-hover-preview"
+      data-source={preview.summary.source || 'generic'}
       data-status={statusText}
       onBlur={onBlur}
       onFocus={onFocus}
@@ -290,10 +304,8 @@ export function DiffHoverPreviewOverlay({
           </span>
           <span title={preview.summary.path}>{preview.summary.path}</span>
         </div>
-        <div
-          className="diff-hover-preview-badges"
-          aria-label={changeText ? `${statusText} ${changeText}` : statusText}
-        >
+        <div className="diff-hover-preview-badges" aria-label={badgeLabel}>
+          <span className="diff-hover-preview-status">{sourceLabel}</span>
           <span className="diff-hover-preview-status">{statusText}</span>
           {changeText && <strong>{changeText}</strong>}
         </div>

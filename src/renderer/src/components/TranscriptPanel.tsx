@@ -966,7 +966,8 @@ export const TranscriptPanel = memo(
             status: summary.status,
             additions: summary.additions,
             deletions: summary.deletions,
-            diffText: summary.diffText
+            diffText: summary.diffText,
+            source: 'run-summary'
           },
           action: onOpenFileChangeInWorkbench
             ? {

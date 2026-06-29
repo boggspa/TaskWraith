@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { getDiffHoverPreviewLayout, prepareDiffHoverPreviewText } from './DiffHoverPreview'
+import {
+  diffHoverPreviewSourceLabel,
+  getDiffHoverPreviewLayout,
+  prepareDiffHoverPreviewText
+} from './DiffHoverPreview'
 
 const rect = (
   input: Pick<DOMRect, 'bottom' | 'left' | 'right' | 'top' | 'width'>
@@ -49,5 +53,13 @@ describe('DiffHoverPreview text bounds', () => {
 
     expect(prepared.capped).toBe(true)
     expect(prepared.text).toHaveLength(40_000)
+  })
+})
+
+describe('DiffHoverPreview source labels', () => {
+  it('labels Task Complete and tool-call hover contexts distinctly', () => {
+    expect(diffHoverPreviewSourceLabel('run-summary')).toBe('Task complete')
+    expect(diffHoverPreviewSourceLabel('tool-call')).toBe('Tool edit')
+    expect(diffHoverPreviewSourceLabel()).toBe('Diff preview')
   })
 })
