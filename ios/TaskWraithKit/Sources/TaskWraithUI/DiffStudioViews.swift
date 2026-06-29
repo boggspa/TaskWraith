@@ -18,10 +18,22 @@ final class MobileDiffStudioState: ObservableObject {
     @Published var selectedPath: String?
     @Published var status = ""
     @Published var isLoading = false
+    @Published var fileFilter = ""
 
     private var reloadGeneration = 0
 
     var files: [WorkspaceDiffFile] { diff?.files ?? [] }
+
+    var filteredFiles: [WorkspaceDiffFile] {
+        Self.filterFiles(files, query: fileFilter)
+    }
+
+    var fileFilterStatus: String? {
+        let query = fileFilter.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return nil }
+        let matchCount = filteredFiles.count
+        return "\(matchCount) of \(files.count) file\(files.count == 1 ? "" : "s") match \"\(query)\"."
+    }
 
     static func statusText(visibleFiles: Int, totalFiles: Int?) -> String {
         let count = max(totalFiles ?? visibleFiles, visibleFiles)
@@ -30,11 +42,22 @@ final class MobileDiffStudioState: ObservableObject {
             : "\(count) changed file\(count == 1 ? "" : "s")"
     }
 
+    static func filterFiles(_ files: [WorkspaceDiffFile], query: String) -> [WorkspaceDiffFile] {
+        let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !normalizedQuery.isEmpty else { return files }
+        return files.filter { file in
+            file.path.lowercased().contains(normalizedQuery)
+                || file.name.lowercased().contains(normalizedQuery)
+                || file.kind.lowercased().contains(normalizedQuery)
+        }
+    }
+
     func clearUnavailableWorkspaceStatus() {
         reloadGeneration += 1
         selectedWorkspaceId = nil
         diff = nil
         selectedPath = nil
+        fileFilter = ""
         isLoading = false
         status = "No workspace has diff review enabled."
     }
@@ -76,6 +99,7 @@ final class MobileDiffStudioState: ObservableObject {
             selectedWorkspaceId = workspaceId
             diff = nil
             selectedPath = nil
+            fileFilter = ""
         }
         Task { await reload(model: model) }
     }
@@ -85,6 +109,7 @@ final class MobileDiffStudioState: ObservableObject {
         selectedWorkspaceId = workspaceId
         diff = nil
         selectedPath = nil
+        fileFilter = ""
         Task { await reload(model: model) }
     }
 
@@ -227,11 +252,20 @@ private struct DiffFileNavigatorPane: View {
             }
 
             Section {
+                TextField("Filter files", text: $state.fileFilter)
+                    .disableAutocorrection(true)
+                    .accessibilityLabel("Filter changed files")
+            }
+
+            Section {
                 if state.files.isEmpty {
                     Text(state.isLoading ? "Computing diff..." : state.status)
                         .foregroundStyle(TWTheme.textMuted)
+                } else if state.filteredFiles.isEmpty {
+                    Text("No changed files match \"\(state.fileFilter.trimmingCharacters(in: .whitespacesAndNewlines))\".")
+                        .foregroundStyle(TWTheme.textMuted)
                 } else {
-                    ForEach(state.files) { file in
+                    ForEach(state.filteredFiles) { file in
                         Button {
                             state.selectedPath = file.path
                         } label: {
@@ -241,8 +275,13 @@ private struct DiffFileNavigatorPane: View {
                     }
                 }
             } footer: {
-                if let footnote = state.truncationFootnote {
-                    Text(footnote)
+                VStack(alignment: .leading, spacing: 4) {
+                    if let filterStatus = state.fileFilterStatus {
+                        Text(filterStatus)
+                    }
+                    if let footnote = state.truncationFootnote {
+                        Text(footnote)
+                    }
                 }
             }
         }

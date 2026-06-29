@@ -18,6 +18,7 @@ struct MobileDiffStudioStateTests {
         let state = MobileDiffStudioState()
         state.selectedWorkspaceId = "ws-1"
         state.selectedPath = "src/App.swift"
+        state.fileFilter = "app"
         state.diff = try decodeWorkspaceDiff()
         state.isLoading = true
 
@@ -26,9 +27,34 @@ struct MobileDiffStudioStateTests {
         #expect(state.selectedWorkspaceId == nil)
         #expect(state.selectedPath == nil)
         #expect(state.diff == nil)
+        #expect(state.fileFilter.isEmpty)
         #expect(state.files.isEmpty)
         #expect(state.isLoading == false)
         #expect(state.status == "No workspace has diff review enabled.")
+    }
+
+    @MainActor
+    @Test func fileFilterMatchesPathNameAndKind() throws {
+        let state = MobileDiffStudioState()
+        state.diff = try decodeFilterableWorkspaceDiff()
+
+        state.fileFilter = "button"
+        #expect(state.filteredFiles.map(\.path) == ["src/ui/Button.swift"])
+        #expect(state.fileFilterStatus == "1 of 3 files match \"button\".")
+
+        state.fileFilter = " deleted "
+        #expect(state.filteredFiles.map(\.path) == ["docs/Old.md"])
+
+        state.fileFilter = "src/"
+        #expect(state.filteredFiles.map(\.path) == ["src/App.swift", "src/ui/Button.swift"])
+
+        state.fileFilter = ""
+        #expect(state.filteredFiles.map(\.path) == [
+            "src/App.swift",
+            "src/ui/Button.swift",
+            "docs/Old.md"
+        ])
+        #expect(state.fileFilterStatus == nil)
     }
 }
 
@@ -55,6 +81,42 @@ private func decodeWorkspaceDiff() throws -> WorkspaceDiffResult {
           ],
           "totalFiles": 4,
           "truncated": true
+        }
+        """
+    return try JSONDecoder().decode(WorkspaceDiffResult.self, from: Data(json.utf8))
+}
+
+private func decodeFilterableWorkspaceDiff() throws -> WorkspaceDiffResult {
+    let json = """
+        {
+          "files": [
+            {
+              "path": "src/App.swift",
+              "kind": "modified",
+              "additions": 2,
+              "deletions": 1,
+              "truncated": false,
+              "hunks": []
+            },
+            {
+              "path": "src/ui/Button.swift",
+              "kind": "created",
+              "additions": 8,
+              "deletions": 0,
+              "truncated": false,
+              "hunks": []
+            },
+            {
+              "path": "docs/Old.md",
+              "kind": "deleted",
+              "additions": 0,
+              "deletions": 4,
+              "truncated": false,
+              "hunks": []
+            }
+          ],
+          "totalFiles": 3,
+          "truncated": false
         }
         """
     return try JSONDecoder().decode(WorkspaceDiffResult.self, from: Data(json.utf8))
