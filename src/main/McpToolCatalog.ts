@@ -504,6 +504,50 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
       }
     },
     {
+      name: 'git_push',
+      description: 'Push the current git branch for the active workspace.',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: true
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          remote: {
+            type: 'string',
+            description: 'Optional remote name. Defaults to upstream or origin.'
+          },
+          setUpstream: { type: 'boolean', description: 'Push with -u even when upstream exists.' }
+        }
+      }
+    },
+    {
+      name: 'git_create_pr',
+      description: 'Create a GitHub pull request for the active workspace branch using gh.',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: true
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          title: { type: 'string' },
+          body: { type: 'string' },
+          draft: { type: 'boolean' },
+          base: { type: 'string', description: 'Optional base branch.' },
+          head: { type: 'string', description: 'Optional head branch.' },
+          fill: {
+            type: 'boolean',
+            description: 'Use gh --fill when title/body are omitted. Defaults to true.'
+          }
+        }
+      }
+    },
+    {
       name: 'run_task',
       description:
         'Run a known project task such as test, typecheck, lint, or build and return structured output.',

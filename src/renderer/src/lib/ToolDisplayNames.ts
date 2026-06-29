@@ -41,6 +41,8 @@ export const TOOL_DISPLAY_NAMES: Record<string, string> = {
   git_diff: 'Git diff',
   git_stage: 'Git stage',
   git_commit: 'Git commit',
+  git_push: 'Git push',
+  git_create_pr: 'Git create PR',
   git_log: 'Git log',
   git_show: 'Git show',
   git_branch: 'Git branch',

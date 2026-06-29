@@ -1064,6 +1064,7 @@ function getEnsembleToolCategory(toolName: string, toolKind = ''): ToolActivity[
   if (name === 'grep_search' || name === 'grep' || name === 'rg' || name === 'web_search')
     return 'search'
   if (name === 'run_shell_command' || name === 'shell' || name === 'get_diagnostics') return 'shell'
+  if (name === 'git_push' || name === 'git_create_pr') return 'shell'
   return 'unknown'
 }
 
@@ -1118,6 +1119,8 @@ function getEnsembleToolDisplayName(
     return path ? `Edited ${path}` : 'Edited file'
   }
   if (name === 'get_diagnostics') return 'Checked diagnostics'
+  if (name === 'git_push') return 'Git push'
+  if (name === 'git_create_pr') return 'Git create PR'
   if (name === 'run_shell_command' || name === 'shell') return 'Shell command'
   return titleCaseToolName(name) || toolName || 'Used tool'
 }
@@ -3103,11 +3106,16 @@ export class EnsembleOrchestrator {
         reason: `Lane ${run.laneId} is not a writer lane and cannot mutate workspace state.`
       }
     }
-    if (input.toolName === 'git_stage' || input.toolName === 'git_commit') {
+    if (
+      input.toolName === 'git_stage' ||
+      input.toolName === 'git_commit' ||
+      input.toolName === 'git_push' ||
+      input.toolName === 'git_create_pr'
+    ) {
       return {
         ok: false,
         reason:
-          'git_stage and git_commit are disabled inside parallel writer lanes; finish the lane and commit from a serial owner.'
+          'git stage/commit/push/PR tools are disabled inside parallel writer lanes; finish the lane and publish from a serial owner.'
       }
     }
     const scopes = run.approvedWriteScopes || lane?.approvedWriteScopes || []

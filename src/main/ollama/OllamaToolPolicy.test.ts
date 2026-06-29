@@ -147,6 +147,8 @@ describe('Ollama tool policy', () => {
     expect(ollamaToolRequiresModalApproval('run_shell_command', 'approved_shell')).toBe(true)
     expect(ollamaToolRequiresModalApproval('run_task', 'approved_shell')).toBe(true)
     expect(ollamaToolRequiresModalApproval('get_diagnostics', 'approved_shell')).toBe(true)
+    expect(ollamaToolRequiresModalApproval('git_push', 'approved_shell')).toBe(true)
+    expect(ollamaToolRequiresModalApproval('git_create_pr', 'approved_shell')).toBe(true)
     expect(ollamaToolRequiresModalApproval('find_files', 'approved_shell')).toBe(false)
     expect(ollamaToolRequiresModalApproval('workspace_search', 'approved_shell')).toBe(false)
     expect(ollamaToolRequiresModalApproval('git_log', 'approved_shell')).toBe(false)

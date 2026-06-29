@@ -1989,6 +1989,10 @@ function inferMcpPolicyKey(tool: TaskWraithMcpToolName): McpToolPolicyKey {
     tool === 'move_path' ||
     tool === 'rename_path' ||
     tool === 'apply_patch' ||
+    tool === 'git_stage' ||
+    tool === 'git_commit' ||
+    tool === 'git_push' ||
+    tool === 'git_create_pr' ||
     tool.includes('import') ||
     tool.includes('dispatch')
   ) {

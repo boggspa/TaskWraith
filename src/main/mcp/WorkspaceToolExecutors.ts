@@ -82,6 +82,8 @@ export const WORKSPACE_MCP_TOOL_NAMES = [
   'git_blame',
   'git_stage',
   'git_commit',
+  'git_push',
+  'git_create_pr',
   'run_task',
   'get_diagnostics',
   'list_subthreads',
@@ -156,6 +158,8 @@ export interface WorkspaceToolExecutors {
     cwd: string
   ) => Promise<unknown>
   executeGitCommit: (args: Record<string, any>, cwd: string) => Promise<unknown>
+  executeGitPush: (args: Record<string, any>, cwd: string) => Promise<unknown>
+  executeGitCreatePr: (args: Record<string, any>, cwd: string) => Promise<unknown>
   executeRunTask: (args: Record<string, any>, cwd: string) => Promise<unknown>
   executeGetDiagnostics: (
     args: Record<string, any>,
@@ -269,6 +273,8 @@ export function createWorkspaceToolExecutors(
     executeGitBlame: (args, context, cwd) => executeGitBlame(deps, args, context, cwd),
     executeGitStage: (args, context, cwd) => executeGitStage(deps, args, context, cwd),
     executeGitCommit: (args, cwd) => executeGitCommit(deps, args, cwd),
+    executeGitPush: (args, cwd) => executeGitPush(deps, args, cwd),
+    executeGitCreatePr: (args, cwd) => executeGitCreatePr(deps, args, cwd),
     executeRunTask: (args, cwd) => executeRunTask(deps, args, cwd),
     executeGetDiagnostics: (args, context, cwd) =>
       executeGetDiagnostics(deps, args, context, cwd),
@@ -348,6 +354,20 @@ export async function executeWorkspaceMcpTool(
   if (toolName === 'git_commit') {
     const result = await executeGitCommit(deps, args, cwd)
     return { result, isError: result.exitCode !== 0 || result.timedOut === true }
+  }
+  if (toolName === 'git_push') {
+    const result = await executeGitPush(deps, args, cwd)
+    return {
+      result,
+      isError: result.ok === false || result.exitCode !== 0 || result.timedOut === true
+    }
+  }
+  if (toolName === 'git_create_pr') {
+    const result = await executeGitCreatePr(deps, args, cwd)
+    return {
+      result,
+      isError: result.ok === false || result.exitCode !== 0 || result.timedOut === true
+    }
   }
   if (toolName === 'run_task') {
     const result = await executeRunTask(deps, args, cwd)
@@ -870,6 +890,88 @@ export async function executeGitCommit(
     stdout: result.stdout,
     stderr: result.stderr,
     timedOut: result.timedOut
+  }
+}
+
+export async function executeGitPush(
+  deps: WorkspaceToolExecutorDependencies,
+  args: Record<string, any>,
+  cwd: string
+) {
+  const branchResult = await runCommandArgs(deps, ['git', 'branch', '--show-current'], cwd, 30_000)
+  const branch = branchResult.stdout.trim()
+  if (branchResult.exitCode !== 0 || !branch) {
+    return {
+      ok: false,
+      command: ['git', 'branch', '--show-current'],
+      exitCode: branchResult.exitCode,
+      timedOut: branchResult.timedOut,
+      stderr: truncateText(branchResult.stderr, 20_000),
+      error: branchResult.error || 'Cannot push from a detached HEAD. Create or switch to a branch first.'
+    }
+  }
+
+  const upstreamResult = await runCommandArgs(
+    deps,
+    ['git', 'rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'],
+    cwd,
+    30_000
+  )
+  const hasUpstream = upstreamResult.exitCode === 0 && upstreamResult.stdout.trim().length > 0
+  const remote = optionalString(args.remote) ? sanitizeGitRemote(args.remote) : undefined
+  const setUpstream =
+    args.setUpstream === true || args.upstream === true || !hasUpstream || Boolean(remote)
+  const safeBranch = sanitizeGitRef(branch)
+  const command = setUpstream
+    ? ['git', 'push', '-u', remote || 'origin', safeBranch]
+    : ['git', 'push']
+  const result = await runCommandArgs(deps, command, cwd, 120_000)
+  const status = await executeGitStatus(deps, cwd)
+  return {
+    ok: result.exitCode === 0 && result.timedOut !== true && !result.error,
+    command,
+    branch: safeBranch,
+    upstream: hasUpstream ? upstreamResult.stdout.trim() : undefined,
+    setUpstream,
+    exitCode: result.exitCode,
+    timedOut: result.timedOut,
+    durationMs: result.durationMs,
+    stdout: truncateText(result.stdout),
+    stderr: truncateText(result.stderr, 20_000),
+    error: result.error,
+    status
+  }
+}
+
+export async function executeGitCreatePr(
+  deps: WorkspaceToolExecutorDependencies,
+  args: Record<string, any>,
+  cwd: string
+) {
+  const title = optionalString(args.title)
+  const body = optionalString(args.body || args.description)
+  const base = optionalString(args.base)
+  const head = optionalString(args.head)
+  const command = ['gh', 'pr', 'create']
+  if (title) command.push('--title', title)
+  if (body) command.push('--body', body)
+  if (!title && !body && args.fill !== false) command.push('--fill')
+  if (args.draft === true) command.push('--draft')
+  if (base) command.push('--base', sanitizeGitRef(base))
+  if (head) command.push('--head', sanitizeGitRef(head))
+
+  const result = await runCommandArgs(deps, command, cwd, 120_000)
+  const url = result.stdout.match(/https?:\/\/[^\s]+/)?.[0]
+  return {
+    ok: result.exitCode === 0 && result.timedOut !== true && !result.error,
+    command: redactGitCreatePrCommand(command),
+    url,
+    exitCode: result.exitCode,
+    timedOut: result.timedOut,
+    durationMs: result.durationMs,
+    stdout: truncateText(result.stdout),
+    stderr: truncateText(result.stderr, 20_000),
+    error: result.error
   }
 }
 
@@ -1881,6 +1983,33 @@ function sanitizeGitRef(value: unknown): string {
     throw new Error('Git ref contains unsupported characters.')
   }
   return ref
+}
+
+function sanitizeGitRemote(value: unknown): string {
+  const remote = requireNonEmptyString(value, 'Git remote')
+  if (
+    remote.startsWith('-') ||
+    remote.includes('\0') ||
+    /\s/.test(remote) ||
+    remote.length > 120 ||
+    !/^[A-Za-z0-9._/-]+$/.test(remote)
+  ) {
+    throw new Error('Git remote contains unsupported characters.')
+  }
+  return remote
+}
+
+function redactGitCreatePrCommand(command: string[]): string[] {
+  const redacted: string[] = []
+  for (let index = 0; index < command.length; index += 1) {
+    const part = command[index]
+    redacted.push(part)
+    if (part === '--title' || part === '--body') {
+      index += 1
+      redacted.push(part === '--title' ? '[title]' : '[body]')
+    }
+  }
+  return redacted
 }
 
 function parseGitCommitLine(line: string): Record<string, unknown> | null {

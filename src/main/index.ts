@@ -7297,7 +7297,9 @@ const WORKSPACE_WIDE_WRITE_LOCK_TOOLS = new Set<string>([
   'rename_path',
   'run_task',
   'git_stage',
-  'git_commit'
+  'git_commit',
+  'git_push',
+  'git_create_pr'
 ])
 
 function mcpWriteLockApprovalContext(
@@ -7674,10 +7676,31 @@ function previewForGeminiMcpTool(
     }
   }
 
-  if (toolName === 'git_stage' || toolName === 'git_commit') {
+  if (
+    toolName === 'git_stage' ||
+    toolName === 'git_commit' ||
+    toolName === 'git_push' ||
+    toolName === 'git_create_pr'
+  ) {
+    const actionLabel =
+      toolName === 'git_stage'
+        ? 'git stage'
+        : toolName === 'git_commit'
+          ? 'git commit'
+          : toolName === 'git_push'
+            ? 'git push'
+            : 'GitHub pull request'
+    const body =
+      toolName === 'git_stage'
+        ? JSON.stringify(args)
+        : toolName === 'git_commit'
+          ? String(args.message || '')
+          : toolName === 'git_push'
+            ? `remote=${String(args.remote || 'upstream/default')} setUpstream=${args.setUpstream === true}`
+            : `title=${String(args.title || '(fill from commits)').slice(0, 300)} draft=${args.draft === true}`
     return {
-      title: toolName === 'git_stage' ? 'Approve git stage' : 'Approve git commit',
-      body: toolName === 'git_stage' ? JSON.stringify(args) : String(args.message || ''),
+      title: `Approve ${actionLabel}`,
+      body,
       service: 'fileChanges' as AgenticServiceId,
       preview: {
         kind: 'tool',

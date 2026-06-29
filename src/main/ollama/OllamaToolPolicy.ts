@@ -50,7 +50,9 @@ const OLLAMA_FORCE_PROMPT_TOOLS = new Set([
   'apply_patch',
   'run_shell_command',
   'run_task',
-  'get_diagnostics'
+  'get_diagnostics',
+  'git_push',
+  'git_create_pr'
 ])
 
 export function ollamaShellRiskLabels(command: string): string[] {

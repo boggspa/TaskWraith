@@ -162,7 +162,9 @@ export function taskWraithToolAgenticService(toolName: string): AgenticServiceId
     toolName === 'rename_path' ||
     toolName === 'apply_patch' ||
     toolName === 'git_stage' ||
-    toolName === 'git_commit'
+    toolName === 'git_commit' ||
+    toolName === 'git_push' ||
+    toolName === 'git_create_pr'
   )
     return 'fileChanges'
   if (toolName === 'delegate_to_subthread' || toolName === 'cancel_subthread')

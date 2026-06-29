@@ -147,6 +147,12 @@ function describeTool(toolName: OllamaToolName): string | null {
   if (toolName === 'git_blame') {
     return '- git_blame: {"path":"relative/path.txt","startLine":1,"maxLines":80} — inspect who last changed a bounded line range.'
   }
+  if (toolName === 'git_push') {
+    return '- git_push: {"intent":"publish approved branch"} — push the current branch through TaskWraith approval policy.'
+  }
+  if (toolName === 'git_create_pr') {
+    return '- git_create_pr: {"title":"Short title","body":"Summary","draft":true,"intent":"open review PR"} — create a GitHub PR through TaskWraith approval policy.'
+  }
   if (toolName === 'web_search') {
     return '- web_search: {"query":"current information to search for"} — returns a ranked list of result titles and URLs from the live web.'
   }

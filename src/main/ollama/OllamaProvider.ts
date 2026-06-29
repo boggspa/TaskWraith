@@ -1268,6 +1268,38 @@ function ollamaNativeToolParameters(
         },
         required: ['path']
       }
+    case 'git_push':
+      return {
+        description: compact ? 'Push current branch (intent required).' : 'Push the current git branch. Requires a short intent.',
+        properties: {
+          remote: {
+            ...STRING,
+            description: compact ? 'Optional remote.' : 'Optional remote name. Defaults to upstream or origin.'
+          },
+          setUpstream: { type: 'boolean', description: 'Push with -u even when an upstream exists.' },
+          intent: {
+            ...STRING,
+            description: compact ? 'Short reason.' : 'Short reason for publishing code.'
+          }
+        },
+        required: ['intent']
+      }
+    case 'git_create_pr':
+      return {
+        description: compact ? 'Create GitHub PR (intent required).' : 'Create a GitHub pull request using gh. Requires a short intent.',
+        properties: {
+          title: { ...STRING, description: 'Pull request title.' },
+          body: { ...STRING, description: 'Pull request body.' },
+          draft: { type: 'boolean', description: 'Create as draft.' },
+          base: { ...STRING, description: 'Optional base branch.' },
+          head: { ...STRING, description: 'Optional head branch.' },
+          intent: {
+            ...STRING,
+            description: compact ? 'Short reason.' : 'Short reason for publishing a pull request.'
+          }
+        },
+        required: ['intent']
+      }
     case 'write_file':
       return {
         description: compact ? 'Write workspace file (intent required).' : 'Create or overwrite a workspace file. Requires a short intent.',

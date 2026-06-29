@@ -405,6 +405,8 @@ describe('ToolParser', () => {
     })
     it('uses the ToolDisplayNames dictionary for delegate_to_subthread', () => {
       expect(getToolDisplayName('delegate_to_subthread', {})).toBe('Delegated to sub-thread')
+      expect(getToolDisplayName('git_push', {})).toBe('Git push')
+      expect(getToolDisplayName('mcp__TaskWraith__git_create_pr', {})).toBe('Git create PR')
     })
     it('uses the dictionary through provider namespace prefixes', () => {
       expect(getToolDisplayName('mcp__TaskWraith__delegate_to_subthread', {})).toBe(

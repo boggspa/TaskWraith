@@ -20,6 +20,8 @@ export const TASKWRAITH_MCP_TOOLS = [
   'git_blame',
   'git_stage',
   'git_commit',
+  'git_push',
+  'git_create_pr',
   'run_task',
   'get_diagnostics',
   'workspace_board_snapshot',

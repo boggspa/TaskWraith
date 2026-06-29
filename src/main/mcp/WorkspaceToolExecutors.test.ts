@@ -8,7 +8,9 @@ import {
   executeFindFiles,
   executeGetDiagnostics,
   executeGitBlame,
+  executeGitCreatePr,
   executeGitLog,
+  executeGitPush,
   executeGitShow,
   executeMovePath,
   executeRenamePath,
@@ -618,6 +620,83 @@ describe('git history workspace tools', () => {
           content: 'const value = 1'
         }
       ]
+    })
+  })
+
+  it('pushes the current branch with upstream inference and refreshed status', async () => {
+    const workspace = resolve('/tmp/taskwraith-workspace-tools')
+    const commands: string[][] = []
+    const deps = makeDeps(async (command) => {
+      commands.push(command as string[])
+      if (command[1] === 'branch') return commandResult('feature/mcp-publish\n')
+      if (command[1] === 'rev-parse') return commandResult('', 1)
+      if (command[1] === 'push') return commandResult('branch pushed\n')
+      if (command[1] === 'status') return commandResult('## feature/mcp-publish...origin/feature/mcp-publish\n')
+      if (command[1] === 'branch' && command[2] === '--show-current') return commandResult('feature/mcp-publish\n')
+      return commandResult('')
+    })
+
+    const result = await executeGitPush(deps, {}, workspace)
+
+    expect(commands.slice(0, 3)).toEqual([
+      ['git', 'branch', '--show-current'],
+      ['git', 'rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'],
+      ['git', 'push', '-u', 'origin', 'feature/mcp-publish']
+    ])
+    expect(result).toMatchObject({
+      ok: true,
+      branch: 'feature/mcp-publish',
+      setUpstream: true,
+      exitCode: 0
+    })
+  })
+
+  it('runs gh pr create with redacted title/body command metadata', async () => {
+    const workspace = resolve('/tmp/taskwraith-workspace-tools')
+    const commands: string[][] = []
+    const deps = makeDeps(async (command) => {
+      commands.push(command as string[])
+      return commandResult('https://github.com/example/repo/pull/42\n')
+    })
+
+    const result = await executeGitCreatePr(
+      deps,
+      {
+        title: 'Ship MCP publishing',
+        body: 'Detailed release notes',
+        draft: true,
+        base: 'main'
+      },
+      workspace
+    )
+
+    expect(commands[0]).toEqual([
+      'gh',
+      'pr',
+      'create',
+      '--title',
+      'Ship MCP publishing',
+      '--body',
+      'Detailed release notes',
+      '--draft',
+      '--base',
+      'main'
+    ])
+    expect(result).toMatchObject({
+      ok: true,
+      command: [
+        'gh',
+        'pr',
+        'create',
+        '--title',
+        '[title]',
+        '--body',
+        '[body]',
+        '--draft',
+        '--base',
+        'main'
+      ],
+      url: 'https://github.com/example/repo/pull/42'
     })
   })
 })

@@ -1799,9 +1799,12 @@ describe('Ollama tool tiers', () => {
     expect(ollamaToolAllowedInTier('run_shell_command', 'approved_shell')).toBe(true)
     expect(ollamaToolAllowedInTier('run_task', 'approved_shell')).toBe(true)
     expect(ollamaToolAllowedInTier('get_diagnostics', 'approved_shell')).toBe(true)
+    expect(ollamaToolAllowedInTier('git_push', 'approved_shell')).toBe(false)
+    expect(ollamaToolAllowedInTier('git_push', 'provider_parity')).toBe(true)
     expect(ollamaToolRequiresIntent('write_file')).toBe(true)
     expect(ollamaToolRequiresIntent('run_shell_command')).toBe(true)
     expect(ollamaToolRequiresIntent('get_diagnostics')).toBe(true)
+    expect(ollamaToolRequiresIntent('git_push')).toBe(true)
   })
 
   it('advertises the full TaskWraith tool surface for acknowledged parity mode', () => {
