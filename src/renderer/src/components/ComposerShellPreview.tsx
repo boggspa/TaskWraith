@@ -151,6 +151,34 @@ function PreviewSendGlyph({ composerStyle }: { composerStyle: ComposerStyle }): 
   return <RunSymbolIcon />
 }
 
+function PreviewContextWheel({ control = false }: { control?: boolean }): React.ReactElement {
+  return (
+    <span
+      className="context-wheel settings-composer-preview-context"
+      data-composer-control={control ? 'context' : undefined}
+    >
+      <svg viewBox="0 0 18 18" width="18" height="18">
+        <circle
+          cx="9"
+          cy="9"
+          r="6.6"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          opacity="0.22"
+        />
+        <path
+          d="M9 2.4a6.6 6.6 0 0 1 5.4 10.4"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+        />
+      </svg>
+    </span>
+  )
+}
+
 export interface ComposerShellPreviewProps {
   composerStyle: ComposerStyle
   /** Theme is scoped onto the card via `data-theme` so the preview reflects the
@@ -341,6 +369,7 @@ export function ComposerShellPreview({
                     >
                       {meta.permissionLabel}
                     </span>
+                    {composerStyle === 'codex' && <PreviewContextWheel control />}
                     <span
                       className="composer-picker-label settings-composer-preview-control"
                       data-composer-control="model"
@@ -349,26 +378,7 @@ export function ComposerShellPreview({
                     </span>
                   </div>
                   <div className="composer-inline-actions" aria-hidden="true">
-                    <span className="context-wheel settings-composer-preview-context">
-                      <svg viewBox="0 0 18 18" width="18" height="18">
-                        <circle
-                          cx="9"
-                          cy="9"
-                          r="6.6"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="2"
-                          opacity="0.22"
-                        />
-                        <path
-                          d="M9 2.4a6.6 6.6 0 0 1 5.4 10.4"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="2"
-                          strokeLinecap="round"
-                        />
-                      </svg>
-                    </span>
+                    {composerStyle !== 'codex' && <PreviewContextWheel />}
                     <span className="composer-send-cluster">
                       <button
                         type="button"

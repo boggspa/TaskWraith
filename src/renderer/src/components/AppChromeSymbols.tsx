@@ -948,7 +948,7 @@ export function ContextWheel({ percent, label }: { percent: number; label: strin
           r={radius}
           fill="none"
           stroke="currentColor"
-          strokeWidth="1.4"
+          strokeWidth="1.7"
           opacity="0.22"
         />
         <circle
@@ -957,7 +957,7 @@ export function ContextWheel({ percent, label }: { percent: number; label: strin
           r={radius}
           fill="none"
           stroke="currentColor"
-          strokeWidth="1.4"
+          strokeWidth="1.7"
           strokeLinecap="round"
           strokeDasharray={`${dash} ${remainingDash}`}
           strokeDashoffset={circumference / 4}

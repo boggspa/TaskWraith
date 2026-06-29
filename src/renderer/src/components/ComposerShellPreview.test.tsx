@@ -131,6 +131,23 @@ describe('ComposerShellPreview — per-shell send glyph', () => {
     expect(render('claude')).toContain('Review changes')
     expect(render('default')).toContain('Review changes')
   })
+
+  it('places the context donut beside the model picker only for the Codex shell', () => {
+    const codex = render('codex')
+    const codexContext = codex.indexOf('data-composer-control="context"')
+    const codexModel = codex.indexOf('data-composer-control="model"')
+    expect(codexContext).toBeGreaterThan(-1)
+    expect(codexContext).toBeLessThan(codexModel)
+
+    const claude = render('claude')
+    expect(claude).not.toContain('data-composer-control="context"')
+    const claudeActions = claude.indexOf('class="composer-inline-actions"')
+    const claudeContext = claude.indexOf('settings-composer-preview-context', claudeActions)
+    const claudeModel = claude.indexOf('data-composer-control="model"')
+    expect(claudeActions).toBeGreaterThan(-1)
+    expect(claudeContext).toBeGreaterThan(claudeActions)
+    expect(claudeContext).toBeGreaterThan(claudeModel)
+  })
 })
 
 describe('ComposerShellPreview — inertness + modes', () => {

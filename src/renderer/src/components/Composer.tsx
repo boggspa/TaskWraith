@@ -3608,6 +3608,15 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
 
                           return (
                             <>
+                              {appearance.composerStyle === 'codex' && (
+                                <ContextMeterPopover
+                                  meter={contextMeter}
+                                  percent={contextUsedPercent}
+                                  label={contextLabel}
+                                  provider={currentProvider}
+                                  composerStyle={appearance.composerStyle}
+                                />
+                              )}
                               <CombinedModelPicker
                                 provider={effectiveProvider}
                                 composerStyle={appearance.composerStyle}
@@ -4008,13 +4017,15 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                         )}
                       </div>
                       <div className="composer-inline-actions">
-                        <ContextMeterPopover
-                          meter={contextMeter}
-                          percent={contextUsedPercent}
-                          label={contextLabel}
-                          provider={currentProvider}
-                          composerStyle={appearance.composerStyle}
-                        />
+                        {appearance.composerStyle !== 'codex' && (
+                          <ContextMeterPopover
+                            meter={contextMeter}
+                            percent={contextUsedPercent}
+                            label={contextLabel}
+                            provider={currentProvider}
+                            composerStyle={appearance.composerStyle}
+                          />
+                        )}
                         {steerIndicatorMessage && (
                           <span
                             className="composer-steer-indicator"
@@ -4030,8 +4041,9 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                         wrapped in `.composer-send-cluster` (display:contents
                         by default, so the nine other shells are unchanged).
                         Obsidian/Alabaster lift this cluster up into the
-                        textarea rect's bottom-right corner; the ContextWheel
-                        ("context") stays here at the right of the control row.
+                        textarea rect's bottom-right corner. Codex moves the
+                        ContextWheel beside the model picker; the remaining
+                        shells keep it here at the right of the control row.
                       */}
                         <span className="composer-send-cluster">
                           {isCurrentChatRunning ? (
