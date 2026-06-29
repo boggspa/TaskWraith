@@ -592,7 +592,6 @@ import {
   appendKimiThinkingArgs,
   CODEX_MODEL_RETIREMENTS,
   CODEX_RETIRED_MODEL_IDS,
-  CODEX_STATIC_MODELS,
   claudePermissionModeForApproval,
   codexModelContextConfig,
   getStaticProviderModels,
