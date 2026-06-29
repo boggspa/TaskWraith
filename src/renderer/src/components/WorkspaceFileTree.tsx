@@ -1,4 +1,11 @@
-import { useRef, type KeyboardEvent } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent
+} from 'react'
 import type { WorkspaceFileEntry } from '../../../main/store/types'
 import { FileTypeIcon } from './FileTypeIcon'
 import {
@@ -25,6 +32,10 @@ export interface WorkspaceFileTreeProps {
   onContextMenuEntry: (entry: WorkspaceFileEntry, anchor: FileEditorContextMenuAnchor) => void
 }
 
+const FILE_TREE_VIRTUALIZATION_THRESHOLD = 700
+const FILE_TREE_ROW_HEIGHT = 32
+const FILE_TREE_OVERSCAN = 16
+
 export function WorkspaceFileTree({
   workspacePath,
   filter,
@@ -41,51 +52,176 @@ export function WorkspaceFileTree({
   onContextMenuEntry
 }: WorkspaceFileTreeProps) {
   const listRef = useRef<HTMLDivElement | null>(null)
+  const [viewport, setViewport] = useState({ height: 0, scrollTop: 0 })
+  const useVirtualization = displayedFiles.length > FILE_TREE_VIRTUALIZATION_THRESHOLD
 
-  const focusRowAt = (rows: HTMLButtonElement[], index: number) => {
-    const nextIndex = Math.max(0, Math.min(rows.length - 1, index))
-    rows[nextIndex]?.focus()
+  useEffect(() => {
+    const listElement = listRef.current
+    if (!listElement) return
+
+    const updateViewport = () => {
+      setViewport({
+        height: listElement.clientHeight,
+        scrollTop: listElement.scrollTop
+      })
+    }
+
+    updateViewport()
+    if (typeof ResizeObserver !== 'undefined') {
+      const observer = new ResizeObserver(updateViewport)
+      observer.observe(listElement)
+      return () => observer.disconnect()
+    }
+    window.addEventListener('resize', updateViewport)
+    return () => window.removeEventListener('resize', updateViewport)
+  }, [displayedFiles.length, useVirtualization])
+
+  useEffect(() => {
+    if (!useVirtualization || !selectedPath || !listRef.current) return
+    const selectedIndex = displayedFiles.findIndex((entry) => entry.path === selectedPath)
+    if (selectedIndex < 0) return
+    const listElement = listRef.current
+    const rowTop = selectedIndex * FILE_TREE_ROW_HEIGHT
+    const rowBottom = rowTop + FILE_TREE_ROW_HEIGHT
+    const viewportTop = listElement.scrollTop
+    const viewportBottom = viewportTop + listElement.clientHeight
+    if (rowTop < viewportTop) {
+      listElement.scrollTop = rowTop
+    } else if (rowBottom > viewportBottom) {
+      listElement.scrollTop = Math.max(0, rowBottom - listElement.clientHeight)
+    }
+  }, [displayedFiles, selectedPath, useVirtualization])
+
+  const visibleRange = useMemo(() => {
+    if (!useVirtualization) {
+      return {
+        endIndex: displayedFiles.length,
+        paddingBottom: 0,
+        paddingTop: 0,
+        startIndex: 0
+      }
+    }
+    const viewportHeight = Math.max(viewport.height, FILE_TREE_ROW_HEIGHT * 16)
+    const visibleCount =
+      Math.ceil(viewportHeight / FILE_TREE_ROW_HEIGHT) + FILE_TREE_OVERSCAN * 2
+    const startIndex = Math.max(
+      0,
+      Math.floor(viewport.scrollTop / FILE_TREE_ROW_HEIGHT) - FILE_TREE_OVERSCAN
+    )
+    const endIndex = Math.min(displayedFiles.length, startIndex + visibleCount)
+    return {
+      endIndex,
+      paddingBottom: Math.max(0, displayedFiles.length - endIndex) * FILE_TREE_ROW_HEIGHT,
+      paddingTop: startIndex * FILE_TREE_ROW_HEIGHT,
+      startIndex
+    }
+  }, [displayedFiles.length, useVirtualization, viewport.height, viewport.scrollTop])
+
+  const visibleFiles = displayedFiles.slice(visibleRange.startIndex, visibleRange.endIndex)
+
+  const rowForIndex = useCallback((index: number): HTMLButtonElement | null => {
+    return (
+      listRef.current?.querySelector<HTMLButtonElement>(
+        `.file-editor-row[data-file-editor-index="${index}"]`
+      ) ?? null
+    )
+  }, [])
+
+  const focusRowAt = useCallback(
+    (index: number) => {
+      if (displayedFiles.length === 0) return
+      const nextIndex = Math.max(0, Math.min(displayedFiles.length - 1, index))
+      const focus = () => {
+        const row = rowForIndex(nextIndex)
+        row?.focus()
+        return Boolean(row)
+      }
+
+      if (useVirtualization && listRef.current) {
+        const listElement = listRef.current
+        const rowTop = nextIndex * FILE_TREE_ROW_HEIGHT
+        const rowBottom = rowTop + FILE_TREE_ROW_HEIGHT
+        const viewportTop = listElement.scrollTop
+        const viewportBottom = viewportTop + listElement.clientHeight
+        if (rowTop < viewportTop) {
+          listElement.scrollTop = rowTop
+        } else if (rowBottom > viewportBottom) {
+          listElement.scrollTop = Math.max(0, rowBottom - listElement.clientHeight)
+        }
+        setViewport({
+          height: listElement.clientHeight,
+          scrollTop: listElement.scrollTop
+        })
+      }
+
+      if (!focus()) {
+        window.requestAnimationFrame(() => {
+          if (!focus()) window.requestAnimationFrame(focus)
+        })
+      }
+    },
+    [displayedFiles.length, rowForIndex, useVirtualization]
+  )
+
+  const handleScroll = () => {
+    const listElement = listRef.current
+    if (!listElement) return
+    setViewport({
+      height: listElement.clientHeight,
+      scrollTop: listElement.scrollTop
+    })
   }
 
   const handleListKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.altKey || event.ctrlKey || event.metaKey) return
-    const rows = Array.from(
-      listRef.current?.querySelectorAll<HTMLButtonElement>('.file-editor-row:not(:disabled)') ?? []
-    )
-    if (rows.length === 0) return
-    const activeIndex = rows.findIndex((row) => row === document.activeElement)
-    const currentIndex = activeIndex >= 0 ? activeIndex : 0
+    if (displayedFiles.length === 0) return
+    const activeElement =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null
+    const activeIndex = Number(activeElement?.dataset.fileEditorIndex)
+    const fallbackIndex = selectedPath
+      ? Math.max(0, displayedFiles.findIndex((entry) => entry.path === selectedPath))
+      : 0
+    const currentIndex =
+      Number.isInteger(activeIndex) && activeIndex >= 0 ? activeIndex : fallbackIndex
     const currentEntry = displayedFiles[currentIndex]
 
     if (event.key === 'ArrowDown') {
       event.preventDefault()
-      focusRowAt(rows, currentIndex + 1)
+      focusRowAt(currentIndex + 1)
       return
     }
     if (event.key === 'ArrowUp') {
       event.preventDefault()
-      focusRowAt(rows, currentIndex - 1)
+      focusRowAt(currentIndex - 1)
       return
     }
     if (event.key === 'Home') {
       event.preventDefault()
-      focusRowAt(rows, 0)
+      focusRowAt(0)
       return
     }
     if (event.key === 'End') {
       event.preventDefault()
-      focusRowAt(rows, rows.length - 1)
+      focusRowAt(displayedFiles.length - 1)
       return
     }
     if (!currentEntry) return
     if (isFileEditorContextMenuKey(event.key, event.shiftKey)) {
       event.preventDefault()
       event.stopPropagation()
+      const currentRow = rowForIndex(currentIndex)
       onContextMenuEntry(
         currentEntry,
-        contextMenuAnchorFromRect(rows[currentIndex].getBoundingClientRect())
+        contextMenuAnchorFromRect(
+          (currentRow ?? listRef.current)?.getBoundingClientRect() ?? {
+            height: 0,
+            left: 0,
+            top: 0,
+            width: 0
+          }
+        )
       )
-      rows[currentIndex]?.focus()
+      currentRow?.focus()
       return
     }
     const isExpanded = currentEntry.isDirectory && expandedDirectories.has(currentEntry.path)
@@ -97,7 +233,7 @@ export function WorkspaceFileTree({
       }
       const nextEntry = displayedFiles[currentIndex + 1]
       if (nextEntry && nextEntry.depth > currentEntry.depth) {
-        focusRowAt(rows, currentIndex + 1)
+        focusRowAt(currentIndex + 1)
       }
       return
     }
@@ -110,12 +246,10 @@ export function WorkspaceFileTree({
       const parentPath = parentDirectoryForPath(currentEntry.path)
       if (parentPath) {
         event.preventDefault()
-        const parentIndex = rows.findIndex(
-          (row) =>
-            row.dataset.fileEditorPath === parentPath &&
-            row.dataset.fileEditorDirectory === 'true'
+        const parentIndex = displayedFiles.findIndex(
+          (entry) => entry.path === parentPath && entry.isDirectory
         )
-        if (parentIndex >= 0) focusRowAt(rows, parentIndex)
+        if (parentIndex >= 0) focusRowAt(parentIndex)
       }
     }
   }
@@ -145,53 +279,70 @@ export function WorkspaceFileTree({
         {fileListStatus}
       </div>
       <div
-        className="file-editor-list"
+        className={`file-editor-list ${useVirtualization ? 'virtualized' : ''}`}
         ref={listRef}
         onKeyDown={handleListKeyDown}
+        onScroll={handleScroll}
         aria-label="Workspace file navigator"
+        data-total-rows={displayedFiles.length}
+        data-visible-rows={visibleFiles.length}
       >
         {displayedFiles.length > 0 ? (
-          displayedFiles.map((entry) => {
-            const isExpanded = entry.isDirectory && expandedDirectories.has(entry.path)
-            return (
-              <button
-                key={`${entry.isDirectory ? 'dir' : 'file'}-${entry.path}`}
-                className={`file-editor-row ${entry.isDirectory ? 'directory' : 'file'} ${selectedPath === entry.path ? 'active' : ''} ${isExpanded ? 'expanded' : ''}`}
-                style={{ paddingLeft: `calc(var(--space-sm) + ${entry.depth * 12}px)` }}
-                type="button"
-                onClick={() => void onOpenEntry(entry)}
-                onContextMenu={(event) => {
-                  event.preventDefault()
-                  event.stopPropagation()
-                  onContextMenuEntry(entry, { x: event.clientX, y: event.clientY })
-                }}
-                data-file-editor-path={entry.path}
-                data-file-editor-directory={entry.isDirectory ? 'true' : 'false'}
-                aria-current={selectedPath === entry.path ? 'true' : undefined}
-                aria-expanded={entry.isDirectory && entry.hasChildren ? isExpanded : undefined}
-                aria-haspopup="menu"
-                aria-keyshortcuts="ContextMenu Shift+F10"
-                disabled={isLoading}
-                title={entry.path}
-              >
-                <span className="file-editor-disclosure" aria-hidden="true">
-                  {entry.isDirectory && entry.hasChildren ? (isExpanded ? '▾' : '▸') : ''}
-                </span>
-                <FileTypeIcon
-                  path={entry.path}
-                  size={14}
-                  className="file-editor-file-icon"
-                  workspacePath={workspacePath}
-                />
-                <span className="file-editor-file-name">
-                  {isFiltering ? entry.path : entry.name}
-                </span>
-                {!entry.isDirectory && (
-                  <span className="file-editor-file-size">{formatBytes(entry.sizeBytes)}</span>
-                )}
-              </button>
-            )
-          })
+          <div
+            className="file-editor-list-virtual-window"
+            style={
+              useVirtualization
+                ? {
+                    paddingBottom: `${visibleRange.paddingBottom}px`,
+                    paddingTop: `${visibleRange.paddingTop}px`
+                  }
+                : undefined
+            }
+          >
+            {visibleFiles.map((entry, offset) => {
+              const rowIndex = visibleRange.startIndex + offset
+              const isExpanded = entry.isDirectory && expandedDirectories.has(entry.path)
+              return (
+                <button
+                  key={`${entry.isDirectory ? 'dir' : 'file'}-${entry.path}`}
+                  className={`file-editor-row ${entry.isDirectory ? 'directory' : 'file'} ${selectedPath === entry.path ? 'active' : ''} ${isExpanded ? 'expanded' : ''}`}
+                  style={{ paddingLeft: `calc(var(--space-sm) + ${entry.depth * 12}px)` }}
+                  type="button"
+                  onClick={() => void onOpenEntry(entry)}
+                  onContextMenu={(event) => {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    onContextMenuEntry(entry, { x: event.clientX, y: event.clientY })
+                  }}
+                  data-file-editor-index={rowIndex}
+                  data-file-editor-path={entry.path}
+                  data-file-editor-directory={entry.isDirectory ? 'true' : 'false'}
+                  aria-current={selectedPath === entry.path ? 'true' : undefined}
+                  aria-expanded={entry.isDirectory && entry.hasChildren ? isExpanded : undefined}
+                  aria-haspopup="menu"
+                  aria-keyshortcuts="ContextMenu Shift+F10"
+                  disabled={isLoading}
+                  title={entry.path}
+                >
+                  <span className="file-editor-disclosure" aria-hidden="true">
+                    {entry.isDirectory && entry.hasChildren ? (isExpanded ? '▾' : '▸') : ''}
+                  </span>
+                  <FileTypeIcon
+                    path={entry.path}
+                    size={14}
+                    className="file-editor-file-icon"
+                    workspacePath={workspacePath}
+                  />
+                  <span className="file-editor-file-name">
+                    {isFiltering ? entry.path : entry.name}
+                  </span>
+                  {!entry.isDirectory && (
+                    <span className="file-editor-file-size">{formatBytes(entry.sizeBytes)}</span>
+                  )}
+                </button>
+              )
+            })}
+          </div>
         ) : (
           <div className="file-editor-empty">{fileListStatus || 'No workspace files found'}</div>
         )}

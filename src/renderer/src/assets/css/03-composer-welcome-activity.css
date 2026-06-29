@@ -8265,6 +8265,14 @@
   padding: 0 var(--space-sm) var(--space-sm);
 }
 
+.file-editor-list.virtualized {
+  scrollbar-gutter: stable;
+}
+
+.file-editor-list-virtual-window {
+  min-width: 0;
+}
+
 .file-editor-empty {
   color: var(--text-muted);
   font-size: var(--font-size-xs);

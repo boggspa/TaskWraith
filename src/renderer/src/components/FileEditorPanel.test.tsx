@@ -128,6 +128,42 @@ describe('WorkspaceFileTree', () => {
     expect(html).toContain('App.tsx')
     expect(html).toContain('2 KB')
   })
+
+  it('server-renders only a bounded virtual window for very large navigators', () => {
+    const displayedFiles = Array.from({ length: 900 }, (_, index) => ({
+      path: `src/file-${String(index).padStart(3, '0')}.ts`,
+      name: `file-${String(index).padStart(3, '0')}.ts`,
+      isDirectory: false,
+      depth: 1,
+      sizeBytes: 128
+    }))
+    const html = renderToStaticMarkup(
+      <WorkspaceFileTree
+        workspacePath="/repo"
+        filter=""
+        fileListStatus="900 files"
+        displayedFiles={displayedFiles}
+        expandedDirectories={new Set(['src'])}
+        selectedPath="src/file-000.ts"
+        isFiltering={false}
+        isLoading={false}
+        isListLoading={false}
+        onFilterChange={vi.fn()}
+        onRefresh={vi.fn()}
+        onOpenEntry={vi.fn()}
+        onContextMenuEntry={vi.fn()}
+      />
+    )
+
+    const renderedRows = html.match(/class="file-editor-row/g)?.length ?? 0
+    expect(renderedRows).toBeGreaterThan(0)
+    expect(renderedRows).toBeLessThan(90)
+    expect(html).toContain('class="file-editor-list virtualized"')
+    expect(html).toContain('data-total-rows="900"')
+    expect(html).toContain('data-file-editor-index="0"')
+    expect(html).toContain('src/file-000.ts')
+    expect(html).not.toContain('src/file-899.ts')
+  })
 })
 
 describe('EditorPane', () => {
