@@ -46,6 +46,7 @@ import type { PlanChoiceState } from '../lib/planModeChoice'
 import type { DisplayCurrency } from '../lib/formatCost'
 import type { RendererProviderRates } from '../lib/providerRateEstimate'
 import { shouldSuppressRunCompleteSummary, type RunCompleteNotice } from '../lib/runCompleteNotice'
+import { formatTranscriptClock } from '../lib/dateTimeFormat'
 import { EMPTY_CHAT_MESSAGES } from '../lib/stableEmpties'
 import { groupAdjacentToolMessages } from '../lib/transcriptToolMessageGrouping'
 import {
@@ -311,7 +312,7 @@ function formatTranscriptMessageFooterTime(timestamp: string | undefined): {
 
   return {
     dateTime: raw,
-    label: date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+    label: formatTranscriptClock(date) ?? date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     title: date.toLocaleString([], {
       dateStyle: 'medium',
       timeStyle: 'medium'
