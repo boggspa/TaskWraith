@@ -706,6 +706,10 @@ export interface EnsembleRunIdentity {
   provider: ProviderId
   role: string
   order: number
+  /** Configured shared-history char budget captured for this participant run. */
+  ensembleContextChars?: number
+  /** Configured shared-history turn budget captured for this participant run. */
+  ensembleContextTurns?: number
 }
 
 /**

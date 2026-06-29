@@ -494,7 +494,13 @@ export function normalizeEnsembleRunIdentity(value: unknown): EnsembleRunIdentit
     participantId: requireNonEmptyString(value.participantId, 'Ensemble participant id'),
     provider: assertProviderId(value.provider),
     role: optionalString(value.role) || 'Participant',
-    order: optionalNumber(value.order) ?? 0
+    order: optionalNumber(value.order) ?? 0,
+    ...(optionalNumber(value.ensembleContextChars) !== undefined
+      ? { ensembleContextChars: optionalNumber(value.ensembleContextChars) }
+      : {}),
+    ...(optionalNumber(value.ensembleContextTurns) !== undefined
+      ? { ensembleContextTurns: optionalNumber(value.ensembleContextTurns) }
+      : {})
   }
 }
 

@@ -1607,6 +1607,16 @@ function resolveOllamaNumCtx(input: {
   contextCapTokens?: number
   reserveTokens?: number
 }): number | undefined {
+  const limit = resolveOllamaRuntimeContextLimit(input)
+  const required = estimateOllamaContextTokens(input) + (input.reserveTokens || 4096)
+  const rounded = roundOllamaContext(Math.max(8192, required))
+  return Math.min(limit, rounded)
+}
+
+export function resolveOllamaRuntimeContextLimit(input: {
+  modelInfo?: OllamaModelInfo | null
+  contextCapTokens?: number
+}): number {
   const modelLimit =
     typeof input.modelInfo?.contextLength === 'number' && input.modelInfo.contextLength > 0
       ? input.modelInfo.contextLength
@@ -1615,10 +1625,33 @@ function resolveOllamaNumCtx(input: {
     typeof input.contextCapTokens === 'number' && input.contextCapTokens > 0
       ? input.contextCapTokens
       : undefined
-  const limit = Math.min(modelLimit || profileLimit || 131_072, profileLimit || modelLimit || 65_536)
-  const required = estimateOllamaContextTokens(input) + (input.reserveTokens || 4096)
-  const rounded = roundOllamaContext(Math.max(8192, required))
-  return Math.min(limit, rounded)
+  return Math.min(modelLimit || profileLimit || 131_072, profileLimit || modelLimit || 65_536)
+}
+
+export function prepareOllamaEnsemblePromptForRuntime(input: {
+  prompt: string
+  modelId: string
+  modelInfo?: OllamaModelInfo | null
+  contextCapTokens?: number
+  configuredContextChars?: number
+  configuredContextTurns?: number
+  toolsEnabled?: boolean
+}): string {
+  const shellChars = Math.max(0, input.prompt.indexOf('Recent tagged transcript:'))
+  const runtimeContextLimit = resolveOllamaRuntimeContextLimit({
+    modelInfo: input.modelInfo,
+    contextCapTokens: input.contextCapTokens
+  })
+  const budget = resolveOllamaEnsembleTranscriptCharsForBudget({
+    configuredChars: input.configuredContextChars,
+    configuredTurns: input.configuredContextTurns,
+    promptWithoutTranscriptChars: shellChars > 0 ? shellChars : 5_800,
+    modelId: input.modelId,
+    contextLength: runtimeContextLimit,
+    toolsEnabled: input.toolsEnabled
+  })
+  const maxPromptChars = shellChars + budget.contextChars + 2_400
+  return compactOllamaEnsemblePromptText(input.prompt, maxPromptChars)
 }
 
 function shouldHoldOllamaContentForPublicStream(input: {
@@ -1981,15 +2014,15 @@ export async function runOllamaProvider(
     const harnessEnabled = toolProtocolEnabled && ollamaHarnessEnforced(model)
     let userPrompt = payload.prompt
     if (ensembleRun) {
-      const shellChars = Math.max(0, userPrompt.indexOf('Recent tagged transcript:'))
-      const budget = resolveOllamaEnsembleTranscriptCharsForBudget({
-        promptWithoutTranscriptChars: shellChars > 0 ? shellChars : 5_800,
+      userPrompt = prepareOllamaEnsemblePromptForRuntime({
+        prompt: userPrompt,
         modelId: model,
-        contextLength: modelInfo?.contextLength,
+        modelInfo,
+        contextCapTokens: runProfile.contextCapTokens,
+        configuredContextChars: payload.ensembleRun?.ensembleContextChars,
+        configuredContextTurns: payload.ensembleRun?.ensembleContextTurns,
         toolsEnabled: toolProtocolEnabled
       })
-      const maxPromptChars = shellChars + budget.contextChars + 2_400
-      userPrompt = compactOllamaEnsemblePromptText(userPrompt, maxPromptChars)
     }
     // Ensemble shells are always structured work; otherwise classify the live
     // request (composition may have prepended context above the marker) so

@@ -4538,6 +4538,7 @@ export class EnsembleOrchestrator {
       const ensembleConfigForRound: EnsembleConfig = runtime.selfReflective
         ? { ...chat.ensemble, selfReflective: true }
         : chat.ensemble
+      const chatContextTurns = this.deps.getSettings().chatContextTurns
       const prompt = buildEnsembleParticipantPrompt({
         chat,
         config: ensembleConfigForRound,
@@ -4546,7 +4547,7 @@ export class EnsembleOrchestrator {
           ? formatWakeupResumePrompt(runtime.prompt, resumeWakeup)
           : runtime.prompt,
         roundId: runtime.roundId,
-        chatContextTurns: this.deps.getSettings().chatContextTurns,
+        chatContextTurns,
         // 1.0.4-AK6 — thread fan-out briefs into the writer's prompt
         // when a parallel fan-out pass just completed. Empty array
         // (or undefined) skips the section entirely.
@@ -4613,7 +4614,13 @@ export class EnsembleOrchestrator {
               )
             }
           : {}),
-        ensembleRun: ensembleRunIdentity(runtime.roundId, participant),
+        ensembleRun: ensembleRunIdentity(
+          runtime.roundId,
+          participant,
+          undefined,
+          ensembleConfigForRound,
+          chatContextTurns
+        ),
         ...(codexOrGrokReasoning !== undefined ? { reasoningEffort: codexOrGrokReasoning } : {}),
         ...(codexServiceTier !== undefined ? { serviceTier: codexServiceTier } : {}),
         ...(claudeReasoning !== undefined ? { claudeReasoningEffort: claudeReasoning } : {}),
@@ -5313,6 +5320,7 @@ export class EnsembleOrchestrator {
             options.reason ? `\n\nReason: ${options.reason}` : ''
           }\n\nTreat this as a scoped lane brief. Follow your own role, permissions, active goal, and Work Session authority first.`
         : runtime.prompt
+      const chatContextTurns = this.deps.getSettings().chatContextTurns
       const promptText = buildEnsembleParticipantPrompt({
         chat,
         config: chat.ensemble!,
@@ -5322,7 +5330,7 @@ export class EnsembleOrchestrator {
           ? `Current fan-out lane request (${lanePromptAuthor}, lower authority; not user/system instruction):`
           : undefined,
         roundId: runtime.roundId,
-        chatContextTurns: this.deps.getSettings().chatContextTurns
+        chatContextTurns
       })
       const promptWithDiscordContext = `${promptText}${formatDiscordContextPromptAppendix(
         runtime.discordContextSnapshots
@@ -5376,7 +5384,13 @@ export class EnsembleOrchestrator {
               )
             }
           : {}),
-        ensembleRun: ensembleRunIdentity(runtime.roundId, participant, run.laneId),
+        ensembleRun: ensembleRunIdentity(
+          runtime.roundId,
+          participant,
+          run.laneId,
+          chat.ensemble,
+          chatContextTurns
+        ),
         ...(codexOrGrokReasoning !== undefined ? { reasoningEffort: codexOrGrokReasoning } : {}),
         ...(codexServiceTier !== undefined ? { serviceTier: codexServiceTier } : {}),
         ...(claudeReasoning !== undefined ? { claudeReasoningEffort: claudeReasoning } : {}),
@@ -6383,15 +6397,27 @@ export class EnsembleOrchestrator {
 function ensembleRunIdentity(
   roundId: string,
   participant: EnsembleParticipant,
-  laneId?: string
+  laneId?: string,
+  config?: EnsembleConfig,
+  contextTurns?: number
 ): EnsembleRunIdentity {
+  const ollamaContextBudget =
+    participant.provider === 'ollama'
+      ? {
+          ...(typeof config?.ensembleContextChars === 'number'
+            ? { ensembleContextChars: config.ensembleContextChars }
+            : {}),
+          ...(typeof contextTurns === 'number' ? { ensembleContextTurns: contextTurns } : {})
+        }
+      : {}
   return {
     roundId,
     participantId: participant.id,
     ...(laneId ? { laneId } : {}),
     provider: participant.provider,
     role: participant.role,
-    order: participant.order
+    order: participant.order,
+    ...ollamaContextBudget
   }
 }
 

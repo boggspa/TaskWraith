@@ -360,6 +360,41 @@ describe('EnsembleOrchestrator', () => {
     expect(harness.dispatched[1].provider).toBe('codex')
   })
 
+  it('threads shared-history budget metadata into Ollama participant runs', async () => {
+    const chat = makeChat()
+    chat.ensemble = {
+      ...chat.ensemble!,
+      ensembleContextChars: 120_000,
+      participants: [
+        {
+          id: 'ollama-worker',
+          provider: 'ollama',
+          enabled: true,
+          role: 'Local Worker',
+          instructions: 'Work locally.',
+          order: 1,
+          model: 'ornith:35b',
+          permissionPresetId: 'read_only'
+        }
+      ]
+    }
+    const harness = makeHarness({ initialChat: chat })
+
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Use the local worker.',
+      event: { sender: {} as Electron.WebContents }
+    })
+
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    expect(harness.dispatched[0].ensembleRun).toMatchObject({
+      participantId: 'ollama-worker',
+      provider: 'ollama',
+      ensembleContextChars: 120_000,
+      ensembleContextTurns: 8
+    })
+  })
+
   // PR6 — ensemble media parity: agent-produced image (media_refs) is routed by
   // appRunId to the right participant's content message (the renderer path is
   // suppressed for ensemble because it can't route by runId).

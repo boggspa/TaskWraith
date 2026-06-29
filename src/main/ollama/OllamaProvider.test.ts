@@ -34,6 +34,7 @@ import {
   parseOllamaMemoryPsOutput,
   ollamaPreToolContentText,
   runOllamaProvider,
+  prepareOllamaEnsemblePromptForRuntime,
   resolveOllamaVisibleText,
   shouldEmitOllamaReasoning,
   shouldReleaseOllamaContentDelta,
@@ -266,6 +267,33 @@ describe('ollamaUsageStats', () => {
       total_tokens: 2400,
       duration_ms: 3000
     })
+  })
+})
+
+describe('prepareOllamaEnsemblePromptForRuntime', () => {
+  it('uses ensemble budget metadata for the final provider compaction pass', () => {
+    const transcript = 'x'.repeat(12_000)
+    const prompt = [
+      'TaskWraith Ensemble Mode',
+      '',
+      'Recent tagged transcript:',
+      transcript,
+      '',
+      'Current user request:',
+      'Summarize the recent panel history.'
+    ].join('\n')
+    const prepared = prepareOllamaEnsemblePromptForRuntime({
+      prompt,
+      modelId: 'ornith:35b',
+      modelInfo: { id: 'ornith:35b', label: 'Ornith', contextLength: 262_144 } as any,
+      contextCapTokens: 262_144,
+      configuredContextChars: 16_000,
+      configuredContextTurns: 8,
+      toolsEnabled: false
+    })
+
+    expect(prepared).toContain(transcript)
+    expect(prepared).not.toContain('[transcript compacted for Ollama context]')
   })
 })
 
