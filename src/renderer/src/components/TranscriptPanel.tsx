@@ -1779,6 +1779,10 @@ export const TranscriptPanel = memo(
                     ) : (
                       (() => {
                         const mediaRefs = collectMessageMediaRefs(msg)
+                        const messageStreamRunId =
+                          typeof msg.runId === 'string' && msg.runId
+                            ? msg.runId
+                            : boundaryRun?.runId
                         // Drop from the attachment strip any image already shown
                         // inline in the rendered body (deduped by resolved ref id).
                         const inlineImageIds = collectInlineImageRefIds(
@@ -1823,6 +1827,7 @@ export const TranscriptPanel = memo(
                                   mediaRefs={mediaRefs}
                                   workspacePath={currentChat?.workspacePath}
                                   onPreviewImage={onPreviewImage}
+                                  streamRunId={messageStreamRunId}
                                 />
                               ) : (
                                 <MarkdownMessage
@@ -1831,6 +1836,7 @@ export const TranscriptPanel = memo(
                                   mediaRefs={mediaRefs}
                                   workspacePath={currentChat?.workspacePath}
                                   onPreviewImage={onPreviewImage}
+                                  streamRunId={messageStreamRunId}
                                 />
                               )
                             ) : (

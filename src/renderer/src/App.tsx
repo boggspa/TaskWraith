@@ -27,6 +27,7 @@ import { coerceLiveProvider, DEFAULT_PROVIDER, isRetiredProvider } from '../../s
 import { sanitizeRawProviderMediaRefs } from '../../shared/transcriptMediaRefSanitize'
 import { normalizeThreadTitle } from '../../shared/threadTitles'
 import {
+  mergeRunStreamRenderMetrics,
   recordRunFlushMetric,
   recordRunItemMetric,
   type RunStreamMetrics
@@ -589,6 +590,7 @@ import {
   type ComposerPermissionState
 } from './lib/composerPermissionState'
 import { createAppRunId, createMessageId } from './lib/idGenerators'
+import { drainStreamRenderMetrics } from './lib/streamRenderMetrics'
 import {
   GHOST_COMPANION_STORAGE_KEY,
   ONBOARDING_HINT_DISMISSED_STORAGE_KEY,
@@ -10292,7 +10294,18 @@ function App(): React.JSX.Element {
           } else if (event.type === 'run_finished') {
             if (isVisibleRunChat()) setIsThinking(false)
             const runs = [...(updated.runs || [])]
-            const streamMetrics = runStreamMetricsByRunIdRef.current.get(currentRunId)
+            const renderMetrics = drainStreamRenderMetrics(currentRunId)
+            const streamMetrics = renderMetrics
+              ? mergeRunStreamRenderMetrics(
+                  runStreamMetricsByRunIdRef.current.get(currentRunId),
+                  currentRunId,
+                  renderMetrics,
+                  Date.now()
+                )
+              : runStreamMetricsByRunIdRef.current.get(currentRunId)
+            if (streamMetrics) {
+              runStreamMetricsByRunIdRef.current.set(currentRunId, streamMetrics)
+            }
             const finishedStats = streamMetrics
               ? { ...(event.stats || {}), streamMetrics }
               : event.stats

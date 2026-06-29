@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
   createRunStreamMetrics,
+  createRunStreamRenderMetrics,
+  mergeRunStreamRenderMetrics,
   recordRunFlushMetric,
   recordRunItemMetric,
   runStreamMetricRates
@@ -58,5 +60,30 @@ describe('runStreamMetrics', () => {
     expect(metrics.maxSequenceGap).toBe(3)
     expect(metrics.duplicateSequences).toBe(1)
     expect(metrics.lastSequence).toBe(4)
+  })
+
+  it('merges markdown and react render timing totals', () => {
+    const renderMetrics = createRunStreamRenderMetrics()
+    renderMetrics.markdownParses = 2
+    renderMetrics.markdownParseMs = 7
+    renderMetrics.markdownParseChars = 42
+    renderMetrics.maxMarkdownParseMs = 5
+    renderMetrics.reactCommits = 3
+    renderMetrics.reactCommitMs = 12
+    renderMetrics.maxReactCommitMs = 6
+
+    const metrics = mergeRunStreamRenderMetrics(undefined, 'run-1', renderMetrics, 1000)
+
+    expect(metrics.markdownParses).toBe(2)
+    expect(metrics.markdownParseMs).toBe(7)
+    expect(metrics.markdownParseChars).toBe(42)
+    expect(metrics.maxMarkdownParseMs).toBe(5)
+    expect(metrics.reactCommits).toBe(3)
+    expect(metrics.reactCommitMs).toBe(12)
+    expect(metrics.maxReactCommitMs).toBe(6)
+    expect(runStreamMetricRates(metrics)).toMatchObject({
+      averageMarkdownParseMs: 3.5,
+      averageReactCommitMs: 4
+    })
   })
 })

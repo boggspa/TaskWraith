@@ -42,6 +42,8 @@ interface RevealingMarkdownMessageProps {
   workspacePath?: string
   /** When provided, inline images open the full-size preview overlay on click. */
   onPreviewImage?: (ref: ChatMediaRef) => void
+  /** Run id for stream render instrumentation. */
+  streamRunId?: string
 }
 
 function prefersReducedMotion(): boolean {
@@ -79,7 +81,8 @@ function RevealingMarkdownMessageImpl({
   reduceMotion,
   mediaRefs,
   workspacePath,
-  onPreviewImage
+  onPreviewImage,
+  streamRunId
 }: RevealingMarkdownMessageProps) {
   const { stable, tail } = useMemo(() => splitMarkdownIntoBlocks(content), [content])
   const tailRaw = tail?.raw ?? ''
@@ -144,11 +147,19 @@ function RevealingMarkdownMessageImpl({
       <MarkdownMediaContext.Provider value={mediaCtx}>
         <div className="message-markdown message-markdown-pro">
           {stable.map((block, index) => (
-            <StableMarkdownBlock key={`${index}-${block.id}`} raw={block.raw} />
+            <StableMarkdownBlock
+              key={`${index}-${block.id}`}
+              raw={block.raw}
+              streamRunId={streamRunId}
+            />
           ))}
           {tail ? (
             <div style={tailStyle}>
-              <StableMarkdownBlock key={`tail-${stable.length}`} raw={displayRaw} />
+              <StableMarkdownBlock
+                key={`tail-${stable.length}`}
+                raw={displayRaw}
+                streamRunId={streamRunId}
+              />
             </div>
           ) : null}
         </div>

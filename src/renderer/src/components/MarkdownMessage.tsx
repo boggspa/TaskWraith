@@ -18,6 +18,8 @@ interface MarkdownMessageProps {
   workspacePath?: string
   /** When provided, inline images open the full-size preview overlay on click. */
   onPreviewImage?: (ref: ChatMediaRef) => void
+  /** Run id for stream render instrumentation. */
+  streamRunId?: string
 }
 
 /**
@@ -171,7 +173,8 @@ function MarkdownMessageImpl({
   chat,
   mediaRefs,
   workspacePath,
-  onPreviewImage
+  onPreviewImage,
+  streamRunId
 }: MarkdownMessageProps) {
   // useMemo the block split so a re-render NOT caused by a content change
   // (e.g. an identity-registry update) doesn't re-run the O(n) string scan.
@@ -198,9 +201,19 @@ function MarkdownMessageImpl({
       <MarkdownMediaContext.Provider value={mediaCtx}>
         <div className="message-markdown message-markdown-pro">
           {stable.map((block, index) => (
-            <StableMarkdownBlock key={`${index}-${block.id}`} raw={block.raw} />
+            <StableMarkdownBlock
+              key={`${index}-${block.id}`}
+              raw={block.raw}
+              streamRunId={streamRunId}
+            />
           ))}
-          {tail ? <StableMarkdownBlock key={`tail-${stable.length}`} raw={tail.raw} /> : null}
+          {tail ? (
+            <StableMarkdownBlock
+              key={`tail-${stable.length}`}
+              raw={tail.raw}
+              streamRunId={streamRunId}
+            />
+          ) : null}
         </div>
       </MarkdownMediaContext.Provider>
     </AgentIdentityContext.Provider>
@@ -224,6 +237,7 @@ function propsAreEqual(prev: MarkdownMessageProps, next: MarkdownMessageProps): 
   return (
     prev.content === next.content &&
     identityContextEqual(prev.chat, next.chat) &&
+    prev.streamRunId === next.streamRunId &&
     markdownMediaSignature(prev.mediaRefs, prev.workspacePath) ===
       markdownMediaSignature(next.mediaRefs, next.workspacePath)
   )

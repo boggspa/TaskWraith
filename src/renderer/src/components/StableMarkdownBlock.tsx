@@ -1,4 +1,12 @@
-import { Fragment, memo, useContext, useState, type MouseEvent, type ReactNode } from 'react'
+import {
+  Fragment,
+  Profiler,
+  memo,
+  useContext,
+  useState,
+  type MouseEvent,
+  type ReactNode
+} from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { HighlightedCodeBlock } from './HighlightedCodeBlock'
@@ -8,6 +16,10 @@ import { FaviconLink } from './FaviconLink'
 import { MarkdownMediaContext } from './MarkdownMediaContext'
 import { classifyMarkdownLink } from '../lib/classifyMarkdownLink'
 import { resolveInlineMarkdownImage } from '../lib/resolveMarkdownImageRef'
+import {
+  recordStreamMarkdownRenderMetric,
+  recordStreamReactCommitMetric
+} from '../lib/streamRenderMetrics'
 import { useCopyFeedback } from '../lib/useCopyFeedback'
 import type { ChatRecord } from '../../../main/store/types'
 
@@ -442,6 +454,8 @@ const REMARK_PLUGINS = [remarkGfm]
 interface StableMarkdownBlockProps {
   /** The raw markdown for a single block. Memo equality is `prev.raw === next.raw`. */
   raw: string
+  /** Run id for streaming render instrumentation. Omitted for static markdown. */
+  streamRunId?: string
   /** Forwarded only for callsites that don't already wrap a provider.
    * MarkdownMessage installs the provider itself so this is unused in
    * the streaming path — kept for type compatibility / future direct
@@ -449,11 +463,23 @@ interface StableMarkdownBlockProps {
   chat?: ChatRecord
 }
 
-function StableMarkdownBlockImpl({ raw }: StableMarkdownBlockProps) {
-  return (
+function StableMarkdownBlockImpl({ raw, streamRunId }: StableMarkdownBlockProps) {
+  const markdown = (
     <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={MARKDOWN_COMPONENTS}>
       {raw}
     </ReactMarkdown>
+  )
+  if (!streamRunId) return markdown
+  return (
+    <Profiler
+      id={`markdown:${streamRunId}`}
+      onRender={(_id, _phase, actualDuration, _baseDuration, startTime, commitTime) => {
+        recordStreamMarkdownRenderMetric(streamRunId, actualDuration, raw.length)
+        recordStreamReactCommitMetric(streamRunId, commitTime - startTime)
+      }}
+    >
+      {markdown}
+    </Profiler>
   )
 }
 
@@ -465,5 +491,5 @@ function StableMarkdownBlockImpl({ raw }: StableMarkdownBlockProps) {
  */
 export const StableMarkdownBlock = memo(
   StableMarkdownBlockImpl,
-  (prev, next) => prev.raw === next.raw
+  (prev, next) => prev.raw === next.raw && prev.streamRunId === next.streamRunId
 )

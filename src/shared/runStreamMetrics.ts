@@ -14,6 +14,13 @@ export interface RunStreamMetrics {
   maxCharsPerFlush: number
   itemFlushes: number
   maxCharsPerItemFlush: number
+  markdownParses: number
+  markdownParseMs: number
+  markdownParseChars: number
+  maxMarkdownParseMs: number
+  reactCommits: number
+  reactCommitMs: number
+  maxReactCommitMs: number
   sequenceGaps: number
   duplicateSequences: number
   maxSequenceGap: number
@@ -28,6 +35,18 @@ export interface RunStreamMetricRates {
   averageCharsPerFlush: number
   averageItemsPerFlush: number
   averageCharsPerItemFlush: number
+  averageMarkdownParseMs: number
+  averageReactCommitMs: number
+}
+
+export interface RunStreamRenderMetrics {
+  markdownParses: number
+  markdownParseMs: number
+  markdownParseChars: number
+  maxMarkdownParseMs: number
+  reactCommits: number
+  reactCommitMs: number
+  maxReactCommitMs: number
 }
 
 export function createRunStreamMetrics(runId: string, nowMs: number): RunStreamMetrics {
@@ -45,10 +64,29 @@ export function createRunStreamMetrics(runId: string, nowMs: number): RunStreamM
     maxCharsPerFlush: 0,
     itemFlushes: 0,
     maxCharsPerItemFlush: 0,
+    markdownParses: 0,
+    markdownParseMs: 0,
+    markdownParseChars: 0,
+    maxMarkdownParseMs: 0,
+    reactCommits: 0,
+    reactCommitMs: 0,
+    maxReactCommitMs: 0,
     sequenceGaps: 0,
     duplicateSequences: 0,
     maxSequenceGap: 0,
     lastSequence: 0
+  }
+}
+
+export function createRunStreamRenderMetrics(): RunStreamRenderMetrics {
+  return {
+    markdownParses: 0,
+    markdownParseMs: 0,
+    markdownParseChars: 0,
+    maxMarkdownParseMs: 0,
+    reactCommits: 0,
+    reactCommitMs: 0,
+    maxReactCommitMs: 0
   }
 }
 
@@ -102,6 +140,24 @@ export function recordRunFlushMetric(
   return next
 }
 
+export function mergeRunStreamRenderMetrics(
+  metrics: RunStreamMetrics | undefined,
+  runId: string,
+  renderMetrics: RunStreamRenderMetrics,
+  nowMs: number
+): RunStreamMetrics {
+  const next = metrics ? { ...metrics } : createRunStreamMetrics(runId, nowMs)
+  next.updatedAtMs = nowMs
+  next.markdownParses += renderMetrics.markdownParses
+  next.markdownParseMs += renderMetrics.markdownParseMs
+  next.markdownParseChars += renderMetrics.markdownParseChars
+  next.maxMarkdownParseMs = Math.max(next.maxMarkdownParseMs, renderMetrics.maxMarkdownParseMs)
+  next.reactCommits += renderMetrics.reactCommits
+  next.reactCommitMs += renderMetrics.reactCommitMs
+  next.maxReactCommitMs = Math.max(next.maxReactCommitMs, renderMetrics.maxReactCommitMs)
+  return next
+}
+
 export function runStreamMetricRates(metrics: RunStreamMetrics): RunStreamMetricRates {
   const elapsedSeconds = Math.max(0.001, (metrics.updatedAtMs - metrics.startedAtMs) / 1000)
   return {
@@ -112,6 +168,10 @@ export function runStreamMetricRates(metrics: RunStreamMetrics): RunStreamMetric
     averageCharsPerFlush: metrics.flushes > 0 ? metrics.flushedChars / metrics.flushes : 0,
     averageItemsPerFlush: metrics.flushes > 0 ? metrics.itemFlushes / metrics.flushes : 0,
     averageCharsPerItemFlush:
-      metrics.itemFlushes > 0 ? metrics.flushedChars / metrics.itemFlushes : 0
+      metrics.itemFlushes > 0 ? metrics.flushedChars / metrics.itemFlushes : 0,
+    averageMarkdownParseMs:
+      metrics.markdownParses > 0 ? metrics.markdownParseMs / metrics.markdownParses : 0,
+    averageReactCommitMs:
+      metrics.reactCommits > 0 ? metrics.reactCommitMs / metrics.reactCommits : 0
   }
 }
