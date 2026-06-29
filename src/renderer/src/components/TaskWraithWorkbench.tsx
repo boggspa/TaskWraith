@@ -1,7 +1,19 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent
+} from 'react'
 import type { GitRepositorySnapshot } from '../../../main/services/GitService'
 import { DiffViewer } from './DiffViewer'
-import { FileEditorPanel, type FileEditorPanelState } from './FileEditorPanel'
+import {
+  FileEditorPanel,
+  type FileEditorCommandKind,
+  type FileEditorCommandRequest,
+  type FileEditorPanelState
+} from './FileEditorPanel'
 
 type WorkbenchView = 'editor' | 'diff'
 
@@ -19,8 +31,14 @@ interface WorkbenchOpenRequest extends EditorOpenRequest {
 const DEFAULT_EDITOR_STATE: FileEditorPanelState = {
   selectedPath: '',
   dirtyBufferCount: 0,
+  openBufferCount: 0,
   cursorStatus: { line: 1, column: 1, selectedChars: 0 },
-  gitSnapshot: null
+  gitSnapshot: null,
+  lineWrapEnabled: false,
+  isLoading: false,
+  isListLoading: false,
+  status: '',
+  gitMessage: ''
 }
 
 interface TaskWraithWorkbenchProps {
@@ -65,6 +83,8 @@ export function TaskWraithWorkbench({
   const [status, setStatus] = useState('Workbench ready')
   const [editorRefreshTick, setEditorRefreshTick] = useState(refreshTick)
   const [editorOpenRequest, setEditorOpenRequest] = useState<EditorOpenRequest | null>(null)
+  const [editorCommandRequest, setEditorCommandRequest] =
+    useState<FileEditorCommandRequest | null>(null)
   const [diffSelectionRequest, setDiffSelectionRequest] = useState<EditorOpenRequest | null>(null)
   const [editorState, setEditorState] = useState<FileEditorPanelState>(DEFAULT_EDITOR_STATE)
   const [diffActionPath, setDiffActionPath] = useState('')
@@ -97,12 +117,40 @@ export function TaskWraithWorkbench({
             : ''
         }`
       : viewLabel(activeView)
+  const editorBufferSummary =
+    editorState.openBufferCount > 0
+      ? `${editorState.openBufferCount} open ${
+          editorState.openBufferCount === 1 ? 'tab' : 'tabs'
+        }`
+      : 'No open files'
   const editorDirtySummary =
     editorState.dirtyBufferCount > 0
       ? `${editorState.dirtyBufferCount} unsaved ${
           editorState.dirtyBufferCount === 1 ? 'file' : 'files'
         }`
       : ''
+  const editorBusy = editorState.isLoading || editorState.isListLoading
+  const workbenchStatus =
+    activeView === 'editor' ? editorState.status || editorState.gitMessage || status : status
+
+  const dispatchEditorCommand = useCallback((kind: FileEditorCommandKind) => {
+    setActiveView('editor')
+    setEditorCommandRequest((current) => ({
+      kind,
+      nonce: (current?.nonce ?? 0) + 1
+    }))
+    setStatus(
+      kind === 'quick-open'
+        ? 'Opening quick open'
+        : kind === 'save-all'
+          ? 'Saving all dirty files'
+          : kind === 'save-current'
+            ? 'Saving current file'
+            : kind === 'reveal-selected'
+              ? 'Revealing selected file'
+              : 'Toggling line wrap'
+    )
+  }, [])
 
   const refreshDiff = useCallback(async () => {
     if (!workspacePath) return
@@ -135,8 +183,25 @@ export function TaskWraithWorkbench({
       return
     }
     setEditorRefreshTick((tick) => tick + 1)
-    setStatus('Editor refreshed')
+    setStatus('Refreshing editor')
   }, [activeView, refreshDiff])
+
+  const handleWorkbenchKeyDown = useCallback(
+    (event: ReactKeyboardEvent<HTMLElement>) => {
+      if (!(event.metaKey || event.ctrlKey) || event.defaultPrevented) return
+      const key = event.key.toLowerCase()
+      if (key === 'p') {
+        event.preventDefault()
+        dispatchEditorCommand('quick-open')
+        return
+      }
+      if (key === 's') {
+        event.preventDefault()
+        dispatchEditorCommand(event.shiftKey ? 'save-all' : 'save-current')
+      }
+    },
+    [dispatchEditorCommand]
+  )
 
   const openFileInEditor = useCallback((path: string) => {
     setActiveView('editor')
@@ -174,6 +239,8 @@ export function TaskWraithWorkbench({
         const result = await window.api.gitStage({ workspacePath, paths: [path] })
         if (result.ok) {
           setDiffGitSnapshot(result.data)
+          setEditorState((current) => ({ ...current, gitSnapshot: result.data }))
+          setEditorRefreshTick((tick) => tick + 1)
           await refreshDiff()
         } else {
           setStatus(result.error)
@@ -196,6 +263,8 @@ export function TaskWraithWorkbench({
         const result = await window.api.gitUnstage({ workspacePath, paths: [path] })
         if (result.ok) {
           setDiffGitSnapshot(result.data)
+          setEditorState((current) => ({ ...current, gitSnapshot: result.data }))
+          setEditorRefreshTick((tick) => tick + 1)
           await refreshDiff()
         } else {
           setStatus(result.error)
@@ -235,7 +304,11 @@ export function TaskWraithWorkbench({
   }, [activeView, diff, refreshDiff])
 
   return (
-    <section className="workbench-shell" aria-label="TaskWraith Workbench">
+    <section
+      className="workbench-shell"
+      aria-label="TaskWraith Workbench"
+      onKeyDown={handleWorkbenchKeyDown}
+    >
       <aside className="workbench-navigator" aria-label="Workbench navigator">
         <button
           className={`workbench-nav-item ${activeView === 'editor' ? 'active' : ''}`}
@@ -279,8 +352,34 @@ export function TaskWraithWorkbench({
             ))}
           </div>
           <div className="workbench-actions">
+            <button
+              className="btn btn-sm btn-ghost"
+              type="button"
+              onClick={() => dispatchEditorCommand('quick-open')}
+              disabled={editorBusy}
+              aria-keyshortcuts="Meta+P Control+P"
+              title="Quick open file"
+            >
+              Quick Open
+            </button>
+            <button
+              className="btn btn-sm btn-ghost"
+              type="button"
+              onClick={() => dispatchEditorCommand('save-all')}
+              disabled={editorState.dirtyBufferCount === 0 || editorBusy}
+              aria-keyshortcuts="Meta+Shift+S Control+Shift+S"
+              title={
+                editorState.dirtyBufferCount > 0
+                  ? `Save ${editorState.dirtyBufferCount} dirty file${
+                      editorState.dirtyBufferCount === 1 ? '' : 's'
+                    }`
+                  : 'No dirty files'
+              }
+            >
+              Save All
+            </button>
             <span className="workbench-status" role="status" aria-live="polite">
-              {status}
+              {workbenchStatus}
             </span>
             <button className="btn btn-sm" type="button" onClick={refreshActiveView}>
               Refresh
@@ -293,6 +392,7 @@ export function TaskWraithWorkbench({
               workspacePath={workspacePath}
               refreshTick={editorRefreshTick}
               openRequest={editorOpenRequest}
+              commandRequest={editorCommandRequest}
               onDirtyChange={onDirtyChange}
               onEditorStateChange={setEditorState}
             />
@@ -318,8 +418,10 @@ export function TaskWraithWorkbench({
             {changeSummary ? ` · ${changeSummary}` : ''}
           </span>
           <span>
+            {activeView === 'editor' ? `${editorBufferSummary} · ` : ''}
             {editorDirtySummary ? `${editorDirtySummary} · ` : ''}
             {editorCursorSummary}
+            {activeView === 'editor' ? ` · ${editorState.lineWrapEnabled ? 'Wrap' : 'No wrap'}` : ''}
           </span>
         </footer>
       </div>

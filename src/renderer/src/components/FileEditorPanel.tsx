@@ -31,12 +31,25 @@ interface FileEditorPanelProps {
   width?: number
   refreshTick?: number
   openRequest?: FileEditorOpenRequest | null
+  commandRequest?: FileEditorCommandRequest | null
   onDirtyChange?: (dirtyBufferCount: number) => void
   onEditorStateChange?: (state: FileEditorPanelState) => void
 }
 
 interface FileEditorOpenRequest {
   path: string
+  nonce: number
+}
+
+export type FileEditorCommandKind =
+  | 'save-current'
+  | 'save-all'
+  | 'quick-open'
+  | 'reveal-selected'
+  | 'toggle-wrap'
+
+export interface FileEditorCommandRequest {
+  kind: FileEditorCommandKind
   nonce: number
 }
 
@@ -101,8 +114,14 @@ export interface EditorCursorStatus {
 export interface FileEditorPanelState {
   selectedPath: string
   dirtyBufferCount: number
+  openBufferCount: number
   cursorStatus: EditorCursorStatus
   gitSnapshot: GitRepositorySnapshot | null
+  lineWrapEnabled: boolean
+  isLoading: boolean
+  isListLoading: boolean
+  status: string
+  gitMessage: string
 }
 
 interface WorkspaceFileTreeProps {
@@ -469,6 +488,7 @@ export function FileEditorPanel({
   width,
   refreshTick = 0,
   openRequest,
+  commandRequest,
   onDirtyChange,
   onEditorStateChange
 }: FileEditorPanelProps) {
@@ -505,6 +525,9 @@ export function FileEditorPanel({
     useState<FileEditorContextMenuSelection | null>(null)
   const lastRefreshTickRef = useRef(refreshTick)
   const lastOpenRequestRef = useRef<number | null>(null)
+  const lastCommandRequestRef = useRef<number | null>(null)
+  const refreshRequestSeqRef = useRef(0)
+  const commandHandlersRef = useRef<Partial<Record<FileEditorCommandKind, () => void>>>({})
   const activeBuffer = useMemo(
     () => buffers.find((buffer) => buffer.path === selectedPath) ?? null,
     [buffers, selectedPath]
@@ -524,15 +547,27 @@ export function FileEditorPanel({
     onEditorStateChange?.({
       selectedPath,
       dirtyBufferCount,
+      openBufferCount: buffers.length,
       cursorStatus,
-      gitSnapshot
+      gitSnapshot,
+      lineWrapEnabled,
+      isLoading,
+      isListLoading,
+      status,
+      gitMessage
     })
   }, [
+    buffers.length,
     cursorStatus,
     dirtyBufferCount,
+    gitMessage,
     gitSnapshot,
+    isLoading,
+    isListLoading,
+    lineWrapEnabled,
     onEditorStateChange,
-    selectedPath
+    selectedPath,
+    status
   ])
 
   const browseFiles = useMemo(() => {
@@ -721,14 +756,18 @@ export function FileEditorPanel({
     [workspacePath]
   )
 
-  const refreshGitSnapshot = useCallback(async () => {
+  const refreshGitSnapshot = useCallback(async (requestId?: number) => {
+    const isCurrentRefresh = () =>
+      requestId === undefined || requestId === refreshRequestSeqRef.current
     if (!workspacePath) {
+      if (!isCurrentRefresh()) return
       setGitSnapshot(null)
       setGitMessage('')
       return
     }
     try {
       const result = await editorApi.gitSnapshot(workspacePath)
+      if (!isCurrentRefresh()) return
       if (result.ok) {
         setGitSnapshot(result.data)
         setGitMessage('')
@@ -737,6 +776,7 @@ export function FileEditorPanel({
         setGitMessage(result.error)
       }
     } catch (error) {
+      if (!isCurrentRefresh()) return
       setGitSnapshot(null)
       setGitMessage(error instanceof Error ? error.message : 'Could not read git status')
     }
@@ -748,9 +788,13 @@ export function FileEditorPanel({
         resetNavigation?: boolean
         expandedPaths?: string[]
         filterQuery?: string
+        requestId?: number
       } = {}
-    ) => {
+    ): Promise<boolean> => {
+      const isCurrentRefresh = () =>
+        options.requestId === undefined || options.requestId === refreshRequestSeqRef.current
       if (!workspacePath) {
+        if (!isCurrentRefresh()) return false
         setChildrenByDirectory({})
         setTruncatedDirectories({})
         setExpandedDirectories(new Set())
@@ -760,7 +804,7 @@ export function FileEditorPanel({
         setListMessage('')
         setGitSnapshot(null)
         setGitMessage('')
-        return
+        return true
       }
 
       const expandedPaths = options.resetNavigation ? [] : (options.expandedPaths ?? [])
@@ -779,6 +823,7 @@ export function FileEditorPanel({
           path: ROOT_DIR_KEY,
           limit: FILE_EDITOR_DIRECTORY_LIMIT
         })
+        if (!isCurrentRefresh()) return false
         nextChildren[ROOT_DIR_KEY] = root.entries
         nextTruncated[ROOT_DIR_KEY] = root.truncated
         for (const path of expandedPaths) {
@@ -787,6 +832,7 @@ export function FileEditorPanel({
               path,
               limit: FILE_EDITOR_DIRECTORY_LIMIT
             })
+            if (!isCurrentRefresh()) return false
             nextChildren[path] = result.entries
             nextTruncated[path] = result.truncated
           } catch {
@@ -800,28 +846,36 @@ export function FileEditorPanel({
             query: filterQuery,
             limit: FILE_EDITOR_SEARCH_LIMIT
           })
+          if (!isCurrentRefresh()) return false
           setSearchFiles(search.entries)
           setSearchTruncated(search.truncated)
         } else {
           setSearchFiles([])
           setSearchTruncated(false)
         }
-        void refreshGitSnapshot()
+        await refreshGitSnapshot(options.requestId)
+        return isCurrentRefresh()
       } catch (error) {
+        if (!isCurrentRefresh()) return false
         setListMessage(error instanceof Error ? error.message : 'Could not load files')
+        return false
       } finally {
-        setIsListLoading(false)
+        if (isCurrentRefresh()) setIsListLoading(false)
       }
     },
     [refreshGitSnapshot, workspacePath]
   )
 
-  const refreshOpenBuffers = useCallback(async () => {
-    if (!workspacePath || buffers.length === 0) return
+  const refreshOpenBuffers = useCallback(async (requestId?: number): Promise<boolean> => {
+    const isCurrentRefresh = () =>
+      requestId === undefined || requestId === refreshRequestSeqRef.current
+    if (!workspacePath || buffers.length === 0) return true
+    let refreshed = true
     for (const buffer of buffers) {
       if (isBufferDirty(buffer)) continue
       try {
         const result = await editorApi.readFile(workspacePath, buffer.path)
+        if (!isCurrentRefresh()) return false
         const nextBuffer = bufferFromReadResult(result)
         setBuffers((current) =>
           updateBuffer(current, result.path, (currentBuffer) =>
@@ -829,6 +883,8 @@ export function FileEditorPanel({
           )
         )
       } catch (error) {
+        if (!isCurrentRefresh()) return false
+        refreshed = false
         setStatus(
           `Could not refresh ${buffer.path}: ${
             error instanceof Error ? error.message : 'file unavailable'
@@ -836,15 +892,32 @@ export function FileEditorPanel({
         )
       }
     }
+    return refreshed && isCurrentRefresh()
   }, [buffers, workspacePath])
 
   const refreshCurrentView = useCallback(async () => {
-    await refreshFiles({
+    if (!workspacePath) return
+    const requestId = refreshRequestSeqRef.current + 1
+    refreshRequestSeqRef.current = requestId
+    setStatus('Refreshing editor')
+    const filesRefreshed = await refreshFiles({
       expandedPaths: Array.from(expandedDirectories),
-      filterQuery: trimmedFilter
+      filterQuery: trimmedFilter,
+      requestId
     })
-    await refreshOpenBuffers()
-  }, [expandedDirectories, refreshFiles, refreshOpenBuffers, trimmedFilter])
+    if (!filesRefreshed || requestId !== refreshRequestSeqRef.current) return
+    const buffersRefreshed = await refreshOpenBuffers(requestId)
+    if (buffersRefreshed && requestId === refreshRequestSeqRef.current) {
+      setStatus(dirtyBufferCount > 0 ? 'Editor refreshed; dirty tabs kept' : 'Editor refreshed')
+    }
+  }, [
+    dirtyBufferCount,
+    expandedDirectories,
+    refreshFiles,
+    refreshOpenBuffers,
+    trimmedFilter,
+    workspacePath
+  ])
 
   useEffect(() => {
     let cancelled = false
@@ -1086,6 +1159,7 @@ export function FileEditorPanel({
         setStatus(`${filePath} · already open`)
         const parentPath = parentDirectoryForPath(filePath)
         if (parentPath) void expandDirectoryPath(parentPath)
+        void refreshGitSnapshot()
         return
       }
 
@@ -1125,6 +1199,7 @@ export function FileEditorPanel({
     setQuickOpenTruncated(false)
     setQuickOpenMessage('')
     setQuickOpenSelectedIndex(0)
+    setStatus('Quick open')
     setShowQuickOpen(true)
   }, [workspacePath])
 
@@ -1500,6 +1575,25 @@ export function FileEditorPanel({
       setIsLoading(false)
     }
   }
+
+  commandHandlersRef.current = {
+    'quick-open': openQuickOpen,
+    'save-current': () => void saveFile(),
+    'save-all': () => void saveAllFiles(),
+    'reveal-selected': () => void revealSelectedFileInTree(),
+    'toggle-wrap': () => {
+      setLineWrapEnabled((enabled) => !enabled)
+      setStatus(lineWrapEnabled ? 'Line wrap disabled' : 'Line wrap enabled')
+    }
+  }
+
+  useEffect(() => {
+    if (!commandRequest || commandRequest.nonce === lastCommandRequestRef.current) return
+    lastCommandRequestRef.current = commandRequest.nonce
+    queueMicrotask(() => {
+      commandHandlersRef.current[commandRequest.kind]?.()
+    })
+  }, [commandRequest])
 
   return (
     <aside className="app-file-editor" style={width ? { width } : undefined}>
