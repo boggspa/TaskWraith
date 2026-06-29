@@ -25,6 +25,7 @@ import type {
   RunQueueJob,
   WorkflowDefinition,
   WorkspaceBoardDefinition,
+  WorkspaceBoardCard,
   ProviderId,
   ComposerStyle,
   ThemeAccentStyle,
@@ -159,6 +160,7 @@ interface SidebarProps {
   runningChatIds?: string[]
   workflows?: WorkflowDefinition[]
   workspaceBoards?: WorkspaceBoardDefinition[]
+  workspaceBoardCards?: WorkspaceBoardCard[]
   activeWorkspaceBoardId?: string | null
   scheduledTasks?: ScheduledTask[]
   collaboratingChatIds?: Set<string>
@@ -1474,10 +1476,19 @@ function workflowMatchesSearch(workflow: WorkflowDefinition, query: string): boo
 function workspaceBoardMatchesSearch(
   board: WorkspaceBoardDefinition,
   workspace: WorkspaceRecord | undefined,
+  cards: WorkspaceBoardCard[],
   query: string
 ): boolean {
   if (!query) return true
-  return [board.name, board.description, workspace?.displayName, workspace?.path]
+  const cardText = cards.flatMap((card) => [
+    card.title,
+    card.body,
+    card.humanOwner,
+    card.blockedReason,
+    card.nextStep,
+    ...(card.labels || [])
+  ])
+  return [board.name, board.description, workspace?.displayName, workspace?.path, ...cardText]
     .join(' ')
     .toLowerCase()
     .includes(query)
@@ -1999,6 +2010,7 @@ export function Sidebar({
   runningChatIds = [],
   workflows = [],
   workspaceBoards = [],
+  workspaceBoardCards = [],
   activeWorkspaceBoardId = null,
   scheduledTasks = [],
   collaboratingChatIds = new Set<string>(),
@@ -2316,9 +2328,24 @@ export function Sidebar({
   const visibleWorkflows = isSidebarSearchActive
     ? scopedWorkflows.filter((workflow) => workflowMatchesSearch(workflow, sidebarSearchQuery))
     : scopedWorkflows
+  const workspaceBoardCardsByBoardId = useMemo(() => {
+    const map = new Map<string, WorkspaceBoardCard[]>()
+    for (const card of workspaceBoardCards) {
+      if (card.archived) continue
+      const cardsForBoard = map.get(card.boardId) || []
+      cardsForBoard.push(card)
+      map.set(card.boardId, cardsForBoard)
+    }
+    return map
+  }, [workspaceBoardCards])
   const visibleWorkspaceBoards = (isSidebarSearchActive
     ? workspaceBoards.filter((board) =>
-        workspaceBoardMatchesSearch(board, workspaceById.get(board.workspaceId), sidebarSearchQuery)
+        workspaceBoardMatchesSearch(
+          board,
+          workspaceById.get(board.workspaceId),
+          workspaceBoardCardsByBoardId.get(board.id) || [],
+          sidebarSearchQuery
+        )
       )
     : workspaceBoards
   )
@@ -3847,6 +3874,22 @@ export function Sidebar({
                   ) : (
                     visibleWorkspaceBoards.map((board) => {
                       const workspace = workspaceById.get(board.workspaceId)
+                      const boardCards = workspaceBoardCardsByBoardId.get(board.id) || []
+                      const attentionCount = boardCards.filter(
+                        (card) =>
+                          card.columnId === 'needs-input' ||
+                          card.columnId === 'blocked' ||
+                          card.columnId === 'review-ready'
+                      ).length
+                      const boardMeta = [
+                        workspace?.displayName || 'Workspace',
+                        `${boardCards.length} card${boardCards.length === 1 ? '' : 's'}`,
+                        attentionCount > 0
+                          ? `${attentionCount} attention`
+                          : null
+                      ]
+                        .filter(Boolean)
+                        .join(' · ')
                       return (
                         <div key={board.id} className="sidebar-workspace-board-block">
                           <button
@@ -3868,7 +3911,7 @@ export function Sidebar({
                                 <HighlightMatch text={board.name} query={sidebarSearchQuery} />
                               </span>
                               <span className="sidebar-workflow-meta">
-                                {workspace?.displayName || 'Workspace'}
+                                {boardMeta}
                               </span>
                             </span>
                           </button>

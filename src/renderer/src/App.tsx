@@ -22199,6 +22199,7 @@ function App(): React.JSX.Element {
                 runningChatIds={runningChatIdsArray}
                 workflows={workflowDefinitions}
                 workspaceBoards={workspaceBoardApiReady ? workspaceBoards : []}
+                workspaceBoardCards={workspaceBoardApiReady ? workspaceBoardCards : []}
                 activeWorkspaceBoardId={workspaceBoardApiReady ? activeWorkspaceBoardId : null}
                 scheduledTasks={scheduledTasks}
                 collaboratingChatIds={collaboratingChatIds}
