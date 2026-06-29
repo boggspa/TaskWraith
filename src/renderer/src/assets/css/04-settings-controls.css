@@ -5173,6 +5173,14 @@ input:disabled, select:disabled, textarea:disabled {
     inset 0 1px 0 rgba(255, 255, 255, 0.18),
     0 0 10px color-mix(in srgb, var(--provider-qwen-color) 14%, transparent);
 }
+.run-card-provider.provider-alibaba {
+  color: var(--provider-alibaba-color);
+  border-color: color-mix(in srgb, var(--provider-alibaba-color) 32%, transparent);
+  background: color-mix(in srgb, var(--provider-alibaba-color) 12%, transparent);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.18),
+    0 0 10px color-mix(in srgb, var(--provider-alibaba-color) 14%, transparent);
+}
 .run-card-provider.provider-google {
   color: var(--provider-google-color);
   border-color: color-mix(in srgb, var(--provider-google-color) 32%, transparent);
@@ -5196,6 +5204,46 @@ input:disabled, select:disabled, textarea:disabled {
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.18),
     0 0 10px color-mix(in srgb, var(--provider-ornith-color) 14%, transparent);
+}
+.run-card-provider.provider-deep-reinforce {
+  color: var(--provider-deep-reinforce-color);
+  border-color: color-mix(in srgb, var(--provider-deep-reinforce-color) 32%, transparent);
+  background: color-mix(in srgb, var(--provider-deep-reinforce-color) 12%, transparent);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.18),
+    0 0 10px color-mix(in srgb, var(--provider-deep-reinforce-color) 14%, transparent);
+}
+.run-card-provider.provider-ibm {
+  color: var(--provider-ibm-color);
+  border-color: color-mix(in srgb, var(--provider-ibm-color) 32%, transparent);
+  background: color-mix(in srgb, var(--provider-ibm-color) 12%, transparent);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.18),
+    0 0 10px color-mix(in srgb, var(--provider-ibm-color) 14%, transparent);
+}
+.run-card-provider.provider-liquid {
+  color: var(--provider-liquid-color);
+  border-color: color-mix(in srgb, var(--provider-liquid-color) 32%, transparent);
+  background: color-mix(in srgb, var(--provider-liquid-color) 12%, transparent);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.18),
+    0 0 10px color-mix(in srgb, var(--provider-liquid-color) 14%, transparent);
+}
+.run-card-provider.provider-nvidia {
+  color: var(--provider-nvidia-color);
+  border-color: color-mix(in srgb, var(--provider-nvidia-color) 32%, transparent);
+  background: color-mix(in srgb, var(--provider-nvidia-color) 12%, transparent);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.18),
+    0 0 10px color-mix(in srgb, var(--provider-nvidia-color) 14%, transparent);
+}
+.run-card-provider.provider-openbmb {
+  color: var(--provider-openbmb-color);
+  border-color: color-mix(in srgb, var(--provider-openbmb-color) 32%, transparent);
+  background: color-mix(in srgb, var(--provider-openbmb-color) 12%, transparent);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.18),
+    0 0 10px color-mix(in srgb, var(--provider-openbmb-color) 14%, transparent);
 }
 
 /* Status chip — same rim-shine pattern per tone. Each tone

@@ -17,6 +17,8 @@ describe('ollama model availability helpers', () => {
     expect(isOllamaModelInstalled('gpt-oss', ['openai/gpt-oss-20b'])).toBe(true)
     expect(isOllamaModelInstalled('ornith', ['ornith:9b'])).toBe(true)
     expect(isOllamaModelInstalled('ornith:35b', ['ornith:9b'])).toBe(false)
+    expect(isOllamaModelInstalled('lfm2.5', ['lfm2.5:8b'])).toBe(true)
+    expect(isOllamaModelInstalled('lfm2.5:latest', ['lfm2.5:8b'])).toBe(true)
   })
 
   it('builds install-only pull commands for safe model ids', () => {

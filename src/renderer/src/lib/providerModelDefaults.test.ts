@@ -100,6 +100,7 @@ describe('Ollama provider model defaults', () => {
       'ornith:9b',
       'ornith:35b',
       'gpt-oss:20b',
+      'lfm2.5:8b',
       'minicpm-v4.5:8b',
       'granite4.1:3b',
       'granite4.1:30b',

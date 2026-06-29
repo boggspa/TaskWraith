@@ -67,6 +67,7 @@ export const OLLAMA_MODEL_COMMANDS: readonly OllamaModelEntry[] = [
   { id: 'ornith:9b', label: 'Ornith 1.0 (9B Param)', command: 'ollama run ornith:9b' },
   { id: 'ornith:35b', label: 'Ornith 1.0 (35B Param)', command: 'ollama run ornith:35b' },
   { id: 'gpt-oss:20b', label: 'GPT OSS (20B Param)', command: 'ollama run gpt-oss:20b' },
+  { id: 'lfm2.5:8b', label: 'LFM 2.5 (8B-A1B)', command: 'ollama run lfm2.5:8b' },
   { id: 'minicpm-v4.5:8b', label: 'MiniCPM-V 4.5 (8B Param)', command: 'ollama run minicpm-v4.5:8b' },
   { id: 'granite4.1:3b', label: 'Granite 4.1 (3B Param)', command: 'ollama run granite4.1:3b' },
   { id: 'granite4.1:30b', label: 'Granite 4.1 (30B Param)', command: 'ollama run granite4.1:30b' },

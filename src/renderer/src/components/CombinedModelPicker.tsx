@@ -28,6 +28,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { ProviderId, ComposerStyle } from '../../../main/store/types'
 import { formatComposerModelChip, reasoningDisplayLabel } from '../lib/composerChipFormat'
+import { OLLAMA_DISPLAY_BRANDS, resolveOllamaDisplayBrand } from '../lib/ollamaDisplayBrand'
 
 export interface CombinedModelPickerModelOption {
   id: string
@@ -157,6 +158,51 @@ interface CombinedModelPickerProps {
   repositionOnScroll?: boolean
 }
 
+type CombinedModelPickerColumn = 'provider' | 'model' | 'reasoning'
+
+type OllamaProviderGroup = {
+  id: string
+  label: string
+  providerClass: string
+  models: CombinedModelPickerModelOption[]
+}
+
+const OLLAMA_CUSTOM_PROVIDER_GROUP = {
+  id: 'custom',
+  label: 'Custom',
+  providerClass: 'ollama'
+}
+
+function buildOllamaProviderGroups(
+  options: readonly CombinedModelPickerModelOption[]
+): OllamaProviderGroup[] {
+  const groups = new Map<string, OllamaProviderGroup>()
+  for (const brand of OLLAMA_DISPLAY_BRANDS) {
+    groups.set(brand.id, {
+      id: brand.id,
+      label: brand.providerLabel,
+      providerClass: brand.providerClass,
+      models: []
+    })
+  }
+
+  for (const option of options) {
+    const brand = resolveOllamaDisplayBrand(option.id, option.label)
+    const groupId = brand?.providerClass || OLLAMA_CUSTOM_PROVIDER_GROUP.id
+    const existing = groups.get(groupId)
+    if (existing) {
+      existing.models.push(option)
+      continue
+    }
+    groups.set(groupId, {
+      ...OLLAMA_CUSTOM_PROVIDER_GROUP,
+      models: [option]
+    })
+  }
+
+  return [...groups.values()].filter((group) => group.models.length > 0)
+}
+
 /**
  * Inline lightning-bolt icon used as the "supports Fast tier"
  * affordance next to capable model labels and as the icon for
@@ -206,9 +252,17 @@ export function CombinedModelPicker({
   const popoverRef = useRef<HTMLDivElement | null>(null)
   const [open, setOpen] = useState(false)
   const [position, setPosition] = useState<{ left: number; top: number } | null>(null)
-  const [focusedColumn, setFocusedColumn] = useState<'model' | 'reasoning'>('model')
+  const [focusedColumn, setFocusedColumn] = useState<CombinedModelPickerColumn>('model')
+  const [providerHighlight, setProviderHighlight] = useState(0)
   const [modelHighlight, setModelHighlight] = useState(0)
   const [reasoningHighlight, setReasoningHighlight] = useState(0)
+  const [activeOllamaProviderId, setActiveOllamaProviderId] = useState<string | null>(null)
+
+  const ollamaProviderGroups = useMemo(
+    () => (provider === 'ollama' ? buildOllamaProviderGroups(modelOptions) : []),
+    [modelOptions, provider]
+  )
+  const isOllamaProviderPicker = provider === 'ollama' && ollamaProviderGroups.length > 0
 
   const selectedModelOption = modelOptions.find((option) => option.id === selectedModelId) ||
     // Show the real id when it isn't in the list (e.g. a server-hydrated or
@@ -219,6 +273,37 @@ export function CombinedModelPicker({
       id: selectedModelId,
       label: selectedModelId
     }
+
+  const selectedOllamaProviderId = useMemo(() => {
+    if (!isOllamaProviderPicker) return null
+    return (
+      ollamaProviderGroups.find((group) =>
+        group.models.some((option) => option.id === selectedModelOption.id)
+      )?.id ||
+      ollamaProviderGroups[0]?.id ||
+      null
+    )
+  }, [isOllamaProviderPicker, ollamaProviderGroups, selectedModelOption.id])
+
+  const activeOllamaProviderGroup = useMemo(() => {
+    if (!isOllamaProviderPicker) return null
+    const activeId = activeOllamaProviderId || selectedOllamaProviderId
+    return (
+      ollamaProviderGroups.find((group) => group.id === activeId) ||
+      ollamaProviderGroups[0] ||
+      null
+    )
+  }, [
+    activeOllamaProviderId,
+    isOllamaProviderPicker,
+    ollamaProviderGroups,
+    selectedOllamaProviderId
+  ])
+
+  const visibleModelOptions =
+    isOllamaProviderPicker && activeOllamaProviderGroup
+      ? activeOllamaProviderGroup.models
+      : modelOptions
 
   const chipText = useMemo(
     () =>
@@ -290,7 +375,7 @@ export function CombinedModelPicker({
       const trigger = triggerRef.current
       if (!trigger) return
       const rect = trigger.getBoundingClientRect()
-      const popoverWidth = reasoningOptions.length > 0 ? 360 : 200
+      const popoverWidth = isOllamaProviderPicker ? 560 : reasoningOptions.length > 0 ? 360 : 200
       const left = Math.max(8, rect.right - popoverWidth)
       // Anchor ABOVE the chip with a small gap.
       const top = rect.top - 8
@@ -313,26 +398,43 @@ export function CombinedModelPicker({
       window.removeEventListener('scroll', computePosition, true)
       window.removeEventListener('resize', computePosition)
     }
-  }, [open, reasoningOptions.length, repositionOnScroll])
+  }, [isOllamaProviderPicker, open, reasoningOptions.length, repositionOnScroll])
 
   // Reset highlights when the popover opens.
   useEffect(() => {
     if (!open) return
+    const providerIdx = isOllamaProviderPicker
+      ? Math.max(
+          0,
+          ollamaProviderGroups.findIndex((group) => group.id === selectedOllamaProviderId)
+        )
+      : 0
     const modelIdx = Math.max(
       0,
-      modelOptions.findIndex((option) => option.id === selectedModelId)
+      visibleModelOptions.findIndex((option) => option.id === selectedModelId)
     )
     const reasoningIdx = Math.max(
       0,
       reasoningOptions.findIndex((option) => option.value === selectedReasoning)
     )
     const frame = window.requestAnimationFrame(() => {
+      setProviderHighlight(providerIdx)
+      setActiveOllamaProviderId(ollamaProviderGroups[providerIdx]?.id || null)
       setModelHighlight(modelIdx)
       setReasoningHighlight(reasoningIdx)
-      setFocusedColumn('model')
+      setFocusedColumn(isOllamaProviderPicker ? 'provider' : 'model')
     })
     return () => window.cancelAnimationFrame(frame)
-  }, [open, modelOptions, selectedModelId, reasoningOptions, selectedReasoning])
+  }, [
+    isOllamaProviderPicker,
+    ollamaProviderGroups,
+    open,
+    selectedModelId,
+    selectedOllamaProviderId,
+    reasoningOptions,
+    selectedReasoning,
+    visibleModelOptions
+  ])
 
   // Click-outside + Escape dismiss.
   useEffect(() => {
@@ -364,28 +466,51 @@ export function CombinedModelPicker({
     const handleArrowKey = (event: KeyboardEvent) => {
       if (event.key === 'ArrowDown') {
         event.preventDefault()
-        if (focusedColumn === 'model') {
-          setModelHighlight((idx) => Math.min(modelOptions.length - 1, idx + 1))
+        if (focusedColumn === 'provider') {
+          setProviderHighlight((idx) => Math.min(ollamaProviderGroups.length - 1, idx + 1))
+        } else if (focusedColumn === 'model') {
+          setModelHighlight((idx) =>
+            Math.min(Math.max(0, visibleModelOptions.length - 1), idx + 1)
+          )
         } else {
-          setReasoningHighlight((idx) => Math.min(reasoningOptions.length - 1, idx + 1))
+          setReasoningHighlight((idx) =>
+            Math.min(Math.max(0, reasoningOptions.length - 1), idx + 1)
+          )
         }
       } else if (event.key === 'ArrowUp') {
         event.preventDefault()
-        if (focusedColumn === 'model') {
+        if (focusedColumn === 'provider') {
+          setProviderHighlight((idx) => Math.max(0, idx - 1))
+        } else if (focusedColumn === 'model') {
           setModelHighlight((idx) => Math.max(0, idx - 1))
         } else {
           setReasoningHighlight((idx) => Math.max(0, idx - 1))
         }
-      } else if (event.key === 'ArrowRight' && reasoningOptions.length > 0) {
+      } else if (event.key === 'ArrowRight') {
         event.preventDefault()
-        setFocusedColumn('reasoning')
+        if (focusedColumn === 'provider') {
+          setFocusedColumn('model')
+        } else if (focusedColumn === 'model' && reasoningOptions.length > 0) {
+          setFocusedColumn('reasoning')
+        }
       } else if (event.key === 'ArrowLeft') {
         event.preventDefault()
-        setFocusedColumn('model')
+        if (focusedColumn === 'reasoning') {
+          setFocusedColumn('model')
+        } else if (focusedColumn === 'model' && isOllamaProviderPicker) {
+          setFocusedColumn('provider')
+        }
       } else if (event.key === 'Enter') {
         event.preventDefault()
-        if (focusedColumn === 'model') {
-          const option = modelOptions[modelHighlight]
+        if (focusedColumn === 'provider') {
+          const option = ollamaProviderGroups[providerHighlight]
+          if (option) {
+            setActiveOllamaProviderId(option.id)
+            setModelHighlight(0)
+            setFocusedColumn('model')
+          }
+        } else if (focusedColumn === 'model') {
+          const option = visibleModelOptions[modelHighlight]
           if (option && !option.disabled) onSelectModel(option.id)
         } else {
           const option = reasoningOptions[reasoningHighlight]
@@ -400,18 +525,23 @@ export function CombinedModelPicker({
   }, [
     open,
     focusedColumn,
-    modelOptions,
+    isOllamaProviderPicker,
+    ollamaProviderGroups,
     reasoningOptions,
     modelHighlight,
+    providerHighlight,
     reasoningHighlight,
     onSelectModel,
-    onSelectReasoning
+    onSelectReasoning,
+    visibleModelOptions
   ])
 
   const popoverContent = open && position && (
     <div
       ref={popoverRef}
-      className={`composer-combined-picker-popover provider-${provider} shell-${composerStyle}`}
+      className={`composer-combined-picker-popover provider-${provider} shell-${composerStyle} ${
+        isOllamaProviderPicker ? 'is-ollama-model-picker' : ''
+      }`}
       style={{
         position: 'fixed',
         left: `${position.left}px`,
@@ -421,11 +551,47 @@ export function CombinedModelPicker({
       role="dialog"
       aria-label="Choose model and reasoning level"
     >
+      {isOllamaProviderPicker && (
+        <div
+          className={`composer-combined-picker-column composer-combined-picker-providers ${focusedColumn === 'provider' ? 'is-focused' : ''}`}
+        >
+          <div className="composer-combined-picker-column-header">Provider</div>
+          {ollamaProviderGroups.map((group, idx) => {
+            const active = group.id === activeOllamaProviderGroup?.id
+            return (
+              <button
+                key={group.id}
+                type="button"
+                className={`composer-combined-picker-row composer-combined-picker-provider-row ${active ? 'is-selected' : ''} ${idx === providerHighlight && focusedColumn === 'provider' ? 'is-highlighted' : ''}`}
+                data-ollama-provider-class={group.providerClass}
+                onMouseEnter={() => {
+                  setFocusedColumn('provider')
+                  setProviderHighlight(idx)
+                }}
+                onClick={() => {
+                  setActiveOllamaProviderId(group.id)
+                  setProviderHighlight(idx)
+                  setModelHighlight(0)
+                  setFocusedColumn('model')
+                }}
+              >
+                <span className="composer-combined-picker-row-label">
+                  <span className="composer-combined-picker-provider-swatch" aria-hidden />
+                  <span>{group.label}</span>
+                </span>
+                <span className="composer-combined-picker-provider-count">
+                  {group.models.length}
+                </span>
+              </button>
+            )
+          })}
+        </div>
+      )}
       <div
         className={`composer-combined-picker-column composer-combined-picker-models ${focusedColumn === 'model' ? 'is-focused' : ''}`}
       >
         <div className="composer-combined-picker-column-header">Model</div>
-        {modelOptions.length === 0 && (
+        {visibleModelOptions.length === 0 && (
           <div
             className="composer-combined-picker-row"
             style={{ cursor: 'default', color: 'var(--text-tertiary)', fontStyle: 'italic' }}
@@ -433,7 +599,7 @@ export function CombinedModelPicker({
             <span className="composer-combined-picker-row-label">Loading models&hellip;</span>
           </div>
         )}
-        {modelOptions.map((option, idx) => {
+        {visibleModelOptions.map((option, idx) => {
           const supportsFast = Boolean(
             fastModeCapableModelIds && fastModeCapableModelIds.has(option.id)
           )
@@ -451,6 +617,12 @@ export function CombinedModelPicker({
               onClick={() => {
                 if (option.disabled) return
                 onSelectModel(option.id)
+                if (isOllamaProviderPicker) {
+                  const parentGroup = ollamaProviderGroups.find((group) =>
+                    group.models.some((model) => model.id === option.id)
+                  )
+                  if (parentGroup) setActiveOllamaProviderId(parentGroup.id)
+                }
                 // Keep the popover open so the user can also tweak
                 // reasoning without re-clicking the chip. Real Codex
                 // behaves the same way.

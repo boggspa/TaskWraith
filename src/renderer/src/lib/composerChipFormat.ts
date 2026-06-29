@@ -151,6 +151,14 @@ export function shortModelName(provider: ProviderId, modelLabel: string, modelId
     ) {
       return 'GPT OSS (20B Param)'
     }
+    if (
+      id === 'lfm2.5' ||
+      id === 'lfm2.5:latest' ||
+      id === 'lfm2.5:8b' ||
+      id.startsWith('lfm2.5:8b-')
+    ) {
+      return 'LFM 2.5 (8B-A1B)'
+    }
     if (id === 'minicpm-v4.5:8b' || id.startsWith('minicpm-v4.5:8b-')) {
       return 'MiniCPM-V 4.5 (8B Param)'
     }

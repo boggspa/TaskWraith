@@ -126,6 +126,9 @@ describe('humaniseModelId', () => {
       expect(humaniseModelId('ollama', 'gpt-oss')).toBe('GPT OSS (20B Param)')
       expect(humaniseModelId('ollama', 'gpt-oss:20b')).toBe('GPT OSS (20B Param)')
       expect(humaniseModelId('ollama', 'gpt-oss:latest')).toBe('GPT OSS (20B Param)')
+      expect(humaniseModelId('ollama', 'lfm2.5')).toBe('LFM 2.5 (8B-A1B)')
+      expect(humaniseModelId('ollama', 'lfm2.5:8b')).toBe('LFM 2.5 (8B-A1B)')
+      expect(humaniseModelId('ollama', 'lfm2.5:8b-q4_K_M')).toBe('LFM 2.5 (8B-A1B)')
       expect(humaniseModelId('ollama', 'minicpm-v4.5:8b')).toBe(
         'MiniCPM-V 4.5 (8B Param)'
       )
@@ -193,6 +196,8 @@ describe('humaniseModelId', () => {
       expect(canonicalModelIdForProvider('ollama', 'gpt-oss:latest')).toBe('gpt-oss:20b')
       expect(canonicalModelIdForProvider('ollama', 'openai/gpt-oss-20b')).toBe('gpt-oss:20b')
       expect(canonicalModelIdForProvider('ollama', 'qwen3.6:35b-a3b')).toBe('qwen3.6:35b')
+      expect(canonicalModelIdForProvider('ollama', 'lfm2.5')).toBe('lfm2.5:8b')
+      expect(canonicalModelIdForProvider('ollama', 'lfm2.5:latest')).toBe('lfm2.5:8b')
     })
   })
 
@@ -226,6 +231,7 @@ describe('humaniseModelId', () => {
       expect(labels['ornith:9b']).toBeDefined()
       expect(labels['ornith:35b']).toBeDefined()
       expect(labels['gpt-oss:20b']).toBeDefined()
+      expect(labels['lfm2.5:8b']).toBeDefined()
       expect(labels['minicpm-v4.5:8b']).toBeDefined()
       expect(labels['granite4.1:30b']).toBeDefined()
       expect(labels['nemotron3:33b']).toBeDefined()

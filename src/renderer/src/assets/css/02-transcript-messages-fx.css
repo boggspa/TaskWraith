@@ -3667,6 +3667,9 @@
 .message-meta.provider-qwen {
   color: var(--provider-qwen-color) !important;
 }
+.message-meta.provider-alibaba {
+  color: var(--provider-alibaba-color) !important;
+}
 .message-meta.provider-google {
   color: var(--provider-google-color) !important;
 }
@@ -3675,6 +3678,21 @@
 }
 .message-meta.provider-ornith {
   color: var(--provider-ornith-color) !important;
+}
+.message-meta.provider-deep-reinforce {
+  color: var(--provider-deep-reinforce-color) !important;
+}
+.message-meta.provider-ibm {
+  color: var(--provider-ibm-color) !important;
+}
+.message-meta.provider-liquid {
+  color: var(--provider-liquid-color) !important;
+}
+.message-meta.provider-nvidia {
+  color: var(--provider-nvidia-color) !important;
+}
+.message-meta.provider-openbmb {
+  color: var(--provider-openbmb-color) !important;
 }
 
 /* Working indicator (transcript tail) inherits provider hue from the
@@ -3706,6 +3724,9 @@
 .message-group:has(.message-meta.provider-qwen) {
   --message-working-accent: var(--provider-qwen-color);
 }
+.message-group:has(.message-meta.provider-alibaba) {
+  --message-working-accent: var(--provider-alibaba-color);
+}
 .message-group:has(.message-meta.provider-google) {
   --message-working-accent: var(--provider-google-color);
 }
@@ -3714,6 +3735,21 @@
 }
 .message-group:has(.message-meta.provider-ornith) {
   --message-working-accent: var(--provider-ornith-color);
+}
+.message-group:has(.message-meta.provider-deep-reinforce) {
+  --message-working-accent: var(--provider-deep-reinforce-color);
+}
+.message-group:has(.message-meta.provider-ibm) {
+  --message-working-accent: var(--provider-ibm-color);
+}
+.message-group:has(.message-meta.provider-liquid) {
+  --message-working-accent: var(--provider-liquid-color);
+}
+.message-group:has(.message-meta.provider-nvidia) {
+  --message-working-accent: var(--provider-nvidia-color);
+}
+.message-group:has(.message-meta.provider-openbmb) {
+  --message-working-accent: var(--provider-openbmb-color);
 }
 
 .message-bubble {

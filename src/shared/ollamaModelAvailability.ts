@@ -29,6 +29,11 @@ export function ollamaModelIdAliases(modelId?: string | null): string[] {
     aliases.add('ornith:latest')
     aliases.add('ornith:9b')
   }
+  if (key === 'lfm2.5' || key === 'lfm2.5:latest' || key === 'lfm2.5:8b') {
+    aliases.add('lfm2.5')
+    aliases.add('lfm2.5:latest')
+    aliases.add('lfm2.5:8b')
+  }
   return [...aliases]
 }
 

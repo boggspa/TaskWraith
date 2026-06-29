@@ -8695,6 +8695,11 @@
   isolation: isolate;
 }
 
+.composer-combined-picker-popover.is-ollama-model-picker {
+  min-width: 520px;
+  max-width: min(620px, calc(100vw - 16px));
+}
+
 /* Light-theme variant of the model/permission picker popover.
  * `--panel-elevated-bg` resolves dark in light themes through
  * the cascade for legacy reasons, so the popover read as a dark
@@ -8865,6 +8870,63 @@
   border-left: 1px solid color-mix(in srgb, var(--panel-border) 50%, transparent);
   margin-left: 4px;
   padding-left: 6px;
+}
+
+.composer-combined-picker-provider-row {
+  --composer-ollama-brand-color: var(--provider-ollama-color);
+}
+
+.composer-combined-picker-provider-row[data-ollama-provider-class="alibaba"] {
+  --composer-ollama-brand-color: var(--provider-alibaba-color);
+}
+
+.composer-combined-picker-provider-row[data-ollama-provider-class="deep-reinforce"] {
+  --composer-ollama-brand-color: var(--provider-deep-reinforce-color);
+}
+
+.composer-combined-picker-provider-row[data-ollama-provider-class="google"] {
+  --composer-ollama-brand-color: var(--provider-google-color);
+}
+
+.composer-combined-picker-provider-row[data-ollama-provider-class="ibm"] {
+  --composer-ollama-brand-color: var(--provider-ibm-color);
+}
+
+.composer-combined-picker-provider-row[data-ollama-provider-class="liquid"] {
+  --composer-ollama-brand-color: var(--provider-liquid-color);
+}
+
+.composer-combined-picker-provider-row[data-ollama-provider-class="nvidia"] {
+  --composer-ollama-brand-color: var(--provider-nvidia-color);
+}
+
+.composer-combined-picker-provider-row[data-ollama-provider-class="openai"] {
+  --composer-ollama-brand-color: var(--provider-openai-color);
+}
+
+.composer-combined-picker-provider-row[data-ollama-provider-class="openbmb"] {
+  --composer-ollama-brand-color: var(--provider-openbmb-color);
+}
+
+.composer-combined-picker-provider-row.is-selected,
+.composer-combined-picker-provider-row.is-highlighted {
+  color: color-mix(in srgb, var(--composer-ollama-brand-color) 82%, var(--text-primary));
+}
+
+.composer-combined-picker-provider-swatch {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  flex: 0 0 auto;
+  background: var(--composer-ollama-brand-color);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--composer-ollama-brand-color) 48%, transparent);
+}
+
+.composer-combined-picker-provider-count {
+  min-width: 18px;
+  text-align: right;
+  font-size: 10px;
+  color: color-mix(in srgb, var(--text-secondary) 72%, transparent);
 }
 
 .composer-combined-picker-column-header {

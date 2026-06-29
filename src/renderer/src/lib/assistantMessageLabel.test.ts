@@ -11,7 +11,7 @@ const assistant = (metadata?: ChatMessage['metadata']): ChatMessage => ({
 })
 
 describe('formatAssistantMessageLabel', () => {
-  it('uses the Qwen brand as the solo Ollama assistant sender label', () => {
+  it('uses the Alibaba brand as the solo Ollama assistant sender label for Qwen', () => {
     expect(
       formatAssistantMessageLabel(
         assistant({ providerModel: 'qwen3:4b-instruct' }),
@@ -19,14 +19,14 @@ describe('formatAssistantMessageLabel', () => {
         'ollama'
       )
     ).toEqual({
-      label: 'Qwen',
+      label: 'Alibaba',
       provider: 'ollama',
-      providerClass: 'qwen',
+      providerClass: 'alibaba',
       modelBadge: 'Qwen 3 (4B Param)'
     })
   })
 
-  it('uses the Qwen brand and Qwen 3.5 badge for the 9B Ollama model', () => {
+  it('uses the Alibaba brand and Qwen 3.5 badge for the 9B Ollama model', () => {
     expect(
       formatAssistantMessageLabel(
         assistant({ providerModel: 'qwen3.5:9b' }),
@@ -34,9 +34,9 @@ describe('formatAssistantMessageLabel', () => {
         'ollama'
       )
     ).toEqual({
-      label: 'Qwen',
+      label: 'Alibaba',
       provider: 'ollama',
-      providerClass: 'qwen',
+      providerClass: 'alibaba',
       modelBadge: 'Qwen 3.5 (9B Param)'
     })
   })
@@ -71,7 +71,7 @@ describe('formatAssistantMessageLabel', () => {
     })
   })
 
-  it('uses the Ornith brand for Ornith through Ollama', () => {
+  it('uses the Deep Reinforce brand for Ornith through Ollama', () => {
     expect(
       formatAssistantMessageLabel(
         assistant({ providerModel: 'ornith:35b' }),
@@ -79,10 +79,25 @@ describe('formatAssistantMessageLabel', () => {
         'ollama'
       )
     ).toEqual({
-      label: 'Ornith',
+      label: 'Deep Reinforce',
       provider: 'ollama',
-      providerClass: 'ornith',
+      providerClass: 'deep-reinforce',
       modelBadge: 'Ornith 1.0 (35B Param)'
+    })
+  })
+
+  it('uses the Liquid brand for LFM through Ollama', () => {
+    expect(
+      formatAssistantMessageLabel(
+        assistant({ providerModel: 'lfm2.5:8b' }),
+        'Ollama',
+        'ollama'
+      )
+    ).toEqual({
+      label: 'Liquid',
+      provider: 'ollama',
+      providerClass: 'liquid',
+      modelBadge: 'LFM 2.5 (8B-A1B)'
     })
   })
 
@@ -124,9 +139,9 @@ describe('formatAssistantMessageLabel', () => {
         { isEnsembleChat: true }
       )
     ).toEqual({
-      label: 'Qwen / Local',
+      label: 'Alibaba / Local',
       provider: 'ollama',
-      providerClass: 'qwen',
+      providerClass: 'alibaba',
       modelBadge: 'Qwen 3.5 (9B Param)'
     })
 

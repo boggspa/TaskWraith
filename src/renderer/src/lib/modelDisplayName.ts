@@ -115,6 +115,8 @@ const KNOWN_MODEL_LABELS: Record<string, string> = {
   'gpt-oss:20b': 'GPT OSS (20B Param)',
   'gpt-oss:latest': 'GPT OSS (20B Param)',
   'openai/gpt-oss-20b': 'GPT OSS (20B Param)',
+  'lfm2.5:8b': 'LFM 2.5 (8B-A1B)',
+  'lfm2.5:latest': 'LFM 2.5 (8B-A1B)',
   'minicpm-v4.5:8b': 'MiniCPM-V 4.5 (8B Param)',
   'granite4.1:3b': 'Granite 4.1 (3B Param)',
   'granite4.1:30b': 'Granite 4.1 (30B Param)',
@@ -201,6 +203,9 @@ export function canonicalModelIdForProvider(
     if (key === 'ornith' || key === 'ornith:latest') {
       return 'ornith:9b'
     }
+    if (key === 'lfm2.5' || key === 'lfm2.5:latest') {
+      return 'lfm2.5:8b'
+    }
   }
   return trimmed
 }
@@ -239,6 +244,9 @@ export function humaniseModelId(
   }
   if (provider === 'ollama' && key.startsWith('ornith:35b-')) {
     return 'Ornith 1.0 (35B Param)'
+  }
+  if (provider === 'ollama' && key.startsWith('lfm2.5:8b-')) {
+    return 'LFM 2.5 (8B-A1B)'
   }
   if (provider === 'ollama' && key.startsWith('granite4.1:3b-')) {
     return 'Granite 4.1 (3B Param)'

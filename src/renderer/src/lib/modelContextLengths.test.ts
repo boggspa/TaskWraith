@@ -122,6 +122,16 @@ describe('buildModelContextLengthGroups', () => {
     expect(row!.formatted).toBe('262k')
   })
 
+  it('ollama group carries the Liquid LFM 2.5 128K window', () => {
+    const groups = buildModelContextLengthGroups({ includeOllama: true })
+    const ollamaGroup = groups.find((g) => g.provider === 'ollama')
+    expect(ollamaGroup).toBeDefined()
+    const row = ollamaGroup!.models.find((m) => m.modelId === 'lfm2.5:8b')
+    expect(row).toBeDefined()
+    expect(row!.contextWindow).toBe(131_072)
+    expect(row!.formatted).toBe('131k')
+  })
+
   it("{ excludeProviders: ['gemini'] }: drops the gemini group, keeps the rest", () => {
     const groups = buildModelContextLengthGroups({ excludeProviders: ['gemini'] })
     const providerIds = groups.map((g) => g.provider)

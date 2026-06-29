@@ -211,6 +211,11 @@ const OLLAMA_DEFAULT_MODELS = [
     description: 'OpenAI gpt-oss 20B via Ollama · 131k context'
   },
   {
+    id: 'lfm2.5:8b',
+    label: 'LFM 2.5 (8B-A1B)',
+    description: 'Liquid LFM2.5 8B-A1B via Ollama · 131k context'
+  },
+  {
     id: 'minicpm-v4.5:8b',
     label: 'MiniCPM-V 4.5 (8B Param)',
     description: 'MiniCPM-V 4.5 8B via Ollama · 40k context · vision/tools/thinking'

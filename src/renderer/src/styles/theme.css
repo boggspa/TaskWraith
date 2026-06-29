@@ -147,10 +147,16 @@
   --provider-ensemble-color: #E8DDE3;
   /* Ollama-backed display brands. Runtime provider remains `ollama`; these
    * presentation aliases let local models wear their upstream brand hue. */
-  --provider-qwen-color: #D946EF;
+  --provider-alibaba-color: #7C3AED;
+  --provider-qwen-color: var(--provider-alibaba-color);
   --provider-google-color: var(--provider-gemini-color);
   --provider-openai-color: var(--provider-codex-color);
-  --provider-ornith-color: #F59E0B;
+  --provider-deep-reinforce-color: #B45309;
+  --provider-ornith-color: var(--provider-deep-reinforce-color);
+  --provider-ibm-color: #1F4E79;
+  --provider-liquid-color: #F7D5E6;
+  --provider-nvidia-color: #76B900;
+  --provider-openbmb-color: #EF6F61;
 
   /* Phase L6 slice 2 — Quota warning palette. Drives the
    * progressive bar gradient on the Model Usage Card: the fill

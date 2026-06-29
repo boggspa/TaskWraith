@@ -786,8 +786,8 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
       />
     )
 
-    expect(html).toContain('provider-qwen')
-    expect(html).toContain('Qwen')
+    expect(html).toContain('provider-alibaba')
+    expect(html).toContain('Alibaba')
     expect(html).toContain('Qwen 3.5 (9B Param)')
   })
 
