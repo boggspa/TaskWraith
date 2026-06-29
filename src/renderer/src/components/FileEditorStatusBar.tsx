@@ -1,4 +1,5 @@
 import type { GitFileStatus } from '../../../main/services/GitService'
+import { formatBytes } from './FileEditorUtils'
 
 export interface EditorCursorStatus {
   line: number
@@ -21,13 +22,6 @@ export interface FileEditorStatusBarProps {
   selectedHasStagedChanges: boolean
   selectedHasUnstagedChanges: boolean
   lineWrapEnabled: boolean
-}
-
-const formatBytes = (value?: number): string => {
-  if (!value) return ''
-  if (value < 1024) return `${value} B`
-  if (value < 1024 * 1024) return `${Math.round(value / 1024)} KB`
-  return `${(value / (1024 * 1024)).toFixed(1)} MB`
 }
 
 export function FileEditorStatusBar({

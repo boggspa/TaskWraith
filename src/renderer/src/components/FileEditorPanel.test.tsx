@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { FileEditorGitActions } from './FileEditorGitActions'
 import { FileEditorStatusBar } from './FileEditorStatusBar'
 import { EditorTabStrip } from './FileEditorTabStrip'
+import { WorkspaceFileTree } from './WorkspaceFileTree'
 
 describe('EditorTabStrip', () => {
   it('renders a roving tablist with the active tab as the only tab stop', () => {
@@ -71,6 +72,49 @@ describe('FileEditorGitActions', () => {
     expect(html).toContain('Reload')
     expect(html).toContain('aria-label="Reload editor file from disk"')
     expect(html).toContain('Reload from disk and discard unsaved changes')
+  })
+})
+
+describe('WorkspaceFileTree', () => {
+  it('renders the workspace navigator with expanded, selected, and sized rows', () => {
+    const html = renderToStaticMarkup(
+      <WorkspaceFileTree
+        workspacePath="/repo"
+        filter=""
+        fileListStatus="2 items in root"
+        displayedFiles={[
+          {
+            path: 'src',
+            name: 'src',
+            isDirectory: true,
+            depth: 0,
+            hasChildren: true
+          },
+          {
+            path: 'src/App.tsx',
+            name: 'App.tsx',
+            isDirectory: false,
+            depth: 1,
+            sizeBytes: 2048
+          }
+        ]}
+        expandedDirectories={new Set(['src'])}
+        selectedPath="src/App.tsx"
+        isFiltering={false}
+        isLoading={false}
+        isListLoading={false}
+        onFilterChange={vi.fn()}
+        onRefresh={vi.fn()}
+        onOpenEntry={vi.fn()}
+        onContextMenuEntry={vi.fn()}
+      />
+    )
+
+    expect(html).toContain('aria-label="Workspace file navigator"')
+    expect(html).toContain('aria-expanded="true"')
+    expect(html).toContain('aria-current="true"')
+    expect(html).toContain('App.tsx')
+    expect(html).toContain('2 KB')
   })
 })
 

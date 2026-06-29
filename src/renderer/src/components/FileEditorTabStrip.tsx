@@ -1,5 +1,9 @@
 import type { KeyboardEvent } from 'react'
 import { FileTypeIcon } from './FileTypeIcon'
+import {
+  fileNameForPath,
+  type FileEditorContextMenuAnchor
+} from './FileEditorUtils'
 
 export interface FileEditorTabBuffer {
   path: string
@@ -10,11 +14,6 @@ export interface FileEditorTabBuffer {
   mtimeMs?: number
 }
 
-export interface FileEditorContextMenuAnchor {
-  x: number
-  y: number
-}
-
 export interface EditorTabStripProps {
   buffers: FileEditorTabBuffer[]
   selectedPath: string
@@ -22,10 +21,6 @@ export interface EditorTabStripProps {
   onSelect: (path: string) => void
   onClose: (path: string) => void
   onContextMenuTab: (path: string, anchor: FileEditorContextMenuAnchor) => void
-}
-
-const fileNameForPath = (filePath: string): string => {
-  return filePath.split('/').filter(Boolean).pop() || filePath
 }
 
 const isBufferDirty = (buffer: FileEditorTabBuffer | null | undefined): boolean => {
