@@ -1,7 +1,13 @@
-import { useState } from 'react'
-import { DiffFileSummary, DiffPreviewKind } from '../../../main/store/types'
+import { useMemo, useState } from 'react'
+import type { DiffFileSummary, DiffPreviewKind } from '../../../main/store/types'
 import { FileTypeIcon } from './FileTypeIcon'
 import { useCopyFeedback } from '../lib/useCopyFeedback'
+import {
+  DEFAULT_DIFF_RENDER_LINE_LIMIT,
+  parseUnifiedDiff,
+  type ParsedDiffLine,
+  type ParsedUnifiedDiff
+} from '../lib/unifiedDiffParser'
 
 interface DiffViewerProps {
   diff: {
@@ -13,6 +19,29 @@ interface DiffViewerProps {
   } | null
   workspacePath?: string
 }
+
+interface DiffToolbarProps {
+  changedCount: number
+  hideNoise: boolean
+  onHideNoiseChange: (hideNoise: boolean) => void
+}
+
+interface DiffFileListProps {
+  summaries: DiffFileSummary[]
+  selectedPath?: string
+  workspacePath?: string
+  onSelectPath: (path: string) => void
+}
+
+interface DiffDetailProps {
+  summary: DiffFileSummary
+}
+
+interface DiffLineRowProps {
+  line: ParsedDiffLine
+}
+
+const DIFF_DETAIL_RENDER_LINE_LIMIT = DEFAULT_DIFF_RENDER_LINE_LIMIT
 
 export function DiffViewer({ diff, workspacePath }: DiffViewerProps) {
   const [hideNoise, setHideNoise] = useState(true)
@@ -63,28 +92,11 @@ export function DiffViewer({ diff, workspacePath }: DiffViewerProps) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
-      <div className="diff-studio-toolbar">
-        <span style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-secondary)' }}>
-          {filteredSummaries.length} changed
-        </span>
-        <label
-          style={{
-            fontSize: 'var(--font-size-xs)',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '4px',
-            color: 'var(--text-secondary)',
-            cursor: 'pointer'
-          }}
-        >
-          <input
-            type="checkbox"
-            checked={hideNoise}
-            onChange={(e) => setHideNoise(e.target.checked)}
-          />
-          Hide noise
-        </label>
-      </div>
+      <DiffToolbar
+        changedCount={filteredSummaries.length}
+        hideNoise={hideNoise}
+        onHideNoiseChange={setHideNoise}
+      />
 
       {filteredSummaries.length === 0 ? (
         <div
@@ -98,38 +110,12 @@ export function DiffViewer({ diff, workspacePath }: DiffViewerProps) {
         </div>
       ) : (
         <>
-          <div className="diff-file-list">
-            {filteredSummaries.map((s) => (
-              <button
-                type="button"
-                key={s.path}
-                className={`diff-file-row ${selectedSummary?.path === s.path ? 'selected' : ''}`}
-                onClick={() => setSelectedPath(s.path)}
-                aria-pressed={selectedSummary?.path === s.path}
-                title={`Show diff for ${s.path}`}
-              >
-                <FileTypeIcon
-                  path={s.path}
-                  size={14}
-                  className="diff-file-type-icon"
-                  workspacePath={workspacePath}
-                />
-                <span className="diff-file-name">{s.path}</span>
-                <span className={`diff-file-badge ${s.status}`}>
-                  {s.additions !== undefined && s.deletions !== undefined ? (
-                    <>
-                      <span className="diff-file-stat diff-file-stat-add">+{s.additions}</span>
-                      <span className="diff-file-stat-divider">|</span>
-                      <span className="diff-file-stat diff-file-stat-delete">-{s.deletions}</span>
-                    </>
-                  ) : (
-                    s.status
-                  )}
-                </span>
-              </button>
-            ))}
-          </div>
-
+          <DiffFileList
+            summaries={filteredSummaries}
+            selectedPath={selectedSummary?.path}
+            workspacePath={workspacePath}
+            onSelectPath={setSelectedPath}
+          />
           {selectedSummary && <DiffDetail summary={selectedSummary} />}
         </>
       )}
@@ -137,8 +123,79 @@ export function DiffViewer({ diff, workspacePath }: DiffViewerProps) {
   )
 }
 
-function DiffDetail({ summary }: { summary: DiffFileSummary }) {
+function DiffToolbar({ changedCount, hideNoise, onHideNoiseChange }: DiffToolbarProps) {
+  return (
+    <div className="diff-studio-toolbar">
+      <span style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-secondary)' }}>
+        {changedCount} changed
+      </span>
+      <label
+        style={{
+          fontSize: 'var(--font-size-xs)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '4px',
+          color: 'var(--text-secondary)',
+          cursor: 'pointer'
+        }}
+      >
+        <input
+          type="checkbox"
+          checked={hideNoise}
+          onChange={(event) => onHideNoiseChange(event.target.checked)}
+        />
+        Hide noise
+      </label>
+    </div>
+  )
+}
+
+function DiffFileList({ summaries, selectedPath, workspacePath, onSelectPath }: DiffFileListProps) {
+  return (
+    <div className="diff-file-list">
+      {summaries.map((summary) => (
+        <button
+          type="button"
+          key={summary.path}
+          className={`diff-file-row ${selectedPath === summary.path ? 'selected' : ''}`}
+          onClick={() => onSelectPath(summary.path)}
+          aria-pressed={selectedPath === summary.path}
+          title={`Show diff for ${summary.path}`}
+        >
+          <FileTypeIcon
+            path={summary.path}
+            size={14}
+            className="diff-file-type-icon"
+            workspacePath={workspacePath}
+          />
+          <span className="diff-file-name">{summary.path}</span>
+          <span className={`diff-file-badge ${summary.status}`}>
+            {summary.additions !== undefined && summary.deletions !== undefined ? (
+              <>
+                <span className="diff-file-stat diff-file-stat-add">+{summary.additions}</span>
+                <span className="diff-file-stat-divider">|</span>
+                <span className="diff-file-stat diff-file-stat-delete">-{summary.deletions}</span>
+              </>
+            ) : (
+              summary.status
+            )}
+          </span>
+        </button>
+      ))}
+    </div>
+  )
+}
+
+function DiffDetail({ summary }: DiffDetailProps) {
   const { copiedId, copy } = useCopyFeedback()
+  const parsedDiff = useMemo(
+    () =>
+      summary.diffText
+        ? parseUnifiedDiff(summary.diffText, { maxLines: DIFF_DETAIL_RENDER_LINE_LIMIT })
+        : null,
+    [summary.diffText]
+  )
+
   const renderPreview = () => {
     const kind: DiffPreviewKind = summary.previewKind || 'none'
     switch (kind) {
@@ -169,7 +226,7 @@ function DiffDetail({ summary }: { summary: DiffFileSummary }) {
       case 'synthetic_new_file':
       case 'git_diff':
         return summary.diffText ? (
-          formatDiff(summary.diffText)
+          <DiffLines parsed={parsedDiff} />
         ) : (
           <div
             style={{
@@ -228,54 +285,20 @@ function DiffDetail({ summary }: { summary: DiffFileSummary }) {
   )
 }
 
-function formatDiff(text: string) {
-  const lines = text.split('\n')
-  const sections: Array<{ header?: string; lines: string[] }> = []
-  let current: { header?: string; lines: string[] } = { lines: [] }
-
-  lines.forEach((line) => {
-    if (line.startsWith('@@')) {
-      if (current.lines.length > 0 || current.header) {
-        sections.push(current)
-      }
-      current = { header: line, lines: [] }
-      return
-    }
-    current.lines.push(line)
-  })
-
-  if (current.lines.length > 0 || current.header) {
-    sections.push(current)
-  }
-
-  if (sections.length === 0) {
+function DiffLines({ parsed }: { parsed: ParsedUnifiedDiff | null }) {
+  if (!parsed || parsed.sections.length === 0) {
     return <div className="diff-lines-section">No diff hunks to display.</div>
-  }
-
-  const getHunkStartLines = (header?: string): { oldLine: number; newLine: number } => {
-    const match = header?.match(/@@\s+-(\d+)(?:,\d+)?\s+\+(\d+)(?:,\d+)?\s+@@/)
-    return {
-      oldLine: match ? Number(match[1]) : 0,
-      newLine: match ? Number(match[2]) : 0
-    }
-  }
-
-  const isDiffMetadata = (line: string): boolean => {
-    return (
-      line.startsWith('diff --git') ||
-      line.startsWith('index ') ||
-      line.startsWith('+++ ') ||
-      line.startsWith('--- ') ||
-      line.startsWith('rename from ') ||
-      line.startsWith('rename to ') ||
-      line.startsWith('new file mode ') ||
-      line.startsWith('deleted file mode ')
-    )
   }
 
   return (
     <div className="diff-lines-stack">
-      {sections.map((section, sectionIndex) => (
+      {parsed.truncated && (
+        <div className="diff-lines-truncated" role="note">
+          Showing first {parsed.renderedLineCount.toLocaleString()} lines.{' '}
+          {parsed.omittedLineCount.toLocaleString()} more omitted.
+        </div>
+      )}
+      {parsed.sections.map((section, sectionIndex) => (
         <div key={sectionIndex} className="diff-lines-section">
           {section.header ? (
             <div className="diff-lines-section-header">{section.header}</div>
@@ -283,42 +306,21 @@ function formatDiff(text: string) {
           {section.lines.length === 0 ? (
             <div className="diff-line">No content in this section.</div>
           ) : (
-            (() => {
-              const counters = getHunkStartLines(section.header)
-              return section.lines.map((line, index) => {
-                let className = 'diff-line'
-                let oldLabel = ''
-                let newLabel = ''
-
-                if (isDiffMetadata(line)) {
-                  className += ' meta'
-                } else if (line.startsWith('+')) {
-                  className += ' add'
-                  newLabel = counters.newLine > 0 ? String(counters.newLine) : ''
-                  counters.newLine += 1
-                } else if (line.startsWith('-')) {
-                  className += ' del'
-                  oldLabel = counters.oldLine > 0 ? String(counters.oldLine) : ''
-                  counters.oldLine += 1
-                } else {
-                  oldLabel = counters.oldLine > 0 ? String(counters.oldLine) : ''
-                  newLabel = counters.newLine > 0 ? String(counters.newLine) : ''
-                  counters.oldLine += counters.oldLine > 0 ? 1 : 0
-                  counters.newLine += counters.newLine > 0 ? 1 : 0
-                }
-
-                return (
-                  <div key={index} className={className}>
-                    <span className="diff-line-gutter old">{oldLabel}</span>
-                    <span className="diff-line-gutter new">{newLabel}</span>
-                    <span className="diff-line-code">{line || ' '}</span>
-                  </div>
-                )
-              })
-            })()
+            section.lines.map((line, index) => <DiffLineRow key={index} line={line} />)
           )}
         </div>
       ))}
+    </div>
+  )
+}
+
+function DiffLineRow({ line }: DiffLineRowProps) {
+  const className = `diff-line ${line.kind === 'context' ? '' : line.kind}`.trim()
+  return (
+    <div className={className}>
+      <span className="diff-line-gutter old">{line.oldLine ?? ''}</span>
+      <span className="diff-line-gutter new">{line.newLine ?? ''}</span>
+      <span className="diff-line-code">{line.text || ' '}</span>
     </div>
   )
 }

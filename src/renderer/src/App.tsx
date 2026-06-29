@@ -14330,7 +14330,7 @@ function App(): React.JSX.Element {
   }
 
   const openWorkspacePopoutWindow = useCallback(
-    (kind: 'file-editor' | 'diff-studio') => {
+    (kind: 'file-editor' | 'diff-studio' | 'workbench') => {
       if (!currentWorkspacePopoutPath) return
       void window.api.openWorkspacePopout({
         kind,
@@ -14420,7 +14420,7 @@ function App(): React.JSX.Element {
   }
 
   const openWorkspacePopoutWindowFromKeyboard = (
-    kind: 'file-editor' | 'diff-studio'
+    kind: 'file-editor' | 'diff-studio' | 'workbench'
   ): boolean => {
     if (!currentWorkspacePopoutPath) return false
     openWorkspacePopoutWindow(kind)
@@ -18460,7 +18460,7 @@ function App(): React.JSX.Element {
     handleCopyTranscriptCommand: () => void | Promise<unknown>
     handleAttachWindowCommand: (ctx: SlashCommandRunContext) => void | Promise<void>
     handleDetachWindowCommand: (ctx: SlashCommandRunContext) => void | Promise<void>
-    openWorkspacePopoutCommand: (kind: 'file-editor' | 'diff-studio') => void
+    openWorkspacePopoutCommand: (kind: 'file-editor' | 'diff-studio' | 'workbench') => void
     openSideChatCommand: (sideCommand: SideSlashCommand) => boolean | void
     handleGoalCommand: (ctx: SlashCommandRunContext) => void
     focusPaneForFocusedFlow?: () => void
@@ -18958,6 +18958,21 @@ function App(): React.JSX.Element {
       group: 'Custom',
       run: (ctx) => {
         void handleDetachWindowCommand(ctx)
+      }
+    },
+    {
+      kind: 'action',
+      id: 'taskwraith-workbench',
+      command: '/workbench',
+      label: 'Open Workbench',
+      description: 'Open the workspace Workbench popout.',
+      group: 'Custom',
+      run: (ctx) => {
+        if (!workspace?.path) {
+          rejectSlashCommandWithDraft(ctx, 'Open a workspace chat to use /workbench.')
+          return
+        }
+        openWorkspacePopoutCommand('workbench')
       }
     },
     {
@@ -22382,6 +22397,18 @@ function App(): React.JSX.Element {
                   role="menu"
                   aria-label="Popout tools"
                 >
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setPopoutMenuOpen(false)
+                      openWorkspacePopoutWindow('workbench')
+                    }}
+                    disabled={!canOpenWorkspacePopout}
+                  >
+                    <span>Workbench</span>
+                    <small>Open files and diffs together</small>
+                  </button>
                   <button
                     type="button"
                     role="menuitem"

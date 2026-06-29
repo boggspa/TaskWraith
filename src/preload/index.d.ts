@@ -1160,6 +1160,7 @@ declare global {
         pluginId: string,
         enabled: boolean
       ) => Promise<TaskWraithPluginCatalogSnapshot>
+      updatePlugin: (pluginId: string) => Promise<TaskWraithPluginCatalogSnapshot>
       uninstallPlugin: (pluginId: string) => Promise<TaskWraithPluginCatalogSnapshot>
       getWorkspaces: () => Promise<WorkspaceRecord[]>
       addOrUpdateWorkspace: (

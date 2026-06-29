@@ -18400,7 +18400,10 @@ function parseWorkspacePopoutInput(input: unknown): {
     throw new Error('Popout request is invalid.')
   }
   const kind =
-    input.kind === 'file-editor' || input.kind === 'diff-studio' || input.kind === 'chat'
+    input.kind === 'file-editor' ||
+    input.kind === 'diff-studio' ||
+    input.kind === 'workbench' ||
+    input.kind === 'chat'
       ? input.kind
       : null
   if (!kind) {
@@ -18466,9 +18469,18 @@ async function openWorkspacePopout(input: unknown): Promise<{ ok: true }> {
       ? 'TaskWraith File Editor'
       : kind === 'diff-studio'
         ? 'TaskWraith Diff Studio'
-        : 'TaskWraith Chat'
+        : kind === 'workbench'
+          ? 'TaskWraith Workbench'
+          : 'TaskWraith Chat'
   const win = new BrowserWindow({
-    width: kind === 'file-editor' ? 980 : kind === 'diff-studio' ? 1120 : 900,
+    width:
+      kind === 'workbench'
+        ? 1280
+        : kind === 'file-editor'
+          ? 980
+          : kind === 'diff-studio'
+            ? 1120
+            : 900,
     height: kind === 'file-editor' ? 720 : 760,
     minWidth: kind === 'chat' ? 520 : 720,
     minHeight: 480,

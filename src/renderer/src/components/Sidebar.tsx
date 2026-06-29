@@ -208,7 +208,7 @@ interface SidebarProps {
     themeAppearance?: ThemeAppearance
     toolIconAccent?: ToolIconAccent
   }) => void
-  onOpenWorkspacePopout?: (kind: 'file-editor' | 'diff-studio') => void
+  onOpenWorkspacePopout?: (kind: 'file-editor' | 'diff-studio' | 'workbench') => void
   canOpenWorkspacePopout?: boolean
   onQuitApp?: () => void
   /** Phase F1: open the SubThreadCreator with `parent` as the parent
@@ -886,6 +886,17 @@ function SidebarSettingsMenu({
         <MenuChevronIcon />
       </button>
       <div className="sidebar-settings-menu-divider" aria-hidden />
+      <button
+        type="button"
+        className="sidebar-settings-menu-item"
+        disabled={!canOpenWorkspacePopout}
+        onClick={() => {
+          onOpenWorkspacePopout?.('workbench')
+          onClose()
+        }}
+      >
+        <span className="sidebar-settings-menu-item-label">Workbench</span>
+      </button>
       <button
         type="button"
         className="sidebar-settings-menu-item"

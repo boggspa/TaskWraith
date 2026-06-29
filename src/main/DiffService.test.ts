@@ -1,10 +1,30 @@
+import { spawnSync } from 'child_process'
+import * as fs from 'fs'
+import * as os from 'os'
+import * as path from 'path'
 import { describe, it, expect } from 'vitest'
 import {
   parseGitStatusZ,
   classifyStatus,
   generateSyntheticNewFileDiff,
+  getWorkspaceDiff,
   computeRunDiff
 } from './DiffService'
+
+function runGit(cwd: string, args: string[]): void {
+  const result = spawnSync('git', args, { cwd, encoding: 'utf-8' })
+  expect(result.status, result.stderr || result.stdout).toBe(0)
+}
+
+function makeGitRepo(): { baseDir: string; repoDir: string } {
+  const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'taskwraith-diff-test-'))
+  const repoDir = path.join(baseDir, 'repo')
+  fs.mkdirSync(repoDir)
+  runGit(repoDir, ['init'])
+  runGit(repoDir, ['config', 'user.email', 'test@example.invalid'])
+  runGit(repoDir, ['config', 'user.name', 'TaskWraith Test'])
+  return { baseDir, repoDir }
+}
 
 describe('DiffService', () => {
   describe('parseGitStatusZ', () => {
@@ -28,6 +48,11 @@ describe('DiffService', () => {
       const result = parseGitStatusZ(input)
       expect(result).toHaveLength(2)
       expect(result[1].filePath).toBe('new.txt')
+    })
+    it('uses the current path for renamed files', () => {
+      const input = 'R  new-name.txt\0old-name.txt\0'
+      const result = parseGitStatusZ(input)
+      expect(result).toEqual([{ statusCode: 'R', filePath: 'new-name.txt' }])
     })
   })
 
@@ -58,6 +83,49 @@ describe('DiffService', () => {
       expect(text).toContain('+++ b/HelloWorldView.swift')
       expect(text).toContain('+line1')
       expect(text).toContain('+line2')
+    })
+  })
+
+  describe('getWorkspaceDiff', () => {
+    it('includes a preview for staged-only tracked changes', async () => {
+      const { baseDir, repoDir } = makeGitRepo()
+      try {
+        fs.writeFileSync(path.join(repoDir, 'tracked.txt'), 'before\n')
+        runGit(repoDir, ['add', 'tracked.txt'])
+        runGit(repoDir, ['commit', '-m', 'initial'])
+
+        fs.writeFileSync(path.join(repoDir, 'tracked.txt'), 'after\n')
+        runGit(repoDir, ['add', 'tracked.txt'])
+
+        const diff = await getWorkspaceDiff(repoDir)
+        const summary = diff.summaries?.find((file) => file.path === 'tracked.txt')
+        expect(summary?.previewKind).toBe('git_diff')
+        expect(summary?.diffText).toContain('-before')
+        expect(summary?.diffText).toContain('+after')
+      } finally {
+        fs.rmSync(baseDir, { recursive: true, force: true })
+      }
+    })
+
+    it('does not preview untracked symlink targets outside the workspace', async () => {
+      const { baseDir, repoDir } = makeGitRepo()
+      try {
+        const outsidePath = path.join(baseDir, 'outside-secret.txt')
+        const linkPath = path.join(repoDir, 'linked-secret.txt')
+        fs.writeFileSync(outsidePath, 'outside secret\n')
+        try {
+          fs.symlinkSync(outsidePath, linkPath)
+        } catch {
+          return
+        }
+
+        const diff = await getWorkspaceDiff(repoDir)
+        const summary = diff.summaries?.find((file) => file.path === 'linked-secret.txt')
+        expect(summary?.previewKind).toBe('none')
+        expect(summary?.diffText).toBeUndefined()
+      } finally {
+        fs.rmSync(baseDir, { recursive: true, force: true })
+      }
     })
   })
 

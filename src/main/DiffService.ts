@@ -36,10 +36,23 @@ function isBinaryFile(filePath: string): boolean {
   }
 }
 
+function isPathInside(basePath: string, candidatePath: string): boolean {
+  const rel = path.relative(basePath, candidatePath)
+  return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel))
+}
+
 function resolveWorkspacePath(workspace: string, filePath: string): string | null {
-  const resolved = path.resolve(workspace, filePath)
-  const rel = path.relative(workspace, resolved)
-  if (rel.startsWith('..') || path.isAbsolute(rel)) return null
+  const workspaceRoot = path.resolve(workspace)
+  const resolved = path.resolve(workspaceRoot, filePath)
+  if (!isPathInside(workspaceRoot, resolved)) return null
+  if (!fs.existsSync(resolved)) return resolved
+  try {
+    const realWorkspace = fs.realpathSync.native(workspaceRoot)
+    const realFile = fs.realpathSync.native(resolved)
+    if (!isPathInside(realWorkspace, realFile)) return null
+  } catch {
+    return null
+  }
   return resolved
 }
 
@@ -102,10 +115,9 @@ export function parseGitStatusZ(
       continue
     }
     const statusCode = entry.substring(0, 2)
-    let filePath = entry.substring(3)
-    // For renames, the next part is the original path
+    const filePath = entry.substring(3)
+    // For renames, porcelain v1 -z emits the current path, then the original path.
     if (statusCode.startsWith('R') && i + 1 < parts.length) {
-      filePath = parts[i + 1]
       i += 2
     } else {
       i++
@@ -237,77 +249,9 @@ export async function getWorkspaceDiff(workspace: string): Promise<{
 
   const statusEntries = parseGitStatusZ(statusOut)
 
-  const summaries: DiffFileSummary[] = []
-  const diffChunks: Record<string, string> = {}
-
-  // Parse git diff chunks
-  if (diffOut) {
-    const parts = diffOut.split(/^diff --git/m)
-    for (const part of parts) {
-      if (!part.trim()) continue
-      const match = part.match(/^ a\/(.*?)\s+b\//)
-      if (match) {
-        const fp = match[1]
-        diffChunks[fp] = 'diff --git' + part
-      }
-    }
-  }
-
-  for (const entry of statusEntries) {
-    const status = classifyStatus(entry.statusCode)
-    const fullPath = resolveWorkspacePath(workspace, entry.filePath)
-    if (!fullPath) continue
-
-    const isNoise = isNoiseFile(entry.filePath)
-    const isSensitive = isSensitiveFile(entry.filePath)
-    const sizeBytes = fs.existsSync(fullPath) ? fs.statSync(fullPath).size : 0
-
-    let previewKind: DiffPreviewKind = 'none'
-    let diffText: string | undefined
-    let isBinary = false
-    let additions: number | undefined
-    let deletions: number | undefined
-
-    if (isSensitive) {
-      previewKind = 'hidden'
-    } else if (status === 'untracked' || status === 'created') {
-      if (fs.existsSync(fullPath) && !fs.statSync(fullPath).isDirectory()) {
-        isBinary = isBinaryFile(fullPath)
-        if (isBinary) {
-          previewKind = 'binary'
-        } else if (sizeBytes > MAX_PREVIEW_SIZE) {
-          previewKind = 'none'
-        } else {
-          const content = fs.readFileSync(fullPath, 'utf-8')
-          diffText = generateSyntheticNewFileDiff(entry.filePath, content)
-          previewKind = 'synthetic_new_file'
-          additions = content.split('\n').length
-          deletions = 0
-        }
-      }
-    } else if (diffChunks[entry.filePath]) {
-      previewKind = 'git_diff'
-      diffText = diffChunks[entry.filePath]
-      // Parse additions/deletions from diff text
-      const addMatch = diffText.match(/^(\+[^+])/gm)
-      const delMatch = diffText.match(/^(-[^-])/gm)
-      additions = addMatch?.length
-      deletions = delMatch?.length
-    }
-
-    summaries.push({
-      path: entry.filePath,
-      status,
-      additions,
-      deletions,
-      isBinary,
-      isNoise,
-      isSensitive,
-      previewKind,
-      diffText,
-      sizeBytes
-    })
-  }
+  const summaries = statusEntries.map((entry) =>
+    buildCurrentFileSummary(workspace, entry.filePath, classifyStatus(entry.statusCode))
+  )
 
   return {
     type: 'changes',

@@ -1,10 +1,17 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import CodeMirror from '@uiw/react-codemirror'
-import { keymap, EditorView } from '@codemirror/view'
+import { keymap, EditorView, type ViewUpdate } from '@codemirror/view'
 import type { Extension } from '@codemirror/state'
 import { HighlightStyle, StreamLanguage, syntaxHighlighting } from '@codemirror/language'
-import { defaultKeymap, historyKeymap } from '@codemirror/commands'
+import { defaultKeymap, historyKeymap, indentWithTab } from '@codemirror/commands'
 import { searchKeymap, highlightSelectionMatches } from '@codemirror/search'
+import {
+  acceptCompletion,
+  autocompletion,
+  completeAnyWord,
+  completionStatus,
+  type CompletionSource
+} from '@codemirror/autocomplete'
 import { javascript } from '@codemirror/lang-javascript'
 import { python } from '@codemirror/lang-python'
 import { markdown } from '@codemirror/lang-markdown'
@@ -21,6 +28,7 @@ import { FileTypeIcon } from './FileTypeIcon'
 interface FileEditorPanelProps {
   workspacePath?: string
   width?: number
+  refreshTick?: number
 }
 
 interface WorkspaceFileListOptions {
@@ -34,15 +42,94 @@ interface WorkspaceFileListResult {
   truncated: boolean
 }
 
+interface EditorBuffer {
+  path: string
+  content: string
+  savedContent: string
+  savedEtag: string | null
+  sizeBytes: number
+  mtimeMs?: number
+}
+
+interface EditorCursorStatus {
+  line: number
+  column: number
+  selectedChars: number
+}
+
+interface WorkspaceFileTreeProps {
+  workspacePath?: string
+  filter: string
+  fileListStatus: string
+  displayedFiles: WorkspaceFileEntry[]
+  expandedDirectories: Set<string>
+  selectedPath: string
+  isFiltering: boolean
+  isLoading: boolean
+  isListLoading: boolean
+  onFilterChange: (value: string) => void
+  onRefresh: () => void | Promise<void>
+  onOpenEntry: (entry: WorkspaceFileEntry) => void | Promise<void>
+}
+
+interface FileEditorGitActionsProps {
+  workspacePath?: string
+  selectedPath: string
+  isDirty: boolean
+  isLoading: boolean
+  selectedHasUnstagedChanges: boolean
+  selectedHasStagedChanges: boolean
+  stagedCount: number
+  dirtyBufferCount: number
+  onDeleteRequest: () => void
+  onStage: () => void | Promise<void>
+  onUnstage: () => void | Promise<void>
+  onCommitRequest: () => void
+  onSaveAll: () => void | Promise<void>
+  onSave: () => void | Promise<void>
+}
+
+interface EditorTabStripProps {
+  buffers: EditorBuffer[]
+  selectedPath: string
+  workspacePath?: string
+  onSelect: (path: string) => void
+  onClose: (path: string) => void
+}
+
+interface EditorPaneProps {
+  selectedPath: string
+  content: string
+  isLoading: boolean
+  editorExtensions: Extension[]
+  onContentChange: (value: string) => void
+}
+
+interface EditorStatusBarProps {
+  activeBuffer: EditorBuffer | null
+  isDirty: boolean
+  status: string
+  gitMessage: string
+  cursorStatus: EditorCursorStatus
+  selectedGitFile?: GitFileStatus
+  selectedHasStagedChanges: boolean
+  selectedHasUnstagedChanges: boolean
+}
+
 const ROOT_DIR_KEY = ''
 const FILE_EDITOR_DIRECTORY_LIMIT = 500
 const FILE_EDITOR_SEARCH_LIMIT = 500
+const DEFAULT_CURSOR_STATUS: EditorCursorStatus = { line: 1, column: 1, selectedChars: 0 }
 
 const formatBytes = (value?: number): string => {
   if (!value) return ''
   if (value < 1024) return `${value} B`
   if (value < 1024 * 1024) return `${Math.round(value / 1024)} KB`
   return `${(value / (1024 * 1024)).toFixed(1)} MB`
+}
+
+const fileNameForPath = (filePath: string): string => {
+  return filePath.split('/').filter(Boolean).pop() || filePath
 }
 
 const parentDirectoryForPath = (filePath: string): string => {
@@ -53,6 +140,85 @@ const parentDirectoryForPath = (filePath: string): string => {
 
 const normalizeAbsolutePath = (path: string): string => {
   return path.replace(/\\/g, '/').replace(/\/+$/, '')
+}
+
+const bufferFromReadResult = (result: WorkspaceFileReadResult): EditorBuffer => ({
+  path: result.path,
+  content: result.content,
+  savedContent: result.content,
+  savedEtag: result.etag ?? null,
+  sizeBytes: result.sizeBytes,
+  mtimeMs: result.mtimeMs
+})
+
+const mergeSavedBufferResult = (
+  currentBuffer: EditorBuffer,
+  nextSavedBuffer: EditorBuffer,
+  savedContentSnapshot: string,
+  savedEtagSnapshot: string | null
+): EditorBuffer => {
+  if (currentBuffer.savedEtag !== savedEtagSnapshot) return currentBuffer
+  if (currentBuffer.content === savedContentSnapshot) return nextSavedBuffer
+  return {
+    ...currentBuffer,
+    savedContent: nextSavedBuffer.savedContent,
+    savedEtag: nextSavedBuffer.savedEtag,
+    sizeBytes: nextSavedBuffer.sizeBytes,
+    mtimeMs: nextSavedBuffer.mtimeMs
+  }
+}
+
+const updateBuffer = (
+  buffers: EditorBuffer[],
+  path: string,
+  updater: (buffer: EditorBuffer) => EditorBuffer
+): EditorBuffer[] => {
+  return buffers.map((buffer) => (buffer.path === path ? updater(buffer) : buffer))
+}
+
+const upsertBuffer = (buffers: EditorBuffer[], nextBuffer: EditorBuffer): EditorBuffer[] => {
+  const index = buffers.findIndex((buffer) => buffer.path === nextBuffer.path)
+  if (index < 0) return [...buffers, nextBuffer]
+  const next = [...buffers]
+  next[index] = nextBuffer
+  return next
+}
+
+const closeBuffer = (
+  buffers: EditorBuffer[],
+  path: string
+): { buffers: EditorBuffer[]; nextSelectedPath: string } => {
+  const index = buffers.findIndex((buffer) => buffer.path === path)
+  if (index < 0) return { buffers, nextSelectedPath: buffers[0]?.path ?? '' }
+  const nextBuffers = buffers.filter((buffer) => buffer.path !== path)
+  const nextSelectedPath =
+    nextBuffers[Math.min(index, nextBuffers.length - 1)]?.path ?? nextBuffers[0]?.path ?? ''
+  return { buffers: nextBuffers, nextSelectedPath }
+}
+
+const pathCompletionSource = (entries: WorkspaceFileEntry[]): CompletionSource => {
+  const completionEntries = entries.filter((entry) => !entry.isDirectory)
+  return (context) => {
+    const token = context.matchBefore(/[\w./@-]+/)
+    if (!token) return null
+    const query = token.text.trim()
+    if (!context.explicit && !query.includes('/') && !query.startsWith('.')) return null
+    const lowerQuery = query.replace(/^\.\//, '').toLowerCase()
+    const options = completionEntries
+      .filter((entry) => entry.path.toLowerCase().includes(lowerQuery))
+      .slice(0, 80)
+      .map((entry) => ({
+        label: entry.path,
+        type: 'file',
+        detail: formatBytes(entry.sizeBytes)
+      }))
+    if (options.length === 0) return null
+    return {
+      from: token.from,
+      options,
+      validFor: /^[\w./@-]*$/
+    }
+  }
 }
 
 const codeEditorTheme = EditorView.theme(
@@ -170,10 +336,7 @@ const editorApi = {
   ): Promise<WorkspaceFileReadResult> => {
     return window.api.writeWorkspaceFile(workspacePath, filePath, content, baseEtag)
   },
-  deleteFile: (
-    workspacePath: string,
-    filePath: string
-  ): Promise<{ path: string }> => {
+  deleteFile: (workspacePath: string, filePath: string): Promise<{ path: string }> => {
     return window.api.deleteWorkspaceFile(workspacePath, filePath)
   },
   gitSnapshot: (workspacePath: string) => {
@@ -190,7 +353,11 @@ const editorApi = {
   }
 }
 
-export function FileEditorPanel({ workspacePath, width }: FileEditorPanelProps) {
+const isBufferDirty = (buffer: EditorBuffer | null | undefined): boolean => {
+  return Boolean(buffer && buffer.content !== buffer.savedContent)
+}
+
+export function FileEditorPanel({ workspacePath, width, refreshTick = 0 }: FileEditorPanelProps) {
   const [childrenByDirectory, setChildrenByDirectory] = useState<
     Record<string, WorkspaceFileEntry[]>
   >({})
@@ -199,10 +366,9 @@ export function FileEditorPanel({ workspacePath, width }: FileEditorPanelProps) 
   const [searchFiles, setSearchFiles] = useState<WorkspaceFileEntry[]>([])
   const [searchTruncated, setSearchTruncated] = useState(false)
   const [filter, setFilter] = useState('')
+  const [buffers, setBuffers] = useState<EditorBuffer[]>([])
   const [selectedPath, setSelectedPath] = useState('')
-  const [content, setContent] = useState('')
-  const [savedContent, setSavedContent] = useState('')
-  const [savedEtag, setSavedEtag] = useState<string | null>(null)
+  const [cursorStatus, setCursorStatus] = useState<EditorCursorStatus>(DEFAULT_CURSOR_STATUS)
   const [status, setStatus] = useState('')
   const [listMessage, setListMessage] = useState('')
   const [gitSnapshot, setGitSnapshot] = useState<GitRepositorySnapshot | null>(null)
@@ -212,11 +378,18 @@ export function FileEditorPanel({ workspacePath, width }: FileEditorPanelProps) 
   const [showCommitDialog, setShowCommitDialog] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [isListLoading, setIsListLoading] = useState(false)
-  const [pendingOpenEntry, setPendingOpenEntry] = useState<WorkspaceFileEntry | null>(null)
-  const isDirty = content !== savedContent
-  const selectedName = selectedPath.split('/').filter(Boolean).pop() || selectedPath
+  const [pendingClosePath, setPendingClosePath] = useState('')
+  const lastRefreshTickRef = useRef(refreshTick)
+  const activeBuffer = useMemo(
+    () => buffers.find((buffer) => buffer.path === selectedPath) ?? null,
+    [buffers, selectedPath]
+  )
+  const content = activeBuffer?.content ?? ''
+  const isDirty = isBufferDirty(activeBuffer)
+  const selectedName = fileNameForPath(selectedPath)
   const trimmedFilter = filter.trim()
   const isFiltering = trimmedFilter.length > 0
+  const dirtyBufferCount = buffers.filter(isBufferDirty).length
 
   const browseFiles = useMemo(() => {
     const rows: WorkspaceFileEntry[] = []
@@ -233,6 +406,12 @@ export function FileEditorPanel({ workspacePath, width }: FileEditorPanelProps) 
   }, [childrenByDirectory, expandedDirectories])
 
   const displayedFiles = isFiltering ? searchFiles : browseFiles
+  const completionFiles = useMemo(() => {
+    const byPath = new Map<string, WorkspaceFileEntry>()
+    for (const entry of browseFiles) byPath.set(entry.path, entry)
+    for (const entry of searchFiles) byPath.set(entry.path, entry)
+    return Array.from(byPath.values())
+  }, [browseFiles, searchFiles])
 
   const selectedRepoPath = useMemo(() => {
     if (!selectedPath) return ''
@@ -284,15 +463,47 @@ export function FileEditorPanel({ workspacePath, width }: FileEditorPanelProps) 
     workspacePath
   ])
 
+  const updateCursorStatus = useCallback((update: ViewUpdate) => {
+    const selection = update.state.selection
+    const head = selection.main.head
+    const line = update.state.doc.lineAt(head)
+    const selectedChars = selection.ranges.reduce(
+      (total, range) => total + Math.abs(range.to - range.from),
+      0
+    )
+    setCursorStatus({
+      line: line.number,
+      column: head - line.from + 1,
+      selectedChars
+    })
+  }, [])
+
   const editorExtensions = useMemo<Extension[]>(
     () => [
       codeEditorTheme,
       syntaxHighlighting(codeHighlightStyle),
       highlightSelectionMatches(),
-      keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap]),
+      autocompletion({
+        override: [pathCompletionSource(completionFiles), completeAnyWord],
+        defaultKeymap: true
+      }),
+      EditorView.updateListener.of(updateCursorStatus),
+      keymap.of([
+        {
+          key: 'Tab',
+          run: (view) => {
+            if (completionStatus(view.state) !== 'active') return false
+            return acceptCompletion(view)
+          }
+        },
+        indentWithTab,
+        ...defaultKeymap,
+        ...historyKeymap,
+        ...searchKeymap
+      ]),
       ...extensionForPath(selectedPath)
     ],
-    [selectedPath]
+    [completionFiles, selectedPath, updateCursorStatus]
   )
 
   const loadDirectory = useCallback(
@@ -337,58 +548,141 @@ export function FileEditorPanel({ workspacePath, width }: FileEditorPanelProps) 
     }
   }, [workspacePath])
 
-  const refreshFiles = useCallback(async () => {
-    if (!workspacePath) {
-      setChildrenByDirectory({})
-      setTruncatedDirectories({})
-      setExpandedDirectories(new Set())
-      setSearchFiles([])
-      setSearchTruncated(false)
-      setFilter('')
-      setListMessage('')
-      setGitSnapshot(null)
-      setGitMessage('')
-      return
-    }
+  const refreshFiles = useCallback(
+    async (
+      options: {
+        resetNavigation?: boolean
+        expandedPaths?: string[]
+        filterQuery?: string
+      } = {}
+    ) => {
+      if (!workspacePath) {
+        setChildrenByDirectory({})
+        setTruncatedDirectories({})
+        setExpandedDirectories(new Set())
+        setSearchFiles([])
+        setSearchTruncated(false)
+        setFilter('')
+        setListMessage('')
+        setGitSnapshot(null)
+        setGitMessage('')
+        return
+      }
 
-    setIsListLoading(true)
-    setListMessage('')
-    try {
-      setChildrenByDirectory({})
-      setTruncatedDirectories({})
-      setExpandedDirectories(new Set())
-      setSearchFiles([])
-      setSearchTruncated(false)
-      setFilter('')
-      await loadDirectory(ROOT_DIR_KEY)
-      void refreshGitSnapshot()
-    } catch (error) {
-      setListMessage(error instanceof Error ? error.message : 'Could not load files')
-    } finally {
-      setIsListLoading(false)
+      const expandedPaths = options.resetNavigation ? [] : (options.expandedPaths ?? [])
+      const filterQuery = options.resetNavigation ? '' : (options.filterQuery?.trim() ?? '')
+
+      setIsListLoading(true)
+      setListMessage('')
+      try {
+        if (options.resetNavigation) {
+          setExpandedDirectories(new Set())
+          setFilter('')
+        }
+        const nextChildren: Record<string, WorkspaceFileEntry[]> = {}
+        const nextTruncated: Record<string, boolean> = {}
+        const root = await editorApi.listFiles(workspacePath, {
+          path: ROOT_DIR_KEY,
+          limit: FILE_EDITOR_DIRECTORY_LIMIT
+        })
+        nextChildren[ROOT_DIR_KEY] = root.entries
+        nextTruncated[ROOT_DIR_KEY] = root.truncated
+        for (const path of expandedPaths) {
+          try {
+            const result = await editorApi.listFiles(workspacePath, {
+              path,
+              limit: FILE_EDITOR_DIRECTORY_LIMIT
+            })
+            nextChildren[path] = result.entries
+            nextTruncated[path] = result.truncated
+          } catch {
+            /* Directory may have been removed; keep the rest of the refresh. */
+          }
+        }
+        setChildrenByDirectory(nextChildren)
+        setTruncatedDirectories(nextTruncated)
+        if (filterQuery) {
+          const search = await editorApi.listFiles(workspacePath, {
+            query: filterQuery,
+            limit: FILE_EDITOR_SEARCH_LIMIT
+          })
+          setSearchFiles(search.entries)
+          setSearchTruncated(search.truncated)
+        } else {
+          setSearchFiles([])
+          setSearchTruncated(false)
+        }
+        void refreshGitSnapshot()
+      } catch (error) {
+        setListMessage(error instanceof Error ? error.message : 'Could not load files')
+      } finally {
+        setIsListLoading(false)
+      }
+    },
+    [refreshGitSnapshot, workspacePath]
+  )
+
+  const refreshOpenBuffers = useCallback(async () => {
+    if (!workspacePath || buffers.length === 0) return
+    for (const buffer of buffers) {
+      if (isBufferDirty(buffer)) continue
+      try {
+        const result = await editorApi.readFile(workspacePath, buffer.path)
+        const nextBuffer = bufferFromReadResult(result)
+        setBuffers((current) =>
+          updateBuffer(current, result.path, (currentBuffer) =>
+            isBufferDirty(currentBuffer) ? currentBuffer : nextBuffer
+          )
+        )
+      } catch (error) {
+        setStatus(
+          `Could not refresh ${buffer.path}: ${
+            error instanceof Error ? error.message : 'file unavailable'
+          }`
+        )
+      }
     }
-  }, [loadDirectory, refreshGitSnapshot, workspacePath])
+  }, [buffers, workspacePath])
+
+  const refreshCurrentView = useCallback(async () => {
+    await refreshFiles({
+      expandedPaths: Array.from(expandedDirectories),
+      filterQuery: trimmedFilter
+    })
+    await refreshOpenBuffers()
+  }, [expandedDirectories, refreshFiles, refreshOpenBuffers, trimmedFilter])
 
   useEffect(() => {
+    let cancelled = false
+    const resetSearch = () => {
+      queueMicrotask(() => {
+        if (cancelled) return
+        setSearchFiles([])
+        setSearchTruncated(false)
+        setListMessage('')
+        setIsListLoading(false)
+      })
+    }
+
     if (!workspacePath) {
-      setSearchFiles([])
-      setSearchTruncated(false)
-      setListMessage('')
-      setIsListLoading(false)
-      return
+      resetSearch()
+      return () => {
+        cancelled = true
+      }
     }
 
     if (!trimmedFilter) {
-      setSearchFiles([])
-      setSearchTruncated(false)
-      setListMessage('')
-      setIsListLoading(false)
-      return
+      resetSearch()
+      return () => {
+        cancelled = true
+      }
     }
 
-    let cancelled = false
-    setIsListLoading(true)
-    setListMessage('')
+    queueMicrotask(() => {
+      if (cancelled) return
+      setIsListLoading(true)
+      setListMessage('')
+    })
 
     const timer = window.setTimeout(() => {
       editorApi
@@ -423,19 +717,27 @@ export function FileEditorPanel({ workspacePath, width }: FileEditorPanelProps) 
     queueMicrotask(() => {
       if (cancelled) return
       setSelectedPath('')
-      setContent('')
-      setSavedContent('')
-      setSavedEtag(null)
-      setPendingOpenEntry(null)
+      setBuffers([])
+      setCursorStatus(DEFAULT_CURSOR_STATUS)
+      setPendingClosePath('')
       setStatus('')
       setGitSnapshot(null)
       setGitMessage('')
-      void refreshFiles()
+      void refreshFiles({ resetNavigation: true })
     })
     return () => {
       cancelled = true
     }
-  }, [refreshFiles])
+  }, [refreshFiles, workspacePath])
+
+  useEffect(() => {
+    if (refreshTick === lastRefreshTickRef.current) return
+    lastRefreshTickRef.current = refreshTick
+    if (!workspacePath) return
+    queueMicrotask(() => {
+      void refreshCurrentView()
+    })
+  }, [refreshCurrentView, refreshTick, workspacePath])
 
   const expandDirectoryPath = async (dirPath: string) => {
     if (!workspacePath) return
@@ -518,9 +820,11 @@ export function FileEditorPanel({ workspacePath, width }: FileEditorPanelProps) 
       await toggleDirectory(entry)
       return
     }
-    if (isDirty) {
-      setPendingOpenEntry(entry)
-      setStatus(`Unsaved changes in ${selectedPath}`)
+
+    if (buffers.some((buffer) => buffer.path === entry.path)) {
+      setSelectedPath(entry.path)
+      setCursorStatus(DEFAULT_CURSOR_STATUS)
+      setStatus(`${entry.path} · already open`)
       return
     }
 
@@ -528,79 +832,128 @@ export function FileEditorPanel({ workspacePath, width }: FileEditorPanelProps) 
     setStatus(`Opening ${entry.path}`)
     try {
       const result = await editorApi.readFile(workspacePath, entry.path)
+      const nextBuffer = bufferFromReadResult(result)
+      setBuffers((current) => upsertBuffer(current, nextBuffer))
       setSelectedPath(result.path)
-      setContent(result.content)
-      setSavedContent(result.content)
-      setSavedEtag(result.etag ?? null)
+      setCursorStatus(DEFAULT_CURSOR_STATUS)
       setStatus(`${result.path} · ${formatBytes(result.sizeBytes)}`)
       void refreshGitSnapshot()
     } catch (error) {
       setStatus(error instanceof Error ? error.message : 'Could not open file')
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  const saveBuffer = async (path: string): Promise<boolean> => {
+    if (!workspacePath || !path) return false
+    const buffer = buffers.find((item) => item.path === path)
+    if (!buffer || !isBufferDirty(buffer)) return true
+
+    setIsLoading(true)
+    setStatus(`Saving ${path}`)
+    const savedContentSnapshot = buffer.content
+    const savedEtagSnapshot = buffer.savedEtag
+    try {
+      const result = await editorApi.writeFile(
+        workspacePath,
+        path,
+        savedContentSnapshot,
+        savedEtagSnapshot
+      )
+      const nextBuffer = bufferFromReadResult(result)
+      setBuffers((current) =>
+        updateBuffer(current, result.path, (currentBuffer) =>
+          mergeSavedBufferResult(currentBuffer, nextBuffer, savedContentSnapshot, savedEtagSnapshot)
+        )
+      )
+      setStatus(`Saved ${result.path} · ${formatBytes(result.sizeBytes)}`)
+      void loadDirectory(parentDirectoryForPath(result.path))
+      void refreshGitSnapshot()
+      return true
+    } catch (error) {
+      setSelectedPath(path)
+      setStatus(error instanceof Error ? error.message : 'Could not save file')
+      return false
     } finally {
       setIsLoading(false)
     }
   }
 
   const saveFile = async () => {
-    if (!workspacePath || !selectedPath || !isDirty) return
+    if (!selectedPath) return
+    await saveBuffer(selectedPath)
+  }
 
+  const saveAllFiles = async () => {
+    if (!workspacePath || dirtyBufferCount === 0) return
     setIsLoading(true)
-    setStatus(`Saving ${selectedPath}`)
+    let failedPath = ''
     try {
-      const nextPendingEntry = pendingOpenEntry
-      const result = await editorApi.writeFile(workspacePath, selectedPath, content, savedEtag)
-      setContent(result.content)
-      setSavedContent(result.content)
-      setSavedEtag(result.etag ?? savedEtag)
-      setPendingOpenEntry(null)
-      if (nextPendingEntry) {
-        setStatus(`Opening ${nextPendingEntry.path}`)
-        const nextResult = await editorApi.readFile(workspacePath, nextPendingEntry.path)
-        setSelectedPath(nextResult.path)
-        setContent(nextResult.content)
-        setSavedContent(nextResult.content)
-        setSavedEtag(nextResult.etag ?? null)
-        setStatus(`${nextResult.path} · ${formatBytes(nextResult.sizeBytes)}`)
-      } else {
-        setStatus(`Saved ${result.path} · ${formatBytes(result.sizeBytes)}`)
+      const dirtyBuffers = buffers.filter(isBufferDirty)
+      let savedCount = 0
+      for (const buffer of dirtyBuffers) {
+        failedPath = buffer.path
+        setStatus(`Saving ${buffer.path}`)
+        const savedContentSnapshot = buffer.content
+        const savedEtagSnapshot = buffer.savedEtag
+        const result = await editorApi.writeFile(
+          workspacePath,
+          buffer.path,
+          savedContentSnapshot,
+          savedEtagSnapshot
+        )
+        const nextBuffer = bufferFromReadResult(result)
+        setBuffers((current) =>
+          updateBuffer(current, result.path, (currentBuffer) =>
+            mergeSavedBufferResult(
+              currentBuffer,
+              nextBuffer,
+              savedContentSnapshot,
+              savedEtagSnapshot
+            )
+          )
+        )
+        void loadDirectory(parentDirectoryForPath(result.path))
+        savedCount += 1
       }
-      void loadDirectory(parentDirectoryForPath(result.path))
+      setStatus(`Saved ${savedCount} open file${savedCount === 1 ? '' : 's'}`)
       void refreshGitSnapshot()
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : 'Could not save or open file')
+      setStatus(error instanceof Error ? error.message : 'Could not save all files')
+      if (failedPath) setSelectedPath(failedPath)
     } finally {
       setIsLoading(false)
     }
   }
 
-  const discardChangesAndOpenPending = async () => {
-    const nextEntry = pendingOpenEntry
-    setPendingOpenEntry(null)
-    setContent(savedContent)
-    if (!workspacePath || !nextEntry) {
+  const closeEditorBuffer = (path: string) => {
+    const result = closeBuffer(buffers, path)
+    const nextSelectedPath = path === selectedPath ? result.nextSelectedPath : selectedPath
+    setBuffers(result.buffers)
+    setSelectedPath(nextSelectedPath)
+    if (path === selectedPath) setCursorStatus(DEFAULT_CURSOR_STATUS)
+    setPendingClosePath('')
+    if (path === selectedPath) {
+      setStatus(nextSelectedPath ? `${nextSelectedPath} · selected` : 'No file selected')
+    }
+  }
+
+  const requestCloseBuffer = (path: string) => {
+    const buffer = buffers.find((item) => item.path === path)
+    if (isBufferDirty(buffer)) {
+      setPendingClosePath(path)
+      setStatus(`Unsaved changes in ${path}`)
       return
     }
-
-    setIsLoading(true)
-    setStatus(`Opening ${nextEntry.path}`)
-    try {
-      const result = await editorApi.readFile(workspacePath, nextEntry.path)
-      setSelectedPath(result.path)
-      setContent(result.content)
-      setSavedContent(result.content)
-      setSavedEtag(result.etag ?? null)
-      setStatus(`${result.path} · ${formatBytes(result.sizeBytes)}`)
-      void refreshGitSnapshot()
-    } catch (error) {
-      setStatus(error instanceof Error ? error.message : 'Could not open file')
-    } finally {
-      setIsLoading(false)
-    }
+    closeEditorBuffer(path)
   }
 
-  const cancelPendingOpen = () => {
-    setPendingOpenEntry(null)
-    setStatus(selectedPath ? `${selectedPath} · unsaved changes` : status)
+  const saveAndClosePendingBuffer = async () => {
+    const path = pendingClosePath
+    if (!path) return
+    const saved = await saveBuffer(path)
+    if (saved) closeEditorBuffer(path)
   }
 
   const deleteSelectedFile = async () => {
@@ -612,11 +965,10 @@ export function FileEditorPanel({ workspacePath, width }: FileEditorPanelProps) 
     try {
       const deletedPath = selectedPath
       const result = await editorApi.deleteFile(workspacePath, selectedPath)
-      setSelectedPath('')
-      setContent('')
-      setSavedContent('')
-      setSavedEtag(null)
-      setPendingOpenEntry(null)
+      const closed = closeBuffer(buffers, deletedPath)
+      setBuffers(closed.buffers)
+      setSelectedPath(closed.nextSelectedPath)
+      setCursorStatus(DEFAULT_CURSOR_STATUS)
       setStatus(`Deleted ${result.path}`)
       await loadDirectory(parentDirectoryForPath(deletedPath))
       if (isFiltering) {
@@ -712,66 +1064,20 @@ export function FileEditorPanel({ workspacePath, width }: FileEditorPanelProps) 
 
   return (
     <aside className="app-file-editor" style={width ? { width } : undefined}>
-      <section className="file-editor-files">
-        <div className="file-editor-header">
-          <strong>Files</strong>
-          <button
-            className="btn btn-sm btn-ghost"
-            type="button"
-            onClick={refreshFiles}
-            disabled={!workspacePath || isListLoading}
-          >
-            Refresh
-          </button>
-        </div>
-        <input
-          className="file-editor-filter"
-          aria-label="Filter workspace files"
-          value={filter}
-          onChange={(event) => setFilter(event.target.value)}
-          placeholder="Filter files"
-          disabled={!workspacePath}
-        />
-        <div className="file-editor-list-status" role="status" aria-live="polite">
-          {fileListStatus}
-        </div>
-        <div className="file-editor-list">
-          {displayedFiles.length > 0 ? (
-            displayedFiles.map((entry) => {
-              const isExpanded = entry.isDirectory && expandedDirectories.has(entry.path)
-              return (
-                <button
-                  key={`${entry.isDirectory ? 'dir' : 'file'}-${entry.path}`}
-                  className={`file-editor-row ${entry.isDirectory ? 'directory' : 'file'} ${selectedPath === entry.path ? 'active' : ''} ${isExpanded ? 'expanded' : ''}`}
-                  style={{ paddingLeft: `calc(var(--space-sm) + ${entry.depth * 12}px)` }}
-                  type="button"
-                  onClick={() => void openFile(entry)}
-                  disabled={isLoading}
-                  title={entry.path}
-                >
-                  <span className="file-editor-disclosure" aria-hidden="true">
-                    {entry.isDirectory && entry.hasChildren ? (isExpanded ? '▾' : '▸') : ''}
-                  </span>
-                  <FileTypeIcon
-                    path={entry.path}
-                    size={14}
-                    className="file-editor-file-icon"
-                    workspacePath={workspacePath}
-                  />
-                  <span className="file-editor-file-name">{isFiltering ? entry.path : entry.name}</span>
-                  {!entry.isDirectory && (
-                    <span className="file-editor-file-size">{formatBytes(entry.sizeBytes)}</span>
-                  )}
-                </button>
-              )
-            })
-          ) : (
-            <div className="file-editor-empty">
-              {fileListStatus || 'No workspace files found'}
-            </div>
-          )}
-        </div>
-      </section>
+      <WorkspaceFileTree
+        workspacePath={workspacePath}
+        filter={filter}
+        fileListStatus={fileListStatus}
+        displayedFiles={displayedFiles}
+        expandedDirectories={expandedDirectories}
+        selectedPath={selectedPath}
+        isFiltering={isFiltering}
+        isLoading={isLoading}
+        isListLoading={isListLoading}
+        onFilterChange={setFilter}
+        onRefresh={refreshCurrentView}
+        onOpenEntry={openFile}
+      />
 
       <section
         className="file-editor-code"
@@ -799,65 +1105,33 @@ export function FileEditorPanel({ workspacePath, width }: FileEditorPanelProps) 
               'Editor'
             )}
           </strong>
-          <div className="file-editor-actions">
-            <button
-              className="btn btn-sm btn-ghost"
-              type="button"
-              onClick={() => setShowDeleteConfirm(true)}
-              disabled={!workspacePath || !selectedPath || isDirty || isLoading}
-              aria-label="Delete editor file"
-              title={isDirty ? 'Save or discard changes before deleting' : 'Delete editor file'}
-            >
-              Delete
-            </button>
-            <button
-              className="btn btn-sm btn-ghost"
-              type="button"
-              onClick={() => void stageSelectedFile()}
-              disabled={
-                !workspacePath ||
-                !selectedPath ||
-                isDirty ||
-                isLoading ||
-                !selectedHasUnstagedChanges
-              }
-              aria-label="Stage editor file"
-              title={isDirty ? 'Save before staging this file' : 'Stage editor file'}
-            >
-              Stage
-            </button>
-            <button
-              className="btn btn-sm btn-ghost"
-              type="button"
-              onClick={() => void unstageSelectedFile()}
-              disabled={!workspacePath || !selectedPath || isLoading || !selectedHasStagedChanges}
-              aria-label="Unstage editor file"
-              title="Unstage editor file"
-            >
-              Unstage
-            </button>
-            <button
-              className="btn btn-sm btn-ghost"
-              type="button"
-              onClick={() => setShowCommitDialog(true)}
-              disabled={!workspacePath || stagedCount === 0 || isLoading}
-              aria-label="Commit staged changes"
-              title={stagedCount > 0 ? `Commit ${stagedCount} staged file${stagedCount === 1 ? '' : 's'}` : 'No staged files'}
-            >
-              Commit
-            </button>
-            <button
-              className="btn btn-sm"
-              type="button"
-              onClick={saveFile}
-              disabled={!workspacePath || !selectedPath || !isDirty || isLoading}
-              aria-label="Save editor file"
-              title="Save editor file"
-            >
-              Save
-            </button>
-          </div>
+          <FileEditorGitActions
+            workspacePath={workspacePath}
+            selectedPath={selectedPath}
+            isDirty={isDirty}
+            isLoading={isLoading}
+            selectedHasUnstagedChanges={selectedHasUnstagedChanges}
+            selectedHasStagedChanges={selectedHasStagedChanges}
+            stagedCount={stagedCount}
+            dirtyBufferCount={dirtyBufferCount}
+            onDeleteRequest={() => setShowDeleteConfirm(true)}
+            onStage={stageSelectedFile}
+            onUnstage={unstageSelectedFile}
+            onCommitRequest={() => setShowCommitDialog(true)}
+            onSaveAll={saveAllFiles}
+            onSave={saveFile}
+          />
         </div>
+        <EditorTabStrip
+          buffers={buffers}
+          selectedPath={selectedPath}
+          workspacePath={workspacePath}
+          onSelect={(path) => {
+            setSelectedPath(path)
+            setCursorStatus(DEFAULT_CURSOR_STATUS)
+          }}
+          onClose={requestCloseBuffer}
+        />
         {showDeleteConfirm && selectedPath && (
           <div className="file-editor-modal-backdrop">
             <div className="file-editor-confirm-card" role="alertdialog" aria-modal="true">
@@ -886,7 +1160,9 @@ export function FileEditorPanel({ workspacePath, width }: FileEditorPanelProps) 
           <div className="file-editor-modal-backdrop">
             <div className="file-editor-confirm-card" role="dialog" aria-modal="true">
               <strong>Commit staged changes</strong>
-              <span>{stagedCount} staged file{stagedCount === 1 ? '' : 's'} will be committed.</span>
+              <span>
+                {stagedCount} staged file{stagedCount === 1 ? '' : 's'} will be committed.
+              </span>
               <input
                 className="file-editor-commit-input"
                 aria-label="Commit message"
@@ -915,63 +1191,364 @@ export function FileEditorPanel({ workspacePath, width }: FileEditorPanelProps) 
             </div>
           </div>
         )}
-        {pendingOpenEntry && (
+        {pendingClosePath && (
           <div
             className="file-editor-unsaved-card"
             role="alertdialog"
             aria-label="Unsaved editor changes"
           >
             <strong>Unsaved changes</strong>
-            <span>Save or discard changes before opening {pendingOpenEntry.path}.</span>
+            <span>Save or discard changes before closing {pendingClosePath}.</span>
             <div className="file-editor-unsaved-actions">
-              <button className="btn btn-sm" type="button" onClick={() => void saveFile()}>
+              <button
+                className="btn btn-sm"
+                type="button"
+                onClick={() => void saveAndClosePendingBuffer()}
+              >
                 Save
               </button>
               <button
                 className="btn btn-sm btn-ghost"
                 type="button"
-                onClick={() => void discardChangesAndOpenPending()}
+                onClick={() => closeEditorBuffer(pendingClosePath)}
               >
                 Discard
               </button>
-              <button className="btn btn-sm btn-ghost" type="button" onClick={cancelPendingOpen}>
+              <button
+                className="btn btn-sm btn-ghost"
+                type="button"
+                onClick={() => setPendingClosePath('')}
+              >
                 Cancel
               </button>
             </div>
           </div>
         )}
-        <div className="file-editor-code-surface">
-          {selectedPath ? (
-            <CodeMirror
-              value={content}
-              height="100%"
-              basicSetup={{
-                lineNumbers: true,
-                foldGutter: false,
-                highlightActiveLine: true,
-                highlightActiveLineGutter: true,
-                bracketMatching: true,
-                closeBrackets: true,
-                autocompletion: true,
-                rectangularSelection: false,
-                crosshairCursor: false
-              }}
-              editable={!isLoading}
-              readOnly={isLoading}
-              extensions={editorExtensions}
-              onChange={(value) => setContent(value)}
-            />
-          ) : (
-            <div className="file-editor-placeholder">Select a text file</div>
-          )}
-        </div>
-        <div className="file-editor-status">
-          <span role="status" aria-live="polite">
-            {isDirty ? 'Unsaved changes' : status}
-            {!isDirty && gitMessage ? ` · ${gitMessage}` : ''}
-          </span>
-        </div>
+        <EditorPane
+          selectedPath={selectedPath}
+          content={content}
+          isLoading={isLoading}
+          editorExtensions={editorExtensions}
+          onContentChange={(value) => {
+            const path = selectedPath
+            if (!path) return
+            setBuffers((current) =>
+              updateBuffer(current, path, (buffer) => ({ ...buffer, content: value }))
+            )
+          }}
+        />
+        <EditorStatusBar
+          activeBuffer={activeBuffer}
+          isDirty={isDirty}
+          status={status}
+          gitMessage={gitMessage}
+          cursorStatus={cursorStatus}
+          selectedGitFile={selectedGitFile}
+          selectedHasStagedChanges={selectedHasStagedChanges}
+          selectedHasUnstagedChanges={selectedHasUnstagedChanges}
+        />
       </section>
     </aside>
+  )
+}
+
+function WorkspaceFileTree({
+  workspacePath,
+  filter,
+  fileListStatus,
+  displayedFiles,
+  expandedDirectories,
+  selectedPath,
+  isFiltering,
+  isLoading,
+  isListLoading,
+  onFilterChange,
+  onRefresh,
+  onOpenEntry
+}: WorkspaceFileTreeProps) {
+  return (
+    <section className="file-editor-files">
+      <div className="file-editor-header">
+        <strong>Files</strong>
+        <button
+          className="btn btn-sm btn-ghost"
+          type="button"
+          onClick={() => void onRefresh()}
+          disabled={!workspacePath || isListLoading}
+        >
+          Refresh
+        </button>
+      </div>
+      <input
+        className="file-editor-filter"
+        aria-label="Filter workspace files"
+        value={filter}
+        onChange={(event) => onFilterChange(event.target.value)}
+        placeholder="Filter files"
+        disabled={!workspacePath}
+      />
+      <div className="file-editor-list-status" role="status" aria-live="polite">
+        {fileListStatus}
+      </div>
+      <div className="file-editor-list">
+        {displayedFiles.length > 0 ? (
+          displayedFiles.map((entry) => {
+            const isExpanded = entry.isDirectory && expandedDirectories.has(entry.path)
+            return (
+              <button
+                key={`${entry.isDirectory ? 'dir' : 'file'}-${entry.path}`}
+                className={`file-editor-row ${entry.isDirectory ? 'directory' : 'file'} ${selectedPath === entry.path ? 'active' : ''} ${isExpanded ? 'expanded' : ''}`}
+                style={{ paddingLeft: `calc(var(--space-sm) + ${entry.depth * 12}px)` }}
+                type="button"
+                onClick={() => void onOpenEntry(entry)}
+                disabled={isLoading}
+                title={entry.path}
+              >
+                <span className="file-editor-disclosure" aria-hidden="true">
+                  {entry.isDirectory && entry.hasChildren ? (isExpanded ? '▾' : '▸') : ''}
+                </span>
+                <FileTypeIcon
+                  path={entry.path}
+                  size={14}
+                  className="file-editor-file-icon"
+                  workspacePath={workspacePath}
+                />
+                <span className="file-editor-file-name">
+                  {isFiltering ? entry.path : entry.name}
+                </span>
+                {!entry.isDirectory && (
+                  <span className="file-editor-file-size">{formatBytes(entry.sizeBytes)}</span>
+                )}
+              </button>
+            )
+          })
+        ) : (
+          <div className="file-editor-empty">{fileListStatus || 'No workspace files found'}</div>
+        )}
+      </div>
+    </section>
+  )
+}
+
+function FileEditorGitActions({
+  workspacePath,
+  selectedPath,
+  isDirty,
+  isLoading,
+  selectedHasUnstagedChanges,
+  selectedHasStagedChanges,
+  stagedCount,
+  dirtyBufferCount,
+  onDeleteRequest,
+  onStage,
+  onUnstage,
+  onCommitRequest,
+  onSaveAll,
+  onSave
+}: FileEditorGitActionsProps) {
+  return (
+    <div className="file-editor-actions">
+      <button
+        className="btn btn-sm btn-ghost"
+        type="button"
+        onClick={onDeleteRequest}
+        disabled={!workspacePath || !selectedPath || isDirty || isLoading}
+        aria-label="Delete editor file"
+        title={isDirty ? 'Save or discard changes before deleting' : 'Delete editor file'}
+      >
+        Delete
+      </button>
+      <button
+        className="btn btn-sm btn-ghost"
+        type="button"
+        onClick={() => void onStage()}
+        disabled={
+          !workspacePath || !selectedPath || isDirty || isLoading || !selectedHasUnstagedChanges
+        }
+        aria-label="Stage editor file"
+        title={isDirty ? 'Save before staging this file' : 'Stage editor file'}
+      >
+        Stage
+      </button>
+      <button
+        className="btn btn-sm btn-ghost"
+        type="button"
+        onClick={() => void onUnstage()}
+        disabled={!workspacePath || !selectedPath || isLoading || !selectedHasStagedChanges}
+        aria-label="Unstage editor file"
+        title="Unstage editor file"
+      >
+        Unstage
+      </button>
+      <button
+        className="btn btn-sm btn-ghost"
+        type="button"
+        onClick={onCommitRequest}
+        disabled={!workspacePath || stagedCount === 0 || isLoading}
+        aria-label="Commit staged changes"
+        title={
+          stagedCount > 0
+            ? `Commit ${stagedCount} staged file${stagedCount === 1 ? '' : 's'}`
+            : 'No staged files'
+        }
+      >
+        Commit
+      </button>
+      <button
+        className="btn btn-sm btn-ghost"
+        type="button"
+        onClick={() => void onSaveAll()}
+        disabled={!workspacePath || dirtyBufferCount === 0 || isLoading}
+        aria-label="Save all open editor files"
+        title={
+          dirtyBufferCount > 0
+            ? `Save ${dirtyBufferCount} dirty file${dirtyBufferCount === 1 ? '' : 's'}`
+            : 'No dirty files'
+        }
+      >
+        Save All
+      </button>
+      <button
+        className="btn btn-sm"
+        type="button"
+        onClick={() => void onSave()}
+        disabled={!workspacePath || !selectedPath || !isDirty || isLoading}
+        aria-label="Save editor file"
+        title="Save editor file"
+      >
+        Save
+      </button>
+    </div>
+  )
+}
+
+function EditorTabStrip({
+  buffers,
+  selectedPath,
+  workspacePath,
+  onSelect,
+  onClose
+}: EditorTabStripProps) {
+  if (buffers.length === 0) return null
+
+  return (
+    <div className="file-editor-tab-strip" role="tablist" aria-label="Open editor files">
+      {buffers.map((buffer) => {
+        const tabDirty = isBufferDirty(buffer)
+        const isActive = selectedPath === buffer.path
+        return (
+          <div
+            key={buffer.path}
+            className={`file-editor-tab ${isActive ? 'active' : ''} ${tabDirty ? 'dirty' : ''}`}
+            title={buffer.path}
+          >
+            <button
+              className="file-editor-tab-select"
+              type="button"
+              role="tab"
+              aria-selected={isActive}
+              onClick={() => onSelect(buffer.path)}
+            >
+              <FileTypeIcon
+                path={buffer.path}
+                size={13}
+                className="file-editor-file-icon"
+                workspacePath={workspacePath}
+              />
+              <span className="file-editor-tab-name">{fileNameForPath(buffer.path)}</span>
+              {tabDirty && <span className="file-editor-dirty-dot" title="Unsaved changes" />}
+            </button>
+            <button
+              type="button"
+              className="file-editor-tab-close"
+              aria-label={`Close ${buffer.path}`}
+              title={`Close ${buffer.path}`}
+              onClick={() => onClose(buffer.path)}
+            >
+              ×
+            </button>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function EditorPane({
+  selectedPath,
+  content,
+  isLoading,
+  editorExtensions,
+  onContentChange
+}: EditorPaneProps) {
+  return (
+    <div className="file-editor-code-surface">
+      {selectedPath ? (
+        <CodeMirror
+          key={selectedPath}
+          value={content}
+          height="100%"
+          basicSetup={{
+            lineNumbers: true,
+            foldGutter: true,
+            highlightActiveLine: true,
+            highlightActiveLineGutter: true,
+            bracketMatching: true,
+            closeBrackets: true,
+            autocompletion: false,
+            rectangularSelection: false,
+            crosshairCursor: false
+          }}
+          editable={!isLoading}
+          readOnly={isLoading}
+          extensions={editorExtensions}
+          onChange={onContentChange}
+        />
+      ) : (
+        <div className="file-editor-placeholder">Select a text file</div>
+      )}
+    </div>
+  )
+}
+
+function EditorStatusBar({
+  activeBuffer,
+  isDirty,
+  status,
+  gitMessage,
+  cursorStatus,
+  selectedGitFile,
+  selectedHasStagedChanges,
+  selectedHasUnstagedChanges
+}: EditorStatusBarProps) {
+  return (
+    <div className="file-editor-status">
+      <span role="status" aria-live="polite">
+        {isDirty ? 'Unsaved changes' : status}
+        {!isDirty && gitMessage ? ` · ${gitMessage}` : ''}
+      </span>
+      <span className="file-editor-status-spacer" aria-hidden="true" />
+      {activeBuffer && (
+        <>
+          <span title={activeBuffer.path}>{activeBuffer.path}</span>
+          <span>{formatBytes(activeBuffer.sizeBytes)}</span>
+          <span>
+            Ln {cursorStatus.line}, Col {cursorStatus.column}
+            {cursorStatus.selectedChars > 0 ? ` · ${cursorStatus.selectedChars} selected` : ''}
+          </span>
+          {selectedGitFile && (
+            <span>
+              {selectedHasStagedChanges && selectedHasUnstagedChanges
+                ? 'staged + unstaged'
+                : selectedHasStagedChanges
+                  ? 'staged'
+                  : selectedHasUnstagedChanges
+                    ? 'unstaged'
+                    : selectedGitFile.kind}
+            </span>
+          )}
+        </>
+      )}
+    </div>
   )
 }

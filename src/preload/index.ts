@@ -840,6 +840,8 @@ const api = {
       pluginId,
       enabled
     ) as Promise<TaskWraithPluginCatalogSnapshot>,
+  updatePlugin: (pluginId: string) =>
+    ipcRenderer.invoke('plugins:update', pluginId) as Promise<TaskWraithPluginCatalogSnapshot>,
   uninstallPlugin: (pluginId: string) =>
     ipcRenderer.invoke('plugins:uninstall', pluginId) as Promise<TaskWraithPluginCatalogSnapshot>,
   getWorkspaces: () => ipcRenderer.invoke('get-workspaces'),

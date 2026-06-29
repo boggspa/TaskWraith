@@ -63,4 +63,4 @@ export interface BackgroundSubThreadTranscriptState {
   finalized?: boolean
 }
 
-export type WorkspacePopoutKind = 'file-editor' | 'diff-studio' | 'chat'
+export type WorkspacePopoutKind = 'file-editor' | 'diff-studio' | 'workbench' | 'chat'

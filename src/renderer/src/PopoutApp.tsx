@@ -1,14 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react'
 import { DiffViewer } from './components/DiffViewer'
 import { FileEditorPanel } from './components/FileEditorPanel'
+import { TaskWraithWorkbench } from './components/TaskWraithWorkbench'
 import { useAppearance } from './hooks/useAppearance'
 
-type PopoutKind = 'file-editor' | 'diff-studio' | 'permission-helper'
+type PopoutKind = 'file-editor' | 'diff-studio' | 'workbench' | 'permission-helper'
 
 type WorkspaceDiff = Awaited<ReturnType<typeof window.api.getDiff>>
 
 const parsePopoutKind = (value: string | null): PopoutKind | null => {
-  return value === 'file-editor' || value === 'diff-studio' || value === 'permission-helper'
+  return value === 'file-editor' ||
+    value === 'diff-studio' ||
+    value === 'workbench' ||
+    value === 'permission-helper'
     ? value
     : null
 }
@@ -30,10 +34,8 @@ export function PopoutApp() {
   const workspacePath = params.get('workspace') || ''
   const [diff, setDiff] = useState<WorkspaceDiff | null>(null)
   const [status, setStatus] = useState('')
-  // 1.0.5-PO2 — fileEditorRefreshTick bumps to nudge FileEditorPanel
-  // to re-list. We can't directly call into the panel; flipping a
-  // key prop forces a re-mount. Cheap, correct, and the panel
-  // already handles its own load lifecycle.
+  // File Editor receives this as an in-place refresh signal. Do not
+  // remount the panel here: open tabs and dirty buffers live inside it.
   const [fileEditorRefreshTick, setFileEditorRefreshTick] = useState(0)
 
   const refreshDiff = useCallback(async () => {
@@ -102,7 +104,8 @@ export function PopoutApp() {
     )
   }
 
-  const title = kind === 'file-editor' ? 'File Editor' : 'Diff Studio'
+  const title =
+    kind === 'file-editor' ? 'File Editor' : kind === 'diff-studio' ? 'Diff Studio' : 'Workbench'
   const workspaceName = basename(workspacePath)
 
   return (
@@ -125,17 +128,17 @@ export function PopoutApp() {
       </header>
       <section className="popout-body">
         {kind === 'file-editor' ? (
-          // 1.0.5-PO2 — key bump forces FileEditorPanel to re-mount,
-          // which re-runs its file-list load. Cheaper than wiring a
-          // bespoke imperative refresh hook into the panel.
-          <FileEditorPanel
-            key={`file-editor-${fileEditorRefreshTick}`}
-            workspacePath={workspacePath}
-          />
-        ) : (
+          <FileEditorPanel workspacePath={workspacePath} refreshTick={fileEditorRefreshTick} />
+        ) : kind === 'diff-studio' ? (
           <div className="diff-studio popout-diff-studio">
             <DiffViewer diff={diff} workspacePath={workspacePath} />
           </div>
+        ) : (
+          <TaskWraithWorkbench
+            workspacePath={workspacePath}
+            workspaceName={workspaceName}
+            refreshTick={fileEditorRefreshTick}
+          />
         )}
       </section>
     </main>

@@ -794,6 +794,59 @@
   opacity: 0.85;
 }
 
+.app-file-editor .file-editor-tab-strip {
+  scrollbar-width: thin;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--text-primary) 5%, transparent), transparent),
+    color-mix(in srgb, var(--panel-elevated-bg) 62%, transparent);
+}
+
+.app-file-editor .file-editor-tab {
+  transition: background-color 120ms ease, box-shadow 120ms ease;
+}
+
+.app-file-editor .file-editor-tab:hover {
+  background: color-mix(in srgb, var(--text-primary) 5%, transparent);
+}
+
+.app-file-editor .file-editor-tab.active {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  box-shadow: inset 0 -1.5px 0 color-mix(in srgb, var(--accent) 70%, transparent);
+}
+
+.app-file-editor .file-editor-tab.active .file-editor-tab-select {
+  color: var(--text-primary);
+}
+
+.app-file-editor .file-editor-tab-select:focus-visible,
+.app-file-editor .file-editor-tab-close:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 62%, transparent);
+  outline-offset: -2px;
+}
+
+.app-file-editor .file-editor-tab-close {
+  opacity: 0.62;
+  transition: opacity 120ms ease, color 120ms ease, background-color 120ms ease;
+}
+
+.app-file-editor .file-editor-tab:hover .file-editor-tab-close,
+.app-file-editor .file-editor-tab-close:focus-visible {
+  opacity: 1;
+}
+
+.app-file-editor .file-editor-tab-close:hover {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+}
+
+.app-file-editor .file-editor-tab .file-editor-dirty-dot {
+  width: 6px;
+  height: 6px;
+  margin-left: 0;
+  flex-shrink: 0;
+  animation: none;
+}
+
 .app-file-editor .file-editor-dirty-dot {
   width: 7px;
   height: 7px;
@@ -838,6 +891,30 @@
   color: var(--text-tertiary);
   background: color-mix(in srgb, var(--panel-elevated-bg) 40%, transparent);
   letter-spacing: 0.01em;
+}
+
+.app-file-editor .file-editor-status > span:first-child {
+  color: var(--text-secondary);
+}
+
+.workbench-nav-item {
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.workbench-nav-item:hover {
+  background: color-mix(in srgb, var(--text-primary) 5%, transparent);
+}
+
+.workbench-nav-item:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 62%, transparent);
+  outline-offset: 2px;
+}
+
+.workbench-nav-item.active {
+  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--accent) 76%, transparent);
 }
 
 .app-file-editor .file-editor-unsaved-card {
