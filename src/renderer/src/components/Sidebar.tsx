@@ -246,6 +246,9 @@ interface SidebarProps {
   onCreateWorkflow?: () => void
   onCreateWorkspaceBoard?: (input?: WorkspaceBoardCreateInput) => void
   onOpenWorkspaceBoard?: (board: WorkspaceBoardDefinition) => void
+  onRenameWorkspaceBoard?: (board: WorkspaceBoardDefinition) => void
+  onDuplicateWorkspaceBoard?: (board: WorkspaceBoardDefinition) => void
+  onTogglePinWorkspaceBoard?: (board: WorkspaceBoardDefinition) => void
   onDeleteWorkspaceBoard?: (boardId: string) => void
   onAddChatToWorkspaceBoard?: (chat: ChatRecord) => void
   onAddWorkflowToWorkspaceBoard?: (workflow: WorkflowDefinition) => void
@@ -2046,6 +2049,9 @@ export function Sidebar({
   onCreateWorkflow,
   onCreateWorkspaceBoard,
   onOpenWorkspaceBoard,
+  onRenameWorkspaceBoard,
+  onDuplicateWorkspaceBoard,
+  onTogglePinWorkspaceBoard,
   onDeleteWorkspaceBoard,
   onAddChatToWorkspaceBoard,
   onAddWorkflowToWorkspaceBoard,
@@ -2351,7 +2357,10 @@ export function Sidebar({
   )
     .filter((board) => workspaceWorkflowIds.has(board.workspaceId) && !board.archived)
     .slice()
-    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+    .sort((left, right) => {
+      if (Boolean(left.pinned) !== Boolean(right.pinned)) return left.pinned ? -1 : 1
+      return right.updatedAt.localeCompare(left.updatedAt)
+    })
   const scheduledTaskById = useMemo(() => {
     const map = new Map<string, ScheduledTask>()
     for (const task of scheduledTasks) map.set(task.id, task)
@@ -3882,6 +3891,7 @@ export function Sidebar({
                           card.columnId === 'review-ready'
                       ).length
                       const boardMeta = [
+                        board.pinned ? 'Pinned' : null,
                         workspace?.displayName || 'Workspace',
                         `${boardCards.length} card${boardCards.length === 1 ? '' : 's'}`,
                         attentionCount > 0
@@ -3915,16 +3925,53 @@ export function Sidebar({
                               </span>
                             </span>
                           </button>
-                          {activeWorkspaceBoardId === board.id && onDeleteWorkspaceBoard && (
-                            <button
-                              type="button"
-                              className="sidebar-workspace-board-remove"
-                              onClick={() => onDeleteWorkspaceBoard(board.id)}
-                              title={`Archive ${board.name}`}
-                              aria-label={`Archive ${board.name}`}
-                            >
-                              Archive
-                            </button>
+                          {activeWorkspaceBoardId === board.id && (
+                            <div className="sidebar-workspace-board-actions" aria-label={`${board.name} actions`}>
+                              {onTogglePinWorkspaceBoard && (
+                                <button
+                                  type="button"
+                                  className="sidebar-workspace-board-action"
+                                  onClick={() => onTogglePinWorkspaceBoard(board)}
+                                  title={`${board.pinned ? 'Unpin' : 'Pin'} ${board.name}`}
+                                  aria-label={`${board.pinned ? 'Unpin' : 'Pin'} ${board.name}`}
+                                >
+                                  {board.pinned ? 'Unpin' : 'Pin'}
+                                </button>
+                              )}
+                              {onRenameWorkspaceBoard && (
+                                <button
+                                  type="button"
+                                  className="sidebar-workspace-board-action"
+                                  onClick={() => onRenameWorkspaceBoard(board)}
+                                  title={`Rename ${board.name}`}
+                                  aria-label={`Rename ${board.name}`}
+                                >
+                                  Rename
+                                </button>
+                              )}
+                              {onDuplicateWorkspaceBoard && (
+                                <button
+                                  type="button"
+                                  className="sidebar-workspace-board-action"
+                                  onClick={() => onDuplicateWorkspaceBoard(board)}
+                                  title={`Duplicate ${board.name}`}
+                                  aria-label={`Duplicate ${board.name}`}
+                                >
+                                  Duplicate
+                                </button>
+                              )}
+                              {onDeleteWorkspaceBoard && (
+                                <button
+                                  type="button"
+                                  className="sidebar-workspace-board-action danger"
+                                  onClick={() => onDeleteWorkspaceBoard(board.id)}
+                                  title={`Archive ${board.name}`}
+                                  aria-label={`Archive ${board.name}`}
+                                >
+                                  Archive
+                                </button>
+                              )}
+                            </div>
                           )}
                         </div>
                       )

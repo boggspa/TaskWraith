@@ -803,6 +803,7 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
       workspacePath: deps.canonicalPath(workspace.path),
       name: requireNonEmptyString(input.name, 'Workspace board name'),
       description: optionalString(input.description),
+      pinned: input.pinned === true,
       archived: input.archived === true,
       columns: Array.isArray(input.columns)
         ? input.columns
@@ -829,6 +830,7 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
     const sanitized: Partial<WorkspaceBoardDefinition> = {}
     if ('name' in input) sanitized.name = requireNonEmptyString(input.name, 'Workspace board name')
     if ('description' in input) sanitized.description = optionalString(input.description)
+    if ('pinned' in input) sanitized.pinned = input.pinned === true
     if ('archived' in input) sanitized.archived = input.archived === true
     if ('columns' in input && Array.isArray(input.columns)) {
       sanitized.columns = input.columns

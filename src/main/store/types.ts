@@ -3138,6 +3138,7 @@ export interface WorkspaceBoardDefinition {
   name: string
   description?: string
   columns: WorkspaceBoardColumn[]
+  pinned?: boolean
   archived?: boolean
   createdAt: string
   updatedAt: string

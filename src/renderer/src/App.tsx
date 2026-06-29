@@ -12588,6 +12588,71 @@ function App(): React.JSX.Element {
     enterWorkspaceBoardMode(board.id)
   }
 
+  const handleRenameWorkspaceBoard = async (board: WorkspaceBoardDefinition) => {
+    if (!workspaceBoardApiReady) return
+    const nextName = window.prompt('Rename workspace board', board.name)?.trim()
+    if (!nextName || nextName === board.name) return
+    const updated = await window.api.updateWorkspaceBoard(board.id, { name: nextName })
+    if (!updated) return
+    setWorkspaceBoards((prev) => prev.map((item) => (item.id === updated.id ? updated : item)))
+  }
+
+  const handleTogglePinWorkspaceBoard = async (board: WorkspaceBoardDefinition) => {
+    if (!workspaceBoardApiReady) return
+    const updated = await window.api.updateWorkspaceBoard(board.id, { pinned: !board.pinned })
+    if (!updated) return
+    setWorkspaceBoards((prev) => prev.map((item) => (item.id === updated.id ? updated : item)))
+  }
+
+  const handleDuplicateWorkspaceBoard = async (board: WorkspaceBoardDefinition) => {
+    if (!workspaceBoardApiReady) return
+    const workspace = workspaces.find((item) => item.id === board.workspaceId) || null
+    if (!workspace) return
+    const nextName = window.prompt('Duplicate workspace board as', `${board.name} Copy`)?.trim()
+    if (!nextName) return
+    const savedBoard = await window.api.saveWorkspaceBoard({
+      workspaceId: workspace.id,
+      workspacePath: workspace.path,
+      name: nextName,
+      description: board.description,
+      columns: board.columns,
+      pinned: false
+    })
+    const sourceCards = workspaceBoardCards.filter((card) => card.boardId === board.id && !card.archived)
+    const savedCards: WorkspaceBoardCard[] = []
+    for (const card of sourceCards) {
+      const savedCard = await window.api.saveWorkspaceBoardCard({
+        boardId: savedBoard.id,
+        workspaceId: savedBoard.workspaceId,
+        columnId: card.columnId,
+        title: card.title,
+        body: card.body,
+        sortOrder: card.sortOrder,
+        humanOwner: card.humanOwner,
+        labels: card.labels,
+        link: card.link,
+        blockedReason: card.blockedReason,
+        nextStep: card.nextStep,
+        reminderAt: card.reminderAt
+      })
+      savedCards.push(savedCard)
+    }
+    setWorkspaceBoards((prev) => [savedBoard, ...prev.filter((item) => item.id !== savedBoard.id)])
+    setWorkspaceBoardCards((prev) => [
+      ...prev.filter((item) => item.boardId !== savedBoard.id),
+      ...savedCards
+    ])
+    if (currentWorkspace?.id !== workspace.id) {
+      setCurrentWorkspace(workspace)
+      currentWorkspaceIdRef.current = workspace.id
+      void window.api
+        .checkTrust(workspace.path)
+        .then(setTrustResult)
+        .catch(() => {})
+    }
+    enterWorkspaceBoardMode(savedBoard.id)
+  }
+
   const handleDeleteWorkspaceBoard = async (boardId: string) => {
     if (!workspaceBoardApiReady) return
     const board = workspaceBoards.find((item) => item.id === boardId)
@@ -22438,6 +22503,9 @@ function App(): React.JSX.Element {
                 onCreateWorkflow={handleOpenWorkflowCompose}
                 onCreateWorkspaceBoard={workspaceBoardApiReady ? handleCreateWorkspaceBoard : undefined}
                 onOpenWorkspaceBoard={workspaceBoardApiReady ? handleOpenWorkspaceBoard : undefined}
+                onRenameWorkspaceBoard={workspaceBoardApiReady ? handleRenameWorkspaceBoard : undefined}
+                onDuplicateWorkspaceBoard={workspaceBoardApiReady ? handleDuplicateWorkspaceBoard : undefined}
+                onTogglePinWorkspaceBoard={workspaceBoardApiReady ? handleTogglePinWorkspaceBoard : undefined}
                 onDeleteWorkspaceBoard={workspaceBoardApiReady ? handleDeleteWorkspaceBoard : undefined}
                 onAddChatToWorkspaceBoard={
                   workspaceBoardApiReady ? handleAddChatToWorkspaceBoard : undefined

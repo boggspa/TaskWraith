@@ -491,6 +491,7 @@ function normalizeWorkspaceBoardDefinitionRecord(
         ? input.description.trim()
         : undefined,
     columns: normalizeWorkspaceBoardColumns(input.columns),
+    pinned: input.pinned === true,
     archived: input.archived === true,
     createdAt: typeof input.createdAt === 'string' && input.createdAt ? input.createdAt : nowIso,
     updatedAt: typeof input.updatedAt === 'string' && input.updatedAt ? input.updatedAt : nowIso,
@@ -2948,6 +2949,7 @@ export class AppStore {
         name: partial.name ?? source.name,
         description: 'description' in partial ? partial.description : source.description,
         columns: partial.columns ?? source.columns,
+        pinned: partial.pinned ?? source.pinned,
         archived: partial.archived ?? source.archived,
         workspaceId: source.workspaceId,
         workspacePath: source.workspacePath,

@@ -162,6 +162,9 @@ function renderSidebar(
     onCreateWorkflow?: () => void
     onCreateWorkspaceBoard?: (input?: WorkspaceBoardCreateInput) => void
     onOpenWorkspaceBoard?: (board: WorkspaceBoardDefinition) => void
+    onRenameWorkspaceBoard?: (board: WorkspaceBoardDefinition) => void
+    onDuplicateWorkspaceBoard?: (board: WorkspaceBoardDefinition) => void
+    onTogglePinWorkspaceBoard?: (board: WorkspaceBoardDefinition) => void
     onDeleteWorkspaceBoard?: (boardId: string) => void
     onCreateSharedChat?: (variant: SharedChatCreateVariant) => void
     collaboratingChatIds?: Set<string>
@@ -204,6 +207,9 @@ function renderSidebar(
       onCreateWorkflow={options.onCreateWorkflow}
       onCreateWorkspaceBoard={options.onCreateWorkspaceBoard}
       onOpenWorkspaceBoard={options.onOpenWorkspaceBoard}
+      onRenameWorkspaceBoard={options.onRenameWorkspaceBoard}
+      onDuplicateWorkspaceBoard={options.onDuplicateWorkspaceBoard}
+      onTogglePinWorkspaceBoard={options.onTogglePinWorkspaceBoard}
       onDeleteWorkspaceBoard={options.onDeleteWorkspaceBoard}
       onCreateSharedChat={options.onCreateSharedChat}
       onRenameChat={options.onRenameChat}
@@ -409,13 +415,45 @@ describe('Sidebar workspace boards', () => {
       workspaceBoards: [makeWorkspaceBoard()],
       activeWorkspaceBoardId: 'board-1',
       onOpenWorkspaceBoard: () => {},
+      onRenameWorkspaceBoard: () => {},
+      onDuplicateWorkspaceBoard: () => {},
+      onTogglePinWorkspaceBoard: () => {},
       onDeleteWorkspaceBoard: () => {}
     })
 
     expect(html).toContain('Release board')
     expect(html).toContain('sidebar-workspace-board-item active')
+    expect(html).toContain('Pin')
+    expect(html).toContain('Rename')
+    expect(html).toContain('Duplicate')
     expect(html).toContain('Archive')
     expect(html).not.toContain('application/x-taskwraith-chat-id')
+  })
+
+  it('sorts pinned boards first and marks their metadata', () => {
+    stubSidebarStorage({
+      [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: collapseSectionsExcept('workspace-boards')
+    })
+
+    const html = renderSidebar([], {
+      workspaceBoards: [
+        makeWorkspaceBoard({
+          id: 'board-1',
+          name: 'Recent board',
+          updatedAt: '2026-06-29T12:00:00.000Z'
+        }),
+        makeWorkspaceBoard({
+          id: 'board-2',
+          name: 'Pinned board',
+          pinned: true,
+          updatedAt: '2026-06-28T12:00:00.000Z'
+        })
+      ],
+      onOpenWorkspaceBoard: () => {}
+    })
+
+    expect(html.indexOf('Pinned board')).toBeLessThan(html.indexOf('Recent board'))
+    expect(html).toContain('Pinned · Repo')
   })
 
   it('renders boards from any known workspace in the shared board section', () => {
