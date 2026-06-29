@@ -117,7 +117,7 @@
    *   --tw-glass-solid      : the opaque bed used by the
    *                           reduce-transparency / no-backdrop-filter
    *                           degrade so the popover stays legible. */
-  --tw-glass-sheen: rgba(196, 200, 208, 0.18);
+  --tw-glass-sheen: rgba(196, 200, 208, 0.14);
   --tw-glass-rim-light: rgba(255, 255, 255, 0.58);
   --tw-glass-solid: #0f1830;
 

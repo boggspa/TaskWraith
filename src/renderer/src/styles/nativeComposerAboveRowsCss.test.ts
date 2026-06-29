@@ -43,6 +43,8 @@ describe('native composer above-row CSS', () => {
     )
 
     expect(dividerBlock).toContain('border-top: 1px solid')
+    expect(dividerBlock).toContain('var(--native-instrument-row-divider)')
+    expect(dividerBlock).toContain('box-shadow: inset 0 1px 0')
     expect(dividerBlock).toContain('!important')
   })
 })

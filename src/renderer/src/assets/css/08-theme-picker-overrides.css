@@ -2005,7 +2005,7 @@
   background:
     radial-gradient(
       130% 80% at 50% -8%,
-      var(--tw-glass-sheen, rgba(196, 200, 208, 0.18)),
+      var(--tw-glass-sheen, rgba(196, 200, 208, 0.14)),
       transparent 58%
     ),
     linear-gradient(
@@ -8718,7 +8718,7 @@
   background:
     radial-gradient(
       120% 80% at 50% -8%,
-      var(--tw-glass-sheen, rgba(196, 200, 208, 0.11)),
+      var(--tw-glass-sheen, rgba(196, 200, 208, 0.09)),
       transparent 62%
     ),
     linear-gradient(

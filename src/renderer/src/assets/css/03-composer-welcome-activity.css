@@ -2639,7 +2639,7 @@
   background:
     radial-gradient(
       140% 92% at 50% -10%,
-      var(--tw-glass-sheen, rgba(196, 200, 208, 0.18)),
+      var(--tw-glass-sheen, rgba(196, 200, 208, 0.14)),
       transparent 56%
     ),
     linear-gradient(
@@ -2984,7 +2984,7 @@
   background:
     radial-gradient(
       140% 100% at 50% -12%,
-      var(--tw-glass-sheen, rgba(196, 200, 208, 0.18)),
+      var(--tw-glass-sheen, rgba(196, 200, 208, 0.14)),
       transparent 58%
     ),
     linear-gradient(
@@ -8495,7 +8495,7 @@
   background:
     radial-gradient(
       150% 90% at 50% -10%,
-      var(--tw-glass-sheen, rgba(196, 200, 208, 0.18)),
+      var(--tw-glass-sheen, rgba(196, 200, 208, 0.14)),
       transparent 56%
     ),
     linear-gradient(
