@@ -11,6 +11,7 @@ import { TerminalPanel } from './TerminalPanel'
 import { BackgroundTasksPanel } from './BackgroundTasksPanel'
 import { ReadOnlyToolClassBreakdown } from './ToolClassBreakdown'
 import { AgentIdentityIcon } from './icons/AgentIdentityIcon'
+import type { GitRepositorySnapshot } from '../../../main/services/GitService'
 import { assignAgentIdentityFromSeed } from '../lib/agentIdentitySeed'
 import type {
   ChatRecord,
@@ -525,6 +526,99 @@ function DiffTab(props: InspectorProps) {
   const effectiveDiff = showingSecondary
     ? { type: 'changes', summaries: props.workspaceRunDiffByPath![selectedWorkspace] }
     : props.activeDiff
+  const effectiveWorkspacePath = showingSecondary ? selectedWorkspace : props.workspacePath
+  const [gitSnapshot, setGitSnapshot] = useState<GitRepositorySnapshot | null>(null)
+  const [busyPath, setBusyPath] = useState('')
+  const [actionStatus, setActionStatus] = useState('')
+
+  useEffect(() => {
+    let cancelled = false
+    if (!effectiveWorkspacePath) {
+      setGitSnapshot(null)
+      setActionStatus('')
+      return () => {
+        cancelled = true
+      }
+    }
+    window.api
+      .gitSnapshot({ workspacePath: effectiveWorkspacePath })
+      .then((result) => {
+        if (cancelled) return
+        setGitSnapshot(result.ok ? result.data : null)
+        if (result.ok) setActionStatus('')
+        if (!result.ok) setActionStatus(result.error)
+      })
+      .catch((error) => {
+        if (cancelled) return
+        setGitSnapshot(null)
+        setActionStatus(error instanceof Error ? error.message : 'Could not read git status')
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [effectiveWorkspacePath])
+
+  const openDiffFileInEditor = async (path: string): Promise<void> => {
+    if (!effectiveWorkspacePath) return
+    setActionStatus(`Opening ${path}`)
+    try {
+      await window.api.openWorkspacePopout({
+        kind: 'file-editor',
+        workspacePath: effectiveWorkspacePath,
+        targetPath: path,
+        targetView: 'editor'
+      })
+      setActionStatus(`Opened ${path}`)
+    } catch (error) {
+      setActionStatus(error instanceof Error ? error.message : 'Could not open file editor')
+    }
+  }
+
+  const stageDiffFile = async (path: string): Promise<void> => {
+    if (!effectiveWorkspacePath) return
+    setBusyPath(path)
+    setActionStatus(`Staging ${path}`)
+    try {
+      const result = await window.api.gitStage({
+        workspacePath: effectiveWorkspacePath,
+        paths: [path]
+      })
+      if (result.ok) {
+        setGitSnapshot(result.data)
+        setActionStatus(`Staged ${path}`)
+        props.refreshDiff()
+      } else {
+        setActionStatus(result.error)
+      }
+    } catch (error) {
+      setActionStatus(error instanceof Error ? error.message : 'Could not stage file')
+    } finally {
+      setBusyPath('')
+    }
+  }
+
+  const unstageDiffFile = async (path: string): Promise<void> => {
+    if (!effectiveWorkspacePath) return
+    setBusyPath(path)
+    setActionStatus(`Unstaging ${path}`)
+    try {
+      const result = await window.api.gitUnstage({
+        workspacePath: effectiveWorkspacePath,
+        paths: [path]
+      })
+      if (result.ok) {
+        setGitSnapshot(result.data)
+        setActionStatus(`Unstaged ${path}`)
+        props.refreshDiff()
+      } else {
+        setActionStatus(result.error)
+      }
+    } catch (error) {
+      setActionStatus(error instanceof Error ? error.message : 'Could not unstage file')
+    } finally {
+      setBusyPath('')
+    }
+  }
 
   return (
     <div className="diff-studio">
@@ -564,6 +658,11 @@ function DiffTab(props: InspectorProps) {
               {props.diffRefreshStatus}
             </span>
           )}
+          {actionStatus && (
+            <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>
+              {actionStatus}
+            </span>
+          )}
         </div>
         <button
           className="btn btn-sm btn-ghost"
@@ -576,7 +675,16 @@ function DiffTab(props: InspectorProps) {
       <div style={{ flex: 1, overflow: 'hidden' }}>
         <DiffViewer
           diff={effectiveDiff}
-          workspacePath={showingSecondary ? selectedWorkspace : props.workspacePath}
+          workspacePath={effectiveWorkspacePath}
+          gitSnapshot={gitSnapshot}
+          busyPath={busyPath}
+          onOpenFile={
+            effectiveWorkspacePath ? (path) => void openDiffFileInEditor(path) : undefined
+          }
+          onStageFile={effectiveWorkspacePath ? (path) => void stageDiffFile(path) : undefined}
+          onUnstageFile={
+            effectiveWorkspacePath ? (path) => void unstageDiffFile(path) : undefined
+          }
         />
       </div>
     </div>
