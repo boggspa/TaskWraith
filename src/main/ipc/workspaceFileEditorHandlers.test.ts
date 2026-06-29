@@ -160,12 +160,13 @@ describe('registerWorkspaceFileEditorHandlers', () => {
     mockedDeleteWorkspaceFile.mockResolvedValue(result)
     registerWorkspaceFileEditorHandlers(deps)
 
-    await expect(handlerFor('delete-workspace-file')({} as any, '/repo', 'README.md')).resolves.toBe(
-      result
-    )
+    await expect(
+      handlerFor('delete-workspace-file')({} as any, '/repo', 'README.md', 'etag-1')
+    ).resolves.toBe(result)
     expect(mockedDeleteWorkspaceFile).toHaveBeenCalledWith({
       workspacePath: '/repo/real',
       filePath: 'README.md',
+      baseEtag: 'etag-1',
       origin: 'file-editor',
       recordChange: deps.recordWorkspaceEditorChange
     })

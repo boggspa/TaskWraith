@@ -655,7 +655,8 @@ declare global {
       ) => Promise<WorkspaceFileReadResult>
       deleteWorkspaceFile: (
         workspace: string,
-        path: string
+        path: string,
+        baseEtag?: string | null
       ) => Promise<{ path: string; changeSet?: WorkspaceChangeSet }>
       captureSnapshot: (workspace: string) => Promise<any>
       computeRunDiff: (

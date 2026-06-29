@@ -186,6 +186,7 @@ describe('WorkspaceFileEditorService', () => {
   it('deletes text files and records a deleted editor change', async () => {
     const workspace = await makeWorkspace()
     await writeFile(join(workspace, 'remove-me.txt'), 'delete me\n')
+    const initial = await readWorkspaceFile(workspace, 'remove-me.txt')
     const recordChange = vi.fn((input): any => ({
       schemaVersion: 1,
       id: 'delete-1',
@@ -214,6 +215,7 @@ describe('WorkspaceFileEditorService', () => {
       workspacePath: workspace,
       workspaceId: 'ws-1',
       filePath: 'remove-me.txt',
+      baseEtag: initial.etag,
       origin: 'ios-file-editor',
       recordChange
     })
@@ -230,6 +232,24 @@ describe('WorkspaceFileEditorService', () => {
         nextContent: '',
         metadata: { origin: 'ios-file-editor' }
       })
+    )
+  })
+
+  it('rejects delete when the file version is stale', async () => {
+    const workspace = await makeWorkspace()
+    await writeFile(join(workspace, 'remove-me.txt'), 'delete me\n')
+    const initial = await readWorkspaceFile(workspace, 'remove-me.txt')
+    await writeFile(join(workspace, 'remove-me.txt'), 'changed elsewhere\n')
+
+    await expect(
+      deleteWorkspaceFile({
+        workspacePath: workspace,
+        filePath: 'remove-me.txt',
+        baseEtag: initial.etag
+      })
+    ).rejects.toThrow(/changed on disk/i)
+    await expect(readFile(join(workspace, 'remove-me.txt'), 'utf8')).resolves.toBe(
+      'changed elsewhere\n'
     )
   })
 

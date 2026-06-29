@@ -51,8 +51,11 @@ export interface WorkspaceFileDeleteOptions {
   workspacePath: string
   workspaceId?: string
   filePath: string
+  /** Required for editor deletes so external edits are not silently removed. */
+  baseEtag?: string | null
   origin?: string
   recordChange?: RecordWorkspaceEditorChangeFn
+  requireBaseEtag?: boolean
 }
 
 export interface WorkspaceFileDeleteResult {
@@ -488,6 +491,7 @@ export async function writeWorkspaceFile(
 export async function deleteWorkspaceFile(
   options: WorkspaceFileDeleteOptions
 ): Promise<WorkspaceFileDeleteResult> {
+  const requireBaseEtag = options.requireBaseEtag ?? true
   const workspaceRoot = resolve(options.workspacePath)
   const targetPath = await resolveReadableFile(workspaceRoot, options.filePath)
   const lstat = await fs.lstat(targetPath)
@@ -509,6 +513,19 @@ export async function deleteWorkspaceFile(
 
   const previousBuffer = await fs.readFile(targetPath)
   assertTextBuffer(previousBuffer)
+  const currentEtag = workspaceFileEtag(previousBuffer)
+  if (requireBaseEtag && !options.baseEtag) {
+    throw new WorkspaceFileEditorError(
+      'missing_base_etag',
+      'Missing base file version for delete.'
+    )
+  }
+  if (requireBaseEtag && currentEtag !== options.baseEtag) {
+    throw new WorkspaceFileEditorError(
+      'stale_etag',
+      'File changed on disk. Reload before deleting.'
+    )
+  }
   const relativePath = toWorkspaceRelativePath(workspaceRoot, targetPath)
   await fs.unlink(targetPath)
 

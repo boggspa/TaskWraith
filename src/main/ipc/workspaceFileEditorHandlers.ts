@@ -79,16 +79,20 @@ export function registerWorkspaceFileEditorHandlers(
     }
   )
 
-  ipcMain.handle('delete-workspace-file', async (_event, workspace: string, filePath: string) => {
-    const registeredWorkspace = deps.requireRegisteredWorkspace(workspace)
-    const result = await deleteWorkspaceFile({
-      workspacePath: registeredWorkspace,
-      filePath,
-      origin: 'file-editor',
-      recordChange: deps.recordWorkspaceEditorChange
-    })
-    const workspaceRecord = deps.findRegisteredWorkspace(registeredWorkspace)
-    deps.scheduleRemoteGitSnapshotRefresh(workspaceRecord?.id, { delayMs: 50, force: true })
-    return result
-  })
+  ipcMain.handle(
+    'delete-workspace-file',
+    async (_event, workspace: string, filePath: string, baseEtag?: string | null) => {
+      const registeredWorkspace = deps.requireRegisteredWorkspace(workspace)
+      const result = await deleteWorkspaceFile({
+        workspacePath: registeredWorkspace,
+        filePath,
+        baseEtag,
+        origin: 'file-editor',
+        recordChange: deps.recordWorkspaceEditorChange
+      })
+      const workspaceRecord = deps.findRegisteredWorkspace(registeredWorkspace)
+      deps.scheduleRemoteGitSnapshotRefresh(workspaceRecord?.id, { delayMs: 50, force: true })
+      return result
+    }
+  )
 }

@@ -327,8 +327,8 @@ const api = {
     content: string,
     baseEtag?: string | null
   ) => ipcRenderer.invoke('write-workspace-file', workspace, path, content, baseEtag),
-  deleteWorkspaceFile: (workspace: string, path: string) =>
-    ipcRenderer.invoke('delete-workspace-file', workspace, path),
+  deleteWorkspaceFile: (workspace: string, path: string, baseEtag?: string | null) =>
+    ipcRenderer.invoke('delete-workspace-file', workspace, path, baseEtag),
   captureSnapshot: (workspace: string) => ipcRenderer.invoke('capture-snapshot', workspace),
   computeRunDiff: (runId: string, preSnapshot: any, postSnapshot: any, changeContext: any = null) =>
     ipcRenderer.invoke('compute-run-diff', runId, preSnapshot, postSnapshot, changeContext),

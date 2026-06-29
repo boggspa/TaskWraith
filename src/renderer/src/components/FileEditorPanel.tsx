@@ -380,8 +380,12 @@ const editorApi = {
   ): Promise<WorkspaceFileReadResult> => {
     return window.api.writeWorkspaceFile(workspacePath, filePath, content, baseEtag)
   },
-  deleteFile: (workspacePath: string, filePath: string): Promise<{ path: string }> => {
-    return window.api.deleteWorkspaceFile(workspacePath, filePath)
+  deleteFile: (
+    workspacePath: string,
+    filePath: string,
+    baseEtag?: string | null
+  ): Promise<{ path: string }> => {
+    return window.api.deleteWorkspaceFile(workspacePath, filePath, baseEtag)
   },
   gitSnapshot: (workspacePath: string) => {
     return window.api.gitSnapshot({ workspacePath })
@@ -1205,13 +1209,18 @@ export function FileEditorPanel({
 
   const deleteSelectedFile = async () => {
     if (!workspacePath || !selectedPath || isDirty) return
+    if (!activeBuffer?.savedEtag) {
+      setStatus('Reload file before deleting.')
+      setShowDeleteConfirm(false)
+      return
+    }
 
     setIsLoading(true)
     setShowDeleteConfirm(false)
     setStatus(`Deleting ${selectedPath}`)
     try {
       const deletedPath = selectedPath
-      const result = await editorApi.deleteFile(workspacePath, selectedPath)
+      const result = await editorApi.deleteFile(workspacePath, selectedPath, activeBuffer.savedEtag)
       const closed = closeBuffer(buffers, deletedPath)
       setBuffers(closed.buffers)
       setSelectedPath(closed.nextSelectedPath)
