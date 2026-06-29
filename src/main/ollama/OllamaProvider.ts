@@ -298,7 +298,7 @@ export interface OllamaToolRequest {
   arguments: Record<string, unknown>
 }
 
-const OLLAMA_TOOL_RESULT_MAX_CHARS = 2400
+const OLLAMA_TOOL_RESULT_MAX_CHARS = 8000
 const OLLAMA_CHAT_TRANSPORT_RETRY_DELAYS_MS = [250, 750]
 const OLLAMA_LOCAL_TOOL_SERVER = 'TaskWraith-local'
 

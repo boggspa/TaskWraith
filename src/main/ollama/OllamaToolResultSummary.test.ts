@@ -2,6 +2,12 @@ import { describe, expect, it } from 'vitest'
 import { summarizeOllamaToolResult } from './OllamaToolResultSummary'
 
 describe('summarizeOllamaToolResult', () => {
+  it('keeps moderately sized read_file bodies intact by default', () => {
+    const output = Array.from({ length: 80 }, (_, index) => `line ${index}`).join('\n')
+    const summary = summarizeOllamaToolResult('read_file', output)
+    expect(summary).toBe(output)
+  })
+
   it('keeps only the head of large read_file bodies', () => {
     const output = Array.from({ length: 120 }, (_, index) => `line ${index}`).join('\n')
     const summary = summarizeOllamaToolResult('read_file', output, 2400)

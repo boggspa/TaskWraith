@@ -1,9 +1,9 @@
 import type { OllamaToolName } from './OllamaToolTiers'
 
-const DEFAULT_MAX_CHARS = 2400
-const READ_FILE_HEAD_LINES = 48
-const SEARCH_SNIPPET_LINES = 12
-const LIST_DIR_MAX_LINES = 40
+const DEFAULT_MAX_CHARS = 8000
+const READ_FILE_HEAD_LINES = 96
+const SEARCH_SNIPPET_LINES = 24
+const LIST_DIR_MAX_LINES = 80
 
 function collapseWhitespace(value: string): string {
   return value.replace(/\s+/g, ' ').trim()
