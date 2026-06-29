@@ -3268,20 +3268,17 @@
   margin-block: 6px;
   padding: 6px 14px;
   border-radius: 16px;
-  /* Polarity-neutral "instrument glass" rim — mirrors the default shell's
-     --native-instrument-* idiom (those vars are scoped to the default shell, so
-     the equivalent values are inlined). Neutral grey glass, a fine hairline, an
-     inset 1px rim, a faint inner glow, a top-edge light catch, and a soft drop
-     shadow — no codex purple, no heavy glow — to match the reference row. */
+  /* Polarity-neutral pill rim, tuned to the Codex App reference: neutral grey
+     glass + a single crisp hairline + a faint top-edge light catch + a soft,
+     flat drop shadow. The bright inset 1px rim and inner glow were dropped so
+     the edge reads as one thin border (no codex purple, no double rim). */
   background: color-mix(in srgb, var(--surface-2) 46%, transparent);
   border: 1px solid color-mix(in srgb, var(--text-primary) 11%, transparent);
   backdrop-filter: blur(20px) saturate(155%);
   -webkit-backdrop-filter: blur(20px) saturate(155%);
   box-shadow:
-    inset 0 0 0 1px color-mix(in srgb, var(--text-primary) 22%, rgba(255, 255, 255, 0.1)),
-    inset 0 0 14px color-mix(in srgb, var(--text-primary) 5%, transparent),
-    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 8%, transparent),
-    0 12px 32px color-mix(in srgb, #000000 26%, transparent);
+    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 5%, transparent),
+    0 4px 12px color-mix(in srgb, #000000 16%, transparent);
 }
 
 /* The floated Codex secondary-workspace row is a detached pill, same as the
@@ -3300,10 +3297,8 @@
   background: color-mix(in srgb, var(--surface-2) 46%, transparent) !important;
   border: 1px solid color-mix(in srgb, var(--text-primary) 11%, transparent) !important;
   box-shadow:
-    inset 0 0 0 1px color-mix(in srgb, var(--text-primary) 22%, rgba(255, 255, 255, 0.1)),
-    inset 0 0 14px color-mix(in srgb, var(--text-primary) 5%, transparent),
-    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 8%, transparent),
-    0 12px 32px color-mix(in srgb, #000000 26%, transparent) !important;
+    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 5%, transparent),
+    0 4px 12px color-mix(in srgb, #000000 16%, transparent) !important;
 }
 
 /* Solo Codex chat: the git rows floated out, leaving the merged stack with no
