@@ -3,15 +3,21 @@
 **Platform:** Electron
 
 ## What it is
-<!-- TODO: 1-2 sentence function. Explorer note: Editable app keybindings for all keyboard shortcuts. -->
+The Keyboard shortcuts tab lists every app command TaskWraith currently dispatches and lets you rebind, reset, or unassign each one. It is one of the **App** group tabs in Settings, alongside General and Appearance.
 
 ## Where to find it
-<!-- TODO: navigation path. Explorer note: Settings → App → Keyboard shortcuts -->
+Open the sidebar footer **Settings** entry, then choose **Keyboard shortcuts** under the App group in the Settings sidebar rail.
 
 <!-- TODO(screenshot): Keyboard shortcuts tab showing editable keybinding list -->
 
 ## How to use it
-<!-- TODO: brief numbered steps -->
+1. Browse the summary cards at the top for active binding counts, command groups, and how many shortcuts are visible or customized.
+2. Use the search field to filter by command name, group, or key (e.g. "new chat" or "Cmd").
+3. Find a command in its group section (Global, Chat, Composer, Actions, Panels, or Windows) and click **Record**, then press the new key combination. TaskWraith blocks the change if it conflicts with another command's shortcut.
+4. Click **Reset** to restore a command's default binding, or **Unassign** to clear it entirely.
+5. Click **Reset all** in the toolbar to revert every customized shortcut back to its default at once.
 
 ## Tips & related
-<!-- TODO: cross-links -->
+- [Settings and Configuration](README.md) — overview of the full Settings takeover and its tab groups.
+- [General tab](general-tab.md) — other core App-group behavior settings.
+- [Appearance tab](appearance-tab.md) — theme and visual customization, also in the App group.
