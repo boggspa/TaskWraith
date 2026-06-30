@@ -9830,6 +9830,29 @@ button.diff-file-row {
   overflow: hidden;
 }
 
+.diff-text-preview {
+  min-height: 100%;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+}
+
+.diff-text-preview pre {
+  margin: 0;
+  padding: var(--space-md);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.diff-text-preview-note {
+  padding: 5px var(--space-md);
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 24%, transparent);
+  font-family: var(--font-sans);
+  font-size: var(--font-size-xs);
+}
+
 .diff-lines-root {
   height: 100%;
   min-height: 0;

@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { GitRepositorySnapshot } from '../../../main/services/GitService'
 import type { DiffFileSummary } from '../../../main/store/types'
-import { DiffDetail, diffDetailHeaderSummary } from './DiffDetail'
+import { DiffDetail, diffDetailHeaderSummary, diffTextPreviewExcerpt } from './DiffDetail'
 import {
   buildDiffFileContextMenuItems,
   DiffFileList,
@@ -410,6 +410,16 @@ describe('DiffFileList', () => {
 })
 
 describe('DiffDetail', () => {
+  it('bounds non-unified text previews before rendering', () => {
+    const source = `${'a'.repeat(25)}\n${'b'.repeat(25)}\nTAIL`
+    const excerpt = diffTextPreviewExcerpt(source, 32)
+
+    expect(excerpt.truncated).toBe(true)
+    expect(excerpt.text).toBe('a'.repeat(25))
+    expect(excerpt.text).not.toContain('TAIL')
+    expect(excerpt.omittedChars).toBe(source.length - 25)
+  })
+
   it('formats compact file change summaries for the detail header', () => {
     expect(
       diffDetailHeaderSummary({ status: 'modified', additions: 12, deletions: 3 })
@@ -449,6 +459,24 @@ describe('DiffDetail', () => {
     expect(html).toContain('Copy')
     expect(html).toContain('class="diff-line-split')
     expect(html).toContain('detail line')
+  })
+
+  it('renders text previews with a cap notice instead of the full large body', () => {
+    const largeText = `${'preview line\n'.repeat(2100)}unique-tail-marker`
+    const html = renderToStaticMarkup(
+      <DiffDetail
+        summary={makeChangedFileSummary('docs/preview.md', 'preview', {
+          diffText: largeText,
+          previewKind: 'text_preview'
+        })}
+        viewMode="inline"
+      />
+    )
+
+    expect(html).toContain('class="diff-text-preview"')
+    expect(html).toContain('Preview capped before rendering.')
+    expect(html).toContain('characters were omitted')
+    expect(html).not.toContain('unique-tail-marker')
   })
 })
 

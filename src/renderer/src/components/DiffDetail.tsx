@@ -46,6 +46,29 @@ const DIFF_DETAIL_MAX_RENDER_LINE_LIMIT = 10_000
 const DIFF_VIRTUALIZATION_THRESHOLD = 800
 const DIFF_VIRTUAL_ROW_HEIGHT = 22
 const DIFF_VIRTUAL_OVERSCAN = 24
+const DIFF_TEXT_PREVIEW_CHAR_LIMIT = 20_000
+
+export interface DiffTextPreviewExcerpt {
+  omittedChars: number
+  text: string
+  truncated: boolean
+}
+
+export function diffTextPreviewExcerpt(
+  text: string,
+  limit = DIFF_TEXT_PREVIEW_CHAR_LIMIT
+): DiffTextPreviewExcerpt {
+  if (text.length <= limit) {
+    return { omittedChars: 0, text, truncated: false }
+  }
+  const newlineIndex = text.lastIndexOf('\n', limit)
+  const endIndex = newlineIndex >= Math.floor(limit * 0.8) ? newlineIndex : limit
+  return {
+    omittedChars: text.length - endIndex,
+    text: text.slice(0, endIndex),
+    truncated: true
+  }
+}
 
 const diffStatusLabel = (status: DiffFileSummary['status']): string => {
   if (status === 'hidden_sensitive') return 'hidden'
@@ -95,6 +118,10 @@ export function DiffDetail({
         ? parseUnifiedDiff(summary.diffText, { maxLines: renderLineLimit })
         : null,
     [renderLineLimit, summary.diffText]
+  )
+  const textPreview = useMemo(
+    () => diffTextPreviewExcerpt(summary.diffText ?? ''),
+    [summary.diffText]
   )
 
   useEffect(() => {
@@ -168,15 +195,18 @@ export function DiffDetail({
         )
       case 'text_preview':
         return (
-          <div
-            style={{
-              padding: 'var(--space-md)',
-              color: 'var(--text-secondary)',
-              fontSize: 'var(--font-size-sm)',
-              whiteSpace: 'pre-wrap'
-            }}
-          >
-            {summary.diffText}
+          <div className="diff-text-preview">
+            {(summary.diffTextTruncated || textPreview.truncated) && (
+              <div className="diff-text-preview-note" role="note">
+                Preview capped before rendering.
+                {summary.diffTextOmittedLines
+                  ? ` ${summary.diffTextOmittedLines.toLocaleString()} source lines were omitted.`
+                  : textPreview.truncated
+                    ? ` ${textPreview.omittedChars.toLocaleString()} characters were omitted.`
+                    : ' Some source text may be omitted.'}
+              </div>
+            )}
+            <pre>{textPreview.text}</pre>
           </div>
         )
       default:
