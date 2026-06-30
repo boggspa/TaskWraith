@@ -9998,6 +9998,15 @@ button.diff-file-row {
   z-index: 2;
 }
 
+.diff-detail-actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+}
+
 .diff-detail-title {
   min-width: 0;
   display: inline-flex;

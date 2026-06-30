@@ -452,6 +452,7 @@ describe('DiffDetail', () => {
 
     expect(html).toContain('class="diff-detail"')
     expect(html).toContain('src/detail.ts')
+    expect(html).toContain('class="diff-detail-actions"')
     expect(html).toContain('class="diff-detail-stat-badge"')
     expect(html).toContain('aria-label="File change summary: modified +1 -1"')
     expect(html).toContain('modified +1 -1')

@@ -237,7 +237,7 @@ export function DiffDetail({
             {headerSummary}
           </span>
         </div>
-        <div style={{ display: 'flex', gap: 'var(--space-sm)' }}>
+        <div className="diff-detail-actions">
           <button
             className="btn btn-sm btn-ghost"
             type="button"
