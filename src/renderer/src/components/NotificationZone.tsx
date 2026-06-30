@@ -24,6 +24,8 @@ import {
 
 const SWIPE_MS = 320
 const ROTATE_MS = 90_000
+/** Recompute active notices on this cadence so `expiresAt` entries drop in-session. */
+export const NOTIFICATION_ACTIVE_REFRESH_MS = 60_000
 const DRAG_THRESHOLD_PX = 48
 const DRAG_AXIS_RATIO = 1.15
 const DISMISSED_EVENT = 'taskwraith:app-notification-dismissed'
@@ -118,17 +120,29 @@ function NotificationCard({
 }
 
 export function NotificationZone({
-  notifications = APP_NOTIFICATIONS
+  notifications = APP_NOTIFICATIONS,
+  /** Inject for tests; production ticks every minute so timed notices expire. */
+  now: nowOverride
 }: {
   notifications?: readonly AppNotification[]
+  now?: number
 }): React.JSX.Element | null {
   const [dismissedIds, setDismissedIds] = useState<Set<string>>(() => readDismissed(notifications))
   const [activeIndex, setActiveIndex] = useState(0)
   const [outgoingIndex, setOutgoingIndex] = useState<number | null>(null)
   const [direction, setDirection] = useState<'next' | 'prev'>('next')
   const [isDragging, setIsDragging] = useState(false)
-  const [now] = useState(() => Date.now())
+  const [now, setNow] = useState(() => nowOverride ?? Date.now())
   const dragStateRef = useRef<NotificationDragState | null>(null)
+
+  useEffect(() => {
+    if (nowOverride !== undefined) {
+      setNow(nowOverride)
+      return
+    }
+    const id = window.setInterval(() => setNow(Date.now()), NOTIFICATION_ACTIVE_REFRESH_MS)
+    return () => window.clearInterval(id)
+  }, [nowOverride])
 
   const refreshDismissed = useCallback((): void => {
     setDismissedIds(readDismissed(notifications))

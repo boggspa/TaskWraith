@@ -73,4 +73,20 @@ describe('NotificationZone', () => {
     )
     expect(html).not.toContain('notification-card-dismiss')
   })
+
+  it('drops expired notifications when now is past expiresAt', () => {
+    const expired: AppNotification = {
+      id: 'expired-1',
+      kind: 'info',
+      title: 'Timed notice.',
+      body: 'Should not render.',
+      expiresAt: 1_000
+    }
+    expect(
+      renderToStaticMarkup(<NotificationZone notifications={[expired]} now={1_000} />)
+    ).toBe('')
+    expect(
+      renderToStaticMarkup(<NotificationZone notifications={[expired]} now={999} />)
+    ).toContain('Timed notice.')
+  })
 })
