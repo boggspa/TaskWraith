@@ -9497,6 +9497,21 @@
   overflow: hidden;
 }
 
+.popout-root[data-popout-family="workspace"] {
+  background: var(--app-bg);
+}
+
+.popout-root[data-popout-family="workspace"] .popout-header {
+  background: var(--panel-bg-solid, var(--app-bg-elevated));
+  box-shadow:
+    inset 0 -1px 0 color-mix(in srgb, var(--panel-border) 88%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 5%, transparent);
+}
+
+.popout-root[data-popout-family="workspace"] .popout-body {
+  background: var(--app-bg);
+}
+
 .workbench-shell {
   width: 100%;
   height: 100%;
@@ -9505,6 +9520,7 @@
   display: grid;
   grid-template-columns: 86px minmax(0, 1fr);
   color: var(--text-primary);
+  background: var(--app-bg);
 }
 
 .workbench-navigator {
@@ -9515,7 +9531,7 @@
   flex-direction: column;
   gap: 6px;
   border-right: 1px solid var(--panel-border);
-  background: color-mix(in srgb, var(--panel-elevated-bg) 56%, transparent);
+  background: var(--panel-bg-solid, var(--panel-bg));
 }
 
 .workbench-nav-item {
@@ -9581,7 +9597,7 @@
   justify-content: space-between;
   gap: var(--space-md);
   border-bottom: 1px solid var(--panel-border);
-  background: color-mix(in srgb, var(--panel-elevated-bg) 62%, transparent);
+  background: var(--panel-bg-solid, var(--panel-bg));
 }
 
 .workbench-breadcrumbs,
@@ -9731,7 +9747,7 @@
   padding: 5px 10px;
   justify-content: space-between;
   border-top: 1px solid var(--panel-border);
-  background: color-mix(in srgb, var(--panel-elevated-bg) 44%, transparent);
+  background: var(--panel-bg-solid, var(--panel-bg));
 }
 
 .workbench-bottom-bar > span {
@@ -9799,8 +9815,10 @@
   height: 100%;
   padding-top: 0;
   border: 0;
-  box-shadow: none !important;
-  background: transparent;
+  background: var(--panel-bg-solid, var(--panel-bg));
+  box-shadow:
+    inset 1px 0 0 color-mix(in srgb, var(--text-primary) 4%, transparent),
+    inset -1px 0 0 color-mix(in srgb, var(--text-primary) 4%, transparent) !important;
   /* Override the in-app row-stack grid (lines 7846-7847) with
    * a 2-column sidebar+main layout. */
   grid-template-rows: minmax(0, 1fr) !important;
@@ -9809,9 +9827,11 @@
 .popout-body .file-editor-files {
   border-right: 1px solid var(--panel-border);
   border-bottom: 0;
+  background: var(--panel-bg-solid, var(--panel-bg));
 }
 .popout-body .file-editor-code {
   min-width: 0;
+  background: var(--app-bg-sunken, var(--app-bg));
 }
 
 /* 1.0.5-EW33 — Diff Studio popout: sidebar+main layout.
@@ -9834,7 +9854,7 @@
 .popout-diff-studio {
   width: 100%;
   height: 100%;
-  background: transparent;
+  background: var(--panel-bg-solid, var(--panel-bg));
 }
 .popout-diff-studio > div {
   display: grid !important;
@@ -9843,6 +9863,7 @@
   grid-template-areas:
     'toolbar toolbar'
     'files   detail' !important;
+  background: var(--panel-bg-solid, var(--panel-bg));
 }
 .popout-diff-studio .diff-studio-toolbar {
   grid-area: toolbar;
@@ -9852,10 +9873,12 @@
   max-height: none;
   border-right: 1px solid var(--panel-border);
   border-bottom: 0;
+  background: var(--panel-bg-solid, var(--panel-bg));
 }
 .popout-diff-studio .diff-detail {
   grid-area: detail;
   min-width: 0;
+  background: var(--app-bg-sunken, var(--app-bg));
 }
 
 .popout-error {

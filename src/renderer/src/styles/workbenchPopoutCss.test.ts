@@ -17,6 +17,37 @@ const cssBlockStartingAt = (source: string, selector: string, fromIndex = 0): st
 }
 
 describe('Workbench popout CSS', () => {
+  it('uses solid workspace popout chrome instead of transparent glass roots', () => {
+    const css = readWorkbenchCss()
+
+    expect(
+      cssBlockStartingAt(css, '.popout-root[data-popout-family="workspace"] {')
+    ).toContain('background: var(--app-bg)')
+    expect(
+      cssBlockStartingAt(css, '.popout-root[data-popout-family="workspace"] .popout-header {')
+    ).toContain('background: var(--panel-bg-solid, var(--app-bg-elevated))')
+    expect(
+      cssBlockStartingAt(css, '.popout-root[data-popout-family="workspace"] .popout-body {')
+    ).toContain('background: var(--app-bg)')
+  })
+
+  it('keeps workspace editor and diff popout bodies opaque', () => {
+    const css = readWorkbenchCss()
+    const editorBlock = cssBlockStartingAt(css, '.popout-body .app-file-editor {')
+    const diffBlock = cssBlockStartingAt(css, '.popout-diff-studio {')
+    const diffRootBlock = cssBlockStartingAt(
+      css,
+      '.popout-diff-studio > div {',
+      css.indexOf(diffBlock) + diffBlock.length
+    )
+
+    expect(editorBlock).toContain('background: var(--panel-bg-solid, var(--panel-bg))')
+    expect(editorBlock).not.toContain('background: transparent')
+    expect(diffBlock).toContain('background: var(--panel-bg-solid, var(--panel-bg))')
+    expect(diffBlock).not.toContain('background: transparent')
+    expect(diffRootBlock).toContain('background: var(--panel-bg-solid, var(--panel-bg))')
+  })
+
   it('drops fixed split-pane minimums at narrow popout widths', () => {
     const css = readWorkbenchCss()
     const mediaStart = css.indexOf('@media (max-width: 640px) {')
