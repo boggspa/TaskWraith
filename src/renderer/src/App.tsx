@@ -47,7 +47,7 @@ import {
 } from '../../shared/runStreamMetrics'
 import type { MultiviewLayout } from '../../shared/multiviewLayouts'
 // 1.0.5-EW25 — User-currency cost formatting helper.
-import { formatCost, setFxRatesPerUsd, type DisplayCurrency } from './lib/formatCost'
+import { setFxRatesPerUsd, type DisplayCurrency } from './lib/formatCost'
 import { computeCumulativeRunBaseMs } from './lib/cumulativeRunTimecode'
 import {
   AppSettings,
@@ -453,16 +453,19 @@ import {
   groundPlanImportFileMentions,
   planImportEnabledChipsForPolicy,
   planImportApprovalModeForPolicy,
-  type PlanImportAssumptionStatus,
   type PlanImportChipId,
-  type PlanImportExecutionEstimate,
-  type PlanImportFileGrounding,
   type PlanImportPolicyMode,
-  type PlanImportRiskLevel,
-  type PlanImportRunConstraintKind,
-  type PlanImportRunConstraint,
   type PlanImportReviewState
 } from './lib/planImport'
+import {
+  PLAN_IMPORT_RISK_LABELS,
+  PLAN_IMPORT_RUN_CONSTRAINT_LABELS,
+  formatPlanImportCostEstimate,
+  formatPlanImportRunConstraintValue,
+  formatPlanImportTokenEstimate,
+  renderPlanImportFileGroundings,
+  renderPlanImportItems
+} from './lib/planImportPresentation'
 import { applyRecoveryRecordsToChatRuns } from './lib/recoverChatRunTerminals'
 import { visibleRunningChatIds } from './lib/runningChatVisibility'
 import {
@@ -801,117 +804,11 @@ const PLAN_IMPORT_CHIP_LABELS: Record<PlanImportChipId, string> = {
   no_telemetry: 'No telemetry',
   quiet_summary: 'Quiet summary'
 }
-const PLAN_IMPORT_RUN_CONSTRAINT_LABELS: Record<PlanImportRunConstraintKind, string> = {
-  max_changed_files: 'Changed-file limit request',
-  exclude_paths_request: 'Avoid-path request',
-  verification_request: 'Verification request'
-}
-const PLAN_IMPORT_GROUNDING_LABELS: Record<PlanImportAssumptionStatus, string> = {
-  unverified: 'Unverified',
-  verified_from_repo: 'Path indexed',
-  contradicted_by_repo: 'No exact path match',
-  needs_user_decision: 'Needs decision'
-}
-const PLAN_IMPORT_RISK_LABELS: Record<PlanImportRiskLevel, string> = {
-  low: 'Low',
-  medium: 'Medium',
-  high: 'High'
-}
 const GUEST_PARTICIPANT_STEERING_PREAMBLE =
   'You are a guest participant attached to a standard TaskWraith chat. The main parent agent has priority. Respond to the user request in parallel as a second opinion or disjoint helper. Write or edit files only when useful and keep any changes disjoint from the main agent. If your intended edits overlap or conflict with the main agent, stop and explain the conflict instead of fighting the main agent.'
 const GUEST_PARENT_CONTEXT_TURN_LIMIT = 20
 const GUEST_PARENT_CONTEXT_CHAR_LIMIT = 12000
 const GUEST_PARENT_CONTEXT_MESSAGE_CHAR_LIMIT = 1800
-
-function renderPlanImportItems(items: readonly string[], emptyText = 'None detected'): ReactNode {
-  if (items.length === 0) {
-    return <span className="plan-import-empty">{emptyText}</span>
-  }
-  return (
-    <ul className="plan-import-list">
-      {items.map((item) => (
-        <li key={item}>{item}</li>
-      ))}
-    </ul>
-  )
-}
-
-function formatPlanImportRunConstraintValue(constraint: PlanImportRunConstraint): string | null {
-  if (typeof constraint.value === 'number') return `${constraint.value} changed-file limit`
-  if (Array.isArray(constraint.value) && constraint.value.length > 0) {
-    return constraint.value.join(', ')
-  }
-  return null
-}
-
-function renderPlanImportFileGroundings(
-  groundings: readonly PlanImportFileGrounding[],
-  busy = false
-): ReactNode {
-  if (groundings.length === 0) {
-    return <span className="plan-import-empty">No file paths detected</span>
-  }
-  const indexedCount = groundings.filter((item) => item.status === 'verified_from_repo').length
-  const unverifiedCount = groundings.filter((item) => item.status === 'unverified').length
-  const decisionCount = groundings.filter((item) => item.status === 'needs_user_decision').length
-  const missingCount = groundings.filter((item) => item.status === 'contradicted_by_repo').length
-  const summaryParts = [
-    `${indexedCount} indexed`,
-    `${unverifiedCount} unverified`,
-    decisionCount > 0 ? `${decisionCount} need decision` : null,
-    missingCount > 0 ? `${missingCount} no exact match` : null
-  ].filter(Boolean)
-  return (
-    <>
-      <small className="plan-import-grounding-summary" role="status" aria-live="polite">
-        Exact workspace-index matches only; plan claims remain unverified. {summaryParts.join(', ')}
-        .
-      </small>
-      <ul className="plan-import-grounding-list" aria-busy={busy}>
-        {groundings.map((grounding) => {
-          const evidenceText =
-            grounding.evidenceRefs.length > 0
-              ? grounding.evidenceRefs
-                  .map((ref) => `${ref.path}${ref.note ? ` - ${ref.note}` : ''}`)
-                  .join('; ')
-              : grounding.note
-          return (
-            <li
-              key={grounding.path}
-              className={`plan-import-grounding-item status-${grounding.status}`}
-            >
-              <div className="plan-import-grounding-top">
-                <code>{grounding.path}</code>
-                <span className="plan-import-grounding-status">
-                  {PLAN_IMPORT_GROUNDING_LABELS[grounding.status]}
-                </span>
-              </div>
-              {evidenceText && <small>{evidenceText}</small>}
-            </li>
-          )
-        })}
-      </ul>
-    </>
-  )
-}
-
-function formatPlanImportTokenEstimate(tokens: number): string {
-  if (!Number.isFinite(tokens) || tokens <= 0) return '0'
-  if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(1)}M`
-  if (tokens >= 1_000) return `${(tokens / 1_000).toFixed(1)}k`
-  return String(Math.round(tokens))
-}
-
-function formatPlanImportCostEstimate(
-  estimate: PlanImportExecutionEstimate,
-  currency: DisplayCurrency,
-  overestimatePercent: number
-): string {
-  if (estimate.costStatus === 'zero_rate') return 'Local / zero-rate'
-  if (!estimate.costAvailable) return 'Pricing unavailable'
-  const formatted = formatCost(estimate.estimatedCostUsd, currency, undefined, overestimatePercent)
-  return formatted ? `~${formatted} API-equiv` : 'Pricing unavailable'
-}
 
 function truncateGuestContextText(value: string, maxChars: number): string {
   if (value.length <= maxChars) return value
