@@ -70,6 +70,15 @@ interface DiffFileContextMenuItem {
   onSelect: () => void
 }
 
+type DiffFileListKeyEventLike = Pick<
+  KeyboardEvent,
+  'altKey' | 'ctrlKey' | 'defaultPrevented' | 'key' | 'metaKey' | 'shiftKey'
+>
+
+export type DiffFileListKeyboardAction =
+  | { type: 'activate'; index: number }
+  | { type: 'select'; index: number }
+
 export function focusDiffFileContextMenuButton(
   menu: HTMLDivElement,
   direction: 'first' | 'last' | 'next' | 'previous'
@@ -130,6 +139,50 @@ const diffFileRowStateLabel = (gitStatus?: GitFileStatus): string => {
   if (gitStatus.staged) return 'staged'
   if (gitStatus.unstaged) return 'unstaged'
   return ''
+}
+
+export function resolveDiffFileListKeyboardAction(
+  event: DiffFileListKeyEventLike,
+  options: { currentIndex: number; fileCount: number; pageSize?: number }
+): DiffFileListKeyboardAction | null {
+  if (
+    event.defaultPrevented ||
+    event.altKey ||
+    event.ctrlKey ||
+    event.metaKey ||
+    event.shiftKey ||
+    options.fileCount <= 0
+  ) {
+    return null
+  }
+
+  const lastIndex = options.fileCount - 1
+  const currentIndex =
+    options.currentIndex >= 0 ? Math.min(lastIndex, Math.max(0, options.currentIndex)) : 0
+  const pageSize = Math.max(1, Math.floor(options.pageSize ?? 10))
+
+  switch (event.key) {
+    case 'ArrowDown':
+    case 'ArrowRight':
+      return { type: 'select', index: Math.min(lastIndex, currentIndex + 1) }
+    case 'ArrowUp':
+    case 'ArrowLeft':
+      return { type: 'select', index: Math.max(0, currentIndex - 1) }
+    case 'Home':
+      return { type: 'select', index: 0 }
+    case 'End':
+      return { type: 'select', index: lastIndex }
+    case 'PageDown':
+      return { type: 'select', index: Math.min(lastIndex, currentIndex + pageSize) }
+    case 'PageUp':
+      return { type: 'select', index: Math.max(0, currentIndex - pageSize) }
+    case 'Enter':
+    case ' ':
+    case 'Spacebar':
+      return { type: 'activate', index: currentIndex }
+    default:
+      return null
+  }
 }
 
 export const diffFilePathDisplay = (path: string): { name: string; parent: string } => {
@@ -399,27 +452,14 @@ export function DiffFileList({
   }
 
   const handleKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
-    if (fileRows.length === 0 || event.defaultPrevented) return
-    const currentIndex = selectedFileIndex >= 0 ? selectedFileIndex : 0
-    if (event.key === 'ArrowDown' || event.key === 'ArrowRight') {
-      event.preventDefault()
-      selectFileAt(Math.min(fileRows.length - 1, currentIndex + 1))
-      return
-    }
-    if (event.key === 'ArrowUp' || event.key === 'ArrowLeft') {
-      event.preventDefault()
-      selectFileAt(Math.max(0, currentIndex - 1))
-      return
-    }
-    if (event.key === 'Home') {
-      event.preventDefault()
-      selectFileAt(0)
-      return
-    }
-    if (event.key === 'End') {
-      event.preventDefault()
-      selectFileAt(fileRows.length - 1)
-    }
+    const action = resolveDiffFileListKeyboardAction(event, {
+      currentIndex: selectedFileIndex,
+      fileCount: fileRows.length,
+      pageSize: Math.max(1, Math.floor(viewport.height / DIFF_FILE_LIST_ROW_HEIGHT) - 1)
+    })
+    if (!action) return
+    event.preventDefault()
+    selectFileAt(action.index)
   }
 
   const openContextMenu = useCallback(
@@ -470,6 +510,7 @@ export function DiffFileList({
       onKeyDown={handleKeyDown}
       onScroll={handleScroll}
       aria-label="Changed files"
+      aria-keyshortcuts="ArrowUp ArrowDown ArrowLeft ArrowRight Home End PageUp PageDown Enter Space"
       role="listbox"
       data-total-rows={rows.length}
       data-visible-rows={visibleRows.length}

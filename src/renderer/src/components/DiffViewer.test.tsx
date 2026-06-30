@@ -13,7 +13,8 @@ import {
   buildDiffFileContextMenuItems,
   DiffFileList,
   diffFilePathDisplay,
-  focusDiffFileContextMenuButton
+  focusDiffFileContextMenuButton,
+  resolveDiffFileListKeyboardAction
 } from './DiffFileList'
 import { DiffToolbar } from './DiffToolbar'
 import {
@@ -456,6 +457,68 @@ describe('DiffFileList', () => {
 
     expect(hiddenItems.find((item) => item.id === 'open-editor')?.disabled).toBe(true)
     expect(hiddenItems.find((item) => item.id === 'stage')?.disabled).toBe(true)
+  })
+
+  it('resolves bounded rail keyboard navigation and activation', () => {
+    const baseEvent = {
+      altKey: false,
+      ctrlKey: false,
+      defaultPrevented: false,
+      key: '',
+      metaKey: false,
+      shiftKey: false
+    }
+    const resolveKey = (key: string, currentIndex = 2) =>
+      resolveDiffFileListKeyboardAction(
+        { ...baseEvent, key },
+        { currentIndex, fileCount: 5, pageSize: 3 }
+      )
+
+    expect(resolveKey('ArrowDown')).toEqual({ type: 'select', index: 3 })
+    expect(resolveKey('ArrowRight', 4)).toEqual({ type: 'select', index: 4 })
+    expect(resolveKey('ArrowUp')).toEqual({ type: 'select', index: 1 })
+    expect(resolveKey('ArrowLeft', 0)).toEqual({ type: 'select', index: 0 })
+    expect(resolveKey('Home')).toEqual({ type: 'select', index: 0 })
+    expect(resolveKey('End')).toEqual({ type: 'select', index: 4 })
+    expect(resolveKey('PageDown')).toEqual({ type: 'select', index: 4 })
+    expect(resolveKey('PageUp')).toEqual({ type: 'select', index: 0 })
+    expect(resolveKey('Enter')).toEqual({ type: 'activate', index: 2 })
+    expect(resolveKey(' ')).toEqual({ type: 'activate', index: 2 })
+    expect(resolveKey('Spacebar')).toEqual({ type: 'activate', index: 2 })
+    expect(resolveKey('x')).toBeNull()
+  })
+
+  it('leaves rail keyboard shortcuts alone when modified or already handled', () => {
+    const baseEvent = {
+      altKey: false,
+      ctrlKey: false,
+      defaultPrevented: false,
+      key: 'ArrowDown',
+      metaKey: false,
+      shiftKey: false
+    }
+
+    expect(
+      resolveDiffFileListKeyboardAction(
+        { ...baseEvent, defaultPrevented: true },
+        { currentIndex: 0, fileCount: 3 }
+      )
+    ).toBeNull()
+    expect(
+      resolveDiffFileListKeyboardAction(
+        { ...baseEvent, metaKey: true },
+        { currentIndex: 0, fileCount: 3 }
+      )
+    ).toBeNull()
+    expect(
+      resolveDiffFileListKeyboardAction(
+        { ...baseEvent, shiftKey: true },
+        { currentIndex: 0, fileCount: 3 }
+      )
+    ).toBeNull()
+    expect(
+      resolveDiffFileListKeyboardAction(baseEvent, { currentIndex: 0, fileCount: 0 })
+    ).toBeNull()
   })
 
   it('moves focus among enabled diff rail context menu items', () => {
