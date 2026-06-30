@@ -41,6 +41,7 @@ import {
   redactUrlQuery,
   resolveViewport,
   validateCanvasHtml,
+  validateCanvasImageRef,
   validateCanvasUrl
 } from './canvasTypes'
 import type { CanvasStore } from './CanvasStore'
@@ -68,7 +69,12 @@ interface LiveSession {
   evals: number
 }
 
-const SUPPORTED_DRIVERS: ReadonlySet<CanvasDriverKind> = new Set(['web', 'html', 'device'])
+const SUPPORTED_DRIVERS: ReadonlySet<CanvasDriverKind> = new Set([
+  'web',
+  'html',
+  'image',
+  'device'
+])
 // Defence-in-depth cap so a hijacked agent (or a session-granted approval)
 // cannot machine-gun clicks/fills against a live app. Per live session.
 const MAX_INTERACTIONS_PER_SESSION = 200
@@ -168,6 +174,16 @@ export class CanvasService implements CanvasController {
       if (!verdict.ok) throw new Error(verdict.reason || 'Invalid canvas html.')
       // Stable, secret-free synthetic id for the audit record (never the markup).
       recordUrl = `html://${createHash('sha256').update(input.html ?? '').digest('hex').slice(0, 8)}`
+      eventHost = undefined
+    } else if (driverKind === 'image') {
+      // Existing content-addressed image attachment. The hash is the only input;
+      // the asset store's realpath jail resolves it (a bad hash -> error), so
+      // there is no path / SSRF surface — just validate the ref shape.
+      const sha256 = (input.mediaSha256 || '').trim()
+      const verdict = validateCanvasImageRef(sha256, (input.mediaMimeType || '').trim())
+      if (!verdict.ok) throw new Error(verdict.reason || 'Invalid image attachment.')
+      // The content hash IS the safe, secret-free id for the audit record.
+      recordUrl = `image://${sha256}`
       eventHost = undefined
     } else {
       const verdict = validateCanvasUrl((input.url || '').trim(), input.originAllowlist ?? [])

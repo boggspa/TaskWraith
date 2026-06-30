@@ -153,6 +153,7 @@ export const TASKWRAITH_MCP_TOOLS = [
   // land in P1; arbitrary `eval` (P2) is signed-elevated (canvasEval service).
   'canvas_open',
   'canvas_render_html',
+  'canvas_open_attachment',
   'canvas_list',
   'canvas_status',
   'canvas_snapshot',

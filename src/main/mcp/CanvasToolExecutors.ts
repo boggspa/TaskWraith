@@ -13,11 +13,12 @@
  */
 import type { McpToolContentBlock, McpToolExecutionResult } from './McpBridgeRuntime'
 import type { CanvasCallContext, CanvasController, CanvasMark } from '../canvas/canvasTypes'
-import { resolveViewport, validateCanvasHtml } from '../canvas/canvasTypes'
+import { resolveViewport, validateCanvasHtml, validateCanvasImageRef } from '../canvas/canvasTypes'
 
 export const CANVAS_MCP_TOOL_NAMES = [
   'canvas_open',
   'canvas_render_html',
+  'canvas_open_attachment',
   'canvas_list',
   'canvas_status',
   'canvas_snapshot',
@@ -210,6 +211,34 @@ export function createCanvasToolExecutors(deps: CanvasToolExecutorDeps): CanvasT
               canvasId: opened.canvasId,
               url: opened.url,
               title: opened.title,
+              mimeType: frame.mimeType,
+              width: frame.width,
+              height: frame.height,
+              byteLength: frame.byteLength,
+              hash: frame.hash,
+              capturedAt: frame.capturedAt
+            },
+            [{ type: 'image', mimeType: frame.mimeType, data: frame.data }]
+          )
+        }
+        case 'canvas_open_attachment': {
+          const sha256 = asOptString(args.sha256) ?? asOptString(args.mediaSha256) ?? ''
+          const mimeType = asOptString(args.mimeType) ?? asOptString(args.mediaMimeType) ?? ''
+          const verdict = validateCanvasImageRef(sha256, mimeType)
+          if (!verdict.ok) return fail(toolName, verdict.reason || 'Invalid attachment ref.')
+          const viewport = resolveViewport({ width: args.width, height: args.height })
+          const opened = await controller.open(
+            { driver: 'image', mediaSha256: sha256, mediaMimeType: mimeType, viewport },
+            ctx
+          )
+          // Surface the image immediately as an MCP image content block.
+          const frame = await controller.screenshot(opened.canvasId, ctx)
+          return jsonResult(
+            {
+              ok: true,
+              tool: toolName,
+              canvasId: opened.canvasId,
+              url: opened.url,
               mimeType: frame.mimeType,
               width: frame.width,
               height: frame.height,

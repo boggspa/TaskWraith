@@ -683,6 +683,7 @@ import { CanvasStore } from './canvas/CanvasStore'
 import { CanvasWebDriver } from './canvas/CanvasWebDriver'
 import { CanvasDeviceDriver } from './canvas/CanvasDeviceDriver'
 import { CanvasRenderDriver } from './canvas/CanvasRenderDriver'
+import { CanvasImageDriver } from './canvas/CanvasImageDriver'
 import { CanvasEmbedController } from './canvas/CanvasEmbedController'
 import { registerCanvasEmbedIpc } from './canvas/CanvasEmbedIpc'
 import { asEmbedParent, createElectronEmbedView } from './canvas/CanvasEmbedView'
@@ -2184,6 +2185,20 @@ const canvasService = new CanvasService({
       return new CanvasRenderDriver(sessionId, {
         render: (html, width, height) =>
           offscreenImageEngine.renderHtmlToPng(html, width, height, CANVAS_HTML_RENDER_TIMEOUT_MS)
+      })
+    }
+    if (kind === 'image') {
+      return new CanvasImageDriver(sessionId, {
+        // Resolve through the asset store's realpath jail (sha + mime->ext
+        // whitelist) and decode via nativeImage — the agent can only view an
+        // EXISTING content-addressed attachment, never an arbitrary file.
+        load: async (sha256, mimeType) => {
+          const res = getTranscriptMediaAssetStore().read({ sha256, mimeType })
+          if (!res.ok) throw new Error(`Image attachment unavailable (${res.reason}).`)
+          const img = nativeImage.createFromBuffer(res.buffer)
+          if (img.isEmpty()) throw new Error('Attachment is not a decodable image.')
+          return img.toPNG()
+        }
       })
     }
     if (kind === 'web') {

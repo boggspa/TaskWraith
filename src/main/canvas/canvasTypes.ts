@@ -11,7 +11,7 @@
  * `annotate` verbs, are deferred — the contracts below leave room for them.
  */
 
-export type CanvasDriverKind = 'web' | 'html' | 'window' | 'device'
+export type CanvasDriverKind = 'web' | 'html' | 'image' | 'window' | 'device'
 
 export type CanvasSessionStatus = 'opening' | 'active' | 'error' | 'closed'
 
@@ -56,6 +56,17 @@ export interface CanvasOpenInput {
    * is a static, fully-contained preview — never a live, scriptable page.
    */
   html?: string
+  // --- image driver (content-addressed image attachment; canvas_open_attachment) ---
+  /**
+   * Content hash of an EXISTING image asset in the content-addressed media store.
+   * REQUIRED for the `image` driver. It resolves through the same realpath jail as
+   * twmedia:// (the store rejects a bad/unknown hash), so it is never an
+   * arbitrary-file-read primitive — the agent can only view assets it/its tools
+   * already produced.
+   */
+  mediaSha256?: string
+  /** MIME type of the image asset (e.g. "image/png"). REQUIRED for the `image` driver. */
+  mediaMimeType?: string
 }
 
 export interface CanvasElementNode {
@@ -620,6 +631,40 @@ export function validateCanvasHtml(rawHtml: string): CanvasHtmlValidation {
     return {
       ok: false,
       reason: `\`html\` too large (${html.length} chars; max ${MAX_CANVAS_HTML_CHARS}).`
+    }
+  }
+  return { ok: true }
+}
+
+// Content-addressed media hashes are base64url sha256 (mirrors the asset store's
+// SHA256_BASE64URL_PATTERN and twMediaRange's SHA_RE) — no '/' or '.', so a hash
+// can never carry a path-traversal segment.
+const CANVAS_MEDIA_SHA_RE = /^[A-Za-z0-9_-]{32,96}$/
+
+export interface CanvasMediaRefValidation {
+  ok: boolean
+  reason?: string
+}
+
+/**
+ * Validate an agent-supplied image attachment ref for the `image` driver:
+ * a well-formed content hash + an image/* MIME. This is the defence-in-depth
+ * shape check — the asset store's own mime→ext whitelist + realpath jail is the
+ * authoritative gate (and is what actually resolves the bytes).
+ */
+export function validateCanvasImageRef(
+  sha256: string,
+  mimeType: string
+): CanvasMediaRefValidation {
+  const sha = typeof sha256 === 'string' ? sha256.trim() : ''
+  const mime = typeof mimeType === 'string' ? mimeType.trim().toLowerCase() : ''
+  if (!CANVAS_MEDIA_SHA_RE.test(sha)) {
+    return { ok: false, reason: 'A valid content-addressed `mediaSha256` is required.' }
+  }
+  if (!mime.startsWith('image/')) {
+    return {
+      ok: false,
+      reason: `The image driver only opens image attachments, not "${mime || 'unknown'}".`
     }
   }
   return { ok: true }

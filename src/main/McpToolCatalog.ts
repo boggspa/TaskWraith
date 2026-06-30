@@ -2524,6 +2524,27 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
       }
     },
     {
+      name: 'canvas_open_attachment',
+      description:
+        'Open an EXISTING image attachment in a TaskWraith Canvas and return it as an image. Pass the content hash (`sha256`) and `mimeType` of an image asset you already have (e.g. from image_generate / image_edit output or a chat attachment). The hash resolves through the media store\'s realpath jail, so only assets that already exist can be viewed — never an arbitrary file. Returns a canvasId; canvas_screenshot re-returns the image, canvas_close ends it; the DOM verbs do not apply. Only image/* attachments are supported today. Gated like canvas_open.',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          sha256: { type: 'string', description: 'Content hash of the existing image asset.' },
+          mimeType: { type: 'string', description: 'Image MIME type, e.g. "image/png".' },
+          width: { type: 'number' },
+          height: { type: 'number' }
+        },
+        required: ['sha256', 'mimeType']
+      }
+    },
+    {
       name: 'canvas_list',
       description:
         'List currently open Canvas sessions (canvasId, driver, url, status). Read-only; carries no pixels.',

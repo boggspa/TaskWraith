@@ -140,6 +140,54 @@ describe('executeCanvasTool', () => {
     expect(opened).toBe(false)
   })
 
+  it('canvas_open_attachment opens an image-driver canvas and returns the image', async () => {
+    const sha = 'b'.repeat(43)
+    let seen: unknown = null
+    const controller = fakeController({
+      open: async (input) => {
+        seen = input
+        return { canvasId: 'c1', url: `image://${sha}`, title: 'image/png', viewport: { width: 4, height: 4 } }
+      }
+    })
+    const { executeCanvasTool } = createCanvasToolExecutors({ controller })
+    const result = await executeCanvasTool(
+      'canvas_open_attachment',
+      { sha256: sha, mimeType: 'image/png' },
+      ctx,
+      'claude'
+    )
+    expect(result.isError).toBeFalsy()
+    expect(seen).toMatchObject({ driver: 'image', mediaSha256: sha, mediaMimeType: 'image/png' })
+    expect(result.structuredContent?.url).toBe(`image://${sha}`)
+    expect(result.content?.some((b) => b.type === 'image')).toBe(true)
+  })
+
+  it('canvas_open_attachment rejects a non-image mime and a bad hash before opening', async () => {
+    let opened = false
+    const controller = fakeController({
+      open: async () => {
+        opened = true
+        return { canvasId: 'c1', url: '', title: 'T', viewport: { width: 1, height: 1 } }
+      }
+    })
+    const { executeCanvasTool } = createCanvasToolExecutors({ controller })
+    const av = await executeCanvasTool(
+      'canvas_open_attachment',
+      { sha256: 'c'.repeat(43), mimeType: 'video/mp4' },
+      ctx,
+      'claude'
+    )
+    expect(av.isError).toBe(true)
+    const badHash = await executeCanvasTool(
+      'canvas_open_attachment',
+      { sha256: '../secret', mimeType: 'image/png' },
+      ctx,
+      'claude'
+    )
+    expect(badHash.isError).toBe(true)
+    expect(opened).toBe(false)
+  })
+
   it('canvas_open device driver requires a bundleId and routes device inputs', async () => {
     let seen: unknown = null
     const controller = fakeController({
