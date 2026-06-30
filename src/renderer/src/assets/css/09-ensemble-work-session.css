@@ -2305,13 +2305,11 @@
   background-color: color-mix(in srgb, var(--theme-chroma-1) 14%, transparent);
 }
 
-/* Popout glass contrast.
+/* Workspace utility popout contrast.
  * Diff Studio and File Editor run in their own utility windows, outside
  * the transcript shell that normally provides a stable reading plane.
- * Keep the liquid-glass chroma wash, but pin these windows to more
- * opaque local surfaces and stronger scoped text tokens so light glass
- * does not collapse into pale-on-pale and dark glass does not become
- * gray-on-gray. */
+ * Keep these windows on solid app-palette surfaces with rim highlights;
+ * do not inherit the transcript/composer glass wash. */
 .popout-root:is([data-popout-kind="file-editor"], [data-popout-kind="diff-studio"]) {
   min-width: 0;
   --text-secondary: color-mix(in srgb, var(--text-primary) 76%, transparent);
@@ -2329,12 +2327,14 @@
   --popout-line-bg: color-mix(in srgb, var(--popout-editor-bg) 96%, var(--popout-panel-bg) 4%);
   --popout-subtle-bg: color-mix(in srgb, var(--text-primary) 5%, transparent);
   --popout-border: color-mix(in srgb, var(--theme-border-accent) 54%, var(--panel-border));
+  --popout-top-rim: color-mix(in srgb, var(--text-primary) 10%, transparent);
   --popout-primary-action-text: rgba(6, 8, 12, 0.92);
   color: var(--text-primary);
   background-color: var(--popout-window-bg) !important;
-  background-image:
-    radial-gradient(circle at 16% 0%, color-mix(in srgb, var(--theme-chroma-1) 12%, transparent), transparent 34%),
-    radial-gradient(circle at 94% 4%, color-mix(in srgb, var(--theme-chroma-2) 8%, transparent), transparent 38%) !important;
+  background-image: none !important;
+  box-shadow:
+    inset 0 1px 0 var(--popout-top-rim),
+    inset 0 0 0 1px var(--popout-border);
 }
 
 :is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"])
@@ -2352,6 +2352,7 @@
   --popout-row-hover-bg: color-mix(in srgb, var(--accent) 12%, white 88%);
   --popout-row-selected-bg: color-mix(in srgb, var(--accent) 18%, white 82%);
   --popout-line-bg: color-mix(in srgb, var(--popout-editor-bg) 94%, white 6%);
+  --popout-top-rim: color-mix(in srgb, white 70%, transparent);
   --diff-add-bg: rgba(12, 132, 82, 0.12);
   --diff-add-text: #055c38;
   --diff-del-bg: rgba(198, 52, 66, 0.12);
@@ -2372,6 +2373,7 @@
   --popout-control-bg: rgba(255, 255, 255, 0.07);
   --popout-row-hover-bg: rgba(200, 192, 210, 0.12);
   --popout-row-selected-bg: rgba(200, 192, 210, 0.18);
+  --popout-top-rim: rgba(255, 232, 214, 0.12);
   --popout-line-bg: #0b090d;
   --diff-add-bg: rgba(36, 168, 112, 0.24);
   --diff-add-text: #7df0b7;
@@ -2421,29 +2423,28 @@
   --text-muted: inherit;
   --panel-border: inherit;
   background-color: var(--popout-panel-bg) !important;
-  background-image: var(--theme-gradient-panel) !important;
+  background-image: none !important;
 }
 
 .popout-root:is([data-popout-kind="file-editor"], [data-popout-kind="diff-studio"])
   :is(.popout-header, .diff-studio-toolbar, .diff-detail-header, .file-editor-header) {
   background-color: var(--popout-toolbar-bg) !important;
-  background-image:
-    linear-gradient(90deg, color-mix(in srgb, var(--theme-chroma-1) 8%, transparent), transparent 62%) !important;
+  background-image: none !important;
   border-color: var(--popout-border) !important;
-  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text-primary) 6%, transparent);
+  box-shadow: inset 0 1px 0 var(--popout-top-rim);
   color: var(--text-primary);
 }
 
 .popout-root:is([data-popout-kind="file-editor"], [data-popout-kind="diff-studio"])
   :is(.file-editor-files, .diff-file-list) {
   background-color: var(--popout-list-bg) !important;
-  background-image: var(--theme-gradient-file-manager) !important;
+  background-image: none !important;
 }
 
 .popout-root:is([data-popout-kind="file-editor"], [data-popout-kind="diff-studio"])
   :is(.diff-detail, .file-editor-code-surface) {
   background-color: var(--popout-editor-bg) !important;
-  background-image: var(--theme-gradient-editor) !important;
+  background-image: none !important;
 }
 
 .popout-root:is([data-popout-kind="file-editor"], [data-popout-kind="diff-studio"])
