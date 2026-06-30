@@ -862,6 +862,7 @@ import { registerApnsHandlers } from './ipc/apnsHandlers'
 import { registerImageGenerationHandlers } from './ipc/imageGenerationHandlers'
 import { registerMediaAssetHandlers } from './ipc/mediaAssetHandlers'
 import { registerSpellcheckHandlers } from './ipc/spellcheckHandlers'
+import { registerExternalPathGrantHandlers } from './ipc/externalPathGrantHandlers'
 import { getCachedRemoteEnsemblePresets } from './remote/EnsembleRosterPresetsCache'
 import { resolveGeminiCliResumePolicy } from './GeminiSessionPolicy'
 // 1.0.5-EW26 — Kimi compatibility filter (curated + user-
@@ -25913,239 +25914,29 @@ if (isGeminiMcpBridgeProcess) {
       homedir: () => os.homedir()
     })
 
-    ipcMain.handle(
-      'select-external-path-grant',
-      async (_, access: 'read' | 'write' = 'read', provider?: unknown) => {
-        if (!mainWindow) return null
-        // Phase J1 composer-unification: optional `provider` lets the
-        // renderer's cross-provider picker stamp the grant with the
-        // requesting provider. Defaults to 'codex' so the legacy renderer
-        // call sites (which only sent `access`) still get a usable grant.
-        const grantProvider: ProviderId =
-          provider === 'gemini' ||
-          provider === 'codex' ||
-          provider === 'claude' ||
-          provider === 'kimi'
-            ? provider
-            : 'codex'
-        const providerLabelText = providerLabel(grantProvider)
-        const result = await dialog.showOpenDialog(mainWindow, {
-          title:
-            access === 'write'
-              ? `Select file or folder ${providerLabelText} can edit`
-              : `Select file or folder ${providerLabelText} can view`,
-          properties: ['openFile', 'openDirectory', 'createDirectory'],
-          securityScopedBookmarks: process.platform === 'darwin'
-        } as Electron.OpenDialogOptions)
-
-        if (result.canceled || result.filePaths.length === 0) {
-          return null
-        }
-
-        const selectedPath = resolve(result.filePaths[0])
-        let kind: ExternalPathGrant['kind'] = 'file'
-        try {
-          const stat = await fs.stat(selectedPath)
-          kind = stat.isDirectory() ? 'directory' : 'file'
-        } catch {
-          kind = 'file'
-        }
-
-        return issueExternalPathGrant({
-          id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
-          provider: grantProvider,
-          path: selectedPath,
-          kind,
-          access: access === 'write' ? 'write' : 'read',
-          duration: 'thisThread',
-          securityScopedBookmark: Array.isArray((result as any).bookmarks)
-            ? (result as any).bookmarks[0]
-            : undefined,
-          createdAt: new Date().toISOString()
-        })
+    registerExternalPathGrantHandlers({
+      getMainWindow: () => mainWindow,
+      showOpenDialog: (window, options) => dialog.showOpenDialog(window, options),
+      stat: (pathValue) => fs.stat(pathValue),
+      resolvePath: (pathValue) => resolve(pathValue),
+      providerLabel,
+      issueExternalPathGrant,
+      getChat: (chatId) => AppStore.getChat(chatId),
+      saveChat: (chat) => AppStore.saveChat(chat),
+      broadcastChatUpdated,
+      collectExternalPathGrantsFromMetadata,
+      canonicalizeExternalPathGrantMetadata,
+      isExternalPathGrantDispatchProvider,
+      resolveRegisteredExplicitExternalPath,
+      findRegisteredWorkspace,
+      canonicalPath,
+      optionalString,
+      randomBytes,
+      securityScopedBookmarks: process.platform === 'darwin',
+      probeExternalPath: async (absolutePath) => {
+        const { probeExternalPath } = await import('./services/ExternalPathProbe')
+        return probeExternalPath(absolutePath)
       }
-    )
-
-    /**
-     * 1.0.5-EW42a — Proactive external-path grant from the composer.
-     *
-     * Pre-EW42a the ONLY way to create an `ExternalPathGrant` was
-     * reactive: an agent's tool call hit an out-of-workspace path,
-     * the runtime detector flagged it, the approval modal opened,
-     * and the user picked "Grant read/edit". That made the
-     * `ExternalPathAboveRow` banner appear mysterious to users —
-     * they didn't know what created it because they didn't
-     * actively create it themselves. It also meant the user
-     * couldn't pre-grant a sibling repo before an agent tried to
-     * touch it.
-     *
-     * This handler is the proactive path: the user clicks "Grant
-     * read access to another folder…" in the composer workspace
-     * switcher's popover, an OS folder picker opens, and on
-     * confirm we issue one grant per participant-provider in the
-     * current chat (or just the chat's primary provider for
-     * single-provider chats), then persist + broadcast so the
-     * `ExternalPathAboveRow` banner appears immediately.
-     *
-     * For Ensemble chats with N participants spanning K unique
-     * providers, we emit K grants (one per provider) targeting
-     * the same path — the existing dispatcher already filters
-     * grants by `grant.provider === participant.provider` so this
-     * is the natural shape.
-     */
-    ipcMain.handle(
-      'external-path:pick-and-persist',
-      async (
-        _event,
-        // 1.0.6-EW69 — `path` (optional): when supplied, skip the OS
-        // folder dialog and grant that exact path (the composer
-        // picker's "attach a known workspace as a secondary" action).
-        // When omitted, open the folder picker as before.
-        payload: {
-          chatId?: string
-          access?: 'read' | 'write'
-          path?: string
-          /** When true, resolve the folder but skip issuing grants until the user confirms in the composer prompt. */
-          deferPersist?: boolean
-        }
-      ): Promise<
-        | { ok: true; grants: ExternalPathGrant[]; path: string }
-        | { ok: false; reason: 'no-chat' | 'cancelled' | 'no-provider' | 'no-window' }
-      > => {
-        if (!mainWindow) return { ok: false, reason: 'no-window' }
-        const chatId = optionalString(payload?.chatId)
-        if (!chatId) return { ok: false, reason: 'no-chat' }
-        const chat = AppStore.getChat(chatId)
-        if (!chat) return { ok: false, reason: 'no-chat' }
-
-        const access: 'read' | 'write' = payload?.access === 'write' ? 'write' : 'read'
-
-        // Determine which providers should receive the grant.
-        // Ensemble: all enabled participants' providers (deduped,
-        // order-preserving so the first-spawned provider gets the
-        // first grant id — keeps the chat metadata diff stable).
-        // Single-provider: the chat's primary provider.
-        const targetProviders: ProviderId[] = []
-        if (chat.chatKind === 'ensemble' && chat.ensemble?.participants?.length) {
-          const seen = new Set<ProviderId>()
-          for (const participant of chat.ensemble.participants) {
-            if (!participant.enabled) continue
-            if (seen.has(participant.provider)) continue
-            seen.add(participant.provider)
-            targetProviders.push(participant.provider)
-          }
-        } else if (chat.provider) {
-          targetProviders.push(chat.provider)
-        }
-        const dispatchProviders = targetProviders.filter((provider) =>
-          isExternalPathGrantDispatchProvider(provider)
-        )
-        if (dispatchProviders.length === 0) {
-          return { ok: false, reason: 'no-provider' }
-        }
-
-        // 1.0.6-EW69 — explicit-path add (known workspace → secondary)
-        // bypasses the dialog; otherwise open the OS folder picker.
-        const explicitPath = optionalString(payload?.path)
-        let selectedPath: string
-        let bookmark: string | undefined
-        let registeredExplicitWorkspace: WorkspaceRecord | undefined
-        if (explicitPath) {
-          const registeredExplicitPath = resolveRegisteredExplicitExternalPath({
-            explicitPath,
-            findRegisteredWorkspace,
-            canonicalPath
-          })
-          if (!registeredExplicitPath) {
-            return { ok: false, reason: 'cancelled' }
-          }
-          selectedPath = registeredExplicitPath.path
-          registeredExplicitWorkspace = registeredExplicitPath.workspace
-          try {
-            await fs.stat(selectedPath)
-          } catch {
-            // Path is gone — treat as a no-op (same as a cancelled add).
-            return { ok: false, reason: 'cancelled' }
-          }
-          bookmark = undefined
-        } else {
-          const accessVerb = access === 'write' ? 'can edit' : 'can read'
-          const dialogResult = await dialog.showOpenDialog(mainWindow, {
-            title: `Select folder agents in this chat ${accessVerb}`,
-            message: `Issues a ${
-              access === 'write' ? 'read+write' : 'read-only'
-            } grant scoped to this chat. ${
-              dispatchProviders.length > 1
-                ? `One grant per panelist provider (${dispatchProviders
-                    .map((p) => providerLabel(p))
-                    .join(', ')}).`
-                : ''
-            }`,
-            properties: ['openFile', 'openDirectory', 'createDirectory'],
-            securityScopedBookmarks: process.platform === 'darwin'
-          } as Electron.OpenDialogOptions)
-          if (dialogResult.canceled || dialogResult.filePaths.length === 0) {
-            return { ok: false, reason: 'cancelled' }
-          }
-          selectedPath = resolve(dialogResult.filePaths[0])
-          bookmark = Array.isArray((dialogResult as any).bookmarks)
-            ? (dialogResult as any).bookmarks[0]
-            : undefined
-        }
-        let kind: ExternalPathGrant['kind'] = 'file'
-        try {
-          const stat = await fs.stat(selectedPath)
-          kind = stat.isDirectory() ? 'directory' : 'file'
-        } catch {
-          kind = 'file'
-        }
-
-        if (payload?.deferPersist) {
-          return { ok: true, grants: [], path: selectedPath }
-        }
-
-        const now = Date.now()
-        const newGrants: ExternalPathGrant[] = dispatchProviders.map((provider) =>
-          issueExternalPathGrant({
-            id: `proactive-${now}-${provider}-${randomBytes(4).toString('hex')}`,
-            provider,
-            workspaceId: registeredExplicitWorkspace?.id,
-            chatId,
-            path: selectedPath,
-            kind,
-            access,
-            duration: 'thisThread',
-            securityScopedBookmark: bookmark,
-            createdAt: new Date(now).toISOString()
-          })
-        )
-
-        const existing = collectExternalPathGrantsFromMetadata(chat.providerMetadata)
-        const updatedChat: ChatRecord = {
-          ...chat,
-          providerMetadata: canonicalizeExternalPathGrantMetadata(chat.providerMetadata, [
-            ...existing,
-            ...newGrants
-          ]),
-          updatedAt: now
-        }
-        AppStore.saveChat(updatedChat)
-        broadcastChatUpdated(updatedChat)
-
-        return { ok: true, grants: newGrants, path: selectedPath }
-      }
-    )
-
-    /**
-     * Slice 1 of the external-path-redesign arc. Given an absolute
-     * path, return whether it sits inside a git repo + the current
-     * branch. Used by the renderer's stacked above-rows to label
-     * each external-path grant with its branch name (mirrors how
-     * Claude Code shows `<repo> <branch>` per touched repo).
-     */
-    ipcMain.handle('probe-external-path', async (_, absolutePath: string) => {
-      const { probeExternalPath } = await import('./services/ExternalPathProbe')
-      return probeExternalPath(absolutePath)
     })
 
     registerWorkspaceGeminiDiscoveryHandlers({
