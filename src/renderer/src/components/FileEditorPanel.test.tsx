@@ -136,7 +136,13 @@ describe('WorkspaceFileTree', () => {
     )
 
     expect(html).toContain('aria-label="Workspace file navigator"')
+    expect(html).toContain('role="tree"')
+    expect(html).toContain('role="treeitem"')
+    expect(html).toContain('role="presentation"')
+    expect(html).toContain('aria-level="1"')
+    expect(html).toContain('aria-level="2"')
     expect(html).toContain('aria-expanded="true"')
+    expect(html).toContain('aria-selected="true"')
     expect(html).toContain('aria-current="true"')
     expect(html).toContain('aria-haspopup="menu"')
     expect(html).toContain('aria-keyshortcuts="ContextMenu Shift+F10"')

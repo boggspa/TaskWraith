@@ -283,13 +283,16 @@ export function WorkspaceFileTree({
         ref={listRef}
         onKeyDown={handleListKeyDown}
         onScroll={handleScroll}
+        role="tree"
         aria-label="Workspace file navigator"
+        aria-busy={isListLoading ? 'true' : undefined}
         data-total-rows={displayedFiles.length}
         data-visible-rows={visibleFiles.length}
       >
         {displayedFiles.length > 0 ? (
           <div
             className="file-editor-list-virtual-window"
+            role="presentation"
             style={
               useVirtualization
                 ? {
@@ -308,6 +311,7 @@ export function WorkspaceFileTree({
                   className={`file-editor-row ${entry.isDirectory ? 'directory' : 'file'} ${selectedPath === entry.path ? 'active' : ''} ${isExpanded ? 'expanded' : ''}`}
                   style={{ paddingLeft: `calc(var(--space-sm) + ${entry.depth * 12}px)` }}
                   type="button"
+                  role="treeitem"
                   onClick={() => void onOpenEntry(entry)}
                   onContextMenu={(event) => {
                     event.preventDefault()
@@ -317,10 +321,12 @@ export function WorkspaceFileTree({
                   data-file-editor-index={rowIndex}
                   data-file-editor-path={entry.path}
                   data-file-editor-directory={entry.isDirectory ? 'true' : 'false'}
+                  aria-level={entry.depth + 1}
                   aria-current={selectedPath === entry.path ? 'true' : undefined}
                   aria-expanded={entry.isDirectory && entry.hasChildren ? isExpanded : undefined}
                   aria-haspopup="menu"
                   aria-keyshortcuts="ContextMenu Shift+F10"
+                  aria-selected={selectedPath === entry.path}
                   disabled={isLoading}
                   title={entry.path}
                 >
