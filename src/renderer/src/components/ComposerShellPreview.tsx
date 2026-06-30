@@ -64,7 +64,7 @@ export function getComposerPreviewMeta(style: ComposerStyle): ComposerPreviewMet
         // 1.0.6 — Opus 4.8 is the current default (4.7 is now "Legacy" in the
         // model picker); keep the preview in step with the live composer chip.
         modelLabel: 'Opus 4.8',
-        permissionLabel: 'Plan / Read-only',
+        permissionLabel: 'Plan',
         placeholder: 'Describe a task or ask a question'
       }
     case 'cursor':

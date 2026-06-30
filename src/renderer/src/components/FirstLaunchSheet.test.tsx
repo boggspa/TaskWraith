@@ -129,7 +129,7 @@ describe('FirstLaunchSheet', () => {
     expect(html).toContain('Composer preview')
     expect(html).toContain('data-composer-style="claude"')
     expect(html).toContain('data-user-bubble-color="purple"')
-    expect(html).toContain('Plan / Read-only')
+    expect(html).toContain('Plan')
   })
 
   it('renders the Ensemble preview row with provider participants', () => {
