@@ -33,6 +33,7 @@ import {
   resolveClaudeShellModelLabel
 } from '../lib/composerChipFormat'
 import { OLLAMA_DISPLAY_BRANDS, resolveOllamaDisplayBrand } from '../lib/ollamaDisplayBrand'
+import { CodexFastBoltIcon } from './icons/CodexFastBoltIcon'
 
 export interface CombinedModelPickerModelOption {
   id: string
@@ -262,9 +263,8 @@ export function resolveCombinedModelPickerResetState(params: {
 }
 
 /**
- * Inline lightning-bolt icon used as the "supports Fast tier"
- * affordance next to capable model labels and as the icon for
- * the toggle row beneath the Reasoning column.
+ * Accent-filled bolt for non-Codex shells (Claude picker rows, etc.).
+ * Codex shell uses {@link CodexFastBoltIcon} for the real monoline glyph.
  */
 function FastBoltIcon(): React.JSX.Element {
   return (
@@ -366,6 +366,8 @@ export function CombinedModelPicker({
 
   const useClaudeShellChipLayout = composerStyle === 'claude'
   const showShellFastLabel = useClaudeShellChipLayout && fastModeEnabled && fastModeCapable
+  const showCodexShellFastBolt = composerStyle === 'codex' && fastModeEnabled && fastModeCapable
+  const useCodexMonolineFastBolt = composerStyle === 'codex'
 
   const chipText = useMemo(
     () =>
@@ -751,7 +753,11 @@ export function CombinedModelPicker({
                   title="Supports Fast mode"
                   aria-label="Supports Fast mode"
                 >
-                  <FastBoltIcon />
+                  {useCodexMonolineFastBolt ? (
+                    <CodexFastBoltIcon className="codex-fast-bolt-icon" />
+                  ) : (
+                    <FastBoltIcon />
+                  )}
                 </span>
               )}
               {option.id === selectedModelId && (
@@ -821,7 +827,11 @@ export function CombinedModelPicker({
               }
             >
               <span className="composer-combined-picker-row-label">
-                <FastBoltIcon />
+                {useCodexMonolineFastBolt ? (
+                  <CodexFastBoltIcon className="codex-fast-bolt-icon" />
+                ) : (
+                  <FastBoltIcon />
+                )}
                 <span>Fast mode</span>
               </span>
               <span
@@ -853,30 +863,35 @@ export function CombinedModelPicker({
         aria-expanded={open}
         title="Model and reasoning"
       >
+        {showCodexShellFastBolt && (
+          <CodexFastBoltIcon className="composer-combined-picker-trigger-fast-bolt" />
+        )}
         {claudeChipSegments ? (
           <>
             <span className="composer-combined-picker-trigger-primary">{claudeChipSegments.model}</span>
             {claudeChipSegments.fast ? (
-              <>
+              <span className="composer-combined-picker-trigger-tail">
                 <span className="composer-combined-picker-trigger-separator" aria-hidden>
                   {' · '}
                 </span>
-                <span className="composer-combined-picker-trigger-fast">{claudeChipSegments.fast}</span>
-                {claudeChipSegments.reasoning && (
-                  <span className="composer-combined-picker-trigger-suffix">
-                    {claudeChipSegments.reasoning}
-                  </span>
-                )}
-              </>
+                <span className="composer-combined-picker-trigger-fast-reasoning">
+                  <span className="composer-combined-picker-trigger-fast">{claudeChipSegments.fast}</span>
+                  {claudeChipSegments.reasoning && (
+                    <span className="composer-combined-picker-trigger-suffix">
+                      {claudeChipSegments.reasoning}
+                    </span>
+                  )}
+                </span>
+              </span>
             ) : claudeChipSegments.reasoning ? (
-              <>
+              <span className="composer-combined-picker-trigger-tail">
                 <span className="composer-combined-picker-trigger-separator" aria-hidden>
                   {' · '}
                 </span>
                 <span className="composer-combined-picker-trigger-suffix">
                   {claudeChipSegments.reasoning}
                 </span>
-              </>
+              </span>
             ) : null}
           </>
         ) : (

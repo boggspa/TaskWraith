@@ -9072,6 +9072,28 @@
   color: color-mix(in srgb, var(--accent) 70%, transparent);
   opacity: 0.75;
 }
+[data-composer-style="codex"] .composer-combined-picker-fast-indicator {
+  color: color-mix(in srgb, #ffffff 58%, transparent);
+  opacity: 1;
+}
+.codex-fast-bolt-icon {
+  display: block;
+  flex-shrink: 0;
+  width: 16.5px;
+  /* 1.5× base, then −15% height squish via box aspect (not scaleY) */
+  height: 11.92px;
+}
+.composer-combined-picker-popover.shell-codex .composer-combined-picker-fast-indicator {
+  color: color-mix(in srgb, #ffffff 58%, transparent);
+  opacity: 1;
+}
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"]
+  .composer-combined-picker-fast-indicator,
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
+  .composer-combined-picker-popover.shell-codex
+  .composer-combined-picker-fast-indicator {
+  color: rgba(29, 29, 31, 0.58);
+}
 .composer-combined-picker-row.is-selected .composer-combined-picker-fast-indicator,
 .composer-combined-picker-row.is-highlighted .composer-combined-picker-fast-indicator {
   opacity: 1;
@@ -9473,6 +9495,7 @@
   background: transparent;
   border: 0;
   padding: 0 4px;
+  gap: 3px;
   color: rgba(255, 255, 255, 0.86);
   font-weight: 500;
 }
@@ -9561,13 +9584,11 @@
  * hardcode `color-mix(in srgb, #ffffff …)` which appears as
  * white-on-white in light themes. */
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"] [data-composer-control="model"],
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"] [data-composer-control="permission"],
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"] [data-composer-control="provider"] {
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"] [data-composer-control="permission"] {
   color: rgba(29, 29, 31, 0.86) !important;
 }
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"] [data-composer-control="model"]:hover,
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"] [data-composer-control="permission"]:hover,
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"] [data-composer-control="provider"]:hover {
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"] [data-composer-control="permission"]:hover {
   background: color-mix(in srgb, #1d1d1f 8%, transparent) !important;
 }
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"] [data-composer-control="model"]::before {
@@ -9577,8 +9598,13 @@
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"] [data-composer-control="permission"]::after {
   color: rgba(29, 29, 31, 0.62) !important;
 }
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"] [data-composer-control="provider"] {
-  border-color: var(--surface-border) !important;
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"]
+  [data-composer-control="permission"][data-permission-value="plan"]::after {
+  color: rgba(25, 118, 210, 0.72) !important;
+}
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"]
+  [data-composer-control="permission"][data-permission-value="auto_edit"]::after {
+  color: rgba(185, 28, 28, 0.72) !important;
 }
 
 [data-composer-style="claude"] .composer-combined-picker-trigger {
@@ -9587,12 +9613,27 @@
   padding: 0 4px;
   color: rgba(255, 255, 255, 0.86);
   font-weight: 500;
+  gap: 0 !important;
+}
+[data-composer-style="claude"] .composer-combined-picker-trigger-tail {
+  display: contents;
+}
+[data-composer-style="claude"] .composer-combined-picker-trigger-fast-reasoning {
+  display: inline;
+  white-space: nowrap;
+}
+[data-composer-style="claude"] .composer-combined-picker-trigger-fast-reasoning .composer-combined-picker-trigger-suffix {
+  margin: 0;
+  padding: 0;
+  margin-left: 12px;
 }
 [data-composer-style="claude"] .composer-combined-picker-trigger:hover:not(:disabled) {
   background: color-mix(in srgb, #ffffff 6%, transparent);
 }
 [data-composer-style="claude"] .composer-combined-picker-trigger-suffix {
-  color: color-mix(in srgb, #ffffff 52%, transparent);
+  /* Reasoning tier reads at model weight; only "Fast" stays faint. */
+  color: rgba(255, 255, 255, 0.86);
+  font-weight: 500;
 }
 /* Claude app parity — explicit "Fast" label between model + reasoning in the
  * chip row (Codex shell keeps the lightning bolt via ::before instead). */
@@ -9639,8 +9680,9 @@
  * Access" / "4 grants" / "Extra High" become legible on the
  * light composer surface.
  *
- * Claude shell still stays dark — Claude's identity is the
- * orange-on-near-black palette in both modes, no light variant.
+ * Claude shell composer surface is also light on light/mist/sage
+ * (unified surface block above) — model chip secondary segments
+ * (Fast / reasoning / separator) use the same muted dark ink.
  */
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"] .composer-combined-picker-trigger {
   background: transparent !important;
@@ -9654,23 +9696,27 @@
   color: rgba(29, 29, 31, 0.56) !important;
 }
 
-/* Claude shell still uses the dark palette in light themes. */
+/* Claude shell model chip — light-mode contrast (mirrors Codex picker). */
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="claude"] .composer-combined-picker-trigger {
   background: transparent !important;
-  color: rgba(255, 255, 255, 0.86) !important;
+  color: rgba(29, 29, 31, 0.86) !important;
   border-color: transparent !important;
 }
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="claude"] .composer-combined-picker-trigger-primary {
+  color: rgba(29, 29, 31, 0.86) !important;
+}
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="claude"] .composer-combined-picker-trigger-suffix {
-  color: color-mix(in srgb, #ffffff 54%, transparent) !important;
+  color: rgba(29, 29, 31, 0.86) !important;
+  font-weight: 500 !important;
 }
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="claude"]
   .composer-combined-picker-trigger-separator {
-  color: color-mix(in srgb, #ffffff 62%, transparent) !important;
+  color: rgba(29, 29, 31, 0.42) !important;
   font-weight: 400;
 }
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="claude"]
   .composer-combined-picker-trigger-fast {
-  color: color-mix(in srgb, #ffffff 54%, transparent) !important;
+  color: rgba(29, 29, 31, 0.56) !important;
   font-weight: 400;
 }
 

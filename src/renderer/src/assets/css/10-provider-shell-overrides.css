@@ -1404,6 +1404,17 @@
 [data-theme="alabaster"][data-composer-style="claude"]
   .composer-combined-picker-trigger
   .composer-combined-picker-trigger-suffix {
+  color: rgba(18, 21, 27, 0.88) !important;
+  font-weight: 500 !important;
+}
+[data-theme="alabaster"][data-composer-style="claude"]
+  .composer-combined-picker-trigger
+  .composer-combined-picker-trigger-separator {
+  color: rgba(18, 21, 27, 0.42) !important;
+}
+[data-theme="alabaster"][data-composer-style="claude"]
+  .composer-combined-picker-trigger
+  .composer-combined-picker-trigger-fast {
   color: rgba(18, 21, 27, 0.56) !important;
 }
 
@@ -1425,6 +1436,17 @@
 [data-theme="obsidian"][data-composer-style="claude"]
   .composer-combined-picker-trigger
   .composer-combined-picker-trigger-suffix {
+  color: rgba(255, 255, 255, 0.90) !important;
+  font-weight: 500 !important;
+}
+[data-theme="obsidian"][data-composer-style="claude"]
+  .composer-combined-picker-trigger
+  .composer-combined-picker-trigger-separator {
+  color: color-mix(in srgb, #ffffff 62%, transparent) !important;
+}
+[data-theme="obsidian"][data-composer-style="claude"]
+  .composer-combined-picker-trigger
+  .composer-combined-picker-trigger-fast {
   color: rgba(255, 255, 255, 0.58) !important;
 }
 

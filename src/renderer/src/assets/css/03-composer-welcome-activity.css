@@ -8229,6 +8229,39 @@
   font: inherit;
   cursor: pointer;
   text-align: left;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--composer-provider-accent, inherit);
+  border-left: 1px solid color-mix(in srgb, currentColor 24%, transparent);
+  padding-left: 8px;
+  margin-left: 4px;
+}
+
+.composer-provider-button::after {
+  content: none !important;
+}
+
+.composer-provider-button .composer-provider-button-icon,
+.composer-provider-button .sidebar-provider-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  line-height: 1;
+  width: 18px;
+  height: 18px;
+}
+
+.composer-provider-button .sidebar-provider-icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+.composer-provider-button .provider-glyph {
+  --provider-accent: var(--composer-provider-accent, currentColor) !important;
+}
+
+.composer-provider-button:hover:not(:disabled) {
+  color: color-mix(in srgb, var(--composer-provider-accent, currentColor) 82%, white);
 }
 
 .composer-provider-button:disabled {
@@ -8241,6 +8274,18 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   max-width: 130px;
+  color: inherit;
+}
+
+/* Shell-specific provider chrome may still hardcode muted text; keep the
+ * trigger label + glyph on the resolved provider accent (incl. Ollama
+ * brand overrides via --composer-provider-accent on the button). */
+[data-composer-control="provider"].composer-provider-button {
+  color: var(--composer-provider-accent, inherit) !important;
+}
+
+[data-composer-control="provider"].composer-provider-button:hover:not(:disabled) {
+  color: color-mix(in srgb, var(--composer-provider-accent, currentColor) 82%, white) !important;
 }
 
 .composer-actions {

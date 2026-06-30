@@ -44,7 +44,6 @@ import { getProviderLabel } from '../lib/providerLabels'
 import { CombinedModelPicker, type CombinedModelPickerModelOption } from './CombinedModelPicker'
 import { CombinedPermissionsPicker, type PermissionOption } from './CombinedPermissionsPicker'
 import { ComposerProviderPicker } from './ComposerProviderPicker'
-import { ProviderBadgeIcon } from './Sidebar'
 
 /** The right-pane working copy: preset metadata + a live participant list
  * (materialized once on selection so the rows carry stable ids for React keys
@@ -306,7 +305,7 @@ function RosterParticipantRow({
             onSelect={(next: ProviderId) =>
               onPatch(participant.id, buildProviderChangeParticipantPatch(next))
             }
-            triggerIcon={<ProviderBadgeIcon provider={participant.provider} />}
+            activeModelId={selectedModelId}
             title="Participant provider"
             repositionOnScroll
           />

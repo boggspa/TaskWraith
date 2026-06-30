@@ -191,14 +191,6 @@
   font: inherit;
   color: inherit;
 }
-[data-composer-style="codex"] [data-composer-control="provider"]::after {
-  /* Mirror the chevron the permission + model pickers already wear
-   * (line 16210 / 16263) so the provider reads as a peer-token. */
-  content: '▾';
-  font-size: 9px;
-  margin-left: 4px;
-  opacity: 0.7;
-}
 
 /* Turn / Continuous toggle — Codex parity (1.0.3 polish).
  *
@@ -260,28 +252,46 @@
   color: #ffffff;
 }
 
-/* Permission picker styled like Codex's "Full access" warning chip */
+/* Permission picker styled like Codex's mode-tinted chip + model-style chevron */
 [data-composer-style="codex"] [data-composer-control="permission"] {
   min-height: 28px;
   padding: 0 10px 0 8px;
   border-radius: 999px;
   background: transparent;
   border: 0;
-  color: #ff7a59;
+  color: color-mix(in srgb, #ffffff 88%, transparent);
   font-size: calc(var(--font-size-xs) + 1px);
   font-weight: 500;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
 }
 [data-composer-style="codex"] [data-composer-control="permission"]:hover {
-  background: color-mix(in srgb, #ff7a59 8%, transparent);
+  background: color-mix(in srgb, #ffffff 6%, transparent);
 }
 [data-composer-style="codex"] [data-composer-control="permission"] svg {
-  color: #ff7a59;
+  color: inherit;
 }
 [data-composer-style="codex"] [data-composer-control="permission"]::after {
-  content: '▾';
-  font-size: 9px;
-  margin-left: 4px;
-  opacity: 0.8;
+  content: '';
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  margin-left: 6px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  opacity: 0.72;
+  transform: translateY(-1px) rotate(45deg);
+  flex: 0 0 auto;
+  color: color-mix(in srgb, #ffffff 56%, transparent);
+}
+[data-composer-style="codex"]
+  [data-composer-control="permission"][data-permission-value="plan"]::after {
+  color: color-mix(in srgb, #6fb6ff 72%, transparent);
+}
+[data-composer-style="codex"]
+  [data-composer-control="permission"][data-permission-value="auto_edit"]::after {
+  color: color-mix(in srgb, #ef4444 72%, transparent);
 }
 
 /* Model picker styled like "5.5 Extra High" with lightning glyph */
@@ -301,36 +311,26 @@
 [data-composer-style="codex"] [data-composer-control="model"]:hover {
   background: color-mix(in srgb, #ffffff 6%, transparent);
 }
-[data-composer-style="codex"] [data-composer-control="model"] svg {
+[data-composer-style="codex"] [data-composer-control="model"] svg:not(.composer-combined-picker-trigger-fast-bolt) {
   display: none;
 }
-/* Codex hallmark lightning bolt next to the model name in the
- * chip. Gated to render ONLY when Fast mode is currently active
- * for the selected model — pre-pre-ship the bolt rendered
- * unconditionally and read as a permanent decoration regardless
- * of whether Fast tier was actually engaged for the run. With
- * the `data-fast-mode-active="true"` attribute (threaded through
- * from CombinedModelPicker.tsx), the bolt now functions as a
- * status indicator: present means "this run is using the paid
- * Fast tier", absent means standard tier.
- *
- * Size bumped from 11×13 → 22×24 (≈2x) so the indicator reads
- * more pronounced — matches the user's stated preference for the
- * bolt to be a visually prominent badge rather than a subtle
- * glyph. Vertical alignment uses translateY to centre against
- * the chip text baseline. */
-[data-composer-style="codex"]
-  [data-composer-control="model"][data-fast-mode-active="true"]::before {
-  content: '';
-  display: inline-block;
-  width: 22px;
-  height: 24px;
-  margin-right: 5px;
-  vertical-align: middle;
-  transform: translateY(-1px);
-  background-color: color-mix(in srgb, var(--accent) 90%, #ffffff);
-  -webkit-mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path d='M9 1 3 9h4l-1 6 6-8H8l1-6z' fill='currentColor'/></svg>") center/contain no-repeat;
-          mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path d='M9 1 3 9h4l-1 6 6-8H8l1-6z' fill='currentColor'/></svg>") center/contain no-repeat;
+/* Codex Fast-tier monoline bolt on the model chip trigger only (not the
+ * popover picker — that uses fixed 11×13 via `.codex-fast-bolt-icon`).
+ * ~2× the base 0.62×0.78em silhouette so it reads beside the label
+ * without `width:100%` layout blow-up. */
+[data-composer-style="codex"] .composer-combined-picker-trigger-fast-bolt {
+  flex-shrink: 0;
+  display: block;
+  width: 1.24em;
+  /* 15% vertical squish via unequal box vs viewBox — not transform: scaleY */
+  height: 1.128em;
+  margin-right: 0.12em;
+  color: color-mix(in srgb, #ffffff 58%, transparent);
+  transform: translateY(0.5px);
+}
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"]
+  .composer-combined-picker-trigger-fast-bolt {
+  color: rgba(29, 29, 31, 0.58);
 }
 [data-composer-style="codex"] [data-composer-control="model"]::after {
   content: '';
@@ -358,7 +358,7 @@
 [data-composer-style="codex"] .composer-action-btn.run-btn:hover:not(:disabled) {
   background: #ffffff;
 }
-[data-composer-style="codex"] .composer-action-btn:disabled {
+[data-composer-style="codex"] .composer-action-btn:disabled:not(.run-btn) {
   width: 32px;
   height: 32px;
   border-radius: 999px;
@@ -366,6 +366,21 @@
   color: color-mix(in srgb, #ffffff 36%, transparent);
   border: 0;
   box-shadow: none;
+}
+/* Empty composer: dimmed light-gray bubble + darker gray arrow (real Codex idle). */
+[data-composer-style="codex"] .composer-action-btn.run-btn:disabled {
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  background: color-mix(in srgb, #ffffff 48%, transparent);
+  color: color-mix(in srgb, #0d0d0d 62%, transparent);
+  border: 0;
+  box-shadow: none;
+  opacity: 1;
+}
+[data-composer-style="codex"] .composer-action-btn.run-btn:disabled .sf-symbol-icon,
+[data-composer-style="codex"] .composer-action-btn.run-btn:disabled .sf-symbol-icon svg {
+  color: inherit;
 }
 [data-composer-style="codex"] .composer-action-btn.stop-btn,
 [data-composer-style="codex"] .composer-action-btn.run-btn.queue {
@@ -1878,11 +1893,26 @@
   order: -1;
   margin-right: 4px;
   color: color-mix(in srgb, #ffffff 70%, transparent);
+  width: 21.6px;
+  height: 21.6px;
+}
+[data-composer-style="codex"] .context-wheel svg {
+  width: 17.1px;
+  height: 17.1px;
 }
 [data-composer-style="claude"] .context-wheel {
   order: -1;
   margin-right: 6px;
   color: #e6a960; /* tinted to read like Claude's amber indicator */
+  width: 20px;
+  height: 20px;
+}
+[data-composer-style="claude"] .context-wheel svg {
+  width: 15px;
+  height: 15px;
+}
+[data-composer-style="claude"] .composer-context-trigger {
+  transform: translateY(-4px);
 }
 
 /* Light-theme override for the context donut. Base + Codex

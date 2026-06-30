@@ -929,9 +929,22 @@ export function XSymbolIcon() {
   )
 }
 
-export function ContextWheel({ percent, label }: { percent: number; label: string }) {
+export function ContextWheel({
+  percent,
+  label,
+  codexShell = false,
+  claudeShell = false
+}: {
+  percent: number
+  label: string
+  /** Codex composer shell — 10% smaller ring, +1px rendered stroke weight. */
+  codexShell?: boolean
+  /** Claude composer shell — hairline ~1px ring matching real Claude. */
+  claudeShell?: boolean
+}) {
   const clamped = Math.max(0, Math.min(100, percent))
   const radius = 5.5
+  const strokeWidth = codexShell ? 2.7 : claudeShell ? 1 : 1.7
   const circumference = 2 * Math.PI * radius
   const dash = (clamped / 100) * circumference
   const remainingDash = circumference - dash
@@ -948,7 +961,7 @@ export function ContextWheel({ percent, label }: { percent: number; label: strin
           r={radius}
           fill="none"
           stroke="currentColor"
-          strokeWidth="1.7"
+          strokeWidth={strokeWidth}
           opacity="0.22"
         />
         <circle
@@ -957,7 +970,7 @@ export function ContextWheel({ percent, label }: { percent: number; label: strin
           r={radius}
           fill="none"
           stroke="currentColor"
-          strokeWidth="1.7"
+          strokeWidth={strokeWidth}
           strokeLinecap="round"
           strokeDasharray={`${dash} ${remainingDash}`}
           strokeDashoffset={circumference / 4}

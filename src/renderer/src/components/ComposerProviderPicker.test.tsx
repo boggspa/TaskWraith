@@ -16,7 +16,6 @@ function renderTrigger(
       grokAvailable={false}
       cursorAvailable={false}
       onSelect={() => undefined}
-      triggerIcon={<span>link</span>}
       title="Provider"
       {...overrides}
     />
@@ -31,6 +30,8 @@ describe('ComposerProviderPicker trigger', () => {
     expect(html).toContain('composer-picker-label')
     expect(html).toContain('composer-provider-button')
     expect(html).toContain('aria-haspopup="dialog"')
+    expect(html).toContain('sidebar-provider-icon')
+    expect(html).toContain('provider-glyph')
     // Trigger reflects the active provider's display name.
     expect(html).toContain('Codex')
   })
@@ -46,6 +47,17 @@ describe('ComposerProviderPicker trigger', () => {
     const html = renderTrigger({ disabled: true })
 
     expect(html).toContain('disabled')
+  })
+
+  it('applies Ollama display-brand hue + label overrides from the active model', () => {
+    const html = renderTrigger({
+      provider: 'ollama',
+      activeModelId: 'qwen3.5:9b'
+    })
+
+    expect(html).toContain('provider-alibaba')
+    expect(html).toContain('Alibaba')
+    expect(html).toContain('--composer-provider-accent:var(--provider-alibaba-color, currentColor)')
   })
 })
 

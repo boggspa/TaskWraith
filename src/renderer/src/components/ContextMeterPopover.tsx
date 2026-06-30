@@ -193,7 +193,12 @@ export function ContextMeterPopover({
         aria-expanded={open}
         title={label}
       >
-        <ContextWheel percent={percent} label={label} />
+        <ContextWheel
+          percent={percent}
+          label={label}
+          codexShell={composerStyle === 'codex'}
+          claudeShell={composerStyle === 'claude'}
+        />
       </button>
       {popoverContent ? createPortal(popoverContent, document.body) : null}
     </>

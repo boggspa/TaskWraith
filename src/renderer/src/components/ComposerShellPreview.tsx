@@ -10,7 +10,8 @@ import {
 } from './AppChromeSymbols'
 import { ComposerCumulativeTimecode, ComposerRunTimecode } from './ComposerTimecodes'
 import { FONT_STACKS, resolveComposerFontFamily } from '../lib/typefaceOptions'
-import type { ComposerStyle, ThemeAppearance } from '../../../main/store/types'
+import type { ComposerStyle, ProviderId, ThemeAppearance } from '../../../main/store/types'
+import { ProviderBadgeIcon } from './Sidebar'
 
 /**
  * ComposerShellPreview — the single source of truth for the inert composer
@@ -132,6 +133,25 @@ export function getComposerPreviewMeta(style: ComposerStyle): ComposerPreviewMet
   }
 }
 
+function previewProviderIdForStyle(style: ComposerStyle): ProviderId {
+  switch (style) {
+    case 'codex':
+      return 'codex'
+    case 'claude':
+      return 'claude'
+    case 'gemini':
+      return 'gemini'
+    case 'kimi':
+      return 'kimi'
+    case 'grok':
+      return 'grok'
+    case 'cursor':
+      return 'cursor'
+    default:
+      return 'codex'
+  }
+}
+
 /**
  * The send-button glyph mirrors the live composer's switch
  * (Composer.tsx — `claude` → return arrow, the pill-layout branded shells →
@@ -219,6 +239,8 @@ export function ComposerShellPreview({
   onValueChange
 }: ComposerShellPreviewProps): React.ReactElement {
   const meta = getComposerPreviewMeta(composerStyle)
+  const previewProviderId = previewProviderIdForStyle(composerStyle)
+  const previewProviderHueClass = previewProviderId
 
   // Font injection mirrors the prior SettingsPanel preview: only inject when the
   // caller actually supplies the font (onboarding omits both → inherit).
@@ -357,12 +379,23 @@ export function ComposerShellPreview({
                     >
                       +
                     </button>
-                    <span
-                      className="composer-picker-label settings-composer-preview-control"
+                    <button
+                      type="button"
+                      className={`composer-picker-label composer-provider-button settings-composer-preview-control provider-${previewProviderHueClass}`}
                       data-composer-control="provider"
+                      tabIndex={-1}
+                      aria-hidden="true"
+                      style={
+                        {
+                          '--composer-provider-accent': `var(--provider-${previewProviderHueClass}-color, currentColor)`
+                        } as React.CSSProperties
+                      }
                     >
-                      {meta.providerLabel}
-                    </span>
+                      <span className="composer-provider-button-icon" aria-hidden="true">
+                        <ProviderBadgeIcon provider={previewProviderId} />
+                      </span>
+                      <span className="composer-provider-button-label">{meta.providerLabel}</span>
+                    </button>
                     <span
                       className="composer-picker-label settings-composer-preview-control"
                       data-composer-control="permission"

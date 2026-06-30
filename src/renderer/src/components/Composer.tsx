@@ -21,7 +21,7 @@ import {
   OLLAMA_TOOL_CONTROL_TIERS
 } from '../../../shared/ollamaTierTables'
 import { AgentMentionMenu } from '../components/AgentMentionMenu'
-import { ArrowUpSendIcon, ChatMediaIcon, ClaudeReturnSymbolIcon, ClockSymbolIcon, CommandSymbolIcon, FileMenuSelectionIcon, GoalSymbolIcon, LinkCircleSymbolIcon, ModelSymbolIcon, PermissionSymbolIcon, PlusSymbolIcon, QueueSymbolIcon, ReviewSymbolIcon, RunSymbolIcon, ScreenWatchSymbolIcon, SteerSymbolIcon, StopSymbolIcon, TrustSymbolIcon, WorkflowGlyphIcon, XSymbolIcon } from '../components/AppChromeSymbols'
+import { ArrowUpSendIcon, ChatMediaIcon, ClaudeReturnSymbolIcon, ClockSymbolIcon, CommandSymbolIcon, FileMenuSelectionIcon, GoalSymbolIcon, ModelSymbolIcon, PermissionSymbolIcon, PlusSymbolIcon, QueueSymbolIcon, ReviewSymbolIcon, RunSymbolIcon, ScreenWatchSymbolIcon, SteerSymbolIcon, StopSymbolIcon, TrustSymbolIcon, WorkflowGlyphIcon, XSymbolIcon } from '../components/AppChromeSymbols'
 import { ContextMeterPopover } from './ContextMeterPopover'
 import { CombinedModelPicker } from '../components/CombinedModelPicker'
 import type { CombinedModelPickerModelOption, CombinedModelPickerReasoningOption } from '../components/CombinedModelPicker'
@@ -3175,7 +3175,9 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                 (!ensembleBinding && isCurrentChatProviderLocked) ||
                                 Boolean(ensembleBinding && isCurrentEnsembleRoundRunning)
                               }
-                              triggerIcon={<LinkCircleSymbolIcon />}
+                              activeModelId={
+                                ensembleBinding?.model ?? selectedComposerModelType
+                              }
                               title={ensembleBinding ? 'Selected participant provider' : 'Provider'}
                             />
                           )

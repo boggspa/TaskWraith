@@ -24570,7 +24570,7 @@ function App(): React.JSX.Element {
                             isSideChatProviderLocked ||
                             sideChat.chatKind === 'ensemble'
                           }
-                          triggerIcon={<LinkCircleSymbolIcon />}
+                          activeModelId={sideComposerSelectedModel}
                           title={
                             sideChat.chatKind === 'ensemble'
                               ? 'Side ensemble provider is configured by participants'

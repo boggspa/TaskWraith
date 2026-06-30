@@ -5,8 +5,8 @@
  * "+"/attach menu). Modelled structurally on ComposerPlusPicker: a
  * trigger that keeps the composer's `.composer-picker-label` chrome
  * + `data-composer-control="provider"` hook (so every shell's
- * existing provider-control positioning / theming / chevron applies
- * unchanged) plus a portaled popover that reuses the shared
+ * existing provider-control positioning / theming applies unchanged)
+ * plus a portaled popover that reuses the shared
  * `composer-combined-picker-popover` + `composer-plus-picker-*`
  * classes and a `shell-${composerStyle}` class.
  *
@@ -32,10 +32,11 @@
  * from ComposerPlusPicker.
  */
 
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import type { AppSettings, ComposerStyle, ProviderId } from '../../../main/store/types'
 import { isRetiredProvider } from '../../../shared/retiredProviders'
+import { resolveProviderBrandLabel, resolveProviderHueClass } from '../lib/ollamaDisplayBrand'
 import { ProviderBadgeIcon, getProviderName } from './Sidebar'
 
 interface ComposerProviderPickerProps {
@@ -56,10 +57,10 @@ interface ComposerProviderPickerProps {
   providerRunPauses?: AppSettings['providerRunPauses']
   disabled?: boolean
   /**
-   * Trigger glyph — App.tsx passes <LinkCircleSymbolIcon /> so the
-   * trigger reads identically to the old provider label.
+   * Active model id — used to resolve Ollama display-brand hue + label
+   * overrides on the trigger (matches @-mention / ensemble chip tinting).
    */
-  triggerIcon: ReactNode
+  activeModelId?: string | null
   /**
    * "Selected participant provider" (ensemble binding) or "Provider"
    * (solo). Used for the trigger title + aria-label and the popover
@@ -196,7 +197,7 @@ export function ComposerProviderPicker({
   onSelect,
   providerRunPauses,
   disabled,
-  triggerIcon,
+  activeModelId,
   title,
   repositionOnScroll
 }: ComposerProviderPickerProps): React.JSX.Element {
@@ -207,6 +208,11 @@ export function ComposerProviderPicker({
 
   const rows = resolveProviderRows(grokAvailable, cursorAvailable, providerRunPauses)
   const activePauseInfo = getProviderPauseInfo(providerRunPauses, provider)
+  const providerHueClass = resolveProviderHueClass(provider, activeModelId)
+  const displayLabel = resolveProviderBrandLabel(provider, activeModelId) ?? getProviderName(provider)
+  const triggerStyle = {
+    '--composer-provider-accent': `var(--provider-${providerHueClass}-color, currentColor)`
+  } as CSSProperties
 
   // Position the popover above the trigger (cloned from
   // ComposerPlusPicker).
@@ -299,8 +305,10 @@ export function ComposerProviderPicker({
       <button
         ref={triggerRef}
         type="button"
-        className="composer-picker-label composer-provider-button"
+        className={`composer-picker-label composer-provider-button provider-${providerHueClass}`}
         data-composer-control="provider"
+        data-provider-value={provider}
+        style={triggerStyle}
         title={title}
         aria-label={title}
         aria-haspopup="dialog"
@@ -308,8 +316,10 @@ export function ComposerProviderPicker({
         onClick={() => setOpen((current) => !current)}
         disabled={disabled}
       >
-        {triggerIcon}
-        <span className="composer-provider-button-label">{getProviderName(provider)}</span>
+        <span className="composer-provider-button-icon" aria-hidden="true">
+          <ProviderBadgeIcon provider={provider} />
+        </span>
+        <span className="composer-provider-button-label">{displayLabel}</span>
         {activePauseInfo && (
           <span className="composer-provider-button-paused" aria-label={activePauseInfo.pauseLabel}>
             Paused
