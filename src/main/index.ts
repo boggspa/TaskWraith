@@ -861,6 +861,7 @@ import { registerCheckpointHandlers } from './ipc/checkpointHandlers'
 import { registerApnsHandlers } from './ipc/apnsHandlers'
 import { registerImageGenerationHandlers } from './ipc/imageGenerationHandlers'
 import { registerMediaAssetHandlers } from './ipc/mediaAssetHandlers'
+import { registerSpellcheckHandlers } from './ipc/spellcheckHandlers'
 import { getCachedRemoteEnsemblePresets } from './remote/EnsembleRosterPresetsCache'
 import { resolveGeminiCliResumePolicy } from './GeminiSessionPolicy'
 // 1.0.5-EW26 — Kimi compatibility filter (curated + user-
@@ -18757,16 +18758,6 @@ function attachSpellcheckContextTracking(targetWindow: BrowserWindow): void {
   })
 }
 
-function currentSpellcheckContextForAction(
-  webContentsId: number,
-  input: unknown
-): SpellcheckContextSnapshot | null {
-  if (!isRecord(input)) return null
-  const point = isRecord(input.point) ? input.point : null
-  const snapshot = latestSpellcheckContextByWebContentsId.get(webContentsId) || null
-  return spellcheckContextMatchesPoint(snapshot, point) ? snapshot : null
-}
-
 function createWindow(): void {
   const isMac = process.platform === 'darwin'
   const settings = AppStore.getSettings()
@@ -25899,35 +25890,12 @@ if (isGeminiMcpBridgeProcess) {
       encryptString: (value) => safeStorage.encryptString(value)
     })
 
-    ipcMain.handle('spellcheck:get-last-context', (event, point: unknown) => {
-      const snapshot = latestSpellcheckContextByWebContentsId.get(event.sender.id) || null
-      return spellcheckContextMatchesPoint(snapshot, point) ? snapshot : null
-    })
-
-    ipcMain.handle('spellcheck:replace-misspelling', (event, input: unknown) => {
-      const snapshot = currentSpellcheckContextForAction(event.sender.id, input)
-      if (!snapshot || !isRecord(input)) {
-        return { ok: false, reason: 'stale-context' }
-      }
-      const rawSuggestion = typeof input.suggestion === 'string' ? input.suggestion.trim() : ''
-      if (!rawSuggestion) {
-        return { ok: false, reason: 'invalid-suggestion' }
-      }
-      const replacement = rawSuggestion.slice(0, 80)
-      if (!spellcheckContextIncludesSuggestion(snapshot, replacement)) {
-        return { ok: false, reason: 'suggestion-mismatch' }
-      }
-      event.sender.replaceMisspelling(replacement)
-      return { ok: true }
-    })
-
-    ipcMain.handle('spellcheck:add-word-to-dictionary', (event, input: unknown) => {
-      const snapshot = currentSpellcheckContextForAction(event.sender.id, input)
-      if (!snapshot) {
-        return { ok: false, reason: 'stale-context' }
-      }
-      const ok = event.sender.session.addWordToSpellCheckerDictionary(snapshot.misspelledWord)
-      return { ok }
+    registerSpellcheckHandlers({
+      isRecord,
+      getLatestSpellcheckContext: (webContentsId) =>
+        latestSpellcheckContextByWebContentsId.get(webContentsId) || null,
+      spellcheckContextMatchesPoint,
+      spellcheckContextIncludesSuggestion
     })
 
     registerSidebarHandlers({
