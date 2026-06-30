@@ -1857,6 +1857,12 @@
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
+[data-composer-style="claude"] .queued-messages-above-row {
+  border-radius: 14px;
+}
+[data-composer-style="claude"] .queued-messages-row {
+  border-radius: 10px;
+}
 [data-composer-style="claude"]
   .composer-above-bar-stack
   > .ensemble-roster-preset-picker.is-compact
