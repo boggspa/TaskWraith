@@ -1,9 +1,13 @@
 import { renderToStaticMarkup } from 'react-dom/server'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import type { GitRepositorySnapshot } from '../../../main/services/GitService'
 import type { DiffFileSummary } from '../../../main/store/types'
 import { DiffDetail, diffDetailHeaderSummary } from './DiffDetail'
-import { buildDiffFileContextMenuItems, DiffFileList } from './DiffFileList'
+import {
+  buildDiffFileContextMenuItems,
+  DiffFileList,
+  focusDiffFileContextMenuButton
+} from './DiffFileList'
 import { DiffToolbar } from './DiffToolbar'
 import { DiffViewer } from './DiffViewer'
 
@@ -157,6 +161,12 @@ const makeLargeChangedFileFixture = (
     }
   }
 }
+
+afterEach(() => {
+  if (typeof document !== 'undefined') {
+    document.body.innerHTML = ''
+  }
+})
 
 describe('DiffViewer large diff safety', () => {
   it('server-renders only the initial virtual window and shows truncation controls', () => {
@@ -340,6 +350,46 @@ describe('DiffFileList', () => {
 
     expect(hiddenItems.find((item) => item.id === 'open-editor')?.disabled).toBe(true)
     expect(hiddenItems.find((item) => item.id === 'stage')?.disabled).toBe(true)
+  })
+
+  it('moves focus among enabled diff rail context menu items', () => {
+    const previousDocument = globalThis.document
+    const fakeDocument = { activeElement: null as unknown }
+    const buttons = [
+      { focus: () => { fakeDocument.activeElement = buttons[0] } },
+      { focus: () => { fakeDocument.activeElement = buttons[1] } },
+      { focus: () => { fakeDocument.activeElement = buttons[2] } }
+    ]
+    const menu = {
+      querySelectorAll: () => [buttons[0], buttons[2]]
+    } as unknown as HTMLDivElement
+
+    Object.defineProperty(globalThis, 'document', {
+      configurable: true,
+      value: fakeDocument
+    })
+
+    try {
+      focusDiffFileContextMenuButton(menu, 'first')
+      expect(document.activeElement).toBe(buttons[0])
+
+      focusDiffFileContextMenuButton(menu, 'next')
+      expect(document.activeElement).toBe(buttons[2])
+
+      focusDiffFileContextMenuButton(menu, 'next')
+      expect(document.activeElement).toBe(buttons[0])
+
+      focusDiffFileContextMenuButton(menu, 'last')
+      expect(document.activeElement).toBe(buttons[2])
+
+      focusDiffFileContextMenuButton(menu, 'previous')
+      expect(document.activeElement).toBe(buttons[0])
+    } finally {
+      Object.defineProperty(globalThis, 'document', {
+        configurable: true,
+        value: previousDocument
+      })
+    }
   })
 })
 

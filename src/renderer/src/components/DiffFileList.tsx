@@ -69,6 +69,30 @@ interface DiffFileContextMenuItem {
   onSelect: () => void
 }
 
+export function focusDiffFileContextMenuButton(
+  menu: HTMLDivElement,
+  direction: 'first' | 'last' | 'next' | 'previous'
+): void {
+  const buttons = Array.from(
+    menu.querySelectorAll<HTMLButtonElement>('.file-editor-context-menu-item:not(:disabled)')
+  )
+  if (buttons.length === 0) return
+  const activeIndex = buttons.findIndex((button) => button === document.activeElement)
+  if (direction === 'first') {
+    buttons[0]?.focus()
+    return
+  }
+  if (direction === 'last') {
+    buttons[buttons.length - 1]?.focus()
+    return
+  }
+  const fallbackIndex = direction === 'next' ? -1 : 0
+  const currentIndex = activeIndex >= 0 ? activeIndex : fallbackIndex
+  const delta = direction === 'next' ? 1 : -1
+  const nextIndex = (currentIndex + delta + buttons.length) % buttons.length
+  buttons[nextIndex]?.focus()
+}
+
 const DIFF_FILE_LIST_VIRTUALIZATION_THRESHOLD = 450
 const DIFF_FILE_LIST_ROW_HEIGHT = 34
 const DIFF_FILE_LIST_OVERSCAN = 12
@@ -591,6 +615,15 @@ function DiffFileContextMenu({
     }
   }, [selection, onClose])
 
+  useEffect(() => {
+    if (!selection) return
+    const frame = window.requestAnimationFrame(() => {
+      if (!menuRef.current) return
+      focusDiffFileContextMenuButton(menuRef.current, 'first')
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [selection, items.length])
+
   if (!selection || items.length === 0) return null
 
   const viewportWidth = typeof window !== 'undefined' ? window.innerWidth : 1024
@@ -605,6 +638,22 @@ function DiffFileContextMenu({
       style={{ position: 'fixed', left: `${left}px`, top: `${top}px` }}
       role="menu"
       aria-label={`Actions for ${selection.summary.path}`}
+      onKeyDown={(event) => {
+        if (!menuRef.current) return
+        if (event.key === 'ArrowDown') {
+          event.preventDefault()
+          focusDiffFileContextMenuButton(menuRef.current, 'next')
+        } else if (event.key === 'ArrowUp') {
+          event.preventDefault()
+          focusDiffFileContextMenuButton(menuRef.current, 'previous')
+        } else if (event.key === 'Home') {
+          event.preventDefault()
+          focusDiffFileContextMenuButton(menuRef.current, 'first')
+        } else if (event.key === 'End') {
+          event.preventDefault()
+          focusDiffFileContextMenuButton(menuRef.current, 'last')
+        }
+      }}
     >
       {items.map((item) => (
         <button
