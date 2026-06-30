@@ -23,7 +23,11 @@ export interface EditorTabStripProps {
   workspacePath?: string
   onSelect: (path: string) => void
   onClose: (path: string) => void
-  onContextMenuTab: (path: string, anchor: FileEditorContextMenuAnchor) => void
+  onContextMenuTab: (
+    path: string,
+    anchor: FileEditorContextMenuAnchor,
+    opener?: HTMLElement | null
+  ) => void
 }
 
 const isBufferDirty = (buffer: FileEditorTabBuffer | null | undefined): boolean => {
@@ -104,7 +108,10 @@ export function EditorTabStrip({
               event.preventDefault()
               event.stopPropagation()
               onSelect(buffer.path)
-              onContextMenuTab(buffer.path, { x: event.clientX, y: event.clientY })
+              const tabButton = event.currentTarget.querySelector<HTMLElement>(
+                '.file-editor-tab-select'
+              )
+              onContextMenuTab(buffer.path, { x: event.clientX, y: event.clientY }, tabButton)
             }}
           >
             <button
@@ -126,7 +133,8 @@ export function EditorTabStrip({
                   onSelect(buffer.path)
                   onContextMenuTab(
                     buffer.path,
-                    contextMenuAnchorFromRect(event.currentTarget.getBoundingClientRect())
+                    contextMenuAnchorFromRect(event.currentTarget.getBoundingClientRect()),
+                    event.currentTarget
                   )
                   return
                 }

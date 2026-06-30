@@ -137,11 +137,13 @@ type FileEditorContextMenuSelection =
       kind: 'tree'
       anchor: FileEditorContextMenuAnchor
       entry: WorkspaceFileEntry
+      opener?: HTMLElement | null
     }
   | {
       kind: 'tab'
       anchor: FileEditorContextMenuAnchor
       path: string
+      opener?: HTMLElement | null
     }
 
 export type FileEditorDirtyActionKind = 'reload' | 'discard'
@@ -163,7 +165,7 @@ interface FileEditorContextMenuItem {
 interface FileEditorContextMenuProps {
   selection: FileEditorContextMenuSelection | null
   items: FileEditorContextMenuItem[]
-  onClose: () => void
+  onClose: (options?: { restoreFocus?: boolean }) => void
 }
 
 export interface FileEditorPanelState {
@@ -556,6 +558,17 @@ export function FileEditorPanel({
   const [quickOpenSelectedIndex, setQuickOpenSelectedIndex] = useState(0)
   const [contextMenuSelection, setContextMenuSelection] =
     useState<FileEditorContextMenuSelection | null>(null)
+  const closeContextMenu = useCallback(
+    (options?: { restoreFocus?: boolean }) => {
+      const opener = contextMenuSelection?.opener
+      setContextMenuSelection(null)
+      if (!options?.restoreFocus || !opener?.isConnected) return
+      window.requestAnimationFrame(() => {
+        if (opener.isConnected) opener.focus()
+      })
+    },
+    [contextMenuSelection?.opener]
+  )
   const lastRefreshTickRef = useRef(refreshTick)
   const lastOpenRequestRef = useRef<number | null>(null)
   const lastCommandRequestRef = useRef<number | null>(null)
@@ -1788,8 +1801,8 @@ export function FileEditorPanel({
         onFilterChange={setFilter}
         onRefresh={refreshCurrentView}
         onOpenEntry={openFile}
-        onContextMenuEntry={(entry, anchor) => {
-          setContextMenuSelection({ kind: 'tree', entry, anchor })
+        onContextMenuEntry={(entry, anchor, opener) => {
+          setContextMenuSelection({ kind: 'tree', entry, anchor, opener })
         }}
       />
 
@@ -1888,15 +1901,15 @@ export function FileEditorPanel({
             setCursorStatus(DEFAULT_CURSOR_STATUS)
           }}
           onClose={requestCloseBuffer}
-          onContextMenuTab={(path, anchor) => {
+          onContextMenuTab={(path, anchor, opener) => {
             setSelectedPath(path)
-            setContextMenuSelection({ kind: 'tab', path, anchor })
+            setContextMenuSelection({ kind: 'tab', path, anchor, opener })
           }}
         />
         <FileEditorContextMenu
           selection={contextMenuSelection}
           items={contextMenuItems}
-          onClose={() => setContextMenuSelection(null)}
+          onClose={closeContextMenu}
         />
         {showDeleteConfirm && selectedPath && (
           <div className="file-editor-modal-backdrop">
@@ -2125,7 +2138,7 @@ function FileEditorContextMenu({
     const handleKeyDown = (event: globalThis.KeyboardEvent) => {
       if (event.key === 'Escape') {
         event.preventDefault()
-        onClose()
+        onClose({ restoreFocus: true })
       }
     }
     document.addEventListener('mousedown', handlePointerDown, true)
@@ -2189,7 +2202,7 @@ function FileEditorContextMenu({
           onClick={() => {
             if (item.disabled) return
             item.onSelect()
-            onClose()
+            onClose({ restoreFocus: true })
           }}
         >
           <span className="file-editor-context-menu-label">{item.label}</span>

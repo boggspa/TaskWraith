@@ -59,6 +59,7 @@ type DiffFileListRow =
 interface DiffFileContextMenuSelection {
   anchor: FileEditorContextMenuAnchor
   gitStatus?: GitFileStatus
+  opener?: HTMLElement | null
   summary: DiffFileSummary
 }
 
@@ -425,12 +426,25 @@ export function DiffFileList({
     (
       summary: DiffFileSummary,
       gitStatus: GitFileStatus | undefined,
-      anchor: FileEditorContextMenuAnchor
+      anchor: FileEditorContextMenuAnchor,
+      opener?: HTMLElement | null
     ) => {
       onSelectPath(summary.path)
-      setContextMenuSelection({ anchor, gitStatus, summary })
+      setContextMenuSelection({ anchor, gitStatus, opener, summary })
     },
     [onSelectPath]
+  )
+
+  const closeContextMenu = useCallback(
+    (options?: { restoreFocus?: boolean }) => {
+      const opener = contextMenuSelection?.opener
+      setContextMenuSelection(null)
+      if (!options?.restoreFocus || !opener?.isConnected) return
+      window.requestAnimationFrame(() => {
+        if (opener.isConnected) opener.focus()
+      })
+    },
+    [contextMenuSelection?.opener]
   )
 
   const copyPath = useCallback((path: string) => {
@@ -513,7 +527,7 @@ export function DiffFileList({
       <DiffFileContextMenu
         selection={contextMenuSelection}
         items={contextMenuItems}
-        onClose={() => setContextMenuSelection(null)}
+        onClose={closeContextMenu}
       />
     </div>
   )
@@ -532,7 +546,8 @@ function DiffFileRow({
   onOpenContextMenu: (
     summary: DiffFileSummary,
     gitStatus: GitFileStatus | undefined,
-    anchor: FileEditorContextMenuAnchor
+    anchor: FileEditorContextMenuAnchor,
+    opener?: HTMLElement | null
   ) => void
   onSelectPath: (path: string) => void
   summary: DiffFileSummary
@@ -541,7 +556,12 @@ function DiffFileRow({
   const pathDisplay = diffFilePathDisplay(summary.path)
   const openPointerContextMenu = (event: ReactMouseEvent<HTMLButtonElement>) => {
     event.preventDefault()
-    onOpenContextMenu(summary, gitStatus, { x: event.clientX, y: event.clientY })
+    onOpenContextMenu(
+      summary,
+      gitStatus,
+      { x: event.clientX, y: event.clientY },
+      event.currentTarget
+    )
   }
 
   const openKeyboardContextMenu = (event: ReactKeyboardEvent<HTMLButtonElement>) => {
@@ -550,7 +570,8 @@ function DiffFileRow({
     onOpenContextMenu(
       summary,
       gitStatus,
-      contextMenuAnchorFromRect(event.currentTarget.getBoundingClientRect())
+      contextMenuAnchorFromRect(event.currentTarget.getBoundingClientRect()),
+      event.currentTarget
     )
   }
 
@@ -613,7 +634,7 @@ function DiffFileContextMenu({
 }: {
   selection: DiffFileContextMenuSelection | null
   items: DiffFileContextMenuItem[]
-  onClose: () => void
+  onClose: (options?: { restoreFocus?: boolean }) => void
 }) {
   const menuRef = useRef<HTMLDivElement | null>(null)
 
@@ -627,7 +648,7 @@ function DiffFileContextMenu({
     const handleKeyDown = (event: globalThis.KeyboardEvent) => {
       if (event.key === 'Escape') {
         event.preventDefault()
-        onClose()
+        onClose({ restoreFocus: true })
       }
     }
     document.addEventListener('mousedown', handlePointerDown, true)
@@ -689,7 +710,7 @@ function DiffFileContextMenu({
           onClick={() => {
             if (item.disabled) return
             item.onSelect()
-            onClose()
+            onClose({ restoreFocus: true })
           }}
         >
           <span className="file-editor-context-menu-label">{item.label}</span>

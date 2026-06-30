@@ -29,7 +29,11 @@ export interface WorkspaceFileTreeProps {
   onFilterChange: (value: string) => void
   onRefresh: () => void | Promise<void>
   onOpenEntry: (entry: WorkspaceFileEntry) => void | Promise<void>
-  onContextMenuEntry: (entry: WorkspaceFileEntry, anchor: FileEditorContextMenuAnchor) => void
+  onContextMenuEntry: (
+    entry: WorkspaceFileEntry,
+    anchor: FileEditorContextMenuAnchor,
+    opener?: HTMLElement | null
+  ) => void
 }
 
 const FILE_TREE_VIRTUALIZATION_THRESHOLD = 700
@@ -219,7 +223,8 @@ export function WorkspaceFileTree({
             top: 0,
             width: 0
           }
-        )
+        ),
+        currentRow
       )
       currentRow?.focus()
       return
@@ -316,7 +321,11 @@ export function WorkspaceFileTree({
                   onContextMenu={(event) => {
                     event.preventDefault()
                     event.stopPropagation()
-                    onContextMenuEntry(entry, { x: event.clientX, y: event.clientY })
+                    onContextMenuEntry(
+                      entry,
+                      { x: event.clientX, y: event.clientY },
+                      event.currentTarget
+                    )
                   }}
                   data-file-editor-index={rowIndex}
                   data-file-editor-path={entry.path}
