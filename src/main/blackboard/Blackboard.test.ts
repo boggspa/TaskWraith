@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { BlackboardEntry } from '../store/types'
 import {
   BLACKBOARD_MAX_ENTRIES,
+  BLACKBOARD_MAX_STORE_LEN,
   BLACKBOARD_MAX_VALUE_LEN,
   deriveBlackboardFromRoundSummary,
   formatBlackboardForPrompt,
@@ -77,10 +78,19 @@ describe('makeBlackboardEntry', () => {
     expect(e).toMatchObject({ category: 'note', scope: 'session', participantId: 'system' })
   })
 
-  it('clamps an over-long value with an ellipsis', () => {
+  it('stores long values beyond the prompt render cap', () => {
     const long = 'x'.repeat(BLACKBOARD_MAX_VALUE_LEN + 50)
     const e = makeBlackboardEntry({ ...base, key: 'k', value: long })
-    expect(e!.value.length).toBeLessThanOrEqual(BLACKBOARD_MAX_VALUE_LEN)
+    expect(e!.value).toBe(long)
+    expect(e!.value.length).toBeGreaterThan(BLACKBOARD_MAX_VALUE_LEN)
+    expect(e!.value.endsWith('…')).toBe(false)
+  })
+
+  it('caps stored values at the store limit instead of the prompt render cap', () => {
+    const long = 'x'.repeat(BLACKBOARD_MAX_STORE_LEN + 50)
+    const e = makeBlackboardEntry({ ...base, key: 'k', value: long })
+    expect(e!.value.length).toBeLessThanOrEqual(BLACKBOARD_MAX_STORE_LEN)
+    expect(e!.value.length).toBeGreaterThan(BLACKBOARD_MAX_VALUE_LEN)
     expect(e!.value.endsWith('…')).toBe(true)
   })
 
@@ -183,6 +193,27 @@ describe('formatBlackboardForPrompt', () => {
     expect(out).toContain('Verified facts:')
     expect(out).not.toContain('Decisions:')
     expect(out).not.toContain('Open risks:')
+  })
+
+  it('truncates long values only when rendering the prompt digest', () => {
+    const long = `${'x'.repeat(BLACKBOARD_MAX_VALUE_LEN + 200)}tail`
+    const e = makeBlackboardEntry({
+      id: 'id-1',
+      chatId: 'chat-1',
+      roundId: 'round-1',
+      participantId: 'Codex',
+      key: 'long-note',
+      value: long,
+      category: 'decision',
+      scope: 'session',
+      createdAt: '2026-05-31T00:00:00.000Z'
+    })
+    expect(e!.value).toBe(long)
+
+    const out = formatBlackboardForPrompt([e!])
+    expect(out).toContain('long-note:')
+    expect(out).toContain('… (—Codex)')
+    expect(out).not.toContain('tail')
   })
 })
 

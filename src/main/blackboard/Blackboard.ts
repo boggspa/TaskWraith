@@ -19,7 +19,8 @@ import type {
 
 /** Hard caps so the digest can never balloon a prompt. */
 export const BLACKBOARD_MAX_ENTRIES = 60
-export const BLACKBOARD_MAX_VALUE_LEN = 600
+export const BLACKBOARD_MAX_VALUE_LEN = 1000
+export const BLACKBOARD_MAX_STORE_LEN = 4000
 export const BLACKBOARD_MAX_KEY_LEN = 80
 
 /** Stable render/derive order — decisions first, throwaway notes last. */
@@ -79,7 +80,7 @@ export interface MakeBlackboardEntryInput {
  */
 export function makeBlackboardEntry(input: MakeBlackboardEntryInput): BlackboardEntry | null {
   const key = clamp(input.key ?? '', BLACKBOARD_MAX_KEY_LEN)
-  const value = clamp(input.value ?? '', BLACKBOARD_MAX_VALUE_LEN)
+  const value = clamp(input.value ?? '', BLACKBOARD_MAX_STORE_LEN)
   if (!key || !value) return null
   return {
     id: input.id,
@@ -168,7 +169,8 @@ export function formatBlackboardForPrompt(entries: BlackboardEntry[]): string {
     if (!bucket || bucket.length === 0) continue
     lines.push(`  ${CATEGORY_LABEL[category]}:`)
     for (const entry of bucket) {
-      lines.push(`    - ${entry.key}: ${entry.value} (—${entry.participantId})`)
+      const value = clamp(entry.value, BLACKBOARD_MAX_VALUE_LEN)
+      lines.push(`    - ${entry.key}: ${value} (—${entry.participantId})`)
     }
   }
   return lines.join('\n')
