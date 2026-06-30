@@ -1185,6 +1185,8 @@ const api = {
   getWorkflowRunSummaries: (workflowId?: string) =>
     ipcRenderer.invoke('get-workflow-run-summaries', workflowId),
   getWorkflowRunEvents: (filter: any = {}) => ipcRenderer.invoke('get-workflow-run-events', filter),
+  getAgentStatsSummaries: (agentIds: string[]) =>
+    ipcRenderer.invoke('get-agent-stats-summaries', agentIds),
   // Audit-run orchestration. startAuditRun resolves with the terminal record;
   // live phase/finding updates arrive via onAuditRunChanged ('audit-run-changed').
   startAuditRun: (input: {

@@ -63,6 +63,7 @@ export interface ScheduledWorkflowHandlersDeps {
   ) => WorkflowDefinition | null
   getWorkflowRunSummaries: (workflowId?: string) => Promise<unknown[]>
   getWorkflowRunEventsFiltered: (filter: Record<string, unknown>) => Promise<unknown[]>
+  getAgentStatsSummaries: (agentIds: string[]) => Promise<unknown[]>
 
   emitDueScheduledTasks: () => void
   scheduleNextTaskTimer: () => void
@@ -252,5 +253,11 @@ export function registerScheduledWorkflowHandlers(deps: ScheduledWorkflowHandler
 
   ipcMain.handle('get-workflow-run-events', (_, filter: Record<string, unknown> = {}) =>
     deps.getWorkflowRunEventsFiltered(filter)
+  )
+
+  ipcMain.handle('get-agent-stats-summaries', (_, agentIds: unknown) =>
+    deps.getAgentStatsSummaries(
+      Array.isArray(agentIds) ? agentIds.filter((id): id is string => typeof id === 'string') : []
+    )
   )
 }

@@ -25587,6 +25587,7 @@ if (isGeminiMcpBridgeProcess) {
       setWorkflowUnattendedElevation: (id, ack) => AppStore.setWorkflowUnattendedElevation(id, ack),
       getWorkflowRunSummaries: (workflowId) => AppStore.getWorkflowRunSummaries(workflowId),
       getWorkflowRunEventsFiltered: (filter) => AppStore.getWorkflowRunEventsFiltered(filter),
+      getAgentStatsSummaries: (agentIds) => AppStore.getAgentStatsSummaries(agentIds),
 
       emitDueScheduledTasks,
       scheduleNextTaskTimer,

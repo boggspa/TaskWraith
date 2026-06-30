@@ -60,6 +60,7 @@ function createDeps() {
     setWorkflowUnattendedElevation: vi.fn((_, ack) => ({ ...defaultWorkflow, unattendedElevation: ack })),
     getWorkflowRunSummaries: vi.fn(async () => [{ id: 'summary-1' }]),
     getWorkflowRunEventsFiltered: vi.fn(async () => [{ id: 'event-1' }]),
+    getAgentStatsSummaries: vi.fn(async () => [{ agentId: 'pooled-agent-1' }]),
 
     emitDueScheduledTasks: vi.fn(),
     scheduleNextTaskTimer: vi.fn(),

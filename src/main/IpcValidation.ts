@@ -146,6 +146,8 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   // Stage 1 slice 4 — durable run-ledger read queries.
   'get-workflow-run-summaries': ['optionalString'],
   'get-workflow-run-events': ['optionalObject'],
+  // Agent Pool (Phase 2) — per-Agent stats summaries (non-empty id list only).
+  'get-agent-stats-summaries': ['array'],
   // Audit-run orchestration (handlers in src/main/ipc/auditHandlers.ts).
   'audit-run:start': ['object'],
   'audit-run:cancel': ['nonEmptyString'],

@@ -9,7 +9,9 @@ import {
   AppSettings,
   WorkspaceRecord,
   ChatRecord,
+  ChatRun,
   ChatListItem,
+  PooledAgentStatsSummary,
   UsageRecord,
   ScheduledTask,
   RunQueueJob,
@@ -97,6 +99,19 @@ import {
   type WorkflowRunEventInput,
   type WorkflowRunSummary
 } from '../WorkflowRunStore'
+import {
+  AGENT_STATS_FILE_CAP,
+  buildAgentStatDelta,
+  compactToRollup,
+  countRawDeltas,
+  foldAgentStats,
+  isPooledAgentId,
+  parseAgentStatRecordLine,
+  safeAgentStatsFileName,
+  seenRunIds,
+  serializeAgentStatRecord,
+  type AgentStatRecord
+} from '../AgentStatsStore'
 import { normalizeWorkflowLoopConfig } from '../WorkflowLoopModel'
 import {
   findStaleAuditRuns,
@@ -206,6 +221,14 @@ const runEventHashCache = new Map<string, string>()
 // workflowExecutionId, append-only; the run-events model). Single writer per file.
 const workflowRunsDir = path.join(userDataPath, 'workflow-runs')
 const workflowRunSequenceCache = new Map<string, number>()
+// Agent Pool (Phase 2) — per-Agent stats ledger (one .jsonl per pooledAgentId,
+// append-only). The in-memory seen-set dedupes runIds so re-harvesting a chat
+// (saveChat fires on every mutation) never double-counts; lazy-loaded per agent.
+const agentStatsDir = path.join(userDataPath, 'agent-stats')
+const agentStatsSeenCache = new Map<string, Set<string>>()
+// Raw-delta count per agent (parallel to the seen-set) so the hot append path
+// checks the compaction cap WITHOUT re-reading the file every finalized run.
+const agentStatsRawCountCache = new Map<string, number>()
 const deletedChatIds = new Set<string>()
 const deletedRunIds = new Set<string>()
 const WORKFLOW_HISTORY_LIMIT = 50
@@ -1099,6 +1122,36 @@ function writeJson<T>(filePath: string, data: T) {
   }
 }
 
+/** Atomic raw-text write (temp + rename), for the jsonl-line compaction rewrite
+ *  where writeJson's pretty-printing would corrupt the line-delimited format. */
+function writeTextAtomic(filePath: string, content: string): void {
+  const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`
+  let fd: number | null = null
+  try {
+    fs.mkdirSync(path.dirname(filePath), { recursive: true })
+    fd = fs.openSync(tempPath, 'w')
+    fs.writeFileSync(fd, content, 'utf-8')
+    fs.fsyncSync(fd)
+    fs.closeSync(fd)
+    fd = null
+    fs.renameSync(tempPath, filePath)
+  } catch (e) {
+    console.error(`Failed to write ${filePath}`, e)
+    if (fd !== null) {
+      try {
+        fs.closeSync(fd)
+      } catch {
+        // Best effort.
+      }
+    }
+    try {
+      if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath)
+    } catch {
+      // Best effort.
+    }
+  }
+}
+
 function previewText(value: unknown, maxLength: number): string {
   const text = String(value || '')
     .replace(/\s+/g, ' ')
@@ -1169,6 +1222,38 @@ function runEventFilePath(runId: string): string {
 
 function workflowRunFilePath(workflowExecutionId: string): string {
   return path.join(workflowRunsDir, safeWorkflowRunFileName(workflowExecutionId))
+}
+
+function agentStatsFilePath(agentId: string): string {
+  return path.join(agentStatsDir, safeAgentStatsFileName(agentId))
+}
+
+function readAgentStatsFile(filePath: string): AgentStatRecord[] {
+  try {
+    if (!fs.existsSync(filePath)) return []
+    return fs
+      .readFileSync(filePath, 'utf-8')
+      .split(/\r?\n/)
+      .map(parseAgentStatRecordLine)
+      .filter((record): record is AgentStatRecord => Boolean(record))
+  } catch (e) {
+    console.error(`Failed to read ${filePath}`, e)
+    return []
+  }
+}
+
+/** Async twin — the per-file await yields the event loop so a renderer pool-open
+ *  summaries query can't beachball MAIN (mirrors readWorkflowRunFileAsync). */
+async function readAgentStatsFileAsync(filePath: string): Promise<AgentStatRecord[]> {
+  try {
+    return (await fs.promises.readFile(filePath, 'utf-8'))
+      .split(/\r?\n/)
+      .map(parseAgentStatRecordLine)
+      .filter((record): record is AgentStatRecord => Boolean(record))
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException)?.code !== 'ENOENT') console.error(`Failed to read ${filePath}`, e)
+    return []
+  }
 }
 
 function readWorkflowRunFile(filePath: string): WorkflowRunEvent[] {
@@ -2590,6 +2675,13 @@ export class AppStore {
     const index = readJson<Record<string, ChatListItem>>(chatListIndexPath, {})
     index[normalizedChat.appChatId] = this.toChatListItem(normalizedChat)
     writeJson(chatListIndexPath, index)
+    // Agent Pool (Phase 2) — harvest finalized-run stats for any pooled-agent
+    // participant. Best-effort: a harvest failure must never break the save.
+    try {
+      this.harvestChatAgentStats(normalizedChat)
+    } catch (e) {
+      console.error('Failed to harvest agent stats', e)
+    }
   }
 
   static deleteChat(chatId: string, seen: Set<string> = new Set()): void {
@@ -3867,6 +3959,102 @@ export class AppStore {
     }
     workflowRunSequenceCache.set(input.workflowExecutionId, event.sequence)
     return event
+  }
+
+  // ── Agent Pool stats ledger (Phase 2) ─────────────────────────────────────
+
+  /** Lazy-load (once per process) the seen-runId set + raw-delta count for an
+   *  Agent from its file — one read populates both caches. The seen-set spans the
+   *  rollup so dedup survives a restart + compaction; the count gates compaction
+   *  without re-reading the file on the hot append path. */
+  private static ensureAgentStatsLoaded(agentId: string): void {
+    if (agentStatsSeenCache.has(agentId)) return
+    const records = readAgentStatsFile(agentStatsFilePath(agentId))
+    agentStatsSeenCache.set(agentId, seenRunIds(records))
+    agentStatsRawCountCache.set(agentId, countRawDeltas(records))
+  }
+
+  /**
+   * Append a finalized run's delta to an Agent's ledger — idempotent on runId
+   * (the in-memory seen-set skips a re-harvested run). Compacts the file into a
+   * single rollup once raw deltas cross AGENT_STATS_FILE_CAP. The normal append
+   * path does NO file read (the raw-count cache gates compaction). Best-effort: a
+   * write failure must never break the saveChat that triggered it.
+   */
+  private static recordAgentRunDelta(agentId: string, chatId: string, run: ChatRun): void {
+    if (!isPooledAgentId(agentId) || typeof run.runId !== 'string' || !run.runId) return
+    this.ensureAgentStatsLoaded(agentId)
+    const seen = agentStatsSeenCache.get(agentId) as Set<string>
+    if (seen.has(run.runId)) return
+    const delta = buildAgentStatDelta(chatId, run, Date.now())
+    if (!delta) return
+    const filePath = agentStatsFilePath(agentId)
+    const rawCount = agentStatsRawCountCache.get(agentId) ?? 0
+    try {
+      fs.mkdirSync(path.dirname(filePath), { recursive: true })
+      if (rawCount + 1 > AGENT_STATS_FILE_CAP) {
+        // Rare — only at the cap. Re-read to fold existing + this delta into one
+        // rollup, then reset the raw count to 0 (the file now holds only a rollup).
+        const rollup = compactToRollup(agentId, [...readAgentStatsFile(filePath), delta])
+        writeTextAtomic(filePath, serializeAgentStatRecord(rollup))
+        agentStatsRawCountCache.set(agentId, 0)
+      } else {
+        const fd = fs.openSync(filePath, 'a')
+        try {
+          fs.writeFileSync(fd, serializeAgentStatRecord(delta), 'utf-8')
+          fs.fsyncSync(fd)
+        } finally {
+          fs.closeSync(fd)
+        }
+        agentStatsRawCountCache.set(agentId, rawCount + 1)
+      }
+      seen.add(run.runId)
+    } catch (e) {
+      console.error(`Failed to record agent stats for ${agentId}`, e)
+    }
+  }
+
+  /**
+   * saveChat hook — harvest any finalized run whose participant is linked to a
+   * pooled Agent. Early-outs unless the chat is an ensemble carrying at least one
+   * pooled participant (the common chat has none → near-zero cost). Scoped to
+   * THIS chat's own runs — never a corpus sweep.
+   */
+  private static harvestChatAgentStats(chat: ChatRecord): void {
+    const participants = chat.ensemble?.participants
+    if (!Array.isArray(participants) || participants.length === 0) return
+    const agentByParticipant = new Map<string, string>()
+    for (const participant of participants) {
+      if (participant && isPooledAgentId(participant.pooledAgentId)) {
+        agentByParticipant.set(participant.id, participant.pooledAgentId as string)
+      }
+    }
+    if (agentByParticipant.size === 0) return
+    const runs = Array.isArray(chat.runs) ? chat.runs : []
+    const chatId = chat.appChatId
+    for (const run of runs) {
+      const agentId = run?.ensembleParticipantId
+        ? agentByParticipant.get(run.ensembleParticipantId)
+        : undefined
+      if (agentId) this.recordAgentRunDelta(agentId, chatId, run)
+    }
+  }
+
+  /**
+   * Fold the per-Agent ledgers for the requested ids into summaries. ASYNC +
+   * per-file await so a pool-open query can't beachball MAIN. REQUIRES a
+   * non-empty id list — empty is never interpreted as "all" (the documented
+   * run-events full-sweep hazard). Unknown ids fold to an all-zero summary.
+   */
+  static async getAgentStatsSummaries(agentIds: string[]): Promise<PooledAgentStatsSummary[]> {
+    if (!Array.isArray(agentIds) || agentIds.length === 0) return []
+    const unique = [...new Set(agentIds.filter(isPooledAgentId))]
+    const summaries: PooledAgentStatsSummary[] = []
+    for (const agentId of unique) {
+      const records = await readAgentStatsFileAsync(agentStatsFilePath(agentId))
+      summaries.push(foldAgentStats(agentId, records))
+    }
+    return summaries
   }
 
   /** Read a workflow execution's durable lifecycle ledger (all events, in sequence order). */

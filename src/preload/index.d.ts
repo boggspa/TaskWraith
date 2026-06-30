@@ -52,7 +52,8 @@ import {
   ProviderRunReroute,
   WorkspaceBoardCard,
   WorkspaceBoardDefinition,
-  EnsembleFanoutPolicy
+  EnsembleFanoutPolicy,
+  PooledAgentStatsSummary
 } from '../main/store/types'
 import type {
   WorkflowRunSummary,
@@ -1486,6 +1487,8 @@ declare global {
       ) => Promise<WorkflowDefinition | null>
       getWorkflowRunSummaries: (workflowId?: string) => Promise<WorkflowRunSummary[]>
       getWorkflowRunEvents: (filter?: WorkflowRunEventFilter) => Promise<WorkflowRunEvent[]>
+      getAgentStatsSummaries: (agentIds: string[]) => Promise<PooledAgentStatsSummary[]>
+
       startAuditRun: (input: {
         mode?: AuditRunRecord['mode']
         chatId: string
