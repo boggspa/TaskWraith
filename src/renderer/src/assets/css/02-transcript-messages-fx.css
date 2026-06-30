@@ -2078,10 +2078,14 @@
   display: none;
 }
 
-/* The gutter portals to <body>, so the transcript's own `display:none` (when
-   Settings takes over) can't reach it — and it holds a stale frame because no
-   scroll/resize fires on the takeover. Suppress it whenever Settings is open. */
-html.tw-settings-active .transcript-user-gutter {
+/* The gutter portals to <body>, so the transcript region's `display:none` (when
+   Settings OR a workspace board takes over — both add `chat-split-hidden-for-settings`)
+   can't reach it, and it holds a stale frame because no scroll/resize fires on
+   the takeover. Suppress it whenever that region is hidden. `:has()` applies
+   synchronously with the takeover class (no JS, no one-frame flash) and covers
+   both takeover paths at once. The `offsetParent` guard in
+   TranscriptUserMessageGutter is the belt for any future hide condition. */
+html:has(.chat-split-region.chat-split-hidden-for-settings) .transcript-user-gutter {
   display: none !important;
 }
 
