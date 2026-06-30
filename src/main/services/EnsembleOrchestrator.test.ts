@@ -1346,6 +1346,29 @@ describe('EnsembleOrchestrator', () => {
     expect(harness.dispatched[0].prompt).toContain('/tmp/ensemble-screenshot.png')
   })
 
+  it('starts an ensemble round when attachments are the only prompt content', async () => {
+    const harness = makeHarness()
+
+    const result = harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: '   ',
+      imageAttachments: [
+        { id: 'img-1', path: '/tmp/attachment-only.png', name: 'attachment-only.png' }
+      ],
+      event: { sender: {} as Electron.WebContents }
+    })
+
+    expect(result.status).toBe('started')
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    expect(harness.chat.messages[0].content).toContain('Please inspect the attached file(s).')
+    expect(harness.chat.messages[0].metadata?.imageAttachments).toEqual([
+      { id: 'img-1', path: '/tmp/attachment-only.png', name: 'attachment-only.png' }
+    ])
+    expect(harness.dispatched[0].imagePaths).toEqual(['/tmp/attachment-only.png'])
+    expect(harness.dispatched[0].prompt).toContain('Please inspect the attached file(s).')
+    expect(harness.dispatched[0].prompt).toContain('/tmp/attachment-only.png')
+  })
+
   it('keeps PDF attachments out of native image payloads and scopes external grant prompts per participant', async () => {
     const harness = makeHarness()
     const claudeGrant = externalGrant('claude', '/tmp/claude-notes.pdf')

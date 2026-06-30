@@ -84,8 +84,25 @@ type LegacyImageThumbnail = {
   height?: number
 }
 
+const normalizeLegacyThumbnail = (
+  value: unknown
+): LegacyImageThumbnail | undefined => {
+  if (!value || typeof value !== 'object') return undefined
+  const record = value as Record<string, unknown>
+  if (typeof record.dataBase64 !== 'string' || record.dataBase64.length === 0) {
+    return undefined
+  }
+  const mimeType = typeof record.mimeType === 'string' ? record.mimeType : 'image/jpeg'
+  return {
+    dataBase64: record.dataBase64,
+    mimeType,
+    ...(typeof record.width === 'number' ? { width: record.width } : {}),
+    ...(typeof record.height === 'number' ? { height: record.height } : {})
+  }
+}
+
 export function isChatMediaImagePath(path: string): boolean {
-  return /\.(png|jpe?g|gif|webp|bmp|tiff?|heic|heif|svg)$/i.test(path)
+  return /\.(png|jpe?g|jfif|gif|webp|bmp|tiff?|heic|heif|avif|svg)$/i.test(path)
 }
 
 export function chatMediaNameFromPath(path: string): string {
@@ -102,9 +119,8 @@ export function chatMediaPreviewSrc(mediaRef: ChatMediaRef): string {
   const path = mediaRef.path
   if (!path) return ''
   if (mediaRef.source !== 'upload' && mediaRef.source !== 'external_path') return ''
-  if (/^(file|https?):\/\//i.test(path)) return path
-  if (!path.startsWith('/')) return ''
-  return `file://${encodeURI(path)}`
+  if (/^https?:\/\//i.test(path)) return path
+  return ''
 }
 
 /** True for playable audio/video refs (rendered as <audio>/<video>, not chips). */
@@ -466,6 +482,39 @@ export function collectChatMediaRefs(
     })
   }
 
+  const addLegacyImagePath = (
+    value: unknown,
+    index: number,
+    thumbnail?: LegacyImageThumbnail
+  ) => {
+    const path = typeof value === 'string' ? value.trim() : ''
+    if (!path) return
+    addRef({
+      id: `image-path:${path}`,
+      kind: 'image',
+      source: 'upload',
+      name: chatMediaNameFromPath(path) || `Image ${index + 1}`,
+      path,
+      ...(thumbnail ? { mimeType: thumbnail.mimeType, thumbnail } : {})
+    })
+  }
+
+  const addLegacyThumbnailOnly = (
+    thumbnail: LegacyImageThumbnail,
+    index: number,
+    ownerId = 'chat'
+  ) => {
+    addRef({
+      id: `image-thumbnail:${ownerId}:${index}`,
+      kind: 'image',
+      source: 'upload',
+      name: `Image ${index + 1}`,
+      path: '',
+      mimeType: thumbnail.mimeType,
+      thumbnail
+    })
+  }
+
   const addMediaRef = (mediaRef: TranscriptMediaRef | null | undefined) => {
     if (!mediaRef) return
     const kind = mediaRef.kind
@@ -529,6 +578,18 @@ export function collectChatMediaRefs(
   const messages = Array.isArray(chatAny?.messages) ? chatAny.messages : []
   messages.forEach((message: any) => {
     const metadata = message?.metadata || {}
+    const imageThumbnails = Array.isArray(metadata.imageThumbnails)
+      ? metadata.imageThumbnails.map((thumbnail: unknown) => normalizeLegacyThumbnail(thumbnail))
+      : []
+    const imagePaths = Array.isArray(metadata.imagePaths) ? metadata.imagePaths : []
+    imagePaths.forEach((path: unknown, index: number) =>
+      addLegacyImagePath(path, index, imageThumbnails[index])
+    )
+    if (imagePaths.length === 0) {
+      imageThumbnails.forEach((thumbnail: LegacyImageThumbnail | undefined, index: number) => {
+        if (thumbnail) addLegacyThumbnailOnly(thumbnail, index, message?.id || 'message')
+      })
+    }
     ;[metadata.imageAttachments, metadata.attachments].forEach((candidate) => {
       if (Array.isArray(candidate)) {
         candidate.forEach((attachment) => addAttachment(attachment))
@@ -584,23 +645,6 @@ export function collectMessageMediaRefs(message: ChatMessage): ChatMediaRef[] {
   const refs: ChatMediaRef[] = []
   const seen = new Set<string>()
   const metadata = message.metadata || {}
-
-  const normalizeLegacyThumbnail = (
-    value: unknown
-  ): LegacyImageThumbnail | undefined => {
-    if (!value || typeof value !== 'object') return undefined
-    const record = value as Record<string, unknown>
-    if (typeof record.dataBase64 !== 'string' || record.dataBase64.length === 0) {
-      return undefined
-    }
-    const mimeType = typeof record.mimeType === 'string' ? record.mimeType : 'image/jpeg'
-    return {
-      dataBase64: record.dataBase64,
-      mimeType,
-      ...(typeof record.width === 'number' ? { width: record.width } : {}),
-      ...(typeof record.height === 'number' ? { height: record.height } : {})
-    }
-  }
 
   const addLegacyImagePath = (
     value: unknown,

@@ -1712,10 +1712,12 @@ export class EnsembleOrchestrator {
     // through to `beginRound` and lands on the runtime for the
     // round's lifetime; queued prompts get the same treatment so a
     // mid-round /discuss queue entry still flips its eventual round.
-    const parsed = parseSelfReflectivePrefix(input.prompt)
-    const prompt = parsed.prompt.trim()
-    if (!prompt) return { status: 'ignored' }
     const imageAttachments = normalizeEnsembleImageAttachments(input.imageAttachments)
+    const parsed = parseSelfReflectivePrefix(input.prompt)
+    const prompt =
+      parsed.prompt.trim() ||
+      (imageAttachments.length > 0 ? 'Please inspect the attached file(s).' : '')
+    if (!prompt) return { status: 'ignored' }
     const imageThumbnails = normalizeEnsembleImageThumbnails(input.imageThumbnails)
     let existing = this.roundsByChatId.get(input.chatId)
     if (existing) {

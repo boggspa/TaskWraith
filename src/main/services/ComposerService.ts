@@ -198,7 +198,14 @@ export class ComposerService {
           ? effectiveInput.prompt
           : ''
     const planParsed = parsePlanModeInput(rawUserInput)
-    const basePrompt = planParsed.prompt
+    const imagePaths = normalizeImagePaths(
+      effectiveInput.imageAttachments || effectiveInput.attachments || []
+    )
+    const basePrompt = planParsed.prompt.trim()
+      ? planParsed.prompt
+      : imagePaths.length > 0
+        ? 'Please inspect the attached file(s).'
+        : planParsed.prompt
     if (!basePrompt.trim()) {
       throw new Error('Prompt is required.')
     }
@@ -245,9 +252,6 @@ export class ComposerService {
     if (previewRiskModel && approvalMode !== 'plan') {
       approvalMode = 'default'
     }
-    const imagePaths = normalizeImagePaths(
-      effectiveInput.imageAttachments || effectiveInput.attachments || []
-    )
     const externalPathGrants =
       scope !== 'global' && !(unattended && approvalMode === 'plan')
         ? normalizeComposerExternalPathGrants(effectiveInput.externalPathGrants || [], provider)

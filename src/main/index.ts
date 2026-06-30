@@ -29096,9 +29096,12 @@ if (isGeminiMcpBridgeProcess) {
           throw new Error('Ensemble Mode is disabled.')
         }
         const chatId = requireNonEmptyString(payload?.chatId, 'Ensemble chat id')
-        const prompt = requireNonEmptyString(payload?.prompt, 'Ensemble prompt')
-        const chat = AppStore.getChat(chatId)
         const imageAttachments = imageAttachmentSnapshots(payload?.imageAttachments)
+        const prompt = typeof payload?.prompt === 'string' ? payload.prompt : ''
+        if (!prompt.trim() && imageAttachments.length === 0) {
+          throw new Error('Ensemble prompt or attachment is required.')
+        }
+        const chat = AppStore.getChat(chatId)
         const dispatchImageAttachments = await expandPdfAttachmentsForDispatch(imageAttachments)
         // 1.0.4-AT4 — normalize the renderer-supplied grants the
         // same way solo-run dispatch does. Drops malformed entries

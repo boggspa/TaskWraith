@@ -483,6 +483,21 @@ describe('ComposerService', () => {
     expect(payload.serviceTier).toBe('fast')
   })
 
+  it('allows attachments to be the prompt content when text is blank', () => {
+    const payload = compose(
+      { provider: 'codex' },
+      {
+        selectedModelType: 'gpt-5.5',
+        userInput: '   ',
+        attachments: [{ id: 'img-1', path: '/tmp/screen.png', name: 'screen.png' }]
+      }
+    )
+
+    expect(payload.prompt).toContain('Please inspect the attached file(s).')
+    expect(payload.prompt).toContain('Attachment references for this request')
+    expect(payload.imagePaths).toEqual(['/tmp/screen.png'])
+  })
+
   it('injects Discord context snapshots into provider prompts and read metadata', () => {
     const payload = compose(
       { provider: 'claude', linkedProviderSessionId: 'claude-session-1' },

@@ -83,6 +83,7 @@ import {
   MAX_IMAGE_ATTACHMENTS,
   collectClipboardAttachmentPaths,
   collectDroppedAttachmentPaths,
+  hasAttachmentPromptContent,
   isPdfAttachmentPath
 } from '../lib/imageAttachments'
 import { ComposerImageThumb } from './ComposerImageThumb'
@@ -666,6 +667,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     workspaceDiffStats,
     workspaces
   } = props
+  const hasSendablePromptContent = hasAttachmentPromptContent(prompt, imageAttachments)
   const isTaskWraithNativeComposer = appearance.composerStyle === 'default'
   const [scheduledNowMs, setScheduledNowMs] = useState(() => Date.now())
 
@@ -867,7 +869,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
   }, [openSlashCommandsRequestId])
 
   const triggerSendConfirmation = () => {
-    if (!currentChat || (!isCurrentGlobalChat && !currentWorkspace) || !prompt.trim()) return
+    if (!currentChat || (!isCurrentGlobalChat && !currentWorkspace) || !hasSendablePromptContent) return
     if (sendConfirmationTimeoutRef.current) {
       window.clearTimeout(sendConfirmationTimeoutRef.current)
       sendConfirmationTimeoutRef.current = null
@@ -4145,7 +4147,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                   disabled={
                                     !currentChat ||
                                     (!isCurrentGlobalChat && !currentWorkspace) ||
-                                    !prompt.trim() ||
+                                    !hasSendablePromptContent ||
                                     (currentProvider === 'gemini' && !geminiWorkspaceTrustReady) ||
                                     isSteerBusyForCurrentChat
                                   }
@@ -4170,7 +4172,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                   disabled={
                                     !currentChat ||
                                     (!isCurrentGlobalChat && !currentWorkspace) ||
-                                    !prompt.trim() ||
+                                    !hasSendablePromptContent ||
                                     (currentProvider === 'gemini' && !geminiWorkspaceTrustReady) ||
                                     isSteerBusyForCurrentChat
                                   }
@@ -4228,7 +4230,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               disabled={
                                 !currentChat ||
                                 (!isCurrentGlobalChat && !currentWorkspace) ||
-                                !prompt.trim() ||
+                                !hasSendablePromptContent ||
                                 (currentProvider === 'gemini' && !geminiWorkspaceTrustReady)
                               }
                               title={
@@ -4236,8 +4238,8 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                   ? 'Open or start a chat first'
                                   : !isCurrentGlobalChat && !currentWorkspace
                                     ? 'Pick a workspace folder first'
-                                    : !prompt.trim()
-                                      ? 'Type a prompt first'
+                                    : !hasSendablePromptContent
+                                      ? 'Type a prompt or attach a file first'
                                       : currentProvider === 'gemini' && !geminiWorkspaceTrustReady
                                           ? 'Trust this workspace for Gemini first'
                                           : isCurrentEnsembleChat && effectiveSelectedParticipantId

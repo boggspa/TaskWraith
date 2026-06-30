@@ -42,7 +42,8 @@ describe('ChatMediaPanel attachment rendering', () => {
         kind: 'image',
         source: 'upload',
         name: 'screen.png',
-        path: '/repo/screen.png'
+        path: '/repo/screen.png',
+        thumbnail: { dataBase64: 'screen-thumb', mimeType: 'image/jpeg', width: 2, height: 1 }
       },
       {
         id: 'file-1',
@@ -213,6 +214,34 @@ describe('ChatMediaPanel attachment rendering', () => {
     expect(refs[0].thumbnail?.dataBase64).toBe('POSTER')
   })
 
+  it('uses legacy image thumbnails for chat-level uploaded attachment refs', () => {
+    const refs = collectChatMediaRefs(
+      {
+        messages: [
+          userMessage({
+            imageAttachments: [
+              { id: 'img-1', path: '/tmp/screenshot.png', name: 'screenshot.png' }
+            ],
+            imagePaths: ['/tmp/screenshot.png'],
+            imageThumbnails: [
+              { dataBase64: 'upload-thumb', mimeType: 'image/jpeg', width: 2, height: 1 }
+            ]
+          })
+        ]
+      } as any,
+      [],
+      []
+    )
+
+    expect(refs).toHaveLength(1)
+    expect(refs[0]).toMatchObject({
+      kind: 'image',
+      source: 'upload',
+      path: '/tmp/screenshot.png',
+      thumbnail: { dataBase64: 'upload-thumb' }
+    })
+  })
+
   it('renders the right dock as a focused playable media preview, not just a file list', () => {
     const refs: ChatMediaRef[] = [
       {
@@ -220,7 +249,8 @@ describe('ChatMediaPanel attachment rendering', () => {
         kind: 'image',
         source: 'upload',
         name: 'screen.png',
-        path: '/repo/screen.png'
+        path: '/repo/screen.png',
+        thumbnail: { dataBase64: 'screen-thumb', mimeType: 'image/jpeg', width: 2, height: 1 }
       },
       {
         id: 'vid-1',
@@ -466,7 +496,8 @@ describe('ChatMediaPanel attachment rendering', () => {
     expect(refs[2].thumbnail).toBeUndefined()
     expect(html).toContain('src="data:image/jpeg;base64,thumb-one"')
     expect(html).toContain('src="data:image/jpeg;base64,thumb-two"')
-    expect(html).toContain('src="file:///var/folders/taskwraith-remote-attachments/three.jpg"')
+    expect(html).not.toContain('file:///var/folders/taskwraith-remote-attachments/three.jpg')
+    expect(html).toContain('three.jpg')
   })
 
   it('ignores malformed legacy thumbnail records without dropping image paths', () => {
@@ -483,7 +514,8 @@ describe('ChatMediaPanel attachment rendering', () => {
     expect(refs).toHaveLength(1)
     expect(refs[0].thumbnail).toBeUndefined()
     expect(html).not.toContain('data:image/jpeg;base64')
-    expect(html).toContain('src="file:///var/folders/taskwraith-remote-attachments/photo.jpg"')
+    expect(html).not.toContain('file:///var/folders/taskwraith-remote-attachments/photo.jpg')
+    expect(html).toContain('photo.jpg')
   })
 
   it('dedupes dual-written legacy image paths and canonical upload media refs', () => {
@@ -716,7 +748,8 @@ describe('ChatMediaPanel attachment rendering', () => {
         kind: 'image',
         source: 'upload',
         name: 'screen.png',
-        path: '/repo/screen.png'
+        path: '/repo/screen.png',
+        thumbnail: { dataBase64: 'screen-thumb', mimeType: 'image/jpeg', width: 2, height: 1 }
       },
       {
         id: 'frame-1',

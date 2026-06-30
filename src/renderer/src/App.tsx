@@ -527,13 +527,18 @@ import type {
   DiscordContextTargets
 } from '../../main/channels/DiscordContextService'
 import {
+  attachmentQueueKey,
+  attachmentSummary,
   dedupePaths,
   getImageName,
+  hasAttachmentPromptContent,
+  imagePreviewDataUrlToThumbnail,
   isImageAttachmentPath,
   MAX_IMAGE_ATTACHMENTS,
   mergeImageAttachments,
   sanitizeImagePath,
-  type ImageAttachment
+  type ImageAttachment,
+  type ImageAttachmentThumbnail
 } from './lib/imageAttachments'
 import { parsePlanModeChoice, type PlanChoiceState } from './lib/planModeChoice'
 import { parseProposedPlan, stripProposedPlanBlock, type ProposedPlanState } from './lib/proposedPlan'
@@ -2533,6 +2538,46 @@ function App(): React.JSX.Element {
     () => collectChatMediaRefs(currentChat, imageAttachments, externalPathGrants),
     [currentChat, imageAttachments, externalPathGrants]
   )
+  const runRequestHasContent = (request: Pick<QueuedRunRequest, 'prompt' | 'imageAttachments'>) =>
+    hasAttachmentPromptContent(request.prompt, request.imageAttachments)
+  const runRequestDisplayPrompt = (
+    request: Pick<QueuedRunRequest, 'prompt' | 'displayPrompt' | 'imageAttachments'>,
+    finalPrompt: string
+  ): string => {
+    if (request.displayPrompt?.trim()) return request.displayPrompt
+    if (request.prompt.trim()) return finalPrompt
+    return attachmentSummary(request.imageAttachments) || finalPrompt
+  }
+  const runRequestPromptPreview = (
+    request: Pick<QueuedRunRequest, 'prompt' | 'displayPrompt' | 'imageAttachments'>
+  ): string => {
+    const text = (request.displayPrompt || request.prompt || '').trim()
+    return text || attachmentSummary(request.imageAttachments)
+  }
+  const buildSubmittedImageThumbnailMetadata = async (
+    attachments: readonly ImageAttachment[]
+  ): Promise<{ imagePaths: string[]; imageThumbnails: ImageAttachmentThumbnail[] }> => {
+    const images = attachments.filter((attachment) => isImageAttachmentPath(attachment.path))
+    if (images.length === 0 || typeof window.api?.readImagePreview !== 'function') {
+      return { imagePaths: [], imageThumbnails: [] }
+    }
+    const thumbnails = await Promise.all(
+      images.map(async (attachment) => {
+        try {
+          return imagePreviewDataUrlToThumbnail(await window.api.readImagePreview(attachment.path))
+        } catch {
+          return undefined
+        }
+      })
+    )
+    if (!thumbnails.every(Boolean)) {
+      return { imagePaths: [], imageThumbnails: [] }
+    }
+    return {
+      imagePaths: images.map((attachment) => attachment.path),
+      imageThumbnails: thumbnails as ImageAttachmentThumbnail[]
+    }
+  }
   const sideChat = useMemo(() => {
     if (!sideChatId) return null
     return (
@@ -9066,7 +9111,7 @@ function App(): React.JSX.Element {
         chatId: chat?.appChatId,
         source: getRunQueueSource(request),
         status,
-        promptPreview: request.displayPrompt || request.prompt,
+        promptPreview: runRequestPromptPreview(request),
         runtimeProfileId: request.runtimeProfileId,
         handoffSourceRunId: request.handoffSourceRunId,
         request: createRunQueueRequestSnapshot(request),
@@ -9455,6 +9500,8 @@ function App(): React.JSX.Element {
         (job.request?.prompt || job.promptPreview || '') === queuedRequest.prompt &&
         job.request?.selectedModelType === queuedRequest.selectedModelType &&
         job.request?.scheduledRunAt === queuedRequest.scheduledRunAt &&
+        attachmentQueueKey(job.request?.imageAttachments || []) ===
+          attachmentQueueKey(queuedRequest.imageAttachments) &&
         discordContextSelectionQueueKey(job.request?.discordContextSelection) ===
           discordContextSelectionQueueKey(queuedRequest.discordContextSelection)
     )
@@ -9466,6 +9513,8 @@ function App(): React.JSX.Element {
         request.prompt === queuedRequest.prompt &&
         request.selectedModelType === queuedRequest.selectedModelType &&
         request.scheduledRunAt === queuedRequest.scheduledRunAt &&
+        attachmentQueueKey(request.imageAttachments) ===
+          attachmentQueueKey(queuedRequest.imageAttachments) &&
         discordContextSelectionQueueKey(request.discordContextSelection) ===
           discordContextSelectionQueueKey(queuedRequest.discordContextSelection)
     )
@@ -9503,7 +9552,7 @@ function App(): React.JSX.Element {
       // ref so the UI can later render this as a dedicated queued-
       // message component (follow-up). The metadata.appRunId lets a
       // dispatched run replace this card in place.
-      const promptPreview = (queuedRequest.displayPrompt || queuedRequest.prompt || '').trim()
+      const promptPreview = runRequestPromptPreview(queuedRequest)
       const promptOneLiner =
         promptPreview.length > 240 ? `${promptPreview.slice(0, 240)}…` : promptPreview
       const scheduledRunAt = queuedRequest.scheduledRunAt
@@ -9660,7 +9709,7 @@ function App(): React.JSX.Element {
       }
       const isGlobalRun = request.scope === 'global' || isGlobalChat(runChat)
       const runWorkspace = isGlobalRun ? null : request.workspaceRecord || currentWorkspace
-      if (!runChat || (!isGlobalRun && !runWorkspace) || !request.prompt.trim()) return
+      if (!runChat || (!isGlobalRun && !runWorkspace) || !runRequestHasContent(request)) return
       const runProvider = request.provider || currentProvider
       const currentRunId = request.appRunId || Date.now().toString()
       if (!isGlobalRun) {
@@ -9723,9 +9772,10 @@ function App(): React.JSX.Element {
               runChat.ensemble?.concurrentModeEnabled
             )
         const concurrentMode = ensembleFanoutPolicyEnabled(fanoutPolicy)
+        const optimisticQueuedPrompt = runRequestPromptPreview(request)
         const didOptimisticallyQueue =
           mode === 'queue'
-            ? appendOptimisticEnsembleQueuedPrompt(runChat.appChatId, request.prompt)
+            ? appendOptimisticEnsembleQueuedPrompt(runChat.appChatId, optimisticQueuedPrompt)
             : false
         try {
           await window.api.runEnsembleRound({
@@ -9762,7 +9812,7 @@ function App(): React.JSX.Element {
           })
         } catch (error) {
           if (didOptimisticallyQueue) {
-            removeOptimisticEnsembleQueuedPrompt(runChat.appChatId, request.prompt)
+            removeOptimisticEnsembleQueuedPrompt(runChat.appChatId, optimisticQueuedPrompt)
           }
           throw error
         }
@@ -9786,6 +9836,10 @@ function App(): React.JSX.Element {
           request,
           `This ${getProviderLabel(runProvider)} chat already has an in-flight run; TaskWraith will dispatch this turn when the chat's previous turn finishes.`
         )
+        if (!request.existingPrompt && !request.preserveComposer) {
+          setChatPromptDraft(runChat.appChatId, '')
+          clearComposerAttachmentsForSubmittedRequest(request)
+        }
         return
       }
 
@@ -9881,7 +9935,7 @@ function App(): React.JSX.Element {
                 request.discordContextSnapshots.map((snapshot) => snapshot.metadata)
               )
             : []
-      const displayFinalPrompt = request.displayPrompt ? request.displayPrompt : finalPrompt
+      const displayFinalPrompt = runRequestDisplayPrompt(request, finalPrompt)
       const modelToPass =
         composedPayload.model ||
         request.overrideModel ||
@@ -9931,6 +9985,12 @@ function App(): React.JSX.Element {
         const messageMetadata: ChatMessage['metadata'] = {}
         if (imageAttachmentMetadata.length > 0) {
           messageMetadata.imageAttachments = imageAttachmentMetadata
+        }
+        const imageThumbnailMetadata =
+          await buildSubmittedImageThumbnailMetadata(request.imageAttachments)
+        if (imageThumbnailMetadata.imagePaths.length > 0) {
+          messageMetadata.imagePaths = imageThumbnailMetadata.imagePaths
+          messageMetadata.imageThumbnails = imageThumbnailMetadata.imageThumbnails
         }
         if (linkPreviewMetadata.length > 0) {
           messageMetadata.linkPreviews = linkPreviewMetadata
@@ -11183,7 +11243,7 @@ function App(): React.JSX.Element {
       approvalModeOverride ? { approvalMode: approvalModeOverride } : undefined
     )
     const request = dmTargetParticipantId ? { ...baseRequest, dmTargetParticipantId } : baseRequest
-    if (!request.prompt.trim()) {
+    if (!runRequestHasContent(request)) {
       return
     }
     // Workflow compose: the first "send" CREATES the workflow (captures the
@@ -12008,7 +12068,7 @@ function App(): React.JSX.Element {
    */
   const handleSteer = async (overrideModel?: string, existingPrompt?: string) => {
     const request = buildRunRequest(overrideModel, existingPrompt)
-    if (!request.prompt.trim()) {
+    if (!runRequestHasContent(request)) {
       return
     }
     if (
@@ -13833,7 +13893,7 @@ function App(): React.JSX.Element {
       approvalMode: planImportApprovalModeForPolicy(review.selectedPolicy),
       imageAttachments
     })
-    if (!request.prompt.trim()) return
+    if (!runRequestHasContent(request)) return
 
     setPendingPlanImport(null)
     if (isChatBusy(request.chatRecord?.appChatId || currentChat?.appChatId)) {
@@ -18717,7 +18777,7 @@ function App(): React.JSX.Element {
       value={scheduleRunAt}
       onChange={setScheduleRunAt}
       onSchedule={handleScheduleRun}
-      hasPrompt={Boolean(prompt.trim())}
+      hasPrompt={hasAttachmentPromptContent(prompt, imageAttachments)}
       disabled={!hasWorkspaceContext || !currentWorkspace || !currentChat}
       disabledReason={scheduleDisabledReason}
     />
@@ -20130,11 +20190,12 @@ function App(): React.JSX.Element {
       const paneChat = chatByIdRef.current.get(chatId)
       if (!paneChat) return
       const panePrompt = composerDraftsByChatIdRef.current[chatId] || ''
-      if (!panePrompt.trim()) return
+      const paneAttachments = imageAttachmentsByChatIdRef.current[chatId] || EMPTY_IMAGE_ATTACHMENTS
+      if (!hasAttachmentPromptContent(panePrompt, paneAttachments)) return
       const request = buildRunRequestRef.current(undefined, undefined, {
         chat: paneChat,
         prompt: panePrompt,
-        imageAttachments: imageAttachmentsByChatIdRef.current[chatId] || EMPTY_IMAGE_ATTACHMENTS
+        imageAttachments: paneAttachments
       })
       if (isChatBusy(chatId)) {
         queueRunRequestRef.current(
@@ -20142,6 +20203,7 @@ function App(): React.JSX.Element {
           `This ${getProviderLabel(request.provider)} chat already has an in-flight run; TaskWraith will dispatch this pane prompt when the chat's previous turn finishes.`
         )
         setChatPromptDraft(chatId, '')
+        setImageAttachmentsByChatId((prev) => ({ ...prev, [chatId]: [] }))
         return
       }
       void executeRunRef.current(request)

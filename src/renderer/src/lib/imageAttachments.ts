@@ -11,9 +11,23 @@ export type ImageAttachment = {
   name: string
 }
 
+type AttachmentPromptLike = {
+  id?: string | null
+  path?: string | null
+  name?: string | null
+}
+
 const IMAGE_EXT = /\.(png|jpe?g|gif|webp|bmp|heic|avif|tiff|tif|svg|jfif)(\?.*)?$/i
 const PDF_EXT = /\.pdf(?:[?#].*)?$/i
 export const MAX_IMAGE_ATTACHMENTS = 15
+const MAX_ATTACHMENT_THUMBNAIL_BASE64_LENGTH = 2 * 1024 * 1024
+
+export type ImageAttachmentThumbnail = {
+  dataBase64: string
+  mimeType: string
+  width?: number
+  height?: number
+}
 
 export const sanitizeImagePath = (value: string): string =>
   sanitizeLocalPath(value)
@@ -25,6 +39,65 @@ export const getImageName = (value: string): string => {
 export const isImageAttachmentPath = (path: string): boolean => IMAGE_EXT.test(path)
 
 export const isPdfAttachmentPath = (path: string): boolean => PDF_EXT.test(path)
+
+const isReadableLocalAttachmentPath = (value: string): boolean => {
+  const normalized = sanitizeImagePath(value)
+  return Boolean(
+    normalized &&
+      (normalized.startsWith('/') ||
+        normalized.startsWith('//') ||
+        /^[A-Za-z]:[\\/]/.test(normalized))
+  )
+}
+
+export const hasAttachmentPromptContent = (
+  prompt: string | null | undefined,
+  attachments: readonly AttachmentPromptLike[] | null | undefined
+): boolean =>
+  Boolean(prompt?.trim()) ||
+  Boolean(attachments?.some((attachment) => sanitizeImagePath(attachment.path || '')))
+
+export const attachmentSummary = (
+  attachments: readonly AttachmentPromptLike[] | null | undefined
+): string => {
+  const names = (attachments || [])
+    .map((attachment) => attachment.name || getImageName(attachment.path || ''))
+    .map((name) => name.trim())
+    .filter(Boolean)
+  if (names.length === 0) return ''
+  if (names.length === 1) return `Attached: ${names[0]}`
+  const preview = names.slice(0, 3).join(', ')
+  const remainder = names.length - 3
+  return `Attached ${names.length} files: ${preview}${remainder > 0 ? `, +${remainder} more` : ''}`
+}
+
+export const attachmentQueueKey = (
+  attachments: readonly AttachmentPromptLike[] | null | undefined
+): string =>
+  (attachments || [])
+    .map((attachment) => sanitizeImagePath(attachment.path || ''))
+    .filter(Boolean)
+    .map((path) => pathComparisonKey(path))
+    .sort()
+    .join('\n')
+
+export const imagePreviewDataUrlToThumbnail = (
+  dataUrl: string | null | undefined
+): ImageAttachmentThumbnail | undefined => {
+  if (!dataUrl) return undefined
+  const match = /^data:(image\/(?:png|jpe?g|webp));base64,([A-Za-z0-9+/=\s]+)$/i.exec(
+    dataUrl.trim()
+  )
+  if (!match) return undefined
+  const dataBase64 = match[2].replace(/\s/g, '')
+  if (!dataBase64 || dataBase64.length > MAX_ATTACHMENT_THUMBNAIL_BASE64_LENGTH) {
+    return undefined
+  }
+  return {
+    mimeType: match[1].toLowerCase(),
+    dataBase64
+  }
+}
 
 export const dedupePaths = (values: string[]): string[] => {
   const seen = new Set<string>()
@@ -54,8 +127,8 @@ export const collectClipboardAttachmentPaths = (
     const file = fileList.item(i)
     if (!file) continue
     const asFile = file as File & { path?: string }
-    const candidate = sanitizeImagePath(asFile.path || file.name)
-    if (candidate) {
+    const candidate = sanitizeImagePath(asFile.path || '')
+    if (isReadableLocalAttachmentPath(candidate)) {
       paths.push(candidate)
     }
   }
@@ -86,8 +159,8 @@ export const collectClipboardAttachmentPaths = (
     const file = item.getAsFile()
     if (!file) continue
     const asFile = file as File & { path?: string }
-    const candidate = sanitizeImagePath(asFile.path || file.name)
-    if (candidate) {
+    const candidate = sanitizeImagePath(asFile.path || '')
+    if (isReadableLocalAttachmentPath(candidate)) {
       paths.push(candidate)
     }
   }
@@ -106,8 +179,8 @@ export const collectDroppedAttachmentPaths = (dataTransfer?: DataTransfer | null
     const file = fileList.item(i)
     if (!file) continue
     const asFile = file as File & { path?: string }
-    const candidate = sanitizeImagePath(asFile.path || file.name)
-    if (candidate) {
+    const candidate = sanitizeImagePath(asFile.path || '')
+    if (isReadableLocalAttachmentPath(candidate)) {
       paths.push(candidate)
     }
   }
