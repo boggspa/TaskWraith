@@ -116,8 +116,9 @@ export interface BridgeComposerPromptAction extends BridgeActionMetadata {
   contextTurns?: number
   /** Phone-attached images (downscaled JPEG/PNG, base64). The executor
    * writes them to temp files and forwards as AgentRunPayload.imagePaths
-   * — the same attachment lane the desktop composer uses. Capped at 2
-   * images / ~900KB combined base64 to respect the relay frame budget. */
+   * — the same attachment lane the desktop composer uses. Count matches
+   * the desktop composer cap; each image stays independently bounded so
+   * iOS cannot send an unbounded bridge payload. */
   imageAttachments?: BridgeImageAttachment[]
   /** Additional allowlisted workspaces granted to this run (the desktop's
    * secondary-workspace picker). The executor validates each against the
@@ -1232,8 +1233,10 @@ function isQuestionReject(v: Record<string, unknown>): boolean {
   )
 }
 
-const MAX_IMAGE_ATTACHMENTS = 2
-const MAX_IMAGE_ATTACHMENT_COMBINED_BASE64 = 900_000
+const MAX_IMAGE_ATTACHMENTS = 15
+const MAX_IMAGE_ATTACHMENT_BASE64_CHARS = 460_000
+const MAX_IMAGE_ATTACHMENT_COMBINED_BASE64 =
+  MAX_IMAGE_ATTACHMENTS * MAX_IMAGE_ATTACHMENT_BASE64_CHARS
 
 function isImageAttachments(value: unknown): boolean {
   if (!Array.isArray(value) || value.length === 0 || value.length > MAX_IMAGE_ATTACHMENTS) {
@@ -1244,6 +1247,7 @@ function isImageAttachments(value: unknown): boolean {
     if (!isRecord(entry)) return false
     if (typeof entry.mimeType !== 'string' || !entry.mimeType.startsWith('image/')) return false
     if (typeof entry.dataBase64 !== 'string' || entry.dataBase64.length === 0) return false
+    if (entry.dataBase64.length > MAX_IMAGE_ATTACHMENT_BASE64_CHARS) return false
     if (entry.name !== undefined && typeof entry.name !== 'string') return false
     combined += entry.dataBase64.length
   }

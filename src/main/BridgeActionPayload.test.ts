@@ -14,6 +14,14 @@ function encode(obj: unknown): string {
   return Buffer.from(JSON.stringify(obj), 'utf-8').toString('base64')
 }
 
+function imageAttachment(index: number, dataBase64 = 'abcd') {
+  return {
+    name: `photo-${index}.jpg`,
+    mimeType: 'image/jpeg',
+    dataBase64
+  }
+}
+
 describe('decodeBridgeActionPayload', () => {
   describe('happy paths', () => {
     it('decodes an approvalReply with all fields', () => {
@@ -761,6 +769,73 @@ describe('decodeBridgeActionPayload', () => {
       })
       const { payload } = decodeBridgeActionPayload(wire)
       expect(payload.kind).toBe('composerPrompt')
+    })
+
+    it('decodes a composerPrompt with the desktop-parity iOS image attachment count', () => {
+      const imageAttachments = Array.from({ length: 15 }, (_, index) => imageAttachment(index))
+      const { payload } = decodeBridgeActionPayload(
+        encode({
+          kind: 'composerPrompt',
+          workspaceId: 'ws-1',
+          threadId: 't-1',
+          text: 'inspect these',
+          provider: 'codex',
+          imageAttachments
+        })
+      )
+
+      expect(payload.kind).toBe('composerPrompt')
+      if (payload.kind === 'composerPrompt') {
+        expect(payload.imageAttachments).toEqual(imageAttachments)
+      }
+    })
+
+    it('decodes an ensembleSteer with the desktop-parity iOS image attachment count', () => {
+      const imageAttachments = Array.from({ length: 15 }, (_, index) => imageAttachment(index))
+      const { payload } = decodeBridgeActionPayload(
+        encode({
+          kind: 'ensembleSteer',
+          workspaceId: 'ws-1',
+          threadId: 'thread-1',
+          text: 'inspect these',
+          imageAttachments
+        })
+      )
+
+      expect(payload.kind).toBe('ensembleSteer')
+      if (payload.kind === 'ensembleSteer') {
+        expect(payload.imageAttachments).toEqual(imageAttachments)
+      }
+    })
+
+    it('rejects iOS bridge image attachments above the desktop-parity count', () => {
+      const { payload } = decodeBridgeActionPayload(
+        encode({
+          kind: 'composerPrompt',
+          workspaceId: 'ws-1',
+          threadId: 't-1',
+          text: 'too many',
+          provider: 'codex',
+          imageAttachments: Array.from({ length: 16 }, (_, index) => imageAttachment(index))
+        })
+      )
+
+      expect(payload).toMatchObject({ kind: 'unknown', rawKind: 'composerPrompt' })
+    })
+
+    it('rejects an oversized single iOS bridge image attachment', () => {
+      const { payload } = decodeBridgeActionPayload(
+        encode({
+          kind: 'composerPrompt',
+          workspaceId: 'ws-1',
+          threadId: 't-1',
+          text: 'too large',
+          provider: 'codex',
+          imageAttachments: [imageAttachment(1, 'a'.repeat(460_001))]
+        })
+      )
+
+      expect(payload).toMatchObject({ kind: 'unknown', rawKind: 'composerPrompt' })
     })
 
     it('decodes composer queue actions', () => {

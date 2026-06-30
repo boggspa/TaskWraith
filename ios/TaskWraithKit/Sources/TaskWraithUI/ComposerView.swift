@@ -14,6 +14,8 @@ import TaskWraithKit
 #if canImport(UIKit)
     import PhotosUI
     import UIKit
+
+    private let twMaxComposerImageAttachments = 15
 #endif
 
 struct Composer: View {
@@ -751,10 +753,11 @@ struct Composer: View {
         /// which carries text alone, so showing the picker there silently
         /// dropped images.
         private var photosButton: some View {
-            let attachmentLimitReached = attachments.count >= 2
+            let remainingSlots = max(0, twMaxComposerImageAttachments - attachments.count)
+            let attachmentLimitReached = remainingSlots == 0
             let iconColor = attachmentLimitReached ? TWTheme.textMuted : TWTheme.textSecondary
             return PhotosPicker(
-                selection: $pickedItems, maxSelectionCount: 2, matching: .images
+                selection: $pickedItems, maxSelectionCount: max(1, remainingSlots), matching: .images
             ) {
                 Image(systemName: "photo.badge.plus")
                     .font(.body)
@@ -764,15 +767,15 @@ struct Composer: View {
             .accessibilityLabel("Add photo attachment")
             .accessibilityHint(
                 attachmentLimitReached
-                    ? "Attachment limit reached. Maximum 2 images."
+                    ? "Attachment limit reached. Maximum \(twMaxComposerImageAttachments) images."
                     : "Opens the photo picker to attach images to your message.")
             .accessibilityValue(
-                attachmentLimitReached ? "Attachment limit reached, maximum 2 images" : "")
+                "\(attachments.count) of \(twMaxComposerImageAttachments) images attached")
             .onChange(of: pickedItems) { _, items in
                 guard !items.isEmpty else { return }
                 Task {
                     for item in items {
-                        guard attachments.count < 2,
+                        guard attachments.count < twMaxComposerImageAttachments,
                             let data = try? await item.loadTransferable(type: Data.self),
                             let image = UIImage(data: data)
                         else { continue }
@@ -787,7 +790,7 @@ struct Composer: View {
     private func sendCurrent() {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         #if canImport(UIKit)
-            let encoded = attachments.compactMap {
+            let encoded = attachments.prefix(twMaxComposerImageAttachments).compactMap {
                 twEncodeImageAttachment($0.image, name: $0.name)
             }
             let hasAttachments = !encoded.isEmpty

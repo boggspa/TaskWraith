@@ -184,9 +184,10 @@ tokens (`#141414` bg, `#1c1c20/#24242a/#2e2e36` surfaces, chroma
   Starter prompt cards removed from the compose sheet (the in-thread
   welcome card keeps its starters).
 - **Image attachments, phone → Mac**: photo button in the thread
-  composer (PhotosPicker, max 2) → downscaled to ≤1280px JPEG with a
-  quality walk-down to ≤330KB each → composerPrompt `imageAttachments`
-  (Mac caps 2 / ~900KB combined base64 for the relay frame). The Mac
+  composer (PhotosPicker, max 15, matching the desktop composer count)
+  → downscaled to ≤1280px JPEG with a quality walk-down to ≤330KB each
+  → composerPrompt `imageAttachments` (Mac validates the same 15-image
+  count with a per-image base64 budget for bridge payload safety). The Mac
   materializes temp files and forwards via AgentRunPayload.imagePaths —
   the SAME lane the desktop composer uses (Mac commit 80603a04). Rows
   surface `imageAttachmentCount` → "N images attached" chip in the

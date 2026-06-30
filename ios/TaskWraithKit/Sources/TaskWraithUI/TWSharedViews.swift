@@ -1592,9 +1592,9 @@ public struct TokenRevealText: View {
 #if canImport(UIKit)
     import UIKit
 
-    /// Downscale + JPEG-compress a picked image to fit the relay frame
-    /// budget (~330KB binary per image; the Mac caps combined base64 at
-    /// ~900KB for 2 images). Returns the wire dict for composerPrompt.
+    /// Downscale + JPEG-compress a picked image to fit the bridge image
+    /// budget (~330KB binary per image). Returns the wire dict for
+    /// composerPrompt / ensembleSteer.
     ///
     /// Never silently drops the image: a dense photo that won't fit 330KB at
     /// 1280px is retried at smaller dimensions, and the smallest attempt is
