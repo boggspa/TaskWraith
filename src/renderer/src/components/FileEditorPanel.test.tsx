@@ -2,6 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 import {
   explicitOnlyCompletionSource,
+  fileEditorBreadcrumbParts,
   fileEditorDirtyActionCopy,
   isFileEditorPromptDismissKey,
   QuickOpenPalette,
@@ -56,6 +57,19 @@ describe('EditorTabStrip', () => {
     expect(html).toContain('tabindex="0"')
     expect(html).toContain('Close src/Editor.tsx')
     expect(html).toContain('file-editor-dirty-dot')
+  })
+})
+
+describe('file editor breadcrumbs', () => {
+  it('splits workspace-relative paths into compact breadcrumb parts', () => {
+    expect(fileEditorBreadcrumbParts('src/renderer/src/App.tsx')).toEqual([
+      'src',
+      'renderer',
+      'src',
+      'App.tsx'
+    ])
+    expect(fileEditorBreadcrumbParts('README.md')).toEqual(['README.md'])
+    expect(fileEditorBreadcrumbParts('')).toEqual([])
   })
 })
 

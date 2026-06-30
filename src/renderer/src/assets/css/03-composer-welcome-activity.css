@@ -8328,6 +8328,38 @@
   font-size: var(--font-size-sm);
 }
 
+.file-editor-breadcrumbs {
+  min-height: 26px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 var(--space-md);
+  border-bottom: 1px solid color-mix(in srgb, var(--panel-border) 74%, transparent);
+  background: color-mix(in srgb, var(--panel-elevated-bg) 44%, transparent);
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.file-editor-breadcrumbs > span {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.file-editor-breadcrumbs > span > span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.file-editor-breadcrumbs > span.current {
+  color: var(--text-secondary);
+  font-weight: 650;
+}
+
 .file-editor-filter {
   margin: var(--space-sm) var(--space-md);
   height: 28px;

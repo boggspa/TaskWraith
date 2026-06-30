@@ -197,6 +197,10 @@ const FILE_EDITOR_DIRECTORY_LIMIT = 500
 const FILE_EDITOR_SEARCH_LIMIT = 500
 const DEFAULT_CURSOR_STATUS: EditorCursorStatus = { line: 1, column: 1, selectedChars: 0 }
 
+export const fileEditorBreadcrumbParts = (filePath: string): string[] => {
+  return filePath.split('/').filter(Boolean)
+}
+
 const normalizeAbsolutePath = (path: string): string => {
   return path.replace(/\\/g, '/').replace(/\/+$/, '')
 }
@@ -562,6 +566,10 @@ export function FileEditorPanel({
   const content = activeBuffer?.content ?? ''
   const isDirty = isBufferDirty(activeBuffer)
   const selectedName = fileNameForPath(selectedPath)
+  const selectedBreadcrumbs = useMemo(
+    () => fileEditorBreadcrumbParts(selectedPath),
+    [selectedPath]
+  )
   const trimmedFilter = filter.trim()
   const isFiltering = trimmedFilter.length > 0
   const dirtyBufferCount = buffers.filter(isBufferDirty).length
@@ -1849,6 +1857,23 @@ export function FileEditorPanel({
             onShowInDiff={onShowInDiff ? showSelectedFileInDiff : undefined}
           />
         </div>
+        {selectedBreadcrumbs.length > 0 && (
+          <nav
+            className="file-editor-breadcrumbs"
+            aria-label="Editor file path"
+            title={selectedPath}
+          >
+            {selectedBreadcrumbs.map((part, index) => (
+              <span
+                key={`${part}-${index}`}
+                className={index === selectedBreadcrumbs.length - 1 ? 'current' : ''}
+              >
+                {index > 0 && <span aria-hidden="true">/</span>}
+                <span>{part}</span>
+              </span>
+            ))}
+          </nav>
+        )}
         <EditorTabStrip
           buffers={buffers}
           selectedPath={selectedPath}
