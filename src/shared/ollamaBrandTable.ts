@@ -108,3 +108,23 @@ export function matchOllamaBrand(
     fallbackModelLabel: definition.fallbackModelLabel
   }
 }
+
+/** Frozen presentation for a participant-health chip at stamp time. Health
+ * cards are per-round audit records — never re-resolve from the live roster. */
+export function resolveHealthEntryPresentation(
+  provider: string,
+  modelId: string | undefined | null,
+  fallbackProviderLabel: string
+): { displayProviderLabel: string; displayHueClass: string } {
+  const id = String(provider || '').trim()
+  if (id === 'ollama') {
+    const brand = matchOllamaBrand(modelId)
+    if (brand) {
+      return {
+        displayProviderLabel: brand.providerLabel,
+        displayHueClass: brand.providerClass
+      }
+    }
+  }
+  return { displayProviderLabel: fallbackProviderLabel, displayHueClass: id }
+}

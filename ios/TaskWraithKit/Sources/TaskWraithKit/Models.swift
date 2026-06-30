@@ -1217,6 +1217,11 @@ public struct RemoteThreadSnapshot: Codable, Sendable {
                 /// Model id — lets the chip spoof the Ollama display brand
                 /// (Qwen → Alibaba). Optional so older Mac builds still decode.
                 public let model: String?
+                /// Frozen provider/brand label stamped when the round health card
+                /// was written — must not be recomputed from the live roster.
+                public let displayProviderLabel: String?
+                /// Frozen hue class stamped when the round health card was written.
+                public let displayHueClass: String?
                 public let role: String?
                 public let status: String?
                 public let reason: String?
@@ -1226,9 +1231,15 @@ public struct RemoteThreadSnapshot: Codable, Sendable {
                 }
 
                 /// Provider key for `TWTheme.providerAccent`/`providerLabel` —
-                /// resolves the Ollama brand class when a brand model is set.
+                /// prefers the frozen stamp; falls back to model-based brand match.
                 public var brandProviderKey: String {
-                    OllamaDisplayBrands.providerHueClass(provider: provider, modelId: model)
+                    if let displayHueClass = displayHueClass?.trimmingCharacters(
+                        in: .whitespacesAndNewlines),
+                        !displayHueClass.isEmpty
+                    {
+                        return displayHueClass
+                    }
+                    return OllamaDisplayBrands.providerHueClass(provider: provider, modelId: model)
                 }
             }
         }

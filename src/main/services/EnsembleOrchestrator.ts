@@ -47,6 +47,7 @@ import {
   PARTICIPANT_HEALTH_TAG,
   type DispatchFailureReason
 } from '../EnsembleErrors'
+import { resolveHealthEntryPresentation } from '../../shared/ollamaBrandTable'
 import type { ScoutBriefRecord } from '../ScoutBrief'
 import { updateActiveGoalLifecycle } from '../GoalState'
 import { findTerminalSynthesizerRoundSummary } from '../EnsembleRoundSummary'
@@ -6232,18 +6233,29 @@ export class EnsembleOrchestrator {
     const chat = this.deps.getChat(chatId)
     if (!chat?.ensemble) return
     const timestamp = this.deps.nowIso()
-    const entries = results.map(({ participant, result }) => ({
-      participantId: participant.id,
-      provider: participant.provider,
-      // Carry the model so renderers can spoof the Ollama display brand
-      // (e.g. Qwen → Alibaba) on the health chip, matching the transcript
-      // header + @-mention chips.
-      model: participant.model,
-      role: (participant.role || 'Participant').trim(),
-      status: result.reachable ? ('ok' as const) : ('unreachable' as const),
-      reason: result.reachable ? undefined : result.reason,
-      underlyingCode: result.reachable ? undefined : result.underlyingCode
-    }))
+    const entries = results.map(({ participant, result }) => {
+      const presentation = resolveHealthEntryPresentation(
+        participant.provider,
+        participant.model,
+        providerLabel(participant.provider)
+      )
+      return {
+        participantId: participant.id,
+        provider: participant.provider,
+        // Carry the model so renderers can spoof the Ollama display brand
+        // (e.g. Qwen → Alibaba) on the health chip, matching the transcript
+        // header + @-mention chips.
+        model: participant.model,
+        // Frozen at stamp time — health cards are per-round records and must
+        // not change when the live roster is edited for future rounds.
+        displayProviderLabel: presentation.displayProviderLabel,
+        displayHueClass: presentation.displayHueClass,
+        role: (participant.role || 'Participant').trim(),
+        status: result.reachable ? ('ok' as const) : ('unreachable' as const),
+        reason: result.reachable ? undefined : result.reason,
+        underlyingCode: result.reachable ? undefined : result.underlyingCode
+      }
+    })
     const okCount = entries.filter((e) => e.status === 'ok').length
     const totalCount = entries.length
     this.saveChatWithCheckpoint({

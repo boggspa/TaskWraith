@@ -1,5 +1,5 @@
 import React from 'react'
-import type { ChatMessage, EnsembleParticipant, ProviderId } from '../../../main/store/types'
+import type { ChatMessage, ProviderId } from '../../../main/store/types'
 import { getProviderName, ProviderBadgeIcon } from './Sidebar'
 import { resolveProviderBrandLabel, resolveProviderHueClass } from '../lib/ollamaDisplayBrand'
 
@@ -22,6 +22,10 @@ import { resolveProviderBrandLabel, resolveProviderHueClass } from '../lib/ollam
  * user can hover to see "ECONNREFUSED — Codex app-server
  * socket unreachable" without leaving the transcript.
  *
+ * Presentation fields (`displayProviderLabel`, `displayHueClass`) are
+ * stamped on the message at round start and must never be recomputed
+ * from the live ensemble roster — the card is a per-round audit record.
+ *
  * The card stays inline in the transcript flow (no portal, no
  * floating positioning) so it scrolls with the conversation and
  * archives cleanly when the chat is exported.
@@ -31,6 +35,10 @@ interface ParticipantHealthEntry {
   participantId: string
   provider: ProviderId
   model?: string
+  /** Frozen provider/brand label stamped when the round health card was written. */
+  displayProviderLabel?: string
+  /** Frozen hue class stamped when the round health card was written. */
+  displayHueClass?: string
   role: string
   status: 'ok' | 'unreachable'
   reason?: string
@@ -39,24 +47,28 @@ interface ParticipantHealthEntry {
 
 interface ParticipantHealthCardProps {
   message: ChatMessage
-  /** Live ensemble roster — used to backfill `model` on historic health
-   * entries that were stamped before the orchestrator carried model ids. */
-  participants?: EnsembleParticipant[]
 }
 
-/** Resolve model for a health entry: prefer the stamped metadata, fall back
- * to the current roster so historic transcripts still get brand hues. */
-function resolveHealthEntryModel(
-  entry: ParticipantHealthEntry,
-  participants?: EnsembleParticipant[]
-): string | undefined {
-  if (entry.model) return entry.model
-  return participants?.find((p) => p.id === entry.participantId)?.model
+function resolveHealthEntryPresentation(entry: ParticipantHealthEntry): {
+  providerName: string
+  providerClass: string
+} {
+  if (entry.displayProviderLabel && entry.displayHueClass) {
+    return {
+      providerName: entry.displayProviderLabel,
+      providerClass: entry.displayHueClass
+    }
+  }
+  // Legacy entries: derive from stamped model only — never from the live roster.
+  return {
+    providerName:
+      resolveProviderBrandLabel(entry.provider, entry.model) || getProviderName(entry.provider),
+    providerClass: resolveProviderHueClass(entry.provider, entry.model)
+  }
 }
 
 export function ParticipantHealthCard({
-  message,
-  participants
+  message
 }: ParticipantHealthCardProps): React.JSX.Element | null {
   const metadata = message.metadata
   if (!metadata || metadata.kind !== 'ensembleParticipantHealth') return null
@@ -124,13 +136,7 @@ export function ParticipantHealthCard({
       </div>
       <div className="participant-health-card-chips">
         {entries.map((entry) => {
-          const model = resolveHealthEntryModel(entry, participants)
-          // Ollama-backed display brands spoof their upstream name + hue on
-          // the chip (e.g. Alibaba / Planner in Alibaba purple), matching the
-          // transcript header, run cards, and @-mention chips.
-          const providerName =
-            resolveProviderBrandLabel(entry.provider, model) || getProviderName(entry.provider)
-          const providerClass = resolveProviderHueClass(entry.provider, model)
+          const { providerName, providerClass } = resolveHealthEntryPresentation(entry)
           const label = entry.role ? `${providerName} / ${entry.role}` : providerName
           const tooltip =
             entry.status === 'ok'

@@ -434,47 +434,41 @@ describe('RemoteThreadProjection', () => {
       })
     })
 
-    it('backfills participant model from the live roster on historic health entries', () => {
+    it('passes stamped display fields through without roster backfill', () => {
       const snap = project(
         { kind: 'latestN', n: 10 },
         [
           msg(1, {
-            id: 'health-ollama-historic',
+            id: 'health-ollama-frozen',
             role: 'system',
             content: 'Participant health: 1/1 ready',
             metadata: {
               kind: 'ensembleParticipantHealth',
-              ensembleRoundId: 'round-ollama-historic',
+              ensembleRoundId: 'round-frozen',
               okCount: 1,
               totalCount: 1,
               entries: [
                 {
                   participantId: 'p1',
                   provider: 'ollama',
+                  model: 'qwen3.5:9b',
+                  displayProviderLabel: 'Alibaba',
+                  displayHueClass: 'alibaba',
                   role: 'Planner',
                   status: 'ok'
                 }
               ]
             }
           })
-        ],
-        [],
-        {
-          ensembleParticipants: [
-            {
-              id: 'p1',
-              provider: 'ollama',
-              model: 'qwen3.5:9b',
-              role: 'Planner',
-              instructions: '',
-              order: 0,
-              enabled: true
-            }
-          ]
-        }
+        ]
       )
 
-      expect(snap.rows[0]?.participantHealth?.entries?.[0]?.model).toBe('qwen3.5:9b')
+      expect(snap.rows[0]?.participantHealth?.entries?.[0]).toMatchObject({
+        displayProviderLabel: 'Alibaba',
+        displayHueClass: 'alibaba',
+        model: 'qwen3.5:9b',
+        role: 'Planner'
+      })
     })
 
     it('projects returned sub-thread results as structured compact result rows', () => {
