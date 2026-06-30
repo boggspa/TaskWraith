@@ -81,7 +81,9 @@ export function EditorTabStrip({
               role="tab"
               aria-selected={isActive}
               aria-haspopup="menu"
-              aria-keyshortcuts="ContextMenu Shift+F10"
+              aria-keyshortcuts={
+                isActive ? 'ContextMenu Shift+F10 Meta+W Control+W' : 'ContextMenu Shift+F10'
+              }
               tabIndex={isActive ? 0 : -1}
               onClick={() => onSelect(buffer.path)}
               onKeyDown={(event) => {
@@ -130,7 +132,8 @@ export function EditorTabStrip({
               type="button"
               className="file-editor-tab-close"
               aria-label={`Close ${buffer.path}`}
-              title={`Close ${buffer.path}`}
+              aria-keyshortcuts={isActive ? 'Meta+W Control+W' : undefined}
+              title={isActive ? `Close ${buffer.path} (Cmd/Ctrl+W)` : `Close ${buffer.path}`}
               onClick={() => onClose(buffer.path)}
             >
               &times;
