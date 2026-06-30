@@ -1,0 +1,23 @@
+# TaskWraith How-To Guides
+
+This section contains public "How To…" guides for each UX feature in TaskWraith. Each guide focuses on **where to find the feature** and a **brief explanation of what it does**, with screenshot placeholders you can fill in later.
+
+## Areas
+
+### Ready (1–5)
+1. [Getting Started](getting-started/)
+2. [Sidebar & Thread Navigation](sidebar-navigation/)
+3. [Sidebar Footer Control Row](footer-control-row/)
+4. [Chats & Threads](chats-and-threads/)
+5. [Composer](composer/)
+
+### Pending (6–14)
+- 6. Ensemble Mode
+- 7. Workflows & Workspace Boards
+- 8. Approvals & Permissions
+- 9. Transcript, Search & Rich Content
+- 10. Canvas & Previews
+- 11. Media, Audio & Video
+- 12. Settings & Configuration
+- 13. Notifications & Status
+- 14. Goals, To-Dos & Scheduling
