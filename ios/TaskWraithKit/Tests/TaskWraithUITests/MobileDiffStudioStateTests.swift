@@ -19,6 +19,7 @@ struct MobileDiffStudioStateTests {
         state.selectedWorkspaceId = "ws-1"
         state.selectedPath = "src/App.swift"
         state.fileFilter = "app"
+        state.stageFilter = .unstaged
         state.diff = try decodeWorkspaceDiff()
         state.isLoading = true
 
@@ -28,6 +29,7 @@ struct MobileDiffStudioStateTests {
         #expect(state.selectedPath == nil)
         #expect(state.diff == nil)
         #expect(state.fileFilter.isEmpty)
+        #expect(state.stageFilter == .all)
         #expect(state.files.isEmpty)
         #expect(state.isLoading == false)
         #expect(state.status == "No workspace has diff review enabled.")
@@ -40,7 +42,7 @@ struct MobileDiffStudioStateTests {
 
         state.fileFilter = "button"
         #expect(state.filteredFiles.map(\.path) == ["src/ui/Button.swift"])
-        #expect(state.fileFilterStatus == "1 of 5 files match \"button\".")
+        #expect(state.fileFilterStatus == "1 of 7 files match \"button\".")
 
         state.fileFilter = " deleted "
         #expect(state.filteredFiles.map(\.path) == ["docs/Old.md"])
@@ -54,9 +56,52 @@ struct MobileDiffStudioStateTests {
             "src/ui/Button.swift",
             "docs/Old.md",
             "Assets/Icon.png",
-            ".env"
+            ".env",
+            "notes/New.md",
+            "generated.lock"
         ])
         #expect(state.fileFilterStatus == nil)
+    }
+
+    @MainActor
+    @Test func stageFilterMatchesDesktopDiffGroupsAndCombinesWithTextSearch() throws {
+        let state = MobileDiffStudioState()
+        state.diff = try decodeFilterableWorkspaceDiff()
+
+        #expect(MobileDiffStageFilter.allCases.map(\.label) == [
+            "All",
+            "Mixed",
+            "Unstaged",
+            "Staged",
+            "Untracked",
+            "Other"
+        ])
+
+        state.stageFilter = .mixed
+        #expect(state.filteredFiles.map(\.path) == ["docs/Old.md"])
+        #expect(state.stageFilterStatus == "1 of 7 mixed file visible.")
+        #expect(state.emptyFilterMessage == "No mixed changed files.")
+
+        state.stageFilter = .unstaged
+        #expect(state.filteredFiles.map(\.path) == ["src/App.swift"])
+        #expect(state.stageFilterStatus == "1 of 7 unstaged file visible.")
+
+        state.stageFilter = .staged
+        #expect(state.filteredFiles.map(\.path) == ["src/ui/Button.swift"])
+
+        state.stageFilter = .untracked
+        #expect(state.filteredFiles.map(\.path) == ["notes/New.md"])
+
+        state.stageFilter = .other
+        #expect(state.filteredFiles.map(\.path) == ["Assets/Icon.png", ".env", "generated.lock"])
+
+        state.fileFilter = "env"
+        #expect(state.filteredFiles.map(\.path) == [".env"])
+        #expect(state.fileFilterStatus == "1 of 3 files match \"env\".")
+
+        state.fileFilter = "missing"
+        #expect(state.filteredFiles.isEmpty)
+        #expect(state.emptyFilterMessage == "No other changed files match \"missing\".")
     }
 
     @MainActor
@@ -209,9 +254,29 @@ private func decodeFilterableWorkspaceDiff() throws -> WorkspaceDiffResult {
               "deletions": 1,
               "truncated": false,
               "hunks": []
+            },
+            {
+              "path": "notes/New.md",
+              "kind": "untracked",
+              "status": "untracked",
+              "additions": 6,
+              "deletions": 0,
+              "staged": false,
+              "unstaged": false,
+              "truncated": false,
+              "hunks": []
+            },
+            {
+              "path": "generated.lock",
+              "kind": "modified",
+              "status": "modified",
+              "additions": 0,
+              "deletions": 0,
+              "truncated": false,
+              "hunks": []
             }
           ],
-          "totalFiles": 5,
+          "totalFiles": 7,
           "truncated": false
         }
         """

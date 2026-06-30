@@ -11,6 +11,59 @@
 import SwiftUI
 import TaskWraithKit
 
+enum MobileDiffStageFilter: String, CaseIterable, Identifiable {
+    case all
+    case mixed
+    case unstaged
+    case staged
+    case untracked
+    case other
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .all: return "All"
+        case .mixed: return "Mixed"
+        case .unstaged: return "Unstaged"
+        case .staged: return "Staged"
+        case .untracked: return "Untracked"
+        case .other: return "Other"
+        }
+    }
+
+    var emptyLabel: String {
+        switch self {
+        case .all: return "changed"
+        case .mixed: return "mixed"
+        case .unstaged: return "unstaged"
+        case .staged: return "staged"
+        case .untracked: return "untracked"
+        case .other: return "other"
+        }
+    }
+
+    func matches(_ file: WorkspaceDiffFile) -> Bool {
+        switch self {
+        case .all:
+            return true
+        case .mixed:
+            return file.staged == true && file.unstaged == true
+        case .unstaged:
+            return file.unstaged == true && !(file.staged == true)
+        case .staged:
+            return file.staged == true && !(file.unstaged == true)
+        case .untracked:
+            return file.kind == "untracked" || file.status == "untracked"
+        case .other:
+            return file.staged != true
+                && file.unstaged != true
+                && file.kind != "untracked"
+                && file.status != "untracked"
+        }
+    }
+}
+
 @MainActor
 final class MobileDiffStudioState: ObservableObject {
     @Published var selectedWorkspaceId: String?
@@ -19,20 +72,40 @@ final class MobileDiffStudioState: ObservableObject {
     @Published var status = ""
     @Published var isLoading = false
     @Published var fileFilter = ""
+    @Published var stageFilter: MobileDiffStageFilter = .all
 
     private var reloadGeneration = 0
 
     var files: [WorkspaceDiffFile] { diff?.files ?? [] }
 
+    var stageFilteredFiles: [WorkspaceDiffFile] {
+        Self.filterFiles(files, stageFilter: stageFilter)
+    }
+
     var filteredFiles: [WorkspaceDiffFile] {
-        Self.filterFiles(files, query: fileFilter)
+        Self.filterFiles(stageFilteredFiles, query: fileFilter)
     }
 
     var fileFilterStatus: String? {
         let query = fileFilter.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { return nil }
         let matchCount = filteredFiles.count
-        return "\(matchCount) of \(files.count) file\(files.count == 1 ? "" : "s") match \"\(query)\"."
+        let poolCount = stageFilteredFiles.count
+        return "\(matchCount) of \(poolCount) file\(poolCount == 1 ? "" : "s") match \"\(query)\"."
+    }
+
+    var stageFilterStatus: String? {
+        guard stageFilter != .all else { return nil }
+        let count = stageFilteredFiles.count
+        return "\(count) of \(files.count) \(stageFilter.emptyLabel) file\(count == 1 ? "" : "s") visible."
+    }
+
+    var emptyFilterMessage: String {
+        let query = fileFilter.trimmingCharacters(in: .whitespacesAndNewlines)
+        if query.isEmpty {
+            return "No \(stageFilter.emptyLabel) changed files."
+        }
+        return "No \(stageFilter.emptyLabel) changed files match \"\(query)\"."
     }
 
     static func statusText(visibleFiles: Int, totalFiles: Int?) -> String {
@@ -52,6 +125,14 @@ final class MobileDiffStudioState: ObservableObject {
         }
     }
 
+    static func filterFiles(
+        _ files: [WorkspaceDiffFile],
+        stageFilter: MobileDiffStageFilter
+    ) -> [WorkspaceDiffFile] {
+        guard stageFilter != .all else { return files }
+        return files.filter { stageFilter.matches($0) }
+    }
+
     static let diffColumnLabels = ["Old", "New", "Δ", "Line"]
 
     func clearUnavailableWorkspaceStatus() {
@@ -60,6 +141,7 @@ final class MobileDiffStudioState: ObservableObject {
         diff = nil
         selectedPath = nil
         fileFilter = ""
+        stageFilter = .all
         isLoading = false
         status = "No workspace has diff review enabled."
     }
@@ -130,6 +212,7 @@ final class MobileDiffStudioState: ObservableObject {
             diff = nil
             selectedPath = nil
             fileFilter = ""
+            stageFilter = .all
         }
         if let targetPath = Self.normalizedTargetPath(targetPath) {
             selectedPath = targetPath
@@ -143,6 +226,7 @@ final class MobileDiffStudioState: ObservableObject {
         diff = nil
         selectedPath = nil
         fileFilter = ""
+        stageFilter = .all
         Task { await reload(model: model) }
     }
 
@@ -342,6 +426,16 @@ private struct DiffFileNavigatorPane: View {
             }
 
             Section {
+                Picker("Change Group", selection: $state.stageFilter) {
+                    ForEach(MobileDiffStageFilter.allCases) { filter in
+                        Text(filter.label).tag(filter)
+                    }
+                }
+                .pickerStyle(.menu)
+                .accessibilityLabel("Filter by change group")
+            }
+
+            Section {
                 if state.files.isEmpty {
                     Text(state.isLoading ? "Computing diff..." : state.status)
                         .foregroundStyle(TWTheme.textMuted)
@@ -350,7 +444,7 @@ private struct DiffFileNavigatorPane: View {
                             state.isLoading ? "Computing diff" : state.status)
                         .accessibilityAddTraits(state.isLoading ? .updatesFrequently : [])
                 } else if state.filteredFiles.isEmpty {
-                    Text("No changed files match \"\(state.fileFilter.trimmingCharacters(in: .whitespacesAndNewlines))\".")
+                    Text(state.emptyFilterMessage)
                         .foregroundStyle(TWTheme.textMuted)
                 } else {
                     ForEach(state.filteredFiles) { file in
@@ -364,6 +458,9 @@ private struct DiffFileNavigatorPane: View {
                 }
             } footer: {
                 VStack(alignment: .leading, spacing: 4) {
+                    if let stageFilterStatus = state.stageFilterStatus {
+                        Text(stageFilterStatus)
+                    }
                     if let filterStatus = state.fileFilterStatus {
                         Text(filterStatus)
                     }
