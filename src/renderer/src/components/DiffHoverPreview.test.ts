@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  canShowDiffHoverPreview,
   diffHoverPreviewRole,
   diffHoverPreviewSourceLabel,
   getDiffHoverPreviewLayout,
@@ -69,5 +70,11 @@ describe('DiffHoverPreview semantics', () => {
   it('uses dialog semantics only when the preview contains an action', () => {
     expect(diffHoverPreviewRole(true)).toBe('dialog')
     expect(diffHoverPreviewRole(false)).toBe('tooltip')
+  })
+
+  it('can show action-only previews for stats-only Workbench rows', () => {
+    expect(canShowDiffHoverPreview({ diffText: undefined }, false)).toBe(false)
+    expect(canShowDiffHoverPreview({ diffText: '' }, true)).toBe(true)
+    expect(canShowDiffHoverPreview({ diffText: '@@ -1 +1 @@\n-old\n+new' }, false)).toBe(true)
   })
 })

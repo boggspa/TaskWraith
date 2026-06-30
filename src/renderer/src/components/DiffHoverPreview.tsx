@@ -10,7 +10,7 @@ export interface DiffHoverPreviewSummary {
   status?: string
   additions?: number
   deletions?: number
-  diffText: string
+  diffText?: string
   source?: DiffHoverPreviewSource
 }
 
@@ -46,6 +46,13 @@ export function diffHoverPreviewSourceLabel(source?: DiffHoverPreviewSource): st
 
 export function diffHoverPreviewRole(hasAction: boolean): 'dialog' | 'tooltip' {
   return hasAction ? 'dialog' : 'tooltip'
+}
+
+export function canShowDiffHoverPreview(
+  summary: Pick<DiffHoverPreviewSummary, 'diffText'>,
+  hasAction = false
+): boolean {
+  return Boolean(summary.diffText?.trim() || hasAction)
 }
 
 export interface DiffHoverPreviewLayout {
@@ -267,7 +274,7 @@ export function DiffHoverPreviewOverlay({
     target?.focus({ preventScroll: true })
   }, [preview?.focusTarget, preview?.summary.path])
 
-  if (!preview || !parsed || typeof document === 'undefined') return null
+  if (!preview || typeof document === 'undefined') return null
 
   const viewportWidth = typeof window !== 'undefined' ? window.innerWidth : 1024
   const viewportHeight = typeof window !== 'undefined' ? window.innerHeight : 768
@@ -288,7 +295,7 @@ export function DiffHoverPreviewOverlay({
     ? `${sourceLabel} ${statusText} ${changeText}`
     : `${sourceLabel} ${statusText}`
   const hiddenLineCount =
-    parsed.omittedLineCount > 0 || preparedDiff?.capped
+    parsed && (parsed.omittedLineCount > 0 || preparedDiff?.capped)
       ? Math.max(parsed.omittedLineCount, 1)
       : 0
 
@@ -331,7 +338,7 @@ export function DiffHoverPreviewOverlay({
         </div>
       </div>
       <div className="diff-hover-preview-body">
-        {parsed.sections.length > 0 ? (
+        {parsed && parsed.sections.length > 0 ? (
           parsed.sections.map((section, sectionIndex) => (
             <div key={sectionIndex} className="diff-hover-preview-section">
               {section.header && <div className="diff-hover-preview-hunk">{section.header}</div>}
@@ -340,6 +347,8 @@ export function DiffHoverPreviewOverlay({
               ))}
             </div>
           ))
+        ) : !preparedDiff ? (
+          <div className="diff-hover-preview-empty">No inline diff captured.</div>
         ) : (
           <div className="diff-hover-preview-empty">No diff hunks to preview.</div>
         )}
@@ -348,8 +357,11 @@ export function DiffHoverPreviewOverlay({
         <span>{preview.summary.actionLabel || 'Hover preview'}</span>
         <div className="diff-hover-preview-footer-actions">
           <span>
-            {parsed.renderedLineCount.toLocaleString()} lines shown
-            {hiddenLineCount > 0 ? ` · ${hiddenLineCount.toLocaleString()} hidden` : ''}
+            {parsed
+              ? `${parsed.renderedLineCount.toLocaleString()} lines shown${
+                  hiddenLineCount > 0 ? ` · ${hiddenLineCount.toLocaleString()} hidden` : ''
+                }`
+              : 'No hunks captured'}
           </span>
           {preview.action && (
             <button

@@ -88,6 +88,7 @@ import {
   DIFF_HOVER_PREVIEW_TOOLTIP_ID,
   DiffHoverPreviewOverlay,
   type DiffHoverPreviewState,
+  canShowDiffHoverPreview,
   diffHoverPreviewBoundaryForElement,
   useDiffHoverPreviewDismiss,
   useDiffHoverPreviewState
@@ -1030,7 +1031,7 @@ export const TranscriptPanel = memo(
         summary: DiffFileSummary,
         options?: { focusTarget?: DiffHoverPreviewState['focusTarget'] }
       ) => {
-        if (!summary.diffText) return
+        if (!canShowDiffHoverPreview(summary, Boolean(onOpenFileChangeInWorkbench))) return
         showFileChangeDiffPreview({
           anchor: event.currentTarget.getBoundingClientRect(),
           boundary: diffHoverPreviewBoundaryForElement(event.currentTarget),
@@ -2587,6 +2588,10 @@ export const TranscriptPanel = memo(
                           )
                         }
                         const hasDiffPreview = Boolean(item.diffText)
+                        const canShowHoverPreview = canShowDiffHoverPreview(
+                          item,
+                          Boolean(onOpenFileChangeInWorkbench)
+                        )
                         const fileChangeActionLabel = onOpenFileChangeInWorkbench
                           ? `Open Workbench diff for ${item.path}`
                           : `Preview diff for ${item.path}`
@@ -2597,26 +2602,29 @@ export const TranscriptPanel = memo(
                               hasDiffPreview ? 'has-diff-preview' : 'has-workbench-link'
                             }`}
                             onMouseEnter={
-                              hasDiffPreview
+                              canShowHoverPreview
                                 ? (event) => openFileChangeDiffPreview(event, item)
                                 : undefined
                             }
                             onMouseLeave={
-                              hasDiffPreview ? scheduleCloseFileChangeDiffPreview : undefined
+                              canShowHoverPreview
+                                ? scheduleCloseFileChangeDiffPreview
+                                : undefined
                             }
                           >
                             <button
                               className="file-change-summary-main-action"
                               type="button"
                               aria-describedby={
-                                hasDiffPreview && fileChangeDiffPreview?.summary.path === item.path
+                                canShowHoverPreview &&
+                                fileChangeDiffPreview?.summary.path === item.path
                                   ? DIFF_HOVER_PREVIEW_TOOLTIP_ID
                                   : undefined
                               }
                               aria-label={fileChangeActionLabel}
                               title={fileChangeActionLabel}
                               onFocus={
-                                hasDiffPreview
+                                canShowHoverPreview
                                   ? (event) =>
                                       openFileChangeDiffPreview(event, item, {
                                         focusTarget: 'preview'
@@ -2624,7 +2632,9 @@ export const TranscriptPanel = memo(
                                   : undefined
                               }
                               onBlur={
-                                hasDiffPreview ? scheduleCloseFileChangeDiffPreview : undefined
+                                canShowHoverPreview
+                                  ? scheduleCloseFileChangeDiffPreview
+                                  : undefined
                               }
                               onClick={(event) => activateFileChangeSummary(event, item)}
                             >
