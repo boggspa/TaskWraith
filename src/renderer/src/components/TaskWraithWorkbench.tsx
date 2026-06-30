@@ -25,7 +25,7 @@ interface EditorOpenRequest {
   nonce: number
 }
 
-interface WorkbenchOpenRequest extends EditorOpenRequest {
+export interface WorkbenchOpenRequest extends EditorOpenRequest {
   view?: WorkbenchView
 }
 
@@ -111,6 +111,13 @@ export const buildWorkbenchBreadcrumbs = ({
 
 export const resolveInitialWorkbenchView = (view?: WorkbenchView): WorkbenchView => {
   return view === 'diff' || view === 'split' ? view : 'editor'
+}
+
+export const workbenchOpenRequestKey = (
+  request?: WorkbenchOpenRequest | null
+): string => {
+  if (!request) return ''
+  return `${request.nonce}\u0000${request.view ?? 'editor'}\u0000${request.path}`
 }
 
 type WorkbenchKeyEventLike = Pick<
@@ -223,6 +230,7 @@ export function TaskWraithWorkbench({
   const [editorState, setEditorState] = useState<FileEditorPanelState>(DEFAULT_EDITOR_STATE)
   const [diffActionPath, setDiffActionPath] = useState('')
   const diffRefreshSeqRef = useRef(0)
+  const handledOpenRequestKeyRef = useRef('')
   const editorNavRef = useRef<HTMLButtonElement | null>(null)
   const diffNavRef = useRef<HTMLButtonElement | null>(null)
   const splitNavRef = useRef<HTMLButtonElement | null>(null)
@@ -463,6 +471,9 @@ export function TaskWraithWorkbench({
 
   useEffect(() => {
     if (!openFileRequest) return
+    const requestKey = workbenchOpenRequestKey(openFileRequest)
+    if (handledOpenRequestKeyRef.current === requestKey) return
+    handledOpenRequestKeyRef.current = requestKey
     if (openFileRequest.view === 'diff') {
       showFileInDiff(openFileRequest.path)
       return

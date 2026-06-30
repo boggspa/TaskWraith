@@ -7,7 +7,8 @@ import {
   isWorkbenchPaneHidden,
   resolveInitialWorkbenchView,
   resolveWorkbenchKeyboardCommand,
-  TaskWraithWorkbench
+  TaskWraithWorkbench,
+  workbenchOpenRequestKey
 } from './TaskWraithWorkbench'
 
 describe('TaskWraithWorkbench nav metadata', () => {
@@ -115,6 +116,13 @@ describe('TaskWraithWorkbench shell', () => {
     expect(resolveInitialWorkbenchView('diff')).toBe('diff')
     expect(resolveInitialWorkbenchView('split')).toBe('split')
     expect(resolveInitialWorkbenchView()).toBe('editor')
+    expect(workbenchOpenRequestKey(null)).toBe('')
+    expect(workbenchOpenRequestKey({ path: 'src/main/index.ts', nonce: 1, view: 'diff' })).toBe(
+      '1\u0000diff\u0000src/main/index.ts'
+    )
+    expect(workbenchOpenRequestKey({ path: 'src/main/index.ts', nonce: 2, view: 'diff' })).not.toBe(
+      workbenchOpenRequestKey({ path: 'src/main/index.ts', nonce: 1, view: 'diff' })
+    )
 
     const html = renderToStaticMarkup(
       <TaskWraithWorkbench
