@@ -568,6 +568,115 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
       }
     },
     {
+      name: 'start_background_process',
+      description:
+        'Start a long-running workspace command such as a dev server or watcher and return a TaskWraith process id for later reads or cancellation.',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: true
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          command: {
+            type: 'string',
+            description: 'Shell command to start inside the active workspace.'
+          },
+          name: {
+            type: 'string',
+            description: 'Optional short label shown when listing background processes.'
+          },
+          cwd: {
+            type: 'string',
+            description: 'Optional workspace-relative directory to run in. Defaults to workspace root.'
+          },
+          initialWaitMs: {
+            type: 'number',
+            description: 'Optional initial log wait, clamped to 0-3000ms. Defaults to 500ms.'
+          },
+          maxInitialChars: {
+            type: 'number',
+            description: 'Maximum initial stdout/stderr chars to return. Defaults to 20000.'
+          }
+        },
+        required: ['command']
+      }
+    },
+    {
+      name: 'list_background_processes',
+      description: 'List long-running processes started by TaskWraith MCP tools in this chat.',
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {}
+      }
+    },
+    {
+      name: 'read_background_process',
+      description:
+        'Read bounded stdout/stderr from a background process started by TaskWraith MCP tools in this chat.',
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          processId: { type: 'string' },
+          stdoutOffset: {
+            type: 'number',
+            description: 'Optional stdout cursor returned by a previous read.'
+          },
+          stderrOffset: {
+            type: 'number',
+            description: 'Optional stderr cursor returned by a previous read.'
+          },
+          maxChars: {
+            type: 'number',
+            description: 'Maximum chars per selected stream. Defaults to 40000.'
+          },
+          stream: {
+            type: 'string',
+            enum: ['stdout', 'stderr', 'both'],
+            description: 'Which stream to read. Defaults to both.'
+          }
+        },
+        required: ['processId']
+      }
+    },
+    {
+      name: 'kill_background_process',
+      description:
+        'Stop a background process previously started by TaskWraith MCP tools in this chat.',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          processId: { type: 'string' },
+          signal: {
+            type: 'string',
+            enum: ['SIGTERM', 'SIGKILL'],
+            description: 'Signal to send. Defaults to SIGTERM.'
+          }
+        },
+        required: ['processId']
+      }
+    },
+    {
       name: 'get_diagnostics',
       description:
         'Run fixed workspace diagnostic tools and return structured TypeScript/ESLint problems.',

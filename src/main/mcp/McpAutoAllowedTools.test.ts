@@ -20,6 +20,8 @@ describe('MCP_AUTO_ALLOWED_TOOLS', () => {
       'inspect_chat_attachment',
       'workspace_board_snapshot',
       'workspace_board_preview_plan',
+      'list_background_processes',
+      'read_background_process',
       'list_active_runs'
     ] as const) {
       expect(autoAllowedTools.has(tool)).toBe(true)
@@ -38,6 +40,8 @@ describe('MCP_AUTO_ALLOWED_TOOLS', () => {
       'rename_path',
       'apply_patch',
       'run_shell_command',
+      'start_background_process',
+      'kill_background_process',
       'git_stage',
       'git_commit',
       'git_push',
@@ -73,6 +77,8 @@ describe('READ_ONLY_MCP_ADVERTISE_TOOLS', () => {
       'inspect_chat_attachment',
       'workspace_board_snapshot',
       'workspace_board_preview_plan',
+      'list_background_processes',
+      'read_background_process',
       'list_active_runs'
     ] as const) {
       expect(READ_ONLY_MCP_ADVERTISE_TOOLS).toContain(tool)
@@ -89,6 +95,8 @@ describe('READ_ONLY_MCP_ADVERTISE_TOOLS', () => {
       'rename_path',
       'apply_patch',
       'run_shell_command',
+      'start_background_process',
+      'kill_background_process',
       'git_stage',
       'git_commit',
       'git_push',
@@ -131,6 +139,8 @@ describe('isReadOnlyAdvertisedTool (bridge scope guard)', () => {
       'inspect_chat_attachment',
       'workspace_board_snapshot',
       'workspace_board_preview_plan',
+      'list_background_processes',
+      'read_background_process',
       'list_active_runs'
     ]) {
       expect(isReadOnlyAdvertisedTool(tool)).toBe(true)
@@ -147,6 +157,8 @@ describe('isReadOnlyAdvertisedTool (bridge scope guard)', () => {
       'rename_path',
       'apply_patch',
       'run_shell_command',
+      'start_background_process',
+      'kill_background_process',
       'git_stage',
       'git_commit',
       'git_push',

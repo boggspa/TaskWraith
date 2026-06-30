@@ -27,6 +27,8 @@ export const MCP_AUTO_ALLOWED_TOOLS = new Set<TaskWraithMcpToolName>([
   'approval_status',
   'provider_auth_status',
   'list_active_runs',
+  'list_background_processes',
+  'read_background_process',
   'browser_console',
   'creative_app_status',
   'creative_app_capabilities',

@@ -151,7 +151,13 @@ export function canonicalTaskWraithToolName(toolName: string): string {
 }
 
 export function taskWraithToolAgenticService(toolName: string): AgenticServiceId {
-  if (toolName === 'run_shell_command' || toolName === 'run_task' || toolName === 'get_diagnostics')
+  if (
+    toolName === 'run_shell_command' ||
+    toolName === 'run_task' ||
+    toolName === 'start_background_process' ||
+    toolName === 'kill_background_process' ||
+    toolName === 'get_diagnostics'
+  )
     return 'shellCommands'
   if (
     toolName === 'write_file' ||

@@ -14,10 +14,14 @@ import {
   executeGitPush,
   executeGitShow,
   executeInspectChatAttachment,
+  executeKillBackgroundProcess,
   executeListActiveRuns,
+  executeListBackgroundProcesses,
   executeListChatAttachments,
   executeMovePath,
+  executeReadBackgroundProcess,
   executeRenamePath,
+  executeStartBackgroundProcess,
   resolveMcpScopedPath,
   type HostCommandResult,
   type WorkspaceToolExecutorDependencies
@@ -460,6 +464,118 @@ describe('active run workspace tools', () => {
       message: 'Cancellation requested.'
     })
     expect(cancelled).toEqual([{ provider: 'codex', runId: 'run-b' }])
+  })
+})
+
+describe('background process workspace tools', () => {
+  it('starts a chat-scoped workspace process through the host registry', async () => {
+    const workspace = resolve('/tmp/taskwraith-workspace-tools')
+    const calls: Array<{ command: string; cwd: string; options: unknown }> = []
+    const deps = makeDeps(async () => commandResult(''))
+    deps.host.startBackgroundProcess = async (command, cwd, options) => {
+      calls.push({ command, cwd, options })
+      return { ok: true, processId: 'bg-1', running: true }
+    }
+
+    const result = await executeStartBackgroundProcess(
+      deps,
+      {
+        command: 'npm run dev',
+        cwd: 'packages/app',
+        name: 'vite',
+        initialWaitMs: 25,
+        maxInitialChars: 4096
+      },
+      { scope: 'workspace', cwd: workspace, workspacePath: workspace, appChatId: 'chat-1' },
+      workspace
+    )
+
+    expect(result).toMatchObject({ ok: true, processId: 'bg-1', running: true })
+    expect(calls).toEqual([
+      {
+        command: 'npm run dev',
+        cwd: resolve(workspace, 'packages/app'),
+        options: {
+          appChatId: 'chat-1',
+          name: 'vite',
+          initialWaitMs: 25,
+          maxInitialChars: 4096
+        }
+      }
+    ])
+  })
+
+  it('rejects background process cwd escapes and missing active chat ids', async () => {
+    const workspace = resolve('/tmp/taskwraith-workspace-tools')
+    const deps = makeDeps(async () => commandResult(''))
+    deps.host.startBackgroundProcess = async () => ({ ok: true })
+
+    await expect(
+      executeStartBackgroundProcess(
+        deps,
+        { command: 'npm run dev', cwd: '../outside' },
+        { scope: 'workspace', cwd: workspace, workspacePath: workspace, appChatId: 'chat-1' },
+        workspace
+      )
+    ).rejects.toThrow('Path is outside the workspace.')
+
+    await expect(
+      executeStartBackgroundProcess(
+        deps,
+        { command: 'npm run dev' },
+        { scope: 'workspace', cwd: workspace, workspacePath: workspace },
+        workspace
+      )
+    ).rejects.toThrow('requires an active chat')
+  })
+
+  it('lists, reads, and kills only through chat-scoped host registry ids', async () => {
+    const deps = makeDeps(async () => commandResult(''))
+    const seen: Record<string, unknown>[] = []
+    deps.host.listBackgroundProcesses = (filter) => {
+      seen.push({ tool: 'list', ...filter })
+      return { ok: true, count: 1 }
+    }
+    deps.host.readBackgroundProcess = (processId, options) => {
+      seen.push({ tool: 'read', processId, ...options })
+      return { ok: true, processId, stdout: { text: 'ready' } }
+    }
+    deps.host.killBackgroundProcess = async (processId, options) => {
+      seen.push({ tool: 'kill', processId, ...options })
+      return { ok: true, processId, signal: options.signal }
+    }
+    const context = {
+      scope: 'workspace' as const,
+      cwd: '/tmp/ws',
+      workspacePath: '/tmp/ws',
+      appChatId: 'chat-1'
+    }
+
+    expect(executeListBackgroundProcesses(deps, context)).toMatchObject({ ok: true, count: 1 })
+    expect(
+      executeReadBackgroundProcess(
+        deps,
+        { processId: 'bg-1', stdoutOffset: 10, stderrOffset: 4, maxChars: 2000, stream: 'stdout' },
+        context
+      )
+    ).toMatchObject({ ok: true, processId: 'bg-1' })
+    await expect(
+      executeKillBackgroundProcess(deps, { processId: 'bg-1', signal: 'SIGKILL' }, context)
+    ).resolves.toMatchObject({ ok: true, processId: 'bg-1', signal: 'SIGKILL' })
+
+    expect(seen).toEqual([
+      { tool: 'list', appChatId: 'chat-1' },
+      {
+        tool: 'read',
+        processId: 'bg-1',
+        appChatId: 'chat-1',
+        stdoutOffset: 10,
+        stderrOffset: 4,
+        maxChars: 2000,
+        stream: 'stdout'
+      },
+      { tool: 'kill', processId: 'bg-1', appChatId: 'chat-1', signal: 'SIGKILL' }
+    ])
   })
 })
 

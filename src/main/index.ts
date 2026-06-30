@@ -1855,6 +1855,265 @@ let localServersServiceRef: LocalServersService | null = null
 /** Processes TaskWraith spawns for agent tool calls — tracked so the Local
  * Servers panel can attribute them and group-kill them cleanly. */
 const spawnRegistry = new SpawnRegistry()
+
+const BACKGROUND_PROCESS_LOG_LIMIT = 500_000
+const BACKGROUND_PROCESS_ENTRY_LIMIT = 80
+
+type BackgroundProcessStreamName = 'stdout' | 'stderr' | 'both'
+type BackgroundProcessSignalName = 'SIGTERM' | 'SIGKILL'
+
+interface BackgroundProcessEntry {
+  processId: string
+  appChatId: string
+  name?: string
+  command: string
+  cwd: string
+  child: ChildProcess
+  pid?: number
+  startedAt: string
+  endedAt?: string
+  exitCode?: number | null
+  signal?: NodeJS.Signals | null
+  error?: string
+  stdout: string
+  stderr: string
+  stdoutBase: number
+  stderrBase: number
+  stdoutLength: number
+  stderrLength: number
+}
+
+class BackgroundProcessRegistry {
+  private entries = new Map<string, BackgroundProcessEntry>()
+
+  async start(
+    command: string,
+    cwd: string,
+    options: {
+      appChatId: string
+      name?: string
+      initialWaitMs: number
+      maxInitialChars: number
+    }
+  ): Promise<Record<string, unknown>> {
+    const startedAt = new Date().toISOString()
+    const processId = `bg-${Date.now()}-${randomBytes(4).toString('hex')}`
+    const shellCommand =
+      process.env.SHELL || (process.platform === 'win32' ? 'powershell.exe' : '/bin/zsh')
+    const shellArgs =
+      process.platform === 'win32' ? ['-NoProfile', '-Command', command] : ['-lc', command]
+
+    let child: ChildProcess
+    try {
+      child = spawn(shellCommand, shellArgs, {
+        cwd,
+        shell: false,
+        detached: true,
+        windowsHide: true,
+        env: createCliEnv({ FORCE_COLOR: '0', NO_COLOR: '1' }, shellCommand)
+      })
+    } catch (error) {
+      return {
+        ok: false,
+        processId,
+        command,
+        cwd,
+        startedAt,
+        error: error instanceof Error ? error.message : String(error)
+      }
+    }
+
+    const entry: BackgroundProcessEntry = {
+      processId,
+      appChatId: options.appChatId,
+      name: options.name,
+      command,
+      cwd,
+      child,
+      pid: child.pid,
+      startedAt,
+      stdout: '',
+      stderr: '',
+      stdoutBase: 0,
+      stderrBase: 0,
+      stdoutLength: 0,
+      stderrLength: 0
+    }
+    this.entries.set(processId, entry)
+    this.prune()
+
+    if (child.pid) {
+      spawnRegistry.track({
+        pid: child.pid,
+        pgid: child.pid,
+        startedAt,
+        workspacePath: cwd
+      })
+    }
+
+    child.stdout?.on('data', (chunk) => this.append(entry, 'stdout', chunk.toString()))
+    child.stderr?.on('data', (chunk) => this.append(entry, 'stderr', chunk.toString()))
+    child.on('error', (error) => {
+      entry.error = error.message
+    })
+    child.on('close', (code, signal) => {
+      entry.exitCode = code
+      entry.signal = signal
+      entry.endedAt = new Date().toISOString()
+      if (entry.pid) spawnRegistry.untrack(entry.pid)
+    })
+
+    if (options.initialWaitMs > 0) {
+      await new Promise((resolveWait) => setTimeout(resolveWait, options.initialWaitMs))
+    }
+
+    return this.read(processId, {
+      appChatId: options.appChatId,
+      stdoutOffset: 0,
+      stderrOffset: 0,
+      maxChars: options.maxInitialChars,
+      stream: 'both'
+    })
+  }
+
+  list(filter: { appChatId: string }): Record<string, unknown> {
+    const processes = [...this.entries.values()]
+      .filter((entry) => entry.appChatId === filter.appChatId)
+      .sort((a, b) => b.startedAt.localeCompare(a.startedAt))
+      .map((entry) => this.summary(entry))
+    return { ok: true, count: processes.length, processes }
+  }
+
+  read(
+    processId: string,
+    options: {
+      appChatId: string
+      stdoutOffset?: number
+      stderrOffset?: number
+      maxChars: number
+      stream: BackgroundProcessStreamName
+    }
+  ): Record<string, unknown> {
+    const entry = this.entryFor(processId, options.appChatId)
+    if (!entry) return { ok: false, processId, error: 'Background process not found for this chat.' }
+    const stdout =
+      options.stream === 'stdout' || options.stream === 'both'
+        ? this.readStream(entry, 'stdout', options.stdoutOffset, options.maxChars)
+        : undefined
+    const stderr =
+      options.stream === 'stderr' || options.stream === 'both'
+        ? this.readStream(entry, 'stderr', options.stderrOffset, options.maxChars)
+        : undefined
+    return {
+      ok: true,
+      ...this.summary(entry),
+      stdout,
+      stderr
+    }
+  }
+
+  async kill(
+    processId: string,
+    options: { appChatId: string; signal: BackgroundProcessSignalName }
+  ): Promise<Record<string, unknown>> {
+    const entry = this.entryFor(processId, options.appChatId)
+    if (!entry) return { ok: false, processId, error: 'Background process not found for this chat.' }
+    if (entry.endedAt) {
+      return { ok: true, alreadyExited: true, ...this.summary(entry) }
+    }
+    try {
+      if (entry.pid) {
+        try {
+          process.kill(-entry.pid, options.signal)
+        } catch {
+          entry.child.kill(options.signal)
+        }
+      } else {
+        entry.child.kill(options.signal)
+      }
+      return { ok: true, signal: options.signal, ...this.summary(entry) }
+    } catch (error) {
+      return {
+        ok: false,
+        ...this.summary(entry),
+        error: error instanceof Error ? error.message : String(error)
+      }
+    }
+  }
+
+  private append(entry: BackgroundProcessEntry, stream: 'stdout' | 'stderr', chunk: string): void {
+    if (!chunk) return
+    const bufferKey = stream
+    const baseKey = stream === 'stdout' ? 'stdoutBase' : 'stderrBase'
+    const lengthKey = stream === 'stdout' ? 'stdoutLength' : 'stderrLength'
+    entry[bufferKey] += chunk
+    entry[lengthKey] += chunk.length
+    if (entry[bufferKey].length > BACKGROUND_PROCESS_LOG_LIMIT) {
+      entry[bufferKey] = entry[bufferKey].slice(-BACKGROUND_PROCESS_LOG_LIMIT)
+      entry[baseKey] = entry[lengthKey] - entry[bufferKey].length
+    }
+  }
+
+  private readStream(
+    entry: BackgroundProcessEntry,
+    stream: 'stdout' | 'stderr',
+    offset: number | undefined,
+    maxChars: number
+  ): Record<string, unknown> {
+    const buffer = entry[stream]
+    const base = stream === 'stdout' ? entry.stdoutBase : entry.stderrBase
+    const total = stream === 'stdout' ? entry.stdoutLength : entry.stderrLength
+    const requestedOffset = typeof offset === 'number' ? offset : Math.max(base, total - maxChars)
+    const startOffset = Math.max(base, Math.min(total, requestedOffset))
+    const startIndex = Math.max(0, startOffset - base)
+    const text = buffer.slice(startIndex, startIndex + maxChars)
+    const cursor = startOffset + text.length
+    return {
+      text,
+      offset: startOffset,
+      cursor,
+      length: total,
+      truncatedBefore: requestedOffset < base,
+      truncatedAfter: cursor < total
+    }
+  }
+
+  private summary(entry: BackgroundProcessEntry): Record<string, unknown> {
+    return {
+      processId: entry.processId,
+      name: entry.name,
+      command: entry.command.length > 500 ? `${entry.command.slice(0, 500)}...` : entry.command,
+      cwd: entry.cwd,
+      pid: entry.pid,
+      running: !entry.endedAt,
+      startedAt: entry.startedAt,
+      endedAt: entry.endedAt,
+      exitCode: entry.exitCode,
+      signal: entry.signal,
+      error: entry.error,
+      stdoutLength: entry.stdoutLength,
+      stderrLength: entry.stderrLength
+    }
+  }
+
+  private entryFor(processId: string, appChatId: string): BackgroundProcessEntry | undefined {
+    const entry = this.entries.get(processId)
+    if (!entry || entry.appChatId !== appChatId) return undefined
+    return entry
+  }
+
+  private prune(): void {
+    if (this.entries.size <= BACKGROUND_PROCESS_ENTRY_LIMIT) return
+    const entries = [...this.entries.values()].sort((a, b) => a.startedAt.localeCompare(b.startedAt))
+    for (const entry of entries) {
+      if (this.entries.size <= BACKGROUND_PROCESS_ENTRY_LIMIT) break
+      if (!entry.endedAt) continue
+      this.entries.delete(entry.processId)
+    }
+  }
+}
+
+const backgroundProcessRegistry = new BackgroundProcessRegistry()
 let faviconServiceRef: FaviconService | null = null
 // 1.0.5-EW37 — Solo-chat wakeup service. Extends the Phase N
 // wakeup infrastructure off the ensemble-only path so a solo chat
@@ -4114,6 +4373,13 @@ function getRunRepository(): RunRepository {
 const workspaceToolExecutors = createWorkspaceToolExecutors({
   host: {
     runHostCommand,
+    startBackgroundProcess: (command, cwd, options) =>
+      backgroundProcessRegistry.start(command, cwd, options),
+    listBackgroundProcesses: (filter) => backgroundProcessRegistry.list(filter),
+    readBackgroundProcess: (processId, options) =>
+      backgroundProcessRegistry.read(processId, options),
+    killBackgroundProcess: (processId, options) =>
+      backgroundProcessRegistry.kill(processId, options),
     getTempDir: () => app.getPath('temp')
   },
   store: {

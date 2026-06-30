@@ -37,6 +37,29 @@ export interface HostCommandResult {
   durationMs: number
 }
 
+export type BackgroundProcessSignal = 'SIGTERM' | 'SIGKILL'
+export type BackgroundProcessStream = 'stdout' | 'stderr' | 'both'
+
+export interface BackgroundProcessStartOptions {
+  name?: string
+  appChatId: string
+  initialWaitMs: number
+  maxInitialChars: number
+}
+
+export interface BackgroundProcessReadOptions {
+  appChatId: string
+  stdoutOffset?: number
+  stderrOffset?: number
+  maxChars: number
+  stream: BackgroundProcessStream
+}
+
+export interface BackgroundProcessKillOptions {
+  appChatId: string
+  signal: BackgroundProcessSignal
+}
+
 export interface WorkspaceToolContext {
   scope: ChatScope
   cwd: string
@@ -50,6 +73,20 @@ export interface WorkspaceToolHostDependencies {
     cwd: string,
     timeoutMs?: number
   ) => Promise<HostCommandResult>
+  startBackgroundProcess?: (
+    command: string,
+    cwd: string,
+    options: BackgroundProcessStartOptions
+  ) => Promise<Record<string, unknown>>
+  listBackgroundProcesses?: (filter: { appChatId: string }) => Record<string, unknown>
+  readBackgroundProcess?: (
+    processId: string,
+    options: BackgroundProcessReadOptions
+  ) => Record<string, unknown>
+  killBackgroundProcess?: (
+    processId: string,
+    options: BackgroundProcessKillOptions
+  ) => Promise<Record<string, unknown>>
   getTempDir: () => string
 }
 
@@ -104,6 +141,10 @@ export const WORKSPACE_MCP_TOOL_NAMES = [
   'git_push',
   'git_create_pr',
   'run_task',
+  'start_background_process',
+  'list_background_processes',
+  'read_background_process',
+  'kill_background_process',
   'get_diagnostics',
   'list_active_runs',
   'cancel_active_run',
@@ -185,6 +226,22 @@ export interface WorkspaceToolExecutors {
   executeGitPush: (args: Record<string, any>, cwd: string) => Promise<unknown>
   executeGitCreatePr: (args: Record<string, any>, cwd: string) => Promise<unknown>
   executeRunTask: (args: Record<string, any>, cwd: string) => Promise<unknown>
+  executeStartBackgroundProcess: (
+    args: Record<string, any>,
+    context: WorkspaceToolContext,
+    cwd: string
+  ) => Promise<unknown>
+  executeListBackgroundProcesses: (
+    context: WorkspaceToolContext
+  ) => unknown
+  executeReadBackgroundProcess: (
+    args: Record<string, any>,
+    context: WorkspaceToolContext
+  ) => unknown
+  executeKillBackgroundProcess: (
+    args: Record<string, any>,
+    context: WorkspaceToolContext
+  ) => Promise<unknown>
   executeGetDiagnostics: (
     args: Record<string, any>,
     context: WorkspaceToolContext,
@@ -388,6 +445,13 @@ export function createWorkspaceToolExecutors(
     executeGitPush: (args, cwd) => executeGitPush(deps, args, cwd),
     executeGitCreatePr: (args, cwd) => executeGitCreatePr(deps, args, cwd),
     executeRunTask: (args, cwd) => executeRunTask(deps, args, cwd),
+    executeStartBackgroundProcess: (args, context, cwd) =>
+      executeStartBackgroundProcess(deps, args, context, cwd),
+    executeListBackgroundProcesses: (context) => executeListBackgroundProcesses(deps, context),
+    executeReadBackgroundProcess: (args, context) =>
+      executeReadBackgroundProcess(deps, args, context),
+    executeKillBackgroundProcess: (args, context) =>
+      executeKillBackgroundProcess(deps, args, context),
     executeGetDiagnostics: (args, context, cwd) =>
       executeGetDiagnostics(deps, args, context, cwd),
     executeListActiveRuns: (args, context) => executeListActiveRuns(deps, args, context),
@@ -493,6 +557,21 @@ export async function executeWorkspaceMcpTool(
       result,
       isError: (result.exitCode !== null && result.exitCode !== 0) || result.timedOut === true
     }
+  }
+  if (toolName === 'start_background_process') {
+    const result = await executeStartBackgroundProcess(deps, args, context, cwd)
+    return { result, isError: result.ok === false }
+  }
+  if (toolName === 'list_background_processes') {
+    return { result: executeListBackgroundProcesses(deps, context), isError: false }
+  }
+  if (toolName === 'read_background_process') {
+    const result = executeReadBackgroundProcess(deps, args, context)
+    return { result, isError: result.ok === false }
+  }
+  if (toolName === 'kill_background_process') {
+    const result = await executeKillBackgroundProcess(deps, args, context)
+    return { result, isError: result.ok === false }
   }
   if (toolName === 'get_diagnostics') {
     const result = await executeGetDiagnostics(deps, args, context, cwd)
@@ -1147,6 +1226,72 @@ export async function executeRunTask(
     stderr: truncateText(result.stderr),
     summary: summarizeTestOutput(`${result.stdout}\n${result.stderr}`)
   }
+}
+
+export async function executeStartBackgroundProcess(
+  deps: WorkspaceToolExecutorDependencies,
+  args: Record<string, any>,
+  context: WorkspaceToolContext,
+  cwd: string
+) {
+  const startBackgroundProcess = deps.host.startBackgroundProcess
+  if (!startBackgroundProcess) throw new Error('Background process host is not configured.')
+  const appChatId = requireActiveChatIdForBackgroundTool(context, 'start_background_process')
+  const command = requireNonEmptyString(args.command, 'Command')
+  const processCwd = args.cwd
+    ? resolveMcpWorkspacePath(context, String(args.cwd), { allowWorkspaceRoot: true })
+    : cwd
+  const initialWaitMs = clampInteger(args.initialWaitMs, 500, 0, 3000)
+  const maxInitialChars = clampInteger(args.maxInitialChars ?? args.maxChars, 20_000, 1000, 100_000)
+  return startBackgroundProcess(command, processCwd, {
+    name: optionalString(args.name),
+    appChatId,
+    initialWaitMs,
+    maxInitialChars
+  })
+}
+
+export function executeListBackgroundProcesses(
+  deps: WorkspaceToolExecutorDependencies,
+  context: WorkspaceToolContext
+) {
+  const listBackgroundProcesses = deps.host.listBackgroundProcesses
+  if (!listBackgroundProcesses) throw new Error('Background process host is not configured.')
+  const appChatId = requireActiveChatIdForBackgroundTool(context, 'list_background_processes')
+  return listBackgroundProcesses({ appChatId })
+}
+
+export function executeReadBackgroundProcess(
+  deps: WorkspaceToolExecutorDependencies,
+  args: Record<string, any>,
+  context: WorkspaceToolContext
+) {
+  const readBackgroundProcess = deps.host.readBackgroundProcess
+  if (!readBackgroundProcess) throw new Error('Background process host is not configured.')
+  const appChatId = requireActiveChatIdForBackgroundTool(context, 'read_background_process')
+  const processId = requireNonEmptyString(args.processId || args.id, 'Process id')
+  return readBackgroundProcess(processId, {
+    appChatId,
+    stdoutOffset: optionalNumber(args.stdoutOffset),
+    stderrOffset: optionalNumber(args.stderrOffset),
+    maxChars: clampInteger(args.maxChars ?? args.limit, 40_000, 1000, 120_000),
+    stream: normalizeBackgroundProcessStream(args.stream)
+  })
+}
+
+export async function executeKillBackgroundProcess(
+  deps: WorkspaceToolExecutorDependencies,
+  args: Record<string, any>,
+  context: WorkspaceToolContext
+) {
+  const killBackgroundProcess = deps.host.killBackgroundProcess
+  if (!killBackgroundProcess) throw new Error('Background process host is not configured.')
+  const appChatId = requireActiveChatIdForBackgroundTool(context, 'kill_background_process')
+  const processId = requireNonEmptyString(args.processId || args.id, 'Process id')
+  return killBackgroundProcess(processId, {
+    appChatId,
+    signal: normalizeBackgroundProcessSignal(args.signal)
+  })
 }
 
 export async function executeGetDiagnostics(
@@ -2112,6 +2257,11 @@ export function optionalString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value : undefined
 }
 
+function optionalNumber(value: unknown): number | undefined {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? Math.max(0, Math.trunc(parsed)) : undefined
+}
+
 export function toStringArray(value: unknown): string[] {
   if (typeof value === 'string') {
     const trimmed = value.trim()
@@ -2135,6 +2285,27 @@ export function truncateText(value: string, max = MAX_MCP_TEXT_CHARS): string {
   return value.length <= max
     ? value
     : `${value.slice(0, max)}\n...truncated ${value.length - max} chars`
+}
+
+function requireActiveChatIdForBackgroundTool(
+  context: WorkspaceToolContext,
+  tool: string
+): string {
+  if (context.scope !== 'workspace') {
+    throw new Error(`${tool} requires an active workspace.`)
+  }
+  if (!context.appChatId) {
+    throw new Error(`${tool} requires an active chat.`)
+  }
+  return context.appChatId
+}
+
+function normalizeBackgroundProcessStream(value: unknown): BackgroundProcessStream {
+  return value === 'stdout' || value === 'stderr' ? value : 'both'
+}
+
+function normalizeBackgroundProcessSignal(value: unknown): BackgroundProcessSignal {
+  return value === 'SIGKILL' ? 'SIGKILL' : 'SIGTERM'
 }
 
 function normalizeDiagnosticSourceMode(value: unknown, args: Record<string, any>): DiagnosticSourceMode {

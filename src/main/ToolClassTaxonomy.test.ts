@@ -23,6 +23,8 @@ describe('classifyTool', () => {
     expect(classifyTool('workspace_board_snapshot')).toBe('orchestration')
     expect(classifyTool('workspace_board_preview_plan')).toBe('orchestration')
     expect(classifyTool('workspace_board_apply_plan')).toBe('orchestration')
+    expect(classifyTool('list_background_processes')).toBe('orchestration')
+    expect(classifyTool('read_background_process')).toBe('orchestration')
     expect(classifyTool('web_search')).toBe('web_read')
     expect(classifyTool('web_fetch')).toBe('web_read')
     expect(classifyTool('ask_user_question')).toBe('ui_elicitation')
@@ -37,6 +39,8 @@ describe('classifyTool', () => {
     expect(classifyTool('write_file')).toBe('workspace_write')
     expect(classifyTool('apply_patch')).toBe('workspace_write')
     expect(classifyTool('run_shell_command')).toBe('workspace_write')
+    expect(classifyTool('start_background_process')).toBe('workspace_write')
+    expect(classifyTool('kill_background_process')).toBe('workspace_write')
     expect(classifyTool('get_diagnostics')).toBe('workspace_write')
     expect(classifyTool('something_brand_new')).toBe('workspace_write')
   })
@@ -122,6 +126,7 @@ describe('workspace_write is exactly the read-only deny set', () => {
         'replace',
         'run_shell_command',
         'run_task',
+        'start_background_process',
         'svg_rasterize',
         'switch_auth_profile',
         'transcode_audio',
@@ -130,7 +135,8 @@ describe('workspace_write is exactly the read-only deny set', () => {
         'video_encode_clip',
         'video_probe',
         'video_thumbnail',
-        'write_file'
+        'write_file',
+        'kill_background_process'
       ].sort()
     )
   })
@@ -152,6 +158,8 @@ describe('workspace_write is exactly the read-only deny set', () => {
       'workspace_board_preview_plan',
       'workspace_board_apply_plan',
       'list_active_runs',
+      'list_background_processes',
+      'read_background_process',
       'test_result_summary',
       'read_subthread_result',
       'creative_timeline_validate',
@@ -173,6 +181,8 @@ describe('isReadOnlyBlockedTool', () => {
     expect(isReadOnlyBlockedTool('browser_open', ro)).toBe(true)
     expect(isReadOnlyBlockedTool('workspace_board_apply_plan', ro)).toBe(true)
     expect(isReadOnlyBlockedTool('cancel_active_run', ro)).toBe(true)
+    expect(isReadOnlyBlockedTool('start_background_process', ro)).toBe(true)
+    expect(isReadOnlyBlockedTool('kill_background_process', ro)).toBe(true)
     for (const tool of MCP_APP_STATE_MUTATION_TOOLS) {
       expect(isReadOnlyBlockedTool(tool, ro)).toBe(true)
     }
@@ -185,6 +195,8 @@ describe('isReadOnlyBlockedTool', () => {
     expect(isReadOnlyBlockedTool('workspace_board_snapshot', ro)).toBe(false)
     expect(isReadOnlyBlockedTool('workspace_board_preview_plan', ro)).toBe(false)
     expect(isReadOnlyBlockedTool('list_active_runs', ro)).toBe(false)
+    expect(isReadOnlyBlockedTool('list_background_processes', ro)).toBe(false)
+    expect(isReadOnlyBlockedTool('read_background_process', ro)).toBe(false)
     expect(isReadOnlyBlockedTool('ensemble_yield', ro)).toBe(false)
     expect(isReadOnlyBlockedTool('ask_user_question', ro)).toBe(false)
     expect(isReadOnlyBlockedTool('write_file', { readOnly: false })).toBe(false)
