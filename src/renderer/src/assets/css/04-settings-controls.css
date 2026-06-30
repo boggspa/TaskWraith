@@ -5618,6 +5618,27 @@ input:disabled, select:disabled, textarea:disabled {
   font-weight: 700;
   line-height: 1;
   white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(4px);
+  transition:
+    opacity 0.12s ease,
+    transform 0.12s ease,
+    border-color 0.12s ease,
+    color 0.12s ease,
+    box-shadow 0.12s ease;
+}
+
+.file-change-summary-item-interactive:hover .file-change-summary-diff-bubble,
+.file-change-summary-item-interactive:focus-within .file-change-summary-diff-bubble {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateX(0);
+}
+
+[data-reduce-motion="true"] .file-change-summary-diff-bubble {
+  transition: none;
+  transform: none;
 }
 
 .file-change-summary-diff-bubble:hover,
