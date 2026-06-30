@@ -187,10 +187,6 @@ import { coerceLiveProvider, DEFAULT_PROVIDER, isRetiredProvider } from '../shar
 import { sanitizeRawProviderMediaRefs } from '../shared/transcriptMediaRefSanitize'
 import { BridgeBroadcaster } from './BridgeBroadcaster'
 import {
-  buildRemoteFirstLaunchState,
-  type RemoteFirstLaunchWorkspaceSummary
-} from './RemoteFirstLaunchState'
-import {
   REMOTE_QUESTION_MAX_ANSWER_CHARS,
   REMOTE_QUESTION_MAX_CONTEXT_CHARS,
   REMOTE_QUESTION_MAX_OPTION_CHARS,
@@ -437,11 +433,7 @@ import {
   extractProviderUsage,
   mergeProviderUsage
 } from './ProviderRunStats'
-import { getExternalUsageCached, buildExternalUsageRollup, prewarmExternalUsageCache } from './ExternalProviderActivity'
-import { buildDailyTokenSeries } from './DailyTokenSeries'
-import { buildRemoteWelcomeDashboardThrottled } from './WelcomeDashboardRemote'
-import type { NormalizedProviderUsageSnapshot } from './ProviderQuotaSnapshots'
-import { summarizeProviderUsage, type ProviderUsageSummary } from './ProviderUsageStatus'
+import { getExternalUsageCached, prewarmExternalUsageCache } from './ExternalProviderActivity'
 import {
   canonicalizeExternalPathGrantMetadata,
   coalesceExternalPathGrants,
@@ -874,6 +866,7 @@ import { registerShellHandlers } from './ipc/shellHandlers'
 import { registerAuditHandlers } from './ipc/auditHandlers'
 import { registerEnsembleRosterPresetsHandlers } from './ipc/ensembleRosterPresetsHandlers'
 import { registerAgenticWorkspaceGrantHandlers } from './ipc/agenticWorkspaceGrantHandlers'
+import { registerUsageRatesHandlers } from './ipc/usageRatesHandlers'
 import { getCachedRemoteEnsemblePresets } from './remote/EnsembleRosterPresetsCache'
 import { resolveGeminiCliResumePolicy } from './GeminiSessionPolicy'
 // 1.0.5-EW26 — Kimi compatibility filter (curated + user-
@@ -25672,219 +25665,42 @@ if (isGeminiMcpBridgeProcess) {
       broadcastThreadList()
     })
 
-    // Usage
-    ipcMain.handle('record-usage', (_, usage: any) => {
-      const result = AppStore.recordUsage(usage)
-      // Broadcast so the renderer's usage meters (sidebar + Settings) refresh
-      // immediately instead of waiting up to 90s for the next poll.
-      mainWindow?.webContents.send('usage-changed')
-      return result
+    registerUsageRatesHandlers({
+      recordUsage: (usage) => AppStore.recordUsage(usage),
+      getUsage: (workspaceId, chatId) => AppStore.getUsage(workspaceId, chatId),
+      getExternalUsageCached: (options) =>
+        getExternalUsageCached(options ? { maxAgeMs: options.maxAgeMs } : {}),
+      onUsageChanged: () => {
+        mainWindow?.webContents.send('usage-changed')
+      },
+      getChats: () => AppStore.getChats(),
+      getWorkspaces: () => AppStore.getWorkspaces(),
+      getSettings: () => settingsService.getSettings(),
+      evaluateRemoteCapability: ({ workspaceId, capability }) =>
+        bridgeAllowlist.evaluate({ workspaceId, capability }).allowed,
+      canonicalRemoteWorkspaceId: (workspaceId) => canonicalRemoteWorkspaceId(workspaceId),
+      broadcastUsageRollup: (payload) => {
+        bridgeBroadcasterRef?.broadcastUsageRollup(payload)
+      },
+      broadcastWelcomeDashboard: (payload) => {
+        bridgeBroadcasterRef?.broadcastWelcomeDashboard(payload)
+      },
+      hasRemoteBroadcaster: () => Boolean(bridgeBroadcasterRef),
+      broadcastModelUsage: (payload) => {
+        bridgeBroadcasterRef?.broadcastModelUsage(payload)
+      },
+      broadcastFirstLaunchState: (payload) => {
+        bridgeBroadcasterRef?.broadcastFirstLaunchState(payload)
+      },
+      fetchCodexUsageSnapshot,
+      fetchClaudeUsageSnapshot,
+      fetchKimiUsageSnapshot,
+      fetchCursorUsageSnapshot,
+      getProviderCapabilityContract,
+      registerRemoteUsageRollupTrigger,
+      registerRemoteModelUsageTrigger,
+      registerRemoteFirstLaunchStateTrigger
     })
-    ipcMain.handle('get-usage', (_, workspaceId?: string, chatId?: string) =>
-      AppStore.getUsage(workspaceId, chatId)
-    )
-    ipcMain.handle(
-      'get-external-usage',
-      (_, options?: { force?: boolean }) =>
-        getExternalUsageCached(options?.force === true ? { maxAgeMs: 0 } : {})
-    )
-    const broadcastUsageRollupToRemote = (): void => {
-      void getExternalUsageCached()
-        .then((externalRecords) => {
-          const now = Date.now()
-          // 90-day daily token series for the Inspector bar charts (Issue 4):
-          // External (from the cached external scan) + TaskWraith (internal API
-          // usage). Same builder, same day-bucketing as the desktop chart.
-          const taskwraithRecords = AppStore.getUsage()
-          bridgeBroadcasterRef?.broadcastUsageRollup({
-            rollup: buildExternalUsageRollup(externalRecords, now),
-            taskwraithDaily: buildDailyTokenSeries(taskwraithRecords, now),
-            externalDaily: buildDailyTokenSeries(externalRecords, now)
-          })
-          // The Electron welcome stats dashboard, projected for paired devices
-          // (same cadence + records as the rollup above). buildRemoteWelcomeDashboard
-          // runs the renderer aggregator main-side and flattens it for the iOS struct.
-          try {
-            bridgeBroadcasterRef?.broadcastWelcomeDashboard({
-              dashboard: buildRemoteWelcomeDashboardThrottled(taskwraithRecords, now, {
-                getChats: () => AppStore.getChats(),
-                getWorkspaces: () =>
-                  AppStore.getWorkspaces().map((w) => ({ id: w.id, displayName: w.displayName })),
-                getStatResetAt: () =>
-                  (AppStore.getSettings().dashboardStatPrefs as { resetAt?: number } | undefined)
-                    ?.resetAt ?? 0
-              })
-            })
-          } catch (err) {
-            // Never let a dashboard-build failure silently hide the card (it rides
-            // the rollup, which is broadcast above and unaffected).
-            console.error('[remote] welcome dashboard broadcast failed:', err)
-          }
-        })
-        .catch(() => {})
-    }
-    registerRemoteUsageRollupTrigger(broadcastUsageRollupToRemote)
-    // Usage tab (Model Usage sidebar parity): the five snapshot fetchers are
-    // TTL-cached main-side (90s-2min fresh, stale-serve beyond), so a
-    // 7.5-minute remote cadence costs nothing extra. Grok's PTY probe is
-    // deliberately excluded (expensive + gated; desktop runs it on demand).
-    const broadcastModelUsageToRemote = (): void => {
-      void (async () => {
-        const broadcaster = bridgeBroadcasterRef
-        if (!broadcaster) return
-        const entries = await Promise.all(
-          (
-            [
-              // gemini retired — no live usage snapshot to broadcast
-              ['codex', fetchCodexUsageSnapshot],
-              ['claude', fetchClaudeUsageSnapshot],
-              ['kimi', fetchKimiUsageSnapshot],
-              ['cursor', fetchCursorUsageSnapshot]
-            ] as const
-          ).map(async ([provider, fetcher]) => {
-            try {
-              const snapshot = await fetcher()
-              const windows = (snapshot?.windows ?? [])
-                .filter((window) => typeof window.usedPercent === 'number')
-                .slice(0, 8)
-                .map((window) => ({
-                  id: window.id,
-                  label: window.label,
-                  usedPercent: Math.max(0, Math.min(100, Math.round(window.usedPercent))),
-                  limitLabel: window.limitLabel,
-                  ...(window.resetAt ? { resetAt: window.resetAt } : {})
-                }))
-              return windows.length > 0 ? { provider, windows } : null
-            } catch {
-              return null
-            }
-          })
-        )
-        const providers = entries.filter(
-          (entry): entry is NonNullable<typeof entry> => Boolean(entry)
-        )
-        if (providers.length === 0) return
-        bridgeBroadcasterRef?.broadcastModelUsage({
-          usage: { providers, generatedAt: new Date().toISOString() }
-        })
-      })()
-    }
-    registerRemoteModelUsageTrigger(broadcastModelUsageToRemote)
-    setTimeout(() => broadcastModelUsageToRemote(), 6000).unref?.()
-    setInterval(() => broadcastModelUsageToRemote(), 7.5 * 60 * 1000).unref?.()
-
-    const FIRST_LAUNCH_REMOTE_PROVIDERS: ProviderId[] = [
-      'codex',
-      'claude',
-      'kimi',
-      'cursor',
-      'grok',
-      'ollama'
-    ]
-    const FIRST_LAUNCH_WORKSPACE_CAPABILITIES: Array<
-      keyof RemoteFirstLaunchWorkspaceSummary['capabilities']
-    > = ['monitor', 'approve', 'answer', 'startTurn', 'steer', 'fileRead', 'fileWrite']
-    const FIRST_LAUNCH_USAGE_FETCHERS: Partial<
-      Record<ProviderId, () => Promise<NormalizedProviderUsageSnapshot | null>>
-    > = {
-      codex: fetchCodexUsageSnapshot,
-      claude: fetchClaudeUsageSnapshot,
-      kimi: fetchKimiUsageSnapshot,
-      cursor: fetchCursorUsageSnapshot as () => Promise<NormalizedProviderUsageSnapshot | null>
-    }
-    const buildFirstLaunchWorkspaceSummary = (): RemoteFirstLaunchWorkspaceSummary => {
-      const allWorkspaces = AppStore.getWorkspaces()
-      const visibleWorkspaces = allWorkspaces.filter((workspace) =>
-        bridgeAllowlist.evaluate({ workspaceId: workspace.id, capability: 'monitor' }).allowed
-      )
-      const visibleWorkspaceIds = new Set(visibleWorkspaces.map((workspace) => workspace.id))
-      const visibleChats = AppStore.getChats().filter((chat) => {
-        const workspaceId = canonicalRemoteWorkspaceId(chat.workspaceId)
-        return workspaceId ? visibleWorkspaceIds.has(workspaceId) : false
-      })
-      const runningCount = visibleChats.filter((chat) =>
-        (chat.runs ?? []).some((run) => run.status === 'running')
-      ).length
-      const capability = (name: keyof RemoteFirstLaunchWorkspaceSummary['capabilities']) =>
-        visibleWorkspaces.some((workspace) =>
-          bridgeAllowlist.evaluate({ workspaceId: workspace.id, capability: name }).allowed
-        )
-      return {
-        visibleCount: visibleWorkspaces.length,
-        totalCount: allWorkspaces.length,
-        runningCount,
-        hasVisibleWorkspaces: visibleWorkspaces.length > 0,
-        capabilities: Object.fromEntries(
-          FIRST_LAUNCH_WORKSPACE_CAPABILITIES.map((name) => [name, capability(name)])
-        ) as RemoteFirstLaunchWorkspaceSummary['capabilities']
-      }
-    }
-    const buildFirstLaunchProviderContracts = async (): Promise<
-      Partial<Record<ProviderId, ProviderCapabilityContract | null>>
-    > => {
-      const entries = await Promise.all(
-        FIRST_LAUNCH_REMOTE_PROVIDERS.map(async (provider) => {
-          try {
-            return [provider, await getProviderCapabilityContract(provider)] as const
-          } catch {
-            return [provider, null] as const
-          }
-        })
-      )
-      return Object.fromEntries(entries) as Partial<
-        Record<ProviderId, ProviderCapabilityContract | null>
-      >
-    }
-    const buildFirstLaunchProviderUsage = async (): Promise<
-      Partial<Record<ProviderId, ProviderUsageSummary | null>>
-    > => {
-      const entries = await Promise.all(
-        FIRST_LAUNCH_REMOTE_PROVIDERS.map(async (provider) => {
-          const fetcher = FIRST_LAUNCH_USAGE_FETCHERS[provider]
-          if (!fetcher) return [provider, null] as const
-          try {
-            return [provider, summarizeProviderUsage(provider, await fetcher())] as const
-          } catch {
-            return [provider, null] as const
-          }
-        })
-      )
-      return Object.fromEntries(entries) as Partial<Record<ProviderId, ProviderUsageSummary | null>>
-    }
-    const broadcastFirstLaunchStateToRemote = (): void => {
-      void (async () => {
-        const broadcaster = bridgeBroadcasterRef
-        if (!broadcaster) return
-        const generatedAt = new Date().toISOString()
-        const [providers, usage] = await Promise.all([
-          buildFirstLaunchProviderContracts(),
-          buildFirstLaunchProviderUsage()
-        ])
-        broadcaster.broadcastFirstLaunchState({
-          state: buildRemoteFirstLaunchState({
-            generatedAt,
-            providers,
-            usage,
-            workspace: buildFirstLaunchWorkspaceSummary()
-          })
-        })
-      })().catch((err) => {
-        console.error('[remote] first-launch state broadcast failed:', err)
-      })
-    }
-    registerRemoteFirstLaunchStateTrigger(broadcastFirstLaunchStateToRemote)
-    setTimeout(() => broadcastFirstLaunchStateToRemote(), 8000).unref?.()
-    setInterval(() => broadcastFirstLaunchStateToRemote(), 10 * 60 * 1000).unref?.()
-    // Prewarm: the external-activity scan is multi-second on busy machines;
-    // warm it shortly after launch (off the critical path) + keep it fresh
-    // on the heatmap's natural cadence so opens always render hydrated.
-    // Each refresh also re-ships the rollup chips to paired devices.
-    setTimeout(() => {
-      void getExternalUsageCached().then(() => broadcastUsageRollupToRemote())
-    }, 4000).unref?.()
-    setInterval(() => {
-      void getExternalUsageCached({ maxAgeMs: 0 }).then(() => broadcastUsageRollupToRemote())
-    }, 2 * 60 * 60 * 1000).unref?.()
     // Scheduled tasks
     ipcMain.handle('get-scheduled-tasks', (_, workspaceId?: string) =>
       AppStore.getScheduledTasks(workspaceId)

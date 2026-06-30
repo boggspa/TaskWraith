@@ -1,0 +1,282 @@
+import { ipcMain } from 'electron'
+import type {
+  AppSettings,
+  ChatRecord,
+  ProviderCapabilityContract,
+  ProviderId,
+  UsageRecord
+} from '../store/types'
+import type { NormalizedProviderUsageSnapshot } from '../ProviderQuotaSnapshots'
+import { buildDailyTokenSeries } from '../DailyTokenSeries'
+import { buildRemoteWelcomeDashboardThrottled } from '../WelcomeDashboardRemote'
+import {
+  buildRemoteFirstLaunchState,
+  type RemoteFirstLaunchWorkspaceSummary
+} from '../RemoteFirstLaunchState'
+import type { ProviderUsageSummary } from '../ProviderUsageStatus'
+import { summarizeProviderUsage } from '../ProviderUsageStatus'
+import { buildExternalUsageRollup } from '../ExternalProviderActivity'
+import type { RemoteWorkspaceCapability } from '../RemoteWorkspaceAllowlist'
+
+type UsageWorkspaceSummary = {
+  id: string
+  displayName: string
+}
+
+type UsageSnapshotWindowLike = {
+  id?: string
+  label?: string
+  usedPercent?: number
+  limitLabel?: string
+  resetAt?: string
+}
+
+type UsageSnapshotLike = {
+  windows?: UsageSnapshotWindowLike[]
+}
+
+type UsageSnapshotFetcher = () => Promise<UsageSnapshotLike | null>
+type NormalizedUsageSnapshotFetcher = () => Promise<NormalizedProviderUsageSnapshot | null>
+
+export interface UsageRatesHandlerDeps {
+  recordUsage: (usage: Omit<UsageRecord, 'id' | 'timestamp'>) => unknown
+  getUsage: (workspaceId?: string, chatId?: string) => UsageRecord[]
+  getExternalUsageCached: (options?: { maxAgeMs?: number }) => Promise<UsageRecord[]>
+  onUsageChanged: () => void
+  getChats: () => ChatRecord[]
+  getWorkspaces: () => UsageWorkspaceSummary[]
+  getSettings: () => AppSettings
+  evaluateRemoteCapability: (input: {
+    workspaceId: string
+    capability: RemoteWorkspaceCapability
+  }) => boolean
+  canonicalRemoteWorkspaceId: (workspaceId?: string | null) => string | null
+  broadcastUsageRollup: (payload: {
+    rollup: unknown
+    taskwraithDaily: unknown
+    externalDaily: unknown
+  }) => void
+  broadcastWelcomeDashboard: (payload: { dashboard: unknown }) => void
+  hasRemoteBroadcaster: () => boolean
+  broadcastModelUsage: (payload: { usage: { providers: unknown[]; generatedAt: string } }) => void
+  broadcastFirstLaunchState: (payload: { state: unknown }) => void
+  fetchCodexUsageSnapshot: UsageSnapshotFetcher
+  fetchClaudeUsageSnapshot: UsageSnapshotFetcher
+  fetchKimiUsageSnapshot: UsageSnapshotFetcher
+  fetchCursorUsageSnapshot: UsageSnapshotFetcher
+  getProviderCapabilityContract: (provider: ProviderId) => Promise<ProviderCapabilityContract>
+  registerRemoteUsageRollupTrigger: (trigger: () => void) => void
+  registerRemoteModelUsageTrigger: (trigger: () => void) => void
+  registerRemoteFirstLaunchStateTrigger: (trigger: () => void) => void
+}
+
+const FIRST_LAUNCH_REMOTE_PROVIDERS: ProviderId[] = [
+  'codex',
+  'claude',
+  'kimi',
+  'cursor',
+  'grok',
+  'ollama'
+]
+
+const FIRST_LAUNCH_WORKSPACE_CAPABILITIES: Array<
+  keyof RemoteFirstLaunchWorkspaceSummary['capabilities']
+> = ['monitor', 'approve', 'answer', 'startTurn', 'steer', 'fileRead', 'fileWrite']
+
+export function registerUsageRatesHandlers(deps: UsageRatesHandlerDeps): void {
+  ipcMain.handle('record-usage', (_event, usage: Omit<UsageRecord, 'id' | 'timestamp'>) => {
+    const result = deps.recordUsage(usage)
+    deps.onUsageChanged()
+    return result
+  })
+
+  ipcMain.handle('get-usage', (_, workspaceId?: string, chatId?: string) =>
+    deps.getUsage(workspaceId, chatId)
+  )
+
+  ipcMain.handle(
+    'get-external-usage',
+    (_, options?: { force?: boolean }) =>
+      deps.getExternalUsageCached(options?.force === true ? { maxAgeMs: 0 } : {})
+  )
+
+  const broadcastUsageRollupToRemote = (): void => {
+    void deps
+      .getExternalUsageCached()
+      .then((externalRecords) => {
+        const now = Date.now()
+        const taskwraithRecords = deps.getUsage()
+        deps.broadcastUsageRollup({
+          rollup: buildExternalUsageRollup(externalRecords, now),
+          taskwraithDaily: buildDailyTokenSeries(taskwraithRecords, now),
+          externalDaily: buildDailyTokenSeries(externalRecords, now)
+        })
+        try {
+          deps.broadcastWelcomeDashboard({
+            dashboard: buildRemoteWelcomeDashboardThrottled(taskwraithRecords, now, {
+              getChats: () => deps.getChats(),
+              getWorkspaces: () =>
+                deps
+                  .getWorkspaces()
+                  .map((workspace) => ({ id: workspace.id, displayName: workspace.displayName })),
+              getStatResetAt: () =>
+                (deps.getSettings().dashboardStatPrefs as { resetAt?: number } | undefined)
+                  ?.resetAt ?? 0
+            })
+          })
+        } catch (err) {
+          console.error('[remote] welcome dashboard broadcast failed:', err)
+        }
+      })
+      .catch(() => {})
+  }
+
+  deps.registerRemoteUsageRollupTrigger(broadcastUsageRollupToRemote)
+
+  const broadcastModelUsageToRemote = (): void => {
+    void (async () => {
+      if (!deps.hasRemoteBroadcaster()) return
+      const providerFetchers: ReadonlyArray<[ProviderId, UsageSnapshotFetcher]> = [
+        ['codex', deps.fetchCodexUsageSnapshot],
+        ['claude', deps.fetchClaudeUsageSnapshot],
+        ['kimi', deps.fetchKimiUsageSnapshot],
+        ['cursor', deps.fetchCursorUsageSnapshot]
+      ]
+
+      const entries = await Promise.all(
+        providerFetchers.map(async ([provider, fetcher]) => {
+          try {
+            const snapshot = await fetcher()
+            const windows = (snapshot?.windows ?? [])
+              .filter((window) => typeof window?.usedPercent === 'number')
+              .slice(0, 8)
+              .map((window) => ({
+                id: String(window?.id || ''),
+                label: String(window?.label || ''),
+                usedPercent: Math.max(0, Math.min(100, Math.round(window.usedPercent as number))),
+                limitLabel: window?.limitLabel,
+                ...(window?.resetAt ? { resetAt: window.resetAt } : {})
+              }))
+            return windows.length > 0 ? { provider, windows } : null
+          } catch {
+            return null
+          }
+        })
+      )
+
+      const providers = entries.filter(
+        (entry): entry is NonNullable<(typeof entries)[number]> => Boolean(entry)
+      )
+      if (providers.length === 0) return
+      deps.broadcastModelUsage({
+        usage: { providers, generatedAt: new Date().toISOString() }
+      })
+    })()
+  }
+
+  deps.registerRemoteModelUsageTrigger(broadcastModelUsageToRemote)
+  setTimeout(() => broadcastModelUsageToRemote(), 6_000).unref?.()
+  setInterval(() => broadcastModelUsageToRemote(), 7.5 * 60 * 1000).unref?.()
+
+  const buildFirstLaunchWorkspaceSummary = (): RemoteFirstLaunchWorkspaceSummary => {
+    const allWorkspaces = deps.getWorkspaces()
+    const visibleWorkspaces = allWorkspaces.filter((workspace) =>
+      deps.evaluateRemoteCapability({ workspaceId: workspace.id, capability: 'monitor' })
+    )
+    const visibleWorkspaceIds = new Set(visibleWorkspaces.map((workspace) => workspace.id))
+    const visibleChats = deps.getChats().filter((chat) => {
+      const workspaceId = deps.canonicalRemoteWorkspaceId(chat.workspaceId)
+      return workspaceId ? visibleWorkspaceIds.has(workspaceId) : false
+    })
+    const runningCount = visibleChats.filter((chat) =>
+      (chat.runs ?? []).some((run) => run?.status === 'running')
+    ).length
+    const capability = (name: keyof RemoteFirstLaunchWorkspaceSummary['capabilities']) =>
+      visibleWorkspaces.some((workspace) =>
+        deps.evaluateRemoteCapability({ workspaceId: workspace.id, capability: name })
+      )
+
+    return {
+      visibleCount: visibleWorkspaces.length,
+      totalCount: allWorkspaces.length,
+      runningCount,
+      hasVisibleWorkspaces: visibleWorkspaces.length > 0,
+      capabilities: Object.fromEntries(
+        FIRST_LAUNCH_WORKSPACE_CAPABILITIES.map((name) => [name, capability(name)])
+      ) as RemoteFirstLaunchWorkspaceSummary['capabilities']
+    }
+  }
+
+  const buildFirstLaunchProviderContracts = async (): Promise<
+    Partial<Record<ProviderId, ProviderCapabilityContract | null>>
+  > => {
+    const entries = await Promise.all(
+      FIRST_LAUNCH_REMOTE_PROVIDERS.map(async (provider) => {
+        try {
+          return [provider, await deps.getProviderCapabilityContract(provider)] as const
+        } catch {
+          return [provider, null] as const
+        }
+      })
+    )
+    return Object.fromEntries(entries) as Partial<Record<ProviderId, ProviderCapabilityContract | null>>
+  }
+
+  const FIRST_LAUNCH_USAGE_FETCHERS: Partial<Record<ProviderId, NormalizedUsageSnapshotFetcher>> = {
+    codex: deps.fetchCodexUsageSnapshot as NormalizedUsageSnapshotFetcher,
+    claude: deps.fetchClaudeUsageSnapshot as NormalizedUsageSnapshotFetcher,
+    kimi: deps.fetchKimiUsageSnapshot as NormalizedUsageSnapshotFetcher,
+    cursor: deps.fetchCursorUsageSnapshot as NormalizedUsageSnapshotFetcher
+  }
+
+  const buildFirstLaunchProviderUsage = async (): Promise<
+    Partial<Record<ProviderId, ProviderUsageSummary | null>>
+  > => {
+    const entries = await Promise.all(
+      FIRST_LAUNCH_REMOTE_PROVIDERS.map(async (provider) => {
+        const fetcher = FIRST_LAUNCH_USAGE_FETCHERS[provider]
+        if (!fetcher) return [provider, null] as const
+        try {
+          return [provider, summarizeProviderUsage(provider, await fetcher())] as const
+        } catch {
+          return [provider, null] as const
+        }
+      })
+    )
+    return Object.fromEntries(entries) as Partial<Record<ProviderId, ProviderUsageSummary | null>>
+  }
+
+  const broadcastFirstLaunchStateToRemote = (): void => {
+    void (async () => {
+      if (!deps.hasRemoteBroadcaster()) return
+      const generatedAt = new Date().toISOString()
+      const [providers, usage] = await Promise.all([
+        buildFirstLaunchProviderContracts(),
+        buildFirstLaunchProviderUsage()
+      ])
+      deps.broadcastFirstLaunchState({
+        state: buildRemoteFirstLaunchState({
+          generatedAt,
+          providers,
+          usage,
+          workspace: buildFirstLaunchWorkspaceSummary()
+        })
+      })
+    })().catch((err) => {
+      console.error('[remote] first-launch state broadcast failed:', err)
+    })
+  }
+
+  deps.registerRemoteFirstLaunchStateTrigger(broadcastFirstLaunchStateToRemote)
+  setTimeout(() => broadcastFirstLaunchStateToRemote(), 8_000).unref?.()
+  setInterval(() => broadcastFirstLaunchStateToRemote(), 10 * 60 * 1000).unref?.()
+
+  setTimeout(() => {
+    void deps.getExternalUsageCached().then(() => broadcastUsageRollupToRemote())
+  }, 4_000).unref?.()
+  setInterval(() => {
+    void deps
+      .getExternalUsageCached({ maxAgeMs: 0 })
+      .then(() => broadcastUsageRollupToRemote())
+  }, 2 * 60 * 60 * 1000).unref?.()
+}
