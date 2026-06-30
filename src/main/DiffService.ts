@@ -735,6 +735,8 @@ export function computeRunDiff(
         // Didn't exist before run
         if (status === 'untracked' || status === 'created') {
           createdFiles.push(buildRunFileSummary(workspace, filePath, 'created'))
+        } else if (status === 'deleted') {
+          deletedFiles.push(buildRunFileSummary(workspace, filePath, 'deleted'))
         } else {
           modifiedFiles.push(buildRunFileSummary(workspace, filePath, 'modified'))
         }
@@ -743,6 +745,8 @@ export function computeRunDiff(
         if (preStatus === status) {
           // Unchanged status: pre-existing
           preExistingFiles.push({ path: filePath, status, previewKind: 'none' })
+        } else if (status === 'deleted') {
+          deletedFiles.push(buildRunFileSummary(workspace, filePath, 'deleted'))
         } else {
           // Changed during run
           modifiedFiles.push(buildRunFileSummary(workspace, filePath, 'modified'))
@@ -752,7 +756,12 @@ export function computeRunDiff(
 
     for (const [filePath] of preMap) {
       if (!postMap.has(filePath)) {
-        deletedFiles.push(buildRunFileSummary(workspace, filePath, 'deleted'))
+        const preStatus = classifyStatus(preMap.get(filePath)?.statusCode ?? '')
+        if (preStatus === 'untracked' || preStatus === 'created') {
+          deletedFiles.push(buildRunFileSummary(workspace, filePath, 'deleted'))
+        } else {
+          modifiedFiles.push(buildRunFileSummary(workspace, filePath, 'modified'))
+        }
       }
     }
   } else if (!pre.isGitRepo && !post.isGitRepo && pre.files && post.files) {

@@ -352,12 +352,20 @@ describe('DiffService', () => {
       expect(result.createdFiles).toHaveLength(1)
       expect(result.createdFiles[0].path).toBe('GEMINI.md')
     })
-    it('marks deleted file during run', () => {
-      const pre: any = { isGitRepo: true, gitStatus: ' M gone.swift\0' }
-      const post: any = { isGitRepo: true, gitStatus: '' }
+    it('marks tracked deleted file during run from post-run git status', () => {
+      const pre: any = { isGitRepo: true, gitStatus: '' }
+      const post: any = { isGitRepo: true, gitStatus: ' D gone.swift\0' }
       const result = computeRunDiff(pre, post, 'run1')
       expect(result.deletedFiles).toHaveLength(1)
       expect(result.deletedFiles[0].path).toBe('gone.swift')
+    })
+    it('does not mark a pre-existing dirty tracked file as deleted when it becomes clean', () => {
+      const pre: any = { isGitRepo: true, gitStatus: ' M FirstLaunchSheet.tsx\0' }
+      const post: any = { isGitRepo: true, gitStatus: '' }
+      const result = computeRunDiff(pre, post, 'run1')
+      expect(result.deletedFiles).toHaveLength(0)
+      expect(result.modifiedFiles).toHaveLength(1)
+      expect(result.modifiedFiles[0].path).toBe('FirstLaunchSheet.tsx')
     })
     it('handles non-git file snapshots', () => {
       const pre: any = { isGitRepo: false, files: [{ path: 'a.txt', sizeBytes: 10, mtimeMs: 1 }] }
