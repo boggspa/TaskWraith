@@ -2186,10 +2186,12 @@ export function summarizeTestOutput(output: string) {
   const failures: any[] = []
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index]
+    const isPassingLine = /^\s*(?:\u2713|PASS\b)/.test(line)
     if (
-      /\bFAIL\b/.test(line) ||
-      /^\s*[\u00d7\u2717]\s+/.test(line) ||
-      /AssertionError|XCTAssert|failed|Failure/i.test(line)
+      !isPassingLine &&
+      (/\bFAIL\b/.test(line) ||
+        /^\s*[\u00d7\u2717]\s+/.test(line) ||
+        /AssertionError|XCTAssert/.test(line))
     ) {
       const location = line.match(
         /([A-Za-z0-9_./~ -]+\.(?:ts|tsx|js|jsx|swift|py|rs|go|java|kt|m|mm)):(\d+)(?::(\d+))?/
@@ -2197,7 +2199,7 @@ export function summarizeTestOutput(output: string) {
       failures.push({
         line: index + 1,
         text: line.trim(),
-        file: location?.[1],
+        file: location?.[1]?.trim(),
         fileLine: location ? Number(location[2]) : undefined,
         column: location?.[3] ? Number(location[3]) : undefined,
         excerpt: lines.slice(Math.max(0, index - 2), Math.min(lines.length, index + 4)).join('\n')
@@ -2205,16 +2207,16 @@ export function summarizeTestOutput(output: string) {
     }
     if (failures.length >= 50) break
   }
+  const failedCountMatch = output.match(/(\d+)\s+(?:failed|failures?|failing)/i)
+  const parsedFailedCount = failedCountMatch ? Number(failedCountMatch[1]) : undefined
   const totals = {
     failed: failures.length,
-    failedCount: Number(
-      output.match(/(\d+)\s+(?:failed|failures?|failing)/i)?.[1] || failures.length || 0
-    ),
+    failedCount: parsedFailedCount ?? failures.length,
     passedCount: Number(output.match(/(\d+)\s+(?:passed|passing)/i)?.[1] || 0),
     passedMentions: lines.filter((line) => /\b(pass|passed|\u2713)\b/i.test(line)).length
   }
   const status =
-    totals.failed > 0 || totals.failedCount > 0
+    totals.failed > 0 || (parsedFailedCount !== undefined && parsedFailedCount > 0)
       ? 'failed'
       : totals.passedCount > 0 || totals.passedMentions > 0
         ? 'passed'

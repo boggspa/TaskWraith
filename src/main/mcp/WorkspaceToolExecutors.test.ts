@@ -22,6 +22,7 @@ import {
   executeReadBackgroundProcess,
   executeRenamePath,
   executeStartBackgroundProcess,
+  summarizeTestOutput,
   resolveMcpScopedPath,
   type HostCommandResult,
   type WorkspaceToolExecutorDependencies
@@ -63,6 +64,61 @@ const PNG_1X1 = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
   'base64'
 )
+
+describe('summarizeTestOutput', () => {
+  it('keeps green vitest output green when pass titles and aggregates contain failed', () => {
+    const summary = summarizeTestOutput(
+      [
+        ' \u2713 src/main/mcp/WorkspaceToolExecutors.test.ts > summarizeTestOutput > keeps zero failed output green',
+        ' Test Files  1 passed (1)',
+        '      Tests  0 failed | 3 passed (3)'
+      ].join('\n')
+    )
+
+    expect(summary.status).toBe('passed')
+    expect(summary.totals.failed).toBe(0)
+    expect(summary.totals.failedCount).toBe(0)
+    expect(summary.failures).toEqual([])
+  })
+
+  it('keeps clean typecheck-style output green', () => {
+    const summary = summarizeTestOutput('Type check passed with 0 errors.\n')
+
+    expect(summary.status).toBe('passed')
+    expect(summary.totals.failed).toBe(0)
+    expect(summary.totals.failedCount).toBe(0)
+  })
+
+  it('detects real fail markers and positive failed aggregates', () => {
+    const summary = summarizeTestOutput(
+      [
+        ' FAIL  src/main/example.test.ts > rejects invalid input',
+        'AssertionError: expected true to be false',
+        ' Test Files  1 failed | 2 passed (3)',
+        '      Tests  1 failed | 5 passed (6)'
+      ].join('\n')
+    )
+
+    expect(summary.status).toBe('failed')
+    expect(summary.totals.failed).toBeGreaterThan(0)
+    expect(summary.totals.failedCount).toBe(1)
+  })
+
+  it('detects a mixed pass and real failure output', () => {
+    const summary = summarizeTestOutput(
+      [
+        ' \u2713 src/main/example.test.ts > keeps passing title even if it says failure',
+        ' \u00d7 src/main/example.test.ts:12:5 > reports a real failure',
+        '      Tests  1 failed | 1 passed (2)'
+      ].join('\n')
+    )
+
+    expect(summary.status).toBe('failed')
+    expect(summary.totals.failed).toBe(1)
+    expect(summary.failures[0]?.file).toBe('src/main/example.test.ts')
+    expect(summary.failures[0]?.fileLine).toBe(12)
+  })
+})
 
 describe('resolveMcpScopedPath', () => {
   it('allows workspace-root directory/search targets only when requested', () => {
