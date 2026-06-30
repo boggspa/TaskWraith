@@ -361,6 +361,7 @@ import {
   subscribeEnsembleRosterPresets,
   type EnsembleRosterPreset
 } from './lib/ensembleRosterPresets'
+import { hydrateParticipantsWithPooledAgentIdentity } from './lib/ensembleAgentPool'
 import { resolveEnsembleParticipantSettings } from './lib/ensembleProviderDefaults'
 import {
   rebindEnsembleChatToWorkspace,
@@ -11353,6 +11354,12 @@ function App(): React.JSX.Element {
           [SIDE_CHAT_SELECTED_PARTICIPANT_ROLE_METADATA_KEY]:
             selectedSideParticipant.role || getProviderLabel(selectedSideParticipant.provider)
         }
+        if (selectedSideParticipant.pooledAgentId) {
+          participantMetadata.pooledAgentId = selectedSideParticipant.pooledAgentId
+        }
+        if (selectedSideParticipant.pooledAgentIdentity) {
+          participantMetadata.pooledAgentIdentity = selectedSideParticipant.pooledAgentIdentity
+        }
         if (selectedSideParticipant.runtimeProfileId) {
           participantMetadata.runtimeProfileId = selectedSideParticipant.runtimeProfileId
         }
@@ -15458,9 +15465,13 @@ function App(): React.JSX.Element {
   const applyEnsembleRosterPreset = useCallback(
     (preset: EnsembleRosterPreset) => {
       if (!isCurrentEnsembleChat || !currentChat?.ensemble || isCurrentEnsembleRoundRunning) return
-      const { participants, bossmanParticipantId } = materializeParticipantsFromPresetWithBossman(
+      const materializedPreset = materializeParticipantsFromPresetWithBossman(
         preset.participants
       )
+      const participants = hydrateParticipantsWithPooledAgentIdentity(
+        materializedPreset.participants
+      )
+      const { bossmanParticipantId } = materializedPreset
       const nextMaxParticipants = Math.min(
         12,
         Math.max(preset.maxParticipants, participants.length, 2)

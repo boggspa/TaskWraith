@@ -4042,13 +4042,17 @@ export class AppStore {
         agentByParticipant.set(participant.id, participant.pooledAgentId as string)
       }
     }
-    if (agentByParticipant.size === 0) return
     const runs = Array.isArray(chat.runs) ? chat.runs : []
+    const hasDirectAgentRuns = runs.some((run) => isPooledAgentId(run?.pooledAgentId))
+    if (agentByParticipant.size === 0 && !hasDirectAgentRuns) return
     const chatId = chat.appChatId
     for (const run of runs) {
-      const agentId = run?.ensembleParticipantId
-        ? agentByParticipant.get(run.ensembleParticipantId)
+      const directAgentId = isPooledAgentId(run?.pooledAgentId)
+        ? (run.pooledAgentId as string)
         : undefined
+      const agentId = directAgentId || (run?.ensembleParticipantId
+        ? agentByParticipant.get(run.ensembleParticipantId)
+        : undefined)
       if (agentId) this.recordAgentRunDelta(agentId, chatId, run)
     }
   }

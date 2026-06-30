@@ -41,7 +41,9 @@ export function transcriptChatRenderSignature(chat: ChatRecord | null | undefine
       id: participant.id,
       role: participant.role,
       provider: participant.provider,
-      model: participant.model
+      model: participant.model,
+      pooledAgentId: participant.pooledAgentId,
+      pooledAgentIdentity: participant.pooledAgentIdentity || null
     })) || []
   return stableJson({
     appChatId: chat.appChatId,
@@ -50,6 +52,8 @@ export function transcriptChatRenderSignature(chat: ChatRecord | null | undefine
     scope: chat.scope,
     workspacePath: chat.workspacePath,
     agentIdentities: chat.providerMetadata?.agentIdentities || null,
+    pooledAgentId: chat.providerMetadata?.pooledAgentId || null,
+    pooledAgentIdentity: chat.providerMetadata?.pooledAgentIdentity || null,
     participants,
     sessionActivityLedger: chat.ensemble?.sessionActivityLedger || null
   })

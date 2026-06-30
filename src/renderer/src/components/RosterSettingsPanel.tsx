@@ -42,7 +42,9 @@ import { PooledAgentIcon } from './icons/PooledAgentIcon'
 import {
   applyPooledAgentToParticipant,
   createPooledAgentFromParticipant,
+  hydrateParticipantsWithPooledAgentIdentity,
   listPooledAgents,
+  pooledAgentIdentitySnapshot,
   pooledAgentToParticipantSnapshot,
   POOLED_AGENT_DRAG_MIME,
   ROSTER_PARTICIPANT_DRAG_MIME,
@@ -414,9 +416,12 @@ export function RosterSettingsPanel({
     }
     const { participants, ...meta } = preset
     const materialized = materializeParticipantsFromPresetWithBossman(participants)
+    const hydratedParticipants = hydrateParticipantsWithPooledAgentIdentity(
+      materialized.participants
+    )
     const loaded: RosterEditing = {
       meta,
-      participants: materialized.participants,
+      participants: hydratedParticipants,
       bossmanParticipantId: materialized.bossmanParticipantId
     }
     editingRef.current = loaded
@@ -581,7 +586,14 @@ export function RosterSettingsPanel({
       const agent = createPooledAgentFromParticipant(participant)
       // patchParticipant reads editingRef + commits (persist=true), so any other
       // unblurred edit in the working copy is flushed alongside the link.
-      patchParticipant(id, { pooledAgentId: agent.agentId }, true)
+      patchParticipant(
+        id,
+        {
+          pooledAgentId: agent.agentId,
+          pooledAgentIdentity: pooledAgentIdentitySnapshot(agent)
+        },
+        true
+      )
     },
     [patchParticipant]
   )

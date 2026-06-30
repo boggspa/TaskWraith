@@ -1,10 +1,13 @@
 import type { CSSProperties, ReactElement } from 'react'
 import { accentFromHue, pooledAgentIconProps, type PooledAgent } from '../../lib/ensembleAgentPool'
+import { namedAgentIdenticonForSlug } from '../../lib/agentIdentityCatalog'
 import { getPoolIconAsset, preparePoolIconSvg } from '../../lib/agentPoolIconAssets'
 import { AgentIdentityIcon } from './AgentIdentityIcon'
+import type { PooledAgentIdentitySnapshot } from '../../../../main/store/types'
 
 interface PooledAgentIconProps {
-  agent: PooledAgent
+  agent?: PooledAgent
+  identity?: PooledAgentIdentitySnapshot
   size?: number
   className?: string
   style?: CSSProperties
@@ -22,12 +25,26 @@ interface PooledAgentIconProps {
  */
 export function PooledAgentIcon({
   agent,
+  identity: snapshotIdentity,
   size = 28,
   className,
   style,
   title
 }: PooledAgentIconProps): ReactElement {
-  const { identity, agentId } = agent
+  const identity = agent?.identity ?? snapshotIdentity
+  const agentId = agent?.agentId ?? snapshotIdentity?.agentId ?? 'pooled-agent'
+  if (!identity) {
+    return (
+      <AgentIdentityIcon
+        seed={agentId}
+        color={accentFromHue(210)}
+        size={size}
+        className={className}
+        style={style}
+        title={title}
+      />
+    )
+  }
   const asset = identity.iconKind === 'asset' ? getPoolIconAsset(identity.assetKey) : undefined
 
   if (asset) {
@@ -47,10 +64,17 @@ export function PooledAgentIcon({
 
   // 'named' / 'seed' — or an 'asset' whose key no longer resolves (props fall
   // through to the procedural seed via pooledAgentIconProps).
-  const props =
-    identity.iconKind === 'asset'
-      ? { seed: identity.seed || agentId, color: identity.accent || accentFromHue(identity.hue) }
-      : pooledAgentIconProps(agent)
+  let props: { name?: string; seed?: string; color: string }
+  if (agent) {
+    props = pooledAgentIconProps(agent)
+  } else if (identity.iconKind === 'named' && identity.slug) {
+    const entry = namedAgentIdenticonForSlug(identity.slug)
+    props = entry
+      ? { name: entry.name, color: identity.accent || entry.accent }
+      : { seed: identity.seed || agentId, color: identity.accent || accentFromHue(identity.hue) }
+  } else {
+    props = { seed: identity.seed || agentId, color: identity.accent || accentFromHue(identity.hue) }
+  }
   return (
     <AgentIdentityIcon
       name={props.name}

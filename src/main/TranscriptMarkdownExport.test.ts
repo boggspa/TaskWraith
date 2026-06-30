@@ -109,6 +109,35 @@ describe('buildChatMarkdownTranscript', () => {
     expect(result.markdown).not.toContain('secret-child-id')
   })
 
+  it('uses pooled-agent identity as the exported speaker heading', () => {
+    const result = buildChatMarkdownTranscript(
+      chat([
+        message({
+          id: 'a1',
+          role: 'assistant',
+          content: 'Ready.',
+          metadata: {
+            ensembleProvider: 'codex',
+            ensembleRole: 'Builder',
+            pooledAgentId: 'pooled-agent-cactus',
+            pooledAgentIdentity: {
+              schemaVersion: 1,
+              agentId: 'pooled-agent-cactus',
+              nickname: 'Circuit Cactus',
+              iconKind: 'asset',
+              assetKey: 'pool:circuit-cactus',
+              hue: 139,
+              accent: '#41F27A'
+            }
+          }
+        })
+      ])
+    )
+
+    expect(result.markdown).toContain('## 0001 - Circuit Cactus')
+    expect(result.markdown).not.toContain('Codex / Builder')
+  })
+
   it('summarizes tool rows without raw parameters or raw events', () => {
     const result = buildChatMarkdownTranscript(
       chat([message({ role: 'tool', content: '', toolActivities: [activity()] })]),

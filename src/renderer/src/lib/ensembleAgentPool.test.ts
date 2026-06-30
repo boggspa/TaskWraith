@@ -44,6 +44,7 @@ import {
   participantSnapshotToPooledAgentConfig,
   pickNextPoolNickname,
   pooledAgentIconProps,
+  pooledAgentIdentitySnapshot,
   pooledAgentToParticipantSnapshot,
   POOLED_AGENT_STORAGE_KEY,
   propagatePooledAgentToPresets,
@@ -153,6 +154,7 @@ describe('converters', () => {
     expect(snap.enabled).toBe(true)
     expect(snap.isBossman).toBeUndefined()
     expect(snap.pooledAgentId).toBe(agent.agentId)
+    expect(snap.pooledAgentIdentity).toEqual(pooledAgentIdentitySnapshot(agent))
     expect(snap.provider).toBe('claude')
     expect(snap.model).toBe('claude-opus-4-8')
   })
@@ -166,6 +168,14 @@ describe('converters', () => {
       order: 2,
       isBossman: true,
       pooledAgentId: 'pooled-agent-x',
+      pooledAgentIdentity: {
+        schemaVersion: 1,
+        agentId: 'pooled-agent-x',
+        nickname: 'Pool X',
+        iconKind: 'seed',
+        seed: 'pool-x',
+        hue: 120
+      },
       model: 'gpt-5.1'
     }
     const config = participantSnapshotToPooledAgentConfig(snap)
@@ -174,6 +184,7 @@ describe('converters', () => {
     expect((config as Record<string, unknown>).isBossman).toBeUndefined()
     expect((config as Record<string, unknown>).enabled).toBeUndefined()
     expect((config as Record<string, unknown>).pooledAgentId).toBeUndefined()
+    expect((config as Record<string, unknown>).pooledAgentIdentity).toBeUndefined()
   })
 
   it('deep-clones permissionOverrides so the Agent never aliases a preset grant', () => {
@@ -312,6 +323,7 @@ describe('linked propagation to presets', () => {
     expect(linked.role).toBe('Reviewer')
     expect(linked.instructions).toBe('NEW GOAL')
     expect(linked.model).toBe('claude-opus-4-8')
+    expect(linked.pooledAgentIdentity).toEqual(pooledAgentIdentitySnapshot(agent))
     // Positional fields preserved:
     expect(linked.order).toBe(2)
     expect(linked.isBossman).toBe(true)
@@ -329,6 +341,23 @@ describe('linked propagation to presets', () => {
       (p) => p.pooledAgentId === agent.agentId
     )!
     expect(linked.role).toBe('Auditor')
+    expect(linked.pooledAgentIdentity).toEqual(
+      pooledAgentIdentitySnapshot({ ...agent, config: { ...agent.config, role: 'Auditor' } })
+    )
+  })
+
+  it('upsertPooledAgent propagates identity snapshots by default', () => {
+    const agent = createPooledAgentFromParticipant(sampleParticipant({ role: 'Reviewer' }))
+    presetWithLinkedParticipant(agent.agentId)
+    const updated = {
+      ...agent,
+      identity: { ...agent.identity, nickname: 'Circuit Cactus', accent: '#41F27A' }
+    }
+    upsertPooledAgent(updated)
+    const linked = getEnsembleRosterPreset('preset-1')!.participants.find(
+      (p) => p.pooledAgentId === agent.agentId
+    )!
+    expect(linked.pooledAgentIdentity).toEqual(pooledAgentIdentitySnapshot(updated))
   })
 
   it('removePooledAgent leaves linked preset copies intact (orphaned, not deleted)', () => {
@@ -348,7 +377,12 @@ describe('applyPooledAgentToParticipant (open-editor reconcile)', () => {
     expect(applyPooledAgentToParticipant(plain)).toBe(plain)
 
     const agent = createPooledAgentFromParticipant(sampleParticipant({ role: 'Reviewer' }))
-    const linked = sampleParticipant({ pooledAgentId: agent.agentId, role: 'Reviewer', model: 'claude-opus-4-8' })
+    const linked = sampleParticipant({
+      pooledAgentId: agent.agentId,
+      pooledAgentIdentity: pooledAgentIdentitySnapshot(agent),
+      role: 'Reviewer',
+      model: 'claude-opus-4-8'
+    })
     // Config already matches the agent → same reference (no needless patch).
     expect(applyPooledAgentToParticipant(linked)).toBe(linked)
   })
@@ -396,6 +430,7 @@ describe('applyPooledAgentToParticipant (open-editor reconcile)', () => {
     )
     const linked = sampleParticipant({
       pooledAgentId: agent.agentId,
+      pooledAgentIdentity: pooledAgentIdentitySnapshot(agent),
       role: 'R',
       permissionPresetId: 'custom',
       permissionOverrides: {

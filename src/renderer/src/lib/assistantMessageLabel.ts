@@ -2,13 +2,19 @@ import { reasoningDisplayLabel, shortModelName } from './composerChipFormat'
 import { humaniseModelId } from './modelDisplayName'
 import { resolveOllamaDisplayBrand } from './ollamaDisplayBrand'
 import { getProviderLabel } from './providerLabels'
-import type { ChatMessage, ProviderId } from '../../../main/store/types'
+import type {
+  ChatMessage,
+  PooledAgentIdentitySnapshot,
+  ProviderId
+} from '../../../main/store/types'
 
 type AssistantMessageLabelPresentation = {
   label: string
   provider: ProviderId | null
   providerClass: string | null
   modelBadge: string | null
+  agentAccent?: string
+  pooledAgentIdentity?: PooledAgentIdentitySnapshot
 }
 
 type FormatAssistantMessageLabelOptions = {
@@ -46,12 +52,67 @@ const ollamaBrandPresentation = (
   return null
 }
 
+const pooledAgentIdentityForMessage = (
+  message: ChatMessage
+): PooledAgentIdentitySnapshot | undefined => {
+  const metadata = message.metadata as Record<string, unknown> | undefined
+  const raw = metadata?.pooledAgentIdentity
+  if (!raw || typeof raw !== 'object') return undefined
+  const record = raw as Record<string, unknown>
+  const agentId =
+    typeof metadata?.pooledAgentId === 'string' && metadata.pooledAgentId.trim()
+      ? metadata.pooledAgentId.trim()
+      : typeof record.agentId === 'string' && record.agentId.trim()
+        ? record.agentId.trim()
+        : ''
+  const nickname =
+    typeof record.nickname === 'string' && record.nickname.trim()
+      ? record.nickname.trim()
+      : ''
+  const iconKind = record.iconKind
+  const hue = Number(record.hue)
+  if (
+    !agentId ||
+    !nickname ||
+    !Number.isFinite(hue) ||
+    (iconKind !== 'named' && iconKind !== 'seed' && iconKind !== 'asset')
+  ) {
+    return undefined
+  }
+  return {
+    schemaVersion: 1,
+    agentId,
+    nickname,
+    iconKind,
+    hue: ((Math.round(hue) % 360) + 360) % 360,
+    ...(typeof record.accent === 'string' && record.accent ? { accent: record.accent } : {}),
+    ...(typeof record.slug === 'string' && record.slug ? { slug: record.slug } : {}),
+    ...(typeof record.assetKey === 'string' && record.assetKey
+      ? { assetKey: record.assetKey }
+      : {}),
+    ...(typeof record.seed === 'string' && record.seed ? { seed: record.seed } : {})
+  }
+}
+
 const formatAssistantMessageLabel = (
   message: ChatMessage,
   fallbackLabel: string,
   fallbackProvider: ProviderId | null,
   options?: FormatAssistantMessageLabelOptions
 ): AssistantMessageLabelPresentation => {
+  const pooledAgentIdentity = pooledAgentIdentityForMessage(message)
+  const withPooledIdentity = (
+    presentation: AssistantMessageLabelPresentation
+  ): AssistantMessageLabelPresentation =>
+    pooledAgentIdentity
+      ? {
+          ...presentation,
+          label: pooledAgentIdentity.nickname,
+          agentAccent: pooledAgentIdentity.accent,
+          pooledAgentIdentity
+        }
+      : presentation
+
   if (message.metadata?.kind === 'guestParticipantReply') {
     const guestProvider = (message.metadata?.guestProvider as ProviderId | undefined) ?? null
     const guestRole =
@@ -60,14 +121,14 @@ const formatAssistantMessageLabel = (
         : 'Guest'
     const guestModel =
       typeof message.metadata?.guestModel === 'string' ? message.metadata.guestModel : ''
-    return {
+    return withPooledIdentity({
       label: guestProvider
         ? `${getProviderLabel(guestProvider)} / ${guestRole}`
         : `Guest / ${guestRole}`,
       provider: guestProvider,
       providerClass: guestProvider,
       modelBadge: guestProvider && guestModel ? shortModelName(guestProvider, '', guestModel) : null
-    }
+    })
   }
   const provider = (message.metadata?.ensembleProvider as ProviderId | undefined) ?? null
   if (!provider) {
@@ -79,18 +140,18 @@ const formatAssistantMessageLabel = (
           ? message.metadata.providerModelLabel
           : humaniseModelId('ollama', model)
       const branded = ollamaBrandPresentation(model, modelLabel)
-      if (branded) return branded
+      if (branded) return withPooledIdentity(branded)
     }
     // Solo chats: use the chat-level provider as the colouring hook.
     // The label is still the plain provider name (no role suffix
     // since there's no ensemble context). The composer chip already
     // shows the model in solo chats — no need to duplicate it here.
-    return {
+    return withPooledIdentity({
       label: fallbackLabel,
       provider: fallbackProvider,
       providerClass: fallbackProvider,
       modelBadge: null
-    }
+    })
   }
   const role =
     typeof message.metadata?.ensembleRole === 'string' ? message.metadata.ensembleRole : ''
@@ -140,19 +201,19 @@ const formatAssistantMessageLabel = (
     const humanLabel = humaniseModelId('ollama', ensembleModel)
     const branded = ollamaBrandPresentation(ensembleModel, humanLabel, role)
     if (branded) {
-      return {
+      return withPooledIdentity({
         ...branded,
         // Keep reasoning suffix on the badge when the participant carried one.
         modelBadge: modelBadge || branded.modelBadge
-      }
+      })
     }
   }
-  return {
+  return withPooledIdentity({
     label: role ? `${getProviderLabel(provider)} / ${role}` : getProviderLabel(provider),
     provider,
     providerClass: provider,
     modelBadge: modelBadge || null
-  }
+  })
 }
 
 export { formatAssistantMessageLabel }

@@ -73,6 +73,39 @@ describe('transcriptRowRenderCache', () => {
     ).toBe(false)
   })
 
+  it('invalidates when chat-level pooled identity changes', () => {
+    const first = transcriptChatRenderSignature(
+      chat({
+        providerMetadata: {
+          pooledAgentId: 'pooled-agent-a',
+          pooledAgentIdentity: {
+            schemaVersion: 1,
+            agentId: 'pooled-agent-a',
+            nickname: 'Circuit Cactus',
+            iconKind: 'seed',
+            hue: 139
+          }
+        }
+      })
+    )
+    const second = transcriptChatRenderSignature(
+      chat({
+        providerMetadata: {
+          pooledAgentId: 'pooled-agent-a',
+          pooledAgentIdentity: {
+            schemaVersion: 1,
+            agentId: 'pooled-agent-a',
+            nickname: 'Socket Sorcery',
+            iconKind: 'seed',
+            hue: 164
+          }
+        }
+      })
+    )
+
+    expect(second).not.toBe(first)
+  })
+
   it('invalidates row-local chrome changes', () => {
     expect(transcriptRowRenderSignatureEqual(signature(), signature({ copied: true }))).toBe(false)
     expect(transcriptRowRenderSignatureEqual(signature(), signature({ highlighted: true }))).toBe(

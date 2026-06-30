@@ -1128,6 +1128,19 @@ public struct RemoteThreadSnapshot: Codable, Sendable {
         /// tag minus the #pN handle: "Provider / Role (Model)". Absent for
         /// solo chats and user rows.
         public let speaker: String?
+        /// Frozen pooled-Agent display identity for this row, when present.
+        public let pooledAgentIdentity: PooledAgentIdentity?
+        public struct PooledAgentIdentity: Codable, Sendable, Equatable {
+            public let schemaVersion: Int?
+            public let agentId: String?
+            public let nickname: String?
+            public let iconKind: String?
+            public let hue: Int?
+            public let accent: String?
+            public let slug: String?
+            public let assetKey: String?
+            public let seed: String?
+        }
         /// Images attached to this message (desktop or phone) — chip count.
         public let imageAttachmentCount: Int?
         /// Downscaled base64 JPEG previews of the attached images, shipped by

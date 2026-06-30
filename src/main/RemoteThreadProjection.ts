@@ -38,6 +38,7 @@ import type {
   ChatRun,
   DiffFileStatus,
   DiffFileSummary,
+  PooledAgentIdentitySnapshot,
   ProviderId,
   TranscriptMediaFormat,
   TranscriptMediaKind,
@@ -488,6 +489,8 @@ export interface RemoteThreadRowMedia {
   thumbnail?: TranscriptMediaThumbnail
 }
 
+export type RemotePooledAgentIdentity = PooledAgentIdentitySnapshot
+
 export interface RemoteThreadRow {
   /** === desktop `message.id`, so remote deep-links resolve exactly. */
   id: string
@@ -502,6 +505,9 @@ export interface RemoteThreadRow {
    * duplicate panels. Absent for solo chats and user rows, so remote
    * clients render "Agent"/"You" exactly like a solo desktop chat. */
   speaker?: string
+  /** Frozen pooled-Agent display identity for this row, when the Mac transcript
+   * message was authored by a saved Agent Pool participant. */
+  pooledAgentIdentity?: RemotePooledAgentIdentity
   /** Images attached to this message (desktop file-picker or phone
    * uploads — both land in message.metadata.imagePaths). Count only;
    * remote clients render an attachment chip when no thumbnail is present. */
@@ -906,6 +912,43 @@ function providerField(value: unknown): ProviderId | undefined {
   return candidate in PROVIDER_LABELS ? (candidate as ProviderId) : undefined
 }
 
+function buildPooledAgentIdentity(
+  metadata: Record<string, unknown> | undefined
+): RemotePooledAgentIdentity | undefined {
+  const raw = metadata?.pooledAgentIdentity
+  if (!raw || typeof raw !== 'object') return undefined
+  const record = raw as Record<string, unknown>
+  const agentId =
+    stringField(metadata?.pooledAgentId, 160) ?? stringField(record.agentId, 160)
+  const nickname = stringField(record.nickname, 80)
+  const iconKind = record.iconKind
+  const hue = Number(record.hue)
+  if (
+    !agentId ||
+    !nickname ||
+    !Number.isFinite(hue) ||
+    (iconKind !== 'named' && iconKind !== 'seed' && iconKind !== 'asset')
+  ) {
+    return undefined
+  }
+  const identity: RemotePooledAgentIdentity = {
+    schemaVersion: 1,
+    agentId,
+    nickname,
+    iconKind,
+    hue: ((Math.round(hue) % 360) + 360) % 360
+  }
+  const accent = stringField(record.accent, 24)
+  if (accent) identity.accent = accent
+  const slug = stringField(record.slug, 120)
+  if (slug) identity.slug = slug
+  const assetKey = stringField(record.assetKey, 180)
+  if (assetKey) identity.assetKey = assetKey
+  const seed = stringField(record.seed, 180)
+  if (seed) identity.seed = seed
+  return identity
+}
+
 function buildParticipantHealth(
   message: ChatMessage
 ): RemoteThreadRow['participantHealth'] | undefined {
@@ -1236,6 +1279,11 @@ function buildRow(
   }
   if (typeof metadata?.ensembleRoundId === 'string' && metadata.ensembleRoundId.trim()) {
     row.ensembleRoundId = metadata.ensembleRoundId
+  }
+  const pooledAgentIdentity = buildPooledAgentIdentity(metadata)
+  if (pooledAgentIdentity) {
+    row.pooledAgentIdentity = pooledAgentIdentity
+    row.speaker = pooledAgentIdentity.nickname
   }
   const imagePaths = metadata?.imagePaths
   if (Array.isArray(imagePaths) && imagePaths.length > 0) {
@@ -2102,7 +2150,7 @@ export function projectRemoteThread(
         ? Math.max(previewMax, REMOTE_IOS_ROW_EXPAND_MAX)
         : previewMax
     const row = buildRow(message, rowPreviewMax, att)
-    const speaker = opts.speakerForMessage?.(message)
+    const speaker = row.pooledAgentIdentity?.nickname || opts.speakerForMessage?.(message)
     if (speaker) row.speaker = speaker
     return row
   }

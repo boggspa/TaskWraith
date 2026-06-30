@@ -5,6 +5,7 @@ import type {
   EnsembleParticipant,
   PermissionOverrides,
   PermissionPresetId,
+  PooledAgentIdentitySnapshot,
   ProviderId
 } from '../../../main/store/types'
 import { getDefaultEnsembleParticipantConfig } from './ensembleProviderDefaults'
@@ -46,6 +47,7 @@ export type EnsembleRosterParticipantSnapshot = {
    * the stats-attribution key once materialized onto a live participant.
    */
   pooledAgentId?: string
+  pooledAgentIdentity?: PooledAgentIdentitySnapshot
   model?: string
   runtimeProfileId?: string
   geminiAuthProfileId?: string | null
@@ -309,6 +311,9 @@ function snapshotParticipant(
     order,
     ...(isBossman ? { isBossman: true } : {}),
     ...(participant.pooledAgentId ? { pooledAgentId: participant.pooledAgentId } : {}),
+    ...(participant.pooledAgentIdentity
+      ? { pooledAgentIdentity: participant.pooledAgentIdentity }
+      : {}),
     ...(participant.model ? { model: participant.model } : {}),
     ...(participant.runtimeProfileId ? { runtimeProfileId: participant.runtimeProfileId } : {}),
     ...(participant.geminiAuthProfileId != null
@@ -365,6 +370,9 @@ export function materializeParticipantsFromPresetWithBossman(
       instructions: snapshot.instructions,
       order: index + 1,
       ...(snapshot.pooledAgentId ? { pooledAgentId: snapshot.pooledAgentId } : {}),
+      ...(snapshot.pooledAgentIdentity
+        ? { pooledAgentIdentity: snapshot.pooledAgentIdentity }
+        : {}),
       ...(snapshot.model ? { model: snapshot.model } : {}),
       ...(snapshot.runtimeProfileId ? { runtimeProfileId: snapshot.runtimeProfileId } : {}),
       geminiAuthProfileId:

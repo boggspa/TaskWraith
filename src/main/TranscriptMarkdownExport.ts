@@ -76,6 +76,13 @@ function markdownEscapeInline(value: string): string {
   return value.replace(/\|/g, '\\|').replace(/\r?\n/g, ' ').trim()
 }
 
+function pooledAgentNickname(metadata: ChatMessage['metadata'] | undefined): string {
+  const raw = metadata?.pooledAgentIdentity
+  if (!raw || typeof raw !== 'object') return ''
+  const nickname = asString((raw as unknown as Record<string, unknown>).nickname)
+  return nickname ? markdownEscapeInline(nickname) : ''
+}
+
 function safeWorkspaceLabel(chat: ChatRecord, workspace?: WorkspaceRecord | null): string {
   if (workspace?.displayName) return workspace.displayName
   if (chat.workspacePath) return path.basename(chat.workspacePath) || 'Workspace'
@@ -168,6 +175,11 @@ function speakerLabel(chat: ChatRecord, message: ChatMessage): string {
     const role = asString(metadata.guestRole) || 'Guest'
     const model = asString(metadata.guestModel)
     return model ? `${provider} / ${role} (${model})` : `${provider} / ${role}`
+  }
+  const pooledNickname =
+    pooledAgentNickname(metadata) || pooledAgentNickname(chat.providerMetadata)
+  if (pooledNickname && (message.role === 'assistant' || message.role === 'tool')) {
+    return pooledNickname
   }
   if (message.role === 'assistant') {
     const provider = asString(metadata.ensembleProvider) || chat.provider || 'gemini'

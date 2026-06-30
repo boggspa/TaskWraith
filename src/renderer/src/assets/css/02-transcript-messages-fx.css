@@ -3654,6 +3654,13 @@ html:has(.chat-split-region.chat-split-hidden-for-settings) .transcript-user-gut
    * to the pre-M4 layout. */
   display: inline-flex;
   align-items: center;
+  gap: 5px;
+}
+
+.message-meta-agent-icon {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
 }
 
 .message-meta-model-badge {

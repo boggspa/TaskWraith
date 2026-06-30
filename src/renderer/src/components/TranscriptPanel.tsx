@@ -78,6 +78,7 @@ import { ChatMessageMediaStrip, collectMessageMediaRefs, type ChatMediaRef } fro
 import { collectInlineImageRefIds } from '../lib/resolveMarkdownImageRef'
 import { FileTypeIcon } from './FileTypeIcon'
 import { RunCard } from './RunCard'
+import { PooledAgentIcon } from './icons/PooledAgentIcon'
 import { ThinkingIndicator } from './AppChromeSymbols'
 import {
   humanCollaboratorMetadata,
@@ -1972,10 +1973,45 @@ export const TranscriptPanel = memo(
                         )
                       }
                       if (msg.role === 'assistant' || isGuestReply) {
-                        const { label, provider, providerClass, modelBadge } =
-                          formatAssistantMessageLabel(msg, currentProviderLabel, currentProvider, {
-                            isEnsembleChat: currentChat?.chatKind === 'ensemble'
-                          })
+                        const rawChatPooledIdentity =
+                          currentChat?.providerMetadata?.pooledAgentIdentity
+                        const chatPooledIdentity =
+                          rawChatPooledIdentity && typeof rawChatPooledIdentity === 'object'
+                            ? (rawChatPooledIdentity as NonNullable<
+                                ChatMessage['metadata']
+                              >['pooledAgentIdentity'])
+                            : undefined
+                        const assistantLabelMessage =
+                          chatPooledIdentity && !msg.metadata?.pooledAgentIdentity
+                            ? {
+                                ...msg,
+                                metadata: {
+                                  ...(msg.metadata || {}),
+                                  ...(typeof currentChat?.providerMetadata?.pooledAgentId === 'string'
+                                    ? {
+                                        pooledAgentId:
+                                          currentChat.providerMetadata.pooledAgentId
+                                      }
+                                    : {}),
+                                  pooledAgentIdentity: chatPooledIdentity
+                                }
+                              }
+                            : msg
+                        const {
+                          label,
+                          provider,
+                          providerClass,
+                          modelBadge,
+                          pooledAgentIdentity
+                        } =
+                          formatAssistantMessageLabel(
+                            assistantLabelMessage,
+                            currentProviderLabel,
+                            currentProvider,
+                            {
+                              isEnsembleChat: currentChat?.chatKind === 'ensemble'
+                            }
+                          )
                         // Solo General (global, non-ensemble) chats read as one
                         // friendly "Assistant" voice: drop the provider tint +
                         // model badge. Ensemble — AND a solo guest reply — keep
@@ -1984,7 +2020,8 @@ export const TranscriptPanel = memo(
                         const soloGlobal =
                           isGlobal === true &&
                           currentChat?.chatKind !== 'ensemble' &&
-                          !isGuestReply
+                          !isGuestReply &&
+                          !pooledAgentIdentity
                         // 1.0.7 — participant-rename continuity. The
                         // header keeps the FROZEN role label; this quiet
                         // badge tells the reader the seat has since been
@@ -2007,6 +2044,13 @@ export const TranscriptPanel = memo(
                             }`}
                           >
                             <span className="message-meta-label">
+                              {!soloGlobal && pooledAgentIdentity && (
+                                <PooledAgentIcon
+                                  identity={pooledAgentIdentity}
+                                  size={14}
+                                  className="message-meta-agent-icon"
+                                />
+                              )}
                               {soloGlobal ? 'Assistant' : label}
                             </span>
                             {!soloGlobal && modelBadge && (

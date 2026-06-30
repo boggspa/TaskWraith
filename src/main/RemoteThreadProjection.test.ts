@@ -1765,5 +1765,36 @@ describe('RemoteThreadProjection', () => {
       const solo = project({ kind: 'latestN', n: 10 }, messages)
       expect(solo.rows.every((row) => row.speaker === undefined)).toBe(true)
     })
+
+    it('projects pooled-agent identity and uses its nickname as speaker', () => {
+      const messages = [
+        msg(1, {
+          role: 'assistant',
+          metadata: {
+            pooledAgentId: 'pooled-agent-test',
+            pooledAgentIdentity: {
+              schemaVersion: 1,
+              agentId: 'pooled-agent-test',
+              nickname: 'Circuit Cactus',
+              iconKind: 'asset',
+              assetKey: 'pool:circuit-cactus',
+              hue: 139,
+              accent: '#41F27A'
+            }
+          }
+        })
+      ]
+      const snapshot = project({ kind: 'latestN', n: 10 }, messages)
+      expect(snapshot.rows[0].speaker).toBe('Circuit Cactus')
+      expect(snapshot.rows[0].pooledAgentIdentity).toEqual({
+        schemaVersion: 1,
+        agentId: 'pooled-agent-test',
+        nickname: 'Circuit Cactus',
+        iconKind: 'asset',
+        assetKey: 'pool:circuit-cactus',
+        hue: 139,
+        accent: '#41F27A'
+      })
+    })
   })
 })

@@ -163,4 +163,71 @@ describe('formatAssistantMessageLabel', () => {
       modelBadge: '5.5-Codex'
     })
   })
+
+  it('uses pooled-agent nickname and identity when present on ensemble rows', () => {
+    expect(
+      formatAssistantMessageLabel(
+        assistant({
+          ensembleProvider: 'codex',
+          ensembleRole: 'Builder',
+          ensembleModel: 'gpt-5.5-codex',
+          pooledAgentId: 'pooled-agent-cactus',
+          pooledAgentIdentity: {
+            schemaVersion: 1,
+            agentId: 'pooled-agent-cactus',
+            nickname: 'Circuit Cactus',
+            iconKind: 'asset',
+            assetKey: 'pool:circuit-cactus',
+            hue: 139,
+            accent: '#41F27A'
+          }
+        }),
+        'Codex',
+        'codex',
+        { isEnsembleChat: true }
+      )
+    ).toEqual({
+      label: 'Circuit Cactus',
+      provider: 'codex',
+      providerClass: 'codex',
+      modelBadge: '5.5-Codex',
+      agentAccent: '#41F27A',
+      pooledAgentIdentity: {
+        schemaVersion: 1,
+        agentId: 'pooled-agent-cactus',
+        nickname: 'Circuit Cactus',
+        iconKind: 'asset',
+        assetKey: 'pool:circuit-cactus',
+        hue: 139,
+        accent: '#41F27A'
+      }
+    })
+  })
+
+  it('uses pooled-agent nickname for solo provider rows when metadata carries it', () => {
+    expect(
+      formatAssistantMessageLabel(
+        assistant({
+          pooledAgentId: 'pooled-agent-solo',
+          pooledAgentIdentity: {
+            schemaVersion: 1,
+            agentId: 'pooled-agent-solo',
+            nickname: 'Socket Sorcery',
+            iconKind: 'seed',
+            seed: 'socket-sorcery',
+            hue: 164,
+            accent: '#06D6A0'
+          }
+        }),
+        'Codex',
+        'codex'
+      )
+    ).toMatchObject({
+      label: 'Socket Sorcery',
+      provider: 'codex',
+      providerClass: 'codex',
+      modelBadge: null,
+      agentAccent: '#06D6A0'
+    })
+  })
 })

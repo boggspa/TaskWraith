@@ -2,6 +2,7 @@ import type {
   EnsembleParticipant,
   PermissionOverrides,
   PermissionPresetId,
+  PooledAgentIdentitySnapshot,
   ProviderId
 } from '../../../main/store/types'
 import { agentIdenticonHash } from './agentIdenticon'
@@ -69,7 +70,7 @@ export type PooledAgentIdentity = {
 
 export type PooledAgentConfig = {
   // `EnsembleRosterParticipantSnapshot` MINUS order / isBossman / enabled /
-  // pooledAgentId (all preset-positional or link metadata, not agent identity).
+  // pooledAgentId / pooledAgentIdentity (all preset-positional or link metadata).
   provider: ProviderId
   role: string
   instructions: string
@@ -156,6 +157,22 @@ export function accentFromHue(hue: number): string {
       .toString(16)
       .padStart(2, '0')
   return `#${toHex(r)}${toHex(g)}${toHex(b)}`.toUpperCase()
+}
+
+export function pooledAgentIdentitySnapshot(agent: PooledAgent): PooledAgentIdentitySnapshot {
+  const identity = agent.identity
+  const nickname = identity.nickname.trim() || agent.config.role || 'Agent'
+  return {
+    schemaVersion: 1,
+    agentId: agent.agentId,
+    nickname,
+    iconKind: identity.iconKind,
+    hue: ((Math.round(identity.hue) % 360) + 360) % 360,
+    ...(identity.accent ? { accent: identity.accent } : {}),
+    ...(identity.slug ? { slug: identity.slug } : {}),
+    ...(identity.assetKey ? { assetKey: identity.assetKey } : {}),
+    ...(identity.seed ? { seed: identity.seed } : {})
+  }
 }
 
 /**
@@ -277,6 +294,7 @@ export function pooledAgentToParticipantSnapshot(
     instructions: config.instructions,
     order,
     pooledAgentId: agent.agentId,
+    pooledAgentIdentity: pooledAgentIdentitySnapshot(agent),
     ...(config.model ? { model: config.model } : {}),
     ...(config.runtimeProfileId ? { runtimeProfileId: config.runtimeProfileId } : {}),
     ...(config.geminiAuthProfileId != null
@@ -497,6 +515,37 @@ function configFieldsEqual(a: PooledAgentConfig, b: PooledAgentConfig): boolean 
   return true
 }
 
+function pooledAgentIdentityEqual(
+  a: PooledAgentIdentitySnapshot | undefined,
+  b: PooledAgentIdentitySnapshot
+): boolean {
+  return stableStringify(a) === stableStringify(b)
+}
+
+export function applyPooledAgentIdentityToParticipant(
+  participant: EnsembleParticipant
+): EnsembleParticipant {
+  if (!participant.pooledAgentId) return participant
+  const agent = getPooledAgent(participant.pooledAgentId)
+  if (!agent) return participant
+  const identity = pooledAgentIdentitySnapshot(agent)
+  return pooledAgentIdentityEqual(participant.pooledAgentIdentity, identity)
+    ? participant
+    : { ...participant, pooledAgentId: agent.agentId, pooledAgentIdentity: identity }
+}
+
+export function hydrateParticipantsWithPooledAgentIdentity(
+  participants: EnsembleParticipant[]
+): EnsembleParticipant[] {
+  let changed = false
+  const next = participants.map((participant) => {
+    const hydrated = applyPooledAgentIdentityToParticipant(participant)
+    if (hydrated !== participant) changed = true
+    return hydrated
+  })
+  return changed ? next : participants
+}
+
 /**
  * Reconcile a LIVE participant against its linked pooled Agent: if it carries a
  * `pooledAgentId` that resolves to a current Agent whose config differs, return
@@ -510,10 +559,18 @@ export function applyPooledAgentToParticipant(participant: EnsembleParticipant):
   if (!participant.pooledAgentId) return participant
   const agent = getPooledAgent(participant.pooledAgentId)
   if (!agent) return participant
-  if (configFieldsEqual(pooledAgentConfigFromLike(participant), agent.config)) return participant
+  const identity = pooledAgentIdentitySnapshot(agent)
+  if (
+    configFieldsEqual(pooledAgentConfigFromLike(participant), agent.config) &&
+    pooledAgentIdentityEqual(participant.pooledAgentIdentity, identity)
+  ) {
+    return participant
+  }
   const config = cloneConfig(agent.config)
   return {
     ...participant,
+    pooledAgentId: agent.agentId,
+    pooledAgentIdentity: identity,
     provider: config.provider,
     role: config.role,
     instructions: config.instructions,
@@ -540,16 +597,21 @@ function applyAgentConfigToSnapshot(
   agent: PooledAgent
 ): EnsembleRosterParticipantSnapshot {
   const desired = pooledAgentToParticipantSnapshot(agent, snapshot.order)
+  const identity = pooledAgentIdentitySnapshot(agent)
   const next: EnsembleRosterParticipantSnapshot = {
     ...desired,
     order: snapshot.order,
     enabled: snapshot.enabled,
     ...(snapshot.isBossman ? { isBossman: true } : {}),
-    pooledAgentId: agent.agentId
+    pooledAgentId: agent.agentId,
+    pooledAgentIdentity: identity
   }
   const before = participantSnapshotToPooledAgentConfig(snapshot)
   const after = participantSnapshotToPooledAgentConfig(next)
-  return configFieldsEqual(before, after) ? snapshot : next
+  return configFieldsEqual(before, after) &&
+    pooledAgentIdentityEqual(snapshot.pooledAgentIdentity, identity)
+    ? snapshot
+    : next
 }
 
 /**

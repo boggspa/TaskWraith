@@ -514,12 +514,33 @@ export interface EnsembleParticipant {
    * `isPooledAgentId`); a per-chat participant id is never written here.
    */
   pooledAgentId?: string
+  /**
+   * Frozen display identity for a pooled Agent at the moment it was materialized
+   * into a roster/chat. Main cannot read the renderer-local Agent pool, so this
+   * compact snapshot is the durable bridge used for transcript labels, icons,
+   * and remote projections.
+   */
+  pooledAgentIdentity?: PooledAgentIdentitySnapshot
   tokenTotals?: {
     input_tokens?: number
     output_tokens?: number
     total_tokens?: number
     duration_ms?: number
   }
+}
+
+export type PooledAgentIconKind = 'named' | 'seed' | 'asset'
+
+export interface PooledAgentIdentitySnapshot {
+  schemaVersion: 1
+  agentId: string
+  nickname: string
+  iconKind: PooledAgentIconKind
+  hue: number
+  accent?: string
+  slug?: string
+  assetKey?: string
+  seed?: string
 }
 
 export interface EnsembleRoundParticipantState {
@@ -2215,6 +2236,9 @@ export interface ChatMessage {
     returnResultToParent?: boolean
     /** Concurrent Ensemble lane id for lane-aware transcript rows. */
     ensembleLaneId?: string
+    /** Agent Pool identity frozen at dispatch/materialization time. */
+    pooledAgentId?: string
+    pooledAgentIdentity?: PooledAgentIdentitySnapshot
     /** Guest participant child chat id for `kind: 'guestParticipantReply'`. */
     guestChatId?: string
     /** Guest participant provider for inline badge/icon rendering. */
@@ -2337,6 +2361,8 @@ export interface ChatRun {
   ensembleLaneId?: string
   ensembleRole?: string
   ensembleOrder?: number
+  pooledAgentId?: string
+  pooledAgentIdentity?: PooledAgentIdentitySnapshot
   ensembleSleepWakeupId?: string
   ensembleSleepUntil?: string
   ensembleSleepReason?: string

@@ -28,6 +28,7 @@ import type {
   EnsembleRoundState,
   EnsembleWakeupRecord,
   ExternalPathGrant,
+  PooledAgentIdentitySnapshot,
   ProviderId,
   ToolActivity,
   ToolActivityStatus,
@@ -3631,6 +3632,7 @@ export class EnsembleOrchestrator {
         ensembleProvider: run.participant.provider,
         ensembleRole: run.participant.role,
         ensembleOrder: run.participant.order,
+        ...pooledAgentTranscriptMetadata(run.participant),
         fromParticipantId: run.participant.id,
         fromProvider: run.participant.provider,
         fromRole: run.participant.role,
@@ -6075,6 +6077,7 @@ export class EnsembleOrchestrator {
       ...(options.laneId ? { ensembleLaneId: options.laneId } : {}),
       ensembleRole: participant.role,
       ensembleOrder: participant.order,
+      ...pooledAgentTranscriptMetadata(participant),
       runtimeProfileId: participant.runtimeProfileId,
       ...(participant.provider === 'gemini' && participant.geminiAuthProfileId
         ? { geminiAuthProfileId: participant.geminiAuthProfileId }
@@ -6365,6 +6368,7 @@ export class EnsembleOrchestrator {
             ensembleOrder: run.participant.order,
             ensembleStatus: run.status,
             ensembleTimelineIndex: i,
+            ...pooledAgentTranscriptMetadata(run.participant),
             // Model preview: pass the participant's configured model so
             // the renderer can show e.g. "Codex / GPT 5.5" next to the
             // bubble. Crucial preview for 1.0.4's same-provider
@@ -6405,6 +6409,7 @@ export class EnsembleOrchestrator {
             ensembleOrder: run.participant.order,
             ensembleTimelineIndex: i,
             ensembleModel: run.participant.model,
+            ...pooledAgentTranscriptMetadata(run.participant),
             ...ensembleReasoningMetadata(run.participant)
           }
         })
@@ -6465,6 +6470,7 @@ export class EnsembleOrchestrator {
             ensembleStatus: run.status,
             ensembleTimelineIndex: timeline.length,
             ensembleModel: run.participant.model,
+            ...pooledAgentTranscriptMetadata(run.participant),
             ...ensembleReasoningMetadata(run.participant),
             mediaRefs: mergeTranscriptMediaRefs(undefined, run.mediaRefs)
           }
@@ -6538,6 +6544,7 @@ export class EnsembleOrchestrator {
           ensembleOrder: run.participant.order,
           ensembleStatus: run.status,
           ensembleModel: run.participant.model,
+          ...pooledAgentTranscriptMetadata(run.participant),
           ...ensembleReasoningMetadata(run.participant)
         }
       }
@@ -7096,6 +7103,52 @@ function ensembleReasoningMetadata(participant: EnsembleParticipant): Record<str
     return { ensembleThinkingEnabled: Boolean(participant.thinkingEnabled) }
   }
   return {}
+}
+
+function pooledAgentTranscriptMetadata(participant: EnsembleParticipant): Record<string, unknown> {
+  const snapshot = participant.pooledAgentIdentity
+  const fallbackAgentId =
+    typeof participant.pooledAgentId === 'string' && participant.pooledAgentId.trim()
+      ? participant.pooledAgentId.trim()
+      : ''
+  if (!snapshot || typeof snapshot !== 'object') {
+    return fallbackAgentId ? { pooledAgentId: fallbackAgentId } : {}
+  }
+  const agentId =
+    fallbackAgentId ||
+    (typeof snapshot.agentId === 'string' && snapshot.agentId.trim()
+      ? snapshot.agentId.trim()
+      : '')
+  const nickname =
+    typeof snapshot.nickname === 'string' && snapshot.nickname.trim()
+      ? snapshot.nickname.trim()
+      : ''
+  const hue = Number(snapshot.hue)
+  const iconKind = snapshot.iconKind
+  if (
+    !agentId ||
+    !nickname ||
+    !Number.isFinite(hue) ||
+    (iconKind !== 'named' && iconKind !== 'seed' && iconKind !== 'asset')
+  ) {
+    return fallbackAgentId ? { pooledAgentId: fallbackAgentId } : {}
+  }
+  const pooledAgentIdentity: PooledAgentIdentitySnapshot = {
+    schemaVersion: 1,
+    agentId,
+    nickname,
+    iconKind,
+    hue: ((Math.round(hue) % 360) + 360) % 360,
+    ...(typeof snapshot.accent === 'string' && snapshot.accent
+      ? { accent: snapshot.accent }
+      : {}),
+    ...(typeof snapshot.slug === 'string' && snapshot.slug ? { slug: snapshot.slug } : {}),
+    ...(typeof snapshot.assetKey === 'string' && snapshot.assetKey
+      ? { assetKey: snapshot.assetKey }
+      : {}),
+    ...(typeof snapshot.seed === 'string' && snapshot.seed ? { seed: snapshot.seed } : {})
+  }
+  return { pooledAgentId: agentId, pooledAgentIdentity }
 }
 
 function ensembleOllamaRunControls(participant: EnsembleParticipant): Partial<AgentRunPayload> {

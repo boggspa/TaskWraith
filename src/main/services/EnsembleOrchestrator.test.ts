@@ -360,6 +360,53 @@ describe('EnsembleOrchestrator', () => {
     expect(harness.dispatched[1].provider).toBe('codex')
   })
 
+  it('stamps pooled-agent identity onto ensemble runs and messages', async () => {
+    const chat = makeChat()
+    const pooledAgentIdentity = {
+      schemaVersion: 1 as const,
+      agentId: 'pooled-agent-cactus',
+      nickname: 'Circuit Cactus',
+      iconKind: 'asset' as const,
+      assetKey: 'pool:circuit-cactus',
+      hue: 139,
+      accent: '#41F27A'
+    }
+    chat.ensemble!.participants[0] = {
+      ...chat.ensemble!.participants[0],
+      pooledAgentId: pooledAgentIdentity.agentId,
+      pooledAgentIdentity
+    }
+    const harness = makeHarness({ initialChat: chat })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Please review.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    expect(harness.chat.runs[0]).toMatchObject({
+      pooledAgentId: 'pooled-agent-cactus',
+      pooledAgentIdentity
+    })
+
+    harness.orchestrator.handleProviderOutput(
+      'claude',
+      {
+        appRunId: harness.dispatched[0].appRunId,
+        appChatId: 'ensemble-chat'
+      },
+      { type: 'content', text: 'Reviewed.' }
+    )
+
+    await vi.waitFor(() =>
+      expect(participantContentMessage(harness)?.metadata?.pooledAgentIdentity).toEqual(
+        pooledAgentIdentity
+      )
+    )
+    expect(participantContentMessage(harness)?.metadata?.pooledAgentId).toBe(
+      'pooled-agent-cactus'
+    )
+  })
+
   it('threads shared-history budget metadata into Ollama participant runs', async () => {
     const chat = makeChat()
     chat.ensemble = {

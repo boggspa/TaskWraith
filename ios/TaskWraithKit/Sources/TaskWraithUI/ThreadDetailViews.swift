@@ -2210,6 +2210,14 @@ struct ThreadAgentIdentity: Equatable {
         slug = card.agentSlug
     }
 
+    init?(pooled: RemoteThreadSnapshot.Row.PooledAgentIdentity?) {
+        let trimmed = (pooled?.nickname ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        name = trimmed
+        accentHex = pooled?.accent
+        slug = pooled?.slug
+    }
+
     @MainActor var accent: Color { twAgentAccentColor(accentHex) }
 }
 
@@ -2715,7 +2723,8 @@ struct ThreadRowView: View, Equatable {
     }
 
     private var activeAgentIdentity: ThreadAgentIdentity? {
-        isUser ? nil : agentIdentity
+        guard !isUser else { return nil }
+        return ThreadAgentIdentity(pooled: row.pooledAgentIdentity) ?? agentIdentity
     }
 
     private var baseLabel: String {

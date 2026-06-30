@@ -130,9 +130,12 @@ export function AgentPoolContainer({
 
   const updateIdentity = useCallback(
     (agent: PooledAgent, identity: Partial<PooledAgent['identity']>): void => {
-      // Identity (nickname / icon / hue) is NOT part of PooledAgentConfig, so it
-      // never needs to propagate to linked preset snapshots — skip the sweep.
-      upsertPooledAgent({ ...agent, identity: { ...agent.identity, ...identity } }, { propagate: false })
+      // Identity is not part of config, but linked presets need the frozen
+      // display snapshot so transcript rows can preserve name/icon/hue.
+      upsertPooledAgent({
+        ...agent,
+        identity: { ...agent.identity, ...identity }
+      })
     },
     []
   )
