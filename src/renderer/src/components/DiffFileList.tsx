@@ -330,6 +330,29 @@ export function DiffFileList({
       startIndex
     }
   })()
+  const currentVirtualSection = (() => {
+    if (!useVirtualization) return null
+    for (
+      let index = Math.min(renderRows.length - 1, visibleRange.startIndex);
+      index >= 0;
+      index -= 1
+    ) {
+      const row = renderRows[index]
+      if (row?.kind === 'sectionHeader') {
+        return {
+          count: row.count,
+          label: diffStageGroupLabel(row.group)
+        }
+      }
+    }
+    const firstSection = renderRows.find((row) => row.kind === 'sectionHeader')
+    return firstSection?.kind === 'sectionHeader'
+      ? {
+          count: firstSection.count,
+          label: diffStageGroupLabel(firstSection.group)
+        }
+      : null
+  })()
   const visibleRows = renderRows.slice(visibleRange.startIndex, visibleRange.endIndex)
 
   const handleScroll = () => {
@@ -404,6 +427,12 @@ export function DiffFileList({
       data-total-rows={rows.length}
       data-visible-rows={visibleRows.length}
     >
+      {currentVirtualSection && (
+        <div className="diff-file-list-floating-header" aria-hidden="true">
+          <span>{currentVirtualSection.label}</span>
+          <small>{currentVirtualSection.count}</small>
+        </div>
+      )}
       <div
         className="diff-file-list-virtual-window"
         style={

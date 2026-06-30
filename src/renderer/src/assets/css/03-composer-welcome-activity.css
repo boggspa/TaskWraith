@@ -9449,6 +9449,30 @@
   position: relative;
 }
 
+.diff-file-list-floating-header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  min-height: 26px;
+  padding: 5px var(--space-md);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  border-bottom: 1px solid color-mix(in srgb, var(--text-primary) 7%, transparent);
+  background: color-mix(in srgb, var(--panel-elevated-bg) 92%, var(--app-bg));
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  pointer-events: none;
+}
+
+.diff-file-list-floating-header small {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: 550;
+}
+
 .diff-file-list-virtual-window {
   min-width: 0;
 }
