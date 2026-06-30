@@ -150,6 +150,25 @@ export function PopoutApp() {
     [workspacePath]
   )
 
+  const openEditorFileInDiff = useCallback(
+    async (path: string) => {
+      if (!workspacePath) return
+      setStatus(`Opening ${path} in Diff Studio...`)
+      try {
+        await window.api.openWorkspacePopout({
+          kind: 'diff-studio',
+          workspacePath,
+          targetPath: path,
+          targetView: 'diff'
+        })
+        setStatus(`Opened ${path} in Diff Studio`)
+      } catch (error) {
+        setStatus(error instanceof Error ? error.message : 'Could not open Diff Studio')
+      }
+    },
+    [workspacePath]
+  )
+
   const stageDiffFile = useCallback(
     async (path: string) => {
       if (!workspacePath) return
@@ -325,6 +344,7 @@ export function PopoutApp() {
             workspacePath={workspacePath}
             refreshTick={fileEditorRefreshTick}
             openRequest={openFileRequest}
+            onShowInDiff={openEditorFileInDiff}
             onDirtyChange={setDirtyBufferCount}
           />
         ) : kind === 'diff-studio' ? (

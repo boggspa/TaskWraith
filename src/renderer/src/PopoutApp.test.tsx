@@ -10,6 +10,10 @@ const diffViewerCapture = vi.hoisted(() => ({
   calls: [] as Array<Record<string, unknown>>
 }))
 
+const fileEditorCapture = vi.hoisted(() => ({
+  calls: [] as Array<Record<string, unknown>>
+}))
+
 vi.mock('./hooks/useAppearance', () => ({
   useAppearance: () => undefined
 }))
@@ -22,7 +26,10 @@ vi.mock('./components/DiffViewer', () => ({
 }))
 
 vi.mock('./components/FileEditorPanel', () => ({
-  FileEditorPanel: () => null
+  FileEditorPanel: (props: Record<string, unknown>) => {
+    fileEditorCapture.calls.push(props)
+    return null
+  }
 }))
 
 vi.mock('./components/TaskWraithWorkbench', () => ({
@@ -59,6 +66,37 @@ describe('PopoutApp Diff Studio', () => {
     expect(typeof props?.onOpenFile).toBe('function')
     expect(typeof props?.onStageFile).toBe('function')
     expect(typeof props?.onUnstageFile).toBe('function')
+  })
+})
+
+describe('PopoutApp File Editor', () => {
+  beforeEach(() => {
+    fileEditorCapture.calls = []
+    vi.stubGlobal('window', {
+      location: {
+        search: '?popout=file-editor&workspace=%2Frepo&file=src%2FApp.tsx'
+      }
+    })
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('wires standalone File Editor callbacks into FileEditorPanel', () => {
+    renderToStaticMarkup(<PopoutApp />)
+
+    const props = fileEditorCapture.calls.at(-1)
+    expect(props).toMatchObject({
+      workspacePath: '/repo',
+      openRequest: {
+        path: 'src/App.tsx',
+        nonce: 1,
+        view: 'editor'
+      }
+    })
+    expect(typeof props?.onShowInDiff).toBe('function')
+    expect(typeof props?.onDirtyChange).toBe('function')
   })
 })
 
