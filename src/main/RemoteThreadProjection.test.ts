@@ -1796,5 +1796,31 @@ describe('RemoteThreadProjection', () => {
         accent: '#41F27A'
       })
     })
+
+    it('applies a pooled-agent identity fallback to solo assistant rows', () => {
+      const messages = [msg(1, { role: 'assistant', content: 'Solo side chat reply.' })]
+      const snapshot = project({ kind: 'latestN', n: 10 }, messages, [], {
+        pooledAgentIdentity: {
+          schemaVersion: 1,
+          agentId: 'pooled-agent-solo',
+          nickname: 'Socket Sorcery',
+          iconKind: 'seed',
+          seed: 'socket-sorcery',
+          hue: 164,
+          accent: '#06D6A0'
+        }
+      })
+
+      expect(snapshot.rows[0].speaker).toBe('Socket Sorcery')
+      expect(snapshot.rows[0].pooledAgentIdentity).toEqual({
+        schemaVersion: 1,
+        agentId: 'pooled-agent-solo',
+        nickname: 'Socket Sorcery',
+        iconKind: 'seed',
+        seed: 'socket-sorcery',
+        hue: 164,
+        accent: '#06D6A0'
+      })
+    })
   })
 })

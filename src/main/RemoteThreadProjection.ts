@@ -695,6 +695,10 @@ export interface RemoteProjectionOptions {
    * chats so each assistant row carries its participant identity. Solo
    * chats omit it (rows stay speaker-less). */
   speakerForMessage?: (message: ChatMessage) => string | undefined
+  /** Single-provider fallback identity for rows that do not already carry
+   * message-level pooled-agent metadata. Used by isolated side chats launched
+   * from a pooled Agent participant. */
+  pooledAgentIdentity?: PooledAgentIdentitySnapshot
 }
 
 const DEFAULT_PREVIEW_MAX = 280
@@ -912,14 +916,13 @@ function providerField(value: unknown): ProviderId | undefined {
   return candidate in PROVIDER_LABELS ? (candidate as ProviderId) : undefined
 }
 
-function buildPooledAgentIdentity(
-  metadata: Record<string, unknown> | undefined
+function normalizePooledAgentIdentity(
+  raw: unknown,
+  fallbackAgentId?: unknown
 ): RemotePooledAgentIdentity | undefined {
-  const raw = metadata?.pooledAgentIdentity
   if (!raw || typeof raw !== 'object') return undefined
   const record = raw as Record<string, unknown>
-  const agentId =
-    stringField(metadata?.pooledAgentId, 160) ?? stringField(record.agentId, 160)
+  const agentId = stringField(fallbackAgentId, 160) ?? stringField(record.agentId, 160)
   const nickname = stringField(record.nickname, 80)
   const iconKind = record.iconKind
   const hue = Number(record.hue)
@@ -947,6 +950,12 @@ function buildPooledAgentIdentity(
   const seed = stringField(record.seed, 180)
   if (seed) identity.seed = seed
   return identity
+}
+
+function buildPooledAgentIdentity(
+  metadata: Record<string, unknown> | undefined
+): RemotePooledAgentIdentity | undefined {
+  return normalizePooledAgentIdentity(metadata?.pooledAgentIdentity, metadata?.pooledAgentId)
 }
 
 function buildParticipantHealth(
@@ -1255,7 +1264,8 @@ function buildToolActivityMedia(message: ChatMessage): RemoteThreadRowMedia[] {
 function buildRow(
   message: ChatMessage,
   previewMax: number,
-  attentionKind: RemoteAttentionKind | null
+  attentionKind: RemoteAttentionKind | null,
+  fallbackPooledAgentIdentity?: RemotePooledAgentIdentity
 ): RemoteThreadRow {
   const subThreadReturn = buildSubThreadReturn(message)
   const guestReply = buildGuestReply(message)
@@ -1280,7 +1290,11 @@ function buildRow(
   if (typeof metadata?.ensembleRoundId === 'string' && metadata.ensembleRoundId.trim()) {
     row.ensembleRoundId = metadata.ensembleRoundId
   }
-  const pooledAgentIdentity = buildPooledAgentIdentity(metadata)
+  const pooledAgentIdentity =
+    buildPooledAgentIdentity(metadata) ||
+    ((message.role === 'assistant' || message.role === 'tool')
+      ? fallbackPooledAgentIdentity
+      : undefined)
   if (pooledAgentIdentity) {
     row.pooledAgentIdentity = pooledAgentIdentity
     row.speaker = pooledAgentIdentity.nickname
@@ -2081,6 +2095,7 @@ export function projectRemoteThread(
   const all = Array.isArray(messages) ? messages.filter((m) => m && typeof m.id === 'string') : []
   const previewMax = opts.previewMaxChars ?? DEFAULT_PREVIEW_MAX
   const generatedAt = opts.generatedAt ?? new Date().toISOString()
+  const fallbackPooledAgentIdentity = normalizePooledAgentIdentity(opts.pooledAgentIdentity)
   const runSummary = buildRunSummary(runs, opts.costDisplay, all)
   const conversationCost = buildConversationCostSummary(runs, opts.costDisplay)
   const runSummaries = (runs ?? [])
@@ -2100,7 +2115,7 @@ export function projectRemoteThread(
           Number((a.metadata as Record<string, unknown>).pinnedAt)
       )
       .slice(0, 12)
-      .map((message) => buildRow(message, previewMax, null)),
+      .map((message) => buildRow(message, previewMax, null, fallbackPooledAgentIdentity)),
     MAX_PINNED_THUMBNAIL_BASE64
   )
 
@@ -2149,7 +2164,7 @@ export function projectRemoteThread(
       message.id === latestAssistantRowId
         ? Math.max(previewMax, REMOTE_IOS_ROW_EXPAND_MAX)
         : previewMax
-    const row = buildRow(message, rowPreviewMax, att)
+    const row = buildRow(message, rowPreviewMax, att, fallbackPooledAgentIdentity)
     const speaker = row.pooledAgentIdentity?.nickname || opts.speakerForMessage?.(message)
     if (speaker) row.speaker = speaker
     return row
