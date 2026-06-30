@@ -620,7 +620,7 @@ export function TaskWraithWorkbench({
       </aside>
       <div className="workbench-main">
         <div className="workbench-toolbar">
-          <div className="workbench-breadcrumbs" aria-label="Workbench breadcrumbs">
+          <nav className="workbench-breadcrumbs" aria-label="Workbench breadcrumbs">
             {breadcrumbs.map((crumb, index) => (
               <span key={`${crumb}-${index}`}>
                 {index > 0 && <span aria-hidden="true">/</span>}
@@ -632,12 +632,13 @@ export function TaskWraithWorkbench({
                         ? editorState.selectedPath
                         : undefined
                   }
+                  aria-current={index === breadcrumbs.length - 1 ? 'page' : undefined}
                 >
                   {crumb}
                 </span>
               </span>
             ))}
-          </div>
+          </nav>
           <div className="workbench-actions">
             <button
               className="btn btn-sm btn-ghost"

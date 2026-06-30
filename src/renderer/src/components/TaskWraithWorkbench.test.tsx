@@ -100,6 +100,8 @@ describe('TaskWraithWorkbench shell', () => {
     expect(html).toContain('No wrap')
     expect(html).toContain('role="tablist"')
     expect(html).toContain('aria-label="Workbench views"')
+    expect(html).toContain('<nav class="workbench-breadcrumbs" aria-label="Workbench breadcrumbs"')
+    expect(html).toContain('aria-current="page"')
     expect(html).toContain('aria-selected="true"')
     expect(html).toContain('aria-controls="workbench-editor-panel"')
     expect(html).toContain('role="tabpanel"')
