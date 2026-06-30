@@ -300,6 +300,60 @@ const codeEditorTheme = EditorView.theme(
     },
     '.cm-line ::selection, .cm-content ::selection': {
       background: 'color-mix(in srgb, var(--accent) 34%, transparent)'
+    },
+    '.cm-tooltip': {
+      border: '1px solid var(--panel-border)',
+      borderRadius: 'var(--radius-sm, 6px)',
+      background: 'color-mix(in srgb, var(--panel-bg) 94%, var(--bg-primary))',
+      boxShadow: '0 18px 42px rgba(0, 0, 0, 0.32)',
+      color: 'var(--text-primary)',
+      overflow: 'hidden'
+    },
+    '.cm-tooltip-autocomplete': {
+      minWidth: '260px',
+      maxWidth: 'min(560px, calc(100vw - 48px))',
+      fontFamily: 'var(--font-ui)',
+      fontSize: '12px',
+      lineHeight: '18px'
+    },
+    '.cm-tooltip-autocomplete > ul': {
+      maxHeight: '260px',
+      padding: '4px'
+    },
+    '.cm-tooltip-autocomplete ul li': {
+      borderRadius: 'var(--radius-xs, 4px)',
+      padding: '3px 8px',
+      color: 'var(--text-secondary)'
+    },
+    '.cm-tooltip-autocomplete ul li[aria-selected]': {
+      background: 'color-mix(in srgb, var(--accent) 18%, transparent)',
+      color: 'var(--text-primary)'
+    },
+    '.cm-completionIcon': {
+      opacity: 0.82,
+      width: '16px'
+    },
+    '.cm-completionLabel': {
+      fontFamily: 'var(--font-mono)'
+    },
+    '.cm-completionMatchedText': {
+      color: 'var(--accent)',
+      textDecoration: 'none',
+      fontWeight: '700'
+    },
+    '.cm-completionDetail': {
+      color: 'var(--text-muted)',
+      fontSize: '11px',
+      marginLeft: '10px'
+    },
+    '.cm-completionInfo': {
+      border: '1px solid var(--panel-border)',
+      borderRadius: 'var(--radius-sm, 6px)',
+      background: 'var(--panel-bg)',
+      color: 'var(--text-secondary)',
+      fontFamily: 'var(--font-ui)',
+      fontSize: '12px',
+      padding: '8px 10px'
     }
   },
   { dark: true }
