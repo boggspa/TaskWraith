@@ -11,6 +11,7 @@ import {
 import {
   buildDiffFileContextMenuItems,
   DiffFileList,
+  diffFilePathDisplay,
   focusDiffFileContextMenuButton
 } from './DiffFileList'
 import { DiffToolbar } from './DiffToolbar'
@@ -280,6 +281,14 @@ describe('DiffToolbar', () => {
 })
 
 describe('DiffFileList', () => {
+  it('splits rail paths into primary filename and secondary parent folder', () => {
+    expect(diffFilePathDisplay('src/renderer/App.tsx')).toEqual({
+      name: 'App.tsx',
+      parent: 'src/renderer'
+    })
+    expect(diffFilePathDisplay('README.md')).toEqual({ name: 'README.md', parent: '' })
+  })
+
   it('renders grouped rail rows with selected state and git badges', () => {
     const summaries = [
       makeChangedFileSummary('src/unstaged.ts', 'unstaged'),
@@ -332,6 +341,9 @@ describe('DiffFileList', () => {
     expect(html).toContain('<span>Staged</span><small>1</small>')
     expect(html).toContain('data-diff-file-path="src/staged.ts"')
     expect(html).toContain('aria-selected="true"')
+    expect(html).toContain('class="diff-file-name"')
+    expect(html).toContain('<strong>staged.ts</strong>')
+    expect(html).toContain('<small>src</small>')
     expect(html).toContain('staged')
   })
 

@@ -556,7 +556,7 @@
 }
 
 .app-inspector .diff-file-name {
-  font-weight: 520;
+  font-weight: inherit;
 }
 
 .app-inspector .diff-file-row:hover {
@@ -571,7 +571,10 @@
 
 .app-inspector .diff-file-row.selected .diff-file-name {
   color: var(--text-primary);
-  font-weight: 600;
+}
+
+.app-inspector .diff-file-row.selected .diff-file-name > strong {
+  font-weight: 700;
 }
 
 .app-inspector .diff-file-badge {

@@ -131,6 +131,15 @@ const diffFileRowStateLabel = (gitStatus?: GitFileStatus): string => {
   return ''
 }
 
+export const diffFilePathDisplay = (path: string): { name: string; parent: string } => {
+  const parts = path.split('/').filter(Boolean)
+  const name = parts.pop() || path || 'file'
+  return {
+    name,
+    parent: parts.join('/')
+  }
+}
+
 const buildDiffFileRowLabel = (summary: DiffFileSummary, gitStatus?: GitFileStatus): string => {
   const parts = [summary.path, summary.status]
   if (summary.additions !== undefined || summary.deletions !== undefined) {
@@ -529,6 +538,7 @@ function DiffFileRow({
   summary: DiffFileSummary
   workspacePath?: string
 }) {
+  const pathDisplay = diffFilePathDisplay(summary.path)
   const openPointerContextMenu = (event: ReactMouseEvent<HTMLButtonElement>) => {
     event.preventDefault()
     onOpenContextMenu(summary, gitStatus, { x: event.clientX, y: event.clientY })
@@ -566,7 +576,10 @@ function DiffFileRow({
         className="diff-file-type-icon"
         workspacePath={workspacePath}
       />
-      <span className="diff-file-name">{summary.path}</span>
+      <span className="diff-file-name">
+        <strong>{pathDisplay.name}</strong>
+        {pathDisplay.parent && <small>{pathDisplay.parent}</small>}
+      </span>
       <span className={`diff-file-badge ${summary.status}`}>
         {summary.additions !== undefined && summary.deletions !== undefined ? (
           <>

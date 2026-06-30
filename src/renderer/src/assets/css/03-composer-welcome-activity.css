@@ -9761,7 +9761,40 @@ button.diff-file-row {
   z-index: 1;
 }
 
-.diff-file-name { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.diff-file-name {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  overflow: hidden;
+  line-height: 1.15;
+}
+
+.diff-file-name > strong,
+.diff-file-name > small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.diff-file-name > strong {
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  font-weight: 650;
+}
+
+.diff-file-row:hover .diff-file-name > strong,
+.diff-file-row.selected .diff-file-name > strong {
+  color: var(--text-primary);
+}
+
+.diff-file-name > small {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+}
 
 .diff-file-type-icon {
   border: 1px solid color-mix(in srgb, var(--text-primary) 12%, transparent);
