@@ -7,6 +7,7 @@ import {
   fileEditorPromptKeyAction,
   isFileEditorPromptDismissKey,
   QuickOpenPalette,
+  quickOpenKeyAction,
   quickOpenOptionId,
   resolveFileEditorKeyboardCommand
 } from './FileEditorPanel'
@@ -281,6 +282,15 @@ describe('EditorPane', () => {
 })
 
 describe('QuickOpenPalette', () => {
+  it('isolates modal keys while preserving quick-open navigation commands', () => {
+    expect(quickOpenKeyAction('Escape', true)).toBe('close')
+    expect(quickOpenKeyAction('ArrowDown', true)).toBe('next')
+    expect(quickOpenKeyAction('ArrowUp', true)).toBe('previous')
+    expect(quickOpenKeyAction('Enter', true)).toBe('open')
+    expect(quickOpenKeyAction('Enter', false)).toBe('isolate')
+    expect(quickOpenKeyAction('s', true)).toBe('isolate')
+  })
+
   it('renders an accessible combobox with a selected result option', () => {
     const html = renderToStaticMarkup(
       <QuickOpenPalette

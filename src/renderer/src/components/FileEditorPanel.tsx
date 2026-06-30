@@ -196,6 +196,19 @@ interface QuickOpenPaletteProps {
 
 export const quickOpenOptionId = (index: number): string => `file-editor-quick-open-option-${index}`
 
+export type QuickOpenKeyAction = 'close' | 'next' | 'previous' | 'open' | 'isolate'
+
+export const quickOpenKeyAction = (
+  key: string,
+  hasSelectedEntry: boolean
+): QuickOpenKeyAction => {
+  if (key === 'Escape') return 'close'
+  if (key === 'ArrowDown') return 'next'
+  if (key === 'ArrowUp') return 'previous'
+  if (key === 'Enter' && hasSelectedEntry) return 'open'
+  return 'isolate'
+}
+
 const ROOT_DIR_KEY = ''
 const FILE_EDITOR_DIRECTORY_LIMIT = 500
 const FILE_EDITOR_SEARCH_LIMIT = 500
@@ -2254,22 +2267,24 @@ export function QuickOpenPalette({
         aria-modal="true"
         aria-label="Quick open file"
         onKeyDown={(event) => {
-          if (event.key === 'Escape') {
+          event.stopPropagation()
+          const action = quickOpenKeyAction(event.key, Boolean(selectedEntry))
+          if (action === 'close') {
             event.preventDefault()
             onClose()
             return
           }
-          if (event.key === 'ArrowDown') {
+          if (action === 'next') {
             event.preventDefault()
             moveSelection(1)
             return
           }
-          if (event.key === 'ArrowUp') {
+          if (action === 'previous') {
             event.preventDefault()
             moveSelection(-1)
             return
           }
-          if (event.key === 'Enter' && selectedEntry) {
+          if (action === 'open' && selectedEntry) {
             event.preventDefault()
             void onOpenPath(selectedEntry.path)
           }
