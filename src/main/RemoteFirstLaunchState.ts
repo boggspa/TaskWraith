@@ -1,7 +1,9 @@
 import {
   resolveAppNotifications,
+  appNotificationAccent,
   appNotificationTone,
-  type AppNotification
+  type AppNotification,
+  type AppNotificationAccent
 } from '../shared/appNotifications'
 import { isRetiredProvider } from '../shared/retiredProviders'
 import {
@@ -29,6 +31,7 @@ export interface RemoteFirstLaunchNotice {
   title: string
   body: string
   tone: 'default' | 'danger'
+  accent: AppNotificationAccent
   dismissible: boolean
 }
 
@@ -155,6 +158,7 @@ function buildNotices(notifications: readonly AppNotification[]): RemoteFirstLau
       title: notice.title,
       body: notice.body,
       tone: appNotificationTone(notice.kind),
+      accent: appNotificationAccent(notice),
       dismissible: notice.dismissible !== false
     }))
 }

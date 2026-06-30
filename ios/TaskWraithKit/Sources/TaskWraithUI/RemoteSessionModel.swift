@@ -1347,8 +1347,9 @@ public final class RemoteSessionModel: ObservableObject {
         let firstLaunchJSON = """
         {"schemaVersion":1,"generatedAt":"2026-06-19T10:45:00Z",
          "notifications":[
-          {"id":"gemini-retired","kind":"provider-retired","title":"Gemini has been retired.","body":"Google ended Gemini CLI sign-in, so Gemini is no longer available for new runs. Existing chats remain visible.","tone":"danger","dismissible":true},
-          {"id":"antigravity-not-planned-2026-06-26","kind":"info","title":"AntiGravity will not be added.","body":"TaskWraith will not integrate Google AntiGravity as a Gemini replacement because it would require unsupported credential use and would not fit TaskWraith’s provider model.","tone":"default","dismissible":true}
+          {"id":"ollama-local-models-2026-06-30","kind":"addition","title":"New local Ollama models are available.","body":"Ollama now includes Ornith 1.0 (9B Param) and Ornith 1.0 (35B Param), 256K-context open-source models for agentic coding, plus Liquid LFM 2.5 (8B-1A), a 131K-context tool/thinking model — all in the model picker and setup commands.","tone":"default","accent":"default","dismissible":true},
+          {"id":"claude-sonnet-5-2026-06-30","kind":"addition","title":"Claude Sonnet 5 is available.","body":"Claude now includes Sonnet 5, Anthropic’s fast model for coding and professional work: adaptive thinking, 1M context, 128K max output, 85.2% SWE-bench Verified, and introductory $2/$10 per MTok pricing through Aug. 31, 2026.","tone":"default","accent":"claude","dismissible":true},
+          {"id":"antigravity-not-planned-2026-06-26","kind":"info","title":"AntiGravity will not be added.","body":"TaskWraith will not integrate Google AntiGravity as a Gemini replacement because it would require unsupported credential use and would not fit TaskWraith’s provider model.","tone":"default","accent":"default","dismissible":true}
          ],
          "workspace":{"visibleCount":1,"totalCount":1,"runningCount":0,"hasVisibleWorkspaces":true,"capabilities":{"monitor":true,"approve":true,"answer":true,"startTurn":true,"steer":true,"fileRead":true,"fileWrite":false}},
          "providerCards":[

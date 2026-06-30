@@ -1942,6 +1942,7 @@ struct ThreadEmptyWelcomeCanvas: View {
             VStack(spacing: 14) {
                 Spacer(minLength: 20)
                 dashboardCard
+                noticeCarousel
                 hero
                 scopeChips
                 composerBlock
@@ -2128,6 +2129,14 @@ struct ThreadEmptyWelcomeCanvas: View {
         // Omitted on General chats — the stripped welcome is greeting + composer.
         if !isWorkflowWelcome, !isGlobal, let data = model.welcomeDashboard, data.lifetimeHasActivity {
             WelcomeUsageDashboardCard(dashboard: data, accent: accent)
+        }
+    }
+
+    @ViewBuilder private var noticeCarousel: some View {
+        let notices = model.firstLaunchState?.notifications ?? []
+        if !notices.isEmpty {
+            RemoteNoticeCarousel(notices: notices)
+                .padding(.horizontal, 2)
         }
     }
 

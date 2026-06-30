@@ -11,7 +11,7 @@
  * zone rotates through more than one with the welcome heatmap's swipe effect.
  *
  * Carousel layout:
- *   1–2 pinned notices (local models + AntiGravity policy)
+ *   pinned notices (new local models + Claude Sonnet 5 + AntiGravity policy)
  *   up to 2 dynamic highlights rotated daily from CHANGELOG_FEATURE_NOTIFICATION_POOL
  */
 
@@ -19,6 +19,9 @@ export type AppNotificationKind = 'deprecation' | 'addition' | 'feature' | 'info
 
 /** Visual tone of a notification card. */
 export type AppNotificationTone = 'default' | 'danger'
+
+/** Optional provider accent for model/provider-specific announcement cards. */
+export type AppNotificationAccent = 'default' | 'claude'
 
 export interface AppNotification {
   /** Stable slug — also the dismiss-key suffix. Never reuse an id for new
@@ -29,6 +32,8 @@ export interface AppNotification {
   title: string
   /** One or two sentences of plain copy. */
   body: string
+  /** Provider-accented glass/card treatment. Omit for the theme default. */
+  accent?: AppNotificationAccent
   /** Default true. A non-dismissible notice stays while it is otherwise active. */
   dismissible?: boolean
   /** Epoch ms after which the notice is no longer shown. Omit = never expires. */
@@ -49,6 +54,10 @@ const MS_PER_DAY = 86_400_000
  */
 export function appNotificationTone(kind: AppNotificationKind): AppNotificationTone {
   return kind === 'deprecation' ? 'danger' : 'default'
+}
+
+export function appNotificationAccent(notification: AppNotification): AppNotificationAccent {
+  return notification.accent ?? 'default'
 }
 
 /** localStorage key a dismissed notice is recorded under (value '1'). */
@@ -85,6 +94,14 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
     kind: 'addition',
     title: 'New local Ollama models are available.',
     body: 'Ollama now includes Ornith 1.0 (9B Param) and Ornith 1.0 (35B Param), 256K-context open-source models for agentic coding, plus Liquid LFM 2.5 (8B-1A), a 131K-context tool/thinking model — all in the model picker and setup commands.',
+    dismissible: true
+  },
+  {
+    id: 'claude-sonnet-5-2026-06-30',
+    kind: 'addition',
+    title: 'Claude Sonnet 5 is available.',
+    body: 'Claude now includes Sonnet 5, Anthropic’s fast model for coding and professional work: adaptive thinking, 1M context, 128K max output, 85.2% SWE-bench Verified, and introductory $2/$10 per MTok pricing through Aug. 31, 2026.',
+    accent: 'claude',
     dismissible: true
   },
   {

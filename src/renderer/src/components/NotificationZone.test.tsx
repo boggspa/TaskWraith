@@ -23,6 +23,13 @@ const addition: AppNotification = {
   title: 'Ornith local models are available.',
   body: 'New local coding models are selectable.'
 }
+const claudeAddition: AppNotification = {
+  id: 'claude-sonnet-5-2026-06-30',
+  kind: 'addition',
+  title: 'Claude Sonnet 5 is available.',
+  body: 'Adaptive thinking and 1M context are available.',
+  accent: 'claude'
+}
 
 describe('NotificationZone', () => {
   it('maps horizontal drags to carousel directions', () => {
@@ -47,6 +54,15 @@ describe('NotificationZone', () => {
   it('uses the default (non-red) card for additions', () => {
     const html = renderToStaticMarkup(<NotificationZone notifications={[addition]} />)
     expect(html).toContain('notification-card--default')
+    expect(html).toContain('notification-card--accent-default')
+    expect(html).not.toContain('notification-card--danger')
+  })
+
+  it('adds the Claude provider accent class for Claude model announcements', () => {
+    const html = renderToStaticMarkup(<NotificationZone notifications={[claudeAddition]} />)
+    expect(html).toContain('Claude Sonnet 5 is available.')
+    expect(html).toContain('notification-card--default')
+    expect(html).toContain('notification-card--accent-claude')
     expect(html).not.toContain('notification-card--danger')
   })
 

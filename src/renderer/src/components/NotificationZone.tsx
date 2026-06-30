@@ -4,6 +4,7 @@ import {
   activeAppNotifications,
   resolveAppNotifications,
   appNotificationDismissKey,
+  appNotificationAccent,
   appNotificationTone,
   type AppNotification,
   type AppNotificationKind
@@ -90,8 +91,12 @@ function NotificationCard({
   onDismiss: (id: string) => void
 }): React.JSX.Element {
   const tone = appNotificationTone(notification.kind)
+  const accent = appNotificationAccent(notification)
   return (
-    <div className={`notification-card notification-card--${tone}`} role="status">
+    <div
+      className={`notification-card notification-card--${tone} notification-card--accent-${accent}`}
+      role="status"
+    >
       <span className="notification-card-icon" aria-hidden>
         {KIND_ICON[notification.kind]}
       </span>

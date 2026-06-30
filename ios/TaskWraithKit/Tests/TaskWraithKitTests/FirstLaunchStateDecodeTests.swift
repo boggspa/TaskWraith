@@ -11,6 +11,7 @@ struct FirstLaunchStateDecodeTests {
         {"state":{"schemaVersion":1,"generatedAt":"2026-06-21T18:02:00.000Z",
          "notifications":[
           {"id":"gemini-retired","kind":"provider-retired","title":"Gemini retired","body":"Existing chats remain visible.","tone":"danger","dismissible":true},
+          {"id":"claude-sonnet-5-2026-06-30","kind":"addition","title":"Claude Sonnet 5 is available.","body":"Adaptive thinking and 1M context are available.","tone":"default","accent":"claude","dismissible":true},
           {"id":"antigravity-not-planned-2026-06-26","kind":"info","title":"AntiGravity will not be added.","body":"TaskWraith will not integrate Google AntiGravity as a Gemini replacement because it would require unsupported credential use and would not fit TaskWraith’s provider model.","tone":"default","dismissible":true}
          ],
          "workspace":{"visibleCount":2,"totalCount":4,"runningCount":1,"hasVisibleWorkspaces":true,"capabilities":{"monitor":true,"approve":true,"answer":true,"startTurn":true,"steer":true,"fileRead":true,"fileWrite":false}},
@@ -25,9 +26,13 @@ struct FirstLaunchStateDecodeTests {
 
         #expect(message.state.schemaVersion == 1)
         #expect(message.state.notifications.first?.tone == "danger")
-        #expect(message.state.notifications.count == 2)
+        #expect(message.state.notifications.first?.accent == nil)
+        #expect(message.state.notifications.count == 3)
+        #expect(message.state.notifications[1].id == "claude-sonnet-5-2026-06-30")
+        #expect(message.state.notifications[1].accent == "claude")
         #expect(message.state.notifications.last?.id == "antigravity-not-planned-2026-06-26")
         #expect(message.state.notifications.last?.tone == "default")
+        #expect(message.state.notifications.last?.accent == nil)
         #expect(message.state.notifications.last?.title == "AntiGravity will not be added.")
         #expect(message.state.workspace?.visibleCount == 2)
         #expect(message.state.workspace?.capabilities.fileWrite == false)

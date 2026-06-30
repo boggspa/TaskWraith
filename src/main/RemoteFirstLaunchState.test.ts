@@ -160,6 +160,9 @@ describe('buildRemoteFirstLaunchState', () => {
       'ollama-local-models-2026-06-30'
     )
     expect(state.notifications.map((notice) => notice.id)).toContain(
+      'claude-sonnet-5-2026-06-30'
+    )
+    expect(state.notifications.map((notice) => notice.id)).toContain(
       'changelog-scheduled-queue-2026-06-28'
     )
     expect(state.notifications.map((notice) => notice.id)).toContain(
@@ -175,8 +178,16 @@ describe('buildRemoteFirstLaunchState', () => {
       (notice) => notice.id === 'antigravity-not-planned-2026-06-26'
     )
     expect(antigravity?.tone).toBe('default')
+    expect(antigravity?.accent).toBe('default')
     expect(antigravity?.kind).toBe('info')
     expect(antigravity?.title).toBe('AntiGravity will not be added.')
+
+    const sonnet = state.notifications.find(
+      (notice) => notice.id === 'claude-sonnet-5-2026-06-30'
+    )
+    expect(sonnet?.tone).toBe('default')
+    expect(sonnet?.accent).toBe('claude')
+    expect(sonnet?.title).toBe('Claude Sonnet 5 is available.')
   })
 
   it('surfaces stale usage snapshots and no-workspace access without leaking setup internals', () => {

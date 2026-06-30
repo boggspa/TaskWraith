@@ -101,43 +101,7 @@ struct FirstLaunchSheetView: View {
     private var notices: some View {
         let entries = state?.notifications ?? []
         if !entries.isEmpty {
-            VStack(spacing: 10) {
-                ForEach(entries) { notice in
-                    HStack(alignment: .top, spacing: 10) {
-                        Image(systemName: notice.tone == "danger" ? "exclamationmark.circle" : "info.circle")
-                            .font(.headline)
-                            .foregroundStyle(notice.tone == "danger" ? TWTheme.statusFailed : TWTheme.chroma1)
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(notice.title)
-                                .font(.footnote.weight(.semibold))
-                                .foregroundStyle(TWTheme.textPrimary)
-                            Text(notice.body)
-                                .font(.caption)
-                                .foregroundStyle(TWTheme.textSecondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                    }
-                    .padding(12)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .fill(
-                                notice.tone == "danger"
-                                    ? TWTheme.statusFailed.opacity(0.12)
-                                    : TWTheme.surface1
-                            )
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .strokeBorder(
-                                notice.tone == "danger"
-                                    ? TWTheme.statusFailed.opacity(0.35)
-                                    : TWTheme.border,
-                                lineWidth: 1
-                            )
-                    )
-                }
-            }
+            RemoteNoticeCarousel(notices: entries)
         }
     }
 

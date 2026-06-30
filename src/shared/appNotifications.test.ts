@@ -6,6 +6,7 @@ import {
   resolveAppNotifications,
   selectChangelogFeatureNotifications,
   activeAppNotifications,
+  appNotificationAccent,
   appNotificationDismissKey,
   appNotificationTone,
   type AppNotification
@@ -138,6 +139,7 @@ describe('notification registry', () => {
     const models = PINNED_APP_NOTIFICATIONS.find((n) => n.id === 'ollama-local-models-2026-06-30')
     expect(models).toBeDefined()
     expect(models && appNotificationTone(models.kind)).toBe('default')
+    expect(models && appNotificationAccent(models)).toBe('default')
     expect(models?.kind).toBe('addition')
     expect(models?.title).toBe('New local Ollama models are available.')
     expect(models?.body).toContain('Ornith 1.0 (9B Param)')
@@ -146,6 +148,20 @@ describe('notification registry', () => {
     expect(models?.body).toContain('LFM 2.5 (8B-1A)')
     expect(models?.body).toContain('131K-context')
     expect(models?.body).toContain('tool/thinking')
+  })
+
+  it('seeds the Claude Sonnet 5 addition with the Claude accent', () => {
+    const sonnet = PINNED_APP_NOTIFICATIONS.find((n) => n.id === 'claude-sonnet-5-2026-06-30')
+    expect(sonnet).toBeDefined()
+    expect(sonnet && appNotificationTone(sonnet.kind)).toBe('default')
+    expect(sonnet && appNotificationAccent(sonnet)).toBe('claude')
+    expect(sonnet?.kind).toBe('addition')
+    expect(sonnet?.title).toBe('Claude Sonnet 5 is available.')
+    expect(sonnet?.body).toContain('adaptive thinking')
+    expect(sonnet?.body).toContain('1M context')
+    expect(sonnet?.body).toContain('128K max output')
+    expect(sonnet?.body).toContain('85.2% SWE-bench Verified')
+    expect(sonnet?.body).toContain('$2/$10 per MTok')
   })
 
   it('keeps scheduled sends in the dynamic changelog pool', () => {
@@ -163,6 +179,7 @@ describe('notification registry', () => {
     )
     expect(antigravity).toBeDefined()
     expect(antigravity && appNotificationTone(antigravity.kind)).toBe('default')
+    expect(antigravity && appNotificationAccent(antigravity)).toBe('default')
     expect(antigravity?.kind).toBe('info')
     expect(antigravity?.title).toBe('AntiGravity will not be added.')
     expect(antigravity?.body).toContain('Google AntiGravity')
