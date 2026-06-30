@@ -648,6 +648,7 @@ import {
   createWorkspaceToolExecutors,
   formatScopedPath as formatWorkspaceToolScopedPath,
   resolveMcpScopedPath as resolveWorkspaceToolScopedPath,
+  summarizeTestOutput,
   WORKSPACE_MCP_TOOL_NAMES,
   type WorkspaceMcpToolName,
   type WorkspaceToolContext
@@ -16589,57 +16590,6 @@ function unsupportedNativeMcpToolResult(toolName: TaskWraithMcpToolName): McpToo
 
 function mcpToolCallResponseFromBrokerResult(result: unknown) {
   return mcpBridgeToolCallResponseFromBrokerResult(result)
-}
-
-function summarizeTestOutput(output: string) {
-  const lines = output.split(/\r?\n/)
-  const failures: any[] = []
-  for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index]
-    if (
-      /\bFAIL\b/.test(line) ||
-      /^\s*[×✗]\s+/.test(line) ||
-      /AssertionError|XCTAssert|failed|Failure/i.test(line)
-    ) {
-      const location = line.match(
-        /([A-Za-z0-9_./~ -]+\.(?:ts|tsx|js|jsx|swift|py|rs|go|java|kt|m|mm)):(\d+)(?::(\d+))?/
-      )
-      failures.push({
-        line: index + 1,
-        text: line.trim(),
-        file: location?.[1],
-        fileLine: location ? Number(location[2]) : undefined,
-        column: location?.[3] ? Number(location[3]) : undefined,
-        excerpt: lines.slice(Math.max(0, index - 2), Math.min(lines.length, index + 4)).join('\n')
-      })
-    }
-    if (failures.length >= 50) break
-  }
-  const totals = {
-    failed: failures.length,
-    failedCount: Number(
-      output.match(/(\d+)\s+(?:failed|failures?|failing)/i)?.[1] || failures.length || 0
-    ),
-    passedCount: Number(output.match(/(\d+)\s+(?:passed|passing)/i)?.[1] || 0),
-    passedMentions: lines.filter((line) => /\b(pass|passed|✓)\b/i.test(line)).length
-  }
-  const status =
-    totals.failed > 0 || totals.failedCount > 0
-      ? 'failed'
-      : totals.passedCount > 0 || totals.passedMentions > 0
-        ? 'passed'
-        : 'unknown'
-  return {
-    status,
-    totals,
-    failures,
-    summary:
-      status === 'failed'
-        ? `${totals.failedCount || totals.failed} test failure(s) detected.`
-        : status === 'passed'
-          ? `${totals.passedCount || 'Some'} test(s) passed.`
-          : 'No clear test result summary found.'
-  }
 }
 
 function pushMcpBrowserConsoleEntry(entry: {
