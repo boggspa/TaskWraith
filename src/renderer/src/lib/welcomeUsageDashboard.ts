@@ -6,6 +6,7 @@ import type {
   WorkspaceRecord
 } from '../../../main/store/types'
 import { canonicalModelIdForProvider, humaniseModelId } from './modelDisplayName'
+import { resolveOllamaDisplayBrand } from './ollamaDisplayBrand'
 
 export type WelcomeUsageTab = 'overview' | 'models' | 'workspaces' | 'providers'
 
@@ -137,6 +138,14 @@ export interface WelcomeUsageModelDatum {
   provider: ProviderId
   model: string
   label: string
+  /**
+   * CSS hue class for the row dot + meter fill. Normally `provider-<id>`,
+   * but Ollama-backed display brands (Alibaba/Qwen, Google/Gemma, …) resolve
+   * to their spoofed upstream brand class (e.g. `provider-alibaba`) so the
+   * Model Comparisons tab wears the same per-brand hue as the transcript,
+   * run cards, and model picker.
+   */
+  colorClass: string
   runs: number
   inputTokens: number
   outputTokens: number
@@ -426,6 +435,30 @@ const shouldSurfaceModelInBreakdown = (provider: ProviderId, model: string): boo
  */
 const labelForBreakdownModel = (provider: ProviderId, model: string): string =>
   humaniseModelId(provider, model)
+
+/**
+ * Resolve the display label + CSS hue class for a breakdown row. For most
+ * providers this is just the humanised model name + `provider-<id>`. For
+ * Ollama-backed display brands the row adopts the spoofed upstream brand
+ * label + class (e.g. Qwen → `provider-alibaba`) so the Model Comparisons
+ * tab matches the transcript / run-card / picker hue treatment.
+ */
+const presentationForBreakdownModel = (
+  provider: ProviderId,
+  model: string
+): { label: string; colorClass: string } => {
+  const baseLabel = labelForBreakdownModel(provider, model)
+  if (provider === 'ollama') {
+    const brand = resolveOllamaDisplayBrand(model, baseLabel)
+    if (brand) {
+      return {
+        label: brand.modelLabel || baseLabel,
+        colorClass: `provider-${brand.providerClass}`
+      }
+    }
+  }
+  return { label: baseLabel, colorClass: `provider-${provider}` }
+}
 
 const inferProviderFromModelName = (model: string): ProviderId => {
   const normalized = model.toLowerCase()
@@ -777,12 +810,13 @@ export const buildWelcomeUsageDashboardData = (
     if (rawModelKey === 'default' || rawModelKey === 'cli-default') continue
     if (!shouldSurfaceModelInBreakdown(provider, model)) continue
     const modelId = `${provider}:${model}`
-    const label = labelForBreakdownModel(provider, model)
+    const { label, colorClass } = presentationForBreakdownModel(provider, model)
     const existing = modelMap.get(modelId) || {
       id: modelId,
       provider,
       model,
       label,
+      colorClass,
       runs: 0,
       inputTokens: 0,
       outputTokens: 0,

@@ -587,6 +587,62 @@ describe('buildWelcomeUsageDashboardData model-breakdown filter (Welcome L8)', (
     ])
   })
 
+  it('maps Ollama display brands to their spoofed brand hue class', () => {
+    const records: UsageRecord[] = [
+      baseRecord({
+        id: 'qwen-brand',
+        provider: 'ollama',
+        timestamp: NOW - 90_000,
+        model: 'qwen3.5:9b',
+        inputTokens: 4_000,
+        outputTokens: 1_000,
+        totalTokens: 5_000
+      }),
+      baseRecord({
+        id: 'gemma-brand',
+        provider: 'ollama',
+        timestamp: NOW - 80_000,
+        model: 'gemma4:12b',
+        inputTokens: 2_000,
+        outputTokens: 500,
+        totalTokens: 2_500
+      }),
+      baseRecord({
+        id: 'gptoss-brand',
+        provider: 'ollama',
+        timestamp: NOW - 70_000,
+        model: 'gpt-oss:20b',
+        inputTokens: 1_000,
+        outputTokens: 200,
+        totalTokens: 1_200
+      })
+    ]
+
+    const data = buildWelcomeUsageDashboardData(records, [], 'all', NOW)
+    const byModel = new Map(data.modelBreakdown.map((m) => [m.model, m.colorClass]))
+
+    expect(byModel.get('qwen3.5:9b')).toBe('provider-alibaba')
+    expect(byModel.get('gemma4:12b')).toBe('provider-google')
+    expect(byModel.get('gpt-oss:20b')).toBe('provider-openai')
+  })
+
+  it('falls back to the runtime provider hue class for non-brand models', () => {
+    const records: UsageRecord[] = [
+      baseRecord({
+        id: 'claude-row',
+        provider: 'claude',
+        timestamp: NOW - 90_000,
+        model: 'claude-opus-4-8',
+        inputTokens: 4_000,
+        outputTokens: 1_000,
+        totalTokens: 5_000
+      })
+    ]
+
+    const data = buildWelcomeUsageDashboardData(records, [], 'all', NOW)
+    expect(data.modelBreakdown[0]?.colorClass).toBe('provider-claude')
+  })
+
   it('percentages are computed against kept-model tokens, not the lifetime aggregate', () => {
     const records: UsageRecord[] = [
       baseRecord({

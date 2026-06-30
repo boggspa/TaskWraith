@@ -2600,6 +2600,36 @@
 .welcome-usage-model-meter-fill.provider-ollama,
 .welcome-usage-bar-segment.provider-ollama { color: var(--provider-ollama-color); }
 
+/* Ollama-backed display brands. Runtime provider stays `ollama`, but the
+ * Model Comparisons rows wear their spoofed upstream brand hue (mirrors the
+ * transcript meta, run cards, and CombinedModelPicker provider column) so a
+ * Qwen / Gemma / Nemotron row reads as Alibaba / Google / NVIDIA, not generic
+ * Ollama green. Brand tokens live in styles/theme.css. */
+.welcome-usage-model-dot.provider-alibaba,
+.welcome-usage-model-meter-fill.provider-alibaba,
+.welcome-usage-bar-segment.provider-alibaba { color: var(--provider-alibaba-color); }
+.welcome-usage-model-dot.provider-deep-reinforce,
+.welcome-usage-model-meter-fill.provider-deep-reinforce,
+.welcome-usage-bar-segment.provider-deep-reinforce { color: var(--provider-deep-reinforce-color); }
+.welcome-usage-model-dot.provider-google,
+.welcome-usage-model-meter-fill.provider-google,
+.welcome-usage-bar-segment.provider-google { color: var(--provider-google-color); }
+.welcome-usage-model-dot.provider-ibm,
+.welcome-usage-model-meter-fill.provider-ibm,
+.welcome-usage-bar-segment.provider-ibm { color: var(--provider-ibm-color); }
+.welcome-usage-model-dot.provider-liquid,
+.welcome-usage-model-meter-fill.provider-liquid,
+.welcome-usage-bar-segment.provider-liquid { color: var(--provider-liquid-color); }
+.welcome-usage-model-dot.provider-nvidia,
+.welcome-usage-model-meter-fill.provider-nvidia,
+.welcome-usage-bar-segment.provider-nvidia { color: var(--provider-nvidia-color); }
+.welcome-usage-model-dot.provider-openai,
+.welcome-usage-model-meter-fill.provider-openai,
+.welcome-usage-bar-segment.provider-openai { color: var(--provider-openai-color); }
+.welcome-usage-model-dot.provider-openbmb,
+.welcome-usage-model-meter-fill.provider-openbmb,
+.welcome-usage-bar-segment.provider-openbmb { color: var(--provider-openbmb-color); }
+
 [data-reduce-transparency="true"] .welcome-usage-dashboard {
   background: color-mix(in srgb, var(--panel-bg-solid) 86%, var(--accent) 6%);
   backdrop-filter: none;

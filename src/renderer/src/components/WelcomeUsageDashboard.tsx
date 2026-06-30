@@ -9,7 +9,6 @@ import {
   type WelcomeUsageTab
 } from '../lib/welcomeUsageDashboard'
 import { isDashboardStatVisible } from '../lib/dashboardStatRegistry'
-import { providerModelColorClass } from '../lib/providerLabels'
 import {
   ClockSymbolIcon,
   FolderSymbolIcon,
@@ -423,11 +422,11 @@ export function WelcomeUsageDashboard({
               return (
                 <div
                   key={model.id}
-                  className={`welcome-usage-model-meter ${providerModelColorClass(model.provider)}`}
+                  className={`welcome-usage-model-meter ${model.colorClass}`}
                 >
                   <div className="welcome-usage-model-meter-header">
                     <span
-                      className={`welcome-usage-model-dot ${providerModelColorClass(model.provider)}`}
+                      className={`welcome-usage-model-dot ${model.colorClass}`}
                       aria-hidden
                     />
                     <span className="welcome-usage-model-name" title={model.label}>
@@ -450,7 +449,7 @@ export function WelcomeUsageDashboard({
                     aria-label={`${model.label} accounts for ${percent.toFixed(1)}% of 30-day usage`}
                   >
                     <span
-                      className={`welcome-usage-model-meter-fill ${providerModelColorClass(model.provider)}`}
+                      className={`welcome-usage-model-meter-fill ${model.colorClass}`}
                       style={{ width: fillWidth }}
                     />
                   </div>
