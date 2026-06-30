@@ -857,6 +857,7 @@ import {
 import { registerDiagnosticsHandlers } from './ipc/diagnosticsHandlers'
 import { registerSidebarHandlers } from './ipc/sidebarHandlers'
 import { registerAppearanceHandlers } from './ipc/appearanceHandlers'
+import { registerDiscordContextHandlers } from './ipc/discordContextHandlers'
 import { getCachedRemoteEnsemblePresets } from './remote/EnsembleRosterPresetsCache'
 import { resolveGeminiCliResumePolicy } from './GeminiSessionPolicy'
 // 1.0.5-EW26 — Kimi compatibility filter (curated + user-
@@ -25013,10 +25014,10 @@ if (isGeminiMcpBridgeProcess) {
       assertAgenticServiceId
     })
     ipcMain.handle('compose-run', (_, input: ComposerInput) => composerService.composeRun(input))
-    ipcMain.handle('discord-context:list-targets', () => discordContextService.listTargets())
-    ipcMain.handle('discord-context:read-channel', (_, input: unknown) =>
-      discordContextService.readChannel(input)
-    )
+    registerDiscordContextHandlers({
+      listTargets: () => discordContextService.listTargets(),
+      readChannel: (input: unknown) => discordContextService.readChannel(input)
+    })
 
     registerWorkspaceHandlers({
       workspaceService,
