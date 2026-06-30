@@ -182,6 +182,7 @@ const ORCHESTRATION_TOOLS = new Set<string>([
   'agent_delegation_role',
   'ensemble_continue',
   'ensemble_bossman_control',
+  'ensemble_roster_edit',
   'scout_brief',
   'blackboard_post',
   'workspace_board_snapshot',

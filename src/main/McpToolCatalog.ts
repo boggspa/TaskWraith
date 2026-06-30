@@ -1956,6 +1956,96 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
       }
     },
     {
+      name: 'ensemble_roster_edit',
+      description:
+        'In Ensemble Mode, lets the assigned Boss participant add, remove, or edit participants in the active roster. Boss-only and audited; requires the user\'s Allow Auto Approvals opt-in on the Ensemble. Permission presets are capped at workspace_write, and tool-grant permissionOverrides are narrow-only: service overrides may only deny, network may only deny, approvalMode may only narrow to plan, and external path grants are forbidden.',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          action: {
+            type: 'string',
+            enum: ['add_participant', 'remove_participant', 'edit_participant'],
+            description:
+              'add_participant creates a new enabled participant; remove_participant removes an existing non-Boss participant; edit_participant patches provider/model/role/reasoning/permission fields.'
+          },
+          roundId: {
+            type: 'string',
+            description: 'Optional stale-command guard. Must match the active Ensemble round id.'
+          },
+          targetParticipantId: {
+            type: 'string',
+            description:
+              'Required for remove_participant and edit_participant. The configured Boss participant cannot be removed.'
+          },
+          participant: {
+            type: 'object',
+            description:
+              'Participant fields for add_participant or edit_participant. add_participant requires provider. edit_participant applies only provided fields.',
+            properties: {
+              provider: {
+                type: 'string',
+                enum: selectableProviderIds(),
+                description:
+                  'Live selectable provider id. Retired providers are rejected; provider-changing edits are health-checked.'
+              },
+              model: { type: 'string' },
+              role: { type: 'string' },
+              instructions: { type: 'string' },
+              reasoningEffort: { type: 'string' },
+              fastModeEnabled: { type: 'boolean' },
+              thinkingEnabled: { type: 'boolean' },
+              permissionPresetId: {
+                type: 'string',
+                enum: ['read_only', 'default', 'workspace_write'],
+                description:
+                  'Coarse permission preset ceiling. full_access and direct custom assignment are rejected.'
+              },
+              permissionOverrides: {
+                type: 'object',
+                description:
+                  'Fine-grained tool grants are narrow-only. Existing denies are sticky on edit; removing them is rejected as tool_grant_widen.',
+                properties: {
+                  approvalMode: {
+                    type: 'string',
+                    enum: ['plan'],
+                    description: 'Only plan is allowed, because it narrows execution posture.'
+                  },
+                  networkAccess: {
+                    type: 'string',
+                    enum: ['deny'],
+                    description: 'Only deny is allowed.'
+                  },
+                  agenticServices: {
+                    type: 'object',
+                    additionalProperties: {
+                      type: 'string',
+                      enum: ['deny']
+                    },
+                    description:
+                      'Map of agentic service ids to deny. allow/workspace/ask are rejected.'
+                  },
+                  externalPathGrants: {
+                    type: 'array',
+                    maxItems: 0,
+                    description: 'Forbidden for this tool; any external path grant is rejected.'
+                  }
+                },
+                additionalProperties: false
+              }
+            },
+            additionalProperties: false
+          }
+        },
+        required: ['action']
+      }
+    },
+    {
       name: 'list_ensemble_participants',
       description:
         'In Ensemble Mode, list the current participants, providers, roles, models, per-round statuses, and estimated per-participant context usage for the active round. Context usage fields are latest usage-bearing run estimates: contextTokens is latest input+output tokens, contextWindow is the resolved token window, and contextPercent is a 0-100 usage percentage; in-flight output is not included.',

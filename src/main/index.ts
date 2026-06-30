@@ -17412,6 +17412,30 @@ async function executeGeminiMcpTool(
       }))
       toolIsError = result.ok === false
       text = mcpJson(result)
+    } else if (toolName === 'ensemble_roster_edit') {
+      const result = await (ensembleOrchestratorRef?.rosterEditForRun(context.appRunId, {
+        action:
+          args.action === 'add_participant' ||
+          args.action === 'remove_participant' ||
+          args.action === 'edit_participant'
+            ? args.action
+            : undefined,
+        roundId: optionalString(args.roundId || args.round_id),
+        targetParticipantId: optionalString(
+          args.targetParticipantId || args.target_participant_id
+        ),
+        participant:
+          args.participant && typeof args.participant === 'object' && !Array.isArray(args.participant)
+            ? (args.participant as Record<string, any>)
+            : undefined
+      }) ?? Promise.resolve({
+        ok: false,
+        tool: 'ensemble_roster_edit' as const,
+        message: 'Ensemble orchestrator is not available.',
+        error: 'no_active_run' as const
+      }))
+      toolIsError = result.ok === false
+      text = mcpJson(result)
     } else if (toolName === 'list_ensemble_participants') {
       const result = ensembleOrchestratorRef?.listParticipantsForRun(context.appRunId) || {
         ok: false,
@@ -28243,26 +28267,33 @@ if (isGeminiMcpBridgeProcess) {
         }
       },
       releaseWriteIntentsForLane: (laneId) => workspaceWriteIntentRegistry.releaseAllForLane(laneId),
-      // A non-Boss participant that tries to drive `ensemble_bossman_control`
-      // is an attempted control escalation — record it to the durable approval
-      // ledger (as a policy auto-deny), not just the transcript. Classified under
-      // `mcpTools` since the rejected call IS an MCP tool invocation.
-      recordBossmanControlRejection: (rejection) =>
-        auditService.recordAutomaticApprovalDecision(
+      // A non-Boss participant that tries to drive a Boss-only Ensemble MCP
+      // control is an attempted control escalation — record it to the durable
+      // approval ledger (as a policy auto-deny), not just the transcript.
+      // Classified under `mcpTools` since the rejected call IS an MCP tool
+      // invocation.
+      recordBossmanControlRejection: (rejection) => {
+        const rosterEditRejected = rejection.metadata?.kind === 'roster_edit_rejected'
+        return auditService.recordAutomaticApprovalDecision(
           rejection.provider,
           { appRunId: rejection.runId, appChatId: rejection.chatId },
           'mcpTools',
           rejection.workspacePath,
           {
-            method: 'ensemble_bossman_control',
-            title: 'Ensemble Boss control rejected',
-            body: 'A non-Boss participant attempted to use ensemble_bossman_control.'
+            method: rosterEditRejected ? 'ensemble_roster_edit' : 'ensemble_bossman_control',
+            title: rosterEditRejected
+              ? 'Ensemble roster edit rejected'
+              : 'Ensemble Boss control rejected',
+            body: rosterEditRejected
+              ? 'A non-Boss participant attempted to use ensemble_roster_edit.'
+              : 'A non-Boss participant attempted to use ensemble_bossman_control.'
           },
           'autoDeny',
           'policy',
           'request',
           rejection.metadata
-        ),
+        )
+      },
       recordFanoutAuthorizationRejection: (rejection) =>
         auditService.recordAutomaticApprovalDecision(
           rejection.provider,
