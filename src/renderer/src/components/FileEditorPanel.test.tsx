@@ -11,7 +11,11 @@ import {
   quickOpenOptionId,
   resolveFileEditorKeyboardCommand
 } from './FileEditorPanel'
-import { EditorPane, FILE_EDITOR_BASIC_SETUP } from './FileEditorPane'
+import {
+  EditorPane,
+  FILE_EDITOR_BASIC_SETUP,
+  editorSelectionFromCursorStatus
+} from './FileEditorPane'
 import { FileEditorGitActions } from './FileEditorGitActions'
 import { FileEditorStatusBar, fileEditorLanguageLabel } from './FileEditorStatusBar'
 import { buildEditorTabPathDisplay, EditorTabStrip } from './FileEditorTabStrip'
@@ -278,6 +282,42 @@ describe('EditorPane', () => {
 
     expect(html).toContain('file-editor-code-surface')
     expect(html).toContain('Select a text file')
+  })
+
+  it('derives a CodeMirror selection from stored cursor status', () => {
+    expect(
+      editorSelectionFromCursorStatus('first\nsecond\nthird', {
+        line: 2,
+        column: 4,
+        selectedChars: 0
+      })
+    ).toEqual({ anchor: 9 })
+
+    expect(
+      editorSelectionFromCursorStatus('first\nsecond\nthird', {
+        line: 2,
+        column: 7,
+        selectedChars: 3
+      })
+    ).toEqual({ anchor: 9, head: 12 })
+  })
+
+  it('clamps restored cursor selections inside the current document', () => {
+    expect(
+      editorSelectionFromCursorStatus('only', {
+        line: 99,
+        column: 99,
+        selectedChars: 99
+      })
+    ).toEqual({ anchor: 0, head: 4 })
+
+    expect(
+      editorSelectionFromCursorStatus('', {
+        line: Number.NaN,
+        column: Number.NaN,
+        selectedChars: Number.NaN
+      })
+    ).toEqual({ anchor: 0 })
   })
 })
 

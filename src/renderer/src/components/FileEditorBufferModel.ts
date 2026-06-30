@@ -9,6 +9,12 @@ export interface EditorBuffer {
   sizeBytes: number
   mtimeMs?: number
   cursorStatus?: EditorCursorStatus
+  cursorSelection?: EditorBufferSelection
+}
+
+export interface EditorBufferSelection {
+  anchor: number
+  head: number
 }
 
 export const bufferFromReadResult = (result: WorkspaceFileReadResult): EditorBuffer => ({
@@ -34,6 +40,7 @@ export const mergeSavedBufferResult = (
   if (currentBuffer.content === savedContentSnapshot) {
     return {
       ...nextSavedBuffer,
+      cursorSelection: currentBuffer.cursorSelection,
       cursorStatus: currentBuffer.cursorStatus
     }
   }

@@ -40,7 +40,7 @@ import {
   type EditorBuffer
 } from './FileEditorBufferModel'
 import { FileTypeIcon } from './FileTypeIcon'
-import { EditorPane } from './FileEditorPane'
+import { EditorPane, editorSelectionFromCursorStatus } from './FileEditorPane'
 import { FileEditorGitActions } from './FileEditorGitActions'
 import {
   FileEditorStatusBar,
@@ -597,8 +597,11 @@ export function FileEditorPanel({
     () => buffers.find((buffer) => buffer.path === selectedPath) ?? null,
     [buffers, selectedPath]
   )
-  const activeCursorStatus = activeBuffer?.cursorStatus ?? cursorStatus
   const content = activeBuffer?.content ?? ''
+  const activeCursorStatus = activeBuffer?.cursorStatus ?? cursorStatus
+  const activeEditorSelection =
+    activeBuffer?.cursorSelection ??
+    (selectedPath ? editorSelectionFromCursorStatus(content, activeCursorStatus) : undefined)
   const isDirty = isBufferDirty(activeBuffer)
   const selectedName = fileNameForPath(selectedPath)
   const selectedBreadcrumbs = useMemo(
@@ -765,6 +768,10 @@ export function FileEditorPanel({
     const path = selectedPath
     const selection = update.state.selection
     const head = selection.main.head
+    const cursorSelection = {
+      anchor: selection.main.anchor,
+      head: selection.main.head
+    }
     const line = update.state.doc.lineAt(head)
     const selectedChars = selection.ranges.reduce(
       (total, range) => total + Math.abs(range.to - range.from),
@@ -780,6 +787,7 @@ export function FileEditorPanel({
     setBuffers((current) =>
       updateBuffer(current, path, (buffer) => ({
         ...buffer,
+        cursorSelection,
         cursorStatus: nextCursorStatus
       }))
     )
@@ -2126,6 +2134,7 @@ export function FileEditorPanel({
           content={content}
           isLoading={isLoading}
           editorExtensions={editorExtensions}
+          initialSelection={activeEditorSelection}
           onContentChange={(value) => {
             const path = selectedPath
             if (!path) return
