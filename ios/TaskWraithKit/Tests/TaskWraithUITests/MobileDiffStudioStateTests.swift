@@ -114,6 +114,11 @@ struct MobileDiffStudioStateTests {
         #expect(MobileDiffStudioState.normalizedTargetPath("   ") == nil)
         #expect(MobileDiffStudioState.normalizedTargetPath("/src/App.swift/") == "src/App.swift")
     }
+
+    @MainActor
+    @Test func diffColumnHeaderLabelsMatchUnifiedDiffGutters() {
+        #expect(MobileDiffStudioState.diffColumnLabels == ["Old", "New", "Δ", "Line"])
+    }
 }
 
 private func decodeWorkspaceDiff() throws -> WorkspaceDiffResult {

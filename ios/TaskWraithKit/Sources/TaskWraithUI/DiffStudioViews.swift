@@ -52,6 +52,8 @@ final class MobileDiffStudioState: ObservableObject {
         }
     }
 
+    static let diffColumnLabels = ["Old", "New", "Δ", "Line"]
+
     func clearUnavailableWorkspaceStatus() {
         reloadGeneration += 1
         selectedWorkspaceId = nil
@@ -690,6 +692,7 @@ private struct DiffHunksView: View {
         } else {
             ScrollView([.vertical, .horizontal]) {
                 LazyVStack(alignment: .leading, spacing: 0) {
+                    DiffColumnHeaderRow(width: contentWidth)
                     ForEach(Array(hunks.enumerated()), id: \.offset) { _, hunk in
                         DiffHunkHeaderRow(header: hunk.header, width: contentWidth)
                         ForEach(Array(hunk.lines.enumerated()), id: \.offset) { _, line in
@@ -706,6 +709,44 @@ private struct DiffHunksView: View {
                 .padding(.vertical, 6)
             }
             .background(TWTheme.appBg)
+        }
+    }
+}
+
+private struct DiffColumnHeaderRow: View {
+    let width: CGFloat
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ForEach(Array(MobileDiffStudioState.diffColumnLabels.enumerated()), id: \.offset) { index, label in
+                Text(label)
+                    .frame(width: widthForColumn(at: index), alignment: alignmentForColumn(at: index))
+                    .foregroundStyle(TWTheme.textMuted)
+            }
+            Spacer(minLength: 0)
+        }
+        .font(.caption2.weight(.semibold).monospaced())
+        .textCase(.uppercase)
+        .padding(.vertical, 4)
+        .frame(width: width, alignment: .leading)
+        .background(TWTheme.surface1)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Diff columns: old line, new line, change marker, line text")
+    }
+
+    private func widthForColumn(at index: Int) -> CGFloat? {
+        switch index {
+        case 0, 1: return 36
+        case 2: return 18
+        default: return nil
+        }
+    }
+
+    private func alignmentForColumn(at index: Int) -> Alignment {
+        switch index {
+        case 0, 1: return .trailing
+        case 2: return .center
+        default: return .leading
         }
     }
 }
