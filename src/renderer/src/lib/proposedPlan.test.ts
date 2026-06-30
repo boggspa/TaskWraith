@@ -40,6 +40,36 @@ describe('parseProposedPlan', () => {
     ).toBeNull()
   })
 
+  it('ignores a lone recap heading in plan mode (single heading, no body)', () => {
+    expect(parseProposedPlan('## Summary', true)).toBeNull()
+    expect(parseProposedPlan('### Done', true)).toBeNull()
+  })
+
+  it('ignores a single heading with only a trivial body in plan mode', () => {
+    expect(parseProposedPlan('## Notes\n\nLooks fine.', true)).toBeNull()
+  })
+
+  it('still surfaces a single heading carrying a substantial prose body', () => {
+    const plan = parseProposedPlan(
+      '# Refactor the auth flow\n\nI will extract the token validation into a shared helper, update the three call sites, and add a focused unit test for it.',
+      true
+    )
+    expect(plan).not.toBeNull()
+    expect(plan?.title).toBe('Refactor the auth flow')
+  })
+
+  it('still surfaces a single heading that carries at least one step', () => {
+    const plan = parseProposedPlan('## Plan\n- do the one thing', true)
+    expect(plan).not.toBeNull()
+    expect(plan?.title).toBe('Plan')
+  })
+
+  it('surfaces a multi-section plan even with terse section bodies', () => {
+    const plan = parseProposedPlan('## Step 1\nDo the thing\n## Step 2\nDo the other thing', true)
+    expect(plan).not.toBeNull()
+    expect(plan?.title).toBe('Step 1')
+  })
+
   it('returns null for an empty block', () => {
     expect(parseProposedPlan('<proposed_plan>\n\n</proposed_plan>', true)).toBeNull()
   })

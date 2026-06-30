@@ -34,24 +34,41 @@ export const derivePlanTitle = (body: string): string => {
 }
 
 /**
- * A turn is "substantive enough" to be a plan when it has real structure — a
- * heading, a couple of list items, or a few hundred chars — not a one-liner.
- * Fenced code is stripped first so a code dump alone doesn't qualify.
+ * A turn is "substantive enough" to be a plan when it has real plan-shaped
+ * STRUCTURE — multiple sections/steps, or a single section that actually
+ * carries a body — not a one-liner and not a lone recap heading. Fenced code is
+ * stripped first so a code dump alone doesn't qualify.
+ *
+ * This is a strict TIGHTENING of the old rule (which treated ANY single heading
+ * as an instant plan, over-triggering on "## Summary" / "## Done" recap
+ * headings): every input that qualifies here also qualified before, but a lone
+ * heading with no real body no longer does — so it can only ever surface fewer
+ * plan cards, never more.
  */
 const looksSubstantive = (body: string): boolean => {
   const stripped = body.replace(/```[\s\S]*?```/g, '').trim()
   if (!stripped) return false
-  // Require plan-shaped STRUCTURE, not length alone — length alone over-triggers
-  // on ordinary plan-mode narration ("I explored the code, here's what I
-  // found…"), turning it into a spurious approve card. A markdown heading is a
-  // strong intentional-structure signal; otherwise require ≥2 steps with enough
-  // body that it isn't a one-line quip.
-  if (/^#{1,6}\s+/m.test(stripped)) return true
+  const lines = stripped.split('\n')
+  const headingCount = lines.filter((line) => /^\s*#{1,6}\s+/.test(line)).length
+  const stepCount = lines.filter((line) => /^\s*(?:[-*+]|\d+[.)])\s+/.test(line)).length
+  // ≥2 section headings is intentional plan structure on its own — symmetric
+  // with the ≥2-step rule below, and unchanged from before (multiple headings
+  // already qualified under "any heading").
+  if (headingCount >= 2) return true
+  // A SINGLE heading qualifies only when it carries real content: at least one
+  // step under it, or a non-heading body that clears the substance floor. This
+  // is the over-trigger the tightening closes — a bare "## Summary" / "## Done"
+  // recap heading is not a plan.
+  if (headingCount === 1) {
+    if (stepCount >= 1) return true
+    const bodyBeyondHeading = stripped.replace(/^\s*#{1,6}\s+.*$/gm, '').trim()
+    return bodyBeyondHeading.length >= 40
+  }
+  // No heading: length alone over-triggers on ordinary plan-mode narration
+  // ("I explored the code, here's what I found…"), so require real length AND
+  // ≥2 explicit steps. (Unchanged.)
   if (stripped.length < 40) return false
-  const stepLines = stripped
-    .split('\n')
-    .filter((line) => /^\s*(?:[-*+]|\d+[.)])\s+/.test(line))
-  return stepLines.length >= 2
+  return stepCount >= 2
 }
 
 /**
