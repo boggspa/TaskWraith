@@ -393,15 +393,7 @@ import {
   type BugReportSubmission as BugReportSubmissionInput
 } from './services/BugReportService'
 import { RunCoordinator } from './services/RunCoordinator'
-import {
-  RunLifecycleCoordinator,
-  type FallbackPromotedSteerInput,
-  type FallbackPromotedSteerJobResult,
-  type LeasePromotedSteerInput,
-  type LeasePromotedSteerJobResult,
-  type PromoteQueuedJobForSteerInput,
-  type PromoteQueuedJobForSteerResult
-} from './services/RunLifecycleCoordinator'
+import { RunLifecycleCoordinator } from './services/RunLifecycleCoordinator'
 import { RunQueueService } from './services/RunQueueService'
 import {
   buildRemoteComposerQueueDispatchAction,
@@ -516,14 +508,11 @@ import {
   RunAnalystSignal,
   RunAnalystSnapshot,
   RunQueueJob,
-  RunQueueJobFilter,
-  RunQueueJobStatus,
   RunEventInput,
   AgentApprovalAction,
   ApprovalLedgerFilter,
   ApprovalLedgerRequestInput,
   ProviderAdapterDescriptor,
-  RunRecoveryFilter,
   RunRecoveryRecord,
   WorkspaceChangeFilter,
   WorkspaceRunChangeInput,
@@ -864,6 +853,7 @@ import { registerEnsembleRosterPresetsHandlers } from './ipc/ensembleRosterPrese
 import { registerAgenticWorkspaceGrantHandlers } from './ipc/agenticWorkspaceGrantHandlers'
 import { registerUsageRatesHandlers } from './ipc/usageRatesHandlers'
 import { registerScheduledWorkflowHandlers } from './ipc/scheduledWorkflowHandlers'
+import { registerRunQueueHandlers } from './ipc/runQueueHandlers'
 import { getCachedRemoteEnsemblePresets } from './remote/EnsembleRosterPresetsCache'
 import { resolveGeminiCliResumePolicy } from './GeminiSessionPolicy'
 // 1.0.5-EW26 — Kimi compatibility filter (curated + user-
@@ -25778,98 +25768,21 @@ if (isGeminiMcpBridgeProcess) {
       }
     })
 
-    // Durable run queue. Renderer requests and observes; main owns persistence and leases.
-    ipcMain.handle('get-run-queue-jobs', (_, filter?: RunQueueJobFilter) =>
-      runQueueService.getJobs(filter)
-    )
-    ipcMain.handle('get-run-recovery-records', (_, filter?: RunRecoveryFilter) =>
-      getRunRepository().getRunRecoveryRecords(filter || {})
-    )
-    ipcMain.handle('request-run-queue-job', (_, job: unknown) => runQueueService.requestJob(job))
-    ipcMain.handle(
-      'lease-run-queue-job',
-      (_, request: { runId?: string; provider?: ProviderId; statusReason?: string } = {}) =>
-        runQueueService.leaseJob(request)
-    )
-    ipcMain.handle(
-      'transition-run-queue-job',
-      (_, runIdOrId: string, status: RunQueueJobStatus, partial: Partial<RunQueueJob> = {}) =>
-        runQueueService.transitionJob(runIdOrId, status, partial)
-    )
-    ipcMain.handle(
-      'promote-queued-job-for-steer',
-      async (_, input: PromoteQueuedJobForSteerInput): Promise<PromoteQueuedJobForSteerResult> => {
-        if (!runLifecycleCoordinatorRef) {
-          return {
-            ok: false,
-            kind: 'fallback',
-            runId: typeof input?.runId === 'string' ? input.runId : 'unknown-run',
-            provider: input?.provider || 'gemini',
-            ownerToken: input?.ownerToken || randomUUID(),
-            jobStatus: 'queued',
-            reason: 'RunLifecycleCoordinator is not initialized yet — the app may still be starting up.',
-            cancelRequested: false
-          }
-        }
-        return runLifecycleCoordinatorRef.promoteQueuedJobForSteer(input)
-      }
-    )
-    ipcMain.handle(
-      'lease-promoted-steer-job',
-      async (_, input: LeasePromotedSteerInput): Promise<LeasePromotedSteerJobResult> => {
-        if (!runLifecycleCoordinatorRef) {
-          return {
-            ok: false,
-            kind: 'not-available',
-            runId: typeof input?.runId === 'string' ? input.runId : 'unknown-run',
-            reason: 'RunLifecycleCoordinator is not initialized yet — the app may still be starting up.',
-            ownerToken: input?.ownerToken || randomUUID()
-          }
-        }
-        return runLifecycleCoordinatorRef.leasePromotedSteerJob(input)
-      }
-    )
-    ipcMain.handle(
-      'fallback-promoted-steer-job',
-      async (_, input: FallbackPromotedSteerInput): Promise<FallbackPromotedSteerJobResult> => {
-        if (!runLifecycleCoordinatorRef) {
-          return {
-            ok: false,
-            kind: 'not-found',
-            runId: typeof input?.runId === 'string' ? input.runId : 'unknown-run',
-            ownerToken: input?.ownerToken || randomUUID(),
-            reason: 'RunLifecycleCoordinator is not initialized yet — the app may still be starting up.'
-          }
-        }
-        return runLifecycleCoordinatorRef.fallbackPromotedSteerJob(input)
-      }
-    )
-
-    // Durable transcript/event store. Writes are main-owned; renderer may only
-    // read/replay. Use the ASYNC read so a filter without runId/chatId (whole-dir
-    // sweep) yields the event loop instead of beachballing the main thread.
-    ipcMain.handle('get-run-events', (_, filter: any = {}) =>
-      getRunRepository().getRunEventsAsync(filter || {})
-    )
-    ipcMain.handle('get-run-event-replay', (_, runId: string) =>
-      getRunRepository().getRunEventReplay(runId)
-    )
-    ipcMain.handle('run-analyst:analyze', async (_, input: unknown) => {
-      const request = sanitizeRunAnalystRequest(input)
-      const daemon = bridgeDaemon
-      if (!daemon?.status().running) {
-        return buildRunAnalystUnavailableSnapshot(
-          request,
-          'TaskWraith bridge daemon is not running.'
-        )
-      }
-      try {
-        const result = await daemon.request('runAnalyst.analyze', request, { timeoutMs: 45_000 })
-        return normalizeRunAnalystResult(request, result, new Date().toISOString())
-      } catch (err) {
-        const reason = err instanceof Error ? err.message : String(err)
-        return buildRunAnalystUnavailableSnapshot(request, reason)
-      }
+    registerRunQueueHandlers({
+      getRunQueueJobs: (filter) => runQueueService.getJobs(filter),
+      getRunRecoveryRecords: (filter) => getRunRepository().getRunRecoveryRecords(filter || {}),
+      requestRunQueueJob: (job) => runQueueService.requestJob(job),
+      leaseRunQueueJob: (request) => runQueueService.leaseJob(request),
+      transitionRunQueueJob: (runIdOrId, status, partial) =>
+        runQueueService.transitionJob(runIdOrId, status, partial),
+      getRunLifecycleCoordinator: () => runLifecycleCoordinatorRef,
+      getRunEvents: (filter = {}) => getRunRepository().getRunEventsAsync(filter || {}),
+      getRunEventReplay: (runId) => getRunRepository().getRunEventReplay(runId),
+      getBridgeDaemon: () => bridgeDaemonRef,
+      sanitizeRunAnalystRequest,
+      normalizeRunAnalystResult,
+      buildRunAnalystUnavailableSnapshot,
+      randomUUID
     })
     ipcMain.handle('get-approval-ledger', (_, filter?: ApprovalLedgerFilter) =>
       AppStore.getApprovalLedger(filter || {})
