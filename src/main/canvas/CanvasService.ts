@@ -36,7 +36,13 @@ import type {
   CanvasSessionSummary,
   CanvasViewport
 } from './canvasTypes'
-import { isValidBundleId, redactUrlQuery, resolveViewport, validateCanvasUrl } from './canvasTypes'
+import {
+  isValidBundleId,
+  redactUrlQuery,
+  resolveViewport,
+  validateCanvasHtml,
+  validateCanvasUrl
+} from './canvasTypes'
 import type { CanvasStore } from './CanvasStore'
 
 export interface CanvasServiceDeps {
@@ -62,7 +68,7 @@ interface LiveSession {
   evals: number
 }
 
-const SUPPORTED_DRIVERS: ReadonlySet<CanvasDriverKind> = new Set(['web', 'device'])
+const SUPPORTED_DRIVERS: ReadonlySet<CanvasDriverKind> = new Set(['web', 'html', 'device'])
 // Defence-in-depth cap so a hijacked agent (or a session-granted approval)
 // cannot machine-gun clicks/fills against a live app. Per live session.
 const MAX_INTERACTIONS_PER_SESSION = 200
@@ -154,6 +160,15 @@ export class CanvasService implements CanvasController {
       }
       eventHost = (input.device?.udid || 'booted').trim()
       recordUrl = `device://${eventHost}/${bundleId}`
+    } else if (driverKind === 'html') {
+      // Agent-authored HTML/SVG. No URL / no host — it is rasterized offscreen
+      // with scripts off and egress cut, so there is no SSRF surface to gate;
+      // only validate the markup is present and within the size cap.
+      const verdict = validateCanvasHtml(input.html ?? '')
+      if (!verdict.ok) throw new Error(verdict.reason || 'Invalid canvas html.')
+      // Stable, secret-free synthetic id for the audit record (never the markup).
+      recordUrl = `html://${createHash('sha256').update(input.html ?? '').digest('hex').slice(0, 8)}`
+      eventHost = undefined
     } else {
       const verdict = validateCanvasUrl((input.url || '').trim(), input.originAllowlist ?? [])
       if (!verdict.ok) throw new Error(verdict.reason || 'Canvas URL was rejected.')

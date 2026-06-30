@@ -2501,6 +2501,29 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
       }
     },
     {
+      name: 'canvas_render_html',
+      description:
+        'Render agent-authored HTML (or SVG markup) as a TaskWraith Canvas and return a screenshot of it. Use this to draw and look at a custom layout / SVG / mockup WITHOUT a server. The markup is rasterized by a hardened offscreen renderer with JavaScript DISABLED and ALL network access cut, so it is a static, fully-contained preview — it cannot run scripts, fetch URLs, or read files (for an interactive page, serve it and use canvas_open with the local URL instead). Returns a canvasId; canvas_screenshot re-captures it, canvas_resize re-renders at a new size, and the DOM verbs (snapshot/inspect/click/fill/eval) are NOT available for this driver. Gated like canvas_open.',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          html: {
+            type: 'string',
+            description: 'Self-contained HTML or SVG markup to render (no external scripts/resources).'
+          },
+          width: { type: 'number', description: 'Viewport width in CSS pixels (default 1280).' },
+          height: { type: 'number', description: 'Viewport height in CSS pixels (default 800).' }
+        },
+        required: ['html']
+      }
+    },
+    {
       name: 'canvas_list',
       description:
         'List currently open Canvas sessions (canvasId, driver, url, status). Read-only; carries no pixels.',

@@ -11,7 +11,7 @@
  * `annotate` verbs, are deferred — the contracts below leave room for them.
  */
 
-export type CanvasDriverKind = 'web' | 'window' | 'device'
+export type CanvasDriverKind = 'web' | 'html' | 'window' | 'device'
 
 export type CanvasSessionStatus = 'opening' | 'active' | 'error' | 'closed'
 
@@ -48,6 +48,14 @@ export interface CanvasOpenInput {
    * renderer's canvas-pane IPC — never by the agent's canvas_open executor.
    */
   embed?: boolean
+  // --- html driver (agent-authored layout/SVG; canvas_render_html) ---
+  /**
+   * Self-contained HTML (or SVG markup) the agent wants rendered. REQUIRED for
+   * the `html` driver. It is rasterized to a PNG by the same hardened offscreen
+   * engine the image tools use (scripts disabled, ALL network egress cut), so it
+   * is a static, fully-contained preview — never a live, scriptable page.
+   */
+  html?: string
 }
 
 export interface CanvasElementNode {
@@ -590,6 +598,31 @@ export function isSafeAppBundlePath(value: string): boolean {
     !/[;&|`$<>\n\r"'\\*?]/.test(value) &&
     !value.split('/').includes('..')
   )
+}
+
+/**
+ * Max characters of agent-authored HTML/SVG the `html` driver will rasterize.
+ * Mirrors the image tools' SVG cap — bounds the base64 data: URL the offscreen
+ * renderer builds so a multi-MB payload can't wedge the loadURL/IPC path.
+ */
+export const MAX_CANVAS_HTML_CHARS = 512_000
+
+export interface CanvasHtmlValidation {
+  ok: boolean
+  reason?: string
+}
+
+/** Validate agent-supplied HTML/SVG for the `html` driver (non-empty, capped). */
+export function validateCanvasHtml(rawHtml: string): CanvasHtmlValidation {
+  const html = typeof rawHtml === 'string' ? rawHtml : ''
+  if (!html.trim()) return { ok: false, reason: 'The html driver requires non-empty `html`.' }
+  if (html.length > MAX_CANVAS_HTML_CHARS) {
+    return {
+      ok: false,
+      reason: `\`html\` too large (${html.length} chars; max ${MAX_CANVAS_HTML_CHARS}).`
+    }
+  }
+  return { ok: true }
 }
 
 /** Read the pixel dimensions from a PNG buffer's IHDR chunk (0 if not a PNG). */

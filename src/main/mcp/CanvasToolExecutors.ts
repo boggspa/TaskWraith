@@ -13,10 +13,11 @@
  */
 import type { McpToolContentBlock, McpToolExecutionResult } from './McpBridgeRuntime'
 import type { CanvasCallContext, CanvasController, CanvasMark } from '../canvas/canvasTypes'
-import { resolveViewport } from '../canvas/canvasTypes'
+import { resolveViewport, validateCanvasHtml } from '../canvas/canvasTypes'
 
 export const CANVAS_MCP_TOOL_NAMES = [
   'canvas_open',
+  'canvas_render_html',
   'canvas_list',
   'canvas_status',
   'canvas_snapshot',
@@ -193,6 +194,31 @@ export function createCanvasToolExecutors(deps: CanvasToolExecutorDeps): CanvasT
             title: opened.title,
             viewport: opened.viewport
           })
+        }
+        case 'canvas_render_html': {
+          const html = asString(args.html)
+          const verdict = validateCanvasHtml(html)
+          if (!verdict.ok) return fail(toolName, verdict.reason || 'Invalid `html`.')
+          const viewport = resolveViewport({ width: args.width, height: args.height })
+          const opened = await controller.open({ driver: 'html', html, viewport }, ctx)
+          // Return the first rendered frame so the agent sees its layout immediately.
+          const frame = await controller.screenshot(opened.canvasId, ctx)
+          return jsonResult(
+            {
+              ok: true,
+              tool: toolName,
+              canvasId: opened.canvasId,
+              url: opened.url,
+              title: opened.title,
+              mimeType: frame.mimeType,
+              width: frame.width,
+              height: frame.height,
+              byteLength: frame.byteLength,
+              hash: frame.hash,
+              capturedAt: frame.capturedAt
+            },
+            [{ type: 'image', mimeType: frame.mimeType, data: frame.data }]
+          )
         }
         case 'canvas_list': {
           return jsonResult({ ok: true, tool: toolName, sessions: controller.list(ctx) })

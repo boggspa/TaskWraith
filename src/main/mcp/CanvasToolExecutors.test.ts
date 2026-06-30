@@ -103,6 +103,43 @@ describe('executeCanvasTool', () => {
     expect(result.isError).toBe(true)
   })
 
+  it('canvas_render_html opens an html-driver canvas and returns the first frame', async () => {
+    let seen: unknown = null
+    const controller = fakeController({
+      open: async (input) => {
+        seen = input
+        return { canvasId: 'c1', url: input.html ? 'html://abc' : '', title: 'Rendered HTML', viewport: { width: 800, height: 600 } }
+      }
+    })
+    const { executeCanvasTool } = createCanvasToolExecutors({ controller })
+    const result = await executeCanvasTool(
+      'canvas_render_html',
+      { html: '<h1>Hi</h1>', width: 800, height: 600 },
+      ctx,
+      'claude'
+    )
+    expect(result.isError).toBeFalsy()
+    expect(seen).toMatchObject({ driver: 'html', html: '<h1>Hi</h1>' })
+    expect(result.structuredContent?.canvasId).toBe('c1')
+    expect(result.structuredContent?.url).toBe('html://abc')
+    // The first screenshot rides back as an image content block.
+    expect(result.content?.some((b) => b.type === 'image')).toBe(true)
+  })
+
+  it('canvas_render_html rejects empty html before opening', async () => {
+    let opened = false
+    const controller = fakeController({
+      open: async () => {
+        opened = true
+        return { canvasId: 'c1', url: '', title: 'T', viewport: { width: 1, height: 1 } }
+      }
+    })
+    const { executeCanvasTool } = createCanvasToolExecutors({ controller })
+    const result = await executeCanvasTool('canvas_render_html', { html: '   ' }, ctx, 'claude')
+    expect(result.isError).toBe(true)
+    expect(opened).toBe(false)
+  })
+
   it('canvas_open device driver requires a bundleId and routes device inputs', async () => {
     let seen: unknown = null
     const controller = fakeController({

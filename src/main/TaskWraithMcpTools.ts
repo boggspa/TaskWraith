@@ -152,6 +152,7 @@ export const TASKWRAITH_MCP_TOOLS = [
   // close are gated like browser_open. Interaction (click/fill) + annotation
   // land in P1; arbitrary `eval` (P2) is signed-elevated (canvasEval service).
   'canvas_open',
+  'canvas_render_html',
   'canvas_list',
   'canvas_status',
   'canvas_snapshot',

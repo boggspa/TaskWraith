@@ -682,6 +682,7 @@ import { CanvasService } from './canvas/CanvasService'
 import { CanvasStore } from './canvas/CanvasStore'
 import { CanvasWebDriver } from './canvas/CanvasWebDriver'
 import { CanvasDeviceDriver } from './canvas/CanvasDeviceDriver'
+import { CanvasRenderDriver } from './canvas/CanvasRenderDriver'
 import { CanvasEmbedController } from './canvas/CanvasEmbedController'
 import { registerCanvasEmbedIpc } from './canvas/CanvasEmbedIpc'
 import { asEmbedParent, createElectronEmbedView } from './canvas/CanvasEmbedView'
@@ -2171,9 +2172,20 @@ const canvasEmbedController = new CanvasEmbedController({
     mainWindow && !mainWindow.isDestroyed() ? asEmbedParent(mainWindow) : null,
   createView: createElectronEmbedView
 })
+// One shared offscreen image engine for both the image_* tools and the canvas
+// `html` driver (canvas_render_html) — its renderHtmlToPng is the hardened,
+// JS-off, egress-cut rasterizer.
+const offscreenImageEngine = createNativeImageEngine()
+const CANVAS_HTML_RENDER_TIMEOUT_MS = 15_000
 const canvasService = new CanvasService({
   createDriver: (kind: CanvasDriverKind, sessionId: string, opts?: { embedded?: boolean }) => {
     if (kind === 'device') return new CanvasDeviceDriver(sessionId)
+    if (kind === 'html') {
+      return new CanvasRenderDriver(sessionId, {
+        render: (html, width, height) =>
+          offscreenImageEngine.renderHtmlToPng(html, width, height, CANVAS_HTML_RENDER_TIMEOUT_MS)
+      })
+    }
     if (kind === 'web') {
       return opts?.embedded
         ? new CanvasWebDriver(sessionId, {
@@ -2206,7 +2218,7 @@ function teardownCanvasSurfacesForWindowClose(): void {
 }
 const canvasToolExecutors = createCanvasToolExecutors({ controller: canvasService })
 const imageToolExecutors = createImageToolExecutors({
-  engine: createNativeImageEngine(),
+  engine: offscreenImageEngine,
   resolveRasterSource: resolveImageRasterSource,
   resolveSvgSource: resolveImageSvgSource
 })
