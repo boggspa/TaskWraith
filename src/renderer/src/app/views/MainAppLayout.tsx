@@ -2325,12 +2325,24 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                               composerStyle={appearance.composerStyle}
                               permissionOptions={sidePermissionOptions}
                               selectedPermission={sideSelectedPermission}
-                              onSelectPermission={(nextApprovalMode) => {
+                              onSelectPermission={(nextPermissionValue) => {
+                                const nextApprovalMode =
+                                  nextPermissionValue === 'read_only'
+                                    ? 'plan'
+                                    : nextPermissionValue
+                                const nextWorkflowMode =
+                                  nextPermissionValue === 'plan' ? 'plan' : 'normal'
                                 const applySideSelection = (): void => {
-                                  rememberSideChatComposerSelection({ approvalMode: nextApprovalMode })
+                                  rememberSideChatComposerSelection({
+                                    approvalMode: nextApprovalMode,
+                                    workflowMode: nextWorkflowMode
+                                  })
                                 }
                                 const elevation = decideApprovalElevation({
-                                  from: sideSelectedPermission,
+                                  from:
+                                    sideSelectedPermission === 'read_only'
+                                      ? 'plan'
+                                      : sideSelectedPermission,
                                   to: nextApprovalMode,
                                   provider: sideComposerProvider,
                                   workspacePath: currentWorkspacePath,

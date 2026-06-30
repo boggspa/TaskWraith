@@ -16329,10 +16329,21 @@ function App(): React.JSX.Element {
           : false
   const sidePermissionOptions: PermissionOption[] = [
     { value: 'plan', label: PLAN_LABEL },
+    { value: 'read_only', label: READ_ONLY_RECON_LABEL },
     { value: 'default', label: 'Default Approval' },
     { value: 'auto_edit', label: 'Full Workspace Access' }
   ]
-  const sideSelectedPermission = sideComposerSelection?.approvalMode || 'default'
+  const sideSelectedApprovalMode = sideComposerSelection?.approvalMode || 'default'
+  const sideComposerWorkflowMode =
+    sideComposerSelection?.workflowMode ||
+    sideChat?.workflowMode ||
+    (sideSelectedApprovalMode === 'plan' ? 'plan' : 'normal')
+  const sideSelectedPermission =
+    sideSelectedApprovalMode === 'plan'
+      ? sideComposerWorkflowMode === 'normal'
+        ? 'read_only'
+        : 'plan'
+      : sideSelectedApprovalMode
   const sideIsGlobalChat = sideChat ? isGlobalChat(sideChat) : false
   const sideGrantWorkspacePath = sideWorkspace?.path || ''
   const sideEnabledGrantIds = new Set(
@@ -16370,8 +16381,14 @@ function App(): React.JSX.Element {
   }
   const rememberSideChatComposerSelection = (patch: Record<string, unknown>) => {
     if (!sideChat || isSideEnsembleComposerLocked) return
+    const maybeWorkflowMode = patch.workflowMode
+    const nextWorkflowMode =
+      maybeWorkflowMode === 'plan' || maybeWorkflowMode === 'normal'
+        ? maybeWorkflowMode
+        : undefined
     updateChatById(sideChat.appChatId, (source) => ({
       ...source,
+      ...(nextWorkflowMode ? { workflowMode: nextWorkflowMode } : {}),
       providerMetadata: {
         ...(source.providerMetadata || {}),
         ...patch
@@ -16392,11 +16409,13 @@ function App(): React.JSX.Element {
     updateChatById(sideChat.appChatId, (source) => ({
       ...source,
       provider,
+      workflowMode: sideComposerWorkflowMode,
       providerMetadata: {
         ...(source.providerMetadata || {}),
         selectedModelType: nextModel,
         customModel: '',
-        approvalMode: sideSelectedPermission,
+        approvalMode: sideSelectedApprovalMode,
+        workflowMode: sideComposerWorkflowMode,
         ...(provider === 'claude'
           ? {
               claudeReasoningEffort: resolveClaudeDefaultReasoningEffort(
