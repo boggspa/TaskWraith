@@ -1338,6 +1338,17 @@ declare global {
           hostIdentityPubKeyB64: string
         }
       >
+      humanCollaborationInviteHealth: (chatId: string) => Promise<{
+        chatAvailable: boolean
+        shareEnabled: boolean
+        bridgeEnabled: boolean
+        bridgeRunning: boolean
+        bridgeError?: string
+        relayUrls: string[]
+        tailscaleConfigured: boolean
+        tailscaleSuggestedUrl?: string | null
+        tailscaleReason?: string | null
+      }>
       humanCollaborationCopyInvite: (input: { invite: string }) => Promise<{ ok: true }>
       humanCollaborationListShares: (chatId?: string) => Promise<HumanCollaborationShare[]>
       humanCollaborationConnectedChatIds: () => Promise<string[]>

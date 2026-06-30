@@ -25301,6 +25301,25 @@ if (isGeminiMcpBridgeProcess) {
           : {})
       }
     }
+    ipcMain.handle('human-collaboration:invite-health', async (_, chatId: string) => {
+      const chat = chatService.getChat(chatId)
+      const share = humanCollaborationStore.getShareForChat(chatId)
+      const settings = AppStore.getSettings()
+      const tailscale = await iosRemoteTailscaleStatus()
+      return {
+        chatAvailable: Boolean(chat && !chat.archived),
+        shareEnabled: Boolean(share?.enabled),
+        bridgeEnabled: settings.iosRemoteEnabled === true,
+        bridgeRunning: iosRemoteRuntime !== null,
+        ...(iosRemoteRuntimeError ? { bridgeError: iosRemoteRuntimeError } : {}),
+        relayUrls: collaborationInviteRelayUrls(),
+        tailscaleConfigured: Boolean(tailscale.active || tailscale.usingSavedRelayFallback),
+        tailscaleSuggestedUrl:
+          typeof tailscale.suggestedUrl === 'string' ? tailscale.suggestedUrl : null,
+        tailscaleReason:
+          typeof tailscale.tailscaleReason === 'string' ? tailscale.tailscaleReason : null
+      }
+    })
     ipcMain.handle(
       'human-collaboration:create-share',
       async (_, input: { chatId: string; mode?: 'readOnly' | 'comments'; inviteTtlMs?: number }) => {
