@@ -65,6 +65,10 @@ export interface UsageRatesHandlerDeps {
   fetchKimiUsageSnapshot: UsageSnapshotFetcher
   fetchCursorUsageSnapshot: UsageSnapshotFetcher
   getProviderCapabilityContract: (provider: ProviderId) => Promise<ProviderCapabilityContract>
+  getCurrentFxRates: () => unknown
+  refreshFxRates: (force: boolean) => Promise<unknown>
+  getCurrentProviderRates: () => unknown
+  probeAllProviderRates: () => Promise<unknown>
   registerRemoteUsageRollupTrigger: (trigger: () => void) => void
   registerRemoteModelUsageTrigger: (trigger: () => void) => void
   registerRemoteFirstLaunchStateTrigger: (trigger: () => void) => void
@@ -99,6 +103,13 @@ export function registerUsageRatesHandlers(deps: UsageRatesHandlerDeps): void {
     (_, options?: { force?: boolean }) =>
       deps.getExternalUsageCached(options?.force === true ? { maxAgeMs: 0 } : {})
   )
+
+  ipcMain.handle('fx-rates:get', () => deps.getCurrentFxRates())
+  ipcMain.handle('fx-rates:refresh', async (_event, force: boolean = false) =>
+    deps.refreshFxRates(Boolean(force))
+  )
+  ipcMain.handle('providerRates:get', () => deps.getCurrentProviderRates())
+  ipcMain.handle('providerRates:probe', async () => deps.probeAllProviderRates())
 
   const broadcastUsageRollupToRemote = (): void => {
     void deps

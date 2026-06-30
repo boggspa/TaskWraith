@@ -25544,6 +25544,10 @@ if (isGeminiMcpBridgeProcess) {
       fetchKimiUsageSnapshot,
       fetchCursorUsageSnapshot,
       getProviderCapabilityContract,
+      getCurrentFxRates: () => getCurrentFxRates(),
+      refreshFxRates: (force) => refreshFxRates(force),
+      getCurrentProviderRates: () => getCurrentProviderRates(),
+      probeAllProviderRates: () => probeAllProviderRates(),
       registerRemoteUsageRollupTrigger,
       registerRemoteModelUsageTrigger,
       registerRemoteFirstLaunchStateTrigger
@@ -26962,35 +26966,6 @@ if (isGeminiMcpBridgeProcess) {
     )
 
     ipcMain.handle('get-provider-adapters', () => getProviderAdapterDescriptors())
-
-    /*
-     * 1.0.5-EW35 — Currency sub-slice (c): expose the live FX rate
-     * snapshot to the renderer. Read-only; the renderer's
-     * `formatCost` module reads this on app boot to hot-swap its
-     * in-memory rate table. The "refresh now" path is opt-in via
-     * `force=true` and currently unused; reserved for a future
-     * Settings → General "refresh rates" button when 1.0.7 lands
-     * the macOS UX pass. Always returns a usable snapshot — even
-     * when network + cache both fail we return the baked-in EW25
-     * fallback constants with `source: 'fallback'` so callers can
-     * disambiguate live from synthetic.
-     */
-    ipcMain.handle('fx-rates:get', () => getCurrentFxRates())
-    ipcMain.handle('fx-rates:refresh', async (_event, force: boolean = false) => {
-      return refreshFxRates(Boolean(force))
-    })
-
-    /*
-     * 1.0.5-EW38 — Currency sub-slice (d): expose the per-provider
-     * rate snapshot. `providerRates:get` always returns the
-     * baked-in baseline (so cost-estimation features can rely on
-     * it even before any probe completes); the optional `probe`
-     * field carries the last best-effort scrape results. The
-     * `providerRates:probe` handler triggers a fresh probe — wired
-     * for a future Settings → Providers "refresh rates" surface.
-     */
-    ipcMain.handle('providerRates:get', () => getCurrentProviderRates())
-    ipcMain.handle('providerRates:probe', async () => probeAllProviderRates())
 
     // 1.0.6-CRUX42/CRUX follow-up — provider CLI operations that must run in
     // the provider-owned CLI open in Terminal as one-shot `.command` files. The

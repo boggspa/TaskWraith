@@ -54,6 +54,10 @@ function createDeps() {
       fetchKimiUsageSnapshot: vi.fn(async (): Promise<any> => null),
       fetchCursorUsageSnapshot: vi.fn(async (): Promise<any> => null),
       getProviderCapabilityContract: vi.fn(async () => null as any),
+      getCurrentFxRates: vi.fn(() => ({ rates: { USD: 1 }, source: 'live' })),
+      refreshFxRates: vi.fn(async (force: boolean) => ({ refreshed: force })),
+      getCurrentProviderRates: vi.fn(() => ({ codex: { inputUsdPer1M: 10 } })),
+      probeAllProviderRates: vi.fn(async () => ({ probe: 'ok' })),
       registerRemoteUsageRollupTrigger: vi.fn((cb: () => void) => {
         usageRollupCallback = cb
       }),
@@ -90,6 +94,10 @@ describe('registerUsageRatesHandlers', () => {
     expect(handlerFor('record-usage')).toBeTypeOf('function')
     expect(handlerFor('get-usage')).toBeTypeOf('function')
     expect(handlerFor('get-external-usage')).toBeTypeOf('function')
+    expect(handlerFor('fx-rates:get')).toBeTypeOf('function')
+    expect(handlerFor('fx-rates:refresh')).toBeTypeOf('function')
+    expect(handlerFor('providerRates:get')).toBeTypeOf('function')
+    expect(handlerFor('providerRates:probe')).toBeTypeOf('function')
     expect(deps.registerRemoteUsageRollupTrigger).toHaveBeenCalledOnce()
     expect(deps.registerRemoteModelUsageTrigger).toHaveBeenCalledOnce()
     expect(deps.registerRemoteFirstLaunchStateTrigger).toHaveBeenCalledOnce()
@@ -119,6 +127,33 @@ describe('registerUsageRatesHandlers', () => {
     const externalUsage = await handlerFor('get-external-usage')({}, { force: true })
     expect(externalUsage).toEqual([{ value: 'external' }])
     expect(deps.getExternalUsageCached).toHaveBeenCalledWith({ maxAgeMs: 0 })
+  })
+
+  it('proxies FX rate and provider rate handlers with the current coercion behavior', async () => {
+    const { deps } = createDeps()
+    registerUsageRatesHandlers(deps)
+
+    expect(handlerFor('fx-rates:get')({})).toEqual({ rates: { USD: 1 }, source: 'live' })
+    expect(deps.getCurrentFxRates).toHaveBeenCalledOnce()
+
+    await expect(handlerFor('fx-rates:refresh')({}, true)).resolves.toEqual({ refreshed: true })
+    expect(deps.refreshFxRates).toHaveBeenCalledWith(true)
+
+    await expect(
+      handlerFor('fx-rates:refresh')({}, undefined as unknown as boolean)
+    ).resolves.toEqual({ refreshed: false })
+    expect(deps.refreshFxRates).toHaveBeenLastCalledWith(false)
+
+    await expect(handlerFor('fx-rates:refresh')({}, 1 as unknown as boolean)).resolves.toEqual({
+      refreshed: true
+    })
+    expect(deps.refreshFxRates).toHaveBeenLastCalledWith(true)
+
+    expect(handlerFor('providerRates:get')({})).toEqual({ codex: { inputUsdPer1M: 10 } })
+    expect(deps.getCurrentProviderRates).toHaveBeenCalledOnce()
+
+    await expect(handlerFor('providerRates:probe')({})).resolves.toEqual({ probe: 'ok' })
+    expect(deps.probeAllProviderRates).toHaveBeenCalledOnce()
   })
 
   it('triggers remote usage rollup and welcome dashboard broadcasts', async () => {
