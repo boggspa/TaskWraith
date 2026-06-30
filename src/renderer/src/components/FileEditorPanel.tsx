@@ -72,6 +72,7 @@ interface FileEditorOpenRequest {
 }
 
 export type FileEditorCommandKind =
+  | 'close-current'
   | 'save-current'
   | 'save-all'
   | 'quick-open'
@@ -101,6 +102,7 @@ export function resolveFileEditorKeyboardCommand(
   if (!(event.metaKey || event.ctrlKey) || event.altKey) return null
 
   if (key === 'p' && !event.shiftKey) return { type: 'editor-command', kind: 'quick-open' }
+  if (key === 'w' && !event.shiftKey) return { type: 'editor-command', kind: 'close-current' }
   if (key === 's') {
     return { type: 'editor-command', kind: event.shiftKey ? 'save-all' : 'save-current' }
   }
@@ -1747,6 +1749,9 @@ export function FileEditorPanel({
 
   commandHandlersRef.current = {
     'quick-open': openQuickOpen,
+    'close-current': () => {
+      if (selectedPath) requestCloseBuffer(selectedPath)
+    },
     'save-current': () => void saveFile(),
     'save-all': () => void saveAllFiles(),
     'reveal-selected': () => void revealSelectedFileInTree(),

@@ -178,6 +178,13 @@ describe('TaskWraithWorkbench shell', () => {
 
     expect(
       resolveWorkbenchKeyboardCommand(
+        { ...baseEvent, key: 'w' },
+        { hasDiffEditorTarget: false, hasEditorDiffTarget: false, hasEditorSelection: true }
+      )
+    ).toEqual({ type: 'editor-command', kind: 'close-current' })
+
+    expect(
+      resolveWorkbenchKeyboardCommand(
         { ...baseEvent, key: 'j', shiftKey: true },
         { hasDiffEditorTarget: false, hasEditorDiffTarget: false, hasEditorSelection: true }
       )

@@ -376,6 +376,13 @@ describe('file editor keyboard commands', () => {
 
     expect(
       resolveFileEditorKeyboardCommand(
+        { ...baseEvent, key: 'w' },
+        { canRevealSelected: false, canShowInDiff: false }
+      )
+    ).toEqual({ type: 'editor-command', kind: 'close-current' })
+
+    expect(
+      resolveFileEditorKeyboardCommand(
         { ...baseEvent, key: 's', shiftKey: true },
         { canRevealSelected: false, canShowInDiff: false }
       )

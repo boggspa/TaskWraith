@@ -149,6 +149,7 @@ export function resolveWorkbenchKeyboardCommand(
   if (!(event.metaKey || event.ctrlKey) || event.altKey) return null
 
   if (key === 'p' && !event.shiftKey) return { type: 'editor-command', kind: 'quick-open' }
+  if (key === 'w' && !event.shiftKey) return { type: 'editor-command', kind: 'close-current' }
   if (key === 's') {
     return { type: 'editor-command', kind: event.shiftKey ? 'save-all' : 'save-current' }
   }
@@ -325,13 +326,15 @@ export function TaskWraithWorkbench({
       setStatus(
         kind === 'quick-open'
           ? 'Opening quick open'
-          : kind === 'save-all'
-            ? 'Saving all dirty files'
-            : kind === 'save-current'
-              ? 'Saving current file'
-              : kind === 'reveal-selected'
-                ? 'Revealing selected file'
-                : 'Toggling line wrap'
+          : kind === 'close-current'
+            ? 'Closing current file'
+            : kind === 'save-all'
+              ? 'Saving all dirty files'
+              : kind === 'save-current'
+                ? 'Saving current file'
+                : kind === 'reveal-selected'
+                  ? 'Revealing selected file'
+                  : 'Toggling line wrap'
       )
     },
     [activeView, selectWorkbenchView]
