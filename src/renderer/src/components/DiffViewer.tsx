@@ -209,7 +209,11 @@ export function DiffViewer({
             workspacePath={workspacePath}
             gitStatusByPath={gitStatusByPath}
             repoPathForSummary={repoPathForSummary}
+            busyPath={busyPath}
             onSelectPath={setSelectedPath}
+            onOpenFile={onOpenFile}
+            onStageFile={onStageFile}
+            onUnstageFile={onUnstageFile}
           />
           {selectedSummary && (
             <DiffDetail

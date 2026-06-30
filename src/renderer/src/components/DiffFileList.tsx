@@ -4,11 +4,18 @@ import {
   useMemo,
   useRef,
   useState,
-  type KeyboardEvent as ReactKeyboardEvent
+  type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent
 } from 'react'
+import { createPortal } from 'react-dom'
 import type { GitFileStatus } from '../../../main/services/GitService'
 import type { DiffFileSummary } from '../../../main/store/types'
 import { FileTypeIcon } from './FileTypeIcon'
+import {
+  contextMenuAnchorFromRect,
+  isFileEditorContextMenuKey,
+  type FileEditorContextMenuAnchor
+} from './FileEditorUtils'
 
 export interface DiffFileListProps {
   summaries: DiffFileSummary[]
@@ -16,7 +23,11 @@ export interface DiffFileListProps {
   workspacePath?: string
   gitStatusByPath: Map<string, GitFileStatus>
   repoPathForSummary: (summary: DiffFileSummary) => string
+  busyPath?: string
   onSelectPath: (path: string) => void
+  onOpenFile?: (path: string) => void
+  onStageFile?: (path: string) => void | Promise<void>
+  onUnstageFile?: (path: string) => void | Promise<void>
 }
 
 type DiffStageGroup = 'mixed' | 'unstaged' | 'staged' | 'untracked' | 'other'
@@ -44,6 +55,19 @@ type DiffFileListRow =
       kind: 'file'
       summary: DiffFileSummary
     }
+
+interface DiffFileContextMenuSelection {
+  anchor: FileEditorContextMenuAnchor
+  gitStatus?: GitFileStatus
+  summary: DiffFileSummary
+}
+
+interface DiffFileContextMenuItem {
+  id: string
+  label: string
+  disabled?: boolean
+  onSelect: () => void
+}
 
 const DIFF_FILE_LIST_VIRTUALIZATION_THRESHOLD = 450
 const DIFF_FILE_LIST_ROW_HEIGHT = 34
@@ -94,16 +118,77 @@ const buildDiffFileRowLabel = (summary: DiffFileSummary, gitStatus?: GitFileStat
   return parts.join(', ')
 }
 
+const canOpenDiffFileInEditor = (summary: DiffFileSummary): boolean => {
+  return (
+    summary.status !== 'deleted' &&
+    summary.status !== 'binary' &&
+    summary.status !== 'hidden_sensitive' &&
+    summary.previewKind !== 'binary' &&
+    summary.previewKind !== 'hidden'
+  )
+}
+
+export function buildDiffFileContextMenuItems({
+  busyPath,
+  gitStatus,
+  onCopyPath,
+  onOpenFile,
+  onStageFile,
+  onUnstageFile,
+  summary
+}: {
+  busyPath?: string
+  gitStatus?: GitFileStatus
+  onCopyPath: (path: string) => void
+  onOpenFile?: (path: string) => void
+  onStageFile?: (path: string) => void | Promise<void>
+  onUnstageFile?: (path: string) => void | Promise<void>
+  summary: DiffFileSummary
+}): DiffFileContextMenuItem[] {
+  const isBusy = busyPath === summary.path
+  return [
+    {
+      id: 'open-editor',
+      label: 'Open in Editor',
+      disabled: !onOpenFile || !canOpenDiffFileInEditor(summary),
+      onSelect: () => onOpenFile?.(summary.path)
+    },
+    {
+      id: 'stage',
+      label: isBusy ? 'Working' : 'Stage File',
+      disabled: !onStageFile || !gitStatus?.unstaged || isBusy,
+      onSelect: () => void onStageFile?.(summary.path)
+    },
+    {
+      id: 'unstage',
+      label: 'Unstage File',
+      disabled: !onUnstageFile || !gitStatus?.staged || isBusy,
+      onSelect: () => void onUnstageFile?.(summary.path)
+    },
+    {
+      id: 'copy-path',
+      label: 'Copy Relative Path',
+      onSelect: () => onCopyPath(summary.path)
+    }
+  ]
+}
+
 export function DiffFileList({
   summaries,
   selectedPath,
   workspacePath,
   gitStatusByPath,
   repoPathForSummary,
-  onSelectPath
+  busyPath,
+  onSelectPath,
+  onOpenFile,
+  onStageFile,
+  onUnstageFile
 }: DiffFileListProps) {
   const listRef = useRef<HTMLDivElement | null>(null)
   const [viewport, setViewport] = useState({ height: 0, scrollTop: 0 })
+  const [contextMenuSelection, setContextMenuSelection] =
+    useState<DiffFileContextMenuSelection | null>(null)
   const groupedSummaries: DiffFileSection[] = useMemo(() => {
     const groupOrder: DiffStageGroup[] = ['mixed', 'unstaged', 'staged', 'untracked', 'other']
     const groups = new Map<DiffStageGroup, DiffFileSummary[]>()
@@ -280,6 +365,34 @@ export function DiffFileList({
     }
   }
 
+  const openContextMenu = useCallback(
+    (
+      summary: DiffFileSummary,
+      gitStatus: GitFileStatus | undefined,
+      anchor: FileEditorContextMenuAnchor
+    ) => {
+      onSelectPath(summary.path)
+      setContextMenuSelection({ anchor, gitStatus, summary })
+    },
+    [onSelectPath]
+  )
+
+  const copyPath = useCallback((path: string) => {
+    void navigator.clipboard?.writeText(path)
+  }, [])
+
+  const contextMenuItems = contextMenuSelection
+    ? buildDiffFileContextMenuItems({
+        busyPath,
+        gitStatus: contextMenuSelection.gitStatus,
+        onCopyPath: copyPath,
+        onOpenFile,
+        onStageFile,
+        onUnstageFile,
+        summary: contextMenuSelection.summary
+      })
+    : []
+
   return (
     <div
       ref={listRef}
@@ -317,6 +430,7 @@ export function DiffFileList({
               key={row.id}
               gitStatus={row.gitStatus}
               isSelected={selectedPath === row.summary.path}
+              onOpenContextMenu={openContextMenu}
               onSelectPath={onSelectPath}
               summary={row.summary}
               workspacePath={workspacePath}
@@ -324,6 +438,11 @@ export function DiffFileList({
           )
         )}
       </div>
+      <DiffFileContextMenu
+        selection={contextMenuSelection}
+        items={contextMenuItems}
+        onClose={() => setContextMenuSelection(null)}
+      />
     </div>
   )
 }
@@ -331,22 +450,47 @@ export function DiffFileList({
 function DiffFileRow({
   gitStatus,
   isSelected,
+  onOpenContextMenu,
   onSelectPath,
   summary,
   workspacePath
 }: {
   gitStatus?: GitFileStatus
   isSelected: boolean
+  onOpenContextMenu: (
+    summary: DiffFileSummary,
+    gitStatus: GitFileStatus | undefined,
+    anchor: FileEditorContextMenuAnchor
+  ) => void
   onSelectPath: (path: string) => void
   summary: DiffFileSummary
   workspacePath?: string
 }) {
+  const openPointerContextMenu = (event: ReactMouseEvent<HTMLButtonElement>) => {
+    event.preventDefault()
+    onOpenContextMenu(summary, gitStatus, { x: event.clientX, y: event.clientY })
+  }
+
+  const openKeyboardContextMenu = (event: ReactKeyboardEvent<HTMLButtonElement>) => {
+    if (!isFileEditorContextMenuKey(event.key, event.shiftKey)) return
+    event.preventDefault()
+    onOpenContextMenu(
+      summary,
+      gitStatus,
+      contextMenuAnchorFromRect(event.currentTarget.getBoundingClientRect())
+    )
+  }
+
   return (
     <button
       type="button"
       className={`diff-file-row ${isSelected ? 'selected' : ''}`}
       onClick={() => onSelectPath(summary.path)}
+      onContextMenu={openPointerContextMenu}
+      onKeyDown={openKeyboardContextMenu}
       aria-label={buildDiffFileRowLabel(summary, gitStatus)}
+      aria-haspopup="menu"
+      aria-keyshortcuts="ContextMenu Shift+F10"
       aria-selected={isSelected}
       data-diff-file-path={summary.path}
       role="option"
@@ -384,4 +528,74 @@ function DiffFileRow({
       )}
     </button>
   )
+}
+
+function DiffFileContextMenu({
+  selection,
+  items,
+  onClose
+}: {
+  selection: DiffFileContextMenuSelection | null
+  items: DiffFileContextMenuItem[]
+  onClose: () => void
+}) {
+  const menuRef = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    if (!selection) return
+    const handlePointerDown = (event: globalThis.MouseEvent) => {
+      const target = event.target as Node
+      if (menuRef.current?.contains(target)) return
+      onClose()
+    }
+    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        onClose()
+      }
+    }
+    document.addEventListener('mousedown', handlePointerDown, true)
+    document.addEventListener('keydown', handleKeyDown, true)
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown, true)
+      document.removeEventListener('keydown', handleKeyDown, true)
+    }
+  }, [selection, onClose])
+
+  if (!selection || items.length === 0) return null
+
+  const viewportWidth = typeof window !== 'undefined' ? window.innerWidth : 1024
+  const viewportHeight = typeof window !== 'undefined' ? window.innerHeight : 768
+  const heightEstimate = 18 + items.length * 34
+  const left = Math.max(8, Math.min(selection.anchor.x, viewportWidth - 224))
+  const top = Math.max(8, Math.min(selection.anchor.y, viewportHeight - heightEstimate))
+  const menu = (
+    <div
+      ref={menuRef}
+      className="file-editor-context-menu diff-file-context-menu"
+      style={{ position: 'fixed', left: `${left}px`, top: `${top}px` }}
+      role="menu"
+      aria-label={`Actions for ${selection.summary.path}`}
+    >
+      {items.map((item) => (
+        <button
+          key={item.id}
+          type="button"
+          role="menuitem"
+          className="file-editor-context-menu-item"
+          disabled={item.disabled}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => {
+            if (item.disabled) return
+            item.onSelect()
+            onClose()
+          }}
+        >
+          <span className="file-editor-context-menu-label">{item.label}</span>
+        </button>
+      ))}
+    </div>
+  )
+
+  return typeof document === 'undefined' ? menu : createPortal(menu, document.body)
 }

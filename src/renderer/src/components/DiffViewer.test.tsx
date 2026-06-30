@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import type { GitRepositorySnapshot } from '../../../main/services/GitService'
 import type { DiffFileSummary } from '../../../main/store/types'
 import { DiffDetail, diffDetailHeaderSummary } from './DiffDetail'
-import { DiffFileList } from './DiffFileList'
+import { buildDiffFileContextMenuItems, DiffFileList } from './DiffFileList'
 import { DiffToolbar } from './DiffToolbar'
 import { DiffViewer } from './DiffViewer'
 
@@ -288,15 +288,58 @@ describe('DiffFileList', () => {
         }
         repoPathForSummary={(summary) => summary.path}
         onSelectPath={() => {}}
+        onOpenFile={() => {}}
+        onStageFile={() => {}}
+        onUnstageFile={() => {}}
       />
     )
 
     expect(html).toContain('role="listbox"')
+    expect(html).toContain('aria-haspopup="menu"')
+    expect(html).toContain('aria-keyshortcuts="ContextMenu Shift+F10"')
     expect(html).toContain('<span>Unstaged</span><small>1</small>')
     expect(html).toContain('<span>Staged</span><small>1</small>')
     expect(html).toContain('data-diff-file-path="src/staged.ts"')
     expect(html).toContain('aria-selected="true"')
     expect(html).toContain('staged')
+  })
+
+  it('builds rail context menu items from git status and preview kind', () => {
+    const summary = makeChangedFileSummary('src/context.ts', 'context menu')
+    const items = buildDiffFileContextMenuItems({
+      gitStatus: {
+        path: 'src/context.ts',
+        index: 'M',
+        workingTree: 'M',
+        kind: 'modified',
+        staged: true,
+        unstaged: true
+      },
+      onCopyPath: () => {},
+      onOpenFile: () => {},
+      onStageFile: () => {},
+      onUnstageFile: () => {},
+      summary
+    })
+
+    expect(items.map((item) => [item.id, item.disabled])).toEqual([
+      ['open-editor', false],
+      ['stage', false],
+      ['unstage', false],
+      ['copy-path', undefined]
+    ])
+
+    const hiddenItems = buildDiffFileContextMenuItems({
+      onCopyPath: () => {},
+      onOpenFile: () => {},
+      summary: makeChangedFileSummary('secrets.env', 'redacted', {
+        previewKind: 'hidden',
+        status: 'hidden_sensitive'
+      })
+    })
+
+    expect(hiddenItems.find((item) => item.id === 'open-editor')?.disabled).toBe(true)
+    expect(hiddenItems.find((item) => item.id === 'stage')?.disabled).toBe(true)
   })
 })
 
