@@ -2119,6 +2119,10 @@ describe('parseOllamaToolRequest', () => {
     expect(prompt).toContain('could not be parsed as valid JSON')
     expect(prompt).toContain('escape them correctly')
     expect(prompt).toContain('Do not output the tool request as plain prose')
+    const ensemblePrompt = ollamaMalformedToolJsonNudgePrompt({ ensembleRun: true })
+    expect(ensemblePrompt).toContain('Boss/Bossman/Lead routing')
+    expect(ensemblePrompt).toContain('assigned participant slice')
+    expect(ensemblePrompt).toContain('assigned role')
   })
 })
 
@@ -2433,6 +2437,10 @@ describe('repeated-tool-call guard', () => {
     const nudge = ollamaRepeatedToolCallNudge('read_file')
     expect(nudge).toContain('read_file')
     expect(nudge).toContain('Do NOT call it again')
+    const ensembleNudge = ollamaRepeatedToolCallNudge('read_file', { ensembleRun: true })
+    expect(ensembleNudge).toContain('assigned ensemble slice')
+    expect(ensembleNudge).toContain('Boss/Bossman/Lead routing')
+    expect(ensembleNudge).toContain('role owns')
   })
 
   it('detects and rewrites no-active-goal lifecycle failures for the local model', () => {

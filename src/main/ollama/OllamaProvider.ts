@@ -426,13 +426,19 @@ export function evaluateOllamaRepeatedToolCall(
  * (e.g. a 9B) ignore the soft rule and burn their whole tool-loop
  * budget re-reading the same file before they ever edit.
  */
-export function ollamaRepeatedToolCallNudge(toolName: string): string {
-  return (
-    `You already called \`${toolName}\` with these exact arguments earlier this turn and got the same result, ` +
-    `so its output is unchanged and already in your context. Do NOT call it again. ` +
-    `Act on what you have now: make the edits the task needs (edit_file / write_file), or give your final answer. ` +
-    `Repeating identical reads wastes your limited local tool budget and will end the run with no result.`
-  )
+export function ollamaRepeatedToolCallNudge(
+  toolName: string,
+  options?: OllamaRetryPromptOptions
+): string {
+  return [
+    `You already called \`${toolName}\` with these exact arguments earlier this turn and got the same result, so its output is unchanged and already in your context.`,
+    'Do NOT call it again.',
+    ...ollamaEnsembleRetryReminder(options),
+    options?.ensembleRun
+      ? 'Act on what you have now inside your assigned ensemble slice: make only the edits your role owns, or give your final answer for this turn.'
+      : 'Act on what you have now: make the edits the task needs (edit_file / write_file), or give your final answer.',
+    'Repeating identical reads wastes your limited local tool budget and will end the run with no result.'
+  ].join(' ')
 }
 
 const OLLAMA_GOAL_LIFECYCLE_TOOL_NAMES = new Set([
@@ -1636,12 +1642,18 @@ export function looksLikeLeakedOllamaToolProtocol(text: string): boolean {
 }
 
 /** Nudge for a malformed/leaked tool-call JSON that couldn't be parsed. */
-export function ollamaMalformedToolJsonNudgePrompt(): string {
+export function ollamaMalformedToolJsonNudgePrompt(options?: OllamaRetryPromptOptions): string {
   return [
     'Your previous tool request could not be parsed as valid JSON.',
     'If a string argument contains source code or backslashes, escape them correctly (for example, a literal backslash must be written as \\\\, and embedded double quotes as \\").',
-    'Re-issue the tool call now as a single valid JSON object (or emit a native tool call). Do not output the tool request as plain prose.'
-  ].join(' ')
+    ...ollamaEnsembleRetryReminder(options),
+    'Re-issue the tool call now as a single valid JSON object (or emit a native tool call). Do not output the tool request as plain prose.',
+    options?.ensembleRun
+      ? 'If this tool is no longer required for your assigned participant slice, answer from your assigned role instead.'
+      : ''
+  ]
+    .filter(Boolean)
+    .join(' ')
 }
 
 /** Heuristic: does this turn's visible `content` merely ANNOUNCE a tool call
@@ -2463,7 +2475,7 @@ export async function runOllamaProvider(
         ) {
           forceJsonToolFallback = true
           messages.push({ role: 'assistant', content: turn.content })
-          messages.push({ role: 'user', content: ollamaMalformedToolJsonNudgePrompt() })
+          messages.push({ role: 'user', content: ollamaMalformedToolJsonNudgePrompt({ ensembleRun }) })
           continue
         }
         // Tool-intent stub: the model announced a tool in prose ("We need to
@@ -2618,7 +2630,7 @@ export async function runOllamaProvider(
           if (repeat.repeated) {
             modelFacingOutput = noActiveGoalToolResult
               ? ollamaNoActiveGoalToolNudge(toolRequest.toolName, { repeated: true, ensembleRun })
-              : ollamaRepeatedToolCallNudge(toolRequest.toolName)
+              : ollamaRepeatedToolCallNudge(toolRequest.toolName, { ensembleRun })
           }
         }
         sessionMemory = appendOllamaTrajectoryEntry(sessionMemory, {
