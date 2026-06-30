@@ -858,6 +858,7 @@ import { registerDiagnosticsHandlers } from './ipc/diagnosticsHandlers'
 import { registerSidebarHandlers } from './ipc/sidebarHandlers'
 import { registerAppearanceHandlers } from './ipc/appearanceHandlers'
 import { registerDiscordContextHandlers } from './ipc/discordContextHandlers'
+import { registerFileIconHandlers } from './ipc/fileIconHandlers'
 import { getCachedRemoteEnsemblePresets } from './remote/EnsembleRosterPresetsCache'
 import { resolveGeminiCliResumePolicy } from './GeminiSessionPolicy'
 // 1.0.5-EW26 — Kimi compatibility filter (curated + user-
@@ -1340,7 +1341,6 @@ function getSessionYoloMode(): { enabled: boolean; enabledAt: string | null } {
 
 const NATIVE_GLASS_VIBRANCY: BrowserWindowConstructorOptions['vibrancy'] = 'sidebar'
 let appliedNativeGlassState: string | null = null
-const FILE_ICON_CACHE = new Map<string, string | null>()
 // MCP server registration name advertised to every provider's MCP client.
 // This becomes the namespace prefix the agent sees in its tool list:
 // `TaskWraith__delegate_to_subthread`, `mcp__TaskWraith__git_status`, etc.
@@ -25657,29 +25657,8 @@ if (isGeminiMcpBridgeProcess) {
       getNativeCapabilitySnapshot
     })
 
-    ipcMain.handle('get-file-icon', async (_, requestedPath: string) => {
-      if (typeof requestedPath !== 'string') {
-        return null
-      }
-
-      const normalizedPath = requestedPath.trim()
-      if (!normalizedPath) {
-        return null
-      }
-
-      if (FILE_ICON_CACHE.has(normalizedPath)) {
-        return FILE_ICON_CACHE.get(normalizedPath) ?? null
-      }
-
-      try {
-        const icon = await app.getFileIcon(normalizedPath, { size: 'small' })
-        const dataUrl = icon.toDataURL()
-        FILE_ICON_CACHE.set(normalizedPath, dataUrl)
-        return dataUrl
-      } catch {
-        FILE_ICON_CACHE.set(normalizedPath, null)
-        return null
-      }
+    registerFileIconHandlers({
+      getFileIcon: (normalizedPath, options) => app.getFileIcon(normalizedPath, options)
     })
 
     // Gemini Version
