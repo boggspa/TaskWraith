@@ -360,11 +360,11 @@ describe('ComposerService', () => {
     expect(payload.prompt).not.toContain('```plan')
   })
 
-  it('treats legacy plan approval mode as plan workflow when no workflow is explicit', () => {
+  it('keeps legacy plan approval mode in normal workflow when no workflow is explicit', () => {
     const payload = compose({ provider: 'codex' }, { approvalMode: 'plan' })
     expect(payload.approvalMode).toBe('plan')
-    expect(payload.workflowMode).toBe('plan')
-    expect(payload.composer.workflowMode).toBe('plan')
+    expect(payload.workflowMode).toBe('normal')
+    expect(payload.composer.workflowMode).toBe('normal')
   })
 
   it('keeps explicit normal workflow separate from read-only plan permissions', () => {

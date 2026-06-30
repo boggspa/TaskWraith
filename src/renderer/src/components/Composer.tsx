@@ -3743,7 +3743,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               currentChat?.providerMetadata?.workflowMode
                             ) ||
                             normalizeComposerWorkflowMode(currentChat?.workflowMode) ||
-                            (approvalMode === 'plan' ? 'plan' : 'normal')
+                            'normal'
                           const effectiveSelectedPermission = ensembleBinding
                             ? presetToMode(ensembleBinding.permissionPresetId)
                             : approvalMode === 'plan'

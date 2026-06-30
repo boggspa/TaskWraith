@@ -186,8 +186,7 @@ export class ComposerService {
     const requestedWorkflowMode = resolveComposerWorkflowMode(
       input.workflowMode,
       chat.workflowMode,
-      requestedPlanMode,
-      input.approvalMode
+      requestedPlanMode
     )
     const trustedApprovalMode = resolveApprovalMode(
       scope,
@@ -225,8 +224,7 @@ export class ComposerService {
     const workflowMode = resolveComposerWorkflowMode(
       effectiveInput.workflowMode,
       chat.workflowMode,
-      planParsed.planMode,
-      effectiveInput.approvalMode
+      planParsed.planMode
     )
     const requestedApprovalMode = workflowMode === 'plan' ? 'plan' : effectiveInput.approvalMode
     const appRunId = optionalString(input.appRunId)
@@ -569,15 +567,14 @@ function normalizeComposerRerouteApprovalMode(value: string | undefined): string
 function resolveComposerWorkflowMode(
   explicitWorkflowMode: unknown,
   chatWorkflowMode: unknown,
-  planModeParsed: boolean,
-  approvalMode: unknown
+  planModeParsed: boolean
 ): ChatWorkflowMode {
   const explicit = normalizeComposerWorkflowMode(explicitWorkflowMode)
   if (explicit) return explicit
   if (planModeParsed) return 'plan'
   const persisted = normalizeComposerWorkflowMode(chatWorkflowMode)
   if (persisted) return persisted
-  return approvalMode === 'plan' ? 'plan' : 'normal'
+  return 'normal'
 }
 
 function normalizeComposerWorkflowMode(value: unknown): ChatWorkflowMode | undefined {

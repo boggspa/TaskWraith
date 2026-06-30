@@ -3885,7 +3885,7 @@ function App(): React.JSX.Element {
       workflowMode:
         metadataWorkflowMode ||
         chat.workflowMode ||
-        (resolvedApprovalMode === 'plan' ? 'plan' : 'normal'),
+        'normal',
       codexReasoningEffort:
         typeof metadata.codexReasoningEffort === 'string'
           ? metadata.codexReasoningEffort
@@ -9361,7 +9361,7 @@ function App(): React.JSX.Element {
       target?.workflowMode ??
       composerSelection?.workflowMode ??
       selectedChat?.workflowMode ??
-      (requestApprovalMode === 'plan' ? 'plan' : 'normal')
+      'normal'
     const requestReasoningEffort =
       provider === 'codex'
         ? composerSelection?.codexReasoningEffort || codexReasoningEffort
@@ -9729,8 +9729,7 @@ function App(): React.JSX.Element {
         }
       }
       if (runChat.chatKind === 'ensemble') {
-        const workflowModeForRound =
-          request.workflowMode || (request.approvalMode === 'plan' ? 'plan' : 'normal')
+        const workflowModeForRound = request.workflowMode || 'normal'
         if (runChat.workflowMode !== workflowModeForRound) {
           const updatedRunChat: ChatRecord = {
             ...runChat,
@@ -18170,7 +18169,7 @@ function App(): React.JSX.Element {
     currentChat?.providerMetadata?.workflowMode === 'plan' ||
     currentChat?.providerMetadata?.workflowMode === 'normal'
       ? currentChat.providerMetadata.workflowMode
-      : currentChat?.workflowMode || (approvalMode === 'plan' ? 'plan' : 'normal')
+      : currentChat?.workflowMode || 'normal'
   const permissionModeLabel =
     approvalMode === 'plan'
       ? currentComposerWorkflowMode === 'plan'
