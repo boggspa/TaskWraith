@@ -10014,11 +10014,34 @@ button.diff-file-row {
   gap: var(--space-sm);
 }
 
-.diff-detail-title > span:first-child {
+.diff-detail-path {
+  min-width: 0;
+  display: inline-flex;
+  flex-direction: column;
+  justify-content: center;
+  overflow: hidden;
+  line-height: 1.15;
+}
+
+.diff-detail-path > strong,
+.diff-detail-path > small {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.diff-detail-path > strong {
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  font-weight: 700;
+}
+
+.diff-detail-path > small {
+  color: var(--text-muted);
+  font-family: var(--font-sans);
+  font-size: var(--font-size-xs);
+  font-weight: 500;
 }
 
 .diff-detail-stat-badge {

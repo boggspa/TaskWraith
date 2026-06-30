@@ -2,7 +2,12 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { GitRepositorySnapshot } from '../../../main/services/GitService'
 import type { DiffFileSummary } from '../../../main/store/types'
-import { DiffDetail, diffDetailHeaderSummary, diffTextPreviewExcerpt } from './DiffDetail'
+import {
+  DiffDetail,
+  diffDetailHeaderSummary,
+  diffDetailPathDisplay,
+  diffTextPreviewExcerpt
+} from './DiffDetail'
 import {
   buildDiffFileContextMenuItems,
   DiffFileList,
@@ -410,6 +415,14 @@ describe('DiffFileList', () => {
 })
 
 describe('DiffDetail', () => {
+  it('splits detail header paths into primary filename and secondary parent folder', () => {
+    expect(diffDetailPathDisplay('src/renderer/App.tsx')).toEqual({
+      name: 'App.tsx',
+      parent: 'src/renderer'
+    })
+    expect(diffDetailPathDisplay('README.md')).toEqual({ name: 'README.md', parent: '' })
+  })
+
   it('bounds non-unified text previews before rendering', () => {
     const source = `${'a'.repeat(25)}\n${'b'.repeat(25)}\nTAIL`
     const excerpt = diffTextPreviewExcerpt(source, 32)
@@ -452,6 +465,9 @@ describe('DiffDetail', () => {
 
     expect(html).toContain('class="diff-detail"')
     expect(html).toContain('src/detail.ts')
+    expect(html).toContain('class="diff-detail-path"')
+    expect(html).toContain('<strong>detail.ts</strong>')
+    expect(html).toContain('<small>src</small>')
     expect(html).toContain('class="diff-detail-actions"')
     expect(html).toContain('class="diff-detail-stat-badge"')
     expect(html).toContain('aria-label="File change summary: modified +1 -1"')

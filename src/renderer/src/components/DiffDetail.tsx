@@ -70,6 +70,15 @@ export function diffTextPreviewExcerpt(
   }
 }
 
+export const diffDetailPathDisplay = (path: string): { name: string; parent: string } => {
+  const parts = path.split('/').filter(Boolean)
+  const name = parts.pop() || path || 'file'
+  return {
+    name,
+    parent: parts.join('/')
+  }
+}
+
 const diffStatusLabel = (status: DiffFileSummary['status']): string => {
   if (status === 'hidden_sensitive') return 'hidden'
   if (status === 'too_large') return 'large'
@@ -110,6 +119,7 @@ export function DiffDetail({
   const canUnstageFile = Boolean(onUnstageFile) && Boolean(gitStatus?.staged) && !isBusy
   const previewKind: DiffPreviewKind = summary.previewKind || 'none'
   const headerSummary = diffDetailHeaderSummary(summary)
+  const pathDisplay = diffDetailPathDisplay(summary.path)
   const usesDiffLines =
     Boolean(summary.diffText) && (previewKind === 'synthetic_new_file' || previewKind === 'git_diff')
   const parsedDiff = useMemo(
@@ -228,7 +238,10 @@ export function DiffDetail({
     <div className="diff-detail">
       <div className="diff-detail-header">
         <div className="diff-detail-title">
-          <span title={summary.path}>{summary.path}</span>
+          <span className="diff-detail-path" title={summary.path}>
+            <strong>{pathDisplay.name}</strong>
+            {pathDisplay.parent && <small>{pathDisplay.parent}</small>}
+          </span>
           <span
             className="diff-detail-stat-badge"
             data-status={summary.status}
