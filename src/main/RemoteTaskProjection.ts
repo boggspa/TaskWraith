@@ -20,6 +20,7 @@ import type {
   VisualEffectStyle
 } from './store/types'
 import { normalizeThreadTitle } from '../shared/threadTitles'
+import { isEnsembleRoundDispatchLive } from '../shared/ensembleRoundLifecycle'
 import { collectExternalPathGrantsFromMetadata } from './store/ExternalPathGrants'
 import { isContentlessRemoteDraftChat, remoteDraftVariant } from './remote/RemoteDraftChats'
 import { computeMergedTodosByLane, TODO_SOLO_LANE, type TodoStatus } from './TodoList'
@@ -1531,31 +1532,6 @@ export function combinedQueuedPrompts(
     return activeRound.queuedPrompts
   }
   return activeRound.queuedPrompt ? [activeRound.queuedPrompt] : []
-}
-
-const LIVE_ENSEMBLE_PARTICIPANT_STATUSES = new Set(['idle', 'running', 'sleeping'])
-
-const LIVE_ENSEMBLE_LANE_STATUSES = new Set(['pending', 'running', 'blocked', 'awaiting-approval'])
-
-function isEnsembleRoundDispatchLive(activeRound: EnsembleConfig['activeRound']): boolean {
-  if (activeRound?.status !== 'running') return false
-  const participants = Array.isArray(activeRound.participants) ? activeRound.participants : []
-  if (activeRound.activeParticipantId) {
-    const activeParticipant = participants.find(
-      (participant) => participant.participantId === activeRound.activeParticipantId
-    )
-    if (!activeParticipant || LIVE_ENSEMBLE_PARTICIPANT_STATUSES.has(activeParticipant.status)) {
-      return true
-    }
-  }
-  if ((activeRound.pendingWakeupIds?.length || 0) > 0) return true
-  if ((activeRound.sleepingParticipantIds?.length || 0) > 0) return true
-  const lanes = Object.values(activeRound.lanes || {})
-  if (lanes.some((lane) => LIVE_ENSEMBLE_LANE_STATUSES.has(lane.status))) return true
-  if (participants.length === 0) return true
-  return participants.some((participant) =>
-    LIVE_ENSEMBLE_PARTICIPANT_STATUSES.has(participant.status)
-  )
 }
 
 function projectEnsembleRoundStatus(

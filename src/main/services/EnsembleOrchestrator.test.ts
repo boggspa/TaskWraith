@@ -4298,6 +4298,43 @@ Next action:
     expect(harness.chat.messages.at(-1)?.content).toBe('Fresh prompt')
   })
 
+  it('does not queue behind a stale running snapshot with no live dispatch evidence', async () => {
+    const harness = makeHarness()
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Original prompt',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const staleRound = harness.chat.ensemble!.activeRound!
+    const oldRoundId = staleRound.roundId
+    harness.chat.ensemble!.activeRound = {
+      ...staleRound,
+      status: 'running',
+      activeParticipantId: 'claude',
+      queuedPrompt: 'stale queued prompt',
+      queuedPrompts: ['stale queued prompt'],
+      participants: staleRound.participants.map((participant) => ({
+        ...participant,
+        status: participant.participantId === 'claude' ? 'answered' : 'skipped',
+        endedAt: '2026-05-24T00:00:09.000Z'
+      }))
+    }
+
+    const result = harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Fresh prompt',
+      event: { sender: {} as Electron.WebContents },
+      mode: 'queue'
+    })
+
+    expect(result.status).toBe('started')
+    expect(harness.chat.ensemble?.activeRound?.status).toBe('running')
+    expect(harness.chat.ensemble?.activeRound?.roundId).not.toBe(oldRoundId)
+    expect(harness.chat.ensemble?.activeRound?.queuedPrompt).toBeUndefined()
+    expect(harness.chat.messages.at(-1)?.content).toBe('Fresh prompt')
+  })
+
   it('can cancel a persisted running round even when its runtime is already gone', async () => {
     const harness = makeHarness()
     harness.orchestrator.startRound({

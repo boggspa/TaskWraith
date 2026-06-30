@@ -85,6 +85,7 @@ import {
   type DiscordContextSnapshot
 } from '../channels/DiscordContextService'
 import { contextPercent, resolveContextWindow } from '../../shared/contextWindows'
+import { isEnsembleRoundDispatchLive } from '../../shared/ensembleRoundLifecycle'
 import { isPreviewRiskModel } from '../../shared/previewModelCatalog'
 import {
   evaluateRosterEdit,
@@ -1826,7 +1827,10 @@ export class EnsembleOrchestrator {
     let existing = this.roundsByChatId.get(input.chatId)
     if (existing) {
       const persistedRound = this.deps.getChat(input.chatId)?.ensemble?.activeRound
-      if (persistedRound?.roundId !== existing.roundId || persistedRound.status !== 'running') {
+      if (
+        persistedRound?.roundId !== existing.roundId ||
+        !isEnsembleRoundDispatchLive(persistedRound)
+      ) {
         this.roundsByChatId.delete(input.chatId)
         existing = undefined
       }
