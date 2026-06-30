@@ -110,6 +110,10 @@ export function toolNameToFamily(name: string | undefined | null): ToolFamily | 
     case 'cancel_wakeup':
     case 'scout_brief':
     case 'blackboard_post':
+    case 'launch_list_targets':
+    case 'launch_start':
+    case 'launch_stop':
+    case 'launch_status':
       return 'task'
     case 'start_background_process':
     case 'list_background_processes':
