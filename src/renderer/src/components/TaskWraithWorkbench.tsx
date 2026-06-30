@@ -113,6 +113,16 @@ export const resolveInitialWorkbenchView = (view?: WorkbenchView): WorkbenchView
   return view === 'diff' || view === 'split' ? view : 'editor'
 }
 
+export const workbenchOpenRequestTargets = (
+  view?: WorkbenchView
+): { editor: boolean; diff: boolean } => {
+  const resolvedView = resolveInitialWorkbenchView(view)
+  return {
+    editor: resolvedView !== 'diff',
+    diff: resolvedView !== 'editor'
+  }
+}
+
 export const workbenchOpenRequestKey = (
   request?: WorkbenchOpenRequest | null
 ): string => {
@@ -226,7 +236,7 @@ export function TaskWraithWorkbench({
     useState<FileEditorCommandRequest | null>(null)
   const [diffSelectionRequest, setDiffSelectionRequest] = useState<EditorOpenRequest | null>(null)
   const [diffSelectedPath, setDiffSelectedPath] = useState(
-    initialView === 'diff' ? (openFileRequest?.path ?? '') : ''
+    workbenchOpenRequestTargets(openFileRequest?.view).diff ? (openFileRequest?.path ?? '') : ''
   )
   const [editorState, setEditorState] = useState<FileEditorPanelState>(DEFAULT_EDITOR_STATE)
   const [diffActionPath, setDiffActionPath] = useState('')
@@ -391,6 +401,23 @@ export function TaskWraithWorkbench({
     setStatus(`Opening ${path}`)
   }, [activeView, selectWorkbenchView])
 
+  const openFileInSplit = useCallback(
+    (path: string) => {
+      selectWorkbenchView('split')
+      setEditorOpenRequest((current) => ({
+        path,
+        nonce: (current?.nonce ?? 0) + 1
+      }))
+      setDiffSelectedPath(path)
+      setDiffSelectionRequest((current) => ({
+        path,
+        nonce: (current?.nonce ?? 0) + 1
+      }))
+      setStatus(`Opening split view for ${path}`)
+    },
+    [selectWorkbenchView]
+  )
+
   const showFileInDiff = useCallback((path: string) => {
     if (activeView !== 'split') {
       selectWorkbenchView('diff')
@@ -481,8 +508,12 @@ export function TaskWraithWorkbench({
       showFileInDiff(openFileRequest.path)
       return
     }
+    if (openFileRequest.view === 'split') {
+      openFileInSplit(openFileRequest.path)
+      return
+    }
     openFileInEditor(openFileRequest.path)
-  }, [openFileInEditor, openFileRequest, showFileInDiff])
+  }, [openFileInEditor, openFileInSplit, openFileRequest, showFileInDiff])
 
   const stageDiffFile = useCallback(
     async (path: string) => {

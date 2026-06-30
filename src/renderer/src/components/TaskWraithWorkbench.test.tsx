@@ -8,6 +8,7 @@ import {
   resolveInitialWorkbenchView,
   resolveWorkbenchKeyboardCommand,
   TaskWraithWorkbench,
+  workbenchOpenRequestTargets,
   workbenchOpenRequestKey
 } from './TaskWraithWorkbench'
 
@@ -118,6 +119,9 @@ describe('TaskWraithWorkbench shell', () => {
     expect(resolveInitialWorkbenchView('diff')).toBe('diff')
     expect(resolveInitialWorkbenchView('split')).toBe('split')
     expect(resolveInitialWorkbenchView()).toBe('editor')
+    expect(workbenchOpenRequestTargets()).toEqual({ editor: true, diff: false })
+    expect(workbenchOpenRequestTargets('diff')).toEqual({ editor: false, diff: true })
+    expect(workbenchOpenRequestTargets('split')).toEqual({ editor: true, diff: true })
     expect(workbenchOpenRequestKey(null)).toBe('')
     expect(workbenchOpenRequestKey({ path: 'src/main/index.ts', nonce: 1, view: 'diff' })).toBe(
       '1\u0000diff\u0000src/main/index.ts'
@@ -143,6 +147,29 @@ describe('TaskWraithWorkbench shell', () => {
     expect(html).toContain('aria-keyshortcuts="Meta+Shift+E Control+Shift+E"')
     expect(html).toContain('id="workbench-diff-tab"')
     expect(html).toContain('aria-selected="true"')
+  })
+
+  it('renders split deep links as a two-pane editor and diff target', () => {
+    const html = renderToStaticMarkup(
+      <TaskWraithWorkbench
+        workspacePath="/repo"
+        workspaceName="Repo"
+        refreshTick={0}
+        openFileRequest={{ path: 'src/main/index.ts', nonce: 1, view: 'split' }}
+        onDirtyChange={() => {}}
+      />
+    )
+
+    expect(html).toContain('class="workbench-stage split"')
+    expect(html).toContain('id="workbench-split-tab"')
+    expect(html).toContain('aria-selected="true"')
+    expect(html).toContain('aria-labelledby="workbench-split-tab"')
+    expect(html).toContain('Split View')
+    expect(html).toContain('src/main/index.ts')
+    expect(html).toContain('Open in Editor')
+    expect(html).toContain('aria-label="Open src/main/index.ts in editor"')
+    expect(html).not.toContain('workbench-editor-pane" role="tabpanel" id="workbench-editor-panel" hidden')
+    expect(html).not.toContain('workbench-diff-pane" role="tabpanel" id="workbench-diff-panel" hidden')
   })
 
   it('maps Workbench keyboard shortcuts to scoped commands', () => {
