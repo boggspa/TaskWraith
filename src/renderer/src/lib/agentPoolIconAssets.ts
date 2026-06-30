@@ -268,6 +268,16 @@ function normalizeProviderGlyphStroke(raw: string): string {
     )
 }
 
+function tintStyleForAccent(accent: string): string {
+  return `color: ${accent}; --agent-accent: ${accent}; --workflow-accent: ${accent};`
+}
+
+function mergeRootSvgStyle(existing: string, accent: string): string {
+  const trimmed = existing.trim().replace(/;?\s*$/, '')
+  const tint = tintStyleForAccent(accent)
+  return trimmed ? `${trimmed}; ${tint}` : tint
+}
+
 /**
  * Inline-ready SVG: injects sizing, and — for recolourable icons — tints
  * `currentColor` + `--agent-accent` to `accent`. Fixed-palette icons (provider
@@ -282,10 +292,14 @@ export function preparePoolIconSvg(asset: PoolIconAsset, size: number, accent?: 
   )
   svg = svg.replace(/\srole="[^"]*"/, '').replace(/\saria-labelledby="[^"]*"/, '')
   if (asset.recolor && accent) {
-    const tint = ` style="color: ${accent}; --agent-accent: ${accent};"`
+    const tint = tintStyleForAccent(accent)
     svg = /<svg[^>]*\sstyle="/.test(svg)
-      ? svg.replace(/(<svg\b[^>]*?)\sstyle="[^"]*"/, `$1${tint}`)
-      : svg.replace(/^<svg\s+/, `<svg${tint} `)
+      ? svg.replace(
+          /(<svg\b[^>]*?\sstyle=")([^"]*)(")/,
+          (_match, open: string, existing: string, close: string) =>
+            `${open}${mergeRootSvgStyle(existing, accent)}${close}`
+        )
+      : svg.replace(/^<svg\s+/, `<svg style="${tint}" `)
   }
   return svg
 }

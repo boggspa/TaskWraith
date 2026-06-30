@@ -76,4 +76,13 @@ describe('agent pool icon assets', () => {
     expect(providerOut).toContain('stroke-width: 1.05')
     expect(providerOut).not.toContain('stroke-width: 1.75')
   })
+
+  it('preparePoolIconSvg keeps workflow action icons visible when tinted', () => {
+    const action = getPoolIconAsset('action:action-run-now')!
+    expect(action.group).toBe('Actions')
+
+    const out = preparePoolIconSvg(action, 24, '#06D6A0')
+    expect(out).toContain('stroke="var(--workflow-accent)"')
+    expect(out).toContain('--workflow-accent: #06D6A0')
+  })
 })
