@@ -5,7 +5,8 @@ import {
   fileEditorDirtyActionCopy,
   isFileEditorPromptDismissKey,
   QuickOpenPalette,
-  quickOpenOptionId
+  quickOpenOptionId,
+  resolveFileEditorKeyboardCommand
 } from './FileEditorPanel'
 import { EditorPane } from './FileEditorPane'
 import { FileEditorGitActions } from './FileEditorGitActions'
@@ -82,12 +83,20 @@ describe('FileEditorGitActions', () => {
         onToggleLineWrap={vi.fn()}
         onOpenQuickOpen={vi.fn()}
         onRevealInTree={vi.fn()}
+        onShowInDiff={vi.fn()}
       />
     )
 
     expect(html).toContain('Reload')
     expect(html).toContain('aria-label="Reload editor file from disk"')
     expect(html).toContain('Reload from disk and discard unsaved changes')
+    expect(html).toContain('aria-keyshortcuts="Meta+P Control+P"')
+    expect(html).toContain('aria-keyshortcuts="Meta+S Control+S"')
+    expect(html).toContain('aria-keyshortcuts="Meta+Shift+S Control+Shift+S"')
+    expect(html).toContain('aria-keyshortcuts="Meta+Shift+J Control+Shift+J"')
+    expect(html).toContain('aria-keyshortcuts="Meta+Shift+D Control+Shift+D"')
+    expect(html).toContain('aria-keyshortcuts="Alt+Z"')
+    expect(html).toContain('Show in Diff')
   })
 })
 
@@ -300,6 +309,68 @@ describe('file editor completion sources', () => {
       options: [{ label: 'workspaceWord' }]
     })
     expect(source).toHaveBeenCalledWith(explicitContext)
+  })
+})
+
+describe('file editor keyboard commands', () => {
+  it('maps standalone editor shortcuts to scoped commands', () => {
+    const baseEvent = {
+      altKey: false,
+      ctrlKey: false,
+      defaultPrevented: false,
+      key: '',
+      metaKey: true,
+      shiftKey: false
+    }
+
+    expect(
+      resolveFileEditorKeyboardCommand(
+        { ...baseEvent, key: 'p' },
+        { canRevealSelected: false, canShowInDiff: false }
+      )
+    ).toEqual({ type: 'editor-command', kind: 'quick-open' })
+
+    expect(
+      resolveFileEditorKeyboardCommand(
+        { ...baseEvent, key: 's' },
+        { canRevealSelected: false, canShowInDiff: false }
+      )
+    ).toEqual({ type: 'editor-command', kind: 'save-current' })
+
+    expect(
+      resolveFileEditorKeyboardCommand(
+        { ...baseEvent, key: 's', shiftKey: true },
+        { canRevealSelected: false, canShowInDiff: false }
+      )
+    ).toEqual({ type: 'editor-command', kind: 'save-all' })
+
+    expect(
+      resolveFileEditorKeyboardCommand(
+        { ...baseEvent, key: 'j', shiftKey: true },
+        { canRevealSelected: true, canShowInDiff: false }
+      )
+    ).toEqual({ type: 'editor-command', kind: 'reveal-selected' })
+
+    expect(
+      resolveFileEditorKeyboardCommand(
+        { ...baseEvent, key: 'd', shiftKey: true },
+        { canRevealSelected: true, canShowInDiff: true }
+      )
+    ).toEqual({ type: 'show-in-diff' })
+
+    expect(
+      resolveFileEditorKeyboardCommand(
+        { ...baseEvent, altKey: true, key: 'z', metaKey: false },
+        { canRevealSelected: false, canShowInDiff: false }
+      )
+    ).toEqual({ type: 'editor-command', kind: 'toggle-wrap' })
+
+    expect(
+      resolveFileEditorKeyboardCommand(
+        { ...baseEvent, key: 'd', shiftKey: true },
+        { canRevealSelected: true, canShowInDiff: false }
+      )
+    ).toBeNull()
   })
 })
 

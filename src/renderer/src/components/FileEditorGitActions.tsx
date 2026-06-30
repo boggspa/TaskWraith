@@ -19,6 +19,7 @@ export interface FileEditorGitActionsProps {
   onToggleLineWrap: () => void
   onOpenQuickOpen: () => void
   onRevealInTree: () => void | Promise<void>
+  onShowInDiff?: () => void
 }
 
 export function FileEditorGitActions({
@@ -41,7 +42,8 @@ export function FileEditorGitActions({
   onReloadSelected,
   onToggleLineWrap,
   onOpenQuickOpen,
-  onRevealInTree
+  onRevealInTree,
+  onShowInDiff
 }: FileEditorGitActionsProps) {
   const commitDisabled =
     !workspacePath || stagedCount === 0 || outOfScopeStagedCount > 0 || isLoading
@@ -117,15 +119,31 @@ export function FileEditorGitActions({
         type="button"
         onClick={() => void onRevealInTree()}
         disabled={!workspacePath || !selectedPath || isLoading}
+        aria-label="Reveal selected file in tree"
+        aria-keyshortcuts="Meta+Shift+J Control+Shift+J"
         title="Reveal selected file in tree"
       >
         Reveal
       </button>
+      {onShowInDiff && (
+        <button
+          className="btn btn-sm btn-ghost"
+          type="button"
+          onClick={onShowInDiff}
+          disabled={!workspacePath || !selectedPath || isLoading}
+          aria-label="Show selected file in Diff Studio"
+          aria-keyshortcuts="Meta+Shift+D Control+Shift+D"
+          title="Show selected file in Diff Studio"
+        >
+          Show in Diff
+        </button>
+      )}
       <button
         className="btn btn-sm btn-ghost"
         type="button"
         onClick={onOpenQuickOpen}
         disabled={!workspacePath || isLoading}
+        aria-keyshortcuts="Meta+P Control+P"
         title="Quick open file"
       >
         Quick Open
@@ -135,6 +153,7 @@ export function FileEditorGitActions({
         type="button"
         onClick={onToggleLineWrap}
         aria-pressed={lineWrapEnabled}
+        aria-keyshortcuts="Alt+Z"
         title={lineWrapEnabled ? 'Turn line wrap off' : 'Turn line wrap on'}
       >
         Wrap
@@ -145,6 +164,7 @@ export function FileEditorGitActions({
         onClick={() => void onSaveAll()}
         disabled={!workspacePath || dirtyBufferCount === 0 || isLoading}
         aria-label="Save all open editor files"
+        aria-keyshortcuts="Meta+Shift+S Control+Shift+S"
         title={
           dirtyBufferCount > 0
             ? `Save ${dirtyBufferCount} dirty file${dirtyBufferCount === 1 ? '' : 's'}`
@@ -159,6 +179,7 @@ export function FileEditorGitActions({
         onClick={() => void onSave()}
         disabled={!workspacePath || !selectedPath || !isDirty || isLoading}
         aria-label="Save editor file"
+        aria-keyshortcuts="Meta+S Control+S"
         title="Save editor file"
       >
         Save

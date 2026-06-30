@@ -78,6 +78,42 @@ export type FileEditorCommandKind =
   | 'reveal-selected'
   | 'toggle-wrap'
 
+type FileEditorKeyEventLike = Pick<
+  KeyboardEvent,
+  'altKey' | 'ctrlKey' | 'defaultPrevented' | 'key' | 'metaKey' | 'shiftKey'
+>
+
+export type FileEditorKeyboardCommand =
+  | { type: 'editor-command'; kind: FileEditorCommandKind }
+  | { type: 'show-in-diff' }
+
+export function resolveFileEditorKeyboardCommand(
+  event: FileEditorKeyEventLike,
+  options: { canRevealSelected: boolean; canShowInDiff: boolean }
+): FileEditorKeyboardCommand | null {
+  if (event.defaultPrevented) return null
+
+  const key = event.key.toLowerCase()
+  if (event.altKey && !event.metaKey && !event.ctrlKey && !event.shiftKey && key === 'z') {
+    return { type: 'editor-command', kind: 'toggle-wrap' }
+  }
+
+  if (!(event.metaKey || event.ctrlKey) || event.altKey) return null
+
+  if (key === 'p') return { type: 'editor-command', kind: 'quick-open' }
+  if (key === 's') {
+    return { type: 'editor-command', kind: event.shiftKey ? 'save-all' : 'save-current' }
+  }
+  if (event.shiftKey && key === 'j' && options.canRevealSelected) {
+    return { type: 'editor-command', kind: 'reveal-selected' }
+  }
+  if (event.shiftKey && key === 'd' && options.canShowInDiff) {
+    return { type: 'show-in-diff' }
+  }
+
+  return null
+}
+
 export interface FileEditorCommandRequest {
   kind: FileEditorCommandKind
   nonce: number
@@ -1152,6 +1188,12 @@ export function FileEditorPanel({
     await revealFilePathInTree(selectedPath)
   }
 
+  const showSelectedFileInDiff = useCallback(() => {
+    if (!selectedPath || !onShowInDiff) return
+    onShowInDiff(selectedPath)
+    setStatus(`Showing diff for ${selectedPath}`)
+  }, [onShowInDiff, selectedPath])
+
   const copyFilePath = useCallback((filePath: string) => {
     if (!filePath) return
     if (typeof navigator === 'undefined' || !navigator.clipboard?.writeText) {
@@ -1667,18 +1709,26 @@ export function FileEditorPanel({
         className="file-editor-code"
         onKeyDown={(event) => {
           if (
-            !showQuickOpen &&
+            showQuickOpen &&
             (event.metaKey || event.ctrlKey) &&
             event.key.toLowerCase() === 'p'
           ) {
             event.preventDefault()
-            openQuickOpen()
+            event.stopPropagation()
             return
           }
-          if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') {
-            event.preventDefault()
-            void saveFile()
+          const command = resolveFileEditorKeyboardCommand(event, {
+            canRevealSelected: Boolean(selectedPath),
+            canShowInDiff: Boolean(selectedPath && onShowInDiff)
+          })
+          if (!command) return
+          event.preventDefault()
+          event.stopPropagation()
+          if (command.type === 'show-in-diff') {
+            showSelectedFileInDiff()
+            return
           }
+          commandHandlersRef.current[command.kind]?.()
         }}
       >
         <div className="file-editor-header">
@@ -1721,6 +1771,7 @@ export function FileEditorPanel({
             onToggleLineWrap={() => setLineWrapEnabled((enabled) => !enabled)}
             onOpenQuickOpen={openQuickOpen}
             onRevealInTree={revealSelectedFileInTree}
+            onShowInDiff={onShowInDiff ? showSelectedFileInDiff : undefined}
           />
         </div>
         <EditorTabStrip
