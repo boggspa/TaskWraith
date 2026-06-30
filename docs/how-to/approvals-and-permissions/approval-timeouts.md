@@ -3,15 +3,20 @@
 **Platform:** Electron
 
 ## What it is
-<!-- TODO: 1-2 sentence function. Explorer note: Per-provider timeout settings for auto-denying approval requests when the user doesn't respond. -->
+Approval timeouts auto-decline a pending approval request if nobody responds in time, so an agent run can't hang forever waiting for input. Each provider gets its own timeout window, since some agents (Codex's sandbox commands) stall faster than others (Claude's longer think-time).
 
 ## Where to find it
-<!-- TODO: navigation path. Explorer note: Settings → General → per-provider timeout fields. -->
+Settings → **Behavior** tab → **Timeout windows** section.
 
 <!-- TODO(screenshot): Settings panel showing approval timeout fields per provider -->
 
 ## How to use it
-<!-- TODO: brief numbered steps -->
+1. Open Settings → Behavior and check **Auto-deny approvals after a timeout** to turn the feature on.
+2. Set a window (in seconds, 5–3600) for each tunable field: **Codex**, **Claude**, **Kimi**, and **Main authority** (the longer window used for workspace-trust and similar non-provider approvals).
+3. Leave the toggle off if you want approvals to block indefinitely instead — useful for hands-off testing.
+4. When a timeout is armed, the pending approval in the composer shows a live "Auto-denies in …" countdown; if it reaches zero before you respond, the request is automatically declined.
 
 ## Tips & related
-<!-- TODO: cross-links -->
+- [Pending Approval Modal](pending-approval-modal.md) — where the countdown and Accept/Decline choices actually appear.
+- [Approval Ledger](approval-ledger.md) — review past decisions, including ones that were auto-denied by timeout.
+- [Provider Agentic Policies](provider-agentic-policies.md) — controls which actions require approval in the first place.
