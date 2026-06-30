@@ -859,6 +859,7 @@ import { registerSidebarHandlers } from './ipc/sidebarHandlers'
 import { registerAppearanceHandlers } from './ipc/appearanceHandlers'
 import { registerDiscordContextHandlers } from './ipc/discordContextHandlers'
 import { registerFileIconHandlers } from './ipc/fileIconHandlers'
+import { registerCheckpointHandlers } from './ipc/checkpointHandlers'
 import { getCachedRemoteEnsemblePresets } from './remote/EnsembleRosterPresetsCache'
 import { resolveGeminiCliResumePolicy } from './GeminiSessionPolicy'
 // 1.0.5-EW26 — Kimi compatibility filter (curated + user-
@@ -28776,27 +28777,10 @@ if (isGeminiMcpBridgeProcess) {
       )
     })
 
-    // === 1.0.7 M7 — Ensemble session checkpoint recovery ===
-    ipcMain.handle('session-checkpoints:latest', async (_, chatId?: string) => {
-      const id = requireNonEmptyString(chatId, 'Chat id')
-      return sessionCheckpointStoreRef?.latestForChat(id) || null
-    })
-
-    ipcMain.handle('session-checkpoints:accept', async (_, checkpointId?: string) => {
-      const id = requireNonEmptyString(checkpointId, 'Checkpoint id')
-      const accepted = sessionCheckpointStoreRef?.accept(id) || null
-      if (!accepted) return { ok: false, error: 'No checkpoint matches.' }
-      return {
-        ok: true,
-        checkpoint: accepted.checkpoint,
-        resumePrompt: accepted.resumePrompt || formatSessionCheckpointResumePrompt(accepted.checkpoint)
-      }
-    })
-
-    ipcMain.handle('session-checkpoints:dismiss', async (_, checkpointId?: string) => {
-      const id = requireNonEmptyString(checkpointId, 'Checkpoint id')
-      const dismissed = sessionCheckpointStoreRef?.dismiss(id) || null
-      return dismissed ? { ok: true, checkpoint: dismissed } : { ok: false, error: 'No checkpoint matches.' }
+    registerCheckpointHandlers({
+      getSessionCheckpointStore: () => sessionCheckpointStoreRef,
+      requireNonEmptyString,
+      formatSessionCheckpointResumePrompt
     })
 
     // 1.0.5-N7 — User-initiated Wake-Now from the participant chip
