@@ -202,6 +202,17 @@ public struct RootView: View {
 struct IdentityErrorView: View {
     @ObservedObject var model: RemoteSessionModel
 
+    private var deviceName: String {
+        #if canImport(UIKit)
+            switch UIDevice.current.userInterfaceIdiom {
+            case .pad: return "iPad"
+            default: return "iPhone"
+            }
+        #else
+            return "device"
+        #endif
+    }
+
     var body: some View {
         ZStack {
             TWTheme.appBg.ignoresSafeArea()
@@ -218,10 +229,10 @@ struct IdentityErrorView: View {
                     .multilineTextAlignment(.center)
                 VStack(alignment: .leading, spacing: 8) {
                     Label(
-                        "Unlock your iPhone, then tap Try again.",
+                        "Unlock your \(deviceName), then tap Try again.",
                         systemImage: "lock.open")
                     Label(
-                        "If this keeps happening, restart your iPhone.",
+                        "If this keeps happening, restart your \(deviceName).",
                         systemImage: "arrow.counterclockwise")
                     Label(
                         "Last resort: reinstall TaskWraith — that creates a new identity, so you'll re-pair with your Mac.",

@@ -134,9 +134,16 @@ struct ApprovalRow: View {
                         .frame(width: 22, height: 22)
                         .contentShape(Rectangle())
                 }
+                .accessibilityLabel("More approval actions")
+                .accessibilityHint("Includes cancel run.")
             }
         }
         .padding(.vertical, 2)
+        .background {
+            if let expiresAt = card.expiresAt {
+                ApprovalExpiryAnnouncer(expiresAt: expiresAt)
+            }
+        }
         .sheet(isPresented: $showDetail) {
             ApprovalDetailSheet(model: model, card: card)
                 .presentationDetents([.medium, .large])
@@ -316,6 +323,8 @@ struct QuestionRow: View {
                     .padding(.vertical, 6)
                     .background(TWTheme.surface2, in: Capsule())
                     .disabled(!canAnswer)
+                    .accessibilityLabel("Your answer")
+                    .accessibilityValue(canAnswer ? freeText : "Viewing only")
                 Button {
                     model.answer(card, freeText)
                     freeText = ""
@@ -327,6 +336,9 @@ struct QuestionRow: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(freeText.isEmpty || !canAnswer)
+                .accessibilityLabel("Submit answer")
+                .accessibilityHint(
+                    freeText.isEmpty || !canAnswer ? "Enter an answer first." : "")
                 Button {
                     model.rejectQuestion(card)
                 } label: {
@@ -335,6 +347,7 @@ struct QuestionRow: View {
                         .foregroundStyle(TWTheme.textTertiary)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Dismiss question")
             }
             if !canAnswer {
                 Text("Viewing only on this device.")
@@ -343,5 +356,52 @@ struct QuestionRow: View {
             }
         }
         .padding(.vertical, 2)
+    }
+}
+
+/// Posts VoiceOver announcements when an approval countdown becomes urgent or expires.
+private struct ApprovalExpiryAnnouncer: View {
+    let expiresAt: String
+    @State private var announcedUrgent = false
+    @State private var announcedExpired = false
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            ApprovalExpiryTick(
+                expiresAt: expiresAt,
+                now: context.date,
+                announcedUrgent: $announcedUrgent,
+                announcedExpired: $announcedExpired
+            )
+        }
+        .accessibilityHidden(true)
+    }
+}
+
+private struct ApprovalExpiryTick: View {
+    let expiresAt: String
+    let now: Date
+    @Binding var announcedUrgent: Bool
+    @Binding var announcedExpired: Bool
+
+    var body: some View {
+        Color.clear
+            .frame(width: 0, height: 0)
+            .onAppear { evaluate() }
+            .onChange(of: now) { _, _ in evaluate() }
+    }
+
+    private func evaluate() {
+        guard let date = twParseISODate(expiresAt) else { return }
+        let seconds = Int(date.timeIntervalSince(now))
+        if seconds <= 0 {
+            guard !announcedExpired else { return }
+            announcedExpired = true
+            AccessibilityNotification.Announcement("Approval auto-denied").post()
+        } else if seconds <= 15, !announcedUrgent {
+            announcedUrgent = true
+            AccessibilityNotification.Announcement("Approval auto-denies in \(seconds) seconds")
+                .post()
+        }
     }
 }

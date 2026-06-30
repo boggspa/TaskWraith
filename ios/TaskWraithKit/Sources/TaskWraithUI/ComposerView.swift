@@ -416,6 +416,8 @@ struct Composer: View {
                 .background(controlChipFill, in: twControlShape(shell.geometry.controlShape))
                 .foregroundStyle(TWTheme.textSecondary)
             }
+            .accessibilityLabel("Approval mode")
+            .accessibilityValue(approvalMode == "plan" ? "Plan" : "Default")
         }
     }
 
@@ -473,6 +475,8 @@ struct Composer: View {
                                 .foregroundStyle(chipAccent)
                             }
                             .buttonStyle(.plain)
+                            .accessibilityLabel("Mention \(candidate.display)")
+                            .accessibilityHint("Inserts mention into message.")
                         }
                     }
                 }
@@ -497,6 +501,7 @@ struct Composer: View {
                                             .foregroundStyle(.white, .black.opacity(0.6))
                                     }
                                     .offset(x: 5, y: -5)
+                                    .accessibilityLabel("Remove attached image \(index + 1)")
                                 }
                             }
                         }
@@ -528,6 +533,7 @@ struct Composer: View {
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("Context usage")
+                    .accessibilityValue("\(Int(pct.rounded())) percent used")
                     .popover(isPresented: $showContextMeter) {
                         ContextMeterPopoverBody(
                             rows: contextMeterRows, ensemble: contextMeterIsEnsemble
@@ -568,6 +574,8 @@ struct Composer: View {
             .foregroundStyle(TWTheme.statusAttention)
         }
         .buttonStyle(.plain)
+        .accessibilityLabel("Queue message")
+        .accessibilityHint("Queues this message behind the active run.")
     }
 
     /// Context-window fill for the donut left of the send button — the phone
@@ -753,6 +761,13 @@ struct Composer: View {
                     .foregroundStyle(iconColor)
             }
             .disabled(attachmentLimitReached)
+            .accessibilityLabel("Add photo attachment")
+            .accessibilityHint(
+                attachmentLimitReached
+                    ? "Attachment limit reached. Maximum 2 images."
+                    : "Opens the photo picker to attach images to your message.")
+            .accessibilityValue(
+                attachmentLimitReached ? "Attachment limit reached, maximum 2 images" : "")
             .onChange(of: pickedItems) { _, items in
                 guard !items.isEmpty else { return }
                 Task {

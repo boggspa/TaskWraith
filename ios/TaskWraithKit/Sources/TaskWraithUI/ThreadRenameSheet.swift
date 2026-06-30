@@ -37,6 +37,8 @@ struct ThreadRenameSheet: View {
                         .lineLimit(1...3)
                         .submitLabel(.done)
                         .onSubmit(save)
+                        .accessibilityLabel("Chat name")
+                        .accessibilityValue(draft)
                         #if os(iOS)
                             .textInputAutocapitalization(.sentences)
                         #endif

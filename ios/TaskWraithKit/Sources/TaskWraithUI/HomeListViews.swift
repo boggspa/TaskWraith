@@ -11,6 +11,8 @@
 import SwiftUI
 import TaskWraithKit
 
+extension RemoteTaskCard: Identifiable {}
+
 #if canImport(UIKit)
     import PhotosUI
     import UIKit
@@ -34,7 +36,6 @@ struct HomeView: View {
     /// QR-optional discovery sheet (find other TaskWraith hosts on the tailnet
     /// via the connected host as the "oracle").
     @State private var showDiscoverySheet = false
-    @State private var renameSheetPresented = false
     @State private var renameTargetCard: RemoteTaskCard?
 
     private func openCanvas(_ mode: ComposeMode) {
@@ -55,14 +56,8 @@ struct HomeView: View {
         collapsedSections = ["activeRuns", "pinned", "recents", "ensembles", "workflows", "workspaces", "shared", "globalChats"]
     }
 
-    private var renameSheetCard: RemoteTaskCard? {
-        guard let target = renameTargetCard else { return nil }
-        return model.taskCards.first { $0.id == target.id } ?? target
-    }
-
     private func presentRenameSheet(for card: RemoteTaskCard) {
-        renameTargetCard = card
-        renameSheetPresented = true
+        renameTargetCard = model.taskCards.first { $0.id == card.id } ?? card
     }
 
     private func renameDisplayTitle(for card: RemoteTaskCard) -> String {
@@ -164,14 +159,12 @@ struct HomeView: View {
         #endif
         .scrollContentBackground(.hidden)
         .background(TWTheme.sidebarBg)
-        .sheet(isPresented: $renameSheetPresented, onDismiss: { renameTargetCard = nil }) {
-            if let card = renameSheetCard {
-                ThreadRenameSheet(
-                    currentTitle: renameDisplayTitle(for: card),
-                    subtitle: renameSubtitle(for: card)
-                ) { title in
-                    model.renameThread(card, title: title)
-                }
+        .sheet(item: $renameTargetCard) { card in
+            ThreadRenameSheet(
+                currentTitle: renameDisplayTitle(for: card),
+                subtitle: renameSubtitle(for: card)
+            ) { title in
+                model.renameThread(card, title: title)
             }
         }
         .onAppear { seedSidebarCollapseIfNeeded() }
@@ -719,6 +712,7 @@ struct HomeView: View {
                 }
             }
             .buttonStyle(.plain)
+            .accessibilityAddTraits(isSelected ? .isSelected : [])
             .contextMenu { renameContextMenu(for: card) }
             .listRowInsets(rowInsets)
             .listRowSeparator(.hidden)
@@ -797,6 +791,7 @@ struct HomeView: View {
         }
         .buttonStyle(.plain)
         .disabled(workflow.threadId == nil)
+        .accessibilityHint(workflow.threadId == nil ? "No chat started yet" : "")
         .listRowInsets(rowInsets)
         .listRowSeparator(.hidden)
         .listRowBackground(chrome)
@@ -933,6 +928,10 @@ struct TaskRow: View {
                         Image(systemName: "exclamationmark.bubble.fill")
                             .font(.caption)
                             .foregroundStyle(TWTheme.statusAttention)
+                            .accessibilityLabel(
+                                pendingAttentionCount == 1
+                                    ? "Needs your attention"
+                                    : "Needs your attention, \(pendingAttentionCount) items")
                     }
                     if card.isShared ?? false {
                         Image(systemName: "person.2.fill")

@@ -1,6 +1,10 @@
 import SwiftUI
 import TaskWraithKit
 
+#if canImport(UIKit)
+    import UIKit
+#endif
+
 struct FirstLaunchSheetView: View {
     @ObservedObject var model: RemoteSessionModel
     @ObservedObject private var themes = TWThemeStore.shared
@@ -67,14 +71,25 @@ struct FirstLaunchSheetView: View {
         .twColorScheme()
     }
 
+    private var welcomeDeviceName: String {
+        #if canImport(UIKit)
+            switch UIDevice.current.userInterfaceIdiom {
+            case .pad: return "iPad"
+            default: return "iPhone"
+            }
+        #else
+            return "iPhone"
+        #endif
+    }
+
     private var header: some View {
         HStack(alignment: .top, spacing: 14) {
             GhostMonolineMarkView(size: 42)
             VStack(alignment: .leading, spacing: 4) {
-                Text("Welcome to TaskWraith on iPhone")
+                Text("Welcome to TaskWraith on \(welcomeDeviceName)")
                     .font(.title2.weight(.semibold))
                     .foregroundStyle(TWTheme.textPrimary)
-                Text("Your Mac runs providers and owns setup. iPhone monitors, steers, approves, and starts allowed turns.")
+                Text("Your Mac runs providers and owns setup. This device monitors, steers, approves, and starts allowed turns.")
                     .font(.subheadline)
                     .foregroundStyle(TWTheme.textSecondary)
             }
@@ -184,6 +199,8 @@ struct FirstLaunchSheetView: View {
                                 }
                             }
                             .labelsHidden()
+                            .accessibilityLabel("Theme")
+                            .accessibilityValue(themes.systemTheme.label)
                         }
                         pickerBox("Accent") {
                             Picker("Accent", selection: Binding(
@@ -195,6 +212,8 @@ struct FirstLaunchSheetView: View {
                                 }
                             }
                             .labelsHidden()
+                            .accessibilityLabel("Accent")
+                            .accessibilityValue(themes.accentTheme.label)
                         }
                     }
                     GridRow {
@@ -206,6 +225,8 @@ struct FirstLaunchSheetView: View {
                                 }
                             }
                             .labelsHidden()
+                            .accessibilityLabel("Composer")
+                            .accessibilityValue(composerPickerValue)
                         }
                         pickerBox("Transcript") {
                             Picker("Transcript", selection: Binding(
@@ -217,6 +238,8 @@ struct FirstLaunchSheetView: View {
                                 }
                             }
                             .labelsHidden()
+                            .accessibilityLabel("Transcript")
+                            .accessibilityValue(themes.transcriptFontPreference.label)
                         }
                     }
                 }
@@ -238,6 +261,13 @@ struct FirstLaunchSheetView: View {
                     raw == "followMac" ? .followMac : .override(TWComposerStyle(raw: raw))
             }
         )
+    }
+
+    private var composerPickerValue: String {
+        switch themes.composerShellPreference {
+        case .followMac: return "Follow Mac"
+        case .override(let style): return style.label
+        }
     }
 
     private func pickerBox<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {

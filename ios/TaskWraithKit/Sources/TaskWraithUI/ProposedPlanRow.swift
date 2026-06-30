@@ -127,6 +127,10 @@ struct ProposedPlanRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .accessibilityLabel("Plan, \(title)")
+        .accessibilityValue(expanded ? "Expanded" : "Collapsed")
+        .accessibilityHint("Double tap to expand or collapse.")
+        .accessibilityAddTraits(.isHeader)
     }
 
     @ViewBuilder private var statusPill: some View {
@@ -180,6 +184,7 @@ struct ProposedPlanRow: View {
                     .padding(.vertical, 6)
                     .background(TWTheme.surface2, in: Capsule())
                     .disabled(decided)
+                    .accessibilityLabel("Plan feedback")
                 Button {
                     model.proposedPlanRespond(threadId: threadId, messageId: rowId, feedback: feedback)
                     feedback = ""
@@ -192,6 +197,7 @@ struct ProposedPlanRow: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(decided || feedback.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .accessibilityLabel("Send feedback on plan")
             }
         }
     }

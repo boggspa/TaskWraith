@@ -681,6 +681,7 @@ private struct FileNavigatorPane: View {
             Section {
                 TextField("Search files", text: $state.filter)
                     .disableAutocorrection(true)
+                    .accessibilityLabel("Search files")
                     .onChange(of: state.filter) { _, _ in
                         state.scheduleSearch(model: model)
                     }
@@ -708,6 +709,11 @@ private struct FileNavigatorPane: View {
                 } else if state.visibleEntries.isEmpty {
                     Text(state.navigatorIsLoading ? "Loading files..." : state.status)
                         .foregroundStyle(TWTheme.textMuted)
+                        .accessibilityLabel("File navigator status")
+                        .accessibilityValue(
+                            state.navigatorIsLoading ? "Loading files" : state.status)
+                        .accessibilityAddTraits(
+                            state.navigatorIsLoading ? .updatesFrequently : [])
                 } else {
                     ForEach(state.visibleEntries) { row in
                         let entry = row.entry
@@ -777,6 +783,10 @@ private struct FileEntryRow: View {
             }
         }
         .padding(.leading, CGFloat(depth) * 12)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(entry.name)
+        .accessibilityValue(entry.path)
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
     private func iconName(for path: String) -> String {
@@ -833,6 +843,15 @@ private struct FileEditorPane: View {
                         .lineLimit(1)
                 }
             }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("File editor status")
+            .accessibilityValue(state.isDirty ? "Unsaved changes" : state.status)
+            .accessibilityAddTraits(state.isLoading ? .updatesFrequently : [])
+            .onChange(of: state.status) { _, newStatus in
+                if twShouldAnnounceEditorStatus(newStatus) {
+                    AccessibilityNotification.Announcement(newStatus).post()
+                }
+            }
             .padding(.horizontal, 12)
             .padding(.vertical, 7)
             .background(TWTheme.surface1)
@@ -848,16 +867,11 @@ private struct FileEditorPane: View {
         } message: {
             Text("\(state.selectedPath ?? "This file") will be removed from this workspace.")
         }
-        .alert("Commit staged changes", isPresented: $state.showCommitDialog) {
-            TextField("Commit message", text: $state.commitMessage)
-            Button("Commit") {
-                Task { await state.commitStaged(model: model) }
-            }
-            Button("Cancel", role: .cancel) {
-                state.commitMessage = ""
-            }
-        } message: {
-            Text("\(stagedCount) staged file\(stagedCount == 1 ? "" : "s") will be committed.")
+        .sheet(isPresented: $state.showCommitDialog) {
+            FileCommitSheet(
+                state: state,
+                model: model,
+                stagedCount: stagedCount)
         }
     }
 
@@ -1007,6 +1021,62 @@ private struct FileEditorPane: View {
             normalized.removeLast()
         }
         return normalized
+    }
+}
+
+private struct FileCommitSheet: View {
+    @ObservedObject var state: MobileFileEditorState
+    @ObservedObject var model: RemoteSessionModel
+    let stagedCount: Int
+
+    @Environment(\.dismiss) private var dismiss
+    @FocusState private var focused: Bool
+
+    private var trimmedMessage: String {
+        state.commitMessage.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var canCommit: Bool {
+        !trimmedMessage.isEmpty && stagedCount > 0 && !state.isLoading
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    TextField("Commit message", text: $state.commitMessage, axis: .vertical)
+                        .focused($focused)
+                        .lineLimit(2...4)
+                        .accessibilityLabel("Commit message")
+                } footer: {
+                    Text(
+                        "\(stagedCount) staged file\(stagedCount == 1 ? "" : "s") will be committed.")
+                }
+            }
+            .navigationTitle("Commit staged changes")
+            #if os(iOS)
+                .navigationBarTitleDisplayMode(.inline)
+            #endif
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        state.commitMessage = ""
+                        dismiss()
+                    }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Commit") {
+                        Task {
+                            await state.commitStaged(model: model)
+                            dismiss()
+                        }
+                    }
+                    .disabled(!canCommit)
+                }
+            }
+            .onAppear { focused = true }
+        }
+        .twColorScheme()
     }
 }
 
@@ -1246,4 +1316,26 @@ private extension View {
             self
         #endif
     }
+}
+
+private func twShouldAnnounceEditorStatus(_ status: String) -> Bool {
+    let trimmed = status.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return false }
+    let lower = trimmed.lowercased()
+    let inProgressPrefixes = [
+        "loading", "opening", "saving", "deleting", "staging", "unstaging",
+        "committing", "searching", "reload before",
+    ]
+    if inProgressPrefixes.contains(where: { lower.hasPrefix($0) }) { return false }
+    if lower.range(
+        of: #"^\d+ (item|items|match|matches)$"#,
+        options: .regularExpression
+    ) != nil {
+        return false
+    }
+    let successMarkers = ["saved ", "staged ", "unstaged ", "deleted ", "committed "]
+    if successMarkers.contains(where: { lower.contains($0) }) { return false }
+    if lower.contains(" · ") { return false }
+    if lower == "select a text file" { return false }
+    return true
 }

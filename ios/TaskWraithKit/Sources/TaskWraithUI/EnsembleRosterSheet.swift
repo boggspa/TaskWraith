@@ -196,6 +196,9 @@ public struct EnsembleRosterSheet: View {
                         participantRow(entry)
                     }
                     .buttonStyle(.plain)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(participantAccessibilityLabel(entry))
+                    .accessibilityValue(participantAccessibilityValue(entry))
                 }
                 .onMove { indices, newOffset in
                     draft.move(fromOffsets: indices, toOffset: newOffset)
@@ -264,6 +267,38 @@ public struct EnsembleRosterSheet: View {
         }
         .padding(.vertical, 2)
         .contentShape(Rectangle())
+    }
+
+    private func participantAccessibilityLabel(
+        _ entry: RemoteSessionModel.RosterDraftEntry
+    ) -> String {
+        let title = entry.role.isEmpty ? TWTheme.providerLabel(entry.provider) : entry.role
+        var parts = [title, TWTheme.providerLabel(entry.provider)]
+        if entry.isBossman { parts.append("boss") }
+        return parts.joined(separator: ", ")
+    }
+
+    private func participantAccessibilityValue(
+        _ entry: RemoteSessionModel.RosterDraftEntry
+    ) -> String {
+        var parts: [String] = []
+        if !entry.enabled || TWTheme.isRetiredProvider(entry.provider) {
+            parts.append("disabled")
+        } else {
+            parts.append("enabled")
+        }
+        let status = roundStatus(for: entry.id)
+        if status == "done" {
+            parts.append("round complete")
+        } else if status == "running" || state?.activeParticipantId == entry.id {
+            parts.append("speaking now")
+        } else if let status, !status.isEmpty {
+            parts.append(status)
+        } else {
+            parts.append("waiting")
+        }
+        parts.append(entry.model ?? "CLI Default")
+        return parts.joined(separator: ", ")
     }
 
     private var addSection: some View {

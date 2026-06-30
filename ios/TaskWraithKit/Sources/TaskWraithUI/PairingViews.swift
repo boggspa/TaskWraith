@@ -126,6 +126,8 @@ struct PairingView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .accessibilityValue(isActive ? "Active, connected" : "Tap to connect")
+            .accessibilityAddTraits(isActive ? .isSelected : [])
             Button(role: .destructive) {
                 model.forgetHost(macIdentityPubKey: host.macIdentityPubKey)
             } label: {
@@ -179,6 +181,8 @@ struct PairingView: View {
                     .lineLimit(3...6)
                     .font(.system(.footnote, design: .monospaced))
                     .foregroundStyle(TWTheme.textPrimary)
+                    .accessibilityLabel("Pairing code")
+                    .accessibilityHint("Paste the JSON pairing code from Mac Settings, Devices.")
                     // The model also sanitizes smart quotes, but stop iOS
                     // mangling the JSON in the first place.
                     .autocorrectionDisabled(true)
@@ -302,6 +306,7 @@ struct PairingView: View {
                     .strokeBorder(TWTheme.chroma1.opacity(0.28)))
         }
         .buttonStyle(.plain)
+        .accessibilityHint("Disconnects your host and shows sample data only.")
     }
 
     // ── This device (identity) ────────────────────────────────────────────────

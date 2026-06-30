@@ -343,6 +343,10 @@ private struct DiffFileNavigatorPane: View {
                 if state.files.isEmpty {
                     Text(state.isLoading ? "Computing diff..." : state.status)
                         .foregroundStyle(TWTheme.textMuted)
+                        .accessibilityLabel("Diff studio status")
+                        .accessibilityValue(
+                            state.isLoading ? "Computing diff" : state.status)
+                        .accessibilityAddTraits(state.isLoading ? .updatesFrequently : [])
                 } else if state.filteredFiles.isEmpty {
                     Text("No changed files match \"\(state.fileFilter.trimmingCharacters(in: .whitespacesAndNewlines))\".")
                         .foregroundStyle(TWTheme.textMuted)
@@ -397,6 +401,29 @@ private struct DiffFileRow: View {
             }
         }
         .padding(.vertical, 2)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilitySummary)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+
+    private var accessibilitySummary: String {
+        var parts: [String] = []
+        switch file.kind {
+        case "created": parts.append("created")
+        case "deleted": parts.append("deleted")
+        default: parts.append("modified")
+        }
+        if let stage = DiffStageChip.label(for: file) {
+            parts.append(stage.lowercased())
+        }
+        if let additions = file.additions, additions > 0 {
+            parts.append("+\(additions)")
+        }
+        if let deletions = file.deletions, deletions > 0 {
+            parts.append("−\(deletions)")
+        }
+        parts.append(file.path)
+        return parts.joined(separator: ", ")
     }
 }
 
@@ -519,6 +546,15 @@ private struct DiffViewerPane: View {
                         .font(.caption2.monospaced())
                         .foregroundStyle(TWTheme.textMuted)
                         .lineLimit(1)
+                }
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Diff viewer status")
+            .accessibilityValue(state.status)
+            .accessibilityAddTraits(state.isLoading ? .updatesFrequently : [])
+            .onChange(of: state.status) { _, newStatus in
+                if twShouldAnnounceDiffStudioStatus(newStatus) {
+                    AccessibilityNotification.Announcement(newStatus).post()
                 }
             }
             .padding(.horizontal, 12)
@@ -754,4 +790,16 @@ private extension View {
             self
         #endif
     }
+}
+
+private func twShouldAnnounceDiffStudioStatus(_ status: String) -> Bool {
+    let trimmed = status.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return false }
+    let lower = trimmed.lowercased()
+    let inProgressPrefixes = ["computing", "staging", "unstaging"]
+    if inProgressPrefixes.contains(where: { lower.hasPrefix($0) }) { return false }
+    if lower.hasPrefix("staged ") || lower.hasPrefix("unstaged ") { return false }
+    if lower.contains("changed file") || lower.contains("no workspace") { return false }
+    if lower.contains("no changes") { return false }
+    return true
 }

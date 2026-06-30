@@ -96,6 +96,7 @@ public struct GitWorkflowPanel: View {
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(TWTheme.textSecondary)
+                .accessibilityLabel("Refresh git status")
                 .disabled(busy != nil)
             }
         }
@@ -214,6 +215,7 @@ public struct GitWorkflowPanel: View {
                 .font(.footnote)
                 .textFieldStyle(.roundedBorder)
                 .autocorrectionDisabled(false)
+                .accessibilityLabel("Commit message")
             Button {
                 runAction(.commit) {
                     let updated = try await model.commitChanges(

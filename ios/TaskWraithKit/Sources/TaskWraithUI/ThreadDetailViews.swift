@@ -136,7 +136,7 @@ struct ThreadDetailView: View {
     /// ensemble) so the host hides the secondary rows + telemetry rail when the
     /// composer is idle — i.e. the compact one-line composer.
     @State private var composerFocused = false
-    @State private var renameSheetPresented = false
+    @State private var renameSheetContext: ThreadRenameSheetContext?
     @StateObject private var composerDiffSheetState = MobileDiffStudioState()
     @State private var composerDiffSheetPresented = false
     /// Follow the transcript tail as content streams in. Driven by the bottom
@@ -1109,6 +1109,7 @@ struct ThreadDetailView: View {
                         floatingTranscriptPill(systemName: "arrow.down")
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel("Jump to latest messages")
                     .transition(.scale.combined(with: .opacity))
                 }
                 #if canImport(UIKit)
@@ -1119,6 +1120,7 @@ struct ThreadDetailView: View {
                             floatingTranscriptPill(systemName: "keyboard.chevron.compact.down")
                         }
                         .buttonStyle(.plain)
+                        .accessibilityLabel("Dismiss keyboard")
                         .transition(.scale.combined(with: .opacity))
                     }
                 #endif
@@ -1745,13 +1747,18 @@ struct ThreadDetailView: View {
             #if os(iOS)
                 ToolbarItem(placement: .principal) {
                     Button {
-                        renameSheetPresented = true
+                        renameSheetContext = ThreadRenameSheetContext(
+                            id: taskId,
+                            title: threadHeaderTitle,
+                            subtitle: threadHeaderSubtitle)
                     } label: {
                         ThreadNavigationTitle(
                             title: threadHeaderTitle, subtitle: threadHeaderSubtitle)
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel("Rename chat")
+                    .accessibilityLabel(threadHeaderTitle)
+                    .accessibilityValue(threadHeaderSubtitle ?? "")
+                    .accessibilityHint("Opens rename sheet.")
                 }
             #endif
             // Individual circular pills (matching the workspaces sidebar), NOT a
@@ -1794,6 +1801,8 @@ struct ThreadDetailView: View {
                         ToolbarIconPillLabel("Roster", systemImage: "person.3.fill")
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel("Open Roster")
+                    .accessibilityHint("Opens the ensemble participant roster.")
                 }
             }
             ToolbarItem(placement: .primaryAction) {
@@ -1807,6 +1816,8 @@ struct ThreadDetailView: View {
                     )
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Open Inspector")
+                .accessibilityHint("Opens the thread inspector sidebar.")
             }
         }
         .sheet(isPresented: $model.rosterPresented) {
@@ -1814,12 +1825,12 @@ struct ThreadDetailView: View {
                 EnsembleRosterSheet(model: model, threadId: taskId, workspaceId: wsId)
             }
         }
-        .sheet(isPresented: $renameSheetPresented) {
-            if let card {
-                ThreadRenameSheet(
-                    currentTitle: threadHeaderTitle,
-                    subtitle: threadHeaderSubtitle
-                ) { title in
+        .sheet(item: $renameSheetContext) { context in
+            ThreadRenameSheet(
+                currentTitle: context.title,
+                subtitle: context.subtitle
+            ) { title in
+                if let card {
                     model.renameThread(card, title: title)
                 }
             }
@@ -3586,7 +3597,15 @@ struct ShimmerThinkingText: View {
                     }
             }
         }
+        .accessibilityLabel("Thinking")
+        .accessibilityAddTraits(.updatesFrequently)
     }
+}
+
+private struct ThreadRenameSheetContext: Identifiable {
+    let id: String
+    let title: String
+    let subtitle: String?
 }
 
 /// Three-dot pulse used by the thinking + streaming indicators.

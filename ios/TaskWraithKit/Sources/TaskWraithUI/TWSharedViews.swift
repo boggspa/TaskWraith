@@ -200,6 +200,20 @@ struct GlassPillHeader: View {
         }
         .buttonStyle(.plain)
         .disabled(onToggle == nil)
+        .accessibilityLabel(glassPillAccessibilityLabel)
+        .accessibilityHint(onToggle != nil ? "Double tap to expand or collapse." : "")
+        .accessibilityAddTraits(.isHeader)
+    }
+
+    private var glassPillAccessibilityLabel: String {
+        var parts = [title]
+        if let count, count > 0 {
+            parts.append("\(count) items")
+        }
+        if onToggle != nil {
+            parts.append(collapsed ? "collapsed" : "expanded")
+        }
+        return parts.joined(separator: ", ")
     }
 }
 
@@ -671,6 +685,8 @@ struct ProviderModelPicker: View {
             pickerLabel
         }
         .buttonStyle(.plain)
+        .accessibilityLabel("Provider and model")
+        .accessibilityValue(providerModelAccessibilityValue)
         .onChange(of: provider) { _, newProvider in
             // Switching provider invalidates a model from the OLD catalog —
             // reset to nil (= inherit on existing chats / provider default
@@ -695,6 +711,16 @@ struct ProviderModelPicker: View {
             twNormalizeReasoningSelection(
                 catalog: currentCatalog, modelId: modelId, reasoningEffort: &reasoningEffort)
         }
+    }
+
+    private var providerModelAccessibilityValue: String {
+        let modelLabel = modelId.map(shortModelLabel) ?? "Default"
+        let providerName = TWTheme.providerLabel(provider, modelId: modelId, modelLabel: modelLabel)
+        var value = "\(providerName), \(modelLabel)"
+        if let reasoningLabel {
+            value += ", \(reasoningLabel) reasoning"
+        }
+        return value
     }
 
     private var pickerLabel: some View {
@@ -3120,13 +3146,13 @@ public struct ThreadInspector: View {
             Picker("Inspector", selection: $tab) {
                 Text("Changes").tag(0)
                 Text("Agents").tag(1)
-                Text("Side chats").tag(3)
-                Text("Notes").tag(2)
+                Text("Side chats").tag(2)
+                Text("Notes").tag(3)
                 Text("Usage").tag(4)
             }
             .pickerStyle(.segmented)
             .padding(12)
-            if tab == 3 {
+            if tab == 2 {
                 SideChatsPanel(
                     model: model, threadId: threadId,
                     onOpenThread: onOpenThread)
@@ -3183,7 +3209,7 @@ public struct ThreadInspector: View {
                     && $0.parentChatRelation == "sideChat"
             })
         else { return }
-        tab = 3
+        tab = 2
     }
 }
 
@@ -4011,7 +4037,7 @@ private struct GoalRailControl: View {
                 HStack(spacing: 8) {
                     if goal.status != "blocked" && goal.status != "completed" {
                         Button("Block") {
-                            onUpdate("block", nil, reason.isEmpty ? "Blocked from iPhone." : reason)
+                            onUpdate("block", nil, reason.isEmpty ? "Blocked from mobile." : reason)
                         }
                         .buttonStyle(.bordered)
                     }
@@ -4358,6 +4384,43 @@ public struct EditableRosterStrip: View {
             .opacity(draggingId == entry.id ? 0.4 : 1)
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(chipAccessibilityLabel(entry, status: status))
+        .accessibilityHint("Opens roster editor. Use actions to reorder.")
+        .accessibilityAction(named: Text("Move earlier")) { moveChip(entry, direction: -1) }
+        .accessibilityAction(named: Text("Move later")) { moveChip(entry, direction: 1) }
+    }
+
+    private func chipAccessibilityLabel(
+        _ entry: RemoteSessionModel.RosterDraftEntry, status: String?
+    ) -> String {
+        let title =
+            entry.role.isEmpty ? TWTheme.providerLabel(entry.provider) : entry.role
+        var parts = [title]
+        if entry.isBossman { parts.append("boss") }
+        if !entry.enabled || TWTheme.isRetiredProvider(entry.provider) {
+            parts.append("disabled")
+        }
+        if let status, !status.isEmpty {
+            switch status {
+            case "running": parts.append("speaking")
+            case "done": parts.append("done")
+            case "skipped": parts.append("skipped")
+            default: parts.append(status)
+            }
+        } else if state?.activeParticipantId == entry.id {
+            parts.append("speaking")
+        }
+        return parts.joined(separator: ", ")
+    }
+
+    private func moveChip(
+        _ entry: RemoteSessionModel.RosterDraftEntry, direction: Int
+    ) {
+        guard let index = draft.firstIndex(where: { $0.id == entry.id }) else { return }
+        let target = index + direction
+        guard target >= 0, target < draft.count else { return }
+        draft.swapAt(index, target)
+        commit()
     }
 
     private var addMenu: some View {
@@ -6281,6 +6344,8 @@ struct NotesPanel: View {
                 .overlay(
                     RoundedRectangle(cornerRadius: 10).strokeBorder(TWTheme.border)
                 )
+                .accessibilityLabel("Thread notes")
+                .accessibilityHint("Edits save with Save notes button.")
             if notesFocused || notesDraft != (snapshot?.notes ?? "") {
                 Button {
                     card.map { model.setThreadNotes($0, notes: notesDraft) }
@@ -6335,6 +6400,7 @@ struct NotesPanel: View {
                                 .foregroundStyle(TWTheme.textMuted)
                         }
                         .buttonStyle(.plain)
+                        .accessibilityLabel(unpinAccessibilityLabel(for: row))
                     }
                     .padding(8)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -6351,6 +6417,22 @@ struct NotesPanel: View {
         .onChange(of: snapshot?.notes ?? "") { _, fresh in
             if !notesFocused { notesDraft = fresh }
         }
+    }
+
+    private func unpinAccessibilityLabel(
+        for row: RemoteThreadSnapshot.Row
+    ) -> String {
+        var parts = ["Unpin message"]
+        if let speaker = row.speaker, !speaker.isEmpty {
+            parts.append("from \(speaker)")
+        }
+        if let preview = row.preview?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !preview.isEmpty
+        {
+            let snippet = preview.count > 48 ? String(preview.prefix(48)) + "…" : preview
+            parts.append("\"\(snippet)\"")
+        }
+        return parts.joined(separator: ", ")
     }
 }
 
@@ -6508,6 +6590,12 @@ public func twBannerSeverity(for message: String) -> TWBannerSeverity {
     return .info
 }
 
+/// Posts a VoiceOver announcement for transient status banners and feedback.
+public func twAnnounceForAccessibility(_ message: String) {
+    guard !message.isEmpty else { return }
+    AccessibilityNotification.Announcement(message).post()
+}
+
 /// Friendlier phrasing for the handful of raw messages users actually hit.
 public func twFriendlyMessage(_ raw: String) -> String {
     let lower = raw.lowercased()
@@ -6557,6 +6645,10 @@ public struct StatusBanner: View {
         .shadow(color: severity.fill.opacity(0.32), radius: 10, y: 3)
         .padding(.horizontal, 10)
         .transition(.move(edge: .top).combined(with: .opacity))
+        .onAppear { twAnnounceForAccessibility(twFriendlyMessage(message)) }
+        .onChange(of: message) { _, newMessage in
+            twAnnounceForAccessibility(twFriendlyMessage(newMessage))
+        }
         .task(id: message) {
             // Non-error feedback fades on its own; errors stay until read.
             let sev = severity
@@ -6636,7 +6728,7 @@ private struct TWBannerGlassBackground: ViewModifier {
 /// Slim connection-state strip shown over the shell while a trusted
 /// reconnect is in flight — the user stays exactly where they were.
 public struct ConnectionBanner: View {
-    public enum State {
+    public enum State: Equatable {
         case reconnecting(detail: String?)
         case offline(detail: String?)
     }
@@ -6678,6 +6770,42 @@ public struct ConnectionBanner: View {
         .padding(.horizontal, 12)
         .shadow(color: bannerSeverity.fill.opacity(0.34), radius: 10, y: 3)
         .transition(.move(edge: .top).combined(with: .opacity))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(connectionAccessibilityLabel)
+        .accessibilityValue(connectionAccessibilityValue)
+        .accessibilityAddTraits(connectionUpdatesFrequently ? .updatesFrequently : [])
+        .onAppear { announceConnectionPhase() }
+        .onChange(of: state) { _, _ in announceConnectionPhase() }
+    }
+
+    private var connectionAccessibilityLabel: String {
+        switch state {
+        case .reconnecting: return "Reconnecting"
+        case .offline: return "Connection lost"
+        }
+    }
+
+    private var connectionAccessibilityValue: String {
+        switch state {
+        case .reconnecting(let detail):
+            return detail ?? "Reconnecting to host"
+        case .offline(let detail):
+            return detail ?? "Connection lost"
+        }
+    }
+
+    private var connectionUpdatesFrequently: Bool {
+        if case .reconnecting = state { return true }
+        return false
+    }
+
+    private func announceConnectionPhase() {
+        switch state {
+        case .reconnecting(let detail):
+            AccessibilityNotification.Announcement(detail ?? "Reconnecting").post()
+        case .offline(let detail):
+            AccessibilityNotification.Announcement(detail ?? "Connection lost").post()
+        }
     }
 
     private var bannerSeverity: TWBannerSeverity {
@@ -7543,6 +7671,7 @@ public struct GuestParticipantControl: View {
                         .background(TWTheme.surface3, in: Circle())
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Add guest participant")
             }
         }
     }
