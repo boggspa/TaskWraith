@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { describe, expect, it } from 'vitest'
 import {
   executeCreateDirectory,
+  executeCancelActiveRun,
   executeDeletePath,
   executeFindFiles,
   executeGetDiagnostics,
@@ -12,6 +13,7 @@ import {
   executeGitLog,
   executeGitPush,
   executeGitShow,
+  executeListActiveRuns,
   executeMovePath,
   executeRenamePath,
   resolveMcpScopedPath,
@@ -19,7 +21,9 @@ import {
   type WorkspaceToolExecutorDependencies
 } from './WorkspaceToolExecutors'
 
-function makeDeps(runHostCommand: WorkspaceToolExecutorDependencies['host']['runHostCommand']) {
+function makeDeps(
+  runHostCommand: WorkspaceToolExecutorDependencies['host']['runHostCommand']
+): WorkspaceToolExecutorDependencies {
   return {
     host: {
       runHostCommand,
@@ -319,6 +323,136 @@ describe('executeGetDiagnostics', () => {
         workspace
       )
     ).rejects.toThrow('Path is outside the workspace.')
+  })
+})
+
+describe('active run workspace tools', () => {
+  it('lists active provider sessions, queue jobs, chat labels, and bounded events', () => {
+    const deps = makeDeps(async () => commandResult(''))
+    deps.runs.getActiveByProvider = (provider) =>
+      provider === 'codex'
+        ? [{ provider, runId: 'run-active', appChatId: 'chat-1', status: 'running' } as any]
+        : []
+    deps.store.getRunQueueJobs = () => [
+      {
+        id: 'job-1',
+        runId: 'run-queued',
+        provider: 'codex',
+        source: 'manual',
+        status: 'queued',
+        priority: 0,
+        attempt: 1,
+        chatId: 'chat-1',
+        promptPreview: 'ship it',
+        createdAt: '2026-06-29T10:00:00.000Z',
+        updatedAt: '2026-06-29T10:01:00.000Z'
+      } as any,
+      {
+        id: 'job-2',
+        runId: 'run-done',
+        provider: 'codex',
+        source: 'manual',
+        status: 'completed',
+        priority: 0,
+        attempt: 1,
+        chatId: 'chat-1',
+        createdAt: '2026-06-29T09:00:00.000Z',
+        updatedAt: '2026-06-29T09:01:00.000Z'
+      } as any
+    ]
+    deps.store.getChat = () =>
+      ({
+        appChatId: 'chat-1',
+        title: 'Focused chat',
+        provider: 'codex',
+        scope: 'workspace',
+        chatKind: 'single',
+        workspaceId: 'workspace-1',
+        messages: [],
+        runs: [{ runId: 'run-active', provider: 'codex', status: 'running' }]
+      }) as any
+    deps.runs.getRunEvents = (filter) => {
+      const runId = filter?.runId || 'unknown'
+      return [
+        {
+          id: `${runId}-old`,
+          sequence: 1,
+          runId,
+          kind: 'status',
+          phase: 'started',
+          source: 'main',
+          timestamp: '2026-06-29T10:00:00.000Z',
+          summary: 'old'
+        } as any,
+        {
+          id: `${runId}-new`,
+          sequence: 2,
+          runId,
+          kind: 'status',
+          phase: 'completed',
+          source: 'main',
+          timestamp: '2026-06-29T10:01:00.000Z',
+          summary: 'new'
+        } as any
+      ]
+    }
+
+    const result = executeListActiveRuns(
+      deps,
+      { provider: 'codex', includeEvents: true, eventLimit: 1 },
+      { scope: 'workspace', cwd: '/tmp/ws', workspacePath: '/tmp/ws' }
+    ) as any
+
+    expect(result.counts).toEqual({ activeSessions: 1, activeQueueJobs: 1, chats: 1 })
+    expect(result.activeSessions).toEqual([
+      { provider: 'codex', runId: 'run-active', appChatId: 'chat-1', status: 'running' }
+    ])
+    expect(result.queueJobs[0]).toMatchObject({
+      runId: 'run-queued',
+      status: 'queued',
+      promptPreview: 'ship it'
+    })
+    expect(result.chats[0]).toMatchObject({ chatId: 'chat-1', title: 'Focused chat' })
+    expect(result.events.map((event: any) => event.summary)).toEqual(['new', 'new'])
+  })
+
+  it('requires an exact run id before cancelling ambiguous active runs', async () => {
+    const deps = makeDeps(async () => commandResult(''))
+    const cancelled: Array<{ provider: string; runId?: string }> = []
+    deps.runs.getActiveByProvider = (provider) =>
+      provider === 'codex'
+        ? [
+            { provider, runId: 'run-a', appChatId: 'chat-a', status: 'running' } as any,
+            { provider, runId: 'run-b', appChatId: 'chat-b', status: 'running' } as any
+          ]
+        : []
+    deps.runs.cancelProviderRun = async (provider, runId) => {
+      cancelled.push({ provider, runId })
+      return true
+    }
+
+    await expect(
+      executeCancelActiveRun(
+        deps,
+        { provider: 'codex', intent: 'Stop stale run' },
+        { scope: 'workspace', cwd: '/tmp/ws', workspacePath: '/tmp/ws' }
+      )
+    ).resolves.toMatchObject({ ok: false, message: expect.stringContaining('Multiple') })
+    expect(cancelled).toEqual([])
+
+    await expect(
+      executeCancelActiveRun(
+        deps,
+        { provider: 'codex', runId: 'run-b', intent: 'Stop stale run' },
+        { scope: 'workspace', cwd: '/tmp/ws', workspacePath: '/tmp/ws' }
+      )
+    ).resolves.toMatchObject({
+      ok: true,
+      provider: 'codex',
+      runId: 'run-b',
+      message: 'Cancellation requested.'
+    })
+    expect(cancelled).toEqual([{ provider: 'codex', runId: 'run-b' }])
   })
 })
 

@@ -72,6 +72,8 @@ describe('taskWraithToolServiceIfKnown', () => {
     expect(taskWraithToolServiceIfKnown('taskwraith__git_push')).toBe('fileChanges')
     expect(taskWraithToolServiceIfKnown('taskwraith__git_create_pr')).toBe('fileChanges')
     expect(taskWraithToolServiceIfKnown('delegate_to_subthread')).toBe('subThreadDelegation')
+    expect(taskWraithToolServiceIfKnown('list_active_runs')).toBe('mcpTools')
+    expect(taskWraithToolServiceIfKnown('cancel_active_run')).toBe('mcpTools')
     expect(taskWraithToolServiceIfKnown('ensemble_yield')).toBe('mcpTools')
   })
 

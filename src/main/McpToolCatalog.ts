@@ -605,6 +605,73 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
       }
     },
     {
+      name: 'list_active_runs',
+      description:
+        'List TaskWraith-owned active provider runs and queued run jobs, with optional recent run events.',
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          provider: {
+            type: 'string',
+            enum: selectableProviderIds(),
+            description: 'Optional provider filter. Omit to include all providers.'
+          },
+          chatId: {
+            type: 'string',
+            description: 'Optional chat id filter.'
+          },
+          includeEvents: {
+            type: 'boolean',
+            description: 'Include bounded recent durable events for matching run ids.'
+          },
+          eventLimit: {
+            type: 'number',
+            description: 'Maximum recent events per matching run when includeEvents is true.'
+          }
+        }
+      }
+    },
+    {
+      name: 'cancel_active_run',
+      description:
+        'Request cancellation of one TaskWraith-owned active provider run. Requires provider plus a run id when more than one run matches.',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          provider: {
+            type: 'string',
+            enum: selectableProviderIds(),
+            description: 'Provider that owns the run.'
+          },
+          runId: {
+            type: 'string',
+            description: 'TaskWraith app run id. Required when multiple runs match.'
+          },
+          chatId: {
+            type: 'string',
+            description: 'Optional chat id to narrow the cancel target.'
+          },
+          intent: {
+            type: 'string',
+            description: 'Short reason for cancelling the run.'
+          }
+        },
+        required: ['provider', 'intent']
+      }
+    },
+    {
       name: 'test_result_summary',
       description: 'Summarize test failures from supplied output or a durable run id.',
       annotations: {

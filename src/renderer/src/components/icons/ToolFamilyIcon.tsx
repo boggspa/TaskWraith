@@ -103,6 +103,8 @@ export function toolNameToFamily(name: string | undefined | null): ToolFamily | 
     case 'list_running_ides':
       return 'handoff'
     case 'run_task':
+    case 'list_active_runs':
+    case 'cancel_active_run':
     case 'test_result_summary':
     case 'schedule_wakeup':
     case 'cancel_wakeup':

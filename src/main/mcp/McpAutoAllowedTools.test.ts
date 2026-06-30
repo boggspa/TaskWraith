@@ -17,7 +17,8 @@ describe('MCP_AUTO_ALLOWED_TOOLS', () => {
       'workspace_search',
       'workspace_symbols',
       'workspace_board_snapshot',
-      'workspace_board_preview_plan'
+      'workspace_board_preview_plan',
+      'list_active_runs'
     ] as const) {
       expect(autoAllowedTools.has(tool)).toBe(true)
     }
@@ -41,6 +42,7 @@ describe('MCP_AUTO_ALLOWED_TOOLS', () => {
       'git_create_pr',
       'run_task',
       'get_diagnostics',
+      'cancel_active_run',
       'ensemble_bossman_control',
       'web_search',
       'web_fetch',
@@ -66,7 +68,8 @@ describe('READ_ONLY_MCP_ADVERTISE_TOOLS', () => {
       'read_file',
       'find_files',
       'workspace_board_snapshot',
-      'workspace_board_preview_plan'
+      'workspace_board_preview_plan',
+      'list_active_runs'
     ] as const) {
       expect(READ_ONLY_MCP_ADVERTISE_TOOLS).toContain(tool)
     }
@@ -88,6 +91,7 @@ describe('READ_ONLY_MCP_ADVERTISE_TOOLS', () => {
       'git_create_pr',
       'run_task',
       'get_diagnostics',
+      'cancel_active_run',
       'web_search',
       'web_fetch',
       'workspace_board_apply_plan',
@@ -120,7 +124,8 @@ describe('isReadOnlyAdvertisedTool (bridge scope guard)', () => {
       'list_directory',
       'find_files',
       'workspace_board_snapshot',
-      'workspace_board_preview_plan'
+      'workspace_board_preview_plan',
+      'list_active_runs'
     ]) {
       expect(isReadOnlyAdvertisedTool(tool)).toBe(true)
     }
@@ -149,6 +154,7 @@ describe('isReadOnlyAdvertisedTool (bridge scope guard)', () => {
       'cancel_wakeup',
       'blackboard_post',
       'delegate_to_subthread',
+      'cancel_active_run',
       'workspace_board_apply_plan',
       'web_search',
       'web_fetch',

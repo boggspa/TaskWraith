@@ -15,6 +15,7 @@ export const OLLAMA_READ_TOOL_NAMES = [
   'git_show',
   'git_blame',
   'test_result_summary',
+  'list_active_runs',
   'web_search',
   'web_fetch',
   'ask_user_question',
@@ -51,6 +52,10 @@ export const OLLAMA_REMOTE_GIT_TOOL_NAMES = [
   'git_create_pr'
 ] as const satisfies readonly OllamaToolName[]
 
+export const OLLAMA_PROCESS_CONTROL_TOOL_NAMES = [
+  'cancel_active_run'
+] as const satisfies readonly OllamaToolName[]
+
 /** Non-mutating coordination tools unlocked at tier 3 (approved edits) and above. */
 export const OLLAMA_TIER3_COORDINATION_TOOL_NAMES = [
   'todo_write'
@@ -65,6 +70,9 @@ const OLLAMA_TIER4_EXTRA_TOOL_NAMES = TASKWRAITH_MCP_TOOLS.filter(
     !OLLAMA_SHELL_TOOL_NAMES.includes(toolName as (typeof OLLAMA_SHELL_TOOL_NAMES)[number]) &&
     !OLLAMA_REMOTE_GIT_TOOL_NAMES.includes(
       toolName as (typeof OLLAMA_REMOTE_GIT_TOOL_NAMES)[number]
+    ) &&
+    !OLLAMA_PROCESS_CONTROL_TOOL_NAMES.includes(
+      toolName as (typeof OLLAMA_PROCESS_CONTROL_TOOL_NAMES)[number]
     ) &&
     !OLLAMA_TIER3_COORDINATION_TOOL_NAMES.includes(
       toolName as (typeof OLLAMA_TIER3_COORDINATION_TOOL_NAMES)[number]
@@ -120,6 +128,7 @@ export function ollamaToolNamesForTier(
       ...OLLAMA_FILE_EDIT_TOOL_NAMES,
       ...OLLAMA_SHELL_TOOL_NAMES,
       ...OLLAMA_REMOTE_GIT_TOOL_NAMES,
+      ...OLLAMA_PROCESS_CONTROL_TOOL_NAMES,
       ...OLLAMA_TIER3_COORDINATION_TOOL_NAMES,
       ...OLLAMA_TIER4_EXTRA_TOOL_NAMES
     ]
@@ -227,6 +236,9 @@ export function ollamaToolRequiresIntent(toolName: string): boolean {
     OLLAMA_SHELL_TOOL_NAMES.includes(toolName as (typeof OLLAMA_SHELL_TOOL_NAMES)[number]) ||
     OLLAMA_REMOTE_GIT_TOOL_NAMES.includes(
       toolName as (typeof OLLAMA_REMOTE_GIT_TOOL_NAMES)[number]
+    ) ||
+    OLLAMA_PROCESS_CONTROL_TOOL_NAMES.includes(
+      toolName as (typeof OLLAMA_PROCESS_CONTROL_TOOL_NAMES)[number]
     )
   )
 }

@@ -98,6 +98,8 @@ describe('toolNameToFamily', () => {
 
   it('maps task/test tools to the task family', () => {
     expect(toolNameToFamily('run_task')).toBe('task')
+    expect(toolNameToFamily('list_active_runs')).toBe('task')
+    expect(toolNameToFamily('cancel_active_run')).toBe('task')
     expect(toolNameToFamily('test_result_summary')).toBe('task')
   })
 

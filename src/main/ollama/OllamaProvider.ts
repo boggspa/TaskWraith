@@ -1396,6 +1396,27 @@ function ollamaNativeToolParameters(
         },
         required: ['intent']
       }
+    case 'list_active_runs':
+      return {
+        description: compact ? 'List active runs.' : 'List TaskWraith-owned active runs and queued run jobs.',
+        properties: {
+          provider: { ...STRING, description: compact ? 'Optional provider.' : 'Optional provider filter.' },
+          chatId: { ...STRING, description: compact ? 'Optional chat id.' : 'Optional chat id filter.' },
+          includeEvents: { type: 'boolean', description: compact ? 'Include recent events.' : 'Include bounded recent durable events.' }
+        },
+        required: []
+      }
+    case 'cancel_active_run':
+      return {
+        description: compact ? 'Cancel active run (intent required).' : 'Request cancellation of one TaskWraith-owned active run. Requires a short intent.',
+        properties: {
+          provider: { ...STRING, description: compact ? 'Provider.' : 'Provider that owns the run.' },
+          runId: { ...STRING, description: compact ? 'Run id.' : 'TaskWraith app run id. Required when multiple runs match.' },
+          chatId: { ...STRING, description: compact ? 'Optional chat id.' : 'Optional chat id to narrow the target.' },
+          intent: { ...STRING, description: compact ? 'Short reason.' : 'Short reason for cancelling the run.' }
+        },
+        required: ['provider', 'intent']
+      }
     default:
       return {
         description: `Invoke the TaskWraith ${toolName} tool using its documented MCP argument schema.`,

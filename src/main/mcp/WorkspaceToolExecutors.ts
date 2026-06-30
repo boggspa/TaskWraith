@@ -86,6 +86,8 @@ export const WORKSPACE_MCP_TOOL_NAMES = [
   'git_create_pr',
   'run_task',
   'get_diagnostics',
+  'list_active_runs',
+  'cancel_active_run',
   'list_subthreads',
   'read_subthread_result',
   'cancel_subthread',
@@ -165,6 +167,14 @@ export interface WorkspaceToolExecutors {
     args: Record<string, any>,
     context: WorkspaceToolContext,
     cwd: string
+  ) => Promise<unknown>
+  executeListActiveRuns: (
+    args: Record<string, any>,
+    context: WorkspaceToolContext
+  ) => unknown
+  executeCancelActiveRun: (
+    args: Record<string, any>,
+    context: WorkspaceToolContext
   ) => Promise<unknown>
   executeListSubthreads: (context: WorkspaceToolContext, args: Record<string, any>) => unknown
   executeReadSubthreadResult: (
@@ -255,6 +265,16 @@ type SubThreadLifecycleState =
   | 'cancelled'
   | 'returned'
 
+const RUN_CONTROL_PROVIDER_IDS: readonly ProviderId[] = [
+  'gemini',
+  'codex',
+  'claude',
+  'kimi',
+  'grok',
+  'cursor',
+  'ollama'
+]
+
 export function createWorkspaceToolExecutors(
   deps: WorkspaceToolExecutorDependencies
 ): WorkspaceToolExecutors {
@@ -278,6 +298,8 @@ export function createWorkspaceToolExecutors(
     executeRunTask: (args, cwd) => executeRunTask(deps, args, cwd),
     executeGetDiagnostics: (args, context, cwd) =>
       executeGetDiagnostics(deps, args, context, cwd),
+    executeListActiveRuns: (args, context) => executeListActiveRuns(deps, args, context),
+    executeCancelActiveRun: (args, context) => executeCancelActiveRun(deps, args, context),
     executeListSubthreads: (context, args) => executeListSubthreads(deps, context, args),
     executeReadSubthreadResult: (context, args) => executeReadSubthreadResult(deps, context, args),
     executeCancelSubthread: (context, args) => executeCancelSubthread(deps, context, args),
@@ -378,6 +400,13 @@ export async function executeWorkspaceMcpTool(
   }
   if (toolName === 'get_diagnostics') {
     const result = await executeGetDiagnostics(deps, args, context, cwd)
+    return { result, isError: result.ok === false }
+  }
+  if (toolName === 'list_active_runs') {
+    return { result: executeListActiveRuns(deps, args, context), isError: false }
+  }
+  if (toolName === 'cancel_active_run') {
+    const result = await executeCancelActiveRun(deps, args, context)
     return { result, isError: result.ok === false }
   }
   if (toolName === 'list_subthreads') {
@@ -1136,6 +1165,127 @@ export async function executeGetDiagnostics(
     truncated: deduped.length > limited.length,
     diagnostics: limited,
     runs
+  }
+}
+
+export function executeListActiveRuns(
+  deps: WorkspaceToolExecutorDependencies,
+  args: Record<string, any>,
+  context: WorkspaceToolContext
+) {
+  void context
+  const providers = resolveRunControlProviders(args.provider)
+  const chatIdFilter = optionalString(args.chatId || args.appChatId)
+  const includeEvents = args.includeEvents === true
+  const eventLimit = clampInteger(args.eventLimit ?? args.limit, 10, 1, 50)
+  const activeQueueStatuses = new Set(['queued', 'steer_promoting', 'starting', 'active', 'paused', 'cancelling'])
+  const queueJobs = deps.store
+    .getRunQueueJobs(chatIdFilter ? { chatId: chatIdFilter } : undefined)
+    .filter((job) => providers.includes(job.provider))
+    .filter((job) => activeQueueStatuses.has(job.status))
+  const sessions = providers.flatMap((provider) =>
+    deps.runs.getActiveByProvider(provider).map((session) => ({
+      provider,
+      runId: session.runId,
+      appChatId: session.appChatId,
+      status: session.status
+    }))
+  ).filter((session) => !chatIdFilter || session.appChatId === chatIdFilter)
+
+  const chatIds = new Set<string>([
+    ...sessions.map((session) => session.appChatId).filter(Boolean) as string[],
+    ...queueJobs.map((job) => job.chatId).filter(Boolean) as string[]
+  ])
+  const chats = [...chatIds].map((chatId) => summarizeRunControlChat(deps, chatId))
+  const runIds = new Set<string>([
+    ...sessions.map((session) => session.runId).filter(Boolean) as string[],
+    ...queueJobs.map((job) => job.runId).filter(Boolean)
+  ])
+  const events = includeEvents
+    ? [...runIds].flatMap((runId) =>
+        deps.runs
+          .getRunEvents({ runId })
+          .slice(-eventLimit)
+          .map((event) => summarizeRunControlEvent(event))
+      )
+    : undefined
+
+  return {
+    ok: true,
+    providers,
+    counts: {
+      activeSessions: sessions.length,
+      activeQueueJobs: queueJobs.length,
+      chats: chats.length
+    },
+    activeSessions: sessions,
+    queueJobs: queueJobs.map(summarizeRunControlQueueJob),
+    chats,
+    events
+  }
+}
+
+export async function executeCancelActiveRun(
+  deps: WorkspaceToolExecutorDependencies,
+  args: Record<string, any>,
+  context: WorkspaceToolContext
+) {
+  const provider = requireSelectableProvider(args.provider)
+  requireNonEmptyString(args.intent, 'Intent')
+  const runId = optionalString(args.runId || args.appRunId)
+  const chatId = optionalString(args.chatId || args.appChatId) || context.appChatId
+  const activeSessions = deps.runs
+    .getActiveByProvider(provider)
+    .filter((session) => !runId || session.runId === runId)
+    .filter((session) => !chatId || session.appChatId === chatId)
+  const queueJobs = deps.store
+    .getRunQueueJobs(chatId ? { chatId } : undefined)
+    .filter((job) => job.provider === provider)
+    .filter((job) => !runId || job.runId === runId)
+    .filter((job) => isActiveRunQueueStatus(job.status))
+  const candidates = dedupeRunControlTargets([
+    ...activeSessions.map((session) => ({
+      provider,
+      runId: session.runId,
+      appChatId: session.appChatId,
+      source: 'active_session' as const
+    })),
+    ...queueJobs.map((job) => ({
+      provider,
+      runId: job.runId,
+      appChatId: job.chatId,
+      source: 'queue_job' as const
+    }))
+  ])
+
+  if (candidates.length === 0) {
+    return {
+      ok: false,
+      provider,
+      runId,
+      chatId,
+      message: 'No matching active TaskWraith run was found.'
+    }
+  }
+  if (candidates.length > 1 && !runId) {
+    return {
+      ok: false,
+      provider,
+      chatId,
+      matches: candidates,
+      message: 'Multiple active runs match. Pass runId to cancel exactly one run.'
+    }
+  }
+
+  const target = candidates[0]
+  const ok = await deps.runs.cancelProviderRun(provider, target.runId)
+  return {
+    ok,
+    provider,
+    runId: target.runId,
+    chatId: target.appChatId,
+    source: target.source,
+    message: ok ? 'Cancellation requested.' : 'TaskWraith could not cancel the matched run.'
   }
 }
 
@@ -2154,6 +2304,101 @@ function summarizeChatRun(run?: ChatRun) {
     runtimeProfileId: run.runtimeProfileId,
     geminiAuthProfileId: run.geminiAuthProfileId
   }
+}
+
+function resolveRunControlProviders(value: unknown): ProviderId[] {
+  const raw = optionalString(value)
+  if (!raw) return [...RUN_CONTROL_PROVIDER_IDS]
+  return [requireSelectableProvider(raw)]
+}
+
+function requireSelectableProvider(value: unknown): ProviderId {
+  const provider = optionalString(value)
+  if (provider && RUN_CONTROL_PROVIDER_IDS.includes(provider as ProviderId)) {
+    return provider as ProviderId
+  }
+  throw new Error('Provider is required and must be a known TaskWraith provider.')
+}
+
+function isActiveRunQueueStatus(status: RunQueueJob['status']): boolean {
+  return (
+    status === 'queued' ||
+    status === 'steer_promoting' ||
+    status === 'starting' ||
+    status === 'active' ||
+    status === 'paused' ||
+    status === 'cancelling'
+  )
+}
+
+function summarizeRunControlQueueJob(job: RunQueueJob) {
+  return {
+    id: job.id,
+    runId: job.runId,
+    provider: job.provider,
+    status: job.status,
+    source: job.source,
+    scope: job.scope,
+    chatId: job.chatId,
+    workspaceId: job.workspaceId,
+    createdAt: job.createdAt,
+    updatedAt: job.updatedAt,
+    enqueuedAt: job.enqueuedAt,
+    startedAt: job.startedAt,
+    pausedAt: job.pausedAt,
+    processPid: job.processPid,
+    runtimeProfileId: job.runtimeProfileId,
+    promptPreview: job.promptPreview,
+    statusReason: job.statusReason,
+    lastError: job.lastError
+  }
+}
+
+function summarizeRunControlChat(
+  deps: WorkspaceToolExecutorDependencies,
+  chatId: string
+) {
+  const chat = deps.store.getChat(chatId)
+  if (!chat) return { chatId, found: false }
+  return {
+    chatId,
+    found: true,
+    title: chat.title,
+    provider: chat.provider,
+    scope: chat.scope,
+    chatKind: chat.chatKind,
+    workspaceId: chat.workspaceId,
+    latestRun: summarizeChatRun(latestChatRun(chat))
+  }
+}
+
+function summarizeRunControlEvent(event: RunEventRecord) {
+  return {
+    id: event.id,
+    sequence: event.sequence,
+    runId: event.runId,
+    chatId: event.chatId,
+    provider: event.provider,
+    kind: event.kind,
+    phase: event.phase,
+    source: event.source,
+    timestamp: event.timestamp,
+    summary: event.summary
+  }
+}
+
+function dedupeRunControlTargets<T extends { runId?: string; appChatId?: string; source: string }>(
+  targets: T[]
+): T[] {
+  const seen = new Set<string>()
+  const result: T[] = []
+  for (const target of targets) {
+    const key = `${target.runId || ''}\u0000${target.appChatId || ''}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    result.push(target)
+  }
+  return result
 }
 
 function isActiveSubThreadRunStatus(status: unknown): boolean {

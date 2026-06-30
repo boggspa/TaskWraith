@@ -89,6 +89,7 @@ describe('workspace_write is exactly the read-only deny set', () => {
         'browser_click',
         'browser_open',
         'browser_screenshot',
+        'cancel_active_run',
         'canvas_click',
         'canvas_eval',
         'canvas_fill',
@@ -139,6 +140,7 @@ describe('workspace_write is exactly the read-only deny set', () => {
       'workspace_board_snapshot',
       'workspace_board_preview_plan',
       'workspace_board_apply_plan',
+      'list_active_runs',
       'test_result_summary',
       'read_subthread_result',
       'creative_timeline_validate',
@@ -159,6 +161,7 @@ describe('isReadOnlyBlockedTool', () => {
     expect(isReadOnlyBlockedTool('switch_auth_profile', ro)).toBe(true)
     expect(isReadOnlyBlockedTool('browser_open', ro)).toBe(true)
     expect(isReadOnlyBlockedTool('workspace_board_apply_plan', ro)).toBe(true)
+    expect(isReadOnlyBlockedTool('cancel_active_run', ro)).toBe(true)
     for (const tool of MCP_APP_STATE_MUTATION_TOOLS) {
       expect(isReadOnlyBlockedTool(tool, ro)).toBe(true)
     }
@@ -170,6 +173,7 @@ describe('isReadOnlyBlockedTool', () => {
     expect(isReadOnlyBlockedTool('web_search', ro)).toBe(false)
     expect(isReadOnlyBlockedTool('workspace_board_snapshot', ro)).toBe(false)
     expect(isReadOnlyBlockedTool('workspace_board_preview_plan', ro)).toBe(false)
+    expect(isReadOnlyBlockedTool('list_active_runs', ro)).toBe(false)
     expect(isReadOnlyBlockedTool('ensemble_yield', ro)).toBe(false)
     expect(isReadOnlyBlockedTool('ask_user_question', ro)).toBe(false)
     expect(isReadOnlyBlockedTool('write_file', { readOnly: false })).toBe(false)

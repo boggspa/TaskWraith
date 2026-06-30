@@ -1704,6 +1704,7 @@ describe('ollamaNativeToolDefinitions', () => {
       'git_show',
       'git_blame',
       'test_result_summary',
+      'list_active_runs',
       'web_search',
       'web_fetch',
       'ask_user_question',
@@ -1771,6 +1772,7 @@ describe('Ollama tool tiers', () => {
       'git_show',
       'git_blame',
       'test_result_summary',
+      'list_active_runs',
       'web_search',
       'web_fetch',
       'ask_user_question',
@@ -1788,7 +1790,9 @@ describe('Ollama tool tiers', () => {
     expect(ollamaToolAllowedInTier('git_status', 'read_only')).toBe(true)
     expect(ollamaToolAllowedInTier('git_blame', 'read_only')).toBe(true)
     expect(ollamaToolAllowedInTier('test_result_summary', 'read_only')).toBe(true)
+    expect(ollamaToolAllowedInTier('list_active_runs', 'read_only')).toBe(true)
     expect(ollamaToolAllowedInTier('write_file', 'read_only')).toBe(false)
+    expect(ollamaToolAllowedInTier('cancel_active_run', 'read_only')).toBe(false)
   })
 
   it('adds file edits and shell incrementally', () => {
@@ -1800,11 +1804,14 @@ describe('Ollama tool tiers', () => {
     expect(ollamaToolAllowedInTier('run_task', 'approved_shell')).toBe(true)
     expect(ollamaToolAllowedInTier('get_diagnostics', 'approved_shell')).toBe(true)
     expect(ollamaToolAllowedInTier('git_push', 'approved_shell')).toBe(false)
+    expect(ollamaToolAllowedInTier('cancel_active_run', 'approved_shell')).toBe(false)
     expect(ollamaToolAllowedInTier('git_push', 'provider_parity')).toBe(true)
+    expect(ollamaToolAllowedInTier('cancel_active_run', 'provider_parity')).toBe(true)
     expect(ollamaToolRequiresIntent('write_file')).toBe(true)
     expect(ollamaToolRequiresIntent('run_shell_command')).toBe(true)
     expect(ollamaToolRequiresIntent('get_diagnostics')).toBe(true)
     expect(ollamaToolRequiresIntent('git_push')).toBe(true)
+    expect(ollamaToolRequiresIntent('cancel_active_run')).toBe(true)
   })
 
   it('advertises the full TaskWraith tool surface for acknowledged parity mode', () => {

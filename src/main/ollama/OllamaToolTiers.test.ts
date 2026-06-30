@@ -202,6 +202,8 @@ describe('ollamaToolNamesForTier (edit-tool gating sanity)', () => {
     expect(names).not.toContain('get_diagnostics')
     expect(names).not.toContain('git_push')
     expect(names).not.toContain('git_create_pr')
+    expect(names).toContain('list_active_runs')
+    expect(names).not.toContain('cancel_active_run')
   })
 
   it('includes file-edit tools at approved_edits and provider_parity', () => {
@@ -220,9 +222,12 @@ describe('ollamaToolNamesForTier (edit-tool gating sanity)', () => {
     expect(ollamaToolNamesForTier('approved_shell')).toContain('get_diagnostics')
     expect(ollamaToolRequiresIntent('get_diagnostics')).toBe(true)
     expect(ollamaToolNamesForTier('approved_shell')).not.toContain('git_push')
+    expect(ollamaToolNamesForTier('approved_shell')).not.toContain('cancel_active_run')
     expect(ollamaToolNamesForTier('provider_parity')).toContain('git_push')
     expect(ollamaToolNamesForTier('provider_parity')).toContain('git_create_pr')
+    expect(ollamaToolNamesForTier('provider_parity')).toContain('cancel_active_run')
     expect(ollamaToolRequiresIntent('git_push')).toBe(true)
     expect(ollamaToolRequiresIntent('git_create_pr')).toBe(true)
+    expect(ollamaToolRequiresIntent('cancel_active_run')).toBe(true)
   })
 })

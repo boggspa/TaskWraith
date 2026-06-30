@@ -24,6 +24,8 @@ export const TASKWRAITH_MCP_TOOLS = [
   'git_create_pr',
   'run_task',
   'get_diagnostics',
+  'list_active_runs',
+  'cancel_active_run',
   'workspace_board_snapshot',
   'workspace_board_preview_plan',
   'workspace_board_apply_plan',
