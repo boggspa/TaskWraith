@@ -38,6 +38,14 @@ export type EnsembleRosterParticipantSnapshot = {
   instructions: string
   order: number
   isBossman?: boolean
+  /**
+   * Link back to a Settings → Roster pooled Agent (`pooled-agent-<uuid>`).
+   * Present only on participants sourced from the Agent Pool. Editing the
+   * pooled Agent propagates its config to every snapshot carrying its id
+   * (see `propagatePooledAgentToPresets` in ensembleAgentPool.ts), and it is
+   * the stats-attribution key once materialized onto a live participant.
+   */
+  pooledAgentId?: string
   model?: string
   runtimeProfileId?: string
   geminiAuthProfileId?: string | null
@@ -300,6 +308,7 @@ function snapshotParticipant(
     instructions: participant.instructions,
     order,
     ...(isBossman ? { isBossman: true } : {}),
+    ...(participant.pooledAgentId ? { pooledAgentId: participant.pooledAgentId } : {}),
     ...(participant.model ? { model: participant.model } : {}),
     ...(participant.runtimeProfileId ? { runtimeProfileId: participant.runtimeProfileId } : {}),
     ...(participant.geminiAuthProfileId != null
@@ -355,6 +364,7 @@ export function materializeParticipantsFromPresetWithBossman(
       role: snapshot.role,
       instructions: snapshot.instructions,
       order: index + 1,
+      ...(snapshot.pooledAgentId ? { pooledAgentId: snapshot.pooledAgentId } : {}),
       ...(snapshot.model ? { model: snapshot.model } : {}),
       ...(snapshot.runtimeProfileId ? { runtimeProfileId: snapshot.runtimeProfileId } : {}),
       geminiAuthProfileId:

@@ -502,6 +502,17 @@ export interface EnsembleParticipant {
   fastModeEnabled?: boolean
   thinkingEnabled?: boolean
   serviceTier?: string
+  /**
+   * Agent-Pool link / stats-attribution key. When a participant was sourced
+   * from a Settings → Roster "pooled Agent" (`pooled-agent-<uuid>`), this
+   * carries that stable agentId so (a) Agent edits propagate back to linked
+   * roster-preset participants and (b) the per-Agent stats ledger can attribute
+   * this run's work to the right Agent. Absent for default-seeded participants
+   * and any chat that predates the pool feature — those are simply never
+   * attributed, which is correct. MUST be a `pooled-agent-` prefixed id (see
+   * `isPooledAgentId`); a per-chat participant id is never written here.
+   */
+  pooledAgentId?: string
   tokenTotals?: {
     input_tokens?: number
     output_tokens?: number
@@ -3746,6 +3757,37 @@ export interface AgentIdentity {
   source: AgentIdentitySource
   /** ISO timestamp the identity was assigned. */
   assignedAt: string
+}
+
+/**
+ * Aggregated work profile for a Settings → Roster pooled Agent
+ * (`pooled-agent-<uuid>`), folded from the per-Agent stats ledger. Attribution
+ * accrues from first pool-use forward (no backfill); a fresh / never-run Agent
+ * has all-zero counters. `±lines` / `filesTouched` are run-LEVEL coverage
+ * estimates — `runsWithDiffUnavailable` reports how many finalized runs carried
+ * no diff so the UI can qualify the figure ("N of M runs").
+ */
+export interface PooledAgentStatsSummary {
+  agentId: string
+  /** Finalized runs attributed to this agent. */
+  runs: number
+  success: number
+  failed: number
+  cancelled: number
+  tokensIn: number
+  tokensOut: number
+  tokensTotal: number
+  costUsd: number
+  durationMs: number
+  linesAdded: number
+  linesRemoved: number
+  filesTouched: number
+  /** Distinct chat ids this agent participated in. */
+  distinctChats: number
+  /** Finalized runs with no run-diff available (so ±lines is undercounted). */
+  runsWithDiffUnavailable: number
+  /** Most-recent attributed run finalize time (ms epoch), 0 if never run. */
+  lastRunAt: number
 }
 
 export type TrustStatus = 'trusted' | 'untrusted' | 'inherited' | 'unknown' | 'not_checked'
