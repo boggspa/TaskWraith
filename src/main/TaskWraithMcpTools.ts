@@ -26,6 +26,8 @@ export const TASKWRAITH_MCP_TOOLS = [
   'get_diagnostics',
   'list_active_runs',
   'cancel_active_run',
+  'list_chat_attachments',
+  'inspect_chat_attachment',
   'workspace_board_snapshot',
   'workspace_board_preview_plan',
   'workspace_board_apply_plan',

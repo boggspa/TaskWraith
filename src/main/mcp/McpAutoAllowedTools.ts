@@ -73,6 +73,8 @@ export const MCP_AUTO_ALLOWED_TOOLS = new Set<TaskWraithMcpToolName>([
   'find_files',
   'workspace_search',
   'workspace_symbols',
+  'list_chat_attachments',
+  'inspect_chat_attachment',
   'workspace_board_snapshot',
   'workspace_board_preview_plan',
   // TaskWraith Canvas read-only verbs. No pixels, no mutation: list/status are

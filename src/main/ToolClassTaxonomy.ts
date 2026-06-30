@@ -62,6 +62,8 @@ export const READ_ONLY_TOOL_PRESET: ReadonlyArray<string> = Object.freeze([
   'read_file',
   'list_directory',
   'find_files',
+  'list_chat_attachments',
+  'inspect_chat_attachment',
   'grep',
   'glob',
   'attached_window_status',
@@ -95,6 +97,8 @@ const WORKSPACE_READ_TOOLS = new Set<string>([
   'grep',
   'glob',
   'find_files',
+  'list_chat_attachments',
+  'inspect_chat_attachment',
   'workspace_search',
   'workspace_symbols',
   // git state + file surfacing — read-only repo / file reads

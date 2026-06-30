@@ -16,6 +16,8 @@ describe('MCP_AUTO_ALLOWED_TOOLS', () => {
       'find_files',
       'workspace_search',
       'workspace_symbols',
+      'list_chat_attachments',
+      'inspect_chat_attachment',
       'workspace_board_snapshot',
       'workspace_board_preview_plan',
       'list_active_runs'
@@ -67,6 +69,8 @@ describe('READ_ONLY_MCP_ADVERTISE_TOOLS', () => {
       'ensemble_yield',
       'read_file',
       'find_files',
+      'list_chat_attachments',
+      'inspect_chat_attachment',
       'workspace_board_snapshot',
       'workspace_board_preview_plan',
       'list_active_runs'
@@ -123,6 +127,8 @@ describe('isReadOnlyAdvertisedTool (bridge scope guard)', () => {
       'read_file',
       'list_directory',
       'find_files',
+      'list_chat_attachments',
+      'inspect_chat_attachment',
       'workspace_board_snapshot',
       'workspace_board_preview_plan',
       'list_active_runs'

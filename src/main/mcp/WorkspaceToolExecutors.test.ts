@@ -13,7 +13,9 @@ import {
   executeGitLog,
   executeGitPush,
   executeGitShow,
+  executeInspectChatAttachment,
   executeListActiveRuns,
+  executeListChatAttachments,
   executeMovePath,
   executeRenamePath,
   resolveMcpScopedPath,
@@ -52,6 +54,11 @@ function commandResult(stdout: string, exitCode = 0): HostCommandResult {
     durationMs: 5
   }
 }
+
+const PNG_1X1 = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+  'base64'
+)
 
 describe('resolveMcpScopedPath', () => {
   it('allows workspace-root directory/search targets only when requested', () => {
@@ -453,6 +460,116 @@ describe('active run workspace tools', () => {
       message: 'Cancellation requested.'
     })
     expect(cancelled).toEqual([{ provider: 'codex', runId: 'run-b' }])
+  })
+})
+
+describe('chat attachment workspace tools', () => {
+  it('lists current-chat attachments and omits paths by default', async () => {
+    const workspace = await mkdtemp(resolve(tmpdir(), 'tw-attachment-list-'))
+    const imagePath = resolve(workspace, 'screen.png')
+    await writeFile(imagePath, PNG_1X1)
+    const deps = makeDeps(async () => commandResult(''))
+    deps.store.getChat = (chatId) =>
+      ({
+        appChatId: chatId,
+        title: 'Attachment chat',
+        messages: [
+          {
+            id: 'msg-1',
+            role: 'user',
+            content: 'see attached',
+            timestamp: '2026-06-30T10:00:00.000Z',
+            metadata: {
+              imagePaths: [imagePath],
+              mediaRefs: [
+                {
+                  id: 'media-1',
+                  kind: 'image',
+                  format: 'raster',
+                  source: 'tool_result',
+                  name: 'generated.png',
+                  mimeType: 'image/png',
+                  sha256: 'abc123',
+                  byteLength: 42,
+                  status: 'available'
+                }
+              ]
+            }
+          }
+        ],
+        runs: []
+      }) as any
+
+    const result = executeListChatAttachments(
+      deps,
+      {},
+      { scope: 'workspace', cwd: workspace, workspacePath: workspace, appChatId: 'chat-1' }
+    ) as any
+
+    expect(result).toMatchObject({
+      ok: true,
+      chatId: 'chat-1',
+      count: 2,
+      totalAttachments: 2
+    })
+    expect(result.attachments[0]).toMatchObject({
+      attachmentId: 'msg-1:image-path:0',
+      kind: 'image',
+      pathScope: 'workspace',
+      hasPath: true
+    })
+    expect(result.attachments[0]).not.toHaveProperty('path')
+    expect(result.attachments[1]).toMatchObject({
+      attachmentId: 'media-1',
+      source: 'message_media_ref',
+      pathScope: 'transcript_asset',
+      sha256: 'abc123'
+    })
+  })
+
+  it('inspects an image attachment by id and returns a rich image block', async () => {
+    const workspace = await mkdtemp(resolve(tmpdir(), 'tw-attachment-inspect-'))
+    const imagePath = resolve(workspace, 'screen.png')
+    await writeFile(imagePath, PNG_1X1)
+    const deps = makeDeps(async () => commandResult(''))
+    deps.store.getChat = (chatId) =>
+      ({
+        appChatId: chatId,
+        title: 'Attachment chat',
+        messages: [
+          {
+            id: 'msg-1',
+            role: 'user',
+            content: 'see attached',
+            timestamp: '2026-06-30T10:00:00.000Z',
+            metadata: {
+              imagePaths: [imagePath]
+            }
+          }
+        ],
+        runs: []
+      }) as any
+
+    const result = await executeInspectChatAttachment(
+      deps,
+      { attachmentId: 'msg-1:image-path:0' },
+      { scope: 'workspace', cwd: workspace, workspacePath: workspace, appChatId: 'chat-1' }
+    )
+
+    expect(result.isError).toBeUndefined()
+    expect(result.structuredContent).toMatchObject({
+      ok: true,
+      imageReturned: true,
+      attachment: {
+        attachmentId: 'msg-1:image-path:0',
+        kind: 'image',
+        mimeType: 'image/png',
+        variant: 'full'
+      }
+    })
+    expect(result.content).toEqual([
+      { type: 'image', mimeType: 'image/png', data: PNG_1X1.toString('base64') }
+    ])
   })
 })
 

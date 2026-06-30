@@ -672,6 +672,74 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
       }
     },
     {
+      name: 'list_chat_attachments',
+      description:
+        'List attachments and transcript media visible in the active chat: uploaded images/files, run attachment snapshots, and generated media refs. Current-chat scoped. Paths are omitted unless includePaths is true; use attachmentId with inspect_chat_attachment to re-inspect an item.',
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          kind: {
+            type: 'string',
+            enum: ['image', 'audio', 'video', 'file', 'folder'],
+            description: 'Optional single attachment kind filter.'
+          },
+          kinds: {
+            type: 'array',
+            items: { type: 'string', enum: ['image', 'audio', 'video', 'file', 'folder'] },
+            description: 'Optional attachment kind filters.'
+          },
+          includePaths: {
+            type: 'boolean',
+            description:
+              'Include stored local paths when present. Defaults to false; attachmentId inspection does not require paths.'
+          },
+          limit: {
+            type: 'number',
+            description: 'Maximum attachment rows to return, capped at 500. Defaults to 100.'
+          }
+        }
+      }
+    },
+    {
+      name: 'inspect_chat_attachment',
+      description:
+        'Inspect one attachment/media item from the active chat by attachmentId. Returns structured metadata and, for raster images with available bytes or thumbnails, an inline image block that appears in the transcript. Current-chat scoped; it does not accept arbitrary paths.',
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          attachmentId: {
+            type: 'string',
+            description: 'Attachment id returned by list_chat_attachments.'
+          },
+          includeImage: {
+            type: 'boolean',
+            description: 'Return image bytes for raster image attachments when available. Defaults to true.'
+          },
+          includePath: {
+            type: 'boolean',
+            description: 'Include the stored local path in metadata when present. Defaults to false.'
+          },
+          maxBytes: {
+            type: 'number',
+            description: 'Maximum raster image bytes to inline, capped at TaskWraith image limits.'
+          }
+        },
+        required: ['attachmentId']
+      }
+    },
+    {
       name: 'test_result_summary',
       description: 'Summarize test failures from supplied output or a durable run id.',
       annotations: {

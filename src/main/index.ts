@@ -4127,6 +4127,9 @@ const workspaceToolExecutors = createWorkspaceToolExecutors({
     cancelProviderRun,
     saveAndBroadcastChat,
     getSubThreadResumeSessionId
+  },
+  media: {
+    readTranscriptMediaAsset: (input) => getTranscriptMediaAssetStore().read(input)
   }
 })
 
@@ -16902,7 +16905,11 @@ async function executeGeminiMcpTool(
             cwd
           )
           toolIsError = result.isError
-          text = mcpJson(result.result)
+          if (result.richResult) {
+            applyRichResult(result.richResult)
+          } else {
+            text = mcpJson(result.result)
+          }
         }
       } else {
         const result = await workspaceToolExecutors.executeWorkspaceMcpTool(
@@ -16912,7 +16919,11 @@ async function executeGeminiMcpTool(
           cwd
         )
         toolIsError = result.isError
-        text = mcpJson(result.result)
+        if (result.richResult) {
+          applyRichResult(result.richResult)
+        } else {
+          text = mcpJson(result.result)
+        }
       }
     } else if (isWebMcpToolName(toolName)) {
       applyRichResult(await executeWebMcpTool(toolName, args))

@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto'
 import fsSync from 'node:fs'
 import fs from 'node:fs/promises'
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 
 import { isPathInsideWorkspace } from '../AgenticPolicy'
 import { getSubThreadResumeSessionId as defaultGetSubThreadResumeSessionId } from '../SubThreadRecall'
@@ -13,8 +13,20 @@ import type {
   ProviderId,
   RunEventFilter,
   RunEventRecord,
-  RunQueueJob
+  RunQueueJob,
+  TranscriptMediaRef,
+  TranscriptMediaThumbnail
 } from '../store/types'
+import {
+  isTranscriptRasterImageMime,
+  isTranscriptThumbnailMime,
+  sniffImageMime
+} from '../services/TranscriptMediaService'
+import {
+  TRANSCRIPT_MEDIA_MAX_FULL_IMAGE_BYTES,
+  type TranscriptMediaAssetReadResult
+} from '../services/TranscriptMediaAssetStore'
+import type { McpToolExecutionResult } from './McpBridgeRuntime'
 
 export interface HostCommandResult {
   stdout: string
@@ -65,6 +77,13 @@ export interface WorkspaceToolExecutorDependencies {
   host: WorkspaceToolHostDependencies
   store: WorkspaceToolStoreDependencies
   runs: WorkspaceToolRunDependencies
+  media?: {
+    readTranscriptMediaAsset: (input: {
+      sha256: string
+      mimeType: string
+      maxBytes?: number
+    }) => TranscriptMediaAssetReadResult
+  }
 }
 
 export const WORKSPACE_MCP_TOOL_NAMES = [
@@ -88,6 +107,8 @@ export const WORKSPACE_MCP_TOOL_NAMES = [
   'get_diagnostics',
   'list_active_runs',
   'cancel_active_run',
+  'list_chat_attachments',
+  'inspect_chat_attachment',
   'list_subthreads',
   'read_subthread_result',
   'cancel_subthread',
@@ -99,6 +120,7 @@ export type WorkspaceMcpToolName = (typeof WORKSPACE_MCP_TOOL_NAMES)[number]
 export interface WorkspaceMcpToolExecution {
   result: unknown
   isError: boolean
+  richResult?: McpToolExecutionResult
 }
 
 export interface WorkspaceToolExecutors {
@@ -176,6 +198,14 @@ export interface WorkspaceToolExecutors {
     args: Record<string, any>,
     context: WorkspaceToolContext
   ) => Promise<unknown>
+  executeListChatAttachments: (
+    args: Record<string, any>,
+    context: WorkspaceToolContext
+  ) => unknown
+  executeInspectChatAttachment: (
+    args: Record<string, any>,
+    context: WorkspaceToolContext
+  ) => Promise<McpToolExecutionResult>
   executeListSubthreads: (context: WorkspaceToolContext, args: Record<string, any>) => unknown
   executeReadSubthreadResult: (
     context: WorkspaceToolContext,
@@ -222,6 +252,68 @@ const DIAGNOSTIC_DEFAULT_TSCONFIGS = [
 type DiagnosticSource = 'typescript' | 'eslint'
 type DiagnosticSourceMode = DiagnosticSource | 'all'
 type DiagnosticSeverity = 'error' | 'warning' | 'info'
+type ChatAttachmentKind = 'image' | 'audio' | 'video' | 'file' | 'folder'
+type ChatAttachmentSource =
+  | 'message_image_path'
+  | 'message_attachment'
+  | 'message_media_ref'
+  | 'run_attachment'
+type ChatAttachmentPathScope =
+  | 'workspace'
+  | 'external'
+  | 'transcript_asset'
+  | 'thumbnail_only'
+  | 'missing'
+
+interface ChatAttachmentEntry {
+  attachmentId: string
+  kind: ChatAttachmentKind
+  source: ChatAttachmentSource
+  name: string
+  messageId?: string
+  messageIndex?: number
+  role?: ChatMessage['role']
+  timestamp?: string
+  runId?: string
+  mimeType?: string
+  status?: string
+  path?: string
+  workspaceRelativePath?: string
+  pathScope: ChatAttachmentPathScope
+  byteLength?: number
+  sha256?: string
+  assetId?: string
+  hasThumbnail: boolean
+  thumbnail?: TranscriptMediaThumbnail
+  mediaRef?: TranscriptMediaRef
+}
+
+const CHAT_ATTACHMENT_IMAGE_EXTENSIONS = new Set([
+  '.png',
+  '.jpg',
+  '.jpeg',
+  '.webp',
+  '.gif',
+  '.bmp',
+  '.heic',
+  '.heif'
+])
+const CHAT_ATTACHMENT_AUDIO_EXTENSIONS = new Set([
+  '.wav',
+  '.mp3',
+  '.m4a',
+  '.aac',
+  '.ogg',
+  '.flac'
+])
+const CHAT_ATTACHMENT_VIDEO_EXTENSIONS = new Set([
+  '.mp4',
+  '.mov',
+  '.m4v',
+  '.webm',
+  '.avi',
+  '.mkv'
+])
 
 interface WorkspaceDiagnostic {
   source: DiagnosticSource
@@ -300,6 +392,10 @@ export function createWorkspaceToolExecutors(
       executeGetDiagnostics(deps, args, context, cwd),
     executeListActiveRuns: (args, context) => executeListActiveRuns(deps, args, context),
     executeCancelActiveRun: (args, context) => executeCancelActiveRun(deps, args, context),
+    executeListChatAttachments: (args, context) =>
+      executeListChatAttachments(deps, args, context),
+    executeInspectChatAttachment: (args, context) =>
+      executeInspectChatAttachment(deps, args, context),
     executeListSubthreads: (context, args) => executeListSubthreads(deps, context, args),
     executeReadSubthreadResult: (context, args) => executeReadSubthreadResult(deps, context, args),
     executeCancelSubthread: (context, args) => executeCancelSubthread(deps, context, args),
@@ -408,6 +504,17 @@ export async function executeWorkspaceMcpTool(
   if (toolName === 'cancel_active_run') {
     const result = await executeCancelActiveRun(deps, args, context)
     return { result, isError: result.ok === false }
+  }
+  if (toolName === 'list_chat_attachments') {
+    return { result: executeListChatAttachments(deps, args, context), isError: false }
+  }
+  if (toolName === 'inspect_chat_attachment') {
+    const richResult = await executeInspectChatAttachment(deps, args, context)
+    return {
+      result: richResult.structuredContent ?? { ok: richResult.isError !== true },
+      isError: richResult.isError === true,
+      richResult
+    }
   }
   if (toolName === 'list_subthreads') {
     return { result: executeListSubthreads(deps, context, args), isError: false }
@@ -1286,6 +1393,96 @@ export async function executeCancelActiveRun(
     chatId: target.appChatId,
     source: target.source,
     message: ok ? 'Cancellation requested.' : 'TaskWraith could not cancel the matched run.'
+  }
+}
+
+export function executeListChatAttachments(
+  deps: WorkspaceToolExecutorDependencies,
+  args: Record<string, any>,
+  context: WorkspaceToolContext
+) {
+  const chat = requireActiveChatForAttachmentTool(deps, context, 'list_chat_attachments')
+  const includePaths = args.includePaths === true
+  const limit = clampInteger(args.limit, 100, 1, 500)
+  const kindFilter = normalizeAttachmentKindFilter(args.kind || args.kinds)
+  const allEntries = collectChatAttachmentEntries(chat, context)
+    .filter((entry) => kindFilter.size === 0 || kindFilter.has(entry.kind))
+  const entries = allEntries.slice(0, limit)
+  return {
+    ok: true,
+    tool: 'list_chat_attachments',
+    chatId: chat.appChatId,
+    title: chat.title,
+    count: entries.length,
+    totalAttachments: allEntries.length,
+    truncated: allEntries.length > entries.length,
+    attachments: entries.map((entry) => summarizeChatAttachmentEntry(entry, includePaths))
+  }
+}
+
+export async function executeInspectChatAttachment(
+  deps: WorkspaceToolExecutorDependencies,
+  args: Record<string, any>,
+  context: WorkspaceToolContext
+): Promise<McpToolExecutionResult> {
+  const chat = requireActiveChatForAttachmentTool(deps, context, 'inspect_chat_attachment')
+  const attachmentId = requireNonEmptyString(args.attachmentId || args.id, 'Attachment id')
+  const includeImage = args.includeImage !== false
+  const includePath = args.includePath === true || args.includePaths === true
+  const maxBytes = clampInteger(
+    args.maxBytes,
+    TRANSCRIPT_MEDIA_MAX_FULL_IMAGE_BYTES,
+    1,
+    TRANSCRIPT_MEDIA_MAX_FULL_IMAGE_BYTES
+  )
+  const entry = collectChatAttachmentEntries(chat, context).find(
+    (candidate) => candidate.attachmentId === attachmentId
+  )
+  if (!entry) {
+    return chatAttachmentRichJson({
+      ok: false,
+      tool: 'inspect_chat_attachment',
+      error: `No attachment with id "${attachmentId}" was found in the active chat.`,
+      attachmentId
+    }, true)
+  }
+
+  const metadata = summarizeChatAttachmentEntry(entry, includePath)
+  if (entry.kind !== 'image' || !includeImage) {
+    return chatAttachmentRichJson({
+      ok: true,
+      tool: 'inspect_chat_attachment',
+      attachment: metadata,
+      imageReturned: false
+    })
+  }
+
+  const image = readChatAttachmentImage(deps, entry, maxBytes)
+  if (!image.ok) {
+    return chatAttachmentRichJson({
+      ok: false,
+      tool: 'inspect_chat_attachment',
+      attachment: metadata,
+      error: image.reason,
+      imageReturned: false
+    }, true)
+  }
+
+  const structured = {
+    ok: true,
+    tool: 'inspect_chat_attachment',
+    attachment: {
+      ...metadata,
+      mimeType: image.mimeType,
+      byteLength: image.byteLength,
+      variant: image.variant
+    },
+    imageReturned: true
+  }
+  return {
+    text: JSON.stringify(structured, null, 2),
+    structuredContent: structured,
+    content: [{ type: 'image', mimeType: image.mimeType, data: image.dataBase64 }]
   }
 }
 
@@ -2281,6 +2478,363 @@ function commandResultExitCode(value: unknown): number | null {
 
 function latestAssistantMessage(chat: ChatRecord): ChatMessage | undefined {
   return [...(chat.messages || [])].reverse().find((message) => message.role === 'assistant')
+}
+
+function requireActiveChatForAttachmentTool(
+  deps: WorkspaceToolExecutorDependencies,
+  context: WorkspaceToolContext,
+  tool: 'list_chat_attachments' | 'inspect_chat_attachment'
+): ChatRecord {
+  if (!context.appChatId) {
+    throw new Error(`${tool} can only read attachments for the active chat.`)
+  }
+  const chat = deps.store.getChat(context.appChatId)
+  if (!chat) throw new Error(`Active chat ${context.appChatId} was not found.`)
+  return chat
+}
+
+function normalizeAttachmentKindFilter(value: unknown): Set<ChatAttachmentKind> {
+  const raw = Array.isArray(value) ? value : value ? [value] : []
+  const allowed = new Set<ChatAttachmentKind>(['image', 'audio', 'video', 'file', 'folder'])
+  return new Set(
+    raw
+      .map((item) => optionalString(item))
+      .filter((item): item is ChatAttachmentKind => !!item && allowed.has(item as ChatAttachmentKind))
+  )
+}
+
+function collectChatAttachmentEntries(
+  chat: ChatRecord,
+  context: WorkspaceToolContext
+): ChatAttachmentEntry[] {
+  const entries: ChatAttachmentEntry[] = []
+  const seen = new Set<string>()
+  const pushEntry = (entry: ChatAttachmentEntry) => {
+    const key =
+      entry.sha256 ||
+      entry.assetId ||
+      (entry.path ? `${entry.source}:${entry.path}` : entry.attachmentId)
+    if (seen.has(key)) return
+    seen.add(key)
+    entries.push(entry)
+  }
+
+  ;(chat.messages || []).forEach((message, messageIndex) => {
+    const metadata = message.metadata || {}
+    const imageThumbnails = Array.isArray(metadata.imageThumbnails)
+      ? metadata.imageThumbnails.map(normalizeAttachmentThumbnail)
+      : []
+    const imagePaths = Array.isArray(metadata.imagePaths) ? metadata.imagePaths : []
+    imagePaths.forEach((value, index) => {
+      const path = optionalString(value)
+      if (!path) return
+      const thumbnail = imageThumbnails[index]
+      pushEntry({
+        attachmentId: `${message.id || `message-${messageIndex}`}:image-path:${index}`,
+        kind: 'image',
+        source: 'message_image_path',
+        name: basename(path) || `Image ${index + 1}`,
+        messageId: message.id,
+        messageIndex,
+        role: message.role,
+        timestamp: message.timestamp,
+        path,
+        pathScope: pathScopeForAttachment(path, context),
+        hasThumbnail: Boolean(thumbnail),
+        thumbnail
+      })
+    })
+    if (imagePaths.length === 0) {
+      imageThumbnails.forEach((thumbnail, index) => {
+        if (!thumbnail) return
+        pushEntry({
+          attachmentId: `${message.id || `message-${messageIndex}`}:thumbnail:${index}`,
+          kind: 'image',
+          source: 'message_image_path',
+          name: `Image ${index + 1}`,
+          messageId: message.id,
+          messageIndex,
+          role: message.role,
+          timestamp: message.timestamp,
+          mimeType: thumbnail.mimeType,
+          pathScope: 'thumbnail_only',
+          hasThumbnail: true,
+          thumbnail
+        })
+      })
+    }
+    for (const candidate of [metadata.imageAttachments, metadata.attachments]) {
+      if (!Array.isArray(candidate)) continue
+      candidate.forEach((raw, index) => {
+        const attachment = normalizeAttachmentObject(raw)
+        if (!attachment?.path) return
+        const kind = normalizeAttachmentKind(attachment.kind, attachment.path, attachment.mimeType)
+        pushEntry({
+          attachmentId:
+            attachment.id || `${message.id || `message-${messageIndex}`}:attachment:${index}`,
+          kind,
+          source: 'message_attachment',
+          name: attachment.name || basename(attachment.path) || `${kind} attachment`,
+          messageId: message.id,
+          messageIndex,
+          role: message.role,
+          timestamp: message.timestamp,
+          mimeType: attachment.mimeType,
+          path: attachment.path,
+          pathScope: pathScopeForAttachment(attachment.path, context),
+          hasThumbnail: false
+        })
+      })
+    }
+    const mediaRefs = Array.isArray(metadata.mediaRefs) ? metadata.mediaRefs : []
+    mediaRefs.forEach((raw, index) => {
+      const ref = normalizeMediaRef(raw)
+      if (!ref) return
+      const path = optionalString(ref.path)
+      pushEntry({
+        attachmentId: ref.id || `${message.id || `message-${messageIndex}`}:media:${index}`,
+        kind: ref.kind,
+        source: 'message_media_ref',
+        name: ref.name || (path ? basename(path) : `${ref.kind} media`),
+        messageId: message.id,
+        messageIndex,
+        role: message.role,
+        timestamp: message.timestamp,
+        mimeType: ref.mimeType,
+        status: ref.status,
+        path,
+        workspaceRelativePath: optionalString(ref.workspaceRelativePath),
+        pathScope: path
+          ? pathScopeForAttachment(path, context)
+          : ref.sha256 || ref.assetId
+            ? 'transcript_asset'
+            : ref.thumbnail
+              ? 'thumbnail_only'
+              : 'missing',
+        byteLength: typeof ref.byteLength === 'number' ? ref.byteLength : undefined,
+        sha256: optionalString(ref.sha256),
+        assetId: optionalString(ref.assetId),
+        hasThumbnail: Boolean(ref.thumbnail),
+        thumbnail: ref.thumbnail,
+        mediaRef: ref
+      })
+    })
+  })
+
+  ;(chat.runs || []).forEach((run, runIndex) => {
+    for (const candidate of runAttachmentCandidates(run)) {
+      const attachments = Array.isArray(candidate?.imageAttachments)
+        ? candidate.imageAttachments
+        : []
+      attachments.forEach((raw, index) => {
+        const attachment = normalizeAttachmentObject(raw)
+        if (!attachment?.path) return
+        pushEntry({
+          attachmentId:
+            attachment.id || `${run.runId || `run-${runIndex}`}:image-attachment:${index}`,
+          kind: 'image',
+          source: 'run_attachment',
+          name: attachment.name || basename(attachment.path) || `Image ${index + 1}`,
+          runId: run.runId,
+          mimeType: attachment.mimeType,
+          path: attachment.path,
+          pathScope: pathScopeForAttachment(attachment.path, context),
+          hasThumbnail: false
+        })
+      })
+    }
+  })
+
+  return entries
+}
+
+function summarizeChatAttachmentEntry(entry: ChatAttachmentEntry, includePath: boolean) {
+  return {
+    attachmentId: entry.attachmentId,
+    kind: entry.kind,
+    source: entry.source,
+    name: entry.name,
+    messageId: entry.messageId,
+    messageIndex: entry.messageIndex,
+    role: entry.role,
+    timestamp: entry.timestamp,
+    runId: entry.runId,
+    mimeType: entry.mimeType,
+    status: entry.status,
+    pathScope: entry.pathScope,
+    workspaceRelativePath: entry.workspaceRelativePath,
+    byteLength: entry.byteLength,
+    sha256: entry.sha256,
+    assetId: entry.assetId,
+    hasThumbnail: entry.hasThumbnail,
+    hasPath: Boolean(entry.path),
+    ...(includePath && entry.path ? { path: entry.path } : {})
+  }
+}
+
+function chatAttachmentRichJson(
+  structuredContent: Record<string, unknown>,
+  isError = false
+): McpToolExecutionResult {
+  return {
+    text: JSON.stringify(structuredContent, null, 2),
+    structuredContent,
+    ...(isError ? { isError: true } : {})
+  }
+}
+
+function readChatAttachmentImage(
+  deps: WorkspaceToolExecutorDependencies,
+  entry: ChatAttachmentEntry,
+  maxBytes: number
+):
+  | { ok: true; dataBase64: string; mimeType: string; byteLength: number; variant: 'full' | 'thumbnail' }
+  | { ok: false; reason: string } {
+  if (entry.mediaRef?.sha256 && deps.media?.readTranscriptMediaAsset) {
+    const read = deps.media.readTranscriptMediaAsset({
+      sha256: entry.mediaRef.sha256,
+      mimeType: entry.mediaRef.mimeType,
+      maxBytes
+    })
+    if (read.ok) {
+      return {
+        ok: true,
+        dataBase64: read.buffer.toString('base64'),
+        mimeType: entry.mediaRef.mimeType,
+        byteLength: read.byteLength,
+        variant: 'full'
+      }
+    }
+  }
+  if (entry.path) {
+    const read = readRasterImagePath(entry.path, maxBytes)
+    if (read.ok) return read
+  }
+  if (entry.thumbnail?.dataBase64 && isTranscriptThumbnailMime(entry.thumbnail.mimeType)) {
+    return {
+      ok: true,
+      dataBase64: entry.thumbnail.dataBase64,
+      mimeType: entry.thumbnail.mimeType,
+      byteLength: Buffer.byteLength(entry.thumbnail.dataBase64, 'base64'),
+      variant: 'thumbnail'
+    }
+  }
+  return { ok: false, reason: 'Attachment image bytes are unavailable.' }
+}
+
+function readRasterImagePath(
+  path: string,
+  maxBytes: number
+):
+  | { ok: true; dataBase64: string; mimeType: string; byteLength: number; variant: 'full' }
+  | { ok: false; reason: string } {
+  let stat: ReturnType<typeof fsSync.statSync>
+  try {
+    stat = fsSync.statSync(path)
+  } catch {
+    return { ok: false, reason: 'Attachment file is missing.' }
+  }
+  if (!stat.isFile()) return { ok: false, reason: 'Attachment path is not a file.' }
+  if (stat.size <= 0 || stat.size > maxBytes) {
+    return { ok: false, reason: `Attachment is too large to inline (${stat.size} bytes).` }
+  }
+  let buffer: Buffer
+  try {
+    buffer = fsSync.readFileSync(path)
+  } catch {
+    return { ok: false, reason: 'Attachment file could not be read.' }
+  }
+  const mimeType = sniffImageMime(buffer)
+  if (!isTranscriptRasterImageMime(mimeType)) {
+    return { ok: false, reason: 'Attachment is not a supported raster image.' }
+  }
+  return {
+    ok: true,
+    dataBase64: buffer.toString('base64'),
+    mimeType: mimeType || 'image/png',
+    byteLength: buffer.length,
+    variant: 'full'
+  }
+}
+
+function normalizeAttachmentObject(value: unknown): {
+  id?: string
+  path: string
+  name?: string
+  kind?: string
+  mimeType?: string
+} | null {
+  if (!isRecord(value)) return null
+  const path = optionalString(value.path)
+  if (!path) return null
+  return {
+    id: optionalString(value.id),
+    path,
+    name: optionalString(value.name || value.filename),
+    kind: optionalString(value.kind),
+    mimeType: optionalString(value.mimeType)
+  }
+}
+
+function normalizeMediaRef(value: unknown): TranscriptMediaRef | null {
+  if (!isRecord(value)) return null
+  const id = optionalString(value.id)
+  const kind = optionalString(value.kind)
+  const source = optionalString(value.source)
+  const name = optionalString(value.name)
+  const mimeType = optionalString(value.mimeType)
+  if (!id || (kind !== 'image' && kind !== 'audio' && kind !== 'video') || !source || !name || !mimeType) {
+    return null
+  }
+  return value as unknown as TranscriptMediaRef
+}
+
+function normalizeAttachmentThumbnail(value: unknown): TranscriptMediaThumbnail | undefined {
+  if (!isRecord(value)) return undefined
+  const dataBase64 = optionalString(value.dataBase64)
+  const mimeType = optionalString(value.mimeType)
+  if (!dataBase64 || !mimeType || !isTranscriptThumbnailMime(mimeType)) return undefined
+  return {
+    dataBase64,
+    mimeType,
+    ...(typeof value.width === 'number' && Number.isFinite(value.width) ? { width: value.width } : {}),
+    ...(typeof value.height === 'number' && Number.isFinite(value.height) ? { height: value.height } : {})
+  }
+}
+
+function normalizeAttachmentKind(
+  declaredKind: string | undefined,
+  path: string,
+  mimeType?: string
+): ChatAttachmentKind {
+  if (declaredKind === 'folder' || declaredKind === 'file' || declaredKind === 'image') {
+    return declaredKind
+  }
+  const mime = (mimeType || '').toLowerCase()
+  if (mime.startsWith('image/')) return 'image'
+  if (mime.startsWith('audio/')) return 'audio'
+  if (mime.startsWith('video/')) return 'video'
+  const ext = extname(path).toLowerCase()
+  if (CHAT_ATTACHMENT_IMAGE_EXTENSIONS.has(ext)) return 'image'
+  if (CHAT_ATTACHMENT_AUDIO_EXTENSIONS.has(ext)) return 'audio'
+  if (CHAT_ATTACHMENT_VIDEO_EXTENSIONS.has(ext)) return 'video'
+  return 'file'
+}
+
+function pathScopeForAttachment(
+  path: string | undefined,
+  context: WorkspaceToolContext
+): ChatAttachmentPathScope {
+  if (!path) return 'missing'
+  if (context.workspacePath && isPathInsideWorkspace(context.workspacePath, path)) {
+    return 'workspace'
+  }
+  return 'external'
+}
+
+function runAttachmentCandidates(run: ChatRun): Record<string, unknown>[] {
+  return [run, (run as any).request, (run as any).snapshot, (run as any).requestSnapshot]
+    .filter(isRecord)
 }
 
 function latestChatRun(chat: ChatRecord): ChatRun | undefined {

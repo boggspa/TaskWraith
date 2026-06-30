@@ -14,6 +14,8 @@ describe('classifyTool', () => {
   it('classifies each non-write class', () => {
     expect(classifyTool('read_file')).toBe('workspace_read')
     expect(classifyTool('find_files')).toBe('workspace_read')
+    expect(classifyTool('list_chat_attachments')).toBe('workspace_read')
+    expect(classifyTool('inspect_chat_attachment')).toBe('workspace_read')
     expect(classifyTool('grep')).toBe('workspace_read')
     expect(classifyTool('git_log')).toBe('workspace_read')
     expect(classifyTool('git_show')).toBe('workspace_read')
@@ -59,12 +61,19 @@ describe('groupToolsByClass', () => {
     const grouped = groupToolsByClass([
       'read_file',
       'find_files',
+      'list_chat_attachments',
+      'inspect_chat_attachment',
       'web_search',
       'ask_user_question',
       'ensemble_yield',
       'write_file'
     ])
-    expect(grouped.workspace_read).toEqual(['read_file', 'find_files'])
+    expect(grouped.workspace_read).toEqual([
+      'read_file',
+      'find_files',
+      'list_chat_attachments',
+      'inspect_chat_attachment'
+    ])
     expect(grouped.web_read).toEqual(['web_search'])
     expect(grouped.ui_elicitation).toEqual(['ask_user_question'])
     expect(grouped.orchestration).toEqual(['ensemble_yield'])
@@ -130,6 +139,8 @@ describe('workspace_write is exactly the read-only deny set', () => {
     for (const tool of [
       'read_file',
       'find_files',
+      'list_chat_attachments',
+      'inspect_chat_attachment',
       'web_search',
       'web_fetch',
       'git_status',
