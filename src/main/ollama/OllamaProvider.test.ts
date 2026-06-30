@@ -1876,6 +1876,31 @@ describe('buildOllamaOpeningMessages', () => {
     expect(messages[2].content).toContain('previous message')
   })
 
+  it('anchors ensemble harness kickoff to the full ensemble instruction block', () => {
+    const messages = buildOllamaOpeningMessages({
+      toolProtocolEnabled: true,
+      harnessEnabled: true,
+      promptIntent: 'workspace',
+      toolControlTier: 'approved_edits',
+      model: 'ornith:35b',
+      workspaceIndexBlock: 'Workspace index:\nsrc/',
+      userPrompt: [
+        'TaskWraith Ensemble Mode',
+        'Role boundary contract:',
+        '- Treat Boss routing as authoritative.',
+        'Current user request:',
+        'Continue the plan arc.'
+      ].join('\n'),
+      ensembleRun: true
+    })
+
+    expect(messages).toHaveLength(3)
+    expect(messages[1].content).toContain('TaskWraith Ensemble Mode')
+    expect(messages[2].content).toContain('complete TaskWraith Ensemble instruction block')
+    expect(messages[2].content).toContain('Boss/Bossman/Lead authority rules')
+    expect(messages[2].content).not.toContain('Your task is the user request')
+  })
+
   it('sends only the tool catalog and the user words for conversational turns', () => {
     const messages = buildOllamaOpeningMessages({
       toolProtocolEnabled: true,

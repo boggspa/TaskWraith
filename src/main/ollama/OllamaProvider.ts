@@ -31,6 +31,7 @@ import {
 import {
   createOllamaHarnessRunState,
   evaluateOllamaHarnessGate,
+  ollamaEnsembleHarnessKickoffPrompt,
   ollamaHarnessEnforced,
   ollamaHarnessKickoffPrompt,
   ollamaHarnessToolFollowUpPrompt,
@@ -311,6 +312,7 @@ export interface OllamaOpeningMessagesInput {
   model: string
   workspaceIndexBlock: string
   userPrompt: string
+  ensembleRun?: boolean
 }
 
 /** Opening transcript for a local run. Workspace intent gets the full harness
@@ -336,7 +338,14 @@ export function buildOllamaOpeningMessages(input: OllamaOpeningMessagesInput): O
       : []),
     { role: 'user' as const, content: input.userPrompt },
     ...(input.harnessEnabled && workspaceIntent
-      ? [{ role: 'user' as const, content: ollamaHarnessKickoffPrompt(input.toolControlTier) }]
+      ? [
+          {
+            role: 'user' as const,
+            content: input.ensembleRun
+              ? ollamaEnsembleHarnessKickoffPrompt(input.toolControlTier)
+              : ollamaHarnessKickoffPrompt(input.toolControlTier)
+          }
+        ]
       : [])
   ]
 }
@@ -2160,7 +2169,8 @@ export async function runOllamaProvider(
       toolControlTier,
       model,
       workspaceIndexBlock,
-      userPrompt
+      userPrompt,
+      ensembleRun
     })
     let lastDone: OllamaChatChunk | null = null
     let runUsageStats: Record<string, unknown> | undefined
