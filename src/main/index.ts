@@ -865,6 +865,7 @@ import { registerSpellcheckHandlers } from './ipc/spellcheckHandlers'
 import { registerExternalPathGrantHandlers } from './ipc/externalPathGrantHandlers'
 import { registerGitHandlers } from './ipc/gitHandlers'
 import { registerClaudeAuthHandlers } from './ipc/claudeAuthHandlers'
+import { registerKimiAuthHandlers } from './ipc/kimiAuthHandlers'
 import { getCachedRemoteEnsemblePresets } from './remote/EnsembleRosterPresetsCache'
 import { resolveGeminiCliResumePolicy } from './GeminiSessionPolicy'
 // 1.0.5-EW26 — Kimi compatibility filter (curated + user-
@@ -26121,57 +26122,13 @@ if (isGeminiMcpBridgeProcess) {
       getNowIso: () => new Date().toISOString()
     })
 
-    ipcMain.handle('get-kimi-auth-status', async () => {
-      const encryptionAvailable = safeStorage.isEncryptionAvailable()
-      const apiKeyConfigured = Boolean(AppStore.getSettings().kimiApiKey)
-      const resolved = await resolveCliProviderBinary('kimi')
-      if (!resolved.binaryPath) {
-        return {
-          available: false,
-          authState: 'missing',
-          apiKeyConfigured,
-          encryptionAvailable,
-          binaryPath: null
-        } satisfies import('./store/types').ProviderApiKeyStatus
-      }
-      const version = await readResolvedCliVersion(resolved)
-      return {
-        available: true,
-        authState: apiKeyConfigured ? 'api-key' : 'unknown',
-        apiKeyConfigured,
-        encryptionAvailable,
-        version,
-        binaryPath: resolved.binaryPath
-      } satisfies import('./store/types').ProviderApiKeyStatus
-    })
-
-    ipcMain.handle('store-kimi-api-key', async (_, rawKey: string) => {
-      const key = String(rawKey || '').trim()
-      if (!key) {
-        AppStore.updateSettings({ kimiApiKey: undefined })
-        return {
-          stored: false,
-          encryptionAvailable: safeStorage.isEncryptionAvailable()
-        }
-      }
-      if (!safeStorage.isEncryptionAvailable()) {
-        return {
-          stored: false,
-          encryptionAvailable: false,
-          error: 'Secure storage is unavailable, so the Kimi API key was not saved.'
-        }
-      }
-      const encrypted = encryptApiKey(key)
-      AppStore.updateSettings({ kimiApiKey: encrypted || undefined })
-      return {
-        stored: Boolean(encrypted),
-        encryptionAvailable: safeStorage.isEncryptionAvailable()
-      }
-    })
-
-    ipcMain.handle('clear-kimi-api-key', async () => {
-      AppStore.updateSettings({ kimiApiKey: undefined })
-      return true
+    registerKimiAuthHandlers({
+      getSettings: () => AppStore.getSettings(),
+      updateSettings: (patch) => AppStore.updateSettings(patch),
+      isEncryptionAvailable: () => safeStorage.isEncryptionAvailable(),
+      encryptApiKey,
+      resolveCliProviderBinary,
+      readResolvedCliVersion
     })
 
     ipcMain.handle('get-gemini-auth-status', async () => {
