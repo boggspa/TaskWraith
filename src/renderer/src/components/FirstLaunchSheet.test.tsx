@@ -124,7 +124,7 @@ describe('FirstLaunchSheet', () => {
     )
     expect(html).toContain('Theme')
     expect(html).toContain('Composer shell')
-    expect(html).not.toContain('Gemini shell')
+    expect(html).toContain('Gemini shell')
     expect(html).toContain('Message bubble')
     expect(html).toContain('Composer preview')
     expect(html).toContain('data-composer-style="claude"')
