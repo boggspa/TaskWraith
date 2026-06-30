@@ -5,13 +5,19 @@ import type { NormalizedGrokRunEvent } from './GrokAcpProtocol'
 class FakeAcpChild implements AcpChildProcess {
   writes: string[] = []
   killed = false
+  writeError: Error | null = null
   private dataListeners: ((chunk: string) => void)[] = []
   private closeListener?: (code: number | null) => void
   private errorListener?: (err: Error) => void
+  private stdinErrorListener?: (err: Error) => void
 
   stdin = {
-    write: (data: string): void => {
+    write: (data: string, cb?: (err?: Error | null) => void): void => {
       this.writes.push(data)
+      cb?.(this.writeError)
+    },
+    on: (_event: 'error', listener: (err: Error) => void): void => {
+      this.stdinErrorListener = listener
     }
   }
   stdout = {
@@ -45,6 +51,10 @@ class FakeAcpChild implements AcpChildProcess {
 
   fail(err: Error): void {
     this.errorListener?.(err)
+  }
+
+  failStdin(err: Error): void {
+    this.stdinErrorListener?.(err)
   }
 }
 
@@ -166,6 +176,30 @@ describe('runGrokAcpTurn', () => {
       method: 'session/new',
       params: { cwd: '/tmp/ws', mcpServers: [scopedBridge] }
     })
+  })
+
+  it('does not crash when Grok closes stdin with EPIPE during an outbound write', () => {
+    const child = new FakeAcpChild()
+    child.writeError = Object.assign(new Error('write EPIPE'), { code: 'EPIPE' })
+    const { events } = run(child)
+
+    expect(child.sent()[0]).toMatchObject({ id: 1, method: 'initialize' })
+
+    child.emit({ jsonrpc: '2.0', id: 1, result: { protocolVersion: 1 } })
+
+    expect(child.sent()).toHaveLength(1)
+    expect(events.some((event) => event.type === 'provider_warning')).toBe(false)
+  })
+
+  it('swallows stdin EPIPE error events from the Grok ACP child', () => {
+    const child = new FakeAcpChild()
+    const { events } = run(child)
+
+    child.failStdin(Object.assign(new Error('write EPIPE'), { code: 'EPIPE' }))
+    child.emit({ jsonrpc: '2.0', id: 1, result: { protocolVersion: 1 } })
+
+    expect(child.sent()).toHaveLength(1)
+    expect(events.some((event) => event.type === 'provider_warning')).toBe(false)
   })
 
   it('cancel() sends session/cancel then kills (only mid-turn)', () => {

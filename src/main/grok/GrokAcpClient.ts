@@ -24,7 +24,14 @@ import {
 
 /** Minimal child-process surface this client needs (subset of ChildProcess). */
 export interface AcpChildProcess {
-  stdin: { write(data: string): void } | null
+  stdin: {
+    write(data: string, cb?: (err?: Error | null) => void): boolean | void
+    on?(event: 'error', listener: (err: Error) => void): void
+    destroyed?: boolean
+    writable?: boolean
+    writableEnded?: boolean
+    writableDestroyed?: boolean
+  } | null
   stdout: { on(event: 'data', listener: (chunk: Buffer | string) => void): void } | null
   stderr: { on(event: 'data', listener: (chunk: Buffer | string) => void): void } | null
   on(event: 'error', listener: (err: Error) => void): void
@@ -87,6 +94,16 @@ export interface GrokAcpRunHandle {
 
 const ACP_ID = { initialize: 1, sessionNew: 2, prompt: 3 } as const
 
+function isTerminalStdinWriteError(err: unknown): boolean {
+  const code = (err as NodeJS.ErrnoException | null | undefined)?.code
+  return (
+    code === 'EPIPE' ||
+    code === 'ECONNRESET' ||
+    code === 'ERR_STREAM_DESTROYED' ||
+    code === 'ERR_STREAM_WRITE_AFTER_END'
+  )
+}
+
 const grokBinaryFromSpawnMessage = (message: string): string | null => {
   const match = message.match(/^spawn\s+(.+?)\s+ENOENT\b/)
   return match?.[1] ?? null
@@ -120,26 +137,59 @@ export function runGrokAcpTurn(options: GrokAcpRunOptions): GrokAcpRunHandle {
   let promptSent = false
   let turnComplete = false
   let terminalStatus: string | undefined
+  let stdinClosed = false
+
+  child.stdin?.on?.('error', (err) => {
+    if (isTerminalStdinWriteError(err)) {
+      stdinClosed = true
+      return
+    }
+    options.onEvent({ type: 'provider_warning', text: err.message || String(err) })
+  })
+
+  const writeFrame = (message: Record<string, unknown>): void => {
+    options.onRawFrame?.('out', message)
+    const stdin = child.stdin
+    if (
+      stdinClosed ||
+      !stdin ||
+      stdin.destroyed ||
+      stdin.writableEnded ||
+      stdin.writableDestroyed ||
+      stdin.writable === false
+    ) {
+      return
+    }
+    try {
+      stdin.write(encodeAcpFrame(message), (err?: Error | null) => {
+        if (!err) return
+        if (isTerminalStdinWriteError(err)) {
+          stdinClosed = true
+          return
+        }
+        options.onEvent({ type: 'provider_warning', text: err.message || String(err) })
+      })
+    } catch (err) {
+      if (isTerminalStdinWriteError(err)) {
+        stdinClosed = true
+        return
+      }
+      options.onEvent({
+        type: 'provider_warning',
+        text: err instanceof Error ? err.message : String(err)
+      })
+    }
+  }
 
   const writeRpc = (id: number | null, method: string, params: unknown): void => {
     const message =
       id == null ? { jsonrpc: '2.0', method, params } : { jsonrpc: '2.0', id, method, params }
-    options.onRawFrame?.('out', message)
-    try {
-      child.stdin?.write(encodeAcpFrame(message))
-    } catch {
-      // stdin may be gone if the child exited; ignored.
-    }
+    writeFrame(message)
   }
 
   // Write a raw JSON-RPC response object (already shaped {jsonrpc,id,result}).
   const writeResponse = (message: Record<string, unknown>): void => {
-    options.onRawFrame?.('out', message)
-    try {
-      child.stdin?.write(encodeAcpFrame(message))
-    } catch {
-      // stdin may be gone if the child exited; ignored.
-    }
+    writeFrame(message)
   }
 
   // G5 — answer an inbound session/request_permission. Resolves the decision
