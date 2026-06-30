@@ -8875,6 +8875,55 @@
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
 }
 
+.diff-stage-counts {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  overflow: hidden;
+}
+
+.diff-stage-count-chip {
+  height: 22px;
+  max-width: 104px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 7px;
+  border: 1px solid color-mix(in srgb, var(--panel-border) 84%, transparent);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--panel-elevated-bg) 70%, transparent);
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  white-space: nowrap;
+}
+
+.diff-stage-count-chip > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.diff-stage-count-chip > strong {
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: 750;
+  font-variant-numeric: tabular-nums;
+}
+
+.diff-stage-count-chip[data-stage-group="unstaged"],
+.diff-stage-count-chip[data-stage-group="mixed"] {
+  border-color: color-mix(in srgb, var(--warning) 34%, var(--panel-border));
+}
+
+.diff-stage-count-chip[data-stage-group="staged"] {
+  border-color: color-mix(in srgb, var(--success) 34%, var(--panel-border));
+}
+
+.diff-stage-count-chip[data-stage-group="untracked"] {
+  border-color: color-mix(in srgb, var(--accent) 34%, var(--panel-border));
+}
+
 .diff-view-toggle {
   display: inline-flex;
   align-items: center;

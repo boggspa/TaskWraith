@@ -224,6 +224,7 @@ describe('DiffToolbar', () => {
       <DiffToolbar
         changedCount={3}
         totalCount={5}
+        stageCounts={{ mixed: 1, other: 0, staged: 1, unstaged: 1, untracked: 0 }}
         hideNoise={true}
         fileFilter="src"
         viewMode="split"
@@ -234,6 +235,11 @@ describe('DiffToolbar', () => {
     )
 
     expect(html).toContain('3 of 5 changed')
+    expect(html).toContain('aria-label="Visible change groups"')
+    expect(html).toContain('data-stage-group="mixed"')
+    expect(html).toContain('data-stage-group="unstaged"')
+    expect(html).toContain('data-stage-group="staged"')
+    expect(html).not.toContain('data-stage-group="other"')
     expect(html).toContain('aria-label="Filter changed files"')
     expect(html).toContain('value="src"')
     expect(html).toMatch(/type="checkbox"[^>]*checked/)
@@ -392,6 +398,15 @@ describe('DiffViewer changed-file rail virtualization', () => {
     )
 
     expect(html).toContain('800 of 900 changed')
+    expect(html).toContain('aria-label="Visible change groups"')
+    expect(html).toContain('data-stage-group="unstaged"')
+    expect(html).toContain('>Unstaged</span><strong>1</strong>')
+    expect(html).toContain('data-stage-group="staged"')
+    expect(html).toContain('>Staged</span><strong>1</strong>')
+    expect(html).toContain('data-stage-group="untracked"')
+    expect(html).toContain('>Untracked</span><strong>1</strong>')
+    expect(html).toContain('data-stage-group="other"')
+    expect(html).toContain('>Other</span><strong>797</strong>')
     expect(html).toContain('aria-label="Filter changed files"')
     expect(html).toMatch(/type="checkbox"[^>]*checked/)
     expect(html).toContain('Hide noise')

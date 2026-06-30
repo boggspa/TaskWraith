@@ -6,7 +6,7 @@ import type {
 } from '../../../main/services/GitService'
 import { DiffDetail } from './DiffDetail'
 import { DiffFileList } from './DiffFileList'
-import { DiffToolbar } from './DiffToolbar'
+import { DiffToolbar, type DiffStageCounts } from './DiffToolbar'
 import type { DiffViewMode } from './DiffViewerTypes'
 
 interface DiffViewerProps {
@@ -51,6 +51,14 @@ const repoPathForWorkspacePath = (
   return filePath
 }
 
+const emptyDiffStageCounts = (): DiffStageCounts => ({
+  mixed: 0,
+  other: 0,
+  staged: 0,
+  unstaged: 0,
+  untracked: 0
+})
+
 export function DiffViewer({
   diff,
   workspacePath,
@@ -91,6 +99,24 @@ export function DiffViewer({
       summary.status.toLowerCase().includes(normalizedFileFilter)
     )
   })
+  const visibleStageCounts = useMemo(() => {
+    const counts = emptyDiffStageCounts()
+    for (const summary of filteredSummaries) {
+      const gitStatus = gitStatusByPath.get(repoPathForSummary(summary))
+      if (gitStatus?.staged && gitStatus?.unstaged) {
+        counts.mixed += 1
+      } else if (gitStatus?.unstaged) {
+        counts.unstaged += 1
+      } else if (gitStatus?.staged) {
+        counts.staged += 1
+      } else if (summary.status === 'untracked') {
+        counts.untracked += 1
+      } else {
+        counts.other += 1
+      }
+    }
+    return counts
+  }, [filteredSummaries, gitStatusByPath, repoPathForSummary])
   const selectedSummary =
     filteredSummaries.find((s) => s.path === selectedPath) || filteredSummaries[0] || null
   const selectedGitStatus = selectedSummary
@@ -156,6 +182,7 @@ export function DiffViewer({
       <DiffToolbar
         changedCount={filteredSummaries.length}
         totalCount={summaries.length}
+        stageCounts={visibleStageCounts}
         hideNoise={hideNoise}
         fileFilter={fileFilter}
         viewMode={viewMode}
