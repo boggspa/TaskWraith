@@ -7113,7 +7113,8 @@ function planArtifactWriteApprovalMetadata(input: {
   }
 }): Record<string, unknown> | null {
   const preview = isRecord(input.request.preview) ? input.request.preview : null
-  const toolName = typeof preview?.toolName === 'string' ? preview.toolName : null
+  const rawToolName = typeof preview?.toolName === 'string' ? preview.toolName : null
+  const toolName = rawToolName ? canonicalTaskWraithToolName(rawToolName) || rawToolName : null
   const rawPath =
     typeof preview?.planArtifactRawPath === 'string' ? preview.planArtifactRawPath : null
   const decision = evaluatePlanArtifactWrite({
@@ -7136,6 +7137,28 @@ function planArtifactWriteApprovalMetadata(input: {
     workflowMode: 'plan',
     rationale: 'Plan workflow permits markdown plan-artifact writes under read-only posture.'
   }
+}
+
+function planArtifactRawPathFromToolInput(input: unknown, depth = 0): string | null {
+  if (!isRecord(input) || depth > 1) return null
+  for (const key of ['file_path', 'filePath', 'path', 'notebook_path', 'target_path']) {
+    const value = input[key]
+    if (typeof value === 'string' && value.trim()) return value
+  }
+  for (const key of ['input', 'arguments', 'params', 'payload']) {
+    const nestedPath = planArtifactRawPathFromToolInput(input[key], depth + 1)
+    if (nestedPath) return nestedPath
+  }
+  return null
+}
+
+function planArtifactRawPathFromChanges(changes: unknown): string | null {
+  if (!Array.isArray(changes)) return null
+  for (const change of changes) {
+    const rawPath = planArtifactRawPathFromToolInput(change)
+    if (rawPath) return rawPath
+  }
+  return null
 }
 
 async function requestAgenticServiceApproval(
@@ -10426,11 +10449,11 @@ function claudeToolApprovalPreview(
     }
   }
   if (service === 'fileChanges') {
-    const path = isRecord(input)
-      ? String(input.file_path || input.filePath || input.path || input.notebook_path || '')
-      : ''
+    const path = planArtifactRawPathFromToolInput(input) || ''
     return {
       kind: 'fileChange',
+      toolName,
+      ...(path ? { planArtifactRawPath: path } : {}),
       changes: path
         ? [{ kind: toolName.toLowerCase().includes('write') ? 'write' : 'edit', path }]
         : [],
@@ -12008,14 +12031,58 @@ async function runKimiWireProvider(
                 : message.params?.payload?.description ||
                   message.params?.payload?.action ||
                   'Kimi is requesting permission to continue.'
+              const kimiPlanArtifactRawPath = planArtifactRawPathFromToolInput(
+                message.params?.payload
+              )
               const approvalPreview = {
                 kind: 'tool',
                 toolName: kimiToolName,
+                ...(kimiPlanArtifactRawPath
+                  ? { planArtifactRawPath: kimiPlanArtifactRawPath }
+                  : {}),
                 params: message.params?.payload,
                 actions,
                 ...(externalPathDetection
                   ? { externalPathDetection: externalPathApprovalPreview(externalPathDetection) }
                   : {})
+              }
+              const kimiPlanArtifactWriteMetadata =
+                kimiGateService && nativePreflight.kind === 'deny'
+                  ? planArtifactWriteApprovalMetadata({
+                      workflowMode: state.workflowMode,
+                      effectivePermissions: state.effectivePermissions,
+                      globalFileChangesPolicy: AppStore.getSettings().agenticServices?.fileChanges,
+                      service: kimiGateService,
+                      workspacePath: workspacePathForKimiApproval,
+                      request: { preview: approvalPreview }
+                    })
+                  : null
+              if (kimiGateService && nativePreflight.kind === 'deny' && kimiPlanArtifactWriteMetadata) {
+                auditService.recordAutomaticApprovalDecision(
+                  'kimi',
+                  route,
+                  kimiGateService,
+                  workspacePathForKimiApproval,
+                  {
+                    method: 'request/ApprovalRequest',
+                    title: approvalTitle,
+                    body: approvalBody,
+                    preview: approvalPreview
+                  },
+                  'autoAllow',
+                  'plan_artifact',
+                  'request',
+                  {
+                    policy: nativePreflight.policy,
+                    transport: 'kimi-wire',
+                    ...kimiPlanArtifactWriteMetadata
+                  }
+                )
+                respondToKimiWireRequest(child, message.id, {
+                  request_id: message.params?.payload?.id || message.id,
+                  response: 'approve'
+                })
+                continue
               }
               if (kimiGateService && nativePreflight.kind === 'deny') {
                 auditService.recordAutomaticApprovalDecision(
@@ -13674,6 +13741,8 @@ function formatCodexApprovalRequest(method: string, params: any, state?: CodexRu
     params?.diff || params?.patch || params?.preview || cachedPatch?.preview || changes
   )
   const toolName = params?.toolName || params?.tool_name || params?.name || params?.mcpToolName
+  const planArtifactRawPath =
+    planArtifactRawPathFromToolInput(params) || planArtifactRawPathFromChanges(changes)
 
   if (command) {
     return {
@@ -13698,6 +13767,8 @@ function formatCodexApprovalRequest(method: string, params: any, state?: CodexRu
       body: summarizeCodexFileChanges(Array.isArray(changes) ? changes : []),
       preview: {
         kind: 'fileChange',
+        toolName,
+        ...(planArtifactRawPath ? { planArtifactRawPath } : {}),
         changes,
         patchPreview,
         itemId,
@@ -13846,6 +13917,48 @@ function handleCodexServerRequest(message: any) {
           externalPathDetection: externalPathApprovalPreview(externalPathDetection)
         }
       : {})
+  }
+  const codexPlanArtifactWriteMetadata =
+    gateService && nativePreflight.kind === 'deny'
+      ? planArtifactWriteApprovalMetadata({
+          workflowMode: state.workflowMode,
+          effectivePermissions: state.effectivePermissions,
+          globalFileChangesPolicy: AppStore.getSettings().agenticServices?.fileChanges,
+          service: gateService,
+          workspacePath: workspacePathForCodexApproval,
+          request: { preview: previewForDecision }
+        })
+      : null
+  if (gateService && nativePreflight.kind === 'deny' && codexPlanArtifactWriteMetadata) {
+    auditService.recordAutomaticApprovalDecision(
+      'codex',
+      { appRunId: state.appRunId, appChatId: state.appChatId },
+      gateService,
+      workspacePathForCodexApproval,
+      {
+        method,
+        title: formatted.title,
+        body: formatted.body,
+        preview: previewForDecision
+      },
+      'autoAllow',
+      'plan_artifact',
+      'request',
+      { policy: nativePreflight.policy, ...codexPlanArtifactWriteMetadata }
+    )
+    if (method === 'mcpServer/elicitation/request' || method === 'mcp/elicitation/request') {
+      codexClient.respond(message.id, { action: 'accept', content: null, _meta: null })
+    } else if (method === 'item/permissions/requestApproval') {
+      codexClient.respond(message.id, {
+        permissions: params?.permissions || {},
+        scope: 'turn'
+      })
+    } else if (method === 'tool/requestUserInput') {
+      codexClient.respond(message.id, { answers: {} })
+    } else {
+      codexClient.respond(message.id, { decision: 'accept' })
+    }
+    return
   }
   if (gateService && nativePreflight.kind === 'deny') {
     auditService.recordAutomaticApprovalDecision(
