@@ -1,5 +1,6 @@
 import type { ChatRecord } from '../../../main/store/types'
 import type { RunCompleteNotice } from './runCompleteNotice'
+import { isEnsembleActiveRoundDispatchLive } from './chatBusyState'
 
 /**
  * Run-queue statuses that count a chat as actively RUNNING — drives the
@@ -31,8 +32,9 @@ export interface DeriveChatIsRunningInput {
  * Whether a chat is actively running. Pure mirror of App.tsx's
  * `isSideChatRunning` (App.tsx:14185): true when the chat id is in
  * `runningChatIds`, OR it has an active run-queue job, OR its ensemble round
- * is currently 'running'. Pure so ANY pane — not just the focused/current
- * chat — can derive its own running state without the App.tsx singletons.
+ * still has live dispatch evidence. Pure so ANY pane — not just the
+ * focused/current chat — can derive its own running state without the App.tsx
+ * singletons.
  */
 export function deriveChatIsRunning(input: DeriveChatIsRunningInput): boolean {
   const chatId = input.chat?.appChatId
@@ -43,7 +45,7 @@ export function deriveChatIsRunning(input: DeriveChatIsRunningInput): boolean {
       return true
     }
   }
-  if (input.chat?.ensemble?.activeRound?.status === 'running') return true
+  if (isEnsembleActiveRoundDispatchLive(input.chat?.ensemble?.activeRound)) return true
   return false
 }
 

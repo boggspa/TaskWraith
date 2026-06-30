@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { isChatBusyForDispatch } from './chatBusyState'
+import { isChatBusyForDispatch, isEnsembleActiveRoundDispatchLive } from './chatBusyState'
+import type { ChatRecord } from '../../../main/store/types'
+
+type EnsembleRound = NonNullable<NonNullable<ChatRecord['ensemble']>['activeRound']>
 
 describe('isChatBusyForDispatch', () => {
   it('reports busy when the chat has an active run context', () => {
@@ -45,5 +48,93 @@ describe('isChatBusyForDispatch', () => {
         ignoreQueueRunId: 'run-1'
       })
     ).toBe(true)
+  })
+})
+
+describe('isEnsembleActiveRoundDispatchLive', () => {
+  const round = (patch: Partial<EnsembleRound> = {}): EnsembleRound =>
+    ({
+      roundId: 'round-1',
+      status: 'running',
+      prompt: 'go',
+      startedAt: '2026-06-30T00:00:00.000Z',
+      participants: [
+        {
+          participantId: 'p1',
+          provider: 'codex',
+          role: 'Worker',
+          order: 0,
+          status: 'running'
+        }
+      ],
+      ...patch
+    }) as EnsembleRound
+
+  it('is live for an active participant, pending participant, wakeup, or concurrent lane', () => {
+    expect(isEnsembleActiveRoundDispatchLive(round({ activeParticipantId: 'p1' }))).toBe(true)
+    expect(
+      isEnsembleActiveRoundDispatchLive(
+        round({ participants: [{ ...round().participants[0], status: 'idle' }] })
+      )
+    ).toBe(true)
+    expect(
+      isEnsembleActiveRoundDispatchLive(
+        round({
+          participants: [{ ...round().participants[0], status: 'answered' }],
+          pendingWakeupIds: ['wakeup-1']
+        })
+      )
+    ).toBe(true)
+    expect(
+      isEnsembleActiveRoundDispatchLive(
+        round({
+          participants: [{ ...round().participants[0], status: 'answered' }],
+          lanes: {
+            lane1: {
+              laneId: 'lane1',
+              participantId: 'p1',
+              provider: 'codex',
+              status: 'awaiting-approval',
+              intent: 'write',
+              startedAt: '2026-06-30T00:00:00.000Z'
+            }
+          }
+        })
+      )
+    ).toBe(true)
+  })
+
+  it('is not live for a stale running snapshot whose participants are terminal', () => {
+    expect(
+      isEnsembleActiveRoundDispatchLive(
+        round({
+          activeParticipantId: 'p1',
+          participants: [
+            { ...round().participants[0], status: 'answered', endedAt: '2026-06-30T00:01:00.000Z' },
+            {
+              participantId: 'p2',
+              provider: 'claude',
+              role: 'Reviewer',
+              order: 1,
+              status: 'skipped',
+              endedAt: '2026-06-30T00:01:00.000Z'
+            }
+          ]
+        })
+      )
+    ).toBe(false)
+  })
+
+  it('does not treat queued prompts alone as live after every participant ended', () => {
+    expect(
+      isEnsembleActiveRoundDispatchLive(
+        round({
+          activeParticipantId: undefined,
+          queuedPrompt: 'next',
+          queuedPrompts: ['next'],
+          participants: [{ ...round().participants[0], status: 'answered' }]
+        })
+      )
+    ).toBe(false)
   })
 })

@@ -417,7 +417,12 @@ import {
   queuedRunFallbackId,
   queuedRunJobSortTime
 } from './lib/runQueuePredicates'
-import { ACTIVE_RUN_QUEUE_STATUSES, isChatBusyForDispatch } from './lib/chatBusyState'
+import {
+  ACTIVE_RUN_QUEUE_STATUSES,
+  isChatBusyForDispatch,
+  isEnsembleActiveRoundDispatchLive
+} from './lib/chatBusyState'
+import { applyRecoveryRecordsToEnsembleRounds } from './lib/recoverEnsembleRoundTerminals'
 import {
   buildPlanImportDisplayPrompt,
   buildInitialPlanImportReview,
@@ -3583,7 +3588,9 @@ function App(): React.JSX.Element {
       let didAppend = false
       const updated = updateChatByIdLocalOnly(chatId, (source) => {
         const round = source.ensemble?.activeRound
-        if (source.chatKind !== 'ensemble' || round?.status !== 'running') return source
+        if (source.chatKind !== 'ensemble' || !round || !isEnsembleActiveRoundDispatchLive(round)) {
+          return source
+        }
         const currentQueue = ensembleQueuedPromptsFromRound(round)
         const nextQueue = [...currentQueue, prompt]
         didAppend = true
@@ -3611,7 +3618,9 @@ function App(): React.JSX.Element {
       if (!chatId) return
       updateChatByIdLocalOnly(chatId, (source) => {
         const round = source.ensemble?.activeRound
-        if (source.chatKind !== 'ensemble' || round?.status !== 'running') return source
+        if (source.chatKind !== 'ensemble' || !round || !isEnsembleActiveRoundDispatchLive(round)) {
+          return source
+        }
         const currentQueue = ensembleQueuedPromptsFromRound(round)
         const index = currentQueue.lastIndexOf(prompt)
         if (index < 0) return source
@@ -6201,7 +6210,7 @@ function App(): React.JSX.Element {
           (chat) =>
             chat.chatKind === 'ensemble' &&
             (runningChatIds.has(chat.appChatId) ||
-              chat.ensemble?.activeRound?.status === 'running')
+              isEnsembleActiveRoundDispatchLive(chat.ensemble?.activeRound))
         )
         .map((chat) => chat.appChatId)
     )
@@ -8548,7 +8557,10 @@ function App(): React.JSX.Element {
               ? { ...merged, messages: prev.messages }
               : merged
           )
-          if (merged.chatKind === 'ensemble' && merged.ensemble?.activeRound?.status === 'running') {
+          if (
+            merged.chatKind === 'ensemble' &&
+            isEnsembleActiveRoundDispatchLive(merged.ensemble?.activeRound)
+          ) {
             setIsThinking(true)
           }
         }
@@ -9202,18 +9214,18 @@ function App(): React.JSX.Element {
 
     if (recordsByChatId.size === 0) return chatList
 
-    // Sidebar-badge fix: reconcile `runs[]` terminal state from the
-    // recovery record so the chat record's persisted view matches the
-    // run queue's. Without this, a chat whose Kimi (or other-provider)
-    // run was orphaned by an app shutdown keeps a `runs[]` entry with
-    // `endedAt`/`status` undefined, and the Sidebar's
-    // `getLastRunStatus` keeps painting "Running" indefinitely — even
-    // after `recoverRunQueueJobsAfterStartup` flipped the queue job
-    // itself to `failed`. The pure helper lives in
-    // `lib/recoverChatRunTerminals` so it is unit-tested without IPC.
+    // Startup recovery reconciles two persisted views: generic `runs[]`
+    // for badges and Ensemble `activeRound` for queue/steer decisions.
+    // Without the activeRound pass, a force-quit round can retain a
+    // live-looking participant + queuedPrompt even after the run queue
+    // marked the underlying provider job failed.
     const runsReconciledChats = applyRecoveryRecordsToChatRuns(records, chatList)
+    const lifecycleReconciledChats = applyRecoveryRecordsToEnsembleRounds(
+      records,
+      runsReconciledChats
+    )
 
-    const updatedChats = runsReconciledChats.map((chat) => {
+    const updatedChats = lifecycleReconciledChats.map((chat) => {
       const chatRecords = recordsByChatId.get(chat.appChatId) || []
       if (chatRecords.length === 0) return chat
       const existingMessageIds = new Set(chat.messages.map((message) => message.id))
@@ -9689,10 +9701,9 @@ function App(): React.JSX.Element {
         }
       }
       if (runChat.chatKind === 'ensemble') {
-        const mode =
-          runChat.ensemble?.activeRound?.status === 'running'
-            ? ('queue' as const)
-            : ('normal' as const)
+        const mode = isEnsembleActiveRoundDispatchLive(runChat.ensemble?.activeRound)
+          ? ('queue' as const)
+          : ('normal' as const)
         const fanoutPolicy: EnsembleFanoutPolicy = request.dmTargetParticipantId
           ? 'off'
           : normalizeEnsembleFanoutPolicy(
@@ -12027,7 +12038,9 @@ function App(): React.JSX.Element {
       await window.api.runEnsembleRound({
         chatId: targetChatId,
         prompt: request.prompt,
-        mode: targetChat.ensemble?.activeRound?.status === 'running' ? 'steer' : 'normal',
+        mode: isEnsembleActiveRoundDispatchLive(targetChat.ensemble?.activeRound)
+          ? 'steer'
+          : 'normal',
         concurrentMode: ensembleFanoutPolicyEnabled(fanoutPolicy),
         fanoutPolicy,
         imageAttachments: request.imageAttachments.map((attachment) => ({
@@ -14943,7 +14956,9 @@ function App(): React.JSX.Element {
 
   const stopCurrentRunFromKeyboard = (): boolean => {
     const chatId = currentChat?.appChatId
-    const ensembleRoundRunning = currentChat?.ensemble?.activeRound?.status === 'running'
+    const ensembleRoundRunning = isEnsembleActiveRoundDispatchLive(
+      currentChat?.ensemble?.activeRound
+    )
     if (!chatId || (!isChatBusy(chatId) && !ensembleRoundRunning)) return false
     void handleCancel()
     return true
@@ -15248,11 +15263,14 @@ function App(): React.JSX.Element {
           job.chatId === currentChat.appChatId && ACTIVE_RUN_QUEUE_STATUSES.has(job.status)
       )
   )
+  const isCurrentEnsembleRoundDispatchLive = isEnsembleActiveRoundDispatchLive(
+    currentChat?.ensemble?.activeRound
+  )
   const isCurrentChatRunning = Boolean(
     currentChat?.appChatId &&
     (runningChatIds.has(currentChat.appChatId) ||
       hasCurrentChatActiveRunQueueJob ||
-      currentChat.ensemble?.activeRound?.status === 'running')
+      isCurrentEnsembleRoundDispatchLive)
   )
   const isCurrentEnsembleChat = currentChat?.chatKind === 'ensemble'
   // True while the open chat is a workflow being composed (welcome screen shows
@@ -15413,7 +15431,7 @@ function App(): React.JSX.Element {
     currentChat?.ensemble?.maxContinuationHops ??
     currentEnsembleRound?.maxContinuationHops ??
     6
-  const isCurrentEnsembleRoundRunning = currentEnsembleRound?.status === 'running'
+  const isCurrentEnsembleRoundRunning = isEnsembleActiveRoundDispatchLive(currentEnsembleRound)
   // Slice F v2 (1.0.3) — write-through helper used by the composer
   // pickers when an ensemble chip is selected. Patches the targeted
   // participant in chat.ensemble.participants and persists. Same
@@ -15755,7 +15773,7 @@ function App(): React.JSX.Element {
     if (!isCurrentEnsembleChat) return
     const round = currentChat?.ensemble?.activeRound
     if (!round) return
-    if (round.status === 'running') {
+    if (isEnsembleActiveRoundDispatchLive(round)) {
       // A new round (or a round-restart) is live — wipe any notice
       // left from a previous round. The dedupe ref also resets so
       // the upcoming round-end CAN fire a fresh notice.
@@ -15799,7 +15817,7 @@ function App(): React.JSX.Element {
   useEffect(() => {
     if (!isCurrentEnsembleChat) return
     const round = currentChat?.ensemble?.activeRound
-    if (round?.status !== 'running') {
+    if (!isEnsembleActiveRoundDispatchLive(round)) {
       // Round not running → drop any override so the next round
       // resumes auto-follow from a clean state.
       userOverrodeSelectionRef.current = false
@@ -15821,20 +15839,19 @@ function App(): React.JSX.Element {
   // selection. Passed to the chip strip as `onSelectParticipant`.
   const handleSelectParticipant = useCallback(
     (id: string) => {
-      const status = currentChat?.ensemble?.activeRound?.status
-      if (status === 'running') {
+      if (isEnsembleActiveRoundDispatchLive(currentChat?.ensemble?.activeRound)) {
         userOverrodeSelectionRef.current = true
       }
       setSelectedParticipantId(id)
     },
-    [currentChat?.ensemble?.activeRound?.status]
+    [currentChat?.ensemble?.activeRound]
   )
   // Phase J3 (steer): the composer Steer button is visible while the
   // current chat has an in-flight run. `isChatBusy` is the per-chat
   // busy predicate already used by every queue-decision site.
   const isCurrentChatBusyForSteer = Boolean(
     currentChat?.appChatId &&
-    (isChatBusy(currentChat.appChatId) || currentChat.ensemble?.activeRound?.status === 'running')
+    (isChatBusy(currentChat.appChatId) || isCurrentEnsembleRoundDispatchLive)
   )
   const steerIndicatorMessage = currentChat?.appChatId
     ? getSteerIndicatorMessage({
@@ -16071,7 +16088,10 @@ function App(): React.JSX.Element {
   // For non-ensemble chats this passes through `isThinking` unchanged.
   const ensembleRoundStatus = currentChat?.ensemble?.activeRound?.status
   const effectiveIsThinking =
-    isThinking && ensembleRoundStatus !== 'completed' && ensembleRoundStatus !== 'cancelled'
+    isThinking &&
+    (currentChat?.chatKind !== 'ensemble' || isCurrentEnsembleRoundDispatchLive) &&
+    ensembleRoundStatus !== 'completed' &&
+    ensembleRoundStatus !== 'cancelled'
   const currentRun = currentChat?.runs?.[currentChat.runs.length - 1]
   const sideRun = sideChat?.runs?.[sideChat.runs.length - 1]
   const hasSideChatActiveRunQueueJob = Boolean(
@@ -16084,7 +16104,7 @@ function App(): React.JSX.Element {
     sideChat?.appChatId &&
       (runningChatIds.has(sideChat.appChatId) ||
         hasSideChatActiveRunQueueJob ||
-        sideChat.ensemble?.activeRound?.status === 'running')
+        isEnsembleActiveRoundDispatchLive(sideChat.ensemble?.activeRound))
   )
   const sideChatStatusLabel =
     sideChat && getSideChatMode(sideChat) === 'fanOut'
@@ -16412,10 +16432,11 @@ function App(): React.JSX.Element {
     if (activeRunIds.size === 0 && sideRun?.runId) {
       activeRunIds.add(sideRun.runId)
     }
-    const activeRoundStartedAt =
-      sideChat.ensemble?.activeRound?.status === 'running'
-        ? Date.parse(sideChat.ensemble.activeRound.startedAt || '')
-        : Number.NaN
+    const activeRoundStartedAt = isEnsembleActiveRoundDispatchLive(
+      sideChat.ensemble?.activeRound
+    )
+      ? Date.parse(sideChat.ensemble!.activeRound!.startedAt || '')
+      : Number.NaN
     let liveChars = 0
     for (const message of sideChat.messages || []) {
       if (message.role !== 'assistant') continue
@@ -16459,10 +16480,11 @@ function App(): React.JSX.Element {
     if (activeRunIds.size === 0 && currentRun?.runId) {
       activeRunIds.add(currentRun.runId)
     }
-    const activeRoundStartedAt =
-      currentChat.ensemble?.activeRound?.status === 'running'
-        ? Date.parse(currentChat.ensemble.activeRound.startedAt || '')
-        : Number.NaN
+    const activeRoundStartedAt = isEnsembleActiveRoundDispatchLive(
+      currentChat.ensemble?.activeRound
+    )
+      ? Date.parse(currentChat.ensemble!.activeRound!.startedAt || '')
+      : Number.NaN
     let liveChars = 0
     for (const message of currentChat.messages || []) {
       if (message.role !== 'assistant') continue
@@ -16543,7 +16565,7 @@ function App(): React.JSX.Element {
   // liveRunOutputTokens, which folds in earlier participants' sealed output and
   // would over-count the active row).
   const liveContextParticipantId =
-    isCurrentChatRunning && currentChat?.ensemble?.activeRound?.status === 'running'
+    isCurrentChatRunning && isCurrentEnsembleRoundDispatchLive
       ? currentChat?.ensemble?.activeRound?.activeParticipantId
       : undefined
   const liveActiveParticipantOutputTokens = useMemo(
@@ -17320,7 +17342,7 @@ function App(): React.JSX.Element {
       // back-compat readers. Iterate the array so the stack shows
       // every pending entry with its own Edit / Delete / Steer.
       const ensembleRound = sourceChat.ensemble?.activeRound
-      if (ensembleRound?.status === 'running') {
+      if (ensembleRound && isEnsembleActiveRoundDispatchLive(ensembleRound)) {
         const prompts =
           Array.isArray(ensembleRound.queuedPrompts) && ensembleRound.queuedPrompts.length > 0
             ? ensembleRound.queuedPrompts
@@ -19109,7 +19131,7 @@ function App(): React.JSX.Element {
       .runEnsembleRound({
         chatId: chat.appChatId,
         prompt: promptText,
-        mode: chat.ensemble.activeRound?.status === 'running' ? 'steer' : 'normal',
+        mode: isEnsembleActiveRoundDispatchLive(chat.ensemble.activeRound) ? 'steer' : 'normal',
         concurrentMode: ensembleFanoutPolicyEnabled(fanoutPolicy),
         fanoutPolicy,
         imageAttachments: attachments.map((attachment) => ({
@@ -20715,10 +20737,11 @@ function App(): React.JSX.Element {
       if (activeRunIds.size === 0 && viewerRun?.runId) {
         activeRunIds.add(viewerRun.runId)
       }
-      const activeRoundStartedAt =
-        viewerChat.ensemble?.activeRound?.status === 'running'
-          ? Date.parse(viewerChat.ensemble.activeRound.startedAt || '')
-          : Number.NaN
+      const activeRoundStartedAt = isEnsembleActiveRoundDispatchLive(
+        viewerChat.ensemble?.activeRound
+      )
+        ? Date.parse(viewerChat.ensemble!.activeRound!.startedAt || '')
+        : Number.NaN
       let liveChars = 0
       for (const message of viewerChat.messages || []) {
         if (message.role !== 'assistant') continue
@@ -22007,10 +22030,11 @@ function App(): React.JSX.Element {
         if (activeRunIds.size === 0 && viewerRun?.runId) {
           activeRunIds.add(viewerRun.runId)
         }
-        const activeRoundStartedAt =
-          viewerChat.ensemble?.activeRound?.status === 'running'
-            ? Date.parse(viewerChat.ensemble.activeRound.startedAt || '')
-            : Number.NaN
+        const activeRoundStartedAt = isEnsembleActiveRoundDispatchLive(
+          viewerChat.ensemble?.activeRound
+        )
+          ? Date.parse(viewerChat.ensemble!.activeRound!.startedAt || '')
+          : Number.NaN
         let liveChars = 0
         for (const message of viewerChat.messages || []) {
           if (message.role !== 'assistant') continue
@@ -22171,7 +22195,7 @@ function App(): React.JSX.Element {
       // Live tick for THIS pane's actively-running participant (same scoping as the
       // focused composer), so a split-layout pane's per-participant rows tick too.
       const paneLiveParticipantId =
-        viewerIsRunning && viewerChat.ensemble?.activeRound?.status === 'running'
+        viewerIsRunning && isEnsembleActiveRoundDispatchLive(viewerChat.ensemble?.activeRound)
           ? viewerChat.ensemble?.activeRound?.activeParticipantId
           : undefined
       const paneContextMeter: ContextMeterModel = {

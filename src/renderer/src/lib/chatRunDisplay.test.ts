@@ -118,6 +118,34 @@ describe('deriveChatIsRunning', () => {
       deriveChatIsRunning({ chat: baseChat(ensemblePatch('cancelled')), runningChatIds: new Set() })
     ).toBe(false)
   })
+
+  it('does not treat a stale running ensemble snapshot as active', () => {
+    expect(
+      deriveChatIsRunning({
+        chat: baseChat({
+          ...ensemblePatch('running'),
+          ensemble: {
+            ...ensemblePatch('running').ensemble!,
+            activeRound: {
+              ...ensemblePatch('running').ensemble!.activeRound!,
+              activeParticipantId: undefined,
+              participants: [
+                {
+                  participantId: 'p1',
+                  provider: 'codex',
+                  role: 'Worker',
+                  order: 0,
+                  status: 'answered',
+                  endedAt: '2026-06-09T00:01:00.000Z'
+                }
+              ]
+            }
+          }
+        }),
+        runningChatIds: new Set()
+      })
+    ).toBe(false)
+  })
 })
 
 describe('deriveChatRunCompleteNotice', () => {

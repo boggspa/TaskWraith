@@ -1,4 +1,5 @@
 import type { ChatRecord } from '../../../main/store/types'
+import { isEnsembleActiveRoundDispatchLive } from './chatBusyState'
 
 const ACTIVE_RUN_QUEUE_STATUSES = new Set([
   'queued',
@@ -30,6 +31,6 @@ export function chatHasInFlightThinkingWork(input: {
       return true
     }
   }
-  if (input.chat?.ensemble?.activeRound?.status === 'running') return true
+  if (isEnsembleActiveRoundDispatchLive(input.chat?.ensemble?.activeRound)) return true
   return false
 }

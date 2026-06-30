@@ -59,6 +59,7 @@ import { AgentIdentityIcon } from './icons/AgentIdentityIcon'
 import type { AgentApprovalRequest } from '../lib/agentApprovalTypes'
 import type { HumanCollaborationShare } from '../../../main/collaboration/HumanCollaborationStore'
 import type { LocalServerEntry } from '../../../main/localServers/types'
+import { isEnsembleActiveRoundDispatchLive } from '../lib/chatBusyState'
 
 export type SharedChatCreateVariant = 'global' | 'workspace' | 'ensemble'
 
@@ -4302,7 +4303,7 @@ export function Sidebar({
                       const activeParticipant = chat.ensemble?.participants.find(
                         (participant) => participant.id === activeRound?.activeParticipantId
                       )
-                      const isRunning = activeRound?.status === 'running'
+                      const isRunning = isEnsembleActiveRoundDispatchLive(activeRound)
                       // Trim the role so a blank/whitespace role doesn't
                       // render a dangling "Provider / " — fall back to
                       // just the provider name in that case.

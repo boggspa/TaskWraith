@@ -586,6 +586,46 @@ describe('RemoteTaskProjection', () => {
     })
   })
 
+  it('projects a stale running ensemble snapshot as completed and hides dead queue entries', () => {
+    const card = buildRemoteTaskCard(
+      chat({
+        chatKind: 'ensemble',
+        runs: [run({ runId: 'run-1', status: 'success', startedAt: ISO })],
+        ensemble: {
+          enabled: true,
+          maxParticipants: 2,
+          participants: [],
+          activeRound: {
+            roundId: 'round-1',
+            status: 'running',
+            prompt: 'Coordinate',
+            startedAt: ISO,
+            activeParticipantId: 'p1',
+            queuedPrompt: 'stale next',
+            queuedPrompts: ['stale next'],
+            participants: [
+              {
+                participantId: 'p1',
+                provider: 'codex',
+                role: 'Implementer',
+                order: 1,
+                status: 'answered',
+                runId: 'run-1',
+                endedAt: ISO
+              }
+            ]
+          }
+        }
+      })
+    )
+    expect(card.status).toBe('success')
+    expect(card.ensembleState).toMatchObject({
+      status: 'completed',
+      queuedPromptCount: 0
+    })
+    expect(card.ensembleState?.queuedPrompts).toBeUndefined()
+  })
+
   it('does not duplicate the legacy queuedPrompt head when queuedPrompts has the full FIFO', () => {
     const activeRound = {
       roundId: 'round-1',

@@ -1205,20 +1205,24 @@ export function buildRemoteEnsembleState(chat: ChatRecord): RemoteEnsembleState 
   const ensemble = chat.ensemble
   if (!ensemble) return buildGuestParticipantState(chat)
   const activeRound = ensemble.activeRound
+  const projectedRoundStatus = projectEnsembleRoundStatus(activeRound)
+  const queuedPrompts =
+    projectedRoundStatus === 'running' ? combinedQueuedPrompts(activeRound) : []
   const participants = activeRound?.participants ?? []
   return {
     threadId: chat.appChatId,
     roundId: activeRound?.roundId,
-    status: activeRound?.status ?? 'idle',
+    status: projectedRoundStatus,
     orchestrationMode: activeRound?.orchestrationMode ?? ensemble.orchestrationMode,
-    activeParticipantId: activeRound?.activeParticipantId,
+    activeParticipantId:
+      projectedRoundStatus === 'running' ? activeRound?.activeParticipantId : undefined,
     bossmanParticipantId: ensemble.bossmanParticipantId,
     continuationHops: activeRound?.continuationHops,
     maxContinuationHops: activeRound?.maxContinuationHops ?? ensemble.maxContinuationHops,
-    queuedPromptCount: queuedPromptCount(activeRound),
-    ...(combinedQueuedPrompts(activeRound).length > 0
+    queuedPromptCount: queuedPrompts.length,
+    ...(queuedPrompts.length > 0
       ? {
-          queuedPrompts: combinedQueuedPrompts(activeRound).map((text, index) => ({
+          queuedPrompts: queuedPrompts.map((text, index) => ({
             index,
             text: sanitizeText(text, 4000).preview
           }))
@@ -1272,7 +1276,7 @@ function deriveTaskStatus(
   // it exactly once at end-of-round. While the round is still running, the
   // card never reports a terminal status off a single participant's run.
   const round = options.ensembleRound
-  if (round && round.status === 'running') return 'running'
+  if (isEnsembleRoundDispatchLive(round)) return 'running'
   if (!run) return 'idle'
   if (run.status === 'running') return 'running'
   if (run.status === 'cancelled' || run.cancelled) return 'cancelled'
@@ -1529,8 +1533,37 @@ export function combinedQueuedPrompts(
   return activeRound.queuedPrompt ? [activeRound.queuedPrompt] : []
 }
 
-function queuedPromptCount(activeRound: EnsembleConfig['activeRound']): number {
-  return combinedQueuedPrompts(activeRound).length
+const LIVE_ENSEMBLE_PARTICIPANT_STATUSES = new Set(['idle', 'running', 'sleeping'])
+
+const LIVE_ENSEMBLE_LANE_STATUSES = new Set(['pending', 'running', 'blocked', 'awaiting-approval'])
+
+function isEnsembleRoundDispatchLive(activeRound: EnsembleConfig['activeRound']): boolean {
+  if (activeRound?.status !== 'running') return false
+  const participants = Array.isArray(activeRound.participants) ? activeRound.participants : []
+  if (activeRound.activeParticipantId) {
+    const activeParticipant = participants.find(
+      (participant) => participant.participantId === activeRound.activeParticipantId
+    )
+    if (!activeParticipant || LIVE_ENSEMBLE_PARTICIPANT_STATUSES.has(activeParticipant.status)) {
+      return true
+    }
+  }
+  if ((activeRound.pendingWakeupIds?.length || 0) > 0) return true
+  if ((activeRound.sleepingParticipantIds?.length || 0) > 0) return true
+  const lanes = Object.values(activeRound.lanes || {})
+  if (lanes.some((lane) => LIVE_ENSEMBLE_LANE_STATUSES.has(lane.status))) return true
+  if (participants.length === 0) return true
+  return participants.some((participant) =>
+    LIVE_ENSEMBLE_PARTICIPANT_STATUSES.has(participant.status)
+  )
+}
+
+function projectEnsembleRoundStatus(
+  activeRound: EnsembleConfig['activeRound']
+): RemoteEnsembleState['status'] {
+  if (!activeRound) return 'idle'
+  if (activeRound.status !== 'running') return activeRound.status
+  return isEnsembleRoundDispatchLive(activeRound) ? 'running' : 'completed'
 }
 
 function projectEnsembleParticipant(

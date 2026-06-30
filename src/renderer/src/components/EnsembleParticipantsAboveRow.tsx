@@ -49,6 +49,7 @@ import {
 import { buildParticipantTokenChipModel } from '../lib/participantTokenChip'
 import { resolveProviderBrandLabel, resolveProviderHueClass } from '../lib/ollamaDisplayBrand'
 import { withSessionActivityLedger } from '../lib/sessionActivityLedger'
+import { isEnsembleActiveRoundDispatchLive } from '../lib/chatBusyState'
 import {
   ComposerProviderPickerRows,
   resolveProviderRows
@@ -481,7 +482,7 @@ export function EnsembleParticipantsAboveRow({
   if (chat.chatKind !== 'ensemble' || !chat.ensemble) return null
 
   const activeRound = chat.ensemble.activeRound
-  const isRoundRunning = activeRound?.status === 'running'
+  const isRoundRunning = isEnsembleActiveRoundDispatchLive(activeRound)
   const canAddParticipant = !isRoundRunning && participants.length < MAX_ENSEMBLE_PARTICIPANTS
 
   const updateParticipant = (id: string, patch: Partial<EnsembleParticipant>): void => {
@@ -1033,7 +1034,7 @@ export function EnsembleParticipantsAboveRow({
             `QueuedMessagesAboveRow.tsx` + the
             `queuedMessagesAboveRowEntries` builder in App.tsx for
             the ensemble-queued branch. */}
-        {activeRound?.status === 'running' && activeRound.activeParticipantId && onSkipActive && (
+        {isRoundRunning && activeRound?.activeParticipantId && onSkipActive && (
           <button
             type="button"
             className="btn btn-sm btn-ghost ensemble-above-row-skip"

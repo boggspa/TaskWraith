@@ -68,4 +68,37 @@ describe('chatHasInFlightThinkingWork', () => {
       })
     ).toBe(false)
   })
+
+  it('returns false for a stale running ensemble round with no live participants', () => {
+    expect(
+      chatHasInFlightThinkingWork({
+        chat: baseChat({
+          chatKind: 'ensemble',
+          ensemble: {
+            enabled: true,
+            maxParticipants: 6,
+            participants: [],
+            activeRound: {
+              roundId: 'round-1',
+              status: 'running',
+              prompt: 'go',
+              startedAt: '2026-06-09T00:00:00.000Z',
+              participants: [
+                {
+                  participantId: 'p1',
+                  provider: 'codex',
+                  role: 'Worker',
+                  order: 0,
+                  status: 'answered',
+                  endedAt: '2026-06-09T00:01:00.000Z'
+                }
+              ]
+            },
+            updatedAt: '2026-06-09T00:01:00.000Z'
+          }
+        }),
+        runningChatIds: new Set()
+      })
+    ).toBe(false)
+  })
 })

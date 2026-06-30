@@ -524,7 +524,8 @@ import {
   EnsembleWakeupRecord,
   RunEventKind,
   TranscriptMediaRef,
-  TranscriptMediaThumbnail
+  TranscriptMediaThumbnail,
+  PooledAgentIdentitySnapshot
 } from './store/types'
 import type { AgentRunPayload, AgentRunRoute } from './run/AgentRunTypes'
 import {
@@ -19988,6 +19989,7 @@ if (isGeminiMcpBridgeProcess) {
         generatedAt,
         costDisplay,
         showRunCompleteSummary: remoteShowRunCompleteSummary(),
+        pooledAgentIdentity: remotePooledAgentIdentityForChat(chat),
         speakerForMessage: remoteSpeakerForMessage(
           chat,
           chat.ensemble?.enabled
@@ -21516,6 +21518,7 @@ if (isGeminiMcpBridgeProcess) {
             generatedAt,
             costDisplay,
             showRunCompleteSummary: remoteShowRunCompleteSummary(),
+            pooledAgentIdentity: remotePooledAgentIdentityForChat(chat),
             speakerForMessage: remoteSpeakerForMessage(
               chat,
               chat.ensemble?.enabled
@@ -21558,6 +21561,7 @@ if (isGeminiMcpBridgeProcess) {
             generatedAt,
             costDisplay: remoteCostDisplayOptions(),
             showRunCompleteSummary: remoteShowRunCompleteSummary(),
+            pooledAgentIdentity: remotePooledAgentIdentityForChat(chat),
             speakerForMessage: remoteSpeakerForMessage(
               chat,
               chat.ensemble?.enabled
@@ -22651,9 +22655,59 @@ if (isGeminiMcpBridgeProcess) {
      * chat's persisted providerMetadata.agentIdentities registry (the
      * renderer assigns + persists these; reading keeps phone names
      * byte-identical to the desktop's instead of re-deriving). */
+    const remotePooledAgentIdentityForChat = (
+      chat: ChatRecord
+    ): PooledAgentIdentitySnapshot | undefined => {
+      const metadata = chat.providerMetadata as Record<string, unknown> | undefined
+      const raw = metadata?.pooledAgentIdentity
+      if (!raw || typeof raw !== 'object') return undefined
+      const record = raw as Record<string, unknown>
+      const agentId =
+        (typeof metadata?.pooledAgentId === 'string' && metadata.pooledAgentId.trim()) ||
+        (typeof record.agentId === 'string' && record.agentId.trim()) ||
+        ''
+      const nickname =
+        typeof record.nickname === 'string' && record.nickname.trim()
+          ? record.nickname.trim()
+          : ''
+      const iconKind = record.iconKind
+      const hue = Number(record.hue)
+      if (
+        !agentId ||
+        !nickname ||
+        !Number.isFinite(hue) ||
+        (iconKind !== 'named' && iconKind !== 'seed' && iconKind !== 'asset')
+      ) {
+        return undefined
+      }
+      return {
+        schemaVersion: 1,
+        agentId,
+        nickname,
+        iconKind,
+        hue: ((Math.round(hue) % 360) + 360) % 360,
+        ...(typeof record.accent === 'string' && record.accent
+          ? { accent: record.accent }
+          : {}),
+        ...(typeof record.slug === 'string' && record.slug ? { slug: record.slug } : {}),
+        ...(typeof record.assetKey === 'string' && record.assetKey
+          ? { assetKey: record.assetKey }
+          : {}),
+        ...(typeof record.seed === 'string' && record.seed ? { seed: record.seed } : {})
+      }
+    }
+
     const remoteAgentIdentityForChat = (
       chat: ChatRecord
     ): { name: string; accent?: string; slug?: string } | undefined => {
+      const pooledIdentity = remotePooledAgentIdentityForChat(chat)
+      if (pooledIdentity) {
+        return {
+          name: pooledIdentity.nickname,
+          ...(pooledIdentity.accent ? { accent: pooledIdentity.accent } : {}),
+          ...(pooledIdentity.slug ? { slug: pooledIdentity.slug } : {})
+        }
+      }
       if (!chat.parentChatId) return undefined
       const parent = AppStore.getChat(chat.parentChatId)
       const meta = parent?.providerMetadata as Record<string, unknown> | undefined
@@ -22961,6 +23015,7 @@ if (isGeminiMcpBridgeProcess) {
             generatedAt,
             costDisplay,
             showRunCompleteSummary: remoteShowRunCompleteSummary(),
+            pooledAgentIdentity: remotePooledAgentIdentityForChat(chat),
             speakerForMessage: remoteSpeakerForMessage(
               chat,
               chat.ensemble?.enabled
