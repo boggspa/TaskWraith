@@ -16,6 +16,7 @@ import {
   buildParticipantToolGrantPatch,
   getParticipantToolGrantIds
 } from '../lib/ensembleParticipantToolGrants'
+import { READ_ONLY_RECON_LABEL } from '../lib/planModeLabels'
 import { WORKSPACE_POLICY_SERVICES } from '../lib/workspacePolicyServices'
 import { CombinedModelPicker, type CombinedModelPickerModelOption } from './CombinedModelPicker'
 import { CombinedPermissionsPicker, type PermissionOption } from './CombinedPermissionsPicker'
@@ -25,7 +26,7 @@ import { ComposerProviderPicker } from './ComposerProviderPicker'
 // full_access + custom survive a round-trip (unlike the composer's 3-mode
 // collapse, which is fine for ephemeral live edits but not persisted data).
 export const PERMISSION_PRESET_OPTIONS: PermissionOption[] = [
-  { value: 'read_only', label: 'Plan / Read-only' },
+  { value: 'read_only', label: READ_ONLY_RECON_LABEL },
   { value: 'default', label: 'Default approval' },
   { value: 'workspace_write', label: 'Full workspace access' },
   { value: 'full_access', label: 'Full access' }

@@ -173,6 +173,7 @@ import {
   normalizeEnsembleFanoutPolicy
 } from './lib/ensembleFanoutPolicy'
 import { createWorkspaceBoardProvenance } from './lib/workspaceBoardProvenance'
+import { PLAN_LABEL, READ_ONLY_RECON_LABEL } from './lib/planModeLabels'
 import {
   GLOBAL_USAGE_WORKSPACE_ID,
   getChatProvider,
@@ -3846,6 +3847,10 @@ function App(): React.JSX.Element {
     const metadata = chat.providerMetadata || {}
     const metadataModel =
       typeof metadata.selectedModelType === 'string' ? metadata.selectedModelType : undefined
+    const metadataWorkflowMode =
+      metadata.workflowMode === 'plan' || metadata.workflowMode === 'normal'
+        ? metadata.workflowMode
+        : undefined
     const runModel = getLastRequestedModelForProvider(chat, provider)
     const selected = isValidModelForProvider(provider, metadataModel)
       ? metadataModel
@@ -3865,16 +3870,21 @@ function App(): React.JSX.Element {
         .filter((option) => !option.disabled)
         .map((option) => option.reasoningEffort)
     )
+    const resolvedApprovalMode =
+      provider === 'ollama'
+        ? 'plan'
+        : typeof metadata.approvalMode === 'string'
+        ? metadata.approvalMode
+        : chat.settingsSnapshot?.approvalMode || approvalMode
     return {
       provider,
       selectedModelType: selected,
       customModel: typeof metadata.customModel === 'string' ? metadata.customModel : '',
-      approvalMode:
-        provider === 'ollama'
-          ? 'plan'
-          : typeof metadata.approvalMode === 'string'
-          ? metadata.approvalMode
-          : chat.settingsSnapshot?.approvalMode || approvalMode,
+      approvalMode: resolvedApprovalMode,
+      workflowMode:
+        metadataWorkflowMode ||
+        chat.workflowMode ||
+        (resolvedApprovalMode === 'plan' ? 'plan' : 'normal'),
       codexReasoningEffort:
         typeof metadata.codexReasoningEffort === 'string'
           ? metadata.codexReasoningEffort
@@ -9342,6 +9352,7 @@ function App(): React.JSX.Element {
     const requestApprovalMode = target?.approvalMode || composerSelection?.approvalMode || approvalMode
     const requestWorkflowMode =
       target?.workflowMode ??
+      composerSelection?.workflowMode ??
       selectedChat?.workflowMode ??
       (requestApprovalMode === 'plan' ? 'plan' : 'normal')
     const requestReasoningEffort =
@@ -16293,7 +16304,7 @@ function App(): React.JSX.Element {
           ? sideComposerSelectedModel === 'composer-2.5-fast'
           : false
   const sidePermissionOptions: PermissionOption[] = [
-    { value: 'plan', label: 'Plan / Read-only' },
+    { value: 'plan', label: PLAN_LABEL },
     { value: 'default', label: 'Default Approval' },
     { value: 'auto_edit', label: 'Full Workspace Access' }
   ]
@@ -18096,9 +18107,16 @@ function App(): React.JSX.Element {
     agenticServices.shellCommands !== 'allow' ||
     agenticServices.fileChanges !== 'allow' ||
     agenticServices.mcpTools !== 'allow'
+  const currentComposerWorkflowMode =
+    currentChat?.providerMetadata?.workflowMode === 'plan' ||
+    currentChat?.providerMetadata?.workflowMode === 'normal'
+      ? currentChat.providerMetadata.workflowMode
+      : currentChat?.workflowMode || (approvalMode === 'plan' ? 'plan' : 'normal')
   const permissionModeLabel =
     approvalMode === 'plan'
-      ? 'Read-only sandbox'
+      ? currentComposerWorkflowMode === 'plan'
+        ? PLAN_LABEL
+        : READ_ONLY_RECON_LABEL
       : isCurrentGlobalChat
         ? 'General chat, prompts'
         : approvalMode === 'auto_edit'

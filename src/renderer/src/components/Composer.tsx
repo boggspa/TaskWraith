@@ -3,6 +3,7 @@ import { MAX_ACTIVE_GOAL_OBJECTIVE_CHARS } from '../../../main/GoalState'
 import {
   AgenticServiceId,
   AgenticWorkspaceGrant,
+  ChatWorkflowMode,
   EnsembleFanoutPolicy,
   EnsembleParticipant,
   PermissionPresetId,
@@ -105,6 +106,7 @@ import {
   resolveClaudeDefaultReasoningEffort
 } from '../lib/providerModelDefaults'
 import { codexReasoningDisplayLabel, claudeReasoningDisplayLabel } from '../lib/composerChipFormat'
+import { PLAN_LABEL, READ_ONLY_RECON_LABEL } from '../lib/planModeLabels'
 import { WORKSPACE_POLICY_SERVICES } from '../lib/workspacePolicyServices'
 import { createPortal } from 'react-dom'
 
@@ -413,10 +415,14 @@ export interface ComposerProps {
   welcomeParticipantOverflow: any
   workflowDraft: any
   workflowForCurrentChat: any
+  workflowMode?: ChatWorkflowMode
   workflowIntervalMinutes: any
   workspaceDiffStats: any
   workspaces: any
 }
+
+const normalizeComposerWorkflowMode = (value: unknown): ChatWorkflowMode | null =>
+  value === 'plan' || value === 'normal' ? value : null
 
 function ComposerInner(props: ComposerProps): React.JSX.Element {
   const {
@@ -699,6 +705,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     welcomeParticipantOverflow,
     workflowDraft,
     workflowForCurrentChat,
+    workflowMode,
     workflowIntervalMinutes,
     workspaceDiffStats,
     workspaces
@@ -3706,11 +3713,10 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                           // participant chip is selected, the picker
                           // reads/writes the participant's
                           // `permissionPresetId` instead of the chat's
-                          // `approvalMode`. The user-facing 3-mode UI
-                          // stays the same (Plan / Default / Full
-                          // Workspace Access) but we translate
-                          // bidirectionally to the preset vocabulary
-                          // (`read_only` / `default` / `workspace_write`).
+                          // `approvalMode`. Participant edits remain
+                          // capability-only; solo chat edits split Plan
+                          // workflow from Read-only recon while both map to
+                          // the provider's existing read-only capability.
                           // Slice A3 — in Ensemble Mode, Tool Grants are
                           // participant-scoped overrides. Solo chats keep
                           // using provider+workspace grants.
@@ -3721,24 +3727,42 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                           const effectiveProvider: ProviderId =
                             ensembleBinding?.provider ?? currentProvider
                           const presetToMode = (preset: string | undefined): string => {
-                            if (preset === 'read_only') return 'plan'
+                            if (preset === 'read_only') return 'read_only'
                             if (preset === 'workspace_write') return 'auto_edit'
                             if (preset === 'full_access') return 'auto_edit'
                             return 'default'
                           }
                           const modeToPreset = (mode: string): PermissionPresetId => {
-                            if (mode === 'plan') return 'read_only'
+                            if (mode === 'plan' || mode === 'read_only') return 'read_only'
                             if (mode === 'auto_edit') return 'workspace_write'
                             return 'default'
                           }
+                          const effectiveWorkflowMode =
+                            normalizeComposerWorkflowMode(workflowMode) ||
+                            normalizeComposerWorkflowMode(
+                              currentChat?.providerMetadata?.workflowMode
+                            ) ||
+                            normalizeComposerWorkflowMode(currentChat?.workflowMode) ||
+                            (approvalMode === 'plan' ? 'plan' : 'normal')
                           const effectiveSelectedPermission = ensembleBinding
                             ? presetToMode(ensembleBinding.permissionPresetId)
-                            : approvalMode
-                          const permissionPickerOptions: PermissionOption[] = [
-                            { value: 'plan', label: 'Plan / Read-only' },
-                            { value: 'default', label: 'Default Approval' },
-                            { value: 'auto_edit', label: 'Full Workspace Access' }
-                          ]
+                            : approvalMode === 'plan'
+                              ? effectiveWorkflowMode === 'plan'
+                                ? 'plan'
+                                : 'read_only'
+                              : approvalMode
+                          const permissionPickerOptions: PermissionOption[] = ensembleBinding
+                            ? [
+                                { value: 'read_only', label: READ_ONLY_RECON_LABEL },
+                                { value: 'default', label: 'Default Approval' },
+                                { value: 'auto_edit', label: 'Full Workspace Access' }
+                              ]
+                            : [
+                                { value: 'plan', label: PLAN_LABEL },
+                                { value: 'read_only', label: READ_ONLY_RECON_LABEL },
+                                { value: 'default', label: 'Default Approval' },
+                                { value: 'auto_edit', label: 'Full Workspace Access' }
+                              ]
                           const normalizedWorkspacePath = (currentWorkspace?.path || '').replace(
                             /\/+$/,
                             ''
@@ -3768,19 +3792,26 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             currentWorkspace && !isCurrentGlobalChat
                               ? WORKSPACE_POLICY_SERVICES
                               : []
-                          const handlePermissionSelection = (nextApprovalMode: string): void => {
+                          const handlePermissionSelection = (nextPermissionMode: string): void => {
                             if (ensembleBinding) {
                               updateSelectedParticipant({
-                                permissionPresetId: modeToPreset(nextApprovalMode)
+                                permissionPresetId: modeToPreset(nextPermissionMode)
                               })
                               return
                             }
+                            const nextApprovalMode =
+                              nextPermissionMode === 'plan' || nextPermissionMode === 'read_only'
+                                ? 'plan'
+                                : nextPermissionMode
+                            const nextWorkflowMode: ChatWorkflowMode =
+                              nextPermissionMode === 'plan' ? 'plan' : 'normal'
                             // The actual mode change, deferred so an
                             // elevation warning can gate it (see below).
                             const applyMainSelection = (): void => {
                               setApprovalMode(nextApprovalMode)
                               rememberCurrentChatComposerSelection({
-                                approvalMode: nextApprovalMode
+                                approvalMode: nextApprovalMode,
+                                workflowMode: nextWorkflowMode
                               })
                               if (
                                 currentProvider === 'gemini' &&
