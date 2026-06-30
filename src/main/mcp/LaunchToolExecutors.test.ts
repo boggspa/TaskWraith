@@ -109,6 +109,35 @@ describe('executeLaunchTool', () => {
     expect(String(r.structuredContent?.error)).toMatch(/denied/)
   })
 
+  it('launch_start refuses an already-active attempt owned by another chat', async () => {
+    const controller = fakeController({
+      start: async () => ({
+        ok: true,
+        attempt: fakeAttempt({ id: 'foreign', chatId: 'c2', detectedUrls: ['http://localhost:9999'] })
+      })
+    })
+    const { executeLaunchTool } = createLaunchToolExecutors({ controller })
+    const r = await executeLaunchTool('launch_start', { targetId: 'npm-dev' }, ctx, 'claude')
+    expect(r.isError).toBe(true)
+    expect(String(r.structuredContent?.error)).toMatch(/already running/)
+    expect(JSON.stringify(r.structuredContent)).not.toContain('9999')
+    expect(JSON.stringify(r.structuredContent)).not.toContain('foreign')
+  })
+
+  it('launch_start requires a chat-scoped run before it can spawn', async () => {
+    const start = vi.fn(async () => ({ ok: true, attempt: fakeAttempt({ chatId: undefined }) }))
+    const { executeLaunchTool } = createLaunchToolExecutors({ controller: fakeController({ start }) })
+    const r = await executeLaunchTool(
+      'launch_start',
+      { targetId: 'npm-dev' },
+      { appRunId: 'r1', workspacePath: '/ws' },
+      'claude'
+    )
+    expect(r.isError).toBe(true)
+    expect(String(r.structuredContent?.error)).toMatch(/chat-scoped/)
+    expect(start).not.toHaveBeenCalled()
+  })
+
   it('launch_stop and launch_status work', async () => {
     const { executeLaunchTool } = createLaunchToolExecutors({ controller: fakeController() })
     const stop = await executeLaunchTool('launch_stop', { attemptId: 'att1' }, ctx, 'claude')
@@ -137,6 +166,16 @@ describe('executeLaunchTool', () => {
     const attempts = r.structuredContent?.attempts as Array<Record<string, unknown>>
     expect(attempts).toHaveLength(1)
     expect(attempts[0].attemptId).toBe('mine')
+  })
+
+  it('launch_status does not expose unattributed attempts to no-chat runs', async () => {
+    const controller = fakeController({
+      attempts: () => [fakeAttempt({ id: 'legacy', chatId: undefined })]
+    })
+    const { executeLaunchTool } = createLaunchToolExecutors({ controller })
+    const r = await executeLaunchTool('launch_status', {}, { appRunId: 'r1', workspacePath: '/ws' }, 'claude')
+    expect(r.isError).toBeFalsy()
+    expect(r.structuredContent?.attempts).toEqual([])
   })
 
   it('launch_stop refuses another chat\'s attemptId without signaling the process', async () => {

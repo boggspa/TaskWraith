@@ -140,11 +140,16 @@ function fail(toolName: LaunchMcpToolName, message: string): McpToolExecutionRes
 export function createLaunchToolExecutors(deps: LaunchToolExecutorDeps): LaunchToolExecutors {
   const { controller } = deps
 
-  /** Attempts the calling chat owns (mirrors the canvas chat-scope: chatId match,
-   * global-scope runs share the no-chat scope). */
+  /** Attempts the calling chat owns. A missing chat id is NOT an ownership bucket:
+   * unattributed/global attempts are intentionally invisible to agent MCP tools. */
   function ownAttempts(context: LaunchToolContext): LaunchAttempt[] {
-    const chat = context.appChatId ?? null
-    return controller.attempts().filter((a) => (a.chatId ?? null) === chat)
+    const chat = context.appChatId
+    if (!chat) return []
+    return controller.attempts().filter((a) => a.chatId === chat)
+  }
+
+  function ownsAttempt(attempt: LaunchAttempt, context: LaunchToolContext): boolean {
+    return Boolean(context.appChatId) && attempt.chatId === context.appChatId
   }
 
   async function executeLaunchTool(
@@ -167,6 +172,9 @@ export function createLaunchToolExecutors(deps: LaunchToolExecutorDeps): LaunchT
         case 'launch_start': {
           const targetId = asOptString(args.targetId)
           if (!targetId) return fail(toolName, '`targetId` is required (from launch_list_targets).')
+          if (!context.appChatId) {
+            return fail(toolName, 'Launch tools require a chat-scoped run.')
+          }
           // Re-discover for THIS run's workspace and find the target by id — the
           // agent can only start a discovered (repo-controlled) target, never a
           // command of its own choosing.
@@ -182,6 +190,12 @@ export function createLaunchToolExecutors(deps: LaunchToolExecutorDeps): LaunchT
           })
           if (!outcome.ok || !outcome.attempt) {
             return fail(toolName, outcome.error || 'Launch failed.')
+          }
+          // LaunchManager may return an already-active attempt for the same
+          // target+workspace before approval. Never leak another chat's attempt
+          // id/URLs through launch_start; status/stop have the same ownership rule.
+          if (!ownsAttempt(outcome.attempt, context)) {
+            return fail(toolName, 'Launch target is already running outside this chat.')
           }
           return jsonResult({ ok: true, tool: toolName, ...attemptView(outcome.attempt) })
         }
