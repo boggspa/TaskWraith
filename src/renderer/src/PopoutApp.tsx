@@ -325,7 +325,12 @@ export function PopoutApp() {
             <span className="popout-status" role="status" aria-live="polite">
               {status}
             </span>
-            <button className="btn btn-sm" type="button" onClick={() => void refreshDiff()}>
+            <button
+              className="btn btn-sm"
+              type="button"
+              onClick={() => void refreshDiff()}
+              aria-label={`Refresh diff for ${workspaceName}`}
+            >
               Refresh
             </button>
           </div>

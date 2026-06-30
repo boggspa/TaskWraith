@@ -335,14 +335,17 @@ export function WorkSessionSetupSheet({
   return (
     <div
       className="work-session-setup-backdrop"
+      role="presentation"
       onClick={(event) => {
         if (event.target === event.currentTarget) onCancel()
       }}
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="work-session-setup-title"
     >
-      <div className="work-session-setup-panel">
+      <div
+        className="work-session-setup-panel"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="work-session-setup-title"
+      >
         <header className="work-session-setup-header">
           <h2 id="work-session-setup-title">{sheetTitle}</h2>
           <p className="work-session-setup-subhead">

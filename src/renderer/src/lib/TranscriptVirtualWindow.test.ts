@@ -14,6 +14,7 @@ import {
   estimatedHeightFor,
   projectRows,
   measurementKey,
+  measurementContentVersion,
   getRowHeight,
   sumHeights,
   selectWindow,
@@ -312,6 +313,23 @@ describe('TranscriptVirtualWindow', () => {
 
     it('invalidates when the expansion bit changes (ActivityStack expand/collapse)', () => {
       expect(measurementKey('m1', 'a:5', 8, false)).not.toBe(measurementKey('m1', 'a:5', 8, true))
+    })
+  })
+
+  describe('measurementContentVersion', () => {
+    it('uses a stable live key for the active assistant row', () => {
+      const row = projectRows([msg({ id: 'a', role: 'assistant', content: 'hello' })])[0]
+      expect(measurementContentVersion(row, row.rowKey)).toBe('assistant:live')
+    })
+
+    it('leaves non-active rows on their content version', () => {
+      const row = projectRows([msg({ id: 'a', role: 'assistant', content: 'hello' })])[0]
+      expect(measurementContentVersion(row, 'other#0')).toBe(row.contentVersion)
+    })
+
+    it('does not live-key non-assistant rows', () => {
+      const row = projectRows([msg({ id: 'u', role: 'user', content: 'hello' })])[0]
+      expect(measurementContentVersion(row, row.rowKey)).toBe(row.contentVersion)
     })
   })
 

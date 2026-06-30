@@ -146,7 +146,7 @@ export function ChangelogSheet({
         )}
 
         {updateStatus === 'error' && updateSnapshot?.errorMessage && (
-          <div className="changelog-sheet-error" role="status">
+          <div className="changelog-sheet-error" role="alert">
             {updateSnapshot.errorMessage}
           </div>
         )}

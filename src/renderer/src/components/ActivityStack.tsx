@@ -2479,7 +2479,11 @@ function ActivityRow({
         tabIndex={canExpand ? 0 : -1}
         onMouseEnter={activityDiffPreviewText ? openActivityDiffHoverPreview : undefined}
         onMouseLeave={activityDiffPreviewText ? scheduleCloseActivityDiffHoverPreview : undefined}
-        onFocus={activityDiffPreviewText ? openActivityDiffHoverPreview : undefined}
+        onFocus={
+          activityDiffPreviewText
+            ? (event) => openActivityDiffHoverPreview(event, { focusTarget: 'preview' })
+            : undefined
+        }
         onBlur={activityDiffPreviewText ? scheduleCloseActivityDiffHoverPreview : undefined}
         aria-expanded={canExpand ? expanded : undefined}
         onClick={canExpand ? (event) => toggleExpanded(event.metaKey || event.shiftKey) : undefined}
@@ -2620,7 +2624,9 @@ function ActivityRow({
                     title="Preview diff"
                     onMouseEnter={openActivityDiffHoverPreview}
                     onMouseLeave={scheduleCloseActivityDiffHoverPreview}
-                    onFocus={openActivityDiffHoverPreview}
+                    onFocus={(event) =>
+                      openActivityDiffHoverPreview(event, { focusTarget: 'preview' })
+                    }
                     onBlur={scheduleCloseActivityDiffHoverPreview}
                     onClick={(event) => {
                       event.preventDefault()

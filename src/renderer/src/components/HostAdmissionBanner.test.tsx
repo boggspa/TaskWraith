@@ -23,6 +23,7 @@ describe('HostAdmissionBanner', () => {
       />
     )
     expect(html).toContain('aria-label="Reject Alex&#x27;s join attempt and stop sharing"')
+    expect(html).toContain('aria-label="Security code 123456"')
     expect(html).toContain('123456')
   })
 })

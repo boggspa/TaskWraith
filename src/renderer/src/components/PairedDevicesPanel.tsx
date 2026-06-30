@@ -74,9 +74,15 @@ export function PairedDevicesPanel(): JSX.Element {
 
   return (
     <section className="settings-group paired-devices-panel">
-      {error && <div className="settings-error">{error}</div>}
+      {error && (
+        <div className="settings-error" role="alert">
+          {error}
+        </div>
+      )}
       {loading && devices.length === 0 ? (
-        <div className="settings-muted">Loading paired devices…</div>
+        <div className="settings-muted" role="status">
+          Loading paired devices…
+        </div>
       ) : devices.length === 0 ? (
         <div className="settings-muted">
           No paired iPhone or iPad yet. Scan the QR above to add your first device.

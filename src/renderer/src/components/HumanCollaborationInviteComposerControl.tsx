@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import type { HumanCollaborationShare } from '../../../main/collaboration/HumanCollaborationStore'
 import type {
   HumanCollaborationInviteCopyResult,
@@ -43,6 +43,8 @@ export function HumanCollaborationInviteComposerControl({
   const [result, setResult] = useState<HumanCollaborationInviteCopyResult | null>(null)
   const [status, setStatus] = useState('')
   const [manualInvite, setManualInvite] = useState('')
+  const triggerRef = useRef<HTMLButtonElement | null>(null)
+  const popoverRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
     if (!open || !onRefreshHealth) return
@@ -54,6 +56,28 @@ export function HumanCollaborationInviteComposerControl({
     setStatus('')
     setManualInvite('')
   }, [share?.shareId])
+
+  useEffect(() => {
+    if (!open) return
+    const handleClick = (event: MouseEvent): void => {
+      const target = event.target as Node
+      if (popoverRef.current?.contains(target)) return
+      if (triggerRef.current?.contains(target)) return
+      setOpen(false)
+    }
+    const handleKey = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      setOpen(false)
+      triggerRef.current?.focus()
+    }
+    document.addEventListener('mousedown', handleClick, true)
+    document.addEventListener('keydown', handleKey, true)
+    return () => {
+      document.removeEventListener('mousedown', handleClick, true)
+      document.removeEventListener('keydown', handleKey, true)
+    }
+  }, [open])
 
   if (!active || !share || !onCopyInvite) return null
 
@@ -118,6 +142,7 @@ export function HumanCollaborationInviteComposerControl({
   return (
     <span className="composer-human-invite-wrap">
       <button
+        ref={triggerRef}
         type="button"
         className={`composer-human-invite-button composer-hint-pill composer-hint-pill--left${open ? ' is-open' : ''}`}
         data-hint-label="People share"
@@ -133,7 +158,12 @@ export function HumanCollaborationInviteComposerControl({
         <span className="composer-human-invite-label">New invite</span>
       </button>
       {open && (
-        <div className="composer-human-invite-popover" role="dialog" aria-label="People sharing">
+        <div
+          ref={popoverRef}
+          className="composer-human-invite-popover"
+          role="dialog"
+          aria-label="People sharing"
+        >
           <div className="composer-human-invite-popover-head">
             <div>
               <span className="composer-human-invite-kicker">People share</span>

@@ -350,7 +350,9 @@ export function NotificationZone({
   if (count === 1) {
     return (
       <div className="notification-zone">
-        <NotificationCard notification={active[0]} onDismiss={dismiss} />
+        <div aria-live="polite" aria-atomic="true">
+          <NotificationCard notification={active[0]} onDismiss={dismiss} />
+        </div>
       </div>
     )
   }
@@ -404,6 +406,9 @@ export function NotificationZone({
               ? `is-incoming ${direction === 'next' ? 'from-left' : 'from-right'}`
               : 'is-active'
           }`}
+          aria-live="polite"
+          aria-atomic="true"
+          aria-label={`Notification ${safeIndex + 1} of ${count}`}
         >
           <NotificationCard notification={current} onDismiss={dismiss} />
         </div>

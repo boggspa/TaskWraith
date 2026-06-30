@@ -103,6 +103,18 @@ export function ApprovalLedgerPanel({
   const [search, setSearch] = useState('')
   const [expandedId, setExpandedId] = useState<string | null>(null)
 
+  useEffect(() => {
+    if (!bulkForgetPending) return
+    const handleKey = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape' && !bulkRevoking) {
+        event.preventDefault()
+        setBulkForgetPending(null)
+      }
+    }
+    window.addEventListener('keydown', handleKey)
+    return () => window.removeEventListener('keydown', handleKey)
+  }, [bulkForgetPending, bulkRevoking])
+
   const refresh = useCallback(async () => {
     try {
       setLoading(true)

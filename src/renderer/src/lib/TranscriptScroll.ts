@@ -54,6 +54,8 @@ export const STICK_ENGAGE_PX = 2
  */
 export const STICK_DISENGAGE_PX = 4
 
+export const PROGRAMMATIC_SCROLL_EPSILON_PX = 1
+
 export interface ChatScrollState {
   scrollTop: number
   scrollHeight: number
@@ -210,6 +212,51 @@ export function restoreChatScrollStateWhenReady(
 export function shouldEngageAutoFollow(distanceFromBottom: number): boolean {
   if (!Number.isFinite(distanceFromBottom)) return false
   return distanceFromBottom <= STICK_ENGAGE_PX
+}
+
+/**
+ * Decide whether a scroll evaluation may re-arm sticky-bottom.
+ *
+ * Being numerically near the bottom is not enough after upward user intent.
+ * During fast streaming the transcript can grow under the viewport and keep
+ * `distanceFromBottom` inside the tiny engage band while the user is trying to
+ * move upward. In that case, only a real downward movement back to the live
+ * edge should clear the scroll-away guard.
+ */
+export function shouldReengageAutoFollowAfterScroll(input: {
+  distanceFromBottom: number
+  userScrolledAwayInThisFrame: boolean
+  previousScrollTop: number
+  nextScrollTop: number
+  isProgrammatic: boolean
+}): boolean {
+  if (!shouldEngageAutoFollow(input.distanceFromBottom)) return false
+  if (!input.userScrolledAwayInThisFrame) return true
+  if (input.isProgrammatic) return false
+  if (!Number.isFinite(input.previousScrollTop) || !Number.isFinite(input.nextScrollTop)) {
+    return false
+  }
+  return input.nextScrollTop > input.previousScrollTop + 0.5
+}
+
+export function expectedBottomScrollTop(input: {
+  scrollHeight: number
+  clientHeight: number
+}): number {
+  const scrollHeight = Number.isFinite(input.scrollHeight) ? input.scrollHeight : 0
+  const clientHeight = Number.isFinite(input.clientHeight) ? input.clientHeight : 0
+  return Math.max(0, scrollHeight - clientHeight)
+}
+
+export function isExpectedProgrammaticScroll(input: {
+  expectedScrollTop: number | null | undefined
+  nextScrollTop: number
+}): boolean {
+  if (typeof input.expectedScrollTop !== 'number') return false
+  if (!Number.isFinite(input.expectedScrollTop) || !Number.isFinite(input.nextScrollTop)) {
+    return false
+  }
+  return Math.abs(input.nextScrollTop - input.expectedScrollTop) <= PROGRAMMATIC_SCROLL_EPSILON_PX
 }
 
 /**

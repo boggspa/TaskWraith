@@ -2845,6 +2845,18 @@
   color: var(--text-primary);
 }
 
+.popout-root[data-popout-family="workspace"] .diff-stage-count-chip {
+  cursor: pointer;
+  font: inherit;
+}
+
+.popout-root[data-popout-family="workspace"] .diff-stage-count-chip[data-active="true"] {
+  color: var(--text-primary);
+  background-color: var(--popout-row-selected-bg) !important;
+  border-color: var(--popout-row-selected-rim);
+  box-shadow: inset 0 0 0 1px var(--popout-row-selected-rim);
+}
+
 .popout-root[data-popout-family="workspace"]
   :is(.diff-file-badge.created, .diff-detail-stat-badge[data-status="created"]) {
   color: var(--popout-status-created-text);

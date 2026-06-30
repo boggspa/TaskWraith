@@ -3568,6 +3568,12 @@
   align-items: flex-start;
 }
 
+.transcript-inner.transcript-virtualized .message-group {
+  /* Virtual rows can remount while scrolling/streaming; replaying the entrance
+     fade turns harmless remounts into visible transcript flashes. */
+  animation: none;
+}
+
 @keyframes fadeIn {
   from { opacity: 0; }
   to { opacity: 1; }

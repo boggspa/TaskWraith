@@ -258,6 +258,23 @@ export function SkyWeatherVisual({ weather }: { weather: HostWeatherVisualState 
       <div className="sky-orb" />
       {isNightBase && (
         <>
+          <div className="sky-moon">
+            <svg
+              className="sky-moon-glyph"
+              viewBox="0 0 96 96"
+              aria-hidden
+              focusable="false"
+            >
+              <path
+                className="sky-moon-crescent"
+                d="M76.4 7.2C54.1 9.8 33.3 27.4 26.1 49.4c-7.7 23.3 6.2 39.9 32.3 39.4 8.5-.2 16.3-3 22.8-8.1-23 1.6-38.9-12.3-38.2-31.3.7-20 13.8-36 33.4-42.2Z"
+              />
+              <path
+                className="sky-moon-sheen"
+                d="M38.7 22.2C29.1 31.2 24.1 43.4 25.3 54.7c1.5 14.6 11.1 25.5 25.6 29"
+              />
+            </svg>
+          </div>
           <span className="sky-star sky-star-1" />
           <span className="sky-star sky-star-2" />
           <span className="sky-star sky-star-3" />

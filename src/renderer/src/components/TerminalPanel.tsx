@@ -69,12 +69,26 @@ export function TerminalPanel({ workspacePath, onClose }: TerminalPanelProps) {
     }
   }, [sessionId, workspacePath])
 
+  useEffect(() => {
+    if (!onClose) return
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') onClose()
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+  }, [onClose])
+
   return (
     <div className="terminal-panel">
       <div className="terminal-panel-header">
         <span>Terminal: {workspacePath}</span>
         {onClose && (
-          <button className="terminal-panel-close" onClick={onClose}>
+          <button
+            className="terminal-panel-close"
+            type="button"
+            onClick={onClose}
+            aria-label="Close terminal"
+          >
             Close
           </button>
         )}

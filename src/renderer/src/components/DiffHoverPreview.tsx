@@ -310,8 +310,8 @@ export function DiffHoverPreviewOverlay({
         width: `${layout.width}px`
       }}
       role={role}
-      aria-label={role === 'dialog' ? `Diff preview for ${preview.summary.path}` : undefined}
-      tabIndex={role === 'dialog' ? -1 : undefined}
+      aria-label={`Diff preview for ${preview.summary.path}`}
+      tabIndex={0}
     >
       <div className="diff-hover-preview-header">
         <div className="diff-hover-preview-title">

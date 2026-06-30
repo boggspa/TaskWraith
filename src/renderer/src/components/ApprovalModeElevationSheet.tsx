@@ -36,32 +36,26 @@ function providerLabel(provider: string): string {
   return PROVIDER_LABEL[provider] ?? (provider.charAt(0).toUpperCase() + provider.slice(1))
 }
 
-export function ApprovalModeElevationSheet({
+export const APPROVAL_ELEVATION_ACK_CHECKBOX_ID = 'approval-elevation-ack'
+
+export function ApprovalModeElevationSheetSurface({
   tier,
   provider,
   workspaceLabel,
+  acknowledged,
+  onAcknowledgedChange,
   onCancel,
   onConfirm
-}: ApprovalModeElevationSheetProps): ReactElement {
-  const [acknowledged, setAcknowledged] = useState(false)
+}: ApprovalModeElevationSheetProps & {
+  acknowledged: boolean
+  onAcknowledgedChange: (next: boolean) => void
+}): ReactElement {
   const name = providerLabel(provider)
   const where = workspaceLabel && workspaceLabel.trim() !== '' ? workspaceLabel : 'this workspace'
   const isFull = tier === 2
   const canConfirm = !isFull || acknowledged
 
-  // Escape cancels (dismiss = stay at the lower, safer mode).
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') {
-        event.preventDefault()
-        onCancel()
-      }
-    }
-    document.addEventListener('keydown', onKey, true)
-    return () => document.removeEventListener('keydown', onKey, true)
-  }, [onCancel])
-
-  return createPortal(
+  return (
     <div className="creative-approval-backdrop" role="presentation" onMouseDown={onCancel}>
       <div
         className="creative-approval-modal approval-elevation-modal"
@@ -93,11 +87,15 @@ export function ApprovalModeElevationSheet({
               Only enable this on a disposable VM or a device you can fully recover. You can revoke
               it at any time from the permission picker.
             </p>
-            <label className="approval-elevation-ack">
+            <label
+              className="approval-elevation-ack"
+              htmlFor={APPROVAL_ELEVATION_ACK_CHECKBOX_ID}
+            >
               <input
+                id={APPROVAL_ELEVATION_ACK_CHECKBOX_ID}
                 type="checkbox"
                 checked={acknowledged}
-                onChange={(event) => setAcknowledged(event.target.checked)}
+                onChange={(event) => onAcknowledgedChange(event.target.checked)}
               />
               <span>I understand the risks and am on a disposable or recoverable device.</span>
             </label>
@@ -134,7 +132,41 @@ export function ApprovalModeElevationSheet({
           </button>
         </footer>
       </div>
-    </div>,
+    </div>
+  )
+}
+
+export function ApprovalModeElevationSheet({
+  tier,
+  provider,
+  workspaceLabel,
+  onCancel,
+  onConfirm
+}: ApprovalModeElevationSheetProps): ReactElement {
+  const [acknowledged, setAcknowledged] = useState(false)
+
+  // Escape cancels (dismiss = stay at the lower, safer mode).
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        onCancel()
+      }
+    }
+    document.addEventListener('keydown', onKey, true)
+    return () => document.removeEventListener('keydown', onKey, true)
+  }, [onCancel])
+
+  return createPortal(
+    <ApprovalModeElevationSheetSurface
+      tier={tier}
+      provider={provider}
+      workspaceLabel={workspaceLabel}
+      acknowledged={acknowledged}
+      onAcknowledgedChange={setAcknowledged}
+      onCancel={onCancel}
+      onConfirm={onConfirm}
+    />,
     document.body
   )
 }

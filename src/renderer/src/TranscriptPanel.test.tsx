@@ -449,7 +449,7 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
     expect(html).toContain('Run cancelled')
   })
 
-  it('uses the reveal renderer for every assistant segment in the active run', () => {
+  it('uses the reveal renderer only for the tail assistant segment in the active run', () => {
     const html = renderToStaticMarkup(
       <TranscriptPanel
         {...makeProps({
@@ -495,7 +495,7 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
     )
 
     expect(html).toContain('settled assistant text')
-    expect(html).not.toContain('active segment before tool')
+    expect(html).toContain('active segment before tool')
     expect(html).not.toContain('active segment after tool')
   })
 

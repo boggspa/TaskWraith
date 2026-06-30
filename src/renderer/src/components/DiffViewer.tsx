@@ -6,7 +6,7 @@ import type {
 } from '../../../main/services/GitService'
 import { DiffDetail } from './DiffDetail'
 import { DiffFileList } from './DiffFileList'
-import { DiffToolbar, type DiffStageCounts } from './DiffToolbar'
+import { DiffToolbar, type DiffStageCounts, type DiffStageGroupFilter } from './DiffToolbar'
 import type { DiffViewMode } from './DiffViewerTypes'
 
 interface DiffViewerProps {
@@ -59,6 +59,32 @@ const emptyDiffStageCounts = (): DiffStageCounts => ({
   untracked: 0
 })
 
+export const diffStageGroupForSummary = (
+  summary: DiffFileSummary,
+  gitStatus?: GitFileStatus
+): DiffStageGroupFilter => {
+  if (gitStatus?.staged && gitStatus?.unstaged) return 'mixed'
+  if (gitStatus?.unstaged) return 'unstaged'
+  if (gitStatus?.staged) return 'staged'
+  if (summary.status === 'untracked') return 'untracked'
+  return 'other'
+}
+
+export const diffStageGroupLabel = (stageGroup: DiffStageGroupFilter): string => {
+  switch (stageGroup) {
+    case 'mixed':
+      return 'Mixed'
+    case 'unstaged':
+      return 'Unstaged'
+    case 'staged':
+      return 'Staged'
+    case 'untracked':
+      return 'Untracked'
+    default:
+      return 'Other'
+  }
+}
+
 export function resolveVisibleDiffSelection(
   summaries: DiffFileSummary[],
   selectedPath: string | null
@@ -82,6 +108,7 @@ export function DiffViewer({
   const [fileFilter, setFileFilter] = useState('')
   const [selectedPath, setSelectedPath] = useState<string | null>(null)
   const [viewMode, setViewMode] = useState<DiffViewMode>('inline')
+  const [stageGroupFilter, setStageGroupFilter] = useState<DiffStageGroupFilter | null>(null)
 
   const summaries = diff?.summaries || []
   const normalizedFileFilter = fileFilter.trim().toLowerCase()
@@ -97,7 +124,7 @@ export function DiffViewer({
       repoPathForWorkspacePath(workspacePath, gitSnapshot?.repoRoot, summary.path),
     [gitSnapshot?.repoRoot, workspacePath]
   )
-  const filteredSummaries = summaries.filter((summary) => {
+  const textFilteredSummaries = summaries.filter((summary) => {
     if (hideNoise && summary.isNoise) return false
     if (!normalizedFileFilter) return true
     const repoPath = repoPathForSummary(summary)
@@ -107,24 +134,21 @@ export function DiffViewer({
       summary.status.toLowerCase().includes(normalizedFileFilter)
     )
   })
+  const filteredSummaries = stageGroupFilter
+    ? textFilteredSummaries.filter(
+        (summary) =>
+          diffStageGroupForSummary(summary, gitStatusByPath.get(repoPathForSummary(summary))) ===
+          stageGroupFilter
+      )
+    : textFilteredSummaries
   const visibleStageCounts = useMemo(() => {
     const counts = emptyDiffStageCounts()
-    for (const summary of filteredSummaries) {
+    for (const summary of textFilteredSummaries) {
       const gitStatus = gitStatusByPath.get(repoPathForSummary(summary))
-      if (gitStatus?.staged && gitStatus?.unstaged) {
-        counts.mixed += 1
-      } else if (gitStatus?.unstaged) {
-        counts.unstaged += 1
-      } else if (gitStatus?.staged) {
-        counts.staged += 1
-      } else if (summary.status === 'untracked') {
-        counts.untracked += 1
-      } else {
-        counts.other += 1
-      }
+      counts[diffStageGroupForSummary(summary, gitStatus)] += 1
     }
     return counts
-  }, [filteredSummaries, gitStatusByPath, repoPathForSummary])
+  }, [gitStatusByPath, repoPathForSummary, textFilteredSummaries])
   const selectedSummary = resolveVisibleDiffSelection(filteredSummaries, selectedPath)
   const selectedGitStatus = selectedSummary
     ? gitStatusByPath.get(repoPathForSummary(selectedSummary))
@@ -132,6 +156,8 @@ export function DiffViewer({
   const hiddenNoiseCount = hideNoise ? summaries.filter((summary) => summary.isNoise).length : 0
   const emptyDiffMessage = normalizedFileFilter
     ? `No changed files match "${fileFilter.trim()}".`
+    : stageGroupFilter
+      ? `No ${diffStageGroupLabel(stageGroupFilter).toLowerCase()} changed files to display.`
     : hiddenNoiseCount > 0
       ? `0 shown; ${hiddenNoiseCount} hidden by Hide noise.`
       : 'No changes to display.'
@@ -141,6 +167,7 @@ export function DiffViewer({
     setSelectedPath(selectionRequest.path)
     setFileFilter('')
     setHideNoise(false)
+    setStageGroupFilter(null)
   }, [selectionRequest])
 
   useEffect(() => {
@@ -197,9 +224,11 @@ export function DiffViewer({
         changedCount={filteredSummaries.length}
         totalCount={summaries.length}
         stageCounts={visibleStageCounts}
+        activeStageGroup={stageGroupFilter}
         hideNoise={hideNoise}
         fileFilter={fileFilter}
         viewMode={viewMode}
+        onStageGroupChange={setStageGroupFilter}
         onHideNoiseChange={setHideNoise}
         onFileFilterChange={setFileFilter}
         onViewModeChange={setViewMode}

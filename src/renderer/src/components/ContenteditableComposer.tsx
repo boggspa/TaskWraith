@@ -370,7 +370,7 @@ export const ContenteditableComposer = forwardRef<
       role="textbox"
       aria-multiline="true"
       aria-disabled={disabled}
-      aria-placeholder={placeholder}
+      aria-label={placeholder ?? 'Message'}
       data-composer-style={composerStyle}
       data-placeholder={placeholder ?? ''}
       data-empty={value.length === 0 ? 'true' : 'false'}

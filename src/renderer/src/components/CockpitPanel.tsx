@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react'
 import { compactPromptPreview, type RunLane } from '../lib/RunLanes'
 import { getProviderLabel } from '../lib/providerLabels'
 import type { HandoffCard, ProviderId } from '../../../main/store/types'
@@ -25,6 +26,61 @@ function CockpitPanel({
   onDispatchHandoff: (card: HandoffCard) => void
   onArchiveHandoff: (card: HandoffCard) => void
 }) {
+  const dialogRef = useRef<HTMLDivElement | null>(null)
+  const lastFocusedRef = useRef<HTMLElement | null>(null)
+
+  useEffect(() => {
+    lastFocusedRef.current = (document.activeElement as HTMLElement | null) ?? null
+    const focusTimer = window.setTimeout(() => {
+      dialogRef.current?.querySelector<HTMLElement>('button:not([disabled])')?.focus()
+    }, 0)
+    return () => {
+      window.clearTimeout(focusTimer)
+      const last = lastFocusedRef.current
+      if (last && typeof last.focus === 'function') {
+        try {
+          last.focus()
+        } catch {
+          // element may be gone; ignore
+        }
+      }
+    }
+  }, [])
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        onClose()
+        return
+      }
+      if (event.key !== 'Tab') return
+      const root = dialogRef.current
+      if (!root) return
+      const focusables = Array.from(
+        root.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), [href], input:not([disabled]), [tabindex]:not([tabindex="-1"])'
+        )
+      ).filter((el) => el.offsetParent !== null)
+      if (focusables.length === 0) return
+      const first = focusables[0]
+      const last = focusables[focusables.length - 1]
+      const active = document.activeElement as HTMLElement | null
+      if (event.shiftKey && active === first) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && active === last) {
+        event.preventDefault()
+        first.focus()
+      } else if (active && !root.contains(active)) {
+        event.preventDefault()
+        first.focus()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+
   const providerIds: ProviderId[] = [
     'gemini',
     'codex',
@@ -42,8 +98,21 @@ function CockpitPanel({
   const openHandoffs = handoffCards.filter((card) => card.status === 'draft')
 
   return (
-    <div className="cockpit-overlay" role="dialog" aria-modal="true" aria-label="Agent cockpit">
-      <div className="cockpit-panel">
+    <div
+      className="cockpit-overlay"
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose()
+      }}
+    >
+      <div
+        ref={dialogRef}
+        className="cockpit-panel"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Agent cockpit"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
         <div className="cockpit-header">
           <div>
             <span className="cockpit-kicker">TaskWraith cockpit</span>

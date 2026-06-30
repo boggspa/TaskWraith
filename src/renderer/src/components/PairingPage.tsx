@@ -229,6 +229,7 @@ export function PairingPage(): JSX.Element {
                 className="pairing-page__qr pairing-page__qr--clickable"
                 onClick={() => setMaximised(true)}
                 title="Click to maximise for easier camera scanning"
+                aria-label="Maximize pairing QR code for scanning"
                 // dangerouslySetInnerHTML is intentional — `qrcode`
                 // returns a self-contained SVG string we want to
                 // render inline so it scales crisply with the panel.
@@ -359,7 +360,7 @@ export function PairingPage(): JSX.Element {
             dangerouslySetInnerHTML={{ __html: bootstrap.qrSvg }}
           />
           <div className="pairing-page__maximise-hint">
-            Click anywhere to close · Point iPad camera at the QR
+            Click anywhere to close · Point your device camera at the QR
           </div>
         </div>
       )}

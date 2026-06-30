@@ -158,6 +158,8 @@ export function JoinSharedChatModal({
   const [connectionState, setConnectionState] = useState<ConnectionState>('idle')
   const [busy, setBusy] = useState(false)
   const rowsRef = useRef<HTMLDivElement | null>(null)
+  const dialogRef = useRef<HTMLDivElement | null>(null)
+  const lastFocusedRef = useRef<HTMLElement | null>(null)
 
   // Live projection + status while the modal is open.
   useEffect(() => {
@@ -202,6 +204,75 @@ export function JoinSharedChatModal({
     void window.api.humanCollaborationCollaboratorLeave?.()
     onClose()
   }, [onClose])
+
+  const requestLeave = useCallback(() => {
+    if (step === 'viewing' || step === 'sas') {
+      if (!window.confirm('Leave this shared chat?')) return
+    }
+    leaveAndClose()
+  }, [leaveAndClose, step])
+
+  useEffect(() => {
+    if (!open) return
+    lastFocusedRef.current = (document.activeElement as HTMLElement | null) ?? null
+    const focusTimer = window.setTimeout(() => {
+      const el = dialogRef.current?.querySelector<HTMLElement>(
+        'button:not([disabled]), input:not([disabled]), textarea:not([disabled])'
+      )
+      el?.focus()
+    }, 0)
+    return () => {
+      window.clearTimeout(focusTimer)
+      const last = lastFocusedRef.current
+      if (last && typeof last.focus === 'function') {
+        try {
+          last.focus()
+        } catch {
+          // element may be gone; ignore
+        }
+      }
+    }
+  }, [open, step])
+
+  useEffect(() => {
+    if (!open) return
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') {
+        if (busy) return
+        event.preventDefault()
+        if (step === 'paste' || step === 'connecting' || step === 'sas') {
+          leaveAndClose()
+        } else if (step === 'viewing') {
+          requestLeave()
+        }
+        return
+      }
+      if (event.key !== 'Tab') return
+      const root = dialogRef.current
+      if (!root) return
+      const focusables = Array.from(
+        root.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), [href], input:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+        )
+      ).filter((el) => el.offsetParent !== null)
+      if (focusables.length === 0) return
+      const first = focusables[0]
+      const last = focusables[focusables.length - 1]
+      const active = document.activeElement as HTMLElement | null
+      if (event.shiftKey && active === first) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && active === last) {
+        event.preventDefault()
+        first.focus()
+      } else if (active && !root.contains(active)) {
+        event.preventDefault()
+        first.focus()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [busy, leaveAndClose, open, requestLeave, step])
 
   const handleJoin = useCallback(async () => {
     setError(null)
@@ -288,14 +359,23 @@ export function JoinSharedChatModal({
 
   if (!open) return null
 
+  const backdropDismissible = step === 'paste' || step === 'connecting'
+
   return createPortal(
-    <div className="creative-approval-backdrop" onClick={leaveAndClose}>
+    <div
+      className="creative-approval-backdrop"
+      role="presentation"
+      onMouseDown={() => {
+        if (backdropDismissible && !busy) leaveAndClose()
+      }}
+    >
       <div
+        ref={dialogRef}
         className="creative-approval-modal join-shared-chat-modal"
         role="dialog"
         aria-modal="true"
         aria-label="Join a shared chat"
-        onClick={(event) => event.stopPropagation()}
+        onMouseDown={(event) => event.stopPropagation()}
       >
         <div className="creative-approval-modal-eyebrow">Collaborate · People</div>
 
@@ -306,16 +386,22 @@ export function JoinSharedChatModal({
             <p className="creative-approval-modal-description">
               Paste the invite the host shared with you, then verify the 6-digit code together.
             </p>
-            <label className="join-field-label">Your name (shown to the host)</label>
+            <label className="join-field-label" htmlFor="join-shared-chat-display-name">
+              Your name (shown to the host)
+            </label>
             <input
+              id="join-shared-chat-display-name"
               className="join-text-input"
               value={displayName}
               onChange={(e) => setDisplayName(e.target.value)}
               placeholder="e.g. Olly"
               maxLength={80}
             />
-            <label className="join-field-label">Invite</label>
+            <label className="join-field-label" htmlFor="join-shared-chat-invite">
+              Invite
+            </label>
             <textarea
+              id="join-shared-chat-invite"
               className="join-invite-textarea"
               value={inviteText}
               onChange={(e) => setInviteText(e.target.value)}
@@ -351,7 +437,7 @@ export function JoinSharedChatModal({
             <div className="join-sas-code" aria-label="Security code">{sasCode}</div>
             {error && <div className="join-error" role="alert">{error}</div>}
             <div className="join-actions">
-              <button type="button" className="btn btn-sm btn-ghost" onClick={leaveAndClose} disabled={busy}>
+              <button type="button" className="btn btn-sm btn-ghost" onClick={requestLeave} disabled={busy}>
                 Codes don&apos;t match
               </button>
               <button type="button" className="btn btn-sm btn-primary" onClick={handleSasMatch} disabled={busy}>
@@ -416,7 +502,7 @@ export function JoinSharedChatModal({
               </div>
             ) : null}
             <div className="join-actions">
-              <button type="button" className="btn btn-sm btn-ghost" onClick={leaveAndClose}>
+              <button type="button" className="btn btn-sm btn-ghost" onClick={requestLeave}>
                 Leave
               </button>
             </div>

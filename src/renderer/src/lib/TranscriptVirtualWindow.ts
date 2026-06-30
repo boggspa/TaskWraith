@@ -286,6 +286,27 @@ export function measurementKey(
 }
 
 /**
+ * The actively streaming reveal row keeps one measurement slot while it grows.
+ * Its message content length can change every provider frame, but giving every
+ * token a fresh measurement key makes the virtualizer repeatedly fall back to
+ * estimates right where the user is watching. Once the row leaves live mode,
+ * normal content-version keys resume and the final settled height is measured.
+ */
+export function measurementContentVersion(
+  row: VirtualRow,
+  activeLiveRowKey?: string | null
+): string {
+  if (
+    activeLiveRowKey &&
+    row.rowKey === activeLiveRowKey &&
+    (row.rowType === 'assistant' || row.rowType === 'guestReply')
+  ) {
+    return `${row.rowType}:live`
+  }
+  return row.contentVersion
+}
+
+/**
  * Resolve a row's height: its measured value (looked up by
  * `measurementKey`) when known, else the type estimate. The caller owns
  * the measurement `Map` (per-chat, in a ref).
@@ -294,11 +315,10 @@ export function getRowHeight(
   row: VirtualRow,
   measurements: ReadonlyMap<string, number>,
   bucket: number,
-  expanded: boolean
+  expanded: boolean,
+  rowContentVersion: string = row.contentVersion
 ): number {
-  const measured = measurements.get(
-    measurementKey(row.rowKey, row.contentVersion, bucket, expanded)
-  )
+  const measured = measurements.get(measurementKey(row.rowKey, rowContentVersion, bucket, expanded))
   if (typeof measured === 'number' && Number.isFinite(measured) && measured >= 0) return measured
   return row.estimatedHeight
 }

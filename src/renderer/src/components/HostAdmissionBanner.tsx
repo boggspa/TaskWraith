@@ -40,7 +40,10 @@ export function HostAdmissionBannerCard({
           <strong>{entry.displayName}</strong> is joining this shared chat. Confirm this code
           matches what they see before they accept:
         </div>
-        <div className="host-admission-banner-code" aria-label="Security code">
+        <div
+          className="host-admission-banner-code"
+          aria-label={`Security code ${entry.confirmCode}`}
+        >
           {entry.confirmCode}
         </div>
       </div>

@@ -196,6 +196,7 @@ export function ContinuousHopsLimitChip({
         disabled={disabled}
         aria-haspopup="dialog"
         aria-expanded={open}
+        aria-label="Continuous round max handoff turns"
         title="Click to set max handoff turns for continuous rounds."
       >
         {hops}/{maxHops}

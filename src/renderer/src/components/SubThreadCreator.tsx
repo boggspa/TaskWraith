@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import type { ChatRecord, ProviderId } from '../../../main/store/types'
 import { isSubThreadChat } from '../lib/chatScope'
 import { isRetiredProvider } from '../../../shared/retiredProviders'
@@ -100,11 +100,20 @@ export function SubThreadCreator({
 
   const isParentItselfSubThread = isSubThreadChat(parentChat)
 
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') onCancel()
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+  }, [onCancel])
+
   return (
     <div className="sub-thread-creator-backdrop" onClick={onCancel} role="presentation">
       <div
         className="sub-thread-creator"
         role="dialog"
+        aria-modal="true"
         aria-labelledby="sub-thread-creator-title"
         onClick={(e) => e.stopPropagation()}
       >
@@ -127,7 +136,7 @@ export function SubThreadCreator({
         </p>
 
         {isParentItselfSubThread && (
-          <div className="sub-thread-creator-error">
+          <div className="sub-thread-creator-error" role="alert">
             This chat is itself a sub-thread. Delegation depth is limited to 1 level in v1 — return
             to the parent thread to spawn another sibling.
           </div>
@@ -185,7 +194,11 @@ export function SubThreadCreator({
           </label>
         </fieldset>
 
-        {error && <div className="sub-thread-creator-error">{error}</div>}
+        {error && (
+          <div className="sub-thread-creator-error" role="alert">
+            {error}
+          </div>
+        )}
 
         <footer className="sub-thread-creator-footer">
           <button type="button" className="btn btn-ghost" onClick={onCancel} disabled={submitting}>

@@ -401,15 +401,17 @@ class InspectorTabErrorBoundary extends Component<
 export function Inspector(props: InspectorProps) {
   return (
     <div className="app-inspector">
-      <div className="inspector-tabs">
+      <div className="inspector-tabs" role="tablist">
         {INSPECTOR_TABS.map((tab) => (
           <button
             key={tab.id}
             type="button"
+            role="tab"
             className={`inspector-tab ${props.rightTab === tab.id ? 'active' : ''}`}
             onClick={() => props.setRightTab(tab.id)}
             title={tab.label}
             aria-label={tab.label}
+            aria-selected={props.rightTab === tab.id}
           >
             <span className="inspector-tab-icon" aria-hidden>
               {tab.icon}

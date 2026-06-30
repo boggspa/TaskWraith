@@ -81,7 +81,8 @@ describe('ContenteditableComposer — initial render', () => {
       <ContenteditableComposer value="" onChange={() => {}} placeholder="Type a message…" />
     )
     expect(html).toContain('data-placeholder="Type a message…"')
-    expect(html).toContain('aria-placeholder="Type a message…"')
+    expect(html).toContain('aria-label="Type a message…"')
+    expect(html).not.toContain('aria-placeholder')
   })
 
   it('respects disabled by dropping contenteditable + setting aria-disabled', () => {

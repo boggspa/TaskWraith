@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { CSSProperties, ReactElement } from 'react'
 
 interface PendingPairing {
@@ -109,6 +109,8 @@ export function IncomingPairingPrompt(): ReactElement | null {
   const [pending, setPending] = useState<PendingPairing | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const dialogRef = useRef<HTMLElement | null>(null)
+  const lastFocusedRef = useRef<HTMLElement | null>(null)
 
   useEffect(() => {
     return window.api.onBridgePairingResponseReceived((params) => {
@@ -135,21 +137,85 @@ export function IncomingPairingPrompt(): ReactElement | null {
     }
   }
 
+  useEffect(() => {
+    if (!pending) return
+    lastFocusedRef.current = (document.activeElement as HTMLElement | null) ?? null
+    const focusTimer = window.setTimeout(() => {
+      dialogRef.current?.querySelector<HTMLElement>('button:not([disabled])')?.focus()
+    }, 0)
+    return () => {
+      window.clearTimeout(focusTimer)
+      const last = lastFocusedRef.current
+      if (last && typeof last.focus === 'function') {
+        try {
+          last.focus()
+        } catch {
+          // element may be gone; ignore
+        }
+      }
+    }
+  }, [pending?.sessionID])
+
+  useEffect(() => {
+    if (!pending) return
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') {
+        if (isSubmitting) return
+        event.preventDefault()
+        void finalize(false)
+        return
+      }
+      if (event.key !== 'Tab') return
+      const root = dialogRef.current
+      if (!root) return
+      const focusables = Array.from(
+        root.querySelectorAll<HTMLElement>('button:not([disabled])')
+      ).filter((el) => el.offsetParent !== null)
+      if (focusables.length === 0) return
+      const first = focusables[0]
+      const last = focusables[focusables.length - 1]
+      const active = document.activeElement as HTMLElement | null
+      if (event.shiftKey && active === first) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && active === last) {
+        event.preventDefault()
+        first.focus()
+      } else if (active && !root.contains(active)) {
+        event.preventDefault()
+        first.focus()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [isSubmitting, pending])
+
   if (!pending) {
     return null
   }
 
+  const deviceLabel = pending.controllerDisplayName.trim() || 'A device'
+
   return (
-    <div style={styles.backdrop} role="presentation">
+    <div
+      style={styles.backdrop}
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target !== event.currentTarget || isSubmitting) return
+        void finalize(false)
+      }}
+    >
       <section
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="incoming-pairing-title"
         aria-describedby="incoming-pairing-description"
         style={styles.panel}
+        onMouseDown={(event) => event.stopPropagation()}
       >
         <h2 id="incoming-pairing-title" style={styles.header}>
-          iPhone wants to pair
+          {deviceLabel} wants to pair
         </h2>
         <p id="incoming-pairing-description" style={styles.label}>
           {pending.controllerDisplayName}

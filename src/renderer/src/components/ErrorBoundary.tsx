@@ -74,6 +74,7 @@ export class ErrorBoundary extends Component<Props, State> {
           The transcript surface failed to render. Your work is safe — reload to recover.
         </p>
         <pre
+          id="error-boundary-details"
           style={{
             margin: '0 0 1.5rem',
             padding: '12px',
@@ -93,6 +94,8 @@ export class ErrorBoundary extends Component<Props, State> {
         <button
           type="button"
           onClick={this.handleReload}
+          aria-label="Reload TaskWraith window"
+          aria-describedby="error-boundary-details"
           style={{
             padding: '8px 18px',
             border: '1px solid #555',

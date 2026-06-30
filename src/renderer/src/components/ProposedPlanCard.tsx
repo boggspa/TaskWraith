@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useId, useMemo, useState } from 'react'
 import type { ChatRecord } from '../../../main/store/types'
 import { MarkdownMessage } from './MarkdownMessage'
 
@@ -37,6 +37,7 @@ export function ProposedPlanCard({
   onCustom
 }: ProposedPlanCardProps) {
   const isPending = status === 'pending'
+  const bodyPanelId = useId()
   // Pending plans open for review; a decided plan collapses to its outcome.
   const [expanded, setExpanded] = useState(isPending)
   const [mode, setMode] = useState<CardMode>('view')
@@ -64,6 +65,7 @@ export function ProposedPlanCard({
         className="proposed-plan-header"
         onClick={() => setExpanded((value) => !value)}
         aria-expanded={expanded}
+        aria-controls={bodyPanelId}
         title={expanded ? 'Collapse plan' : 'Expand plan'}
       >
         <span className="proposed-plan-chevron" aria-hidden>
@@ -80,7 +82,7 @@ export function ProposedPlanCard({
       </button>
 
       {expanded && (
-        <div className="proposed-plan-body">
+        <div className="proposed-plan-body" id={bodyPanelId}>
           {mode === 'edit' && isPending ? (
             <textarea
               className="proposed-plan-edit"
@@ -104,6 +106,7 @@ export function ProposedPlanCard({
             onChange={(event) => setCustomText(event.target.value)}
             rows={3}
             autoFocus
+            aria-label="Plan feedback"
             placeholder="Tell the agent what to change… (⌘/Ctrl+Enter to send)"
             onKeyDown={(event) => {
               if ((event.metaKey || event.ctrlKey) && event.key === 'Enter' && customText.trim()) {

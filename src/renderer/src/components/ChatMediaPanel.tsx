@@ -1227,6 +1227,12 @@ export function ChatMediaPreviewOverlay({
   const copyId = `preview:${mediaRef.id}`
   const isCopied = copiedId === copyId
   const location = formatChatMediaLocation(mediaRef.path, workspacePath)
+  const closePreviewLabel =
+    mediaRef.kind === 'audio'
+      ? 'Close audio preview'
+      : mediaRef.kind === 'video'
+        ? 'Close video preview'
+        : 'Close image preview'
 
   const openPath = (): void => {
     if (!mediaRef.path) return
@@ -1248,17 +1254,22 @@ export function ChatMediaPreviewOverlay({
         if (event.target === event.currentTarget) onClose()
       }}
     >
-      <section className="chat-media-preview-dialog" role="dialog" aria-modal="true">
+      <section
+        className="chat-media-preview-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="chat-media-preview-title"
+      >
         <header className="chat-media-preview-header">
           <div className="chat-media-preview-title">
-            <span>{mediaRef.name}</span>
+            <span id="chat-media-preview-title">{mediaRef.name}</span>
             <small>{location}</small>
           </div>
           <button
             className="chat-media-preview-close"
             type="button"
             onClick={onClose}
-            aria-label="Close image preview"
+            aria-label={closePreviewLabel}
           >
             <XSymbolIcon />
           </button>

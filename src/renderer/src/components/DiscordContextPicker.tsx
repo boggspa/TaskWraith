@@ -40,6 +40,18 @@ export function DiscordContextPicker({
     setLimit(currentSelection?.limit || 25)
   }, [currentSelection?.channelId, currentSelection?.limit, open])
 
+  useEffect(() => {
+    if (!open) return
+    const handleKey = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        onClose()
+      }
+    }
+    window.addEventListener('keydown', handleKey)
+    return () => window.removeEventListener('keydown', handleKey)
+  }, [onClose, open])
+
   const channels = useMemo(() => {
     const all: DiscordContextTargetChannel[] = []
     for (const guild of targets?.guilds || []) {
@@ -104,13 +116,15 @@ export function DiscordContextPicker({
           ) : (
             <>
               <div className="discord-context-picker-controls">
-                <label className="discord-context-picker-search">
-                  <span>Channel</span>
+                <label className="discord-context-picker-search" htmlFor="discord-context-picker-filter">
+                  <span>Filter channels</span>
                   <input
+                    id="discord-context-picker-filter"
                     type="search"
                     value={query}
                     onChange={(event) => setQuery(event.target.value)}
                     placeholder="Filter servers and channels"
+                    aria-label="Filter channels"
                   />
                 </label>
                 <div className="discord-context-picker-limit" role="group" aria-label="Messages">
@@ -119,6 +133,7 @@ export function DiscordContextPicker({
                       key={option}
                       type="button"
                       className={option === limit ? 'is-active' : ''}
+                      aria-pressed={option === limit}
                       onClick={() => setLimit(option)}
                     >
                       {option}

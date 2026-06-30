@@ -92,10 +92,16 @@ export function SharesPanelView({
         make sure remote access is enabled under Devices.
       </div>
 
-      {error && <div className="settings-error">{error}</div>}
+      {error && (
+        <div className="settings-error" role="alert">
+          {error}
+        </div>
+      )}
 
       {loading ? (
-        <div className="settings-hint shares-panel-empty">Loading shares…</div>
+        <div className="settings-hint shares-panel-empty" role="status">
+          Loading shares…
+        </div>
       ) : rows.length === 0 ? (
         <div className="settings-hint shares-panel-empty">
           No active shares. Start one from a chat&apos;s share action or the “+ New” menu.

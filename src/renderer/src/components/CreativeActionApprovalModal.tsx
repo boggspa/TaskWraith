@@ -48,6 +48,7 @@ export function CreativeActionApprovalModal({
   // Track focus restoration so closing the modal returns the user to
   // wherever they were typing.
   const lastFocusedRef = useRef<HTMLElement | null>(null)
+  const dialogRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
     const unsubscribe = onSubscribe((request) => {
@@ -82,6 +83,42 @@ export function CreativeActionApprovalModal({
     [onDecide]
   )
 
+  useEffect(() => {
+    if (queue.length === 0) return
+    const activeRequest = queue[0]
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        handleDecide(activeRequest.requestId, false, false)
+        return
+      }
+      if (event.key !== 'Tab') return
+      const root = dialogRef.current
+      if (!root) return
+      const focusables = Array.from(
+        root.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), [href], input:not([disabled]), [tabindex]:not([tabindex="-1"])'
+        )
+      ).filter((el) => el.offsetParent !== null)
+      if (focusables.length === 0) return
+      const first = focusables[0]
+      const last = focusables[focusables.length - 1]
+      const active = document.activeElement as HTMLElement | null
+      if (event.shiftKey && active === first) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && active === last) {
+        event.preventDefault()
+        first.focus()
+      } else if (active && !root.contains(active)) {
+        event.preventDefault()
+        first.focus()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [handleDecide, queue])
+
   if (queue.length === 0) return null
 
   // Render the top request as interactive; behind it, a small badge
@@ -91,12 +128,18 @@ export function CreativeActionApprovalModal({
   const remaining = queue.length - 1
 
   return createPortal(
-    <div className="creative-approval-backdrop" role="presentation">
+    <div
+      className="creative-approval-backdrop"
+      role="presentation"
+      onMouseDown={() => handleDecide(active.requestId, false, false)}
+    >
       <div
+        ref={dialogRef}
         className="creative-approval-modal"
         role="dialog"
         aria-modal="true"
         aria-labelledby={`creative-approval-title-${active.requestId}`}
+        onMouseDown={(event) => event.stopPropagation()}
       >
         <header className="creative-approval-modal-header">
           <span className="creative-approval-modal-eyebrow" aria-hidden>

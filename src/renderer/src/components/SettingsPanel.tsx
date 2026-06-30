@@ -3053,6 +3053,30 @@ export function SettingsPanel({
   const [deleteHistoryError, setDeleteHistoryError] = useState('')
 
   useEffect(() => {
+    if (!showOllamaParityAck) return
+    const handleKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        setShowOllamaParityAck(false)
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown, true)
+    return () => window.removeEventListener('keydown', handleKeyDown, true)
+  }, [showOllamaParityAck])
+
+  useEffect(() => {
+    if (!showDeleteHistoryConfirm) return
+    const handleKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape' && !deleteHistoryPending) {
+        event.preventDefault()
+        setShowDeleteHistoryConfirm(false)
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown, true)
+    return () => window.removeEventListener('keydown', handleKeyDown, true)
+  }, [deleteHistoryPending, showDeleteHistoryConfirm])
+
+  useEffect(() => {
     if (activeTab !== 'plugins') return
     let cancelled = false
     if (typeof window === 'undefined' || typeof window.api?.getPluginCatalog !== 'function') {

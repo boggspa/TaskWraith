@@ -55,6 +55,8 @@ export interface MultiviewPaneGridProps {
   renderEmptyCell?: (paneIndex: number) => ReactNode
   /** Close a pane — non-focused cells get a close affordance. */
   onClosePane?: (paneIndex: number) => void
+  /** Human-readable pane label for the close button's accessible name. */
+  resolvePaneTitle?: (paneIndex: number, pane: MultiviewPaneRecord) => string
   /**
    * Stateful column / row track fractions (the `fr` weights). Default to the
    * spec when omitted so the un-dragged grid is byte-identical to today.
@@ -231,8 +233,8 @@ export function MultiviewPaneGrid(props: MultiviewPaneGridProps) {
             <button
               type="button"
               className="multiview-pane-close"
-              aria-label="Close pane"
-              title="Close pane"
+              aria-label={`Close pane: ${props.resolvePaneTitle?.(paneIndex, props.panes[paneIndex]!) ?? `Pane ${paneIndex + 1}`}`}
+              title={`Close pane: ${props.resolvePaneTitle?.(paneIndex, props.panes[paneIndex]!) ?? `Pane ${paneIndex + 1}`}`}
               onClick={() => props.onClosePane?.(paneIndex)}
             >
               ×
@@ -247,6 +249,8 @@ export function MultiviewPaneGrid(props: MultiviewPaneGridProps) {
           className={`multiview-gutter multiview-gutter-${segment.orientation}`}
           role="separator"
           aria-orientation={segment.orientation === 'column' ? 'vertical' : 'horizontal'}
+          aria-label="Resize panes"
+          title="Drag to resize panes. Double-click to reset."
           data-orientation={segment.orientation}
           data-track-index={segment.trackIndex}
           style={

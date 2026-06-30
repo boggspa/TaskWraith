@@ -6,6 +6,7 @@ import { StableMarkdownBlock } from './StableMarkdownBlock'
 import { splitMarkdownIntoBlocks, type MarkdownBlockType } from '../lib/MarkdownBlockSplit'
 import { advanceReveal, graphemeCount, sliceGraphemes } from '../lib/advanceReveal'
 import { useRevealClock } from '../lib/useRevealClock'
+import { REVEAL_PARAMS } from '../../../shared/revealParams'
 import type { ChatMediaRef } from './ChatMediaPanel'
 import type { ChatRecord } from '../../../main/store/types'
 
@@ -45,6 +46,10 @@ interface RevealingMarkdownMessageProps {
   /** Run id for stream render instrumentation. */
   streamRunId?: string
 }
+
+// Extremely fast providers can outrun the display cursor by whole screens. Snap
+// only that pathological backlog; normal messages keep the type-out cadence.
+const LIVE_REVEAL_BACKLOG_SNAP_CHARS = REVEAL_PARAMS.coldSnapChars * 4
 
 function prefersReducedMotion(): boolean {
   if (
@@ -96,7 +101,9 @@ function RevealingMarkdownMessageImpl({
   // Cursor (graphemes into the tail). A live row must start behind the target
   // even if the first renderer-visible chunk is large; otherwise a coalesced
   // provider flush mounts as a whole row. Non-live mounts render fully below.
-  const [revealedLen, setRevealedLen] = useState(() => (isLive ? 0 : targetLen))
+  const [revealedLen, setRevealedLen] = useState(() =>
+    isLive && targetLen <= REVEAL_PARAMS.coldSnapChars ? 0 : targetLen
+  )
   const revealedRef = useRef(revealedLen)
   revealedRef.current = revealedLen
   const targetRawRef = useRef(tailRaw)
@@ -114,6 +121,13 @@ function RevealingMarkdownMessageImpl({
   }, [animate, tailRaw, targetLen])
 
   useRevealClock((dt) => {
+    const target = graphemeCount(targetRawRef.current)
+    if (target - revealedRef.current > LIVE_REVEAL_BACKLOG_SNAP_CHARS) {
+      prevRawRef.current = targetRawRef.current
+      revealedRef.current = target
+      setRevealedLen(target)
+      return
+    }
     const next = advanceReveal({
       prev: prevRawRef.current,
       next: targetRawRef.current,

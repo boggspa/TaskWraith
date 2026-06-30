@@ -8,13 +8,17 @@ export interface DiffStageCounts {
   other: number
 }
 
+export type DiffStageGroupFilter = keyof DiffStageCounts
+
 export interface DiffToolbarProps {
   changedCount: number
   totalCount: number
   stageCounts?: DiffStageCounts
+  activeStageGroup?: DiffStageGroupFilter | null
   hideNoise: boolean
   fileFilter: string
   viewMode: DiffViewMode
+  onStageGroupChange?: (stageGroup: DiffStageGroupFilter | null) => void
   onHideNoiseChange: (hideNoise: boolean) => void
   onFileFilterChange: (fileFilter: string) => void
   onViewModeChange: (viewMode: DiffViewMode) => void
@@ -24,20 +28,22 @@ export function DiffToolbar({
   changedCount,
   totalCount,
   stageCounts,
+  activeStageGroup = null,
   hideNoise,
   fileFilter,
   viewMode,
+  onStageGroupChange,
   onHideNoiseChange,
   onFileFilterChange,
   onViewModeChange
 }: DiffToolbarProps) {
   const stageChips = stageCounts
     ? [
-        { key: 'mixed', label: 'Mixed', value: stageCounts.mixed },
-        { key: 'unstaged', label: 'Unstaged', value: stageCounts.unstaged },
-        { key: 'staged', label: 'Staged', value: stageCounts.staged },
-        { key: 'untracked', label: 'Untracked', value: stageCounts.untracked },
-        { key: 'other', label: 'Other', value: stageCounts.other }
+        { key: 'mixed' as const, label: 'Mixed', value: stageCounts.mixed },
+        { key: 'unstaged' as const, label: 'Unstaged', value: stageCounts.unstaged },
+        { key: 'staged' as const, label: 'Staged', value: stageCounts.staged },
+        { key: 'untracked' as const, label: 'Untracked', value: stageCounts.untracked },
+        { key: 'other' as const, label: 'Other', value: stageCounts.other }
       ].filter((item) => item.value > 0)
     : []
 
@@ -53,17 +59,23 @@ export function DiffToolbar({
           role="group"
         >
           {stageChips.map((chip) => (
-            <span
+            <button
               key={chip.key}
               className="diff-stage-count-chip"
               data-stage-group={chip.key}
+              data-active={activeStageGroup === chip.key ? 'true' : undefined}
+              type="button"
+              aria-pressed={activeStageGroup === chip.key}
+              onClick={() =>
+                onStageGroupChange?.(activeStageGroup === chip.key ? null : chip.key)
+              }
               title={`${chip.value} ${chip.label.toLowerCase()} changed file${
                 chip.value === 1 ? '' : 's'
-              } visible`}
+              } visible${activeStageGroup === chip.key ? '; click to show all groups' : ''}`}
             >
               <span>{chip.label}</span>
               <strong>{chip.value}</strong>
-            </span>
+            </button>
           ))}
         </div>
       )}

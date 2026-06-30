@@ -95,9 +95,13 @@ function TranscriptUserGutterPreview({
       onMouseEnter={onKeepOpen}
       onMouseLeave={onDismiss}
       onFocus={onKeepOpen}
-      onBlur={onDismiss}
       onClick={jumpToMarker}
       onKeyDown={(event) => {
+        if (event.key === 'Escape') {
+          event.preventDefault()
+          onDismiss()
+          return
+        }
         if (event.key === 'Enter' || event.key === ' ') {
           event.preventDefault()
           jumpToMarker()
@@ -336,7 +340,12 @@ export function TranscriptUserMessageGutter({
           onMouseEnter={(event) => activateMarker(marker, event.currentTarget)}
           onMouseLeave={scheduleDismiss}
           onFocus={(event) => activateMarker(marker, event.currentTarget)}
-          onBlur={scheduleDismiss}
+          onBlur={(event) => {
+            const related = event.relatedTarget
+            const rail = event.currentTarget.closest('.transcript-user-gutter')
+            if (related instanceof Node && rail?.contains(related)) return
+            scheduleDismiss()
+          }}
           onKeyDown={(event) => {
             const currentIndex = markers.findIndex((candidate) => candidate.key === marker.key)
             if (event.key === 'ArrowDown' || event.key === 'ArrowRight') {

@@ -188,9 +188,10 @@ export function WorkflowCreator({
             ) : null}
           </div>
 
-          <label className="workflow-creator-field">
+          <label className="workflow-creator-field" htmlFor="workflow-creator-name">
             <span>Name</span>
             <input
+              id="workflow-creator-name"
               type="text"
               value={name}
               onChange={(event) => setName(event.target.value)}
@@ -198,9 +199,10 @@ export function WorkflowCreator({
             />
           </label>
 
-          <label className="workflow-creator-field">
+          <label className="workflow-creator-field" htmlFor="workflow-creator-prompt">
             <span>Prompt</span>
             <textarea
+              id="workflow-creator-prompt"
               ref={promptRef}
               value={prompt}
               onChange={(event) => setPrompt(event.target.value)}
@@ -215,6 +217,7 @@ export function WorkflowCreator({
               <button
                 type="button"
                 className={cadence === 'manual' ? 'is-active' : ''}
+                aria-pressed={cadence === 'manual'}
                 onClick={() => setCadence('manual')}
               >
                 Manual
@@ -222,6 +225,7 @@ export function WorkflowCreator({
               <button
                 type="button"
                 className={cadence === 'interval' ? 'is-active' : ''}
+                aria-pressed={cadence === 'interval'}
                 onClick={() => setCadence('interval')}
               >
                 Every
@@ -230,9 +234,13 @@ export function WorkflowCreator({
           </div>
 
           {cadence === 'interval' && (
-            <label className="workflow-creator-field workflow-creator-inline-field">
+            <label
+              className="workflow-creator-field workflow-creator-inline-field"
+              htmlFor="workflow-creator-interval-minutes"
+            >
               <span>Minutes</span>
               <input
+                id="workflow-creator-interval-minutes"
                 type="number"
                 min={1}
                 step={1}
@@ -242,9 +250,13 @@ export function WorkflowCreator({
             </label>
           )}
 
-          <label className="workflow-creator-field workflow-creator-inline-field">
+          <label
+            className="workflow-creator-field workflow-creator-inline-field"
+            htmlFor="workflow-creator-max-runs"
+          >
             <span>Max runs per day</span>
             <input
+              id="workflow-creator-max-runs"
               type="number"
               min={1}
               step={1}
@@ -253,7 +265,11 @@ export function WorkflowCreator({
             />
           </label>
 
-          {error && <div className="workflow-creator-error">{error}</div>}
+          {error && (
+            <div className="workflow-creator-error" role="alert">
+              {error}
+            </div>
+          )}
         </div>
 
         <footer className="workflow-creator-footer">
