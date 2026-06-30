@@ -20,6 +20,54 @@ interface PendingAdmission {
 
 const ADMISSION_TTL_MS = 120_000
 
+export function hostAdmissionRejectAriaLabel(displayName: string): string {
+  return `Reject ${displayName}'s join attempt and stop sharing`
+}
+
+export function HostAdmissionBannerCard({
+  entry,
+  onReject,
+  onDismiss
+}: {
+  entry: PendingAdmission
+  onReject: () => void
+  onDismiss: () => void
+}) {
+  return (
+    <div className="host-admission-banner" role="status">
+      <div className="host-admission-banner-body">
+        <div className="host-admission-banner-text">
+          <strong>{entry.displayName}</strong> is joining this shared chat. Confirm this code
+          matches what they see before they accept:
+        </div>
+        <div className="host-admission-banner-code" aria-label="Security code">
+          {entry.confirmCode}
+        </div>
+      </div>
+      <div className="host-admission-banner-actions">
+        <button
+          type="button"
+          className="host-admission-banner-reject"
+          onClick={onReject}
+          aria-label={hostAdmissionRejectAriaLabel(entry.displayName)}
+          title="Codes don't match — stop sharing"
+        >
+          Reject
+        </button>
+        <button
+          type="button"
+          className="host-admission-banner-dismiss"
+          onClick={onDismiss}
+          aria-label="Dismiss"
+          title="Dismiss"
+        >
+          ×
+        </button>
+      </div>
+    </div>
+  )
+}
+
 export function HostAdmissionBanner() {
   const [pending, setPending] = useState<PendingAdmission[]>([])
   const timersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
@@ -69,36 +117,12 @@ export function HostAdmissionBanner() {
   return createPortal(
     <div className="host-admission-banner-stack">
       {pending.map((entry) => (
-        <div key={entry.handshakeId} className="host-admission-banner" role="status">
-          <div className="host-admission-banner-body">
-            <div className="host-admission-banner-text">
-              <strong>{entry.displayName}</strong> is joining this shared chat. Confirm this code
-              matches what they see before they accept:
-            </div>
-            <div className="host-admission-banner-code" aria-label="Security code">
-              {entry.confirmCode}
-            </div>
-          </div>
-          <div className="host-admission-banner-actions">
-            <button
-              type="button"
-              className="host-admission-banner-reject"
-              onClick={() => reject(entry)}
-              title="Codes don't match — stop sharing"
-            >
-              Reject
-            </button>
-            <button
-              type="button"
-              className="host-admission-banner-dismiss"
-              onClick={() => dismiss(entry.handshakeId)}
-              aria-label="Dismiss"
-              title="Dismiss"
-            >
-              ×
-            </button>
-          </div>
-        </div>
+        <HostAdmissionBannerCard
+          key={entry.handshakeId}
+          entry={entry}
+          onReject={() => reject(entry)}
+          onDismiss={() => dismiss(entry.handshakeId)}
+        />
       ))}
     </div>,
     document.body
