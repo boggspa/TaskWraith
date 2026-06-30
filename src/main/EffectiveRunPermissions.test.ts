@@ -334,7 +334,7 @@ describe('resolveEffectiveRunPermissions', () => {
     const resolved = resolveEffectiveRunPermissions({
       provider: 'claude',
       workspacePath: '/repo',
-      model: 'claude-mythos-5',
+      model: 'claude-sonnet-5',
       settings: settings(),
       presetId: 'read_only'
     })

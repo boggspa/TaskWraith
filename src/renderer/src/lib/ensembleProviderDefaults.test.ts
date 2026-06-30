@@ -221,12 +221,20 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
       'high',
       'xhigh'
     ])
-    expect(getEnsembleReasoningOptions('codex', 'gpt-5.5').map((option) => option.value)).toEqual([
-      'low',
-      'medium',
-      'high',
-      'xhigh'
-    ])
+    expect(
+      getEnsembleReasoningOptions('codex', 'gpt-5.5').map((option) => option.value)
+    ).toEqual(['low', 'medium', 'high', 'xhigh'])
+    expect(
+      getEnsembleReasoningOptions('codex', 'preview:openai:gpt-5.6:sol').map(
+        (option) => option.value
+      )
+    ).toEqual(['low', 'medium', 'high', 'xhigh', 'max'])
+    expect(
+      codex.modelOptions.find((option) => option.id === 'preview:openai:gpt-5.6:sol')
+    ).toMatchObject({
+      disabled: true,
+      disabledReason: 'Requires OpenAI preview access'
+    })
   })
 
   it('does not expose Default or CLI Default as ensemble picker model rows', () => {
@@ -253,7 +261,7 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
     expect(getEnsembleModelDefaults('kimi').defaultModelId).toBe('kimi-k2.7-code')
   })
 
-  it('marks temporarily unavailable Claude Fable 1M disabled in ensemble model options', () => {
+  it('marks temporarily unavailable Claude preview rows disabled in ensemble model options', () => {
     const claude = getEnsembleModelDefaults('claude')
     expect(claude.modelOptions.map((option) => option.id)).not.toEqual(
       expect.arrayContaining([
@@ -262,15 +270,23 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
         'claude-opus-4-8',
         'claude-opus-4-7',
         'claude-opus-4-6',
+        'claude-sonnet-5',
         'claude-fable-5'
       ])
     )
+    expect(
+      claude.modelOptions.find((option) => option.id === 'preview:anthropic:claude-sonnet-5')
+    ).toMatchObject({
+      disabled: true,
+      disabledReason: 'Requires Claude preview access'
+    })
     expect(claude.modelOptions.find((option) => option.id === 'claude-fable-5-1m')).toMatchObject({
       disabled: true,
       disabledReason: 'Temporarily unavailable from Anthropic'
     })
     expect(claude.modelOptions.map((option) => option.id)).toEqual([
       'claude-opus-4-8-1m',
+      'preview:anthropic:claude-sonnet-5',
       'claude-fable-5-1m',
       'claude-opus-4-7-1m',
       'claude-sonnet-4-6',

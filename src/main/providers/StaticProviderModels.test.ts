@@ -50,6 +50,9 @@ describe('normalizeCliProviderModel (claude)', () => {
   })
 
   it('maps non-runnable Claude preview placeholders back to the concrete default', () => {
+    expect(normalizeCliProviderModel('claude', 'preview:anthropic:claude-sonnet-5')).toBe(
+      'claude-sonnet-4-6'
+    )
     expect(normalizeCliProviderModel('claude', 'preview:anthropic:claude-fable-5')).toBe(
       'claude-sonnet-4-6'
     )
@@ -71,6 +74,7 @@ interface StaticModelShape {
   isDefault?: boolean
   disabled?: boolean
   disabledReason?: string
+  defaultReasoningEffort?: string | null
   additionalSpeedTiers?: string[]
   supportedReasoningEfforts?: Array<{
     reasoningEffort: string
@@ -181,15 +185,32 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
       includePreviewModels: true
     }) as StaticModelShape[]
     expect(models.find((model) => model.isDefault)?.id).toBe('gpt-5.5')
-    expect(models.find((model) => model.id === 'preview:openai:gpt-5.6:sol')).toMatchObject({
+    const sol = models.find((model) => model.id === 'preview:openai:gpt-5.6:sol')
+    const terra = models.find((model) => model.id === 'preview:openai:gpt-5.6:terra')
+    const luna = models.find((model) => model.id === 'preview:openai:gpt-5.6:luna')
+    expect(sol).toMatchObject({
+      disabled: true,
+      disabledReason: 'Requires OpenAI preview access',
+      defaultReasoningEffort: 'medium'
+    })
+    expect(sol?.supportedReasoningEfforts?.map((option) => option.reasoningEffort)).toEqual([
+      'low',
+      'medium',
+      'high',
+      'xhigh',
+      'max'
+    ])
+    expect(terra).toMatchObject({
       disabled: true,
       disabledReason: 'Requires OpenAI preview access'
     })
-    expect(models.find((model) => model.id === 'preview:openai:gpt-5.6:terra')).toMatchObject({
-      disabled: true,
-      disabledReason: 'Requires OpenAI preview access'
-    })
-    expect(models.find((model) => model.id === 'preview:openai:gpt-5.6:luna')).toMatchObject({
+    expect(terra?.supportedReasoningEfforts?.map((option) => option.reasoningEffort)).toEqual([
+      'low',
+      'medium',
+      'high',
+      'xhigh'
+    ])
+    expect(luna).toMatchObject({
       disabled: true,
       disabledReason: 'Requires OpenAI preview access'
     })
@@ -199,6 +220,23 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
     expect(normalizeCliProviderModel('codex', 'preview:openai:gpt-5.6:sol')).toBe(
       'gpt-5.5'
     )
+  })
+
+  it('adds Max reasoning only for GPT-5.6 Sol Codex rows', () => {
+    expect(
+      codexReasoningEffortsForModel('gpt-5.6-sol', [
+        { reasoningEffort: 'medium' },
+        { reasoningEffort: 'high' },
+        { reasoningEffort: 'xhigh' }
+      ]).map((option) => option.reasoningEffort)
+    ).toEqual(['low', 'medium', 'high', 'xhigh', 'max'])
+    expect(
+      codexReasoningEffortsForModel('gpt-5.6-terra', [
+        { reasoningEffort: 'medium' },
+        { reasoningEffort: 'high' },
+        { reasoningEffort: 'xhigh' }
+      ]).map((option) => option.reasoningEffort)
+    ).toEqual(['low', 'medium', 'high', 'xhigh'])
   })
 })
 
@@ -220,6 +258,7 @@ describe('getStaticProviderModels (claude)', () => {
     expect(ids).not.toContain('default')
     expect(ids).not.toContain('claude-fable-5')
     expect(ids).not.toContain('claude-fable-5-1m')
+    expect(ids).not.toContain('preview:anthropic:claude-sonnet-5')
     expect(ids).not.toContain('preview:anthropic:claude-fable-5')
     expect(ids).not.toContain('preview:anthropic:claude-mythos-5')
     expect(ids).not.toContain('claude-opus-4-8')
@@ -231,6 +270,17 @@ describe('getStaticProviderModels (claude)', () => {
       includePreviewModels: true
     }) as StaticModelShape[]
     const previewById = new Map(previewModels.map((m) => [m.id, m]))
+    expect(previewById.get('preview:anthropic:claude-sonnet-5')).toMatchObject({
+      disabled: true,
+      disabledReason: 'Requires Claude preview access',
+      defaultReasoningEffort: 'medium'
+    })
+    expect(
+      previewById
+        .get('preview:anthropic:claude-sonnet-5')
+        ?.supportedReasoningEfforts?.filter((option) => option.disabled)
+        .map((option) => option.reasoningEffort)
+    ).toEqual(['xhigh', 'ultracode'])
     expect(previewById.get('preview:anthropic:claude-fable-5')).toMatchObject({
       disabled: true,
       disabledReason: 'Requires Claude preview access'

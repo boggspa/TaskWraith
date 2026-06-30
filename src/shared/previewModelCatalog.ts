@@ -14,17 +14,53 @@ export interface PreviewModelCatalogEntry {
   accessState: PreviewModelAccessState
   previewFamily: string
   previewRole: string
+  supportedReasoningEfforts?: Array<{
+    reasoningEffort: string
+    description?: string
+    disabled?: boolean
+    disabledReason?: string
+  }>
+  defaultReasoningEffort?: string | null
 }
 
 export const PREVIEW_MODEL_ACCESS_REASON = 'Requires preview access'
 export const OPENAI_PREVIEW_MODEL_ACCESS_REASON = 'Requires OpenAI preview access'
 export const CLAUDE_PREVIEW_MODEL_ACCESS_REASON = 'Requires Claude preview access'
 
+const OPENAI_GPT56_REASONING_EFFORTS = [
+  { reasoningEffort: 'low' },
+  { reasoningEffort: 'medium' },
+  { reasoningEffort: 'high' },
+  { reasoningEffort: 'xhigh' }
+]
+
+const OPENAI_GPT56_SOL_REASONING_EFFORTS = [
+  ...OPENAI_GPT56_REASONING_EFFORTS,
+  { reasoningEffort: 'max' }
+]
+
+const CLAUDE_SONNET_PREVIEW_REASONING_EFFORTS = [
+  { reasoningEffort: 'low' },
+  { reasoningEffort: 'medium' },
+  { reasoningEffort: 'high' },
+  {
+    reasoningEffort: 'xhigh',
+    disabled: true,
+    disabledReason: 'Not available for this Claude model'
+  },
+  { reasoningEffort: 'max' },
+  {
+    reasoningEffort: 'ultracode',
+    disabled: true,
+    disabledReason: 'Not available for this Claude model'
+  }
+]
+
 export const PREVIEW_MODEL_CATALOG: PreviewModelCatalogEntry[] = [
   {
     id: 'preview:openai:gpt-5.6:sol',
     provider: 'codex',
-    label: 'OpenAI GPT-5.6 Sol Preview',
+    label: 'GPT-5.6 Sol Preview',
     description: 'Preview placeholder for hardest long-horizon coding and research.',
     disabled: true,
     disabledReason: OPENAI_PREVIEW_MODEL_ACCESS_REASON,
@@ -32,12 +68,14 @@ export const PREVIEW_MODEL_CATALOG: PreviewModelCatalogEntry[] = [
     runnable: false,
     accessState: 'requires_preview_access',
     previewFamily: 'gpt-5.6',
-    previewRole: 'Hardest long-horizon coding/research'
+    previewRole: 'Hardest long-horizon coding/research',
+    supportedReasoningEfforts: OPENAI_GPT56_SOL_REASONING_EFFORTS,
+    defaultReasoningEffort: 'medium'
   },
   {
     id: 'preview:openai:gpt-5.6:terra',
     provider: 'codex',
-    label: 'OpenAI GPT-5.6 Terra Preview',
+    label: 'GPT-5.6 Terra Preview',
     description: 'Preview placeholder for strong everyday advanced agentic work.',
     disabled: true,
     disabledReason: OPENAI_PREVIEW_MODEL_ACCESS_REASON,
@@ -45,12 +83,14 @@ export const PREVIEW_MODEL_CATALOG: PreviewModelCatalogEntry[] = [
     runnable: false,
     accessState: 'requires_preview_access',
     previewFamily: 'gpt-5.6',
-    previewRole: 'Strong everyday advanced agentic work'
+    previewRole: 'Strong everyday advanced agentic work',
+    supportedReasoningEfforts: OPENAI_GPT56_REASONING_EFFORTS,
+    defaultReasoningEffort: 'medium'
   },
   {
     id: 'preview:openai:gpt-5.6:luna',
     provider: 'codex',
-    label: 'OpenAI GPT-5.6 Luna Preview',
+    label: 'GPT-5.6 Luna Preview',
     description: 'Preview placeholder for fast triage, board planning, and lightweight subagents.',
     disabled: true,
     disabledReason: OPENAI_PREVIEW_MODEL_ACCESS_REASON,
@@ -58,7 +98,24 @@ export const PREVIEW_MODEL_CATALOG: PreviewModelCatalogEntry[] = [
     runnable: false,
     accessState: 'requires_preview_access',
     previewFamily: 'gpt-5.6',
-    previewRole: 'Fast triage, board planning, summarization, lightweight subagents'
+    previewRole: 'Fast triage, board planning, summarization, lightweight subagents',
+    supportedReasoningEfforts: OPENAI_GPT56_REASONING_EFFORTS,
+    defaultReasoningEffort: 'medium'
+  },
+  {
+    id: 'preview:anthropic:claude-sonnet-5',
+    provider: 'claude',
+    label: 'Claude Sonnet 5 Preview',
+    description: 'Preview model gated behind explicit Claude preview access.',
+    disabled: true,
+    disabledReason: CLAUDE_PREVIEW_MODEL_ACCESS_REASON,
+    hidden: true,
+    runnable: false,
+    accessState: 'requires_preview_access',
+    previewFamily: 'claude-sonnet-5',
+    previewRole: 'Future Claude Sonnet preview model',
+    supportedReasoningEfforts: CLAUDE_SONNET_PREVIEW_REASONING_EFFORTS,
+    defaultReasoningEffort: 'medium'
   },
   {
     id: 'preview:anthropic:claude-fable-5',
@@ -111,7 +168,7 @@ export function isPreviewRiskModel(provider: string, model?: string | null): boo
     return /^gpt-5\.6(?:$|[^0-9])/i.test(id)
   }
   if (provider === 'claude') {
-    return /\b(?:claude-)?(?:fable|mythos)-5\b/i.test(id)
+    return /\b(?:claude-)?(?:sonnet|fable|mythos)-5\b/i.test(id)
   }
   return false
 }
@@ -119,7 +176,7 @@ export function isPreviewRiskModel(provider: string, model?: string | null): boo
 export function previewModelCatalogEnabled(
   env: Record<string, string | undefined> | undefined
 ): boolean {
-  return envFlagEnabled(env, 'TASKWRAITH_PREVIEW_MODELS', false)
+  return envFlagEnabled(env, 'TASKWRAITH_PREVIEW_MODELS', true)
 }
 
 export function previewModelCatalogEnabledForProvider(

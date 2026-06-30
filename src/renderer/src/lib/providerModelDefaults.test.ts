@@ -20,16 +20,37 @@ describe('Codex provider model defaults', () => {
       )
     }
   })
+
+  it('exposes disabled GPT-5.6 preview rows with Max reasoning only on Sol', () => {
+    const byId = new Map(CODEX_DEFAULT_MODELS.map((model) => [model.id, model]))
+    expect(byId.get('preview:openai:gpt-5.6:sol')).toMatchObject({
+      label: 'GPT-5.6 Sol Preview',
+      disabled: true,
+      disabledReason: 'Requires OpenAI preview access',
+      defaultReasoningEffort: 'medium'
+    })
+    expect(
+      byId
+        .get('preview:openai:gpt-5.6:sol')
+        ?.supportedReasoningEfforts?.map((option) => option.reasoningEffort)
+    ).toEqual(['low', 'medium', 'high', 'xhigh', 'max'])
+    expect(
+      byId
+        .get('preview:openai:gpt-5.6:terra')
+        ?.supportedReasoningEfforts?.map((option) => option.reasoningEffort)
+    ).toEqual(['low', 'medium', 'high', 'xhigh'])
+  })
 })
 
 describe('Claude provider model defaults', () => {
-  it('keeps unavailable Fable rows out of the renderer fallback picker list', () => {
+  it('keeps unavailable concrete Fable rows out while exposing disabled preview rows', () => {
     const ids = CLAUDE_DEFAULT_MODELS.map((model) => model.id)
     expect(ids).not.toContain('default')
     expect(ids).not.toContain('claude-fable-5')
     expect(ids).not.toContain('claude-fable-5-1m')
-    expect(ids).not.toContain('preview:anthropic:claude-fable-5')
-    expect(ids).not.toContain('preview:anthropic:claude-mythos-5')
+    expect(ids).toContain('preview:anthropic:claude-sonnet-5')
+    expect(ids).toContain('preview:anthropic:claude-fable-5')
+    expect(ids).toContain('preview:anthropic:claude-mythos-5')
   })
 
   it('uses Sonnet 4.6 as the concrete Claude fallback model', () => {
@@ -40,8 +61,10 @@ describe('Claude provider model defaults', () => {
     expect(isClaudeModelId('default')).toBe(false)
     expect(isClaudeModelId('cli-default')).toBe(false)
     expect(isClaudeModelId('fable')).toBe(false)
+    expect(isClaudeModelId('claude-sonnet-5')).toBe(false)
     expect(isClaudeModelId('claude-fable-5')).toBe(false)
     expect(isClaudeModelId('claude-fable-5-1m')).toBe(false)
+    expect(isClaudeModelId('preview:anthropic:claude-sonnet-5')).toBe(false)
     expect(isClaudeModelId('claude-opus-4-8')).toBe(true)
   })
 
@@ -57,6 +80,9 @@ describe('Claude provider model defaults', () => {
   it('resolves family-specific Claude reasoning defaults', () => {
     const byId = new Map(CLAUDE_DEFAULT_MODELS.map((model) => [model.id, model]))
     const sonnetReasoning = resolveClaudeReasoningEfforts(byId.get('claude-sonnet-4-6'))
+    const sonnet5Reasoning = resolveClaudeReasoningEfforts(
+      byId.get('preview:anthropic:claude-sonnet-5')
+    )
     const opusReasoning = resolveClaudeReasoningEfforts(byId.get('claude-opus-4-8-1m'))
     const haikuReasoning = resolveClaudeReasoningEfforts(byId.get('claude-haiku-4-5'))
     expect(
@@ -64,6 +90,19 @@ describe('Claude provider model defaults', () => {
     ).toEqual(['low', 'medium', 'high', 'xhigh', 'max', 'ultracode'])
     expect(
       sonnetReasoning
+        .filter((option) => option.disabled)
+        .map((option) => option.reasoningEffort)
+    ).toEqual(['xhigh', 'ultracode'])
+    expect(sonnet5Reasoning.map((option) => option.reasoningEffort)).toEqual([
+      'low',
+      'medium',
+      'high',
+      'xhigh',
+      'max',
+      'ultracode'
+    ])
+    expect(
+      sonnet5Reasoning
         .filter((option) => option.disabled)
         .map((option) => option.reasoningEffort)
     ).toEqual(['xhigh', 'ultracode'])

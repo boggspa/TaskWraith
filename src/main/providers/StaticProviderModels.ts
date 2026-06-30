@@ -72,6 +72,11 @@ export function codexModelSupportsLightReasoning(modelId?: string | null): boole
   return /^gpt-5(?:[.-]|$)/.test(id) && !id.startsWith('preview:')
 }
 
+export function codexModelSupportsMaxReasoning(modelId?: string | null): boolean {
+  const id = String(modelId || '').trim().toLowerCase()
+  return id === 'gpt-5.6-sol' || id === 'preview:openai:gpt-5.6:sol'
+}
+
 export function codexReasoningEffortsForModel<T extends CodexReasoningEffortOption>(
   modelId: string,
   efforts: readonly T[] | null | undefined
@@ -91,7 +96,11 @@ export function codexReasoningEffortsForModel<T extends CodexReasoningEffortOpti
     )
   }
   if (codexModelSupportsLightReasoning(modelId) && !seen.has('low')) {
-    return [{ reasoningEffort: 'low' }, ...normalized]
+    normalized.unshift({ reasoningEffort: 'low' })
+    seen.add('low')
+  }
+  if (codexModelSupportsMaxReasoning(modelId) && !seen.has('max')) {
+    normalized.push({ reasoningEffort: 'max' })
   }
   return normalized
 }
@@ -471,6 +480,12 @@ function previewModelForPicker(entry: PreviewModelCatalogEntry) {
     runnable: entry.runnable,
     accessState: entry.accessState,
     previewFamily: entry.previewFamily,
-    previewRole: entry.previewRole
+    previewRole: entry.previewRole,
+    ...(entry.supportedReasoningEfforts
+      ? { supportedReasoningEfforts: entry.supportedReasoningEfforts }
+      : {}),
+    ...(entry.defaultReasoningEffort
+      ? { defaultReasoningEffort: entry.defaultReasoningEffort }
+      : {})
   }
 }

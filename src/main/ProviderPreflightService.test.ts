@@ -158,7 +158,7 @@ describe('ProviderPreflightService', () => {
       {
         provider: 'claude',
         workspacePath: '/repo',
-        model: 'claude-mythos-5'
+        model: 'claude-sonnet-5'
       },
       contract({ provider: 'claude', label: 'Claude' }),
       defaultProviderDescriptor('claude')

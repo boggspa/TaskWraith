@@ -36,6 +36,10 @@ describe('humaniseModelId', () => {
     it('maps full claude ids to "Claude Opus/Sonnet/Haiku N.N" form', () => {
       expect(humaniseModelId('claude', 'claude-fable-5')).toBe('Claude Fable 5')
       expect(humaniseModelId('claude', 'claude-fable-5-1m')).toBe('Claude Fable 5 (1M)')
+      expect(humaniseModelId('claude', 'claude-sonnet-5')).toBe('Claude Sonnet 5')
+      expect(humaniseModelId('claude', 'preview:anthropic:claude-sonnet-5')).toBe(
+        'Claude Sonnet 5 Preview'
+      )
       expect(humaniseModelId('claude', 'claude-opus-4-8')).toBe('Claude Opus 4.8')
       expect(humaniseModelId('claude', 'claude-opus-4-8-1m')).toBe('Claude Opus 4.8 (1M)')
       expect(humaniseModelId('claude', 'claude-opus-4-7')).toBe('Claude Opus 4.7')
@@ -61,6 +65,9 @@ describe('humaniseModelId', () => {
       expect(humaniseModelId('codex', 'gpt-5.3-codex')).toBe('GPT-5.3 Codex')
       expect(humaniseModelId('codex', 'gpt-5.3-codex-spark')).toBe('GPT-5.3 Codex Spark')
       expect(humaniseModelId('codex', 'gpt-5.2')).toBe('GPT-5.2')
+      expect(humaniseModelId('codex', 'preview:openai:gpt-5.6:sol')).toBe(
+        'GPT-5.6 Sol Preview'
+      )
     })
   })
 
