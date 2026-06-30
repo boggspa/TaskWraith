@@ -10827,6 +10827,55 @@ button.diff-file-row {
   opacity: 1;
 }
 
+.callmcp-tool-easter-egg {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 1.35em;
+  color: var(--tool-call-icon-accent, var(--accent));
+  vertical-align: -0.2em;
+}
+
+.callmcp-tool-easter-egg-icon {
+  --callmcp-delay: 0s;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.86;
+  animation:
+    callmcpToolDance 1.45s ease-in-out infinite,
+    callmcpToolSpin 2.2s linear infinite;
+  animation-delay: var(--callmcp-delay);
+  transform-origin: 50% 58%;
+}
+
+.callmcp-tool-easter-egg-icon:nth-child(2n) {
+  color: color-mix(in srgb, var(--text-primary) 72%, var(--accent) 28%);
+  animation-direction: alternate, reverse;
+}
+
+.callmcp-tool-easter-egg-icon:nth-child(3n) {
+  opacity: 0.72;
+  animation-duration: 1.25s, 1.95s;
+}
+
+@keyframes callmcpToolDance {
+  0%, 100% { translate: 0 1px; scale: 0.95; }
+  35% { translate: 0 -3px; scale: 1.08; }
+  70% { translate: 0 2px; scale: 0.98; }
+}
+
+@keyframes callmcpToolSpin {
+  to { rotate: 360deg; }
+}
+
+[data-reduce-motion="true"] .callmcp-tool-easter-egg-icon {
+  animation: none;
+  translate: 0;
+  rotate: 0deg;
+  scale: 1;
+}
+
 /* Compact-group icon array. When a group contains tools from
  * multiple families, we render them side-by-side in a small row
  * (a la Codex's "Edited X, ran Y" status lines). Single-family

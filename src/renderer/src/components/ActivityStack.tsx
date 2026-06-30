@@ -3,6 +3,7 @@ import {
   useEffect,
   useMemo,
   useState,
+  type CSSProperties,
   type ReactNode
 } from 'react'
 import {
@@ -33,7 +34,7 @@ import { displayPathRelativeToWorkspace } from '../lib/ActivityPathDisplay'
 import { FileTypeIcon } from './FileTypeIcon'
 import { DigitOdometer } from './DigitOdometer'
 import { AgentIdentityIcon } from './icons/AgentIdentityIcon'
-import { ToolFamilyIcon, toolNameToFamily } from './icons/ToolFamilyIcon'
+import { ToolFamilyIcon, toolNameToFamily, type ToolFamily } from './icons/ToolFamilyIcon'
 import { CreativeTimelineDiffCard } from './CreativeTimelineDiffCard'
 import { creativeTimelineDiffModelFromActivity } from './CreativeTimelineDiffCardModel'
 import { CompactToolTrace } from './CompactToolTrace'
@@ -722,6 +723,47 @@ function getReadableActivityDisplayName(activity: ToolActivity): string {
   return displayLooksRaw ? fallback || displayName || rawToolName : displayName
 }
 
+function isCallMcpToolActivity(activity: ToolActivity): boolean {
+  const toolName = (activity.toolName || '').trim().toLowerCase()
+  const displayName = (activity.displayName || '').trim().toLowerCase()
+  return toolName === 'callmcptool' || displayName === 'used callmcptool'
+}
+
+const CALL_MCP_TOOL_EASTER_EGG_FAMILIES: ToolFamily[] = [
+  'mcp',
+  'shell',
+  'search',
+  'edit',
+  'browser',
+  'task'
+]
+
+type CallMcpToolEasterEggStyle = CSSProperties & {
+  '--callmcp-delay': string
+}
+
+function CallMcpToolEasterEgg() {
+  return (
+    <span
+      className="callmcp-tool-easter-egg"
+      role="img"
+      aria-label="Used callmcptool"
+      title="Used callmcptool"
+    >
+      {CALL_MCP_TOOL_EASTER_EGG_FAMILIES.map((family, index) => (
+        <span
+          key={family}
+          className="callmcp-tool-easter-egg-icon"
+          style={{ '--callmcp-delay': `${index * -0.16}s` } as CallMcpToolEasterEggStyle}
+          aria-hidden="true"
+        >
+          <ToolFamilyIcon family={family} size={18} />
+        </span>
+      ))}
+    </span>
+  )
+}
+
 function getProgressNote(activity: ToolActivity): { title: string; body?: string } | null {
   if (activity.category !== 'task') return null
   // 1.4.2 — todo_write / update_todo_list render as checklist cards.
@@ -1288,6 +1330,10 @@ function getInlineActivityTitle(
   filePath?: string,
   participants?: EnsembleParticipant[]
 ): ReactNode {
+  if (isCallMcpToolActivity(activity)) {
+    return <CallMcpToolEasterEgg />
+  }
+
   if (filePath) {
     return <ActivityTitle activity={activity} filePath={filePath} participants={participants} />
   }
@@ -1367,6 +1413,10 @@ function ActivityTitle({
   filePath?: string
   participants?: EnsembleParticipant[]
 }) {
+  if (isCallMcpToolActivity(activity)) {
+    return <CallMcpToolEasterEgg />
+  }
+
   // 1.0.4 — same structured render as the inline path for
   // ensemble_yield activities so the larger card form stays in
   // visual lockstep with the inline form.

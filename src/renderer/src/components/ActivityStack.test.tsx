@@ -409,6 +409,29 @@ describe('ActivityStack diff hover previews', () => {
 })
 
 describe('ActivityStack agent invocation presentation', () => {
+  it('renders Used callmcptool as the dancing tool icon easter egg', () => {
+    const html = renderToStaticMarkup(
+      <ActivityStack
+        provider="grok"
+        activities={[
+          makeWriteActivity({
+            id: 'call-mcp-tool',
+            toolName: 'callmcptool',
+            displayName: 'Used callmcptool',
+            category: 'unknown',
+            parameters: {},
+            resultSummary: ''
+          })
+        ]}
+      />
+    )
+
+    expect(html).toContain('callmcp-tool-easter-egg')
+    expect(html).toContain('aria-label="Used callmcptool"')
+    expect(html).toContain('callmcp-tool-easter-egg-icon')
+    expect(html).not.toContain('>Used callmcptool<')
+  })
+
   it('labels provider-native child-agent threads with unified invocation copy', () => {
     const html = renderToStaticMarkup(
       <ActivityStack
