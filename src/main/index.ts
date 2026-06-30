@@ -407,8 +407,8 @@ import type {
   GitRepositorySnapshot
 } from './services/GitService'
 import { AppShellStatsService } from './services/AppShellStatsService'
-import { getCurrentFxRates, refreshFxRates, startFxRateScheduler } from './services/FxRateService'
 import { getCachedHostWeather } from './services/HostWeatherService'
+import { getCurrentFxRates, refreshFxRates, startFxRateScheduler } from './services/FxRateService'
 import {
   getCurrentProviderRates,
   loadPersistedProbeResults,
@@ -490,7 +490,6 @@ import {
   ChatScope,
   ToolActivity,
   WorkspaceSnapshot,
-  AppearanceMode,
   GeminiWorktreeLaunchOption,
   ProviderId,
   AuditRunRecord,
@@ -857,6 +856,7 @@ import {
 } from './ipc/bridgeAllowlistHandlers'
 import { registerDiagnosticsHandlers } from './ipc/diagnosticsHandlers'
 import { registerSidebarHandlers } from './ipc/sidebarHandlers'
+import { registerAppearanceHandlers } from './ipc/appearanceHandlers'
 import { getCachedRemoteEnsemblePresets } from './remote/EnsembleRosterPresetsCache'
 import { resolveGeminiCliResumePolicy } from './GeminiSessionPolicy'
 // 1.0.5-EW26 — Kimi compatibility filter (curated + user-
@@ -25642,37 +25642,19 @@ if (isGeminiMcpBridgeProcess) {
       appendBugReport: (userDataPath, payload) => appendBugReport(userDataPath, payload)
     })
 
-    ipcMain.handle(
-      'set-appearance-mode',
-      (_, payload: { mode?: string; reduceTransparency?: boolean } | string) => {
-        const settings = AppStore.getSettings()
-        const requestMode = typeof payload === 'string' ? payload : payload?.mode
-        const requestReduce =
-          typeof payload === 'string'
-            ? settings.reduceTransparency
-            : (payload?.reduceTransparency ?? settings.reduceTransparency)
-        const nextMode: AppearanceMode = isAppearanceMode(requestMode)
-          ? requestMode
-          : settings.appearanceMode || 'soft_glass'
-        const nextSettings = {
-          ...settings,
-          appearanceMode: nextMode,
-          reduceTransparency: requestReduce
-        }
-        if (mainWindow) {
-          applyNativeGlassToWindow(mainWindow, nextSettings)
-        }
+    registerAppearanceHandlers({
+      getSettings: () => AppStore.getSettings(),
+      isAppearanceMode,
+      getMainWindow: () => mainWindow,
+      forEachWorkspacePopoutWindow: (visit) => {
         for (const win of workspacePopoutWindows.values()) {
-          if (!win.isDestroyed()) {
-            applyNativeGlassToWindow(win, nextSettings)
-          }
+          visit(win)
         }
-        return true
-      }
-    )
-
-    ipcMain.handle('get-host-weather', async () => getCachedHostWeather())
-    ipcMain.handle('native-capabilities:snapshot', () => getNativeCapabilitySnapshot())
+      },
+      applyNativeGlassToWindow,
+      getCachedHostWeather,
+      getNativeCapabilitySnapshot
+    })
 
     ipcMain.handle('get-file-icon', async (_, requestedPath: string) => {
       if (typeof requestedPath !== 'string') {
