@@ -353,9 +353,36 @@ describe('ComposerService', () => {
       }
     )
     expect(payload.approvalMode).toBe('plan')
+    expect(payload.workflowMode).toBe('plan')
+    expect(payload.composer.workflowMode).toBe('plan')
     expect(payload.composer.planModeParsed).toBe(true)
     expect(payload.prompt).toContain('Yes, proceed.')
     expect(payload.prompt).not.toContain('```plan')
+  })
+
+  it('treats legacy plan approval mode as plan workflow when no workflow is explicit', () => {
+    const payload = compose({ provider: 'codex' }, { approvalMode: 'plan' })
+    expect(payload.approvalMode).toBe('plan')
+    expect(payload.workflowMode).toBe('plan')
+    expect(payload.composer.workflowMode).toBe('plan')
+  })
+
+  it('keeps explicit normal workflow separate from read-only plan permissions', () => {
+    const payload = compose(
+      { provider: 'codex' },
+      { approvalMode: 'plan', workflowMode: 'normal' }
+    )
+    expect(payload.approvalMode).toBe('plan')
+    expect(payload.workflowMode).toBe('normal')
+    expect(payload.composer.workflowMode).toBe('normal')
+    expect(payload.effectivePermissions?.readOnly).toBe(true)
+  })
+
+  it('uses persisted plan workflow to force plan approval mode', () => {
+    const payload = compose({ provider: 'claude', workflowMode: 'plan' }, { approvalMode: 'default' })
+    expect(payload.approvalMode).toBe('plan')
+    expect(payload.workflowMode).toBe('plan')
+    expect(payload.composer.workflowMode).toBe('plan')
   })
 
   it('1.0.4-AF: strips a leading /discuss token and flags selfReflectiveRequested', () => {

@@ -2,6 +2,7 @@ import type {
   AuditRunIdentity,
   ActiveGoal,
   ChatScope,
+  ChatWorkflowMode,
   EffectiveRunPermissions,
   EnsembleRunIdentity,
   ExternalPathGrant,
@@ -36,6 +37,8 @@ export interface AgentRunPayload {
   claudeFastMode?: boolean | null
   kimiThinking?: boolean | null
   approvalMode?: string
+  /** Product workflow intent, separate from the low-level permission posture. */
+  workflowMode?: ChatWorkflowMode
   /** Per-run Ollama tool-control tier override (sourced from chat metadata for
    * solo runs or participant metadata for ensembles). When present it takes
    * precedence over the global settings.ollamaToolControlTier; an absent value

@@ -36,6 +36,7 @@ import type {
   ChatRecord,
   ChatRun,
   ChatScope,
+  ChatWorkflowMode,
   EffectiveRunPermissions,
   ExternalPathGrant,
   GeminiWorktreeLaunchOption,
@@ -70,6 +71,7 @@ export interface ComposerInput {
   customModel?: string
   overrideModel?: string
   approvalMode?: string
+  workflowMode?: ChatWorkflowMode
   sessionTrust?: boolean
   attachments?: ComposerImageAttachment[]
   imageAttachments?: ComposerImageAttachment[]
@@ -94,6 +96,7 @@ export interface ComposerRunMetadata {
   providerLabel: string
   requestedModel?: string
   approvalMode: string
+  workflowMode: ChatWorkflowMode
   providerSessionId?: string | null
   geminiResumeSkippedReason?: string
   clearLinkedGeminiSession?: boolean
@@ -180,9 +183,15 @@ export class ComposerService {
           ? input.prompt
           : ''
     const requestedPlanMode = parsePlanModeInput(rawInputBeforeReroute).planMode
+    const requestedWorkflowMode = resolveComposerWorkflowMode(
+      input.workflowMode,
+      chat.workflowMode,
+      requestedPlanMode,
+      input.approvalMode
+    )
     const trustedApprovalMode = resolveApprovalMode(
       scope,
-      requestedPlanMode ? 'plan' : undefined,
+      requestedWorkflowMode === 'plan' ? 'plan' : undefined,
       trustedApprovalChat
     )
     const effectiveInput = applyComposerReroutePlan(
@@ -213,7 +222,13 @@ export class ComposerService {
 
     const requestedModel = resolveRequestedModel(provider, effectiveInput, chat)
     const previewRiskModel = isPreviewRiskModel(provider, requestedModel)
-    const requestedApprovalMode = planParsed.planMode ? 'plan' : effectiveInput.approvalMode
+    const workflowMode = resolveComposerWorkflowMode(
+      effectiveInput.workflowMode,
+      chat.workflowMode,
+      planParsed.planMode,
+      effectiveInput.approvalMode
+    )
+    const requestedApprovalMode = workflowMode === 'plan' ? 'plan' : effectiveInput.approvalMode
     const appRunId = optionalString(input.appRunId)
     let approvalMode =
       provider === 'ollama'
@@ -429,6 +444,7 @@ export class ComposerService {
           ? (effectiveInput.kimiThinkingEnabled ?? metadataBoolean(chat, 'kimiThinkingEnabled') ?? true)
           : null,
       approvalMode,
+      workflowMode,
       ...(effectiveRunPermissions ? { effectivePermissions: effectiveRunPermissions } : {}),
       // Stamp the posture so the renderer can round-trip this payload back
       // through `run-agent` without the normalize-time clamp downgrading it.
@@ -466,6 +482,7 @@ export class ComposerService {
         providerLabel: getProviderLabel(provider),
         requestedModel,
         approvalMode,
+        workflowMode,
         providerSessionId: resumeDecision.sessionId || null,
         geminiResumeSkippedReason: resumeDecision.skippedReason,
         clearLinkedGeminiSession: Boolean(resumeDecision.skippedReason),
@@ -543,6 +560,24 @@ function cappedComposerRerouteApprovalMode(
 function normalizeComposerRerouteApprovalMode(value: string | undefined): string | undefined {
   if (value === 'full_access') return 'auto_edit'
   return coerceApprovalMode(value)
+}
+
+function resolveComposerWorkflowMode(
+  explicitWorkflowMode: unknown,
+  chatWorkflowMode: unknown,
+  planModeParsed: boolean,
+  approvalMode: unknown
+): ChatWorkflowMode {
+  const explicit = normalizeComposerWorkflowMode(explicitWorkflowMode)
+  if (explicit) return explicit
+  if (planModeParsed) return 'plan'
+  const persisted = normalizeComposerWorkflowMode(chatWorkflowMode)
+  if (persisted) return persisted
+  return approvalMode === 'plan' ? 'plan' : 'normal'
+}
+
+function normalizeComposerWorkflowMode(value: unknown): ChatWorkflowMode | undefined {
+  return value === 'plan' || value === 'normal' ? value : undefined
 }
 
 function assertProviderId(value: unknown): ProviderId {
