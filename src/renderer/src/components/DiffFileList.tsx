@@ -470,11 +470,21 @@ export function DiffFileList({
       >
         {visibleRows.map((row) =>
           row.kind === 'notice' ? (
-            <div key={row.id} className="diff-file-list-virtual-note" role="note">
+            <div
+              key={row.id}
+              className="diff-file-list-virtual-note"
+              role="presentation"
+              aria-hidden="true"
+            >
               {row.text}
             </div>
           ) : row.kind === 'sectionHeader' ? (
-            <div key={row.id} className="diff-file-section-header">
+            <div
+              key={row.id}
+              className="diff-file-section-header"
+              role="presentation"
+              aria-hidden="true"
+            >
               <span>{diffStageGroupLabel(row.group)}</span>
               <small>{row.count}</small>
             </div>
