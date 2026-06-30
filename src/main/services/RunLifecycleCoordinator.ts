@@ -508,6 +508,7 @@ export class RunLifecycleCoordinator {
       selectedModelType: this.normalizeString(request?.selectedModelType, 'cli-default'),
       customModel: this.normalizeOptionalString(request?.customModel) || '',
       approvalMode: this.normalizeString(request?.approvalMode, 'default'),
+      workflowMode: this.normalizeWorkflowMode(request?.workflowMode),
       sessionTrust: typeof request?.sessionTrust === 'boolean' ? request.sessionTrust : false,
       imageAttachments: Array.isArray(request?.imageAttachments)
         ? request.imageAttachments
@@ -570,6 +571,10 @@ export class RunLifecycleCoordinator {
   private normalizeNullableString(value: unknown): string | null | undefined {
     if (value === null) return null
     return this.normalizeOptionalString(value)
+  }
+
+  private normalizeWorkflowMode(value: unknown): RunQueueRequestSnapshot['workflowMode'] {
+    return value === 'plan' || value === 'normal' ? value : undefined
   }
 
   private normalizeDiscordSelection(

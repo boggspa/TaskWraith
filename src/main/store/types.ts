@@ -3506,6 +3506,7 @@ export interface RunQueueRequestSnapshot {
   selectedModelType: string
   customModel: string
   approvalMode: string
+  workflowMode?: ChatWorkflowMode
   sessionTrust: boolean
   imageAttachments: RunQueueImageAttachmentSnapshot[]
   discordContextSelection?: RunQueueDiscordContextSelectionSnapshot

@@ -46,6 +46,7 @@ describe('RunLifecycleCoordinator', () => {
         prompt: 'Clean this up.',
         selectedModelType: '',
         approvalMode: '',
+        workflowMode: 'plan',
         customModel: '',
         imageAttachments: [
           { path: '/tmp/a.png', id: 'img-1', name: 'a.png' } as RunQueueRequestSnapshot['imageAttachments'][number]
@@ -84,6 +85,7 @@ describe('RunLifecycleCoordinator', () => {
         selectedModelType: 'cli-default',
         customModel: '',
         approvalMode: 'default',
+        workflowMode: 'plan',
         sessionTrust: false,
         imageAttachments: [{ id: 'img-1', path: '/tmp/a.png', name: 'a.png' }],
         displayPrompt: '   Clean this up.   '
@@ -115,6 +117,22 @@ describe('RunLifecycleCoordinator', () => {
       ownerToken: expect.any(String),
       statusReason: 'Queued run leased from main lifecycle coordinator.'
     })
+  })
+
+  it('drops invalid workflow mode values from queued dispatch tickets', async () => {
+    const job = makeJob({
+      request: makeRequest({ workflowMode: 'read_only' as any })
+    })
+    const queue: RunLifecycleCoordinatorDeps['queue'] = {
+      getRunQueueJob: () => job,
+      leaseQueuedJob: vi.fn(() => job)
+    }
+    const cancelProviderRun = vi.fn(() => true)
+    const coordinator = new RunLifecycleCoordinator({ queue, cancelProviderRun })
+
+    const ticket = await coordinator.claimNextLifecycleJob({ provider: 'codex', chatId: 'chat-1' })
+
+    expect(ticket?.request.workflowMode).toBeUndefined()
   })
 
   it('reserves a queued steer promotion before cancelling the active provider run', async () => {

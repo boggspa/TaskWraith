@@ -9,6 +9,7 @@ import type {
   ProviderId,
   WorkspaceRecord,
   ChatRecord,
+  ChatWorkflowMode,
   ExternalPathGrant,
   GeminiWorktreeConfig,
   ProviderRunReroute,
@@ -27,6 +28,7 @@ export interface QueuedRunRequest {
   selectedModelType: string
   customModel: string
   approvalMode: string
+  workflowMode?: ChatWorkflowMode
   sessionTrust: boolean
   imageAttachments: ImageAttachment[]
   discordContextSelection?: DiscordContextSelection
