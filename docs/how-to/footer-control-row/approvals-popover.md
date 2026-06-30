@@ -3,15 +3,18 @@
 **Platform:** Electron
 
 ## What it is
-<!-- TODO: 1-2 sentence function. Explorer note: Popover of pending approvals + jump-to-chat + deep-link Settings -> Approvals & Grants. -->
+The Approvals popover shows all pending agent approvals across your chats, lets you jump to the requesting chat, and provides a deep link to **Settings → Approvals & Grants**.
 
 ## Where to find it
-<!-- TODO: navigation path. Explorer note: Sidebar footer control row, red shield icon. -->
+In the **Sidebar footer control row** — click the **red shield** icon.
 
 <!-- TODO(screenshot): Sidebar footer red shield and expanded Approvals popover -->
 
 ## How to use it
-<!-- TODO: brief numbered steps -->
+1. Click the red shield to open the popover.
+2. Review the pending approvals list.
+3. Click an item to jump to its chat, or click the Settings link to manage grants.
 
 ## Tips & related
-<!-- TODO: cross-links -->
+- [Approval Ledger](../approvals-and-permissions/approval-ledger.md) — full audit history.
+- [Pending approval modal](../approvals-and-permissions/pending-approval-modal.md) — the modal that blocks a turn.

@@ -3,15 +3,18 @@
 **Platform:** Electron
 
 ## What it is
-<!-- TODO: 1-2 sentence function. Explorer note: ⌘⇧F focuses workspace+thread search. -->
+A quick-search bar that filters workspaces and threads across your sidebar. Press **⌘⇧F** to focus it instantly.
 
 ## Where to find it
-<!-- TODO: navigation path. Explorer note: Sidebar, press ⌘⇧F to focus search. -->
+In the **Sidebar** — press **⌘⇧F** to focus the search field, or click the search icon.
 
 <!-- TODO(screenshot): Sidebar search bar focused with results -->
 
 ## How to use it
-<!-- TODO: brief numbered steps -->
+1. Press **⌘⇧F** (or click the search icon).
+2. Type a workspace or chat name.
+3. Click a result to jump to it.
 
 ## Tips & related
-<!-- TODO: cross-links -->
+- [In-chat search](../chats-and-threads/in-chat-search.md) — search inside a single transcript.
+- [Sidebar sections](sidebar-sections.md) — understand the sidebar layout before searching.

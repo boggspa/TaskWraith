@@ -3,15 +3,18 @@
 **Platform:** Electron
 
 ## What it is
-<!-- TODO: 1-2 sentence function. Explorer note: Reorderable via drag: Active runs, Local servers, Workflows, Workspace Boards, Pinned, Recents, Ensembles, Workspaces, Chats, Shared. -->
+The sidebar is organized into hierarchical, drag-reorderable sections: Active runs, Local servers, Workflows, Workspace Boards, Pinned, Recents, Ensembles, Workspaces, Chats, and Shared.
 
 ## Where to find it
-<!-- TODO: navigation path. Explorer note: Sidebar left panel, hierarchical sections. -->
+In the **left sidebar panel** of the TaskWraith main window.
 
 <!-- TODO(screenshot): Sidebar showing all hierarchical sections -->
 
 ## How to use it
-<!-- TODO: brief numbered steps -->
+1. Drag section headers up or down to reorder them.
+2. Click a section header to collapse or expand it.
+3. Your order preference is persisted across launches.
 
 ## Tips & related
-<!-- TODO: cross-links -->
+- [Workspace and chat tree](workspace-and-chat-tree.md) — the items inside each section.
+- [Sidebar search](sidebar-search.md) to quickly find a workspace or chat.

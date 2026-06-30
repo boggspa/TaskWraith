@@ -3,15 +3,18 @@
 **Platform:** Electron
 
 ## What it is
-<!-- TODO: 1-2 sentence function. Explorer note: Footer Settings button opens full-app takeover. -->
+The **Settings** button opens the full-app Settings takeover, where you can configure providers, appearance, keyboard shortcuts, approvals, and more.
 
 ## Where to find it
-<!-- TODO: navigation path. Explorer note: Sidebar footer -> Settings button. -->
+In the **Sidebar footer** — click the **Settings** (gear) button.
 
 <!-- TODO(screenshot): Sidebar footer with Settings button highlighted -->
 
 ## How to use it
-<!-- TODO: brief numbered steps -->
+1. Click the **Settings** button in the sidebar footer.
+2. The Settings sidebar and panel take over the main window.
+3. Pick a tab from the sidebar rail to configure that area.
 
 ## Tips & related
-<!-- TODO: cross-links -->
+- [General tab](../settings-and-configuration/general-tab.md) — core behavior settings.
+- [Providers tab](../settings-and-configuration/providers-tab.md) — sign in and configure AI providers.

@@ -3,15 +3,18 @@
 **Platform:** Electron
 
 ## What it is
-<!-- TODO: 1-2 sentence function. Explorer note: Auto on first run; re-open via ? in chat-corner rim. Sections: welcome, theme/composer preview, provider auth status cards (deep-link Settings), workspace hint. -->
+The First Launch Sheet appears automatically on your first run of TaskWraith. It provides a welcome introduction, a theme and composer preview, provider auth status cards with deep links to Settings, and a workspace hint to get you started.
 
 ## Where to find it
-<!-- TODO: navigation path. Explorer note: Appears automatically on first run; re-open via ? in chat-corner rim. -->
+It appears automatically the first time you launch TaskWraith. You can reopen it later by clicking the **?** button in the chat-corner rim.
 
 <!-- TODO(screenshot): First Launch Sheet showing welcome, theme preview, and provider auth cards -->
 
 ## How to use it
-<!-- TODO: brief numbered steps -->
+1. Read through the welcome sections and pick a theme preview.
+2. Check the provider auth status cards — click any card to jump to its Settings page.
+3. Follow the workspace hint to add your first workspace.
 
 ## Tips & related
-<!-- TODO: cross-links -->
+- [Add workspace](add-workspace.md) for setting up your first workspace.
+- [Settings entry](sidebar-navigation/settings-entry.md) to open Settings manually.

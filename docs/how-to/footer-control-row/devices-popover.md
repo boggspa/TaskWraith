@@ -3,15 +3,18 @@
 **Platform:** Electron
 
 ## What it is
-<!-- TODO: 1-2 sentence function. Explorer note: Paired iOS device status popover -> Settings -> Devices. -->
+The Devices popover shows the status of paired iOS devices and provides a quick link to **Settings → Devices** for pairing, workspace allowlists, and networking.
 
 ## Where to find it
-<!-- TODO: navigation path. Explorer note: Sidebar footer control row, green devices icon (IOS_REMOTE_ENABLED). -->
+In the **Sidebar footer control row** — click the **green devices** icon (when iOS remote is enabled).
 
 <!-- TODO(screenshot): Sidebar footer green devices icon and expanded Devices popover -->
 
 ## How to use it
-<!-- TODO: brief numbered steps -->
+1. Click the green devices icon to open the popover.
+2. Review paired devices and their connection status.
+3. Click the Settings link to pair a new device or manage networking.
 
 ## Tips & related
-<!-- TODO: cross-links -->
+- [Devices tab](../settings-and-configuration/devices-tab.md) — full pairing and networking settings.
+- [iOS ensemble UI](../ensemble-mode/ios-ensemble-ui.md) — using TaskWraith on your iPhone.

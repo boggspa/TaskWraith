@@ -3,15 +3,18 @@
 **Platform:** Electron
 
 ## What it is
-<!-- TODO: 1-2 sentence function. Explorer note: Workspace tree + chat list, sub-thread indent (↳), collapse parents. -->
+The workspace tree shows your loaded workspaces, their chats, and sub-threads (indented with a ↳ glyph). You can collapse parent workspaces to tidy the view.
 
 ## Where to find it
-<!-- TODO: navigation path. Explorer note: Sidebar under Workspaces and Chats sections. -->
+In the **Sidebar**, under the **Workspaces** and **Chats** sections.
 
 <!-- TODO(screenshot): Sidebar workspace tree with expanded chats and sub-thread indents -->
 
 ## How to use it
-<!-- TODO: brief numbered steps -->
+1. Expand a workspace to see its chats.
+2. Look for the ↳ indent to identify sub-threads.
+3. Click the chevron to collapse a workspace when you need less clutter.
 
 ## Tips & related
-<!-- TODO: cross-links -->
+- [Sub-thread delegation](../chats-and-threads/sub-thread-delegation.md)
+- [Overflow menus](overflow-menus.md) for actions on a workspace or chat.

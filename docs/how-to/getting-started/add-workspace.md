@@ -3,15 +3,18 @@
 **Platform:** Electron
 
 ## What it is
-<!-- TODO: 1-2 sentence function. Explorer note: Add a new workspace to the sidebar tree. -->
+Add a new workspace folder to the sidebar so TaskWraith can run agents against it.
 
 ## Where to find it
-<!-- TODO: navigation path. Explorer note: Sidebar masthead + or Settings -> Workspaces. -->
+Click the **+** button in the **sidebar masthead**, or go to **Settings → Workspaces**.
 
 <!-- TODO(screenshot): Sidebar masthead + button or Settings Workspaces tab -->
 
 ## How to use it
-<!-- TODO: brief numbered steps -->
+1. Click the **+** in the sidebar masthead (or open Settings → Workspaces).
+2. Select a folder on your Mac.
+3. The workspace appears in the sidebar under **Workspaces**.
 
 ## Tips & related
-<!-- TODO: cross-links -->
+- [Sidebar onboarding hint](sidebar-onboarding-hint.md) — appears when no workspaces exist.
+- [Workspaces tab](../settings-and-configuration/workspaces-tab.md) for managing loaded workspaces.

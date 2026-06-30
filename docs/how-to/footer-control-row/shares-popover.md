@@ -3,15 +3,18 @@
 **Platform:** Electron
 
 ## What it is
-<!-- TODO: 1-2 sentence function. Explorer note: Active human-collaboration shares popover. -->
+The Shares popover shows your active human-collaboration shares — shared chats you have invited others to join.
 
 ## Where to find it
-<!-- TODO: navigation path. Explorer note: Sidebar footer control row, yellow shares icon. -->
+In the **Sidebar footer control row** — click the **yellow shares** icon.
 
 <!-- TODO(screenshot): Sidebar footer yellow shares icon and expanded Shares popover -->
 
 ## How to use it
-<!-- TODO: brief numbered steps -->
+1. Click the yellow shares icon to open the popover.
+2. Review active shared chats and their collaborators.
+3. Click an item to jump to the shared chat or manage access.
 
 ## Tips & related
-<!-- TODO: cross-links -->
+- [Shares tab](../settings-and-configuration/shares-tab.md) — full management page for shared chats.
+- [Chat types](../chats-and-threads/chat-types.md) — learn about shared chats.
