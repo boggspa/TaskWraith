@@ -112,6 +112,36 @@ describe('ModelUsageCard', () => {
     expect(html).toContain('200 / 200 remaining')
   })
 
+  it('renders the sidebar provider usage refresh control when wired', () => {
+    const apiSpend: ModelUsageApiSpendOptions = {
+      providerRates: {},
+      view: 'plan',
+      onRefreshUsage: () => undefined
+    }
+    const html = renderToStaticMarkup(
+      <ModelUsageCard usageSummary={[quotaEntry()]} variant="sidebar" apiSpend={apiSpend} />
+    )
+
+    expect(html).toContain('model-usage-refresh-button')
+    expect(html).toContain('aria-label="Refresh usage data"')
+    expect(html).toContain('title="Refresh usage data"')
+  })
+
+  it('marks the sidebar provider usage refresh control busy while refreshing', () => {
+    const apiSpend: ModelUsageApiSpendOptions = {
+      providerRates: {},
+      view: 'plan',
+      onRefreshUsage: () => undefined,
+      refreshing: true
+    }
+    const html = renderToStaticMarkup(
+      <ModelUsageCard usageSummary={[quotaEntry()]} variant="sidebar" apiSpend={apiSpend} />
+    )
+
+    expect(html).toContain('model-usage-refresh-button is-refreshing')
+    expect(html).toContain('disabled=""')
+  })
+
   it('marks the API-spend radio active and shows the empty state under SSR when view=spend', () => {
     // Under renderToStaticMarkup, the getUsage effect does NOT fire, so View B
     // resolves to its honest empty state. We assert the toggle reflects the

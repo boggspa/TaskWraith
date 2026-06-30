@@ -1794,6 +1794,7 @@ function App(): React.JSX.Element {
   // `usage-changed` broadcast). Forwarded to the sidebar Model Usage card's
   // API-spend view so it re-queries `getUsage` without a manual refresh.
   const [usageRefreshTick, setUsageRefreshTick] = useState(0)
+  const [manualUsageRefreshInFlight, setManualUsageRefreshInFlight] = useState(false)
   // True once the first usage fetch has resolved. Until then we can't know
   // whether the welcome dashboard will render, so the welcome screen reserves
   // its (fixed) height to stop the greeting + composer jumping downward when
@@ -1821,7 +1822,12 @@ function App(): React.JSX.Element {
   // UI state. The ref-to-latest pattern keeps the timer stable across renders
   // so we don't tear down & reinstall it whenever `codexStatus` changes.
   const refreshUsageSummaryRef = useRef<
-    (_workspaceId?: string, _providerHint?: ProviderId, codexStatusHint?: any) => Promise<void>
+    (
+      _workspaceId?: string,
+      _providerHint?: ProviderId,
+      codexStatusHint?: any,
+      options?: { force?: boolean }
+    ) => Promise<void>
   >(async () => {})
   const usageRefreshInFlightRef = useRef(false)
   const usageRefreshLastFiredAtRef = useRef<number | null>(null)
@@ -5610,21 +5616,23 @@ function App(): React.JSX.Element {
   const refreshUsageSummary = async (
     _workspaceId?: string,
     _providerHint?: ProviderId,
-    codexStatusHint?: any
+    codexStatusHint?: any,
+    options: { force?: boolean } = {}
   ) => {
     const now = Date.now()
     const effectiveCodexStatus = codexStatusHint ?? codexStatus
+    const quotaRefreshOptions = options.force ? { force: true } : undefined
 
     // gemini retired — no live quota fetch, and omitted from the Model Usage
     // card's quota meters below (its historical token usage is still shown).
     const [codexSnap, claudeSnap, kimiSnap, cursorSnap, allUsageRecords] =
       await Promise.all([
         typeof window.api.getCodexUsageSnapshot === 'function'
-          ? window.api.getCodexUsageSnapshot().catch(() => null)
+          ? window.api.getCodexUsageSnapshot(quotaRefreshOptions).catch(() => null)
           : Promise.resolve(null),
-        window.api.getAgentRateLimits('claude').catch(() => null),
-        window.api.getAgentRateLimits('kimi').catch(() => null),
-        window.api.getAgentRateLimits('cursor').catch(() => null),
+        window.api.getAgentRateLimits('claude', quotaRefreshOptions).catch(() => null),
+        window.api.getAgentRateLimits('kimi', quotaRefreshOptions).catch(() => null),
+        window.api.getAgentRateLimits('cursor', quotaRefreshOptions).catch(() => null),
         window.api.getUsage().catch(() => [])
       ])
 
@@ -5959,7 +5967,7 @@ function App(): React.JSX.Element {
     workspaceId?: string,
     providerHint?: ProviderId,
     options: { force?: boolean; codexStatusHint?: any } = {}
-  ) => {
+  ): Promise<boolean> => {
     const canRefresh =
       typeof navigator === 'undefined' || navigator.onLine !== false
     const decision = options.force
@@ -5975,16 +5983,41 @@ function App(): React.JSX.Element {
             typeof document === 'undefined' ? true : document.visibilityState !== 'hidden',
           online: canRefresh
         })
-    if (!decision) return
+    if (!decision) return Promise.resolve(false)
     usageRefreshInFlightRef.current = true
     usageRefreshLastFiredAtRef.current = Date.now()
-    void refreshUsageSummary(workspaceId, providerHint, options.codexStatusHint)
+    return refreshUsageSummary(workspaceId, providerHint, options.codexStatusHint, {
+      force: options.force === true
+    })
+      .then(() => true)
       .catch(() => {
         // `refreshUsageSummary` catches expected IPC failures internally.
+        return false
       })
       .finally(() => {
         usageRefreshInFlightRef.current = false
       })
+  }
+
+  const handleManualUsageRefresh = async () => {
+    if (manualUsageRefreshInFlight) return
+    setManualUsageRefreshInFlight(true)
+    try {
+      const usageWorkspaceId =
+        getUsageWorkspaceIdForChat(currentChat) ||
+        currentWorkspaceIdRef.current ||
+        GLOBAL_USAGE_WORKSPACE_ID
+      const provider = currentChat ? getChatProvider(currentChat) : currentProvider
+      const refreshed = await requestUsageSummaryRefresh(usageWorkspaceId, provider, {
+        force: true,
+        codexStatusHint: codexStatus
+      })
+      if (refreshed) {
+        setUsageRefreshTick((tick) => tick + 1)
+      }
+    } finally {
+      setManualUsageRefreshInFlight(false)
+    }
   }
 
   /**
@@ -8433,7 +8466,15 @@ function App(): React.JSX.Element {
       // Live-refresh the usage meters the moment a run records usage, rather
       // than waiting for the 90s poll.
       window.api.onUsageChanged(() => {
-        void refreshUsageSummaryRef.current?.()
+        if (!usageRefreshInFlightRef.current) {
+          usageRefreshInFlightRef.current = true
+          usageRefreshLastFiredAtRef.current = Date.now()
+          void refreshUsageSummaryRef.current?.(currentWorkspaceIdRef.current || undefined)
+            .catch(() => {})
+            .finally(() => {
+              usageRefreshInFlightRef.current = false
+            })
+        }
         // Nudge the sidebar API-spend view to re-query the priced records.
         setUsageRefreshTick((tick) => tick + 1)
       })
@@ -22623,7 +22664,9 @@ function App(): React.JSX.Element {
                   view: settings?.modelUsagePanelView ?? 'plan',
                   onViewChange: (nextView) =>
                     handleSettingsChange({ modelUsagePanelView: nextView }),
-                  refreshKey: usageRefreshTick
+                  refreshKey: usageRefreshTick,
+                  onRefreshUsage: handleManualUsageRefresh,
+                  refreshing: manualUsageRefreshInFlight
                 }}
                 runningChatIds={runningChatIdsArray}
                 workflows={workflowDefinitions}

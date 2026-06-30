@@ -504,10 +504,10 @@ declare global {
           additionalSpeedTiers?: string[]
         }>
       >
-      getAgentRateLimits: (provider: ProviderId) => Promise<any>
+      getAgentRateLimits: (provider: ProviderId, options?: { force?: boolean }) => Promise<any>
       importCodexUsageCredential: (filePath?: string) => Promise<any>
       clearCodexUsageCredential: () => Promise<boolean>
-      getCodexUsageSnapshot: () => Promise<any>
+      getCodexUsageSnapshot: (options?: { force?: boolean }) => Promise<any>
       getExternalUsage: (options?: { force?: boolean }) => Promise<UsageRecord[]>
       probeGrokUsage: () => Promise<GrokUsageSnapshot>
       gitSnapshot: (payload: {

@@ -78,11 +78,19 @@ export interface ProviderAuthUsageHelpers {
     event: IpcMainInvokeEvent,
     requestedPath?: string | null
   ) => Promise<CodexUsageImportResult>
-  fetchCodexUsageSnapshot: () => Promise<NormalizedProviderUsageSnapshot>
+  fetchCodexUsageSnapshot: (
+    options?: ProviderUsageSnapshotOptions
+  ) => Promise<NormalizedProviderUsageSnapshot>
   fetchGeminiUsageSnapshot: () => Promise<NormalizedProviderUsageSnapshot>
-  fetchClaudeUsageSnapshot: () => Promise<NormalizedProviderUsageSnapshot>
-  fetchKimiUsageSnapshot: () => Promise<NormalizedProviderUsageSnapshot>
-  fetchCursorUsageSnapshot: () => Promise<CursorUsageSnapshot | null>
+  fetchClaudeUsageSnapshot: (
+    options?: ProviderUsageSnapshotOptions
+  ) => Promise<NormalizedProviderUsageSnapshot>
+  fetchKimiUsageSnapshot: (
+    options?: ProviderUsageSnapshotOptions
+  ) => Promise<NormalizedProviderUsageSnapshot>
+  fetchCursorUsageSnapshot: (
+    options?: ProviderUsageSnapshotOptions
+  ) => Promise<CursorUsageSnapshot | null>
 }
 
 export interface CodexUsageImportResult {
@@ -93,6 +101,11 @@ export interface CodexUsageImportResult {
   source?: string
   encryptionAvailable?: boolean
   snapshot?: unknown
+}
+
+export interface ProviderUsageSnapshotOptions {
+  /** Bypass fresh in-process usage caches. Provider fetchers still own stale fallback/backoff. */
+  force?: boolean
 }
 
 type GeminiOAuthLoginRun = GeminiOAuthLoginStatus & {
@@ -908,7 +921,9 @@ export async function resolveCodexUsageImportPath(
   return result.filePaths[0]
 }
 
-export async function fetchCodexUsageSnapshot(): Promise<NormalizedProviderUsageSnapshot> {
+export async function fetchCodexUsageSnapshot(
+  _options: ProviderUsageSnapshotOptions = {}
+): Promise<NormalizedProviderUsageSnapshot> {
   // Prefer the live, CLI-rotated token from ~/.codex/auth.json; fall back to the
   // one-time encrypted import only when the file is missing/unreadable.
   const credential = (await readCodexUsageCredentialLive()) ?? storedCodexUsageCredential()
@@ -1183,9 +1198,15 @@ export async function getKimiUsageAccessToken(): Promise<string | null> {
   return getStoredKimiApiKey() || (await readKimiOAuthAccessToken())
 }
 
-export async function fetchKimiUsageSnapshot(): Promise<NormalizedProviderUsageSnapshot> {
+export async function fetchKimiUsageSnapshot(
+  options: ProviderUsageSnapshotOptions = {}
+): Promise<NormalizedProviderUsageSnapshot> {
   const now = Date.now()
-  if (kimiUsageCache && now - kimiUsageCache.fetchedAt < KIMI_USAGE_FRESH_TTL_MS) {
+  if (
+    !options.force &&
+    kimiUsageCache &&
+    now - kimiUsageCache.fetchedAt < KIMI_USAGE_FRESH_TTL_MS
+  ) {
     return kimiUsageCache.snapshot
   }
 
@@ -1299,9 +1320,15 @@ export async function fetchCursorUsageRpc(token: string): Promise<unknown> {
   return response.json()
 }
 
-export async function fetchCursorUsageSnapshot(): Promise<CursorUsageSnapshot | null> {
+export async function fetchCursorUsageSnapshot(
+  options: ProviderUsageSnapshotOptions = {}
+): Promise<CursorUsageSnapshot | null> {
   const now = Date.now()
-  if (cursorUsageCache && now - cursorUsageCache.fetchedAt < CURSOR_USAGE_FRESH_TTL_MS) {
+  if (
+    !options.force &&
+    cursorUsageCache &&
+    now - cursorUsageCache.fetchedAt < CURSOR_USAGE_FRESH_TTL_MS
+  ) {
     return cursorUsageCache.snapshot
   }
   const snapshot = await loadCursorUsageSnapshot({
@@ -1419,9 +1446,15 @@ export async function getClaudeOAuthCredential(): Promise<ClaudeOAuthCredential 
   )
 }
 
-export async function fetchClaudeUsageSnapshot(): Promise<NormalizedProviderUsageSnapshot> {
+export async function fetchClaudeUsageSnapshot(
+  options: ProviderUsageSnapshotOptions = {}
+): Promise<NormalizedProviderUsageSnapshot> {
   const now = Date.now()
-  if (claudeUsageCache && now - claudeUsageCache.fetchedAt < CLAUDE_USAGE_FRESH_TTL_MS) {
+  if (
+    !options.force &&
+    claudeUsageCache &&
+    now - claudeUsageCache.fetchedAt < CLAUDE_USAGE_FRESH_TTL_MS
+  ) {
     return claudeUsageCache.snapshot
   }
 

@@ -26736,25 +26736,29 @@ if (isGeminiMcpBridgeProcess) {
       return getAgentStatusSnapshot(assertProviderId(provider))
     })
 
-    ipcMain.handle('get-agent-rate-limits', async (_, provider: ProviderId) => {
-      provider = assertProviderId(provider)
-      // gemini retired — no live account to meter (falls through to null below)
-      if (provider === 'kimi') {
-        return fetchKimiUsageSnapshot()
+    ipcMain.handle(
+      'get-agent-rate-limits',
+      async (_, provider: ProviderId, options?: { force?: unknown }) => {
+        provider = assertProviderId(provider)
+        const force = options?.force === true
+        // gemini retired — no live account to meter (falls through to null below)
+        if (provider === 'kimi') {
+          return fetchKimiUsageSnapshot({ force })
+        }
+        if (provider === 'claude') {
+          return fetchClaudeUsageSnapshot({ force })
+        }
+        if (provider === 'cursor') {
+          return fetchCursorUsageSnapshot({ force })
+        }
+        if (provider !== 'codex') {
+          return null
+        }
+        const client = getCodexClient()
+        await client.ensureStarted(app.getVersion())
+        return client.request('account/rateLimits/read', {}, 15_000)
       }
-      if (provider === 'claude') {
-        return fetchClaudeUsageSnapshot()
-      }
-      if (provider === 'cursor') {
-        return fetchCursorUsageSnapshot()
-      }
-      if (provider !== 'codex') {
-        return null
-      }
-      const client = getCodexClient()
-      await client.ensureStarted(app.getVersion())
-      return client.request('account/rateLimits/read', {}, 15_000)
-    })
+    )
 
     ipcMain.handle('import-codex-usage-credential', async (event, filePath?: string | null) => {
       return importCodexUsageCredential(event, filePath)
@@ -26765,8 +26769,8 @@ if (isGeminiMcpBridgeProcess) {
       return true
     })
 
-    ipcMain.handle('get-codex-usage-snapshot', async () => {
-      return fetchCodexUsageSnapshot()
+    ipcMain.handle('get-codex-usage-snapshot', async (_, options?: { force?: unknown }) => {
+      return fetchCodexUsageSnapshot({ force: options?.force === true })
     })
 
     // Grok subscription-credit usage. UNLIKE the token/cost meters above, this

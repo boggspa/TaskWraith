@@ -39,6 +39,59 @@
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 42%, transparent);
 }
 
+.model-usage-refresh-button {
+  appearance: none;
+  -webkit-appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  margin: -4px -3px -4px 0;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: color-mix(in srgb, var(--sidebar-text-secondary, var(--text-secondary)) 76%, transparent);
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+  transition:
+    color 140ms ease,
+    background-color 140ms ease,
+    opacity 140ms ease;
+}
+
+.model-usage-refresh-button:hover,
+.model-usage-refresh-button:focus-visible {
+  color: var(--sidebar-text, var(--text-primary));
+  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+  outline: 0;
+}
+
+.model-usage-refresh-button:focus-visible {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 42%, transparent);
+}
+
+.model-usage-refresh-button:disabled {
+  cursor: default;
+  opacity: 0.58;
+}
+
+.model-usage-refresh-button svg {
+  width: 14px;
+  height: 14px;
+}
+
+.model-usage-refresh-button.is-refreshing svg {
+  animation: model-usage-refresh-spin 700ms linear infinite;
+}
+
+@keyframes model-usage-refresh-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .model-usage-toggle-icon {
   display: inline-flex;
   width: 13px;
@@ -373,6 +426,12 @@
 }
 
 [data-reduce-motion='true'] .model-usage-view-toggle-btn {
+  transition: none;
+}
+
+[data-reduce-motion='true'] .model-usage-refresh-button,
+[data-reduce-motion='true'] .model-usage-refresh-button.is-refreshing svg {
+  animation: none;
   transition: none;
 }
 

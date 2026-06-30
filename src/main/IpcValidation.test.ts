@@ -71,6 +71,17 @@ describe('IpcValidation', () => {
     }
   })
 
+  it('accepts optional provider usage refresh options', () => {
+    expect(() => validateIpcArgs('get-agent-rate-limits', ['claude'])).not.toThrow()
+    expect(() =>
+      validateIpcArgs('get-agent-rate-limits', ['claude', { force: true }])
+    ).not.toThrow()
+    expect(() => validateIpcArgs('get-agent-rate-limits', ['claude', 'force'])).toThrow(/object/)
+    expect(() => validateIpcArgs('get-codex-usage-snapshot', [])).not.toThrow()
+    expect(() => validateIpcArgs('get-codex-usage-snapshot', [{ force: true }])).not.toThrow()
+    expect(() => validateIpcArgs('get-codex-usage-snapshot', ['force'])).toThrow(/object/)
+  })
+
   it('accepts valid run-agent payloads', () => {
     expect(() =>
       validateIpcArgs('run-agent', [

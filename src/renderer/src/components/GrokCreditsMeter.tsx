@@ -15,8 +15,9 @@
  *
  * Pure presentational view (`GrokCreditsMeterView`, SSR-testable) + impure
  * probe shell. The parent only mounts the shell when the gated Grok adapter is
- * registered. "Stale" = showing the last known-good reading because the latest
- * probe failed/returned unavailable.
+ * registered, and can bump `refreshKey` to join the sidebar-level refresh.
+ * "Stale" = showing the last known-good reading because the latest probe
+ * failed/returned unavailable.
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { GrokUsageSnapshot } from '../../../main/grok/GrokUsage'
@@ -44,6 +45,10 @@ export interface GrokCreditsMeterViewProps {
   errored: boolean
   /** True when `snapshot` is a prior reading shown after a failed refresh. */
   stale: boolean
+}
+
+export interface GrokCreditsMeterProps {
+  refreshKey?: number
 }
 
 /** Pure presentational meter — no IPC, no state. Mirrors the Model Usage
@@ -126,8 +131,8 @@ export function GrokCreditsMeterView({
   )
 }
 
-/** Stateful shell: owns the on-mount PTY probe + render state (no button). */
-export function GrokCreditsMeter(): React.ReactElement {
+/** Stateful shell: owns the PTY probe + render state (no button). */
+export function GrokCreditsMeter({ refreshKey }: GrokCreditsMeterProps): React.ReactElement {
   const [result, setResult] = useState<GrokUsageSnapshot | null>(null)
   const [lastObserved, setLastObserved] = useState<GrokUsageSnapshot | null>(null)
   const [loading, setLoading] = useState(true)
@@ -186,11 +191,14 @@ export function GrokCreditsMeter(): React.ReactElement {
 
   useEffect(() => {
     mountedRef.current = true
+    retriedRef.current = false
+    setErrored(false)
+    setLoading(true)
     runProbe()
     return () => {
       mountedRef.current = false
     }
-  }, [runProbe])
+  }, [runProbe, refreshKey])
 
   const resultObserved = result?.confidence === 'observed'
   // Prefer a fresh observed result; otherwise fall back to the last good one.

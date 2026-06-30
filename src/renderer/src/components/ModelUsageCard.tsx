@@ -80,6 +80,10 @@ export interface ModelUsageApiSpendOptions extends ApiSpendCurrencyOptions {
    * (e.g. after a turn completes). Mirrors `UsageHeatmap.refreshKey`.
    */
   refreshKey?: number
+  /** Manual refresh action for provider quota/usage snapshots. */
+  onRefreshUsage?: () => void | Promise<void>
+  /** True while a caller-owned refresh is already in progress. */
+  refreshing?: boolean
 }
 
 interface ModelUsageCardProps {
@@ -255,6 +259,25 @@ function ModelUsageDisclosureIcon({ isExpanded }: { isExpanded: boolean }) {
         <path d="M6.2 4.7 10 8.1 6.2 11.5" />
       </svg>
     </span>
+  )
+}
+
+function ModelUsageRefreshIcon() {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.25"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M13.2 6.2A5.1 5.1 0 0 0 4.5 3.1L3 4.6" />
+      <path d="M3 2.2v2.4h2.4" />
+      <path d="M2.8 9.8a5.1 5.1 0 0 0 8.7 3.1l1.5-1.5" />
+      <path d="M13 13.8v-2.4h-2.4" />
+    </svg>
   )
 }
 
@@ -584,6 +607,7 @@ export function ModelUsageCard({ usageSummary, variant = 'card', apiSpend }: Mod
   const sidebarHeightRef = useRef<number | null>(sidebarHeightPx)
   const [sidebarExpanded, setSidebarExpanded] = useState(true)
   const [sidebarResizing, setSidebarResizing] = useState(false)
+  const [localRefreshPending, setLocalRefreshPending] = useState(false)
   // Grok subscription-credit meter gate. Grok is NOT part of the token/cost
   // `usageSummary` (its credit pool comes from a separate on-demand PTY probe),
   // so we surface it only when the gated Grok provider adapter is registered.
@@ -636,6 +660,8 @@ export function ModelUsageCard({ usageSummary, variant = 'card', apiSpend }: Mod
         : 'context'
   const showQuotaEntries = !isSidebarVariant || sidebarExpanded
   const title = sidebarExpanded ? 'Collapse provider usage' : 'Expand provider usage'
+  const refreshTitle = 'Refresh usage data'
+  const usageRefreshPending = localRefreshPending || apiSpend?.refreshing === true
   const ariaHeight = Math.round(sidebarHeightPx ?? SIDEBAR_USAGE_DEFAULT_HEIGHT)
   const rootClassName = [
     'run-summary',
@@ -725,6 +751,19 @@ export function ModelUsageCard({ usageSummary, variant = 'card', apiSpend }: Mod
     persistSidebarUsageHeight(updateSidebarHeight(nextHeight, maxHeight))
   }
 
+  const refreshProviderUsage = () => {
+    if (!apiSpend?.onRefreshUsage || usageRefreshPending) return
+    setLocalRefreshPending(true)
+    void Promise.resolve(apiSpend.onRefreshUsage())
+      .catch(() => {
+        // The caller owns surfacing refresh errors; keep the sidebar control
+        // self-resetting so a transient provider failure doesn't strand it.
+      })
+      .finally(() => {
+        setLocalRefreshPending(false)
+      })
+  }
+
   return (
     <div ref={summaryRef} className={rootClassName} style={rootStyle}>
       {isSidebarVariant && sidebarExpanded && (
@@ -793,6 +832,18 @@ export function ModelUsageCard({ usageSummary, variant = 'card', apiSpend }: Mod
             )}
           </div>
         )}
+        {isSidebarVariant && apiSpend?.onRefreshUsage && (
+          <button
+            type="button"
+            className={`model-usage-refresh-button ${usageRefreshPending ? 'is-refreshing' : ''}`}
+            onClick={refreshProviderUsage}
+            aria-label={refreshTitle}
+            title={refreshTitle}
+            disabled={usageRefreshPending}
+          >
+            <ModelUsageRefreshIcon />
+          </button>
+        )}
         {isSidebarVariant && (
           <button
             type="button"
@@ -823,7 +874,7 @@ export function ModelUsageCard({ usageSummary, variant = 'card', apiSpend }: Mod
                * mounts when the gated Grok provider adapter is registered. Kept
                * inside the list so the `.model-usage-item + .model-usage-item`
                * divider lands between Kimi and Grok. */}
-              {grokAvailable ? <GrokCreditsMeter /> : null}
+              {grokAvailable ? <GrokCreditsMeter refreshKey={apiSpend?.refreshKey} /> : null}
             </div>
           )}
         </div>

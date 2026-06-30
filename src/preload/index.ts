@@ -210,12 +210,13 @@ const api = {
   getProviderRates: () => ipcRenderer.invoke('providerRates:get'),
   probeProviderRates: () => ipcRenderer.invoke('providerRates:probe'),
   getAgentModels: (provider: ProviderId) => ipcRenderer.invoke('get-agent-models', provider),
-  getAgentRateLimits: (provider: ProviderId) =>
-    ipcRenderer.invoke('get-agent-rate-limits', provider),
+  getAgentRateLimits: (provider: ProviderId, options?: { force?: boolean }) =>
+    ipcRenderer.invoke('get-agent-rate-limits', provider, options),
   importCodexUsageCredential: (filePath?: string) =>
     ipcRenderer.invoke('import-codex-usage-credential', filePath),
   clearCodexUsageCredential: () => ipcRenderer.invoke('clear-codex-usage-credential'),
-  getCodexUsageSnapshot: () => ipcRenderer.invoke('get-codex-usage-snapshot'),
+  getCodexUsageSnapshot: (options?: { force?: boolean }) =>
+    ipcRenderer.invoke('get-codex-usage-snapshot', options),
   getExternalUsage: (options?: { force?: boolean }) =>
     ipcRenderer.invoke('get-external-usage', options),
   probeGrokUsage: () => ipcRenderer.invoke('grok-usage:probe'),
