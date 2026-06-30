@@ -11,7 +11,7 @@ import {
 } from './FileEditorPanel'
 import { EditorPane, FILE_EDITOR_BASIC_SETUP } from './FileEditorPane'
 import { FileEditorGitActions } from './FileEditorGitActions'
-import { FileEditorStatusBar } from './FileEditorStatusBar'
+import { FileEditorStatusBar, fileEditorLanguageLabel } from './FileEditorStatusBar'
 import { EditorTabStrip } from './FileEditorTabStrip'
 import {
   contextMenuAnchorFromRect,
@@ -272,6 +272,13 @@ describe('QuickOpenPalette', () => {
 })
 
 describe('FileEditorStatusBar', () => {
+  it('maps active file paths to compact language labels', () => {
+    expect(fileEditorLanguageLabel('src/App.tsx')).toBe('TSX')
+    expect(fileEditorLanguageLabel('scripts/setup.sh')).toBe('Shell')
+    expect(fileEditorLanguageLabel('README.md')).toBe('Markdown')
+    expect(fileEditorLanguageLabel('notes.unknown')).toBe('Plain Text')
+  })
+
   it('renders cursor, selection, wrap, size, and git state summaries', () => {
     const html = renderToStaticMarkup(
       <FileEditorStatusBar
@@ -299,6 +306,7 @@ describe('FileEditorStatusBar', () => {
 
     expect(html).toContain('Ready')
     expect(html).toContain('src/App.tsx')
+    expect(html).toContain('TSX')
     expect(html).toContain('2 KB')
     expect(html).toContain('Ln 12, Col 4 · 9 selected')
     expect(html).toContain('Wrap')

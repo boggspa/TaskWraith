@@ -24,6 +24,29 @@ export interface FileEditorStatusBarProps {
   lineWrapEnabled: boolean
 }
 
+export const fileEditorLanguageLabel = (filePath: string): string => {
+  const lower = filePath.toLowerCase()
+  if (/\.(tsx|jsx)$/.test(lower)) return lower.endsWith('.tsx') ? 'TSX' : 'JSX'
+  if (/\.(ts|mts|cts)$/.test(lower)) return 'TypeScript'
+  if (/\.(js|mjs|cjs)$/.test(lower)) return 'JavaScript'
+  if (/\.py$/.test(lower)) return 'Python'
+  if (/\.(md|markdown)$/.test(lower)) return 'Markdown'
+  if (/\.jsonc$/.test(lower)) return 'JSONC'
+  if (/\.json$/.test(lower)) return 'JSON'
+  if (/\.(html|htm)$/.test(lower)) return 'HTML'
+  if (/\.(xml|svg)$/.test(lower)) return 'XML'
+  if (/\.(css|scss|sass|less)$/.test(lower)) return 'CSS'
+  if (/\.swift$/.test(lower)) return 'Swift'
+  if (/\.(c|h|cc|cpp|cxx|hpp|hh|m|mm|metal)$/.test(lower)) return 'C/C++'
+  if (
+    /\.(sh|bash|zsh|fish|command|env)$/.test(lower) ||
+    /(^|\/)(bashrc|zshrc|profile|env)$/.test(lower)
+  ) {
+    return 'Shell'
+  }
+  return 'Plain Text'
+}
+
 export function FileEditorStatusBar({
   activeBuffer,
   isDirty,
@@ -45,6 +68,7 @@ export function FileEditorStatusBar({
       {activeBuffer && (
         <>
           <span title={activeBuffer.path}>{activeBuffer.path}</span>
+          <span>{fileEditorLanguageLabel(activeBuffer.path)}</span>
           <span>{formatBytes(activeBuffer.sizeBytes)}</span>
           <span>
             Ln {cursorStatus.line}, Col {cursorStatus.column}
