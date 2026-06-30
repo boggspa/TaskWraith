@@ -3,8 +3,6 @@ import {
   useEffect,
   useMemo,
   useState,
-  type FocusEvent as ReactFocusEvent,
-  type MouseEvent as ReactMouseEvent,
   type ReactNode
 } from 'react'
 import {
@@ -64,7 +62,9 @@ import {
   childAgentStateLabel
 } from '../lib/AgentInvocationPresentation'
 import {
+  DIFF_HOVER_PREVIEW_TOOLTIP_ID,
   DiffHoverPreviewOverlay,
+  type DiffHoverPreviewState,
   diffHoverPreviewBoundaryForElement,
   useDiffHoverPreviewDismiss,
   useDiffHoverPreviewState
@@ -2324,7 +2324,10 @@ function ActivityRow({
     [activityDiffPreviewText, activityFilePath, diffSummary, workspacePath]
   )
   const openActivityDiffHoverPreview = useCallback(
-    (event: ReactFocusEvent<HTMLElement> | ReactMouseEvent<HTMLElement>) => {
+    (
+      event: { currentTarget: HTMLElement },
+      options?: { focusTarget?: DiffHoverPreviewState['focusTarget'] }
+    ) => {
       if (!activityDiffPreviewText) return
       showActivityDiffHoverPreview({
         anchor: event.currentTarget.getBoundingClientRect(),
@@ -2338,6 +2341,7 @@ function ActivityRow({
           diffText: activityDiffPreviewText,
           source: 'tool-call'
         },
+        focusTarget: options?.focusTarget,
         action:
           onOpenFileChangeInWorkbench && workbenchDiffSummary
             ? {
@@ -2607,6 +2611,11 @@ function ActivityRow({
                   <button
                     type="button"
                     className="activity-diff-preview-bubble"
+                    aria-describedby={
+                      activityDiffHoverPreview
+                        ? DIFF_HOVER_PREVIEW_TOOLTIP_ID
+                        : undefined
+                    }
                     aria-label={`Preview diff for ${activityDiffPreviewPath}`}
                     title="Preview diff"
                     onMouseEnter={openActivityDiffHoverPreview}
@@ -2620,7 +2629,9 @@ function ActivityRow({
                     }}
                     onKeyDown={(event) => {
                       if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault()
                         event.stopPropagation()
+                        openActivityDiffHoverPreview(event, { focusTarget: 'action' })
                       }
                     }}
                   >

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  diffHoverPreviewRole,
   diffHoverPreviewSourceLabel,
   getDiffHoverPreviewLayout,
   prepareDiffHoverPreviewText
@@ -61,5 +62,12 @@ describe('DiffHoverPreview source labels', () => {
     expect(diffHoverPreviewSourceLabel('run-summary')).toBe('Task complete')
     expect(diffHoverPreviewSourceLabel('tool-call')).toBe('Tool edit')
     expect(diffHoverPreviewSourceLabel()).toBe('Diff preview')
+  })
+})
+
+describe('DiffHoverPreview semantics', () => {
+  it('uses dialog semantics only when the preview contains an action', () => {
+    expect(diffHoverPreviewRole(true)).toBe('dialog')
+    expect(diffHoverPreviewRole(false)).toBe('tooltip')
   })
 })

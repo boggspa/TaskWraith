@@ -85,6 +85,7 @@ import { TranscriptUserMessageGutter } from './TranscriptUserMessageGutter'
 import {
   DIFF_HOVER_PREVIEW_TOOLTIP_ID,
   DiffHoverPreviewOverlay,
+  type DiffHoverPreviewState,
   diffHoverPreviewBoundaryForElement,
   useDiffHoverPreviewDismiss,
   useDiffHoverPreviewState
@@ -1004,8 +1005,9 @@ export const TranscriptPanel = memo(
     }, [])
     const openFileChangeDiffPreview = useCallback(
       (
-        event: React.MouseEvent<HTMLElement> | React.FocusEvent<HTMLElement>,
-        summary: DiffFileSummary
+        event: { currentTarget: HTMLElement },
+        summary: DiffFileSummary,
+        options?: { focusTarget?: DiffHoverPreviewState['focusTarget'] }
       ) => {
         if (!summary.diffText) return
         showFileChangeDiffPreview({
@@ -1022,6 +1024,7 @@ export const TranscriptPanel = memo(
             diffText: summary.diffText,
             source: 'run-summary'
           },
+          focusTarget: options?.focusTarget,
           action: onOpenFileChangeInWorkbench
             ? {
                 label: 'Open Diff Studio',
@@ -2586,7 +2589,9 @@ export const TranscriptPanel = memo(
                                 }}
                                 onKeyDown={(event) => {
                                   if (event.key === 'Enter' || event.key === ' ') {
+                                    event.preventDefault()
                                     event.stopPropagation()
+                                    openFileChangeDiffPreview(event, item, { focusTarget: 'action' })
                                   }
                                 }}
                               >

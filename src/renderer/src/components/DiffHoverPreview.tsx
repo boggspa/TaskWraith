@@ -22,6 +22,7 @@ export interface DiffHoverPreviewState {
     label: string
     onActivate: () => void
   }
+  focusTarget?: 'action' | 'preview'
 }
 
 export const DIFF_HOVER_PREVIEW_TOOLTIP_ID = 'diff-hover-preview-tooltip'
@@ -41,6 +42,10 @@ export function diffHoverPreviewSourceLabel(source?: DiffHoverPreviewSource): st
   if (source === 'run-summary') return 'Task complete'
   if (source === 'tool-call') return 'Tool edit'
   return 'Diff preview'
+}
+
+export function diffHoverPreviewRole(hasAction: boolean): 'dialog' | 'tooltip' {
+  return hasAction ? 'dialog' : 'tooltip'
 }
 
 export interface DiffHoverPreviewLayout {
@@ -234,6 +239,8 @@ export function DiffHoverPreviewOverlay({
   onMouseLeave?: () => void
   preview: DiffHoverPreviewState | null
 }) {
+  const overlayRef = useRef<HTMLDivElement | null>(null)
+  const actionRef = useRef<HTMLButtonElement | null>(null)
   const preparedDiff = useMemo(
     () =>
       preview?.summary.diffText
@@ -251,6 +258,15 @@ export function DiffHoverPreviewOverlay({
     [preparedDiff]
   )
 
+  useEffect(() => {
+    if (!preview?.focusTarget) return
+    const target =
+      preview.focusTarget === 'action'
+        ? actionRef.current || overlayRef.current
+        : overlayRef.current
+    target?.focus({ preventScroll: true })
+  }, [preview?.focusTarget, preview?.summary.path])
+
   if (!preview || !parsed || typeof document === 'undefined') return null
 
   const viewportWidth = typeof window !== 'undefined' ? window.innerWidth : 1024
@@ -267,6 +283,7 @@ export function DiffHoverPreviewOverlay({
       : ''
   const statusText = preview.summary.status || 'modified'
   const sourceLabel = diffHoverPreviewSourceLabel(preview.summary.source)
+  const role = diffHoverPreviewRole(Boolean(preview.action))
   const badgeLabel = changeText
     ? `${sourceLabel} ${statusText} ${changeText}`
     : `${sourceLabel} ${statusText}`
@@ -277,6 +294,7 @@ export function DiffHoverPreviewOverlay({
 
   const overlay = (
     <div
+      ref={overlayRef}
       id={DIFF_HOVER_PREVIEW_TOOLTIP_ID}
       className="diff-hover-preview"
       data-source={preview.summary.source || 'generic'}
@@ -291,7 +309,9 @@ export function DiffHoverPreviewOverlay({
         top: `${layout.top}px`,
         width: `${layout.width}px`
       }}
-      role="tooltip"
+      role={role}
+      aria-label={role === 'dialog' ? `Diff preview for ${preview.summary.path}` : undefined}
+      tabIndex={role === 'dialog' ? -1 : undefined}
     >
       <div className="diff-hover-preview-header">
         <div className="diff-hover-preview-title">
@@ -333,6 +353,7 @@ export function DiffHoverPreviewOverlay({
           </span>
           {preview.action && (
             <button
+              ref={actionRef}
               className="diff-hover-preview-action"
               type="button"
               onClick={(event) => {
