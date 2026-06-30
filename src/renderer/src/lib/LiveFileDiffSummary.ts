@@ -63,9 +63,15 @@ const WRITE_LIKE_TOOL_NAMES = new Set([
   'strreplaceeditor'
 ])
 
-const CREATE_HINT_TOOL_NAMES = new Set(['create_file', 'create_directory', 'write_file', 'write'])
+const CREATE_HINT_TOOL_NAMES = new Set([
+  'create_file',
+  'createfile',
+  'create_directory',
+  'write_file',
+  'write'
+])
 
-const DELETE_HINT_TOOL_NAMES = new Set(['delete_file', 'delete_path'])
+const DELETE_HINT_TOOL_NAMES = new Set(['delete_file', 'deletefile', 'delete_path', 'deletepath'])
 
 const STATUS_PRIORITY: Record<DiffFileStatus, number> = {
   created: 3,
@@ -120,10 +126,29 @@ function normalisePath(value: string, workspacePath?: string | null): string {
   return normalised.startsWith(ws) ? normalised.slice(ws.length) : normalised
 }
 
+function isCreateHintToolName(toolName: string): boolean {
+  const name = (toolName || '').toLowerCase()
+  return (
+    CREATE_HINT_TOOL_NAMES.has(name) ||
+    name.endsWith('__create_file') ||
+    name.endsWith('__create_directory') ||
+    name.endsWith('__write_file')
+  )
+}
+
+function isDeleteHintToolName(toolName: string): boolean {
+  const name = (toolName || '').toLowerCase()
+  return (
+    DELETE_HINT_TOOL_NAMES.has(name) ||
+    name.endsWith('__delete_file') ||
+    name.endsWith('__delete_path')
+  )
+}
+
 function statusFromToolName(toolName: string): DiffFileStatus | null {
   const name = (toolName || '').toLowerCase()
-  if (CREATE_HINT_TOOL_NAMES.has(name)) return 'created'
-  if (DELETE_HINT_TOOL_NAMES.has(name)) return 'deleted'
+  if (isCreateHintToolName(name)) return 'created'
+  if (isDeleteHintToolName(name)) return 'deleted'
   if (name === 'move_path' || name === 'rename_path') return 'renamed'
   return null
 }
@@ -204,12 +229,14 @@ function unifiedDiffDeletesFile(diff: string): boolean {
   return /^---\s+(?:a\/.+|[^/\s].*)$/m.test(diff) && /^\+\+\+\s+\/dev\/null$/m.test(diff)
 }
 
-function reconcileStatusWithUnifiedDiff(
+function reconcileStatusWithEvidence(
   status: DiffFileStatus,
-  diff: string
+  diff: string,
+  trustLifecycleStatus = false
 ): DiffFileStatus {
   if (status !== 'deleted') return status
-  return unifiedDiffDeletesFile(diff) ? 'deleted' : 'modified'
+  if (diff) return unifiedDiffDeletesFile(diff) ? 'deleted' : 'modified'
+  return trustLifecycleStatus ? 'deleted' : 'modified'
 }
 
 /** Extract per-file additions/deletions from a single Codex-style change record. */
@@ -217,7 +244,8 @@ function extractContributionFromChangeRecord(
   raw: unknown,
   fallbackPath: string,
   fallbackStatus: DiffFileStatus,
-  workspacePath?: string | null
+  workspacePath?: string | null,
+  options: { trustLifecycleStatus?: boolean } = {}
 ): PerFileContribution | null {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
   const record = raw as Record<string, unknown>
@@ -239,9 +267,7 @@ function extractContributionFromChangeRecord(
   let deletions = readNumericField(record, ['deletions', 'deleted', 'linesDeleted', 'removals'])
   const diff = readStringField(record, ['unified_diff', 'unifiedDiff', 'diff', 'patch'])
 
-  if (diff) {
-    status = reconcileStatusWithUnifiedDiff(status, diff)
-  }
+  status = reconcileStatusWithEvidence(status, diff, options.trustLifecycleStatus)
 
   // No directly-attached numstat: try per-file unified diff / patch content.
   if (additions === undefined && deletions === undefined) {
@@ -320,6 +346,7 @@ export function extractToolFileContributions(
   const toolName = activity.toolName || ''
   const parameters = activity.parameters || {}
   const fallbackStatus = statusFromToolName(toolName) ?? 'modified'
+  const trustToolLifecycleStatus = fallbackStatus === 'deleted'
 
   const contributions: PerFileContribution[] = []
   const seen = new Set<string>()
@@ -356,7 +383,11 @@ export function extractToolFileContributions(
           recordCandidate,
           fallbackPath,
           fallbackStatus,
-          workspacePath
+          workspacePath,
+          {
+            trustLifecycleStatus:
+              trustToolLifecycleStatus || activity.diffSummary?.source === 'patch_preview'
+          }
         )
       )
     }
@@ -366,7 +397,9 @@ export function extractToolFileContributions(
   if (Array.isArray(parameters.changes)) {
     for (const change of parameters.changes) {
       addContribution(
-        extractContributionFromChangeRecord(change, fallbackPath, fallbackStatus, workspacePath)
+        extractContributionFromChangeRecord(change, fallbackPath, fallbackStatus, workspacePath, {
+          trustLifecycleStatus: trustToolLifecycleStatus
+        })
       )
     }
   }
@@ -385,9 +418,14 @@ export function extractToolFileContributions(
       const patchSummary = parseUnifiedDiffSummary(patchText)
       if (patchSummary?.files) {
         for (const file of patchSummary.files) {
+          const status = reconcileStatusWithEvidence(
+            normaliseFileStatus(file.status as string | undefined, fallbackStatus),
+            '',
+            true
+          )
           addContribution({
             path: file.path ? normalisePath(file.path, workspacePath) : fallbackPath,
-            status: normaliseFileStatus(file.status as string | undefined, fallbackStatus),
+            status,
             additions: file.additions,
             deletions: file.deletions
           })
@@ -415,11 +453,15 @@ export function extractToolFileContributions(
       deriveToolDiffSummary(toolName, parameters, activity.resultSummary || activity.outputPreview)
     if (derived?.files && derived.files.length > 0) {
       for (const file of derived.files) {
+        const status = reconcileStatusWithEvidence(
+          explicitStatusFromTool ??
+            normaliseFileStatus(file.status as string | undefined, fallbackStatus),
+          '',
+          explicitStatusFromTool === 'deleted' || derived.source === 'patch_preview'
+        )
         addContribution({
           path: file.path ? normalisePath(file.path, workspacePath) : fallbackPath,
-          status:
-            explicitStatusFromTool ??
-            normaliseFileStatus(file.status as string | undefined, fallbackStatus),
+          status,
           additions: file.additions,
           deletions: file.deletions
         })

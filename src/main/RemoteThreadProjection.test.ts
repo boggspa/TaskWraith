@@ -1087,6 +1087,58 @@ describe('RemoteThreadProjection', () => {
       ])
     })
 
+    it('does not treat provider deleted line hints as file deletions without evidence', () => {
+      const messages = [
+        msg(1, {
+          id: 'run-status-hints',
+          role: 'tool',
+          runId: 'run-status-hints',
+          toolActivities: [
+            activity({
+              id: 'edit',
+              toolName: 'edit_file',
+              displayName: 'Edit file',
+              category: 'write',
+              diffSummary: {
+                source: 'codex_changes',
+                confidence: 'exact',
+                deletions: 1,
+                files: [
+                  {
+                    path: 'src/renderer/src/components/FirstLaunchSheet.tsx',
+                    status: 'deleted',
+                    deletions: 1
+                  }
+                ]
+              }
+            })
+          ]
+        })
+      ]
+      const runs = [
+        {
+          runId: 'run-status-hints',
+          status: 'success',
+          startedAt: '2026-01-01T00:00:00.000Z',
+          endedAt: '2026-01-01T00:00:03.000Z'
+        } as unknown as ChatRun
+      ]
+
+      const summary = buildRunSummary(runs, undefined, messages)
+      expect(summary?.fileChanges).toMatchObject({
+        filesChanged: 1,
+        modifiedFiles: 1,
+        deletedFiles: 0,
+        files: [
+          {
+            path: 'src/renderer/src/components/FirstLaunchSheet.tsx',
+            status: 'modified',
+            deletions: 1
+          }
+        ]
+      })
+    })
+
     it('formats run cost with the remote display currency options', () => {
       const summary = buildRunSummary(
         [

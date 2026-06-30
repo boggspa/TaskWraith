@@ -124,6 +124,27 @@ describe('LiveFileDiffSummary', () => {
       })
     })
 
+    it('downgrades deleted status hints without whole-file evidence', () => {
+      const activity = baseActivity({
+        toolName: 'edit_file',
+        parameters: {
+          changes: [
+            {
+              path: 'src/renderer/src/components/FirstLaunchSheet.tsx',
+              status: 'deleted',
+              deletions: 1
+            }
+          ]
+        }
+      })
+
+      expect(extractToolFileContributions(activity)[0]).toMatchObject({
+        path: 'src/renderer/src/components/FirstLaunchSheet.tsx',
+        status: 'modified',
+        deletions: 1
+      })
+    })
+
     it('keeps deleted status hints when the patch deletes the whole file', () => {
       const activity = baseActivity({
         toolName: 'edit_file',
@@ -142,6 +163,43 @@ describe('LiveFileDiffSummary', () => {
               ].join('\n')
             }
           ]
+        }
+      })
+
+      expect(extractToolFileContributions(activity)[0]).toMatchObject({
+        path: 'src/old.ts',
+        status: 'deleted',
+        additions: 0,
+        deletions: 1
+      })
+    })
+
+    it('keeps explicit delete_file activities deleted without diff text', () => {
+      const activity = baseActivity({
+        toolName: 'delete_file',
+        parameters: {
+          file_path: 'src/old.ts'
+        }
+      })
+
+      expect(extractToolFileContributions(activity)[0]).toMatchObject({
+        path: 'src/old.ts',
+        status: 'deleted'
+      })
+    })
+
+    it('keeps parsed patch-preview file deletions deleted', () => {
+      const activity = baseActivity({
+        toolName: 'apply_patch',
+        parameters: {
+          patch: [
+            'diff --git a/src/old.ts b/src/old.ts',
+            'deleted file mode 100644',
+            '--- a/src/old.ts',
+            '+++ /dev/null',
+            '@@ -1 +0,0 @@',
+            '-old'
+          ].join('\n')
         }
       })
 

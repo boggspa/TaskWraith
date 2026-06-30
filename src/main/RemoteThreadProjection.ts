@@ -1707,12 +1707,34 @@ function normalizeToolFileStatus(
   return value in TOOL_FILE_STATUS_PRIORITY ? (value as DiffFileStatus) : fallback
 }
 
+function isDeleteToolName(toolName: string | undefined): boolean {
+  const value = (toolName || '').toLowerCase()
+  return (
+    value === 'delete_file' ||
+    value === 'deletefile' ||
+    value === 'delete_path' ||
+    value === 'deletepath' ||
+    value.endsWith('__delete_file') ||
+    value.endsWith('__delete_path')
+  )
+}
+
 function toolNameFallbackStatus(toolName: string | undefined): DiffFileStatus {
   const value = (toolName || '').toLowerCase()
-  if (value.includes('delete') || value.includes('remove')) return 'deleted'
+  if (isDeleteToolName(value)) return 'deleted'
   if (value.includes('create') || value === 'write_file' || value.endsWith('__write_file')) {
     return 'created'
   }
+  return 'modified'
+}
+
+function reconcileToolFileStatus(
+  status: DiffFileStatus,
+  fallbackStatus: DiffFileStatus,
+  diffSource: NonNullable<ToolActivity['diffSummary']>['source'] | undefined
+): DiffFileStatus {
+  if (status !== 'deleted') return status
+  if (fallbackStatus === 'deleted' || diffSource === 'patch_preview') return 'deleted'
   return 'modified'
 }
 
@@ -1816,9 +1838,10 @@ function addActivityFileChanges(
     for (const file of files) {
       const path = typeof file.path === 'string' && file.path.trim() ? file.path : fallbackPath
       if (!path) continue
+      const status = normalizeToolFileStatus(file.status, fallbackStatus)
       addToolFileChange(changes, {
         path,
-        status: normalizeToolFileStatus(file.status, fallbackStatus),
+        status: reconcileToolFileStatus(status, fallbackStatus, activity.diffSummary?.source),
         additions: typeof file.additions === 'number' ? file.additions : undefined,
         deletions: typeof file.deletions === 'number' ? file.deletions : undefined
       })
