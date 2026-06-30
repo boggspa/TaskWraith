@@ -802,7 +802,7 @@ export const buildWelcomeUsageDashboardData = (
 
     // Drop the wildcard `default` / `cli-default` bucket by its RAW id: the
     // canonical id above has already rewritten it to a real provider default
-    // (e.g. claude `default` -> `claude-sonnet-4-6`), so the canonical filter
+    // (e.g. claude `default` -> `claude-sonnet-5`), so the canonical filter
     // alone would no longer recognise it as the noisy default bucket. The run
     // still counts toward the headline/aggregate stats — only this per-model
     // breakdown row is suppressed.

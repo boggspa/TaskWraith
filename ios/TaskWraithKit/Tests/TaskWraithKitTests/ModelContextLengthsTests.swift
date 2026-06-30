@@ -62,6 +62,17 @@ struct ModelContextLengthsTests {
         #expect(row?.formatted == "1.0M")
     }
 
+    @Test("claude-sonnet-5 row: 200_000 / 200k")
+    func claudeSonnet5() {
+        let groups = ModelContextLengths.buildGroups()
+        let row = groups.first { $0.provider == "claude" }?
+            .models.first { $0.modelId == "claude-sonnet-5" }
+        #expect(row != nil)
+        #expect(row?.label == "Claude Sonnet 5")
+        #expect(row?.contextWindow == 200_000)
+        #expect(row?.formatted == "200k")
+    }
+
     @Test("claude-opus-4-8 row: 200_000 / 200k (two honest rows coexist)")
     func claudeOpus48() {
         let groups = ModelContextLengths.buildGroups()

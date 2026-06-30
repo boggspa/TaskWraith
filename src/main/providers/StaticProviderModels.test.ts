@@ -44,28 +44,35 @@ describe('normalizeCliProviderModel (claude)', () => {
   })
 
   it('maps temporarily unavailable Fable ids back to the concrete Claude default', () => {
-    expect(normalizeCliProviderModel('claude', 'fable')).toBe('claude-sonnet-4-6')
-    expect(normalizeCliProviderModel('claude', 'claude-fable-5')).toBe('claude-sonnet-4-6')
-    expect(normalizeCliProviderModel('claude', 'claude-fable-5-1m')).toBe('claude-sonnet-4-6')
+    expect(normalizeCliProviderModel('claude', 'fable')).toBe('claude-sonnet-5')
+    expect(normalizeCliProviderModel('claude', 'claude-fable-5')).toBe('claude-sonnet-5')
+    expect(normalizeCliProviderModel('claude', 'claude-fable-5-1m')).toBe('claude-sonnet-5')
   })
 
-  it('maps non-runnable Claude preview placeholders back to the concrete default', () => {
+  it('maps non-runnable / stale Claude preview placeholders back to the concrete default', () => {
+    // claude-sonnet-5 is GA, but a persisted preview-namespaced id from before
+    // it shipped still maps to the concrete default rather than dispatching an
+    // invalid `preview:` model name.
     expect(normalizeCliProviderModel('claude', 'preview:anthropic:claude-sonnet-5')).toBe(
-      'claude-sonnet-4-6'
+      'claude-sonnet-5'
     )
     expect(normalizeCliProviderModel('claude', 'preview:anthropic:claude-fable-5')).toBe(
-      'claude-sonnet-4-6'
+      'claude-sonnet-5'
     )
     expect(normalizeCliProviderModel('claude', 'preview:anthropic:claude-mythos-5')).toBe(
-      'claude-sonnet-4-6'
+      'claude-sonnet-5'
     )
   })
 
-  it('maps empty / sentinel ids to Sonnet 4.6', () => {
-    expect(normalizeCliProviderModel('claude', '')).toBe('claude-sonnet-4-6')
-    expect(normalizeCliProviderModel('claude', 'default')).toBe('claude-sonnet-4-6')
-    expect(normalizeCliProviderModel('claude', 'cli-default')).toBe('claude-sonnet-4-6')
-    expect(normalizeCliProviderModel('claude', 'custom')).toBe('claude-sonnet-4-6')
+  it('maps empty / sentinel ids to Sonnet 5', () => {
+    expect(normalizeCliProviderModel('claude', '')).toBe('claude-sonnet-5')
+    expect(normalizeCliProviderModel('claude', 'default')).toBe('claude-sonnet-5')
+    expect(normalizeCliProviderModel('claude', 'cli-default')).toBe('claude-sonnet-5')
+    expect(normalizeCliProviderModel('claude', 'custom')).toBe('claude-sonnet-5')
+  })
+
+  it('keeps the retired Sonnet 4.6 id runnable for historical selections', () => {
+    expect(normalizeCliProviderModel('claude', 'claude-sonnet-4-6')).toBe('claude-sonnet-4-6')
   })
 })
 
@@ -263,6 +270,8 @@ describe('getStaticProviderModels (claude)', () => {
     expect(ids).not.toContain('preview:anthropic:claude-mythos-5')
     expect(ids).not.toContain('claude-opus-4-8')
     expect(ids).toContain('claude-opus-4-8-1m')
+    // Sonnet 5 is now a real, selectable model (no longer a preview placeholder).
+    expect(ids).toContain('claude-sonnet-5')
   })
 
   it('can expose disabled Claude preview placeholders behind the preview catalog flag', () => {
@@ -270,17 +279,9 @@ describe('getStaticProviderModels (claude)', () => {
       includePreviewModels: true
     }) as StaticModelShape[]
     const previewById = new Map(previewModels.map((m) => [m.id, m]))
-    expect(previewById.get('preview:anthropic:claude-sonnet-5')).toMatchObject({
-      disabled: true,
-      disabledReason: 'Requires Claude preview access',
-      defaultReasoningEffort: 'medium'
-    })
-    expect(
-      previewById
-        .get('preview:anthropic:claude-sonnet-5')
-        ?.supportedReasoningEfforts?.filter((option) => option.disabled)
-        .map((option) => option.reasoningEffort)
-    ).toEqual(['xhigh', 'ultracode'])
+    // Sonnet 5 has GRADUATED out of the preview catalog — it is no longer a
+    // disabled placeholder. Fable 5 / Mythos 5 remain gated previews.
+    expect(previewById.get('preview:anthropic:claude-sonnet-5')).toBeUndefined()
     expect(previewById.get('preview:anthropic:claude-fable-5')).toMatchObject({
       disabled: true,
       disabledReason: 'Requires Claude preview access'
@@ -291,8 +292,9 @@ describe('getStaticProviderModels (claude)', () => {
     })
   })
 
-  it('marks Claude Sonnet 4.6 as the concrete default', () => {
-    expect(byId.get('claude-sonnet-4-6')).toMatchObject({ isDefault: true })
+  it('marks Claude Sonnet 5 as the concrete default and retires Sonnet 4.6 from the picker', () => {
+    expect(byId.get('claude-sonnet-5')).toMatchObject({ isDefault: true })
+    expect(byId.get('claude-sonnet-4-6')).toBeUndefined()
   })
 
   it('keeps the paid Fast tier on the default 1M Opus rows', () => {
@@ -301,17 +303,18 @@ describe('getStaticProviderModels (claude)', () => {
   })
 
   it('offers family-specific Claude reasoning efforts', () => {
-    const sonnetReasoning = byId.get('claude-sonnet-4-6')?.supportedReasoningEfforts ?? []
+    const sonnetReasoning = byId.get('claude-sonnet-5')?.supportedReasoningEfforts ?? []
     const opusReasoning = byId.get('claude-opus-4-8-1m')?.supportedReasoningEfforts ?? []
     const haikuReasoning = byId.get('claude-haiku-4-5')?.supportedReasoningEfforts ?? []
     expect(
       sonnetReasoning.map((e) => e.reasoningEffort)
     ).toEqual(['low', 'medium', 'high', 'xhigh', 'max', 'ultracode'])
+    // Sonnet 5 unlocks the full Opus ladder — none of its efforts are disabled.
     expect(
       sonnetReasoning
         .filter((e) => e.disabled)
         .map((e) => e.reasoningEffort)
-    ).toEqual(['xhigh', 'ultracode'])
+    ).toEqual([])
     expect(opusReasoning.map((e) => e.reasoningEffort)).toEqual([
       'low',
       'medium',

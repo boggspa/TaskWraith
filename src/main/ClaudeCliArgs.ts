@@ -4,6 +4,10 @@
 
 const CLAUDE_EFFORT_LEVELS = new Set(['low', 'medium', 'high', 'xhigh', 'max'])
 const CLAUDE_SONNET_EFFORT_LEVELS = new Set(['low', 'medium', 'high', 'max'])
+// Sonnet 5 family (claude-sonnet-5, claude-sonnet-5-1m, …) gets the full Opus
+// ladder; the trailing non-digit guard avoids matching a `claude-sonnet-50`
+// lookalike. Kept in sync with ensembleProviderDefaults' CLAUDE_SONNET_5_FAMILY.
+const CLAUDE_SONNET_5_FAMILY = /sonnet-5(?![0-9])/
 const CLAUDE_EFFORT_ALIASES: Record<string, string> = {
   extra: 'xhigh',
   ultracode: 'max'
@@ -25,7 +29,9 @@ export function normalizeClaudeEffortFlagForModel(
   if (!normalized) return null
   const modelKey = String(model || '').toLowerCase()
   if (modelKey.includes('haiku')) return null
-  if (modelKey.includes('sonnet')) {
+  // Sonnet 5 uses the full Opus-equivalent effort ladder; only the legacy
+  // Sonnet 4.x line is clamped to the reduced set.
+  if (modelKey.includes('sonnet') && !CLAUDE_SONNET_5_FAMILY.test(modelKey)) {
     return CLAUDE_SONNET_EFFORT_LEVELS.has(normalized) ? normalized : null
   }
   return normalized

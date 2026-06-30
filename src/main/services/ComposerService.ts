@@ -753,7 +753,7 @@ function getProviderLabel(provider: ProviderId): string {
 
 export function getDefaultModelForProvider(provider: ProviderId): string {
   if (provider === 'codex') return 'gpt-5.5'
-  if (provider === 'claude') return 'claude-sonnet-4-6'
+  if (provider === 'claude') return 'claude-sonnet-5'
   if (provider === 'kimi') return 'kimi-k2.7-code'
   if (provider === 'grok') return 'grok-build'
   if (provider === 'cursor') return 'composer-2.5-fast'

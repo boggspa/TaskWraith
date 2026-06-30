@@ -154,7 +154,7 @@ describe('ProviderPreflightService', () => {
   })
 
   it('blocks preview-risk model ids unless access is proven', () => {
-    for (const model of ['claude-sonnet-5', 'claude-mythos-5']) {
+    for (const model of ['claude-fable-5', 'claude-mythos-5']) {
       const result = service.evaluate(
         {
           provider: 'claude',
@@ -168,6 +168,20 @@ describe('ProviderPreflightService', () => {
       expect(result.state).toBe('blocked')
       expect(result.reason).toBe('Requires Claude preview access')
     }
+  })
+
+  it('does not block the GA Sonnet 5 model (no longer preview-risk)', () => {
+    const result = service.evaluate(
+      {
+        provider: 'claude',
+        workspacePath: '/repo',
+        model: 'claude-sonnet-5'
+      },
+      contract({ provider: 'claude', label: 'Claude' }),
+      defaultProviderDescriptor('claude')
+    )
+
+    expect(result.state).not.toBe('blocked')
   })
 
   it('allows preview-risk model ids when access has been proven by the caller', () => {

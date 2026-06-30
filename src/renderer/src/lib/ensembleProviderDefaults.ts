@@ -26,10 +26,7 @@ import type {
   CombinedModelPickerReasoningOption
 } from '../components/CombinedModelPicker'
 import type { EnsembleParticipant, PermissionPresetId, ProviderId } from '../../../main/store/types'
-import {
-  CLAUDE_PREVIEW_MODEL_ACCESS_REASON,
-  OPENAI_PREVIEW_MODEL_ACCESS_REASON
-} from '../../../shared/previewModelCatalog'
+import { OPENAI_PREVIEW_MODEL_ACCESS_REASON } from '../../../shared/previewModelCatalog'
 import { codexReasoningDisplayLabel, claudeReasoningDisplayLabel } from './composerChipFormat'
 
 export interface EnsembleModelDefaults {
@@ -128,12 +125,7 @@ const CODEX_MODELS: CombinedModelPickerModelOption[] = [
 
 const CLAUDE_MODELS: CombinedModelPickerModelOption[] = [
   { id: 'claude-opus-4-8-1m', label: 'Claude Opus 4.8 1M' },
-  {
-    id: 'preview:anthropic:claude-sonnet-5',
-    label: 'Claude Sonnet 5',
-    disabled: true,
-    disabledReason: CLAUDE_PREVIEW_MODEL_ACCESS_REASON
-  },
+  { id: 'claude-sonnet-5', label: 'Claude Sonnet 5' },
   {
     id: 'claude-fable-5-1m',
     label: 'Claude Fable 5 1M',
@@ -141,7 +133,8 @@ const CLAUDE_MODELS: CombinedModelPickerModelOption[] = [
     disabledReason: 'Temporarily unavailable from Anthropic'
   },
   { id: 'claude-opus-4-7-1m', label: 'Claude Opus 4.7 1M' },
-  { id: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6' },
+  // Sonnet 4.6 is retired from the picker; its tombstone metadata (display
+  // name, context window, billing rate) is retained elsewhere for past runs.
   { id: 'claude-haiku-4-5', label: 'Claude Haiku 4.5' }
 ]
 
@@ -199,6 +192,16 @@ function isClaudeOpusOrFableModel(modelId?: string | null): boolean {
   return normalized.includes('opus') || normalized.includes('fable')
 }
 
+// Sonnet 5 exposes the full Opus-equivalent reasoning ladder (unlike the
+// legacy Sonnet 4.x line, which is capped at low/medium/high/max). Matches the
+// Sonnet 5 family — `claude-sonnet-5` and future variants like
+// `claude-sonnet-5-1m` — while the trailing non-digit guard avoids colliding
+// with a numeric lookalike such as `claude-sonnet-50`.
+const CLAUDE_SONNET_5_FAMILY = /sonnet-5(?![0-9])/
+function isClaudeSonnet5Model(modelId?: string | null): boolean {
+  return CLAUDE_SONNET_5_FAMILY.test(String(modelId || '').toLowerCase())
+}
+
 function isClaudeHaikuModel(modelId?: string | null): boolean {
   return String(modelId || '')
     .toLowerCase()
@@ -216,7 +219,9 @@ export function getEnsembleReasoningOptions(
         : CODEX_REASONING
     case 'claude':
       if (isClaudeHaikuModel(modelId)) return CLAUDE_HAIKU_REASONING
-      return isClaudeOpusOrFableModel(modelId) ? CLAUDE_OPUS_REASONING : CLAUDE_SONNET_REASONING
+      return isClaudeOpusOrFableModel(modelId) || isClaudeSonnet5Model(modelId)
+        ? CLAUDE_OPUS_REASONING
+        : CLAUDE_SONNET_REASONING
     case 'kimi':
       return KIMI_REASONING
     case 'grok':
@@ -270,7 +275,7 @@ export function getDefaultEnsembleParticipantConfig(
       }
     case 'claude':
       return {
-        model: 'claude-sonnet-4-6',
+        model: 'claude-sonnet-5',
         permissionPresetId: 'read_only',
         reasoningEffort: 'medium',
         fastModeEnabled: false
@@ -429,10 +434,10 @@ export function getEnsembleModelDefaults(provider: ProviderId): EnsembleModelDef
     case 'claude':
       return {
         modelOptions: CLAUDE_MODELS,
-        reasoningOptions: getEnsembleReasoningOptions('claude', 'claude-sonnet-4-6'),
+        reasoningOptions: getEnsembleReasoningOptions('claude', 'claude-sonnet-5'),
         defaultReasoning: 'medium',
         fastModeCapableModelIds: CLAUDE_FAST_CAPABLE,
-        defaultModelId: 'claude-sonnet-4-6'
+        defaultModelId: 'claude-sonnet-5'
       }
     case 'gemini':
       return {

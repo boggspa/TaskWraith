@@ -108,9 +108,6 @@ const claudeReasoningEfforts = (enabled: ReadonlySet<string>) =>
       ? option
       : { ...option, disabled: true, disabledReason: CLAUDE_REASONING_UNAVAILABLE }
   )
-const CLAUDE_SONNET_REASONING_EFFORTS = claudeReasoningEfforts(
-  new Set(['low', 'medium', 'high', 'max'])
-)
 const CLAUDE_OPUS_REASONING_EFFORTS = claudeReasoningEfforts(
   new Set(['low', 'medium', 'high', 'xhigh', 'max', 'ultracode'])
 )
@@ -119,11 +116,10 @@ const CLAUDE_THINKING_EFFORTS = CLAUDE_OPUS_REASONING_EFFORTS
 const CLAUDE_DEFAULT_REASONING_EFFORT = 'medium'
 const CLAUDE_TEMPORARILY_HIDDEN_MODEL_IDS = new Set([
   'fable',
-  'claude-sonnet-5',
   'claude-fable-5',
   'claude-fable-5-1m'
 ])
-const CLAUDE_DEFAULT_MODEL = 'claude-sonnet-4-6'
+const CLAUDE_DEFAULT_MODEL = 'claude-sonnet-5'
 const CLAUDE_DEFAULT_MODELS = [
   {
     id: 'claude-opus-4-8-1m',
@@ -135,10 +131,10 @@ const CLAUDE_DEFAULT_MODELS = [
   },
   {
     id: CLAUDE_DEFAULT_MODEL,
-    label: 'Claude Sonnet 4.6',
+    label: 'Claude Sonnet 5',
     description: 'Balanced — extended thinking',
     isDefault: true,
-    supportedReasoningEfforts: CLAUDE_SONNET_REASONING_EFFORTS,
+    supportedReasoningEfforts: CLAUDE_OPUS_REASONING_EFFORTS,
     defaultReasoningEffort: 'medium'
   },
   {
@@ -266,6 +262,7 @@ const CLAUDE_MODEL_IDS = new Set([
   'claude-opus-4-8-1m',
   'claude-fable-5-1m',
   'claude-opus-4-7-1m',
+  'claude-sonnet-5',
   'claude-sonnet-4-6',
   'claude-haiku-4-5'
 ])
@@ -277,6 +274,10 @@ const isCodexModelId = (modelId: string): boolean =>
 const isClaudeModelId = (modelId: string): boolean =>
   !CLAUDE_TEMPORARILY_HIDDEN_MODEL_IDS.has(normalizeProviderModelKey(modelId)) &&
   !isPreviewModelPlaceholder(modelId) &&
+  // Any preview-namespaced id (catalogued or stale, e.g. a persisted
+  // `preview:anthropic:claude-sonnet-5` from before Sonnet 5 went GA) is never
+  // a directly-selectable Claude model — dispatch normalizes it to the default.
+  !normalizeProviderModelKey(modelId).startsWith('preview:') &&
   (CLAUDE_MODEL_IDS.has(modelId) || modelId.includes('claude'))
 const isKimiModelId = (modelId: string): boolean => KIMI_MODEL_IDS.has(modelId)
 const isOllamaModelId = (modelId: string): boolean =>

@@ -311,6 +311,16 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         notes: 'Previous-gen Opus; same published $5/$25 rate as 4.7/4.8.'
       },
       {
+        modelId: 'claude-sonnet-5',
+        inputUsdPerMillion: 3.0,
+        outputUsdPerMillion: 15.0,
+        cachedInputUsdPerMillion: 0.3,
+        sourceUrl: 'https://www.anthropic.com/pricing',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Current-gen Sonnet. Assumed Sonnet-tier billing ($3/$15/$0.3) pending published Sonnet 5 rates — it shares the Opus 4.8 reasoning ladder but NOT Opus billing. Verify against https://www.anthropic.com/pricing before release.'
+      },
+      {
         modelId: 'claude-sonnet-4-6',
         inputUsdPerMillion: 3.0,
         outputUsdPerMillion: 15.0,

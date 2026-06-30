@@ -190,7 +190,7 @@ describe('humaniseModelId', () => {
 
     it('maps legacy default sentinels to provider-specific concrete defaults', () => {
       expect(canonicalModelIdForProvider('codex', 'cli-default')).toBe('gpt-5.5')
-      expect(canonicalModelIdForProvider('claude', 'default')).toBe('claude-sonnet-4-6')
+      expect(canonicalModelIdForProvider('claude', 'default')).toBe('claude-sonnet-5')
       expect(canonicalModelIdForProvider('gemini', 'cli-default')).toBe('flash-lite')
       expect(canonicalModelIdForProvider('kimi', 'cli-default')).toBe('kimi-k2.7-code')
       expect(canonicalModelIdForProvider('grok', 'cli-default')).toBe('grok-build')

@@ -40,10 +40,20 @@ describe('normalizeClaudeEffortFlagForModel', () => {
     expect(normalizeClaudeEffortFlagForModel('ultracode', 'haiku')).toBeNull()
   })
 
-  it('keeps Sonnet on its supported effort ladder', () => {
+  it('keeps the legacy Sonnet 4.x line on its capped effort ladder', () => {
     expect(normalizeClaudeEffortFlagForModel('high', 'claude-sonnet-4-6')).toBe('high')
     expect(normalizeClaudeEffortFlagForModel('xhigh', 'claude-sonnet-4-6')).toBeNull()
     expect(normalizeClaudeEffortFlagForModel('ultracode', 'claude-sonnet-4-6')).toBe('max')
+  })
+
+  it('lets the Sonnet 5 family use the full Opus-equivalent Claude CLI ladder', () => {
+    expect(normalizeClaudeEffortFlagForModel('high', 'claude-sonnet-5')).toBe('high')
+    expect(normalizeClaudeEffortFlagForModel('xhigh', 'claude-sonnet-5')).toBe('xhigh')
+    expect(normalizeClaudeEffortFlagForModel('ultracode', 'claude-sonnet-5')).toBe('max')
+    // Future Sonnet 5 variants share the ladder...
+    expect(normalizeClaudeEffortFlagForModel('xhigh', 'claude-sonnet-5-1m')).toBe('xhigh')
+    // ...but a numeric lookalike must NOT be mistaken for the Sonnet 5 family.
+    expect(normalizeClaudeEffortFlagForModel('xhigh', 'claude-sonnet-50')).toBeNull()
   })
 
   it('allows Opus/Fable/custom models to use the full Claude CLI ladder', () => {

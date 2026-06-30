@@ -37,9 +37,9 @@ describe('getDefaultEnsembleParticipantConfig', () => {
     })
   })
 
-  it('returns claude defaults: Sonnet 4.6 model, read_only, medium reasoning, fast off', () => {
+  it('returns claude defaults: Sonnet 5 model, read_only, medium reasoning, fast off', () => {
     expect(getDefaultEnsembleParticipantConfig('claude')).toEqual({
-      model: 'claude-sonnet-4-6',
+      model: 'claude-sonnet-5',
       permissionPresetId: 'read_only',
       reasoningEffort: 'medium',
       fastModeEnabled: false
@@ -261,7 +261,7 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
     expect(getEnsembleModelDefaults('kimi').defaultModelId).toBe('kimi-k2.7-code')
   })
 
-  it('marks temporarily unavailable Claude preview rows disabled in ensemble model options', () => {
+  it('exposes Sonnet 5 as the default and keeps unavailable Fable rows disabled in ensemble model options', () => {
     const claude = getEnsembleModelDefaults('claude')
     expect(claude.modelOptions.map((option) => option.id)).not.toEqual(
       expect.arrayContaining([
@@ -270,36 +270,37 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
         'claude-opus-4-8',
         'claude-opus-4-7',
         'claude-opus-4-6',
-        'claude-sonnet-5',
+        // Sonnet 4.6 is retired from the picker; the stale preview placeholder is gone.
+        'claude-sonnet-4-6',
+        'preview:anthropic:claude-sonnet-5',
         'claude-fable-5'
       ])
     )
+    // Sonnet 5 is a real, enabled row now.
     expect(
-      claude.modelOptions.find((option) => option.id === 'preview:anthropic:claude-sonnet-5')
-    ).toMatchObject({
-      disabled: true,
-      disabledReason: 'Requires Claude preview access'
-    })
+      claude.modelOptions.find((option) => option.id === 'claude-sonnet-5')?.disabled
+    ).toBeFalsy()
     expect(claude.modelOptions.find((option) => option.id === 'claude-fable-5-1m')).toMatchObject({
       disabled: true,
       disabledReason: 'Temporarily unavailable from Anthropic'
     })
     expect(claude.modelOptions.map((option) => option.id)).toEqual([
       'claude-opus-4-8-1m',
-      'preview:anthropic:claude-sonnet-5',
+      'claude-sonnet-5',
       'claude-fable-5-1m',
       'claude-opus-4-7-1m',
-      'claude-sonnet-4-6',
       'claude-haiku-4-5'
     ])
-    expect(claude.defaultModelId).toBe('claude-sonnet-4-6')
+    expect(claude.defaultModelId).toBe('claude-sonnet-5')
   })
 
   it('returns model-aware Claude reasoning options for ensemble pickers', () => {
-    const sonnet = getEnsembleReasoningOptions('claude', 'claude-sonnet-4-6')
+    const sonnet5 = getEnsembleReasoningOptions('claude', 'claude-sonnet-5')
+    const sonnetLegacy = getEnsembleReasoningOptions('claude', 'claude-sonnet-4-6')
     const opus = getEnsembleReasoningOptions('claude', 'claude-opus-4-8-1m')
     const haiku = getEnsembleReasoningOptions('claude', 'claude-haiku-4-5')
-    expect(sonnet.map((o) => o.value)).toEqual([
+    // Sonnet 5 unlocks the full Opus ladder with nothing disabled.
+    expect(sonnet5.map((o) => o.value)).toEqual([
       'low',
       'medium',
       'high',
@@ -307,10 +308,23 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
       'max',
       'ultracode'
     ])
-    expect(sonnet.filter((o) => o.disabled).map((o) => o.value)).toEqual([
+    expect(sonnet5.filter((o) => o.disabled).map((o) => o.value)).toEqual([])
+    // Future Sonnet 5 variants (e.g. a 1M row) share the full ladder...
+    expect(
+      getEnsembleReasoningOptions('claude', 'claude-sonnet-5-1m')
+        .filter((o) => o.disabled)
+        .map((o) => o.value)
+    ).toEqual([])
+    // ...but the retired Sonnet 4.x line — and a numeric lookalike — stay capped.
+    expect(sonnetLegacy.filter((o) => o.disabled).map((o) => o.value)).toEqual([
       'xhigh',
       'ultracode'
     ])
+    expect(
+      getEnsembleReasoningOptions('claude', 'claude-sonnet-50')
+        .filter((o) => o.disabled)
+        .map((o) => o.value)
+    ).toEqual(['xhigh', 'ultracode'])
     expect(opus.map((o) => o.value)).toEqual([
       'low',
       'medium',

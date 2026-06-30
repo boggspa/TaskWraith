@@ -39,23 +39,6 @@ const OPENAI_GPT56_SOL_REASONING_EFFORTS = [
   { reasoningEffort: 'max' }
 ]
 
-const CLAUDE_SONNET_PREVIEW_REASONING_EFFORTS = [
-  { reasoningEffort: 'low' },
-  { reasoningEffort: 'medium' },
-  { reasoningEffort: 'high' },
-  {
-    reasoningEffort: 'xhigh',
-    disabled: true,
-    disabledReason: 'Not available for this Claude model'
-  },
-  { reasoningEffort: 'max' },
-  {
-    reasoningEffort: 'ultracode',
-    disabled: true,
-    disabledReason: 'Not available for this Claude model'
-  }
-]
-
 export const PREVIEW_MODEL_CATALOG: PreviewModelCatalogEntry[] = [
   {
     id: 'preview:openai:gpt-5.6:sol',
@@ -100,21 +83,6 @@ export const PREVIEW_MODEL_CATALOG: PreviewModelCatalogEntry[] = [
     previewFamily: 'gpt-5.6',
     previewRole: 'Fast triage, board planning, summarization, lightweight subagents',
     supportedReasoningEfforts: OPENAI_GPT56_REASONING_EFFORTS,
-    defaultReasoningEffort: 'medium'
-  },
-  {
-    id: 'preview:anthropic:claude-sonnet-5',
-    provider: 'claude',
-    label: 'Claude Sonnet 5',
-    description: 'Preview model gated behind explicit Claude preview access.',
-    disabled: true,
-    disabledReason: CLAUDE_PREVIEW_MODEL_ACCESS_REASON,
-    hidden: true,
-    runnable: false,
-    accessState: 'requires_preview_access',
-    previewFamily: 'claude-sonnet-5',
-    previewRole: 'Future Claude Sonnet preview model',
-    supportedReasoningEfforts: CLAUDE_SONNET_PREVIEW_REASONING_EFFORTS,
     defaultReasoningEffort: 'medium'
   },
   {
@@ -168,7 +136,9 @@ export function isPreviewRiskModel(provider: string, model?: string | null): boo
     return /^gpt-5\.6(?:$|[^0-9])/i.test(id)
   }
   if (provider === 'claude') {
-    return /\b(?:claude-)?(?:sonnet|fable|mythos)-5\b/i.test(id)
+    // claude-sonnet-5 is GA now (a real, runnable model), so it must not be
+    // flagged as preview-risk. Fable 5 / Mythos 5 remain gated previews.
+    return /\b(?:claude-)?(?:fable|mythos)-5\b/i.test(id)
   }
   return false
 }

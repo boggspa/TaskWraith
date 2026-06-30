@@ -43,25 +43,28 @@ describe('Codex provider model defaults', () => {
 })
 
 describe('Claude provider model defaults', () => {
-  it('keeps unavailable concrete Fable rows out while exposing disabled preview rows', () => {
+  it('exposes Sonnet 5 as a real row while keeping unavailable Fable rows behind disabled previews', () => {
     const ids = CLAUDE_DEFAULT_MODELS.map((model) => model.id)
     expect(ids).not.toContain('default')
     expect(ids).not.toContain('claude-fable-5')
     expect(ids).not.toContain('claude-fable-5-1m')
-    expect(ids).toContain('preview:anthropic:claude-sonnet-5')
+    // Sonnet 5 graduated from preview placeholder to a real, selectable row.
+    expect(ids).toContain('claude-sonnet-5')
+    expect(ids).not.toContain('preview:anthropic:claude-sonnet-5')
     expect(ids).toContain('preview:anthropic:claude-fable-5')
     expect(ids).toContain('preview:anthropic:claude-mythos-5')
   })
 
-  it('uses Sonnet 4.6 as the concrete Claude fallback model', () => {
-    expect(CLAUDE_DEFAULT_MODELS.find((model) => model.isDefault)?.id).toBe('claude-sonnet-4-6')
+  it('uses Sonnet 5 as the concrete Claude fallback model', () => {
+    expect(CLAUDE_DEFAULT_MODELS.find((model) => model.isDefault)?.id).toBe('claude-sonnet-5')
   })
 
-  it('treats stale Fable and generic default selections as invalid so the composer falls back', () => {
+  it('treats stale Fable / preview / generic default selections as invalid but accepts Sonnet 5', () => {
     expect(isClaudeModelId('default')).toBe(false)
     expect(isClaudeModelId('cli-default')).toBe(false)
     expect(isClaudeModelId('fable')).toBe(false)
-    expect(isClaudeModelId('claude-sonnet-5')).toBe(false)
+    // Sonnet 5 is now a valid, selectable Claude model id.
+    expect(isClaudeModelId('claude-sonnet-5')).toBe(true)
     expect(isClaudeModelId('claude-fable-5')).toBe(false)
     expect(isClaudeModelId('claude-fable-5-1m')).toBe(false)
     expect(isClaudeModelId('preview:anthropic:claude-sonnet-5')).toBe(false)
@@ -79,20 +82,11 @@ describe('Claude provider model defaults', () => {
 
   it('resolves family-specific Claude reasoning defaults', () => {
     const byId = new Map(CLAUDE_DEFAULT_MODELS.map((model) => [model.id, model]))
-    const sonnetReasoning = resolveClaudeReasoningEfforts(byId.get('claude-sonnet-4-6'))
-    const sonnet5Reasoning = resolveClaudeReasoningEfforts(
-      byId.get('preview:anthropic:claude-sonnet-5')
-    )
+    const sonnet5Reasoning = resolveClaudeReasoningEfforts(byId.get('claude-sonnet-5'))
     const opusReasoning = resolveClaudeReasoningEfforts(byId.get('claude-opus-4-8-1m'))
     const haikuReasoning = resolveClaudeReasoningEfforts(byId.get('claude-haiku-4-5'))
-    expect(
-      sonnetReasoning.map((option) => option.reasoningEffort)
-    ).toEqual(['low', 'medium', 'high', 'xhigh', 'max', 'ultracode'])
-    expect(
-      sonnetReasoning
-        .filter((option) => option.disabled)
-        .map((option) => option.reasoningEffort)
-    ).toEqual(['xhigh', 'ultracode'])
+    // Sonnet 5 shares the full Opus ladder with every effort enabled (unlike the
+    // retired Sonnet 4.6, which capped xhigh/ultracode).
     expect(sonnet5Reasoning.map((option) => option.reasoningEffort)).toEqual([
       'low',
       'medium',
@@ -101,11 +95,7 @@ describe('Claude provider model defaults', () => {
       'max',
       'ultracode'
     ])
-    expect(
-      sonnet5Reasoning
-        .filter((option) => option.disabled)
-        .map((option) => option.reasoningEffort)
-    ).toEqual(['xhigh', 'ultracode'])
+    expect(sonnet5Reasoning.filter((option) => option.disabled)).toEqual([])
     expect(opusReasoning.map((option) => option.reasoningEffort)).toEqual([
       'low',
       'medium',
