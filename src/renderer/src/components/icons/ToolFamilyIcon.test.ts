@@ -87,6 +87,13 @@ describe('toolNameToFamily', () => {
   it('maps shell-execution tools to the shell family', () => {
     expect(toolNameToFamily('run_shell_command')).toBe('shell')
     expect(toolNameToFamily('shell')).toBe('shell')
+    expect(toolNameToFamily('start_background_process')).toBe('shell')
+    expect(toolNameToFamily('read_background_process')).toBe('shell')
+  })
+
+  it('maps chat attachment tools to the file family', () => {
+    expect(toolNameToFamily('list_chat_attachments')).toBe('file')
+    expect(toolNameToFamily('inspect_chat_attachment')).toBe('file')
   })
 
   it('maps workspace search/symbols to the search family', () => {
@@ -146,8 +153,12 @@ describe('toolNameToFamily', () => {
     expect(toolNameToFamily('creative_timeline_diff')).toBe('diagnostic')
   })
 
-  it('maps codex_reasoning / codex_plan to their dedicated families', () => {
+  it('maps thinking/reasoning traces and codex_plan to their dedicated families', () => {
     expect(toolNameToFamily('codex_reasoning')).toBe('reasoning')
+    expect(toolNameToFamily('thinking')).toBe('reasoning')
+    expect(toolNameToFamily('kimi_thinking')).toBe('reasoning')
+    expect(toolNameToFamily('grok_thinking')).toBe('reasoning')
+    expect(toolNameToFamily('mcp__TaskWraith__gemini_reasoning')).toBe('reasoning')
     expect(toolNameToFamily('codex_plan')).toBe('plan')
   })
 

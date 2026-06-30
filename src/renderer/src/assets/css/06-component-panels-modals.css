@@ -47,6 +47,7 @@
 }
 
 .activity-progress-note {
+  --activity-progress-note-thinking-accent: var(--tool-call-icon-accent, var(--accent));
   display: grid;
   grid-template-columns: 18px minmax(0, 1fr);
   gap: 8px;
@@ -59,6 +60,45 @@
   background: color-mix(in srgb, var(--accent-primary) 5%, transparent);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-primary) 5%, transparent);
   border-radius: 10px;
+}
+
+.activity-progress-note[data-provider="gemini"] {
+  --activity-progress-note-thinking-accent: var(--provider-gemini-color, #2563eb);
+}
+
+.activity-progress-note[data-provider="codex"] {
+  --activity-progress-note-thinking-accent: var(--provider-codex-color, #6366f1);
+}
+
+.activity-progress-note[data-provider="claude"] {
+  --activity-progress-note-thinking-accent: var(--provider-claude-color, #d97706);
+}
+
+.activity-progress-note[data-provider="kimi"] {
+  --activity-progress-note-thinking-accent: var(--provider-kimi-color, #84a33b);
+}
+
+.activity-progress-note[data-provider="grok"] {
+  --activity-progress-note-thinking-accent: var(--provider-grok-color, var(--text-primary));
+}
+
+.activity-progress-note[data-provider="cursor"] {
+  --activity-progress-note-thinking-accent: var(--provider-cursor-color, #e3b91e);
+}
+
+.activity-progress-note[data-provider="ollama"] {
+  --activity-progress-note-thinking-accent: var(--provider-ollama-color, #20a77a);
+}
+
+.activity-progress-note-thinking-icon {
+  align-self: start;
+  margin-top: 1px;
+  flex-shrink: 0;
+  color: var(--activity-progress-note-thinking-accent);
+  opacity: 0.96;
+  filter: drop-shadow(
+    0 0 7px color-mix(in srgb, var(--activity-progress-note-thinking-accent) 34%, transparent)
+  );
 }
 
 .activity-progress-note-body {

@@ -409,6 +409,56 @@ describe('ActivityStack diff hover previews', () => {
 })
 
 describe('ActivityStack agent invocation presentation', () => {
+  it('renders thinking progress notes with a provider-tinted bulb instead of a status check', () => {
+    const html = renderToStaticMarkup(
+      <ActivityStack
+        provider="grok"
+        activities={[
+          makeWriteActivity({
+            id: 'thinking-1',
+            toolName: 'grok_thinking',
+            displayName: 'Thinking',
+            category: 'task',
+            status: 'success',
+            parameters: {},
+            resultSummary: 'Reviewing the renderer path.'
+          })
+        ]}
+      />
+    )
+
+    expect(html).toContain('activity-progress-note')
+    expect(html).toContain('is-thinking-trace')
+    expect(html).toContain('data-provider="grok"')
+    expect(html).toContain('activity-progress-note-thinking-icon')
+    expect(html).toContain('Grok thinking trace')
+    expect(html).not.toContain('class="activity-status success"')
+  })
+
+  it('uses the thinking bulb when only the progress displayName identifies the trace', () => {
+    const html = renderToStaticMarkup(
+      <ActivityStack
+        provider="kimi"
+        activities={[
+          makeWriteActivity({
+            id: 'thinking-display-name',
+            toolName: 'Task',
+            displayName: 'Kimi Thinking',
+            category: 'task',
+            status: 'success',
+            parameters: {},
+            resultSummary: 'Considering the next edit.'
+          })
+        ]}
+      />
+    )
+
+    expect(html).toContain('is-thinking-trace')
+    expect(html).toContain('data-provider="kimi"')
+    expect(html).toContain('activity-progress-note-thinking-icon')
+    expect(html).not.toContain('class="activity-status success"')
+  })
+
   it('renders Used callmcptool as the dancing tool icon easter egg', () => {
     const html = renderToStaticMarkup(
       <ActivityStack

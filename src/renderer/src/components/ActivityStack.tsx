@@ -729,6 +729,21 @@ function isCallMcpToolActivity(activity: ToolActivity): boolean {
   return toolName === 'callmcptool' || displayName === 'used callmcptool'
 }
 
+function isThinkingTraceActivity(activity: ToolActivity): boolean {
+  if (isReasoningToolName(activity.toolName || '')) return true
+  const displayName = (activity.displayName || '').trim().toLowerCase()
+  return (
+    displayName === 'thinking' ||
+    displayName === 'reasoning' ||
+    displayName.endsWith(' thinking') ||
+    displayName.endsWith(' reasoning')
+  )
+}
+
+function activityProvider(activity: ToolActivity, fallback?: ProviderId): ProviderId | undefined {
+  return activity.metadata?.ensembleProvider || activity.metadata?.provider || fallback
+}
+
 const CALL_MCP_TOOL_EASTER_EGG_FAMILIES: ToolFamily[] = [
   'mcp',
   'shell',
@@ -1138,13 +1153,34 @@ export function buildTimelineItems(activities: ToolActivity[]): ActivityTimeline
   return items
 }
 
-function ActivityProgressNote({ activity }: { activity: ToolActivity }) {
+function ActivityProgressNote({
+  activity,
+  provider
+}: {
+  activity: ToolActivity
+  provider?: ProviderId
+}) {
   const note = getProgressNote(activity)
   if (!note) return null
+  const isThinkingTrace = isThinkingTraceActivity(activity)
+  const noteProvider = activityProvider(activity, provider)
+  const providerLabel = noteProvider ? getProviderLabel(noteProvider) : undefined
 
   return (
-    <div className={`activity-progress-note status-${activity.status}`}>
-      <ActivityStatusIcon status={activity.status} />
+    <div
+      className={`activity-progress-note status-${activity.status}${isThinkingTrace ? ' is-thinking-trace' : ''}`}
+      data-provider={noteProvider || 'unknown'}
+    >
+      {isThinkingTrace ? (
+        <ToolFamilyIcon
+          family="reasoning"
+          size={18}
+          className="activity-progress-note-thinking-icon"
+          title={providerLabel ? `${providerLabel} thinking trace` : 'Thinking trace'}
+        />
+      ) : (
+        <ActivityStatusIcon status={activity.status} />
+      )}
       <div className="activity-progress-note-body">
         <div className="activity-progress-note-title">
           <span>{note.title}</span>
@@ -2488,7 +2524,7 @@ function ActivityRow({
   if (progressNote && !forceCompact) {
     return (
       <>
-        <ActivityProgressNote activity={activity} />
+        <ActivityProgressNote activity={activity} provider={provider} />
         {childThread && (
           <ChildAgentThreadCard
             thread={childThread}
@@ -2610,7 +2646,9 @@ function ActivityRow({
                     // currentColor inheritance). Fall back to the
                     // legacy pip when the tool name doesn't map to
                     // any family — keeps unknown tools visible.
-                    const inlineFamily = toolNameToFamily(activity.toolName)
+                    const inlineFamily = isThinkingTraceActivity(activity)
+                      ? 'reasoning'
+                      : toolNameToFamily(activity.toolName)
                     return inlineFamily ? (
                       <ToolFamilyIcon
                         family={inlineFamily}
