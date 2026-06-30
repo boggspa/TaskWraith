@@ -1068,6 +1068,66 @@ function participantLabel(participant?: EnsembleParticipant): string {
   return participant.role || participant.provider
 }
 
+const PROPOSED_PLAN_BLOCK = /<proposed_plan>([\s\S]*?)<\/proposed_plan>/i
+const PROPOSED_PLAN_BLOCK_GLOBAL = /<proposed_plan>[\s\S]*?<\/proposed_plan>/gi
+
+function deriveProposedPlanTitle(body: string): string {
+  for (const raw of body.split('\n')) {
+    const line = raw.trim()
+    if (!line) continue
+    const heading = line.match(/^#{1,6}\s+(.+?)\s*#*$/)
+    const text = (heading ? heading[1] : line.replace(/^[-*+]\s+/, '')).trim()
+    if (text) return text.length > 80 ? `${text.slice(0, 79)}…` : text
+  }
+  return 'Proposed plan'
+}
+
+function parseExplicitProposedPlan(text: string): { title: string; body: string } | null {
+  const match = text.match(PROPOSED_PLAN_BLOCK)
+  if (!match) return null
+  const body = match[1].trim()
+  if (!body) return null
+  return { title: deriveProposedPlanTitle(body), body }
+}
+
+function stripExplicitProposedPlanBlock(text: string): string {
+  if (!PROPOSED_PLAN_BLOCK.test(text)) return text
+  return text.replace(PROPOSED_PLAN_BLOCK_GLOBAL, '').trim()
+}
+
+function cleanParticipantId(value: string | null | undefined): string | null {
+  if (typeof value !== 'string') return null
+  const trimmed = value.trim()
+  return trimmed || null
+}
+
+function resolveEnsembleProposedPlanOwnerId(
+  config: EnsembleConfig,
+  roundId: string
+): string | null {
+  const orderedParticipants = getOrderedEnsembleParticipants(config)
+  const bossmanId = cleanParticipantId(config.bossmanParticipantId)
+  if (bossmanId && orderedParticipants.some((participant) => participant.id === bossmanId)) {
+    return bossmanId
+  }
+
+  const activeRoundParticipants =
+    config.activeRound?.roundId === roundId ? config.activeRound.participants : []
+  const activeFallback = [...activeRoundParticipants].sort((a, b) => a.order - b.order).at(-1)
+  return (
+    cleanParticipantId(activeFallback?.participantId) ||
+    cleanParticipantId(orderedParticipants.at(-1)?.id)
+  )
+}
+
+function shouldStampEnsembleProposedPlan(
+  config: EnsembleConfig,
+  roundId: string,
+  participantId: string
+): boolean {
+  return cleanParticipantId(participantId) === resolveEnsembleProposedPlanOwnerId(config, roundId)
+}
+
 function mapEnsembleToolKindToCategory(kind: string): ToolActivity['category'] | undefined {
   switch (kind) {
     case 'read':
@@ -6265,9 +6325,30 @@ export class EnsembleOrchestrator {
       if (entry.kind === 'content') {
         const id = timelineMessageId(run.runId, i, 'content')
         desiredIds.add(id)
-        const content = stripPseudoSystemYieldLines(entry.text)
-        if (!content.trim()) continue
+        const rawContent = stripPseudoSystemYieldLines(entry.text)
+        if (!rawContent.trim()) continue
         const previous = existingMessageById.get(id)
+        const parsedPlan = parseExplicitProposedPlan(rawContent)
+        const shouldStampPlan = Boolean(
+          parsedPlan &&
+            shouldStampEnsembleProposedPlan(chat.ensemble, run.roundId, run.participant.id)
+        )
+        const previousPlan = shouldStampEnsembleProposedPlan(
+          chat.ensemble,
+          run.roundId,
+          run.participant.id
+        )
+          ? previous?.metadata?.proposedPlan
+          : undefined
+        const proposedPlan =
+          parsedPlan && shouldStampPlan
+            ? {
+                title: parsedPlan.title,
+                body: parsedPlan.body,
+                status: previousPlan?.status || 'pending'
+              }
+            : previousPlan
+        const content = shouldStampPlan ? stripExplicitProposedPlanBlock(rawContent) : rawContent
         desiredMessages.push({
           id,
           role: 'assistant',
@@ -6297,7 +6378,8 @@ export class EnsembleOrchestrator {
             // the composer chip the user picked. Only the field that
             // applies to this participant's provider is set; the others
             // stay undefined.
-            ...ensembleReasoningMetadata(run.participant)
+            ...ensembleReasoningMetadata(run.participant),
+            ...(proposedPlan ? { proposedPlan } : {})
           }
         })
       } else {

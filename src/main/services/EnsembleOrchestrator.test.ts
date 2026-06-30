@@ -418,6 +418,105 @@ describe('EnsembleOrchestrator', () => {
     )
   }
 
+  it('stamps a proposed plan card on the ensemble plan owner message', async () => {
+    const chat = makeChat()
+    chat.ensemble!.bossmanParticipantId = 'claude'
+    const harness = makeHarness({ initialChat: chat })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Plan this.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const runId = harness.dispatched[0].appRunId!
+
+    harness.orchestrator.handleProviderOutput(
+      'claude',
+      { appRunId: runId, appChatId: 'ensemble-chat' },
+      {
+        type: 'content',
+        text: 'Here is the plan.\n<proposed_plan>\n## Build it\n- Add the hook\n</proposed_plan>\nReady.'
+      }
+    )
+
+    await vi.waitFor(() =>
+      expect(participantContentMessage(harness)?.metadata?.proposedPlan).toBeTruthy()
+    )
+    const message = participantContentMessage(harness)
+    expect(message?.content).toBe('Here is the plan.\n\nReady.')
+    expect(message?.metadata?.proposedPlan).toEqual({
+      title: 'Build it',
+      body: '## Build it\n- Add the hook',
+      status: 'pending'
+    })
+  })
+
+  it('does not stamp proposed plan cards from non-owner ensemble participants', async () => {
+    const chat = makeChat()
+    chat.ensemble!.bossmanParticipantId = 'codex'
+    const harness = makeHarness({ initialChat: chat })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Plan this.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const runId = harness.dispatched[0].appRunId!
+
+    harness.orchestrator.handleProviderOutput(
+      'claude',
+      { appRunId: runId, appChatId: 'ensemble-chat' },
+      {
+        type: 'content',
+        text: '<proposed_plan>\n## Wrong owner\n- Should stay plain\n</proposed_plan>'
+      }
+    )
+
+    await vi.waitFor(() => expect(participantContentMessage(harness)).toBeTruthy())
+    const message = participantContentMessage(harness)
+    expect(message?.metadata?.proposedPlan).toBeUndefined()
+    expect(message?.content).toContain('<proposed_plan>')
+  })
+
+  it('preserves proposed plan decision status across ensemble message re-flushes', async () => {
+    const chat = makeChat()
+    chat.ensemble!.bossmanParticipantId = 'claude'
+    const harness = makeHarness({ initialChat: chat })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Plan this.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const runId = harness.dispatched[0].appRunId!
+
+    harness.orchestrator.handleProviderOutput(
+      'claude',
+      { appRunId: runId, appChatId: 'ensemble-chat' },
+      {
+        type: 'content',
+        text: '<proposed_plan>\n## Keep status\n- Preserve the decision\n</proposed_plan>'
+      }
+    )
+    await vi.waitFor(() =>
+      expect(participantContentMessage(harness)?.metadata?.proposedPlan?.status).toBe('pending')
+    )
+    const plan = participantContentMessage(harness)?.metadata?.proposedPlan
+    expect(plan).toBeTruthy()
+    plan!.status = 'approved'
+
+    harness.orchestrator.handleProviderOutput(
+      'claude',
+      { appRunId: runId, appChatId: 'ensemble-chat' },
+      { type: 'content', text: '\nFollow-up note.' }
+    )
+
+    await vi.waitFor(() =>
+      expect(participantContentMessage(harness)?.content).toContain('Follow-up note.')
+    )
+    expect(participantContentMessage(harness)?.metadata?.proposedPlan?.status).toBe('approved')
+  })
+
   it('attaches agent-produced media_refs to the participant content message', async () => {
     const harness = makeHarness()
     harness.orchestrator.startRound({
