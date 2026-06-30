@@ -3,15 +3,22 @@
 **Platform:** Electron
 
 ## What it is
-<!-- TODO: 1-2 sentence function. Explorer note: Right dock Run tab · RunRailPanel.tsx · Electron -->
+The run cockpit (Run rail) is a right-dock panel that gives you a cross-chat view of every run in flight — active launches, queued/scheduled/failed runs, an AI-generated analysis of the selected run, the run's event timeline, and any draft handoffs — without leaving the chat you're in.
 
 ## Where to find it
-<!-- TODO: navigation path. Explorer note: Right dock Run tab · RunRailPanel.tsx · Electron -->
+Click the **Run** tab on the right-dock rim (or use the "Open Run rail" toggle) to open it for the current pane. It shows provider counts across all runs, a list of tracked launch processes, a list of run lanes you can click to select, and the selected run's analysis, timeline, and handoffs.
 
 <!-- TODO(screenshot): Run cockpit panel in the right dock -->
 
 ## How to use it
-<!-- TODO: brief numbered steps -->
+1. Open the **Run** tab in the right dock to see live counts of active, waiting, and failed runs, plus per-provider run counts along the top strip.
+2. Under **Launches**, review any tracked launch processes (command, workspace, branch, output preview); click **Open** to visit a detected preview URL, **Thread** to jump to its chat, or **Stop** to cancel it.
+3. Under **Runs**, click a lane to select it — this drives the Analyst and timeline sections below.
+4. Click **Local AI** in the Analyst section to generate a summary, risks, and next steps for the selected run (uses on-device Apple Foundation Models when available, falling back to a deterministic local summary).
+5. Use **Open**, **Cancel**, **Retry**, **Duplicate**, or **Handoff** to act on the selected run directly from the panel.
+6. Scroll down to the embedded timeline for the selected run's recorded events, and to **Handoffs** to dispatch or archive any draft handoff cards.
 
 ## Tips & related
-<!-- TODO: cross-links -->
+- [Right dock rim](right-dock-rim.md) — the tab strip (Run/Media/Notes/Files/Inspect) that the Run tab lives on.
+- [Inspector panel](inspector-panel.md) — open the Inspect tab for the full diff/raw/delegation/timeline/safety view of a run.
+- [Activity stack](activity-stack.md) — the inline tool-call trace for a run, shown in the transcript itself.

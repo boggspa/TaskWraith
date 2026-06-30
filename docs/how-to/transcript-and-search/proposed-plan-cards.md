@@ -3,15 +3,22 @@
 **Platform:** Electron
 
 ## What it is
-<!-- TODO: 1-2 sentence function. Explorer note: Plan-mode approval row · ProposedPlanCard.tsx · Electron -->
+A proposed plan card is a collapsible "Plan" panel that appears inline in the transcript when an agent running in **Plan** mode presents a plan for you to review. It lets you approve the plan (which re-runs the agent with write access to implement it), edit it before approving, dismiss it, or send free-text feedback so the agent revises it — all without leaving plan mode until you approve.
 
 ## Where to find it
-<!-- TODO: navigation path. Explorer note: Plan-mode approval row · ProposedPlanCard.tsx · Electron -->
+Appears automatically in the **transcript**, attached to the assistant message that contains the plan, whenever the active permission preset is **Plan** (set via the composer's permissions chip) and the agent's reply is plan-shaped — either an explicit plan block, or (while in plan mode) a substantive turn with real structure.
 
 <!-- TODO(screenshot): Proposed plan card in the transcript -->
 
 ## How to use it
-<!-- TODO: brief numbered steps -->
+1. Send a message with the composer's permissions chip set to **Plan** so the agent runs read-only and is prompted to propose a plan.
+2. When the plan card appears, click its header (or the chevron) to expand or collapse the plan body.
+3. Click **Approve & implement** to accept the plan as-is — this switches the chat off plan mode to **Default Approval** and re-dispatches the thread with write access to implement it.
+4. Click **Edit** to revise the plan text in place, then **Approve edited plan** to implement your edited version instead of the original.
+5. Click **Respond…** to type free-text feedback (or press Cmd/Ctrl+Enter to send) asking the agent to revise the plan — this stays in plan mode and does not implement anything.
+6. Click **Dismiss** to reject the plan without implementing it; the chat stays in plan mode.
+7. Once you've approved or dismissed, the card collapses to a read-only outcome badge ("Approved" or "Dismissed") and the action row disappears.
 
 ## Tips & related
-<!-- TODO: cross-links -->
+- [Provider, model, and permissions pickers](../composer/provider-model-permissions-pickers.md) — where you switch the composer to **Plan** to trigger these cards.
+- [Permission elevation sheet](../approvals-and-permissions/permission-elevation-sheet.md) — related approval-posture prompts you may see when a run needs higher trust.
