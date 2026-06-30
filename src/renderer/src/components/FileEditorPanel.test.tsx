@@ -332,6 +332,13 @@ describe('file editor keyboard commands', () => {
 
     expect(
       resolveFileEditorKeyboardCommand(
+        { ...baseEvent, key: 'p', shiftKey: true },
+        { canRevealSelected: false, canShowInDiff: false }
+      )
+    ).toBeNull()
+
+    expect(
+      resolveFileEditorKeyboardCommand(
         { ...baseEvent, key: 's' },
         { canRevealSelected: false, canShowInDiff: false }
       )

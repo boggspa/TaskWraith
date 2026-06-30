@@ -141,7 +141,7 @@ export function resolveWorkbenchKeyboardCommand(
 
   if (!(event.metaKey || event.ctrlKey) || event.altKey) return null
 
-  if (key === 'p') return { type: 'editor-command', kind: 'quick-open' }
+  if (key === 'p' && !event.shiftKey) return { type: 'editor-command', kind: 'quick-open' }
   if (key === 's') {
     return { type: 'editor-command', kind: event.shiftKey ? 'save-all' : 'save-current' }
   }
@@ -165,6 +165,16 @@ export function resolveWorkbenchKeyboardCommand(
   }
 
   return null
+}
+
+export function shouldSuppressWorkbenchKeyboardShortcut(target: EventTarget | null): boolean {
+  if (typeof HTMLElement === 'undefined') return false
+  if (!(target instanceof HTMLElement)) return false
+  if (target.closest('.cm-editor')) return true
+  if (target.closest('[role="textbox"]')) return true
+  if (target.isContentEditable) return true
+  const tagName = target.tagName.toLowerCase()
+  return tagName === 'input' || tagName === 'textarea' || tagName === 'select'
 }
 
 function WorkbenchNavIcon({ view }: { view: WorkbenchView }) {
@@ -384,6 +394,7 @@ export function TaskWraithWorkbench({
 
   const handleWorkbenchKeyDown = useCallback(
     (event: ReactKeyboardEvent<HTMLElement>) => {
+      if (shouldSuppressWorkbenchKeyboardShortcut(event.target)) return
       const command = resolveWorkbenchKeyboardCommand(event, {
         hasDiffEditorTarget: Boolean(diffEditorActionPath),
         hasEditorDiffTarget: Boolean(editorDiffActionPath),

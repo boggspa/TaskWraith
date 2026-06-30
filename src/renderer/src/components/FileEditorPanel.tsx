@@ -100,7 +100,7 @@ export function resolveFileEditorKeyboardCommand(
 
   if (!(event.metaKey || event.ctrlKey) || event.altKey) return null
 
-  if (key === 'p') return { type: 'editor-command', kind: 'quick-open' }
+  if (key === 'p' && !event.shiftKey) return { type: 'editor-command', kind: 'quick-open' }
   if (key === 's') {
     return { type: 'editor-command', kind: event.shiftKey ? 'save-all' : 'save-current' }
   }

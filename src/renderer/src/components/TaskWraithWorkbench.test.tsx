@@ -154,6 +154,13 @@ describe('TaskWraithWorkbench shell', () => {
 
     expect(
       resolveWorkbenchKeyboardCommand(
+        { ...baseEvent, key: 'p', shiftKey: true },
+        { hasDiffEditorTarget: false, hasEditorDiffTarget: false, hasEditorSelection: false }
+      )
+    ).toBeNull()
+
+    expect(
+      resolveWorkbenchKeyboardCommand(
         { ...baseEvent, key: 's', shiftKey: true },
         { hasDiffEditorTarget: false, hasEditorDiffTarget: false, hasEditorSelection: false }
       )
