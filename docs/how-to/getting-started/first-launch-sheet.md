@@ -17,4 +17,4 @@ It appears automatically the first time you launch TaskWraith. You can reopen it
 
 ## Tips & related
 - [Add workspace](add-workspace.md) for setting up your first workspace.
-- [Settings entry](sidebar-navigation/settings-entry.md) to open Settings manually.
+- [Settings entry](../sidebar-navigation/settings-entry.md) to open Settings manually.
