@@ -22,6 +22,6 @@ This section contains public "How To…" guides for each UX feature in TaskWrait
 11. [Media, Audio & Video](media-audio-and-video/)
 
 ### Pending (12–14)
-- 12. Settings & Configuration
+12. [Settings & Configuration](settings-and-configuration/)
 - 13. Notifications & Status
 - 14. Goals, To-Dos & Scheduling
