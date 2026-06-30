@@ -438,7 +438,7 @@ export function CombinedModelPicker({
         provider,
         selectedModelOption.label,
         selectedModelOption.id,
-        showShellFastLabel
+        Boolean(showShellFastLabel)
       ),
       fast: showShellFastLabel ? 'Fast' : '',
       reasoning: reasoningSuffix

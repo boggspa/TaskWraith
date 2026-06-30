@@ -297,7 +297,6 @@ export function formatComposerModelChip(ctx: ComposerChipContext): string {
 
   const shellMatchesProvider =
     (composerStyle === 'codex' && provider === 'codex') ||
-    (composerStyle === 'claude' && provider === 'claude') ||
     (composerStyle === 'kimi' && provider === 'kimi') ||
     (composerStyle === 'gemini' && provider === 'gemini')
 
@@ -308,9 +307,6 @@ export function formatComposerModelChip(ctx: ComposerChipContext): string {
     const short = shortModelName(provider, modelLabel, modelId)
     if (provider === 'codex') {
       return reasoning ? `${short} ${reasoning}` : short
-    }
-    if (provider === 'claude') {
-      return reasoning ? `${short} · ${reasoning}` : short
     }
     if (provider === 'kimi') {
       return reasoning ? `${short} ${reasoning}` : short
