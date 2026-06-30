@@ -851,6 +851,10 @@ import { registerUsageRatesHandlers } from './ipc/usageRatesHandlers'
 import { registerScheduledWorkflowHandlers } from './ipc/scheduledWorkflowHandlers'
 import { registerRunQueueHandlers } from './ipc/runQueueHandlers'
 import { registerApprovalLedgerHandlers } from './ipc/approvalLedgerHandlers'
+import {
+  createBridgeNetworkingTailscaleStatusGetter,
+  registerBridgeAllowlistHandlers
+} from './ipc/bridgeAllowlistHandlers'
 import { registerDiagnosticsHandlers } from './ipc/diagnosticsHandlers'
 import { getCachedRemoteEnsemblePresets } from './remote/EnsembleRosterPresetsCache'
 import { resolveGeminiCliResumePolicy } from './GeminiSessionPolicy'
@@ -24044,79 +24048,25 @@ if (isGeminiMcpBridgeProcess) {
       })
     })
 
-    // Bridge / iOS remote allowlist (Phase C4 admin surface)
-    // The four handlers below proxy to the in-process `RemoteWorkspaceAllowlist`
-    // which persists at `<userData>/bridge/remote-workspaces.json`. They are
-    // unconditionally registered so the renderer can manage allowlist entries
-    // even when the daemon is not running.
-    // Allowlist mutations change what a paired phone is ALLOWED TO SEE — the
-    // workspace list and every projection are filtered through the allowlist.
-    // Re-broadcast after each mutation so the phone's workspace picker and
-    // task feed update immediately instead of waiting for an unrelated chat
-    // mutation or a reconnect. No-ops when no device is connected.
-    const broadcastAllowlistVisibilityChange = (): void => {
-      broadcastWorkspaceList()
-      broadcastThreadList()
-      try {
+    // Phase E3: Bridge Networking — detection + status for the Settings panel.
+    // Available Tailscale results are cached for 5 seconds; unavailable results
+    // re-check immediately so the UI recovers quickly after setup changes.
+    const bridgeNetworkingTailscaleStatus = createBridgeNetworkingTailscaleStatusGetter({
+      detectTailscale,
+      getNowMs: () => Date.now()
+    })
+    registerBridgeAllowlistHandlers({
+      listRemoteAllowlist: () => workspaceService.listRemoteAllowlist(),
+      upsertRemoteAllowlist: (entry) => workspaceService.upsertRemoteAllowlist(entry),
+      removeRemoteAllowlist: (workspaceId) => workspaceService.removeRemoteAllowlist(workspaceId),
+      clearRemoteAllowlist: () => workspaceService.clearRemoteAllowlist(),
+      broadcastWorkspaceList,
+      broadcastThreadList,
+      broadcastRemoteProjectionSnapshot: () => {
         bridgeBroadcaster?.broadcastRemoteProjectionSnapshot()
-      } catch (err) {
-        console.error('[BridgeBroadcaster] allowlist visibility broadcast failed:', err)
-      }
-    }
-    ipcMain.handle('bridge-allowlist-list', () => workspaceService.listRemoteAllowlist())
-    ipcMain.handle(
-      'bridge-allowlist-upsert',
-      (
-        _,
-        entry: {
-          workspaceId: string
-          path: string
-          mode: 'read-only' | 'read-write'
-          capabilities?: RemoteWorkspaceCapability[]
-          allowedProviders: string[]
-          allowedApprovalModes: string[]
-          expiresAt?: number
-        }
-      ) => {
-        const result = workspaceService.upsertRemoteAllowlist(entry)
-        broadcastAllowlistVisibilityChange()
-        return result
-      }
-    )
-    ipcMain.handle('bridge-allowlist-remove', (_, workspaceId: string) => {
-      const result = workspaceService.removeRemoteAllowlist(workspaceId)
-      broadcastAllowlistVisibilityChange()
-      return result
-    })
-    ipcMain.handle('bridge-allowlist-clear', () => {
-      const result = workspaceService.clearRemoteAllowlist()
-      broadcastAllowlistVisibilityChange()
-      return result
-    })
-
-    // Phase E3: Bridge Networking — detection + status for the
-    // Settings panel. Returns the LAN serviceName (used for Bonjour
-    // discovery) and the Tailscale status (cached for ~5 seconds so
-    // refresh clicks don't re-run the CLI on every keystroke).
-    let cachedTailscaleStatus: Awaited<ReturnType<typeof detectTailscale>> | null = null
-    let cachedTailscaleAt = 0
-    const TAILSCALE_SUCCESS_CACHE_TTL_MS = 5_000
-    const bridgeNetworkingTailscaleStatus = async (): Promise<
-      Awaited<ReturnType<typeof detectTailscale>>
-    > => {
-      const now = Date.now()
-      const ttl = cachedTailscaleStatus?.available ? TAILSCALE_SUCCESS_CACHE_TTL_MS : 0
-      if (!cachedTailscaleStatus || now - cachedTailscaleAt > ttl) {
-        cachedTailscaleStatus = await detectTailscale()
-        cachedTailscaleAt = now
-      }
-      return cachedTailscaleStatus
-    }
-    ipcMain.handle('bridge-networking-status', async () => {
-      return {
-        lan: bridgeDaemonStatus(),
-        tailscale: await bridgeNetworkingTailscaleStatus()
-      }
+      },
+      getBridgeDaemonStatus: () => bridgeDaemonStatus(),
+      getBridgeNetworkingTailscaleStatus: () => bridgeNetworkingTailscaleStatus()
     })
 
     const gitService = new GitService()
