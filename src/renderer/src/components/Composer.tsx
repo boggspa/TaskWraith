@@ -28,6 +28,7 @@ import { ComposerPlusPicker } from '../components/ComposerPlusPicker'
 import type { ComposerPlusPickerSection } from '../components/ComposerPlusPicker'
 import { ComposerProviderPicker } from '../components/ComposerProviderPicker'
 import { ComposerSlashMenu } from '../components/ComposerSlashMenu'
+import { HumanCollaborationInviteComposerControl } from './HumanCollaborationInviteComposerControl'
 import {
   ComposerTextareaContextMenu,
   useComposerTextareaContextMenu
@@ -175,6 +176,7 @@ export interface ComposerProps {
   currentGoalModeLabel: any
   currentGoalStatus: any
   currentGuestParticipant: any
+  humanCollaborationInviteActive?: boolean
   currentProvider: any
   currentProviderCapabilityWarning: any
   currentProviderLabel: any
@@ -298,6 +300,7 @@ export interface ComposerProps {
   ollamaToolControlTier: any
   onOllamaModelSelected?: (modelId: string, modelLabel?: string) => void
   onRequestOllamaTier4Ack: (chatId?: string | null, workspacePath?: string | null) => void
+  onCopyHumanCollaborationInvite?: () => void
   openDiscordContextPicker: any
   openGoalPopover: any
   openInspectorTab: any
@@ -454,6 +457,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     currentGoalModeLabel,
     currentGoalStatus,
     currentGuestParticipant,
+    humanCollaborationInviteActive,
     currentProvider,
     currentProviderCapabilityWarning,
     currentProviderLabel,
@@ -575,6 +579,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     ollamaToolControlTier,
     onOllamaModelSelected,
     onRequestOllamaTier4Ack,
+    onCopyHumanCollaborationInvite,
     openDiscordContextPicker,
     openGoalPopover,
     openInspectorTab,
@@ -4119,6 +4124,11 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             <span>{steerIndicatorMessage}</span>
                           </span>
                         )}
+                        <HumanCollaborationInviteComposerControl
+                          active={Boolean(humanCollaborationInviteActive)}
+                          disabled={isCurrentComposerLocked}
+                          onCopyInvite={onCopyHumanCollaborationInvite}
+                        />
                         {/*
                         1.0.6-EW70 — the run/queue/steer/stop buttons are
                         wrapped in `.composer-send-cluster` (display:contents

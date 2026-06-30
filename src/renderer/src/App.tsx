@@ -1264,15 +1264,19 @@ function App(): React.JSX.Element {
     },
     [ensureChatPersistedForHumanCollaboration, refreshHumanCollaborationShares]
   )
+  const activeHumanCollaborationShareByChatId = useMemo(() => {
+    const byChatId = new Map<string, HumanCollaborationShare>()
+    for (const share of humanCollaborationShares) {
+      if (share?.enabled === false || !share.chatId || byChatId.has(share.chatId)) continue
+      byChatId.set(share.chatId, share)
+    }
+    return byChatId
+  }, [humanCollaborationShares])
   const currentChatHumanCollaborationShare = useMemo(() => {
     const chatId = currentChat?.appChatId
     if (!chatId) return null
-    return (
-      humanCollaborationShares.find(
-        (share) => share?.enabled !== false && share.chatId === chatId
-      ) || null
-    )
-  }, [currentChat?.appChatId, humanCollaborationShares])
+    return activeHumanCollaborationShareByChatId.get(chatId) || null
+  }, [activeHumanCollaborationShareByChatId, currentChat?.appChatId])
   const handleCreateHumanCollaborationShare = useCallback(() => {
     const chatId = currentChat?.appChatId
     if (!chatId) return
@@ -22259,6 +22263,8 @@ function App(): React.JSX.Element {
               )
             : undefined
       }
+      const paneHumanCollaborationShare =
+        activeHumanCollaborationShareByChatId.get(viewerChatId) || null
       const paneComposerCtx: ComposerProps = {
         // Slice H: spread the MEMOISED stable base (chat-independent props + bagged
         // handlers) instead of the focused `composerCtx`. The base is referentially
@@ -22291,6 +22297,15 @@ function App(): React.JSX.Element {
         shouldShowGhostCompanion: paneCtxHelpers.paneGhostEnabled(viewerPaneIndex),
         currentChat: viewerChat,
         currentComposerChatId: viewerChatId,
+        humanCollaborationInviteActive: Boolean(paneHumanCollaborationShare),
+        onCopyHumanCollaborationInvite: paneHumanCollaborationShare
+          ? () =>
+              void shareChatIdAndCopyInvite(paneHumanCollaborationShare.chatId, {
+                mode: paneHumanCollaborationShare.mode,
+                actionLabel: 'refreshed',
+                chat: viewerChat
+              })
+          : undefined,
         currentProvider: viewerProvider,
         currentProviderLabel: viewerProviderLabel,
         currentProviderModelOptions: paneCtxHelpers.getProviderModelOptions(viewerProvider),
@@ -22472,6 +22487,7 @@ function App(): React.JSX.Element {
       return paneComposerCtx
     },
     [
+      activeHumanCollaborationShareByChatId,
       paneCtxHelpers,
       agentModelsByProvider.claude,
       attachedWindow,
@@ -22497,6 +22513,7 @@ function App(): React.JSX.Element {
       rememberMultiviewPaneComposerSelection,
       runQueueJobs,
       runningChatIds,
+      shareChatIdAndCopyInvite,
       usageInitialized,
       usageRecords,
       welcomeExternalHeatmapEnabled,
@@ -22547,6 +22564,10 @@ function App(): React.JSX.Element {
     currentActiveGoal,
     currentChat,
     currentComposerChatId,
+    humanCollaborationInviteActive: Boolean(currentChatHumanCollaborationShare),
+    onCopyHumanCollaborationInvite: currentChatHumanCollaborationShare
+      ? handleCopyCurrentHumanCollaborationInvite
+      : undefined,
     currentGoalButtonTitle,
     currentGoalStatus,
     currentProvider,
