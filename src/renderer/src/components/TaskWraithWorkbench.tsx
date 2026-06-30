@@ -39,6 +39,64 @@ export const WORKBENCH_SPLIT_MAX_RATIO = 72
 export const WORKBENCH_SPLIT_KEYBOARD_STEP = 4
 export const WORKBENCH_SPLIT_KEYBOARD_LARGE_STEP = 10
 
+interface WorkbenchSplitResizeWindowTarget {
+  addEventListener(
+    type: 'pointercancel' | 'pointermove' | 'pointerup',
+    listener: (event: PointerEvent) => void
+  ): void
+  removeEventListener(
+    type: 'pointercancel' | 'pointermove' | 'pointerup',
+    listener: (event: PointerEvent) => void
+  ): void
+}
+
+interface WorkbenchSplitResizeCaptureTarget {
+  hasPointerCapture?: (pointerId: number) => boolean
+  releasePointerCapture?: (pointerId: number) => void
+}
+
+export interface WorkbenchSplitResizeSessionOptions {
+  onFinish: () => void
+  onPointerMove: (event: PointerEvent) => void
+  pointerId: number
+  resizerElement: WorkbenchSplitResizeCaptureTarget
+  windowTarget: WorkbenchSplitResizeWindowTarget
+}
+
+export const startWorkbenchSplitResizeSession = ({
+  onFinish,
+  onPointerMove,
+  pointerId,
+  resizerElement,
+  windowTarget
+}: WorkbenchSplitResizeSessionOptions): (() => void) => {
+  let isCleanedUp = false
+  const cleanup = () => {
+    if (isCleanedUp) return
+    isCleanedUp = true
+    windowTarget.removeEventListener('pointermove', onPointerMove)
+    windowTarget.removeEventListener('pointerup', finish)
+    windowTarget.removeEventListener('pointercancel', finish)
+    try {
+      if (resizerElement.hasPointerCapture?.(pointerId) !== false) {
+        resizerElement.releasePointerCapture?.(pointerId)
+      }
+    } catch {
+      // Pointer capture may already have been released by the platform.
+    }
+  }
+  const finish = () => {
+    if (isCleanedUp) return
+    cleanup()
+    onFinish()
+  }
+
+  windowTarget.addEventListener('pointermove', onPointerMove)
+  windowTarget.addEventListener('pointerup', finish)
+  windowTarget.addEventListener('pointercancel', finish)
+  return cleanup
+}
+
 const DEFAULT_EDITOR_STATE: FileEditorPanelState = {
   selectedPath: '',
   dirtyBufferCount: 0,
@@ -346,6 +404,7 @@ export function TaskWraithWorkbench({
   const diffRefreshSeqRef = useRef(0)
   const handledOpenRequestKeyRef = useRef(initialOpenState.handledOpenRequestKey)
   const stageRef = useRef<HTMLDivElement | null>(null)
+  const splitResizeCleanupRef = useRef<(() => void) | null>(null)
   const editorNavRef = useRef<HTMLButtonElement | null>(null)
   const diffNavRef = useRef<HTMLButtonElement | null>(null)
   const splitNavRef = useRef<HTMLButtonElement | null>(null)
@@ -644,7 +703,9 @@ export function TaskWraithWorkbench({
       event.preventDefault()
       event.stopPropagation()
       const pointerId = event.pointerId
-      event.currentTarget.setPointerCapture?.(pointerId)
+      const resizerElement = event.currentTarget
+      splitResizeCleanupRef.current?.()
+      resizerElement.setPointerCapture?.(pointerId)
       let latestRatio = splitRatio
       const updateFromClientX = (clientX: number) => {
         const rect = stageElement.getBoundingClientRect()
@@ -656,18 +717,35 @@ export function TaskWraithWorkbench({
         moveEvent.preventDefault()
         updateFromClientX(moveEvent.clientX)
       }
-      const finishPointerResize = () => {
-        window.removeEventListener('pointermove', handlePointerMove)
-        window.removeEventListener('pointerup', finishPointerResize)
-        window.removeEventListener('pointercancel', finishPointerResize)
-        setStatus(`Editor pane ${latestRatio}%`)
+      const cleanupSession = startWorkbenchSplitResizeSession({
+        onFinish: () => {
+          splitResizeCleanupRef.current = null
+          setStatus(`Editor pane ${latestRatio}%`)
+        },
+        onPointerMove: handlePointerMove,
+        pointerId,
+        resizerElement,
+        windowTarget: window
+      })
+      splitResizeCleanupRef.current = () => {
+        cleanupSession()
+        splitResizeCleanupRef.current = null
       }
-      window.addEventListener('pointermove', handlePointerMove)
-      window.addEventListener('pointerup', finishPointerResize)
-      window.addEventListener('pointercancel', finishPointerResize)
     },
     [activeView, splitRatio, updateSplitRatio]
   )
+
+  useEffect(() => {
+    if (activeView !== 'split') {
+      splitResizeCleanupRef.current?.()
+    }
+  }, [activeView])
+
+  useEffect(() => {
+    return () => {
+      splitResizeCleanupRef.current?.()
+    }
+  }, [])
 
   useEffect(() => {
     if (!openFileRequest) return

@@ -1,5 +1,5 @@
 import { renderToStaticMarkup } from 'react-dom/server'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   buildDiffWorkbenchNavMeta,
   buildEditorWorkbenchNavMeta,
@@ -10,6 +10,7 @@ import {
   resolveWorkbenchSplitResizeRatio,
   resolveInitialWorkbenchView,
   resolveWorkbenchKeyboardCommand,
+  startWorkbenchSplitResizeSession,
   TaskWraithWorkbench,
   WORKBENCH_SPLIT_DEFAULT_RATIO,
   WORKBENCH_SPLIT_MAX_RATIO,
@@ -258,6 +259,55 @@ describe('TaskWraithWorkbench shell', () => {
         52
       )
     ).toBeNull()
+  })
+
+  it('cleans up split pointer resize listeners and capture idempotently', () => {
+    const listeners = new Map<string, (event: PointerEvent) => void>()
+    const addEventListener = vi.fn((type: string, listener: (event: PointerEvent) => void) => {
+      listeners.set(type, listener)
+    })
+    const removeEventListener = vi.fn()
+    const releasePointerCapture = vi.fn()
+    const onFinish = vi.fn()
+    const onPointerMove = vi.fn()
+    const cleanup = startWorkbenchSplitResizeSession({
+      onFinish,
+      onPointerMove,
+      pointerId: 42,
+      resizerElement: {
+        hasPointerCapture: () => true,
+        releasePointerCapture
+      },
+      windowTarget: {
+        addEventListener,
+        removeEventListener
+      }
+    })
+
+    expect(addEventListener).toHaveBeenCalledTimes(3)
+    expect(addEventListener).toHaveBeenCalledWith('pointermove', onPointerMove)
+    expect(addEventListener).toHaveBeenCalledWith('pointerup', listeners.get('pointerup'))
+    expect(addEventListener).toHaveBeenCalledWith(
+      'pointercancel',
+      listeners.get('pointercancel')
+    )
+
+    listeners.get('pointerup')?.({} as PointerEvent)
+    expect(onFinish).toHaveBeenCalledTimes(1)
+    expect(removeEventListener).toHaveBeenCalledTimes(3)
+    expect(removeEventListener).toHaveBeenCalledWith('pointermove', onPointerMove)
+    expect(removeEventListener).toHaveBeenCalledWith('pointerup', listeners.get('pointerup'))
+    expect(removeEventListener).toHaveBeenCalledWith(
+      'pointercancel',
+      listeners.get('pointercancel')
+    )
+    expect(releasePointerCapture).toHaveBeenCalledWith(42)
+
+    cleanup()
+    listeners.get('pointercancel')?.({} as PointerEvent)
+    expect(onFinish).toHaveBeenCalledTimes(1)
+    expect(removeEventListener).toHaveBeenCalledTimes(3)
+    expect(releasePointerCapture).toHaveBeenCalledTimes(1)
   })
 
   it('maps Workbench keyboard shortcuts to scoped commands', () => {
