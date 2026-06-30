@@ -167,6 +167,22 @@ type OllamaProviderGroup = {
   models: CombinedModelPickerModelOption[]
 }
 
+export type CombinedModelPickerResetState = {
+  providerIndex: number
+  activeOllamaProviderId: string | null
+  modelIndex: number
+  reasoningIndex: number
+  focusedColumn: CombinedModelPickerColumn
+}
+
+export function getCombinedModelPickerResetSignature(params: {
+  provider: ProviderId
+  isOllamaProviderPicker: boolean
+  selectedModelId: string
+}): string {
+  return `${params.provider}\u0000${params.isOllamaProviderPicker ? 'ollama' : 'standard'}\u0000${params.selectedModelId}`
+}
+
 const OLLAMA_CUSTOM_PROVIDER_GROUP = {
   id: 'custom',
   label: 'Custom',
@@ -201,6 +217,44 @@ function buildOllamaProviderGroups(
   }
 
   return [...groups.values()].filter((group) => group.models.length > 0)
+}
+
+export function resolveCombinedModelPickerResetState(params: {
+  isOllamaProviderPicker: boolean
+  ollamaProviderGroups: readonly OllamaProviderGroup[]
+  modelOptions: readonly CombinedModelPickerModelOption[]
+  selectedModelId: string
+  selectedOllamaProviderId: string | null
+  reasoningOptions: readonly CombinedModelPickerReasoningOption[]
+  selectedReasoning: string
+}): CombinedModelPickerResetState {
+  const providerIndex = params.isOllamaProviderPicker
+    ? Math.max(
+        0,
+        params.ollamaProviderGroups.findIndex(
+          (group) => group.id === params.selectedOllamaProviderId
+        )
+      )
+    : 0
+  const initialModelOptions = params.isOllamaProviderPicker
+    ? params.ollamaProviderGroups[providerIndex]?.models || []
+    : params.modelOptions
+  const modelIndex = Math.max(
+    0,
+    initialModelOptions.findIndex((option) => option.id === params.selectedModelId)
+  )
+  const reasoningIndex = Math.max(
+    0,
+    params.reasoningOptions.findIndex((option) => option.value === params.selectedReasoning)
+  )
+
+  return {
+    providerIndex,
+    activeOllamaProviderId: params.ollamaProviderGroups[providerIndex]?.id || null,
+    modelIndex,
+    reasoningIndex,
+    focusedColumn: params.isOllamaProviderPicker ? 'provider' : 'model'
+  }
 }
 
 /**
@@ -257,6 +311,7 @@ export function CombinedModelPicker({
   const [modelHighlight, setModelHighlight] = useState(0)
   const [reasoningHighlight, setReasoningHighlight] = useState(0)
   const [activeOllamaProviderId, setActiveOllamaProviderId] = useState<string | null>(null)
+  const resetSignatureRef = useRef<string | null>(null)
 
   const ollamaProviderGroups = useMemo(
     () => (provider === 'ollama' ? buildOllamaProviderGroups(modelOptions) : []),
@@ -375,7 +430,7 @@ export function CombinedModelPicker({
       const trigger = triggerRef.current
       if (!trigger) return
       const rect = trigger.getBoundingClientRect()
-      const popoverWidth = isOllamaProviderPicker ? 560 : reasoningOptions.length > 0 ? 360 : 200
+      const popoverWidth = isOllamaProviderPicker ? 500 : reasoningOptions.length > 0 ? 360 : 200
       const left = Math.max(8, rect.right - popoverWidth)
       // Anchor ABOVE the chip with a small gap.
       const top = rect.top - 8
@@ -400,41 +455,60 @@ export function CombinedModelPicker({
     }
   }, [isOllamaProviderPicker, open, reasoningOptions.length, repositionOnScroll])
 
-  // Reset highlights when the popover opens.
+  // Reset model/provider highlights only when the popover opens or the committed
+  // model/provider selection changes. Parent catalog refreshes recreate
+  // modelOptions/ollamaProviderGroups while the picker is open; those updates
+  // must not snap Ollama browsing back to the selected model's provider.
   useEffect(() => {
-    if (!open) return
-    const providerIdx = isOllamaProviderPicker
-      ? Math.max(
-          0,
-          ollamaProviderGroups.findIndex((group) => group.id === selectedOllamaProviderId)
-        )
-      : 0
-    const modelIdx = Math.max(
-      0,
-      visibleModelOptions.findIndex((option) => option.id === selectedModelId)
-    )
-    const reasoningIdx = Math.max(
-      0,
-      reasoningOptions.findIndex((option) => option.value === selectedReasoning)
-    )
+    if (!open) {
+      resetSignatureRef.current = null
+      return
+    }
+    const resetSignature = getCombinedModelPickerResetSignature({
+      provider,
+      isOllamaProviderPicker,
+      selectedModelId
+    })
+    if (resetSignatureRef.current === resetSignature) return
+    resetSignatureRef.current = resetSignature
+    const resetState = resolveCombinedModelPickerResetState({
+      isOllamaProviderPicker,
+      ollamaProviderGroups,
+      modelOptions,
+      selectedModelId,
+      selectedOllamaProviderId,
+      reasoningOptions,
+      selectedReasoning
+    })
     const frame = window.requestAnimationFrame(() => {
-      setProviderHighlight(providerIdx)
-      setActiveOllamaProviderId(ollamaProviderGroups[providerIdx]?.id || null)
-      setModelHighlight(modelIdx)
-      setReasoningHighlight(reasoningIdx)
-      setFocusedColumn(isOllamaProviderPicker ? 'provider' : 'model')
+      setProviderHighlight(resetState.providerIndex)
+      setActiveOllamaProviderId(resetState.activeOllamaProviderId)
+      setModelHighlight(resetState.modelIndex)
+      setReasoningHighlight(resetState.reasoningIndex)
+      setFocusedColumn(resetState.focusedColumn)
     })
     return () => window.cancelAnimationFrame(frame)
   }, [
     isOllamaProviderPicker,
+    modelOptions,
     ollamaProviderGroups,
     open,
     selectedModelId,
     selectedOllamaProviderId,
     reasoningOptions,
-    selectedReasoning,
-    visibleModelOptions
+    selectedReasoning
   ])
+
+  // Keep the reasoning row highlight current without disturbing the provider
+  // and model browse columns.
+  useEffect(() => {
+    if (!open) return
+    const reasoningIdx = Math.max(
+      0,
+      reasoningOptions.findIndex((option) => option.value === selectedReasoning)
+    )
+    setReasoningHighlight(reasoningIdx)
+  }, [open, reasoningOptions, selectedReasoning])
 
   // Click-outside + Escape dismiss.
   useEffect(() => {
