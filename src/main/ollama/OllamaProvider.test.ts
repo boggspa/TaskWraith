@@ -566,6 +566,87 @@ describe('runOllamaProvider streaming', () => {
     expect(chatBodies[1]).toContain('assigned participant role')
   })
 
+  it('keeps ensemble authority salient after tool-intent stubs', async () => {
+    let chatCalls = 0
+    const chatBodies: string[] = []
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (String(url).endsWith('/api/tags')) {
+        return jsonResponse({
+          models: [
+            {
+              name: 'stream-model:latest',
+              digest: 'digest-stream',
+              details: { family: 'qwen' },
+              capabilities: ['tools']
+            }
+          ]
+        })
+      }
+      if (String(url).endsWith('/api/show')) {
+        return jsonResponse({ details: { family: 'qwen' }, capabilities: ['tools'] })
+      }
+      if (String(url).endsWith('/api/chat')) {
+        chatCalls += 1
+        chatBodies.push(String(init?.body || ''))
+        if (chatCalls === 1) {
+          return ollamaStreamResponse([
+            JSON.stringify({
+              message: { role: 'assistant', content: 'I should use workspace_search now.' }
+            }),
+            JSON.stringify({ done: true, prompt_eval_count: 8, eval_count: 6 })
+          ])
+        }
+        return ollamaStreamResponse([
+          JSON.stringify({
+            message: {
+              role: 'assistant',
+              content: 'I will answer from my assigned role with the next local step.'
+            }
+          }),
+          JSON.stringify({ done: true, prompt_eval_count: 8, eval_count: 12 })
+        ])
+      }
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const { deps } = makeProviderDeps({
+      fetchMock,
+      settings: {
+        ollamaRunProfiles: {
+          'stream-model:latest': { protocolMode: 'json_only' }
+        }
+      },
+      executeTool: async () => ({ ok: true, output: '' })
+    })
+
+    await runOllamaProvider(
+      deps,
+      stubEvent,
+      {
+        ...basePayload,
+        prompt: [
+          'TaskWraith Ensemble Mode',
+          'Role boundary contract:',
+          '- Treat Boss routing as authoritative.',
+          'Current user request:',
+          'Check tool-intent retry parity.'
+        ].join('\n'),
+        ensembleRun: {
+          roundId: 'round-1',
+          participantId: 'participant-ollama',
+          provider: 'ollama',
+          role: 'SliceWorker',
+          order: 9
+        }
+      },
+      baseRoute
+    )
+
+    expect(chatBodies).toHaveLength(2)
+    expect(chatBodies[1]).toContain('assigned participant')
+    expect(chatBodies[1]).toContain('Boss/Bossman/Lead routing')
+    expect(chatBodies[1]).toContain('assigned participant role')
+  })
+
   it('emits content deltas before the Ollama HTTP stream finishes', async () => {
     const gate = makeDeferred()
     const fetchMock = vi.fn(async (url: string) => {
@@ -1171,6 +1252,102 @@ describe('runOllamaProvider streaming', () => {
           String(line.payload.message || '').includes('Codex or Claude')
       )
     ).toBe(false)
+  })
+
+  it('keeps ensemble authority salient after no-active-goal tool failures', async () => {
+    let chatCalls = 0
+    const chatBodies: string[] = []
+    const executeTool = vi.fn(async () => ({
+      ok: false,
+      output:
+        '{"ok":false,"tool":"goal_update","error":"No active TaskWraith goal is set for this chat."}'
+    }))
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (String(url).endsWith('/api/tags')) {
+        return jsonResponse({
+          models: [
+            {
+              name: 'stream-model:latest',
+              digest: 'digest-stream',
+              details: { family: 'qwen' },
+              capabilities: ['tools']
+            }
+          ]
+        })
+      }
+      if (String(url).endsWith('/api/show')) {
+        return jsonResponse({ details: { family: 'qwen' }, capabilities: ['tools'] })
+      }
+      if (String(url).endsWith('/api/chat')) {
+        chatCalls += 1
+        chatBodies.push(String(init?.body || ''))
+        if (chatCalls === 1) {
+          return ollamaStreamResponse([
+            JSON.stringify({
+              message: {
+                role: 'assistant',
+                content:
+                  '{"taskwraith_tool":{"name":"goal_update","arguments":{"status":"active","reason":"Setting up test environment."}}}'
+              }
+            }),
+            JSON.stringify({ done: true, prompt_eval_count: 12, eval_count: 8 })
+          ])
+        }
+        return ollamaStreamResponse([
+          JSON.stringify({
+            message: {
+              role: 'assistant',
+              content: 'I will continue within my assigned ensemble slice.'
+            }
+          }),
+          JSON.stringify({ done: true, prompt_eval_count: 12, eval_count: 12 })
+        ])
+      }
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const { deps, lines } = makeProviderDeps({
+      fetchMock,
+      executeTool,
+      settings: {
+        ollamaRunProfiles: {
+          'stream-model:latest': { protocolMode: 'json_only' }
+        }
+      }
+    })
+
+    await runOllamaProvider(
+      deps,
+      stubEvent,
+      {
+        ...basePayload,
+        prompt: [
+          'TaskWraith Ensemble Mode',
+          'Role boundary contract:',
+          '- Treat Boss routing as authoritative.',
+          'Current user request:',
+          'add tests locally'
+        ].join('\n'),
+        ensembleRun: {
+          roundId: 'round-1',
+          participantId: 'participant-ollama',
+          provider: 'ollama',
+          role: 'SliceWorker',
+          order: 9
+        }
+      },
+      baseRoute
+    )
+
+    expect(executeTool).toHaveBeenCalledTimes(1)
+    expect(chatBodies).toHaveLength(2)
+    expect(chatBodies[1]).toContain('Do NOT call goal_update')
+    expect(chatBodies[1]).toContain('assigned ensemble slice')
+    expect(chatBodies[1]).toContain('Boss/Bossman/Lead routing')
+    expect(
+      lines
+        .filter((line) => line.payload.type === 'content')
+        .map((line) => line.payload.text)
+    ).toEqual(['I will continue within my assigned ensemble slice.'])
   })
 
   it('streams visible Ollama thinking once public content is flowing', async () => {
@@ -1901,6 +2078,11 @@ describe('parseOllamaToolRequest', () => {
     expect(prompt).toContain('emit a real tool call now')
     expect(prompt).toContain('Available tools: web_search, web_fetch.')
     expect(prompt).toContain('give your complete final answer')
+    expect(prompt).toContain('to the user')
+    const ensemblePrompt = ollamaToolIntentNudgePrompt(['web_search'], { ensembleRun: true })
+    expect(ensemblePrompt).toContain('assigned participant role')
+    expect(ensemblePrompt).toContain('Boss/Bossman/Lead routing')
+    expect(ensemblePrompt).not.toContain('to the user')
   })
 
   it('detects a leaked tool-protocol blob that should not reach the user', () => {
@@ -2267,6 +2449,10 @@ describe('repeated-tool-call guard', () => {
     expect(ollamaNoActiveGoalToolNudge('goal_update', { repeated: true })).toContain(
       'already retried'
     )
+    const ensembleNudge = ollamaNoActiveGoalToolNudge('goal_update', { ensembleRun: true })
+    expect(ensembleNudge).toContain('assigned ensemble slice')
+    expect(ensembleNudge).toContain('Boss/Bossman/Lead routing')
+    expect(ensembleNudge).not.toContain('Continue the user request')
   })
 })
 

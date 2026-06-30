@@ -454,7 +454,7 @@ export function isOllamaNoActiveGoalToolResult(
 
 export function ollamaNoActiveGoalToolNudge(
   toolName: string,
-  options: { repeated?: boolean } = {}
+  options: { repeated?: boolean; ensembleRun?: boolean } = {}
 ): string {
   const prefix = options.repeated
     ? `You already retried \`${toolName}\`, but TaskWraith still has no active thread goal.`
@@ -463,7 +463,10 @@ export function ollamaNoActiveGoalToolNudge(
     prefix,
     'Do NOT call goal_update, goal_complete, or goal_blocked again in this run.',
     'Those tools only change the lifecycle of an existing TaskWraith goal; they are not todo lists, progress notes, or planning tools.',
-    'Continue the user request with the available workspace tools, or give a normal final answer with the next local step.'
+    ...ollamaEnsembleRetryReminder(options),
+    options.ensembleRun
+      ? 'Continue inside your assigned ensemble slice with the available workspace tools, or give a normal final answer with the next local step.'
+      : 'Continue the user request with the available workspace tools, or give a normal final answer with the next local step.'
   ].join(' ')
 }
 
@@ -1602,13 +1605,19 @@ export function ollamaReasoningOnlyNudgePrompt(options?: OllamaRetryPromptOption
  * actual structured tool call, then stop — handing an intent stub back to the
  * user instead of acting. Push them to emit the real call (or, if no tool is
  * actually needed, to answer) rather than describing the call in prose. */
-export function ollamaToolIntentNudgePrompt(toolNames: string[] = []): string {
+export function ollamaToolIntentNudgePrompt(
+  toolNames: string[] = [],
+  options?: OllamaRetryPromptOptions
+): string {
   const available = toolNames.filter(Boolean)
   return [
     'You described using a tool in prose but did not actually call one.',
     'Stop announcing the tool and emit a real tool call now (a structured function call), not a description of it.',
     available.length ? `Available tools: ${available.join(', ')}.` : '',
-    'If you do not actually need a tool, give your complete final answer to the user in normal assistant prose instead.'
+    ...ollamaEnsembleRetryReminder(options),
+    options?.ensembleRun
+      ? 'If you do not actually need a tool, give your complete final answer for this ensemble turn from your assigned participant role instead.'
+      : 'If you do not actually need a tool, give your complete final answer to the user in normal assistant prose instead.'
   ]
     .filter(Boolean)
     .join(' ')
@@ -2470,7 +2479,7 @@ export async function runOllamaProvider(
           messages.push({ role: 'assistant', content: turn.content })
           messages.push({
             role: 'user',
-            content: ollamaToolIntentNudgePrompt(availableToolNames)
+            content: ollamaToolIntentNudgePrompt(availableToolNames, { ensembleRun })
           })
           continue
         }
@@ -2597,7 +2606,7 @@ export async function runOllamaProvider(
           toolResult
         )
         let modelFacingOutput = noActiveGoalToolResult
-          ? ollamaNoActiveGoalToolNudge(toolRequest.toolName)
+          ? ollamaNoActiveGoalToolNudge(toolRequest.toolName, { ensembleRun })
           : truncatedOutput
         if (toolResult.ok || noActiveGoalToolResult) {
           const repeat = evaluateOllamaRepeatedToolCall(
@@ -2608,7 +2617,7 @@ export async function runOllamaProvider(
           )
           if (repeat.repeated) {
             modelFacingOutput = noActiveGoalToolResult
-              ? ollamaNoActiveGoalToolNudge(toolRequest.toolName, { repeated: true })
+              ? ollamaNoActiveGoalToolNudge(toolRequest.toolName, { repeated: true, ensembleRun })
               : ollamaRepeatedToolCallNudge(toolRequest.toolName)
           }
         }
