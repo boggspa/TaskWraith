@@ -1,11 +1,17 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type JSX } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type DragEvent as ReactDragEvent,
+  type JSX
+} from 'react'
 import type {
   AgenticServicesSettings,
   ComposerStyle,
   EnsembleOrchestrationMode,
-  EnsembleParticipant,
-  PermissionPresetId,
-  ProviderId
+  EnsembleParticipant
 } from '../../../main/store/types'
 import { isRetiredProvider } from '../../../shared/retiredProviders'
 import {
@@ -25,25 +31,25 @@ import {
   type EnsembleRosterPreset
 } from '../lib/ensembleRosterPresets'
 import {
-  buildProviderChangeParticipantPatch,
-  getEnsembleModelDefaults,
-  getEnsembleReasoningOptions,
-  resolveEnsembleParticipantSettings
-} from '../lib/ensembleProviderDefaults'
-import {
-  buildParticipantToolGrantPatch,
-  getParticipantToolGrantIds
-} from '../lib/ensembleParticipantToolGrants'
-import { WORKSPACE_POLICY_SERVICES } from '../lib/workspacePolicyServices'
-import {
   ENSEMBLE_ROLE_PRESETS,
   resolveRolePresetId,
   roleLabelForPresetId
 } from '../lib/ensembleRolePresets'
 import { getProviderLabel } from '../lib/providerLabels'
-import { CombinedModelPicker, type CombinedModelPickerModelOption } from './CombinedModelPicker'
-import { CombinedPermissionsPicker, type PermissionOption } from './CombinedPermissionsPicker'
-import { ComposerProviderPicker } from './ComposerProviderPicker'
+import { ParticipantPickerCluster } from './ParticipantPickerCluster'
+import { AgentPoolContainer } from './AgentPoolContainer'
+import { AgentIdentityIcon } from './icons/AgentIdentityIcon'
+import {
+  applyPooledAgentToParticipant,
+  createPooledAgentFromParticipant,
+  listPooledAgents,
+  pooledAgentIconProps,
+  pooledAgentToParticipantSnapshot,
+  POOLED_AGENT_DRAG_MIME,
+  ROSTER_PARTICIPANT_DRAG_MIME,
+  subscribeEnsembleAgentPool,
+  type PooledAgent
+} from '../lib/ensembleAgentPool'
 
 /** The right-pane working copy: preset metadata + a live participant list
  * (materialized once on selection so the rows carry stable ids for React keys
@@ -61,16 +67,6 @@ interface RosterSettingsPanelProps {
   grokAvailable?: boolean
   cursorAvailable?: boolean
 }
-
-// Lossless permission options: the values ARE the PermissionPresetId, so
-// full_access + custom survive a round-trip (unlike the composer's 3-mode
-// collapse, which is fine for ephemeral live edits but not persisted data).
-const PERMISSION_PRESET_OPTIONS: PermissionOption[] = [
-  { value: 'read_only', label: 'Plan / Read-only' },
-  { value: 'default', label: 'Default approval' },
-  { value: 'workspace_write', label: 'Full workspace access' },
-  { value: 'full_access', label: 'Full access' }
-]
 
 function uniqueNewName(existing: EnsembleRosterPreset[]): string {
   const base = 'New roster'
@@ -132,6 +128,7 @@ interface RosterParticipantRowProps {
   onPatch: (id: string, patch: Partial<EnsembleParticipant>, persist?: boolean) => void
   onFlush: () => void
   onApplyPermissionsToAll: (source: EnsembleParticipant) => void
+  onSaveToPool: (id: string) => void
 }
 
 function RosterParticipantRow({
@@ -150,13 +147,27 @@ function RosterParticipantRow({
   onSetBossman,
   onPatch,
   onFlush,
-  onApplyPermissionsToAll
+  onApplyPermissionsToAll,
+  onSaveToPool
 }: RosterParticipantRowProps): JSX.Element {
   const retired = isRetiredProvider(participant.provider)
   const rolePresetId = resolveRolePresetId(participant.role)
+  const isLinkedToPool = Boolean(participant.pooledAgentId)
 
   const rail = (
     <div className="settings-roster-participant-rail">
+      <span
+        className="settings-roster-grip"
+        draggable
+        onDragStart={(event) => {
+          event.dataTransfer.setData(ROSTER_PARTICIPANT_DRAG_MIME, participant.id)
+          event.dataTransfer.effectAllowed = 'copy'
+        }}
+        title="Drag to the agent pool to save"
+        aria-hidden
+      >
+        ⠿
+      </span>
       <button
         type="button"
         className="settings-roster-chevron"
@@ -217,140 +228,20 @@ function RosterParticipantRow({
     )
   }
 
-  const resolved = resolveEnsembleParticipantSettings(participant)
-  const defaults = getEnsembleModelDefaults(participant.provider)
-  // SettingsPanel always supplies agenticServices; the empty-object fallback
-  // only guards a hypothetical caller that doesn't (the grants column reads it
-  // for sub-labels). Avoids a runtime crash without coupling a literal default
-  // to the churning AgenticServicesSettings shape.
-  const services = agenticServices ?? ({} as AgenticServicesSettings)
-
-  const modelOptions: CombinedModelPickerModelOption[] = defaults.modelOptions
-  // Display the participant's model, mapping the agnostic 'cli-default' seed to
-  // the provider's preferred id so the chip reads cleanly. The stored value is
-  // untouched until the user actually picks a model.
-  const selectedModelId =
-    participant.model && participant.model !== 'cli-default'
-      ? participant.model
-      : defaults.defaultModelId
-
-  const onSelectModel = (nextModel: string): void => {
-    const patch: Partial<EnsembleParticipant> = { model: nextModel }
-    if (participant.provider === 'claude') {
-      const nextReasoningOptions = getEnsembleReasoningOptions(participant.provider, nextModel)
-      const enabledReasoningOptions = nextReasoningOptions.filter((option) => !option.disabled)
-      const nextReasoningValues = new Set(enabledReasoningOptions.map((option) => option.value))
-      patch.reasoningEffort = nextReasoningValues.has(defaults.defaultReasoning)
-        ? defaults.defaultReasoning
-        : enabledReasoningOptions[0]?.value
-    }
-    // Drop fast mode when the new model can't support it (mirrors composer).
-    if (
-      (participant.provider === 'codex' || participant.provider === 'claude') &&
-      !defaults.fastModeCapableModelIds.has(nextModel)
-    ) {
-      patch.fastModeEnabled = false
-      if (participant.provider === 'codex') patch.serviceTier = ''
-    }
-    onPatch(participant.id, patch)
-  }
-
-  const selectedReasoning =
-    participant.provider === 'kimi'
-      ? resolved.thinkingEnabled
-        ? 'on'
-        : 'off'
-      : resolved.reasoningEffort
-  const reasoningOptions = getEnsembleReasoningOptions(participant.provider, selectedModelId)
-  const onSelectReasoning = (value: string): void => {
-    if (participant.provider === 'kimi') {
-      onPatch(participant.id, { thinkingEnabled: value !== 'off' })
-    } else {
-      onPatch(participant.id, { reasoningEffort: value })
-    }
-  }
-
-  const fastModeEnabled =
-    participant.provider === 'codex'
-      ? resolved.serviceTier === 'fast'
-      : participant.provider === 'claude'
-        ? resolved.fastModeEnabled
-        : false
-  const onToggleFastMode =
-    participant.provider === 'codex'
-      ? (): void => {
-          const nextTier = resolved.serviceTier === 'fast' ? '' : 'fast'
-          onPatch(participant.id, { serviceTier: nextTier, fastModeEnabled: nextTier === 'fast' })
-        }
-      : participant.provider === 'claude'
-        ? (): void => onPatch(participant.id, { fastModeEnabled: !resolved.fastModeEnabled })
-        : undefined
-
-  const permissionOptions: PermissionOption[] = [
-    ...PERMISSION_PRESET_OPTIONS,
-    ...(resolved.permissionPresetId === 'custom' ? [{ value: 'custom', label: 'Custom' }] : [])
-  ]
-  const enabledGrantIds = getParticipantToolGrantIds(participant)
-
   return (
     <li className={`settings-roster-participant${participant.enabled ? '' : ' is-disabled'}`}>
       {rail}
       <div className="settings-roster-participant-body">
         <div className="settings-roster-participant-top">
-          <ComposerProviderPicker
-            provider={participant.provider}
+          <ParticipantPickerCluster
+            participant={participant}
             composerStyle={composerStyle}
+            agenticServices={agenticServices}
             grokAvailable={grokAvailable}
             cursorAvailable={cursorAvailable}
-            onSelect={(next: ProviderId) =>
-              onPatch(participant.id, buildProviderChangeParticipantPatch(next))
-            }
-            activeModelId={selectedModelId}
-            title="Participant provider"
-            repositionOnScroll
-          />
-          <CombinedModelPicker
-            provider={participant.provider}
-            composerStyle={composerStyle}
-            modelOptions={modelOptions}
-            selectedModelId={selectedModelId}
-            onSelectModel={onSelectModel}
-            reasoningOptions={reasoningOptions}
-            selectedReasoning={selectedReasoning}
-            onSelectReasoning={onSelectReasoning}
-            codexReasoningEffort={
-              participant.provider === 'codex' ? resolved.reasoningEffort : undefined
-            }
-            claudeReasoningEffort={
-              participant.provider === 'claude' ? resolved.reasoningEffort : undefined
-            }
-            kimiThinkingEnabled={
-              participant.provider === 'kimi' ? resolved.thinkingEnabled : undefined
-            }
-            fastModeCapableModelIds={defaults.fastModeCapableModelIds}
-            fastModeEnabled={fastModeEnabled}
-            onToggleFastMode={onToggleFastMode}
-            repositionOnScroll
-          />
-          <CombinedPermissionsPicker
-            provider={participant.provider}
-            composerStyle={composerStyle}
-            permissionOptions={permissionOptions}
-            selectedPermission={resolved.permissionPresetId}
-            onSelectPermission={(value) =>
-              onPatch(participant.id, { permissionPresetId: value as PermissionPresetId })
-            }
-            grantServices={WORKSPACE_POLICY_SERVICES}
-            enabledGrantIds={enabledGrantIds}
-            agenticServices={services}
-            onToggleGrant={(service, enabled) =>
-              onPatch(participant.id, buildParticipantToolGrantPatch(participant, service, enabled))
-            }
-            grantScopeLabel="participant"
-            onApplyToAllParticipants={
-              showApplyToAll ? () => onApplyPermissionsToAll(participant) : undefined
-            }
-            repositionOnScroll
+            showApplyToAll={showApplyToAll}
+            onPatch={(patch) => onPatch(participant.id, patch)}
+            onApplyPermissionsToAll={onApplyPermissionsToAll}
           />
           <label className="settings-roster-enable">
             <input
@@ -368,6 +259,19 @@ function RosterParticipantRow({
             aria-pressed={isBossman}
           >
             Boss
+          </button>
+          <button
+            type="button"
+            className={`settings-roster-save-pool${isLinkedToPool ? ' is-linked' : ''}`}
+            onClick={() => onSaveToPool(participant.id)}
+            title={
+              isLinkedToPool
+                ? 'Linked to a pool agent — save again to create a new one'
+                : 'Save this participant to the agent pool for reuse'
+            }
+            aria-label="Save to agent pool"
+          >
+            {isLinkedToPool ? '★ Pooled' : '☆ Save to pool'}
           </button>
           <button
             type="button"
@@ -629,6 +533,107 @@ export function RosterSettingsPanel({
     commit({ ...current, meta: { ...current.meta, maxParticipants }, participants })
   }, [commit])
 
+  // ── Agent Pool wiring ─────────────────────────────────────────────────────
+  // Live pool list for the "+ Add from pool" picker. Subscribes to the same
+  // same-window fan-out the band uses so a save/edit/delete reflects instantly.
+  const [poolAgents, setPoolAgents] = useState<PooledAgent[]>(() => listPooledAgents())
+  const [poolPickerOpen, setPoolPickerOpen] = useState(false)
+  useEffect(() => {
+    const refresh = (): void => {
+      setPoolAgents(listPooledAgents())
+      // Reconcile the OPEN editor's linked participants with the pool, so editing
+      // a pooled Agent whose linked preset is currently open updates the working
+      // copy — otherwise a later commit would persist the stale config and
+      // silently clobber the propagation. Non-dirty patch: never re-persists.
+      const current = editingRef.current
+      if (!current) return
+      let changed = false
+      const participants = current.participants.map((participant) => {
+        const next = applyPooledAgentToParticipant(participant)
+        if (next !== participant) changed = true
+        return next
+      })
+      if (changed) {
+        const updated = { ...current, participants }
+        editingRef.current = updated
+        setEditing(updated)
+      }
+    }
+    refresh()
+    return subscribeEnsembleAgentPool(refresh)
+  }, [])
+
+  // Save a preset participant INTO the pool as a reusable Agent, then LINK the
+  // source participant to the new Agent (so future Agent edits propagate back).
+  // Reads editingRef.current — never the row's captured `participant` prop — so
+  // an unblurred Role/Goal edit is captured, not silently dropped.
+  const saveParticipantToPool = useCallback(
+    (id: string): void => {
+      const current = editingRef.current
+      if (!current) return
+      const participant = current.participants.find((p) => p.id === id)
+      if (!participant) return
+      const agent = createPooledAgentFromParticipant(participant)
+      // patchParticipant reads editingRef + commits (persist=true), so any other
+      // unblurred edit in the working copy is flushed alongside the link.
+      patchParticipant(id, { pooledAgentId: agent.agentId }, true)
+    },
+    [patchParticipant]
+  )
+
+  // Materialize a pooled Agent into the open preset as a fresh LINKED
+  // participant. Routes through commit() (the persist=true structural path) and
+  // reads editingRef so it composes with any unblurred edit.
+  const addPooledAgentToPreset = useCallback(
+    (agent: PooledAgent): void => {
+      const current = editingRef.current
+      if (!current || current.participants.length >= MAX_ROSTER_PRESET_PARTICIPANTS) return
+      const snapshot = pooledAgentToParticipantSnapshot(agent, current.participants.length + 1)
+      const [materialized] = materializeParticipantsFromPresetWithBossman([snapshot]).participants
+      if (!materialized) return
+      const participant: EnsembleParticipant = {
+        ...materialized,
+        id: freshWorkingId(current.participants),
+        order: current.participants.length + 1
+      }
+      const participants = [...current.participants, participant]
+      const maxParticipants = Math.max(current.meta.maxParticipants, participants.length)
+      commit({ ...current, meta: { ...current.meta, maxParticipants }, participants })
+      setPoolPickerOpen(false)
+    },
+    [commit]
+  )
+
+  // pool agent -> participant-list drop (forward direction). At MAX we withhold
+  // preventDefault so the browser shows a no-drop cursor — there is no toast
+  // system, mirroring how "+ Add participant" simply disables.
+  const [isPoolDropTarget, setIsPoolDropTarget] = useState(false)
+  const onParticipantsDragOver = useCallback(
+    (event: ReactDragEvent<HTMLUListElement>): void => {
+      if (!event.dataTransfer.types.includes(POOLED_AGENT_DRAG_MIME)) return
+      const current = editingRef.current
+      if (!current || current.participants.length >= MAX_ROSTER_PRESET_PARTICIPANTS) {
+        event.dataTransfer.dropEffect = 'none'
+        return
+      }
+      event.preventDefault()
+      event.dataTransfer.dropEffect = 'copy'
+      setIsPoolDropTarget(true)
+    },
+    []
+  )
+  const onParticipantsDrop = useCallback(
+    (event: ReactDragEvent<HTMLUListElement>): void => {
+      setIsPoolDropTarget(false)
+      const agentId = event.dataTransfer.getData(POOLED_AGENT_DRAG_MIME)
+      if (!agentId) return
+      event.preventDefault()
+      const agent = listPooledAgents().find((candidate) => candidate.agentId === agentId)
+      if (agent) addPooledAgentToPreset(agent)
+    },
+    [addPooledAgentToPreset]
+  )
+
   const setOrchestrationMode = useCallback(
     (mode: EnsembleOrchestrationMode): void => {
       const current = editingRef.current
@@ -853,7 +858,14 @@ export function RosterSettingsPanel({
                 </label>
               </div>
 
-              <ul className="settings-roster-participants">
+              <ul
+                className={`settings-roster-participants${
+                  isPoolDropTarget ? ' is-pool-drop-target' : ''
+                }`}
+                onDragOver={onParticipantsDragOver}
+                onDragLeave={() => setIsPoolDropTarget(false)}
+                onDrop={onParticipantsDrop}
+              >
                 {orderedParticipants.map((participant, index) => (
                   <RosterParticipantRow
                     key={participant.id}
@@ -873,6 +885,7 @@ export function RosterSettingsPanel({
                     onPatch={patchParticipant}
                     onFlush={flushText}
                     onApplyPermissionsToAll={applyPermissionsToAll}
+                    onSaveToPool={saveParticipantToPool}
                   />
                 ))}
               </ul>
@@ -891,11 +904,70 @@ export function RosterSettingsPanel({
                 >
                   + Add participant
                 </button>
+                <div className="settings-roster-pool-add">
+                  <button
+                    type="button"
+                    className="settings-roster-add settings-roster-add-from-pool"
+                    onClick={() => setPoolPickerOpen((open) => !open)}
+                    disabled={
+                      poolAgents.length === 0 ||
+                      editing.participants.length >= MAX_ROSTER_PRESET_PARTICIPANTS
+                    }
+                    aria-expanded={poolPickerOpen}
+                    title={
+                      poolAgents.length === 0
+                        ? 'Save a participant to the pool first'
+                        : editing.participants.length >= MAX_ROSTER_PRESET_PARTICIPANTS
+                          ? `Up to ${MAX_ROSTER_PRESET_PARTICIPANTS} participants`
+                          : 'Add a reusable agent from the pool'
+                    }
+                  >
+                    + Add from pool
+                  </button>
+                  {poolPickerOpen && poolAgents.length > 0 && (
+                    <ul className="settings-roster-pool-picker" role="menu">
+                      {poolAgents.map((agent) => {
+                        const icon = pooledAgentIconProps(agent)
+                        return (
+                          <li key={agent.agentId} role="none">
+                            <button
+                              type="button"
+                              role="menuitem"
+                              className="settings-roster-pool-picker-item"
+                              onClick={() => addPooledAgentToPreset(agent)}
+                            >
+                              <AgentIdentityIcon
+                                name={icon.name}
+                                seed={icon.seed}
+                                color={icon.color}
+                                size={20}
+                              />
+                              <span className="settings-roster-pool-picker-name">
+                                {agent.identity.nickname}
+                              </span>
+                              <span className="settings-roster-pool-picker-sub">
+                                {getProviderLabel(agent.config.provider)}
+                              </span>
+                            </button>
+                          </li>
+                        )
+                      })}
+                    </ul>
+                  )}
+                </div>
               </div>
             </>
           )}
         </div>
       </div>
+
+      <AgentPoolContainer
+        composerStyle={composerStyle}
+        agenticServices={agenticServices}
+        grokAvailable={grokAvailable}
+        cursorAvailable={cursorAvailable}
+        onSaveParticipantToPool={saveParticipantToPool}
+      />
     </div>
   )
 }
