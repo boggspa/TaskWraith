@@ -4199,8 +4199,7 @@ html:has(.chat-split-region.chat-split-hidden-for-settings) .transcript-user-gut
 
 /*
  * iOS LiveActivityAnchor parity: monoline ghost + provider-tinted radial
- * glow + granular sparkle on "Working" (noise grain + stepped sweep, not
- * the smooth text-shimmer band used by the old Thinking label).
+ * glow + provider-hue shimmer sweep on "Working".
  */
 .message-working-ghost {
   position: relative;
@@ -4225,21 +4224,14 @@ html:has(.chat-split-region.chat-split-hidden-for-settings) .transcript-user-gut
   border-radius: 999px;
   pointer-events: none;
   z-index: 1;
-  --working-ghost-spec: color-mix(in srgb, var(--message-working-accent) 72%, white);
-  --working-ghost-spec-dim: color-mix(in srgb, var(--message-working-accent) 38%, transparent);
-  background-image:
-    radial-gradient(circle, var(--working-ghost-spec) 0.45px, transparent 0.6px),
-    radial-gradient(circle, var(--working-ghost-spec-dim) 0.5px, transparent 0.7px),
-    radial-gradient(circle, color-mix(in srgb, white 48%, var(--message-working-accent)) 0.4px, transparent 0.58px);
-  background-size: 7px 8px, 10px 9px, 8px 11px;
-  background-position: 0 0, 4px 3px, 8px 1px;
-  -webkit-mask-image: radial-gradient(circle at 50% 50%, #000 16%, transparent 74%);
-  mask-image: radial-gradient(circle at 50% 50%, #000 16%, transparent 74%);
-  opacity: 0.5;
+  background: radial-gradient(
+    circle,
+    color-mix(in srgb, var(--message-working-accent) 28%, white 16%) 0%,
+    color-mix(in srgb, var(--message-working-accent) 18%, transparent) 42%,
+    transparent 74%
+  );
+  opacity: 0.58;
   transform: translate(-50%, -50%);
-  animation:
-    working-ghost-grain-drift 1.9s steps(9) infinite,
-    working-ghost-grain-flash 1.35s steps(6) infinite;
 }
 
 .message-working-ghost-glow {
@@ -4295,38 +4287,23 @@ html:has(.chat-split-region.chat-split-hidden-for-settings) .transcript-user-gut
   z-index: 2;
   font-weight: 600;
   background-image:
-    repeating-linear-gradient(
-      0deg,
-      transparent 0,
-      transparent 2px,
-      color-mix(in srgb, var(--message-working-accent) 22%, white) 2px,
-      transparent 3px
-    ),
-    repeating-linear-gradient(
-      90deg,
-      transparent 0,
-      transparent 3px,
-      color-mix(in srgb, var(--message-working-accent) 14%, white) 3px,
-      transparent 4px
-    ),
     linear-gradient(
       105deg,
-      color-mix(in srgb, var(--message-working-accent) 58%, var(--text-secondary)) 0%,
-      color-mix(in srgb, var(--message-working-accent) 82%, white 10%) 40%,
-      color-mix(in srgb, var(--message-working-accent) 96%, white 16%) 50%,
-      color-mix(in srgb, var(--message-working-accent) 72%, var(--text-secondary)) 60%,
-      color-mix(in srgb, var(--message-working-accent) 58%, var(--text-secondary)) 100%
+      color-mix(in srgb, var(--message-working-accent) 54%, var(--text-secondary)) 0%,
+      color-mix(in srgb, var(--message-working-accent) 68%, var(--text-primary)) 34%,
+      color-mix(in srgb, white 46%, var(--message-working-accent)) 48%,
+      color-mix(in srgb, var(--message-working-accent) 76%, var(--text-primary)) 62%,
+      color-mix(in srgb, var(--message-working-accent) 54%, var(--text-secondary)) 100%
     );
-  background-size: 5px 5px, 7px 7px, 240% 100%;
+  background-size: 260% 100%;
   background-clip: text;
   -webkit-background-clip: text;
   color: transparent;
   -webkit-text-fill-color: transparent;
-  animation: working-sparkle-noise 2.6s steps(16) infinite;
-  filter: drop-shadow(0 0 7px color-mix(in srgb, var(--message-working-accent) 30%, transparent));
+  animation: text-shimmer-sweep 2.4s ease-in-out infinite;
+  filter: drop-shadow(0 0 7px color-mix(in srgb, var(--message-working-accent) 24%, transparent));
 }
 
-/* Ambient 1px sparkle specs around "Working…" (label + dots). */
 .message-working-text {
   position: relative;
   display: inline-flex;
@@ -4353,173 +4330,9 @@ html:has(.chat-split-region.chat-split-hidden-for-settings) .transcript-user-gut
   opacity: 0.76;
 }
 
-.message-working-sparkles {
-  position: absolute;
-  inset: -8px -16px -6px -8px;
-  z-index: 1;
-  pointer-events: none;
-  overflow: visible;
-  --working-spec: color-mix(in srgb, var(--message-working-accent) 86%, white);
-  --working-spec-dim: color-mix(in srgb, var(--message-working-accent) 52%, transparent);
-  background-image:
-    radial-gradient(circle, var(--working-spec) 0.45px, transparent 0.55px),
-    radial-gradient(circle, var(--working-spec-dim) 0.45px, transparent 0.55px),
-    radial-gradient(circle, color-mix(in srgb, white 62%, var(--message-working-accent)) 0.45px, transparent 0.55px);
-  background-size: 8px 10px, 12px 9px, 10px 13px;
-  background-position: 0 0, 5px 4px, 9px 2px;
-  -webkit-mask-image: radial-gradient(ellipse 92% 130% at 44% 52%, #000 14%, transparent 74%);
-  mask-image: radial-gradient(ellipse 92% 130% at 44% 52%, #000 14%, transparent 74%);
-  animation:
-    working-sparkle-specs-drift 2.2s steps(11) infinite,
-    working-sparkle-specs-flash 1.4s steps(7) infinite;
-}
-
-.message-working-sparkles::before,
-.message-working-sparkles::after {
-  content: '';
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  border-radius: 50%;
-  background: var(--working-spec);
-  pointer-events: none;
-}
-
-.message-working-sparkles::before {
-  top: 18%;
-  left: 6%;
-  box-shadow:
-    12px -6px 0 0 var(--working-spec),
-    24px 2px 0 0 var(--working-spec-dim),
-    38px -3px 0 0 var(--working-spec),
-    52px 5px 0 0 color-mix(in srgb, white 55%, var(--message-working-accent)),
-    -4px 5px 0 0 var(--working-spec-dim),
-    6px 11px 0 0 var(--working-spec);
-  animation: working-spec-twinkle-a 1.65s steps(5) infinite;
-}
-
-.message-working-sparkles::after {
-  top: 58%;
-  left: 18%;
-  box-shadow:
-    10px -8px 0 0 var(--working-spec-dim),
-    22px -1px 0 0 var(--working-spec),
-    34px 4px 0 0 color-mix(in srgb, white 50%, var(--message-working-accent)),
-    46px -4px 0 0 var(--working-spec-dim),
-    58px 3px 0 0 var(--working-spec),
-    -2px -3px 0 0 var(--working-spec);
-  animation: working-spec-twinkle-b 1.95s steps(5) infinite 0.35s;
-}
-
-@keyframes working-sparkle-specs-drift {
-  0% {
-    background-position: 0 0, 5px 4px, 9px 2px;
-  }
-  100% {
-    background-position: 20px -14px, -12px 18px, 24px 10px;
-  }
-}
-
-@keyframes working-sparkle-specs-flash {
-  0%,
-  100% {
-    opacity: 0.22;
-  }
-  14% {
-    opacity: 0.95;
-  }
-  28% {
-    opacity: 0.3;
-  }
-  42% {
-    opacity: 1;
-  }
-  56% {
-    opacity: 0.18;
-  }
-  70% {
-    opacity: 0.88;
-  }
-  84% {
-    opacity: 0.35;
-  }
-}
-
-@keyframes working-spec-twinkle-a {
-  0%,
-  100% {
-    opacity: 0.15;
-  }
-  20% {
-    opacity: 1;
-  }
-  40% {
-    opacity: 0.25;
-  }
-  60% {
-    opacity: 0.92;
-  }
-  80% {
-    opacity: 0.2;
-  }
-}
-
-@keyframes working-spec-twinkle-b {
-  0%,
-  100% {
-    opacity: 0.2;
-  }
-  25% {
-    opacity: 0.95;
-  }
-  50% {
-    opacity: 0.18;
-  }
-  75% {
-    opacity: 1;
-  }
-}
-
 @keyframes working-ghost-pulse {
   from { opacity: 0.45; }
   to { opacity: 1; }
-}
-
-@keyframes working-ghost-grain-drift {
-  0% {
-    background-position: 0 0, 4px 3px, 8px 1px;
-  }
-  100% {
-    background-position: 14px -10px, -8px 12px, 18px 7px;
-  }
-}
-
-@keyframes working-ghost-grain-flash {
-  0%,
-  100% {
-    opacity: 0.28;
-  }
-  20% {
-    opacity: 0.62;
-  }
-  40% {
-    opacity: 0.34;
-  }
-  60% {
-    opacity: 0.7;
-  }
-  80% {
-    opacity: 0.3;
-  }
-}
-
-@keyframes working-sparkle-noise {
-  0% {
-    background-position: 0 0, 0 0, 220% 0;
-  }
-  100% {
-    background-position: 36px 18px, -28px 14px, -120% 0;
-  }
 }
 
 @keyframes text-shimmer-sweep {
@@ -4547,13 +4360,6 @@ html:has(.chat-split-region.chat-split-hidden-for-settings) .transcript-user-gut
   color: var(--message-working-accent, var(--text-primary));
   -webkit-text-fill-color: var(--message-working-accent, var(--text-primary));
   filter: none;
-}
-
-[data-reduce-motion='true'] .message-working-sparkles,
-[data-reduce-motion='true'] .message-working-sparkles::before,
-[data-reduce-motion='true'] .message-working-sparkles::after {
-  animation: none;
-  opacity: 0;
 }
 
 .message-working .thinking-dots {

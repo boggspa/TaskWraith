@@ -23,6 +23,7 @@ import {
 } from '../lib/runCompleteSummary'
 import { decideMeasurePass, MAX_MEASURE_REWRITE_PASSES } from '../lib/transcriptMeasureConvergence'
 import { deriveQueuedLifecycleProjection } from '../lib/queuedMessageRows'
+import { deriveActiveEnsembleWorkingPresentation } from '../lib/workingIndicatorPresentation'
 import {
   TRANSCRIPT_VIRTUALIZATION_ENABLED,
   DEFAULT_OVERSCAN_PX,
@@ -997,6 +998,18 @@ export const TranscriptPanel = memo(
         return !pendingQueuedAppRunIds.has(appRunId)
       })
     }, [isWelcomeChat, messages, pendingQueuedAppRunIds, queuedRunStatusByAppRunId])
+    const ensembleWorkingPresentation = useMemo(
+      () => deriveActiveEnsembleWorkingPresentation(currentChat),
+      [currentChat]
+    )
+    const workingProviderLabel =
+      ensembleWorkingPresentation?.providerLabel || thinkingProviderLabel || currentProviderLabel
+    const workingProvider = ensembleWorkingPresentation?.provider ?? thinkingProvider
+    const workingProviderClass =
+      ensembleWorkingPresentation?.providerClass ?? thinkingProviderClass
+    const workingRoleLabel = ensembleWorkingPresentation?.roleLabel || null
+    const workingModelBadge =
+      ensembleWorkingPresentation?.modelBadge ?? thinkingModelBadge ?? null
     const [messageContextMenu, setMessageContextMenu] =
       useState<TranscriptMessageContextMenuSelection | null>(null)
     const {
@@ -2383,25 +2396,36 @@ export const TranscriptPanel = memo(
               aria-atomic="true"
             >
               <span className="sr-only">
-                {(thinkingProviderLabel || currentProviderLabel) ?? 'Agent'} working
+                {workingRoleLabel
+                  ? `${workingRoleLabel} (${workingProviderLabel || 'Agent'}) working`
+                  : `${workingProviderLabel || 'Agent'} working`}
               </span>
               <div
                 className={`message-meta${
-                  thinkingProviderClass || thinkingProvider
-                    ? ` provider-${thinkingProviderClass || thinkingProvider}`
+                  workingProviderClass || workingProvider
+                    ? ` provider-${workingProviderClass || workingProvider}`
                     : ''
                 }`}
               >
                 <span className="message-meta-label">
-                  {thinkingProviderLabel || currentProviderLabel}
+                  {workingProviderLabel || currentProviderLabel}
                 </span>
-                {thinkingModelBadge && (
+                {workingRoleLabel && (
+                  <span
+                    className="message-meta-model-badge message-meta-role-badge"
+                    title={`Role: ${workingRoleLabel}`}
+                    aria-label={`Role ${workingRoleLabel}`}
+                  >
+                    {workingRoleLabel}
+                  </span>
+                )}
+                {workingModelBadge && (
                   <span
                     className="message-meta-model-badge"
-                    title={`Model: ${thinkingModelBadge}`}
-                    aria-label={`Model ${thinkingModelBadge}`}
+                    title={`Model: ${workingModelBadge}`}
+                    aria-label={`Model ${workingModelBadge}`}
                   >
-                    {thinkingModelBadge}
+                    {workingModelBadge}
                   </span>
                 )}
               </div>

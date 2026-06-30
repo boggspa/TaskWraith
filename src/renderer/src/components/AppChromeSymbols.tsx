@@ -645,7 +645,6 @@ export function ThinkingIndicator() {
         </span>
       </span>
       <span className="message-working-text">
-        <span className="message-working-sparkles" aria-hidden />
         <span className="message-working-label">Working</span>
         <span className="thinking-dots" aria-hidden>
           <span className="thinking-dot" />

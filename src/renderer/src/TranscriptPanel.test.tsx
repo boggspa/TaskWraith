@@ -2,7 +2,14 @@ import { describe, it, expect } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { createRef } from 'react'
 import { TranscriptPanel } from './App'
-import type { ChatKind, ChatMessage, ProviderId, ToolActivity } from '../../main/store/types'
+import type {
+  ChatKind,
+  ChatMessage,
+  ChatRecord,
+  EnsembleParticipant,
+  ProviderId,
+  ToolActivity
+} from '../../main/store/types'
 
 /**
  * 1.0.6-TV1 — TranscriptPanel windowing wiring.
@@ -90,6 +97,55 @@ function providerLabel(provider: ProviderId): string {
   return provider.charAt(0).toUpperCase() + provider.slice(1)
 }
 
+function ensembleParticipant(patch: Partial<EnsembleParticipant> = {}): EnsembleParticipant {
+  return {
+    id: 'codex-builder',
+    provider: 'codex',
+    enabled: true,
+    role: 'Builder',
+    instructions: '',
+    order: 0,
+    model: 'gpt-5.5',
+    reasoningEffort: 'xhigh',
+    ...patch
+  }
+}
+
+function activeEnsembleChat(participant: EnsembleParticipant): ChatRecord {
+  return {
+    appChatId: 'ensemble-chat',
+    title: 'Ensemble chat',
+    chatKind: 'ensemble',
+    provider: 'codex',
+    createdAt: 0,
+    updatedAt: 0,
+    archived: false,
+    messages: [],
+    runs: [],
+    ensemble: {
+      enabled: true,
+      maxParticipants: 1,
+      participants: [participant],
+      activeRound: {
+        roundId: 'round-1',
+        status: 'running',
+        prompt: 'Build',
+        startedAt: '2026-07-01T00:00:00.000Z',
+        activeParticipantId: participant.id,
+        participants: [
+          {
+            participantId: participant.id,
+            provider: participant.provider,
+            role: participant.role,
+            order: participant.order,
+            status: 'running'
+          }
+        ]
+      }
+    }
+  } as ChatRecord
+}
+
 function transcriptParityMessages(provider: ProviderId, chatKind: ChatKind): ChatMessage[] {
   const toolActivity: ToolActivity = {
     id: `activity-${provider}-${chatKind}`,
@@ -174,6 +230,59 @@ function spacerHeight(html: string, cls: string): number {
 }
 
 describe('TranscriptPanel virtualisation wiring (TV1)', () => {
+  it('renders the active Ensemble participant role in the working indicator', () => {
+    const html = renderToStaticMarkup(
+      <TranscriptPanel
+        {...makeProps({
+          virtualize: false,
+          isThinking: true,
+          currentChat: activeEnsembleChat(ensembleParticipant()),
+          currentProviderLabel: 'Ensemble',
+          currentProvider: 'codex',
+          thinkingProviderLabel: 'Ensemble',
+          thinkingProvider: null,
+          thinkingModelBadge: null
+        })}
+      />
+    )
+
+    expect(html).toContain('Codex')
+    expect(html).toContain('Role: Builder')
+    expect(html).toContain('Builder')
+    expect(html).toContain('5.5 Extra High')
+    expect(html).toContain('provider-codex')
+    expect(html).not.toContain('message-working-sparkles')
+  })
+
+  it('uses Ollama display-brand label and hue for an active Ensemble local model', () => {
+    const html = renderToStaticMarkup(
+      <TranscriptPanel
+        {...makeProps({
+          virtualize: false,
+          isThinking: true,
+          currentChat: activeEnsembleChat(
+            ensembleParticipant({
+              id: 'local-scout',
+              provider: 'ollama',
+              role: 'Scout',
+              model: 'qwen3.5:9b'
+            })
+          ),
+          currentProviderLabel: 'Ensemble',
+          currentProvider: 'codex',
+          thinkingProviderLabel: 'Ensemble',
+          thinkingProvider: null,
+          thinkingModelBadge: null
+        })}
+      />
+    )
+
+    expect(html).toContain('Alibaba')
+    expect(html).toContain('Role: Scout')
+    expect(html).toContain('Qwen 3.5 (9B Param)')
+    expect(html).toContain('provider-alibaba')
+  })
+
   it('renders a user-message gutter from the full display row set', () => {
     const html = renderToStaticMarkup(
       <TranscriptPanel {...makeProps({ virtualize: true, autoFollowRef: { current: false } })} />
