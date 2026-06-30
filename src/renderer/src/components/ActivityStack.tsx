@@ -55,6 +55,7 @@ import {
 import { durationLabel } from './CompactToolTrace.lib'
 import { isGlobalChat } from '../lib/chatScope'
 import { getProviderLabel } from '../lib/providerLabels'
+import { resolveProviderHueClass } from '../lib/ollamaDisplayBrand'
 import {
   agentInvocationRouteLabel,
   agentInvocationSourceClassName,
@@ -638,6 +639,7 @@ function renderEnsembleYieldTitle(
   const target = (getStringParam(params, ['target', 'participant', 'to', 'next']) || '').trim()
 
   let targetProvider: ProviderId | undefined
+  let targetProviderClass: string | undefined
   if (target && participants && participants.length > 0) {
     // 1.0.4 — agents often emit compound target strings like
     // "Kimi / Captain K" (provider + role), "@Captain K" (with @
@@ -666,7 +668,13 @@ function renderEnsembleYieldTitle(
       }
       return false
     })
-    if (matched) targetProvider = matched.provider
+    if (matched) {
+      targetProvider = matched.provider
+      // Ollama-backed display brands resolve to their spoofed brand hue
+      // class (e.g. `alibaba`) so the yield chip matches the brand tint
+      // used by the transcript header and @-mention chips.
+      targetProviderClass = resolveProviderHueClass(matched.provider, matched.model)
+    }
   }
 
   // Pull actor prefix from the orchestrator's displayName when it
@@ -684,7 +692,7 @@ function renderEnsembleYieldTitle(
 
   const chip = (
     <span
-      className={`activity-yield-target${targetProvider ? ` provider-${targetProvider}` : ''}`}
+      className={`activity-yield-target${targetProviderClass ? ` provider-${targetProviderClass}` : ''}`}
       data-provider={targetProvider || ''}
     >
       @{target}

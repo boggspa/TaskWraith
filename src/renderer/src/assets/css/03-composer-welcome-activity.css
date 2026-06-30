@@ -10717,6 +10717,20 @@ button.diff-file-row {
 .activity-yield-target.provider-claude { --provider-tint: #ffad64; }
 .activity-yield-target.provider-gemini { --provider-tint: #8eb1ff; }
 .activity-yield-target.provider-kimi { --provider-tint: #bbcf66; }
+.activity-yield-target.provider-grok { --provider-tint: var(--provider-grok-color); }
+.activity-yield-target.provider-cursor { --provider-tint: var(--provider-cursor-color); }
+.activity-yield-target.provider-ollama { --provider-tint: var(--provider-ollama-color); }
+/* Ollama-backed display brands — yield chip wears the spoofed brand hue
+ * so "@Planner yielding to @Reviewer" reads in the brand colour, matching
+ * the transcript header + @-mention chips. */
+.activity-yield-target.provider-alibaba { --provider-tint: var(--provider-alibaba-color); }
+.activity-yield-target.provider-deep-reinforce { --provider-tint: var(--provider-deep-reinforce-color); }
+.activity-yield-target.provider-google { --provider-tint: var(--provider-google-color); }
+.activity-yield-target.provider-ibm { --provider-tint: var(--provider-ibm-color); }
+.activity-yield-target.provider-liquid { --provider-tint: var(--provider-liquid-color); }
+.activity-yield-target.provider-nvidia { --provider-tint: var(--provider-nvidia-color); }
+.activity-yield-target.provider-openai { --provider-tint: var(--provider-openai-color); }
+.activity-yield-target.provider-openbmb { --provider-tint: var(--provider-openbmb-color); }
 
 /* Light theme — keep the colour but lift saturation against the
  * lighter background so the tag stays legible. */

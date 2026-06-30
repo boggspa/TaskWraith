@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { OLLAMA_DISPLAY_BRANDS, resolveOllamaDisplayBrand } from './ollamaDisplayBrand'
+import {
+  OLLAMA_DISPLAY_BRANDS,
+  resolveOllamaDisplayBrand,
+  resolveProviderBrandLabel,
+  resolveProviderHueClass
+} from './ollamaDisplayBrand'
 
 describe('resolveOllamaDisplayBrand', () => {
   it('maps curated Ollama models to their upstream provider brands', () => {
@@ -52,5 +57,31 @@ describe('resolveOllamaDisplayBrand', () => {
       'openai',
       'openbmb'
     ])
+  })
+})
+
+describe('resolveProviderHueClass', () => {
+  it('returns the spoofed brand class for Ollama display brands', () => {
+    expect(resolveProviderHueClass('ollama', 'qwen3.5:9b')).toBe('alibaba')
+    expect(resolveProviderHueClass('ollama', 'gemma4:12b')).toBe('google')
+    expect(resolveProviderHueClass('ollama', 'gpt-oss:20b')).toBe('openai')
+  })
+
+  it('returns the runtime provider for non-brand models', () => {
+    expect(resolveProviderHueClass('ollama', 'some-unknown-local-model')).toBe('ollama')
+    expect(resolveProviderHueClass('claude', 'claude-opus-4-8')).toBe('claude')
+    expect(resolveProviderHueClass('codex')).toBe('codex')
+  })
+})
+
+describe('resolveProviderBrandLabel', () => {
+  it('returns the spoofed upstream brand label for Ollama brands', () => {
+    expect(resolveProviderBrandLabel('ollama', 'qwen3.5:9b')).toBe('Alibaba')
+    expect(resolveProviderBrandLabel('ollama', 'nemotron3:33b')).toBe('NVIDIA')
+  })
+
+  it('returns null for non-Ollama providers and unbranded Ollama models', () => {
+    expect(resolveProviderBrandLabel('claude', 'claude-opus-4-8')).toBeNull()
+    expect(resolveProviderBrandLabel('ollama', 'mystery-model')).toBeNull()
   })
 })

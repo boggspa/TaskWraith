@@ -62,7 +62,7 @@ export function MentionHighlightedText({
           <span
             key={idx}
             className={`mention-highlighted-token${mentionClassName ? ` ${mentionClassName}` : ''}`}
-            style={{ color: `var(--provider-${segment.provider}-color, var(--accent))` }}
+            style={{ color: `var(--provider-${segment.providerClass}-color, var(--accent))` }}
           >
             {segment.text}
           </span>

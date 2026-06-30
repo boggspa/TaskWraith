@@ -252,7 +252,7 @@ export function ComposerHighlightOverlay({
             <span
               key={idx}
               className="composer-mention-token"
-              style={{ color: `var(--provider-${segment.provider}-color, var(--accent))` }}
+              style={{ color: `var(--provider-${segment.providerClass}-color, var(--accent))` }}
             >
               {segment.text}
             </span>

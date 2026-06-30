@@ -4,6 +4,7 @@ import {
   findFirstMention,
   resolvePhraseToParticipant
 } from '../../../main/services/EnsembleMentionAlias'
+import { resolveProviderHueClass } from './ollamaDisplayBrand'
 
 /**
  * Shared `@Token` mention tokeniser. Used by:
@@ -34,6 +35,10 @@ export type MentionTokenSegment =
       kind: 'mention'
       text: string
       provider: ProviderId
+      /** CSS hue class. Equals `provider` for most providers, but
+       * Ollama-backed display brands resolve to their spoofed upstream
+       * brand class (e.g. `alibaba`) so the chip wears the brand hue. */
+      providerClass: string
     }
   | {
       /** 1.0.4 — user-mention (`@user` / `@human` / `@you`).
@@ -87,7 +92,11 @@ export function tokeniseMentions(
       segments.push({
         kind: 'mention',
         text: `@${match.text}`,
-        provider: match.participant.provider
+        provider: match.participant.provider,
+        providerClass: resolveProviderHueClass(
+          match.participant.provider,
+          match.participant.model
+        )
       })
     }
     lastIndex = match.atIndex + match.consumedLength

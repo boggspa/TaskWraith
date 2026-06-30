@@ -3,6 +3,7 @@ import { AgentIdentityContext } from './AgentIdentityContext'
 import { getProviderName } from './Sidebar'
 import type { ProviderId } from '../../../main/store/types'
 import { isUserMentionToken } from '../../../main/services/EnsembleMentionAlias'
+import { resolveProviderBrandLabel, resolveProviderHueClass } from '../lib/ollamaDisplayBrand'
 
 interface ParticipantMentionProps {
   /** Either an ensemble participant id (from a `[@Role](ensemble-dm://id)`
@@ -72,15 +73,21 @@ export function ParticipantMention({ reference, children }: ParticipantMentionPr
   }
 
   const providerId: ProviderId = participant.provider
-  const tint = `var(--provider-${providerId}-color, var(--accent))`
+  // Ollama-backed display brands wear their spoofed upstream brand hue +
+  // name (e.g. Qwen → Alibaba purple) so the chip matches the transcript
+  // header, run cards, and model picker. Non-Ollama providers resolve to
+  // their own provider class / label unchanged.
+  const providerClass = resolveProviderHueClass(providerId, participant.model)
+  const brandLabel = resolveProviderBrandLabel(providerId, participant.model)
+  const tint = `var(--provider-${providerClass}-color, var(--accent))`
   const displayName =
     (typeof children === 'string'
       ? children.replace(/^@+/, '')
       : Array.isArray(children) && typeof children[0] === 'string'
         ? (children[0] as string).replace(/^@+/, '')
-        : participant.role || getProviderName(providerId)) || providerId
+        : participant.role || brandLabel || getProviderName(providerId)) || providerId
 
-  const titleParts = [getProviderName(providerId)]
+  const titleParts = [brandLabel || getProviderName(providerId)]
   if (participant.role) titleParts.push(participant.role)
 
   return (
