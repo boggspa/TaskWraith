@@ -873,6 +873,7 @@ import { registerPluginHandlers } from './ipc/pluginHandlers'
 import { registerShellHandlers } from './ipc/shellHandlers'
 import { registerAuditHandlers } from './ipc/auditHandlers'
 import { registerEnsembleRosterPresetsHandlers } from './ipc/ensembleRosterPresetsHandlers'
+import { registerAgenticWorkspaceGrantHandlers } from './ipc/agenticWorkspaceGrantHandlers'
 import { getCachedRemoteEnsemblePresets } from './remote/EnsembleRosterPresetsCache'
 import { resolveGeminiCliResumePolicy } from './GeminiSessionPolicy'
 // 1.0.5-EW26 — Kimi compatibility filter (curated + user-
@@ -25160,28 +25161,18 @@ if (isGeminiMcpBridgeProcess) {
       sanitizeHandoffCardPatch,
       sanitizeHandoffCardFilter
     })
-    ipcMain.handle(
-      'upsert-agentic-workspace-grant',
-      (_, provider: ProviderId, workspacePath: string, service: AgenticServiceId) => {
-        permissionService.upsertWorkspaceGrant(
-          assertProviderId(provider),
-          requireNonEmptyString(workspacePath, 'Workspace path'),
-          assertAgenticServiceId(service)
-        )
-        return settingsService.getSettings()
-      }
-    )
-    ipcMain.handle(
-      'remove-agentic-workspace-grant',
-      (_, provider: ProviderId, workspacePath: string, service: AgenticServiceId) => {
-        permissionService.removeWorkspaceGrant(
-          assertProviderId(provider),
-          requireNonEmptyString(workspacePath, 'Workspace path'),
-          assertAgenticServiceId(service)
-        )
-        return settingsService.getSettings()
-      }
-    )
+    registerAgenticWorkspaceGrantHandlers({
+      permissionService: {
+        upsertWorkspaceGrant: (provider, workspacePath, service) =>
+          permissionService.upsertWorkspaceGrant(provider, workspacePath, service),
+        removeWorkspaceGrant: (provider, workspacePath, service) =>
+          permissionService.removeWorkspaceGrant(provider, workspacePath, service)
+      },
+      getSettings: () => settingsService.getSettings(),
+      assertProviderId,
+      requireNonEmptyString,
+      assertAgenticServiceId
+    })
     ipcMain.handle('compose-run', (_, input: ComposerInput) => composerService.composeRun(input))
     ipcMain.handle('discord-context:list-targets', () => discordContextService.listTargets())
     ipcMain.handle('discord-context:read-channel', (_, input: unknown) =>
