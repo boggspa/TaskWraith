@@ -155,6 +155,15 @@ export function TranscriptUserMessageGutter({
     const scroller = scrollRef.current
     const content = contentRef.current
     if (!scroller || !content) return
+    // Self-hide when the scroller isn't laid out — `offsetParent` is null when
+    // the element or an ancestor is `display:none` (the transcript is hidden for
+    // Settings / a board takeover). The scroller is a normal block (never
+    // position:fixed), so this only ever means "not visible". Belt to the
+    // `html.tw-settings-active` CSS suppressor for any non-settings takeover.
+    if (scroller.offsetParent === null) {
+      setFrame(null)
+      return
+    }
     const scrollerRect = scroller.getBoundingClientRect()
     const contentRect = content.getBoundingClientRect()
     const gapLeft = contentRect.left - scrollerRect.left

@@ -2078,6 +2078,13 @@
   display: none;
 }
 
+/* The gutter portals to <body>, so the transcript's own `display:none` (when
+   Settings takes over) can't reach it — and it holds a stale frame because no
+   scroll/resize fires on the takeover. Suppress it whenever Settings is open. */
+html.tw-settings-active .transcript-user-gutter {
+  display: none !important;
+}
+
 .transcript-user-gutter-marker {
   appearance: none;
   position: absolute;

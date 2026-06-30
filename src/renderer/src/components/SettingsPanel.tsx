@@ -3005,6 +3005,20 @@ export function SettingsPanel({
       .then((list) => setRemoteAllowlist((list ?? []) as RemoteWorkspaceEntry[]))
       .catch(() => undefined)
   }, [])
+
+  // While Settings is open, flag the document root so transcript overlays that
+  // PORTAL to <body> (the user-message gutter's ↑/lines/↓ rail) are hidden.
+  // The transcript itself is hidden via `.transcript-hidden-for-settings`, but a
+  // body-portaled child escapes that `display:none` and would otherwise linger
+  // with a stale frame over the settings pane (it only re-measures on
+  // scroll/resize, neither of which fires when Settings takes over). This
+  // mount/unmount effect tracks Settings open/close exactly (SettingsPanel only
+  // mounts when `showSettings`), so the suppression is deterministic.
+  useEffect(() => {
+    const root = document.documentElement
+    root.classList.add('tw-settings-active')
+    return () => root.classList.remove('tw-settings-active')
+  }, [])
   const requestedActiveTab = activeTabProp ?? internalActiveTab
   const activeTab = resolveVisibleSettingsTab(requestedActiveTab)
   const visibleSettingsTabs = getVisibleSettingsTabs()
