@@ -44,7 +44,7 @@ export function DiffToolbar({
         { key: 'staged' as const, label: 'Staged', value: stageCounts.staged },
         { key: 'untracked' as const, label: 'Untracked', value: stageCounts.untracked },
         { key: 'other' as const, label: 'Other', value: stageCounts.other }
-      ].filter((item) => item.value > 0)
+      ].filter((item) => item.value > 0 || activeStageGroup === item.key)
     : []
 
   return (

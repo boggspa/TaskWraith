@@ -313,6 +313,29 @@ describe('DiffToolbar', () => {
     expect(html).toContain('aria-pressed="false"')
     expect(html).toContain('aria-pressed="true"')
   })
+
+  it('keeps the active stage group chip visible when its count reaches zero', () => {
+    const html = renderToStaticMarkup(
+      <DiffToolbar
+        changedCount={0}
+        totalCount={5}
+        stageCounts={{ mixed: 0, other: 2, staged: 0, unstaged: 0, untracked: 0 }}
+        activeStageGroup="staged"
+        hideNoise={true}
+        fileFilter="src"
+        viewMode="inline"
+        onStageGroupChange={() => {}}
+        onHideNoiseChange={() => {}}
+        onFileFilterChange={() => {}}
+        onViewModeChange={() => {}}
+      />
+    )
+
+    expect(html).toContain('data-stage-group="staged"')
+    expect(html).toContain('data-active="true"')
+    expect(html).toContain('<span>Staged</span><strong>0</strong>')
+    expect(html).toContain('click to show all groups')
+  })
 })
 
 describe('DiffFileList', () => {
