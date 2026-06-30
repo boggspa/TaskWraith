@@ -130,6 +130,36 @@ export const workbenchOpenRequestKey = (
   return `${request.nonce}\u0000${request.view ?? 'editor'}\u0000${request.path}`
 }
 
+export const buildInitialWorkbenchOpenState = (
+  request?: WorkbenchOpenRequest | null
+): {
+  activeView: WorkbenchView
+  diffSelectedPath: string
+  diffSelectionRequest: EditorOpenRequest | null
+  editorOpenRequest: EditorOpenRequest | null
+  handledOpenRequestKey: string
+} => {
+  const activeView = resolveInitialWorkbenchView(request?.view)
+  if (!request) {
+    return {
+      activeView,
+      diffSelectedPath: '',
+      diffSelectionRequest: null,
+      editorOpenRequest: null,
+      handledOpenRequestKey: ''
+    }
+  }
+  const targets = workbenchOpenRequestTargets(request.view)
+  const requestTarget = { path: request.path, nonce: request.nonce }
+  return {
+    activeView,
+    diffSelectedPath: targets.diff ? request.path : '',
+    diffSelectionRequest: targets.diff ? requestTarget : null,
+    editorOpenRequest: targets.editor ? requestTarget : null,
+    handledOpenRequestKey: workbenchOpenRequestKey(request)
+  }
+}
+
 type WorkbenchKeyEventLike = Pick<
   KeyboardEvent,
   'altKey' | 'ctrlKey' | 'defaultPrevented' | 'key' | 'metaKey' | 'shiftKey'
@@ -225,23 +255,25 @@ export function TaskWraithWorkbench({
   openFileRequest,
   onDirtyChange
 }: TaskWraithWorkbenchProps) {
-  const initialView = resolveInitialWorkbenchView(openFileRequest?.view)
-  const [activeView, setActiveView] = useState<WorkbenchView>(initialView)
+  const [initialOpenState] = useState(() => buildInitialWorkbenchOpenState(openFileRequest))
+  const [activeView, setActiveView] = useState<WorkbenchView>(initialOpenState.activeView)
   const [diff, setDiff] = useState<WorkspaceDiff | null>(null)
   const [diffGitSnapshot, setDiffGitSnapshot] = useState<GitRepositorySnapshot | null>(null)
   const [status, setStatus] = useState('Workbench ready')
   const [editorRefreshTick, setEditorRefreshTick] = useState(refreshTick)
-  const [editorOpenRequest, setEditorOpenRequest] = useState<EditorOpenRequest | null>(null)
+  const [editorOpenRequest, setEditorOpenRequest] = useState<EditorOpenRequest | null>(
+    initialOpenState.editorOpenRequest
+  )
   const [editorCommandRequest, setEditorCommandRequest] =
     useState<FileEditorCommandRequest | null>(null)
-  const [diffSelectionRequest, setDiffSelectionRequest] = useState<EditorOpenRequest | null>(null)
-  const [diffSelectedPath, setDiffSelectedPath] = useState(
-    workbenchOpenRequestTargets(openFileRequest?.view).diff ? (openFileRequest?.path ?? '') : ''
+  const [diffSelectionRequest, setDiffSelectionRequest] = useState<EditorOpenRequest | null>(
+    initialOpenState.diffSelectionRequest
   )
+  const [diffSelectedPath, setDiffSelectedPath] = useState(initialOpenState.diffSelectedPath)
   const [editorState, setEditorState] = useState<FileEditorPanelState>(DEFAULT_EDITOR_STATE)
   const [diffActionPath, setDiffActionPath] = useState('')
   const diffRefreshSeqRef = useRef(0)
-  const handledOpenRequestKeyRef = useRef('')
+  const handledOpenRequestKeyRef = useRef(initialOpenState.handledOpenRequestKey)
   const editorNavRef = useRef<HTMLButtonElement | null>(null)
   const diffNavRef = useRef<HTMLButtonElement | null>(null)
   const splitNavRef = useRef<HTMLButtonElement | null>(null)
@@ -316,12 +348,13 @@ export function TaskWraithWorkbench({
 
   const selectWorkbenchView = useCallback(
     (view: WorkbenchView, options?: { focusNav?: boolean }) => {
+      handledOpenRequestKeyRef.current = workbenchOpenRequestKey(openFileRequest)
       setActiveView(view)
       if (options?.focusNav) {
         window.requestAnimationFrame(() => focusNavItem(view))
       }
     },
-    [focusNavItem]
+    [focusNavItem, openFileRequest]
   )
 
   const dispatchEditorCommand = useCallback(

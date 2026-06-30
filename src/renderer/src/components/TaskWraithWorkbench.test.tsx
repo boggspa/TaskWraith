@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   buildDiffWorkbenchNavMeta,
   buildEditorWorkbenchNavMeta,
+  buildInitialWorkbenchOpenState,
   buildWorkbenchBreadcrumbs,
   isWorkbenchPaneHidden,
   resolveInitialWorkbenchView,
@@ -129,6 +130,19 @@ describe('TaskWraithWorkbench shell', () => {
     expect(workbenchOpenRequestKey({ path: 'src/main/index.ts', nonce: 2, view: 'diff' })).not.toBe(
       workbenchOpenRequestKey({ path: 'src/main/index.ts', nonce: 1, view: 'diff' })
     )
+    expect(
+      buildInitialWorkbenchOpenState({
+        path: 'src/main/index.ts',
+        nonce: 1,
+        view: 'diff'
+      })
+    ).toEqual({
+      activeView: 'diff',
+      diffSelectedPath: 'src/main/index.ts',
+      diffSelectionRequest: { path: 'src/main/index.ts', nonce: 1 },
+      editorOpenRequest: null,
+      handledOpenRequestKey: '1\u0000diff\u0000src/main/index.ts'
+    })
 
     const html = renderToStaticMarkup(
       <TaskWraithWorkbench
@@ -150,6 +164,20 @@ describe('TaskWraithWorkbench shell', () => {
   })
 
   it('renders split deep links as a two-pane editor and diff target', () => {
+    expect(
+      buildInitialWorkbenchOpenState({
+        path: 'src/main/index.ts',
+        nonce: 1,
+        view: 'split'
+      })
+    ).toEqual({
+      activeView: 'split',
+      diffSelectedPath: 'src/main/index.ts',
+      diffSelectionRequest: { path: 'src/main/index.ts', nonce: 1 },
+      editorOpenRequest: { path: 'src/main/index.ts', nonce: 1 },
+      handledOpenRequestKey: '1\u0000split\u0000src/main/index.ts'
+    })
+
     const html = renderToStaticMarkup(
       <TaskWraithWorkbench
         workspacePath="/repo"
