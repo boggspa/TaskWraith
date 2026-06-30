@@ -53,6 +53,26 @@ describe('RunRecovery', () => {
     })
   })
 
+  it('preserves ensemble participant metadata on recovery records', () => {
+    const active = job({
+      id: 'run-ensemble',
+      runId: 'run-ensemble',
+      status: 'active',
+      chatId: 'chat-ensemble',
+      ensembleParticipantId: 'participant-grok',
+      ensembleRole: 'Reviewer'
+    })
+
+    const recovered = recoverRunQueueJobsAfterStartup([active], recoveredAt, () => undefined)
+
+    expect(recovered.records).toHaveLength(1)
+    expect(recovered.records[0]).toMatchObject({
+      runId: 'run-ensemble',
+      ensembleParticipantId: 'participant-grok',
+      ensembleRole: 'Reviewer'
+    })
+  })
+
   it('captures live orphan process details for interrupted active jobs', () => {
     const active = job({
       id: 'run-orphan',

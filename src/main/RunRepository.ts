@@ -29,6 +29,22 @@ type RunQueueJobWithSteerMetadata = RunQueueJob & SteerQueueMetadata
 
 const STEER_PROMOTING_STATUS: RunQueueJobStatusLike = 'steer_promoting'
 
+function lookupEnsembleQueueMetadata(
+  session: RunSession
+): Pick<RunQueueJob, 'ensembleParticipantId' | 'ensembleRole'> {
+  const chatId = typeof session.appChatId === 'string' ? session.appChatId.trim() : ''
+  const runId = typeof session.runId === 'string' ? session.runId.trim() : ''
+  if (!chatId || !runId) return {}
+  const matchedRun = AppStore.getChat(chatId)?.runs?.find((run) => run.runId === runId)
+  if (!matchedRun) return {}
+  return {
+    ...(matchedRun.ensembleParticipantId
+      ? { ensembleParticipantId: matchedRun.ensembleParticipantId }
+      : {}),
+    ...(matchedRun.ensembleRole ? { ensembleRole: matchedRun.ensembleRole } : {})
+  }
+}
+
 export interface RunRepositoryOptions {
   providerLabel: (provider: RunSession['provider']) => string
   emitRunQueueChanged: () => void
@@ -90,6 +106,7 @@ export class RunRepository {
     if (!session) return
     const status = this.mapRunSessionStatusToQueueStatus(session.status)
     const existing = AppStore.getRunQueueJob(session.runId)
+    const ensembleMetadata = lookupEnsembleQueueMetadata(session)
     const processLike = session.process as unknown as
       | {
           pid?: unknown
@@ -107,6 +124,7 @@ export class RunRepository {
       provider: session.provider,
       chatId: session.appChatId,
       workspacePath: session.workspacePath || existing?.workspacePath,
+      ...ensembleMetadata,
       providerSessionId: session.providerSessionId,
       providerRunId: session.providerRunId,
       processPid,
@@ -126,6 +144,8 @@ export class RunRepository {
         provider: session.provider,
         chatId: session.appChatId,
         workspacePath: partial.workspacePath,
+        ensembleParticipantId: partial.ensembleParticipantId,
+        ensembleRole: partial.ensembleRole,
         scope: partial.workspacePath ? 'workspace' : 'global',
         source: 'system',
         status,

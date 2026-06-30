@@ -3512,6 +3512,8 @@ export interface RunQueueJob {
   id: string
   runId: string
   provider: ProviderId
+  ensembleParticipantId?: string
+  ensembleRole?: string
   scope?: ChatScope
   workspaceId?: string
   workspacePath?: string
@@ -3577,6 +3579,8 @@ export interface RunRecoveryRecord {
   runId: string
   jobId: string
   provider: ProviderId
+  ensembleParticipantId?: string
+  ensembleRole?: string
   chatId?: string
   workspaceId?: string
   workspacePath?: string

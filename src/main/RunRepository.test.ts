@@ -110,6 +110,67 @@ describe('RunRepository', () => {
     }
   })
 
+  it('mirrors ensemble participant metadata from chat runs when persisting queue state', () => {
+    const emitRunQueueChanged = vi.fn()
+    const repository = new RunRepository({
+      providerLabel: (provider) => provider,
+      emitRunQueueChanged,
+      emitRunEventsChanged: vi.fn()
+    })
+    const getExisting = vi.spyOn(AppStore, 'getRunQueueJob').mockReturnValue(null)
+    const getChat = vi.spyOn(AppStore, 'getChat').mockReturnValue({
+      appChatId: 'chat-ensemble',
+      runs: [
+        {
+          runId: 'run-ensemble',
+          provider: 'grok',
+          status: 'running',
+          startedAt: '2026-05-08T00:00:00.000Z',
+          ensembleParticipantId: 'participant-grok',
+          ensembleRole: 'Reviewer'
+        }
+      ]
+    } as any)
+    const save = vi
+      .spyOn(AppStore, 'saveRunQueueJob')
+      .mockImplementation((input: any) => ({
+        priority: 0,
+        attempt: 1,
+        createdAt: '2026-05-08T00:00:00.000Z',
+        updatedAt: '2026-05-08T00:00:00.000Z',
+        ...input
+      }))
+
+    try {
+      repository.persistSessionQueueState({
+        runId: 'run-ensemble',
+        provider: 'grok',
+        appChatId: 'chat-ensemble',
+        workspacePath: '/repo',
+        status: 'running',
+        startedAt: Date.parse('2026-05-08T00:00:00.000Z'),
+        updatedAt: Date.parse('2026-05-08T00:00:01.000Z'),
+        approvalIds: new Set(),
+        sessionGrants: new Set()
+      })
+
+      expect(getChat).toHaveBeenCalledWith('chat-ensemble')
+      expect(save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          runId: 'run-ensemble',
+          chatId: 'chat-ensemble',
+          ensembleParticipantId: 'participant-grok',
+          ensembleRole: 'Reviewer'
+        })
+      )
+      expect(emitRunQueueChanged).toHaveBeenCalledTimes(1)
+    } finally {
+      getExisting.mockRestore()
+      getChat.mockRestore()
+      save.mockRestore()
+    }
+  })
+
   it('leases queued jobs by moving them to starting', () => {
     const emitRunQueueChanged = vi.fn()
     const repository = new RunRepository({

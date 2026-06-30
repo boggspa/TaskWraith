@@ -108,6 +108,8 @@ function recoveryRecordForJob(
     runId: original.runId,
     jobId: original.id,
     provider: original.provider,
+    ensembleParticipantId: recovered.ensembleParticipantId,
+    ensembleRole: recovered.ensembleRole,
     chatId: original.chatId,
     workspaceId: original.workspaceId,
     workspacePath: original.workspacePath,
