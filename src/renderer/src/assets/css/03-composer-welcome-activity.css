@@ -8589,7 +8589,25 @@
   gap: 6px;
 }
 
-.file-editor-breadcrumbs > span > span:last-child {
+.file-editor-breadcrumb-button {
+  min-width: 0;
+  padding: 1px 3px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.file-editor-breadcrumb-button:hover,
+.file-editor-breadcrumb-button:focus-visible {
+  outline: 0;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--text-primary);
+}
+
+.file-editor-breadcrumbs > span > .file-editor-breadcrumb-button {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;

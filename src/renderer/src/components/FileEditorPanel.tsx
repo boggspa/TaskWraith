@@ -218,6 +218,45 @@ export const fileEditorBreadcrumbParts = (filePath: string): string[] => {
   return filePath.split('/').filter(Boolean)
 }
 
+export const fileEditorBreadcrumbTargetPath = (filePath: string, index: number): string => {
+  const parts = fileEditorBreadcrumbParts(filePath)
+  if (index < 0 || index >= parts.length) return ''
+  return parts.slice(0, index + 1).join('/')
+}
+
+export function FileEditorBreadcrumbs({
+  filePath,
+  onRevealPath
+}: {
+  filePath: string
+  onRevealPath: (path: string) => void | Promise<void>
+}) {
+  const parts = fileEditorBreadcrumbParts(filePath)
+  if (parts.length === 0) return null
+  return (
+    <nav className="file-editor-breadcrumbs" aria-label="Editor file path" title={filePath}>
+      {parts.map((part, index) => {
+        const targetPath = fileEditorBreadcrumbTargetPath(filePath, index)
+        const isCurrent = index === parts.length - 1
+        return (
+          <span key={`${part}-${index}`} className={isCurrent ? 'current' : ''}>
+            {index > 0 && <span aria-hidden="true">/</span>}
+            <button
+              type="button"
+              className="file-editor-breadcrumb-button"
+              aria-current={isCurrent ? 'page' : undefined}
+              title={`Reveal ${targetPath} in file tree`}
+              onClick={() => void onRevealPath(targetPath)}
+            >
+              {part}
+            </button>
+          </span>
+        )
+      })}
+    </nav>
+  )
+}
+
 const normalizeAbsolutePath = (path: string): string => {
   return path.replace(/\\/g, '/').replace(/\/+$/, '')
 }
@@ -604,10 +643,6 @@ export function FileEditorPanel({
     (selectedPath ? editorSelectionFromCursorStatus(content, activeCursorStatus) : undefined)
   const isDirty = isBufferDirty(activeBuffer)
   const selectedName = fileNameForPath(selectedPath)
-  const selectedBreadcrumbs = useMemo(
-    () => fileEditorBreadcrumbParts(selectedPath),
-    [selectedPath]
-  )
   const trimmedFilter = filter.trim()
   const isFiltering = trimmedFilter.length > 0
   const dirtyBufferCount = buffers.filter(isBufferDirty).length
@@ -1912,23 +1947,7 @@ export function FileEditorPanel({
             onShowInDiff={onShowInDiff ? showSelectedFileInDiff : undefined}
           />
         </div>
-        {selectedBreadcrumbs.length > 0 && (
-          <nav
-            className="file-editor-breadcrumbs"
-            aria-label="Editor file path"
-            title={selectedPath}
-          >
-            {selectedBreadcrumbs.map((part, index) => (
-              <span
-                key={`${part}-${index}`}
-                className={index === selectedBreadcrumbs.length - 1 ? 'current' : ''}
-              >
-                {index > 0 && <span aria-hidden="true">/</span>}
-                <span>{part}</span>
-              </span>
-            ))}
-          </nav>
-        )}
+        <FileEditorBreadcrumbs filePath={selectedPath} onRevealPath={revealFilePathInTree} />
         <EditorTabStrip
           buffers={buffers}
           selectedPath={selectedPath}

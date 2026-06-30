@@ -2,7 +2,9 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 import {
   explicitOnlyCompletionSource,
+  FileEditorBreadcrumbs,
   fileEditorBreadcrumbParts,
+  fileEditorBreadcrumbTargetPath,
   fileEditorDirtyActionCopy,
   fileEditorPromptKeyAction,
   isFileEditorPromptDismissKey,
@@ -129,6 +131,32 @@ describe('file editor breadcrumbs', () => {
     ])
     expect(fileEditorBreadcrumbParts('README.md')).toEqual(['README.md'])
     expect(fileEditorBreadcrumbParts('')).toEqual([])
+  })
+
+  it('resolves breadcrumb target paths for parent directories and current files', () => {
+    expect(fileEditorBreadcrumbTargetPath('src/renderer/src/App.tsx', 0)).toBe('src')
+    expect(fileEditorBreadcrumbTargetPath('src/renderer/src/App.tsx', 1)).toBe(
+      'src/renderer'
+    )
+    expect(fileEditorBreadcrumbTargetPath('src/renderer/src/App.tsx', 3)).toBe(
+      'src/renderer/src/App.tsx'
+    )
+    expect(fileEditorBreadcrumbTargetPath('README.md', 0)).toBe('README.md')
+    expect(fileEditorBreadcrumbTargetPath('README.md', 1)).toBe('')
+  })
+
+  it('renders actionable breadcrumb buttons for tree reveal', () => {
+    const html = renderToStaticMarkup(
+      <FileEditorBreadcrumbs filePath="src/renderer/App.tsx" onRevealPath={vi.fn()} />
+    )
+
+    expect(html).toContain('class="file-editor-breadcrumbs"')
+    expect(html).toContain('aria-label="Editor file path"')
+    expect(html).toContain('class="file-editor-breadcrumb-button"')
+    expect(html).toContain('Reveal src in file tree')
+    expect(html).toContain('Reveal src/renderer in file tree')
+    expect(html).toContain('Reveal src/renderer/App.tsx in file tree')
+    expect(html).toContain('aria-current="page"')
   })
 })
 
