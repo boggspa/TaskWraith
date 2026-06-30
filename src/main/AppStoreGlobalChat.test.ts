@@ -131,6 +131,39 @@ describe('AppStore global chats', () => {
     expect(workspaceChat.workspacePath).toBe('/repo')
   })
 
+  it('normalizes chat workflow mode independently from approval permissions', () => {
+    const legacyChat = AppStore.normalizeChatRecord({
+      appChatId: 'legacy-workflow-chat',
+      provider: 'codex',
+      title: 'Legacy workflow',
+      workspaceId: 'workspace-1',
+      workspacePath: '/repo',
+      createdAt: 1,
+      updatedAt: 1,
+      archived: false,
+      messages: [],
+      runs: []
+    })
+    const planChat = AppStore.normalizeChatRecord({
+      ...legacyChat,
+      workflowMode: 'plan'
+    })
+    const invalidChat = AppStore.normalizeChatRecord({
+      ...legacyChat,
+      workflowMode: 'read_only' as any
+    })
+
+    expect(legacyChat.workflowMode).toBe('normal')
+    expect(planChat.workflowMode).toBe('plan')
+    expect(invalidChat.workflowMode).toBe('normal')
+  })
+
+  it('creates new chats with normal workflow mode by default', () => {
+    expect(AppStore.createChat('workspace-1', '/repo').workflowMode).toBe('normal')
+    expect(AppStore.createGlobalChat().workflowMode).toBe('normal')
+    expect(AppStore.createEnsembleChat().workflowMode).toBe('normal')
+  })
+
   it('defaults side-chat lifecycle metadata for legacy records', () => {
     const activeSideChat = AppStore.normalizeChatRecord({
       appChatId: 'side-chat',

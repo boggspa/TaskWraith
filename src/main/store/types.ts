@@ -288,6 +288,7 @@ export type PermissionPresetId =
   | 'workspace_write'
   | 'full_access'
   | 'custom'
+export type ChatWorkflowMode = 'normal' | 'plan'
 export type CodexSandboxFallbackMode = 'ask_rerun' | 'off'
 export type ProductUpdateChannel = 'debug' | 'stable' | 'nightly'
 export interface ProductUpdateReleaseNoteInfo {
@@ -2300,6 +2301,7 @@ export interface ChatRun {
   requestedModel?: string
   actualModel?: string
   approvalMode?: string
+  workflowMode?: ChatWorkflowMode
   status?: string // RunStatus
   warnings?: RunWarning[]
   exitCode?: number
@@ -2416,6 +2418,11 @@ export interface ChatRecord {
   providerMetadata?: Record<string, unknown>
   linkedGeminiSessionId?: string
   activeGoal?: ActiveGoal
+  /** Product workflow state. Separate from permissionPreset/approvalMode:
+   * `normal` means ordinary chat/recon; `plan` means plan-first UX with an
+   * explicit accept/refine/execute transition. Capability enforcement still
+   * flows through the existing permission/approval layers. */
+  workflowMode?: ChatWorkflowMode
   /** Per-lane agent ToDo / plan checklists — a persisted sibling of activeGoal.
    * Lane key = ensemble participantId, or TODO_SOLO_LANE for solo/guest. Written
    * by the todo_write MCP tool (+ ingested provider-native plans) and broadcast

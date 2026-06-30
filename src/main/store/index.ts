@@ -10,6 +10,7 @@ import {
   WorkspaceRecord,
   ChatRecord,
   ChatRun,
+  ChatWorkflowMode,
   ChatListItem,
   PooledAgentStatsSummary,
   UsageRecord,
@@ -1160,6 +1161,10 @@ function previewText(value: unknown, maxLength: number): string {
   return `${text.slice(0, maxLength - 3)}...`
 }
 
+function normalizeChatWorkflowMode(value: unknown): ChatWorkflowMode {
+  return value === 'plan' ? 'plan' : 'normal'
+}
+
 function summarizeLastRun(
   run: ChatRecord['runs'][number] | undefined
 ): ChatRecord['runs'][number] | undefined {
@@ -1174,6 +1179,7 @@ function summarizeLastRun(
     requestedModel: run.requestedModel,
     actualModel: run.actualModel,
     approvalMode: run.approvalMode,
+    workflowMode: run.workflowMode,
     status: run.status,
     cancelled: run.cancelled,
     exitCode: run.exitCode,
@@ -1854,6 +1860,7 @@ export class AppStore {
   static normalizeChatRecord(chat: ChatRecord): ChatRecord {
     const scope = chat.scope === 'global' ? 'global' : 'workspace'
     const chatKind = chat.chatKind === 'ensemble' ? 'ensemble' : 'single'
+    const workflowMode = normalizeChatWorkflowMode(chat.workflowMode)
     const parentChatRelation = chat.parentChatId
       ? chat.parentChatRelation === 'sideChat'
         ? 'sideChat'
@@ -1896,6 +1903,7 @@ export class AppStore {
         chatKind,
         parentChatRelation,
         sideChatContext,
+        workflowMode,
         ...(ensemble ? { ensemble } : {}),
         providerMetadata
       }
@@ -1906,6 +1914,7 @@ export class AppStore {
       chatKind,
       parentChatRelation,
       sideChatContext,
+      workflowMode,
       ...(ensemble ? { ensemble } : {}),
       providerMetadata,
       workspaceId: chat.workspaceId || '',
@@ -2174,6 +2183,7 @@ export class AppStore {
       createdAt: Date.now(),
       updatedAt: Date.now(),
       archived: false,
+      workflowMode: 'normal',
       messages: [],
       runs: []
     }
@@ -2194,6 +2204,7 @@ export class AppStore {
       createdAt: Date.now(),
       updatedAt: Date.now(),
       archived: false,
+      workflowMode: 'normal',
       messages: [],
       runs: []
     }
@@ -2223,6 +2234,7 @@ export class AppStore {
       createdAt: Date.now(),
       updatedAt: Date.now(),
       archived: false,
+      workflowMode: 'normal',
       messages: [],
       runs: [],
       ensemble: createDefaultEnsembleConfig(activeProvider, configuredProviders)
@@ -2297,6 +2309,7 @@ export class AppStore {
       createdAt: now,
       updatedAt: now,
       archived: false,
+      workflowMode: normalizeChatWorkflowMode(parent.workflowMode),
       messages: [],
       runs: [],
       parentChatId: parent.appChatId,
