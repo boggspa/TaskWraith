@@ -47,6 +47,7 @@ import {
   roleLabelForPresetId
 } from '../lib/ensembleRolePresets'
 import { buildParticipantTokenChipModel } from '../lib/participantTokenChip'
+import { resolveProviderBrandLabel, resolveProviderHueClass } from '../lib/ollamaDisplayBrand'
 import { withSessionActivityLedger } from '../lib/sessionActivityLedger'
 import {
   ComposerProviderPickerRows,
@@ -971,7 +972,7 @@ export function EnsembleParticipantsAboveRow({
             if (!ghostParticipant) return null
             return createPortal(
               <div
-                className={`ensemble-above-chip ensemble-above-chip-drag-ghost provider-${ghostParticipant.provider} is-selected`}
+                className={`ensemble-above-chip ensemble-above-chip-drag-ghost provider-${resolveProviderHueClass(ghostParticipant.provider, ghostParticipant.model)} is-selected`}
                 style={{
                   position: 'fixed',
                   left: `${dragGhost.x}px`,
@@ -1258,6 +1259,10 @@ function ParticipantChip({
   // Slug the status onto the class so CSS can colour-code the pill
   // (running=warm, yielded=amber, answered=green, cancelled=muted, etc.).
   const statusClass = `status-${statusLabel.toLowerCase().replace(/\s+/g, '-')}`
+  const providerClass = resolveProviderHueClass(participant.provider, participant.model)
+  const providerDisplayName =
+    resolveProviderBrandLabel(participant.provider, participant.model) ||
+    getProviderName(participant.provider)
   const handlePointerDown = useCallback(
     (event: React.PointerEvent) => {
       // Left-click only. Right-click / middle-click fall through to
@@ -1340,7 +1345,7 @@ function ParticipantChip({
       data-participant-id={participant.id}
       data-linked-session={participant.linkedProviderSessionId ? 'true' : undefined}
       onPointerDown={handlePointerDown}
-      className={`ensemble-above-chip provider-${participant.provider} ${isSelected ? 'is-selected' : ''} ${dimmed ? 'is-dimmed' : ''} ${isDragOver ? 'is-drag-over' : ''} ${isDragging ? 'is-dragging' : ''}`}
+      className={`ensemble-above-chip provider-${providerClass} ${isSelected ? 'is-selected' : ''} ${dimmed ? 'is-dimmed' : ''} ${isDragOver ? 'is-drag-over' : ''} ${isDragging ? 'is-dragging' : ''}`}
       // 1.0.4-AT1 — surface the participant's linked provider
       // session in the tooltip so the user can verify which thread
       // the next dispatch will resume against. Pre-AT1 there was
@@ -1348,8 +1353,8 @@ function ParticipantChip({
       // participant's detail popover to see linkage state.
       title={
         participant.linkedProviderSessionId
-          ? `${isBossman ? 'Boss · ' : ''}${getProviderName(participant.provider)} — ${participant.role || 'Participant'} · Linked session: ${participant.linkedProviderSessionId}`
-          : `${isBossman ? 'Boss · ' : ''}${getProviderName(participant.provider)} — ${participant.role || 'Participant'}`
+          ? `${isBossman ? 'Boss · ' : ''}${providerDisplayName} — ${participant.role || 'Participant'} · Linked session: ${participant.linkedProviderSessionId}`
+          : `${isBossman ? 'Boss · ' : ''}${providerDisplayName} — ${participant.role || 'Participant'}`
       }
     >
       {/*
@@ -1366,7 +1371,7 @@ function ParticipantChip({
         role="button"
         tabIndex={0}
         aria-pressed={isSelected}
-        aria-label={`${isBossman ? 'Boss ' : ''}${participant.role || getProviderName(participant.provider)}`}
+        aria-label={`${isBossman ? 'Boss ' : ''}${participant.role || providerDisplayName}`}
         onKeyDown={(event) => {
           if (event.key === 'Enter' || event.key === ' ') {
             event.preventDefault()
@@ -1389,8 +1394,8 @@ function ParticipantChip({
           className="ensemble-above-chip-role"
           title={
             isBossman
-              ? `Boss — ${participant.role || getProviderName(participant.provider)}`
-              : participant.role || getProviderName(participant.provider)
+              ? `Boss — ${participant.role || providerDisplayName}`
+              : participant.role || providerDisplayName
           }
         >
           {isBossman ? <BossmanCrownIcon className="ensemble-above-chip-crown" /> : null}
@@ -1640,7 +1645,7 @@ export function EnsembleParticipantOverflowPopover({
   const content = (
     <div
       ref={popoverRef}
-      className={`ensemble-above-overflow provider-${participant.provider}`}
+      className={`ensemble-above-overflow provider-${resolveProviderHueClass(participant.provider, participant.model)}`}
       style={{
         position: 'fixed',
         left: `${position.left}px`,

@@ -1,5 +1,5 @@
 import React from 'react'
-import type { ChatMessage, ProviderId } from '../../../main/store/types'
+import type { ChatMessage, EnsembleParticipant, ProviderId } from '../../../main/store/types'
 import { getProviderName, ProviderBadgeIcon } from './Sidebar'
 import { resolveProviderBrandLabel, resolveProviderHueClass } from '../lib/ollamaDisplayBrand'
 
@@ -39,10 +39,24 @@ interface ParticipantHealthEntry {
 
 interface ParticipantHealthCardProps {
   message: ChatMessage
+  /** Live ensemble roster — used to backfill `model` on historic health
+   * entries that were stamped before the orchestrator carried model ids. */
+  participants?: EnsembleParticipant[]
+}
+
+/** Resolve model for a health entry: prefer the stamped metadata, fall back
+ * to the current roster so historic transcripts still get brand hues. */
+function resolveHealthEntryModel(
+  entry: ParticipantHealthEntry,
+  participants?: EnsembleParticipant[]
+): string | undefined {
+  if (entry.model) return entry.model
+  return participants?.find((p) => p.id === entry.participantId)?.model
 }
 
 export function ParticipantHealthCard({
-  message
+  message,
+  participants
 }: ParticipantHealthCardProps): React.JSX.Element | null {
   const metadata = message.metadata
   if (!metadata || metadata.kind !== 'ensembleParticipantHealth') return null
@@ -110,12 +124,13 @@ export function ParticipantHealthCard({
       </div>
       <div className="participant-health-card-chips">
         {entries.map((entry) => {
+          const model = resolveHealthEntryModel(entry, participants)
           // Ollama-backed display brands spoof their upstream name + hue on
           // the chip (e.g. Alibaba / Planner in Alibaba purple), matching the
           // transcript header, run cards, and @-mention chips.
           const providerName =
-            resolveProviderBrandLabel(entry.provider, entry.model) || getProviderName(entry.provider)
-          const providerClass = resolveProviderHueClass(entry.provider, entry.model)
+            resolveProviderBrandLabel(entry.provider, model) || getProviderName(entry.provider)
+          const providerClass = resolveProviderHueClass(entry.provider, model)
           const label = entry.role ? `${providerName} / ${entry.role}` : providerName
           const tooltip =
             entry.status === 'ok'

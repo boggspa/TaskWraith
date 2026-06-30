@@ -1876,7 +1876,11 @@ export const TranscriptPanel = memo(
                     text variant on `msg.content` is the fallback for
                     older transcripts / exports.
                   */
-                  <ParticipantHealthCard key={msg.id} message={msg} />
+                  <ParticipantHealthCard
+                    key={msg.id}
+                    message={msg}
+                    participants={currentChat?.ensemble?.participants}
+                  />
                 ) : isProviderRunFailure ? (
                   <ProviderRunFailureCard
                     key={msg.id}

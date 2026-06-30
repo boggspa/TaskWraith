@@ -38,6 +38,7 @@ import type {
   ChatRun,
   DiffFileStatus,
   DiffFileSummary,
+  EnsembleParticipant,
   ProviderId,
   TranscriptMediaFormat,
   TranscriptMediaKind,
@@ -685,6 +686,9 @@ export interface RemoteProjectionOptions {
    * chats so each assistant row carries its participant identity. Solo
    * chats omit it (rows stay speaker-less). */
   speakerForMessage?: (message: ChatMessage) => string | undefined
+  /** Live ensemble roster — used to backfill participant `model` on historic
+   * health-card metadata that predates the orchestrator stamping model ids. */
+  ensembleParticipants?: EnsembleParticipant[]
 }
 
 const DEFAULT_PREVIEW_MAX = 280
@@ -903,7 +907,8 @@ function providerField(value: unknown): ProviderId | undefined {
 }
 
 function buildParticipantHealth(
-  message: ChatMessage
+  message: ChatMessage,
+  ensembleParticipants?: EnsembleParticipant[]
 ): RemoteThreadRow['participantHealth'] | undefined {
   const metadata = message.metadata as Record<string, unknown> | undefined
   if (metadata?.kind !== 'ensembleParticipantHealth') return undefined
@@ -922,7 +927,9 @@ function buildParticipantHealth(
       role: stringField(entry.role, 80) ?? PROVIDER_LABELS[provider],
       status
     }
-    const model = stringField(entry.model, 120)
+    const model =
+      stringField(entry.model, 120) ??
+      ensembleParticipants?.find((participant) => participant.id === participantId)?.model
     if (model) healthEntry.model = model
     const reason = stringField(entry.reason, 220)
     if (reason) healthEntry.reason = reason
@@ -1204,7 +1211,8 @@ function buildToolActivityMedia(message: ChatMessage): RemoteThreadRowMedia[] {
 function buildRow(
   message: ChatMessage,
   previewMax: number,
-  attentionKind: RemoteAttentionKind | null
+  attentionKind: RemoteAttentionKind | null,
+  ensembleParticipants?: EnsembleParticipant[]
 ): RemoteThreadRow {
   const subThreadReturn = buildSubThreadReturn(message)
   const guestReply = buildGuestReply(message)
@@ -1282,7 +1290,7 @@ function buildRow(
   }
   const toolSummary = buildToolSummary(message)
   if (toolSummary) row.toolSummary = toolSummary
-  const participantHealth = buildParticipantHealth(message)
+  const participantHealth = buildParticipantHealth(message, ensembleParticipants)
   if (participantHealth) row.participantHealth = participantHealth
   if (subThreadReturn) row.subThreadReturn = subThreadReturn.summary
   if (guestReply) {
@@ -2021,7 +2029,7 @@ export function projectRemoteThread(
           Number((a.metadata as Record<string, unknown>).pinnedAt)
       )
       .slice(0, 12)
-      .map((message) => buildRow(message, previewMax, null)),
+      .map((message) => buildRow(message, previewMax, null, opts.ensembleParticipants)),
     MAX_PINNED_THUMBNAIL_BASE64
   )
 
@@ -2070,7 +2078,7 @@ export function projectRemoteThread(
       message.id === latestAssistantRowId
         ? Math.max(previewMax, REMOTE_IOS_ROW_EXPAND_MAX)
         : previewMax
-    const row = buildRow(message, rowPreviewMax, att)
+    const row = buildRow(message, rowPreviewMax, att, opts.ensembleParticipants)
     const speaker = opts.speakerForMessage?.(message)
     if (speaker) row.speaker = speaker
     return row

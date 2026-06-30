@@ -2213,11 +2213,15 @@ func twParticipantsSignature(_ participants: [RemoteEnsembleState.Participant]) 
 /// providers without one (qwen, unknown) keep the original dot.
 public struct ProviderGlyphIcon: View {
     let provider: String?
+    let modelId: String?
     let isEnsemble: Bool
     let size: CGFloat
 
-    public init(provider: String?, isEnsemble: Bool = false, size: CGFloat = 16) {
+    public init(
+        provider: String?, modelId: String? = nil, isEnsemble: Bool = false, size: CGFloat = 16
+    ) {
         self.provider = provider
+        self.modelId = modelId
         self.isEnsemble = isEnsemble
         self.size = size
     }
@@ -2260,10 +2264,10 @@ public struct ProviderGlyphIcon: View {
                 .resizable()
                 .scaledToFit()
                 .frame(width: size, height: size)
-                .foregroundStyle(TWTheme.providerAccent(provider))
+                .foregroundStyle(TWTheme.providerAccent(provider, modelId: modelId))
         } else {
             Circle()
-                .fill(TWTheme.providerAccent(provider))
+                .fill(TWTheme.providerAccent(provider, modelId: modelId))
                 .frame(width: size * 0.44, height: size * 0.44)
                 .frame(width: size, height: size)
         }
@@ -4302,7 +4306,10 @@ public struct EditableRosterStrip: View {
 
     private func chip(_ entry: RemoteSessionModel.RosterDraftEntry) -> some View {
         let retired = TWTheme.isRetiredProvider(entry.provider)
-        let accent = retired ? TWTheme.textMuted : TWTheme.providerAccent(entry.provider)
+        let accent =
+            retired
+            ? TWTheme.textMuted
+            : TWTheme.providerAccent(entry.provider, modelId: entry.model)
         let status = roundStatus(for: entry.id)
         let isActive = !retired && (status == "running" || state?.activeParticipantId == entry.id)
         let live = entry.enabled && !retired
@@ -4321,7 +4328,7 @@ public struct EditableRosterStrip: View {
                         .font(.system(size: 8, weight: .bold))
                         .foregroundStyle(TWTheme.textMuted)
                 } else {
-                    ProviderGlyphIcon(provider: entry.provider, size: 12)
+                    ProviderGlyphIcon(provider: entry.provider, modelId: entry.model, size: 12)
                         .opacity(live ? 1 : 0.45)
                 }
                 Text(title)

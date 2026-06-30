@@ -434,6 +434,49 @@ describe('RemoteThreadProjection', () => {
       })
     })
 
+    it('backfills participant model from the live roster on historic health entries', () => {
+      const snap = project(
+        { kind: 'latestN', n: 10 },
+        [
+          msg(1, {
+            id: 'health-ollama-historic',
+            role: 'system',
+            content: 'Participant health: 1/1 ready',
+            metadata: {
+              kind: 'ensembleParticipantHealth',
+              ensembleRoundId: 'round-ollama-historic',
+              okCount: 1,
+              totalCount: 1,
+              entries: [
+                {
+                  participantId: 'p1',
+                  provider: 'ollama',
+                  role: 'Planner',
+                  status: 'ok'
+                }
+              ]
+            }
+          })
+        ],
+        [],
+        {
+          ensembleParticipants: [
+            {
+              id: 'p1',
+              provider: 'ollama',
+              model: 'qwen3.5:9b',
+              role: 'Planner',
+              instructions: '',
+              order: 0,
+              enabled: true
+            }
+          ]
+        }
+      )
+
+      expect(snap.rows[0]?.participantHealth?.entries?.[0]?.model).toBe('qwen3.5:9b')
+    })
+
     it('projects returned sub-thread results as structured compact result rows', () => {
       const snap = project(
         { kind: 'latestN', n: 10 },

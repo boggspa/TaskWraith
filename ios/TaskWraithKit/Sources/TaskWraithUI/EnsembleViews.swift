@@ -34,10 +34,18 @@ struct EnsembleRosterStrip: View {
         .padding(.vertical, 2)
     }
 
+    private func modelForParticipant(_ participant: RemoteEnsembleState.Participant) -> String? {
+        state.roster?.first(where: { $0.id == participant.participantId })?.model
+    }
+
     @ViewBuilder
     private func chip(_ participant: RemoteEnsembleState.Participant) -> some View {
         let retired = TWTheme.isRetiredProvider(participant.provider)
-        let accent = retired ? TWTheme.textMuted : TWTheme.providerAccent(participant.provider)
+        let modelId = modelForParticipant(participant)
+        let accent =
+            retired
+            ? TWTheme.textMuted
+            : TWTheme.providerAccent(participant.provider, modelId: modelId)
         let isActive = !retired && participant.participantId == state.activeParticipantId
         HStack(spacing: 4) {
             if retired {
@@ -49,7 +57,9 @@ struct EnsembleRosterStrip: View {
             }
             Text(
                 participant.role?.isEmpty == false
-                    ? participant.role! : TWTheme.providerLabel(participant.provider)
+                    ? participant.role!
+                    : TWTheme.providerLabel(
+                        participant.provider, modelId: modelId, modelLabel: modelId)
             )
             .font(.caption2.weight(isActive ? .bold : .medium))
             .lineLimit(1)

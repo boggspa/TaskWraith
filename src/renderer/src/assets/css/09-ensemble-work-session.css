@@ -850,6 +850,32 @@
 .ensemble-above-chip.provider-ollama[data-linked-session="true"]::after {
   background: var(--provider-ollama-color, var(--accent));
 }
+/* Ollama-backed display brands — linked-session dot uses the spoofed
+ * upstream hue (e.g. Qwen → Alibaba purple), not generic Ollama green. */
+.ensemble-above-chip.provider-alibaba[data-linked-session="true"]::after {
+  background: var(--provider-alibaba-color, var(--accent));
+}
+.ensemble-above-chip.provider-deep-reinforce[data-linked-session="true"]::after {
+  background: var(--provider-deep-reinforce-color, var(--accent));
+}
+.ensemble-above-chip.provider-google[data-linked-session="true"]::after {
+  background: var(--provider-google-color, var(--accent));
+}
+.ensemble-above-chip.provider-ibm[data-linked-session="true"]::after {
+  background: var(--provider-ibm-color, var(--accent));
+}
+.ensemble-above-chip.provider-liquid[data-linked-session="true"]::after {
+  background: var(--provider-liquid-color, var(--accent));
+}
+.ensemble-above-chip.provider-nvidia[data-linked-session="true"]::after {
+  background: var(--provider-nvidia-color, var(--accent));
+}
+.ensemble-above-chip.provider-openai[data-linked-session="true"]::after {
+  background: var(--provider-openai-color, var(--accent));
+}
+.ensemble-above-chip.provider-openbmb[data-linked-session="true"]::after {
+  background: var(--provider-openbmb-color, var(--accent));
+}
 
 .ensemble-above-chip-body {
   display: flex;
@@ -1133,6 +1159,32 @@
 }
 .ensemble-above-chip.provider-ollama .ensemble-above-chip-role {
   color: var(--provider-ollama-color);
+}
+/* Ollama-backed display brands — role text uses the spoofed upstream hue
+ * (e.g. Qwen → Alibaba purple), matching transcript headers + health chips. */
+.ensemble-above-chip.provider-alibaba .ensemble-above-chip-role {
+  color: var(--provider-alibaba-color);
+}
+.ensemble-above-chip.provider-deep-reinforce .ensemble-above-chip-role {
+  color: var(--provider-deep-reinforce-color);
+}
+.ensemble-above-chip.provider-google .ensemble-above-chip-role {
+  color: var(--provider-google-color);
+}
+.ensemble-above-chip.provider-ibm .ensemble-above-chip-role {
+  color: var(--provider-ibm-color);
+}
+.ensemble-above-chip.provider-liquid .ensemble-above-chip-role {
+  color: var(--provider-liquid-color);
+}
+.ensemble-above-chip.provider-nvidia .ensemble-above-chip-role {
+  color: var(--provider-nvidia-color);
+}
+.ensemble-above-chip.provider-openai .ensemble-above-chip-role {
+  color: var(--provider-openai-color);
+}
+.ensemble-above-chip.provider-openbmb .ensemble-above-chip-role {
+  color: var(--provider-openbmb-color);
 }
 
 /* Neutralise the per-provider chip-border overrides — the chip

@@ -20008,7 +20008,8 @@ if (isGeminiMcpBridgeProcess) {
           chat.ensemble?.enabled
             ? ensembleSpeakerForMessage(chat.ensemble.participants)
             : undefined
-        )
+        ),
+        ensembleParticipants: chat.ensemble?.participants
       })
       return {
         canonical,
@@ -21536,7 +21537,8 @@ if (isGeminiMcpBridgeProcess) {
               chat.ensemble?.enabled
                 ? ensembleSpeakerForMessage(chat.ensemble.participants)
                 : undefined
-            )
+            ),
+            ensembleParticipants: chat.ensemble?.participants
           })
           const row = snapshot.rows.find((entry) => entry.id === action.rowId)
           if (!row) {
@@ -21578,7 +21580,8 @@ if (isGeminiMcpBridgeProcess) {
               chat.ensemble?.enabled
                 ? ensembleSpeakerForMessage(chat.ensemble.participants)
                 : undefined
-            )
+            ),
+            ensembleParticipants: chat.ensemble?.participants
           })
           const row = snapshot.rows.find((entry) => entry.id === action.rowId)
           const media = row?.media?.find((entry) => entry.id === action.mediaId)
@@ -22981,7 +22984,8 @@ if (isGeminiMcpBridgeProcess) {
               chat.ensemble?.enabled
                 ? ensembleSpeakerForMessage(chat.ensemble.participants)
                 : undefined
-            )
+            ),
+            ensembleParticipants: chat.ensemble?.participants
           })
           envelopes.push(
             buildRemoteProjectionEnvelope({
