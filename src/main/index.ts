@@ -868,6 +868,7 @@ import { registerClaudeAuthHandlers } from './ipc/claudeAuthHandlers'
 import { registerKimiAuthHandlers } from './ipc/kimiAuthHandlers'
 import { registerGeminiAuthHandlers } from './ipc/geminiAuthHandlers'
 import { registerProviderMetadataHandlers } from './ipc/providerMetadataHandlers'
+import { registerProviderTerminalHandlers } from './ipc/providerTerminalHandlers'
 import { getCachedRemoteEnsemblePresets } from './remote/EnsembleRosterPresetsCache'
 import { resolveGeminiCliResumePolicy } from './GeminiSessionPolicy'
 // 1.0.5-EW26 — Kimi compatibility filter (curated + user-
@@ -26153,170 +26154,15 @@ if (isGeminiMcpBridgeProcess) {
       getProviderAdapterDescriptors
     })
 
-    // 1.0.6-CRUX42/CRUX follow-up — provider CLI operations that must run in
-    // the provider-owned CLI open in Terminal as one-shot `.command` files. The
-    // app never shells these silently: users can see exactly which login/logout/
-    // upgrade command is running.
-    const openProviderAuthTerminal = async (
-      provider: ProviderId,
-      action: 'login' | 'logout' | 'upgrade'
-    ): Promise<{ ok: boolean; error?: string }> => {
-      const shQuote = (s: string): string => `'${s.replace(/'/g, `'\\''`)}'`
-      const psQuote = (s: string): string => `'${s.replace(/'/g, "''")}'`
-      try {
-        let commandParts: string[] | null = null
-        let rawCommand: string | null = null
-        let label: string
-        const actionLabel =
-          action === 'login' ? 'Sign-in' : action === 'logout' ? 'Sign-out' : 'Upgrade'
-        const actionVerb =
-          action === 'login' ? 'Signing in to' : action === 'logout' ? 'Signing out of' : 'Upgrading'
-        let postscript = `${actionLabel} finished (exit $status). Close this window and return to TaskWraith.`
-        if (provider === 'codex') {
-          label = 'Codex'
-          const resolved = await resolveCliProviderBinary('codex')
-          commandParts =
-            action === 'upgrade'
-              ? ['npm', 'install', '-g', '@openai/codex@latest']
-              : [resolved.binaryPath || 'codex', action]
-        } else if (provider === 'gemini') {
-          if (action !== 'upgrade') {
-            return { ok: false, error: `Gemini terminal ${action} is not supported here.` }
-          }
-          label = 'Gemini'
-          commandParts = ['npm', 'install', '-g', '@google/gemini-cli@latest']
-        } else if (provider === 'claude') {
-          label = 'Claude'
-          const resolved = await resolveCliProviderBinary('claude')
-          if (action === 'upgrade') {
-            if (resolved.binaryPath) {
-              commandParts = [resolved.binaryPath, 'update']
-            } else {
-              rawCommand = 'curl -fsSL https://claude.ai/install.sh | bash'
-            }
-          } else {
-            commandParts = [resolved.binaryPath || 'claude', 'auth', action]
-          }
-        } else if (provider === 'kimi') {
-          label = 'Kimi'
-          const resolved = await resolveCliProviderBinary('kimi')
-          if (action === 'upgrade') {
-            if (resolved.binaryPath) {
-              commandParts = [resolved.binaryPath, '/upgrade']
-            } else {
-              rawCommand = 'curl -LsSf https://code.kimi.com/install.sh | bash'
-            }
-          } else {
-            commandParts = [resolved.binaryPath || 'kimi', action]
-          }
-        } else if (provider === 'cursor') {
-          label = 'Cursor'
-          const resolved = await resolveCliProviderBinary('cursor')
-          if (action === 'upgrade') {
-            rawCommand = 'curl https://cursor.com/install -fsS | bash'
-          } else {
-            commandParts = [resolved.binaryPath || 'cursor-agent', action]
-          }
-        } else if (provider === 'grok') {
-          label = 'Grok'
-          const resolved = await resolveCliProviderBinary('grok')
-          commandParts = action === 'upgrade' ? null : [resolved.binaryPath || 'grok']
-          if (action === 'upgrade') {
-            rawCommand = 'curl -fsSL https://x.ai/cli/install.sh | bash'
-          }
-          if (action === 'logout') {
-            postscript =
-              'Grok CLI does not expose a logout subcommand yet. Use the opened Grok session to manage account state, then close this window.'
-          }
-        } else if (provider === 'ollama') {
-          // Ollama cloud auth (ollama.com). `signin` opens a browser to
-          // authorize this machine for Ollama Cloud / Turbo + private model
-          // pulls; local models need no account. The subcommands are
-          // `signin` / `signout` — `ollama login` is NOT a valid command.
-          label = 'Ollama'
-          const resolved = await resolveCliProviderBinary('ollama')
-          if (action === 'upgrade') {
-            rawCommand = 'curl -fsSL https://ollama.com/install.sh | sh'
-          } else {
-            commandParts = [
-              resolved.binaryPath || 'ollama',
-              action === 'logout' ? 'signout' : 'signin'
-            ]
-          }
-        } else {
-          return { ok: false, error: `No terminal ${action} for ${provider}.` }
-        }
-        if (!rawCommand && !commandParts) {
-          return { ok: false, error: `No terminal ${action} command for ${provider}.` }
-        }
-        const command = rawCommand
-          ? rawCommand
-          : process.platform === 'win32'
-            ? commandParts!.map(psQuote).join(' ')
-            : commandParts!.map(shQuote).join(' ')
-        const dir = join(app.getPath('userData'), 'login')
-        fsSync.mkdirSync(dir, { recursive: true })
-        if (process.platform === 'win32') {
-          const psFile = join(dir, `${provider}-${action}.ps1`)
-          const cmdFile = join(dir, `${provider}-${action}.cmd`)
-          const psScript =
-            [
-              `# Generated by TaskWraith - interactive provider ${action}.`,
-              '$ErrorActionPreference = "Continue"',
-              `Write-Host "${actionVerb} ${label} for TaskWraith..."`,
-              `Write-Host "> ${command.replace(/"/g, '`"')}"`,
-              'Write-Host ""',
-              `& ${command}`,
-              '$status = if ($LASTEXITCODE -ne $null) { $LASTEXITCODE } else { 0 }',
-              'Write-Host ""',
-              `Write-Host "${postscript.replace(/"/g, '`"').replace('$status', '$status')}"`
-            ].join('\r\n') + '\r\n'
-          fsSync.writeFileSync(psFile, psScript)
-          fsSync.writeFileSync(
-            cmdFile,
-            `@echo off\r\npowershell.exe -NoProfile -ExecutionPolicy Bypass -NoExit -File "%~dp0${basename(psFile)}"\r\n`
-          )
-          const err = await shell.openPath(cmdFile)
-          if (err) return { ok: false, error: err }
-          return { ok: true }
-        }
-        const script =
-          [
-            '#!/bin/zsh',
-            `# Generated by TaskWraith — interactive provider ${action}.`,
-            '[ -f "$HOME/.zprofile" ] && source "$HOME/.zprofile" 2>/dev/null',
-            '[ -f "$HOME/.zshrc" ] && source "$HOME/.zshrc" 2>/dev/null',
-            `echo "${actionVerb} ${label} for TaskWraith…"`,
-            `echo "> ${command}"`,
-            'echo ""',
-            command,
-            'status=$?',
-            'echo ""',
-            `echo "${postscript}"`
-          ].join('\n') + '\n'
-        const file = join(dir, `${provider}-${action}.command`)
-        fsSync.writeFileSync(file, script, { mode: 0o755 })
-        fsSync.chmodSync(file, 0o755)
-        const err = await shell.openPath(file)
-        if (err) return { ok: false, error: err }
-        return { ok: true }
-      } catch (e) {
-        return { ok: false, error: e instanceof Error ? e.message : String(e) }
-      }
-    }
-
-    ipcMain.handle('provider:open-login-terminal', async (_e, provider: ProviderId) =>
-      openProviderAuthTerminal(provider, 'login')
-    )
-    ipcMain.handle('provider:open-logout-terminal', async (_e, provider: ProviderId) =>
-      openProviderAuthTerminal(provider, 'logout')
-    )
-    ipcMain.handle('provider:open-upgrade-terminal', async (_e, provider: ProviderId) =>
-      openProviderAuthTerminal(provider, 'upgrade')
-    )
-    ipcMain.handle('provider:open-kimi-upgrade-terminal', async () =>
-      openProviderAuthTerminal('kimi', 'upgrade')
-    )
+    registerProviderTerminalHandlers({
+      resolveCliProviderBinary,
+      getUserDataPath: () => app.getPath('userData'),
+      openPath: (path) => shell.openPath(path),
+      mkdirSync: (path, options) => fsSync.mkdirSync(path, options),
+      writeFileSync: (path, data, options) => fsSync.writeFileSync(path, data, options),
+      chmodSync: (path, mode) => fsSync.chmodSync(path, mode),
+      getPlatform: () => process.platform
+    })
 
     ipcMain.handle('list-agent-threads', async (_, provider: ProviderId, params: any = {}) => {
       if (provider !== 'codex') {
