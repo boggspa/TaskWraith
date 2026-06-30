@@ -1510,18 +1510,36 @@ export function shouldStopOllamaAfterGoalLifecycleTool(toolName: string, ok: boo
   return ok && ollamaGoalLifecycleStopContent(toolName) !== null
 }
 
-export function ollamaEmptyToolResponseRetryPrompt(): string {
+interface OllamaRetryPromptOptions {
+  ensembleRun?: boolean
+}
+
+function ollamaEnsembleRetryReminder(options?: OllamaRetryPromptOptions): string[] {
+  return options?.ensembleRun
+    ? [
+        'For this ensemble run, answer as your assigned participant and keep following the Role boundary contract plus Boss/Bossman/Lead routing.'
+      ]
+    : []
+}
+
+export function ollamaEmptyToolResponseRetryPrompt(options?: OllamaRetryPromptOptions): string {
   return [
     'Your previous response was empty after TaskWraith returned tool results.',
     'Do not request another tool unless it is strictly required.',
-    'Answer the original user now in normal assistant prose, summarizing the tool results you already received.'
+    ...ollamaEnsembleRetryReminder(options),
+    options?.ensembleRun
+      ? 'Answer now in normal assistant prose, summarizing the tool results inside your assigned ensemble slice.'
+      : 'Answer the original user now in normal assistant prose, summarizing the tool results you already received.'
   ].join(' ')
 }
 
-export function ollamaEmptyResponseRetryPrompt(): string {
+export function ollamaEmptyResponseRetryPrompt(options?: OllamaRetryPromptOptions): string {
   return [
     'Your previous response was empty.',
-    'Answer the original user request now in normal assistant prose.',
+    ...ollamaEnsembleRetryReminder(options),
+    options?.ensembleRun
+      ? 'Answer the current ensemble turn now in normal assistant prose from your assigned participant role.'
+      : 'Answer the original user request now in normal assistant prose.',
     'Put your final answer in your normal response, not only in hidden reasoning.'
   ].join(' ')
 }
@@ -1532,10 +1550,13 @@ export const OLLAMA_DEGENERATE_OUTPUT_TOKEN_MAX = 1
 /** Max visible chars for a stub fragment ("The", "I", …) worth re-prompting. */
 export const OLLAMA_DEGENERATE_STUB_MAX_CHARS = 24
 
-export function ollamaDegenerateResponseNudgePrompt(): string {
+export function ollamaDegenerateResponseNudgePrompt(options?: OllamaRetryPromptOptions): string {
   return [
     'Your previous reply was too short to count as a turn (often caused by running out of context window).',
-    'Answer the current request in full assistant prose now, or call a TaskWraith tool if you need workspace facts.',
+    ...ollamaEnsembleRetryReminder(options),
+    options?.ensembleRun
+      ? 'Answer the current ensemble turn in full assistant prose now, or call a TaskWraith tool if your assigned slice needs workspace facts.'
+      : 'Answer the current request in full assistant prose now, or call a TaskWraith tool if you need workspace facts.',
     'Do not stop after a single word or fragment.'
   ].join(' ')
 }
@@ -1564,11 +1585,14 @@ export function isDegenerateOllamaTurn(
 /** Nudge for harmony-format models (gpt-oss) that emit a plan into their hidden
  * reasoning channel without producing a final answer or an actual tool call.
  * We must not surface chain-of-thought as the answer, so push the model to act. */
-export function ollamaReasoningOnlyNudgePrompt(): string {
+export function ollamaReasoningOnlyNudgePrompt(options?: OllamaRetryPromptOptions): string {
   return [
     'You produced internal reasoning but no final answer and no tool call.',
     'If you need external data (web pages, files, search results), call one of the available tools now.',
-    'Otherwise, write your final answer for the user in normal assistant prose.',
+    ...ollamaEnsembleRetryReminder(options),
+    options?.ensembleRun
+      ? 'Otherwise, write your final answer for this ensemble turn in normal assistant prose from your assigned participant role.'
+      : 'Otherwise, write your final answer for the user in normal assistant prose.',
     'Do not leave your response only in hidden reasoning.'
   ].join(' ')
 }
@@ -2404,8 +2428,8 @@ export async function runOllamaProvider(
             role: 'user',
             content:
               toolCallCount > 0
-                ? ollamaEmptyToolResponseRetryPrompt()
-                : ollamaReasoningOnlyNudgePrompt()
+                ? ollamaEmptyToolResponseRetryPrompt({ ensembleRun })
+                : ollamaReasoningOnlyNudgePrompt({ ensembleRun })
           })
           continue
         }
@@ -2414,8 +2438,8 @@ export async function runOllamaProvider(
             role: 'user',
             content:
               toolCallCount > 0
-                ? ollamaEmptyToolResponseRetryPrompt()
-                : ollamaEmptyResponseRetryPrompt()
+                ? ollamaEmptyToolResponseRetryPrompt({ ensembleRun })
+                : ollamaEmptyResponseRetryPrompt({ ensembleRun })
           })
           continue
         }
@@ -2456,7 +2480,7 @@ export async function runOllamaProvider(
           if (turn.content.trim()) {
             messages.push({ role: 'assistant', content: turn.content })
           }
-          messages.push({ role: 'user', content: ollamaDegenerateResponseNudgePrompt() })
+          messages.push({ role: 'user', content: ollamaDegenerateResponseNudgePrompt({ ensembleRun }) })
           continue
         }
         if (visibleText) {

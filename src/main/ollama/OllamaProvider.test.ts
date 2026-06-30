@@ -487,6 +487,85 @@ describe('runOllamaProvider streaming', () => {
     expect(chatBodies[1]).toContain('Boss/Bossman/Lead routing')
   })
 
+  it('keeps ensemble authority salient after empty Ollama turns', async () => {
+    let chatCalls = 0
+    const chatBodies: string[] = []
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (String(url).endsWith('/api/tags')) {
+        return jsonResponse({
+          models: [
+            {
+              name: 'stream-model:latest',
+              digest: 'digest-stream',
+              details: { family: 'qwen' },
+              capabilities: ['tools']
+            }
+          ]
+        })
+      }
+      if (String(url).endsWith('/api/show')) {
+        return jsonResponse({ details: { family: 'qwen' }, capabilities: ['tools'] })
+      }
+      if (String(url).endsWith('/api/chat')) {
+        chatCalls += 1
+        chatBodies.push(String(init?.body || ''))
+        if (chatCalls === 1) {
+          return ollamaStreamResponse([
+            JSON.stringify({ message: { role: 'assistant', content: '' } }),
+            JSON.stringify({ done: true, prompt_eval_count: 8, eval_count: 0 })
+          ])
+        }
+        return ollamaStreamResponse([
+          JSON.stringify({
+            message: {
+              role: 'assistant',
+              content: 'I will answer from my assigned ensemble participant role.'
+            }
+          }),
+          JSON.stringify({ done: true, prompt_eval_count: 8, eval_count: 12 })
+        ])
+      }
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const { deps } = makeProviderDeps({
+      fetchMock,
+      settings: {
+        ollamaRunProfiles: {
+          'stream-model:latest': { protocolMode: 'json_only' }
+        }
+      },
+      executeTool: async () => ({ ok: true, output: '' })
+    })
+
+    await runOllamaProvider(
+      deps,
+      stubEvent,
+      {
+        ...basePayload,
+        prompt: [
+          'TaskWraith Ensemble Mode',
+          'Role boundary contract:',
+          '- Treat Boss routing as authoritative.',
+          'Current user request:',
+          'Check empty-turn retry parity.'
+        ].join('\n'),
+        ensembleRun: {
+          roundId: 'round-1',
+          participantId: 'participant-ollama',
+          provider: 'ollama',
+          role: 'SliceWorker',
+          order: 9
+        }
+      },
+      baseRoute
+    )
+
+    expect(chatBodies).toHaveLength(2)
+    expect(chatBodies[1]).toContain('assigned participant')
+    expect(chatBodies[1]).toContain('Boss/Bossman/Lead routing')
+    expect(chatBodies[1]).toContain('assigned participant role')
+  })
+
   it('emits content deltas before the Ollama HTTP stream finishes', async () => {
     const gate = makeDeferred()
     const fetchMock = vi.fn(async (url: string) => {
@@ -1660,11 +1739,26 @@ describe('parseOllamaToolRequest', () => {
     expect(ollamaEmptyResponseRetryPrompt()).toContain('Answer the original user request now')
   })
 
+  it('keeps empty-response retry nudges anchored to ensemble assignments', () => {
+    expect(ollamaEmptyToolResponseRetryPrompt({ ensembleRun: true })).toContain(
+      'assigned ensemble slice'
+    )
+    expect(ollamaEmptyResponseRetryPrompt({ ensembleRun: true })).toContain(
+      'assigned participant role'
+    )
+    expect(ollamaDegenerateResponseNudgePrompt({ ensembleRun: true })).toContain(
+      'assigned slice needs workspace facts'
+    )
+  })
+
   it('nudges reasoning-only turns to act instead of leaking chain-of-thought', () => {
     const prompt = ollamaReasoningOnlyNudgePrompt()
     expect(prompt).toContain('internal reasoning but no final answer and no tool call')
     expect(prompt).toContain('call one of the available tools now')
     expect(prompt).toContain('Do not leave your response only in hidden reasoning')
+    expect(ollamaReasoningOnlyNudgePrompt({ ensembleRun: true })).toContain(
+      'assigned participant role'
+    )
   })
 
   it('tells local models they can reach the live internet via web tools', () => {
