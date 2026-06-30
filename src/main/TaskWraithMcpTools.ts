@@ -158,6 +158,7 @@ export const TASKWRAITH_MCP_TOOLS = [
   'canvas_open',
   'canvas_render_html',
   'canvas_open_attachment',
+  'canvas_open_launch',
   'canvas_list',
   'canvas_status',
   'canvas_snapshot',

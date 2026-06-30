@@ -88,12 +88,22 @@ describe('taskWraithToolAgenticService — canvas interaction bucket', () => {
     expect(taskWraithToolAgenticService('canvas_click')).toBe('canvasInteraction')
     expect(taskWraithToolAgenticService('canvas_fill')).toBe('canvasInteraction')
     expect(taskWraithToolAgenticService('canvas_snapshot')).toBe('mcpTools')
+    expect(taskWraithToolAgenticService('canvas_open_launch')).toBe('mcpTools')
   })
 
   it('routes canvas_eval to its own stricter canvasEval bucket', () => {
     // Distinct from canvasInteraction: eval is non-grantable / never-auto-allowed.
     expect(taskWraithToolAgenticService('canvas_eval')).toBe('canvasEval')
     expect(taskWraithToolAgenticService('canvas_eval')).not.toBe('canvasInteraction')
+  })
+})
+
+describe('taskWraithToolAgenticService — Run-Button launch bucket', () => {
+  it('routes launch start/stop to shellCommands and keeps launch reads on mcpTools', () => {
+    expect(taskWraithToolAgenticService('launch_start')).toBe('shellCommands')
+    expect(taskWraithToolAgenticService('launch_stop')).toBe('shellCommands')
+    expect(taskWraithToolAgenticService('launch_list_targets')).toBe('mcpTools')
+    expect(taskWraithToolAgenticService('launch_status')).toBe('mcpTools')
   })
 })
 

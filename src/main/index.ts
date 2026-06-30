@@ -688,6 +688,7 @@ import { CanvasEmbedController } from './canvas/CanvasEmbedController'
 import { registerCanvasEmbedIpc } from './canvas/CanvasEmbedIpc'
 import { asEmbedParent, createElectronEmbedView } from './canvas/CanvasEmbedView'
 import type { CanvasDriverKind, CanvasEventRecord } from './canvas/canvasTypes'
+import type { LaunchAttempt } from './launch/types'
 import {
   CANVAS_IMAGE_MAX_DECODE_PIXELS,
   fitWithinMaxEdge,
@@ -2256,7 +2257,11 @@ function teardownCanvasSurfacesForWindowClose(): void {
       canvasShutdownCloseAllInFlight = null
     })
 }
-const canvasToolExecutors = createCanvasToolExecutors({ controller: canvasService })
+let canvasLaunchAttemptsSnapshot: (() => LaunchAttempt[]) | null = null
+const canvasToolExecutors = createCanvasToolExecutors({
+  controller: canvasService,
+  launchAttempts: () => canvasLaunchAttemptsSnapshot?.() ?? []
+})
 // Assigned during app init once LaunchManager + workspace/local-server deps exist
 // (see the registerLaunchHandlers wiring). Held at module scope so the shared MCP
 // dispatcher (executeGeminiMcpTool) can reach it.
@@ -24168,6 +24173,7 @@ if (isGeminiMcpBridgeProcess) {
       recordLifecycleEvent: appendLaunchLifecycleRunEvent,
       log: (line) => console.log(line)
     })
+    canvasLaunchAttemptsSnapshot = () => launchManager.snapshot().attempts
     launchManager.subscribe((snapshot) => {
       try {
         mainWindow?.webContents.send('launch-attempts-changed', snapshot)

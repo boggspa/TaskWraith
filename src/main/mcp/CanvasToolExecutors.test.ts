@@ -5,6 +5,7 @@ import {
   isCanvasMcpToolName
 } from './CanvasToolExecutors'
 import type { CanvasController } from '../canvas/canvasTypes'
+import type { LaunchAttempt } from '../launch/types'
 
 function fakeController(over: Partial<CanvasController> = {}): CanvasController {
   return {
@@ -79,6 +80,34 @@ function fakeController(over: Partial<CanvasController> = {}): CanvasController 
 }
 
 const ctx = { appChatId: 'chat1', appRunId: 'run1', workspacePath: '/ws' }
+
+function fakeLaunchAttempt(over: Partial<LaunchAttempt> = {}): LaunchAttempt {
+  return {
+    schemaVersion: 1,
+    id: 'att1',
+    targetId: 'npm-dev',
+    targetLabel: 'npm dev',
+    targetSource: 'package-json',
+    targetKind: 'dev-server',
+    targetSnapshot: {} as LaunchAttempt['targetSnapshot'],
+    targetSnapshotHash: 'h',
+    provider: 'codex',
+    workspacePath: '/ws',
+    cwd: '/ws',
+    commandRaw: 'npm run dev',
+    argv: ['npm', 'run', 'dev'],
+    status: 'running',
+    startedAt: 'T0',
+    updatedAt: 'T1',
+    outputTail: 'ready on http://localhost:5173\n',
+    outputTailBytes: 31,
+    outputTruncated: false,
+    detectedUrls: ['http://localhost:5173/'],
+    chatId: 'chat1',
+    runId: 'run1',
+    ...over
+  } as LaunchAttempt
+}
 
 describe('isCanvasMcpToolName', () => {
   it('matches the canvas tools and nothing else', () => {
@@ -185,6 +214,157 @@ describe('executeCanvasTool', () => {
       'claude'
     )
     expect(badHash.isError).toBe(true)
+    expect(opened).toBe(false)
+  })
+
+  it('canvas_open_launch opens this chat\'s running detected URL with the web driver', async () => {
+    let seen: unknown = null
+    const controller = fakeController({
+      open: async (input) => {
+        seen = input
+        return {
+          canvasId: 'cw',
+          url: input.url || '',
+          title: 'Dev app',
+          viewport: { width: 390, height: 844 }
+        }
+      }
+    })
+    const { executeCanvasTool } = createCanvasToolExecutors({
+      controller,
+      launchAttempts: () => [fakeLaunchAttempt()]
+    })
+    const result = await executeCanvasTool(
+      'canvas_open_launch',
+      { attemptId: 'att1', width: 390, height: 844 },
+      ctx,
+      'claude'
+    )
+    expect(result.isError).toBeFalsy()
+    expect(seen).toMatchObject({ driver: 'web', url: 'http://localhost:5173/' })
+    expect(result.structuredContent?.source).toBe('detectedUrl')
+    expect(result.structuredContent?.canvasId).toBe('cw')
+  })
+
+  it('canvas_open_launch requires an attemptId', async () => {
+    let opened = false
+    const controller = fakeController({
+      open: async () => {
+        opened = true
+        return { canvasId: 'c1', url: '', title: 'T', viewport: { width: 1, height: 1 } }
+      }
+    })
+    const { executeCanvasTool } = createCanvasToolExecutors({
+      controller,
+      launchAttempts: () => [fakeLaunchAttempt()]
+    })
+    const result = await executeCanvasTool('canvas_open_launch', {}, ctx, 'claude')
+    expect(result.isError).toBe(true)
+    expect(opened).toBe(false)
+  })
+
+  it('canvas_open_launch renders owned build output as escaped static html', async () => {
+    let seen: unknown = null
+    const controller = fakeController({
+      open: async (input) => {
+        seen = input
+        return { canvasId: 'clog', url: 'html://log', title: 'Build output', viewport: { width: 800, height: 600 } }
+      }
+    })
+    const { executeCanvasTool } = createCanvasToolExecutors({
+      controller,
+      launchAttempts: () => [
+        fakeLaunchAttempt({
+          id: 'build1',
+          targetLabel: 'swift build',
+          targetKind: 'build',
+          status: 'failed',
+          detectedUrls: [],
+          outputTail: '<script>alert(1)</script>\nerror\n'
+        })
+      ]
+    })
+    const result = await executeCanvasTool('canvas_open_launch', { attemptId: 'build1' }, ctx, 'claude')
+    expect(result.isError).toBeFalsy()
+    expect(seen).toMatchObject({ driver: 'html' })
+    expect(String((seen as { html: string }).html)).toContain('&lt;script&gt;alert(1)&lt;/script&gt;')
+    expect(result.structuredContent?.source).toBe('outputTail')
+    expect(result.content?.some((b) => b.type === 'image')).toBe(true)
+  })
+
+  it('canvas_open_launch falls back to output for terminal attempts even with a detected URL', async () => {
+    let seen: unknown = null
+    const controller = fakeController({
+      open: async (input) => {
+        seen = input
+        return { canvasId: 'clog', url: 'html://log', title: 'Build output', viewport: { width: 800, height: 600 } }
+      }
+    })
+    const { executeCanvasTool } = createCanvasToolExecutors({
+      controller,
+      launchAttempts: () => [fakeLaunchAttempt({ status: 'stopped', detectedUrls: ['http://localhost:5173/'] })]
+    })
+    const result = await executeCanvasTool('canvas_open_launch', { attemptId: 'att1' }, ctx, 'claude')
+    expect(result.isError).toBeFalsy()
+    expect(seen).toMatchObject({ driver: 'html' })
+    expect(result.structuredContent?.source).toBe('outputTail')
+  })
+
+  it('canvas_open_launch ignores non-loopback detected URLs and falls back to output', async () => {
+    let seen: unknown = null
+    const controller = fakeController({
+      open: async (input) => {
+        seen = input
+        return { canvasId: 'clog', url: 'html://log', title: 'Build output', viewport: { width: 800, height: 600 } }
+      }
+    })
+    const { executeCanvasTool } = createCanvasToolExecutors({
+      controller,
+      launchAttempts: () => [fakeLaunchAttempt({ detectedUrls: ['https://example.com/'] })]
+    })
+    const result = await executeCanvasTool('canvas_open_launch', { attemptId: 'att1' }, ctx, 'claude')
+    expect(result.isError).toBeFalsy()
+    expect(seen).toMatchObject({ driver: 'html' })
+    expect(result.structuredContent?.source).toBe('outputTail')
+  })
+
+  it('canvas_open_launch refuses another chat\'s attemptId without opening', async () => {
+    let opened = false
+    const controller = fakeController({
+      open: async () => {
+        opened = true
+        return { canvasId: 'c1', url: '', title: 'T', viewport: { width: 1, height: 1 } }
+      }
+    })
+    const { executeCanvasTool } = createCanvasToolExecutors({
+      controller,
+      launchAttempts: () => [fakeLaunchAttempt({ id: 'other', chatId: 'chat2' })]
+    })
+    const result = await executeCanvasTool('canvas_open_launch', { attemptId: 'other' }, ctx, 'claude')
+    expect(result.isError).toBe(true)
+    expect(String(result.structuredContent?.error)).toMatch(/not found/)
+    expect(opened).toBe(false)
+  })
+
+  it('canvas_open_launch does not expose unattributed attempts to no-chat runs', async () => {
+    let opened = false
+    const controller = fakeController({
+      open: async () => {
+        opened = true
+        return { canvasId: 'c1', url: '', title: 'T', viewport: { width: 1, height: 1 } }
+      }
+    })
+    const { executeCanvasTool } = createCanvasToolExecutors({
+      controller,
+      launchAttempts: () => [fakeLaunchAttempt({ id: 'legacy', chatId: undefined })]
+    })
+    const result = await executeCanvasTool(
+      'canvas_open_launch',
+      { attemptId: 'legacy' },
+      { appRunId: 'run1', workspacePath: '/ws' },
+      'claude'
+    )
+    expect(result.isError).toBe(true)
     expect(opened).toBe(false)
   })
 

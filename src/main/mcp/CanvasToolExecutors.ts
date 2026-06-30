@@ -13,12 +13,19 @@
  */
 import type { McpToolContentBlock, McpToolExecutionResult } from './McpBridgeRuntime'
 import type { CanvasCallContext, CanvasController, CanvasMark } from '../canvas/canvasTypes'
-import { resolveViewport, validateCanvasHtml, validateCanvasImageRef } from '../canvas/canvasTypes'
+import {
+  resolveViewport,
+  validateCanvasHtml,
+  validateCanvasImageRef,
+  validateCanvasUrl
+} from '../canvas/canvasTypes'
+import type { LaunchAttempt } from '../launch/types'
 
 export const CANVAS_MCP_TOOL_NAMES = [
   'canvas_open',
   'canvas_render_html',
   'canvas_open_attachment',
+  'canvas_open_launch',
   'canvas_list',
   'canvas_status',
   'canvas_snapshot',
@@ -51,6 +58,12 @@ export interface CanvasToolContext {
 
 export interface CanvasToolExecutorDeps {
   controller: CanvasController
+  /**
+   * Lazy snapshot of LaunchManager attempts. Kept optional so the canvas executor
+   * remains usable in tests / early app startup; canvas_open_launch errors if it
+   * is called before launch infrastructure is available.
+   */
+  launchAttempts?: () => LaunchAttempt[]
 }
 
 export interface CanvasToolExecutors {
@@ -121,6 +134,82 @@ function fail(toolName: CanvasMcpToolName, message: string): McpToolExecutionRes
   const value = { ok: false, tool: toolName, error: message }
   const text = JSON.stringify(value)
   return { text, isError: true, structuredContent: value, content: [{ type: 'text', text }] }
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
+function ownLaunchAttempts(
+  attempts: LaunchAttempt[],
+  context: CanvasToolContext
+): LaunchAttempt[] {
+  const chat = context.appChatId
+  if (!chat) return []
+  return attempts.filter((attempt) => attempt.chatId === chat)
+}
+
+function firstPreviewableLaunchUrl(attempt: LaunchAttempt): string | undefined {
+  if (attempt.status !== 'starting' && attempt.status !== 'running') return undefined
+  for (const rawUrl of attempt.detectedUrls ?? []) {
+    const verdict = validateCanvasUrl(rawUrl)
+    // LaunchManager only detects loopback URLs; keep the extra class check here
+    // so a future detector broadening cannot turn canvas_open_launch into a
+    // public-web opener without an explicit design change.
+    if (verdict.ok && verdict.hostClass === 'loopback') {
+      return verdict.normalizedUrl ?? rawUrl
+    }
+  }
+  return undefined
+}
+
+function launchLogHtml(attempt: LaunchAttempt): string {
+  const output = attempt.outputTail.trimEnd()
+  const body = output || '(no process output captured yet)'
+  const truncated = attempt.outputTruncated
+    ? '<div class="notice">Showing the most recent captured output.</div>'
+    : ''
+  const lines = [
+    ['Target', attempt.targetLabel],
+    ['Status', attempt.status],
+    ['Started', attempt.startedAt],
+    ['Updated', attempt.updatedAt]
+  ]
+    .map(([label, value]) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value || '')}</dd></div>`)
+    .join('')
+
+  return `<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>${escapeHtml(attempt.targetLabel)} output</title>
+<style>
+:root { color-scheme: light dark; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+body { margin: 0; background: #111318; color: #f4f7fb; }
+main { min-height: 100vh; box-sizing: border-box; padding: 28px; }
+h1 { margin: 0 0 16px; font-size: 24px; font-weight: 650; letter-spacing: 0; }
+dl { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin: 0 0 20px; }
+dl > div { padding: 10px 12px; border: 1px solid #303643; border-radius: 6px; background: #191d25; }
+dt { color: #aab4c2; font-size: 12px; margin-bottom: 4px; }
+dd { margin: 0; font-size: 13px; overflow-wrap: anywhere; }
+.notice { margin: 0 0 12px; color: #f7d488; font-size: 13px; }
+pre { margin: 0; padding: 16px; border: 1px solid #303643; border-radius: 6px; background: #07090d; color: #f4f7fb; overflow: auto; white-space: pre-wrap; word-break: break-word; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+</style>
+</head>
+<body>
+<main>
+<h1>${escapeHtml(attempt.targetLabel)} output</h1>
+<dl>${lines}</dl>
+${truncated}
+<pre>${escapeHtml(body)}</pre>
+</main>
+</body>
+</html>`
 }
 
 export function createCanvasToolExecutors(deps: CanvasToolExecutorDeps): CanvasToolExecutors {
@@ -239,6 +328,56 @@ export function createCanvasToolExecutors(deps: CanvasToolExecutorDeps): CanvasT
               tool: toolName,
               canvasId: opened.canvasId,
               url: opened.url,
+              mimeType: frame.mimeType,
+              width: frame.width,
+              height: frame.height,
+              byteLength: frame.byteLength,
+              hash: frame.hash,
+              capturedAt: frame.capturedAt
+            },
+            [{ type: 'image', mimeType: frame.mimeType, data: frame.data }]
+          )
+        }
+        case 'canvas_open_launch': {
+          const attemptId = asOptString(args.attemptId)
+          if (!attemptId) return fail(toolName, '`attemptId` is required (from launch_start / launch_status).')
+          if (!deps.launchAttempts) {
+            return fail(toolName, 'Launch attempts are not available yet (app still initializing).')
+          }
+          const attempt = ownLaunchAttempts(deps.launchAttempts(), context).find((a) => a.id === attemptId)
+          if (!attempt) return fail(toolName, `Launch attempt "${attemptId}" was not found.`)
+
+          const viewport = resolveViewport({ width: args.width, height: args.height })
+          const url = firstPreviewableLaunchUrl(attempt)
+          if (url) {
+            const opened = await controller.open({ driver: 'web', url, viewport }, ctx)
+            return jsonResult({
+              ok: true,
+              tool: toolName,
+              attemptId,
+              source: 'detectedUrl',
+              canvasId: opened.canvasId,
+              url: opened.url,
+              title: opened.title,
+              viewport: opened.viewport
+            })
+          }
+
+          const opened = await controller.open(
+            { driver: 'html', html: launchLogHtml(attempt), viewport },
+            ctx
+          )
+          const frame = await controller.screenshot(opened.canvasId, ctx)
+          return jsonResult(
+            {
+              ok: true,
+              tool: toolName,
+              attemptId,
+              source: 'outputTail',
+              canvasId: opened.canvasId,
+              url: opened.url,
+              title: opened.title,
+              status: attempt.status,
               mimeType: frame.mimeType,
               width: frame.width,
               height: frame.height,

@@ -2606,6 +2606,29 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
       }
     },
     {
+      name: 'canvas_open_launch',
+      description:
+        'Open an existing Run-Button launch attempt in TaskWraith Canvas. Pass an `attemptId` from launch_start / launch_status. This tool NEVER starts a process: it only attaches to an attempt owned by the calling chat. If the attempt is running and has a detected http://localhost URL, Canvas opens that live app with the web driver. Otherwise Canvas renders the attempt\'s recent outputTail as escaped static HTML and returns a screenshot. Gated like canvas_open.',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          attemptId: {
+            type: 'string',
+            description: 'A launch attempt id returned by launch_start or launch_status.'
+          },
+          width: { type: 'number' },
+          height: { type: 'number' }
+        },
+        required: ['attemptId']
+      }
+    },
+    {
       name: 'canvas_list',
       description:
         'List currently open Canvas sessions (canvasId, driver, url, status). Read-only; carries no pixels.',
