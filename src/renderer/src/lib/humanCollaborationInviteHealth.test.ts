@@ -6,7 +6,7 @@ describe('classifyHumanCollaborationRelayUrls', () => {
     const availability = classifyHumanCollaborationRelayUrls([
       'ws://127.0.0.1:8787',
       'ws://192.168.0.147:8787',
-      'wss://chriss-mac-studio.tail2d0961.ts.net',
+      'wss://studio.example.ts.net',
       'ws://192.168.0.147:8787',
       ''
     ])
@@ -14,7 +14,7 @@ describe('classifyHumanCollaborationRelayUrls', () => {
     expect(availability.relayUrls).toEqual([
       'ws://127.0.0.1:8787',
       'ws://192.168.0.147:8787',
-      'wss://chriss-mac-studio.tail2d0961.ts.net'
+      'wss://studio.example.ts.net'
     ])
     expect(availability.lanAvailable).toBe(true)
     expect(availability.remoteAvailable).toBe(true)
