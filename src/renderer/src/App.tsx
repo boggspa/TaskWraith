@@ -20,6 +20,11 @@ import { resolveRuntimePickerScope } from './lib/participantRuntimeProfile'
 import { resolveSlashParticipantForChat } from './lib/resolveSlashParticipant'
 import { buildHumanCollaborationInvitePayload } from './lib/humanCollaborationInvitePayload'
 import {
+  classifyHumanCollaborationRelayUrls,
+  type HumanCollaborationInviteCopyResult,
+  type HumanCollaborationInviteHealth
+} from './lib/humanCollaborationInviteHealth'
+import {
   applyScheduledEnsembleSnapshot,
   buildScheduledEnsembleSnapshot
 } from './lib/scheduledEnsembleSnapshot'
@@ -1198,6 +1203,40 @@ function App(): React.JSX.Element {
       window.clearInterval(interval)
     }
   }, [])
+  const [humanCollaborationInviteHealthByChatId, setHumanCollaborationInviteHealthByChatId] =
+    useState<Record<string, HumanCollaborationInviteHealth>>({})
+  const [pendingHumanCollaborationInviteChatIds, setPendingHumanCollaborationInviteChatIds] =
+    useState<Set<string>>(new Set())
+  const pendingHumanCollaborationInviteChatIdsRef = useRef<Set<string>>(new Set())
+  const readHumanCollaborationInviteHealth = useCallback(
+    async (chatId: string): Promise<HumanCollaborationInviteHealth> => {
+      const raw =
+        typeof window.api.humanCollaborationInviteHealth === 'function'
+          ? await window.api.humanCollaborationInviteHealth(chatId)
+          : null
+      const availability = classifyHumanCollaborationRelayUrls(raw?.relayUrls || [])
+      const health: HumanCollaborationInviteHealth = {
+        chatAvailable: Boolean(raw?.chatAvailable),
+        shareEnabled: Boolean(raw?.shareEnabled),
+        bridgeEnabled: Boolean(raw?.bridgeEnabled),
+        bridgeRunning: Boolean(raw?.bridgeRunning),
+        bridgeError: typeof raw?.bridgeError === 'string' ? raw.bridgeError : '',
+        relayUrls: availability.relayUrls,
+        lanAvailable: availability.lanAvailable,
+        remoteAvailable: availability.remoteAvailable || Boolean(raw?.tailscaleConfigured),
+        tailscaleConfigured: Boolean(raw?.tailscaleConfigured),
+        tailscaleSuggestedUrl:
+          typeof raw?.tailscaleSuggestedUrl === 'string' ? raw.tailscaleSuggestedUrl : '',
+        tailscaleReason: typeof raw?.tailscaleReason === 'string' ? raw.tailscaleReason : ''
+      }
+      setHumanCollaborationInviteHealthByChatId((previous) => ({
+        ...previous,
+        [chatId]: health
+      }))
+      return health
+    },
+    []
+  )
   // Shared helper: create a collaboration share for `chatId` and copy the
   // out-of-band invite payload. Used by both "Share this chat" (current chat)
   // and "New Shared Chat" (a freshly-created chat).
@@ -1213,18 +1252,91 @@ function App(): React.JSX.Element {
     },
     [chats, currentChat]
   )
-  const shareChatIdAndCopyInvite = useCallback(
+  const copyHumanCollaborationInvitePayload = useCallback(
+    async (invitePayload: string): Promise<boolean> => {
+      let copyError: unknown = null
+      if (typeof window.api.humanCollaborationCopyInvite === 'function') {
+        try {
+          await window.api.humanCollaborationCopyInvite({ invite: invitePayload })
+          return true
+        } catch (error) {
+          copyError = error
+        }
+      }
+      if (!navigator.clipboard?.writeText) {
+        if (copyError) console.warn('[human-collaboration] native clipboard failed', copyError)
+        return false
+      }
+      try {
+        await navigator.clipboard.writeText(invitePayload)
+        return true
+      } catch (error) {
+        console.warn('[human-collaboration] clipboard fallback failed', error)
+        return false
+      }
+    },
+    []
+  )
+  const createFreshHumanCollaborationInvite = useCallback(
     async (
       chatId: string,
       options: {
         mode?: HumanCollaborationShare['mode']
-        actionLabel?: 'created' | 'refreshed'
         chat?: ChatRecord | null
+        requireActiveShare?: boolean
+        allowLanOnly?: boolean
       } = {}
-    ): Promise<void> => {
-      if (typeof window.api.humanCollaborationCreateShare !== 'function') return
+    ): Promise<HumanCollaborationInviteCopyResult> => {
+      if (typeof window.api.humanCollaborationCreateShare !== 'function') {
+        return {
+          ok: false,
+          code: 'unknown',
+          message: 'People sharing is not available in this TaskWraith build.'
+        }
+      }
+      if (pendingHumanCollaborationInviteChatIdsRef.current.has(chatId)) {
+        return {
+          ok: false,
+          code: 'unknown',
+          message: 'An invite is already being prepared for this chat.'
+        }
+      }
+      pendingHumanCollaborationInviteChatIdsRef.current = new Set([
+        ...pendingHumanCollaborationInviteChatIdsRef.current,
+        chatId
+      ])
+      setPendingHumanCollaborationInviteChatIds(
+        new Set(pendingHumanCollaborationInviteChatIdsRef.current)
+      )
       try {
         await ensureChatPersistedForHumanCollaboration(chatId, options.chat)
+        const preflight = await readHumanCollaborationInviteHealth(chatId)
+        if (!preflight.chatAvailable) {
+          return {
+            ok: false,
+            code: 'chat-unavailable',
+            message: 'This chat is not saved yet. Save or re-open the chat, then try again.',
+            health: preflight
+          }
+        }
+        if (options.requireActiveShare !== false && !preflight.shareEnabled) {
+          return {
+            ok: false,
+            code: 'share-disabled',
+            message: 'Sharing is not enabled for this chat anymore.',
+            health: preflight
+          }
+        }
+        if (!preflight.bridgeRunning) {
+          return {
+            ok: false,
+            code: 'bridge-stopped',
+            message: preflight.bridgeError
+              ? `The iOS remote bridge is stopped: ${preflight.bridgeError}`
+              : 'The iOS remote bridge is stopped. Open Devices and enable the iOS remote bridge.',
+            health: preflight
+          }
+        }
         const result = await window.api.humanCollaborationCreateShare({
           chatId,
           mode: options.mode || 'comments'
@@ -1232,40 +1344,119 @@ function App(): React.JSX.Element {
         refreshHumanCollaborationShares()
         const { payload: invitePayload, relayUrls, relayWarning } =
           buildHumanCollaborationInvitePayload(result)
-        let copied = false
-        let copyError: unknown = null
-        if (typeof window.api.humanCollaborationCopyInvite === 'function') {
-          try {
-            await window.api.humanCollaborationCopyInvite({ invite: invitePayload })
-            copied = true
-          } catch (error) {
-            copyError = error
+        const availability = classifyHumanCollaborationRelayUrls(relayUrls)
+        const postHealth: HumanCollaborationInviteHealth = {
+          ...preflight,
+          shareEnabled: true,
+          relayUrls: availability.relayUrls,
+          lanAvailable: availability.lanAvailable,
+          remoteAvailable: availability.remoteAvailable || preflight.remoteAvailable
+        }
+        setHumanCollaborationInviteHealthByChatId((previous) => ({
+          ...previous,
+          [chatId]: postHealth
+        }))
+        if (availability.relayUrls.length === 0 || availability.loopbackOnly) {
+          return {
+            ok: false,
+            code: 'no-relay-url',
+            message:
+              'No collaborator-reachable relay URL is available. Open remote setup, then copy a fresh invite.',
+            invitePayload,
+            relayUrls,
+            relayWarning,
+            availability,
+            health: postHealth
           }
         }
+        if (!options.allowLanOnly && availability.lanAvailable && !availability.remoteAvailable) {
+          return {
+            ok: false,
+            code: 'no-relay-url',
+            message:
+              'Remote relay is not ready. You can copy a LAN-only invite, or open remote setup for cellular/Tailscale access.',
+            invitePayload,
+            relayUrls,
+            relayWarning,
+            availability,
+            health: postHealth,
+            canCopyLanOnly: true
+          }
+        }
+        const copied = await copyHumanCollaborationInvitePayload(invitePayload)
         if (!copied) {
-          if (!navigator.clipboard?.writeText) {
-            throw copyError instanceof Error ? copyError : new Error('Clipboard is not available.')
+          return {
+            ok: false,
+            code: 'clipboard-failed',
+            message: 'Clipboard copy failed. The invite is shown below so you can copy it manually.',
+            invitePayload,
+            relayUrls,
+            relayWarning,
+            availability,
+            health: postHealth
           }
-          await navigator.clipboard.writeText(invitePayload)
         }
-        const warningSuffix = relayWarning ? `\n\n${relayWarning}` : ''
+        return {
+          ok: true,
+          copied,
+          invitePayload,
+          relayUrls,
+          relayWarning,
+          availability,
+          health: postHealth,
+          message: options.allowLanOnly ? 'LAN-only People invite copied.' : 'Fresh People invite copied.'
+        }
+      } catch (error) {
+        console.error('[human-collaboration] create share failed', error)
+        const detail = error instanceof Error ? error.message : String(error)
+        return {
+          ok: false,
+          code: detail.includes('not available for collaboration') ? 'chat-unavailable' : 'unknown',
+          message: detail || 'Could not create or copy People invite.'
+        }
+      } finally {
+        const next = new Set(pendingHumanCollaborationInviteChatIdsRef.current)
+        next.delete(chatId)
+        pendingHumanCollaborationInviteChatIdsRef.current = next
+        setPendingHumanCollaborationInviteChatIds(new Set(next))
+      }
+    },
+    [
+      copyHumanCollaborationInvitePayload,
+      ensureChatPersistedForHumanCollaboration,
+      readHumanCollaborationInviteHealth,
+      refreshHumanCollaborationShares
+    ]
+  )
+  const shareChatIdAndCopyInvite = useCallback(
+    async (
+      chatId: string,
+      options: {
+        mode?: HumanCollaborationShare['mode']
+        actionLabel?: 'created' | 'refreshed'
+        chat?: ChatRecord | null
+        requireActiveShare?: boolean
+      } = {}
+    ): Promise<HumanCollaborationInviteCopyResult> => {
+      const result = await createFreshHumanCollaborationInvite(chatId, {
+        mode: options.mode,
+        chat: options.chat,
+        requireActiveShare: options.requireActiveShare
+      })
+      if (result.ok) {
+        const warningSuffix = result.relayWarning ? `\n\n${result.relayWarning}` : ''
         const successPrefix =
           options.actionLabel === 'refreshed'
             ? 'Fresh People invite copied.'
             : 'People invite copied.'
-        window.alert(
-          (relayUrls.length > 0
-            ? `${successPrefix} Share it out of band with the collaborator.`
-            : `${successPrefix} Remote access is OFF, so collaborators cannot connect yet. Enable remote access in Settings, then create a new invite.`) +
-            warningSuffix
-        )
-      } catch (error) {
-        console.error('[human-collaboration] create share failed', error)
-        const detail = error instanceof Error ? error.message : String(error)
-        window.alert(`Could not create or copy People invite.${detail ? `\n\n${detail}` : ''}`)
+        window.alert(`${successPrefix} Share it out of band with the collaborator.${warningSuffix}`)
+      } else {
+        const warningSuffix = result.relayWarning ? `\n\n${result.relayWarning}` : ''
+        window.alert(`Could not create or copy People invite.\n\n${result.message}${warningSuffix}`)
       }
+      return result
     },
-    [ensureChatPersistedForHumanCollaboration, refreshHumanCollaborationShares]
+    [createFreshHumanCollaborationInvite]
   )
   const activeHumanCollaborationShareByChatId = useMemo(() => {
     const byChatId = new Map<string, HumanCollaborationShare>()
@@ -1283,7 +1474,7 @@ function App(): React.JSX.Element {
   const handleCreateHumanCollaborationShare = useCallback(() => {
     const chatId = currentChat?.appChatId
     if (!chatId) return
-    void shareChatIdAndCopyInvite(chatId)
+    void shareChatIdAndCopyInvite(chatId, { requireActiveShare: false })
   }, [currentChat?.appChatId, shareChatIdAndCopyInvite])
   const handleCopyCurrentHumanCollaborationInvite = useCallback(() => {
     const share = currentChatHumanCollaborationShare
@@ -1293,38 +1484,49 @@ function App(): React.JSX.Element {
       actionLabel: 'refreshed'
     })
   }, [currentChatHumanCollaborationShare, shareChatIdAndCopyInvite])
-  // Host-side "Stop sharing": revoke every enabled share on the current chat
+  // Host-side "Stop sharing": revoke every enabled share on a chat
   // (audit finding L6-1 — the revoke bridge existed with no renderer caller).
   // Confirm first, then revoke each enabled share and re-derive the shared set.
+  const stopHumanCollaborationSharingForChat = useCallback(
+    (chatId: string) => {
+      if (
+        !chatId ||
+        typeof window.api.humanCollaborationListShares !== 'function' ||
+        typeof window.api.humanCollaborationRevokeShare !== 'function'
+      )
+        return
+      if (
+        !window.confirm(
+          'Stop sharing this chat? Collaborators will lose access immediately.'
+        )
+      )
+        return
+      void window.api
+        .humanCollaborationListShares(chatId)
+        .then(async (shares) => {
+          for (const share of shares || []) {
+            if (typeof share?.shareId !== 'string' || share?.enabled === false) continue
+            await window.api.humanCollaborationRevokeShare(share.shareId)
+          }
+          refreshHumanCollaborationShares()
+        })
+        .catch((error) => {
+          console.error('[human-collaboration] stop sharing failed', error)
+          window.alert('Could not stop sharing this chat.')
+          refreshHumanCollaborationShares()
+        })
+    },
+    [refreshHumanCollaborationShares]
+  )
   const handleStopHumanCollaborationSharing = useCallback(() => {
     const chatId = currentChat?.appChatId
-    if (
-      !chatId ||
-      typeof window.api.humanCollaborationListShares !== 'function' ||
-      typeof window.api.humanCollaborationRevokeShare !== 'function'
-    )
-      return
-    if (
-      !window.confirm(
-        'Stop sharing this chat? Collaborators will lose access immediately.'
-      )
-    )
-      return
-    void window.api
-      .humanCollaborationListShares(chatId)
-      .then(async (shares) => {
-        for (const share of shares || []) {
-          if (typeof share?.shareId !== 'string' || share?.enabled === false) continue
-          await window.api.humanCollaborationRevokeShare(share.shareId)
-        }
-        refreshHumanCollaborationShares()
-      })
-      .catch((error) => {
-        console.error('[human-collaboration] stop sharing failed', error)
-        window.alert('Could not stop sharing this chat.')
-        refreshHumanCollaborationShares()
-      })
-  }, [currentChat?.appChatId, refreshHumanCollaborationShares])
+    if (!chatId) return
+    stopHumanCollaborationSharingForChat(chatId)
+  }, [currentChat?.appChatId, stopHumanCollaborationSharingForChat])
+  const openHumanCollaborationRemoteSetup = useCallback(() => {
+    setSettingsActiveTab('pairing')
+    setShowSettings(true)
+  }, [])
   const [isRunning, setIsRunning] = useState(false)
   const [queuedRuns, setQueuedRuns] = useState<QueuedRunRequest[]>([])
   // Mirror of `queuedRuns` for handlers that need synchronous
@@ -6645,7 +6847,10 @@ function App(): React.JSX.Element {
       sharedChat = newChat
     }
     if (sharedChat) {
-      await shareChatIdAndCopyInvite(sharedChat.appChatId, { chat: sharedChat })
+      await shareChatIdAndCopyInvite(sharedChat.appChatId, {
+        chat: sharedChat,
+        requireActiveShare: false
+      })
     }
   }
 
@@ -22323,14 +22528,26 @@ function App(): React.JSX.Element {
         currentChat: viewerChat,
         currentComposerChatId: viewerChatId,
         humanCollaborationInviteActive: Boolean(paneHumanCollaborationShare),
+        humanCollaborationShare: paneHumanCollaborationShare,
+        humanCollaborationInviteHealth:
+          humanCollaborationInviteHealthByChatId[viewerChatId] || null,
+        humanCollaborationInviteBusy: pendingHumanCollaborationInviteChatIds.has(viewerChatId),
+        humanCollaborationInviteLive: connectedCollaborationChatIds.has(viewerChatId),
         onCopyHumanCollaborationInvite: paneHumanCollaborationShare
-          ? () =>
-              void shareChatIdAndCopyInvite(paneHumanCollaborationShare.chatId, {
+          ? (options?: { allowLanOnly?: boolean }) =>
+              createFreshHumanCollaborationInvite(paneHumanCollaborationShare.chatId, {
                 mode: paneHumanCollaborationShare.mode,
-                actionLabel: 'refreshed',
-                chat: viewerChat
+                chat: viewerChat,
+                allowLanOnly: options?.allowLanOnly
               })
           : undefined,
+        onCopyHumanCollaborationInviteText: copyHumanCollaborationInvitePayload,
+        onStopHumanCollaborationSharing: paneHumanCollaborationShare
+          ? () => stopHumanCollaborationSharingForChat(viewerChatId)
+          : undefined,
+        onOpenHumanCollaborationRemoteSetup: openHumanCollaborationRemoteSetup,
+        onRefreshHumanCollaborationInviteHealth: () =>
+          readHumanCollaborationInviteHealth(viewerChatId),
         currentProvider: viewerProvider,
         currentProviderLabel: viewerProviderLabel,
         currentProviderModelOptions: paneCtxHelpers.getProviderModelOptions(viewerProvider),
@@ -22513,6 +22730,9 @@ function App(): React.JSX.Element {
     },
     [
       activeHumanCollaborationShareByChatId,
+      connectedCollaborationChatIds,
+      copyHumanCollaborationInvitePayload,
+      createFreshHumanCollaborationInvite,
       paneCtxHelpers,
       agentModelsByProvider.claude,
       attachedWindow,
@@ -22532,13 +22752,17 @@ function App(): React.JSX.Element {
       handleMultiviewPaneToggleGrant,
       handleMultiviewPaneWelcomeSuggestion,
       handleRunMultiviewPane,
+      humanCollaborationInviteHealthByChatId,
       imageAttachmentsByChatId,
       isAttachingWindow,
       isMultiviewSplit,
+      openHumanCollaborationRemoteSetup,
+      pendingHumanCollaborationInviteChatIds,
+      readHumanCollaborationInviteHealth,
       rememberMultiviewPaneComposerSelection,
       runQueueJobs,
       runningChatIds,
-      shareChatIdAndCopyInvite,
+      stopHumanCollaborationSharingForChat,
       usageInitialized,
       usageRecords,
       welcomeExternalHeatmapEnabled,
@@ -22590,8 +22814,30 @@ function App(): React.JSX.Element {
     currentChat,
     currentComposerChatId,
     humanCollaborationInviteActive: Boolean(currentChatHumanCollaborationShare),
+    humanCollaborationShare: currentChatHumanCollaborationShare,
+    humanCollaborationInviteHealth: currentChat?.appChatId
+      ? humanCollaborationInviteHealthByChatId[currentChat.appChatId] || null
+      : null,
+    humanCollaborationInviteBusy: currentChat?.appChatId
+      ? pendingHumanCollaborationInviteChatIds.has(currentChat.appChatId)
+      : false,
+    humanCollaborationInviteLive: currentChat?.appChatId
+      ? connectedCollaborationChatIds.has(currentChat.appChatId)
+      : false,
     onCopyHumanCollaborationInvite: currentChatHumanCollaborationShare
-      ? handleCopyCurrentHumanCollaborationInvite
+      ? (options?: { allowLanOnly?: boolean }) =>
+          createFreshHumanCollaborationInvite(currentChatHumanCollaborationShare.chatId, {
+            mode: currentChatHumanCollaborationShare.mode,
+            allowLanOnly: options?.allowLanOnly
+          })
+      : undefined,
+    onCopyHumanCollaborationInviteText: copyHumanCollaborationInvitePayload,
+    onStopHumanCollaborationSharing: currentChatHumanCollaborationShare
+      ? handleStopHumanCollaborationSharing
+      : undefined,
+    onOpenHumanCollaborationRemoteSetup: openHumanCollaborationRemoteSetup,
+    onRefreshHumanCollaborationInviteHealth: currentChat?.appChatId
+      ? () => readHumanCollaborationInviteHealth(currentChat.appChatId)
       : undefined,
     currentGoalButtonTitle,
     currentGoalStatus,

@@ -11,6 +11,11 @@ import {
 import type { CodexModelOption } from '../lib/providerModelDefaults'
 import { isRetiredProvider } from '../../../shared/retiredProviders'
 import { resolveWorkspaceDisplayName } from '../../../shared/workspaceDisplayName'
+import type { HumanCollaborationShare } from '../../../main/collaboration/HumanCollaborationStore'
+import type {
+  HumanCollaborationInviteCopyResult,
+  HumanCollaborationInviteHealth
+} from '../lib/humanCollaborationInviteHealth'
 import {
   OLLAMA_RUN_PROFILE_OPTIONS,
   OLLAMA_TOOL_CONTROL_TIERS
@@ -177,6 +182,10 @@ export interface ComposerProps {
   currentGoalStatus: any
   currentGuestParticipant: any
   humanCollaborationInviteActive?: boolean
+  humanCollaborationShare?: HumanCollaborationShare | null
+  humanCollaborationInviteHealth?: HumanCollaborationInviteHealth | null
+  humanCollaborationInviteBusy?: boolean
+  humanCollaborationInviteLive?: boolean
   currentProvider: any
   currentProviderCapabilityWarning: any
   currentProviderLabel: any
@@ -300,7 +309,17 @@ export interface ComposerProps {
   ollamaToolControlTier: any
   onOllamaModelSelected?: (modelId: string, modelLabel?: string) => void
   onRequestOllamaTier4Ack: (chatId?: string | null, workspacePath?: string | null) => void
-  onCopyHumanCollaborationInvite?: () => void
+  onCopyHumanCollaborationInvite?: (options?: { allowLanOnly?: boolean }) =>
+    | Promise<HumanCollaborationInviteCopyResult>
+    | HumanCollaborationInviteCopyResult
+    | void
+  onCopyHumanCollaborationInviteText?: (invitePayload: string) => Promise<boolean> | boolean
+  onStopHumanCollaborationSharing?: () => void
+  onOpenHumanCollaborationRemoteSetup?: () => void
+  onRefreshHumanCollaborationInviteHealth?: () =>
+    | Promise<HumanCollaborationInviteHealth>
+    | HumanCollaborationInviteHealth
+    | void
   openDiscordContextPicker: any
   openGoalPopover: any
   openInspectorTab: any
@@ -458,6 +477,10 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     currentGoalStatus,
     currentGuestParticipant,
     humanCollaborationInviteActive,
+    humanCollaborationShare,
+    humanCollaborationInviteHealth,
+    humanCollaborationInviteBusy,
+    humanCollaborationInviteLive,
     currentProvider,
     currentProviderCapabilityWarning,
     currentProviderLabel,
@@ -580,6 +603,10 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     onOllamaModelSelected,
     onRequestOllamaTier4Ack,
     onCopyHumanCollaborationInvite,
+    onCopyHumanCollaborationInviteText,
+    onStopHumanCollaborationSharing,
+    onOpenHumanCollaborationRemoteSetup,
+    onRefreshHumanCollaborationInviteHealth,
     openDiscordContextPicker,
     openGoalPopover,
     openInspectorTab,
@@ -4127,7 +4154,15 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                         <HumanCollaborationInviteComposerControl
                           active={Boolean(humanCollaborationInviteActive)}
                           disabled={isCurrentComposerLocked}
+                          share={humanCollaborationShare}
+                          health={humanCollaborationInviteHealth}
+                          busy={humanCollaborationInviteBusy}
+                          live={humanCollaborationInviteLive}
                           onCopyInvite={onCopyHumanCollaborationInvite}
+                          onCopyInviteText={onCopyHumanCollaborationInviteText}
+                          onStopSharing={onStopHumanCollaborationSharing}
+                          onOpenRemoteSetup={onOpenHumanCollaborationRemoteSetup}
+                          onRefreshHealth={onRefreshHumanCollaborationInviteHealth}
                         />
                         {/*
                         1.0.6-EW70 — the run/queue/steer/stop buttons are

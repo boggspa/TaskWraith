@@ -4118,6 +4118,201 @@
   box-shadow: 0 0 8px color-mix(in srgb, var(--accent) 70%, transparent);
 }
 
+.composer-human-invite-wrap {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+
+.composer-human-invite-button.is-open {
+  border-color: color-mix(in srgb, var(--accent) 62%, var(--panel-border));
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--accent) 22%, transparent),
+      color-mix(in srgb, var(--surface-elevated) 82%, transparent)
+    );
+}
+
+.composer-human-invite-popover {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 10px);
+  z-index: 3000;
+  width: min(360px, calc(100vw - 28px));
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--panel-border) 78%, #fff 12%);
+  border-radius: 14px;
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--surface-elevated) 92%, transparent),
+      color-mix(in srgb, var(--surface) 88%, transparent)
+    );
+  box-shadow:
+    0 18px 44px color-mix(in srgb, #000 42%, transparent),
+    inset 0 1px 0 color-mix(in srgb, #fff 12%, transparent);
+  color: var(--text-primary);
+  backdrop-filter: blur(22px) saturate(150%);
+}
+
+.composer-human-invite-popover-head,
+.composer-human-invite-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.composer-human-invite-popover-head {
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.composer-human-invite-kicker {
+  display: block;
+  margin-bottom: 2px;
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.composer-human-invite-live-state {
+  flex: 0 0 auto;
+  padding: 3px 8px;
+  border: 1px solid var(--panel-border);
+  border-radius: 999px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.composer-human-invite-live-state.is-live {
+  border-color: color-mix(in srgb, var(--success, #3ddc84) 52%, var(--panel-border));
+  color: color-mix(in srgb, var(--success, #3ddc84) 76%, var(--text-primary));
+}
+
+.composer-human-invite-status-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0 0 10px;
+}
+
+.composer-human-invite-status-grid div {
+  min-width: 0;
+  padding: 7px 8px;
+  border: 1px solid color-mix(in srgb, var(--panel-border) 70%, transparent);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--surface-elevated) 42%, transparent);
+}
+
+.composer-human-invite-status-grid dt {
+  margin: 0 0 2px;
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.composer-human-invite-status-grid dd {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.composer-human-invite-collaborators,
+.composer-human-invite-empty,
+.composer-human-invite-message {
+  margin-top: 8px;
+}
+
+.composer-human-invite-collaborators {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.composer-human-invite-collaborators span {
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: color-mix(in srgb, var(--accent) 78%, var(--text-primary));
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.composer-human-invite-empty {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.composer-human-invite-message {
+  padding: 8px 9px;
+  border: 1px solid color-mix(in srgb, var(--success, #3ddc84) 30%, var(--panel-border));
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--success, #3ddc84) 10%, transparent);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.composer-human-invite-message.is-warning {
+  border-color: color-mix(in srgb, var(--warning, #f2b84b) 42%, var(--panel-border));
+  background: color-mix(in srgb, var(--warning, #f2b84b) 13%, transparent);
+}
+
+.composer-human-invite-manual {
+  width: 100%;
+  min-height: 74px;
+  margin-top: 8px;
+  padding: 8px;
+  border: 1px solid var(--panel-border);
+  border-radius: 9px;
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--surface) 86%, transparent);
+  font: 11px/1.4 var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  resize: vertical;
+}
+
+.composer-human-invite-actions {
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+
+.composer-human-invite-actions button {
+  appearance: none;
+  min-height: 28px;
+  border-radius: 999px;
+  padding: 5px 10px;
+  border: 1px solid var(--panel-border);
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--surface-elevated) 74%, transparent);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.composer-human-invite-actions button:disabled {
+  cursor: default;
+  opacity: 0.56;
+}
+
+.composer-human-invite-actions .composer-human-invite-primary {
+  border-color: color-mix(in srgb, var(--accent) 48%, var(--panel-border));
+  color: color-mix(in srgb, var(--accent) 84%, var(--text-primary));
+}
+
+.composer-human-invite-actions .composer-human-invite-danger {
+  margin-left: auto;
+  border-color: color-mix(in srgb, var(--danger, #e54d4d) 42%, var(--panel-border));
+  color: color-mix(in srgb, var(--danger, #e54d4d) 84%, var(--text-primary));
+}
+
 @media (max-width: 760px) {
   .composer-human-invite-label {
     display: none;
