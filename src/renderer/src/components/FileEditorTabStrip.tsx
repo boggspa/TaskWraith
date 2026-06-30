@@ -4,6 +4,7 @@ import {
   contextMenuAnchorFromRect,
   fileNameForPath,
   isFileEditorContextMenuKey,
+  parentDirectoryForPath,
   type FileEditorContextMenuAnchor
 } from './FileEditorUtils'
 
@@ -29,6 +30,32 @@ const isBufferDirty = (buffer: FileEditorTabBuffer | null | undefined): boolean 
   return Boolean(buffer && buffer.content !== buffer.savedContent)
 }
 
+export interface EditorTabPathDisplay {
+  name: string
+  parent: string
+}
+
+export const buildEditorTabPathDisplay = (paths: string[]): Map<string, EditorTabPathDisplay> => {
+  const nameCounts = new Map<string, number>()
+  for (const path of paths) {
+    const name = fileNameForPath(path)
+    nameCounts.set(name, (nameCounts.get(name) ?? 0) + 1)
+  }
+
+  return new Map(
+    paths.map((path) => {
+      const name = fileNameForPath(path)
+      return [
+        path,
+        {
+          name,
+          parent: (nameCounts.get(name) ?? 0) > 1 ? parentDirectoryForPath(path) : ''
+        }
+      ]
+    })
+  )
+}
+
 export function EditorTabStrip({
   buffers,
   selectedPath,
@@ -38,6 +65,7 @@ export function EditorTabStrip({
   onContextMenuTab
 }: EditorTabStripProps) {
   if (buffers.length === 0) return null
+  const pathDisplayByPath = buildEditorTabPathDisplay(buffers.map((buffer) => buffer.path))
 
   const focusTabButton = (tabStrip: HTMLElement | null, index: number) => {
     if (!tabStrip) return
@@ -63,6 +91,10 @@ export function EditorTabStrip({
       {buffers.map((buffer, index) => {
         const tabDirty = isBufferDirty(buffer)
         const isActive = selectedPath === buffer.path
+        const pathDisplay = pathDisplayByPath.get(buffer.path) ?? {
+          name: fileNameForPath(buffer.path),
+          parent: ''
+        }
         return (
           <div
             key={buffer.path}
@@ -81,6 +113,7 @@ export function EditorTabStrip({
               role="tab"
               aria-selected={isActive}
               aria-haspopup="menu"
+              aria-label={`${buffer.path}${tabDirty ? ', unsaved changes' : ''}`}
               aria-keyshortcuts={
                 isActive ? 'ContextMenu Shift+F10 Meta+W Control+W' : 'ContextMenu Shift+F10'
               }
@@ -125,7 +158,12 @@ export function EditorTabStrip({
                 className="file-editor-file-icon"
                 workspacePath={workspacePath}
               />
-              <span className="file-editor-tab-name">{fileNameForPath(buffer.path)}</span>
+              <span className="file-editor-tab-label">
+                <span className="file-editor-tab-name">{pathDisplay.name}</span>
+                {pathDisplay.parent && (
+                  <span className="file-editor-tab-parent">{pathDisplay.parent}</span>
+                )}
+              </span>
               {tabDirty && <span className="file-editor-dirty-dot" title="Unsaved changes" />}
             </button>
             <button

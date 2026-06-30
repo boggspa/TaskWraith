@@ -12,7 +12,7 @@ import {
 import { EditorPane, FILE_EDITOR_BASIC_SETUP } from './FileEditorPane'
 import { FileEditorGitActions } from './FileEditorGitActions'
 import { FileEditorStatusBar, fileEditorLanguageLabel } from './FileEditorStatusBar'
-import { EditorTabStrip } from './FileEditorTabStrip'
+import { buildEditorTabPathDisplay, EditorTabStrip } from './FileEditorTabStrip'
 import {
   contextMenuAnchorFromRect,
   isFileEditorContextMenuKey
@@ -20,6 +20,24 @@ import {
 import { WorkspaceFileTree } from './WorkspaceFileTree'
 
 describe('EditorTabStrip', () => {
+  it('adds parent folder hints only when tab filenames collide', () => {
+    const display = buildEditorTabPathDisplay([
+      'src/main/index.ts',
+      'src/preload/index.ts',
+      'README.md'
+    ])
+
+    expect(display.get('src/main/index.ts')).toEqual({
+      name: 'index.ts',
+      parent: 'src/main'
+    })
+    expect(display.get('src/preload/index.ts')).toEqual({
+      name: 'index.ts',
+      parent: 'src/preload'
+    })
+    expect(display.get('README.md')).toEqual({ name: 'README.md', parent: '' })
+  })
+
   it('renders a roving tablist with the active tab as the only tab stop', () => {
     const html = renderToStaticMarkup(
       <EditorTabStrip
@@ -56,8 +74,42 @@ describe('EditorTabStrip', () => {
     expect(html).toContain('tabindex="-1"')
     expect(html).toContain('aria-selected="true"')
     expect(html).toContain('tabindex="0"')
+    expect(html).toContain('aria-label="src/Editor.tsx, unsaved changes"')
     expect(html).toContain('Close src/Editor.tsx (Cmd/Ctrl+W)')
     expect(html).toContain('file-editor-dirty-dot')
+  })
+
+  it('renders duplicate tab filenames with compact parent folder hints', () => {
+    const html = renderToStaticMarkup(
+      <EditorTabStrip
+        buffers={[
+          {
+            path: 'src/main/index.ts',
+            content: '',
+            savedContent: '',
+            savedEtag: null,
+            sizeBytes: 128
+          },
+          {
+            path: 'src/preload/index.ts',
+            content: '',
+            savedContent: '',
+            savedEtag: null,
+            sizeBytes: 128
+          }
+        ]}
+        selectedPath="src/main/index.ts"
+        workspacePath="/repo"
+        onSelect={vi.fn()}
+        onClose={vi.fn()}
+        onContextMenuTab={vi.fn()}
+      />
+    )
+
+    expect(html).toContain('class="file-editor-tab-label"')
+    expect(html).toContain('<span class="file-editor-tab-name">index.ts</span>')
+    expect(html).toContain('<span class="file-editor-tab-parent">src/main</span>')
+    expect(html).toContain('<span class="file-editor-tab-parent">src/preload</span>')
   })
 })
 

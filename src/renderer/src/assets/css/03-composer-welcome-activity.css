@@ -8510,11 +8510,25 @@
   cursor: pointer;
 }
 
-.file-editor-tab-name {
+.file-editor-tab-label {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  line-height: 1.1;
+}
+
+.file-editor-tab-name,
+.file-editor-tab-parent {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.file-editor-tab-parent {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
 }
 
 .file-editor-tab-close {
