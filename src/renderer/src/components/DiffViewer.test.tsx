@@ -9,7 +9,7 @@ import {
   focusDiffFileContextMenuButton
 } from './DiffFileList'
 import { DiffToolbar } from './DiffToolbar'
-import { DiffViewer } from './DiffViewer'
+import { DiffViewer, resolveVisibleDiffSelection } from './DiffViewer'
 
 const makeLargeUnifiedDiff = (lineCount: number): string => {
   const lines = [
@@ -225,6 +225,18 @@ describe('DiffViewer large diff safety', () => {
     expect(html).toContain('Preview capped before rendering.')
     expect(html).toContain('42 source lines were omitted.')
     expect(html).not.toContain('Showing first')
+  })
+})
+
+describe('DiffViewer visible selection resolution', () => {
+  it('keeps selection on a visible file and falls back when filters hide it', () => {
+    const first = makeChangedFileSummary('src/first.ts', 'first')
+    const second = makeChangedFileSummary('src/second.ts', 'second')
+
+    expect(resolveVisibleDiffSelection([first, second], 'src/second.ts')).toBe(second)
+    expect(resolveVisibleDiffSelection([first, second], 'src/missing.ts')).toBe(first)
+    expect(resolveVisibleDiffSelection([first, second], null)).toBe(first)
+    expect(resolveVisibleDiffSelection([], 'src/second.ts')).toBeNull()
   })
 })
 

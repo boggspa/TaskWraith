@@ -59,6 +59,14 @@ const emptyDiffStageCounts = (): DiffStageCounts => ({
   untracked: 0
 })
 
+export function resolveVisibleDiffSelection(
+  summaries: DiffFileSummary[],
+  selectedPath: string | null
+): DiffFileSummary | null {
+  if (summaries.length === 0) return null
+  return summaries.find((summary) => summary.path === selectedPath) || summaries[0] || null
+}
+
 export function DiffViewer({
   diff,
   workspacePath,
@@ -117,8 +125,7 @@ export function DiffViewer({
     }
     return counts
   }, [filteredSummaries, gitStatusByPath, repoPathForSummary])
-  const selectedSummary =
-    filteredSummaries.find((s) => s.path === selectedPath) || filteredSummaries[0] || null
+  const selectedSummary = resolveVisibleDiffSelection(filteredSummaries, selectedPath)
   const selectedGitStatus = selectedSummary
     ? gitStatusByPath.get(repoPathForSummary(selectedSummary))
     : undefined
@@ -135,6 +142,13 @@ export function DiffViewer({
     setFileFilter('')
     setHideNoise(false)
   }, [selectionRequest])
+
+  useEffect(() => {
+    const visiblePath = selectedSummary?.path ?? null
+    if (selectedPath !== visiblePath) {
+      setSelectedPath(visiblePath)
+    }
+  }, [selectedPath, selectedSummary?.path])
 
   useEffect(() => {
     onSelectedPathChange?.(selectedSummary?.path ?? null)
