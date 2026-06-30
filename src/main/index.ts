@@ -860,6 +860,7 @@ import { registerDiscordContextHandlers } from './ipc/discordContextHandlers'
 import { registerFileIconHandlers } from './ipc/fileIconHandlers'
 import { registerCheckpointHandlers } from './ipc/checkpointHandlers'
 import { registerApnsHandlers } from './ipc/apnsHandlers'
+import { registerImageGenerationHandlers } from './ipc/imageGenerationHandlers'
 import { getCachedRemoteEnsemblePresets } from './remote/EnsembleRosterPresetsCache'
 import { resolveGeminiCliResumePolicy } from './GeminiSessionPolicy'
 // 1.0.5-EW26 — Kimi compatibility filter (curated + user-
@@ -25944,63 +25945,12 @@ if (isGeminiMcpBridgeProcess) {
       }
     )
 
-    // Image generation config. Keys are safeStorage-encrypted; the plaintext key
-    // is NEVER returned to the renderer (status only reports presence).
-    ipcMain.handle('image-generation:get-status', () => {
-      const ig = AppStore.getSettings().imageGeneration
-      return {
-        enabled: Boolean(ig?.enabled),
-        defaultProvider: ig?.provider === 'xai' ? 'xai' : 'openai',
-        encryptionAvailable: safeStorage.isEncryptionAvailable(),
-        configured: {
-          openai: Boolean(ig?.encryptedKeys?.openai),
-          xai: Boolean(ig?.encryptedKeys?.xai)
-        }
-      }
-    })
-
-    ipcMain.handle('image-generation:set-enabled', (_event, input: unknown) => {
-      if (!isRecord(input)) return { ok: false, error: 'invalid input' }
-      const provider =
-        input.provider === 'xai' ? 'xai' : input.provider === 'openai' ? 'openai' : undefined
-      const current = AppStore.getSettings().imageGeneration || {}
-      AppStore.updateSettings({
-        imageGeneration: { ...current, enabled: Boolean(input.enabled), ...(provider ? { provider } : {}) }
-      })
-      return { ok: true }
-    })
-
-    ipcMain.handle('image-generation:set-key', (_event, input: unknown) => {
-      if (!isRecord(input)) return { ok: false, error: 'invalid input' }
-      const provider = input.provider === 'xai' ? 'xai' : input.provider === 'openai' ? 'openai' : null
-      const key = typeof input.key === 'string' ? input.key.trim() : ''
-      if (!provider) return { ok: false, error: 'provider must be openai or xai' }
-      if (!key) return { ok: false, error: 'key is required' }
-      if (!safeStorage.isEncryptionAvailable()) {
-        return { ok: false, error: 'OS keychain encryption is unavailable; cannot store the key.' }
-      }
-      const current = AppStore.getSettings().imageGeneration || {}
-      AppStore.updateSettings({
-        imageGeneration: {
-          ...current,
-          encryptedKeys: {
-            ...(current.encryptedKeys || {}),
-            [provider]: safeStorage.encryptString(key).toString('base64')
-          }
-        }
-      })
-      return { ok: true }
-    })
-
-    ipcMain.handle('image-generation:clear-key', (_event, input: unknown) => {
-      if (!isRecord(input)) return { ok: false, error: 'invalid input' }
-      const provider = input.provider === 'xai' ? 'xai' : input.provider === 'openai' ? 'openai' : null
-      if (!provider) return { ok: false, error: 'provider must be openai or xai' }
-      const current = AppStore.getSettings().imageGeneration || {}
-      const encryptedKeys = { ...(current.encryptedKeys || {}) }
-      delete encryptedKeys[provider]
-      AppStore.updateSettings({ imageGeneration: { ...current, encryptedKeys } })
-      return { ok: true }
+    registerImageGenerationHandlers({
+      getSettings: () => AppStore.getSettings(),
+      updateSettings: (patch) => AppStore.updateSettings(patch),
+      isRecord,
+      isEncryptionAvailable: () => safeStorage.isEncryptionAvailable(),
+      encryptString: (value) => safeStorage.encryptString(value)
     })
 
     ipcMain.handle('spellcheck:get-last-context', (event, point: unknown) => {
