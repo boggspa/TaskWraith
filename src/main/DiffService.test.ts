@@ -32,17 +32,28 @@ describe('DiffService', () => {
     it('parses modified file', () => {
       const input = ' M README.md\0'
       const result = parseGitStatusZ(input)
-      expect(result).toEqual([{ statusCode: 'M', filePath: 'README.md' }])
+      expect(result).toEqual([
+        { statusCode: 'M', filePath: 'README.md', staged: false, unstaged: true }
+      ])
     })
     it('parses untracked file', () => {
       const input = '?? HelloWorldView.swift\0'
       const result = parseGitStatusZ(input)
-      expect(result).toEqual([{ statusCode: '??', filePath: 'HelloWorldView.swift' }])
+      expect(result).toEqual([
+        {
+          statusCode: '??',
+          filePath: 'HelloWorldView.swift',
+          staged: false,
+          unstaged: true
+        }
+      ])
     })
     it('parses filenames with spaces using -z output', () => {
       const input = '?? my file.txt\0'
       const result = parseGitStatusZ(input)
-      expect(result).toEqual([{ statusCode: '??', filePath: 'my file.txt' }])
+      expect(result).toEqual([
+        { statusCode: '??', filePath: 'my file.txt', staged: false, unstaged: true }
+      ])
     })
     it('parses multiple entries', () => {
       const input = ' M README.md\0?? new.txt\0'
@@ -53,7 +64,16 @@ describe('DiffService', () => {
     it('uses the current path for renamed files', () => {
       const input = 'R  new-name.txt\0old-name.txt\0'
       const result = parseGitStatusZ(input)
-      expect(result).toEqual([{ statusCode: 'R', filePath: 'new-name.txt' }])
+      expect(result).toEqual([
+        { statusCode: 'R', filePath: 'new-name.txt', staged: true, unstaged: false }
+      ])
+    })
+    it('retains staged and unstaged state for mixed files', () => {
+      const input = 'MM src/App.tsx\0'
+      const result = parseGitStatusZ(input)
+      expect(result).toEqual([
+        { statusCode: 'MM', filePath: 'src/App.tsx', staged: true, unstaged: true }
+      ])
     })
   })
 
@@ -229,7 +249,9 @@ describe('DiffService', () => {
           previewKind: 'git_diff',
           diffText,
           diffTextOmittedLines: 400,
-          diffTextTruncated: true
+          diffTextTruncated: true,
+          staged: true,
+          unstaged: true
         }
       ])
 
@@ -239,7 +261,9 @@ describe('DiffService', () => {
         path: 'large.txt',
         status: 'modified',
         previewKind: 'git_diff',
-        canOpenInEditor: true
+        canOpenInEditor: true,
+        staged: true,
+        unstaged: true
       })
       expect(bounded.files[0].hunks[0].lines).toHaveLength(200)
       expect(bounded.files[0].truncated).toBe(true)

@@ -80,6 +80,27 @@ struct MobileDiffStudioStateTests {
     }
 
     @MainActor
+    @Test func stageActionsUseBoundedDiffStageState() throws {
+        let state = MobileDiffStudioState()
+        state.diff = try decodeFilterableWorkspaceDiff()
+
+        #expect(state.selectedFileCanStage == false)
+        #expect(state.selectedFileCanUnstage == false)
+
+        state.selectedPath = "src/App.swift"
+        #expect(state.selectedFileCanStage == true)
+        #expect(state.selectedFileCanUnstage == false)
+
+        state.selectedPath = "src/ui/Button.swift"
+        #expect(state.selectedFileCanStage == false)
+        #expect(state.selectedFileCanUnstage == true)
+
+        state.selectedPath = "docs/Old.md"
+        #expect(state.selectedFileCanStage == true)
+        #expect(state.selectedFileCanUnstage == true)
+    }
+
+    @MainActor
     @Test func targetPathNormalizationIgnoresBlankAndSlashes() {
         #expect(MobileDiffStudioState.normalizedTargetPath(nil) == nil)
         #expect(MobileDiffStudioState.normalizedTargetPath("   ") == nil)
@@ -124,6 +145,8 @@ private func decodeFilterableWorkspaceDiff() throws -> WorkspaceDiffResult {
               "kind": "modified",
               "additions": 2,
               "deletions": 1,
+              "staged": false,
+              "unstaged": true,
               "truncated": false,
               "hunks": []
             },
@@ -132,6 +155,8 @@ private func decodeFilterableWorkspaceDiff() throws -> WorkspaceDiffResult {
               "kind": "created",
               "additions": 8,
               "deletions": 0,
+              "staged": true,
+              "unstaged": false,
               "truncated": false,
               "hunks": []
             },
@@ -143,6 +168,8 @@ private func decodeFilterableWorkspaceDiff() throws -> WorkspaceDiffResult {
               "canOpenInEditor": false,
               "additions": 0,
               "deletions": 4,
+              "staged": true,
+              "unstaged": true,
               "truncated": false,
               "hunks": []
             },

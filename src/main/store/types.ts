@@ -3833,6 +3833,8 @@ export interface DiffFileSummary {
   diffTextOmittedLines?: number
   diffTextOriginalBytes?: number
   sizeBytes?: number
+  staged?: boolean
+  unstaged?: boolean
 }
 
 export interface WorkspaceSnapshot {

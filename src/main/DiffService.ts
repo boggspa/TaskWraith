@@ -259,8 +259,13 @@ function readGitDiffPreview(
 
 export function parseGitStatusZ(
   statusOutput: string
-): Array<{ statusCode: string; filePath: string }> {
-  const entries: Array<{ statusCode: string; filePath: string }> = []
+): Array<{ statusCode: string; filePath: string; staged: boolean; unstaged: boolean }> {
+  const entries: Array<{
+    statusCode: string
+    filePath: string
+    staged: boolean
+    unstaged: boolean
+  }> = []
   const parts = statusOutput.split('\0')
   let i = 0
   while (i < parts.length) {
@@ -269,15 +274,22 @@ export function parseGitStatusZ(
       i++
       continue
     }
-    const statusCode = entry.substring(0, 2)
+    const rawStatusCode = entry.substring(0, 2)
+    const index = rawStatusCode[0] || ' '
+    const workingTree = rawStatusCode[1] || ' '
     const filePath = entry.substring(3)
     // For renames, porcelain v1 -z emits the current path, then the original path.
-    if (statusCode.startsWith('R') && i + 1 < parts.length) {
+    if (rawStatusCode.startsWith('R') && i + 1 < parts.length) {
       i += 2
     } else {
       i++
     }
-    entries.push({ statusCode: statusCode.trim(), filePath })
+    entries.push({
+      statusCode: rawStatusCode.trim(),
+      filePath,
+      staged: index !== ' ' && index !== '?' && index !== '!',
+      unstaged: workingTree !== ' ' || index === '?' || index === '!'
+    })
   }
   return entries
 }
@@ -304,14 +316,17 @@ function buildCurrentFileSummary(
   repoRoot: string | undefined,
   repoPath: string,
   displayPath: string,
-  status: DiffFileStatus
+  status: DiffFileStatus,
+  stageState?: Pick<DiffFileSummary, 'staged' | 'unstaged'>
 ): DiffFileSummary {
   const baseSummary: DiffFileSummary = {
     path: displayPath,
     status,
     previewKind: 'none',
     isNoise: isNoiseFile(displayPath),
-    isSensitive: isSensitiveFile(displayPath)
+    isSensitive: isSensitiveFile(displayPath),
+    ...(stageState?.staged !== undefined ? { staged: stageState.staged } : {}),
+    ...(stageState?.unstaged !== undefined ? { unstaged: stageState.unstaged } : {})
   }
 
   if (!workspace) {
@@ -463,7 +478,8 @@ export async function getWorkspaceDiff(workspace: string): Promise<{
         scope.repoRoot,
         entry.filePath,
         displayPath,
-        classifyStatus(entry.statusCode)
+        classifyStatus(entry.statusCode),
+        { staged: entry.staged, unstaged: entry.unstaged }
       )
     ]
   })
@@ -561,6 +577,8 @@ export interface BoundedDiffFile {
   isBinary?: boolean
   isSensitive?: boolean
   canOpenInEditor: boolean
+  staged?: boolean
+  unstaged?: boolean
   truncated?: boolean
 }
 
@@ -612,7 +630,9 @@ function boundDiffFile(summary: DiffFileSummary): BoundedDiffFile {
       summary.status !== 'binary' &&
       summary.status !== 'hidden_sensitive' &&
       summary.previewKind !== 'binary' &&
-      summary.previewKind !== 'hidden'
+      summary.previewKind !== 'hidden',
+    staged: summary.staged,
+    unstaged: summary.unstaged
   }
   // Sensitive previews stay hidden on the phone exactly as on the desktop;
   // binary files have no renderable hunks either way.

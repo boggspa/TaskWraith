@@ -87,6 +87,14 @@ final class MobileDiffStudioState: ObservableObject {
         return selectedFile.isBinary != true && selectedFile.isSensitive != true
     }
 
+    var selectedFileCanStage: Bool {
+        selectedFile?.unstaged == true
+    }
+
+    var selectedFileCanUnstage: Bool {
+        selectedFile?.staged == true
+    }
+
     /// "Showing 40 of N" / relay-budget clipping — rendered as the list footer.
     var truncationFootnote: String? {
         guard let diff else { return nil }
@@ -166,6 +174,40 @@ final class MobileDiffStudioState: ObservableObject {
             guard isCurrentRequest() else { return }
             status = error.localizedDescription
         }
+    }
+
+    func stageSelectedFile(model: RemoteSessionModel) async {
+        guard let workspaceId = selectedWorkspaceId,
+              let selectedPath,
+              selectedFileCanStage
+        else { return }
+        isLoading = true
+        status = "Staging \(selectedPath)..."
+        do {
+            _ = try await model.stagePaths(workspaceId: workspaceId, paths: [selectedPath])
+            status = "Staged \(selectedPath)"
+            await reload(model: model)
+        } catch {
+            status = error.localizedDescription
+        }
+        isLoading = false
+    }
+
+    func unstageSelectedFile(model: RemoteSessionModel) async {
+        guard let workspaceId = selectedWorkspaceId,
+              let selectedPath,
+              selectedFileCanUnstage
+        else { return }
+        isLoading = true
+        status = "Unstaging \(selectedPath)..."
+        do {
+            _ = try await model.unstagePaths(workspaceId: workspaceId, paths: [selectedPath])
+            status = "Unstaged \(selectedPath)"
+            await reload(model: model)
+        } catch {
+            status = error.localizedDescription
+        }
+        isLoading = false
     }
 
     static func normalizedTargetPath(_ path: String?) -> String? {
@@ -510,6 +552,33 @@ private struct DiffViewerPane: View {
                 .disabled(
                     !state.selectedFileCanOpenInEditor
                         || !model.workspaceCanEditFiles(state.selectedWorkspaceId))
+            }
+            if model.workspaceCanEditFiles(state.selectedWorkspaceId) {
+                Button {
+                    Task { await state.stageSelectedFile(model: model) }
+                } label: {
+                    if compact {
+                        Image(systemName: "plus.circle")
+                            .accessibilityLabel("Stage file")
+                    } else {
+                        Label("Stage", systemImage: "plus.circle")
+                    }
+                }
+                .buttonStyle(.bordered)
+                .disabled(!state.selectedFileCanStage || state.isLoading)
+
+                Button {
+                    Task { await state.unstageSelectedFile(model: model) }
+                } label: {
+                    if compact {
+                        Image(systemName: "minus.circle")
+                            .accessibilityLabel("Unstage file")
+                    } else {
+                        Label("Unstage", systemImage: "minus.circle")
+                    }
+                }
+                .buttonStyle(.bordered)
+                .disabled(!state.selectedFileCanUnstage || state.isLoading)
             }
             if let file = state.selectedFile {
                 DiffStatChips(additions: file.additions, deletions: file.deletions)
