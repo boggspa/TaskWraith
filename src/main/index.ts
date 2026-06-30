@@ -863,6 +863,7 @@ import { registerImageGenerationHandlers } from './ipc/imageGenerationHandlers'
 import { registerMediaAssetHandlers } from './ipc/mediaAssetHandlers'
 import { registerSpellcheckHandlers } from './ipc/spellcheckHandlers'
 import { registerExternalPathGrantHandlers } from './ipc/externalPathGrantHandlers'
+import { registerGitHandlers } from './ipc/gitHandlers'
 import { getCachedRemoteEnsemblePresets } from './remote/EnsembleRosterPresetsCache'
 import { resolveGeminiCliResumePolicy } from './GeminiSessionPolicy'
 // 1.0.5-EW26 — Kimi compatibility filter (curated + user-
@@ -26069,199 +26070,18 @@ if (isGeminiMcpBridgeProcess) {
       }
     })
 
-    type GitIpcPayload = { workspacePath?: string; repoPath?: string }
-    type GitIpcScope = 'registered-workspace' | 'registered-or-granted-read'
-
-    const allSignedExternalPathGrants = (): ExternalPathGrant[] =>
-      normalizeExternalPathGrants(
-        AppStore.getChats().flatMap((chat) => externalPathGrantMetadataLists(chat))
-      )
-
-    const externalGrantCoversPath = (
-      targetPath: string,
-      grants: ExternalPathGrant[],
-      access: 'read' | 'write'
-    ): boolean => {
-      const target = (canonicalExternalGrantPath(targetPath) || resolve(targetPath)).replace(/\/+$/, '')
-      return grants.some((grant) => {
-        const grantPath = (canonicalExternalGrantPath(grant.path) || resolve(grant.path)).replace(
-          /\/+$/,
-          ''
-        )
-        const coversPath =
-          target === grantPath || (grant.kind === 'directory' && target.startsWith(grantPath + sep))
-        if (!coversPath) return false
-        return access === 'read' || grant.access === 'write'
-      })
-    }
-
-    const gitPayloadPath = (
-      payload: GitIpcPayload | undefined,
-      scope: GitIpcScope
-    ): { ok: true; path: string } | { ok: false; error: string } => {
-      const raw =
-        typeof payload?.repoPath === 'string' && payload.repoPath.trim()
-          ? payload.repoPath
-          : payload?.workspacePath || ''
-      const normalized = canonicalExternalGrantPath(raw) || canonicalPath(raw)
-      if (!normalized.trim()) {
-        return { ok: false, error: 'Repository path is required.' }
-      }
-      if (findRegisteredWorkspace(normalized)) return { ok: true, path: normalized }
-      if (
-        scope === 'registered-or-granted-read' &&
-        externalGrantCoversPath(normalized, allSignedExternalPathGrants(), 'read')
-      ) {
-        return { ok: true, path: normalized }
-      }
-      return {
-        ok: false,
-        error:
-          scope === 'registered-or-granted-read'
-            ? 'Git inspection is limited to registered workspaces or signed external path grants.'
-            : 'Git actions are limited to registered workspaces.'
-      }
-    }
-
-    ipcMain.handle(
-      'git:snapshot',
-      async (_event, payload?: { workspacePath?: string; repoPath?: string }) => {
-        const repo = gitPayloadPath(payload, 'registered-or-granted-read')
-        return repo.ok ? gitService.snapshot(repo.path) : repo
-      }
-    )
-
-    ipcMain.handle(
-      'git:stage',
-      async (
-        _event,
-        payload?: {
-          workspacePath?: string
-          repoPath?: string
-          paths?: string[]
-          all?: boolean
-          update?: boolean
-          patch?: string
-        }
-      ) => {
-        const repo = gitPayloadPath(payload, 'registered-workspace')
-        if (!repo.ok) return repo
-        return gitService.stage({
-          repoPath: repo.path,
-          paths: payload?.paths,
-          all: payload?.all,
-          update: payload?.update,
-          patch: payload?.patch
-        })
-      }
-    )
-
-    ipcMain.handle(
-      'git:unstage',
-      async (
-        _event,
-        payload?: {
-          workspacePath?: string
-          repoPath?: string
-          paths?: string[]
-        }
-      ) => {
-        const repo = gitPayloadPath(payload, 'registered-workspace')
-        if (!repo.ok) return repo
-        return gitService.unstage({
-          repoPath: repo.path,
-          paths: payload?.paths
-        })
-      }
-    )
-
-    ipcMain.handle(
-      'git:commit',
-      async (
-        _event,
-        payload?: {
-          workspacePath?: string
-          repoPath?: string
-          message?: string
-        }
-      ) => {
-        const repo = gitPayloadPath(payload, 'registered-workspace')
-        if (!repo.ok) return repo
-        return gitService.commit({
-          repoPath: repo.path,
-          message: payload?.message || ''
-        })
-      }
-    )
-
-    ipcMain.handle(
-      'git:push',
-      async (
-        _event,
-        payload?: {
-          workspacePath?: string
-          repoPath?: string
-          setUpstream?: boolean
-          remote?: string
-        }
-      ) => {
-        const repo = gitPayloadPath(payload, 'registered-workspace')
-        if (!repo.ok) return repo
-        return gitService.push({
-          repoPath: repo.path,
-          setUpstream: payload?.setUpstream,
-          remote: payload?.remote
-        })
-      }
-    )
-
-    ipcMain.handle(
-      'github:pr-status',
-      async (_event, payload?: { workspacePath?: string; repoPath?: string }) => {
-        const repo = gitPayloadPath(payload, 'registered-workspace')
-        return repo.ok ? gitService.pullRequestStatus(repo.path) : repo
-      }
-    )
-
-    ipcMain.handle(
-      'github:pr-readiness',
-      async (_event, payload?: { workspacePath?: string; repoPath?: string }) => {
-        const repo = gitPayloadPath(payload, 'registered-workspace')
-        return repo.ok ? gitService.pullRequestReadiness(repo.path) : repo
-      }
-    )
-
-    ipcMain.handle(
-      'create-github-pr',
-      async (
-        _event,
-        payload?: {
-          workspacePath?: string
-          repoPath?: string
-          title?: string
-          body?: string
-          draft?: boolean
-          openInBrowser?: boolean
-        }
-      ) => {
-        const repo = gitPayloadPath(payload, 'registered-workspace')
-        if (!repo.ok) return repo
-        const result = await gitService.createPullRequest({
-          repoPath: repo.path,
-          title: payload?.title,
-          body: payload?.body,
-          draft: payload?.draft
-        })
-        if (result.ok) {
-          const url = result.data.url
-          if (url && payload?.openInBrowser !== false) {
-            shell.openExternal(url).catch(() => {})
-          }
-          return { ok: true, ...result.data }
-        }
-        return result
-      }
-    )
+    registerGitHandlers({
+      getChats: () => AppStore.getChats(),
+      externalPathGrantMetadataLists,
+      normalizeExternalPathGrants,
+      canonicalExternalGrantPath,
+      canonicalPath,
+      findRegisteredWorkspace,
+      resolvePath: (pathValue) => resolve(pathValue),
+      pathSeparator: sep,
+      gitService,
+      openExternal: (url) => shell.openExternal(url)
+    })
 
     ipcMain.handle('get-claude-auth-status', async () => {
       const encryptionAvailable = safeStorage.isEncryptionAvailable()
