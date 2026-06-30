@@ -8,7 +8,7 @@ import {
 } from './OllamaPermissionRuntimePicker'
 
 const permissionOptions = [
-  { value: 'plan', label: 'Plan / Read-only' },
+  { value: 'plan', label: 'Plan' },
   { value: 'default', label: 'Default Approval' },
   { value: 'auto_edit', label: 'Full Workspace Access' }
 ]

@@ -409,10 +409,10 @@ function fearTranslationNote(requestedSignals: PlanImportChipId[]): string {
     return 'Shown as a request to avoid agent-initiated external calls; it does not block the provider request or change provider telemetry.'
   }
   if (requestedSignals.includes('read_only')) {
-    return 'This maps to Plan / read-only unless you explicitly choose a looser run policy.'
+    return 'This maps to Plan mode unless you explicitly choose a looser run policy.'
   }
   if (requestedSignals.includes('no_shell') || requestedSignals.includes('no_network')) {
-    return 'Requested only unless Plan / read-only remains selected.'
+    return 'Requested only unless Plan mode remains selected.'
   }
   if (requestedSignals.includes('quiet_summary')) {
     return 'This is surfaced as a request for concise progress and summaries.'
@@ -707,7 +707,7 @@ export function estimatePlanImportExecution(
         : 'Edit-capable approval mode selected; existing approval settings govern prompts or auto-allow.'
     )
   } else if (options.approvalsAutoAllowed) {
-    riskReasons.push('Trust mode active; Plan / read-only remains selected for this import.')
+    riskReasons.push('Trust mode active; Plan mode remains selected for this import.')
   }
   if (review.contract.riskyInstructions.length > 0) {
     riskReasons.push(`${review.contract.riskyInstructions.length} risky pasted instruction(s).`)

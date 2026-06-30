@@ -717,7 +717,7 @@ type SideChatSeedContext = {
   transcriptVisibility?: NonNullable<ChatRecord['sideChatContext']>['transcriptVisibility']
 }
 const PLAN_IMPORT_CHIP_LABELS: Record<PlanImportChipId, string> = {
-  read_only: 'Plan / read-only',
+  read_only: PLAN_LABEL,
   ask_before_edits: 'Ask before edits',
   no_shell: 'No shell',
   no_network: 'No network',
@@ -3965,8 +3965,14 @@ function App(): React.JSX.Element {
 
   const rememberChatComposerSelectionById = (chatId: string, patch: Record<string, unknown>) => {
     if (!chatId) return
+    const maybeWorkflowMode = patch.workflowMode
+    const nextWorkflowMode =
+      maybeWorkflowMode === 'plan' || maybeWorkflowMode === 'normal'
+        ? maybeWorkflowMode
+        : undefined
     updateChatById(chatId, (source) => ({
       ...source,
+      ...(nextWorkflowMode ? { workflowMode: nextWorkflowMode } : {}),
       providerMetadata: {
         ...(source.providerMetadata || {}),
         ...patch
@@ -14434,7 +14440,7 @@ function App(): React.JSX.Element {
     // main-side posture cap is downgrade-only, so a sticky 'plan' pill would
     // otherwise outrank the per-dispatch 'default' override and silently keep
     // the implement run read-only. This makes the trusted posture 'default'.
-    rememberCurrentChatComposerSelection({ approvalMode: 'default' })
+    rememberCurrentChatComposerSelection({ approvalMode: 'default', workflowMode: 'normal' })
     setApprovalMode('default')
     setCurrentChat((prev) => {
       if (!prev) return prev

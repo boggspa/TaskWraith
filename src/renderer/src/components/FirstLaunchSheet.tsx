@@ -705,7 +705,7 @@ export function FirstLaunchSheet({
             <div className="first-launch-sheet-safety-block">
               <span className="first-launch-sheet-safety-label">Start cautious, dial up</span>
               <div className="first-launch-sheet-safety-chips">
-                <span className="first-launch-sheet-safety-chip">Plan / read-only</span>
+                <span className="first-launch-sheet-safety-chip">Plan</span>
                 <span className="first-launch-sheet-safety-chip">Default approval</span>
                 <span className="first-launch-sheet-safety-chip">Full workspace access</span>
               </div>

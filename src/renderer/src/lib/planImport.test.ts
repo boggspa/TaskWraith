@@ -142,12 +142,12 @@ describe('plan import intake', () => {
       {
         sourceText: 'DO NOT EDIT FILES',
         requestedSignals: ['read_only'],
-        note: 'This maps to Plan / read-only unless you explicitly choose a looser run policy.'
+        note: 'This maps to Plan mode unless you explicitly choose a looser run policy.'
       },
       {
         sourceText: 'No shell commands',
         requestedSignals: ['no_shell'],
-        note: 'Requested only unless Plan / read-only remains selected.'
+        note: 'Requested only unless Plan mode remains selected.'
       },
       {
         sourceText: 'No telemetry',
