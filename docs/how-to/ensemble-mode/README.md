@@ -1,0 +1,18 @@
+# Ensemble Mode
+
+Guides for TaskWraith's multi-provider ensemble chat feature.
+
+## Guides
+
+- [Create an Ensemble Chat](create-ensemble-chat.md)
+- [Participant Chip Strip](participant-chip-strip.md)
+- [Fan-Out Toggle](fan-out.md)
+- [Continuous Hops Meter](continuous-hops-meter.md)
+- [Round Cards in Transcript](round-cards.md)
+- [Mention & Yield Routing](mention-yield-routing.md)
+- [Saved Roster Presets](saved-roster-presets.md)
+- [iOS Ensemble UI](ios-ensemble-ui.md)
+
+## Cross-links
+
+- [Ensemble Mode Picker](../composer/ensemble-mode-picker.md) — for orchestration mode settings (Turn / Continuous / Work Session).

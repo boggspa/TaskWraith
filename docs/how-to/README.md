@@ -11,10 +11,12 @@ This section contains public "How To…" guides for each UX feature in TaskWrait
 4. [Chats & Threads](chats-and-threads/)
 5. [Composer](composer/)
 
-### Pending (6–14)
-- 6. Ensemble Mode
-- 7. Workflows & Workspace Boards
-- 8. Approvals & Permissions
+### Ready (6–8)
+6. [Ensemble Mode](ensemble-mode/)
+7. [Workflows & Workspace Boards](workflows-and-boards/)
+8. [Approvals & Permissions](approvals-and-permissions/)
+
+### Pending (9–14)
 - 9. Transcript, Search & Rich Content
 - 10. Canvas & Previews
 - 11. Media, Audio & Video
