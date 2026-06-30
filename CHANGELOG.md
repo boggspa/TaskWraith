@@ -11,6 +11,9 @@ history, and workspace state stay on your machine throughout.
   (9B Param) and Ornith 1.0 (35B Param), with model labels, context-window
   estimates, setup hints, preflight checks, run profiles, rate estimates, and
   iOS companion metadata wired through the desktop and companion surfaces.
+- **Liquid LFM local Ollama model.** Local / Ollama now includes Liquid LFM 2.5
+  (8B-1A) with model labels, context-window estimates, setup hints, and iOS
+  companion metadata alongside the existing local-model picker surfaces.
 - **Model usage workspace matrix.** Settings -> Model Usage now adds a
   provider/model by workspace matrix for the busiest workspaces, showing diffs,
   tokens, and cost estimates alongside the existing aggregate table.
@@ -20,8 +23,9 @@ history, and workspace state stay on your machine throughout.
 
 ### Changed
 - **Cleaner welcome notices.** Welcome / first-launch notices are dismissible and
-  swipeable, with the carousel now focused on Ornith local models, scheduled
-  sends, and the AntiGravity policy notice instead of older Gemini/Grok cards.
+  swipeable, with the carousel now focused on local Ollama models (Ornith + LFM),
+  the AntiGravity policy notice, and rotating changelog highlights instead of
+  older Gemini/Grok cards.
 - **Composer shell polish.** Queue and Steer controls stay out of non-native
   composer shells, review popovers open within the visible area, Claude action
   glyphs are adjusted, Codex reasoning now uses the current "Light" label, dark

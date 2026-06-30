@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { buildRemoteFirstLaunchState } from './RemoteFirstLaunchState'
+import { resolveAppNotifications } from '../shared/appNotifications'
 import type { ProviderUsageSummary } from './ProviderUsageStatus'
 import type { ProviderCapabilityContract, ProviderId } from './store/types'
 
@@ -149,16 +150,17 @@ describe('buildRemoteFirstLaunchState', () => {
   it('projects active app notices for the iOS first-launch sheet', () => {
     const state = buildRemoteFirstLaunchState({
       generatedAt: '2026-06-21T18:02:00.000Z',
+      notifications: resolveAppNotifications(0),
       workspace,
       providers: {},
       usage: {}
     })
 
     expect(state.notifications.map((notice) => notice.id)).toContain(
-      'ollama-ornith-models-2026-06-28'
+      'ollama-local-models-2026-06-30'
     )
     expect(state.notifications.map((notice) => notice.id)).toContain(
-      'scheduled-composer-queue-2026-06-28'
+      'changelog-scheduled-queue-2026-06-28'
     )
     expect(state.notifications.map((notice) => notice.id)).toContain(
       'antigravity-not-planned-2026-06-26'

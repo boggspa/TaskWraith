@@ -1,8 +1,8 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { PointerEvent as ReactPointerEvent } from 'react'
 import {
-  APP_NOTIFICATIONS,
   activeAppNotifications,
+  resolveAppNotifications,
   appNotificationDismissKey,
   appNotificationTone,
   type AppNotification,
@@ -120,20 +120,27 @@ function NotificationCard({
 }
 
 export function NotificationZone({
-  notifications = APP_NOTIFICATIONS,
+  notifications,
   /** Inject for tests; production ticks every minute so timed notices expire. */
   now: nowOverride
 }: {
   notifications?: readonly AppNotification[]
   now?: number
 }): React.JSX.Element | null {
-  const [dismissedIds, setDismissedIds] = useState<Set<string>>(() => readDismissed(notifications))
+  const [dismissedIds, setDismissedIds] = useState<Set<string>>(() =>
+    readDismissed(notifications ?? resolveAppNotifications(nowOverride ?? Date.now()))
+  )
   const [activeIndex, setActiveIndex] = useState(0)
   const [outgoingIndex, setOutgoingIndex] = useState<number | null>(null)
   const [direction, setDirection] = useState<'next' | 'prev'>('next')
   const [isDragging, setIsDragging] = useState(false)
   const [now, setNow] = useState(() => nowOverride ?? Date.now())
   const dragStateRef = useRef<NotificationDragState | null>(null)
+
+  const resolvedNotifications = useMemo(
+    () => notifications ?? resolveAppNotifications(now),
+    [notifications, now]
+  )
 
   useEffect(() => {
     if (nowOverride !== undefined) {
@@ -145,8 +152,8 @@ export function NotificationZone({
   }, [nowOverride])
 
   const refreshDismissed = useCallback((): void => {
-    setDismissedIds(readDismissed(notifications))
-  }, [notifications])
+    setDismissedIds(readDismissed(resolvedNotifications))
+  }, [resolvedNotifications])
 
   useEffect(() => {
     refreshDismissed()
@@ -154,7 +161,7 @@ export function NotificationZone({
 
   useEffect(() => {
     const legacyDismissKeys = new Set(
-      notifications
+      resolvedNotifications
         .map((notification) => notification.legacyDismissKey)
         .filter((key): key is string => Boolean(key))
     )
@@ -190,17 +197,17 @@ export function NotificationZone({
       window.removeEventListener(DISMISSED_EVENT, handleDismissed)
       window.removeEventListener('storage', handleStorage)
     }
-  }, [notifications, refreshDismissed])
+  }, [resolvedNotifications, refreshDismissed])
 
   const active = activeAppNotifications({
-    notifications,
+    notifications: resolvedNotifications,
     isDismissed: (notification) => dismissedIds.has(notification.id),
     now
   })
 
   const dismiss = useCallback(
     (id: string): void => {
-      const notification = notifications.find((candidate) => candidate.id === id)
+      const notification = resolvedNotifications.find((candidate) => candidate.id === id)
       try {
         localStorage.setItem(appNotificationDismissKey(id), '1')
         if (notification?.legacyDismissKey) {
@@ -221,7 +228,7 @@ export function NotificationZone({
       dragStateRef.current = null
       window.dispatchEvent(new CustomEvent(DISMISSED_EVENT, { detail: { id } }))
     },
-    [notifications]
+    [resolvedNotifications]
   )
 
   const goTo = useCallback(

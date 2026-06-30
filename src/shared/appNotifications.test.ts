@@ -1,6 +1,10 @@
 import { describe, it, expect } from 'vitest'
 import {
   APP_NOTIFICATIONS,
+  CHANGELOG_FEATURE_NOTIFICATION_POOL,
+  PINNED_APP_NOTIFICATIONS,
+  resolveAppNotifications,
+  selectChangelogFeatureNotifications,
   activeAppNotifications,
   appNotificationDismissKey,
   appNotificationTone,
@@ -25,8 +29,8 @@ describe('appNotificationTone', () => {
 
 describe('appNotificationDismissKey', () => {
   it('builds a stable per-id key', () => {
-    expect(appNotificationDismissKey('ollama-ornith-models-2026-06-28')).toBe(
-      'taskwraith.appNotification.ollama-ornith-models-2026-06-28.dismissed'
+    expect(appNotificationDismissKey('ollama-local-models-2026-06-30')).toBe(
+      'taskwraith.appNotification.ollama-local-models-2026-06-30.dismissed'
     )
   })
 })
@@ -47,7 +51,6 @@ describe('activeAppNotifications', () => {
       now: 0,
       isDismissed: () => true
     })
-    // a, b, d are dismissible → gone; c (dismissible:false) survives.
     expect(active.map((n) => n.id)).toEqual(['c'])
   })
 
@@ -66,50 +69,96 @@ describe('activeAppNotifications', () => {
     expect(atExpiry.map((n) => n.id)).not.toContain('d')
   })
 
-  it('defaults to the real registry when no list is passed', () => {
+  it('defaults to the resolved registry when no list is passed', () => {
     const active = activeAppNotifications({ now: 0, isDismissed: () => false })
-    expect(active.length).toBe(APP_NOTIFICATIONS.length)
+    expect(active.length).toBe(resolveAppNotifications(0).length)
   })
 })
 
-describe('APP_NOTIFICATIONS registry', () => {
-  it('has unique, dot-safe ids', () => {
-    const ids = APP_NOTIFICATIONS.map((n) => n.id)
+describe('selectChangelogFeatureNotifications', () => {
+  it('returns the full pool when maxCount exceeds pool size', () => {
+    const picked = selectChangelogFeatureNotifications(
+      CHANGELOG_FEATURE_NOTIFICATION_POOL.slice(0, 2),
+      0,
+      4
+    )
+    expect(picked.map((n) => n.id)).toEqual([
+      'changelog-scheduled-queue-2026-06-28',
+      'changelog-model-usage-matrix-2026-06-28'
+    ])
+  })
+
+  it('rotates the daily window through a larger pool', () => {
+    const dayZero = selectChangelogFeatureNotifications(CHANGELOG_FEATURE_NOTIFICATION_POOL, 0, 2)
+    const nextDay = selectChangelogFeatureNotifications(
+      CHANGELOG_FEATURE_NOTIFICATION_POOL,
+      86_400_000,
+      2
+    )
+    expect(dayZero.map((n) => n.id)).toEqual([
+      'changelog-scheduled-queue-2026-06-28',
+      'changelog-model-usage-matrix-2026-06-28'
+    ])
+    expect(nextDay.map((n) => n.id)).toEqual([
+      'changelog-model-usage-matrix-2026-06-28',
+      'changelog-chat-search-2026-06-28'
+    ])
+  })
+})
+
+describe('resolveAppNotifications', () => {
+  it('prepends pinned notices before dynamic changelog picks', () => {
+    const resolved = resolveAppNotifications(0)
+    expect(resolved.slice(0, PINNED_APP_NOTIFICATIONS.length).map((n) => n.id)).toEqual(
+      PINNED_APP_NOTIFICATIONS.map((n) => n.id)
+    )
+    expect(resolved.length).toBe(
+      PINNED_APP_NOTIFICATIONS.length + selectChangelogFeatureNotifications(CHANGELOG_FEATURE_NOTIFICATION_POOL, 0).length
+    )
+  })
+})
+
+describe('notification registry', () => {
+  it('has unique, dot-safe ids across pinned + pool', () => {
+    const ids = [...PINNED_APP_NOTIFICATIONS, ...CHANGELOG_FEATURE_NOTIFICATION_POOL].map(
+      (n) => n.id
+    )
     expect(new Set(ids).size).toBe(ids.length)
   })
 
   it('does not keep stale Gemini or Grok carousel notices', () => {
-    expect(APP_NOTIFICATIONS.some((n) => n.id === 'gemini-retirement-2026-06-18')).toBe(false)
-    expect(APP_NOTIFICATIONS.some((n) => n.id === 'grok-composer-2-5-fast-2026-06-19')).toBe(
-      false
-    )
+    const ids = resolveAppNotifications(0).map((n) => n.id)
+    expect(ids).not.toContain('gemini-retirement-2026-06-18')
+    expect(ids).not.toContain('grok-composer-2-5-fast-2026-06-19')
+    expect(ids).not.toContain('scheduled-composer-queue-2026-06-28')
+    expect(ids).not.toContain('ollama-ornith-models-2026-06-28')
   })
 
-  it('seeds the Ornith Ollama addition (default card)', () => {
-    const ornith = APP_NOTIFICATIONS.find((n) => n.id === 'ollama-ornith-models-2026-06-28')
-    expect(ornith).toBeDefined()
-    expect(ornith && appNotificationTone(ornith.kind)).toBe('default')
-    expect(ornith?.kind).toBe('addition')
-    expect(ornith?.title).toBe('Ornith local models are available.')
-    expect(ornith?.body).toContain('Ornith 1.0 (9B Param)')
-    expect(ornith?.body).toContain('Ornith 1.0 (35B Param)')
-    expect(ornith?.body).toContain('256K-context')
-    expect(ornith?.body).toContain('open-source models for agentic coding')
+  it('seeds the local Ollama models addition with Ornith + LFM (default card)', () => {
+    const models = PINNED_APP_NOTIFICATIONS.find((n) => n.id === 'ollama-local-models-2026-06-30')
+    expect(models).toBeDefined()
+    expect(models && appNotificationTone(models.kind)).toBe('default')
+    expect(models?.kind).toBe('addition')
+    expect(models?.title).toBe('New local Ollama models are available.')
+    expect(models?.body).toContain('Ornith 1.0 (9B Param)')
+    expect(models?.body).toContain('Ornith 1.0 (35B Param)')
+    expect(models?.body).toContain('256K-context')
+    expect(models?.body).toContain('LFM 2.5 (8B-1A)')
+    expect(models?.body).toContain('131K-context')
+    expect(models?.body).toContain('tool/thinking')
   })
 
-  it('seeds scheduled composer sends as a headline feature card', () => {
-    const scheduled = APP_NOTIFICATIONS.find(
-      (n) => n.id === 'scheduled-composer-queue-2026-06-28'
+  it('keeps scheduled sends in the dynamic changelog pool', () => {
+    const scheduled = CHANGELOG_FEATURE_NOTIFICATION_POOL.find(
+      (n) => n.id === 'changelog-scheduled-queue-2026-06-28'
     )
     expect(scheduled).toBeDefined()
-    expect(scheduled && appNotificationTone(scheduled.kind)).toBe('default')
-    expect(scheduled?.kind).toBe('feature')
     expect(scheduled?.title).toBe('Scheduled sends are visible now.')
     expect(scheduled?.body).toContain('Schedule clock')
   })
 
   it('seeds the AntiGravity policy notice as a neutral info card', () => {
-    const antigravity = APP_NOTIFICATIONS.find(
+    const antigravity = PINNED_APP_NOTIFICATIONS.find(
       (n) => n.id === 'antigravity-not-planned-2026-06-26'
     )
     expect(antigravity).toBeDefined()
@@ -117,5 +166,9 @@ describe('APP_NOTIFICATIONS registry', () => {
     expect(antigravity?.kind).toBe('info')
     expect(antigravity?.title).toBe('AntiGravity will not be added.')
     expect(antigravity?.body).toContain('Google AntiGravity')
+  })
+
+  it('exports APP_NOTIFICATIONS as a resolveAppNotifications snapshot', () => {
+    expect(APP_NOTIFICATIONS).toEqual(resolveAppNotifications(0))
   })
 })

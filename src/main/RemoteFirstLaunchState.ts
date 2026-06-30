@@ -1,5 +1,5 @@
 import {
-  APP_NOTIFICATIONS,
+  resolveAppNotifications,
   appNotificationTone,
   type AppNotification
 } from '../shared/appNotifications'
@@ -124,7 +124,7 @@ export function buildRemoteFirstLaunchState(
   return {
     schemaVersion: REMOTE_FIRST_LAUNCH_SCHEMA_VERSION,
     generatedAt,
-    notifications: buildNotices(input.notifications ?? APP_NOTIFICATIONS),
+    notifications: buildNotices(input.notifications ?? resolveAppNotifications()),
     workspace: input.workspace,
     providerCards: PROVIDER_ORDER.filter((provider) => !isRetiredProvider(provider)).map(
       (provider) =>
