@@ -179,7 +179,7 @@ export function SidebarOverflowMenu({
     // span, which a plain `closest('[role=button]')` would wrongly match.
     const host =
       (trigger.parentElement?.closest(
-        '.sidebar-item, .sidebar-pinned-item, .sidebar-recents-item'
+        '.sidebar-item, .sidebar-pinned-item, .sidebar-recents-item, .sidebar-workspace-board-item'
       ) as HTMLElement | null) ?? null
     if (!host) return
     const handleContextMenu = (event: globalThis.MouseEvent): void => {

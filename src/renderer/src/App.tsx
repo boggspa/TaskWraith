@@ -12715,7 +12715,7 @@ function App(): React.JSX.Element {
     enterWorkspaceBoardMode(savedBoard.id)
   }
 
-  const handleDeleteWorkspaceBoard = async (boardId: string) => {
+  const handleArchiveWorkspaceBoard = async (boardId: string) => {
     if (!workspaceBoardApiReady) return
     const board = workspaceBoards.find((item) => item.id === boardId)
     const confirmed = window.confirm(
@@ -12726,6 +12726,21 @@ function App(): React.JSX.Element {
     if (updated) {
       setWorkspaceBoards((prev) => prev.map((item) => (item.id === boardId ? updated : item)))
     }
+    if (activeWorkspaceBoardId === boardId) setActiveWorkspaceBoardId(null)
+  }
+
+  const handleDeleteWorkspaceBoard = async (boardId: string) => {
+    if (!workspaceBoardApiReady) return
+    const board = workspaceBoards.find((item) => item.id === boardId)
+    const confirmed = window.confirm(
+      board
+        ? `Delete board "${board.name}" permanently? Its cards will also be deleted.`
+        : 'Delete this board permanently? Its cards will also be deleted.'
+    )
+    if (!confirmed) return
+    await window.api.deleteWorkspaceBoard(boardId)
+    setWorkspaceBoards((prev) => prev.filter((item) => item.id !== boardId))
+    setWorkspaceBoardCards((prev) => prev.filter((item) => item.boardId !== boardId))
     if (activeWorkspaceBoardId === boardId) setActiveWorkspaceBoardId(null)
   }
 
@@ -22660,6 +22675,7 @@ function App(): React.JSX.Element {
                 onRenameWorkspaceBoard={workspaceBoardApiReady ? handleRenameWorkspaceBoard : undefined}
                 onDuplicateWorkspaceBoard={workspaceBoardApiReady ? handleDuplicateWorkspaceBoard : undefined}
                 onTogglePinWorkspaceBoard={workspaceBoardApiReady ? handleTogglePinWorkspaceBoard : undefined}
+                onArchiveWorkspaceBoard={workspaceBoardApiReady ? handleArchiveWorkspaceBoard : undefined}
                 onDeleteWorkspaceBoard={workspaceBoardApiReady ? handleDeleteWorkspaceBoard : undefined}
                 onAddChatToWorkspaceBoard={
                   workspaceBoardApiReady ? handleAddChatToWorkspaceBoard : undefined

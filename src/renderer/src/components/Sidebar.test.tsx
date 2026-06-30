@@ -165,6 +165,7 @@ function renderSidebar(
     onRenameWorkspaceBoard?: (board: WorkspaceBoardDefinition) => void
     onDuplicateWorkspaceBoard?: (board: WorkspaceBoardDefinition) => void
     onTogglePinWorkspaceBoard?: (board: WorkspaceBoardDefinition) => void
+    onArchiveWorkspaceBoard?: (boardId: string) => void
     onDeleteWorkspaceBoard?: (boardId: string) => void
     onCreateSharedChat?: (variant: SharedChatCreateVariant) => void
     collaboratingChatIds?: Set<string>
@@ -210,6 +211,7 @@ function renderSidebar(
       onRenameWorkspaceBoard={options.onRenameWorkspaceBoard}
       onDuplicateWorkspaceBoard={options.onDuplicateWorkspaceBoard}
       onTogglePinWorkspaceBoard={options.onTogglePinWorkspaceBoard}
+      onArchiveWorkspaceBoard={options.onArchiveWorkspaceBoard}
       onDeleteWorkspaceBoard={options.onDeleteWorkspaceBoard}
       onCreateSharedChat={options.onCreateSharedChat}
       onRenameChat={options.onRenameChat}
@@ -418,15 +420,15 @@ describe('Sidebar workspace boards', () => {
       onRenameWorkspaceBoard: () => {},
       onDuplicateWorkspaceBoard: () => {},
       onTogglePinWorkspaceBoard: () => {},
+      onArchiveWorkspaceBoard: () => {},
       onDeleteWorkspaceBoard: () => {}
     })
 
     expect(html).toContain('Release board')
     expect(html).toContain('sidebar-workspace-board-item active')
-    expect(html).toContain('Pin')
-    expect(html).toContain('Rename')
-    expect(html).toContain('Duplicate')
-    expect(html).toContain('Archive')
+    expect(html).toContain('aria-label="Workspace board actions"')
+    expect(html).toContain('sidebar-overflow-menu')
+    expect(html).not.toContain('sidebar-workspace-board-actions')
     expect(html).not.toContain('application/x-taskwraith-chat-id')
   })
 

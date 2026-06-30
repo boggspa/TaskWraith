@@ -4338,6 +4338,8 @@
 .sidebar-pinned-item:focus-within .sidebar-overflow-trigger,
 .sidebar-recents-item:hover .sidebar-overflow-trigger,
 .sidebar-recents-item:focus-within .sidebar-overflow-trigger,
+.sidebar-workspace-board-item:hover .sidebar-overflow-trigger,
+.sidebar-workspace-board-item:focus-within .sidebar-overflow-trigger,
 .sidebar-overflow-menu.is-open .sidebar-overflow-trigger {
   opacity: 1;
 }
