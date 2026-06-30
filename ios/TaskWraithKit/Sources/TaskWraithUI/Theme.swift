@@ -99,11 +99,32 @@ public enum TWTheme {
         case "cursor": return Color(hex: 0xE3B91E)
         case "ollama": return Color(hex: 0x20A77A)
         case "ensemble": return Color(hex: 0xE8DDE3)
-        case "qwen": return Color(hex: 0xD946EF)
-        case "ornith": return Color(hex: 0xF59E0B)
         case "grok": return textPrimary
+        // ── Ollama-backed display brands (--provider-*-color) ──────────────
+        // Runtime provider stays `ollama`; these spoofed brand classes let
+        // local models wear their upstream brand hue. Mirrors theme.css
+        // lines 148–159. `google`/`openai` reuse the gemini/codex accents
+        // above. `qwen`/`ornith` retained as legacy speaker heads but now
+        // alias to their canonical brand colors (Alibaba / Deep Reinforce).
+        case "alibaba", "qwen": return Color(hex: 0x7C3AED)
+        case "deep-reinforce", "ornith": return Color(hex: 0xB45309)
+        case "ibm": return Color(hex: 0x1F4E79)
+        case "liquid": return Color(hex: 0xF7D5E6)
+        case "nvidia": return Color(hex: 0x76B900)
+        case "openbmb": return Color(hex: 0xEF6F61)
         default: return chroma1
         }
+    }
+
+    /// Brand-aware provider accent. For Ollama models the accent resolves to
+    /// the spoofed upstream brand hue (e.g. Qwen → Alibaba purple); every
+    /// other provider falls through to the flat `providerAccent` above.
+    @MainActor public static func providerAccent(
+        _ provider: String?, modelId: String?, modelLabel: String? = nil
+    ) -> Color {
+        providerAccent(
+            OllamaDisplayBrands.providerHueClass(
+                provider: provider, modelId: modelId, modelLabel: modelLabel))
     }
 
     /// Display label matching the desktop's provider naming.
@@ -117,11 +138,33 @@ public enum TWTheme {
         case "cursor": return "Cursor"
         case "ollama": return "Ollama"
         case "ensemble": return "Ensemble"
+        case "alibaba": return "Alibaba"
+        case "deep-reinforce": return "Deep Reinforce"
+        case "google": return "Google"
+        case "ibm": return "IBM"
+        case "liquid": return "Liquid"
+        case "nvidia": return "NVIDIA"
+        case "openai": return "OpenAI"
+        case "openbmb": return "OpenBMB"
         case "qwen": return "Qwen"
         case "ornith": return "Ornith"
         case .some(let other): return other.prefix(1).uppercased() + other.dropFirst()
         case nil: return "Agent"
         }
+    }
+
+    /// Brand-aware provider label. For Ollama models this returns the spoofed
+    /// upstream brand name (e.g. "Alibaba") instead of "Ollama"; every other
+    /// provider falls through to the flat `providerLabel` above.
+    public static func providerLabel(
+        _ provider: String?, modelId: String?, modelLabel: String? = nil
+    ) -> String {
+        if let brand = OllamaDisplayBrands.brandLabel(
+            provider: provider, modelId: modelId, modelLabel: modelLabel)
+        {
+            return brand
+        }
+        return providerLabel(provider)
     }
 
     // ── Retired providers ─────────────────────────────────────────────────────
