@@ -261,7 +261,7 @@ const ONBOARDING_COMPOSER_OPTIONS: Array<{ value: ComposerStyle; label: string }
   // in the list keeps the picker honest about the family.
   { value: 'obsidian', label: 'Obsidian' },
   { value: 'alabaster', label: 'Alabaster' }
-]
+].filter((option) => !isRetiredProvider(option.value))
 
 const ONBOARDING_BUBBLE_OPTIONS: Array<{ value: UserBubbleColor; label: string }> = [
   { value: 'system', label: 'Default' },
