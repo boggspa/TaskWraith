@@ -87,6 +87,7 @@ import {
   ProductOperationsStatus,
   ProductUpdateChannel,
   ChatScope,
+  ChatWorkflowMode,
   RuntimeProfile,
   HandoffCard,
   RunAnalystSnapshot,
@@ -8912,6 +8913,7 @@ function App(): React.JSX.Element {
       selectedModelType: snapshot.selectedModelType || fallbackRequest.selectedModelType,
       customModel: snapshot.customModel || fallbackRequest.customModel,
       approvalMode: snapshot.approvalMode || fallbackRequest.approvalMode,
+      workflowMode: snapshot.workflowMode || fallbackRequest.workflowMode,
       sessionTrust:
         typeof snapshot.sessionTrust === 'boolean' ? snapshot.sessionTrust : fallbackRequest.sessionTrust,
       imageAttachments: snapshot.imageAttachments.length
@@ -8990,6 +8992,7 @@ function App(): React.JSX.Element {
     selectedModelType: request.selectedModelType,
     customModel: request.customModel,
     approvalMode: request.approvalMode,
+    ...(request.workflowMode ? { workflowMode: request.workflowMode } : {}),
     sessionTrust: request.sessionTrust,
     imageAttachments: request.imageAttachments.map((attachment) => ({
       id: attachment.id,
@@ -9107,6 +9110,7 @@ function App(): React.JSX.Element {
       selectedModelType: selectedModel,
       customModel: request.customModel,
       approvalMode: request.approvalMode,
+      workflowMode: request.workflowMode,
       sessionTrust: request.sessionTrust,
       imageAttachments: request.imageAttachments.map((attachment, index) => ({
         id: attachment.id || `${job.runId}-attachment-${index}`,
@@ -9315,6 +9319,7 @@ function App(): React.JSX.Element {
       prompt?: string
       displayPrompt?: string
       approvalMode?: string
+      workflowMode?: ChatWorkflowMode
       imageAttachments?: ImageAttachment[]
     }
   ): QueuedRunRequest => {
@@ -9335,6 +9340,10 @@ function App(): React.JSX.Element {
       : getDefaultModelForProvider(provider)
     const requestCustomModel = composerSelection?.customModel ?? customModel
     const requestApprovalMode = target?.approvalMode || composerSelection?.approvalMode || approvalMode
+    const requestWorkflowMode =
+      target?.workflowMode ??
+      selectedChat?.workflowMode ??
+      (requestApprovalMode === 'plan' ? 'plan' : 'normal')
     const requestReasoningEffort =
       provider === 'codex'
         ? composerSelection?.codexReasoningEffort || codexReasoningEffort
@@ -9383,6 +9392,7 @@ function App(): React.JSX.Element {
       selectedModelType: requestModel,
       customModel: requestCustomModel,
       approvalMode: requestApprovalMode,
+      workflowMode: requestWorkflowMode,
       sessionTrust,
       imageAttachments: target?.imageAttachments ?? imageAttachments,
       ...(requestDiscordContextSelection
@@ -9701,6 +9711,26 @@ function App(): React.JSX.Element {
         }
       }
       if (runChat.chatKind === 'ensemble') {
+        const workflowModeForRound =
+          request.workflowMode || (request.approvalMode === 'plan' ? 'plan' : 'normal')
+        if (runChat.workflowMode !== workflowModeForRound) {
+          const updatedRunChat: ChatRecord = {
+            ...runChat,
+            workflowMode: workflowModeForRound,
+            updatedAt: Date.now()
+          }
+          runChat = updatedRunChat
+          chatByIdRef.current.set(updatedRunChat.appChatId, updatedRunChat)
+          setChats((prev) =>
+            prev.map((chat) =>
+              chat.appChatId === updatedRunChat.appChatId ? updatedRunChat : chat
+            )
+          )
+          if (currentChatIdRef.current === updatedRunChat.appChatId) {
+            setCurrentChat(updatedRunChat)
+          }
+          window.api.saveChat(updatedRunChat)
+        }
         const mode = isEnsembleActiveRoundDispatchLive(runChat.ensemble?.activeRound)
           ? ('queue' as const)
           : ('normal' as const)
@@ -9811,6 +9841,7 @@ function App(): React.JSX.Element {
           customModel: request.customModel,
           overrideModel: request.overrideModel,
           approvalMode: request.approvalMode,
+          workflowMode: request.workflowMode,
           sessionTrust: request.sessionTrust,
           imageAttachments: request.imageAttachments,
           externalPathGrants: request.externalPathGrants,
@@ -9882,6 +9913,8 @@ function App(): React.JSX.Element {
           ? request.customModel.trim()
           : request.selectedModelType)
       const modeToPass = composerMetadata.approvalMode
+      const workflowModeToPass =
+        composerMetadata.workflowMode || composedPayload.workflowMode || request.workflowMode
       const resumeSessionId = composedPayload.providerSessionId || undefined
       const geminiResumeSkippedReason = composerMetadata.geminiResumeSkippedReason
       const contextTurnsForRun = composerMetadata.contextTurnsApplied
@@ -9972,6 +10005,7 @@ function App(): React.JSX.Element {
         rawEventsFile: `run-events/${currentRunId}.jsonl`,
         requestedModel: modelToPass,
         approvalMode: modeToPass,
+        ...(workflowModeToPass ? { workflowMode: workflowModeToPass } : {}),
         runtimeProfileId: request.runtimeProfileId,
         handoffSourceRunId: request.handoffSourceRunId,
         ...(effectiveRunProvider !== 'gemini' && resumeSessionId
@@ -10030,6 +10064,7 @@ function App(): React.JSX.Element {
           promptMessageId,
           requestedModel: modelToPass,
           approvalMode: modeToPass,
+          workflowMode: workflowModeToPass || null,
           contextTurns: contextTurnsForRun,
           workspacePath: isGlobalRun ? undefined : runWorkspace!.path,
           effectiveWorkspacePath: runDiffWorkspacePath,
@@ -11126,6 +11161,7 @@ function App(): React.JSX.Element {
         selectedModelType,
         customModel,
         approvalMode: 'plan',
+        workflowMode: 'normal',
         sessionTrust,
         imageAttachments: [],
         codexNativeReview:
@@ -11174,12 +11210,18 @@ function App(): React.JSX.Element {
      * permissions (the HMAC posture clamp re-signs). Undefined inherits the
      * chat's composer selection.
      */
-    approvalModeOverride?: string
+    approvalModeOverride?: string,
+    workflowModeOverride?: ChatWorkflowMode
   ) => {
     const baseRequest = buildRunRequest(
       overrideModel,
       existingPrompt,
-      approvalModeOverride ? { approvalMode: approvalModeOverride } : undefined
+      approvalModeOverride || workflowModeOverride
+        ? {
+            ...(approvalModeOverride ? { approvalMode: approvalModeOverride } : {}),
+            ...(workflowModeOverride ? { workflowMode: workflowModeOverride } : {})
+          }
+        : undefined
     )
     const request = dmTargetParticipantId ? { ...baseRequest, dmTargetParticipantId } : baseRequest
     if (!runRequestHasContent(request)) {
@@ -14376,13 +14418,14 @@ function App(): React.JSX.Element {
       }
       const updated = {
         ...prev,
+        workflowMode: 'normal' as const,
         messages: [...markProposedPlan(prev.messages, messageId, 'approved'), nextMessage]
       }
       window.api.saveChat(updated)
       return updated
     })
     // Elevate off plan/read-only so the implementation run can write files.
-    handleRun(undefined, prompt, undefined, 'default')
+    handleRun(undefined, prompt, undefined, 'default', 'normal')
   }
 
   const handleProposedPlanDismiss = (messageId: string) => {

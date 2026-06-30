@@ -13,6 +13,7 @@ import {
   GeminiWorktreeLaunchOption,
   ProviderId,
   ChatScope,
+  ChatWorkflowMode,
   ExternalPathGrant,
   ScheduledTask,
   WorkflowDefinition,
@@ -223,6 +224,7 @@ interface AgentRunPayload {
   claudeFastMode?: boolean | null
   kimiThinking?: boolean | null
   approvalMode?: string
+  workflowMode?: ChatWorkflowMode
   imagePaths?: string[]
   providerSessionId?: string | null
   externalPathGrants?: ExternalPathGrant[]
@@ -254,6 +256,7 @@ interface ComposerRunInput {
   customModel?: string
   overrideModel?: string
   approvalMode?: string
+  workflowMode?: ChatWorkflowMode
   sessionTrust?: boolean
   attachments?: ComposerImageAttachment[]
   imageAttachments?: ComposerImageAttachment[]
@@ -278,6 +281,7 @@ interface ComposerRunMetadata {
   providerLabel: string
   requestedModel?: string
   approvalMode: string
+  workflowMode: ChatWorkflowMode
   providerSessionId?: string | null
   geminiResumeSkippedReason?: string
   clearLinkedGeminiSession?: boolean
