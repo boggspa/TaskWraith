@@ -40,7 +40,7 @@ struct MobileDiffStudioStateTests {
 
         state.fileFilter = "button"
         #expect(state.filteredFiles.map(\.path) == ["src/ui/Button.swift"])
-        #expect(state.fileFilterStatus == "1 of 3 files match \"button\".")
+        #expect(state.fileFilterStatus == "1 of 5 files match \"button\".")
 
         state.fileFilter = " deleted "
         #expect(state.filteredFiles.map(\.path) == ["docs/Old.md"])
@@ -52,13 +52,15 @@ struct MobileDiffStudioStateTests {
         #expect(state.filteredFiles.map(\.path) == [
             "src/App.swift",
             "src/ui/Button.swift",
-            "docs/Old.md"
+            "docs/Old.md",
+            "Assets/Icon.png",
+            ".env"
         ])
         #expect(state.fileFilterStatus == nil)
     }
 
     @MainActor
-    @Test func editorHandoffSkipsDeletedAndMissingSelections() throws {
+    @Test func editorHandoffSkipsDeletedBinaryHiddenAndMissingSelections() throws {
         let state = MobileDiffStudioState()
         state.diff = try decodeFilterableWorkspaceDiff()
 
@@ -68,6 +70,12 @@ struct MobileDiffStudioStateTests {
         #expect(state.selectedFileCanOpenInEditor == true)
 
         state.selectedPath = "docs/Old.md"
+        #expect(state.selectedFileCanOpenInEditor == false)
+
+        state.selectedPath = "Assets/Icon.png"
+        #expect(state.selectedFileCanOpenInEditor == false)
+
+        state.selectedPath = ".env"
         #expect(state.selectedFileCanOpenInEditor == false)
     }
 
@@ -130,13 +138,40 @@ private func decodeFilterableWorkspaceDiff() throws -> WorkspaceDiffResult {
             {
               "path": "docs/Old.md",
               "kind": "deleted",
+              "status": "deleted",
+              "previewKind": "none",
+              "canOpenInEditor": false,
               "additions": 0,
               "deletions": 4,
               "truncated": false,
               "hunks": []
+            },
+            {
+              "path": "Assets/Icon.png",
+              "kind": "modified",
+              "status": "modified",
+              "previewKind": "binary",
+              "isBinary": true,
+              "canOpenInEditor": false,
+              "additions": 0,
+              "deletions": 0,
+              "truncated": false,
+              "hunks": []
+            },
+            {
+              "path": ".env",
+              "kind": "modified",
+              "status": "hidden_sensitive",
+              "previewKind": "hidden",
+              "isSensitive": true,
+              "canOpenInEditor": false,
+              "additions": 1,
+              "deletions": 1,
+              "truncated": false,
+              "hunks": []
             }
           ],
-          "totalFiles": 3,
+          "totalFiles": 5,
           "truncated": false
         }
         """

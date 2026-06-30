@@ -832,9 +832,14 @@ public struct WorkspaceDiffFile: Codable, Sendable, Identifiable, Hashable {
     public let path: String
     /// created | modified | deleted
     public let kind: String
+    public let status: String?
     public let additions: Int?
     public let deletions: Int?
     public let hunks: [WorkspaceDiffHunk]?
+    public let previewKind: String?
+    public let isBinary: Bool?
+    public let isSensitive: Bool?
+    public let canOpenInEditor: Bool?
     /// Hunk lines were dropped/clipped for this file (per-file cap).
     public let truncated: Bool?
     public var id: String { path }

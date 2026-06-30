@@ -553,9 +553,14 @@ export interface BoundedDiffHunk {
 export interface BoundedDiffFile {
   path: string
   kind: 'created' | 'modified' | 'deleted'
+  status: DiffFileStatus
   additions: number
   deletions: number
   hunks: BoundedDiffHunk[]
+  previewKind: DiffFileSummary['previewKind']
+  isBinary?: boolean
+  isSensitive?: boolean
+  canOpenInEditor: boolean
   truncated?: boolean
 }
 
@@ -595,9 +600,19 @@ function boundDiffFile(summary: DiffFileSummary): BoundedDiffFile {
   const file: BoundedDiffFile = {
     path: summary.path,
     kind: boundedDiffKind(summary.status),
+    status: summary.status,
     additions: summary.additions ?? 0,
     deletions: summary.deletions ?? 0,
-    hunks: []
+    hunks: [],
+    previewKind: summary.previewKind,
+    isBinary: summary.isBinary,
+    isSensitive: summary.isSensitive,
+    canOpenInEditor:
+      summary.status !== 'deleted' &&
+      summary.status !== 'binary' &&
+      summary.status !== 'hidden_sensitive' &&
+      summary.previewKind !== 'binary' &&
+      summary.previewKind !== 'hidden'
   }
   // Sensitive previews stay hidden on the phone exactly as on the desktop;
   // binary files have no renderable hunks either way.

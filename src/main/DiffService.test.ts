@@ -235,8 +235,65 @@ describe('DiffService', () => {
 
       expect(bounded.totalFiles).toBe(1)
       expect(bounded.truncated).toBe(true)
+      expect(bounded.files[0]).toMatchObject({
+        path: 'large.txt',
+        status: 'modified',
+        previewKind: 'git_diff',
+        canOpenInEditor: true
+      })
       expect(bounded.files[0].hunks[0].lines).toHaveLength(200)
       expect(bounded.files[0].truncated).toBe(true)
+    })
+
+    it('carries mobile handoff safety metadata for blocked preview types', () => {
+      const bounded = buildBoundedWorkspaceDiff([
+        {
+          path: 'asset.bin',
+          status: 'modified',
+          additions: 0,
+          deletions: 0,
+          isBinary: true,
+          previewKind: 'binary'
+        },
+        {
+          path: '.env',
+          status: 'hidden_sensitive',
+          additions: 1,
+          deletions: 1,
+          isSensitive: true,
+          previewKind: 'hidden'
+        },
+        {
+          path: 'docs/readme.md',
+          status: 'deleted',
+          additions: 0,
+          deletions: 4,
+          previewKind: 'none'
+        }
+      ])
+
+      expect(bounded.files).toMatchObject([
+        {
+          path: 'asset.bin',
+          status: 'modified',
+          previewKind: 'binary',
+          isBinary: true,
+          canOpenInEditor: false
+        },
+        {
+          path: '.env',
+          status: 'hidden_sensitive',
+          previewKind: 'hidden',
+          isSensitive: true,
+          canOpenInEditor: false
+        },
+        {
+          path: 'docs/readme.md',
+          status: 'deleted',
+          previewKind: 'none',
+          canOpenInEditor: false
+        }
+      ])
     })
   })
 

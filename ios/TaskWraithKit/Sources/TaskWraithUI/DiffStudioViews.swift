@@ -73,7 +73,18 @@ final class MobileDiffStudioState: ObservableObject {
 
     var selectedFileCanOpenInEditor: Bool {
         guard let selectedFile else { return false }
-        return selectedFile.kind != "deleted"
+        if let canOpenInEditor = selectedFile.canOpenInEditor {
+            return canOpenInEditor
+        }
+        if selectedFile.kind == "deleted" { return false }
+        if selectedFile.status == "deleted" || selectedFile.status == "binary" {
+            return false
+        }
+        if selectedFile.status == "hidden_sensitive" { return false }
+        if selectedFile.previewKind == "binary" || selectedFile.previewKind == "hidden" {
+            return false
+        }
+        return selectedFile.isBinary != true && selectedFile.isSensitive != true
     }
 
     /// "Showing 40 of N" / relay-budget clipping — rendered as the list footer.
