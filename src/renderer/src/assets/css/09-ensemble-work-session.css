@@ -2657,9 +2657,18 @@
   --popout-editor-bg: var(--app-bg-sunken);
   --popout-control-bg: color-mix(in srgb, var(--text-primary) 7%, var(--popout-toolbar-bg));
   --popout-row-hover-bg: color-mix(in srgb, var(--text-primary) 7%, transparent);
-  --popout-row-selected-bg: color-mix(in srgb, var(--accent) 20%, var(--popout-list-bg));
+  --popout-row-selected-bg: color-mix(in srgb, var(--text-primary) 9%, var(--popout-list-bg));
+  --popout-row-selected-rim: color-mix(in srgb, var(--accent) 62%, var(--popout-pill-border));
   --popout-pill-bg: color-mix(in srgb, var(--text-primary) 8%, transparent);
   --popout-pill-border: color-mix(in srgb, var(--text-primary) 13%, transparent);
+  --popout-status-created-bg: color-mix(in srgb, var(--success) 16%, var(--popout-control-bg));
+  --popout-status-created-text: color-mix(in srgb, var(--success) 82%, var(--text-primary));
+  --popout-status-modified-bg: color-mix(in srgb, var(--accent) 16%, var(--popout-control-bg));
+  --popout-status-modified-text: color-mix(in srgb, var(--accent) 82%, var(--text-primary));
+  --popout-status-deleted-bg: color-mix(in srgb, var(--danger) 16%, var(--popout-control-bg));
+  --popout-status-deleted-text: color-mix(in srgb, var(--danger) 86%, var(--text-primary));
+  --popout-status-untracked-bg: color-mix(in srgb, var(--warning) 18%, var(--popout-control-bg));
+  --popout-status-untracked-text: color-mix(in srgb, var(--warning) 78%, var(--text-primary));
   --popout-rim: color-mix(in srgb, var(--text-primary) 13%, transparent);
   --popout-top-rim: color-mix(in srgb, var(--text-primary) 11%, transparent);
   --popout-shadow: color-mix(in srgb, #000 32%, transparent);
@@ -2684,7 +2693,8 @@
   --popout-editor-bg: color-mix(in srgb, var(--surface-3) 88%, white 12%);
   --popout-control-bg: color-mix(in srgb, var(--text-primary) 6%, white);
   --popout-row-hover-bg: color-mix(in srgb, var(--text-primary) 6%, transparent);
-  --popout-row-selected-bg: color-mix(in srgb, var(--accent) 16%, white 84%);
+  --popout-row-selected-bg: color-mix(in srgb, var(--text-primary) 6%, white 94%);
+  --popout-row-selected-rim: color-mix(in srgb, var(--accent) 58%, var(--popout-pill-border));
   --popout-pill-bg: color-mix(in srgb, var(--text-primary) 5%, white);
   --popout-pill-border: color-mix(in srgb, var(--text-primary) 16%, transparent);
   --popout-rim: color-mix(in srgb, var(--text-primary) 14%, transparent);
@@ -2836,6 +2846,43 @@
 }
 
 .popout-root[data-popout-family="workspace"]
+  :is(.diff-file-badge.created, .diff-detail-stat-badge[data-status="created"]) {
+  color: var(--popout-status-created-text);
+  background-color: var(--popout-status-created-bg) !important;
+  border-color: color-mix(in srgb, var(--success) 36%, var(--popout-pill-border));
+}
+
+.popout-root[data-popout-family="workspace"]
+  :is(
+    .diff-file-badge.modified,
+    .diff-detail-stat-badge[data-status="modified"],
+    .diff-detail-stat-badge[data-status="renamed"]
+  ) {
+  color: var(--popout-status-modified-text);
+  background-color: var(--popout-status-modified-bg) !important;
+  border-color: color-mix(in srgb, var(--accent) 36%, var(--popout-pill-border));
+}
+
+.popout-root[data-popout-family="workspace"]
+  :is(.diff-file-badge.deleted, .diff-detail-stat-badge[data-status="deleted"]) {
+  color: var(--popout-status-deleted-text);
+  background-color: var(--popout-status-deleted-bg) !important;
+  border-color: color-mix(in srgb, var(--danger) 40%, var(--popout-pill-border));
+}
+
+.popout-root[data-popout-family="workspace"]
+  :is(.diff-file-badge.untracked, .diff-detail-stat-badge[data-status="untracked"]) {
+  color: var(--popout-status-untracked-text);
+  background-color: var(--popout-status-untracked-bg) !important;
+  border-color: color-mix(in srgb, var(--warning) 42%, var(--popout-pill-border));
+}
+
+.popout-root[data-popout-family="workspace"] .diff-file-badge.noise {
+  color: var(--text-muted);
+  background-color: var(--popout-pill-bg) !important;
+}
+
+.popout-root[data-popout-family="workspace"]
   :is(
     .diff-stage-count-chip[data-stage-group="unstaged"],
     .diff-stage-count-chip[data-stage-group="mixed"]
@@ -2893,8 +2940,11 @@
 }
 
 .popout-root[data-popout-family="workspace"] .workbench-nav-item.active {
-  border-color: color-mix(in srgb, var(--accent) 58%, var(--popout-pill-border));
+  border-color: var(--popout-row-selected-rim);
   background-color: var(--popout-row-selected-bg) !important;
+  box-shadow:
+    inset 0 0 0 1px var(--popout-row-selected-rim),
+    inset 0 1px 0 var(--popout-top-rim);
 }
 
 .popout-root[data-popout-family="workspace"] .workbench-nav-item.active .workbench-nav-icon {
@@ -2911,6 +2961,10 @@
 .popout-root[data-popout-family="workspace"]
   :is(.file-editor-row.active, .diff-file-row.selected) {
   background-color: var(--popout-row-selected-bg) !important;
+  border-color: var(--popout-row-selected-rim) !important;
+  box-shadow:
+    inset 0 0 0 1px var(--popout-row-selected-rim),
+    inset 0 1px 0 var(--popout-top-rim);
 }
 
 .popout-root[data-popout-family="workspace"]
