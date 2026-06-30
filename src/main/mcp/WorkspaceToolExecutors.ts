@@ -1196,14 +1196,24 @@ export async function executeRunTask(
   cwd: string
 ) {
   const task = requireNonEmptyString(args.task || args.script || args.name, 'Task')
+  const taskArgs = toStringArray(args.args)
   const packageJson = await readJsonFile(join(cwd, 'package.json'))
   const scripts = isRecord(packageJson?.scripts) ? packageJson.scripts : null
   let command: string[]
   if (scripts && task in scripts) {
     command = ['npm', 'run', task]
     const script = String(scripts[task] || '')
-    if (task === 'test' && /\bvitest\b/.test(script) && !/\s--run\b/.test(script)) {
-      command.push('--', '--run')
+    const isVitestTestScript = task === 'test' && /\bvitest\b/.test(script)
+    const scriptAlreadyRunsVitest =
+      /\bvitest\b[^\n|;&]*\brun\b/.test(script) || /\s--run\b/.test(script)
+    if (isVitestTestScript) {
+      if (!scriptAlreadyRunsVitest) {
+        command.push('--', '--run')
+      } else if (taskArgs.length > 0) {
+        command.push('--')
+      }
+    } else if (taskArgs.length > 0) {
+      command.push('--')
     }
   } else if (task === 'test' && fsSync.existsSync(join(cwd, 'Package.swift'))) {
     command = ['swift', 'test']
@@ -1212,7 +1222,7 @@ export async function executeRunTask(
   } else {
     throw new Error(`No known task "${task}" in this workspace.`)
   }
-  command.push(...toStringArray(args.args))
+  command.push(...taskArgs)
   const timeoutMs = clampInteger(args.timeoutMs, 600_000, 1_000, 30 * 60_000)
   const result = await runCommandArgs(deps, command, cwd, timeoutMs)
   return {

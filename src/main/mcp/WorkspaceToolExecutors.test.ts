@@ -21,6 +21,7 @@ import {
   executeMovePath,
   executeReadBackgroundProcess,
   executeRenamePath,
+  executeRunTask,
   executeStartBackgroundProcess,
   summarizeTestOutput,
   resolveMcpScopedPath,
@@ -117,6 +118,59 @@ describe('summarizeTestOutput', () => {
     expect(summary.totals.failed).toBe(1)
     expect(summary.failures[0]?.file).toBe('src/main/example.test.ts')
     expect(summary.failures[0]?.fileLine).toBe(12)
+  })
+})
+
+describe('executeRunTask', () => {
+  it('forwards test args without injecting --run when the vitest script already uses run mode', async () => {
+    const workspace = await mkdtemp(resolve(tmpdir(), 'taskwraith-run-task-'))
+    try {
+      await writeFile(
+        resolve(workspace, 'package.json'),
+        JSON.stringify({ scripts: { test: 'vitest run' } })
+      )
+      const commands: string[][] = []
+      const deps = makeDeps(async (command) => {
+        commands.push(command as string[])
+        return commandResult([' Test Files  1 passed (1)', '      Tests  1 passed (1)'].join('\n'))
+      })
+
+      const result = await executeRunTask(
+        deps,
+        { task: 'test', args: ['src/foo.test.ts'] },
+        workspace
+      )
+
+      expect(commands[0]).toEqual(['npm', 'run', 'test', '--', 'src/foo.test.ts'])
+      expect(result).toMatchObject({
+        task: 'test',
+        command: ['npm', 'run', 'test', '--', 'src/foo.test.ts'],
+        exitCode: 0
+      })
+    } finally {
+      await rm(workspace, { recursive: true, force: true })
+    }
+  })
+
+  it('injects --run for vitest test scripts that do not already force run mode', async () => {
+    const workspace = await mkdtemp(resolve(tmpdir(), 'taskwraith-run-task-'))
+    try {
+      await writeFile(
+        resolve(workspace, 'package.json'),
+        JSON.stringify({ scripts: { test: 'vitest' } })
+      )
+      const commands: string[][] = []
+      const deps = makeDeps(async (command) => {
+        commands.push(command as string[])
+        return commandResult([' Test Files  1 passed (1)', '      Tests  1 passed (1)'].join('\n'))
+      })
+
+      await executeRunTask(deps, { task: 'test', args: ['src/foo.test.ts'] }, workspace)
+
+      expect(commands[0]).toEqual(['npm', 'run', 'test', '--', '--run', 'src/foo.test.ts'])
+    } finally {
+      await rm(workspace, { recursive: true, force: true })
+    }
   })
 })
 
