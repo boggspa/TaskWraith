@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-glitch-switch-title agent-pool-icon-glitch-switch-desc" data-agent-name="Glitch Switch" data-agent-accent="#FF3864" data-agent-hue="347" style="color: #FF3864; --agent-accent: #FF3864;">
+  <title id="agent-pool-icon-glitch-switch-title">Glitch Switch</title>
+  <desc id="agent-pool-icon-glitch-switch-desc">Funky tech themed agent pool icon with a chunky toggle and broken signal waveform.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}</style>
+  <path class="soft" d="M118 194h364v166H118Z"/>
+  <path class="line" d="M154 188h292c44 0 80 36 80 80s-36 80-80 80H154c-44 0-80-36-80-80s36-80 80-80Z"/>
+  <circle class="line" cx="390" cy="268" r="52"/>
+  <path class="accent" d="M116 430h68l24-44 42 88 44-112 36 68h154"/>
+  <path class="fine" d="M150 268h116M198 228l42 40-42 40"/>
+  <circle class="dot" cx="390" cy="268" r="16"/>
+  <path class="fine" d="M186 124h76M338 124h76M236 512h128"/>
+</svg>

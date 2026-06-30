@@ -1,0 +1,163 @@
+[
+  {
+    "name": "Async Arcade",
+    "slug": "async-arcade",
+    "file": "icons/async-arcade.svg",
+    "accent": "#00D7FF",
+    "hue": 190
+  },
+  {
+    "name": "Bitmap Bazaar",
+    "slug": "bitmap-bazaar",
+    "file": "icons/bitmap-bazaar.svg",
+    "accent": "#FF4FD8",
+    "hue": 314
+  },
+  {
+    "name": "Cache Cabana",
+    "slug": "cache-cabana",
+    "file": "icons/cache-cabana.svg",
+    "accent": "#FFB000",
+    "hue": 41
+  },
+  {
+    "name": "Circuit Cactus",
+    "slug": "circuit-cactus",
+    "file": "icons/circuit-cactus.svg",
+    "accent": "#41F27A",
+    "hue": 139
+  },
+  {
+    "name": "Debug Disco",
+    "slug": "debug-disco",
+    "file": "icons/debug-disco.svg",
+    "accent": "#A855FF",
+    "hue": 268
+  },
+  {
+    "name": "Glitch Switch",
+    "slug": "glitch-switch",
+    "file": "icons/glitch-switch.svg",
+    "accent": "#FF3864",
+    "hue": 347
+  },
+  {
+    "name": "Hex Hotline",
+    "slug": "hex-hotline",
+    "file": "icons/hex-hotline.svg",
+    "accent": "#00E0A4",
+    "hue": 164
+  },
+  {
+    "name": "Kernel Kiosk",
+    "slug": "kernel-kiosk",
+    "file": "icons/kernel-kiosk.svg",
+    "accent": "#6DFF57",
+    "hue": 113
+  },
+  {
+    "name": "Latency Limbo",
+    "slug": "latency-limbo",
+    "file": "icons/latency-limbo.svg",
+    "accent": "#FFD23F",
+    "hue": 48
+  },
+  {
+    "name": "Neon Node",
+    "slug": "neon-node",
+    "file": "icons/neon-node.svg",
+    "accent": "#2F6BFF",
+    "hue": 223
+  },
+  {
+    "name": "Packet Jukebox",
+    "slug": "packet-jukebox",
+    "file": "icons/packet-jukebox.svg",
+    "accent": "#FF7A1A",
+    "hue": 25
+  },
+  {
+    "name": "Pixel Parasol",
+    "slug": "pixel-parasol",
+    "file": "icons/pixel-parasol.svg",
+    "accent": "#00C2FF",
+    "hue": 194
+  },
+  {
+    "name": "Plugin Pancake",
+    "slug": "plugin-pancake",
+    "file": "icons/plugin-pancake.svg",
+    "accent": "#FF5F8F",
+    "hue": 342
+  },
+  {
+    "name": "Prompt Pinball",
+    "slug": "prompt-pinball",
+    "file": "icons/prompt-pinball.svg",
+    "accent": "#B6FF2E",
+    "hue": 81
+  },
+  {
+    "name": "Quantum Pretzel",
+    "slug": "quantum-pretzel",
+    "file": "icons/quantum-pretzel.svg",
+    "accent": "#9B5CFF",
+    "hue": 263
+  },
+  {
+    "name": "Router Rhumba",
+    "slug": "router-rhumba",
+    "file": "icons/router-rhumba.svg",
+    "accent": "#24E0FF",
+    "hue": 189
+  },
+  {
+    "name": "Socket Sundae",
+    "slug": "socket-sundae",
+    "file": "icons/socket-sundae.svg",
+    "accent": "#FF72C6",
+    "hue": 324
+  },
+  {
+    "name": "Synth Stack",
+    "slug": "synth-stack",
+    "file": "icons/synth-stack.svg",
+    "accent": "#15F5BA",
+    "hue": 164
+  },
+  {
+    "name": "Thread Tango",
+    "slug": "thread-tango",
+    "file": "icons/thread-tango.svg",
+    "accent": "#FF4C2E",
+    "hue": 9
+  },
+  {
+    "name": "Token Totem",
+    "slug": "token-totem",
+    "file": "icons/token-totem.svg",
+    "accent": "#D2FF3D",
+    "hue": 74
+  },
+  {
+    "name": "Turbo Telescope",
+    "slug": "turbo-telescope",
+    "file": "icons/turbo-telescope.svg",
+    "accent": "#38BDF8",
+    "hue": 199
+  },
+  {
+    "name": "Vector Vortex",
+    "slug": "vector-vortex",
+    "file": "icons/vector-vortex.svg",
+    "accent": "#7C3DFF",
+    "hue": 259
+  },
+  {
+    "name": "Websocket Waltz",
+    "slug": "websocket-waltz",
+    "file": "icons/websocket-waltz.svg",
+    "accent": "#00F0CF",
+    "hue": 172
+  }
+]

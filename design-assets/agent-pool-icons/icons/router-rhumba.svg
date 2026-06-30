@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-router-rhumba-title agent-pool-icon-router-rhumba-desc" data-agent-name="Router Rhumba" data-agent-accent="#24E0FF" data-agent-hue="189" style="color: #24E0FF; --agent-accent: #24E0FF;">
+  <title id="agent-pool-icon-router-rhumba-title">Router Rhumba</title>
+  <desc id="agent-pool-icon-router-rhumba-desc">Funky tech themed agent pool icon with a dancing router shape and sync-wave antennas.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}</style>
+  <path class="soft" d="M138 256h324v168H138Z"/>
+  <path class="line" d="M138 256h324v168H138Z"/>
+  <path class="line" d="M206 256l-46-96M394 256l46-96"/>
+  <path class="fine" d="M132 142c42-42 96-50 150-22M318 120c54-28 108-20 150 22"/>
+  <path class="accent" d="M198 336h70M332 336h70"/>
+  <circle class="dot" cx="300" cy="336" r="16"/>
+  <path class="line" d="M204 424l-34 58M396 424l34 58"/>
+  <path class="accent" d="M236 500c42-28 86-28 128 0"/>
+  <circle class="dot" cx="160" cy="160" r="12"/>
+  <circle class="dot" cx="440" cy="160" r="12"/>
+</svg>

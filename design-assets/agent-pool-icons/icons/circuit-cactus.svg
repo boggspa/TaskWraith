@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-circuit-cactus-title agent-pool-icon-circuit-cactus-desc" data-agent-name="Circuit Cactus" data-agent-accent="#41F27A" data-agent-hue="139" style="color: #41F27A; --agent-accent: #41F27A;">
+  <title id="agent-pool-icon-circuit-cactus-title">Circuit Cactus</title>
+  <desc id="agent-pool-icon-circuit-cactus-desc">Funky tech themed agent pool icon with a cactus-shaped circuit and glowing terminal nodes.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}</style>
+  <path class="soft" d="M220 136h160v318H220Z"/>
+  <path class="line" d="M300 132v330"/>
+  <path class="line" d="M300 212h-86c-34 0-62 28-62 62v52"/>
+  <path class="line" d="M300 286h92c34 0 62 28 62 62v48"/>
+  <path class="accent" d="M300 158v70M214 274v92M392 348v82"/>
+  <circle class="dot" cx="300" cy="132" r="18"/>
+  <circle class="dot" cx="152" cy="326" r="18"/>
+  <circle class="dot" cx="454" cy="396" r="18"/>
+  <path class="fine" d="M238 516h124M188 462c58 26 166 26 224 0"/>
+  <path class="accent" d="M244 370h112"/>
+</svg>

@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-token-totem-title agent-pool-icon-token-totem-desc" data-agent-name="Token Totem" data-agent-accent="#D2FF3D" data-agent-hue="74" style="color: #D2FF3D; --agent-accent: #D2FF3D;">
+  <title id="agent-pool-icon-token-totem-title">Token Totem</title>
+  <desc id="agent-pool-icon-token-totem-desc">Funky tech themed agent pool icon with stacked token chips and a prompt glyph crown.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}</style>
+  <path class="soft" d="M210 126h180v348H210Z"/>
+  <path class="line" d="M210 166h180v82H210ZM190 278h220v82H190ZM210 390h180v82H210Z"/>
+  <path class="accent" d="m264 206 28 20-28 20M318 246h38M248 320h104M262 432h76"/>
+  <circle class="dot" cx="236" cy="320" r="12"/>
+  <circle class="dot" cx="364" cy="320" r="12"/>
+  <path class="accent" d="M234 118h132l-34-44-32 44-32-44Z"/>
+  <path class="fine" d="M154 236h50M396 236h50M154 414h50M396 414h50"/>
+  <path class="line" d="M236 520h128"/>
+</svg>

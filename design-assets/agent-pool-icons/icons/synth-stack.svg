@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-synth-stack-title agent-pool-icon-synth-stack-desc" data-agent-name="Synth Stack" data-agent-accent="#15F5BA" data-agent-hue="164" style="color: #15F5BA; --agent-accent: #15F5BA;">
+  <title id="agent-pool-icon-synth-stack-title">Synth Stack</title>
+  <desc id="agent-pool-icon-synth-stack-desc">Funky tech themed agent pool icon with stacked synth modules, sliders, and signal keys.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}</style>
+  <path class="soft" d="M126 144h348v312H126Z"/>
+  <path class="line" d="M126 144h348v96H126ZM126 264h348v96H126ZM126 384h348v96H126Z"/>
+  <path class="accent" d="M180 192h96M324 192h86M190 312h220M180 432h70M304 432h106"/>
+  <circle class="dot" cx="276" cy="192" r="14"/>
+  <circle class="dot" cx="250" cy="312" r="14"/>
+  <circle class="dot" cx="304" cy="432" r="14"/>
+  <path class="fine" d="M168 480v42M232 480v42M296 480v42M360 480v42M424 480v42"/>
+  <path class="accent" d="M204 104h192"/>
+</svg>

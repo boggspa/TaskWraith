@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-pixel-parasol-title agent-pool-icon-pixel-parasol-desc" data-agent-name="Pixel Parasol" data-agent-accent="#00C2FF" data-agent-hue="194" style="color: #00C2FF; --agent-accent: #00C2FF;">
+  <title id="agent-pool-icon-pixel-parasol-title">Pixel Parasol</title>
+  <desc id="agent-pool-icon-pixel-parasol-desc">Funky tech themed agent pool icon with a pixel parasol shielding a command prompt stem.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}</style>
+  <path class="soft" d="M112 276c42-100 112-150 188-150s146 50 188 150Z"/>
+  <path class="line" d="M112 276c42-100 112-150 188-150s146 50 188 150Z"/>
+  <path class="fine" d="M300 126v150M204 174l54 102M396 174l-54 102"/>
+  <path class="accent" d="M164 276h272M300 276v176c0 40 52 40 52 0"/>
+  <path class="line" d="M236 358h128"/>
+  <path class="accent" d="m252 358 36 30-36 30M312 418h52"/>
+  <circle class="dot" cx="184" cy="226" r="12"/>
+  <circle class="dot" cx="300" cy="186" r="12"/>
+  <circle class="dot" cx="416" cy="226" r="12"/>
+</svg>

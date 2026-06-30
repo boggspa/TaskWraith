@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-bitmap-bazaar-title agent-pool-icon-bitmap-bazaar-desc" data-agent-name="Bitmap Bazaar" data-agent-accent="#FF4FD8" data-agent-hue="314" style="color: #FF4FD8; --agent-accent: #FF4FD8;">
+  <title id="agent-pool-icon-bitmap-bazaar-title">Bitmap Bazaar</title>
+  <desc id="agent-pool-icon-bitmap-bazaar-desc">Funky tech themed agent pool icon with a pixel market grid and neon selection cursor.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}</style>
+  <path class="soft" d="M104 158h392v284H104Z"/>
+  <path class="line" d="M104 158h392v284H104Z"/>
+  <path class="fine" d="M104 228h392M104 300h392M104 372h392M184 158v284M264 158v284M344 158v284M424 158v284"/>
+  <path class="accent" d="M184 228h80v72h-80ZM344 300h80v72h-80Z"/>
+  <circle class="dot" cx="144" cy="194" r="12"/>
+  <circle class="dot" cx="464" cy="406" r="12"/>
+  <path class="line" d="m318 194 66 52-38 6 26 54-32 16-26-54-26 28Z"/>
+  <path class="accent" d="M192 504h216"/>
+</svg>

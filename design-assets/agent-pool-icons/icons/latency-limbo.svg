@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-latency-limbo-title agent-pool-icon-latency-limbo-desc" data-agent-name="Latency Limbo" data-agent-accent="#FFD23F" data-agent-hue="48" style="color: #FFD23F; --agent-accent: #FFD23F;">
+  <title id="agent-pool-icon-latency-limbo-title">Latency Limbo</title>
+  <desc id="agent-pool-icon-latency-limbo-desc">Funky tech themed agent pool icon with an hourglass, ping arcs, and delayed packet dots.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}</style>
+  <path class="soft" d="M196 126h208v348H196Z"/>
+  <path class="line" d="M204 126h192M204 474h192M236 126c0 86 34 120 64 174-30 54-64 88-64 174M364 126c0 86-34 120-64 174 30 54 64 88 64 174"/>
+  <path class="accent" d="M260 222h80M254 386h92"/>
+  <circle class="dot" cx="300" cy="300" r="14"/>
+  <path class="fine" d="M118 234c36-52 74-80 114-86M482 366c-36 52-74 80-114 86"/>
+  <path class="accent" d="M94 300h76M430 300h76"/>
+  <circle class="dot" cx="110" cy="300" r="12"/>
+  <circle class="dot" cx="490" cy="300" r="12"/>
+</svg>

@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-thread-tango-title agent-pool-icon-thread-tango-desc" data-agent-name="Thread Tango" data-agent-accent="#FF4C2E" data-agent-hue="9" style="color: #FF4C2E; --agent-accent: #FF4C2E;">
+  <title id="agent-pool-icon-thread-tango-title">Thread Tango</title>
+  <desc id="agent-pool-icon-thread-tango-desc">Funky tech themed agent pool icon with two crossing execution threads and scheduler ticks.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}</style>
+  <path class="soft" d="M116 132h368v336H116Z"/>
+  <path class="line" d="M132 172c92 0 120 256 214 256 56 0 92-46 122-106"/>
+  <path class="line" d="M468 172c-92 0-120 256-214 256-56 0-92-46-122-106"/>
+  <path class="accent" d="M178 226h94M328 226h94M178 374h94M328 374h94"/>
+  <circle class="dot" cx="132" cy="172" r="18"/>
+  <circle class="dot" cx="468" cy="172" r="18"/>
+  <circle class="dot" cx="132" cy="428" r="18"/>
+  <circle class="dot" cx="468" cy="428" r="18"/>
+  <path class="fine" d="M248 112h104M248 488h104"/>
+</svg>

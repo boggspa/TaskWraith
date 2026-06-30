@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-debug-disco-title agent-pool-icon-debug-disco-desc" data-agent-name="Debug Disco" data-agent-accent="#A855FF" data-agent-hue="268" style="color: #A855FF; --agent-accent: #A855FF;">
+  <title id="agent-pool-icon-debug-disco-title">Debug Disco</title>
+  <desc id="agent-pool-icon-debug-disco-desc">Funky tech themed agent pool icon with a mirrored debug sphere and inspection beam.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}</style>
+  <circle class="soft" cx="300" cy="248" r="120"/>
+  <circle class="line" cx="300" cy="248" r="120"/>
+  <path class="fine" d="M196 218h208M196 278h208M242 142c-28 64-28 148 0 212M358 142c28 64 28 148 0 212"/>
+  <path class="accent" d="M180 112l-42-48M420 112l42-48M176 386l-52 44M424 386l52 44"/>
+  <circle class="dot" cx="300" cy="248" r="18"/>
+  <path class="line" d="m376 332 86 86"/>
+  <path class="accent" d="M436 392l58 58"/>
+  <path class="fine" d="M214 492h172"/>
+</svg>

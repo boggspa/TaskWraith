@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-neon-node-title agent-pool-icon-neon-node-desc" data-agent-name="Neon Node" data-agent-accent="#2F6BFF" data-agent-hue="223" style="color: #2F6BFF; --agent-accent: #2F6BFF;">
+  <title id="agent-pool-icon-neon-node-title">Neon Node</title>
+  <desc id="agent-pool-icon-neon-node-desc">Funky tech themed agent pool icon with a bright node graph and sync hub.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <path class="line" d="M300 172v256M188 236l224 128M412 236 188 364"/>
+  <circle class="line" cx="300" cy="300" r="58"/>
+  <circle class="accent" cx="300" cy="172" r="38"/>
+  <circle class="accent" cx="188" cy="236" r="38"/>
+  <circle class="accent" cx="412" cy="236" r="38"/>
+  <circle class="accent" cx="188" cy="364" r="38"/>
+  <circle class="accent" cx="412" cy="364" r="38"/>
+  <circle class="dot" cx="300" cy="300" r="18"/>
+  <path class="fine" d="M214 494h172"/>
+</svg>

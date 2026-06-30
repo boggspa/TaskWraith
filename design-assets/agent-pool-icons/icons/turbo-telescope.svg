@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-turbo-telescope-title agent-pool-icon-turbo-telescope-desc" data-agent-name="Turbo Telescope" data-agent-accent="#38BDF8" data-agent-hue="199" style="color: #38BDF8; --agent-accent: #38BDF8;">
+  <title id="agent-pool-icon-turbo-telescope-title">Turbo Telescope</title>
+  <desc id="agent-pool-icon-turbo-telescope-desc">Funky tech themed agent pool icon with a fast telescope pointed at packet satellites.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}</style>
+  <path class="soft" d="M144 286 404 158l52 104-260 128Z"/>
+  <path class="line" d="M144 286 404 158l52 104-260 128Z"/>
+  <path class="line" d="M406 158l74-36 52 104-76 36"/>
+  <path class="accent" d="M244 340l62 142M306 482h-118M306 482h118"/>
+  <path class="fine" d="M142 204l-74-32M166 158l-58-54M482 338l58 54"/>
+  <circle class="dot" cx="480" cy="122" r="14"/>
+  <circle class="dot" cx="532" cy="226" r="14"/>
+  <path class="accent" d="M198 246l204-100"/>
+</svg>

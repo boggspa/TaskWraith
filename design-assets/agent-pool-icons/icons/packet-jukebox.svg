@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-packet-jukebox-title agent-pool-icon-packet-jukebox-desc" data-agent-name="Packet Jukebox" data-agent-accent="#FF7A1A" data-agent-hue="25" style="color: #FF7A1A; --agent-accent: #FF7A1A;">
+  <title id="agent-pool-icon-packet-jukebox-title">Packet Jukebox</title>
+  <desc id="agent-pool-icon-packet-jukebox-desc">Funky tech themed agent pool icon with a jukebox-shaped packet router and signal grooves.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}</style>
+  <path class="soft" d="M160 502V260c0-86 58-150 140-150s140 64 140 150v242Z"/>
+  <path class="line" d="M160 502V260c0-86 58-150 140-150s140 64 140 150v242Z"/>
+  <path class="line" d="M224 266c0-48 30-82 76-82s76 34 76 82Z"/>
+  <path class="accent" d="M218 340h164M218 396h164M218 452h164"/>
+  <path class="fine" d="M190 250h-58M410 250h58M132 250l34-34M468 250l-34-34"/>
+  <circle class="dot" cx="250" cy="396" r="12"/>
+  <circle class="dot" cx="300" cy="396" r="12"/>
+  <circle class="dot" cx="350" cy="396" r="12"/>
+  <path class="accent" d="M228 536h144"/>
+</svg>

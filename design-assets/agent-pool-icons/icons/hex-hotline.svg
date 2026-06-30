@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-hex-hotline-title agent-pool-icon-hex-hotline-desc" data-agent-name="Hex Hotline" data-agent-accent="#00E0A4" data-agent-hue="164" style="color: #00E0A4; --agent-accent: #00E0A4;">
+  <title id="agent-pool-icon-hex-hotline-title">Hex Hotline</title>
+  <desc id="agent-pool-icon-hex-hotline-desc">Funky tech themed agent pool icon with linked hex nodes and a hotline handset trace.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}</style>
+  <path class="soft" d="m300 96 174 100v208L300 504 126 404V196Z"/>
+  <path class="line" d="m300 106 154 88v176L300 458 146 370V194Z"/>
+  <path class="fine" d="M146 194 300 282l154-88M300 282v176"/>
+  <path class="accent" d="M224 362c26-60 126-60 152 0M236 334c18 26 110 26 128 0"/>
+  <circle class="dot" cx="218" cy="238" r="18"/>
+  <circle class="dot" cx="382" cy="238" r="18"/>
+  <path class="line" d="M216 238h168"/>
+  <path class="accent" d="M188 504h224"/>
+</svg>

@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-plugin-pancake-title agent-pool-icon-plugin-pancake-desc" data-agent-name="Plugin Pancake" data-agent-accent="#FF5F8F" data-agent-hue="342" style="color: #FF5F8F; --agent-accent: #FF5F8F;">
+  <title id="agent-pool-icon-plugin-pancake-title">Plugin Pancake</title>
+  <desc id="agent-pool-icon-plugin-pancake-desc">Funky tech themed agent pool icon with stacked plugin layers and a cable tab.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}</style>
+  <path class="soft" d="M144 178h312v244H144Z"/>
+  <path class="line" d="M146 214c0-38 308-38 308 0s-308 38-308 0Z"/>
+  <path class="line" d="M146 294c0-38 308-38 308 0"/>
+  <path class="line" d="M146 374c0-38 308-38 308 0"/>
+  <path class="accent" d="M300 250v120M246 312h108"/>
+  <path class="line" d="M420 300h68v68h-68"/>
+  <path class="fine" d="M488 318h54M488 350h54"/>
+  <circle class="dot" cx="222" cy="294" r="12"/>
+  <circle class="dot" cx="378" cy="374" r="12"/>
+  <path class="accent" d="M222 500h156"/>
+</svg>

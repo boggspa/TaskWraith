@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-socket-sundae-title agent-pool-icon-socket-sundae-desc" data-agent-name="Socket Sundae" data-agent-accent="#FF72C6" data-agent-hue="324" style="color: #FF72C6; --agent-accent: #FF72C6;">
+  <title id="agent-pool-icon-socket-sundae-title">Socket Sundae</title>
+  <desc id="agent-pool-icon-socket-sundae-desc">Funky tech themed agent pool icon with a socket scoop, plug sprinkles, and a cable stem.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}</style>
+  <path class="soft" d="M174 198c30-58 222-58 252 0 52 22 72 92 28 142l-74 86H220l-74-86c-44-50-24-120 28-142Z"/>
+  <path class="line" d="M174 198c30-58 222-58 252 0 52 22 72 92 28 142l-74 86H220l-74-86c-44-50-24-120 28-142Z"/>
+  <path class="accent" d="M246 260v58M354 260v58M250 364h100"/>
+  <path class="fine" d="M214 196l-36-58M386 196l36-58M244 154h112"/>
+  <circle class="dot" cx="220" cy="236" r="12"/>
+  <circle class="dot" cx="300" cy="214" r="12"/>
+  <circle class="dot" cx="380" cy="236" r="12"/>
+  <path class="line" d="M260 426v80c0 32 80 32 80 0"/>
+  <path class="accent" d="M224 520h152"/>
+</svg>

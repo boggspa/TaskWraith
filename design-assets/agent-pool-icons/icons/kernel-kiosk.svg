@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-kernel-kiosk-title agent-pool-icon-kernel-kiosk-desc" data-agent-name="Kernel Kiosk" data-agent-accent="#6DFF57" data-agent-hue="113" style="color: #6DFF57; --agent-accent: #6DFF57;">
+  <title id="agent-pool-icon-kernel-kiosk-title">Kernel Kiosk</title>
+  <desc id="agent-pool-icon-kernel-kiosk-desc">Funky tech themed agent pool icon with a tiny kiosk shell and kernel prompt window.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}</style>
+  <path class="soft" d="M146 140h308v332H146Z"/>
+  <path class="line" d="M156 158h288v314H156Z"/>
+  <path class="line" d="M198 214h204v120H198Z"/>
+  <path class="accent" d="m226 258 36 28-36 28M286 314h78"/>
+  <path class="fine" d="M156 386h288M226 472v52M374 472v52M196 524h208"/>
+  <circle class="dot" cx="216" cy="180" r="10"/>
+  <circle class="dot" cx="254" cy="180" r="10"/>
+  <circle class="dot" cx="292" cy="180" r="10"/>
+  <path class="accent" d="M128 118h344"/>
+</svg>

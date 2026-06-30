@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-async-arcade-title agent-pool-icon-async-arcade-desc" data-agent-name="Async Arcade" data-agent-accent="#00D7FF" data-agent-hue="190" style="color: #00D7FF; --agent-accent: #00D7FF;">
+  <title id="agent-pool-icon-async-arcade-title">Async Arcade</title>
+  <desc id="agent-pool-icon-async-arcade-desc">Funky tech themed agent pool icon with an arcade terminal, async arrows, and neon packet dots.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}</style>
+  <path class="soft" d="M170 98h260c44 0 78 34 78 78v248c0 44-34 78-78 78H170c-44 0-78-34-78-78V176c0-44 34-78 78-78Z"/>
+  <path class="line" d="M154 124h292c24 0 44 20 44 44v260c0 24-20 44-44 44H154c-24 0-44-20-44-44V168c0-24 20-44 44-44Z"/>
+  <path class="line" d="M172 186h256v142H172Z"/>
+  <path class="accent" d="M218 250h96m-42-40 42 40-42 40M386 210l-42 40 42 40"/>
+  <path class="fine" d="M180 378h92m56 0h92"/>
+  <circle class="dot" cx="218" cy="420" r="18"/>
+  <circle class="dot" cx="300" cy="420" r="12"/>
+  <circle class="dot" cx="382" cy="420" r="18"/>
+  <path class="accent" d="M236 520h128"/>
+</svg>

@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-vector-vortex-title agent-pool-icon-vector-vortex-desc" data-agent-name="Vector Vortex" data-agent-accent="#7C3DFF" data-agent-hue="259" style="color: #7C3DFF; --agent-accent: #7C3DFF;">
+  <title id="agent-pool-icon-vector-vortex-title">Vector Vortex</title>
+  <desc id="agent-pool-icon-vector-vortex-desc">Funky tech themed agent pool icon with rotating vector handles and a central transform hub.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}</style>
+  <circle class="soft" cx="300" cy="300" r="190"/>
+  <path class="line" d="M300 118c94 0 170 76 170 170 0 72-44 134-106 160"/>
+  <path class="line" d="M300 482c-94 0-170-76-170-170 0-72 44-134 106-160"/>
+  <path class="accent" d="m364 448 72 8-48 54M236 152l-72-8 48-54"/>
+  <circle class="line" cx="300" cy="300" r="58"/>
+  <circle class="dot" cx="300" cy="300" r="16"/>
+  <path class="fine" d="M300 242v116M242 300h116"/>
+  <path class="accent" d="M206 506h188"/>
+</svg>

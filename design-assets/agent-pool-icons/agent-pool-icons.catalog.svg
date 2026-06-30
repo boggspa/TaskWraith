@@ -1,0 +1,157 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="984" height="760" viewBox="0 0 984 760" fill="none">
+  <title>TaskWraith Agent pool icon catalogue</title>
+  <desc>Standalone funky tech-themed SVG candidates for the Agent pool icon picker.</desc>
+  <style>
+    .sheet-bg { fill: #15171d; }
+    .title { fill: #f2f5fb; font: 700 22px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; letter-spacing: 0; }
+    .subtitle { fill: #9aa3b5; font: 13px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; letter-spacing: 0; }
+    .tile-bg { fill: #20232b; stroke: #343947; stroke-width: 1; }
+    .tile-label { fill: #d9deea; font: 600 10px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; letter-spacing: 0; text-anchor: middle; }
+    .tile-meta { fill: #7f889b; font: 8px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; letter-spacing: 0; text-anchor: middle; }
+  </style>
+  <rect class="sheet-bg" width="984" height="760" rx="0"/>
+  <text class="title" x="24" y="36">Agent pool icon catalogue</text>
+  <text class="subtitle" x="24" y="58">Funky tech-themed SVGs kept separate from the subagent identicon catalogue.</text>
+
+  <g transform="translate(24 82)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/async-arcade.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Async Arcade</text>
+    <text class="tile-meta" x="66" y="138">#00D7FF</text>
+  </g>
+  <g transform="translate(180 82)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/bitmap-bazaar.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Bitmap Bazaar</text>
+    <text class="tile-meta" x="66" y="138">#FF4FD8</text>
+  </g>
+  <g transform="translate(336 82)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/cache-cabana.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Cache Cabana</text>
+    <text class="tile-meta" x="66" y="138">#FFB000</text>
+  </g>
+  <g transform="translate(492 82)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/circuit-cactus.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Circuit Cactus</text>
+    <text class="tile-meta" x="66" y="138">#41F27A</text>
+  </g>
+  <g transform="translate(648 82)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/debug-disco.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Debug Disco</text>
+    <text class="tile-meta" x="66" y="138">#A855FF</text>
+  </g>
+  <g transform="translate(804 82)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/glitch-switch.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Glitch Switch</text>
+    <text class="tile-meta" x="66" y="138">#FF3864</text>
+  </g>
+
+  <g transform="translate(24 254)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/hex-hotline.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Hex Hotline</text>
+    <text class="tile-meta" x="66" y="138">#00E0A4</text>
+  </g>
+  <g transform="translate(180 254)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/kernel-kiosk.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Kernel Kiosk</text>
+    <text class="tile-meta" x="66" y="138">#6DFF57</text>
+  </g>
+  <g transform="translate(336 254)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/latency-limbo.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Latency Limbo</text>
+    <text class="tile-meta" x="66" y="138">#FFD23F</text>
+  </g>
+  <g transform="translate(492 254)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/neon-node.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Neon Node</text>
+    <text class="tile-meta" x="66" y="138">#2F6BFF</text>
+  </g>
+  <g transform="translate(648 254)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/packet-jukebox.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Packet Jukebox</text>
+    <text class="tile-meta" x="66" y="138">#FF7A1A</text>
+  </g>
+  <g transform="translate(804 254)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/pixel-parasol.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Pixel Parasol</text>
+    <text class="tile-meta" x="66" y="138">#00C2FF</text>
+  </g>
+
+  <g transform="translate(24 426)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/plugin-pancake.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Plugin Pancake</text>
+    <text class="tile-meta" x="66" y="138">#FF5F8F</text>
+  </g>
+  <g transform="translate(180 426)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/prompt-pinball.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Prompt Pinball</text>
+    <text class="tile-meta" x="66" y="138">#B6FF2E</text>
+  </g>
+  <g transform="translate(336 426)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/quantum-pretzel.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Quantum Pretzel</text>
+    <text class="tile-meta" x="66" y="138">#9B5CFF</text>
+  </g>
+  <g transform="translate(492 426)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/router-rhumba.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Router Rhumba</text>
+    <text class="tile-meta" x="66" y="138">#24E0FF</text>
+  </g>
+  <g transform="translate(648 426)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/socket-sundae.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Socket Sundae</text>
+    <text class="tile-meta" x="66" y="138">#FF72C6</text>
+  </g>
+  <g transform="translate(804 426)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/synth-stack.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Synth Stack</text>
+    <text class="tile-meta" x="66" y="138">#15F5BA</text>
+  </g>
+
+  <g transform="translate(24 598)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/thread-tango.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Thread Tango</text>
+    <text class="tile-meta" x="66" y="138">#FF4C2E</text>
+  </g>
+  <g transform="translate(180 598)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/token-totem.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Token Totem</text>
+    <text class="tile-meta" x="66" y="138">#D2FF3D</text>
+  </g>
+  <g transform="translate(336 598)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/turbo-telescope.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Turbo Telescope</text>
+    <text class="tile-meta" x="66" y="138">#38BDF8</text>
+  </g>
+  <g transform="translate(492 598)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/vector-vortex.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Vector Vortex</text>
+    <text class="tile-meta" x="66" y="138">#7C3DFF</text>
+  </g>
+  <g transform="translate(648 598)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/websocket-waltz.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Websocket Waltz</text>
+    <text class="tile-meta" x="66" y="138">#00F0CF</text>
+  </g>
+</svg>

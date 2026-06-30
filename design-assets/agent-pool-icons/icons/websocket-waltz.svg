@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-websocket-waltz-title agent-pool-icon-websocket-waltz-desc" data-agent-name="Websocket Waltz" data-agent-accent="#00F0CF" data-agent-hue="172" style="color: #00F0CF; --agent-accent: #00F0CF;">
+  <title id="agent-pool-icon-websocket-waltz-title">Websocket Waltz</title>
+  <desc id="agent-pool-icon-websocket-waltz-desc">Funky tech themed agent pool icon with paired websocket frames and looping channel arrows.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}</style>
+  <path class="soft" d="M120 178h160v244H120ZM320 178h160v244H320Z"/>
+  <path class="line" d="M120 178h160v244H120ZM320 178h160v244H320Z"/>
+  <path class="fine" d="M120 230h160M320 230h160"/>
+  <path class="accent" d="M194 302h212m-44-44 44 44-44 44M406 386H194m44-44-44 44 44 44"/>
+  <circle class="dot" cx="156" cy="204" r="10"/>
+  <circle class="dot" cx="194" cy="204" r="10"/>
+  <circle class="dot" cx="356" cy="204" r="10"/>
+  <circle class="dot" cx="394" cy="204" r="10"/>
+  <path class="line" d="M216 500h168"/>
+</svg>

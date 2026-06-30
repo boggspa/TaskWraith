@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-prompt-pinball-title agent-pool-icon-prompt-pinball-desc" data-agent-name="Prompt Pinball" data-agent-accent="#B6FF2E" data-agent-hue="81" style="color: #B6FF2E; --agent-accent: #B6FF2E;">
+  <title id="agent-pool-icon-prompt-pinball-title">Prompt Pinball</title>
+  <desc id="agent-pool-icon-prompt-pinball-desc">Funky tech themed agent pool icon with a command prompt pinball table and launcher lane.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}</style>
+  <path class="soft" d="M160 110h280v390H160Z"/>
+  <path class="line" d="M180 112h240l50 388H130Z"/>
+  <path class="accent" d="m220 210 46 38-46 38M300 286h86"/>
+  <path class="fine" d="M196 366l72 70M404 366l-72 70M422 172h54v278"/>
+  <circle class="dot" cx="300" cy="182" r="20"/>
+  <circle class="dot" cx="238" cy="344" r="16"/>
+  <circle class="dot" cx="362" cy="344" r="16"/>
+  <path class="accent" d="M476 450l28 50"/>
+  <path class="line" d="M220 500h160"/>
+</svg>
