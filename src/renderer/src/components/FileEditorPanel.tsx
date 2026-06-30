@@ -2278,7 +2278,10 @@ export function QuickOpenPalette({
                     className="file-editor-file-icon"
                     workspacePath={workspacePath}
                   />
-                  <span>{entry.path}</span>
+                  <span className="file-editor-quick-open-label">
+                    <strong>{fileNameForPath(entry.path)}</strong>
+                    <span>{parentDirectoryForPath(entry.path) || 'workspace root'}</span>
+                  </span>
                   <small>{formatBytes(entry.sizeBytes)}</small>
                 </button>
               )

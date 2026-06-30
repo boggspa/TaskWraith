@@ -250,6 +250,8 @@ describe('QuickOpenPalette', () => {
     expect(html).toContain('role="listbox"')
     expect(html).toContain('role="option"')
     expect(html).toContain('aria-selected="true"')
+    expect(html).toContain('file-editor-quick-open-label')
+    expect(html).toContain('<strong>App.test.tsx</strong>')
     expect(html).toContain('src/App.test.tsx')
   })
 })

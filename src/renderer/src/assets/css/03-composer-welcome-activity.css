@@ -8751,11 +8751,32 @@
   color: var(--text-primary);
 }
 
-.file-editor-quick-open-row span {
+.file-editor-quick-open-label {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  overflow: hidden;
+  line-height: 1.18;
+}
+
+.file-editor-quick-open-label > strong,
+.file-editor-quick-open-label > span {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.file-editor-quick-open-label > strong {
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  font-weight: 650;
+}
+
+.file-editor-quick-open-label > span {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
 }
 
 .file-editor-quick-open-row small,
