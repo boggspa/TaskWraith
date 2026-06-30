@@ -172,6 +172,7 @@ import {
   ensembleFanoutPolicyEnabled,
   normalizeEnsembleFanoutPolicy
 } from './lib/ensembleFanoutPolicy'
+import { createWorkspaceBoardProvenance } from './lib/workspaceBoardProvenance'
 import {
   GLOBAL_USAGE_WORKSPACE_ID,
   getChatProvider,
@@ -662,24 +663,6 @@ interface WorkspaceBoardCaptureInput {
   blockedReason?: string
   nextStep?: string
   provenance?: WorkspaceBoardProvenance
-}
-
-function createWorkspaceBoardProvenance(
-  sourceKind: WorkspaceBoardProvenance['sourceKind'],
-  input: Omit<WorkspaceBoardProvenance, 'actor' | 'sourceKind' | 'at' | 'trust'> &
-    Partial<Pick<WorkspaceBoardProvenance, 'actor' | 'at' | 'trust'>> = {}
-): WorkspaceBoardProvenance {
-  return {
-    actor: input.actor || 'user',
-    sourceKind,
-    at: input.at || new Date().toISOString(),
-    trust: input.trust || 'user-confirmed',
-    sourceId: input.sourceId,
-    sourceTitle: input.sourceTitle,
-    provider: input.provider,
-    runId: input.runId,
-    note: input.note
-  }
 }
 
 const STREAM_FLUSH_ITEM_KEY_SEPARATOR = '\u0000'
