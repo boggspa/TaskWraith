@@ -27,7 +27,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { ProviderId, ComposerStyle } from '../../../main/store/types'
-import { formatComposerModelChip, reasoningDisplayLabel } from '../lib/composerChipFormat'
+import { formatComposerModelChip, reasoningDisplayLabel, shortModelName } from '../lib/composerChipFormat'
 import { OLLAMA_DISPLAY_BRANDS, resolveOllamaDisplayBrand } from '../lib/ollamaDisplayBrand'
 
 export interface CombinedModelPickerModelOption {
@@ -360,6 +360,9 @@ export function CombinedModelPicker({
       ? activeOllamaProviderGroup.models
       : modelOptions
 
+  const isClaudeShellMatch = composerStyle === 'claude' && provider === 'claude'
+  const showClaudeFast = isClaudeShellMatch && fastModeEnabled && fastModeCapable
+
   const chipText = useMemo(
     () =>
       formatComposerModelChip({
@@ -369,7 +372,8 @@ export function CombinedModelPicker({
         modelLabel: selectedModelOption.label,
         codexReasoningEffort,
         claudeReasoningEffort,
-        kimiThinkingEnabled
+        kimiThinkingEnabled,
+        claudeFastModeEnabled: showClaudeFast
       }),
     [
       provider,
@@ -378,7 +382,8 @@ export function CombinedModelPicker({
       selectedModelOption.label,
       codexReasoningEffort,
       claudeReasoningEffort,
-      kimiThinkingEnabled
+      kimiThinkingEnabled,
+      showClaudeFast
     ]
   )
 
@@ -419,6 +424,22 @@ export function CombinedModelPicker({
     }
     return { primary: chipText, suffix: '' }
   }, [chipText, reasoningSuffix])
+
+  const claudeChipSegments = useMemo(() => {
+    if (!isClaudeShellMatch) return null
+    return {
+      model: shortModelName(provider, selectedModelOption.label, selectedModelOption.id),
+      fast: showClaudeFast ? 'Fast' : '',
+      reasoning: reasoningSuffix
+    }
+  }, [
+    isClaudeShellMatch,
+    provider,
+    selectedModelOption.id,
+    selectedModelOption.label,
+    showClaudeFast,
+    reasoningSuffix
+  ])
 
   // Position the popover above-right of the chip when opened.
   useEffect(() => {
@@ -823,9 +844,39 @@ export function CombinedModelPicker({
         aria-expanded={open}
         title="Model and reasoning"
       >
-        <span className="composer-combined-picker-trigger-primary">{chipPieces.primary}</span>
-        {chipPieces.suffix && (
-          <span className="composer-combined-picker-trigger-suffix">{chipPieces.suffix}</span>
+        {claudeChipSegments ? (
+          <>
+            <span className="composer-combined-picker-trigger-primary">{claudeChipSegments.model}</span>
+            {claudeChipSegments.fast ? (
+              <>
+                <span className="composer-combined-picker-trigger-separator" aria-hidden>
+                  {' · '}
+                </span>
+                <span className="composer-combined-picker-trigger-fast">{claudeChipSegments.fast}</span>
+                {claudeChipSegments.reasoning && (
+                  <span className="composer-combined-picker-trigger-suffix">
+                    {claudeChipSegments.reasoning}
+                  </span>
+                )}
+              </>
+            ) : claudeChipSegments.reasoning ? (
+              <>
+                <span className="composer-combined-picker-trigger-separator" aria-hidden>
+                  {' · '}
+                </span>
+                <span className="composer-combined-picker-trigger-suffix">
+                  {claudeChipSegments.reasoning}
+                </span>
+              </>
+            ) : null}
+          </>
+        ) : (
+          <>
+            <span className="composer-combined-picker-trigger-primary">{chipPieces.primary}</span>
+            {chipPieces.suffix && (
+              <span className="composer-combined-picker-trigger-suffix">{chipPieces.suffix}</span>
+            )}
+          </>
         )}
       </button>
       {popoverContent ? createPortal(popoverContent, document.body) : null}

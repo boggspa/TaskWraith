@@ -230,6 +230,45 @@ describe('formatComposerModelChip', () => {
     ).toBe('Opus 4.7 · High')
   })
 
+  it('Claude shell + fast + extra → "Opus 4.8 1M · Fast Extra"', () => {
+    expect(
+      formatComposerModelChip({
+        provider: 'claude',
+        composerStyle: 'claude',
+        modelId: 'claude-opus-4-8-1m',
+        modelLabel: 'Claude Opus 4.8 1M',
+        claudeReasoningEffort: 'xhigh',
+        claudeFastModeEnabled: true
+      })
+    ).toBe('Opus 4.8 1M · Fast Extra')
+  })
+
+  it('Claude shell + fast only → "Opus 4.8 · Fast"', () => {
+    expect(
+      formatComposerModelChip({
+        provider: 'claude',
+        composerStyle: 'claude',
+        modelId: 'claude-opus-4-8',
+        modelLabel: 'Claude Opus 4.8',
+        claudeReasoningEffort: 'off',
+        claudeFastModeEnabled: true
+      })
+    ).toBe('Opus 4.8 · Fast')
+  })
+
+  it('TaskWraith shell ignores Claude fast mode in chip text', () => {
+    expect(
+      formatComposerModelChip({
+        provider: 'claude',
+        composerStyle: 'default',
+        modelId: 'claude-opus-4-8-1m',
+        modelLabel: 'Claude Opus 4.8 1M',
+        claudeReasoningEffort: 'xhigh',
+        claudeFastModeEnabled: true
+      })
+    ).toBe('Claude Opus 4.8 1M · Extra')
+  })
+
   it('Claude shell + claude provider + ultracode → "Opus 4.8 1M · Ultracode"', () => {
     expect(
       formatComposerModelChip({

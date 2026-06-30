@@ -9594,6 +9594,16 @@
 [data-composer-style="claude"] .composer-combined-picker-trigger-suffix {
   color: color-mix(in srgb, #ffffff 52%, transparent);
 }
+/* Claude app parity — explicit "Fast" label between model + reasoning in the
+ * chip row (Codex shell keeps the lightning bolt via ::before instead). */
+[data-composer-style="claude"] .composer-combined-picker-trigger-separator {
+  color: color-mix(in srgb, #ffffff 62%, transparent);
+  font-weight: 400;
+}
+[data-composer-style="claude"] .composer-combined-picker-trigger-fast {
+  color: color-mix(in srgb, #ffffff 52%, transparent);
+  font-weight: 400;
+}
 
 [data-composer-style="gemini"] .composer-combined-picker-trigger {
   background: color-mix(in srgb, #5a8cff 14%, transparent);
@@ -9652,6 +9662,16 @@
 }
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="claude"] .composer-combined-picker-trigger-suffix {
   color: color-mix(in srgb, #ffffff 54%, transparent) !important;
+}
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="claude"]
+  .composer-combined-picker-trigger-separator {
+  color: color-mix(in srgb, #ffffff 62%, transparent) !important;
+  font-weight: 400;
+}
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="claude"]
+  .composer-combined-picker-trigger-fast {
+  color: color-mix(in srgb, #ffffff 54%, transparent) !important;
+  font-weight: 400;
 }
 
 /* Satellite composer polish: model/reasoning and permission/tool-grant

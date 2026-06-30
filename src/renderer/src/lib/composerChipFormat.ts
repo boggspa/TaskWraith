@@ -27,6 +27,8 @@ export interface ComposerChipContext {
   claudeReasoningEffort?: string
   /** Kimi thinking toggle (boolean). */
   kimiThinkingEnabled?: boolean
+  /** Claude Fast mode toggle — only affects chip text in the Claude shell. */
+  claudeFastModeEnabled?: boolean
 }
 
 /**
@@ -234,6 +236,7 @@ export function claudeReasoningDisplayLabel(effortValue?: string | null): string
  * Examples:
  *   Codex shell + codex provider + xhigh   → `5.5 Extra High`
  *   Claude shell + claude provider + high  → `Opus 4.7 · High`
+ *   Claude shell + claude + fast + extra  → `Opus 4.8 · Fast Extra`
  *   Kimi shell + kimi provider + on        → `K2.7 Code Thinking`
  *   TaskWraith shell + codex + high           → `GPT-5.5 · High`
  *   TaskWraith shell + kimi + on              → `Kimi K2.7 Code · Thinking`
@@ -256,6 +259,9 @@ export function formatComposerModelChip(ctx: ComposerChipContext): string {
       return reasoning ? `${short} ${reasoning}` : short
     }
     if (provider === 'claude') {
+      const fast = ctx.claudeFastModeEnabled ? 'Fast' : ''
+      if (fast && reasoning) return `${short} · ${fast} ${reasoning}`
+      if (fast) return `${short} · ${fast}`
       return reasoning ? `${short} · ${reasoning}` : short
     }
     if (provider === 'kimi') {
