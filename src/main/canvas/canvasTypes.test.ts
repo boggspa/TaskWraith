@@ -1,15 +1,20 @@
 import { describe, it, expect } from 'vitest'
 import {
+  CANVAS_IMAGE_MAX_EDGE,
   CANVAS_VIEWPORT_PRESETS,
   classifyCanvasHost,
+  fitWithinMaxEdge,
   isCanvasRequestBlocked,
   isLoopbackHost,
   isSafeAppBundlePath,
   isValidBundleId,
   isValidSimUdid,
+  MAX_CANVAS_HTML_CHARS,
   readPngDimensions,
   redactUrlQuery,
   resolveViewport,
+  validateCanvasHtml,
+  validateCanvasImageRef,
   validateCanvasUrl
 } from './canvasTypes'
 
@@ -187,5 +192,38 @@ describe('device-driver input validators', () => {
     png.writeUInt32BE(2532, 20)
     expect(readPngDimensions(png)).toEqual({ width: 1170, height: 2532 })
     expect(readPngDimensions(Buffer.from('not a png'))).toEqual({ width: 0, height: 0 })
+  })
+
+  it('validateCanvasHtml requires non-empty, capped markup', () => {
+    expect(validateCanvasHtml('<h1>hi</h1>').ok).toBe(true)
+    expect(validateCanvasHtml('   ').ok).toBe(false)
+    expect(validateCanvasHtml('').ok).toBe(false)
+    expect(validateCanvasHtml('x'.repeat(MAX_CANVAS_HTML_CHARS + 1)).ok).toBe(false)
+  })
+
+  it('validateCanvasImageRef requires a base64url hash + image/* mime', () => {
+    const sha = 'a'.repeat(43)
+    expect(validateCanvasImageRef(sha, 'image/png').ok).toBe(true)
+    expect(validateCanvasImageRef(sha, 'IMAGE/JPEG').ok).toBe(true)
+    expect(validateCanvasImageRef(sha, 'video/mp4').ok).toBe(false)
+    expect(validateCanvasImageRef(sha, 'application/pdf').ok).toBe(false)
+    // path-traversal / malformed hashes are rejected by shape.
+    expect(validateCanvasImageRef('../etc/passwd', 'image/png').ok).toBe(false)
+    expect(validateCanvasImageRef('short', 'image/png').ok).toBe(false)
+    expect(validateCanvasImageRef('a/b', 'image/png').ok).toBe(false)
+  })
+
+  it('fitWithinMaxEdge downscales oversized images preserving aspect ratio', () => {
+    // Within bounds → unchanged.
+    expect(fitWithinMaxEdge(1000, 800)).toEqual({ width: 1000, height: 800 })
+    // The decompression-bomb case: 20000x20000 fits to the max edge.
+    expect(fitWithinMaxEdge(20000, 20000)).toEqual({
+      width: CANVAS_IMAGE_MAX_EDGE,
+      height: CANVAS_IMAGE_MAX_EDGE
+    })
+    // Aspect ratio preserved on the long edge.
+    const wide = fitWithinMaxEdge(8192, 2048)
+    expect(wide.width).toBe(CANVAS_IMAGE_MAX_EDGE)
+    expect(wide.height).toBe(CANVAS_IMAGE_MAX_EDGE / 4)
   })
 })

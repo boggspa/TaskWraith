@@ -60,9 +60,12 @@ export interface CanvasOpenInput {
   /**
    * Content hash of an EXISTING image asset in the content-addressed media store.
    * REQUIRED for the `image` driver. It resolves through the same realpath jail as
-   * twmedia:// (the store rejects a bad/unknown hash), so it is never an
-   * arbitrary-file-read primitive — the agent can only view assets it/its tools
-   * already produced.
+   * twmedia:// (the store rejects a bad/unknown hash + enforces a mime->ext
+   * whitelist), so it is never an arbitrary-file-read primitive. NOTE: the asset
+   * store is process-global (not per-chat/workspace), so the access control is
+   * possession of the hash — an agent can view any stored asset whose hash it
+   * already has, not strictly only the ones it produced (the opened Canvas session
+   * is, however, chat-scoped via CanvasService.owns).
    */
   mediaSha256?: string
   /** MIME type of the image asset (e.g. "image/png"). REQUIRED for the `image` driver. */
@@ -668,6 +671,35 @@ export function validateCanvasImageRef(
     }
   }
   return { ok: true }
+}
+
+// Decompression-bomb guards for the `image` driver. A small compressed image can
+// declare enormous dimensions (e.g. an 8 MiB solid-colour 20000×20000 PNG decodes
+// to ~1.6 GB of RGBA), so the loader (a) rejects a too-large DECLARED size before
+// nativeImage allocates the bitmap and (b) downscales an oversized decoded image
+// to a sane preview edge before re-encoding + base64'ing it into the tool result.
+export const CANVAS_IMAGE_MAX_DECODE_PIXELS = 24_000_000 // ~24M px (mirrors the offscreen-render area cap)
+export const CANVAS_IMAGE_MAX_EDGE = 4096
+
+/**
+ * Fit width×height inside a square of `maxEdge`, preserving aspect ratio. Returns
+ * the original dims when already within bounds. Pure + unit-tested; the Electron
+ * `nativeImage.resize` call uses the result.
+ */
+export function fitWithinMaxEdge(
+  width: number,
+  height: number,
+  maxEdge: number = CANVAS_IMAGE_MAX_EDGE
+): { width: number; height: number } {
+  const w = Math.max(1, Math.floor(width))
+  const h = Math.max(1, Math.floor(height))
+  const longest = Math.max(w, h)
+  if (longest <= maxEdge) return { width: w, height: h }
+  const scale = maxEdge / longest
+  return {
+    width: Math.max(1, Math.round(w * scale)),
+    height: Math.max(1, Math.round(h * scale))
+  }
 }
 
 /** Read the pixel dimensions from a PNG buffer's IHDR chunk (0 if not a PNG). */

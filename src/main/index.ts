@@ -688,6 +688,11 @@ import { CanvasEmbedController } from './canvas/CanvasEmbedController'
 import { registerCanvasEmbedIpc } from './canvas/CanvasEmbedIpc'
 import { asEmbedParent, createElectronEmbedView } from './canvas/CanvasEmbedView'
 import type { CanvasDriverKind, CanvasEventRecord } from './canvas/canvasTypes'
+import {
+  CANVAS_IMAGE_MAX_DECODE_PIXELS,
+  fitWithinMaxEdge,
+  readPngDimensions
+} from './canvas/canvasTypes'
 import { createCanvasToolExecutors, isCanvasMcpToolName } from './mcp/CanvasToolExecutors'
 import {
   createImageToolExecutors,
@@ -2195,9 +2200,22 @@ const canvasService = new CanvasService({
         load: async (sha256, mimeType) => {
           const res = getTranscriptMediaAssetStore().read({ sha256, mimeType })
           if (!res.ok) throw new Error(`Image attachment unavailable (${res.reason}).`)
+          // Pre-decode bomb guard: an 8MiB compressed PNG can declare a 20000x20000
+          // bitmap (~1.6GB RGBA). Reject a too-large DECLARED size (cheap IHDR read)
+          // before nativeImage allocates it. Non-PNG falls through to the post-decode
+          // downscale below.
+          const declared = readPngDimensions(res.buffer)
+          if (declared.width * declared.height > CANVAS_IMAGE_MAX_DECODE_PIXELS) {
+            throw new Error('Image attachment is too large to preview.')
+          }
           const img = nativeImage.createFromBuffer(res.buffer)
           if (img.isEmpty()) throw new Error('Attachment is not a decodable image.')
-          return img.toPNG()
+          // Post-decode: downscale an oversized image so the re-encoded PNG + base64
+          // tool result stays bounded (also caps non-PNG inputs).
+          const { width, height } = img.getSize()
+          const fit = fitWithinMaxEdge(width, height)
+          const out = fit.width !== width || fit.height !== height ? img.resize(fit) : img
+          return out.toPNG()
         }
       })
     }
