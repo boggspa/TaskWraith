@@ -141,4 +141,29 @@ describe('OllamaEnsembleContext', () => {
     expect(compacted).toContain('[transcript compacted for Ollama context]')
     expect(compacted.length).toBeLessThan(prompt.length)
   })
+
+  it('preserves ensemble role and authority instructions when compacting transcripts', () => {
+    const prompt = [
+      'TaskWraith Ensemble Mode',
+      '',
+      'Role boundary contract:',
+      '- Treat your role (LeadBoss / Codex) and your role instructions as your ownership boundary.',
+      '- Authority rule: Bossman routing takes priority over advisory mentions.',
+      '',
+      'Recent tagged transcript:',
+      'historical turn\n'.repeat(1_000),
+      '',
+      'Current user request:',
+      'Continue the Plan Mode arc.'
+    ].join('\n')
+    const compacted = compactOllamaEnsemblePromptText(prompt, 4_500)
+
+    expect(compacted).toContain('TaskWraith Ensemble Mode')
+    expect(compacted).toContain('Role boundary contract:')
+    expect(compacted).toContain('LeadBoss / Codex')
+    expect(compacted).toContain('Bossman routing')
+    expect(compacted).toContain('Current user request:')
+    expect(compacted).toContain('Continue the Plan Mode arc.')
+    expect(compacted).toContain('[transcript compacted for Ollama context]')
+  })
 })
