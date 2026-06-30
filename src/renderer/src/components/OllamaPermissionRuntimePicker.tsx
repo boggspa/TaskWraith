@@ -362,9 +362,6 @@ export function OllamaPermissionRuntimePicker({
             onClick={() => onSelectPermission(option.value)}
           >
             <span className="composer-combined-picker-row-label">{option.label}</span>
-            <span className="composer-combined-picker-row-sub">
-              {grantScopeLabel === 'participant' ? 'Participant permission preset' : 'Chat permission mode'}
-            </span>
             {option.value === selectedPermission && (
               <span className="composer-combined-picker-check" aria-hidden>
                 ✓
