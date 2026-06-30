@@ -198,6 +198,20 @@ function countDiffStatsFromUnifiedDiff(diff: string): { additions?: number; dele
   return { additions, deletions }
 }
 
+function unifiedDiffDeletesFile(diff: string): boolean {
+  if (!diff.trim()) return false
+  if (/^deleted file mode\s+/m.test(diff)) return true
+  return /^---\s+(?:a\/.+|[^/\s].*)$/m.test(diff) && /^\+\+\+\s+\/dev\/null$/m.test(diff)
+}
+
+function reconcileStatusWithUnifiedDiff(
+  status: DiffFileStatus,
+  diff: string
+): DiffFileStatus {
+  if (status !== 'deleted') return status
+  return unifiedDiffDeletesFile(diff) ? 'deleted' : 'modified'
+}
+
 /** Extract per-file additions/deletions from a single Codex-style change record. */
 function extractContributionFromChangeRecord(
   raw: unknown,
@@ -219,14 +233,18 @@ function extractContributionFromChangeRecord(
   if (!path) return null
 
   const kindOrType = readStringField(record, ['kind', 'type', 'operation', 'status'])
-  const status = normaliseFileStatus(kindOrType, fallbackStatus)
+  let status = normaliseFileStatus(kindOrType, fallbackStatus)
 
   let additions = readNumericField(record, ['additions', 'added', 'linesAdded', 'insertions'])
   let deletions = readNumericField(record, ['deletions', 'deleted', 'linesDeleted', 'removals'])
+  const diff = readStringField(record, ['unified_diff', 'unifiedDiff', 'diff', 'patch'])
+
+  if (diff) {
+    status = reconcileStatusWithUnifiedDiff(status, diff)
+  }
 
   // No directly-attached numstat: try per-file unified diff / patch content.
   if (additions === undefined && deletions === undefined) {
-    const diff = readStringField(record, ['unified_diff', 'unifiedDiff', 'diff', 'patch'])
     if (diff) {
       const counts = countDiffStatsFromUnifiedDiff(diff)
       additions = counts.additions
@@ -451,6 +469,19 @@ function buildSummary(entry: AccumulatorEntry): DiffFileSummary {
   }
 }
 
+function reconcileLiveStatusWithWorkspace(
+  liveStatus: DiffFileStatus,
+  workspaceStatus: DiffFileStatus
+): DiffFileStatus {
+  if (liveStatus === workspaceStatus) return liveStatus
+  if (liveStatus === 'deleted' && workspaceStatus !== 'deleted') {
+    return workspaceStatus === 'untracked' ? 'created' : workspaceStatus
+  }
+  if (liveStatus === 'created' && workspaceStatus === 'modified') return 'modified'
+  if (liveStatus === 'modified' && workspaceStatus === 'deleted') return 'deleted'
+  return liveStatus
+}
+
 /**
  * Aggregate per-file change summaries across every tool activity in the chat.
  *
@@ -536,12 +567,18 @@ export function applyWorkspaceDiffOverlay(
   const seen = new Set<string>()
   const overlaid = summaries.map((summary) => {
     seen.add(summary.path)
-    if (summary.additions !== undefined || summary.deletions !== undefined) return summary
     const match = lookup.get(summary.path)
     if (!match) return summary
-    if (match.additions === undefined && match.deletions === undefined) return summary
+    const nextStatus = reconcileLiveStatusWithWorkspace(summary.status, match.status)
+    if (summary.additions !== undefined || summary.deletions !== undefined) {
+      return nextStatus === summary.status ? summary : { ...summary, status: nextStatus }
+    }
+    if (match.additions === undefined && match.deletions === undefined) {
+      return nextStatus === summary.status ? summary : { ...summary, status: nextStatus }
+    }
     return {
       ...summary,
+      status: nextStatus,
       additions: match.additions,
       deletions: match.deletions
     }
@@ -563,5 +600,6 @@ export function applyWorkspaceDiffOverlay(
 
 export const __test__ = {
   countDiffStatsFromUnifiedDiff,
-  extractMultiEditContribution
+  extractMultiEditContribution,
+  unifiedDiffDeletesFile
 }

@@ -239,7 +239,10 @@ import {
 import { RunRailPanel } from './components/RunRailPanel'
 import { estimateLineChanges } from './lib/ToolParser'
 import { reduceSoloToolEventMessages } from './lib/soloToolEventReducer'
-import { getLiveToolFileDiffSummaries, liveSummariesAreFuzzy } from './lib/LiveFileDiffSummary'
+import {
+  applyWorkspaceDiffOverlay,
+  getLiveToolFileDiffSummaries
+} from './lib/LiveFileDiffSummary'
 import { parseGeminiPermissionRequest } from './lib/GeminiPermissionParser'
 import type { GeminiPermissionRequest } from './lib/GeminiPermissionParser'
 import type {
@@ -18211,10 +18214,32 @@ function App(): React.JSX.Element {
     liveToolFileSummaryState.workspacePath === liveToolFileSummaryWorkspacePath
       ? liveToolFileSummaryState.summaries
       : EMPTY_DIFF_FILE_SUMMARIES
+  const workspaceFileChangeSummaries = useMemo(
+    () =>
+      Array.isArray((diff as any)?.summaries)
+        ? (diff as any).summaries.filter(isFileSummaryRecord)
+        : EMPTY_DIFF_FILE_SUMMARIES,
+    [diff]
+  )
+  const overlaidLiveToolFileChangeSummaries = useMemo(
+    () =>
+      applyWorkspaceDiffOverlay(
+        liveToolFileChangeSummaries,
+        workspaceFileChangeSummaries,
+        liveToolFileSummaryWorkspacePath
+      ),
+    [
+      liveToolFileChangeSummaries,
+      liveToolFileSummaryWorkspacePath,
+      workspaceFileChangeSummaries
+    ]
+  )
   const fileChangeSummaries =
-    exactFileChangeSummaries.length > 0 ? exactFileChangeSummaries : liveToolFileChangeSummaries
+    exactFileChangeSummaries.length > 0
+      ? exactFileChangeSummaries
+      : overlaidLiveToolFileChangeSummaries
   const fileChangeSummaryEstimated =
-    exactFileChangeSummaries.length === 0 && liveSummariesAreFuzzy(liveToolFileChangeSummaries)
+    exactFileChangeSummaries.length === 0 && overlaidLiveToolFileChangeSummaries.length > 0
   const displayFileChangeSummaries = useMemo(
     () => fileChangeSummaries.filter((item) => !item.isNoise),
     [fileChangeSummaries]

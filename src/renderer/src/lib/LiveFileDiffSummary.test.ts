@@ -95,6 +95,64 @@ describe('LiveFileDiffSummary', () => {
       })
     })
 
+    it('downgrades deleted status hints when the attached patch only edits lines', () => {
+      const activity = baseActivity({
+        toolName: 'edit_file',
+        parameters: {
+          changes: [
+            {
+              path: 'src/important.ts',
+              type: 'delete',
+              patch: [
+                'diff --git a/src/important.ts b/src/important.ts',
+                '--- a/src/important.ts',
+                '+++ b/src/important.ts',
+                '@@ -1,2 +1,1 @@',
+                ' keep',
+                '-remove just this line'
+              ].join('\n')
+            }
+          ]
+        }
+      })
+
+      expect(extractToolFileContributions(activity)[0]).toMatchObject({
+        path: 'src/important.ts',
+        status: 'modified',
+        additions: 0,
+        deletions: 1
+      })
+    })
+
+    it('keeps deleted status hints when the patch deletes the whole file', () => {
+      const activity = baseActivity({
+        toolName: 'edit_file',
+        parameters: {
+          changes: [
+            {
+              path: 'src/old.ts',
+              type: 'delete',
+              patch: [
+                'diff --git a/src/old.ts b/src/old.ts',
+                'deleted file mode 100644',
+                '--- a/src/old.ts',
+                '+++ /dev/null',
+                '@@ -1 +0,0 @@',
+                '-old'
+              ].join('\n')
+            }
+          ]
+        }
+      })
+
+      expect(extractToolFileContributions(activity)[0]).toMatchObject({
+        path: 'src/old.ts',
+        status: 'deleted',
+        additions: 0,
+        deletions: 1
+      })
+    })
+
     it('infers additions from content for `add` change records', () => {
       const activity = baseActivity({
         toolName: 'apply_patch',
@@ -418,6 +476,34 @@ describe('LiveFileDiffSummary', () => {
       const overlaid = applyWorkspaceDiffOverlay(summaries, workspace)
       expect(overlaid).toHaveLength(1)
       expect(overlaid[0]).toMatchObject({ path: 'a.ts', additions: 5, deletions: 5 })
+    })
+
+    it('uses workspace status to correct misleading live deleted rows for existing files', () => {
+      const summaries: DiffFileSummary[] = [
+        {
+          path: 'FirstLaunchSheet.tsx',
+          status: 'deleted',
+          additions: 0,
+          deletions: 3,
+          previewKind: 'none'
+        }
+      ]
+      const workspace: DiffFileSummary[] = [
+        {
+          path: 'FirstLaunchSheet.tsx',
+          status: 'modified',
+          additions: 2,
+          deletions: 3,
+          previewKind: 'git_diff'
+        }
+      ]
+
+      expect(applyWorkspaceDiffOverlay(summaries, workspace)[0]).toMatchObject({
+        path: 'FirstLaunchSheet.tsx',
+        status: 'modified',
+        additions: 0,
+        deletions: 3
+      })
     })
 
     it('returns the input unchanged when the overlay is empty', () => {
