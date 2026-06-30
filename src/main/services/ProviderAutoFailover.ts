@@ -157,6 +157,7 @@ export async function runProviderAutoFailover(
     appRunId: newRunId,
     appChatId: snap.appChatId,
     approvalMode: reroutedApprovalMode,
+    workflowMode: snap.workflowMode === 'plan' ? 'plan' : 'normal',
     model: snap.model,
     reasoningEffort: snap.reasoningEffort,
     serviceTier: snap.serviceTier,
@@ -181,6 +182,7 @@ export async function runProviderAutoFailover(
     appRunId: payload.appRunId,
     appChatId: payload.appChatId,
     prompt: payload.prompt,
+    workflowMode: payload.workflowMode === 'plan' ? 'plan' : 'normal',
     runtimeProfileId: payload.runtimeProfileId
   })
 

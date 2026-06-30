@@ -980,6 +980,7 @@ describe('composeRun ↔ normalize posture clamp contract', () => {
     appRunId: payload.appRunId,
     appChatId: payload.appChatId,
     prompt: payload.prompt,
+    workflowMode: payload.workflowMode,
     runtimeProfileId: payload.runtimeProfileId
   })
 
@@ -1021,6 +1022,28 @@ describe('composeRun ↔ normalize posture clamp contract', () => {
         clampDeps
       ).approvalMode
     ).toBe('auto_edit')
+  })
+
+  it('binds workflowMode so a read-only recon payload cannot be flipped into plan', () => {
+    const payload = composeSigned({ approvalMode: 'plan', workflowMode: 'normal' })
+    expect(payload.approvalMode).toBe('plan')
+    expect(payload.workflowMode).toBe('normal')
+    expect(payload.effectivePermissions?.readOnly).toBe(true)
+
+    const clamped = clampUntrustedRunPosture(
+      {
+        scope: 'workspace',
+        approvalMode: payload.approvalMode,
+        effectivePermissions: payload.effectivePermissions,
+        signature: payload.effectivePermissionsSignature,
+        context: { ...payloadContext(payload), workflowMode: 'plan' }
+      },
+      clampDeps
+    )
+    expect(clamped.downgraded).toBe(true)
+    expect(clamped.reason).toBe('invalid-posture-signature')
+    expect(clamped.approvalMode).toBe('plan')
+    expect(clamped.effectivePermissions).toEqual(SENTINEL_READONLY)
   })
 
   it('rejects replaying a composed signature onto a different run context', () => {
@@ -1233,6 +1256,7 @@ describe('composeRun unattended ELEVATION (P2 verified ack honoring)', () => {
           appRunId: payload.appRunId,
           appChatId: payload.appChatId,
           prompt: payload.prompt,
+          workflowMode: payload.workflowMode,
           runtimeProfileId: payload.runtimeProfileId
         }
       )

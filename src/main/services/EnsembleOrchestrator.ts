@@ -5209,6 +5209,7 @@ export class EnsembleOrchestrator {
         appChatId: chat.appChatId,
         model: participant.model || 'cli-default',
         approvalMode: permissions.approvalMode,
+        workflowMode: chat.workflowMode === 'plan' ? 'plan' : 'normal',
         runtimeProfileId: participant.runtimeProfileId,
         geminiAuthProfileId:
           participant.provider === 'gemini' ? participant.geminiAuthProfileId || null : null,
@@ -5226,6 +5227,7 @@ export class EnsembleOrchestrator {
                   appRunId: run.runId,
                   appChatId: chat.appChatId,
                   prompt: promptWithDiscordContext,
+                  workflowMode: chat.workflowMode === 'plan' ? 'plan' : 'normal',
                   runtimeProfileId: participant.runtimeProfileId
                 }
               )
@@ -5981,6 +5983,7 @@ export class EnsembleOrchestrator {
         appChatId: chat.appChatId,
         model: participant.model || 'cli-default',
         approvalMode: permissions.approvalMode,
+        workflowMode: chat.workflowMode === 'plan' ? 'plan' : 'normal',
         runtimeProfileId: participant.runtimeProfileId,
         geminiAuthProfileId:
           participant.provider === 'gemini' ? participant.geminiAuthProfileId || null : null,
@@ -5998,6 +6001,7 @@ export class EnsembleOrchestrator {
                   appRunId: run.runId,
                   appChatId: chat.appChatId,
                   prompt: promptWithDiscordContext,
+                  workflowMode: chat.workflowMode === 'plan' ? 'plan' : 'normal',
                   runtimeProfileId: participant.runtimeProfileId
                 }
               )

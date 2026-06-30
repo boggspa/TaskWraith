@@ -463,6 +463,7 @@ export class ComposerService {
                 appRunId,
                 appChatId: chatId,
                 prompt: composed.contextualPrompt,
+                workflowMode,
                 runtimeProfileId
               }
             )

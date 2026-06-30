@@ -1,4 +1,5 @@
-import { extname, isAbsolute, relative, resolve, sep } from 'node:path'
+import fsSync from 'node:fs'
+import { dirname, extname, isAbsolute, relative, resolve, sep } from 'node:path'
 import type { AgenticServiceId, ChatWorkflowMode, EffectiveRunPermissions } from './store/types'
 import type { TaskWraithMcpToolName } from './TaskWraithMcpTools'
 
@@ -53,6 +54,9 @@ export function evaluatePlanArtifactWrite(input: PlanArtifactWriteCheckInput): P
   if (!relativePath || relativePath.startsWith('../') || relativePath === '..') {
     return { allowed: false, reason: 'outside_workspace' }
   }
+  if (!targetRealpathStaysInWorkspace(workspaceRoot, targetPath)) {
+    return { allowed: false, reason: 'outside_workspace_realpath' }
+  }
   if (!isMarkdownPath(relativePath)) {
     return { allowed: false, reason: 'not_markdown' }
   }
@@ -69,6 +73,42 @@ function toPosixRelative(workspaceRoot: string, targetPath: string): string {
 function isMarkdownPath(relativePath: string): boolean {
   const extension = extname(relativePath).toLowerCase()
   return extension === '.md' || extension === '.markdown'
+}
+
+function targetRealpathStaysInWorkspace(workspaceRoot: string, targetPath: string): boolean {
+  let realWorkspace: string
+  try {
+    realWorkspace = fsSync.realpathSync.native(workspaceRoot)
+  } catch {
+    return false
+  }
+  const existingPath = nearestExistingPath(targetPath, workspaceRoot)
+  if (!existingPath) return false
+  try {
+    return isPathWithin(realWorkspace, fsSync.realpathSync.native(existingPath))
+  } catch {
+    return false
+  }
+}
+
+function nearestExistingPath(targetPath: string, workspaceRoot: string): string | null {
+  let cursor = targetPath
+  const root = resolve(workspaceRoot)
+  while (true) {
+    try {
+      fsSync.lstatSync(cursor)
+      return cursor
+    } catch {
+      const parent = dirname(cursor)
+      if (cursor === root || parent === cursor) return null
+      cursor = parent
+    }
+  }
+}
+
+function isPathWithin(root: string, candidate: string): boolean {
+  const rel = relative(root, candidate)
+  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))
 }
 
 function isPlanArtifactPath(relativePath: string): boolean {

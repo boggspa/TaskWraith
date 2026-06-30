@@ -3947,7 +3947,7 @@ function isMainIssuedExternalPathGrant(grant: ExternalPathGrant): boolean {
 }
 
 // Run permission posture provenance. Mirrors the external-path-grant HMAC
-// above but binds the whole `{ approvalMode, effectivePermissions }` pair
+// above but binds `{ approvalMode, workflowMode, effectivePermissions }`
 // so only a main-side producer can mint a permissive run posture. Every
 // trusted producer (ComposerService, EnsembleOrchestrator, sub-thread
 // delegation, SoloChatWakeupService) stamps `effectivePermissionsSignature`
@@ -4035,6 +4035,7 @@ function runPostureContextFromPayload(payload: {
   appRunId?: unknown
   appChatId?: unknown
   prompt?: unknown
+  workflowMode?: unknown
   runtimeProfileId?: unknown
 }): RunPermissionPostureContext {
   return {
@@ -4043,6 +4044,7 @@ function runPostureContextFromPayload(payload: {
     appRunId: optionalString(payload.appRunId),
     appChatId: optionalString(payload.appChatId),
     prompt: typeof payload.prompt === 'string' ? payload.prompt : String(payload.prompt ?? ''),
+    workflowMode: payload.workflowMode === 'plan' ? 'plan' : 'normal',
     runtimeProfileId: optionalString(payload.runtimeProfileId)
   }
 }
@@ -4088,6 +4090,7 @@ function normalizeAgentRunPayload(rawPayload: unknown): AgentRunPayload {
   const suppliedEffectivePermissions = isRecord(payload.effectivePermissions)
     ? (payload.effectivePermissions as unknown as EffectiveRunPermissions)
     : undefined
+  const requestedWorkflowMode = payload.workflowMode === 'plan' ? 'plan' : 'normal'
   // Downgrade-only permission-posture clamp at the renderer / bridge trust
   // boundary. A validly-signed posture (stamped by a main-side producer via
   // `signRunPosture`) passes through byte-for-byte; an unsigned / forged /
@@ -4106,6 +4109,7 @@ function normalizeAgentRunPayload(rawPayload: unknown): AgentRunPayload {
         appRunId: optionalString(payload.appRunId),
         appChatId,
         prompt: typeof payload.prompt === 'string' ? payload.prompt : String(payload.prompt ?? ''),
+        workflowMode: requestedWorkflowMode,
         runtimeProfileId: optionalString(payload.runtimeProfileId)
       })
     },
@@ -4148,7 +4152,7 @@ function normalizeAgentRunPayload(rawPayload: unknown): AgentRunPayload {
       typeof payload.claudeFastMode === 'boolean' ? payload.claudeFastMode : undefined,
     kimiThinking: typeof payload.kimiThinking === 'boolean' ? payload.kimiThinking : undefined,
     approvalMode: clampedPosture.approvalMode,
-    workflowMode: payload.workflowMode === 'plan' ? 'plan' : 'normal',
+    workflowMode: clampedPosture.downgraded ? 'normal' : requestedWorkflowMode,
     imagePaths: stringArray(payload.imagePaths),
     providerSessionId: optionalStringOrNull(payload.providerSessionId),
     externalPathGrants: scopedExternalPathGrants,

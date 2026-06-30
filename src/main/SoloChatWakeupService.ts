@@ -427,6 +427,7 @@ export class SoloChatWakeupService {
           appRunId: payload.appRunId,
           appChatId: payload.appChatId,
           prompt: payload.prompt,
+          workflowMode: payload.workflowMode === 'plan' ? 'plan' : 'normal',
           runtimeProfileId: payload.runtimeProfileId
         }
       )

@@ -160,6 +160,7 @@ describe('canonical posture + sign/verify', () => {
       appRunId: 'run-1',
       appChatId: 'chat-1',
       prompt: 'Do the thing',
+      workflowMode: 'normal',
       runtimeProfileId: 'builtin:codex:local'
     }
     const sig = signRunPermissionPosture(SECRET, 'default', undefined, context)
@@ -168,6 +169,12 @@ describe('canonical posture + sign/verify', () => {
       verifyRunPermissionPosture(SECRET, 'default', undefined, sig, {
         ...context,
         appRunId: 'run-2'
+      })
+    ).toBe(false)
+    expect(
+      verifyRunPermissionPosture(SECRET, 'default', undefined, sig, {
+        ...context,
+        workflowMode: 'plan'
       })
     ).toBe(false)
     expect(

@@ -145,6 +145,7 @@ export interface RunPermissionPostureContext {
   appRunId?: string | null
   appChatId?: string | null
   prompt?: string | null
+  workflowMode?: string | null
   runtimeProfileId?: string | null
 }
 
@@ -207,6 +208,7 @@ function normalizeRunPermissionPostureContext(
     appRunId: normalizeContextString(context.appRunId),
     appChatId: normalizeContextString(context.appChatId),
     prompt: normalizeContextString(context.prompt),
+    workflowMode: normalizeContextString(context.workflowMode),
     runtimeProfileId: normalizeContextString(context.runtimeProfileId)
   }
 }
