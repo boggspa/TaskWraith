@@ -151,10 +151,11 @@ describe('defaultProviderDescriptor capabilities', () => {
     expect(cap.perThreadMcp).toBe(true)
   })
 
-  it('codex supports reasoning effort + speed tiers', () => {
+  it('codex supports reasoning effort, speed tiers, and image attachments', () => {
     const cap = defaultProviderDescriptor('codex').capabilities
     expect(cap.reasoningEffort).toBe(true)
     expect(cap.speedTiers.length).toBeGreaterThan(0)
+    expect(cap.imageAttachments).toBe(true)
   })
 
   it('claude supports reasoning effort + fast mode', () => {
@@ -163,11 +164,11 @@ describe('defaultProviderDescriptor capabilities', () => {
     expect(cap.speedTiers).toEqual(['fast'])
   })
 
-  it('kimi has the most restrictive capability set (default-only, no reasoning, no images)', () => {
+  it('kimi has a restrictive default-only capability set with image attachments', () => {
     const cap = defaultProviderDescriptor('kimi').capabilities
     expect(cap.approvalModes).toEqual(['default'])
     expect(cap.reasoningEffort).toBe(false)
-    expect(cap.imageAttachments).toBe(false)
+    expect(cap.imageAttachments).toBe(true)
   })
 
   it('declares Ollama as token-streaming after HTTP chunk forwarding', () => {
