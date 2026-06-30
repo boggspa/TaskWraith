@@ -1,12 +1,110 @@
-// R9 MainAppLayout extraction — flat prop bag; refine into grouped interfaces in a follow-up slice.
+import type { ComponentProps, Dispatch, SetStateAction } from 'react'
+import type { AppSettings } from '../../../../main/store/types'
+import type { PanelPresence } from '../../hooks/usePanelPresence'
+import type { SettingsPanelUpdate } from '../../lib/settingsPanelUpdate'
+
+type SidebarProps = ComponentProps<typeof import('../../components/Sidebar').Sidebar>
+type SettingsSidebarProps = ComponentProps<
+  typeof import('../../components/SettingsSidebar').SettingsSidebar
+>
+type SidebarModelUsageApiSpend = NonNullable<SidebarProps['modelUsageApiSpend']>
+type SidebarDisplayCurrency = NonNullable<SidebarModelUsageApiSpend['currency']>
+type SidebarProviderRates = NonNullable<SidebarModelUsageApiSpend['providerRates']>
+type ResizeHandleProps = ComponentProps<'div'>
+type UpdateStatusState = ReturnType<typeof import('../../hooks/useUpdateStatus').useUpdateStatus>
+type SettingsPanelUpdateHandler = (next: SettingsPanelUpdate) => void
+
+type MainAppLayoutSidebarProps = {
+  activeSidebarChatId: SidebarProps['activeChatId']
+  appVersion: SettingsSidebarProps['appVersion']
+  canOpenWorkspacePopout: SidebarProps['canOpenWorkspacePopout']
+  chats: SidebarProps['chats']
+  collaboratingChatIds: NonNullable<SidebarProps['collaboratingChatIds']>
+  connectedCollaborationChatIds: ReadonlySet<string>
+  currentChat: SidebarProps['currentChat']
+  currentWorkspace: SidebarProps['currentWorkspace']
+  displayCurrency: SidebarDisplayCurrency
+  handleAddChatToWorkspaceBoard: NonNullable<SidebarProps['onAddChatToWorkspaceBoard']>
+  handleAddLocalServerToWorkspaceBoard: NonNullable<SidebarProps['onAddLocalServerToWorkspaceBoard']>
+  handleAddRunQueueJobToWorkspaceBoard: NonNullable<SidebarProps['onAddRunQueueJobToWorkspaceBoard']>
+  handleAddWorkflowToWorkspaceBoard: NonNullable<SidebarProps['onAddWorkflowToWorkspaceBoard']>
+  handleArchiveWorkspaceBoard: NonNullable<SidebarProps['onArchiveWorkspaceBoard']>
+  handleCancelWorkflowExecution: NonNullable<SidebarProps['onCancelWorkflowExecution']>
+  handleCreateWorkspaceBoard: NonNullable<SidebarProps['onCreateWorkspaceBoard']>
+  handleDeleteChat: NonNullable<SidebarProps['onDeleteChat']>
+  handleDeleteWorkflow: NonNullable<SidebarProps['onDeleteWorkflow']>
+  handleDeleteWorkspaceBoard: NonNullable<SidebarProps['onDeleteWorkspaceBoard']>
+  handleDismissOnboardingHint: NonNullable<SidebarProps['onDismissOnboardingHint']>
+  handleDuplicateWorkspaceBoard: NonNullable<SidebarProps['onDuplicateWorkspaceBoard']>
+  handleEditWorkflowInterval: NonNullable<SidebarProps['onEditWorkflowInterval']>
+  handleManualUsageRefresh: NonNullable<SidebarModelUsageApiSpend['onRefreshUsage']>
+  handleNavigateToWorkspace: SidebarProps['onSelectWorkspace']
+  handleNewChat: SidebarProps['onNewChat']
+  handleNewEnsemble: SidebarProps['onNewEnsemble']
+  handleNewGlobalChat: SidebarProps['onNewGlobalChat']
+  handleOpenChangelogSheet: NonNullable<SidebarProps['onOpenChangelog']>
+  handleOpenInMultiview: NonNullable<SidebarProps['onOpenInMultiview']>
+  handleOpenLinkedChatInSidePanelFromSidebar: NonNullable<SidebarProps['onOpenChatInSidePanel']>
+  handleOpenWorkflowCompose: NonNullable<SidebarProps['onCreateWorkflow']>
+  handleOpenWorkspaceBoard: NonNullable<SidebarProps['onOpenWorkspaceBoard']>
+  handleRemoveWorkspace: SidebarProps['onRemoveWorkspace']
+  handleRenameChat: NonNullable<SidebarProps['onRenameChat']>
+  handleRenameWorkspaceBoard: NonNullable<SidebarProps['onRenameWorkspaceBoard']>
+  handleRevokeHumanShare: NonNullable<SidebarProps['onRevokeShare']>
+  handleRunWorkflowNow: NonNullable<SidebarProps['onRunWorkflowNow']>
+  handleSelectChat: SidebarProps['onSelectChat']
+  handleSelectWorkspace: SidebarProps['onSelectWorkspaceDialog']
+  handleSetWorkflowUnattended: NonNullable<SidebarProps['onSetWorkflowUnattended']>
+  handleSettingsChange: SettingsPanelUpdateHandler
+  handleSidebarQuickUpdate: NonNullable<SidebarProps['onQuickUpdate']>
+  handleStartSharedChat: NonNullable<SidebarProps['onCreateSharedChat']>
+  handleToggleArchiveChat: NonNullable<SidebarProps['onToggleArchiveChat']>
+  handleTogglePinChat: NonNullable<SidebarProps['onTogglePinChat']>
+  handleTogglePinWorkspace: NonNullable<SidebarProps['onTogglePinWorkspace']>
+  handleTogglePinWorkspaceBoard: NonNullable<SidebarProps['onTogglePinWorkspaceBoard']>
+  handleToggleWorkflowEnabled: NonNullable<SidebarProps['onToggleWorkflowEnabled']>
+  handleWorkspaceSidebarResizeKeyDown: NonNullable<ResizeHandleProps['onKeyDown']>
+  humanCollaborationShares: SidebarProps['collaborationShares']
+  isChatPopoutWindow: boolean
+  isEnsembleModeEnabled: SidebarProps['ensembleModeEnabled']
+  manualUsageRefreshInFlight: SidebarModelUsageApiSpend['refreshing']
+  overestimatePercent: NonNullable<SidebarModelUsageApiSpend['overestimatePercent']>
+  pendingAgentApprovalByChatId: SidebarProps['pendingAgentApprovalByChatId']
+  pendingApprovalQueueByChatId: SidebarProps['pendingApprovalQueueByChatId']
+  providerRates: SidebarProviderRates
+  runningChatIdsArray: NonNullable<SidebarProps['runningChatIds']>
+  scheduledTasks: NonNullable<SidebarProps['scheduledTasks']>
+  setSettingsActiveTab: Dispatch<SetStateAction<SettingsSidebarProps['activeTab']>>
+  setShowSettings: Dispatch<SetStateAction<boolean>>
+  settings: AppSettings | null
+  settingsActiveTab: SettingsSidebarProps['activeTab']
+  showOnboardingHint: SidebarProps['showOnboardingHint']
+  showSettings: boolean
+  sidebarPresence: PanelPresence
+  sidebarSearchFocusRequestId: SidebarProps['focusSearchRequestId']
+  startWorkspaceSidebarResize: NonNullable<ResizeHandleProps['onMouseDown']>
+  updateStatus: UpdateStatusState
+  usageRefreshTick: SidebarModelUsageApiSpend['refreshKey']
+  usageSummary: SidebarProps['usageSummary']
+  workflowDefinitions: NonNullable<SidebarProps['workflows']>
+  workspaceAddPointerActive: SidebarProps['workspaceAddPointerActive']
+  workspaceBoardApiReady: boolean
+  workspaceBoardCards: SidebarProps['workspaceBoardCards']
+  workspaceBoards: SidebarProps['workspaceBoards']
+  workspaceSearchShortcutHint: SidebarProps['searchShortcutHint']
+  workspaceSidebarWidth: number
+  workspaces: SidebarProps['workspaces']
+}
+
+// R9 MainAppLayout extraction — still mostly flat; R9b-1 types the left sidebar shell.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export type MainAppLayoutProps = {
+export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   acknowledgedElevationDefaults: any
   activateRightDockTab: any
   activeDiff: any
   activeProvider: any
   activeRightDockTab: any
-  activeSidebarChatId: any
+  activeSidebarChatId: MainAppLayoutSidebarProps['activeSidebarChatId']
   activeThreadSearchIndex: any
   activeWorkspaceBoard: any
   activeWorkspaceBoardCards: any
@@ -20,7 +118,7 @@ export type MainAppLayoutProps = {
   agenticWorkspaceGrants: any
   appMainStyle: any
   appTranscriptRef: any
-  appVersion: any
+  appVersion: MainAppLayoutSidebarProps['appVersion']
   appearance: any
   approvalMode: any
   approvalTimeouts: any
@@ -31,14 +129,14 @@ export type MainAppLayoutProps = {
   beginManualMainTranscriptJump: any
   beginManualSideTranscriptJump: any
   canCreateSideChatFromCurrent: any
-  canOpenWorkspacePopout: any
+  canOpenWorkspacePopout: MainAppLayoutSidebarProps['canOpenWorkspacePopout']
   chatByIdRef: any
   chatContextNotice: any
   chatContextTurns: any
   chatPopoutParentChat: any
   chatSplitRegionRef: any
   chatSplitStyle: any
-  chats: any
+  chats: MainAppLayoutSidebarProps['chats']
   claudeAuthStatus: any
   claudeBinaryPath: any
   claudeLoginState: any
@@ -51,15 +149,15 @@ export type MainAppLayoutProps = {
   codexSandboxFallback: any
   codexStatus: any
   codexThreads: any
-  collaboratingChatIds: any
+  collaboratingChatIds: MainAppLayoutSidebarProps['collaboratingChatIds']
   composerCtx: any
   copiedId: any
   copy: any
-  connectedCollaborationChatIds: any
+  connectedCollaborationChatIds: MainAppLayoutSidebarProps['connectedCollaborationChatIds']
   currentAgentMcpStatus: any
   currentAgentStatus: any
   currentBlackboardEntries: any
-  currentChat: any
+  currentChat: MainAppLayoutSidebarProps['currentChat']
   currentChatHumanCollaborationShare: any
   currentChatIdRef: any
   currentChatMediaRefs: any
@@ -74,7 +172,7 @@ export type MainAppLayoutProps = {
   currentProviderLabel: any
   currentProviderModelOptions: any
   currentRun: any
-  currentWorkspace: any
+  currentWorkspace: MainAppLayoutSidebarProps['currentWorkspace']
   currentWorkspacePath: any
   cursorProviderAvailable: any
   customModel: any
@@ -82,7 +180,7 @@ export type MainAppLayoutProps = {
   diff: any
   diffRefreshStatus: any
   diffView: any
-  displayCurrency: any
+  displayCurrency: MainAppLayoutSidebarProps['displayCurrency']
   displayFileChangeSummaries: any
   dockChatPopoutWindow: any
   dockPresence: any
@@ -111,19 +209,19 @@ export type MainAppLayoutProps = {
   guestComposerProvider: any
   guestThinkingModelBadge: any
   guestThinkingOllamaBrand: any
-  handleAddChatToWorkspaceBoard: any
-  handleAddLocalServerToWorkspaceBoard: any
+  handleAddChatToWorkspaceBoard: MainAppLayoutSidebarProps['handleAddChatToWorkspaceBoard']
+  handleAddLocalServerToWorkspaceBoard: MainAppLayoutSidebarProps['handleAddLocalServerToWorkspaceBoard']
   handleAddPinnedMessageToWorkspaceBoard: any
-  handleAddRunQueueJobToWorkspaceBoard: any
-  handleAddWorkflowToWorkspaceBoard: any
+  handleAddRunQueueJobToWorkspaceBoard: MainAppLayoutSidebarProps['handleAddRunQueueJobToWorkspaceBoard']
+  handleAddWorkflowToWorkspaceBoard: MainAppLayoutSidebarProps['handleAddWorkflowToWorkspaceBoard']
   handleAddWorkspaceBoardCard: any
   handleAgentQuestionDismiss: any
   handleAgentQuestionSubmit: any
   handleArchiveHandoff: any
-  handleArchiveWorkspaceBoard: any
+  handleArchiveWorkspaceBoard: MainAppLayoutSidebarProps['handleArchiveWorkspaceBoard']
   handleCancelAuditRun: any
   handleCancelRunLane: any
-  handleCancelWorkflowExecution: any
+  handleCancelWorkflowExecution: MainAppLayoutSidebarProps['handleCancelWorkflowExecution']
   handleClearClaudeApiKey: any
   handleClearCodexUsageCredential: any
   handleClearKimiApiKey: any
@@ -131,47 +229,47 @@ export type MainAppLayoutProps = {
   handleCopyMessage: any
   handleCreateHandoffFromLane: any
   handleCreateHumanCollaborationShare: any
-  handleCreateWorkspaceBoard: any
+  handleCreateWorkspaceBoard: MainAppLayoutSidebarProps['handleCreateWorkspaceBoard']
   handleDeleteAllChatHistory: any
-  handleDeleteChat: any
+  handleDeleteChat: MainAppLayoutSidebarProps['handleDeleteChat']
   handleDeleteMessage: any
   handleDeleteQueuedMessage: any
-  handleDeleteWorkflow: any
-  handleDeleteWorkspaceBoard: any
+  handleDeleteWorkflow: MainAppLayoutSidebarProps['handleDeleteWorkflow']
+  handleDeleteWorkspaceBoard: MainAppLayoutSidebarProps['handleDeleteWorkspaceBoard']
   handleDeleteWorkspaceBoardCard: any
   handleDismissAuditRun: any
   handleDismissAuditRunNotice: any
-  handleDismissOnboardingHint: any
+  handleDismissOnboardingHint: MainAppLayoutSidebarProps['handleDismissOnboardingHint']
   handleDispatchHandoff: any
   handleDuplicateRunLane: any
-  handleDuplicateWorkspaceBoard: any
+  handleDuplicateWorkspaceBoard: MainAppLayoutSidebarProps['handleDuplicateWorkspaceBoard']
   handleEditQueuedMessage: any
-  handleEditWorkflowInterval: any
+  handleEditWorkflowInterval: MainAppLayoutSidebarProps['handleEditWorkflowInterval']
   handleEndCurrentLinkedMainChat: any
   handleEndSidePanelChat: any
   handleForkCodexThread: any
   handleGeminiTerminalSubmit: any
   handleImportCodexUsageCredential: any
   handleJumpToLatest: any
-  handleManualUsageRefresh: any
+  handleManualUsageRefresh: MainAppLayoutSidebarProps['handleManualUsageRefresh']
   handleMessageSelectionCandidate: any
-  handleNavigateToWorkspace: any
-  handleNewChat: any
-  handleNewEnsemble: any
-  handleNewGlobalChat: any
-  handleOpenChangelogSheet: any
+  handleNavigateToWorkspace: MainAppLayoutSidebarProps['handleNavigateToWorkspace']
+  handleNewChat: MainAppLayoutSidebarProps['handleNewChat']
+  handleNewEnsemble: MainAppLayoutSidebarProps['handleNewEnsemble']
+  handleNewGlobalChat: MainAppLayoutSidebarProps['handleNewGlobalChat']
+  handleOpenChangelogSheet: MainAppLayoutSidebarProps['handleOpenChangelogSheet']
   handleOpenCockpitThread: any
-  handleOpenInMultiview: any
+  handleOpenInMultiview: MainAppLayoutSidebarProps['handleOpenInMultiview']
   handleOpenLinkedChatInSidePanelById: any
-  handleOpenLinkedChatInSidePanelFromSidebar: any
+  handleOpenLinkedChatInSidePanelFromSidebar: MainAppLayoutSidebarProps['handleOpenLinkedChatInSidePanelFromSidebar']
   handleOpenPinnedMessageFromSettings: any
   handleOpenSideChatFromLatestRunResult: any
   handleOpenSideChatFromMessage: any
   handleOpenSideChatFromRunResult: any
   handleOpenSideChatFromSelectedMessage: any
   handleOpenSideChatFromSummary: any
-  handleOpenWorkflowCompose: any
-  handleOpenWorkspaceBoard: any
+  handleOpenWorkflowCompose: MainAppLayoutSidebarProps['handleOpenWorkflowCompose']
+  handleOpenWorkspaceBoard: MainAppLayoutSidebarProps['handleOpenWorkspaceBoard']
   handlePersistRunAnalysis: any
   handlePlanChoiceSubmit: any
   handlePromoteCollaboratorComment: any
@@ -179,61 +277,61 @@ export type MainAppLayoutProps = {
   handleProposedPlanCustom: any
   handleProposedPlanDismiss: any
   handleRemoveAgenticWorkspaceGrant: any
-  handleRemoveWorkspace: any
-  handleRenameChat: any
-  handleRenameWorkspaceBoard: any
+  handleRemoveWorkspace: MainAppLayoutSidebarProps['handleRemoveWorkspace']
+  handleRenameChat: MainAppLayoutSidebarProps['handleRenameChat']
+  handleRenameWorkspaceBoard: MainAppLayoutSidebarProps['handleRenameWorkspaceBoard']
   handleReorderQueuedMessages: any
   handleResumeCodexThread: any
   handleRetryRunLane: any
   handleReturnToSideChatParent: any
-  handleRevokeHumanShare: any
+  handleRevokeHumanShare: MainAppLayoutSidebarProps['handleRevokeHumanShare']
   handleRightPanelResizeKeyDown: any
   handleRollbackCodexThread: any
-  handleRunWorkflowNow: any
-  handleSelectChat: any
+  handleRunWorkflowNow: MainAppLayoutSidebarProps['handleRunWorkflowNow']
+  handleSelectChat: MainAppLayoutSidebarProps['handleSelectChat']
   handleSelectSideChatTypeOption: any
-  handleSelectWorkspace: any
+  handleSelectWorkspace: MainAppLayoutSidebarProps['handleSelectWorkspace']
   handleSetSideAgenticWorkspaceGrant: any
-  handleSetWorkflowUnattended: any
-  handleSettingsChange: any
+  handleSetWorkflowUnattended: MainAppLayoutSidebarProps['handleSetWorkflowUnattended']
+  handleSettingsChange: MainAppLayoutSidebarProps['handleSettingsChange']
   handleSideCancel: any
   handleSideModelChange: any
   handleSideProviderChange: any
   handleSideReasoningChange: any
   handleSideRun: any
   handleSideToggleFastMode: any
-  handleSidebarQuickUpdate: any
-  handleStartSharedChat: any
+  handleSidebarQuickUpdate: MainAppLayoutSidebarProps['handleSidebarQuickUpdate']
+  handleStartSharedChat: MainAppLayoutSidebarProps['handleStartSharedChat']
   handleSteerToQueuedMessage: any
   handleStopHumanCollaborationSharing: any
   handleStoreClaudeApiKey: any
   handleStoreKimiApiKey: any
-  handleToggleArchiveChat: any
-  handleTogglePinChat: any
-  handleTogglePinWorkspace: any
-  handleTogglePinWorkspaceBoard: any
-  handleToggleWorkflowEnabled: any
+  handleToggleArchiveChat: MainAppLayoutSidebarProps['handleToggleArchiveChat']
+  handleTogglePinChat: MainAppLayoutSidebarProps['handleTogglePinChat']
+  handleTogglePinWorkspace: MainAppLayoutSidebarProps['handleTogglePinWorkspace']
+  handleTogglePinWorkspaceBoard: MainAppLayoutSidebarProps['handleTogglePinWorkspaceBoard']
+  handleToggleWorkflowEnabled: MainAppLayoutSidebarProps['handleToggleWorkflowEnabled']
   handleTriggerClaudeLogin: any
   handleUpdateWorkspaceBoardCard: any
   handleUpgradeProviderCli: any
-  handleWorkspaceSidebarResizeKeyDown: any
+  handleWorkspaceSidebarResizeKeyDown: MainAppLayoutSidebarProps['handleWorkspaceSidebarResizeKeyDown']
   handoffCards: any
   hasCurrentHandoffDraft: any
   hasWorkspaceContext: any
   hideSideChatPane: any
   hostWeather: any
-  humanCollaborationShares: any
+  humanCollaborationShares: MainAppLayoutSidebarProps['humanCollaborationShares']
   inspectingRunId: any
   installGeminiMcpBridge: any
   interfaceStyle: any
   isAdvancedFxActive: any
   isChatExpanded: any
   isChatMediaPanelOpen: any
-  isChatPopoutWindow: any
+  isChatPopoutWindow: MainAppLayoutSidebarProps['isChatPopoutWindow']
   isCurrentEnsembleChat: any
   isCurrentGlobalChat: any
   isCurrentGuestParticipantRunning: any
-  isEnsembleModeEnabled: any
+  isEnsembleModeEnabled: MainAppLayoutSidebarProps['isEnsembleModeEnabled']
   isFxEnabled: any
   isLinkedChatPopout: any
   isMultiviewSplit: any
@@ -253,7 +351,7 @@ export type MainAppLayoutProps = {
   kimiThinkingEnabled: any
   latestSideChatRunResultSeed: any
   logsEndRef: any
-  manualUsageRefreshInFlight: any
+  manualUsageRefreshInFlight: MainAppLayoutSidebarProps['manualUsageRefreshInFlight']
   multiview: any
   ollamaBaseUrl: any
   ollamaDefaultModel: any
@@ -266,12 +364,12 @@ export type MainAppLayoutProps = {
   openLinkedChatAsMain: any
   openMediaPane: any
   openWorkspacePopoutWindow: any
-  overestimatePercent: any
+  overestimatePercent: MainAppLayoutSidebarProps['overestimatePercent']
   pendingAgentApproval: any
-  pendingAgentApprovalByChatId: any
+  pendingAgentApprovalByChatId: MainAppLayoutSidebarProps['pendingAgentApprovalByChatId']
   pendingAgentQuestions: any
   pendingAgentQuestionsByChatId: any
-  pendingApprovalQueueByChatId: any
+  pendingApprovalQueueByChatId: MainAppLayoutSidebarProps['pendingApprovalQueueByChatId']
   pendingPlanChoice: any
   pendingProposedPlan: any
   pendingQueuedAppRunIds: any
@@ -283,7 +381,7 @@ export type MainAppLayoutProps = {
   prompt: any
   providerCapabilitiesByProvider: any
   providerCliUpgradeState: any
-  providerRates: any
+  providerRates: MainAppLayoutSidebarProps['providerRates']
   providerShellClass: any
   queuedRunQueueCount: any
   queuedRunStatusByAppRunId: any
@@ -312,8 +410,8 @@ export type MainAppLayoutProps = {
   runPreviewTargetAction: any
   runQueueJobs: any
   runningChatIds: any
-  runningChatIdsArray: any
-  scheduledTasks: any
+  runningChatIdsArray: MainAppLayoutSidebarProps['runningChatIdsArray']
+  scheduledTasks: MainAppLayoutSidebarProps['scheduledTasks']
   selectThreadSearchMatch: any
   selectedModelType: any
   selectedParticipant: any
@@ -336,14 +434,14 @@ export type MainAppLayoutProps = {
   setRightDockTab: any
   setRightTab: any
   setSessionTrust: any
-  setSettingsActiveTab: any
+  setSettingsActiveTab: MainAppLayoutSidebarProps['setSettingsActiveTab']
   setShowBugReportSheet: any
   setShowCockpit: any
   setShowFileEditor: any
   setShowFirstLaunchSheet: any
   setShowGeminiTerminal: any
   setShowGhostCompanion: any
-  setShowSettings: any
+  setShowSettings: MainAppLayoutSidebarProps['setShowSettings']
   setShowSkyVisualFx: any
   setShowTerminal: any
   setShowWorkspaceSidebar: any
@@ -353,8 +451,8 @@ export type MainAppLayoutProps = {
   setThreadSearchActiveIndex: any
   setThreadSearchQuery: any
   setWelcomeUsageTab: any
-  settings: any
-  settingsActiveTab: any
+  settings: MainAppLayoutSidebarProps['settings']
+  settingsActiveTab: MainAppLayoutSidebarProps['settingsActiveTab']
   settingsPinnedMessageGroups: any
   shouldShowWelcomeUsageDashboard: any
   showAgentAuraFx: any
@@ -365,9 +463,9 @@ export type MainAppLayoutProps = {
   showFirstLaunchSheet: any
   showGeminiTerminal: any
   showJumpToLatestPill: any
-  showOnboardingHint: any
+  showOnboardingHint: MainAppLayoutSidebarProps['showOnboardingHint']
   showRunDataVizFx: any
-  showSettings: any
+  showSettings: MainAppLayoutSidebarProps['showSettings']
   showTerminal: any
   showWorkspaceSidebar: any
   sideAutoFollowRef: any
@@ -425,10 +523,10 @@ export type MainAppLayoutProps = {
   sideTranscriptContentRef: any
   sideTranscriptScrollRef: any
   sideWorkspace: any
-  sidebarPresence: any
-  sidebarSearchFocusRequestId: any
+  sidebarPresence: MainAppLayoutSidebarProps['sidebarPresence']
+  sidebarSearchFocusRequestId: MainAppLayoutSidebarProps['sidebarSearchFocusRequestId']
   startRightPanelResize: any
-  startWorkspaceSidebarResize: any
+  startWorkspaceSidebarResize: MainAppLayoutSidebarProps['startWorkspaceSidebarResize']
   thinkingModelBadge: any
   thinkingProvider: any
   thinkingProviderClass: any
@@ -448,11 +546,11 @@ export type MainAppLayoutProps = {
   unreadFromBottomCount: any
   updateChannel: any
   updatePinnedNotesForChat: any
-  updateStatus: any
+  updateStatus: MainAppLayoutSidebarProps['updateStatus']
   usageInitialized: any
   usageRecords: any
-  usageRefreshTick: any
-  usageSummary: any
+  usageRefreshTick: MainAppLayoutSidebarProps['usageRefreshTick']
+  usageSummary: MainAppLayoutSidebarProps['usageSummary']
   visibleAuditRun: any
   visibleAuditRunNotice: any
   visibleGeminiTerminalLogs: any
@@ -462,12 +560,12 @@ export type MainAppLayoutProps = {
   welcomeDashboardRegionRef: any
   welcomeUsageDashboardData: any
   welcomeUsageTab: any
-  workflowDefinitions: any
-  workspaceAddPointerActive: any
-  workspaceBoardApiReady: any
-  workspaceBoardCards: any
-  workspaceBoards: any
-  workspaceSearchShortcutHint: any
-  workspaceSidebarWidth: any
-  workspaces: any
+  workflowDefinitions: MainAppLayoutSidebarProps['workflowDefinitions']
+  workspaceAddPointerActive: MainAppLayoutSidebarProps['workspaceAddPointerActive']
+  workspaceBoardApiReady: MainAppLayoutSidebarProps['workspaceBoardApiReady']
+  workspaceBoardCards: MainAppLayoutSidebarProps['workspaceBoardCards']
+  workspaceBoards: MainAppLayoutSidebarProps['workspaceBoards']
+  workspaceSearchShortcutHint: MainAppLayoutSidebarProps['workspaceSearchShortcutHint']
+  workspaceSidebarWidth: MainAppLayoutSidebarProps['workspaceSidebarWidth']
+  workspaces: MainAppLayoutSidebarProps['workspaces']
 }
