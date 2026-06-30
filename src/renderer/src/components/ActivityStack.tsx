@@ -2595,6 +2595,30 @@ function ActivityRow({
                     )}
                   </span>
                 )}
+                {activityDiffPreviewText && (
+                  <button
+                    type="button"
+                    className="activity-diff-preview-bubble"
+                    aria-label={`Preview diff for ${activityDiffPreviewPath}`}
+                    title="Preview diff"
+                    onMouseEnter={openActivityDiffHoverPreview}
+                    onMouseLeave={scheduleCloseActivityDiffHoverPreview}
+                    onFocus={openActivityDiffHoverPreview}
+                    onBlur={scheduleCloseActivityDiffHoverPreview}
+                    onClick={(event) => {
+                      event.preventDefault()
+                      event.stopPropagation()
+                      openActivityDiffHoverPreview(event)
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.stopPropagation()
+                      }
+                    }}
+                  >
+                    Diff
+                  </button>
+                )}
                 {/* Phase L4 slice 3 — expansion chevron at the end of
                  * the inline row, shown only when the row carries
                  * substantive detail worth expanding. Rotates 90°

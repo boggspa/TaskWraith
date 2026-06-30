@@ -393,6 +393,9 @@ describe('ActivityStack diff hover previews', () => {
     )
 
     expect(html).toContain('data-diff-hover-preview="true"')
+    expect(html).toContain('class="activity-diff-preview-bubble"')
+    expect(html).toContain('aria-label="Preview diff for /repo/src/foo.ts"')
+    expect(html).toContain('Diff')
   })
 
   it('does not mark write rows without diff text for hover preview', () => {
@@ -401,6 +404,7 @@ describe('ActivityStack diff hover previews', () => {
     )
 
     expect(html).not.toContain('data-diff-hover-preview=')
+    expect(html).not.toContain('activity-diff-preview-bubble')
   })
 })
 

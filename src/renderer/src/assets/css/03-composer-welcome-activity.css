@@ -10850,6 +10850,34 @@ button.diff-file-row {
   margin-left: 4px;
 }
 
+.activity-diff-preview-bubble {
+  appearance: none;
+  -webkit-appearance: none;
+  height: 20px;
+  padding: 0 7px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid color-mix(in srgb, var(--diff-add-text) 28%, var(--panel-border));
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--panel-elevated-bg) 78%, transparent);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.activity-diff-preview-bubble:hover,
+.activity-diff-preview-bubble:focus-visible {
+  border-color: color-mix(in srgb, var(--accent) 56%, var(--panel-border));
+  color: var(--text-primary);
+  outline: 0;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
 .activity-row-inline .activity-meta {
   font-size: var(--font-size-xs);
   color: color-mix(in srgb, var(--text-muted) 88%, transparent);
