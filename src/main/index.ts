@@ -4757,6 +4757,21 @@ function safeSendToWebContents(
   }
 }
 
+function safeSendToSender(
+  sender: Electron.WebContents | null | undefined,
+  channel: string,
+  payload: unknown
+): boolean {
+  if (!sender || sender.isDestroyed()) return false
+  try {
+    sender.send(channel, payload)
+    return true
+  } catch {
+    // Renderer/webContents was destroyed between the check and send.
+    return false
+  }
+}
+
 let transcriptMediaAssetStore: TranscriptMediaAssetStore | null = null
 
 function getTranscriptMediaAssetStore(): TranscriptMediaAssetStore {
@@ -6878,7 +6893,10 @@ async function requestAgenticServiceApproval(
       'request',
       { policy, ...(ensembleApproval ? { ensembleParticipant: ensembleApproval.preview } : {}) }
     )
-    sender?.send('agent-error', { provider, error: agenticServiceBlockedMessage(service) })
+    safeSendToSender(sender, 'agent-error', {
+      provider,
+      error: agenticServiceBlockedMessage(service)
+    })
     return false
   }
 
@@ -7054,7 +7072,7 @@ async function requestAgenticServiceApproval(
         }
       }
     )
-    sender.send('agent-approval-request', approvalPayload)
+    safeSendToSender(sender, 'agent-approval-request', approvalPayload)
     // Fan out a wake-push to any paired iOS device so the user can
     // approve the agentic-service request away from the desktop.
     notifyPairedDevicesOfApproval({
@@ -7125,7 +7143,7 @@ async function requestMainApproval(
       workspacePath: request.workspacePath,
       metadata: { mainAuthority: true }
     })
-    sender.send('agent-approval-request', approvalPayload)
+    safeSendToSender(sender, 'agent-approval-request', approvalPayload)
     // Fan out a wake-push to any paired iOS device. Main-authority
     // approvals are typically workspace-trust or other infrequent
     // events — exactly the kind of decision the user benefits from
@@ -11761,7 +11779,7 @@ async function runKimiWireProvider(
                   ...(nativePreflight.kind === 'ask' ? { policy: nativePreflight.policy } : {})
                 }
               })
-              event.sender.send('agent-approval-request', approvalPayload)
+              safeSendToSender(event.sender, 'agent-approval-request', approvalPayload)
               // Fan out a wake-push to any paired iOS device. Kimi's
               // payload.description is the cleanest user-facing summary;
               // fall back to action name or a generic phrase.
@@ -13592,7 +13610,7 @@ function handleCodexServerRequest(message: any) {
       metadata: { policy }
     }
   )
-  state.sender.send('agent-approval-request', approvalPayload)
+  safeSendToSender(state.sender, 'agent-approval-request', approvalPayload)
   // Fan out a wake-push to any paired iOS device. Summary uses
   // formatted.title (already curated for the user-facing approval
   // modal); falls back to `method` for unfamiliar Codex shapes.
@@ -13708,7 +13726,7 @@ function maybeRequestCodexHostRerun(
       }
     }
   )
-  state.sender.send('agent-approval-request', approvalPayload)
+  safeSendToSender(state.sender, 'agent-approval-request', approvalPayload)
   // Fan out a wake-push to any paired iOS device so the user can decide
   // away from the desktop. No-op if APNs is un-configured.
   notifyPairedDevicesOfApproval({
