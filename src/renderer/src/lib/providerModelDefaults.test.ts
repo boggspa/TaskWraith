@@ -24,7 +24,7 @@ describe('Codex provider model defaults', () => {
   it('exposes disabled GPT-5.6 preview rows with Max reasoning only on Sol', () => {
     const byId = new Map(CODEX_DEFAULT_MODELS.map((model) => [model.id, model]))
     expect(byId.get('preview:openai:gpt-5.6:sol')).toMatchObject({
-      label: 'GPT-5.6 Sol Preview',
+      label: 'GPT-5.6 Sol',
       disabled: true,
       disabledReason: 'Requires OpenAI preview access',
       defaultReasoningEffort: 'medium'

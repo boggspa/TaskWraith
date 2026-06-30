@@ -60,7 +60,7 @@ export const PREVIEW_MODEL_CATALOG: PreviewModelCatalogEntry[] = [
   {
     id: 'preview:openai:gpt-5.6:sol',
     provider: 'codex',
-    label: 'GPT-5.6 Sol Preview',
+    label: 'GPT-5.6 Sol',
     description: 'Preview placeholder for hardest long-horizon coding and research.',
     disabled: true,
     disabledReason: OPENAI_PREVIEW_MODEL_ACCESS_REASON,
@@ -75,7 +75,7 @@ export const PREVIEW_MODEL_CATALOG: PreviewModelCatalogEntry[] = [
   {
     id: 'preview:openai:gpt-5.6:terra',
     provider: 'codex',
-    label: 'GPT-5.6 Terra Preview',
+    label: 'GPT-5.6 Terra',
     description: 'Preview placeholder for strong everyday advanced agentic work.',
     disabled: true,
     disabledReason: OPENAI_PREVIEW_MODEL_ACCESS_REASON,
@@ -90,7 +90,7 @@ export const PREVIEW_MODEL_CATALOG: PreviewModelCatalogEntry[] = [
   {
     id: 'preview:openai:gpt-5.6:luna',
     provider: 'codex',
-    label: 'GPT-5.6 Luna Preview',
+    label: 'GPT-5.6 Luna',
     description: 'Preview placeholder for fast triage, board planning, and lightweight subagents.',
     disabled: true,
     disabledReason: OPENAI_PREVIEW_MODEL_ACCESS_REASON,
@@ -105,7 +105,7 @@ export const PREVIEW_MODEL_CATALOG: PreviewModelCatalogEntry[] = [
   {
     id: 'preview:anthropic:claude-sonnet-5',
     provider: 'claude',
-    label: 'Claude Sonnet 5 Preview',
+    label: 'Claude Sonnet 5',
     description: 'Preview model gated behind explicit Claude preview access.',
     disabled: true,
     disabledReason: CLAUDE_PREVIEW_MODEL_ACCESS_REASON,
@@ -120,7 +120,7 @@ export const PREVIEW_MODEL_CATALOG: PreviewModelCatalogEntry[] = [
   {
     id: 'preview:anthropic:claude-fable-5',
     provider: 'claude',
-    label: 'Claude Fable 5 Preview',
+    label: 'Claude Fable 5',
     description: 'Preview model gated behind explicit Claude preview access.',
     disabled: true,
     disabledReason: CLAUDE_PREVIEW_MODEL_ACCESS_REASON,
@@ -133,7 +133,7 @@ export const PREVIEW_MODEL_CATALOG: PreviewModelCatalogEntry[] = [
   {
     id: 'preview:anthropic:claude-mythos-5',
     provider: 'claude',
-    label: 'Claude Mythos 5 Preview',
+    label: 'Claude Mythos 5',
     description: 'Preview model gated behind explicit Claude preview access.',
     disabled: true,
     disabledReason: CLAUDE_PREVIEW_MODEL_ACCESS_REASON,

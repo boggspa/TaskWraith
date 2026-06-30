@@ -105,19 +105,19 @@ const CODEX_MODELS: CombinedModelPickerModelOption[] = [
   { id: 'gpt-5.3-codex-spark', label: 'GPT-5.3 Codex Spark' },
   {
     id: 'preview:openai:gpt-5.6:sol',
-    label: 'GPT-5.6 Sol Preview',
+    label: 'GPT-5.6 Sol',
     disabled: true,
     disabledReason: OPENAI_PREVIEW_MODEL_ACCESS_REASON
   },
   {
     id: 'preview:openai:gpt-5.6:terra',
-    label: 'GPT-5.6 Terra Preview',
+    label: 'GPT-5.6 Terra',
     disabled: true,
     disabledReason: OPENAI_PREVIEW_MODEL_ACCESS_REASON
   },
   {
     id: 'preview:openai:gpt-5.6:luna',
-    label: 'GPT-5.6 Luna Preview',
+    label: 'GPT-5.6 Luna',
     disabled: true,
     disabledReason: OPENAI_PREVIEW_MODEL_ACCESS_REASON
   }
@@ -130,7 +130,7 @@ const CLAUDE_MODELS: CombinedModelPickerModelOption[] = [
   { id: 'claude-opus-4-8-1m', label: 'Claude Opus 4.8 1M' },
   {
     id: 'preview:anthropic:claude-sonnet-5',
-    label: 'Claude Sonnet 5 Preview',
+    label: 'Claude Sonnet 5',
     disabled: true,
     disabledReason: CLAUDE_PREVIEW_MODEL_ACCESS_REASON
   },
