@@ -2643,7 +2643,8 @@ export async function runOllamaProvider(
                   output: modelFacingOutput,
                   ok: toolResult.ok,
                   state: harnessState,
-                  tier: toolControlTier
+                  tier: toolControlTier,
+                  ensembleRun
                 })
               : ollamaToolResultFollowUpPrompt({
                   toolName: toolRequest.toolName,

@@ -119,6 +119,32 @@ describe('OllamaHarnessGates', () => {
     expect(prompt).toContain('explore todo')
   })
 
+  it('keeps ensemble role authority salient in tool follow-up guidance', () => {
+    let state = createOllamaHarnessRunState()
+    state = recordOllamaHarnessToolResult(state, 'workspace_search', { query: 'foo' }, true)
+    state = recordOllamaHarnessToolResult(state, 'read_file', { path: 'src/main/Foo.ts' }, true)
+    state = recordOllamaHarnessToolResult(
+      state,
+      'replace',
+      { path: 'src/main/Foo.ts', old_string: 'a', new_string: 'b', intent: 'test' },
+      true
+    )
+
+    const prompt = ollamaHarnessToolFollowUpPrompt({
+      toolName: 'replace',
+      output: 'Patched src/main/Foo.ts',
+      ok: true,
+      state,
+      tier: 'approved_edits',
+      ensembleRun: true
+    })
+
+    expect(prompt).toContain('assigned ensemble role')
+    expect(prompt).toContain('Boss/Bossman/Lead routing')
+    expect(prompt).toContain('assigned ensemble slice')
+    expect(prompt).not.toContain('original user request')
+  })
+
   it('ships the default harness todo scaffold', () => {
     expect(ollamaHarnessDefaultTodos().map((item) => item.id)).toEqual([
       'explore',

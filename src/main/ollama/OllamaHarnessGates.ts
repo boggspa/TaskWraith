@@ -258,6 +258,7 @@ export function ollamaHarnessToolFollowUpPrompt(input: {
   ok: boolean
   state: OllamaHarnessRunState
   tier: OllamaToolControlTier | string | undefined | null
+  ensembleRun?: boolean
 }): string {
   const base = [
     `TaskWraith executed ${input.toolName}.`,
@@ -268,6 +269,11 @@ export function ollamaHarnessToolFollowUpPrompt(input: {
   ]
 
   const guidance: string[] = []
+  if (input.ensembleRun) {
+    guidance.push(
+      'Keep following your assigned ensemble role, Role boundary contract, and Boss/Bossman/Lead routing; do not broaden into another participant\'s slice.'
+    )
+  }
   if (input.ok) {
     if (
       input.toolName === 'workspace_search' ||
@@ -291,7 +297,9 @@ export function ollamaHarnessToolFollowUpPrompt(input: {
       }
     } else if (isEditTool(input.toolName)) {
       guidance.push(
-        'Re-read the file if you need another edit. Summarize what changed and whether the original user request is satisfied.'
+        input.ensembleRun
+          ? 'Re-read the file if you need another edit. Summarize what changed and whether your assigned ensemble slice is satisfied.'
+          : 'Re-read the file if you need another edit. Summarize what changed and whether the original user request is satisfied.'
       )
       if (ollamaToolNamesForTier(input.tier).includes('todo_write') && input.state.publishedTodos) {
         guidance.push('Mark edit completed and move verify to in_progress before you claim the task is done.')
