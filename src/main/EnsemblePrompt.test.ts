@@ -824,10 +824,10 @@ describe('Ensemble prompt composition', () => {
     expect(prompt).toContain('Other participants may still operate')
   })
 
-  it('adds an ensemble plan-owner rule for the boss participant in plan posture', () => {
+  it('adds an ensemble plan-owner rule for the boss participant in plan workflow', () => {
     const bossConfig: EnsembleConfig = { ...ensemble, bossmanParticipantId: 'claude' }
     const prompt = buildEnsembleParticipantPrompt({
-      chat: chat(),
+      chat: { ...chat(), workflowMode: 'plan' },
       config: bossConfig,
       participant: bossConfig.participants[0],
       currentPrompt: 'Plan the implementation.',
@@ -840,10 +840,10 @@ describe('Ensemble prompt composition', () => {
     expect(prompt).not.toContain('do NOT emit a `<proposed_plan>` block')
   })
 
-  it('prevents non-owner plan-posture participants from emitting proposed plan blocks', () => {
+  it('prevents non-owner plan-workflow participants from emitting proposed plan blocks', () => {
     const bossConfig: EnsembleConfig = { ...ensemble, bossmanParticipantId: 'claude' }
     const prompt = buildEnsembleParticipantPrompt({
-      chat: chat(),
+      chat: { ...chat(), workflowMode: 'plan' },
       config: bossConfig,
       participant: bossConfig.participants[2],
       currentPrompt: 'Plan the implementation.',
@@ -857,7 +857,7 @@ describe('Ensemble prompt composition', () => {
 
   it('falls back to the last ordered participant as the ensemble plan owner', () => {
     const prompt = buildEnsembleParticipantPrompt({
-      chat: chat(),
+      chat: { ...chat(), workflowMode: 'plan' },
       config: ensemble,
       participant: ensemble.participants[2],
       currentPrompt: 'Plan the implementation.',
@@ -868,16 +868,31 @@ describe('Ensemble prompt composition', () => {
     expect(prompt).toContain('<proposed_plan>...</proposed_plan>')
   })
 
-  it('does not add ensemble plan-owner rules for non-plan-posture participants', () => {
+  it('does not add ensemble plan-owner rules outside plan workflow', () => {
     const bossConfig: EnsembleConfig = { ...ensemble, bossmanParticipantId: 'claude' }
     const prompt = buildEnsembleParticipantPrompt({
       chat: chat(),
       config: bossConfig,
-      participant: bossConfig.participants[1],
-      currentPrompt: 'Implement.',
+      participant: bossConfig.participants[0],
+      currentPrompt: 'Recon only.',
       roundId: 'round-plan'
     })
     expect(prompt).not.toContain('Ensemble Plan owner')
+  })
+
+  it('can assign a write-capable participant as the ensemble plan owner in plan workflow', () => {
+    const bossConfig: EnsembleConfig = { ...ensemble, bossmanParticipantId: 'codex' }
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: { ...chat(), workflowMode: 'plan' },
+      config: bossConfig,
+      participant: bossConfig.participants[1],
+      currentPrompt: 'Plan the implementation.',
+      roundId: 'round-plan'
+    })
+    expect(prompt).toContain('Ensemble Plan owner')
+    expect(prompt).toContain('Codex / Worker')
+    expect(prompt).toContain('you are the designated plan synthesizer')
+    expect(prompt).toContain('<proposed_plan>...</proposed_plan>')
   })
 
   it('1.0.4-AF: inverts the deictic rule and rewrites the workspace stanza in selfReflective mode', () => {

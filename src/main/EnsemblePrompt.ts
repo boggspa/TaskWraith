@@ -284,8 +284,8 @@ function formatAuthorityLines(
   ]
 }
 
-function isPlanPostureParticipant(participant: EnsembleParticipant): boolean {
-  return participant.permissionPresetId === 'read_only'
+function isPlanWorkflowChat(chat: ChatRecord): boolean {
+  return chat.workflowMode === 'plan'
 }
 
 function resolveEnsemblePlanOwnerId(
@@ -303,22 +303,23 @@ function resolveEnsemblePlanOwnerId(
 }
 
 function formatEnsemblePlanOwnerLines(
+  chat: ChatRecord,
   config: EnsembleConfig,
   orderedParticipants: EnsembleParticipant[],
   participant: EnsembleParticipant
 ): string[] {
-  if (!isPlanPostureParticipant(participant)) return []
+  if (!isPlanWorkflowChat(chat)) return []
   const planOwnerId = resolveEnsemblePlanOwnerId(config, orderedParticipants)
   if (!planOwnerId) return []
   const owner = orderedParticipants.find((candidate) => candidate.id === planOwnerId)
   const ownerLabel = owner ? formatParticipantScopeName(owner) : planOwnerId
   if (participant.id === planOwnerId) {
     return [
-      `- Ensemble Plan owner: you are the designated plan synthesizer (${ownerLabel}). If this turn needs a plan, emit exactly one \`<proposed_plan>...</proposed_plan>\` block that synthesizes the panel's findings; do not execute implementation steps in this plan-posture turn.`
+      `- Ensemble Plan owner: you are the designated plan synthesizer (${ownerLabel}). If this turn needs a plan, emit exactly one \`<proposed_plan>...</proposed_plan>\` block that synthesizes the panel's findings; do not execute implementation steps in this plan-workflow turn.`
     ]
   }
   return [
-    `- Ensemble Plan owner: ${ownerLabel} is responsible for the single synthesized \`<proposed_plan>...</proposed_plan>\` block. In plan posture, contribute recon/findings/risks only and do NOT emit a \`<proposed_plan>\` block.`
+    `- Ensemble Plan owner: ${ownerLabel} is responsible for the single synthesized \`<proposed_plan>...</proposed_plan>\` block. In plan workflow, contribute recon/findings/risks only and do NOT emit a \`<proposed_plan>\` block.`
   ]
 }
 
@@ -569,6 +570,7 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
     totalParticipants
   )
   const planOwnerLines = formatEnsemblePlanOwnerLines(
+    input.chat,
     input.config,
     orderedParticipants,
     input.participant
