@@ -405,6 +405,9 @@ export interface RemoteToolEntry {
 export interface RemoteParticipantHealthEntry {
   participantId: string
   provider: ProviderId
+  /** Model id — lets the phone spoof the Ollama display brand (Qwen →
+   * Alibaba) on the health chip, matching the desktop. */
+  model?: string
   role: string
   status: 'ok' | 'unreachable'
   reason?: string
@@ -919,6 +922,8 @@ function buildParticipantHealth(
       role: stringField(entry.role, 80) ?? PROVIDER_LABELS[provider],
       status
     }
+    const model = stringField(entry.model, 120)
+    if (model) healthEntry.model = model
     const reason = stringField(entry.reason, 220)
     if (reason) healthEntry.reason = reason
     const underlyingCode = stringField(entry.underlyingCode, 80)

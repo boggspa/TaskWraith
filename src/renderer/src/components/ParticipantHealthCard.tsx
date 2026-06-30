@@ -1,6 +1,7 @@
 import React from 'react'
 import type { ChatMessage, ProviderId } from '../../../main/store/types'
 import { getProviderName, ProviderBadgeIcon } from './Sidebar'
+import { resolveProviderBrandLabel, resolveProviderHueClass } from '../lib/ollamaDisplayBrand'
 
 /**
  * 1.0.5-EW29 — Participant-health card.
@@ -29,6 +30,7 @@ import { getProviderName, ProviderBadgeIcon } from './Sidebar'
 interface ParticipantHealthEntry {
   participantId: string
   provider: ProviderId
+  model?: string
   role: string
   status: 'ok' | 'unreachable'
   reason?: string
@@ -108,7 +110,12 @@ export function ParticipantHealthCard({
       </div>
       <div className="participant-health-card-chips">
         {entries.map((entry) => {
-          const providerName = getProviderName(entry.provider)
+          // Ollama-backed display brands spoof their upstream name + hue on
+          // the chip (e.g. Alibaba / Planner in Alibaba purple), matching the
+          // transcript header, run cards, and @-mention chips.
+          const providerName =
+            resolveProviderBrandLabel(entry.provider, entry.model) || getProviderName(entry.provider)
+          const providerClass = resolveProviderHueClass(entry.provider, entry.model)
           const label = entry.role ? `${providerName} / ${entry.role}` : providerName
           const tooltip =
             entry.status === 'ok'
@@ -125,7 +132,7 @@ export function ParticipantHealthCard({
           return (
             <span
               key={entry.participantId}
-              className={`participant-health-chip provider-${entry.provider} status-${entry.status}`}
+              className={`participant-health-chip provider-${providerClass} status-${entry.status}`}
               title={tooltip}
               aria-label={tooltip}
             >

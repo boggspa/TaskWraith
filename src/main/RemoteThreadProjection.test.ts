@@ -398,6 +398,42 @@ describe('RemoteThreadProjection', () => {
       })
     })
 
+    it('passes the participant model through so the phone can spoof the Ollama brand', () => {
+      const snap = project(
+        { kind: 'latestN', n: 10 },
+        [
+          msg(1, {
+            id: 'health-ollama',
+            role: 'system',
+            content: 'Participant health: 1/1 ready',
+            metadata: {
+              kind: 'ensembleParticipantHealth',
+              ensembleRoundId: 'round-ollama',
+              okCount: 1,
+              totalCount: 1,
+              entries: [
+                {
+                  participantId: 'p1',
+                  provider: 'ollama',
+                  model: 'qwen3.5:9b',
+                  role: 'Planner',
+                  status: 'ok'
+                }
+              ]
+            }
+          })
+        ]
+      )
+
+      expect(snap.rows[0]?.participantHealth?.entries?.[0]).toMatchObject({
+        participantId: 'p1',
+        provider: 'ollama',
+        model: 'qwen3.5:9b',
+        role: 'Planner',
+        status: 'ok'
+      })
+    })
+
     it('projects returned sub-thread results as structured compact result rows', () => {
       const snap = project(
         { kind: 'latestN', n: 10 },

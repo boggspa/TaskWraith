@@ -857,6 +857,8 @@ public struct WorkspaceDiffFile: Codable, Sendable, Identifiable, Hashable {
     public let isBinary: Bool?
     public let isSensitive: Bool?
     public let canOpenInEditor: Bool?
+    public let staged: Bool?
+    public let unstaged: Bool?
     /// Hunk lines were dropped/clipped for this file (per-file cap).
     public let truncated: Bool?
     public var id: String { path }
@@ -1212,12 +1214,21 @@ public struct RemoteThreadSnapshot: Codable, Sendable {
             public struct Entry: Codable, Sendable, Equatable, Identifiable {
                 public let participantId: String?
                 public let provider: String?
+                /// Model id — lets the chip spoof the Ollama display brand
+                /// (Qwen → Alibaba). Optional so older Mac builds still decode.
+                public let model: String?
                 public let role: String?
                 public let status: String?
                 public let reason: String?
                 public let underlyingCode: String?
                 public var id: String {
                     participantId ?? "\(provider ?? "provider")-\(role ?? "role")"
+                }
+
+                /// Provider key for `TWTheme.providerAccent`/`providerLabel` —
+                /// resolves the Ollama brand class when a brand model is set.
+                public var brandProviderKey: String {
+                    OllamaDisplayBrands.providerHueClass(provider: provider, modelId: model)
                 }
             }
         }

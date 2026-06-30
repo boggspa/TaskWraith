@@ -2335,7 +2335,10 @@ struct ParticipantHealthSummaryCard: View {
         let status = entry.status?.lowercased()
         let reachable = status == "ok"
         let provider = entry.provider
-        let providerAccent = TWTheme.providerAccent(provider)
+        // Ollama-backed display brands spoof their upstream name + hue on the
+        // chip (e.g. Alibaba in Alibaba purple), matching the transcript header.
+        let providerAccent = TWTheme.providerAccent(entry.brandProviderKey)
+        let providerName = TWTheme.providerLabel(provider, modelId: entry.model, modelLabel: entry.model)
         let chipAccent = reachable ? providerAccent : TWTheme.statusColor("failed")
         let role = entry.role?.isEmpty == false ? entry.role ?? "Participant" : "Participant"
         return VStack(alignment: .leading, spacing: 3) {
@@ -2348,7 +2351,7 @@ struct ParticipantHealthSummaryCard: View {
                     .lineLimit(1)
                     .foregroundStyle(TWTheme.textPrimary)
                 Spacer(minLength: 4)
-                Text(TWTheme.providerLabel(provider))
+                Text(providerName)
                     .font(.caption2.weight(.semibold))
                     .lineLimit(1)
                     .foregroundStyle(providerAccent)

@@ -4771,6 +4771,33 @@
 .participant-health-chip.provider-ollama {
   color: var(--provider-ollama-color, var(--text-primary));
 }
+/* Ollama-backed display brands — the health chip spoofs the upstream brand
+ * hue (e.g. Qwen → Alibaba) so "Alibaba / Planner" reads in the brand colour,
+ * matching the transcript header + @-mention chips. */
+.participant-health-chip.provider-alibaba {
+  color: var(--provider-alibaba-color, var(--text-primary));
+}
+.participant-health-chip.provider-deep-reinforce {
+  color: var(--provider-deep-reinforce-color, var(--text-primary));
+}
+.participant-health-chip.provider-google {
+  color: var(--provider-google-color, var(--text-primary));
+}
+.participant-health-chip.provider-ibm {
+  color: var(--provider-ibm-color, var(--text-primary));
+}
+.participant-health-chip.provider-liquid {
+  color: var(--provider-liquid-color, var(--text-primary));
+}
+.participant-health-chip.provider-nvidia {
+  color: var(--provider-nvidia-color, var(--text-primary));
+}
+.participant-health-chip.provider-openai {
+  color: var(--provider-openai-color, var(--text-primary));
+}
+.participant-health-chip.provider-openbmb {
+  color: var(--provider-openbmb-color, var(--text-primary));
+}
 
 /* Provider run failure — compact stderr rim bubble surfaced in the
  * transcript when a solo or ensemble participant exits non-zero.

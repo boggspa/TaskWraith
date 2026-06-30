@@ -6235,6 +6235,10 @@ export class EnsembleOrchestrator {
     const entries = results.map(({ participant, result }) => ({
       participantId: participant.id,
       provider: participant.provider,
+      // Carry the model so renderers can spoof the Ollama display brand
+      // (e.g. Qwen → Alibaba) on the health chip, matching the transcript
+      // header + @-mention chips.
+      model: participant.model,
       role: (participant.role || 'Participant').trim(),
       status: result.reachable ? ('ok' as const) : ('unreachable' as const),
       reason: result.reachable ? undefined : result.reason,
