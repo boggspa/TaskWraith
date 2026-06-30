@@ -1198,16 +1198,30 @@ function App(): React.JSX.Element {
   // Shared helper: create a collaboration share for `chatId` and copy the
   // out-of-band invite payload. Used by both "Share this chat" (current chat)
   // and "New Shared Chat" (a freshly-created chat).
+  const ensureChatPersistedForHumanCollaboration = useCallback(
+    async (chatId: string, chatSnapshot?: ChatRecord | null): Promise<void> => {
+      const chat =
+        chatSnapshot ||
+        (currentChat?.appChatId === chatId ? currentChat : null) ||
+        chats.find((candidate) => candidate.appChatId === chatId) ||
+        null
+      if (!chat || typeof window.api.saveChat !== 'function') return
+      await window.api.saveChat(chat)
+    },
+    [chats, currentChat]
+  )
   const shareChatIdAndCopyInvite = useCallback(
     async (
       chatId: string,
       options: {
         mode?: HumanCollaborationShare['mode']
         actionLabel?: 'created' | 'refreshed'
+        chat?: ChatRecord | null
       } = {}
     ): Promise<void> => {
       if (typeof window.api.humanCollaborationCreateShare !== 'function') return
       try {
+        await ensureChatPersistedForHumanCollaboration(chatId, options.chat)
         const result = await window.api.humanCollaborationCreateShare({
           chatId,
           mode: options.mode || 'comments'
@@ -1248,7 +1262,7 @@ function App(): React.JSX.Element {
         window.alert(`Could not create or copy People invite.${detail ? `\n\n${detail}` : ''}`)
       }
     },
-    [refreshHumanCollaborationShares]
+    [ensureChatPersistedForHumanCollaboration, refreshHumanCollaborationShares]
   )
   const currentChatHumanCollaborationShare = useMemo(() => {
     const chatId = currentChat?.appChatId
@@ -6624,7 +6638,7 @@ function App(): React.JSX.Element {
       sharedChat = newChat
     }
     if (sharedChat) {
-      await shareChatIdAndCopyInvite(sharedChat.appChatId)
+      await shareChatIdAndCopyInvite(sharedChat.appChatId, { chat: sharedChat })
     }
   }
 
