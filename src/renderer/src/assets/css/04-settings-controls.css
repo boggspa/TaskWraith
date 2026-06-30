@@ -7182,6 +7182,21 @@ input:disabled, select:disabled, textarea:disabled {
   display: flex;
   align-items: center;
   gap: 10px;
+  /* Wrap rather than clip the provider/model/permission pickers when the window
+     is narrow — the model name used to run off the right edge. */
+  flex-wrap: wrap;
+}
+
+/* Row-level actions live ABOVE the picker row so the model name has full width. */
+.settings-roster-participant-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.settings-roster-participant-actions .settings-roster-remove {
+  margin-left: auto;
 }
 
 .settings-roster-participant-provider {
@@ -7204,7 +7219,6 @@ input:disabled, select:disabled, textarea:disabled {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  margin-left: auto;
   font-size: 12px;
   color: var(--text-secondary);
   cursor: pointer;

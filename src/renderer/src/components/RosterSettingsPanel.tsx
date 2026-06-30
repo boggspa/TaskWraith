@@ -232,17 +232,9 @@ function RosterParticipantRow({
     <li className={`settings-roster-participant${participant.enabled ? '' : ' is-disabled'}`}>
       {rail}
       <div className="settings-roster-participant-body">
-        <div className="settings-roster-participant-top">
-          <ParticipantPickerCluster
-            participant={participant}
-            composerStyle={composerStyle}
-            agenticServices={agenticServices}
-            grokAvailable={grokAvailable}
-            cursorAvailable={cursorAvailable}
-            showApplyToAll={showApplyToAll}
-            onPatch={(patch) => onPatch(participant.id, patch)}
-            onApplyPermissionsToAll={onApplyPermissionsToAll}
-          />
+        {/* Row 1 — row-level actions (kept off the picker row so the model name
+            below has full width and never clips off the window edge). */}
+        <div className="settings-roster-participant-actions">
           <label className="settings-roster-enable">
             <input
               type="checkbox"
@@ -283,6 +275,20 @@ function RosterParticipantRow({
           >
             ✕
           </button>
+        </div>
+
+        {/* Row 2 — provider / model / permissions pickers (full width). */}
+        <div className="settings-roster-participant-top">
+          <ParticipantPickerCluster
+            participant={participant}
+            composerStyle={composerStyle}
+            agenticServices={agenticServices}
+            grokAvailable={grokAvailable}
+            cursorAvailable={cursorAvailable}
+            showApplyToAll={showApplyToAll}
+            onPatch={(patch) => onPatch(participant.id, patch)}
+            onApplyPermissionsToAll={onApplyPermissionsToAll}
+          />
         </div>
 
         <div className="settings-roster-field settings-roster-field-role">
