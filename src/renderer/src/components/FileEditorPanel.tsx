@@ -597,6 +597,7 @@ export function FileEditorPanel({
     () => buffers.find((buffer) => buffer.path === selectedPath) ?? null,
     [buffers, selectedPath]
   )
+  const activeCursorStatus = activeBuffer?.cursorStatus ?? cursorStatus
   const content = activeBuffer?.content ?? ''
   const isDirty = isBufferDirty(activeBuffer)
   const selectedName = fileNameForPath(selectedPath)
@@ -617,7 +618,7 @@ export function FileEditorPanel({
       selectedPath,
       dirtyBufferCount,
       openBufferCount: buffers.length,
-      cursorStatus,
+      cursorStatus: activeCursorStatus,
       gitSnapshot,
       lineWrapEnabled,
       isLoading,
@@ -627,7 +628,7 @@ export function FileEditorPanel({
     })
   }, [
     buffers.length,
-    cursorStatus,
+    activeCursorStatus,
     dirtyBufferCount,
     gitMessage,
     gitSnapshot,
@@ -761,6 +762,7 @@ export function FileEditorPanel({
   ])
 
   const updateCursorStatus = useCallback((update: ViewUpdate) => {
+    const path = selectedPath
     const selection = update.state.selection
     const head = selection.main.head
     const line = update.state.doc.lineAt(head)
@@ -768,12 +770,20 @@ export function FileEditorPanel({
       (total, range) => total + Math.abs(range.to - range.from),
       0
     )
-    setCursorStatus({
+    const nextCursorStatus = {
       line: line.number,
       column: head - line.from + 1,
       selectedChars
-    })
-  }, [])
+    }
+    setCursorStatus(nextCursorStatus)
+    if (!path) return
+    setBuffers((current) =>
+      updateBuffer(current, path, (buffer) => ({
+        ...buffer,
+        cursorStatus: nextCursorStatus
+      }))
+    )
+  }, [selectedPath])
 
   const editorExtensions = useMemo<Extension[]>(
     () => [
@@ -2129,7 +2139,7 @@ export function FileEditorPanel({
           isDirty={isDirty}
           status={status}
           gitMessage={gitMessage}
-          cursorStatus={cursorStatus}
+          cursorStatus={activeCursorStatus}
           selectedGitFile={selectedGitFile}
           selectedHasStagedChanges={selectedHasStagedChanges}
           selectedHasUnstagedChanges={selectedHasUnstagedChanges}

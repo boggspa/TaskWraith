@@ -44,7 +44,14 @@ describe('FileEditorBufferModel', () => {
     expect(isBufferDirty(null)).toBe(false)
   })
 
-  it('replaces a clean buffer with the latest saved result', () => {
+  it('replaces a clean buffer with the latest saved result while keeping cursor status', () => {
+    const current = buffer({
+      cursorStatus: {
+        line: 12,
+        column: 4,
+        selectedChars: 0
+      }
+    })
     const nextSaved = buffer({
       content: 'saved on disk',
       savedContent: 'saved on disk',
@@ -52,7 +59,14 @@ describe('FileEditorBufferModel', () => {
       sizeBytes: 13
     })
 
-    expect(mergeSavedBufferResult(buffer(), nextSaved, 'saved', 'etag-1')).toBe(nextSaved)
+    expect(mergeSavedBufferResult(current, nextSaved, 'saved', 'etag-1')).toEqual({
+      ...nextSaved,
+      cursorStatus: {
+        line: 12,
+        column: 4,
+        selectedChars: 0
+      }
+    })
   })
 
   it('preserves dirty content while refreshing the saved baseline', () => {

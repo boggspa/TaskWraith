@@ -1,4 +1,5 @@
 import type { WorkspaceFileReadResult } from '../../../main/store/types'
+import type { EditorCursorStatus } from './FileEditorStatusBar'
 
 export interface EditorBuffer {
   path: string
@@ -7,6 +8,7 @@ export interface EditorBuffer {
   savedEtag: string | null
   sizeBytes: number
   mtimeMs?: number
+  cursorStatus?: EditorCursorStatus
 }
 
 export const bufferFromReadResult = (result: WorkspaceFileReadResult): EditorBuffer => ({
@@ -29,7 +31,12 @@ export const mergeSavedBufferResult = (
   savedEtagSnapshot: string | null
 ): EditorBuffer => {
   if (currentBuffer.savedEtag !== savedEtagSnapshot) return currentBuffer
-  if (currentBuffer.content === savedContentSnapshot) return nextSavedBuffer
+  if (currentBuffer.content === savedContentSnapshot) {
+    return {
+      ...nextSavedBuffer,
+      cursorStatus: currentBuffer.cursorStatus
+    }
+  }
   return {
     ...currentBuffer,
     savedContent: nextSavedBuffer.savedContent,
