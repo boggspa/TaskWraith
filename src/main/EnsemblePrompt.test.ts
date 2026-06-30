@@ -824,6 +824,62 @@ describe('Ensemble prompt composition', () => {
     expect(prompt).toContain('Other participants may still operate')
   })
 
+  it('adds an ensemble plan-owner rule for the boss participant in plan posture', () => {
+    const bossConfig: EnsembleConfig = { ...ensemble, bossmanParticipantId: 'claude' }
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: chat(),
+      config: bossConfig,
+      participant: bossConfig.participants[0],
+      currentPrompt: 'Plan the implementation.',
+      roundId: 'round-plan'
+    })
+    expect(prompt).toContain('Ensemble Plan owner')
+    expect(prompt).toContain('you are the designated plan synthesizer')
+    expect(prompt).toContain('<proposed_plan>...</proposed_plan>')
+    expect(prompt).toContain('emit exactly one')
+    expect(prompt).not.toContain('do NOT emit a `<proposed_plan>` block')
+  })
+
+  it('prevents non-owner plan-posture participants from emitting proposed plan blocks', () => {
+    const bossConfig: EnsembleConfig = { ...ensemble, bossmanParticipantId: 'claude' }
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: chat(),
+      config: bossConfig,
+      participant: bossConfig.participants[2],
+      currentPrompt: 'Plan the implementation.',
+      roundId: 'round-plan'
+    })
+    expect(prompt).toContain('Ensemble Plan owner')
+    expect(prompt).toContain('Claude / Reviewer is responsible')
+    expect(prompt).toContain('do NOT emit a `<proposed_plan>` block')
+    expect(prompt).not.toContain('you are the designated plan synthesizer')
+  })
+
+  it('falls back to the last ordered participant as the ensemble plan owner', () => {
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: chat(),
+      config: ensemble,
+      participant: ensemble.participants[2],
+      currentPrompt: 'Plan the implementation.',
+      roundId: 'round-plan'
+    })
+    expect(prompt).toContain('you are the designated plan synthesizer')
+    expect(prompt).toContain('Gemini / Researcher')
+    expect(prompt).toContain('<proposed_plan>...</proposed_plan>')
+  })
+
+  it('does not add ensemble plan-owner rules for non-plan-posture participants', () => {
+    const bossConfig: EnsembleConfig = { ...ensemble, bossmanParticipantId: 'claude' }
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: chat(),
+      config: bossConfig,
+      participant: bossConfig.participants[1],
+      currentPrompt: 'Implement.',
+      roundId: 'round-plan'
+    })
+    expect(prompt).not.toContain('Ensemble Plan owner')
+  })
+
   it('1.0.4-AF: inverts the deictic rule and rewrites the workspace stanza in selfReflective mode', () => {
     const reflectiveEnsemble: EnsembleConfig = { ...ensemble, selfReflective: true }
     const prompt = buildEnsembleParticipantPrompt({

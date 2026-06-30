@@ -284,6 +284,44 @@ function formatAuthorityLines(
   ]
 }
 
+function isPlanPostureParticipant(participant: EnsembleParticipant): boolean {
+  return participant.permissionPresetId === 'read_only'
+}
+
+function resolveEnsemblePlanOwnerId(
+  config: EnsembleConfig,
+  orderedParticipants: EnsembleParticipant[]
+): string | null {
+  const bossmanId = sanitizeText(config.bossmanParticipantId)
+  if (
+    bossmanId &&
+    orderedParticipants.some((participant) => participant.id === bossmanId)
+  ) {
+    return bossmanId
+  }
+  return orderedParticipants[orderedParticipants.length - 1]?.id || null
+}
+
+function formatEnsemblePlanOwnerLines(
+  config: EnsembleConfig,
+  orderedParticipants: EnsembleParticipant[],
+  participant: EnsembleParticipant
+): string[] {
+  if (!isPlanPostureParticipant(participant)) return []
+  const planOwnerId = resolveEnsemblePlanOwnerId(config, orderedParticipants)
+  if (!planOwnerId) return []
+  const owner = orderedParticipants.find((candidate) => candidate.id === planOwnerId)
+  const ownerLabel = owner ? formatParticipantScopeName(owner) : planOwnerId
+  if (participant.id === planOwnerId) {
+    return [
+      `- Ensemble Plan owner: you are the designated plan synthesizer (${ownerLabel}). If this turn needs a plan, emit exactly one \`<proposed_plan>...</proposed_plan>\` block that synthesizes the panel's findings; do not execute implementation steps in this plan-posture turn.`
+    ]
+  }
+  return [
+    `- Ensemble Plan owner: ${ownerLabel} is responsible for the single synthesized \`<proposed_plan>...</proposed_plan>\` block. In plan posture, contribute recon/findings/risks only and do NOT emit a \`<proposed_plan>\` block.`
+  ]
+}
+
 function formatPeerRoleScopes(
   orderedParticipants: EnsembleParticipant[],
   currentParticipantId: string
@@ -530,6 +568,11 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
     positionOneIndexed,
     totalParticipants
   )
+  const planOwnerLines = formatEnsemblePlanOwnerLines(
+    input.config,
+    orderedParticipants,
+    input.participant
+  )
   // Threaded into the tagged-transcript builder so every
   // `[Provider / Role #pN]` header carries the same handle the
   // roster + self-label use.
@@ -631,6 +674,7 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
     // Without this note, panelists were confused about whether a Plan
     // Mode invocation gates the entire round or only the speaker.
     '- Plan Mode and Ensemble Mode compose: Plan Mode is a per-participant permission posture (this run only); Ensemble Mode is the orchestration mode. If your approval mode is `plan`, respect the read-only posture even within an ensemble round — produce a plan, do not execute. Other participants may still operate at their default permission preset; their posture is not yours.',
+    ...planOwnerLines,
     // 1.0.4-AF / AR8 — deictic-resolution rule. Three branches:
     //
     //  - Self-reflective (`/discuss` / `/meta`): orientation flips
