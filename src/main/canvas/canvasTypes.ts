@@ -431,8 +431,9 @@ function classifyIPv4(host: string): CanvasHostClass {
  * NAT64 IPv6 in BOTH dotted (`::ffff:169.254.169.254`) and Node's hex-
  * normalized (`::ffff:a9fe:a9fe`) forms — so the metadata IP cannot be smuggled
  * past a naive string check — plus IPv6 loopback/link-local/ULA and known
- * cloud-metadata DNS names. A bare DNS name we cannot resolve here is treated as
- * 'public' (DNS-rebinding to an internal IP is a documented P0 residual).
+ * cloud-metadata DNS names. A bare DNS name we cannot resolve in this pure helper
+ * is treated as 'public'; the web driver layers an async DNS guard on top before
+ * loading and before each request.
  */
 export function classifyCanvasHost(rawHost: string): CanvasHostClass {
   let host = rawHost

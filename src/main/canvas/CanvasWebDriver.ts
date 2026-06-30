@@ -47,6 +47,11 @@ import {
   resolveViewport,
   validateCanvasUrl
 } from './canvasTypes'
+import {
+  assertCanvasDnsAllowed,
+  isCanvasDnsBlocked,
+  type CanvasResolveHost
+} from './CanvasDnsGuard'
 
 const NETWORK_BUFFER = 200
 const CONSOLE_BUFFER = 200
@@ -289,6 +294,8 @@ function normalizeConsoleLevel(level: unknown): CanvasConsoleLevel {
 export interface CanvasWebDriverDeps {
   /** Inject an alternate host surface (e.g. an embedded WebContentsView). */
   createSurface?: (opts: CanvasSurfaceOptions) => CanvasHostSurface
+  /** Injectable DNS seam for SSRF/rebinding tests. Production uses dns.lookup. */
+  resolveHost?: CanvasResolveHost
 }
 
 export class CanvasWebDriver implements CanvasDriver {
@@ -306,11 +313,14 @@ export class CanvasWebDriver implements CanvasDriver {
   // in a finally immediately after, win.webContents.executeJavaScript.
   private evalEgressCut = false
   private readonly createSurface: (opts: CanvasSurfaceOptions) => CanvasHostSurface
+  private readonly resolveHost?: CanvasResolveHost
+  private readonly dnsBlockCache = new Map<string, Promise<boolean>>()
 
   constructor(sessionId: string, deps: CanvasWebDriverDeps = {}) {
     // In-memory partition (no "persist:" prefix) — isolated, ephemeral session.
     this.partition = `canvas-${sessionId}`
     this.createSurface = deps.createSurface ?? createBrowserWindowSurface
+    this.resolveHost = deps.resolveHost
   }
 
   private requireSurface(): CanvasHostSurface {
@@ -327,6 +337,7 @@ export class CanvasWebDriver implements CanvasDriver {
     if (!verdict.ok || !verdict.normalizedUrl) {
       throw new Error(verdict.reason || 'Canvas URL was rejected.')
     }
+    await assertCanvasDnsAllowed(verdict.normalizedUrl, this.allowlist, this.resolveHost)
     const viewport = resolveViewport({
       width: input.viewport?.width,
       height: input.viewport?.height
@@ -438,9 +449,13 @@ export class CanvasWebDriver implements CanvasDriver {
     wr.onBeforeRequest((details, callback) => {
       // Egress-cut during eval takes precedence over the per-host SSRF policy:
       // while a script is running, NOTHING leaves the page.
-      callback({
-        cancel: this.evalEgressCut || isCanvasRequestBlocked(details.url, this.allowlist)
-      })
+      if (this.evalEgressCut || isCanvasRequestBlocked(details.url, this.allowlist)) {
+        callback({ cancel: true })
+        return
+      }
+      this.dnsBlocked(details.url)
+        .then((cancel) => callback({ cancel }))
+        .catch(() => callback({ cancel: true }))
     })
     const push = (entry: CanvasNetworkEntry): void => {
       this.networkById.set(entry.id, entry)
@@ -475,6 +490,27 @@ export class CanvasWebDriver implements CanvasDriver {
         entry.completedAt = new Date().toISOString()
       }
     })
+  }
+
+  private dnsBlocked(url: string): Promise<boolean> {
+    let parsed: URL
+    try {
+      parsed = new URL(url)
+    } catch {
+      return Promise.resolve(false)
+    }
+    if (!parsed.hostname) return Promise.resolve(false)
+    const key = `${parsed.protocol}//${parsed.hostname}|${this.allowlist.join(',')}`
+    let cached = this.dnsBlockCache.get(key)
+    if (!cached) {
+      cached = isCanvasDnsBlocked(url, this.allowlist, this.resolveHost)
+      this.dnsBlockCache.set(key, cached)
+      if (this.dnsBlockCache.size > 256) {
+        const first = this.dnsBlockCache.keys().next().value
+        if (first) this.dnsBlockCache.delete(first)
+      }
+    }
+    return cached
   }
 
   private pushConsole(entry: CanvasConsoleEntry): void {
