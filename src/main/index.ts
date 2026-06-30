@@ -459,7 +459,6 @@ import {
   TRANSCRIPT_MEDIA_MAX_FULL_IMAGE_BYTES,
   TRANSCRIPT_MEDIA_MAX_VIDEO_BYTES,
   maxTranscriptMediaBytesForMime,
-  transcriptMediaAssetPath,
   TranscriptMediaAssetStore
 } from './services/TranscriptMediaAssetStore'
 import {
@@ -861,6 +860,7 @@ import { registerFileIconHandlers } from './ipc/fileIconHandlers'
 import { registerCheckpointHandlers } from './ipc/checkpointHandlers'
 import { registerApnsHandlers } from './ipc/apnsHandlers'
 import { registerImageGenerationHandlers } from './ipc/imageGenerationHandlers'
+import { registerMediaAssetHandlers } from './ipc/mediaAssetHandlers'
 import { getCachedRemoteEnsemblePresets } from './remote/EnsembleRosterPresetsCache'
 import { resolveGeminiCliResumePolicy } from './GeminiSessionPolicy'
 // 1.0.5-EW26 — Kimi compatibility filter (curated + user-
@@ -25875,75 +25875,21 @@ if (isGeminiMcpBridgeProcess) {
       }
     })
 
-    // Content-addressed AV media-asset path resolution. Generated AV refs carry only
-    // a sha256 + mimeType (NO filesystem path); the renderer must NOT resolve paths
-    // itself, so these three channels resolve the absolute path main-side. The
-    // resolver below re-validates the sha256 + jails the path to the asset dir via
-    // transcriptMediaAssetPath (which calls assertSafeSha256 + mediaExtension), then
-    // confirms the file exists before any handler acts. `null` on any rejection.
-    const resolveMediaAssetPath = (input: unknown): string | null => {
-      if (!isRecord(input)) return null
-      const sha256 = typeof input.sha256 === 'string' ? input.sha256.trim() : ''
-      const mimeType = typeof input.mimeType === 'string' ? input.mimeType.trim() : ''
-      if (!sha256 || !mimeType) return null
-      const baseDir = join(app.getPath('userData'), TRANSCRIPT_MEDIA_ASSET_DIR)
-      let assetPath: string
-      try {
-        // Throws on an unsafe sha256 (assertSafeSha256) or unsupported mime — the
-        // path can never escape the asset dir.
-        assetPath = transcriptMediaAssetPath(baseDir, sha256, mimeType)
-      } catch {
-        return null
-      }
-      try {
-        if (!fsSync.statSync(assetPath).isFile()) return null
-      } catch {
-        return null
-      }
-      return assetPath
-    }
-
-    ipcMain.handle('media-asset:reveal', async (_event, input: unknown): Promise<{ ok: boolean }> => {
-      const assetPath = resolveMediaAssetPath(input)
-      if (!assetPath) return { ok: false }
-      try {
-        shell.showItemInFolder(assetPath)
-        return { ok: true }
-      } catch {
-        return { ok: false }
-      }
-    })
-
-    ipcMain.handle('media-asset:get-path', async (_event, input: unknown): Promise<string | null> => {
-      return resolveMediaAssetPath(input)
-    })
-
-    ipcMain.handle(
-      'media-asset:save-as',
-      async (_event, input: unknown): Promise<{ ok: boolean; canceled: boolean }> => {
-        const assetPath = resolveMediaAssetPath(input)
-        if (!assetPath) return { ok: false, canceled: false }
-        if (!mainWindow) return { ok: false, canceled: false }
-        const suggestedName =
-          isRecord(input) && typeof input.suggestedName === 'string' && input.suggestedName.trim()
-            ? input.suggestedName.trim()
-            : basename(assetPath)
-        let chosen: string | undefined
+    registerMediaAssetHandlers({
+      isRecord,
+      getUserDataPath: () => app.getPath('userData'),
+      statIsFile: (assetPath) => {
         try {
-          const result = await dialog.showSaveDialog(mainWindow, { defaultPath: suggestedName })
-          if (result.canceled || !result.filePath) return { ok: false, canceled: true }
-          chosen = result.filePath
+          return fsSync.statSync(assetPath).isFile()
         } catch {
-          return { ok: false, canceled: false }
+          return false
         }
-        try {
-          await fs.copyFile(assetPath, chosen)
-          return { ok: true, canceled: false }
-        } catch {
-          return { ok: false, canceled: false }
-        }
-      }
-    )
+      },
+      getMainWindow: () => mainWindow,
+      showItemInFolder: (assetPath) => shell.showItemInFolder(assetPath),
+      showSaveDialog: (window, options) => dialog.showSaveDialog(window, options),
+      copyFile: (src, dest) => fs.copyFile(src, dest)
+    })
 
     registerImageGenerationHandlers({
       getSettings: () => AppStore.getSettings(),
