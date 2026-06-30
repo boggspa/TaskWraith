@@ -169,6 +169,10 @@ import {
   buildGuestParentTranscriptContext
 } from './lib/guestParticipantContext'
 import {
+  ensembleFanoutPolicyEnabled,
+  normalizeEnsembleFanoutPolicy
+} from './lib/ensembleFanoutPolicy'
+import {
   GLOBAL_USAGE_WORKSPACE_ID,
   getChatProvider,
   getChatScope,
@@ -691,27 +695,6 @@ function runIdFromStreamFlushItemKey(key: string): string {
 
 const FX_BURST_DURATION_MS = 1150
 const CHAT_SWITCH_USAGE_REFRESH_INTERVAL_MS = 30_000
-const ENSEMBLE_FANOUT_POLICIES = new Set<EnsembleFanoutPolicy>([
-  'off',
-  'read_only',
-  'locked_writers_with_boss',
-  'locked_writers_user_preflight'
-])
-
-function normalizeEnsembleFanoutPolicy(
-  value: unknown,
-  legacyEnabled?: boolean
-): EnsembleFanoutPolicy {
-  return ENSEMBLE_FANOUT_POLICIES.has(value as EnsembleFanoutPolicy)
-    ? (value as EnsembleFanoutPolicy)
-    : legacyEnabled
-      ? 'read_only'
-      : 'off'
-}
-
-function ensembleFanoutPolicyEnabled(policy: EnsembleFanoutPolicy): boolean {
-  return policy !== 'off'
-}
 
 /**
  * Lifetime of the post-dismissal pointer animation on the sidebar
