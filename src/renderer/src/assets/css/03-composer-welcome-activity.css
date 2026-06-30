@@ -8972,6 +8972,22 @@
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
 }
 
+.diff-toolbar-count {
+  flex: 0 0 auto;
+  min-height: 24px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 8px;
+  border: 1px solid color-mix(in srgb, var(--panel-border) 78%, transparent);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--panel-elevated-bg) 62%, transparent);
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 .diff-stage-counts {
   min-width: 0;
   display: flex;
@@ -9019,6 +9035,38 @@
 
 .diff-stage-count-chip[data-stage-group="untracked"] {
   border-color: color-mix(in srgb, var(--accent) 34%, var(--panel-border));
+}
+
+.diff-noise-toggle {
+  flex: 0 0 auto;
+  min-height: 24px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 7px;
+  border: 1px solid color-mix(in srgb, var(--panel-border) 72%, transparent);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--panel-elevated-bg) 54%, transparent);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: var(--font-size-xs);
+  white-space: nowrap;
+}
+
+.diff-noise-toggle:hover {
+  color: var(--text-primary);
+  border-color: color-mix(in srgb, var(--accent) 32%, var(--panel-border));
+}
+
+.diff-noise-checkbox {
+  width: 12px;
+  height: 12px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.diff-noise-toggle-text {
+  line-height: 1;
 }
 
 .diff-view-toggle {

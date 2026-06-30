@@ -43,7 +43,7 @@ export function DiffToolbar({
 
   return (
     <div className="diff-studio-toolbar">
-      <span style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-secondary)' }}>
+      <span className="diff-toolbar-count">
         {changedCount} of {totalCount} changed
       </span>
       {stageChips.length > 0 && (
@@ -75,22 +75,14 @@ export function DiffToolbar({
         onChange={(event) => onFileFilterChange(event.target.value)}
         placeholder="Filter files"
       />
-      <label
-        style={{
-          fontSize: 'var(--font-size-xs)',
-          display: 'flex',
-          alignItems: 'center',
-          gap: '4px',
-          color: 'var(--text-secondary)',
-          cursor: 'pointer'
-        }}
-      >
+      <label className="diff-noise-toggle">
         <input
+          className="diff-noise-checkbox"
           type="checkbox"
           checked={hideNoise}
           onChange={(event) => onHideNoiseChange(event.target.checked)}
         />
-        Hide noise
+        <span className="diff-noise-toggle-text">Hide noise</span>
       </label>
       <div className="diff-view-toggle" role="group" aria-label="Diff view mode">
         <button

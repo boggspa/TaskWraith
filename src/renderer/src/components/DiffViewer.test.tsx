@@ -257,6 +257,7 @@ describe('DiffToolbar', () => {
     )
 
     expect(html).toContain('3 of 5 changed')
+    expect(html).toContain('class="diff-toolbar-count"')
     expect(html).toContain('aria-label="Visible change groups"')
     expect(html).toContain('data-stage-group="mixed"')
     expect(html).toContain('data-stage-group="unstaged"')
@@ -264,6 +265,8 @@ describe('DiffToolbar', () => {
     expect(html).not.toContain('data-stage-group="other"')
     expect(html).toContain('aria-label="Filter changed files"')
     expect(html).toContain('value="src"')
+    expect(html).toContain('class="diff-noise-toggle"')
+    expect(html).toContain('class="diff-noise-checkbox"')
     expect(html).toMatch(/type="checkbox"[^>]*checked/)
     expect(html).toContain('role="group" aria-label="Diff view mode"')
     expect(html).toContain('aria-pressed="false"')
