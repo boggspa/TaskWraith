@@ -1,5 +1,6 @@
 import type { ComponentProps, Dispatch, SetStateAction } from 'react'
 import type { AppSettings } from '../../../../main/store/types'
+import type { AppearanceState } from '../../hooks/useAppearance'
 import type { PanelPresence } from '../../hooks/usePanelPresence'
 import type { SettingsPanelUpdate } from '../../lib/settingsPanelUpdate'
 
@@ -13,6 +14,37 @@ type SidebarProviderRates = NonNullable<SidebarModelUsageApiSpend['providerRates
 type ResizeHandleProps = ComponentProps<'div'>
 type UpdateStatusState = ReturnType<typeof import('../../hooks/useUpdateStatus').useUpdateStatus>
 type SettingsPanelUpdateHandler = (next: SettingsPanelUpdate) => void
+type AppearanceUpdateHandler = (partial: Partial<AppearanceState>) => void
+
+type MainAppLayoutSettingsTakeoverAppearanceProps = Pick<
+  AppearanceState,
+  | 'mode'
+  | 'visualEffectStyle'
+  | 'themeAppearance'
+  | 'themeCornerStyle'
+  | 'themeAccentStyle'
+  | 'toolIconAccent'
+  | 'appIconVariant'
+  | 'userBubbleColor'
+  | 'promptSurfaceStyle'
+  | 'composerStyle'
+  | 'transcriptFontFamily'
+  | 'composerFontFamily'
+  | 'reduceTransparency'
+  | 'reduceMotion'
+  | 'compactDensity'
+  | 'liveActivityViewport'
+  | 'sidebarOpacity'
+  | 'mainPaneOpacity'
+  | 'funFxEnabled'
+  | 'funFxMode'
+  | 'advancedFx'
+>
+
+type MainAppLayoutAppearanceProps = MainAppLayoutSettingsTakeoverAppearanceProps &
+  Pick<AppearanceState, 'showInspector' | 'inspectorWidth'> & {
+    update: AppearanceUpdateHandler
+  }
 
 type MainAppLayoutSidebarProps = {
   activeSidebarChatId: SidebarProps['activeChatId']
@@ -119,7 +151,7 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   appMainStyle: any
   appTranscriptRef: any
   appVersion: MainAppLayoutSidebarProps['appVersion']
-  appearance: any
+  appearance: MainAppLayoutAppearanceProps
   approvalMode: any
   approvalTimeouts: any
   auraProviderKey: any
