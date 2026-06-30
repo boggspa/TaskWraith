@@ -10153,13 +10153,20 @@ button.diff-file-row {
 
 .diff-lines-column-header.inline {
   display: grid;
-  grid-template-columns: 4ch 4ch minmax(0, 1fr);
+  grid-template-columns:
+    var(--diff-old-gutter-width, 4ch)
+    var(--diff-new-gutter-width, 4ch)
+    minmax(0, 1fr);
   min-width: max-content;
 }
 
 .diff-lines-column-header.split {
   display: grid;
-  grid-template-columns: 4ch minmax(320px, 1fr) 4ch minmax(320px, 1fr);
+  grid-template-columns:
+    var(--diff-old-gutter-width, 4ch)
+    minmax(320px, 1fr)
+    var(--diff-new-gutter-width, 4ch)
+    minmax(320px, 1fr);
   min-width: 780px;
 }
 
@@ -10367,7 +10374,10 @@ button.diff-file-row {
 
 .diff-line {
   display: grid;
-  grid-template-columns: 4ch 4ch minmax(0, 1fr);
+  grid-template-columns:
+    var(--diff-old-gutter-width, 4ch)
+    var(--diff-new-gutter-width, 4ch)
+    minmax(0, 1fr);
   height: 22px;
   box-sizing: border-box;
   min-width: max-content;
@@ -10391,7 +10401,11 @@ button.diff-file-row {
 
 .diff-line-split {
   display: grid;
-  grid-template-columns: 4ch minmax(320px, 1fr) 4ch minmax(320px, 1fr);
+  grid-template-columns:
+    var(--diff-old-gutter-width, 4ch)
+    minmax(320px, 1fr)
+    var(--diff-new-gutter-width, 4ch)
+    minmax(320px, 1fr);
   height: 22px;
   box-sizing: border-box;
   min-width: 780px;

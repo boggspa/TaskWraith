@@ -629,6 +629,34 @@ describe('DiffDetail', () => {
     expect(html).toContain('detail line')
   })
 
+  it('widens diff gutters for high line numbers', () => {
+    const html = renderToStaticMarkup(
+      <DiffDetail
+        summary={makeSummary(
+          [
+            'diff --git a/src/high-lines.ts b/src/high-lines.ts',
+            'index 1111111..2222222 100644',
+            '--- a/src/high-lines.ts',
+            '+++ b/src/high-lines.ts',
+            '@@ -100000,1 +100000,1 @@',
+            '-old high line',
+            '+new high line'
+          ].join('\n'),
+          {
+            path: 'src/high-lines.ts',
+            additions: 1,
+            deletions: 1
+          }
+        )}
+        viewMode="inline"
+      />
+    )
+
+    expect(html).toContain('--diff-old-gutter-width:8ch')
+    expect(html).toContain('--diff-new-gutter-width:8ch')
+    expect(html).toContain('100000')
+  })
+
   it('renders text previews with a cap notice instead of the full large body', () => {
     const largeText = `${'preview line\n'.repeat(2100)}unique-tail-marker`
     const html = renderToStaticMarkup(

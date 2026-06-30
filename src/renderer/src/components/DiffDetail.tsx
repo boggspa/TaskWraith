@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import type { GitFileStatus } from '../../../main/services/GitService'
 import type { DiffFileSummary, DiffPreviewKind } from '../../../main/store/types'
 import { useCopyFeedback } from '../lib/useCopyFeedback'
@@ -61,6 +61,11 @@ export interface DiffTextPreviewExcerpt {
   truncated: boolean
 }
 
+export interface DiffLineGutterWidths {
+  new: string
+  old: string
+}
+
 export function diffTextPreviewExcerpt(
   text: string,
   limit = DIFF_TEXT_PREVIEW_CHAR_LIMIT
@@ -83,6 +88,29 @@ export const diffDetailPathDisplay = (path: string): { name: string; parent: str
   return {
     name,
     parent: parts.join('/')
+  }
+}
+
+export const diffLineGutterWidths = (
+  parsed: ParsedUnifiedDiff | null
+): DiffLineGutterWidths => {
+  let oldDigits = 1
+  let newDigits = 1
+
+  parsed?.sections.forEach((section) => {
+    section.lines.forEach((line) => {
+      if (line.oldLine !== null) {
+        oldDigits = Math.max(oldDigits, String(line.oldLine).length)
+      }
+      if (line.newLine !== null) {
+        newDigits = Math.max(newDigits, String(line.newLine).length)
+      }
+    })
+  })
+
+  return {
+    old: `${Math.max(4, oldDigits + 2)}ch`,
+    new: `${Math.max(4, newDigits + 2)}ch`
   }
 }
 
@@ -358,6 +386,11 @@ function DiffLines({
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const [viewport, setViewport] = useState({ height: 0, scrollTop: 0 })
   const rows = useMemo(() => (parsed ? buildDiffRows(parsed) : []), [parsed])
+  const gutterWidths = useMemo(() => diffLineGutterWidths(parsed), [parsed])
+  const gutterStyle = {
+    '--diff-new-gutter-width': gutterWidths.new,
+    '--diff-old-gutter-width': gutterWidths.old
+  } as CSSProperties
 
   useEffect(() => {
     const scrollElement = scrollRef.current
@@ -432,7 +465,7 @@ function DiffLines({
   }
 
   return (
-    <div className="diff-lines-root">
+    <div className="diff-lines-root" style={gutterStyle}>
       {sourceTruncated && (
         <div className="diff-lines-truncated diff-lines-source-truncated" role="note">
           <span>
