@@ -5,10 +5,15 @@ import {
   buildEditorWorkbenchNavMeta,
   buildInitialWorkbenchOpenState,
   buildWorkbenchBreadcrumbs,
+  clampWorkbenchSplitRatio,
   isWorkbenchPaneHidden,
+  resolveWorkbenchSplitResizeRatio,
   resolveInitialWorkbenchView,
   resolveWorkbenchKeyboardCommand,
   TaskWraithWorkbench,
+  WORKBENCH_SPLIT_DEFAULT_RATIO,
+  WORKBENCH_SPLIT_MAX_RATIO,
+  WORKBENCH_SPLIT_MIN_RATIO,
   workbenchOpenRequestTargets,
   workbenchOpenRequestKey
 } from './TaskWraithWorkbench'
@@ -189,6 +194,14 @@ describe('TaskWraithWorkbench shell', () => {
     )
 
     expect(html).toContain('class="workbench-stage split"')
+    expect(html).toContain('style="--workbench-editor-split:52%"')
+    expect(html).toContain('class="workbench-split-resizer"')
+    expect(html).toContain('role="separator"')
+    expect(html).toContain('aria-label="Resize editor and diff panes"')
+    expect(html).toContain('aria-orientation="vertical"')
+    expect(html).toContain(`aria-valuemin="${WORKBENCH_SPLIT_MIN_RATIO}"`)
+    expect(html).toContain(`aria-valuemax="${WORKBENCH_SPLIT_MAX_RATIO}"`)
+    expect(html).toContain(`aria-valuenow="${WORKBENCH_SPLIT_DEFAULT_RATIO}"`)
     expect(html).toContain('id="workbench-split-tab"')
     expect(html).toContain('aria-selected="true"')
     expect(html).toContain('aria-labelledby="workbench-split-tab"')
@@ -198,6 +211,53 @@ describe('TaskWraithWorkbench shell', () => {
     expect(html).toContain('aria-label="Open src/main/index.ts in editor"')
     expect(html).not.toContain('workbench-editor-pane" role="tabpanel" id="workbench-editor-panel" hidden')
     expect(html).not.toContain('workbench-diff-pane" role="tabpanel" id="workbench-diff-panel" hidden')
+  })
+
+  it('bounds Workbench split pane ratios', () => {
+    expect(clampWorkbenchSplitRatio(Number.NaN)).toBe(WORKBENCH_SPLIT_DEFAULT_RATIO)
+    expect(clampWorkbenchSplitRatio(10)).toBe(WORKBENCH_SPLIT_MIN_RATIO)
+    expect(clampWorkbenchSplitRatio(52.4)).toBe(52)
+    expect(clampWorkbenchSplitRatio(52.6)).toBe(53)
+    expect(clampWorkbenchSplitRatio(90)).toBe(WORKBENCH_SPLIT_MAX_RATIO)
+  })
+
+  it('maps split separator keyboard controls to bounded ratios', () => {
+    const baseEvent = {
+      altKey: false,
+      ctrlKey: false,
+      defaultPrevented: false,
+      key: '',
+      metaKey: false,
+      shiftKey: false
+    }
+
+    expect(resolveWorkbenchSplitResizeRatio({ ...baseEvent, key: 'ArrowLeft' }, 52)).toBe(48)
+    expect(resolveWorkbenchSplitResizeRatio({ ...baseEvent, key: 'ArrowRight' }, 52)).toBe(56)
+    expect(
+      resolveWorkbenchSplitResizeRatio({ ...baseEvent, key: 'ArrowRight', shiftKey: true }, 52)
+    ).toBe(62)
+    expect(resolveWorkbenchSplitResizeRatio({ ...baseEvent, key: 'Home' }, 52)).toBe(
+      WORKBENCH_SPLIT_MIN_RATIO
+    )
+    expect(resolveWorkbenchSplitResizeRatio({ ...baseEvent, key: 'End' }, 52)).toBe(
+      WORKBENCH_SPLIT_MAX_RATIO
+    )
+    expect(resolveWorkbenchSplitResizeRatio({ ...baseEvent, key: 'ArrowLeft' }, 10)).toBe(
+      WORKBENCH_SPLIT_MIN_RATIO
+    )
+    expect(resolveWorkbenchSplitResizeRatio({ ...baseEvent, key: 'ArrowRight' }, 90)).toBe(
+      WORKBENCH_SPLIT_MAX_RATIO
+    )
+    expect(resolveWorkbenchSplitResizeRatio({ ...baseEvent, key: 'x' }, 52)).toBeNull()
+    expect(
+      resolveWorkbenchSplitResizeRatio({ ...baseEvent, key: 'ArrowRight', metaKey: true }, 52)
+    ).toBeNull()
+    expect(
+      resolveWorkbenchSplitResizeRatio(
+        { ...baseEvent, key: 'ArrowRight', defaultPrevented: true },
+        52
+      )
+    ).toBeNull()
   })
 
   it('maps Workbench keyboard shortcuts to scoped commands', () => {

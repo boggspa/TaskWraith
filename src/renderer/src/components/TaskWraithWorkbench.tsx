@@ -4,7 +4,9 @@ import {
   useMemo,
   useRef,
   useState,
-  type KeyboardEvent as ReactKeyboardEvent
+  type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent
 } from 'react'
 import type { GitRepositorySnapshot } from '../../../main/services/GitService'
 import { DiffViewer } from './DiffViewer'
@@ -30,6 +32,12 @@ export interface WorkbenchOpenRequest extends EditorOpenRequest {
 }
 
 const WORKBENCH_VIEWS: WorkbenchView[] = ['editor', 'diff', 'split']
+const WORKBENCH_SPLIT_RATIO_STORAGE_KEY_PREFIX = 'taskwraith.workbenchSplitRatio'
+export const WORKBENCH_SPLIT_DEFAULT_RATIO = 52
+export const WORKBENCH_SPLIT_MIN_RATIO = 30
+export const WORKBENCH_SPLIT_MAX_RATIO = 72
+export const WORKBENCH_SPLIT_KEYBOARD_STEP = 4
+export const WORKBENCH_SPLIT_KEYBOARD_LARGE_STEP = 10
 
 const DEFAULT_EDITOR_STATE: FileEditorPanelState = {
   selectedPath: '',
@@ -165,6 +173,11 @@ type WorkbenchKeyEventLike = Pick<
   'altKey' | 'ctrlKey' | 'defaultPrevented' | 'key' | 'metaKey' | 'shiftKey'
 >
 
+type WorkbenchSplitResizeKeyEventLike = Pick<
+  KeyboardEvent,
+  'altKey' | 'ctrlKey' | 'defaultPrevented' | 'key' | 'metaKey' | 'shiftKey'
+>
+
 export type WorkbenchKeyboardCommand =
   | { type: 'editor-command'; kind: FileEditorCommandKind }
   | { type: 'select-view'; view: WorkbenchView; status: string }
@@ -225,6 +238,63 @@ export function shouldSuppressWorkbenchKeyboardShortcut(target: EventTarget | nu
   return tagName === 'input' || tagName === 'textarea' || tagName === 'select'
 }
 
+export function clampWorkbenchSplitRatio(value: number): number {
+  if (!Number.isFinite(value)) return WORKBENCH_SPLIT_DEFAULT_RATIO
+  return Math.max(
+    WORKBENCH_SPLIT_MIN_RATIO,
+    Math.min(WORKBENCH_SPLIT_MAX_RATIO, Math.round(value))
+  )
+}
+
+export function resolveWorkbenchSplitResizeRatio(
+  event: WorkbenchSplitResizeKeyEventLike,
+  currentRatio: number
+): number | null {
+  if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey) return null
+  const ratio = clampWorkbenchSplitRatio(currentRatio)
+  const step = event.shiftKey ? WORKBENCH_SPLIT_KEYBOARD_LARGE_STEP : WORKBENCH_SPLIT_KEYBOARD_STEP
+  switch (event.key) {
+    case 'ArrowLeft':
+    case 'ArrowUp':
+      return clampWorkbenchSplitRatio(ratio - step)
+    case 'ArrowRight':
+    case 'ArrowDown':
+      return clampWorkbenchSplitRatio(ratio + step)
+    case 'Home':
+      return WORKBENCH_SPLIT_MIN_RATIO
+    case 'End':
+      return WORKBENCH_SPLIT_MAX_RATIO
+    default:
+      return null
+  }
+}
+
+const workbenchSplitRatioStorageKey = (workspacePath: string): string =>
+  `${WORKBENCH_SPLIT_RATIO_STORAGE_KEY_PREFIX}.${workspacePath || 'default'}`
+
+const readStoredWorkbenchSplitRatio = (workspacePath: string): number => {
+  if (typeof window === 'undefined') return WORKBENCH_SPLIT_DEFAULT_RATIO
+  try {
+    const stored = window.localStorage?.getItem(workbenchSplitRatioStorageKey(workspacePath))
+    const parsed = stored ? Number(stored) : WORKBENCH_SPLIT_DEFAULT_RATIO
+    return clampWorkbenchSplitRatio(parsed)
+  } catch {
+    return WORKBENCH_SPLIT_DEFAULT_RATIO
+  }
+}
+
+const storeWorkbenchSplitRatio = (workspacePath: string, ratio: number): void => {
+  if (typeof window === 'undefined') return
+  try {
+    window.localStorage?.setItem(
+      workbenchSplitRatioStorageKey(workspacePath),
+      String(clampWorkbenchSplitRatio(ratio))
+    )
+  } catch {
+    // Local split sizing is best-effort.
+  }
+}
+
 function WorkbenchNavIcon({ view }: { view: WorkbenchView }) {
   return (
     <span className="workbench-nav-icon" aria-hidden="true">
@@ -270,13 +340,21 @@ export function TaskWraithWorkbench({
     initialOpenState.diffSelectionRequest
   )
   const [diffSelectedPath, setDiffSelectedPath] = useState(initialOpenState.diffSelectedPath)
+  const [splitRatio, setSplitRatio] = useState(() => readStoredWorkbenchSplitRatio(workspacePath))
   const [editorState, setEditorState] = useState<FileEditorPanelState>(DEFAULT_EDITOR_STATE)
   const [diffActionPath, setDiffActionPath] = useState('')
   const diffRefreshSeqRef = useRef(0)
   const handledOpenRequestKeyRef = useRef(initialOpenState.handledOpenRequestKey)
+  const stageRef = useRef<HTMLDivElement | null>(null)
   const editorNavRef = useRef<HTMLButtonElement | null>(null)
   const diffNavRef = useRef<HTMLButtonElement | null>(null)
   const splitNavRef = useRef<HTMLButtonElement | null>(null)
+  const splitStageStyle =
+    activeView === 'split'
+      ? ({
+          '--workbench-editor-split': `${splitRatio}%`
+        } as CSSProperties)
+      : undefined
 
   const breadcrumbs = useMemo(
     () =>
@@ -345,6 +423,20 @@ export function TaskWraithWorkbench({
           : splitNavRef.current
     navButton?.focus()
   }, [])
+
+  const updateSplitRatio = useCallback(
+    (ratio: number) => {
+      const nextRatio = clampWorkbenchSplitRatio(ratio)
+      setSplitRatio(nextRatio)
+      storeWorkbenchSplitRatio(workspacePath, nextRatio)
+      return nextRatio
+    },
+    [workspacePath]
+  )
+
+  useEffect(() => {
+    setSplitRatio(readStoredWorkbenchSplitRatio(workspacePath))
+  }, [workspacePath])
 
   const selectWorkbenchView = useCallback(
     (view: WorkbenchView, options?: { focusNav?: boolean }) => {
@@ -530,6 +622,51 @@ export function TaskWraithWorkbench({
       }
     },
     [selectWorkbenchView]
+  )
+
+  const handleSplitResizeKeyDown = useCallback(
+    (event: ReactKeyboardEvent<HTMLDivElement>) => {
+      const nextRatio = resolveWorkbenchSplitResizeRatio(event, splitRatio)
+      if (nextRatio === null) return
+      event.preventDefault()
+      event.stopPropagation()
+      updateSplitRatio(nextRatio)
+      setStatus(`Editor pane ${nextRatio}%`)
+    },
+    [splitRatio, updateSplitRatio]
+  )
+
+  const handleSplitResizePointerDown = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      if (activeView !== 'split') return
+      const stageElement = stageRef.current
+      if (!stageElement) return
+      event.preventDefault()
+      event.stopPropagation()
+      const pointerId = event.pointerId
+      event.currentTarget.setPointerCapture?.(pointerId)
+      let latestRatio = splitRatio
+      const updateFromClientX = (clientX: number) => {
+        const rect = stageElement.getBoundingClientRect()
+        if (rect.width <= 0) return
+        latestRatio = updateSplitRatio(((clientX - rect.left) / rect.width) * 100)
+      }
+      updateFromClientX(event.clientX)
+      const handlePointerMove = (moveEvent: PointerEvent) => {
+        moveEvent.preventDefault()
+        updateFromClientX(moveEvent.clientX)
+      }
+      const finishPointerResize = () => {
+        window.removeEventListener('pointermove', handlePointerMove)
+        window.removeEventListener('pointerup', finishPointerResize)
+        window.removeEventListener('pointercancel', finishPointerResize)
+        setStatus(`Editor pane ${latestRatio}%`)
+      }
+      window.addEventListener('pointermove', handlePointerMove)
+      window.addEventListener('pointerup', finishPointerResize)
+      window.addEventListener('pointercancel', finishPointerResize)
+    },
+    [activeView, splitRatio, updateSplitRatio]
   )
 
   useEffect(() => {
@@ -813,7 +950,11 @@ export function TaskWraithWorkbench({
             </button>
           </div>
         </div>
-        <div className={`workbench-stage ${activeView === 'split' ? 'split' : ''}`}>
+        <div
+          ref={stageRef}
+          className={`workbench-stage ${activeView === 'split' ? 'split' : ''}`}
+          style={splitStageStyle}
+        >
           <div
             className="workbench-pane workbench-editor-pane"
             role="tabpanel"
@@ -831,6 +972,24 @@ export function TaskWraithWorkbench({
               onEditorStateChange={setEditorState}
             />
           </div>
+          {activeView === 'split' && (
+            <div
+              className="workbench-split-resizer"
+              role="separator"
+              aria-label="Resize editor and diff panes"
+              aria-orientation="vertical"
+              aria-valuemin={WORKBENCH_SPLIT_MIN_RATIO}
+              aria-valuemax={WORKBENCH_SPLIT_MAX_RATIO}
+              aria-valuenow={splitRatio}
+              aria-valuetext={`Editor pane ${splitRatio}%`}
+              tabIndex={0}
+              title="Drag to resize split panes"
+              onKeyDown={handleSplitResizeKeyDown}
+              onPointerDown={handleSplitResizePointerDown}
+            >
+              <span aria-hidden="true" />
+            </div>
+          )}
           <div
             className="workbench-pane workbench-diff-pane"
             role="tabpanel"

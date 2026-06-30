@@ -9571,11 +9571,46 @@
 
 .workbench-stage.split {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 0.9fr);
+  grid-template-columns:
+    minmax(260px, var(--workbench-editor-split, 52%))
+    10px
+    minmax(280px, 1fr);
 }
 
 .workbench-stage.split .workbench-editor-pane {
-  border-right: 1px solid var(--panel-border);
+  border-right: 0;
+}
+
+.workbench-split-resizer {
+  width: 10px;
+  min-width: 10px;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  align-self: stretch;
+  border-inline: 1px solid color-mix(in srgb, var(--panel-border) 80%, transparent);
+  background: color-mix(in srgb, var(--panel-elevated-bg) 52%, transparent);
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.workbench-split-resizer > span {
+  width: 2px;
+  height: 38px;
+  border-radius: 99px;
+  background: color-mix(in srgb, var(--text-muted) 46%, transparent);
+}
+
+.workbench-split-resizer:hover,
+.workbench-split-resizer:focus-visible {
+  outline: 0;
+  border-color: color-mix(in srgb, var(--accent) 46%, var(--panel-border));
+  background: color-mix(in srgb, var(--accent) 10%, var(--panel-elevated-bg));
+}
+
+.workbench-split-resizer:hover > span,
+.workbench-split-resizer:focus-visible > span {
+  background: color-mix(in srgb, var(--accent) 68%, var(--text-primary));
 }
 
 .workbench-stage.split .app-file-editor {

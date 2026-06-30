@@ -2805,6 +2805,25 @@
   box-shadow: inset 1px 0 0 var(--popout-rim);
 }
 
+.popout-root[data-popout-family="workspace"] .workbench-split-resizer {
+  border-color: var(--popout-rim);
+  background: var(--popout-toolbar-bg);
+  box-shadow:
+    inset 1px 0 0 var(--popout-top-rim),
+    inset -1px 0 0 color-mix(in srgb, #000 14%, transparent);
+}
+
+.popout-root[data-popout-family="workspace"] .workbench-split-resizer > span {
+  background: var(--text-muted);
+}
+
+.popout-root[data-popout-family="workspace"]
+  :is(.workbench-split-resizer:hover, .workbench-split-resizer:focus-visible) {
+  border-color: var(--popout-row-selected-rim);
+  background: color-mix(in srgb, var(--accent) 11%, var(--popout-toolbar-bg));
+  box-shadow: inset 0 0 0 1px var(--popout-row-selected-rim);
+}
+
 .popout-root[data-popout-family="workspace"]
   :is(.workbench-breadcrumbs, .workbench-status, .workbench-bottom-bar > span) {
   color: var(--text-muted);
