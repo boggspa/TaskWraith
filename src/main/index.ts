@@ -866,6 +866,7 @@ import { registerExternalPathGrantHandlers } from './ipc/externalPathGrantHandle
 import { registerGitHandlers } from './ipc/gitHandlers'
 import { registerClaudeAuthHandlers } from './ipc/claudeAuthHandlers'
 import { registerKimiAuthHandlers } from './ipc/kimiAuthHandlers'
+import { registerGeminiAuthHandlers } from './ipc/geminiAuthHandlers'
 import { getCachedRemoteEnsemblePresets } from './remote/EnsembleRosterPresetsCache'
 import { resolveGeminiCliResumePolicy } from './GeminiSessionPolicy'
 // 1.0.5-EW26 — Kimi compatibility filter (curated + user-
@@ -26131,39 +26132,17 @@ if (isGeminiMcpBridgeProcess) {
       readResolvedCliVersion
     })
 
-    ipcMain.handle('get-gemini-auth-status', async () => {
-      return getGeminiAuthStatusSnapshot()
-    })
-
-    ipcMain.handle('list-gemini-auth-profiles', async () => {
-      const defaultProfileId = getDefaultGeminiAuthProfileId()
-      return getGeminiAuthProfiles().map((profile) =>
-        summarizeGeminiAuthProfile(profile, defaultProfileId)
-      )
-    })
-
-    ipcMain.handle('save-gemini-auth-profile', async (_, profile: unknown) => {
-      return saveGeminiAuthProfile(profile)
-    })
-
-    ipcMain.handle('delete-gemini-auth-profile', async (_, profileId: unknown) => {
-      return deleteGeminiAuthProfile(profileId)
-    })
-
-    ipcMain.handle('set-default-gemini-auth-profile', async (_, profileId: unknown) => {
-      return setDefaultGeminiAuthProfile(profileId)
-    })
-
-    ipcMain.handle('start-gemini-oauth-login', async (_, input: unknown) => {
-      return startGeminiOAuthLogin(input)
-    })
-
-    ipcMain.handle('get-gemini-oauth-login-status', async (_, profileId: unknown) => {
-      return getGeminiOAuthLoginStatus(profileId)
-    })
-
-    ipcMain.handle('cancel-gemini-oauth-login', async (_, profileId: unknown) => {
-      return cancelGeminiOAuthLogin(profileId)
+    registerGeminiAuthHandlers({
+      getGeminiAuthStatusSnapshot,
+      getDefaultGeminiAuthProfileId,
+      getGeminiAuthProfiles,
+      summarizeGeminiAuthProfile,
+      saveGeminiAuthProfile,
+      deleteGeminiAuthProfile,
+      setDefaultGeminiAuthProfile,
+      startGeminiOAuthLogin,
+      getGeminiOAuthLoginStatus,
+      cancelGeminiOAuthLogin
     })
 
     ipcMain.handle('get-agent-mcp-status', async (_, provider: ProviderId) => {
