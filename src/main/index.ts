@@ -869,6 +869,7 @@ import { registerKimiAuthHandlers } from './ipc/kimiAuthHandlers'
 import { registerGeminiAuthHandlers } from './ipc/geminiAuthHandlers'
 import { registerProviderMetadataHandlers } from './ipc/providerMetadataHandlers'
 import { registerProviderTerminalHandlers } from './ipc/providerTerminalHandlers'
+import { registerCodexThreadHandlers } from './ipc/codexThreadHandlers'
 import { getCachedRemoteEnsemblePresets } from './remote/EnsembleRosterPresetsCache'
 import { resolveGeminiCliResumePolicy } from './GeminiSessionPolicy'
 // 1.0.5-EW26 — Kimi compatibility filter (curated + user-
@@ -26164,71 +26165,11 @@ if (isGeminiMcpBridgeProcess) {
       getPlatform: () => process.platform
     })
 
-    ipcMain.handle('list-agent-threads', async (_, provider: ProviderId, params: any = {}) => {
-      if (provider !== 'codex') {
-        return { data: [], nextCursor: null }
-      }
-      const client = getCodexClient()
-      await client.ensureStarted(app.getVersion())
-      return client.request(
-        'thread/list',
-        {
-          limit: params.limit || 40,
-          cursor: params.cursor || null,
-          cwd: params.cwd || null,
-          archived: Boolean(params.archived),
-          searchTerm: params.searchTerm || null,
-          sortKey: params.sortKey || 'updated_at',
-          sortDirection: params.sortDirection || 'desc'
-        },
-        20_000
-      )
+    registerCodexThreadHandlers({
+      getCodexClient: () => getCodexClient(),
+      getAppVersion: () => app.getVersion(),
+      providerDisplayName
     })
-
-    ipcMain.handle(
-      'fork-agent-thread',
-      async (_, provider: ProviderId, threadId: string, params: any = {}) => {
-        if (provider !== 'codex') {
-          throw new Error(
-            `Thread fork is not available for ${providerDisplayName(provider)} in this version.`
-          )
-        }
-        const client = getCodexClient()
-        await client.ensureStarted(app.getVersion())
-        return client.request(
-          'thread/fork',
-          {
-            threadId,
-            excludeTurns: Boolean(params.excludeTurns),
-            persistExtendedHistory: true,
-            ...(params.cwd ? { cwd: params.cwd } : {}),
-            ...(params.model ? { model: params.model } : {})
-          },
-          30_000
-        )
-      }
-    )
-
-    ipcMain.handle(
-      'rollback-agent-thread',
-      async (_, provider: ProviderId, threadId: string, numTurns: number = 1) => {
-        if (provider !== 'codex') {
-          throw new Error(
-            `Thread rollback is not available for ${providerDisplayName(provider)} in this version. File rollback still belongs to Diff Studio/git workflow.`
-          )
-        }
-        const client = getCodexClient()
-        await client.ensureStarted(app.getVersion())
-        return client.request(
-          'thread/rollback',
-          {
-            threadId,
-            numTurns: Math.max(1, Math.trunc(Number(numTurns) || 1))
-          },
-          30_000
-        )
-      }
-    )
 
     ipcMain.handle(
       'start-agent-review',
