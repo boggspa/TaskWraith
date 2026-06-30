@@ -263,7 +263,7 @@ public struct WelcomeUsageDashboardCard: View {
                 ForEach(dashboard.modelBreakdown.prefix(4)) { m in
                     VStack(alignment: .leading, spacing: 5) {
                         HStack(spacing: 7) {
-                            Circle().fill(TWTheme.providerAccent(m.provider))
+                            Circle().fill(TWTheme.providerAccent(m.accentProviderKey))
                                 .frame(width: 8, height: 8)
                             Text(m.label).font(.caption.weight(.medium))
                                 .foregroundStyle(TWTheme.textPrimary).lineLimit(1)
@@ -277,7 +277,9 @@ public struct WelcomeUsageDashboardCard: View {
                                 .font(.caption.weight(.semibold))
                                 .foregroundStyle(TWTheme.textPrimary)
                         }
-                        meter(fraction: m.percent / 100, color: TWTheme.providerAccent(m.provider))
+                        meter(
+                            fraction: m.percent / 100,
+                            color: TWTheme.providerAccent(m.accentProviderKey))
                     }
                 }
             }

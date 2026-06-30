@@ -50,6 +50,7 @@ import {
   createToolResultMediaRefs,
   extractMcpImageBlocksFromRawResult
 } from './services/TranscriptMediaService'
+import { matchOllamaBrand } from '../shared/ollamaBrandTable'
 
 export type RemoteDisplayCurrency = 'USD' | 'GBP' | 'EUR'
 
@@ -331,7 +332,7 @@ export function soloSpeakerForMessage(
     const provider =
       (message.metadata?.ensembleProvider as ProviderId | undefined) ?? chatProvider
     if (!provider) return undefined
-    const label = PROVIDER_LABELS[provider] ?? provider
+    let label = PROVIDER_LABELS[provider] ?? provider
     const run = typeof message.runId === 'string' ? runById.get(message.runId) : undefined
     const model =
       (typeof message.metadata?.providerModel === 'string'
@@ -342,6 +343,13 @@ export function soloSpeakerForMessage(
         : undefined) ||
       run?.actualModel ||
       run?.requestedModel
+    // Ollama-backed display brands spoof their upstream provider name on the
+    // phone transcript header (e.g. "Alibaba · Qwen 3.5"), mirroring the
+    // desktop assistant header so iOS reads as the same product.
+    if (provider === 'ollama' && model) {
+      const brand = matchOllamaBrand(model)
+      if (brand) label = brand.providerLabel
+    }
     if (model) {
       const short = shortModelLabel(model)
       return short ? `${label} · ${short}` : label
@@ -976,7 +984,11 @@ function buildGuestReply(
   // attribute the reply instead of rendering a bare "System" row.
   let speaker: string | undefined
   if (provider) {
-    const label = PROVIDER_LABELS[provider] ?? provider
+    let label = PROVIDER_LABELS[provider] ?? provider
+    if (provider === 'ollama' && model) {
+      const brand = matchOllamaBrand(model)
+      if (brand) label = brand.providerLabel
+    }
     speaker = role ? `${label} / ${role}` : label
   }
   return { summary, speaker }

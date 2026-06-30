@@ -34,6 +34,10 @@ export interface RemoteWelcomeDashboard {
     id: string
     provider: string
     label: string
+    /** CSS/theme hue class — `provider-<id>`, or the spoofed Ollama brand
+     * class (e.g. `provider-alibaba`) so the phone's Model Comparisons rows
+     * wear the same per-brand hue as the desktop. */
+    colorClass: string
     inputTokens: number
     outputTokens: number
     percent: number
@@ -101,6 +105,7 @@ export function buildRemoteWelcomeDashboard(
       id: m.id,
       provider: m.provider,
       label: m.label,
+      colorClass: m.colorClass,
       inputTokens: int(m.inputTokens),
       outputTokens: int(m.outputTokens),
       percent: m.percent

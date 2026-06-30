@@ -238,15 +238,32 @@ public struct WelcomeDashboard: Codable, Sendable {
         public let id: String
         public let provider: String
         public let label: String
+        /// CSS/theme hue class sent by the Mac — `provider-<id>`, or the
+        /// spoofed Ollama brand class (e.g. `provider-alibaba`). Optional so
+        /// older Mac builds that don't send it still decode (falls back to the
+        /// runtime provider hue). Mirrors desktop WelcomeUsageModelDatum.
+        public let colorClass: String?
         public let inputTokens: Int
         public let outputTokens: Int
         /// Share of kept-model tokens, 0–100.
         public let percent: Double
+
+        /// Provider key for `TWTheme.providerAccent` — strips the `provider-`
+        /// prefix off `colorClass` (so Ollama brands resolve to their spoofed
+        /// hue) and falls back to the runtime provider.
+        public var accentProviderKey: String {
+            if let cls = colorClass, cls.hasPrefix("provider-") {
+                return String(cls.dropFirst("provider-".count))
+            }
+            return provider
+        }
+
         public init(
-            id: String, provider: String, label: String,
+            id: String, provider: String, label: String, colorClass: String? = nil,
             inputTokens: Int, outputTokens: Int, percent: Double
         ) {
             self.id = id; self.provider = provider; self.label = label
+            self.colorClass = colorClass
             self.inputTokens = inputTokens; self.outputTokens = outputTokens
             self.percent = percent
         }
