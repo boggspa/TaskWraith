@@ -2759,6 +2759,217 @@ Next action:
     })
   })
 
+  it('rejects roster edits from non-Boss callers and audits with roster_edit_rejected', async () => {
+    const rejections: Array<{ metadata: Record<string, unknown> }> = []
+    const initialChat = makeChat()
+    initialChat.ensemble!.bossmanParticipantId = 'claude'
+    initialChat.ensemble!.bossmanAutoApprovals = {
+      enabled: true,
+      mode: 'permission_preset_once',
+      confirmedAt: '2026-05-24T00:00:00.000Z'
+    }
+    initialChat.ensemble!.participants[0].permissionPresetId = 'workspace_write'
+    const harness = makeHarness({
+      initialChat,
+      recordBossmanControlRejection: (rejection) => rejections.push(rejection)
+    })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Plan and execute.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    harness.orchestrator.handleProviderOutput(
+      'claude',
+      { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'result', status: 'success' }
+    )
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+
+    const rejected = await harness.orchestrator.rosterEditForRun(harness.dispatched[1].appRunId, {
+      action: 'add_participant',
+      participant: { provider: 'kimi' }
+    })
+
+    expect(rejected.ok).toBe(false)
+    expect(rejected.error).toBe('not_bossman')
+    expect(rejections).toHaveLength(1)
+    expect(rejections[0].metadata).toMatchObject({
+      kind: 'roster_edit_rejected',
+      rejectionReason: 'not_bossman',
+      action: 'add_participant',
+      attemptingParticipantId: 'codex',
+      assignedBossmanParticipantId: 'claude'
+    })
+  })
+
+  it('rejects roster edits when Boss Auto Approvals consent is disabled', async () => {
+    const initialChat = makeChat()
+    initialChat.ensemble!.bossmanParticipantId = 'claude'
+    initialChat.ensemble!.participants[0].permissionPresetId = 'workspace_write'
+    const harness = makeHarness({ initialChat })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Plan and execute.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    const result = await harness.orchestrator.rosterEditForRun(harness.dispatched[0].appRunId, {
+      action: 'add_participant',
+      participant: { provider: 'kimi' }
+    })
+
+    expect(result.ok).toBe(false)
+    expect(result.error).toBe('auto_approvals_disabled')
+  })
+
+  it('adds a participant through rosterEditForRun after provider health passes', async () => {
+    const initialChat = makeChat()
+    initialChat.ensemble!.bossmanParticipantId = 'claude'
+    initialChat.ensemble!.bossmanAutoApprovals = {
+      enabled: true,
+      mode: 'permission_preset_once',
+      confirmedAt: '2026-05-24T00:00:00.000Z'
+    }
+    initialChat.ensemble!.participants[0].permissionPresetId = 'workspace_write'
+    const harness = makeHarness({
+      initialChat,
+      probeParticipant: async () => ({ reachable: true })
+    })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Plan and execute.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    const result = await harness.orchestrator.rosterEditForRun(harness.dispatched[0].appRunId, {
+      action: 'add_participant',
+      participant: {
+        provider: 'kimi',
+        role: 'Verifier',
+        model: 'kimi-k2',
+        permissionPresetId: 'workspace_write'
+      }
+    })
+
+    expect(result.ok).toBe(true)
+    expect(result.participantId).toMatch(/^bossman-roster-/)
+    const added = harness.chat.ensemble!.participants.find(
+      (participant) => participant.id === result.participantId
+    )
+    expect(added).toMatchObject({
+      provider: 'kimi',
+      role: 'Verifier',
+      model: 'kimi-k2',
+      permissionPresetId: 'workspace_write'
+    })
+    expect(harness.chat.ensemble!.activeRound?.participants).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          participantId: result.participantId,
+          provider: 'kimi',
+          role: 'Verifier',
+          status: 'idle'
+        })
+      ])
+    )
+    expect(
+      harness.probeParticipant?.mock.calls.some(([participant]) => participant.provider === 'kimi')
+    ).toBe(true)
+  })
+
+  it('rejects roster removal of the configured Boss participant', async () => {
+    const initialChat = makeChat()
+    initialChat.ensemble!.bossmanParticipantId = 'claude'
+    initialChat.ensemble!.bossmanAutoApprovals = {
+      enabled: true,
+      mode: 'permission_preset_once',
+      confirmedAt: '2026-05-24T00:00:00.000Z'
+    }
+    initialChat.ensemble!.participants[0].permissionPresetId = 'workspace_write'
+    const harness = makeHarness({ initialChat })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Plan and execute.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    const result = await harness.orchestrator.rosterEditForRun(harness.dispatched[0].appRunId, {
+      action: 'remove_participant',
+      targetParticipantId: 'claude'
+    })
+
+    expect(result.ok).toBe(false)
+    expect(result.error).toBe('remove_boss')
+  })
+
+  it('rejects roster add with an unknown or retired provider', async () => {
+    const initialChat = makeChat()
+    initialChat.ensemble!.bossmanParticipantId = 'claude'
+    initialChat.ensemble!.bossmanAutoApprovals = {
+      enabled: true,
+      mode: 'permission_preset_once',
+      confirmedAt: '2026-05-24T00:00:00.000Z'
+    }
+    initialChat.ensemble!.participants[0].permissionPresetId = 'workspace_write'
+    const harness = makeHarness({ initialChat })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Plan and execute.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    const result = await harness.orchestrator.rosterEditForRun(harness.dispatched[0].appRunId, {
+      action: 'add_participant',
+      participant: { provider: 'gemini' }
+    })
+
+    expect(result.ok).toBe(false)
+    expect(result.error).toBe('unknown_provider')
+  })
+
+  it('rejects roster add when the current roster is already at the maximum', async () => {
+    const initialChat = makeChat()
+    initialChat.ensemble!.bossmanParticipantId = 'claude'
+    initialChat.ensemble!.bossmanAutoApprovals = {
+      enabled: true,
+      mode: 'permission_preset_once',
+      confirmedAt: '2026-05-24T00:00:00.000Z'
+    }
+    initialChat.ensemble!.participants = Array.from({ length: 12 }, (_, index) => ({
+      id: index === 0 ? 'claude' : `worker-${index}`,
+      provider: index === 0 ? 'claude' : 'codex',
+      enabled: true,
+      role: index === 0 ? 'Boss' : `Worker ${index}`,
+      instructions: index === 0 ? 'Manage.' : 'Work.',
+      order: index + 1,
+      permissionPresetId: index === 0 ? 'workspace_write' : 'read_only'
+    }))
+    const harness = makeHarness({
+      initialChat,
+      probeParticipant: async () => ({ reachable: true })
+    })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Plan and execute.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    const result = await harness.orchestrator.rosterEditForRun(harness.dispatched[0].appRunId, {
+      action: 'add_participant',
+      participant: { provider: 'kimi' }
+    })
+
+    expect(result.ok).toBe(false)
+    expect(result.error).toBe('roster_max')
+    expect(harness.chat.ensemble!.participants).toHaveLength(12)
+  })
+
   it('rejects skip with an unknown target participant (stale_target)', async () => {
     const initialChat = makeChat()
     initialChat.ensemble!.bossmanParticipantId = 'claude'

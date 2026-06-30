@@ -85,6 +85,14 @@ import {
 } from '../channels/DiscordContextService'
 import { contextPercent, resolveContextWindow } from '../../shared/contextWindows'
 import { isPreviewRiskModel } from '../../shared/previewModelCatalog'
+import {
+  evaluateRosterEdit,
+  type RosterEditAction,
+  type RosterEditError,
+  type RosterEditParticipantInput,
+  type RosterEditRequest
+} from '../EnsembleRosterMutation'
+import { selectableProviderIds } from '../settings/MainSanitizers'
 
 export type EnsembleRunMode = 'normal' | 'queue' | 'steer'
 export type EnsembleQueuedSteerResult = {
@@ -403,6 +411,32 @@ export interface EnsembleBossmanControlResult {
     | 'baseline_exceeded'
 }
 
+export interface EnsembleRosterEditInput extends Omit<RosterEditRequest, 'action'> {
+  action?: RosterEditAction | string
+  roundId?: string
+}
+
+export interface EnsembleRosterEditResult {
+  ok: boolean
+  tool: 'ensemble_roster_edit'
+  action?: RosterEditAction | string
+  message: string
+  roundId?: string
+  participantId?: string
+  error?:
+    | RosterEditError
+    | 'no_active_run'
+    | 'not_ensemble'
+    | 'no_active_round'
+    | 'bossman_not_configured'
+    | 'not_bossman'
+    | 'invalid_action'
+    | 'stale_round'
+    | 'unknown_provider'
+    | 'health_check_unavailable'
+    | 'participant_unreachable'
+}
+
 export interface EnsembleSideMessageInput {
   to?: unknown
   message?: string
@@ -507,6 +541,14 @@ function stripPseudoSystemYieldLines(text: string): string {
 function normalizeFanoutMode(value: unknown): EnsembleFanoutMode | null {
   if (value === undefined || value === null || value === '') return 'read_only'
   return value === 'read_only' || value === 'locked_writers' ? value : null
+}
+
+function isRosterEditAction(value: string): value is RosterEditAction {
+  return (
+    value === 'add_participant' ||
+    value === 'remove_participant' ||
+    value === 'edit_participant'
+  )
 }
 
 function isEnsembleFanoutPolicy(value: unknown): value is EnsembleFanoutPolicy {
@@ -2279,6 +2321,497 @@ export class EnsembleOrchestrator {
       message: `ensemble_bossman_control: unsupported action "${action}".`,
       error: 'invalid_action'
     }
+  }
+
+  async rosterEditForRun(
+    runId: string | undefined,
+    input: EnsembleRosterEditInput
+  ): Promise<EnsembleRosterEditResult> {
+    const action = input.action
+    if (!action || !isRosterEditAction(action)) {
+      return {
+        ok: false,
+        tool: 'ensemble_roster_edit',
+        action,
+        message: 'ensemble_roster_edit: action must be add_participant, remove_participant, or edit_participant.',
+        error: 'invalid_action'
+      }
+    }
+    if (!runId) {
+      return {
+        ok: false,
+        tool: 'ensemble_roster_edit',
+        action,
+        message: 'ensemble_roster_edit requires an active Ensemble participant run.',
+        error: 'no_active_run'
+      }
+    }
+    const caller = this.runsByRunId.get(runId)
+    if (!caller) {
+      return {
+        ok: false,
+        tool: 'ensemble_roster_edit',
+        action,
+        message: 'No active Ensemble participant run matches this roster edit call.',
+        error: 'no_active_run'
+      }
+    }
+    const chat = this.deps.getChat(caller.chatId)
+    if (!chat?.ensemble) {
+      return {
+        ok: false,
+        tool: 'ensemble_roster_edit',
+        action,
+        message: 'The active chat is not an Ensemble chat.',
+        error: 'not_ensemble'
+      }
+    }
+    const runtime = this.roundsByChatId.get(caller.chatId)
+    if (!runtime || runtime.roundId !== caller.roundId || runtime.cancelled) {
+      return {
+        ok: false,
+        tool: 'ensemble_roster_edit',
+        action,
+        message: 'There is no active Ensemble round for this roster edit call.',
+        error: 'no_active_round'
+      }
+    }
+    if (input.roundId && input.roundId !== runtime.roundId) {
+      return {
+        ok: false,
+        tool: 'ensemble_roster_edit',
+        action,
+        roundId: runtime.roundId,
+        message: 'Roster edit rejected: roundId is no longer active.',
+        error: 'stale_round'
+      }
+    }
+    const bossmanParticipantId = this.activeBossmanParticipantId(chat, runtime)
+    if (!bossmanParticipantId) {
+      return {
+        ok: false,
+        tool: 'ensemble_roster_edit',
+        action,
+        roundId: runtime.roundId,
+        message: 'Roster edit rejected: no Boss is assigned for this Ensemble.',
+        error: 'bossman_not_configured'
+      }
+    }
+    if (caller.participant.id !== bossmanParticipantId) {
+      this.appendRoundStatus(
+        caller.chatId,
+        runtime.roundId,
+        `Roster edit rejected from ${caller.participant.role || caller.participant.provider}: only the assigned Boss may use ensemble_roster_edit.`
+      )
+      this.deps.recordBossmanControlRejection?.({
+        provider: caller.participant.provider,
+        workspacePath: chat.workspacePath,
+        chatId: caller.chatId,
+        runId: caller.runId,
+        metadata: {
+          kind: 'roster_edit_rejected',
+          rejectionReason: 'not_bossman',
+          action,
+          roundId: runtime.roundId,
+          attemptingParticipantId: caller.participant.id,
+          attemptingParticipantRole: caller.participant.role,
+          attemptingProvider: caller.participant.provider,
+          assignedBossmanParticipantId: bossmanParticipantId
+        }
+      })
+      return {
+        ok: false,
+        tool: 'ensemble_roster_edit',
+        action,
+        roundId: runtime.roundId,
+        participantId: caller.participant.id,
+        message: 'Roster edit rejected: caller is not the assigned Boss participant.',
+        error: 'not_bossman'
+      }
+    }
+
+    if (
+      input.targetParticipantId &&
+      !this.roundHasParticipant(chat.ensemble.activeRound, runtime.roundId, input.targetParticipantId)
+    ) {
+      return {
+        ok: false,
+        tool: 'ensemble_roster_edit',
+        action,
+        roundId: runtime.roundId,
+        message: 'Roster edit rejected: targetParticipantId is not part of the active round.',
+        error: 'stale_target'
+      }
+    }
+
+    const preflightCallerPermissions = this.resolveParticipantPermissions(
+      chat,
+      caller.participant,
+      runtime.externalPathGrants
+    )
+    const preflight = evaluateRosterEdit(
+      {
+        action,
+        targetParticipantId: input.targetParticipantId,
+        participant: input.participant || undefined
+      },
+      {
+        participants: chat.ensemble.participants,
+        bossmanParticipantId,
+        autoApprovals: chat.ensemble.bossmanAutoApprovals,
+        roundReadOnly: preflightCallerPermissions.readOnly,
+        nextParticipantId: () => this.nextRosterEditParticipantId(chat.ensemble!.participants)
+      }
+    )
+    if (!preflight.ok) {
+      return {
+        ok: false,
+        tool: 'ensemble_roster_edit',
+        action,
+        roundId: runtime.roundId,
+        message: preflight.message,
+        error: preflight.error
+      }
+    }
+
+    const providerValidation = this.validateRosterEditProvider(input, chat.ensemble.participants)
+    if (!providerValidation.ok) {
+      return {
+        ok: false,
+        tool: 'ensemble_roster_edit',
+        action,
+        roundId: runtime.roundId,
+        message: providerValidation.message,
+        error: providerValidation.error
+      }
+    }
+    if (providerValidation.probeParticipant) {
+      if (!this.deps.probeParticipant) {
+        return {
+          ok: false,
+          tool: 'ensemble_roster_edit',
+          action,
+          roundId: runtime.roundId,
+          message: 'Roster edit rejected: provider health checks are unavailable.',
+          error: 'health_check_unavailable'
+        }
+      }
+      const health = await this.deps.probeParticipant(providerValidation.probeParticipant)
+      if (!health.reachable) {
+        return {
+          ok: false,
+          tool: 'ensemble_roster_edit',
+          action,
+          roundId: runtime.roundId,
+          message: `Roster edit rejected: ${health.reason || `${providerValidation.probeParticipant.provider} is not reachable`}.`,
+          error: 'participant_unreachable'
+        }
+      }
+    }
+
+    const currentRuntime = this.roundsByChatId.get(caller.chatId)
+    if (!currentRuntime || currentRuntime.roundId !== runtime.roundId || currentRuntime.cancelled) {
+      return {
+        ok: false,
+        tool: 'ensemble_roster_edit',
+        action,
+        roundId: runtime.roundId,
+        message: 'There is no active Ensemble round for this roster edit call.',
+        error: 'no_active_round'
+      }
+    }
+    const latestChat = this.deps.getChat(runtime.chatId)
+    if (!latestChat?.ensemble) {
+      return {
+        ok: false,
+        tool: 'ensemble_roster_edit',
+        action,
+        roundId: runtime.roundId,
+        message: 'Roster edit rejected: active chat is no longer an Ensemble chat.',
+        error: 'not_ensemble'
+      }
+    }
+    const latestBossmanParticipantId = this.activeBossmanParticipantId(latestChat, runtime)
+    if (!latestBossmanParticipantId) {
+      return {
+        ok: false,
+        tool: 'ensemble_roster_edit',
+        action,
+        roundId: runtime.roundId,
+        message: 'Roster edit rejected: no Boss is assigned for this Ensemble.',
+        error: 'bossman_not_configured'
+      }
+    }
+    if (caller.participant.id !== latestBossmanParticipantId) {
+      this.appendRoundStatus(
+        caller.chatId,
+        runtime.roundId,
+        `Roster edit rejected from ${caller.participant.role || caller.participant.provider}: only the assigned Boss may use ensemble_roster_edit.`
+      )
+      this.deps.recordBossmanControlRejection?.({
+        provider: caller.participant.provider,
+        workspacePath: latestChat.workspacePath,
+        chatId: caller.chatId,
+        runId: caller.runId,
+        metadata: {
+          kind: 'roster_edit_rejected',
+          rejectionReason: 'not_bossman',
+          action,
+          roundId: runtime.roundId,
+          attemptingParticipantId: caller.participant.id,
+          attemptingParticipantRole: caller.participant.role,
+          attemptingProvider: caller.participant.provider,
+          assignedBossmanParticipantId: latestBossmanParticipantId
+        }
+      })
+      return {
+        ok: false,
+        tool: 'ensemble_roster_edit',
+        action,
+        roundId: runtime.roundId,
+        participantId: caller.participant.id,
+        message: 'Roster edit rejected: caller is not the assigned Boss participant.',
+        error: 'not_bossman'
+      }
+    }
+    const latestCaller =
+      latestChat.ensemble.participants.find((participant) => participant.id === caller.participant.id) ||
+      caller.participant
+    const callerPermissions = this.resolveParticipantPermissions(
+      latestChat,
+      latestCaller,
+      runtime.externalPathGrants
+    )
+    const resolution = evaluateRosterEdit(
+      {
+        action,
+        targetParticipantId: input.targetParticipantId,
+        participant: input.participant || undefined
+      },
+      {
+        participants: latestChat.ensemble.participants,
+        bossmanParticipantId: latestBossmanParticipantId,
+        autoApprovals: latestChat.ensemble.bossmanAutoApprovals,
+        roundReadOnly: callerPermissions.readOnly,
+        nextParticipantId: () => this.nextRosterEditParticipantId(latestChat.ensemble!.participants)
+      }
+    )
+    if (!resolution.ok) {
+      return {
+        ok: false,
+        tool: 'ensemble_roster_edit',
+        action,
+        roundId: runtime.roundId,
+        message: resolution.message,
+        error: resolution.error
+      }
+    }
+
+    const affectedBefore = latestChat.ensemble.participants.find(
+      (participant) => participant.id === resolution.affectedParticipantId
+    )
+    this.applyRosterEditToRuntime(runtime, action, resolution.affectedParticipantId, resolution.nextParticipants)
+    const activeRound = this.applyRosterEditToActiveRound(
+      latestChat.ensemble.activeRound,
+      runtime.roundId,
+      resolution.nextParticipants
+    )
+    this.saveChatWithCheckpoint(
+      {
+        ...latestChat,
+        ensemble: {
+          ...latestChat.ensemble,
+          participants: resolution.nextParticipants,
+          activeRound,
+          updatedAt: this.deps.nowIso()
+        },
+        updatedAt: this.deps.now()
+      },
+      'participant-updated'
+    )
+    const affected = resolution.nextParticipants.find(
+      (participant) => participant.id === resolution.affectedParticipantId
+    )
+    const label =
+      affected?.role ||
+      affected?.provider ||
+      affectedBefore?.role ||
+      affectedBefore?.provider ||
+      input.targetParticipantId ||
+      resolution.affectedParticipantId
+    const verb =
+      action === 'add_participant' ? 'added' : action === 'remove_participant' ? 'removed' : 'edited'
+    const message = `Boss ${verb} ${label}.`
+    this.appendRoundStatus(runtime.chatId, runtime.roundId, message)
+    return {
+      ok: true,
+      tool: 'ensemble_roster_edit',
+      action,
+      roundId: runtime.roundId,
+      participantId: resolution.affectedParticipantId,
+      message
+    }
+  }
+
+  private validateRosterEditProvider(
+    input: EnsembleRosterEditInput,
+    participants: EnsembleParticipant[]
+  ):
+    | { ok: true; probeParticipant?: EnsembleParticipant }
+    | { ok: false; error: 'unknown_provider'; message: string } {
+    const patch = input.participant
+    const provider = typeof patch?.provider === 'string' ? patch.provider : undefined
+    if (input.action === 'add_participant') {
+      if (!provider) return { ok: true }
+      if (!selectableProviderIds().includes(provider as ProviderId)) {
+        return {
+          ok: false,
+          error: 'unknown_provider',
+          message: `Roster edit rejected: ${provider} is not a live selectable provider.`
+        }
+      }
+      return {
+        ok: true,
+        probeParticipant: {
+          id: this.nextRosterEditParticipantId(participants),
+          provider: provider as ProviderId,
+          enabled: true,
+          role: patch?.role || providerLabel(provider as ProviderId),
+          instructions: patch?.instructions || '',
+          order: participants.length + 1,
+          ...(patch?.model ? { model: patch.model } : {}),
+          ...(patch?.permissionPresetId
+            ? { permissionPresetId: patch.permissionPresetId as EnsembleParticipant['permissionPresetId'] }
+            : {}),
+          ...(patch?.reasoningEffort ? { reasoningEffort: patch.reasoningEffort } : {}),
+          ...(typeof patch?.fastModeEnabled === 'boolean'
+            ? { fastModeEnabled: patch.fastModeEnabled }
+            : {}),
+          ...(typeof patch?.thinkingEnabled === 'boolean'
+            ? { thinkingEnabled: patch.thinkingEnabled }
+            : {})
+        }
+      }
+    }
+    if (
+      input.action !== 'edit_participant' ||
+      !patch ||
+      !Object.prototype.hasOwnProperty.call(patch, 'provider')
+    ) {
+      return { ok: true }
+    }
+    if (!provider) return { ok: true }
+    if (!selectableProviderIds().includes(provider as ProviderId)) {
+      return {
+        ok: false,
+        error: 'unknown_provider',
+        message: `Roster edit rejected: ${provider} is not a live selectable provider.`
+      }
+    }
+    const target = participants.find((participant) => participant.id === input.targetParticipantId)
+    if (!target || target.provider === provider) return { ok: true }
+    return {
+      ok: true,
+      probeParticipant: this.applyRosterEditProbePatch(target, patch, provider as ProviderId)
+    }
+  }
+
+  private applyRosterEditProbePatch(
+    target: EnsembleParticipant,
+    patch: RosterEditParticipantInput,
+    provider: ProviderId
+  ): EnsembleParticipant {
+    return {
+      ...target,
+      provider,
+      ...(patch.model ? { model: patch.model } : {}),
+      ...(patch.role !== undefined ? { role: patch.role } : {}),
+      ...(patch.instructions !== undefined ? { instructions: patch.instructions } : {}),
+      ...(patch.permissionPresetId
+        ? { permissionPresetId: patch.permissionPresetId as EnsembleParticipant['permissionPresetId'] }
+        : {}),
+      ...(patch.reasoningEffort ? { reasoningEffort: patch.reasoningEffort } : {}),
+      ...(typeof patch.fastModeEnabled === 'boolean'
+        ? { fastModeEnabled: patch.fastModeEnabled }
+        : {}),
+      ...(typeof patch.thinkingEnabled === 'boolean'
+        ? { thinkingEnabled: patch.thinkingEnabled }
+        : {})
+    }
+  }
+
+  private applyRosterEditToRuntime(
+    runtime: ActiveRoundRuntime,
+    action: RosterEditAction,
+    affectedParticipantId: string,
+    nextParticipants: EnsembleParticipant[]
+  ): void {
+    const remaining = runtime.remainingParticipants
+    if (!remaining) return
+    const nextById = new Map(nextParticipants.map((participant) => [participant.id, participant]))
+    const affected = nextById.get(affectedParticipantId)
+    if (action === 'add_participant') {
+      if (affected && !remaining.some((participant) => participant.id === affected.id)) {
+        remaining.push(affected)
+      }
+    } else if (action === 'remove_participant') {
+      runtime.remainingParticipants = remaining.filter(
+        (participant) => participant.id !== affectedParticipantId
+      )
+    } else {
+      runtime.remainingParticipants = remaining.map(
+        (participant) => nextById.get(participant.id) || participant
+      )
+    }
+    runtime.remainingParticipants?.sort((a, b) => a.order - b.order)
+  }
+
+  private applyRosterEditToActiveRound(
+    round: EnsembleRoundState | undefined,
+    roundId: string,
+    nextParticipants: EnsembleParticipant[]
+  ): EnsembleRoundState | undefined {
+    if (!round || round.roundId !== roundId) return round
+    const nextById = new Map(nextParticipants.map((participant) => [participant.id, participant]))
+    const existing = round.participants
+      .filter((state) => nextById.has(state.participantId))
+      .map((state) => {
+        const participant = nextById.get(state.participantId)!
+        return {
+          ...state,
+          provider: participant.provider,
+          role: participant.role,
+          order: participant.order
+        }
+      })
+    const existingIds = new Set(existing.map((state) => state.participantId))
+    const added = nextParticipants
+      .filter((participant) => !existingIds.has(participant.id))
+      .map((participant): EnsembleRoundState['participants'][number] => ({
+        participantId: participant.id,
+        provider: participant.provider,
+        role: participant.role,
+        order: participant.order,
+        status: 'idle'
+      }))
+    const participantStates = [...existing, ...added].sort((a, b) => a.order - b.order)
+    return {
+      ...round,
+      activeParticipantId:
+        round.activeParticipantId && nextById.has(round.activeParticipantId)
+          ? round.activeParticipantId
+          : undefined,
+      participants: participantStates
+    }
+  }
+
+  private nextRosterEditParticipantId(participants: EnsembleParticipant[]): string {
+    const existing = new Set(participants.map((participant) => participant.id))
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      const id = `bossman-roster-${this.deps.now().toString(36)}-${attempt}`
+      if (!existing.has(id)) return id
+    }
+    return `bossman-roster-${Math.random().toString(36).slice(2, 10)}`
   }
 
   private roundHasParticipant(
