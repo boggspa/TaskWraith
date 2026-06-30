@@ -113,6 +113,60 @@ export const resolveInitialWorkbenchView = (view?: WorkbenchView): WorkbenchView
   return view === 'diff' || view === 'split' ? view : 'editor'
 }
 
+type WorkbenchKeyEventLike = Pick<
+  KeyboardEvent,
+  'altKey' | 'ctrlKey' | 'defaultPrevented' | 'key' | 'metaKey' | 'shiftKey'
+>
+
+export type WorkbenchKeyboardCommand =
+  | { type: 'editor-command'; kind: FileEditorCommandKind }
+  | { type: 'select-view'; view: WorkbenchView; status: string }
+  | { type: 'show-in-diff' }
+  | { type: 'open-in-editor' }
+
+export function resolveWorkbenchKeyboardCommand(
+  event: WorkbenchKeyEventLike,
+  options: {
+    hasDiffEditorTarget: boolean
+    hasEditorDiffTarget: boolean
+    hasEditorSelection: boolean
+  }
+): WorkbenchKeyboardCommand | null {
+  if (event.defaultPrevented) return null
+
+  const key = event.key.toLowerCase()
+  if (event.altKey && !event.metaKey && !event.ctrlKey && !event.shiftKey && key === 'z') {
+    return { type: 'editor-command', kind: 'toggle-wrap' }
+  }
+
+  if (!(event.metaKey || event.ctrlKey) || event.altKey) return null
+
+  if (key === 'p') return { type: 'editor-command', kind: 'quick-open' }
+  if (key === 's') {
+    return { type: 'editor-command', kind: event.shiftKey ? 'save-all' : 'save-current' }
+  }
+  if (event.shiftKey && key === 'j' && options.hasEditorSelection) {
+    return { type: 'editor-command', kind: 'reveal-selected' }
+  }
+  if (event.shiftKey && key === 'd' && options.hasEditorDiffTarget) {
+    return { type: 'show-in-diff' }
+  }
+  if (event.shiftKey && key === 'e' && options.hasDiffEditorTarget) {
+    return { type: 'open-in-editor' }
+  }
+  if (key === '1') {
+    return { type: 'select-view', view: 'editor', status: 'Showing File Editor' }
+  }
+  if (key === '2') {
+    return { type: 'select-view', view: 'diff', status: 'Showing Diff Studio' }
+  }
+  if (key === '3') {
+    return { type: 'select-view', view: 'split', status: 'Showing split view' }
+  }
+
+  return null
+}
+
 function WorkbenchNavIcon({ view }: { view: WorkbenchView }) {
   return (
     <span className="workbench-nav-icon" aria-hidden="true">
@@ -305,41 +359,6 @@ export function TaskWraithWorkbench({
     setStatus('Refreshing editor')
   }, [activeView, refreshDiff])
 
-  const handleWorkbenchKeyDown = useCallback(
-    (event: ReactKeyboardEvent<HTMLElement>) => {
-      if (!(event.metaKey || event.ctrlKey) || event.defaultPrevented) return
-      const key = event.key.toLowerCase()
-      if (key === 'p') {
-        event.preventDefault()
-        dispatchEditorCommand('quick-open')
-        return
-      }
-      if (key === 's') {
-        event.preventDefault()
-        dispatchEditorCommand(event.shiftKey ? 'save-all' : 'save-current')
-        return
-      }
-      if (key === '1') {
-        event.preventDefault()
-        selectWorkbenchView('editor', { focusNav: true })
-        setStatus('Showing File Editor')
-        return
-      }
-      if (key === '2') {
-        event.preventDefault()
-        selectWorkbenchView('diff', { focusNav: true })
-        setStatus('Showing Diff Studio')
-        return
-      }
-      if (key === '3') {
-        event.preventDefault()
-        selectWorkbenchView('split', { focusNav: true })
-        setStatus('Showing split view')
-      }
-    },
-    [dispatchEditorCommand, selectWorkbenchView]
-  )
-
   const openFileInEditor = useCallback((path: string) => {
     if (activeView !== 'split') {
       selectWorkbenchView('editor')
@@ -362,6 +381,42 @@ export function TaskWraithWorkbench({
     }))
     setStatus(`Showing diff for ${path}`)
   }, [activeView, selectWorkbenchView])
+
+  const handleWorkbenchKeyDown = useCallback(
+    (event: ReactKeyboardEvent<HTMLElement>) => {
+      const command = resolveWorkbenchKeyboardCommand(event, {
+        hasDiffEditorTarget: Boolean(diffEditorActionPath),
+        hasEditorDiffTarget: Boolean(editorDiffActionPath),
+        hasEditorSelection: Boolean(editorState.selectedPath)
+      })
+      if (!command) return
+
+      event.preventDefault()
+      if (command.type === 'editor-command') {
+        dispatchEditorCommand(command.kind)
+        return
+      }
+      if (command.type === 'select-view') {
+        selectWorkbenchView(command.view, { focusNav: true })
+        setStatus(command.status)
+        return
+      }
+      if (command.type === 'show-in-diff') {
+        showFileInDiff(editorDiffActionPath)
+        return
+      }
+      openFileInEditor(diffEditorActionPath)
+    },
+    [
+      diffEditorActionPath,
+      dispatchEditorCommand,
+      editorDiffActionPath,
+      editorState.selectedPath,
+      openFileInEditor,
+      selectWorkbenchView,
+      showFileInDiff
+    ]
+  )
 
   const handleNavKeyDown = useCallback(
     (event: ReactKeyboardEvent<HTMLButtonElement>, view: WorkbenchView) => {
@@ -589,6 +644,42 @@ export function TaskWraithWorkbench({
               Save All
             </button>
             {(activeView === 'editor' || activeView === 'split') && (
+              <>
+                <button
+                  className="btn btn-sm btn-ghost"
+                  type="button"
+                  onClick={() => dispatchEditorCommand('reveal-selected')}
+                  disabled={!editorState.selectedPath || editorBusy}
+                  aria-label={
+                    editorState.selectedPath
+                      ? `Reveal ${editorState.selectedPath} in file tree`
+                      : 'Reveal selected file in file tree'
+                  }
+                  aria-keyshortcuts="Meta+Shift+J Control+Shift+J"
+                  title={
+                    editorState.selectedPath
+                      ? `Reveal ${editorState.selectedPath} in file tree`
+                      : 'Select a file to reveal it in the tree'
+                  }
+                >
+                  Reveal
+                </button>
+                <button
+                  className="btn btn-sm btn-ghost"
+                  type="button"
+                  onClick={() => dispatchEditorCommand('toggle-wrap')}
+                  disabled={editorBusy}
+                  aria-keyshortcuts="Alt+Z"
+                  aria-pressed={editorState.lineWrapEnabled}
+                  title={
+                    editorState.lineWrapEnabled ? 'Disable line wrap' : 'Enable line wrap'
+                  }
+                >
+                  Wrap
+                </button>
+              </>
+            )}
+            {(activeView === 'editor' || activeView === 'split') && (
               <button
                 className="btn btn-sm btn-ghost"
                 type="button"
@@ -596,6 +687,7 @@ export function TaskWraithWorkbench({
                   if (editorDiffActionPath) showFileInDiff(editorDiffActionPath)
                 }}
                 disabled={!editorDiffActionPath || editorBusy}
+                aria-keyshortcuts="Meta+Shift+D Control+Shift+D"
                 aria-label={
                   editorDiffActionPath
                     ? `Show ${editorDiffActionPath} in Diff Studio`
@@ -616,6 +708,7 @@ export function TaskWraithWorkbench({
                 type="button"
                 onClick={() => openFileInEditor(diffEditorActionPath)}
                 disabled={editorBusy}
+                aria-keyshortcuts="Meta+Shift+E Control+Shift+E"
                 aria-label={`Open ${diffEditorActionPath} in editor`}
                 title={`Open ${diffEditorActionPath} in editor`}
               >

@@ -6,6 +6,7 @@ import {
   buildWorkbenchBreadcrumbs,
   isWorkbenchPaneHidden,
   resolveInitialWorkbenchView,
+  resolveWorkbenchKeyboardCommand,
   TaskWraithWorkbench
 } from './TaskWraithWorkbench'
 
@@ -86,7 +87,10 @@ describe('TaskWraithWorkbench shell', () => {
     expect(html).toContain('TaskWraith Workbench')
     expect(html).toContain('Quick Open')
     expect(html).toContain('Save All')
+    expect(html).toContain('Reveal')
+    expect(html).toContain('Wrap')
     expect(html).toContain('Show in Diff')
+    expect(html).toContain('aria-label="Reveal selected file in file tree"')
     expect(html).toContain('aria-label="Show selected file in Diff Studio"')
     expect(html).toContain('Select a file to show its diff')
     expect(html).toContain('Split')
@@ -102,6 +106,9 @@ describe('TaskWraithWorkbench shell', () => {
     expect(html).toContain('aria-keyshortcuts="Meta+1 Control+1"')
     expect(html).toContain('aria-keyshortcuts="Meta+2 Control+2"')
     expect(html).toContain('aria-keyshortcuts="Meta+3 Control+3"')
+    expect(html).toContain('aria-keyshortcuts="Meta+Shift+J Control+Shift+J"')
+    expect(html).toContain('aria-keyshortcuts="Alt+Z"')
+    expect(html).toContain('aria-keyshortcuts="Meta+Shift+D Control+Shift+D"')
   })
 
   it('renders deep-linked diff targets with a direct editor handoff', () => {
@@ -123,7 +130,80 @@ describe('TaskWraithWorkbench shell', () => {
     expect(html).toContain('src/main/index.ts')
     expect(html).toContain('Open in Editor')
     expect(html).toContain('aria-label="Open src/main/index.ts in editor"')
+    expect(html).toContain('aria-keyshortcuts="Meta+Shift+E Control+Shift+E"')
     expect(html).toContain('id="workbench-diff-tab"')
     expect(html).toContain('aria-selected="true"')
+  })
+
+  it('maps Workbench keyboard shortcuts to scoped commands', () => {
+    const baseEvent = {
+      altKey: false,
+      ctrlKey: false,
+      defaultPrevented: false,
+      key: '',
+      metaKey: true,
+      shiftKey: false
+    }
+
+    expect(
+      resolveWorkbenchKeyboardCommand(
+        { ...baseEvent, key: 'p' },
+        { hasDiffEditorTarget: false, hasEditorDiffTarget: false, hasEditorSelection: false }
+      )
+    ).toEqual({ type: 'editor-command', kind: 'quick-open' })
+
+    expect(
+      resolveWorkbenchKeyboardCommand(
+        { ...baseEvent, key: 's', shiftKey: true },
+        { hasDiffEditorTarget: false, hasEditorDiffTarget: false, hasEditorSelection: false }
+      )
+    ).toEqual({ type: 'editor-command', kind: 'save-all' })
+
+    expect(
+      resolveWorkbenchKeyboardCommand(
+        { ...baseEvent, key: 'j', shiftKey: true },
+        { hasDiffEditorTarget: false, hasEditorDiffTarget: false, hasEditorSelection: true }
+      )
+    ).toEqual({ type: 'editor-command', kind: 'reveal-selected' })
+
+    expect(
+      resolveWorkbenchKeyboardCommand(
+        { ...baseEvent, key: 'd', shiftKey: true },
+        { hasDiffEditorTarget: false, hasEditorDiffTarget: true, hasEditorSelection: true }
+      )
+    ).toEqual({ type: 'show-in-diff' })
+
+    expect(
+      resolveWorkbenchKeyboardCommand(
+        { ...baseEvent, key: 'e', shiftKey: true },
+        { hasDiffEditorTarget: true, hasEditorDiffTarget: false, hasEditorSelection: false }
+      )
+    ).toEqual({ type: 'open-in-editor' })
+
+    expect(
+      resolveWorkbenchKeyboardCommand(
+        {
+          ...baseEvent,
+          altKey: true,
+          key: 'z',
+          metaKey: false
+        },
+        { hasDiffEditorTarget: false, hasEditorDiffTarget: false, hasEditorSelection: false }
+      )
+    ).toEqual({ type: 'editor-command', kind: 'toggle-wrap' })
+
+    expect(
+      resolveWorkbenchKeyboardCommand(
+        { ...baseEvent, key: 'd', shiftKey: true },
+        { hasDiffEditorTarget: false, hasEditorDiffTarget: false, hasEditorSelection: false }
+      )
+    ).toBeNull()
+
+    expect(
+      resolveWorkbenchKeyboardCommand(
+        { ...baseEvent, key: '2' },
+        { hasDiffEditorTarget: false, hasEditorDiffTarget: false, hasEditorSelection: false }
+      )
+    ).toEqual({ type: 'select-view', view: 'diff', status: 'Showing Diff Studio' })
   })
 })
