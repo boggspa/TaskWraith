@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-buffer-burrito-title agent-pool-icon-buffer-burrito-desc" data-agent-name="Buffer Burrito" data-agent-accent="#FFD33D" data-agent-hue="48" style="color: #FFD33D; --agent-accent: #FFD33D;">
+  <title id="agent-pool-icon-buffer-burrito-title">Buffer Burrito</title>
+  <desc id="agent-pool-icon-buffer-burrito-desc">Funky tech themed agent pool icon with buffer burrito energy.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}.fill{fill:none;stroke:currentColor;stroke-width:18;stroke-linecap:round;stroke-linejoin:round}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <path class="line" d="M156 214c78-76 210-90 300-14 46 38 42 112-10 150-84 62-214 50-286-12-46-40-48-88-4-124Z"/>
+  <path class="accent" d="M198 226c76 54 188 68 302 38M160 306c102 50 206 62 318 24"/>
+  <circle class="dot" cx="250" cy="282" r="16"/><circle class="dot" cx="342" cy="300" r="16"/>
+</svg>

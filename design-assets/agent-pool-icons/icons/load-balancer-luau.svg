@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-load-balancer-luau-title agent-pool-icon-load-balancer-luau-desc" data-agent-name="Load Balancer Luau" data-agent-accent="#22C55E" data-agent-hue="142" style="color: #22C55E; --agent-accent: #22C55E;">
+  <title id="agent-pool-icon-load-balancer-luau-title">Load Balancer Luau</title>
+  <desc id="agent-pool-icon-load-balancer-luau-desc">Funky tech themed agent pool icon with load balancer luau energy.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}.fill{fill:none;stroke:currentColor;stroke-width:18;stroke-linecap:round;stroke-linejoin:round}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <path class="line" d="M300 128v336M174 196h252M194 196l-70 142h140ZM406 196l-70 142h140Z"/>
+  <path class="accent" d="M144 338h100M356 338h100M238 464h124"/>
+  <circle class="dot" cx="300" cy="196" r="18"/>
+</svg>

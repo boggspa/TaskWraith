@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-telemetry-taffy-title agent-pool-icon-telemetry-taffy-desc" data-agent-name="Telemetry Taffy" data-agent-accent="#22D3EE" data-agent-hue="187" style="color: #22D3EE; --agent-accent: #22D3EE;">
+  <title id="agent-pool-icon-telemetry-taffy-title">Telemetry Taffy</title>
+  <desc id="agent-pool-icon-telemetry-taffy-desc">Funky tech themed agent pool icon with telemetry taffy energy.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}.fill{fill:none;stroke:currentColor;stroke-width:18;stroke-linecap:round;stroke-linejoin:round}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <path class="line" d="M146 438h308"/>
+  <path class="accent" d="M174 382l78-94 70 58 104-158"/>
+  <circle class="dot" cx="174" cy="382" r="22"/><circle class="dot" cx="252" cy="288" r="22"/><circle class="dot" cx="322" cy="346" r="22"/><circle class="dot" cx="426" cy="188" r="22"/>
+</svg>

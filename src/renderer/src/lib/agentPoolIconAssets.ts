@@ -203,13 +203,80 @@ export function poolIconAssetsByGroup(): { group: PoolIconGroup; assets: PoolIco
   })).filter((section) => section.assets.length > 0)
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function classPrefixForAsset(key: string): string {
+  const stem = key
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+  return `agent-pool-icon-${stem}-`
+}
+
+function namespaceInlineSvgClasses(raw: string, key: string): string {
+  const prefix = classPrefixForAsset(key)
+  const classNames = new Set<string>()
+  const withNamespacedClassAttrs = raw.replace(/\sclass="([^"]+)"/g, (match, value: string) => {
+    const classes = value
+      .split(/\s+/)
+      .map((name) => name.trim())
+      .filter(Boolean)
+    if (classes.length === 0) return match
+    for (const name of classes) classNames.add(name)
+    return ` class="${classes.map((name) => `${prefix}${name}`).join(' ')}"`
+  })
+
+  if (classNames.size === 0) return withNamespacedClassAttrs
+
+  const classSelectorReplacements = Array.from(classNames)
+    .sort((a, b) => b.length - a.length)
+    .map((name) => ({
+      pattern: new RegExp(`\\.${escapeRegExp(name)}(?![\\w-])`, 'g'),
+      replacement: `.${prefix}${name}`
+    }))
+
+  return withNamespacedClassAttrs.replace(
+    /(<style\b[^>]*>)([\s\S]*?)(<\/style>)/g,
+    (_match, open: string, css: string, close: string) => {
+      let scopedCss = css
+      for (const { pattern, replacement } of classSelectorReplacements) {
+        scopedCss = scopedCss.replace(pattern, replacement)
+      }
+      return `${open}${scopedCss}${close}`
+    }
+  )
+}
+
+function normalizeProviderGlyphStroke(raw: string): string {
+  return raw
+    .replace(/(stroke-width:\s*)1\.85\b/g, (_match, prefix: string) => `${prefix}1.1`)
+    .replace(/(stroke-width:\s*)1\.75\b/g, (_match, prefix: string) => `${prefix}1.05`)
+    .replace(/(stroke-width:\s*)1\.3\b/g, (_match, prefix: string) => `${prefix}0.82`)
+    .replace(
+      /(stroke-width=")1\.85(")/g,
+      (_match, open: string, close: string) => `${open}1.1${close}`
+    )
+    .replace(
+      /(stroke-width=")1\.75(")/g,
+      (_match, open: string, close: string) => `${open}1.05${close}`
+    )
+    .replace(
+      /(stroke-width=")1\.3(")/g,
+      (_match, open: string, close: string) => `${open}0.82${close}`
+    )
+}
+
 /**
  * Inline-ready SVG: injects sizing, and — for recolourable icons — tints
  * `currentColor` + `--agent-accent` to `accent`. Fixed-palette icons (provider
  * brand glyphs, full-colour ghost art) render natively, accent ignored.
  */
 export function preparePoolIconSvg(asset: PoolIconAsset, size: number, accent?: string): string {
-  let svg = asset.raw.replace(
+  const raw =
+    asset.group === 'Providers' ? normalizeProviderGlyphStroke(asset.raw) : asset.raw
+  let svg = namespaceInlineSvgClasses(raw, asset.key).replace(
     /^<svg\s+/,
     `<svg class="agent-pool-asset-svg" width="${size}" height="${size}" aria-hidden="true" focusable="false" `
   )

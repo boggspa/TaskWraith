@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-daemon-diner-title agent-pool-icon-daemon-diner-desc" data-agent-name="Daemon Diner" data-agent-accent="#FF477E" data-agent-hue="343" style="color: #FF477E; --agent-accent: #FF477E;">
+  <title id="agent-pool-icon-daemon-diner-title">Daemon Diner</title>
+  <desc id="agent-pool-icon-daemon-diner-desc">Funky tech themed agent pool icon with daemon diner energy.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}.fill{fill:none;stroke:currentColor;stroke-width:18;stroke-linecap:round;stroke-linejoin:round}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <path class="line" d="M154 420h292M178 420l34-170h176l34 170"/>
+  <path class="accent" d="M210 250c0-72 180-72 180 0M250 250c0-38 100-38 100 0"/>
+  <path class="fine" d="M238 304h124M226 356h148"/>
+</svg>

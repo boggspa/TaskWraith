@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-data-disco-ball-title agent-pool-icon-data-disco-ball-desc" data-agent-name="Data Disco Ball" data-agent-accent="#C084FC" data-agent-hue="270" style="color: #C084FC; --agent-accent: #C084FC;">
+  <title id="agent-pool-icon-data-disco-ball-title">Data Disco Ball</title>
+  <desc id="agent-pool-icon-data-disco-ball-desc">Funky tech themed agent pool icon with data disco ball energy.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}.fill{fill:none;stroke:currentColor;stroke-width:18;stroke-linecap:round;stroke-linejoin:round}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <circle class="line" cx="300" cy="300" r="154"/>
+  <path class="fine" d="M168 258h264M168 342h264M242 156c-34 84-34 204 0 288M358 156c34 84 34 204 0 288"/>
+  <path class="accent" d="M214 214l172 172M386 214 214 386"/>
+</svg>

@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-boolean-boombox-title agent-pool-icon-boolean-boombox-desc" data-agent-name="Boolean Boombox" data-agent-accent="#FF3FC8" data-agent-hue="318" style="color: #FF3FC8; --agent-accent: #FF3FC8;">
+  <title id="agent-pool-icon-boolean-boombox-title">Boolean Boombox</title>
+  <desc id="agent-pool-icon-boolean-boombox-desc">Funky tech themed agent pool icon with boolean boombox energy.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}.fill{fill:none;stroke:currentColor;stroke-width:18;stroke-linecap:round;stroke-linejoin:round}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <rect class="line" x="118" y="198" width="364" height="232" rx="44"/>
+  <circle class="accent" cx="216" cy="316" r="58"/><circle class="accent" cx="384" cy="316" r="58"/>
+  <path class="fine" d="M228 164h144M258 198v-34M342 198v-34M280 258h40"/>
+</svg>

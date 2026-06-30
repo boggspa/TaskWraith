@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-firewall-flamingo-title agent-pool-icon-firewall-flamingo-desc" data-agent-name="Firewall Flamingo" data-agent-accent="#FF2E63" data-agent-hue="346" style="color: #FF2E63; --agent-accent: #FF2E63;">
+  <title id="agent-pool-icon-firewall-flamingo-title">Firewall Flamingo</title>
+  <desc id="agent-pool-icon-firewall-flamingo-desc">Funky tech themed agent pool icon with firewall flamingo energy.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}.fill{fill:none;stroke:currentColor;stroke-width:18;stroke-linecap:round;stroke-linejoin:round}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <path class="line" d="M128 178h344v244H128Z"/>
+  <path class="fine" d="M128 252h344M128 326h344M212 178v74M300 252v74M388 326v96"/>
+  <path class="accent" d="M300 120c72 68 92 130 54 184-28-44-58-68-90-80 16 62 0 96-48 122 6-94 34-168 84-226Z"/>
+</svg>

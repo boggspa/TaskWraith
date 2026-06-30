@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-webhook-whirlpool-title agent-pool-icon-webhook-whirlpool-desc" data-agent-name="Webhook Whirlpool" data-agent-accent="#00E0A4" data-agent-hue="164" style="color: #00E0A4; --agent-accent: #00E0A4;">
+  <title id="agent-pool-icon-webhook-whirlpool-title">Webhook Whirlpool</title>
+  <desc id="agent-pool-icon-webhook-whirlpool-desc">Funky tech themed agent pool icon with webhook whirlpool energy.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}.fill{fill:none;stroke:currentColor;stroke-width:18;stroke-linecap:round;stroke-linejoin:round}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <path class="line" d="M426 300c0 70-56 126-126 126s-126-56-126-126 56-126 126-126c48 0 82 28 82 68 0 42-34 76-76 76-28 0-50-22-50-50"/>
+  <path class="accent" d="M300 104v70M300 426v70M104 300h70M426 300h70"/>
+</svg>

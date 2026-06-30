@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-ping-pong-parser-title agent-pool-icon-ping-pong-parser-desc" data-agent-name="Ping Pong Parser" data-agent-accent="#2F6BFF" data-agent-hue="223" style="color: #2F6BFF; --agent-accent: #2F6BFF;">
+  <title id="agent-pool-icon-ping-pong-parser-title">Ping Pong Parser</title>
+  <desc id="agent-pool-icon-ping-pong-parser-desc">Funky tech themed agent pool icon with ping pong parser energy.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}.fill{fill:none;stroke:currentColor;stroke-width:18;stroke-linecap:round;stroke-linejoin:round}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <circle class="line" cx="208" cy="250" r="72"/><circle class="accent" cx="392" cy="350" r="72"/>
+  <path class="fine" d="M260 302l80-80M260 358l80-80M208 322v118M392 422v58"/>
+</svg>

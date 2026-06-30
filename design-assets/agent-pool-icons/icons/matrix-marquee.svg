@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-matrix-marquee-title agent-pool-icon-matrix-marquee-desc" data-agent-name="Matrix Marquee" data-agent-accent="#10B981" data-agent-hue="160" style="color: #10B981; --agent-accent: #10B981;">
+  <title id="agent-pool-icon-matrix-marquee-title">Matrix Marquee</title>
+  <desc id="agent-pool-icon-matrix-marquee-desc">Funky tech themed agent pool icon with matrix marquee energy.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}.fill{fill:none;stroke:currentColor;stroke-width:18;stroke-linecap:round;stroke-linejoin:round}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <rect class="line" x="134" y="150" width="332" height="300" rx="46"/>
+  <path class="accent" d="M202 220h196M202 286h142M202 352h196"/>
+  <path class="fine" d="M164 150l48-58M436 150l48-58M164 450l48 58M436 450l48 58"/>
+</svg>

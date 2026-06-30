@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-binary-bonsai-title agent-pool-icon-binary-bonsai-desc" data-agent-name="Binary Bonsai" data-agent-accent="#48F06A" data-agent-hue="131" style="color: #48F06A; --agent-accent: #48F06A;">
+  <title id="agent-pool-icon-binary-bonsai-title">Binary Bonsai</title>
+  <desc id="agent-pool-icon-binary-bonsai-desc">Funky tech themed agent pool icon with binary bonsai energy.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}.fill{fill:none;stroke:currentColor;stroke-width:18;stroke-linecap:round;stroke-linejoin:round}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <path class="line" d="M300 498V150M300 308 194 202M300 370l118-118M300 250l82-88"/>
+  <circle class="accent" cx="300" cy="150" r="36"/><circle class="accent" cx="194" cy="202" r="36"/><circle class="accent" cx="418" cy="252" r="36"/><circle class="accent" cx="382" cy="162" r="30"/>
+  <path class="fine" d="M214 498h172"/>
+</svg>

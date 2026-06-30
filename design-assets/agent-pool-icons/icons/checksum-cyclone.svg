@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-checksum-cyclone-title agent-pool-icon-checksum-cyclone-desc" data-agent-name="Checksum Cyclone" data-agent-accent="#8B5CFF" data-agent-hue="259" style="color: #8B5CFF; --agent-accent: #8B5CFF;">
+  <title id="agent-pool-icon-checksum-cyclone-title">Checksum Cyclone</title>
+  <desc id="agent-pool-icon-checksum-cyclone-desc">Funky tech themed agent pool icon with checksum cyclone energy.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}.fill{fill:none;stroke:currentColor;stroke-width:18;stroke-linecap:round;stroke-linejoin:round}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <path class="line" d="M440 302c0 78-62 138-140 138s-140-60-140-138 62-138 140-138c52 0 96 28 120 70"/>
+  <path class="accent" d="M364 234c-52-32-130-10-150 58-22 78 48 126 106 104 56-20 74-84 42-126"/>
+  <path class="fine" d="M300 112v72M300 416v72M112 300h72M416 300h72"/>
+</svg>

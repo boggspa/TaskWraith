@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-git-gumbo-title agent-pool-icon-git-gumbo-desc" data-agent-name="Git Gumbo" data-agent-accent="#F43F5E" data-agent-hue="350" style="color: #F43F5E; --agent-accent: #F43F5E;">
+  <title id="agent-pool-icon-git-gumbo-title">Git Gumbo</title>
+  <desc id="agent-pool-icon-git-gumbo-desc">Funky tech themed agent pool icon with git gumbo energy.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}.fill{fill:none;stroke:currentColor;stroke-width:18;stroke-linecap:round;stroke-linejoin:round}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <path class="line" d="M198 198l102 102 102-102M300 300v142"/>
+  <circle class="accent" cx="198" cy="198" r="46"/><circle class="accent" cx="402" cy="198" r="46"/><circle class="accent" cx="300" cy="300" r="46"/><circle class="accent" cx="300" cy="442" r="46"/>
+  <path class="fine" d="M168 442h264"/>
+</svg>

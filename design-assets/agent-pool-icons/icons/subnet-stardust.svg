@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-subnet-stardust-title agent-pool-icon-subnet-stardust-desc" data-agent-name="Subnet Stardust" data-agent-accent="#3B82F6" data-agent-hue="217" style="color: #3B82F6; --agent-accent: #3B82F6;">
+  <title id="agent-pool-icon-subnet-stardust-title">Subnet Stardust</title>
+  <desc id="agent-pool-icon-subnet-stardust-desc">Funky tech themed agent pool icon with subnet stardust energy.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}.fill{fill:none;stroke:currentColor;stroke-width:18;stroke-linecap:round;stroke-linejoin:round}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <path class="line" d="M168 390l112-164 114 72 52-148"/>
+  <path class="accent" d="M168 390l226-92M280 226l166-76"/>
+  <circle class="dot" cx="168" cy="390" r="28"/><circle class="dot" cx="280" cy="226" r="28"/><circle class="dot" cx="394" cy="298" r="28"/><circle class="dot" cx="446" cy="150" r="28"/>
+</svg>

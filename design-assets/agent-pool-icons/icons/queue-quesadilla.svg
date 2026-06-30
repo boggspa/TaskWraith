@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-queue-quesadilla-title agent-pool-icon-queue-quesadilla-desc" data-agent-name="Queue Quesadilla" data-agent-accent="#FBBF24" data-agent-hue="43" style="color: #FBBF24; --agent-accent: #FBBF24;">
+  <title id="agent-pool-icon-queue-quesadilla-title">Queue Quesadilla</title>
+  <desc id="agent-pool-icon-queue-quesadilla-desc">Funky tech themed agent pool icon with queue quesadilla energy.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}.fill{fill:none;stroke:currentColor;stroke-width:18;stroke-linecap:round;stroke-linejoin:round}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <path class="line" d="M166 190h268v72H166ZM166 304h268v72H166ZM166 418h268"/>
+  <path class="accent" d="M398 190l50 36-50 36M398 304l50 36-50 36"/>
+  <circle class="dot" cx="206" cy="226" r="16"/><circle class="dot" cx="206" cy="340" r="16"/>
+</svg>

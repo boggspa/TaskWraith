@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-heap-harmonica-title agent-pool-icon-heap-harmonica-desc" data-agent-name="Heap Harmonica" data-agent-accent="#34D399" data-agent-hue="158" style="color: #34D399; --agent-accent: #34D399;">
+  <title id="agent-pool-icon-heap-harmonica-title">Heap Harmonica</title>
+  <desc id="agent-pool-icon-heap-harmonica-desc">Funky tech themed agent pool icon with heap harmonica energy.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}.fill{fill:none;stroke:currentColor;stroke-width:18;stroke-linecap:round;stroke-linejoin:round}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <path class="line" d="M152 430h296"/>
+  <rect class="accent" x="170" y="298" width="54" height="132" rx="18"/><rect class="accent" x="252" y="222" width="54" height="208" rx="18"/><rect class="accent" x="334" y="168" width="54" height="262" rx="18"/>
+  <path class="fine" d="M170 176h218M170 246h218"/>
+</svg>

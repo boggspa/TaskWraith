@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-diff-dandelion-title agent-pool-icon-diff-dandelion-desc" data-agent-name="Diff Dandelion" data-agent-accent="#22E6A8" data-agent-hue="164" style="color: #22E6A8; --agent-accent: #22E6A8;">
+  <title id="agent-pool-icon-diff-dandelion-title">Diff Dandelion</title>
+  <desc id="agent-pool-icon-diff-dandelion-desc">Funky tech themed agent pool icon with diff dandelion energy.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}.fill{fill:none;stroke:currentColor;stroke-width:18;stroke-linecap:round;stroke-linejoin:round}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <circle class="dot" cx="300" cy="300" r="28"/>
+  <path class="line" d="M300 122v120M300 358v120M122 300h120M358 300h120"/>
+  <path class="accent" d="M174 174l84 84M342 342l84 84M426 174l-84 84M258 342l-84 84"/>
+  <circle class="fine" cx="300" cy="300" r="132"/>
+</svg>

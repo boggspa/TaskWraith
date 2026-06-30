@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-lint-lagoon-title agent-pool-icon-lint-lagoon-desc" data-agent-name="Lint Lagoon" data-agent-accent="#14B8A6" data-agent-hue="174" style="color: #14B8A6; --agent-accent: #14B8A6;">
+  <title id="agent-pool-icon-lint-lagoon-title">Lint Lagoon</title>
+  <desc id="agent-pool-icon-lint-lagoon-desc">Funky tech themed agent pool icon with lint lagoon energy.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}.fill{fill:none;stroke:currentColor;stroke-width:18;stroke-linecap:round;stroke-linejoin:round}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <path class="line" d="M116 250c48-38 96-38 144 0s96 38 144 0 64-38 80-30"/>
+  <path class="accent" d="M116 332c48-38 96-38 144 0s96 38 144 0 64-38 80-30M116 414c48-38 96-38 144 0s96 38 144 0 64-38 80-30"/>
+  <path class="fine" d="M198 152h204"/>
+</svg>

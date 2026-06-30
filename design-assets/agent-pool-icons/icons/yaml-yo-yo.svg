@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-yaml-yo-yo-title agent-pool-icon-yaml-yo-yo-desc" data-agent-name="YAML Yo-Yo" data-agent-accent="#38BDF8" data-agent-hue="199" style="color: #38BDF8; --agent-accent: #38BDF8;">
+  <title id="agent-pool-icon-yaml-yo-yo-title">YAML Yo-Yo</title>
+  <desc id="agent-pool-icon-yaml-yo-yo-desc">Funky tech themed agent pool icon with yaml yo-yo energy.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}.fill{fill:none;stroke:currentColor;stroke-width:18;stroke-linecap:round;stroke-linejoin:round}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <circle class="line" cx="236" cy="300" r="86"/><circle class="accent" cx="364" cy="300" r="86"/>
+  <path class="fine" d="M236 214c34 58 34 114 0 172M364 214c-34 58-34 114 0 172M300 386v98"/>
+  <circle class="dot" cx="300" cy="300" r="18"/>
+</svg>

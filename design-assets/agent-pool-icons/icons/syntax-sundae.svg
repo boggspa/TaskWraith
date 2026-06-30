@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-syntax-sundae-title agent-pool-icon-syntax-sundae-desc" data-agent-name="Syntax Sundae" data-agent-accent="#F472B6" data-agent-hue="330" style="color: #F472B6; --agent-accent: #F472B6;">
+  <title id="agent-pool-icon-syntax-sundae-title">Syntax Sundae</title>
+  <desc id="agent-pool-icon-syntax-sundae-desc">Funky tech themed agent pool icon with syntax sundae energy.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}.fill{fill:none;stroke:currentColor;stroke-width:18;stroke-linecap:round;stroke-linejoin:round}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <path class="line" d="M186 278c14-86 214-86 228 0M214 278h172l-34 160H248Z"/>
+  <path class="accent" d="M234 346h132M258 410h84M300 116v76"/>
+  <circle class="dot" cx="300" cy="116" r="26"/>
+</svg>

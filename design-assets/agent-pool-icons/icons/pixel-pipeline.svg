@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-pixel-pipeline-title agent-pool-icon-pixel-pipeline-desc" data-agent-name="Pixel Pipeline" data-agent-accent="#FF7A1A" data-agent-hue="25" style="color: #FF7A1A; --agent-accent: #FF7A1A;">
+  <title id="agent-pool-icon-pixel-pipeline-title">Pixel Pipeline</title>
+  <desc id="agent-pool-icon-pixel-pipeline-desc">Funky tech themed agent pool icon with pixel pipeline energy.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}.fill{fill:none;stroke:currentColor;stroke-width:18;stroke-linecap:round;stroke-linejoin:round}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <path class="line" d="M124 222h184c42 0 76 34 76 76v80c0 42 34 76 76 76h16"/>
+  <path class="accent" d="M124 310h184M476 366H384M198 182v80M198 350v80"/>
+  <circle class="dot" cx="124" cy="222" r="24"/><circle class="dot" cx="476" cy="454" r="24"/>
+</svg>

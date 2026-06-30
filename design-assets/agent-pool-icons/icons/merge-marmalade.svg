@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-merge-marmalade-title agent-pool-icon-merge-marmalade-desc" data-agent-name="Merge Marmalade" data-agent-accent="#F97316" data-agent-hue="24" style="color: #F97316; --agent-accent: #F97316;">
+  <title id="agent-pool-icon-merge-marmalade-title">Merge Marmalade</title>
+  <desc id="agent-pool-icon-merge-marmalade-desc">Funky tech themed agent pool icon with merge marmalade energy.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}.fill{fill:none;stroke:currentColor;stroke-width:18;stroke-linecap:round;stroke-linejoin:round}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <path class="line" d="M174 158v104c0 54 44 98 98 98h156"/>
+  <path class="line" d="M426 158v300"/>
+  <path class="accent" d="M382 414l44 44 44-44M218 202l-44-44-44 44M382 202l44-44 44 44"/>
+  <circle class="dot" cx="300" cy="360" r="18"/>
+</svg>

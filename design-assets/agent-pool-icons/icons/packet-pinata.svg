@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-packet-pinata-title agent-pool-icon-packet-pinata-desc" data-agent-name="Packet Pinata" data-agent-accent="#EC4899" data-agent-hue="330" style="color: #EC4899; --agent-accent: #EC4899;">
+  <title id="agent-pool-icon-packet-pinata-title">Packet Pinata</title>
+  <desc id="agent-pool-icon-packet-pinata-desc">Funky tech themed agent pool icon with packet pinata energy.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}.fill{fill:none;stroke:currentColor;stroke-width:18;stroke-linecap:round;stroke-linejoin:round}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <path class="line" d="M300 126 458 218v164L300 474 142 382V218Z"/>
+  <path class="accent" d="M142 218l158 92 158-92M300 310v164"/>
+  <path class="fine" d="M224 264l158-92M376 264 218 172"/>
+</svg>

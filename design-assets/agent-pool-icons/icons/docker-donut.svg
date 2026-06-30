@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-docker-donut-title agent-pool-icon-docker-donut-desc" data-agent-name="Docker Donut" data-agent-accent="#38BDF8" data-agent-hue="199" style="color: #38BDF8; --agent-accent: #38BDF8;">
+  <title id="agent-pool-icon-docker-donut-title">Docker Donut</title>
+  <desc id="agent-pool-icon-docker-donut-desc">Funky tech themed agent pool icon with docker donut energy.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}.fill{fill:none;stroke:currentColor;stroke-width:18;stroke-linecap:round;stroke-linejoin:round}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <circle class="line" cx="300" cy="300" r="156"/>
+  <circle class="accent" cx="300" cy="300" r="82"/>
+  <path class="fine" d="M192 192l216 216M408 192 192 408"/>
+  <circle class="dot" cx="300" cy="300" r="22"/>
+</svg>

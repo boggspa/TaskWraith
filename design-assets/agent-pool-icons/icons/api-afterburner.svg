@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-api-afterburner-title agent-pool-icon-api-afterburner-desc" data-agent-name="API Afterburner" data-agent-accent="#FF5A1F" data-agent-hue="17" style="color: #FF5A1F; --agent-accent: #FF5A1F;">
+  <title id="agent-pool-icon-api-afterburner-title">API Afterburner</title>
+  <desc id="agent-pool-icon-api-afterburner-desc">Funky tech themed agent pool icon with api afterburner energy.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}.fill{fill:none;stroke:currentColor;stroke-width:18;stroke-linecap:round;stroke-linejoin:round}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <path class="line" d="M300 100c58 48 82 120 72 214l72 72-64 20-20 64-72-72c-94 10-166-14-214-72 82-10 150-48 226-226Z"/>
+  <path class="accent" d="M246 354l-80 80M214 310l-70 20M290 386l-20 70"/>
+  <circle class="dot" cx="342" cy="210" r="22"/>
+</svg>

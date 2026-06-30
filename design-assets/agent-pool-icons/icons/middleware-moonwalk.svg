@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-middleware-moonwalk-title agent-pool-icon-middleware-moonwalk-desc" data-agent-name="Middleware Moonwalk" data-agent-accent="#38BDF8" data-agent-hue="199" style="color: #38BDF8; --agent-accent: #38BDF8;">
+  <title id="agent-pool-icon-middleware-moonwalk-title">Middleware Moonwalk</title>
+  <desc id="agent-pool-icon-middleware-moonwalk-desc">Funky tech themed agent pool icon with middleware moonwalk energy.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}.fill{fill:none;stroke:currentColor;stroke-width:18;stroke-linecap:round;stroke-linejoin:round}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <circle class="line" cx="300" cy="300" r="86"/>
+  <ellipse class="accent" cx="300" cy="300" rx="190" ry="76" transform="rotate(201 300 300)"/>
+  <ellipse class="fine" cx="300" cy="300" rx="76" ry="190" transform="rotate(229 300 300)"/>
+  <circle class="dot" cx="460" cy="260" r="24"/>
+</svg>

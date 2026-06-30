@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-relay-robot-title agent-pool-icon-relay-robot-desc" data-agent-name="Relay Robot" data-agent-accent="#22C55E" data-agent-hue="142" style="color: #22C55E; --agent-accent: #22C55E;">
+  <title id="agent-pool-icon-relay-robot-title">Relay Robot</title>
+  <desc id="agent-pool-icon-relay-robot-desc">Funky tech themed agent pool icon with relay robot energy.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}.fill{fill:none;stroke:currentColor;stroke-width:18;stroke-linecap:round;stroke-linejoin:round}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <rect class="line" x="174" y="190" width="252" height="226" rx="52"/>
+  <path class="accent" d="M300 190v-70M254 120h92"/>
+  <circle class="dot" cx="246" cy="286" r="22"/><circle class="dot" cx="354" cy="286" r="22"/><path class="fine" d="M244 360h112"/>
+</svg>

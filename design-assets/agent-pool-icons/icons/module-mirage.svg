@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-module-mirage-title agent-pool-icon-module-mirage-desc" data-agent-name="Module Mirage" data-agent-accent="#818CF8" data-agent-hue="235" style="color: #818CF8; --agent-accent: #818CF8;">
+  <title id="agent-pool-icon-module-mirage-title">Module Mirage</title>
+  <desc id="agent-pool-icon-module-mirage-desc">Funky tech themed agent pool icon with module mirage energy.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}.fill{fill:none;stroke:currentColor;stroke-width:18;stroke-linecap:round;stroke-linejoin:round}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <rect class="line" x="140" y="140" width="132" height="132" rx="28"/><rect class="line" x="328" y="140" width="132" height="132" rx="28"/><rect class="line" x="140" y="328" width="132" height="132" rx="28"/><rect class="line" x="328" y="328" width="132" height="132" rx="28"/>
+  <path class="accent" d="M272 206h56M206 272v56M394 272v56M272 394h56"/>
+</svg>

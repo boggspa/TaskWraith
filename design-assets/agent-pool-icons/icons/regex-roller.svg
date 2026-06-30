@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-regex-roller-title agent-pool-icon-regex-roller-desc" data-agent-name="Regex Roller" data-agent-accent="#C084FC" data-agent-hue="270" style="color: #C084FC; --agent-accent: #C084FC;">
+  <title id="agent-pool-icon-regex-roller-title">Regex Roller</title>
+  <desc id="agent-pool-icon-regex-roller-desc">Funky tech themed agent pool icon with regex roller energy.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}.fill{fill:none;stroke:currentColor;stroke-width:18;stroke-linecap:round;stroke-linejoin:round}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <path class="line" d="M220 220c-62 0-112 50-112 112s50 112 112 112c54 0 92-28 128-80l48-64c30-42 52-80 104-80"/>
+  <path class="accent" d="M380 220c62 0 112 50 112 112s-50 112-112 112c-54 0-92-28-128-80"/>
+  <circle class="dot" cx="220" cy="332" r="18"/><circle class="dot" cx="380" cy="332" r="18"/>
+</svg>

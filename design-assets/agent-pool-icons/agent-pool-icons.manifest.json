@@ -159,5 +159,488 @@
     "file": "icons/websocket-waltz.svg",
     "accent": "#00F0CF",
     "hue": 172
+  },
+  {
+    "name": "API Afterburner",
+    "slug": "api-afterburner",
+    "file": "icons/api-afterburner.svg",
+    "accent": "#FF5A1F",
+    "hue": 17
+  },
+  {
+    "name": "Binary Bonsai",
+    "slug": "binary-bonsai",
+    "file": "icons/binary-bonsai.svg",
+    "accent": "#48F06A",
+    "hue": 131
+  },
+  {
+    "name": "Boolean Boombox",
+    "slug": "boolean-boombox",
+    "file": "icons/boolean-boombox.svg",
+    "accent": "#FF3FC8",
+    "hue": 318
+  },
+  {
+    "name": "Buffer Burrito",
+    "slug": "buffer-burrito",
+    "file": "icons/buffer-burrito.svg",
+    "accent": "#FFD33D",
+    "hue": 48
+  },
+  {
+    "name": "Byte Bodega",
+    "slug": "byte-bodega",
+    "file": "icons/byte-bodega.svg",
+    "accent": "#28D4FF",
+    "hue": 193
+  },
+  {
+    "name": "Checksum Cyclone",
+    "slug": "checksum-cyclone",
+    "file": "icons/checksum-cyclone.svg",
+    "accent": "#8B5CFF",
+    "hue": 259
+  },
+  {
+    "name": "Cloud Compiler",
+    "slug": "cloud-compiler",
+    "file": "icons/cloud-compiler.svg",
+    "accent": "#66D9FF",
+    "hue": 197
+  },
+  {
+    "name": "Codec Carousel",
+    "slug": "codec-carousel",
+    "file": "icons/codec-carousel.svg",
+    "accent": "#F97316",
+    "hue": 24
+  },
+  {
+    "name": "Cron Coconut",
+    "slug": "cron-coconut",
+    "file": "icons/cron-coconut.svg",
+    "accent": "#9EFF38",
+    "hue": 88
+  },
+  {
+    "name": "Daemon Diner",
+    "slug": "daemon-diner",
+    "file": "icons/daemon-diner.svg",
+    "accent": "#FF477E",
+    "hue": 343
+  },
+  {
+    "name": "Data Disco Ball",
+    "slug": "data-disco-ball",
+    "file": "icons/data-disco-ball.svg",
+    "accent": "#C084FC",
+    "hue": 270
+  },
+  {
+    "name": "Diff Dandelion",
+    "slug": "diff-dandelion",
+    "file": "icons/diff-dandelion.svg",
+    "accent": "#22E6A8",
+    "hue": 164
+  },
+  {
+    "name": "Docker Donut",
+    "slug": "docker-donut",
+    "file": "icons/docker-donut.svg",
+    "accent": "#38BDF8",
+    "hue": 199
+  },
+  {
+    "name": "Endpoint Espresso",
+    "slug": "endpoint-espresso",
+    "file": "icons/endpoint-espresso.svg",
+    "accent": "#FB923C",
+    "hue": 25
+  },
+  {
+    "name": "Fiber Fizz",
+    "slug": "fiber-fizz",
+    "file": "icons/fiber-fizz.svg",
+    "accent": "#06B6D4",
+    "hue": 188
+  },
+  {
+    "name": "Firewall Flamingo",
+    "slug": "firewall-flamingo",
+    "file": "icons/firewall-flamingo.svg",
+    "accent": "#FF2E63",
+    "hue": 346
+  },
+  {
+    "name": "Forklift Firmware",
+    "slug": "forklift-firmware",
+    "file": "icons/forklift-firmware.svg",
+    "accent": "#FACC15",
+    "hue": 50
+  },
+  {
+    "name": "Function Ferris",
+    "slug": "function-ferris",
+    "file": "icons/function-ferris.svg",
+    "accent": "#A3E635",
+    "hue": 79
+  },
+  {
+    "name": "Gateway Glitter",
+    "slug": "gateway-glitter",
+    "file": "icons/gateway-glitter.svg",
+    "accent": "#2DD4BF",
+    "hue": 174
+  },
+  {
+    "name": "Git Gumbo",
+    "slug": "git-gumbo",
+    "file": "icons/git-gumbo.svg",
+    "accent": "#F43F5E",
+    "hue": 350
+  },
+  {
+    "name": "GPU Gumball",
+    "slug": "gpu-gumball",
+    "file": "icons/gpu-gumball.svg",
+    "accent": "#60A5FA",
+    "hue": 217
+  },
+  {
+    "name": "Hash Hula",
+    "slug": "hash-hula",
+    "file": "icons/hash-hula.svg",
+    "accent": "#E879F9",
+    "hue": 292
+  },
+  {
+    "name": "Heap Harmonica",
+    "slug": "heap-harmonica",
+    "file": "icons/heap-harmonica.svg",
+    "accent": "#34D399",
+    "hue": 158
+  },
+  {
+    "name": "HTTP Hotrod",
+    "slug": "http-hotrod",
+    "file": "icons/http-hotrod.svg",
+    "accent": "#FB7185",
+    "hue": 348
+  },
+  {
+    "name": "Index Iguana",
+    "slug": "index-iguana",
+    "file": "icons/index-iguana.svg",
+    "accent": "#84CC16",
+    "hue": 82
+  },
+  {
+    "name": "JSON Jamboree",
+    "slug": "json-jamboree",
+    "file": "icons/json-jamboree.svg",
+    "accent": "#F59E0B",
+    "hue": 38
+  },
+  {
+    "name": "Lambda Lava Lamp",
+    "slug": "lambda-lava-lamp",
+    "file": "icons/lambda-lava-lamp.svg",
+    "accent": "#A855F7",
+    "hue": 270
+  },
+  {
+    "name": "Lint Lagoon",
+    "slug": "lint-lagoon",
+    "file": "icons/lint-lagoon.svg",
+    "accent": "#14B8A6",
+    "hue": 174
+  },
+  {
+    "name": "Load Balancer Luau",
+    "slug": "load-balancer-luau",
+    "file": "icons/load-balancer-luau.svg",
+    "accent": "#22C55E",
+    "hue": 142
+  },
+  {
+    "name": "Logic Lava",
+    "slug": "logic-lava",
+    "file": "icons/logic-lava.svg",
+    "accent": "#EF4444",
+    "hue": 0
+  },
+  {
+    "name": "Matrix Marquee",
+    "slug": "matrix-marquee",
+    "file": "icons/matrix-marquee.svg",
+    "accent": "#10B981",
+    "hue": 160
+  },
+  {
+    "name": "Memory Mojito",
+    "slug": "memory-mojito",
+    "file": "icons/memory-mojito.svg",
+    "accent": "#4ADE80",
+    "hue": 134
+  },
+  {
+    "name": "Merge Marmalade",
+    "slug": "merge-marmalade",
+    "file": "icons/merge-marmalade.svg",
+    "accent": "#F97316",
+    "hue": 24
+  },
+  {
+    "name": "Middleware Moonwalk",
+    "slug": "middleware-moonwalk",
+    "file": "icons/middleware-moonwalk.svg",
+    "accent": "#38BDF8",
+    "hue": 199
+  },
+  {
+    "name": "Module Mirage",
+    "slug": "module-mirage",
+    "file": "icons/module-mirage.svg",
+    "accent": "#818CF8",
+    "hue": 235
+  },
+  {
+    "name": "Mutex Mochi",
+    "slug": "mutex-mochi",
+    "file": "icons/mutex-mochi.svg",
+    "accent": "#F472B6",
+    "hue": 330
+  },
+  {
+    "name": "Neural Nachos",
+    "slug": "neural-nachos",
+    "file": "icons/neural-nachos.svg",
+    "accent": "#D946EF",
+    "hue": 292
+  },
+  {
+    "name": "Nonce Nebula",
+    "slug": "nonce-nebula",
+    "file": "icons/nonce-nebula.svg",
+    "accent": "#6366F1",
+    "hue": 239
+  },
+  {
+    "name": "OAuth Octopus",
+    "slug": "oauth-octopus",
+    "file": "icons/oauth-octopus.svg",
+    "accent": "#06B6D4",
+    "hue": 188
+  },
+  {
+    "name": "Opcode Otterpop",
+    "slug": "opcode-otterpop",
+    "file": "icons/opcode-otterpop.svg",
+    "accent": "#F43F5E",
+    "hue": 350
+  },
+  {
+    "name": "Packet Pinata",
+    "slug": "packet-pinata",
+    "file": "icons/packet-pinata.svg",
+    "accent": "#EC4899",
+    "hue": 330
+  },
+  {
+    "name": "Parity Parrot",
+    "slug": "parity-parrot",
+    "file": "icons/parity-parrot.svg",
+    "accent": "#A3E635",
+    "hue": 79
+  },
+  {
+    "name": "Patch Popcorn",
+    "slug": "patch-popcorn",
+    "file": "icons/patch-popcorn.svg",
+    "accent": "#FDE047",
+    "hue": 55
+  },
+  {
+    "name": "Payload Pinwheel",
+    "slug": "payload-pinwheel",
+    "file": "icons/payload-pinwheel.svg",
+    "accent": "#22D3EE",
+    "hue": 187
+  },
+  {
+    "name": "Ping Pong Parser",
+    "slug": "ping-pong-parser",
+    "file": "icons/ping-pong-parser.svg",
+    "accent": "#2F6BFF",
+    "hue": 223
+  },
+  {
+    "name": "Pixel Pipeline",
+    "slug": "pixel-pipeline",
+    "file": "icons/pixel-pipeline.svg",
+    "accent": "#FF7A1A",
+    "hue": 25
+  },
+  {
+    "name": "Protocol Popsicle",
+    "slug": "protocol-popsicle",
+    "file": "icons/protocol-popsicle.svg",
+    "accent": "#0EA5E9",
+    "hue": 202
+  },
+  {
+    "name": "Proxy Popstar",
+    "slug": "proxy-popstar",
+    "file": "icons/proxy-popstar.svg",
+    "accent": "#F0ABFC",
+    "hue": 294
+  },
+  {
+    "name": "Query Quasar",
+    "slug": "query-quasar",
+    "file": "icons/query-quasar.svg",
+    "accent": "#A78BFA",
+    "hue": 255
+  },
+  {
+    "name": "Queue Quesadilla",
+    "slug": "queue-quesadilla",
+    "file": "icons/queue-quesadilla.svg",
+    "accent": "#FBBF24",
+    "hue": 43
+  },
+  {
+    "name": "Rate Limit Rave",
+    "slug": "rate-limit-rave",
+    "file": "icons/rate-limit-rave.svg",
+    "accent": "#FB7185",
+    "hue": 348
+  },
+  {
+    "name": "Regex Roller",
+    "slug": "regex-roller",
+    "file": "icons/regex-roller.svg",
+    "accent": "#C084FC",
+    "hue": 270
+  },
+  {
+    "name": "Relay Robot",
+    "slug": "relay-robot",
+    "file": "icons/relay-robot.svg",
+    "accent": "#22C55E",
+    "hue": 142
+  },
+  {
+    "name": "Render Rodeo",
+    "slug": "render-rodeo",
+    "file": "icons/render-rodeo.svg",
+    "accent": "#38BDF8",
+    "hue": 199
+  },
+  {
+    "name": "Repo Rollercoaster",
+    "slug": "repo-rollercoaster",
+    "file": "icons/repo-rollercoaster.svg",
+    "accent": "#F97316",
+    "hue": 24
+  },
+  {
+    "name": "Schema Shindig",
+    "slug": "schema-shindig",
+    "file": "icons/schema-shindig.svg",
+    "accent": "#14B8A6",
+    "hue": 174
+  },
+  {
+    "name": "Semaphore Sorbet",
+    "slug": "semaphore-sorbet",
+    "file": "icons/semaphore-sorbet.svg",
+    "accent": "#F59E0B",
+    "hue": 38
+  },
+  {
+    "name": "Shard Shuffle",
+    "slug": "shard-shuffle",
+    "file": "icons/shard-shuffle.svg",
+    "accent": "#8B5CF6",
+    "hue": 258
+  },
+  {
+    "name": "Socket Sorcery",
+    "slug": "socket-sorcery",
+    "file": "icons/socket-sorcery.svg",
+    "accent": "#06D6A0",
+    "hue": 164
+  },
+  {
+    "name": "Stacktrace Salsa",
+    "slug": "stacktrace-salsa",
+    "file": "icons/stacktrace-salsa.svg",
+    "accent": "#EF4444",
+    "hue": 0
+  },
+  {
+    "name": "Subnet Stardust",
+    "slug": "subnet-stardust",
+    "file": "icons/subnet-stardust.svg",
+    "accent": "#3B82F6",
+    "hue": 217
+  },
+  {
+    "name": "Syntax Sundae",
+    "slug": "syntax-sundae",
+    "file": "icons/syntax-sundae.svg",
+    "accent": "#F472B6",
+    "hue": 330
+  },
+  {
+    "name": "Telemetry Taffy",
+    "slug": "telemetry-taffy",
+    "file": "icons/telemetry-taffy.svg",
+    "accent": "#22D3EE",
+    "hue": 187
+  },
+  {
+    "name": "Terminal Tiki",
+    "slug": "terminal-tiki",
+    "file": "icons/terminal-tiki.svg",
+    "accent": "#84CC16",
+    "hue": 82
+  },
+  {
+    "name": "Token Turntable",
+    "slug": "token-turntable",
+    "file": "icons/token-turntable.svg",
+    "accent": "#FACC15",
+    "hue": 50
+  },
+  {
+    "name": "Vector Vaporwave",
+    "slug": "vector-vaporwave",
+    "file": "icons/vector-vaporwave.svg",
+    "accent": "#A855F7",
+    "hue": 270
+  },
+  {
+    "name": "Webhook Whirlpool",
+    "slug": "webhook-whirlpool",
+    "file": "icons/webhook-whirlpool.svg",
+    "accent": "#00E0A4",
+    "hue": 164
+  },
+  {
+    "name": "Workflow Waffle",
+    "slug": "workflow-waffle",
+    "file": "icons/workflow-waffle.svg",
+    "accent": "#FB923C",
+    "hue": 25
+  },
+  {
+    "name": "YAML Yo-Yo",
+    "slug": "yaml-yo-yo",
+    "file": "icons/yaml-yo-yo.svg",
+    "accent": "#38BDF8",
+    "hue": 199
   }
 ]

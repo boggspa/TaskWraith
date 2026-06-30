@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-shard-shuffle-title agent-pool-icon-shard-shuffle-desc" data-agent-name="Shard Shuffle" data-agent-accent="#8B5CF6" data-agent-hue="258" style="color: #8B5CF6; --agent-accent: #8B5CF6;">
+  <title id="agent-pool-icon-shard-shuffle-title">Shard Shuffle</title>
+  <desc id="agent-pool-icon-shard-shuffle-desc">Funky tech themed agent pool icon with shard shuffle energy.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}.fill{fill:none;stroke:currentColor;stroke-width:18;stroke-linecap:round;stroke-linejoin:round}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <path class="line" d="M184 140l128 72-46 144-132-74Z"/>
+  <path class="accent" d="M340 174l118 118-118 118-72-118Z"/>
+  <path class="fine" d="M174 432l96-84M350 448l-78-100"/>
+</svg>

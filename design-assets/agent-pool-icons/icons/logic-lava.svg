@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-logic-lava-title agent-pool-icon-logic-lava-desc" data-agent-name="Logic Lava" data-agent-accent="#EF4444" data-agent-hue="0" style="color: #EF4444; --agent-accent: #EF4444;">
+  <title id="agent-pool-icon-logic-lava-title">Logic Lava</title>
+  <desc id="agent-pool-icon-logic-lava-desc">Funky tech themed agent pool icon with logic lava energy.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}.fill{fill:none;stroke:currentColor;stroke-width:18;stroke-linecap:round;stroke-linejoin:round}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <path class="line" d="M144 180h148c38 0 68 30 68 68s-30 68-68 68h-60c-38 0-68 30-68 68s30 68 68 68h224"/>
+  <path class="accent" d="M404 404l52 48-52 48"/>
+  <circle class="dot" cx="144" cy="180" r="26"/><circle class="dot" cx="456" cy="452" r="26"/>
+</svg>

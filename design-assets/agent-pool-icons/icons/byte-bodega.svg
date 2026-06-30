@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-byte-bodega-title agent-pool-icon-byte-bodega-desc" data-agent-name="Byte Bodega" data-agent-accent="#28D4FF" data-agent-hue="193" style="color: #28D4FF; --agent-accent: #28D4FF;">
+  <title id="agent-pool-icon-byte-bodega-title">Byte Bodega</title>
+  <desc id="agent-pool-icon-byte-bodega-desc">Funky tech themed agent pool icon with byte bodega energy.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}.fill{fill:none;stroke:currentColor;stroke-width:18;stroke-linecap:round;stroke-linejoin:round}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <path class="line" d="M138 246h324v202H138Z"/>
+  <path class="accent" d="M154 246l36-96h220l36 96M166 246c0 44 64 44 64 0 0 44 64 44 64 0 0 44 64 44 64 0 0 44 64 44 64 0"/>
+  <path class="fine" d="M218 342h164M218 390h112"/>
+</svg>

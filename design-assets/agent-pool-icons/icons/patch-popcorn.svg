@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-patch-popcorn-title agent-pool-icon-patch-popcorn-desc" data-agent-name="Patch Popcorn" data-agent-accent="#FDE047" data-agent-hue="55" style="color: #FDE047; --agent-accent: #FDE047;">
+  <title id="agent-pool-icon-patch-popcorn-title">Patch Popcorn</title>
+  <desc id="agent-pool-icon-patch-popcorn-desc">Funky tech themed agent pool icon with patch popcorn energy.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}.fill{fill:none;stroke:currentColor;stroke-width:18;stroke-linecap:round;stroke-linejoin:round}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <path class="line" d="M190 154h220l36 36v220l-36 36H190l-36-36V190Z"/>
+  <path class="accent" d="M234 300h132M300 234v132"/>
+  <path class="fine" d="M154 190l72 72M446 190l-72 72M154 410l72-72M446 410l-72-72"/>
+</svg>

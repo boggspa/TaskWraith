@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-function-ferris-title agent-pool-icon-function-ferris-desc" data-agent-name="Function Ferris" data-agent-accent="#A3E635" data-agent-hue="79" style="color: #A3E635; --agent-accent: #A3E635;">
+  <title id="agent-pool-icon-function-ferris-title">Function Ferris</title>
+  <desc id="agent-pool-icon-function-ferris-desc">Funky tech themed agent pool icon with function ferris energy.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}.fill{fill:none;stroke:currentColor;stroke-width:18;stroke-linecap:round;stroke-linejoin:round}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <circle class="line" cx="300" cy="300" r="166"/>
+  <circle class="accent" cx="300" cy="300" r="42"/>
+  <path class="fine" d="M300 134v124M300 342v124M134 300h124M342 300h124M182 182l88 88M330 330l88 88M418 182l-88 88M270 330l-88 88"/>
+</svg>

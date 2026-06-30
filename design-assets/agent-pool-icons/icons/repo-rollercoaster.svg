@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-repo-rollercoaster-title agent-pool-icon-repo-rollercoaster-desc" data-agent-name="Repo Rollercoaster" data-agent-accent="#F97316" data-agent-hue="24" style="color: #F97316; --agent-accent: #F97316;">
+  <title id="agent-pool-icon-repo-rollercoaster-title">Repo Rollercoaster</title>
+  <desc id="agent-pool-icon-repo-rollercoaster-desc">Funky tech themed agent pool icon with repo rollercoaster energy.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}.fill{fill:none;stroke:currentColor;stroke-width:18;stroke-linecap:round;stroke-linejoin:round}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <path class="line" d="M118 384c70-136 146-136 228 0 52 86 94 86 136 0"/>
+  <path class="accent" d="M166 254h268M208 196h184"/>
+  <circle class="dot" cx="160" cy="384" r="24"/><circle class="dot" cx="336" cy="384" r="24"/><circle class="dot" cx="482" cy="384" r="24"/>
+</svg>

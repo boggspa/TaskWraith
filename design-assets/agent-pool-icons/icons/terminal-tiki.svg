@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-terminal-tiki-title agent-pool-icon-terminal-tiki-desc" data-agent-name="Terminal Tiki" data-agent-accent="#84CC16" data-agent-hue="82" style="color: #84CC16; --agent-accent: #84CC16;">
+  <title id="agent-pool-icon-terminal-tiki-title">Terminal Tiki</title>
+  <desc id="agent-pool-icon-terminal-tiki-desc">Funky tech themed agent pool icon with terminal tiki energy.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}.fill{fill:none;stroke:currentColor;stroke-width:18;stroke-linecap:round;stroke-linejoin:round}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <path class="line" d="M178 158h244v232c0 62-54 112-122 112s-122-50-122-112Z"/>
+  <path class="accent" d="M236 260h52M312 260h52M246 360c40 28 68 28 108 0"/>
+  <path class="fine" d="M222 158l-58-58M378 158l58-58"/>
+</svg>

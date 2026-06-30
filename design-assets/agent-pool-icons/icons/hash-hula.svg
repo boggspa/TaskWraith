@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-hash-hula-title agent-pool-icon-hash-hula-desc" data-agent-name="Hash Hula" data-agent-accent="#E879F9" data-agent-hue="292" style="color: #E879F9; --agent-accent: #E879F9;">
+  <title id="agent-pool-icon-hash-hula-title">Hash Hula</title>
+  <desc id="agent-pool-icon-hash-hula-desc">Funky tech themed agent pool icon with hash hula energy.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}.fill{fill:none;stroke:currentColor;stroke-width:18;stroke-linecap:round;stroke-linejoin:round}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <path class="line" d="M224 132l-40 336M376 132l-40 336M132 236h336M116 364h336"/>
+  <path class="accent" d="M236 236h126M228 364h126"/>
+  <circle class="dot" cx="300" cy="300" r="22"/>
+</svg>

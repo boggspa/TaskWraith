@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-neural-nachos-title agent-pool-icon-neural-nachos-desc" data-agent-name="Neural Nachos" data-agent-accent="#D946EF" data-agent-hue="292" style="color: #D946EF; --agent-accent: #D946EF;">
+  <title id="agent-pool-icon-neural-nachos-title">Neural Nachos</title>
+  <desc id="agent-pool-icon-neural-nachos-desc">Funky tech themed agent pool icon with neural nachos energy.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}.fill{fill:none;stroke:currentColor;stroke-width:18;stroke-linecap:round;stroke-linejoin:round}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <path class="line" d="M246 144c-60 0-92 42-82 98-48 22-56 92-12 126-18 62 44 108 100 76 28 42 78 42 106 0 56 32 118-14 100-76 44-34 36-104-12-126 10-56-22-98-82-98-28 0-52 12-64 34-12-22-36-34-54-34Z"/>
+  <path class="accent" d="M244 238h112M220 300h160M252 362h96"/>
+  <path class="fine" d="M300 180v264"/>
+</svg>

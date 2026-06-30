@@ -18,7 +18,7 @@ describe('agent pool icon assets', () => {
 
   it('includes the featured agent-pool icons keyed by pool: slug', () => {
     const pool = POOL_ICON_ASSETS.filter((a) => a.group === 'Agent pool')
-    expect(pool.length).toBeGreaterThanOrEqual(10)
+    expect(pool.length).toBeGreaterThanOrEqual(90)
     for (const asset of pool) {
       expect(asset.key.startsWith('pool:')).toBe(true)
       expect(asset.raw).toContain('<svg')
@@ -62,5 +62,18 @@ describe('agent pool icon assets', () => {
       const out = preparePoolIconSvg(fixed, 26, '#123456')
       expect(out).toContain('width="26"')
     }
+  })
+
+  it('preparePoolIconSvg scopes embedded classes and slims provider strokes', () => {
+    const pool = getPoolIconAsset('pool:neon-node')!
+    const poolOut = preparePoolIconSvg(pool, 24, '#ABCDEF')
+    expect(poolOut).toContain('.agent-pool-icon-pool-neon-node-line')
+    expect(poolOut).not.toContain('class="line')
+
+    const provider = getPoolIconAsset('provider:codex')!
+    const providerOut = preparePoolIconSvg(provider, 24)
+    expect(providerOut).toContain('.agent-pool-icon-provider-codex-line')
+    expect(providerOut).toContain('stroke-width: 1.05')
+    expect(providerOut).not.toContain('stroke-width: 1.75')
   })
 })

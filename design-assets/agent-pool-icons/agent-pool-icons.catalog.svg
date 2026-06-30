@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="984" height="760" viewBox="0 0 984 760" fill="none">
+<svg xmlns="http://www.w3.org/2000/svg" width="984" height="2848" viewBox="0 0 984 2848" fill="none">
   <title>TaskWraith Agent pool icon catalogue</title>
   <desc>Standalone funky tech-themed SVG candidates for the Agent pool icon picker.</desc>
   <style>
@@ -9,7 +9,7 @@
     .tile-label { fill: #d9deea; font: 600 10px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; letter-spacing: 0; text-anchor: middle; }
     .tile-meta { fill: #7f889b; font: 8px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; letter-spacing: 0; text-anchor: middle; }
   </style>
-  <rect class="sheet-bg" width="984" height="760" rx="0"/>
+  <rect class="sheet-bg" width="984" height="2848" rx="0"/>
   <text class="title" x="24" y="36">Agent pool icon catalogue</text>
   <text class="subtitle" x="24" y="58">Funky tech-themed SVGs kept separate from the subagent identicon catalogue.</text>
 
@@ -19,30 +19,35 @@
     <text class="tile-label" x="66" y="124">Async Arcade</text>
     <text class="tile-meta" x="66" y="138">#00D7FF</text>
   </g>
+
   <g transform="translate(180 82)">
     <rect class="tile-bg" width="132" height="148" rx="8"/>
     <image href="icons/bitmap-bazaar.svg" x="16" y="10" width="100" height="100"/>
     <text class="tile-label" x="66" y="124">Bitmap Bazaar</text>
     <text class="tile-meta" x="66" y="138">#FF4FD8</text>
   </g>
+
   <g transform="translate(336 82)">
     <rect class="tile-bg" width="132" height="148" rx="8"/>
     <image href="icons/cache-cabana.svg" x="16" y="10" width="100" height="100"/>
     <text class="tile-label" x="66" y="124">Cache Cabana</text>
     <text class="tile-meta" x="66" y="138">#FFB000</text>
   </g>
+
   <g transform="translate(492 82)">
     <rect class="tile-bg" width="132" height="148" rx="8"/>
     <image href="icons/circuit-cactus.svg" x="16" y="10" width="100" height="100"/>
     <text class="tile-label" x="66" y="124">Circuit Cactus</text>
     <text class="tile-meta" x="66" y="138">#41F27A</text>
   </g>
+
   <g transform="translate(648 82)">
     <rect class="tile-bg" width="132" height="148" rx="8"/>
     <image href="icons/debug-disco.svg" x="16" y="10" width="100" height="100"/>
     <text class="tile-label" x="66" y="124">Debug Disco</text>
     <text class="tile-meta" x="66" y="138">#A855FF</text>
   </g>
+
   <g transform="translate(804 82)">
     <rect class="tile-bg" width="132" height="148" rx="8"/>
     <image href="icons/glitch-switch.svg" x="16" y="10" width="100" height="100"/>
@@ -56,30 +61,35 @@
     <text class="tile-label" x="66" y="124">Hex Hotline</text>
     <text class="tile-meta" x="66" y="138">#00E0A4</text>
   </g>
+
   <g transform="translate(180 254)">
     <rect class="tile-bg" width="132" height="148" rx="8"/>
     <image href="icons/kernel-kiosk.svg" x="16" y="10" width="100" height="100"/>
     <text class="tile-label" x="66" y="124">Kernel Kiosk</text>
     <text class="tile-meta" x="66" y="138">#6DFF57</text>
   </g>
+
   <g transform="translate(336 254)">
     <rect class="tile-bg" width="132" height="148" rx="8"/>
     <image href="icons/latency-limbo.svg" x="16" y="10" width="100" height="100"/>
     <text class="tile-label" x="66" y="124">Latency Limbo</text>
     <text class="tile-meta" x="66" y="138">#FFD23F</text>
   </g>
+
   <g transform="translate(492 254)">
     <rect class="tile-bg" width="132" height="148" rx="8"/>
     <image href="icons/neon-node.svg" x="16" y="10" width="100" height="100"/>
     <text class="tile-label" x="66" y="124">Neon Node</text>
     <text class="tile-meta" x="66" y="138">#2F6BFF</text>
   </g>
+
   <g transform="translate(648 254)">
     <rect class="tile-bg" width="132" height="148" rx="8"/>
     <image href="icons/packet-jukebox.svg" x="16" y="10" width="100" height="100"/>
     <text class="tile-label" x="66" y="124">Packet Jukebox</text>
     <text class="tile-meta" x="66" y="138">#FF7A1A</text>
   </g>
+
   <g transform="translate(804 254)">
     <rect class="tile-bg" width="132" height="148" rx="8"/>
     <image href="icons/pixel-parasol.svg" x="16" y="10" width="100" height="100"/>
@@ -93,30 +103,35 @@
     <text class="tile-label" x="66" y="124">Plugin Pancake</text>
     <text class="tile-meta" x="66" y="138">#FF5F8F</text>
   </g>
+
   <g transform="translate(180 426)">
     <rect class="tile-bg" width="132" height="148" rx="8"/>
     <image href="icons/prompt-pinball.svg" x="16" y="10" width="100" height="100"/>
     <text class="tile-label" x="66" y="124">Prompt Pinball</text>
     <text class="tile-meta" x="66" y="138">#B6FF2E</text>
   </g>
+
   <g transform="translate(336 426)">
     <rect class="tile-bg" width="132" height="148" rx="8"/>
     <image href="icons/quantum-pretzel.svg" x="16" y="10" width="100" height="100"/>
     <text class="tile-label" x="66" y="124">Quantum Pretzel</text>
     <text class="tile-meta" x="66" y="138">#9B5CFF</text>
   </g>
+
   <g transform="translate(492 426)">
     <rect class="tile-bg" width="132" height="148" rx="8"/>
     <image href="icons/router-rhumba.svg" x="16" y="10" width="100" height="100"/>
     <text class="tile-label" x="66" y="124">Router Rhumba</text>
     <text class="tile-meta" x="66" y="138">#24E0FF</text>
   </g>
+
   <g transform="translate(648 426)">
     <rect class="tile-bg" width="132" height="148" rx="8"/>
     <image href="icons/socket-sundae.svg" x="16" y="10" width="100" height="100"/>
     <text class="tile-label" x="66" y="124">Socket Sundae</text>
     <text class="tile-meta" x="66" y="138">#FF72C6</text>
   </g>
+
   <g transform="translate(804 426)">
     <rect class="tile-bg" width="132" height="148" rx="8"/>
     <image href="icons/synth-stack.svg" x="16" y="10" width="100" height="100"/>
@@ -130,28 +145,515 @@
     <text class="tile-label" x="66" y="124">Thread Tango</text>
     <text class="tile-meta" x="66" y="138">#FF4C2E</text>
   </g>
+
   <g transform="translate(180 598)">
     <rect class="tile-bg" width="132" height="148" rx="8"/>
     <image href="icons/token-totem.svg" x="16" y="10" width="100" height="100"/>
     <text class="tile-label" x="66" y="124">Token Totem</text>
     <text class="tile-meta" x="66" y="138">#D2FF3D</text>
   </g>
+
   <g transform="translate(336 598)">
     <rect class="tile-bg" width="132" height="148" rx="8"/>
     <image href="icons/turbo-telescope.svg" x="16" y="10" width="100" height="100"/>
     <text class="tile-label" x="66" y="124">Turbo Telescope</text>
     <text class="tile-meta" x="66" y="138">#38BDF8</text>
   </g>
+
   <g transform="translate(492 598)">
     <rect class="tile-bg" width="132" height="148" rx="8"/>
     <image href="icons/vector-vortex.svg" x="16" y="10" width="100" height="100"/>
     <text class="tile-label" x="66" y="124">Vector Vortex</text>
     <text class="tile-meta" x="66" y="138">#7C3DFF</text>
   </g>
+
   <g transform="translate(648 598)">
     <rect class="tile-bg" width="132" height="148" rx="8"/>
     <image href="icons/websocket-waltz.svg" x="16" y="10" width="100" height="100"/>
     <text class="tile-label" x="66" y="124">Websocket Waltz</text>
     <text class="tile-meta" x="66" y="138">#00F0CF</text>
+  </g>
+
+  <g transform="translate(804 598)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/api-afterburner.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">API Afterburner</text>
+    <text class="tile-meta" x="66" y="138">#FF5A1F</text>
+  </g>
+
+  <g transform="translate(24 770)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/binary-bonsai.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Binary Bonsai</text>
+    <text class="tile-meta" x="66" y="138">#48F06A</text>
+  </g>
+
+  <g transform="translate(180 770)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/boolean-boombox.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Boolean Boombox</text>
+    <text class="tile-meta" x="66" y="138">#FF3FC8</text>
+  </g>
+
+  <g transform="translate(336 770)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/buffer-burrito.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Buffer Burrito</text>
+    <text class="tile-meta" x="66" y="138">#FFD33D</text>
+  </g>
+
+  <g transform="translate(492 770)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/byte-bodega.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Byte Bodega</text>
+    <text class="tile-meta" x="66" y="138">#28D4FF</text>
+  </g>
+
+  <g transform="translate(648 770)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/checksum-cyclone.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Checksum Cyclone</text>
+    <text class="tile-meta" x="66" y="138">#8B5CFF</text>
+  </g>
+
+  <g transform="translate(804 770)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/cloud-compiler.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Cloud Compiler</text>
+    <text class="tile-meta" x="66" y="138">#66D9FF</text>
+  </g>
+
+  <g transform="translate(24 942)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/codec-carousel.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Codec Carousel</text>
+    <text class="tile-meta" x="66" y="138">#F97316</text>
+  </g>
+
+  <g transform="translate(180 942)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/cron-coconut.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Cron Coconut</text>
+    <text class="tile-meta" x="66" y="138">#9EFF38</text>
+  </g>
+
+  <g transform="translate(336 942)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/daemon-diner.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Daemon Diner</text>
+    <text class="tile-meta" x="66" y="138">#FF477E</text>
+  </g>
+
+  <g transform="translate(492 942)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/data-disco-ball.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Data Disco Ball</text>
+    <text class="tile-meta" x="66" y="138">#C084FC</text>
+  </g>
+
+  <g transform="translate(648 942)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/diff-dandelion.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Diff Dandelion</text>
+    <text class="tile-meta" x="66" y="138">#22E6A8</text>
+  </g>
+
+  <g transform="translate(804 942)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/docker-donut.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Docker Donut</text>
+    <text class="tile-meta" x="66" y="138">#38BDF8</text>
+  </g>
+
+  <g transform="translate(24 1114)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/endpoint-espresso.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Endpoint Espresso</text>
+    <text class="tile-meta" x="66" y="138">#FB923C</text>
+  </g>
+
+  <g transform="translate(180 1114)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/fiber-fizz.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Fiber Fizz</text>
+    <text class="tile-meta" x="66" y="138">#06B6D4</text>
+  </g>
+
+  <g transform="translate(336 1114)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/firewall-flamingo.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Firewall Flamingo</text>
+    <text class="tile-meta" x="66" y="138">#FF2E63</text>
+  </g>
+
+  <g transform="translate(492 1114)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/forklift-firmware.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Forklift Firmware</text>
+    <text class="tile-meta" x="66" y="138">#FACC15</text>
+  </g>
+
+  <g transform="translate(648 1114)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/function-ferris.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Function Ferris</text>
+    <text class="tile-meta" x="66" y="138">#A3E635</text>
+  </g>
+
+  <g transform="translate(804 1114)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/gateway-glitter.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Gateway Glitter</text>
+    <text class="tile-meta" x="66" y="138">#2DD4BF</text>
+  </g>
+
+  <g transform="translate(24 1286)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/git-gumbo.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Git Gumbo</text>
+    <text class="tile-meta" x="66" y="138">#F43F5E</text>
+  </g>
+
+  <g transform="translate(180 1286)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/gpu-gumball.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">GPU Gumball</text>
+    <text class="tile-meta" x="66" y="138">#60A5FA</text>
+  </g>
+
+  <g transform="translate(336 1286)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/hash-hula.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Hash Hula</text>
+    <text class="tile-meta" x="66" y="138">#E879F9</text>
+  </g>
+
+  <g transform="translate(492 1286)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/heap-harmonica.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Heap Harmonica</text>
+    <text class="tile-meta" x="66" y="138">#34D399</text>
+  </g>
+
+  <g transform="translate(648 1286)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/http-hotrod.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">HTTP Hotrod</text>
+    <text class="tile-meta" x="66" y="138">#FB7185</text>
+  </g>
+
+  <g transform="translate(804 1286)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/index-iguana.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Index Iguana</text>
+    <text class="tile-meta" x="66" y="138">#84CC16</text>
+  </g>
+
+  <g transform="translate(24 1458)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/json-jamboree.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">JSON Jamboree</text>
+    <text class="tile-meta" x="66" y="138">#F59E0B</text>
+  </g>
+
+  <g transform="translate(180 1458)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/lambda-lava-lamp.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Lambda Lava Lamp</text>
+    <text class="tile-meta" x="66" y="138">#A855F7</text>
+  </g>
+
+  <g transform="translate(336 1458)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/lint-lagoon.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Lint Lagoon</text>
+    <text class="tile-meta" x="66" y="138">#14B8A6</text>
+  </g>
+
+  <g transform="translate(492 1458)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/load-balancer-luau.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Load Balancer Luau</text>
+    <text class="tile-meta" x="66" y="138">#22C55E</text>
+  </g>
+
+  <g transform="translate(648 1458)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/logic-lava.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Logic Lava</text>
+    <text class="tile-meta" x="66" y="138">#EF4444</text>
+  </g>
+
+  <g transform="translate(804 1458)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/matrix-marquee.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Matrix Marquee</text>
+    <text class="tile-meta" x="66" y="138">#10B981</text>
+  </g>
+
+  <g transform="translate(24 1630)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/memory-mojito.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Memory Mojito</text>
+    <text class="tile-meta" x="66" y="138">#4ADE80</text>
+  </g>
+
+  <g transform="translate(180 1630)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/merge-marmalade.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Merge Marmalade</text>
+    <text class="tile-meta" x="66" y="138">#F97316</text>
+  </g>
+
+  <g transform="translate(336 1630)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/middleware-moonwalk.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Middleware Moonwalk</text>
+    <text class="tile-meta" x="66" y="138">#38BDF8</text>
+  </g>
+
+  <g transform="translate(492 1630)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/module-mirage.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Module Mirage</text>
+    <text class="tile-meta" x="66" y="138">#818CF8</text>
+  </g>
+
+  <g transform="translate(648 1630)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/mutex-mochi.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Mutex Mochi</text>
+    <text class="tile-meta" x="66" y="138">#F472B6</text>
+  </g>
+
+  <g transform="translate(804 1630)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/neural-nachos.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Neural Nachos</text>
+    <text class="tile-meta" x="66" y="138">#D946EF</text>
+  </g>
+
+  <g transform="translate(24 1802)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/nonce-nebula.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Nonce Nebula</text>
+    <text class="tile-meta" x="66" y="138">#6366F1</text>
+  </g>
+
+  <g transform="translate(180 1802)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/oauth-octopus.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">OAuth Octopus</text>
+    <text class="tile-meta" x="66" y="138">#06B6D4</text>
+  </g>
+
+  <g transform="translate(336 1802)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/opcode-otterpop.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Opcode Otterpop</text>
+    <text class="tile-meta" x="66" y="138">#F43F5E</text>
+  </g>
+
+  <g transform="translate(492 1802)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/packet-pinata.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Packet Pinata</text>
+    <text class="tile-meta" x="66" y="138">#EC4899</text>
+  </g>
+
+  <g transform="translate(648 1802)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/parity-parrot.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Parity Parrot</text>
+    <text class="tile-meta" x="66" y="138">#A3E635</text>
+  </g>
+
+  <g transform="translate(804 1802)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/patch-popcorn.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Patch Popcorn</text>
+    <text class="tile-meta" x="66" y="138">#FDE047</text>
+  </g>
+
+  <g transform="translate(24 1974)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/payload-pinwheel.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Payload Pinwheel</text>
+    <text class="tile-meta" x="66" y="138">#22D3EE</text>
+  </g>
+
+  <g transform="translate(180 1974)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/ping-pong-parser.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Ping Pong Parser</text>
+    <text class="tile-meta" x="66" y="138">#2F6BFF</text>
+  </g>
+
+  <g transform="translate(336 1974)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/pixel-pipeline.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Pixel Pipeline</text>
+    <text class="tile-meta" x="66" y="138">#FF7A1A</text>
+  </g>
+
+  <g transform="translate(492 1974)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/protocol-popsicle.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Protocol Popsicle</text>
+    <text class="tile-meta" x="66" y="138">#0EA5E9</text>
+  </g>
+
+  <g transform="translate(648 1974)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/proxy-popstar.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Proxy Popstar</text>
+    <text class="tile-meta" x="66" y="138">#F0ABFC</text>
+  </g>
+
+  <g transform="translate(804 1974)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/query-quasar.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Query Quasar</text>
+    <text class="tile-meta" x="66" y="138">#A78BFA</text>
+  </g>
+
+  <g transform="translate(24 2146)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/queue-quesadilla.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Queue Quesadilla</text>
+    <text class="tile-meta" x="66" y="138">#FBBF24</text>
+  </g>
+
+  <g transform="translate(180 2146)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/rate-limit-rave.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Rate Limit Rave</text>
+    <text class="tile-meta" x="66" y="138">#FB7185</text>
+  </g>
+
+  <g transform="translate(336 2146)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/regex-roller.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Regex Roller</text>
+    <text class="tile-meta" x="66" y="138">#C084FC</text>
+  </g>
+
+  <g transform="translate(492 2146)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/relay-robot.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Relay Robot</text>
+    <text class="tile-meta" x="66" y="138">#22C55E</text>
+  </g>
+
+  <g transform="translate(648 2146)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/render-rodeo.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Render Rodeo</text>
+    <text class="tile-meta" x="66" y="138">#38BDF8</text>
+  </g>
+
+  <g transform="translate(804 2146)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/repo-rollercoaster.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Repo Rollercoaster</text>
+    <text class="tile-meta" x="66" y="138">#F97316</text>
+  </g>
+
+  <g transform="translate(24 2318)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/schema-shindig.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Schema Shindig</text>
+    <text class="tile-meta" x="66" y="138">#14B8A6</text>
+  </g>
+
+  <g transform="translate(180 2318)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/semaphore-sorbet.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Semaphore Sorbet</text>
+    <text class="tile-meta" x="66" y="138">#F59E0B</text>
+  </g>
+
+  <g transform="translate(336 2318)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/shard-shuffle.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Shard Shuffle</text>
+    <text class="tile-meta" x="66" y="138">#8B5CF6</text>
+  </g>
+
+  <g transform="translate(492 2318)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/socket-sorcery.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Socket Sorcery</text>
+    <text class="tile-meta" x="66" y="138">#06D6A0</text>
+  </g>
+
+  <g transform="translate(648 2318)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/stacktrace-salsa.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Stacktrace Salsa</text>
+    <text class="tile-meta" x="66" y="138">#EF4444</text>
+  </g>
+
+  <g transform="translate(804 2318)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/subnet-stardust.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Subnet Stardust</text>
+    <text class="tile-meta" x="66" y="138">#3B82F6</text>
+  </g>
+
+  <g transform="translate(24 2490)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/syntax-sundae.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Syntax Sundae</text>
+    <text class="tile-meta" x="66" y="138">#F472B6</text>
+  </g>
+
+  <g transform="translate(180 2490)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/telemetry-taffy.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Telemetry Taffy</text>
+    <text class="tile-meta" x="66" y="138">#22D3EE</text>
+  </g>
+
+  <g transform="translate(336 2490)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/terminal-tiki.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Terminal Tiki</text>
+    <text class="tile-meta" x="66" y="138">#84CC16</text>
+  </g>
+
+  <g transform="translate(492 2490)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/token-turntable.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Token Turntable</text>
+    <text class="tile-meta" x="66" y="138">#FACC15</text>
+  </g>
+
+  <g transform="translate(648 2490)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/vector-vaporwave.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Vector Vaporwave</text>
+    <text class="tile-meta" x="66" y="138">#A855F7</text>
+  </g>
+
+  <g transform="translate(804 2490)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/webhook-whirlpool.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Webhook Whirlpool</text>
+    <text class="tile-meta" x="66" y="138">#00E0A4</text>
+  </g>
+
+  <g transform="translate(24 2662)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/workflow-waffle.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Workflow Waffle</text>
+    <text class="tile-meta" x="66" y="138">#FB923C</text>
+  </g>
+
+  <g transform="translate(180 2662)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/yaml-yo-yo.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">YAML Yo-Yo</text>
+    <text class="tile-meta" x="66" y="138">#38BDF8</text>
   </g>
 </svg>

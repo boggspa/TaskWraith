@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-render-rodeo-title agent-pool-icon-render-rodeo-desc" data-agent-name="Render Rodeo" data-agent-accent="#38BDF8" data-agent-hue="199" style="color: #38BDF8; --agent-accent: #38BDF8;">
+  <title id="agent-pool-icon-render-rodeo-title">Render Rodeo</title>
+  <desc id="agent-pool-icon-render-rodeo-desc">Funky tech themed agent pool icon with render rodeo energy.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}.fill{fill:none;stroke:currentColor;stroke-width:18;stroke-linecap:round;stroke-linejoin:round}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <rect class="line" x="122" y="148" width="356" height="256" rx="42"/>
+  <path class="accent" d="M206 258h188M206 316h132M300 404v72M222 476h156"/>
+  <circle class="dot" cx="404" cy="316" r="18"/>
+</svg>

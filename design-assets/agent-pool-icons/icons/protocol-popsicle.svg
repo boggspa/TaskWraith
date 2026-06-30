@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-protocol-popsicle-title agent-pool-icon-protocol-popsicle-desc" data-agent-name="Protocol Popsicle" data-agent-accent="#0EA5E9" data-agent-hue="202" style="color: #0EA5E9; --agent-accent: #0EA5E9;">
+  <title id="agent-pool-icon-protocol-popsicle-title">Protocol Popsicle</title>
+  <desc id="agent-pool-icon-protocol-popsicle-desc">Funky tech themed agent pool icon with protocol popsicle energy.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}.fill{fill:none;stroke:currentColor;stroke-width:18;stroke-linecap:round;stroke-linejoin:round}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <path class="line" d="M300 116v368M198 484h204"/>
+  <path class="accent" d="M244 218h112M224 310h152M204 402h192"/>
+  <path class="fine" d="M198 176c60-42 144-42 204 0M164 138c84-70 188-70 272 0"/>
+</svg>

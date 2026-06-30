@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-gateway-glitter-title agent-pool-icon-gateway-glitter-desc" data-agent-name="Gateway Glitter" data-agent-accent="#2DD4BF" data-agent-hue="174" style="color: #2DD4BF; --agent-accent: #2DD4BF;">
+  <title id="agent-pool-icon-gateway-glitter-title">Gateway Glitter</title>
+  <desc id="agent-pool-icon-gateway-glitter-desc">Funky tech themed agent pool icon with gateway glitter energy.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}.fill{fill:none;stroke:currentColor;stroke-width:18;stroke-linecap:round;stroke-linejoin:round}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <path class="line" d="M148 430V198c0-42 34-76 76-76h152c42 0 76 34 76 76v232"/>
+  <path class="accent" d="M206 430V220c0-28 22-50 50-50h88c28 0 50 22 50 50v210"/>
+  <path class="fine" d="M254 286h92M254 344h92"/>
+</svg>

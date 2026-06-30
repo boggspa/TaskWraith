@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-schema-shindig-title agent-pool-icon-schema-shindig-desc" data-agent-name="Schema Shindig" data-agent-accent="#14B8A6" data-agent-hue="174" style="color: #14B8A6; --agent-accent: #14B8A6;">
+  <title id="agent-pool-icon-schema-shindig-title">Schema Shindig</title>
+  <desc id="agent-pool-icon-schema-shindig-desc">Funky tech themed agent pool icon with schema shindig energy.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}.fill{fill:none;stroke:currentColor;stroke-width:18;stroke-linecap:round;stroke-linejoin:round}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <rect class="line" x="160" y="146" width="116" height="92" rx="22"/><rect class="line" x="324" y="146" width="116" height="92" rx="22"/><rect class="line" x="160" y="362" width="116" height="92" rx="22"/><rect class="line" x="324" y="362" width="116" height="92" rx="22"/>
+  <path class="accent" d="M218 238v124M382 238v124M276 192h48M276 408h48"/>
+</svg>

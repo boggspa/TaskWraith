@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-token-turntable-title agent-pool-icon-token-turntable-desc" data-agent-name="Token Turntable" data-agent-accent="#FACC15" data-agent-hue="50" style="color: #FACC15; --agent-accent: #FACC15;">
+  <title id="agent-pool-icon-token-turntable-title">Token Turntable</title>
+  <desc id="agent-pool-icon-token-turntable-desc">Funky tech themed agent pool icon with token turntable energy.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}.fill{fill:none;stroke:currentColor;stroke-width:18;stroke-linecap:round;stroke-linejoin:round}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <circle class="line" cx="300" cy="300" r="164"/>
+  <circle class="accent" cx="300" cy="300" r="64"/>
+  <circle class="dot" cx="300" cy="300" r="18"/>
+  <path class="fine" d="M418 182l64-64M420 420l62 62"/>
+</svg>

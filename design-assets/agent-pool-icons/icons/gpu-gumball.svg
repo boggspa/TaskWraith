@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-gpu-gumball-title agent-pool-icon-gpu-gumball-desc" data-agent-name="GPU Gumball" data-agent-accent="#60A5FA" data-agent-hue="217" style="color: #60A5FA; --agent-accent: #60A5FA;">
+  <title id="agent-pool-icon-gpu-gumball-title">GPU Gumball</title>
+  <desc id="agent-pool-icon-gpu-gumball-desc">Funky tech themed agent pool icon with gpu gumball energy.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}.fill{fill:none;stroke:currentColor;stroke-width:18;stroke-linecap:round;stroke-linejoin:round}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <rect class="line" x="176" y="176" width="248" height="248" rx="54"/>
+  <rect class="accent" x="244" y="244" width="112" height="112" rx="24"/>
+  <path class="fine" d="M176 236h-58M176 300h-58M176 364h-58M424 236h58M424 300h58M424 364h58M236 176v-58M300 176v-58M364 176v-58M236 424v58M300 424v58M364 424v58"/>
+</svg>

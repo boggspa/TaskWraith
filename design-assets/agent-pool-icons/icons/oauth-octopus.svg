@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-oauth-octopus-title agent-pool-icon-oauth-octopus-desc" data-agent-name="OAuth Octopus" data-agent-accent="#06B6D4" data-agent-hue="188" style="color: #06B6D4; --agent-accent: #06B6D4;">
+  <title id="agent-pool-icon-oauth-octopus-title">OAuth Octopus</title>
+  <desc id="agent-pool-icon-oauth-octopus-desc">Funky tech themed agent pool icon with oauth octopus energy.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}.fill{fill:none;stroke:currentColor;stroke-width:18;stroke-linecap:round;stroke-linejoin:round}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <circle class="line" cx="228" cy="278" r="92"/>
+  <path class="accent" d="M296 346l146 146M374 424l54-54M414 464l54-54"/>
+  <circle class="dot" cx="228" cy="278" r="26"/>
+</svg>

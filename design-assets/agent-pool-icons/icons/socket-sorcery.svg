@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-socket-sorcery-title agent-pool-icon-socket-sorcery-desc" data-agent-name="Socket Sorcery" data-agent-accent="#06D6A0" data-agent-hue="164" style="color: #06D6A0; --agent-accent: #06D6A0;">
+  <title id="agent-pool-icon-socket-sorcery-title">Socket Sorcery</title>
+  <desc id="agent-pool-icon-socket-sorcery-desc">Funky tech themed agent pool icon with socket sorcery energy.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}.fill{fill:none;stroke:currentColor;stroke-width:18;stroke-linecap:round;stroke-linejoin:round}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <path class="line" d="M226 134v126M374 134v126M188 260h224v96c0 62-50 112-112 112s-112-50-112-112Z"/>
+  <path class="accent" d="M234 356h132M300 356v112"/>
+  <path class="fine" d="M226 134h-54M374 134h54"/>
+</svg>

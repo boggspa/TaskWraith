@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-endpoint-espresso-title agent-pool-icon-endpoint-espresso-desc" data-agent-name="Endpoint Espresso" data-agent-accent="#FB923C" data-agent-hue="25" style="color: #FB923C; --agent-accent: #FB923C;">
+  <title id="agent-pool-icon-endpoint-espresso-title">Endpoint Espresso</title>
+  <desc id="agent-pool-icon-endpoint-espresso-desc">Funky tech themed agent pool icon with endpoint espresso energy.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}.fill{fill:none;stroke:currentColor;stroke-width:18;stroke-linecap:round;stroke-linejoin:round}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <path class="line" d="M198 232h178v180c0 46-38 82-88 82s-90-36-90-82Z"/>
+  <path class="accent" d="M376 278h42c36 0 50 28 40 58-10 32-40 52-82 52"/>
+  <path class="fine" d="M242 152c-26 34 24 46 0 80M312 146c-26 34 24 48 0 84"/>
+</svg>

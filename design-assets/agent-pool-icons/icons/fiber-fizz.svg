@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-fiber-fizz-title agent-pool-icon-fiber-fizz-desc" data-agent-name="Fiber Fizz" data-agent-accent="#06B6D4" data-agent-hue="188" style="color: #06B6D4; --agent-accent: #06B6D4;">
+  <title id="agent-pool-icon-fiber-fizz-title">Fiber Fizz</title>
+  <desc id="agent-pool-icon-fiber-fizz-desc">Funky tech themed agent pool icon with fiber fizz energy.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}.fill{fill:none;stroke:currentColor;stroke-width:18;stroke-linecap:round;stroke-linejoin:round}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <path class="line" d="M110 322c60-94 118-94 176 0s116 94 204 0"/>
+  <path class="accent" d="M110 244c60-94 118-94 176 0s116 94 204 0M110 400c60-94 118-94 176 0s116 94 204 0"/>
+  <circle class="dot" cx="300" cy="322" r="18"/>
+</svg>

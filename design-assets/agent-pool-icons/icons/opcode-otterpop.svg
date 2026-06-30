@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-opcode-otterpop-title agent-pool-icon-opcode-otterpop-desc" data-agent-name="Opcode Otterpop" data-agent-accent="#F43F5E" data-agent-hue="350" style="color: #F43F5E; --agent-accent: #F43F5E;">
+  <title id="agent-pool-icon-opcode-otterpop-title">Opcode Otterpop</title>
+  <desc id="agent-pool-icon-opcode-otterpop-desc">Funky tech themed agent pool icon with opcode otterpop energy.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}.fill{fill:none;stroke:currentColor;stroke-width:18;stroke-linecap:round;stroke-linejoin:round}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <rect class="line" x="124" y="154" width="352" height="292" rx="46"/>
+  <path class="accent" d="m202 258 58 42-58 42M294 354h104"/>
+  <path class="fine" d="M124 220h352M178 188h2M236 188h2"/>
+</svg>
