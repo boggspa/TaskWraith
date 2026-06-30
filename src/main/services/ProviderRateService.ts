@@ -315,10 +315,10 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         inputUsdPerMillion: 3.0,
         outputUsdPerMillion: 15.0,
         cachedInputUsdPerMillion: 0.3,
-        sourceUrl: 'https://www.anthropic.com/pricing',
+        sourceUrl: 'https://platform.claude.com/docs/en/about-claude/models/overview',
         lastVerified: RATE_TABLE_VERSION,
         notes:
-          'Current-gen Sonnet. Assumed Sonnet-tier billing ($3/$15/$0.3) pending published Sonnet 5 rates — it shares the Opus 4.8 reasoning ladder but NOT Opus billing. Verify against https://www.anthropic.com/pricing before release.'
+          'Current-gen Sonnet. Published rate $3/$15 (verified against platform.claude.com 2026-06-30); cached-read at the standard 0.1x input = $0.3. Shares the Opus 4.8 reasoning ladder but Sonnet-tier billing, NOT Opus $5/$25. NOTE: introductory pricing of $2/$10 per MTok applies through 2026-08-31 — the table tracks the standard post-intro rate so historical/forward costs stay correct after the promo ends.'
       },
       {
         modelId: 'claude-sonnet-4-6',
