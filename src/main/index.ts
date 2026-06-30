@@ -867,6 +867,7 @@ import { registerGitHandlers } from './ipc/gitHandlers'
 import { registerClaudeAuthHandlers } from './ipc/claudeAuthHandlers'
 import { registerKimiAuthHandlers } from './ipc/kimiAuthHandlers'
 import { registerGeminiAuthHandlers } from './ipc/geminiAuthHandlers'
+import { registerProviderMetadataHandlers } from './ipc/providerMetadataHandlers'
 import { getCachedRemoteEnsemblePresets } from './remote/EnsembleRosterPresetsCache'
 import { resolveGeminiCliResumePolicy } from './GeminiSessionPolicy'
 // 1.0.5-EW26 — Kimi compatibility filter (curated + user-
@@ -26145,22 +26146,12 @@ if (isGeminiMcpBridgeProcess) {
       cancelGeminiOAuthLogin
     })
 
-    ipcMain.handle('get-agent-mcp-status', async (_, provider: ProviderId) => {
-      return getAgentMcpStatusSnapshot(assertProviderId(provider))
+    registerProviderMetadataHandlers({
+      assertProviderId,
+      getAgentMcpStatusSnapshot,
+      getProviderCapabilityContract,
+      getProviderAdapterDescriptors
     })
-
-    ipcMain.handle(
-      'get-provider-capabilities',
-      async (_, provider: ProviderId, workspacePath?: string, approvalMode?: string) => {
-        return getProviderCapabilityContract(
-          assertProviderId(provider),
-          workspacePath,
-          approvalMode
-        )
-      }
-    )
-
-    ipcMain.handle('get-provider-adapters', () => getProviderAdapterDescriptors())
 
     // 1.0.6-CRUX42/CRUX follow-up — provider CLI operations that must run in
     // the provider-owned CLI open in Terminal as one-shot `.command` files. The
