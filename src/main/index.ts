@@ -24203,11 +24203,13 @@ if (isGeminiMcpBridgeProcess) {
         })
         return snapshot.targets
       },
-      start: ({ provider, target, chatId, runId }) =>
+      start: ({ provider, target, chatId, runId, sender }) =>
         // The run's own provider (trusted, not agent-supplied); assert it's a live
-        // provider id for the approval-route + audit attribution.
+        // provider id for the approval-route + audit attribution. The sender is the
+        // run's approval surface (context.sender) — startTarget's shellCommands+
+        // forcePrompt approval needs it to reach the human (a null sender auto-denies).
         launchManager.startTarget({
-          sender: null,
+          sender: (sender as Electron.WebContents | null | undefined) ?? null,
           provider: assertLiveProviderId(provider),
           target,
           chatId,

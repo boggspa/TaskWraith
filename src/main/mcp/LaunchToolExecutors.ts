@@ -39,6 +39,13 @@ export interface LaunchToolContext {
   appChatId?: string
   appRunId?: string
   workspacePath?: string
+  /**
+   * The run's approval surface (an Electron WebContents). Opaque here to keep this
+   * module electron-free; the real controller passes it to LaunchManager.startTarget
+   * so its shellCommands+forcePrompt approval actually reaches the human (a null
+   * sender would auto-DENY the launch).
+   */
+  sender?: unknown
 }
 
 export interface LaunchStartOutcome {
@@ -57,6 +64,8 @@ export interface LaunchController {
     target: LaunchTarget
     chatId?: string
     runId?: string
+    /** Approval surface (Electron WebContents) — required for the human prompt. */
+    sender?: unknown
   }): Promise<LaunchStartOutcome>
   /** Stop a running attempt by id. */
   stop(attemptId: string): Promise<LaunchStartOutcome>
@@ -131,6 +140,13 @@ function fail(toolName: LaunchMcpToolName, message: string): McpToolExecutionRes
 export function createLaunchToolExecutors(deps: LaunchToolExecutorDeps): LaunchToolExecutors {
   const { controller } = deps
 
+  /** Attempts the calling chat owns (mirrors the canvas chat-scope: chatId match,
+   * global-scope runs share the no-chat scope). */
+  function ownAttempts(context: LaunchToolContext): LaunchAttempt[] {
+    const chat = context.appChatId ?? null
+    return controller.attempts().filter((a) => (a.chatId ?? null) === chat)
+  }
+
   async function executeLaunchTool(
     toolName: LaunchMcpToolName,
     rawArgs: unknown,
@@ -161,7 +177,8 @@ export function createLaunchToolExecutors(deps: LaunchToolExecutorDeps): LaunchT
             provider: parentProvider,
             target,
             chatId: context.appChatId,
-            runId: context.appRunId
+            runId: context.appRunId,
+            sender: context.sender
           })
           if (!outcome.ok || !outcome.attempt) {
             return fail(toolName, outcome.error || 'Launch failed.')
@@ -171,6 +188,12 @@ export function createLaunchToolExecutors(deps: LaunchToolExecutorDeps): LaunchT
         case 'launch_stop': {
           const attemptId = asOptString(args.attemptId)
           if (!attemptId) return fail(toolName, '`attemptId` is required.')
+          // Chat-scope: an agent may only stop an attempt its OWN chat started.
+          // (Same opaque message for not-owned and truly-missing — no existence
+          // oracle for other chats' attempts.)
+          if (!ownAttempts(context).some((a) => a.id === attemptId)) {
+            return fail(toolName, `Launch attempt "${attemptId}" was not found.`)
+          }
           const outcome = await controller.stop(attemptId)
           if (!outcome.ok) return fail(toolName, outcome.error || 'Stop failed.')
           return jsonResult({
@@ -181,8 +204,10 @@ export function createLaunchToolExecutors(deps: LaunchToolExecutorDeps): LaunchT
         }
         case 'launch_status': {
           const attemptId = asOptString(args.attemptId)
-          const all = controller.attempts()
-          const attempts = attemptId ? all.filter((a) => a.id === attemptId) : all
+          // Chat-scope: only surface attempts this chat started — never another
+          // chat's/workspace's labels, ports, or enumerable attemptIds.
+          const mine = ownAttempts(context)
+          const attempts = attemptId ? mine.filter((a) => a.id === attemptId) : mine
           return jsonResult({ ok: true, tool: toolName, attempts: attempts.map(attemptView) })
         }
         default: {

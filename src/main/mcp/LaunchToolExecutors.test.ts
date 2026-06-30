@@ -32,6 +32,7 @@ function fakeAttempt(over: Partial<LaunchAttempt> = {}): LaunchAttempt {
     status: 'running',
     detectedUrls: ['http://localhost:3000'],
     startedAt: 'T',
+    chatId: 'c1',
     ...over
   } as LaunchAttempt
 }
@@ -66,7 +67,7 @@ describe('executeLaunchTool', () => {
     expect(targets[0]).toMatchObject({ targetId: 'npm-dev', command: 'npm run dev', runnable: true })
   })
 
-  it('launch_start resolves the target by id and starts it', async () => {
+  it('launch_start resolves the target by id and starts it, threading the approval sender', async () => {
     let started: unknown = null
     const controller = fakeController({
       start: async (input) => {
@@ -74,11 +75,19 @@ describe('executeLaunchTool', () => {
         return { ok: true, attempt: fakeAttempt() }
       }
     })
+    const sender = { isDestroyed: () => false }
     const { executeLaunchTool } = createLaunchToolExecutors({ controller })
-    const r = await executeLaunchTool('launch_start', { targetId: 'npm-dev' }, ctx, 'claude')
+    const r = await executeLaunchTool(
+      'launch_start',
+      { targetId: 'npm-dev' },
+      { ...ctx, sender },
+      'claude'
+    )
     expect(r.isError).toBeFalsy()
     expect(started).toMatchObject({ provider: 'claude', chatId: 'c1', runId: 'r1' })
     expect((started as { target: LaunchTarget }).target.id).toBe('npm-dev')
+    // The run's approval surface must reach startTarget (a null sender auto-denies).
+    expect((started as { sender: unknown }).sender).toBe(sender)
     expect(r.structuredContent?.attemptId).toBe('att1')
   })
 
@@ -114,5 +123,32 @@ describe('executeLaunchTool', () => {
     const { executeLaunchTool } = createLaunchToolExecutors({ controller: fakeController() })
     const r = await executeLaunchTool('launch_stop', {}, ctx, 'claude')
     expect(r.isError).toBe(true)
+  })
+
+  it('launch_status only surfaces the calling chat\'s attempts (no cross-chat leak)', async () => {
+    const controller = fakeController({
+      attempts: () => [
+        fakeAttempt({ id: 'mine', chatId: 'c1' }),
+        fakeAttempt({ id: 'other', chatId: 'c2', targetLabel: 'secret', detectedUrls: ['http://localhost:9999'] })
+      ]
+    })
+    const { executeLaunchTool } = createLaunchToolExecutors({ controller })
+    const r = await executeLaunchTool('launch_status', {}, ctx, 'claude')
+    const attempts = r.structuredContent?.attempts as Array<Record<string, unknown>>
+    expect(attempts).toHaveLength(1)
+    expect(attempts[0].attemptId).toBe('mine')
+  })
+
+  it('launch_stop refuses another chat\'s attemptId without signaling the process', async () => {
+    const stop = vi.fn(async () => ({ ok: true, attempt: fakeAttempt() }))
+    const controller = fakeController({
+      attempts: () => [fakeAttempt({ id: 'other', chatId: 'c2' })],
+      stop
+    })
+    const { executeLaunchTool } = createLaunchToolExecutors({ controller })
+    const r = await executeLaunchTool('launch_stop', { attemptId: 'other' }, ctx, 'claude')
+    expect(r.isError).toBe(true)
+    expect(String(r.structuredContent?.error)).toMatch(/not found/)
+    expect(stop).not.toHaveBeenCalled()
   })
 })
