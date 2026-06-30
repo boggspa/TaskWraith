@@ -388,10 +388,7 @@ import {
   formatSessionCheckpointResumePrompt,
   type SessionCheckpointStore
 } from './checkpoints/SessionCheckpoint'
-import {
-  appendBugReport,
-  type BugReportSubmission as BugReportSubmissionInput
-} from './services/BugReportService'
+import { appendBugReport } from './services/BugReportService'
 import { RunCoordinator } from './services/RunCoordinator'
 import { RunLifecycleCoordinator } from './services/RunLifecycleCoordinator'
 import { RunQueueService } from './services/RunQueueService'
@@ -516,7 +513,6 @@ import {
   RunRecoveryRecord,
   WorkspaceChangeFilter,
   WorkspaceRunChangeInput,
-  ProductCrashFilter,
   ProductCrashInput,
   ProductDiagnosticsExportResult,
   ProductOperationsStatus,
@@ -854,6 +850,7 @@ import { registerAgenticWorkspaceGrantHandlers } from './ipc/agenticWorkspaceGra
 import { registerUsageRatesHandlers } from './ipc/usageRatesHandlers'
 import { registerScheduledWorkflowHandlers } from './ipc/scheduledWorkflowHandlers'
 import { registerRunQueueHandlers } from './ipc/runQueueHandlers'
+import { registerDiagnosticsHandlers } from './ipc/diagnosticsHandlers'
 import { getCachedRemoteEnsemblePresets } from './remote/EnsembleRosterPresetsCache'
 import { resolveGeminiCliResumePolicy } from './GeminiSessionPolicy'
 // 1.0.5-EW26 — Kimi compatibility filter (curated + user-
@@ -25836,55 +25833,20 @@ if (isGeminiMcpBridgeProcess) {
       }
     )
 
-    // Product operations
-    ipcMain.handle('get-product-operations-status', async () => getProductOperationsStatus())
-    ipcMain.handle('get-product-crashes', (_, filter?: ProductCrashFilter) =>
-      AppStore.getProductCrashes(filter || {})
-    )
-    ipcMain.handle('record-product-crash', (_, input: ProductCrashInput) => {
-      return AppStore.recordProductCrash({
-        ...input,
-        source: input?.source || 'renderer'
-      })
-    })
-    ipcMain.handle('export-product-diagnostics', async (_, requestedPath?: string) =>
-      exportProductDiagnostics(requestedPath)
-    )
-    ipcMain.handle('repair-product-install', async () => repairProductInstall())
-    ipcMain.handle('app-shell-stats:snapshot', async () => appShellStatsService.getSnapshot())
-
-    // Tester-feedback intake (1.0.1). Returns the canonical app
-    // version so the BugReportSheet's read-only context row matches
-    // what `submit-bug-report` will stamp on the file. Cheap; we just
-    // forward `app.getVersion()`.
-    ipcMain.handle('get-app-version', () => app.getVersion() || 'unknown')
-    ipcMain.handle('submit-bug-report', async (_, payload: BugReportSubmissionInput) => {
-      try {
-        // Re-stamp the version + timestamp server-side so the file is
-        // authoritative even if the renderer's display is stale.
-        const submission: BugReportSubmissionInput = {
-          ...payload,
-          context: {
-            ...payload.context,
-            timestamp: payload.context.timestamp || new Date().toISOString(),
-            version: app.getVersion() || payload.context.version
-          }
-        }
-        const result = await appendBugReport(app.getPath('userData'), submission)
-        if (result.sizeWarning) {
-          // Soft warning only — the report still landed. Mirrors the
-          // diagnostics export soft-cap pattern (we log but don't
-          // reject the call).
-          console.warn(
-            `[bug-report] file is large (${result.totalBytes} bytes) — consider archiving and clearing ${result.path}.`
-          )
-        }
-        return { ok: true, path: result.path }
-      } catch (err) {
-        const message = err instanceof Error ? err.message : 'Failed to save bug report.'
-        console.error('[bug-report] append failed:', err)
-        return { ok: false, error: message }
-      }
+    registerDiagnosticsHandlers({
+      getProductOperationsStatus: () => getProductOperationsStatus(),
+      getProductCrashes: (filter) => AppStore.getProductCrashes(filter || {}),
+      recordProductCrash: (input) =>
+        AppStore.recordProductCrash({
+          ...input,
+          source: input?.source || 'renderer'
+        }),
+      exportProductDiagnostics: (requestedPath) => exportProductDiagnostics(requestedPath),
+      repairProductInstall: () => repairProductInstall(),
+      getAppShellStatsSnapshot: () => appShellStatsService.getSnapshot(),
+      getAppVersion: () => app.getVersion(),
+      getUserDataPath: () => app.getPath('userData'),
+      appendBugReport: (userDataPath, payload) => appendBugReport(userDataPath, payload)
     })
 
     ipcMain.handle(
