@@ -2764,6 +2764,11 @@
   background-image: none !important;
 }
 
+.popout-root[data-popout-family="workspace"] .app-file-editor {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+
 .popout-root[data-popout-family="workspace"]
   :is(.popout-header, .file-editor-header, .diff-studio-toolbar, .diff-detail-header, .workbench-toolbar, .workbench-bottom-bar) {
   background-color: var(--popout-toolbar-bg) !important;
@@ -2805,10 +2810,60 @@
 }
 
 .popout-root[data-popout-family="workspace"]
-  :is(.file-editor-filter, .btn-ghost, .diff-file-badge, .workbench-nav-item) {
+  :is(
+    .file-editor-filter,
+    .diff-file-filter,
+    .btn-ghost,
+    .diff-file-badge,
+    .diff-toolbar-count,
+    .diff-stage-count-chip,
+    .diff-noise-toggle,
+    .diff-view-toggle,
+    .workbench-nav-item
+  ) {
   color: var(--text-primary);
   background-color: var(--popout-control-bg) !important;
   border-color: var(--popout-pill-border);
+}
+
+.popout-root[data-popout-family="workspace"] .diff-file-filter:focus {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--popout-pill-border));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 13%, transparent);
+}
+
+.popout-root[data-popout-family="workspace"] .diff-stage-count-chip > strong {
+  color: var(--text-primary);
+}
+
+.popout-root[data-popout-family="workspace"]
+  :is(
+    .diff-stage-count-chip[data-stage-group="unstaged"],
+    .diff-stage-count-chip[data-stage-group="mixed"]
+  ) {
+  border-color: color-mix(in srgb, var(--warning) 42%, var(--popout-pill-border));
+}
+
+.popout-root[data-popout-family="workspace"] .diff-stage-count-chip[data-stage-group="staged"] {
+  border-color: color-mix(in srgb, var(--success) 42%, var(--popout-pill-border));
+}
+
+.popout-root[data-popout-family="workspace"] .diff-stage-count-chip[data-stage-group="untracked"] {
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--popout-pill-border));
+}
+
+.popout-root[data-popout-family="workspace"] .diff-view-toggle button {
+  color: var(--text-secondary);
+}
+
+.popout-root[data-popout-family="workspace"]
+  :is(.diff-view-toggle button:hover, .diff-view-toggle button:focus-visible) {
+  color: var(--text-primary);
+}
+
+.popout-root[data-popout-family="workspace"] .diff-view-toggle button.active {
+  color: var(--text-primary);
+  background-color: color-mix(in srgb, var(--accent) 16%, var(--popout-pill-bg)) !important;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 36%, transparent);
 }
 
 .popout-root[data-popout-family="workspace"] .btn:not(.btn-ghost) {
