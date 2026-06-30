@@ -10180,6 +10180,16 @@ button.diff-file-row {
   font-size: var(--font-size-xs);
 }
 
+.diff-lines-virtualization-note {
+  flex: 0 0 auto;
+  padding: 4px var(--space-md);
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 18%, transparent);
+  font-family: var(--font-sans);
+  font-size: var(--font-size-xs);
+}
+
 .diff-lines-show-more {
   flex: 0 0 auto;
   border: 1px solid color-mix(in srgb, var(--warning) 36%, transparent);

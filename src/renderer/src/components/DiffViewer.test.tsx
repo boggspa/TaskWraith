@@ -6,7 +6,8 @@ import {
   DiffDetail,
   diffDetailHeaderSummary,
   diffDetailPathDisplay,
-  diffTextPreviewExcerpt
+  diffTextPreviewExcerpt,
+  diffVirtualizationSummary
 } from './DiffDetail'
 import {
   buildDiffFileContextMenuItems,
@@ -206,6 +207,9 @@ describe('DiffViewer large diff safety', () => {
     expect(html).toContain('class="diff-lines-stack virtualized"')
     expect(html).toContain('class="diff-lines-truncated"')
     expect(html).toContain('role="note"')
+    expect(html).toContain('class="diff-lines-virtualization-note" role="note"')
+    expect(html).toContain('Windowing 60 of 2,501 rows')
+    expect(html).toContain('showing 1-60')
     expect(html).toContain('Showing first 2,500 lines')
     expect(html).toContain('504 more omitted')
     expect(html).toContain('Show 504 more')
@@ -224,7 +228,18 @@ describe('DiffViewer large diff safety', () => {
     )
 
     expect(html).not.toContain('class="diff-lines-truncated"')
+    expect(html).not.toContain('diff-lines-virtualization-note')
     expect(html).not.toContain('more omitted')
+  })
+
+  it('formats virtualization status only when row windowing is active', () => {
+    expect(
+      diffVirtualizationSummary(2501, { startIndex: 0, endIndex: 60 }, true)
+    ).toBe('Windowing 60 of 2,501 rows · showing 1-60')
+    expect(
+      diffVirtualizationSummary(2501, { startIndex: 1200, endIndex: 1260 }, true)
+    ).toBe('Windowing 60 of 2,501 rows · showing 1,201-1,260')
+    expect(diffVirtualizationSummary(12, { startIndex: 0, endIndex: 12 }, false)).toBe('')
   })
 
   it('labels source-capped previews separately from renderer truncation', () => {

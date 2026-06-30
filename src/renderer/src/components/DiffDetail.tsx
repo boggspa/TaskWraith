@@ -41,6 +41,13 @@ interface DiffRenderRow {
   line?: ParsedDiffLine
 }
 
+interface DiffVirtualRange {
+  endIndex: number
+  paddingBottom: number
+  paddingTop: number
+  startIndex: number
+}
+
 const DIFF_DETAIL_RENDER_LINE_LIMIT = DEFAULT_DIFF_RENDER_LINE_LIMIT
 const DIFF_DETAIL_MAX_RENDER_LINE_LIMIT = 10_000
 const DIFF_VIRTUALIZATION_THRESHOLD = 800
@@ -327,6 +334,18 @@ const buildDiffRows = (parsed: ParsedUnifiedDiff): DiffRenderRow[] => {
   return rows
 }
 
+export const diffVirtualizationSummary = (
+  totalRows: number,
+  range: Pick<DiffVirtualRange, 'endIndex' | 'startIndex'>,
+  enabled: boolean
+): string => {
+  if (!enabled || totalRows <= 0) return ''
+  const mountedRows = Math.max(0, range.endIndex - range.startIndex)
+  const firstRow = Math.min(totalRows, range.startIndex + 1)
+  const lastRow = Math.min(totalRows, range.endIndex)
+  return `Windowing ${mountedRows.toLocaleString()} of ${totalRows.toLocaleString()} rows · showing ${firstRow.toLocaleString()}-${lastRow.toLocaleString()}`
+}
+
 function DiffLines({
   parsed,
   viewMode,
@@ -368,7 +387,7 @@ function DiffLines({
   const useVirtualization = rows.length > DIFF_VIRTUALIZATION_THRESHOLD
   const nextLineCount =
     showMoreLineCount ?? Math.min(DIFF_DETAIL_RENDER_LINE_LIMIT, parsed.omittedLineCount)
-  const visibleRange = (() => {
+  const visibleRange: DiffVirtualRange = (() => {
     if (!useVirtualization) {
       return {
         endIndex: rows.length,
@@ -401,6 +420,7 @@ function DiffLines({
     return ''
   })()
   const visibleRows = rows.slice(visibleRange.startIndex, visibleRange.endIndex)
+  const virtualSummary = diffVirtualizationSummary(rows.length, visibleRange, useVirtualization)
 
   const handleScroll = () => {
     const scrollElement = scrollRef.current
@@ -435,6 +455,11 @@ function DiffLines({
               Show {nextLineCount.toLocaleString()} more
             </button>
           )}
+        </div>
+      )}
+      {virtualSummary && (
+        <div className="diff-lines-virtualization-note" role="note">
+          {virtualSummary}
         </div>
       )}
       <DiffLinesColumnHeader viewMode={viewMode} />
