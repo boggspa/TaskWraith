@@ -578,6 +578,40 @@ final class MobileFileEditorState: ObservableObject {
         if value < 1024 * 1024 { return "\(value / 1024) KB" }
         return String(format: "%.1f MB", Double(value) / Double(1024 * 1024))
     }
+
+    static func languageLabel(for path: String) -> String {
+        let lower = path.lowercased()
+        if lower.hasSuffix(".tsx") { return "TSX" }
+        if lower.hasSuffix(".jsx") { return "JSX" }
+        if lower.hasSuffix(".ts") || lower.hasSuffix(".mts") || lower.hasSuffix(".cts") {
+            return "TypeScript"
+        }
+        if lower.hasSuffix(".js") || lower.hasSuffix(".mjs") || lower.hasSuffix(".cjs") {
+            return "JavaScript"
+        }
+        if lower.hasSuffix(".py") { return "Python" }
+        if lower.hasSuffix(".md") || lower.hasSuffix(".markdown") { return "Markdown" }
+        if lower.hasSuffix(".jsonc") { return "JSONC" }
+        if lower.hasSuffix(".json") { return "JSON" }
+        if lower.hasSuffix(".html") || lower.hasSuffix(".htm") { return "HTML" }
+        if lower.hasSuffix(".xml") || lower.hasSuffix(".svg") { return "XML" }
+        if lower.hasSuffix(".css") || lower.hasSuffix(".scss") || lower.hasSuffix(".sass")
+            || lower.hasSuffix(".less")
+        { return "CSS" }
+        if lower.hasSuffix(".swift") { return "Swift" }
+        if lower.hasSuffix(".c") || lower.hasSuffix(".h") || lower.hasSuffix(".cc")
+            || lower.hasSuffix(".cpp") || lower.hasSuffix(".cxx") || lower.hasSuffix(".hpp")
+            || lower.hasSuffix(".hh") || lower.hasSuffix(".m") || lower.hasSuffix(".mm")
+            || lower.hasSuffix(".metal")
+        { return "C/C++" }
+        if lower.hasSuffix(".sh") || lower.hasSuffix(".bash") || lower.hasSuffix(".zsh")
+            || lower.hasSuffix(".fish") || lower.hasSuffix(".command") || lower.hasSuffix(".env")
+            || lower.hasSuffix("/bashrc") || lower.hasSuffix("/zshrc")
+            || lower.hasSuffix("/profile") || lower.hasSuffix("/env") || lower == "bashrc"
+            || lower == "zshrc" || lower == "profile" || lower == "env"
+        { return "Shell" }
+        return "Plain Text"
+    }
 }
 
 struct FilesModeSplitView: View {
@@ -837,6 +871,10 @@ private struct FileEditorPane: View {
                     .lineLimit(1)
                 Spacer()
                 if let selectedPath = state.selectedPath {
+                    Text(MobileFileEditorState.languageLabel(for: selectedPath))
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(TWTheme.textSecondary)
+                        .lineLimit(1)
                     Text(selectedPath)
                         .font(.caption2.monospaced())
                         .foregroundStyle(TWTheme.textMuted)
@@ -845,7 +883,7 @@ private struct FileEditorPane: View {
             }
             .accessibilityElement(children: .combine)
             .accessibilityLabel("File editor status")
-            .accessibilityValue(state.isDirty ? "Unsaved changes" : state.status)
+            .accessibilityValue(statusAccessibilityValue)
             .accessibilityAddTraits(state.isLoading ? .updatesFrequently : [])
             .onChange(of: state.status) { _, newStatus in
                 if twShouldAnnounceEditorStatus(newStatus) {
@@ -965,6 +1003,12 @@ private struct FileEditorPane: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
         .background(TWTheme.surface1)
+    }
+
+    private var statusAccessibilityValue: String {
+        let base = state.isDirty ? "Unsaved changes" : state.status
+        guard let selectedPath = state.selectedPath else { return base }
+        return "\(base), \(MobileFileEditorState.languageLabel(for: selectedPath)), \(selectedPath)"
     }
 
     @ViewBuilder
