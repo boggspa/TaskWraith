@@ -157,7 +157,7 @@ export function shortModelName(provider: ProviderId, modelLabel: string, modelId
       id === 'lfm2.5:8b' ||
       id.startsWith('lfm2.5:8b-')
     ) {
-      return 'LFM 2.5 (8B-A1B)'
+      return 'LFM 2.5 (8B-1A)'
     }
     if (id === 'minicpm-v4.5:8b' || id.startsWith('minicpm-v4.5:8b-')) {
       return 'MiniCPM-V 4.5 (8B Param)'

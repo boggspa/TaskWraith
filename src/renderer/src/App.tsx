@@ -198,7 +198,6 @@ import {
   GROK_DEFAULT_MODEL,
   GROK_DEFAULT_MODELS,
   CURSOR_DEFAULT_MODELS,
-  OLLAMA_DEFAULT_MODELS,
   OLLAMA_DEFAULT_MODEL,
   isGeminiModelId,
   isCodexModelId,
@@ -220,6 +219,7 @@ import {
 } from './lib/geminiWorktree'
 import { chatHasInFlightThinkingWork } from './lib/chatThinkingState'
 import { humaniseModelId } from './lib/modelDisplayName'
+import { mergeOllamaModelCatalog } from './lib/ollamaModelCatalog'
 import { resolveOllamaDisplayBrand } from './lib/ollamaDisplayBrand'
 import { normalizeGeminiResumeTarget, resolveGeminiResumeForRun } from './lib/geminiResume'
 import {
@@ -1028,40 +1028,6 @@ interface OllamaModelInstallPrompt {
   command: string | null
   status: 'missing' | 'offline' | 'unknown'
   error?: string
-}
-
-function mergeOllamaModelCatalog(models?: CodexModelOption[] | null): CodexModelOption[] {
-  const byKey = new Map<string, CodexModelOption>()
-  const add = (model: CodexModelOption): void => {
-    if (!model?.id || model.id === 'custom') return
-    const key = normalizeOllamaModelKey(model.id)
-    if (!key) return
-    const previous = byKey.get(key)
-    byKey.set(key, {
-      ...previous,
-      ...model,
-      label: model.label || previous?.label || model.id
-    })
-  }
-  for (const model of OLLAMA_DEFAULT_MODELS) add(model)
-  const liveDefaultKey = Array.isArray(models)
-    ? normalizeOllamaModelKey(models.find((model) => model.isDefault)?.id)
-    : ''
-  if (liveDefaultKey) {
-    for (const [key, model] of byKey) {
-      byKey.set(key, { ...model, isDefault: key === liveDefaultKey })
-    }
-  }
-  if (Array.isArray(models)) {
-    for (const model of models) add(model)
-  }
-  return [
-    ...byKey.values(),
-    OLLAMA_DEFAULT_MODELS.find((model) => model.id === 'custom') || {
-      id: 'custom',
-      label: 'Custom model ID'
-    }
-  ]
 }
 
 function App(): React.JSX.Element {

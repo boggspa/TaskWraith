@@ -19,7 +19,7 @@ describe('resolveOllamaDisplayBrand', () => {
       providerLabel: 'IBM',
       providerClass: 'ibm'
     })
-    expect(resolveOllamaDisplayBrand('lfm2.5:8b', 'LFM 2.5 (8B-A1B)')).toMatchObject({
+    expect(resolveOllamaDisplayBrand('lfm2.5:8b', 'LFM 2.5 (8B-1A)')).toMatchObject({
       providerLabel: 'Liquid',
       providerClass: 'liquid'
     })

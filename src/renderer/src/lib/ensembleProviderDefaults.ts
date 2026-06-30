@@ -26,6 +26,10 @@ import type {
   CombinedModelPickerReasoningOption
 } from '../components/CombinedModelPicker'
 import type { EnsembleParticipant, PermissionPresetId, ProviderId } from '../../../main/store/types'
+import {
+  CLAUDE_PREVIEW_MODEL_ACCESS_REASON,
+  OPENAI_PREVIEW_MODEL_ACCESS_REASON
+} from '../../../shared/previewModelCatalog'
 import { codexReasoningDisplayLabel, claudeReasoningDisplayLabel } from './composerChipFormat'
 
 export interface EnsembleModelDefaults {
@@ -50,6 +54,10 @@ const CODEX_REASONING: CombinedModelPickerReasoningOption[] = [
   { value: 'medium', label: codexReasoningDisplayLabel('medium') },
   { value: 'high', label: codexReasoningDisplayLabel('high') },
   { value: 'xhigh', label: codexReasoningDisplayLabel('xhigh') }
+]
+const CODEX_SOL_REASONING: CombinedModelPickerReasoningOption[] = [
+  ...CODEX_REASONING,
+  { value: 'max', label: codexReasoningDisplayLabel('max') }
 ]
 
 const CLAUDE_REASONING_UNAVAILABLE = 'Not available for this Claude model'
@@ -94,7 +102,25 @@ const CODEX_MODELS: CombinedModelPickerModelOption[] = [
   { id: 'gpt-5.5', label: 'GPT-5.5' },
   { id: 'gpt-5.4', label: 'GPT-5.4' },
   { id: 'gpt-5.4-mini', label: 'GPT-5.4 Mini' },
-  { id: 'gpt-5.3-codex-spark', label: 'GPT-5.3 Codex Spark' }
+  { id: 'gpt-5.3-codex-spark', label: 'GPT-5.3 Codex Spark' },
+  {
+    id: 'preview:openai:gpt-5.6:sol',
+    label: 'GPT-5.6 Sol Preview',
+    disabled: true,
+    disabledReason: OPENAI_PREVIEW_MODEL_ACCESS_REASON
+  },
+  {
+    id: 'preview:openai:gpt-5.6:terra',
+    label: 'GPT-5.6 Terra Preview',
+    disabled: true,
+    disabledReason: OPENAI_PREVIEW_MODEL_ACCESS_REASON
+  },
+  {
+    id: 'preview:openai:gpt-5.6:luna',
+    label: 'GPT-5.6 Luna Preview',
+    disabled: true,
+    disabledReason: OPENAI_PREVIEW_MODEL_ACCESS_REASON
+  }
   // gpt-5.2 and gpt-5.3-codex are HARD-retired (the API rejects requests) and
   // removed from the ensemble Codex picker. Historical/cost lookups elsewhere
   // (modelDisplayName, contextWindows, ProviderRateService) keep their entries.
@@ -102,6 +128,12 @@ const CODEX_MODELS: CombinedModelPickerModelOption[] = [
 
 const CLAUDE_MODELS: CombinedModelPickerModelOption[] = [
   { id: 'claude-opus-4-8-1m', label: 'Claude Opus 4.8 1M' },
+  {
+    id: 'preview:anthropic:claude-sonnet-5',
+    label: 'Claude Sonnet 5 Preview',
+    disabled: true,
+    disabledReason: CLAUDE_PREVIEW_MODEL_ACCESS_REASON
+  },
   {
     id: 'claude-fable-5-1m',
     label: 'Claude Fable 5 1M',
@@ -147,7 +179,7 @@ const OLLAMA_MODELS: CombinedModelPickerModelOption[] = [
   { id: 'ornith:9b', label: 'Ornith 1.0 (9B Param)' },
   { id: 'ornith:35b', label: 'Ornith 1.0 (35B Param)' },
   { id: 'gpt-oss:20b', label: 'GPT OSS (20B Param)' },
-  { id: 'lfm2.5:8b', label: 'LFM 2.5 (8B-A1B)' },
+  { id: 'lfm2.5:8b', label: 'LFM 2.5 (8B-1A)' },
   { id: 'minicpm-v4.5:8b', label: 'MiniCPM-V 4.5 (8B Param)' },
   { id: 'granite4.1:3b', label: 'Granite 4.1 (3B Param)' },
   { id: 'granite4.1:30b', label: 'Granite 4.1 (30B Param)' },
@@ -179,7 +211,9 @@ export function getEnsembleReasoningOptions(
 ): CombinedModelPickerReasoningOption[] {
   switch (provider) {
     case 'codex':
-      return CODEX_REASONING
+      return String(modelId || '').toLowerCase() === 'preview:openai:gpt-5.6:sol'
+        ? CODEX_SOL_REASONING
+        : CODEX_REASONING
     case 'claude':
       if (isClaudeHaikuModel(modelId)) return CLAUDE_HAIKU_REASONING
       return isClaudeOpusOrFableModel(modelId) ? CLAUDE_OPUS_REASONING : CLAUDE_SONNET_REASONING

@@ -50,10 +50,18 @@ const KNOWN_MODEL_LABELS: Record<string, string> = {
   'gpt-5.3-codex': 'GPT-5.3 Codex',
   'gpt-5.3-codex-spark': 'GPT-5.3 Codex Spark',
   'gpt-5.2': 'GPT-5.2',
+  'preview:openai:gpt-5.6:sol': 'GPT-5.6 Sol Preview',
+  'preview:openai:gpt-5.6:terra': 'GPT-5.6 Terra Preview',
+  'preview:openai:gpt-5.6:luna': 'GPT-5.6 Luna Preview',
 
   // ── Claude ────────────────────────────────────────────────
+  'claude-sonnet-5': 'Claude Sonnet 5',
+  'preview:anthropic:claude-sonnet-5': 'Claude Sonnet 5 Preview',
   'claude-fable-5': 'Claude Fable 5',
   'claude-fable-5-1m': 'Claude Fable 5 (1M)',
+  'claude-mythos-5': 'Claude Mythos 5',
+  'preview:anthropic:claude-fable-5': 'Claude Fable 5 Preview',
+  'preview:anthropic:claude-mythos-5': 'Claude Mythos 5 Preview',
   'claude-opus-4-8': 'Claude Opus 4.8',
   'claude-opus-4-8-1m': 'Claude Opus 4.8 (1M)',
   'claude-opus-4-7': 'Claude Opus 4.7',
@@ -115,8 +123,8 @@ const KNOWN_MODEL_LABELS: Record<string, string> = {
   'gpt-oss:20b': 'GPT OSS (20B Param)',
   'gpt-oss:latest': 'GPT OSS (20B Param)',
   'openai/gpt-oss-20b': 'GPT OSS (20B Param)',
-  'lfm2.5:8b': 'LFM 2.5 (8B-A1B)',
-  'lfm2.5:latest': 'LFM 2.5 (8B-A1B)',
+  'lfm2.5:8b': 'LFM 2.5 (8B-1A)',
+  'lfm2.5:latest': 'LFM 2.5 (8B-1A)',
   'minicpm-v4.5:8b': 'MiniCPM-V 4.5 (8B Param)',
   'granite4.1:3b': 'Granite 4.1 (3B Param)',
   'granite4.1:30b': 'Granite 4.1 (30B Param)',
@@ -246,7 +254,7 @@ export function humaniseModelId(
     return 'Ornith 1.0 (35B Param)'
   }
   if (provider === 'ollama' && key.startsWith('lfm2.5:8b-')) {
-    return 'LFM 2.5 (8B-A1B)'
+    return 'LFM 2.5 (8B-1A)'
   }
   if (provider === 'ollama' && key.startsWith('granite4.1:3b-')) {
     return 'Granite 4.1 (3B Param)'

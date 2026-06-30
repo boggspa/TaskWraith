@@ -97,7 +97,7 @@ describe('formatAssistantMessageLabel', () => {
       label: 'Liquid',
       provider: 'ollama',
       providerClass: 'liquid',
-      modelBadge: 'LFM 2.5 (8B-A1B)'
+      modelBadge: 'LFM 2.5 (8B-1A)'
     })
   })
 

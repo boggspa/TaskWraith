@@ -1,4 +1,8 @@
-import { isPreviewModelPlaceholder } from '../../../shared/previewModelCatalog'
+import {
+  isPreviewModelPlaceholder,
+  previewModelsForProvider,
+  type PreviewModelCatalogEntry
+} from '../../../shared/previewModelCatalog'
 
 interface CodexModelOption {
   id: string
@@ -24,6 +28,18 @@ interface CodexModelOption {
    * field once the model is actually removed from the list. */
   retiresAt?: string
 }
+
+const previewModelForPicker = (entry: PreviewModelCatalogEntry): CodexModelOption => ({
+  id: entry.id,
+  label: entry.label,
+  description: entry.description,
+  disabled: entry.disabled,
+  disabledReason: entry.disabledReason,
+  ...(entry.supportedReasoningEfforts
+    ? { supportedReasoningEfforts: entry.supportedReasoningEfforts }
+    : {}),
+  ...(entry.defaultReasoningEffort ? { defaultReasoningEffort: entry.defaultReasoningEffort } : {})
+})
 
 const CODEX_DEFAULT_MODELS = [
   {
@@ -68,7 +84,8 @@ const CODEX_DEFAULT_MODELS = [
     supportedReasoningEfforts: [{ reasoningEffort: 'low' }, { reasoningEffort: 'medium' }],
     defaultReasoningEffort: 'low'
     // Fast tier removed alongside 5.3 — see note above.
-  }
+  },
+  ...previewModelsForProvider('codex').map(previewModelForPicker)
   // gpt-5.2 and gpt-5.3-codex were HARD-retired (the API rejects requests for
   // them) and removed from the picker. The authoritative removal lives in the
   // main process (CODEX_RETIRED_MODEL_IDS, applied in the get-agent-models
@@ -102,6 +119,7 @@ const CLAUDE_THINKING_EFFORTS = CLAUDE_OPUS_REASONING_EFFORTS
 const CLAUDE_DEFAULT_REASONING_EFFORT = 'medium'
 const CLAUDE_TEMPORARILY_HIDDEN_MODEL_IDS = new Set([
   'fable',
+  'claude-sonnet-5',
   'claude-fable-5',
   'claude-fable-5-1m'
 ])
@@ -136,7 +154,8 @@ const CLAUDE_DEFAULT_MODELS = [
     supportedReasoningEfforts: CLAUDE_OPUS_REASONING_EFFORTS,
     defaultReasoningEffort: 'medium',
     additionalSpeedTiers: ['fast']
-  }
+  },
+  ...previewModelsForProvider('claude').map(previewModelForPicker)
 ] satisfies CodexModelOption[]
 const KIMI_DEFAULT_MODELS = [
   {
@@ -212,8 +231,8 @@ const OLLAMA_DEFAULT_MODELS = [
   },
   {
     id: 'lfm2.5:8b',
-    label: 'LFM 2.5 (8B-A1B)',
-    description: 'Liquid LFM2.5 8B-A1B via Ollama · 131k context · tools/thinking'
+    label: 'LFM 2.5 (8B-1A)',
+    description: 'Liquid LFM2.5 8B-1A via Ollama · 131k context · tools/thinking'
   },
   {
     id: 'minicpm-v4.5:8b',
