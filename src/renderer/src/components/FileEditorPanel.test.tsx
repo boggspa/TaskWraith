@@ -4,6 +4,7 @@ import {
   explicitOnlyCompletionSource,
   fileEditorBreadcrumbParts,
   fileEditorDirtyActionCopy,
+  fileEditorPromptKeyAction,
   isFileEditorPromptDismissKey,
   QuickOpenPalette,
   quickOpenOptionId,
@@ -502,5 +503,12 @@ describe('file editor dirty action prompts', () => {
     expect(isFileEditorPromptDismissKey('Escape')).toBe(true)
     expect(isFileEditorPromptDismissKey('Enter')).toBe(false)
     expect(isFileEditorPromptDismissKey('F10')).toBe(false)
+  })
+
+  it('isolates non-dismiss prompt keys from editor shortcuts', () => {
+    expect(fileEditorPromptKeyAction('Escape')).toBe('dismiss')
+    expect(fileEditorPromptKeyAction('s')).toBe('isolate')
+    expect(fileEditorPromptKeyAction('p')).toBe('isolate')
+    expect(fileEditorPromptKeyAction('F10')).toBe('isolate')
   })
 })

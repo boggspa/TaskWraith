@@ -481,14 +481,20 @@ export const fileEditorDirtyActionCopy = (
 
 export const isFileEditorPromptDismissKey = (key: string): boolean => key === 'Escape'
 
-const dismissFileEditorPromptOnEscape = (
+export type FileEditorPromptKeyAction = 'dismiss' | 'isolate'
+
+export const fileEditorPromptKeyAction = (key: string): FileEditorPromptKeyAction =>
+  isFileEditorPromptDismissKey(key) ? 'dismiss' : 'isolate'
+
+const handleFileEditorPromptKeyDown = (
   event: ReactKeyboardEvent,
   onDismiss: () => void
 ): void => {
-  if (!isFileEditorPromptDismissKey(event.key)) return
-  event.preventDefault()
   event.stopPropagation()
-  onDismiss()
+  if (fileEditorPromptKeyAction(event.key) === 'dismiss') {
+    event.preventDefault()
+    onDismiss()
+  }
 }
 
 function focusFileEditorContextMenuButton(
@@ -1920,7 +1926,7 @@ export function FileEditorPanel({
               aria-labelledby="file-editor-delete-title"
               aria-describedby="file-editor-delete-body"
               onKeyDown={(event) =>
-                dismissFileEditorPromptOnEscape(event, () => setShowDeleteConfirm(false))
+                handleFileEditorPromptKeyDown(event, () => setShowDeleteConfirm(false))
               }
             >
               <strong id="file-editor-delete-title">Delete file?</strong>
@@ -1956,7 +1962,7 @@ export function FileEditorPanel({
               aria-labelledby="file-editor-commit-title"
               aria-describedby="file-editor-commit-body"
               onKeyDown={(event) =>
-                dismissFileEditorPromptOnEscape(event, () => setShowCommitDialog(false))
+                handleFileEditorPromptKeyDown(event, () => setShowCommitDialog(false))
               }
             >
               <strong id="file-editor-commit-title">Commit staged changes</strong>
@@ -2027,7 +2033,7 @@ export function FileEditorPanel({
             aria-labelledby="file-editor-unsaved-title"
             aria-describedby="file-editor-unsaved-body"
             onKeyDown={(event) =>
-              dismissFileEditorPromptOnEscape(event, () => setPendingClosePath(''))
+              handleFileEditorPromptKeyDown(event, () => setPendingClosePath(''))
             }
           >
             <strong id="file-editor-unsaved-title">Unsaved changes</strong>
@@ -2068,7 +2074,7 @@ export function FileEditorPanel({
             aria-labelledby="file-editor-dirty-action-title"
             aria-describedby="file-editor-dirty-action-body"
             onKeyDown={(event) =>
-              dismissFileEditorPromptOnEscape(event, () => setPendingDirtyAction(null))
+              handleFileEditorPromptKeyDown(event, () => setPendingDirtyAction(null))
             }
           >
             <strong id="file-editor-dirty-action-title">{pendingDirtyActionCopy.title}</strong>
