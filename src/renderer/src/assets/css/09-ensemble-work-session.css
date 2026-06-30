@@ -1858,10 +1858,10 @@
   -webkit-backdrop-filter: none;
 }
 [data-composer-style="claude"] .queued-messages-above-row {
-  border-radius: 14px;
+  border-radius: 12px;
 }
 [data-composer-style="claude"] .queued-messages-row {
-  border-radius: 10px;
+  border-radius: 8px;
 }
 [data-composer-style="claude"]
   .composer-above-bar-stack
