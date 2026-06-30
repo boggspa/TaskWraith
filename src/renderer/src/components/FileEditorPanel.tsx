@@ -61,6 +61,7 @@ interface FileEditorPanelProps {
   refreshTick?: number
   openRequest?: FileEditorOpenRequest | null
   commandRequest?: FileEditorCommandRequest | null
+  onShowInDiff?: (path: string) => void
   onDirtyChange?: (dirtyBufferCount: number) => void
   onEditorStateChange?: (state: FileEditorPanelState) => void
 }
@@ -401,6 +402,7 @@ export function FileEditorPanel({
   refreshTick = 0,
   openRequest,
   commandRequest,
+  onShowInDiff,
   onDirtyChange,
   onEditorStateChange
 }: FileEditorPanelProps) {
@@ -1403,21 +1405,31 @@ export function FileEditorPanel({
           ? 'Collapse Folder'
           : 'Open Folder'
         : 'Open File'
+      const fileActions: FileEditorContextMenuItem[] = entry.isDirectory
+        ? []
+        : [
+            {
+              id: 'reveal',
+              label: 'Reveal in Tree',
+              onSelect: () => void revealFilePathInTree(entry.path)
+            },
+            ...(onShowInDiff
+              ? [
+                  {
+                    id: 'show-in-diff',
+                    label: 'Show in Diff Studio',
+                    onSelect: () => onShowInDiff(entry.path)
+                  }
+                ]
+              : [])
+          ]
       return [
         {
           id: 'open',
           label: openLabel,
           onSelect: () => void openFile(entry)
         },
-        ...(entry.isDirectory
-          ? []
-          : [
-              {
-                id: 'reveal',
-                label: 'Reveal in Tree',
-                onSelect: () => void revealFilePathInTree(entry.path)
-              }
-            ]),
+        ...fileActions,
         {
           id: 'copy-path',
           label: 'Copy Relative Path',
@@ -1434,6 +1446,15 @@ export function FileEditorPanel({
         label: 'Reveal in Tree',
         onSelect: () => void revealFilePathInTree(contextMenuSelection.path)
       },
+      ...(onShowInDiff
+        ? [
+            {
+              id: 'show-in-diff',
+              label: 'Show in Diff Studio',
+              onSelect: () => onShowInDiff(contextMenuSelection.path)
+            }
+          ]
+        : []),
       {
         id: 'save',
         label: 'Save',

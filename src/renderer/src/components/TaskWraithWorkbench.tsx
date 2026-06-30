@@ -643,6 +643,7 @@ export function TaskWraithWorkbench({
               refreshTick={editorRefreshTick}
               openRequest={editorOpenRequest}
               commandRequest={editorCommandRequest}
+              onShowInDiff={showFileInDiff}
               onDirtyChange={onDirtyChange}
               onEditorStateChange={setEditorState}
             />
