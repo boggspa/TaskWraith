@@ -1123,11 +1123,15 @@ function resolveEnsembleProposedPlanOwnerId(
 }
 
 function shouldStampEnsembleProposedPlan(
-  config: EnsembleConfig,
+  chat: ChatRecord,
   roundId: string,
   participantId: string
 ): boolean {
-  return cleanParticipantId(participantId) === resolveEnsembleProposedPlanOwnerId(config, roundId)
+  if (chat.workflowMode !== 'plan' || !chat.ensemble) return false
+  return (
+    cleanParticipantId(participantId) ===
+    resolveEnsembleProposedPlanOwnerId(chat.ensemble, roundId)
+  )
 }
 
 function mapEnsembleToolKindToCategory(kind: string): ToolActivity['category'] | undefined {
@@ -6338,10 +6342,10 @@ export class EnsembleOrchestrator {
         const parsedPlan = parseExplicitProposedPlan(rawContent)
         const shouldStampPlan = Boolean(
           parsedPlan &&
-            shouldStampEnsembleProposedPlan(chat.ensemble, run.roundId, run.participant.id)
+            shouldStampEnsembleProposedPlan(chat, run.roundId, run.participant.id)
         )
         const previousPlan = shouldStampEnsembleProposedPlan(
-          chat.ensemble,
+          chat,
           run.roundId,
           run.participant.id
         )

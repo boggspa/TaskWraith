@@ -467,6 +467,7 @@ describe('EnsembleOrchestrator', () => {
 
   it('stamps a proposed plan card on the ensemble plan owner message', async () => {
     const chat = makeChat()
+    chat.workflowMode = 'plan'
     chat.ensemble!.bossmanParticipantId = 'claude'
     const harness = makeHarness({ initialChat: chat })
     harness.orchestrator.startRound({
@@ -500,6 +501,7 @@ describe('EnsembleOrchestrator', () => {
 
   it('does not stamp proposed plan cards from non-owner ensemble participants', async () => {
     const chat = makeChat()
+    chat.workflowMode = 'plan'
     chat.ensemble!.bossmanParticipantId = 'codex'
     const harness = makeHarness({ initialChat: chat })
     harness.orchestrator.startRound({
@@ -525,8 +527,37 @@ describe('EnsembleOrchestrator', () => {
     expect(message?.content).toContain('<proposed_plan>')
   })
 
+  it('does not stamp proposed plan cards outside plan workflow', async () => {
+    const chat = makeChat()
+    chat.workflowMode = 'normal'
+    chat.ensemble!.bossmanParticipantId = 'claude'
+    const harness = makeHarness({ initialChat: chat })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Summarize this.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const runId = harness.dispatched[0].appRunId!
+
+    harness.orchestrator.handleProviderOutput(
+      'claude',
+      { appRunId: runId, appChatId: 'ensemble-chat' },
+      {
+        type: 'content',
+        text: '<proposed_plan>\n## Should stay plain\n- Not a plan workflow\n</proposed_plan>'
+      }
+    )
+
+    await vi.waitFor(() => expect(participantContentMessage(harness)).toBeTruthy())
+    const message = participantContentMessage(harness)
+    expect(message?.metadata?.proposedPlan).toBeUndefined()
+    expect(message?.content).toContain('<proposed_plan>')
+  })
+
   it('preserves proposed plan decision status across ensemble message re-flushes', async () => {
     const chat = makeChat()
+    chat.workflowMode = 'plan'
     chat.ensemble!.bossmanParticipantId = 'claude'
     const harness = makeHarness({ initialChat: chat })
     harness.orchestrator.startRound({
