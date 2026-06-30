@@ -3,9 +3,11 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import {
   CODE_BLOCK_RESIZE_EVENT,
   captureChatScrollState,
+  expectedBottomScrollTop,
+  isExpectedProgrammaticScroll,
   restoreChatScrollStateWhenReady,
   shouldDisengageAutoFollow,
-  shouldEngageAutoFollow,
+  shouldReengageAutoFollowAfterScroll,
   shouldRepinAfterCodeBlockResize,
   shouldRepinAfterFrame,
   shouldRepinAfterTranscriptResize,
@@ -36,7 +38,8 @@ export function useTranscriptScrollState({
   const userScrolledAwayInFrameRef = useRef(false)
   const repinRafIdRef = useRef<number | null>(null)
   const lastTranscriptScrollTopRef = useRef(0)
-  const programmaticScrollRef = useRef(false)
+  const programmaticScrollTargetRef = useRef<number | null>(null)
+  const programmaticScrollClearRafRef = useRef<number | null>(null)
   const [unreadFromBottomCount, setUnreadFromBottomCount] = useState(0)
   const unreadFromBottomCountRef = useRef(0)
   const previousMessagesCountRef = useRef<{ chatId: string | null; count: number }>({
@@ -87,21 +90,50 @@ export function useTranscriptScrollState({
   const handleJumpToLatestRef = useRef(handleJumpToLatest)
   handleJumpToLatestRef.current = handleJumpToLatest
 
-  const snapScrollToBottom = useCallback((node: HTMLElement) => {
-    programmaticScrollRef.current = true
-    node.scrollTop = node.scrollHeight
+  const clearProgrammaticScrollTarget = useCallback(() => {
+    programmaticScrollTargetRef.current = null
+    if (programmaticScrollClearRafRef.current !== null) {
+      cancelAnimationFrame(programmaticScrollClearRafRef.current)
+      programmaticScrollClearRafRef.current = null
+    }
   }, [])
+
+  const scheduleProgrammaticScrollTargetClear = useCallback(() => {
+    if (programmaticScrollClearRafRef.current !== null) {
+      cancelAnimationFrame(programmaticScrollClearRafRef.current)
+    }
+    programmaticScrollClearRafRef.current = requestAnimationFrame(() => {
+      programmaticScrollClearRafRef.current = requestAnimationFrame(() => {
+        programmaticScrollClearRafRef.current = null
+        programmaticScrollTargetRef.current = null
+      })
+    })
+  }, [])
+
+  const snapScrollToBottom = useCallback((node: HTMLElement) => {
+    const target = expectedBottomScrollTop({
+      scrollHeight: node.scrollHeight,
+      clientHeight: node.clientHeight
+    })
+    if (isExpectedProgrammaticScroll({ expectedScrollTop: target, nextScrollTop: node.scrollTop })) {
+      clearProgrammaticScrollTarget()
+    } else {
+      programmaticScrollTargetRef.current = target
+      scheduleProgrammaticScrollTargetClear()
+    }
+    node.scrollTop = node.scrollHeight
+  }, [clearProgrammaticScrollTarget, scheduleProgrammaticScrollTargetClear])
 
   const beginManualTranscriptJump = useCallback(() => {
     autoFollowRef.current = false
     userScrolledAwayInFrameRef.current = true
-    programmaticScrollRef.current = true
+    clearProgrammaticScrollTarget()
     pendingTranscriptJumpChatIdRef.current = null
     if (repinRafIdRef.current !== null) {
       cancelAnimationFrame(repinRafIdRef.current)
       repinRafIdRef.current = null
     }
-  }, [])
+  }, [clearProgrammaticScrollTarget])
 
   const prepareMessageJump = useCallback((targetChatId: string) => {
     pendingTranscriptJumpChatIdRef.current = targetChatId
@@ -120,13 +152,28 @@ export function useTranscriptScrollState({
     let rafId: number | null = null
     const evaluate = () => {
       rafId = null
-      if (programmaticScrollRef.current) {
-        programmaticScrollRef.current = false
-        lastTranscriptScrollTopRef.current = scroller.scrollTop
+      const previousScrollTop = lastTranscriptScrollTopRef.current
+      const nextScrollTop = scroller.scrollTop
+      const expectedProgrammatic = isExpectedProgrammaticScroll({
+        expectedScrollTop: programmaticScrollTargetRef.current,
+        nextScrollTop
+      })
+      if (expectedProgrammatic) {
+        clearProgrammaticScrollTarget()
+        lastTranscriptScrollTopRef.current = nextScrollTop
         return
       }
-      const distanceFromBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight
-      if (shouldEngageAutoFollow(distanceFromBottom)) {
+      programmaticScrollTargetRef.current = null
+      const distanceFromBottom = scroller.scrollHeight - nextScrollTop - scroller.clientHeight
+      if (
+        shouldReengageAutoFollowAfterScroll({
+          distanceFromBottom,
+          userScrolledAwayInThisFrame: userScrolledAwayInFrameRef.current,
+          previousScrollTop,
+          nextScrollTop,
+          isProgrammatic: false
+        })
+      ) {
         autoFollowRef.current = true
         userScrolledAwayInFrameRef.current = false
         if (unreadFromBottomCountRef.current !== 0) {
@@ -136,16 +183,22 @@ export function useTranscriptScrollState({
       } else if (shouldDisengageAutoFollow(distanceFromBottom)) {
         autoFollowRef.current = false
       }
-      lastTranscriptScrollTopRef.current = scroller.scrollTop
+      lastTranscriptScrollTopRef.current = nextScrollTop
     }
     const onScroll = () => {
+      const nextScrollTop = scroller.scrollTop
+      const expectedProgrammatic = isExpectedProgrammaticScroll({
+        expectedScrollTop: programmaticScrollTargetRef.current,
+        nextScrollTop
+      })
       if (
         shouldTreatScrollAsUserScrollAway({
           previousScrollTop: lastTranscriptScrollTopRef.current,
-          nextScrollTop: scroller.scrollTop,
-          isProgrammatic: programmaticScrollRef.current
+          nextScrollTop,
+          isProgrammatic: expectedProgrammatic
         })
       ) {
+        clearProgrammaticScrollTarget()
         userScrolledAwayInFrameRef.current = true
         autoFollowRef.current = false
       }
@@ -158,7 +211,11 @@ export function useTranscriptScrollState({
       scroller.removeEventListener('scroll', onScroll)
       if (rafId !== null) cancelAnimationFrame(rafId)
     }
-  }, [chatId])
+  }, [chatId, clearProgrammaticScrollTarget])
+
+  useEffect(() => {
+    return () => clearProgrammaticScrollTarget()
+  }, [clearProgrammaticScrollTarget])
 
   useEffect(() => {
     const scroller = transcriptScrollRef.current

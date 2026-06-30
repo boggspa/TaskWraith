@@ -2,11 +2,15 @@ import { afterEach, describe, it, expect, vi } from 'vitest'
 import {
   STICK_ENGAGE_PX,
   STICK_DISENGAGE_PX,
+  PROGRAMMATIC_SCROLL_EPSILON_PX,
   captureChatScrollState,
+  expectedBottomScrollTop,
+  isExpectedProgrammaticScroll,
   normalizeChatScrollState,
   restoreChatScrollAnchor,
   restoreChatScrollState,
   shouldEngageAutoFollow,
+  shouldReengageAutoFollowAfterScroll,
   shouldDisengageAutoFollow,
   shouldTreatScrollAsUserScrollAway,
   shouldRepinAfterFrame,
@@ -259,6 +263,93 @@ describe('TranscriptScroll', () => {
     it('rejects non-finite inputs defensively', () => {
       expect(shouldEngageAutoFollow(Number.NaN)).toBe(false)
       expect(shouldEngageAutoFollow(Number.POSITIVE_INFINITY)).toBe(false)
+    })
+  })
+
+  describe('shouldReengageAutoFollowAfterScroll', () => {
+    it('re-engages at the bottom when there was no active user scroll-away', () => {
+      expect(
+        shouldReengageAutoFollowAfterScroll({
+          distanceFromBottom: 0,
+          userScrolledAwayInThisFrame: false,
+          previousScrollTop: 300,
+          nextScrollTop: 300,
+          isProgrammatic: false
+        })
+      ).toBe(true)
+    })
+
+    it('does not erase upward user intent just because streaming left the viewport near bottom', () => {
+      expect(
+        shouldReengageAutoFollowAfterScroll({
+          distanceFromBottom: 0,
+          userScrolledAwayInThisFrame: true,
+          previousScrollTop: 300,
+          nextScrollTop: 260,
+          isProgrammatic: false
+        })
+      ).toBe(false)
+    })
+
+    it('re-engages when the user scrolls downward back to the live edge', () => {
+      expect(
+        shouldReengageAutoFollowAfterScroll({
+          distanceFromBottom: 1,
+          userScrolledAwayInThisFrame: true,
+          previousScrollTop: 260,
+          nextScrollTop: 300,
+          isProgrammatic: false
+        })
+      ).toBe(true)
+    })
+
+    it('does not re-engage from app-owned scroll writes or non-bottom positions', () => {
+      expect(
+        shouldReengageAutoFollowAfterScroll({
+          distanceFromBottom: 1,
+          userScrolledAwayInThisFrame: true,
+          previousScrollTop: 260,
+          nextScrollTop: 300,
+          isProgrammatic: true
+        })
+      ).toBe(false)
+      expect(
+        shouldReengageAutoFollowAfterScroll({
+          distanceFromBottom: STICK_ENGAGE_PX + 1,
+          userScrolledAwayInThisFrame: true,
+          previousScrollTop: 260,
+          nextScrollTop: 300,
+          isProgrammatic: false
+        })
+      ).toBe(false)
+    })
+  })
+
+  describe('programmatic scroll target helpers', () => {
+    it('computes the real bottom scrollTop target', () => {
+      expect(expectedBottomScrollTop({ scrollHeight: 1200, clientHeight: 500 })).toBe(700)
+      expect(expectedBottomScrollTop({ scrollHeight: 300, clientHeight: 500 })).toBe(0)
+    })
+
+    it('matches only the expected app-owned scroll target', () => {
+      expect(
+        isExpectedProgrammaticScroll({
+          expectedScrollTop: 700,
+          nextScrollTop: 700 + PROGRAMMATIC_SCROLL_EPSILON_PX
+        })
+      ).toBe(true)
+      expect(
+        isExpectedProgrammaticScroll({
+          expectedScrollTop: 700,
+          nextScrollTop: 650
+        })
+      ).toBe(false)
+      expect(
+        isExpectedProgrammaticScroll({
+          expectedScrollTop: null,
+          nextScrollTop: 700
+        })
+      ).toBe(false)
     })
   })
 
