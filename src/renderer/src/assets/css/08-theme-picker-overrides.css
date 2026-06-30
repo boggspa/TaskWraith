@@ -8696,8 +8696,9 @@
 }
 
 .composer-combined-picker-popover.is-ollama-model-picker {
-  min-width: 520px;
-  max-width: min(620px, calc(100vw - 16px));
+  width: min(500px, calc(100vw - 16px));
+  min-width: min(500px, calc(100vw - 16px));
+  max-width: min(500px, calc(100vw - 16px));
 }
 
 /* Light-theme variant of the model/permission picker popover.
