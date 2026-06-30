@@ -154,18 +154,20 @@ describe('ProviderPreflightService', () => {
   })
 
   it('blocks preview-risk model ids unless access is proven', () => {
-    const result = service.evaluate(
-      {
-        provider: 'claude',
-        workspacePath: '/repo',
-        model: 'claude-sonnet-5'
-      },
-      contract({ provider: 'claude', label: 'Claude' }),
-      defaultProviderDescriptor('claude')
-    )
+    for (const model of ['claude-sonnet-5', 'claude-mythos-5']) {
+      const result = service.evaluate(
+        {
+          provider: 'claude',
+          workspacePath: '/repo',
+          model
+        },
+        contract({ provider: 'claude', label: 'Claude' }),
+        defaultProviderDescriptor('claude')
+      )
 
-    expect(result.state).toBe('blocked')
-    expect(result.reason).toBe('Requires Claude preview access')
+      expect(result.state).toBe('blocked')
+      expect(result.reason).toBe('Requires Claude preview access')
+    }
   })
 
   it('allows preview-risk model ids when access has been proven by the caller', () => {

@@ -331,18 +331,20 @@ describe('resolveEffectiveRunPermissions', () => {
   })
 
   it('preserves read-only posture for preview-risk models', () => {
-    const resolved = resolveEffectiveRunPermissions({
-      provider: 'claude',
-      workspacePath: '/repo',
-      model: 'claude-sonnet-5',
-      settings: settings(),
-      presetId: 'read_only'
-    })
+    for (const model of ['claude-sonnet-5', 'claude-mythos-5']) {
+      const resolved = resolveEffectiveRunPermissions({
+        provider: 'claude',
+        workspacePath: '/repo',
+        model,
+        settings: settings(),
+        presetId: 'read_only'
+      })
 
-    expect(resolved.approvalMode).toBe('plan')
-    expect(resolved.readOnly).toBe(true)
-    expect(resolved.agenticServices.shellCommands).toBe('deny')
-    expect(resolved.agenticServices.fileChanges).toBe('deny')
-    expect(resolved.networkAccess).toBe('deny')
+      expect(resolved.approvalMode).toBe('plan')
+      expect(resolved.readOnly).toBe(true)
+      expect(resolved.agenticServices.shellCommands).toBe('deny')
+      expect(resolved.agenticServices.fileChanges).toBe('deny')
+      expect(resolved.networkAccess).toBe('deny')
+    }
   })
 })
