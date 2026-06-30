@@ -16,10 +16,12 @@ This section contains public "How To…" guides for each UX feature in TaskWrait
 7. [Workflows & Workspace Boards](workflows-and-boards/)
 8. [Approvals & Permissions](approvals-and-permissions/)
 
-### Pending (9–14)
-- 9. Transcript, Search & Rich Content
-- 10. Canvas & Previews
-- 11. Media, Audio & Video
+### Ready (9–11)
+9. [Transcript, Search & Rich Content](transcript-and-search/)
+10. [Canvas & Previews](canvas-and-previews/)
+11. [Media, Audio & Video](media-audio-and-video/)
+
+### Pending (12–14)
 - 12. Settings & Configuration
 - 13. Notifications & Status
 - 14. Goals, To-Dos & Scheduling
