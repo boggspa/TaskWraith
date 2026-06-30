@@ -864,6 +864,7 @@ import { registerMediaAssetHandlers } from './ipc/mediaAssetHandlers'
 import { registerSpellcheckHandlers } from './ipc/spellcheckHandlers'
 import { registerExternalPathGrantHandlers } from './ipc/externalPathGrantHandlers'
 import { registerGitHandlers } from './ipc/gitHandlers'
+import { registerClaudeAuthHandlers } from './ipc/claudeAuthHandlers'
 import { getCachedRemoteEnsemblePresets } from './remote/EnsembleRosterPresetsCache'
 import { resolveGeminiCliResumePolicy } from './GeminiSessionPolicy'
 // 1.0.5-EW26 — Kimi compatibility filter (curated + user-
@@ -26083,79 +26084,16 @@ if (isGeminiMcpBridgeProcess) {
       openExternal: (url) => shell.openExternal(url)
     })
 
-    ipcMain.handle('get-claude-auth-status', async () => {
-      const encryptionAvailable = safeStorage.isEncryptionAvailable()
-      const apiKeyConfigured = Boolean(AppStore.getSettings().claudeApiKey)
-      const resolved = await resolveCliProviderBinary('claude')
-      if (!resolved.binaryPath) {
-        return {
-          available: false,
-          authState: 'missing',
-          apiKeyConfigured,
-          encryptionAvailable,
-          binaryPath: null
-        } satisfies import('./store/types').ProviderApiKeyStatus
-      }
-      const [authState, version] = await Promise.all([
-        readClaudeAuthState(resolved),
-        readResolvedCliVersion(resolved)
-      ])
-      return {
-        available: true,
-        authState,
-        apiKeyConfigured,
-        encryptionAvailable,
-        version,
-        binaryPath: resolved.binaryPath
-      } satisfies import('./store/types').ProviderApiKeyStatus
-    })
-
-    ipcMain.handle('store-claude-api-key', async (_, rawKey: string) => {
-      const key = String(rawKey || '').trim()
-      if (!key) {
-        AppStore.updateSettings({ claudeApiKey: undefined })
-        return {
-          stored: false,
-          encryptionAvailable: safeStorage.isEncryptionAvailable()
-        }
-      }
-      if (!safeStorage.isEncryptionAvailable()) {
-        return {
-          stored: false,
-          encryptionAvailable: false,
-          error: 'Secure storage is unavailable, so the Claude API key was not saved.'
-        }
-      }
-      const encrypted = encryptApiKey(key)
-      AppStore.updateSettings({ claudeApiKey: encrypted || undefined })
-      return {
-        stored: Boolean(encrypted),
-        encryptionAvailable: safeStorage.isEncryptionAvailable()
-      }
-    })
-
-    ipcMain.handle('clear-claude-api-key', async () => {
-      AppStore.updateSettings({ claudeApiKey: undefined })
-      return true
-    })
-
-    ipcMain.handle('trigger-claude-login', async () => {
-      const resolved = await resolveCliProviderBinary('claude')
-      if (!resolved.binaryPath) {
-        return {
-          ok: false,
-          error: 'Claude CLI not found. Install with: npm install -g @anthropic-ai/claude-code'
-        }
-      }
-      return new Promise<{ ok: boolean; error?: string; code?: number | null }>((resolve) => {
-        const child = spawn(resolved.binaryPath!, ['auth', 'login'], {
-          shell: false,
-          stdio: 'ignore',
-          env: createCliEnv({}, resolved.binaryPath)
-        })
-        child.on('close', (code) => resolve({ ok: code === 0, code }))
-        child.on('error', (err) => resolve({ ok: false, error: err.message }))
-      })
+    registerClaudeAuthHandlers({
+      getSettings: () => AppStore.getSettings(),
+      updateSettings: (patch) => AppStore.updateSettings(patch),
+      isEncryptionAvailable: () => safeStorage.isEncryptionAvailable(),
+      encryptApiKey,
+      resolveCliProviderBinary,
+      readClaudeAuthState,
+      readResolvedCliVersion,
+      spawn,
+      createCliEnv
     })
 
     // Phase E1 (iOS bridge gap #1) — APNs config IPC surface for the
