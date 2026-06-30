@@ -2785,6 +2785,22 @@
   box-shadow: none;
 }
 
+/* Context donut + inline percent (real Cursor composer parity). */
+[data-composer-style="cursor"] .composer-context-trigger--cursor {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border-radius: 6px;
+  padding: 0 2px;
+}
+[data-composer-style="cursor"] .composer-context-trigger-pct {
+  font-size: calc(var(--font-size-xs) + 1px);
+  font-weight: 500;
+  line-height: 1;
+  color: var(--cursor-shell-muted);
+  letter-spacing: -0.01em;
+}
+
 /* Diff signal — canonical +N/−N hues (kept coloured across all shells). */
 [data-composer-style="cursor"] .composer-diff-add {
   color: #2db777 !important;

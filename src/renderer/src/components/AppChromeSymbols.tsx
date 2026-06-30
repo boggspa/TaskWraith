@@ -933,7 +933,8 @@ export function ContextWheel({
   percent,
   label,
   codexShell = false,
-  claudeShell = false
+  claudeShell = false,
+  cursorShell = false
 }: {
   percent: number
   label: string
@@ -941,10 +942,12 @@ export function ContextWheel({
   codexShell?: boolean
   /** Claude composer shell — hairline ~1px ring matching real Claude. */
   claudeShell?: boolean
+  /** Cursor composer shell — 10% smaller ring with a thicker stroke. */
+  cursorShell?: boolean
 }) {
   const clamped = Math.max(0, Math.min(100, percent))
   const radius = 5.5
-  const strokeWidth = codexShell ? 2.7 : claudeShell ? 1 : 1.7
+  const strokeWidth = codexShell ? 2.7 : claudeShell ? 1 : cursorShell ? 2.5 : 1.7
   const circumference = 2 * Math.PI * radius
   const dash = (clamped / 100) * circumference
   const remainingDash = circumference - dash

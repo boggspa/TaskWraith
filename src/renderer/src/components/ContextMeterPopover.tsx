@@ -154,6 +154,8 @@ export function ContextMeterPopover({
     ? meter.participants.map((row) => toRowView(row, true))
     : null
   const rows: RowView[] = participantRows ?? (meter ? [toRowView(meter.solo, false)] : [])
+  const roundedPercent = Math.round(percent)
+  const isCursorShell = composerStyle === 'cursor'
 
   const popoverContent = open && position && rows.length > 0 && (
     <div
@@ -185,20 +187,27 @@ export function ContextMeterPopover({
       <button
         ref={triggerRef}
         type="button"
-        className="composer-context-trigger"
+        className={`composer-context-trigger${isCursorShell ? ' composer-context-trigger--cursor' : ''}`}
         data-composer-control="context"
         onClick={() => setOpen((prev) => !prev)}
         disabled={disabled || rows.length === 0}
         aria-haspopup="dialog"
         aria-expanded={open}
         title={label}
+        aria-label={`Context ${roundedPercent}% used (${label})`}
       >
         <ContextWheel
           percent={percent}
           label={label}
           codexShell={composerStyle === 'codex'}
           claudeShell={composerStyle === 'claude'}
+          cursorShell={isCursorShell}
         />
+        {isCursorShell && (
+          <span className="composer-context-trigger-pct" aria-hidden="true">
+            {roundedPercent}%
+          </span>
+        )}
       </button>
       {popoverContent ? createPortal(popoverContent, document.body) : null}
     </>

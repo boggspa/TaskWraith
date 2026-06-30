@@ -9607,6 +9607,37 @@
   color: rgba(185, 28, 28, 0.72) !important;
 }
 
+/* Codex send button — light-mode only (real Codex app parity).
+ * Dark-mode Codex keeps the white bubble + dark arrow in
+ * 07-composer-shells.css. Scoped to light/mist/sage + codex shell
+ * so Claude/Cursor/etc. and the global `.composer-action-btn.run-btn`
+ * success tint in shard 03 are untouched. `:not(.queue)` preserves the
+ * queue affordance while a run is active. */
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"]
+  .composer-action-btn.run-btn:disabled:not(.queue) {
+  background: rgba(29, 29, 31, 0.58) !important;
+  color: #ffffff !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+  opacity: 1 !important;
+}
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"]
+  .composer-action-btn.run-btn:not(:disabled):not(.queue) {
+  background: #1d1d1f !important;
+  color: #ffffff !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+}
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"]
+  .composer-action-btn.run-btn:not(:disabled):not(.queue):hover {
+  background: #000000 !important;
+}
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"]
+  .composer-action-btn.run-btn:not(.queue)
+  :is(.sf-symbol-icon, .sf-symbol-icon svg) {
+  color: inherit !important;
+}
+
 [data-composer-style="claude"] .composer-combined-picker-trigger {
   background: transparent;
   border: 0;

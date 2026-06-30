@@ -1914,6 +1914,15 @@
 [data-composer-style="claude"] .composer-context-trigger {
   transform: translateY(-4px);
 }
+[data-composer-style="cursor"] .context-wheel {
+  width: 21.6px;
+  height: 21.6px;
+  color: var(--cursor-shell-muted, color-mix(in srgb, #ffffff 65%, transparent));
+}
+[data-composer-style="cursor"] .context-wheel svg {
+  width: 17.1px;
+  height: 17.1px;
+}
 
 /* Light-theme override for the context donut. Base + Codex
  * variants hardcode `color-mix(#ffffff 65|70%, transparent)`
