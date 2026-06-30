@@ -93,6 +93,16 @@ export function resolveVisibleDiffSelection(
   return summaries.find((summary) => summary.path === selectedPath) || summaries[0] || null
 }
 
+export function resolveNextDiffSelectedPath(
+  diff: DiffViewerProps['diff'],
+  summaries: DiffFileSummary[],
+  selectedPath: string | null
+): string | null {
+  if (!diff) return selectedPath
+  if (diff.type !== 'changes') return null
+  return resolveVisibleDiffSelection(summaries, selectedPath)?.path ?? null
+}
+
 export function DiffViewer({
   diff,
   workspacePath,
@@ -171,15 +181,15 @@ export function DiffViewer({
   }, [selectionRequest])
 
   useEffect(() => {
-    const visiblePath = selectedSummary?.path ?? null
-    if (selectedPath !== visiblePath) {
-      setSelectedPath(visiblePath)
+    const nextSelectedPath = resolveNextDiffSelectedPath(diff, filteredSummaries, selectedPath)
+    if (selectedPath !== nextSelectedPath) {
+      setSelectedPath(nextSelectedPath)
     }
-  }, [selectedPath, selectedSummary?.path])
+  }, [diff, filteredSummaries, selectedPath])
 
   useEffect(() => {
-    onSelectedPathChange?.(selectedSummary?.path ?? null)
-  }, [onSelectedPathChange, selectedSummary?.path])
+    onSelectedPathChange?.(diff ? (selectedSummary?.path ?? null) : selectedPath)
+  }, [diff, onSelectedPathChange, selectedPath, selectedSummary?.path])
 
   if (!diff)
     return (

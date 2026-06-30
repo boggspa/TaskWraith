@@ -21,6 +21,7 @@ import {
   DiffViewer,
   diffStageGroupForSummary,
   diffStageGroupLabel,
+  resolveNextDiffSelectedPath,
   resolveVisibleDiffSelection
 } from './DiffViewer'
 
@@ -274,6 +275,28 @@ describe('DiffViewer visible selection resolution', () => {
     expect(resolveVisibleDiffSelection([first, second], 'src/missing.ts')).toBe(first)
     expect(resolveVisibleDiffSelection([first, second], null)).toBe(first)
     expect(resolveVisibleDiffSelection([], 'src/second.ts')).toBeNull()
+  })
+
+  it('preserves requested paths while deep-linked diff data is still loading', () => {
+    const first = makeChangedFileSummary('src/first.ts', 'first')
+    const target = makeChangedFileSummary('src/target.ts', 'target')
+
+    expect(resolveNextDiffSelectedPath(null, [], 'src/target.ts')).toBe('src/target.ts')
+    expect(
+      resolveNextDiffSelectedPath(
+        { type: 'changes', summaries: [first, target] },
+        [first, target],
+        'src/target.ts'
+      )
+    ).toBe('src/target.ts')
+    expect(
+      resolveNextDiffSelectedPath(
+        { type: 'changes', summaries: [first] },
+        [first],
+        'src/target.ts'
+      )
+    ).toBe('src/first.ts')
+    expect(resolveNextDiffSelectedPath({ type: 'no_changes' }, [], 'src/target.ts')).toBeNull()
   })
 
   it('classifies files into stage groups for toolbar filtering', () => {
