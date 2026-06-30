@@ -32,6 +32,7 @@ export interface FailoverRunSnapshot {
   activeGoal?: ActiveGoal | null
   appChatId?: string
   approvalMode?: string
+  workflowMode?: AgentRunPayload['workflowMode']
   effectivePermissions?: EffectiveRunPermissions
   model?: string
   reasoningEffort?: string | null

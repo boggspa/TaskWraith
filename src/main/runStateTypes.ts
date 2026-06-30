@@ -1,6 +1,7 @@
 import type Electron from 'electron'
 import type {
   ChatScope,
+  ChatWorkflowMode,
   EffectiveRunPermissions,
   EnsembleRunIdentity,
   ExternalPathGrant,
@@ -16,6 +17,7 @@ export interface CodexRunState {
   turnId?: string
   model: string
   approvalMode?: string
+  workflowMode?: ChatWorkflowMode
   sessionTrust?: boolean
   externalPathGrants?: ExternalPathGrant[]
   runtimeProfileId?: string
@@ -43,6 +45,7 @@ export interface GeminiToolContext {
   appChatId?: string
   providerSessionId?: string | null
   approvalMode?: string
+  workflowMode?: ChatWorkflowMode
   sessionTrust?: boolean
   externalPathGrants?: ExternalPathGrant[]
   runtimeProfileId?: string
@@ -91,6 +94,7 @@ export interface CliProviderStreamState {
   thinkingStarted?: boolean
   providerSessionId?: string | null
   approvalMode?: string
+  workflowMode?: ChatWorkflowMode
   sessionTrust?: boolean
   externalPathGrants?: ExternalPathGrant[]
   runtimeProfileId?: string

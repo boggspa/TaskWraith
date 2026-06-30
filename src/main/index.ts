@@ -977,6 +977,7 @@ import { makeBlackboardEntry, upsertBlackboardEntry } from './blackboard/Blackbo
 import { WorkspaceWriteIntentRegistry, type WriteIntentToken } from './WorkspaceWriteIntentRegistry'
 import { CreativeApprovalGate } from './CreativeApprovalGate'
 import { assignAgentIdentityFromSeed } from './AgentIdentitySeed'
+import { evaluatePlanArtifactWrite } from './PlanArtifactWritePolicy'
 
 let mainWindow: BrowserWindow | null = null
 const workspacePopoutWindows = new Map<string, BrowserWindow>()
@@ -1703,6 +1704,7 @@ function captureFailoverSnapshot(payload: AgentRunPayload): FailoverRunSnapshot 
     activeGoal: payload.activeGoal,
     appChatId: payload.appChatId,
     approvalMode: payload.approvalMode,
+    workflowMode: payload.workflowMode,
     effectivePermissions: payload.effectivePermissions,
     model: payload.model,
     reasoningEffort: payload.reasoningEffort,
@@ -4146,6 +4148,7 @@ function normalizeAgentRunPayload(rawPayload: unknown): AgentRunPayload {
       typeof payload.claudeFastMode === 'boolean' ? payload.claudeFastMode : undefined,
     kimiThinking: typeof payload.kimiThinking === 'boolean' ? payload.kimiThinking : undefined,
     approvalMode: clampedPosture.approvalMode,
+    workflowMode: payload.workflowMode === 'plan' ? 'plan' : 'normal',
     imagePaths: stringArray(payload.imagePaths),
     providerSessionId: optionalStringOrNull(payload.providerSessionId),
     externalPathGrants: scopedExternalPathGrants,
@@ -7099,6 +7102,42 @@ function bossmanAutoApprovalMetadata(input: {
   })
 }
 
+function planArtifactWriteApprovalMetadata(input: {
+  workflowMode: unknown
+  effectivePermissions: EffectiveRunPermissions | undefined
+  globalFileChangesPolicy?: string
+  service: AgenticServiceId
+  workspacePath: string | undefined
+  request: {
+    preview?: any
+  }
+}): Record<string, unknown> | null {
+  const preview = isRecord(input.request.preview) ? input.request.preview : null
+  const toolName = typeof preview?.toolName === 'string' ? preview.toolName : null
+  const rawPath =
+    typeof preview?.planArtifactRawPath === 'string' ? preview.planArtifactRawPath : null
+  const decision = evaluatePlanArtifactWrite({
+    workflowMode:
+      input.workflowMode === 'plan' || input.workflowMode === 'normal'
+        ? input.workflowMode
+        : undefined,
+    effectivePermissions: input.effectivePermissions,
+    globalFileChangesPolicy: input.globalFileChangesPolicy,
+    service: input.service,
+    toolName,
+    workspacePath: input.workspacePath,
+    rawPath
+  })
+  if (!decision.allowed) return null
+  return {
+    toolName,
+    relativePath: decision.relativePath,
+    targetPath: decision.targetPath,
+    workflowMode: 'plan',
+    rationale: 'Plan workflow permits markdown plan-artifact writes under read-only posture.'
+  }
+}
+
 async function requestAgenticServiceApproval(
   sender: Electron.WebContents | null,
   provider: ProviderId,
@@ -7119,6 +7158,7 @@ async function requestAgenticServiceApproval(
   const effectivePermissions = session?.state?.effectivePermissions as
     | EffectiveRunPermissions
     | undefined
+  const workflowMode = (session?.state as { workflowMode?: unknown } | undefined)?.workflowMode
   const ensembleRun = session?.state?.ensembleRun as EnsembleRunIdentity | undefined
   const ensembleApproval = ensembleApprovalContext(ensembleRun, service, workspacePath)
   // 1.0.4-AR3 — carry `appChatId` into every auto-decision so the
@@ -7140,6 +7180,29 @@ async function requestAgenticServiceApproval(
     effectiveSettings
   )
   const { policy, workspaceGrantAllowed, sessionGrantAllowed, decision } = resolution
+  const planArtifactWriteMetadata = planArtifactWriteApprovalMetadata({
+    workflowMode,
+    effectivePermissions,
+    globalFileChangesPolicy: settings.agenticServices?.fileChanges,
+    service,
+    workspacePath,
+    request
+  })
+
+  if (decision === 'deny' && planArtifactWriteMetadata) {
+    auditService.recordAutomaticApprovalDecision(
+      provider,
+      auditRoute,
+      service,
+      workspacePath,
+      request,
+      'autoAllow',
+      'plan_artifact',
+      'request',
+      { policy, ...planArtifactWriteMetadata }
+    )
+    return true
+  }
 
   if (decision === 'deny') {
     auditService.recordAutomaticApprovalDecision(
@@ -7900,6 +7963,8 @@ function previewForGeminiMcpTool(
       service: 'fileChanges' as AgenticServiceId,
       preview: {
         kind: 'fileChange',
+        toolName,
+        planArtifactRawPath: filePath,
         changes: [{ kind: toolName === 'write_file' ? 'write' : 'replace', path: previewPath }],
         ...intentPreview,
         patchPreview
@@ -9954,6 +10019,7 @@ function runCliProviderProcess(
     assistantText: '',
     providerSessionId: payload.providerSessionId || null,
     approvalMode: payload.approvalMode,
+    workflowMode: payload.workflowMode,
     sessionTrust: Boolean(payload.sessionTrust),
     externalPathGrants: payload.externalPathGrants,
     runtimeProfileId: payload.runtimeProfileId,
@@ -10578,6 +10644,7 @@ async function tryRunClaudeSdk(
     assistantText: '',
     providerSessionId: payload.providerSessionId || null,
     approvalMode: payload.approvalMode,
+    workflowMode: payload.workflowMode,
     sessionTrust: Boolean(payload.sessionTrust),
     externalPathGrants: payload.externalPathGrants,
     runtimeProfileId: payload.runtimeProfileId,
@@ -11189,6 +11256,7 @@ async function runGrokAcpProvider(event: Electron.IpcMainInvokeEvent, payload: A
     assistantText: '',
     providerSessionId: payload.providerSessionId || null,
     approvalMode: payload.approvalMode,
+    workflowMode: payload.workflowMode,
     sessionTrust: Boolean(payload.sessionTrust),
     externalPathGrants: payload.externalPathGrants,
     runtimeProfileId: payload.runtimeProfileId,
@@ -11572,6 +11640,7 @@ async function runKimiWireProvider(
     assistantText: '',
     providerSessionId: payload.providerSessionId || null,
     approvalMode: payload.approvalMode,
+    workflowMode: payload.workflowMode,
     sessionTrust: Boolean(payload.sessionTrust),
     externalPathGrants: payload.externalPathGrants,
     runtimeProfileId: payload.runtimeProfileId,
@@ -12587,6 +12656,7 @@ function getAgentToolContext(
     appChatId: session.appChatId,
     providerSessionId: session.providerSessionId,
     approvalMode: state.approvalMode,
+    workflowMode: state.workflowMode,
     sessionTrust: state.sessionTrust,
     externalPathGrants: state.externalPathGrants,
     effectivePermissions: state.effectivePermissions,
@@ -13062,6 +13132,7 @@ function createCodexRunState(
     workspacePath,
     model,
     approvalMode: payload?.approvalMode,
+    workflowMode: payload?.workflowMode,
     sessionTrust: Boolean(payload?.sessionTrust),
     externalPathGrants: payload?.externalPathGrants,
     runtimeProfileId: payload?.runtimeProfileId,
@@ -18579,6 +18650,7 @@ function installGeminiToolContextForRun(
     effectivePermissions: options.runPayload?.effectivePermissions,
     ensembleRun: options.runPayload?.ensembleRun,
     providerSessionId: options.providerSessionId ?? options.runPayload?.providerSessionId,
+    workflowMode: options.runPayload?.workflowMode,
     ...routed
   }
   registerRunSession(

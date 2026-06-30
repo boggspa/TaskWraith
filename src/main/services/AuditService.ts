@@ -33,6 +33,7 @@ export type AutomaticApprovalDecisionSource =
   | 'session_grant'
   | 'session_yolo'
   | 'bossman_auto'
+  | 'plan_artifact'
 export type AutomaticApprovalGrantedScope = 'request' | 'session' | 'workspace'
 
 export interface AuditServiceDeps {

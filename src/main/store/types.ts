@@ -2751,6 +2751,7 @@ export type ApprovalLedgerDecisionSource =
   | 'session_grant'
   | 'session_yolo'
   | 'bossman_auto'
+  | 'plan_artifact'
   | 'system'
 export type ApprovalLedgerExpirationMode =
   | 'pending_timeout'
