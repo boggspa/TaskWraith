@@ -104,13 +104,17 @@ struct Composer: View {
     }
 
     private var accent: Color {
-        card.isEnsemble ? TWTheme.chroma2 : TWTheme.providerAccent(selectedProvider)
+        card.isEnsemble
+            ? TWTheme.chroma2
+            : TWTheme.providerAccent(selectedProvider, modelId: cardSelectedModelId)
     }
 
     /// The resolved composer shell for the active style (default unless the Mac
     /// projects, or the user overrides, another). Drives per-style body theming.
     private var shell: ResolvedComposerShell { twResolvedComposerShell(model: model) }
-    private var providerName: String { TWTheme.providerLabel(selectedProvider) }
+    private var providerName: String {
+        TWTheme.providerLabel(selectedProvider, modelId: cardSelectedModelId)
+    }
     private var canChangeProvider: Bool {
         allowsProviderChange ?? (newTaskWorkspaceId != nil)
     }

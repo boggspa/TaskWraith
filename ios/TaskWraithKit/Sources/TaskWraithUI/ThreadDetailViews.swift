@@ -2150,13 +2150,27 @@ struct ThreadEmptyWelcomeCanvas: View {
 /// provider-tinted transcript names.
 @MainActor func providerAccentFromSpeaker(_ speaker: String?, fallback: Color) -> Color {
     guard let speaker, !speaker.isEmpty else { return fallback }
-    let head = speaker.split(whereSeparator: { $0 == "·" || $0 == "/" }).first.map {
+    let segments = speaker.split(whereSeparator: { $0 == "·" || $0 == "/" }).map {
         String($0).trimmingCharacters(in: .whitespaces)
     }
-    guard let head, !head.isEmpty else { return fallback }
+    guard let head = segments.first, !head.isEmpty else { return fallback }
+    let headLower = head.lowercased()
+    let rest = segments.dropFirst().joined(separator: " ")
+
+    // Ollama speakers either carry the spoofed brand name in the head
+    // (post brand-aware projection — "Alibaba · …") or the raw model in a
+    // later segment ("Ollama · qwen3:4b"). Resolve either to the brand hue.
+    if headLower == "ollama" {
+        return TWTheme.providerAccent("ollama", modelId: rest, modelLabel: rest)
+    }
+    if let brand = OllamaDisplayBrands.all.first(where: {
+        $0.providerLabel.lowercased() == headLower || $0.providerClass == headLower
+    }) {
+        return TWTheme.providerAccent(brand.providerClass)
+    }
     let known = ["gemini", "codex", "claude", "kimi", "grok", "cursor", "ollama", "qwen", "ornith"]
-    guard known.contains(head.lowercased()) else { return fallback }
-    return TWTheme.providerAccent(head.lowercased())
+    guard known.contains(headLower) else { return fallback }
+    return TWTheme.providerAccent(headLower)
 }
 
 struct ThreadAgentIdentity: Equatable {
@@ -3293,7 +3307,9 @@ struct StreamingRowView: View {
     var model: String? = nil
     var agentIdentity: ThreadAgentIdentity? = nil
 
-    private var accent: Color { agentIdentity?.accent ?? TWTheme.providerAccent(provider) }
+    private var accent: Color {
+        agentIdentity?.accent ?? TWTheme.providerAccent(provider, modelId: model, modelLabel: model)
+    }
 
     var body: some View {
         // Route the settled prefix through the markdown pipeline (parity with
@@ -3334,7 +3350,7 @@ struct StreamingRowView: View {
         if let agentIdentity {
             return agentIdentity.name
         }
-        return model.map { "\(TWTheme.providerLabel(provider)) · \($0)" }
+        return model.map { "\(TWTheme.providerLabel(provider, modelId: $0, modelLabel: $0)) · \($0)" }
             ?? TWTheme.providerLabel(provider)
     }
 }
@@ -3348,7 +3364,9 @@ struct StreamingLiveHeader: View {
     var model: String? = nil
     var agentIdentity: ThreadAgentIdentity? = nil
 
-    private var accent: Color { agentIdentity?.accent ?? TWTheme.providerAccent(provider) }
+    private var accent: Color {
+        agentIdentity?.accent ?? TWTheme.providerAccent(provider, modelId: model, modelLabel: model)
+    }
 
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
@@ -3379,12 +3397,12 @@ struct StreamingLiveHeader: View {
 
     private var headerLabel: String {
         agentIdentity?.name
-            ?? model.map { "\(TWTheme.providerLabel(provider)) · \($0)" }
+            ?? model.map { "\(TWTheme.providerLabel(provider, modelId: $0, modelLabel: $0)) · \($0)" }
             ?? TWTheme.providerLabel(provider)
     }
 
     private var providerModelLabel: String {
-        model.map { "\(TWTheme.providerLabel(provider)) · \($0)" }
+        model.map { "\(TWTheme.providerLabel(provider, modelId: $0, modelLabel: $0)) · \($0)" }
             ?? TWTheme.providerLabel(provider)
     }
 }
@@ -3446,7 +3464,9 @@ struct ThinkingRow: View {
     var model: String? = nil
     var agentIdentity: ThreadAgentIdentity? = nil
 
-    private var accent: Color { agentIdentity?.accent ?? TWTheme.providerAccent(provider) }
+    private var accent: Color {
+        agentIdentity?.accent ?? TWTheme.providerAccent(provider, modelId: model, modelLabel: model)
+    }
 
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
@@ -3456,9 +3476,12 @@ struct ThinkingRow: View {
                 hidden: false)
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
-                    Text(agentIdentity?.name ?? TWTheme.providerLabel(provider))
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(accent)
+                    Text(
+                        agentIdentity?.name
+                            ?? TWTheme.providerLabel(provider, modelId: model, modelLabel: model)
+                    )
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(accent)
                     if let model, !model.isEmpty {
                         Text(model)
                             .font(.caption2.weight(.semibold))

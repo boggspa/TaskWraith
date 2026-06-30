@@ -699,15 +699,19 @@ struct ProviderModelPicker: View {
 
     private var pickerLabel: some View {
         // Flat text labels (desktop composer parity) — the whole run of
-        // text is the tap target; no pill chrome.
-        HStack(spacing: 6) {
+        // text is the tap target; no pill chrome. Ollama-backed display
+        // brands spoof their upstream brand name + hue (e.g. Qwen → Alibaba)
+        // so the pill matches the transcript header and the Mac.
+        let modelLabel = modelId.map(shortModelLabel)
+        return HStack(spacing: 6) {
             Circle()
-                .fill(TWTheme.providerAccent(provider))
+                .fill(TWTheme.providerAccent(provider, modelId: modelId, modelLabel: modelLabel))
                 .frame(width: 7, height: 7)
-            Text(TWTheme.providerLabel(provider))
+            Text(TWTheme.providerLabel(provider, modelId: modelId, modelLabel: modelLabel))
                 .font(.caption.weight(.semibold))
-                .foregroundStyle(TWTheme.providerAccent(provider))
-            Text(modelId.map(shortModelLabel) ?? "Default")
+                .foregroundStyle(
+                    TWTheme.providerAccent(provider, modelId: modelId, modelLabel: modelLabel))
+            Text(modelLabel ?? "Default")
                 .font(.caption)
                 .foregroundStyle(TWTheme.textPrimary)
                 .lineLimit(1)
