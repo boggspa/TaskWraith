@@ -238,7 +238,7 @@ describe('formatComposerModelChip', () => {
         modelId: 'claude-opus-4-8-1m',
         modelLabel: 'Claude Opus 4.8 1M',
         claudeReasoningEffort: 'xhigh',
-        claudeFastModeEnabled: true
+        shellFastModeActive: true
       })
     ).toBe('Opus 4.8 1M · Fast Extra')
   })
@@ -251,12 +251,50 @@ describe('formatComposerModelChip', () => {
         modelId: 'claude-opus-4-8',
         modelLabel: 'Claude Opus 4.8',
         claudeReasoningEffort: 'off',
-        claudeFastModeEnabled: true
+        shellFastModeActive: true
       })
     ).toBe('Opus 4.8 · Fast')
   })
 
-  it('TaskWraith shell ignores Claude fast mode in chip text', () => {
+  it('Claude shell + codex provider + fast + xhigh → "GPT 5.5 · Fast Extra High"', () => {
+    expect(
+      formatComposerModelChip({
+        provider: 'codex',
+        composerStyle: 'claude',
+        modelId: 'gpt-5.5',
+        modelLabel: 'GPT-5.5',
+        codexReasoningEffort: 'xhigh',
+        shellFastModeActive: true
+      })
+    ).toBe('GPT 5.5 · Fast Extra High')
+  })
+
+  it('Claude shell + codex gpt-5.4 + fast → "GPT 5.4 · Fast"', () => {
+    expect(
+      formatComposerModelChip({
+        provider: 'codex',
+        composerStyle: 'claude',
+        modelId: 'gpt-5.4',
+        modelLabel: 'GPT-5.4',
+        codexReasoningEffort: 'off',
+        shellFastModeActive: true
+      })
+    ).toBe('GPT 5.4 · Fast')
+  })
+
+  it('Claude shell + cursor fast model → "Composer 2.5 · Fast"', () => {
+    expect(
+      formatComposerModelChip({
+        provider: 'cursor',
+        composerStyle: 'claude',
+        modelId: 'composer-2.5-fast',
+        modelLabel: 'Composer 2.5 Fast',
+        shellFastModeActive: true
+      })
+    ).toBe('Composer 2.5 · Fast')
+  })
+
+  it('TaskWraith shell ignores shell fast mode in chip text', () => {
     expect(
       formatComposerModelChip({
         provider: 'claude',
@@ -264,9 +302,22 @@ describe('formatComposerModelChip', () => {
         modelId: 'claude-opus-4-8-1m',
         modelLabel: 'Claude Opus 4.8 1M',
         claudeReasoningEffort: 'xhigh',
-        claudeFastModeEnabled: true
+        shellFastModeActive: true
       })
     ).toBe('Claude Opus 4.8 1M · Extra')
+  })
+
+  it('Codex shell ignores shell fast label (uses lightning bolt instead)', () => {
+    expect(
+      formatComposerModelChip({
+        provider: 'codex',
+        composerStyle: 'codex',
+        modelId: 'gpt-5.5',
+        modelLabel: 'GPT-5.5',
+        codexReasoningEffort: 'xhigh',
+        shellFastModeActive: true
+      })
+    ).toBe('5.5 Extra High')
   })
 
   it('Claude shell + claude provider + ultracode → "Opus 4.8 1M · Ultracode"', () => {
@@ -333,7 +384,7 @@ describe('formatComposerModelChip', () => {
     expect(
       formatComposerModelChip({
         provider: 'kimi',
-        composerStyle: 'claude',
+        composerStyle: 'terminal',
         modelId: 'kimi-k2.7-code',
         modelLabel: 'Kimi K2.7 Code',
         kimiThinkingEnabled: true

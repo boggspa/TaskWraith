@@ -27,7 +27,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { ProviderId, ComposerStyle } from '../../../main/store/types'
-import { formatComposerModelChip, reasoningDisplayLabel, shortModelName } from '../lib/composerChipFormat'
+import {
+  formatComposerModelChip,
+  reasoningDisplayLabel,
+  resolveClaudeShellModelLabel
+} from '../lib/composerChipFormat'
 import { OLLAMA_DISPLAY_BRANDS, resolveOllamaDisplayBrand } from '../lib/ollamaDisplayBrand'
 
 export interface CombinedModelPickerModelOption {
@@ -360,8 +364,8 @@ export function CombinedModelPicker({
       ? activeOllamaProviderGroup.models
       : modelOptions
 
-  const isClaudeShellMatch = composerStyle === 'claude' && provider === 'claude'
-  const showClaudeFast = isClaudeShellMatch && fastModeEnabled && fastModeCapable
+  const useClaudeShellChipLayout = composerStyle === 'claude'
+  const showShellFastLabel = useClaudeShellChipLayout && fastModeEnabled && fastModeCapable
 
   const chipText = useMemo(
     () =>
@@ -373,7 +377,7 @@ export function CombinedModelPicker({
         codexReasoningEffort,
         claudeReasoningEffort,
         kimiThinkingEnabled,
-        claudeFastModeEnabled: showClaudeFast
+        shellFastModeActive: showShellFastLabel
       }),
     [
       provider,
@@ -383,7 +387,7 @@ export function CombinedModelPicker({
       codexReasoningEffort,
       claudeReasoningEffort,
       kimiThinkingEnabled,
-      showClaudeFast
+      showShellFastLabel
     ]
   )
 
@@ -426,18 +430,23 @@ export function CombinedModelPicker({
   }, [chipText, reasoningSuffix])
 
   const claudeChipSegments = useMemo(() => {
-    if (!isClaudeShellMatch) return null
+    if (!useClaudeShellChipLayout) return null
     return {
-      model: shortModelName(provider, selectedModelOption.label, selectedModelOption.id),
-      fast: showClaudeFast ? 'Fast' : '',
+      model: resolveClaudeShellModelLabel(
+        provider,
+        selectedModelOption.label,
+        selectedModelOption.id,
+        showShellFastLabel
+      ),
+      fast: showShellFastLabel ? 'Fast' : '',
       reasoning: reasoningSuffix
     }
   }, [
-    isClaudeShellMatch,
+    useClaudeShellChipLayout,
     provider,
     selectedModelOption.id,
     selectedModelOption.label,
-    showClaudeFast,
+    showShellFastLabel,
     reasoningSuffix
   ])
 

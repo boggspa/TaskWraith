@@ -27,8 +27,9 @@ export interface ComposerChipContext {
   claudeReasoningEffort?: string
   /** Kimi thinking toggle (boolean). */
   kimiThinkingEnabled?: boolean
-  /** Claude Fast mode toggle — only affects chip text in the Claude shell. */
-  claudeFastModeEnabled?: boolean
+  /** Claude composer shell only — render explicit "Fast" between model +
+   * reasoning for Claude/Codex tier toggles and Cursor composer-2.5-fast. */
+  shellFastModeActive?: boolean
 }
 
 /**
@@ -228,6 +229,40 @@ export function claudeReasoningDisplayLabel(effortValue?: string | null): string
   return effort.charAt(0).toUpperCase() + effort.slice(1)
 }
 
+/** Model label for the Claude composer shell chip — strips a trailing "Fast"
+ * from Cursor's composer-2.5-fast id so "Fast" can render as its own segment.
+ * Codex models use the marketing-style `GPT 5.5` / `GPT 5.4` prefix here (the
+ * native Codex shell keeps the bare `5.5` convention via `shortModelName`). */
+export function resolveClaudeShellModelLabel(
+  provider: ProviderId,
+  modelLabel: string,
+  modelId: string,
+  shellFastModeActive: boolean
+): string {
+  if (provider === 'cursor' && shellFastModeActive && modelId === 'composer-2.5-fast') {
+    return 'Composer 2.5'
+  }
+  const short = shortModelName(provider, modelLabel, modelId)
+  if (provider === 'codex') {
+    return `GPT ${short}`
+  }
+  return short
+}
+
+function formatClaudeShellChip(
+  provider: ProviderId,
+  modelLabel: string,
+  modelId: string,
+  reasoning: string,
+  shellFastModeActive: boolean
+): string {
+  const short = resolveClaudeShellModelLabel(provider, modelLabel, modelId, shellFastModeActive)
+  const fast = shellFastModeActive ? 'Fast' : ''
+  if (fast && reasoning) return `${short} · ${fast} ${reasoning}`
+  if (fast) return `${short} · ${fast}`
+  return reasoning ? `${short} · ${reasoning}` : short
+}
+
 /**
  * Compose the chip text. Per-shell native format when the shell is
  * themed for that provider (Codex shell + Codex provider → real-Codex
@@ -237,6 +272,8 @@ export function claudeReasoningDisplayLabel(effortValue?: string | null): string
  *   Codex shell + codex provider + xhigh   → `5.5 Extra High`
  *   Claude shell + claude provider + high  → `Opus 4.7 · High`
  *   Claude shell + claude + fast + extra  → `Opus 4.8 · Fast Extra`
+ *   Claude shell + codex + fast + xhigh   → `GPT 5.5 · Fast Extra High`
+ *   Claude shell + cursor fast model      → `Composer 2.5 · Fast`
  *   Kimi shell + kimi provider + on        → `K2.7 Code Thinking`
  *   TaskWraith shell + codex + high           → `GPT-5.5 · High`
  *   TaskWraith shell + kimi + on              → `Kimi K2.7 Code · Thinking`
@@ -244,6 +281,20 @@ export function claudeReasoningDisplayLabel(effortValue?: string | null): string
 export function formatComposerModelChip(ctx: ComposerChipContext): string {
   const { provider, composerStyle, modelLabel, modelId } = ctx
   const reasoning = reasoningDisplayLabel(ctx)
+
+  // Claude composer shell uses one chip layout for every provider — explicit
+  // "Fast" segment between model + reasoning when the active provider supports
+  // it (Claude/Codex tier toggle, Cursor composer-2.5-fast model).
+  if (composerStyle === 'claude') {
+    return formatClaudeShellChip(
+      provider,
+      modelLabel,
+      modelId,
+      reasoning,
+      Boolean(ctx.shellFastModeActive)
+    )
+  }
+
   const shellMatchesProvider =
     (composerStyle === 'codex' && provider === 'codex') ||
     (composerStyle === 'claude' && provider === 'claude') ||
@@ -259,9 +310,6 @@ export function formatComposerModelChip(ctx: ComposerChipContext): string {
       return reasoning ? `${short} ${reasoning}` : short
     }
     if (provider === 'claude') {
-      const fast = ctx.claudeFastModeEnabled ? 'Fast' : ''
-      if (fast && reasoning) return `${short} · ${fast} ${reasoning}`
-      if (fast) return `${short} · ${fast}`
       return reasoning ? `${short} · ${reasoning}` : short
     }
     if (provider === 'kimi') {
