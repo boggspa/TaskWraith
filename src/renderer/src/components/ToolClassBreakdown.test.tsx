@@ -13,7 +13,7 @@ describe('ReadOnlyToolClassBreakdown', () => {
     // Allowed classes show ✓, the write class shows ✗ (blocked).
     expect(html).toContain('✓')
     expect(html).toContain('✗')
-    // Read-only permits exactly the four file/search reads from the preset.
-    expect(html).toContain('Workspace reads (4)')
+    // Read-only permits the current workspace read/search attachment tools.
+    expect(html).toContain('Workspace reads (7)')
   })
 })
