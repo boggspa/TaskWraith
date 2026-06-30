@@ -323,6 +323,81 @@ describe('prepareOllamaEnsemblePromptForRuntime', () => {
 })
 
 describe('runOllamaProvider streaming', () => {
+  it('uses the ensemble-aware harness kickoff for live ensemble dispatches', async () => {
+    const chatBodies: string[] = []
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (String(url).endsWith('/api/tags')) {
+        return jsonResponse({
+          models: [
+            {
+              name: 'stream-model:latest',
+              digest: 'digest-stream',
+              details: { family: 'qwen' },
+              capabilities: ['tools']
+            }
+          ]
+        })
+      }
+      if (String(url).endsWith('/api/show')) {
+        return jsonResponse({ details: { family: 'qwen' }, capabilities: ['tools'] })
+      }
+      if (String(url).endsWith('/api/chat')) {
+        chatBodies.push(String(init?.body || ''))
+        return ollamaStreamResponse([
+          JSON.stringify({
+            message: {
+              role: 'assistant',
+              content: 'I will follow the ensemble role contract and continue with the assigned slice.'
+            }
+          }),
+          JSON.stringify({ done: true, prompt_eval_count: 4, eval_count: 2 })
+        ])
+      }
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const { deps } = makeProviderDeps({
+      fetchMock,
+      settings: {
+        ollamaRunProfiles: {
+          'stream-model:latest': { protocolMode: 'json_only' }
+        }
+      },
+      executeTool: async () => ({ ok: true, output: '' })
+    })
+
+    await runOllamaProvider(
+      deps,
+      stubEvent,
+      {
+        ...basePayload,
+        prompt: [
+          'TaskWraith Ensemble Mode',
+          'Role boundary contract:',
+          '- Treat Boss routing as authoritative.',
+          'Current user request:',
+          'Continue the plan arc.'
+        ].join('\n'),
+        ensembleRun: {
+          roundId: 'round-1',
+          participantId: 'participant-ollama',
+          provider: 'ollama',
+          role: 'SliceWorker',
+          order: 9,
+          ensembleContextChars: 24000,
+          ensembleContextTurns: 8
+        }
+      },
+      baseRoute
+    )
+
+    expect(chatBodies).toHaveLength(1)
+    const messagesText = chatBodies[0]
+    expect(messagesText).toContain('TaskWraith Ensemble Mode')
+    expect(messagesText).toContain('complete TaskWraith Ensemble instruction block')
+    expect(messagesText).toContain('Boss/Bossman/Lead authority rules')
+    expect(messagesText).not.toContain('Your task is the user request')
+  })
+
   it('emits content deltas before the Ollama HTTP stream finishes', async () => {
     const gate = makeDeferred()
     const fetchMock = vi.fn(async (url: string) => {
