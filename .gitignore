@@ -9,6 +9,7 @@ out
 
 # Local-only planning/release material kept out of the public source tree
 .local-only/
+papercuts/
 /PLAN-IMPORT-CODEX-BRIEF.md
 docs/
 RELEASING.md
