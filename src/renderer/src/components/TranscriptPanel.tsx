@@ -2528,19 +2528,11 @@ export const TranscriptPanel = memo(
                           ? `Open Workbench diff for ${item.path}`
                           : `Preview diff for ${item.path}`
                         return (
-                          <button
+                          <div
                             key={`${item.path}-${item.status}`}
-                            className={`file-change-summary-item ${
+                            className={`file-change-summary-item file-change-summary-item-interactive ${
                               hasDiffPreview ? 'has-diff-preview' : 'has-workbench-link'
                             }`}
-                            type="button"
-                            aria-describedby={
-                              hasDiffPreview && fileChangeDiffPreview?.summary.path === item.path
-                                ? DIFF_HOVER_PREVIEW_TOOLTIP_ID
-                                : undefined
-                            }
-                            aria-label={fileChangeActionLabel}
-                            title={fileChangeActionLabel}
                             onMouseEnter={
                               hasDiffPreview
                                 ? (event) => openFileChangeDiffPreview(event, item)
@@ -2549,18 +2541,59 @@ export const TranscriptPanel = memo(
                             onMouseLeave={
                               hasDiffPreview ? scheduleCloseFileChangeDiffPreview : undefined
                             }
-                            onFocus={
-                              hasDiffPreview
-                                ? (event) => openFileChangeDiffPreview(event, item)
-                                : undefined
-                            }
-                            onBlur={
-                              hasDiffPreview ? scheduleCloseFileChangeDiffPreview : undefined
-                            }
-                            onClick={(event) => activateFileChangeSummary(event, item)}
                           >
-                            {rowContent}
-                          </button>
+                            <button
+                              className="file-change-summary-main-action"
+                              type="button"
+                              aria-describedby={
+                                hasDiffPreview && fileChangeDiffPreview?.summary.path === item.path
+                                  ? DIFF_HOVER_PREVIEW_TOOLTIP_ID
+                                  : undefined
+                              }
+                              aria-label={fileChangeActionLabel}
+                              title={fileChangeActionLabel}
+                              onFocus={
+                                hasDiffPreview
+                                  ? (event) => openFileChangeDiffPreview(event, item)
+                                  : undefined
+                              }
+                              onBlur={
+                                hasDiffPreview ? scheduleCloseFileChangeDiffPreview : undefined
+                              }
+                              onClick={(event) => activateFileChangeSummary(event, item)}
+                            >
+                              {rowContent}
+                            </button>
+                            {hasDiffPreview && (
+                              <button
+                                type="button"
+                                className="file-change-summary-diff-bubble"
+                                aria-describedby={
+                                  fileChangeDiffPreview?.summary.path === item.path
+                                    ? DIFF_HOVER_PREVIEW_TOOLTIP_ID
+                                    : undefined
+                                }
+                                aria-label={`Preview diff for ${item.path}`}
+                                title="Preview diff"
+                                onMouseEnter={(event) => openFileChangeDiffPreview(event, item)}
+                                onMouseLeave={scheduleCloseFileChangeDiffPreview}
+                                onFocus={(event) => openFileChangeDiffPreview(event, item)}
+                                onBlur={scheduleCloseFileChangeDiffPreview}
+                                onClick={(event) => {
+                                  event.preventDefault()
+                                  event.stopPropagation()
+                                  openFileChangeDiffPreview(event, item)
+                                }}
+                                onKeyDown={(event) => {
+                                  if (event.key === 'Enter' || event.key === ' ') {
+                                    event.stopPropagation()
+                                  }
+                                }}
+                              >
+                                Diff
+                              </button>
+                            )}
+                          </div>
                         )
                       })}
                       {fileChangeSummaryWindow.canShowMore ? (

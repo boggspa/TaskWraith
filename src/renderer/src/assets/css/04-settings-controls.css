@@ -5539,6 +5539,11 @@ input:disabled, select:disabled, textarea:disabled {
   background: rgba(255, 255, 255, 0.015);
 }
 
+.file-change-summary-item-interactive {
+  padding: 0;
+  gap: 0;
+}
+
 .file-change-summary-item:first-child {
   border-top: none;
 }
@@ -5564,12 +5569,63 @@ input:disabled, select:disabled, textarea:disabled {
 }
 
 .file-change-summary-item.has-diff-preview:hover,
-.file-change-summary-item.has-diff-preview:focus-visible,
+.file-change-summary-item.has-diff-preview:focus-within,
 .file-change-summary-item.has-workbench-link:hover,
-.file-change-summary-item.has-workbench-link:focus-visible {
+.file-change-summary-item.has-workbench-link:focus-within {
   background: color-mix(in srgb, var(--text-primary) 6%, transparent);
   outline: 1px solid color-mix(in srgb, var(--text-primary) 14%, transparent);
   outline-offset: -1px;
+}
+
+.file-change-summary-main-action {
+  appearance: none;
+  -webkit-appearance: none;
+  min-width: 0;
+  min-height: 36px;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 var(--space-md);
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.file-change-summary-main-action:focus {
+  outline: 0;
+}
+
+.file-change-summary-diff-bubble {
+  appearance: none;
+  -webkit-appearance: none;
+  height: 20px;
+  margin-right: var(--space-md);
+  padding: 0 7px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid color-mix(in srgb, var(--success) 28%, var(--panel-border));
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--panel-elevated-bg) 78%, transparent);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.file-change-summary-diff-bubble:hover,
+.file-change-summary-diff-bubble:focus-visible {
+  border-color: color-mix(in srgb, var(--accent) 56%, var(--panel-border));
+  color: var(--text-primary);
+  outline: 0;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
 .file-change-summary-header strong {

@@ -413,11 +413,19 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
     )
 
     expect(html).toContain('<button')
-    expect(html).toContain('class="file-change-summary-item has-diff-preview"')
+    expect(html).toContain(
+      'class="file-change-summary-item file-change-summary-item-interactive has-diff-preview"'
+    )
+    expect(html).toContain('class="file-change-summary-main-action"')
     expect(html).toContain('aria-label="Open Workbench diff for src/example.ts"')
     expect(html).toContain('title="Open Workbench diff for src/example.ts"')
+    expect(html).toContain('class="file-change-summary-diff-bubble"')
+    expect(html).toContain('aria-label="Preview diff for src/example.ts"')
+    expect(html).toContain('Diff')
     expect(html).toContain('src/stats-only.ts')
-    expect(html).toContain('class="file-change-summary-item has-workbench-link"')
+    expect(html).toContain(
+      'class="file-change-summary-item file-change-summary-item-interactive has-workbench-link"'
+    )
     expect(html).toContain('aria-label="Open Workbench diff for src/stats-only.ts"')
   })
 
