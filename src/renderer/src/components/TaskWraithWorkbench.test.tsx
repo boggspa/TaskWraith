@@ -4,6 +4,7 @@ import {
   buildDiffWorkbenchNavMeta,
   buildEditorWorkbenchNavMeta,
   buildInitialWorkbenchOpenState,
+  buildWorkbenchBreadcrumbItems,
   buildWorkbenchBreadcrumbs,
   clampWorkbenchSplitRatio,
   isWorkbenchPaneHidden,
@@ -71,6 +72,49 @@ describe('TaskWraithWorkbench nav metadata', () => {
       })
     ).toEqual(['AGBench', 'Split View', 'src', 'main', 'index.ts'])
   })
+
+  it('marks actionable Workbench breadcrumb targets without inventing folder actions', () => {
+    const editorItems = buildWorkbenchBreadcrumbItems({
+      activeView: 'editor',
+      editorSelectedPath: 'src/renderer/App.tsx',
+      workspaceName: 'AGBench'
+    })
+
+    expect(editorItems.map((item) => item.label)).toEqual([
+      'AGBench',
+      'src',
+      'renderer',
+      'App.tsx'
+    ])
+    expect(editorItems[0].action).toEqual({ kind: 'select-view', view: 'editor' })
+    expect(editorItems[1].action).toBeUndefined()
+    expect(editorItems[2].action).toBeUndefined()
+    expect(editorItems[3]).toMatchObject({
+      action: { kind: 'reveal-editor-file', path: 'src/renderer/App.tsx' },
+      current: true,
+      title: 'Reveal src/renderer/App.tsx in file tree'
+    })
+
+    const diffItems = buildWorkbenchBreadcrumbItems({
+      activeView: 'diff',
+      diffSelectedPath: 'src/main/index.ts',
+      workspaceName: 'AGBench'
+    })
+
+    expect(diffItems.map((item) => item.label)).toEqual([
+      'AGBench',
+      'Diff Studio',
+      'src',
+      'main',
+      'index.ts'
+    ])
+    expect(diffItems[1].action).toEqual({ kind: 'select-view', view: 'diff' })
+    expect(diffItems[4]).toMatchObject({
+      action: { kind: 'open-diff-file', path: 'src/main/index.ts' },
+      current: true,
+      title: 'Open src/main/index.ts in editor'
+    })
+  })
 })
 
 describe('TaskWraithWorkbench shell', () => {
@@ -109,6 +153,8 @@ describe('TaskWraithWorkbench shell', () => {
     expect(html).toContain('role="tablist"')
     expect(html).toContain('aria-label="Workbench views"')
     expect(html).toContain('<nav class="workbench-breadcrumbs" aria-label="Workbench breadcrumbs"')
+    expect(html).toContain('class="workbench-breadcrumb-button"')
+    expect(html).toContain('aria-label="Show File Editor"')
     expect(html).toContain('aria-current="page"')
     expect(html).toContain('aria-selected="true"')
     expect(html).toContain('aria-controls="workbench-editor-panel"')
@@ -162,8 +208,8 @@ describe('TaskWraithWorkbench shell', () => {
 
     expect(html).toContain('Diff Studio')
     expect(html).toContain('src/main/index.ts')
-    expect(html).toContain('Open in Editor')
     expect(html).toContain('aria-label="Open src/main/index.ts in editor"')
+    expect(html).toContain('Open in Editor')
     expect(html).toContain('aria-keyshortcuts="Meta+Shift+E Control+Shift+E"')
     expect(html).toContain('id="workbench-diff-tab"')
     expect(html).toContain('aria-selected="true"')

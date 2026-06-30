@@ -147,7 +147,20 @@ export const buildDiffWorkbenchNavMeta = (
   return gitSnapshot.counts.changed > 0 ? `${gitSnapshot.counts.changed} changed` : 'Clean'
 }
 
-export const buildWorkbenchBreadcrumbs = ({
+export type WorkbenchBreadcrumbAction =
+  | { kind: 'select-view'; view: WorkbenchView }
+  | { kind: 'reveal-editor-file'; path: string }
+  | { kind: 'open-diff-file'; path: string }
+
+export interface WorkbenchBreadcrumbItem {
+  action?: WorkbenchBreadcrumbAction
+  current: boolean
+  key: string
+  label: string
+  title?: string
+}
+
+export const buildWorkbenchBreadcrumbItems = ({
   activeView,
   diffSelectedPath,
   editorSelectedPath,
@@ -157,23 +170,71 @@ export const buildWorkbenchBreadcrumbs = ({
   diffSelectedPath?: string
   editorSelectedPath?: string
   workspaceName: string
-}): string[] => {
-  const editorParts = editorSelectedPath?.split('/').filter(Boolean) ?? []
-  if ((activeView === 'editor' || activeView === 'split') && editorParts.length > 0) {
-    return [workspaceName, ...editorParts]
+}): WorkbenchBreadcrumbItem[] => {
+  const workspaceItem: WorkbenchBreadcrumbItem = {
+    action: { kind: 'select-view', view: activeView },
+    current: false,
+    key: 'workspace',
+    label: workspaceName,
+    title: `Show ${viewLabel(activeView)}`
   }
 
-  const diffParts = diffSelectedPath?.split('/').filter(Boolean) ?? []
-  if (diffParts.length > 0) {
+  const editorParts = editorSelectedPath?.split('/').filter(Boolean) ?? []
+  if ((activeView === 'editor' || activeView === 'split') && editorParts.length > 0) {
     return [
-      workspaceName,
-      activeView === 'split' ? 'Split View' : 'Diff Studio',
-      ...diffParts
+      workspaceItem,
+      ...editorParts.map((label, index) => {
+        const isCurrent = index === editorParts.length - 1
+        return {
+          action: isCurrent
+            ? ({ kind: 'reveal-editor-file', path: editorSelectedPath ?? '' } as const)
+            : undefined,
+          current: isCurrent,
+          key: `editor-path-${index}-${label}`,
+          label,
+          title: isCurrent
+            ? `Reveal ${editorSelectedPath} in file tree`
+            : editorParts.slice(0, index + 1).join('/')
+        }
+      })
     ]
   }
 
-  return [workspaceName, viewLabel(activeView)]
+  const diffParts = diffSelectedPath?.split('/').filter(Boolean) ?? []
+  const viewItem: WorkbenchBreadcrumbItem = {
+    action: { kind: 'select-view', view: activeView },
+    current: diffParts.length === 0,
+    key: 'view',
+    label: viewLabel(activeView),
+    title: `Show ${viewLabel(activeView)}`
+  }
+  if (diffParts.length > 0) {
+    return [
+      workspaceItem,
+      viewItem,
+      ...diffParts.map((label, index) => {
+        const isCurrent = index === diffParts.length - 1
+        return {
+          action: isCurrent
+            ? ({ kind: 'open-diff-file', path: diffSelectedPath ?? '' } as const)
+            : undefined,
+          current: isCurrent,
+          key: `diff-path-${index}-${label}`,
+          label,
+          title: isCurrent
+            ? `Open ${diffSelectedPath} in editor`
+            : diffParts.slice(0, index + 1).join('/')
+        }
+      })
+    ]
+  }
+
+  return [workspaceItem, viewItem]
 }
+
+export const buildWorkbenchBreadcrumbs = (
+  options: Parameters<typeof buildWorkbenchBreadcrumbItems>[0]
+): string[] => buildWorkbenchBreadcrumbItems(options).map((item) => item.label)
 
 export const resolveInitialWorkbenchView = (view?: WorkbenchView): WorkbenchView => {
   return view === 'diff' || view === 'split' ? view : 'editor'
@@ -415,9 +476,9 @@ export function TaskWraithWorkbench({
         } as CSSProperties)
       : undefined
 
-  const breadcrumbs = useMemo(
+  const breadcrumbItems = useMemo(
     () =>
-      buildWorkbenchBreadcrumbs({
+      buildWorkbenchBreadcrumbItems({
         activeView,
         diffSelectedPath,
         editorSelectedPath: editorState.selectedPath,
@@ -735,6 +796,23 @@ export function TaskWraithWorkbench({
     [activeView, splitRatio, updateSplitRatio]
   )
 
+  const runBreadcrumbAction = useCallback(
+    (item: WorkbenchBreadcrumbItem) => {
+      if (!item.action) return
+      if (item.action.kind === 'select-view') {
+        selectWorkbenchView(item.action.view, { focusNav: true })
+        setStatus(`Showing ${viewLabel(item.action.view)}`)
+        return
+      }
+      if (item.action.kind === 'reveal-editor-file') {
+        dispatchEditorCommand('reveal-selected')
+        return
+      }
+      openFileInEditor(item.action.path)
+    },
+    [dispatchEditorCommand, openFileInEditor, selectWorkbenchView]
+  )
+
   useEffect(() => {
     if (activeView !== 'split') {
       splitResizeCleanupRef.current?.()
@@ -903,21 +981,29 @@ export function TaskWraithWorkbench({
       <div className="workbench-main">
         <div className="workbench-toolbar">
           <nav className="workbench-breadcrumbs" aria-label="Workbench breadcrumbs">
-            {breadcrumbs.map((crumb, index) => (
-              <span key={`${crumb}-${index}`}>
+            {breadcrumbItems.map((item, index) => (
+              <span key={item.key}>
                 {index > 0 && <span aria-hidden="true">/</span>}
-                <span
-                  title={
-                    index === 0
-                      ? workspacePath
-                      : activeView === 'editor' || activeView === 'split'
-                        ? editorState.selectedPath
-                        : undefined
-                  }
-                  aria-current={index === breadcrumbs.length - 1 ? 'page' : undefined}
-                >
-                  {crumb}
-                </span>
+                {item.action ? (
+                  <button
+                    className={`workbench-breadcrumb-button${item.current ? ' current' : ''}`}
+                    type="button"
+                    onClick={() => runBreadcrumbAction(item)}
+                    title={index === 0 ? `${item.title} · ${workspacePath}` : item.title}
+                    aria-label={item.title}
+                    aria-current={item.current ? 'page' : undefined}
+                  >
+                    {item.label}
+                  </button>
+                ) : (
+                  <span
+                    className="workbench-breadcrumb-label"
+                    title={item.title}
+                    aria-current={item.current ? 'page' : undefined}
+                  >
+                    {item.label}
+                  </span>
+                )}
               </span>
             ))}
           </nav>

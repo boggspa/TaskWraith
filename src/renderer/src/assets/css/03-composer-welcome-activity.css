@@ -9623,12 +9623,44 @@
   gap: 8px;
 }
 
-.workbench-breadcrumbs > span > span:last-child,
+.workbench-breadcrumb-label,
+.workbench-breadcrumb-button,
 .workbench-status {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.workbench-breadcrumb-label {
+  display: inline-block;
+}
+
+.workbench-breadcrumb-button {
+  max-width: 100%;
+  padding: 2px 5px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-xs, 4px);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.workbench-breadcrumb-button.current {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.workbench-breadcrumb-button:hover {
+  border-color: color-mix(in srgb, var(--panel-border) 74%, transparent);
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+  color: var(--text-primary);
+}
+
+.workbench-breadcrumb-button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 72%, white 18%);
+  outline-offset: 1px;
 }
 
 .workbench-actions {
