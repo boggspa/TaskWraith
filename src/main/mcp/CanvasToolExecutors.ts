@@ -362,6 +362,12 @@ export function createCanvasToolExecutors(deps: CanvasToolExecutorDeps): CanvasT
               viewport: opened.viewport
             })
           }
+          if (!attempt.runId) {
+            return fail(
+              toolName,
+              'Launch output is only available for agent-started attempts; no live loopback URL was detected.'
+            )
+          }
 
           const opened = await controller.open(
             { driver: 'html', html: launchLogHtml(attempt), viewport },

@@ -144,6 +144,10 @@ const ORCHESTRATION_TOOLS = new Set<string>([
   'test_result_summary',
   'run_timeline',
   'raw_provider_events',
+  // Run-Button reads. These expose discovered target/status metadata only; the
+  // process-spawning/terminating tools (launch_start/launch_stop) stay write.
+  'launch_list_targets',
+  'launch_status',
   // sub-thread coordination (read + control; no workspace mutation)
   'list_subthreads',
   'read_subthread_result',

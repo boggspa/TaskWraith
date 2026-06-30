@@ -328,6 +328,43 @@ describe('executeCanvasTool', () => {
     expect(result.structuredContent?.source).toBe('outputTail')
   })
 
+  it('canvas_open_launch does not render logs from user-started attempts without a runId', async () => {
+    let opened = false
+    const controller = fakeController({
+      open: async () => {
+        opened = true
+        return { canvasId: 'c1', url: '', title: 'T', viewport: { width: 1, height: 1 } }
+      }
+    })
+    const { executeCanvasTool } = createCanvasToolExecutors({
+      controller,
+      launchAttempts: () => [fakeLaunchAttempt({ runId: undefined, detectedUrls: [], outputTail: 'SECRET=1\n' })]
+    })
+    const result = await executeCanvasTool('canvas_open_launch', { attemptId: 'att1' }, ctx, 'claude')
+    expect(result.isError).toBe(true)
+    expect(String(result.structuredContent?.error)).toMatch(/agent-started/)
+    expect(JSON.stringify(result.structuredContent)).not.toContain('SECRET')
+    expect(opened).toBe(false)
+  })
+
+  it('canvas_open_launch can still attach a user-started attempt when it has a live loopback URL', async () => {
+    let seen: unknown = null
+    const controller = fakeController({
+      open: async (input) => {
+        seen = input
+        return { canvasId: 'cw', url: input.url || '', title: 'Dev app', viewport: { width: 1280, height: 800 } }
+      }
+    })
+    const { executeCanvasTool } = createCanvasToolExecutors({
+      controller,
+      launchAttempts: () => [fakeLaunchAttempt({ runId: undefined, detectedUrls: ['http://localhost:5173/'] })]
+    })
+    const result = await executeCanvasTool('canvas_open_launch', { attemptId: 'att1' }, ctx, 'claude')
+    expect(result.isError).toBeFalsy()
+    expect(seen).toMatchObject({ driver: 'web', url: 'http://localhost:5173/' })
+    expect(result.structuredContent?.source).toBe('detectedUrl')
+  })
+
   it('canvas_open_launch refuses another chat\'s attemptId without opening', async () => {
     let opened = false
     const controller = fakeController({

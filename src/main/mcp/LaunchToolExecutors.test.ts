@@ -119,7 +119,7 @@ describe('executeLaunchTool', () => {
     const { executeLaunchTool } = createLaunchToolExecutors({ controller })
     const r = await executeLaunchTool('launch_start', { targetId: 'npm-dev' }, ctx, 'claude')
     expect(r.isError).toBe(true)
-    expect(String(r.structuredContent?.error)).toMatch(/already running/)
+    expect(String(r.structuredContent?.error)).toBe('Launch target is unavailable.')
     expect(JSON.stringify(r.structuredContent)).not.toContain('9999')
     expect(JSON.stringify(r.structuredContent)).not.toContain('foreign')
   })

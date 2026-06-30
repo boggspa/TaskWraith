@@ -30,6 +30,8 @@ describe('classifyTool', () => {
     expect(classifyTool('ask_user_question')).toBe('ui_elicitation')
     expect(classifyTool('ensemble_yield')).toBe('orchestration')
     expect(classifyTool('provider_usage_status')).toBe('orchestration')
+    expect(classifyTool('launch_list_targets')).toBe('orchestration')
+    expect(classifyTool('launch_status')).toBe('orchestration')
     // video_decode_frame = native daemon capture (like appwatch_latest_frame /
     // canvas_screenshot), non-mutating → orchestration, allowed under read-only.
     expect(classifyTool('video_decode_frame')).toBe('orchestration')
@@ -124,9 +126,7 @@ describe('workspace_write is exactly the read-only deny set', () => {
         'git_stage',
         'image_edit',
         'image_generate',
-        'launch_list_targets',
         'launch_start',
-        'launch_status',
         'launch_stop',
         'move_path',
         'rename_path',
@@ -165,6 +165,8 @@ describe('workspace_write is exactly the read-only deny set', () => {
       'workspace_board_preview_plan',
       'workspace_board_apply_plan',
       'list_active_runs',
+      'launch_list_targets',
+      'launch_status',
       'list_background_processes',
       'read_background_process',
       'test_result_summary',
@@ -202,6 +204,8 @@ describe('isReadOnlyBlockedTool', () => {
     expect(isReadOnlyBlockedTool('workspace_board_snapshot', ro)).toBe(false)
     expect(isReadOnlyBlockedTool('workspace_board_preview_plan', ro)).toBe(false)
     expect(isReadOnlyBlockedTool('list_active_runs', ro)).toBe(false)
+    expect(isReadOnlyBlockedTool('launch_list_targets', ro)).toBe(false)
+    expect(isReadOnlyBlockedTool('launch_status', ro)).toBe(false)
     expect(isReadOnlyBlockedTool('list_background_processes', ro)).toBe(false)
     expect(isReadOnlyBlockedTool('read_background_process', ro)).toBe(false)
     expect(isReadOnlyBlockedTool('ensemble_yield', ro)).toBe(false)

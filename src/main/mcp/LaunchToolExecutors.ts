@@ -195,7 +195,7 @@ export function createLaunchToolExecutors(deps: LaunchToolExecutorDeps): LaunchT
           // target+workspace before approval. Never leak another chat's attempt
           // id/URLs through launch_start; status/stop have the same ownership rule.
           if (!ownsAttempt(outcome.attempt, context)) {
-            return fail(toolName, 'Launch target is already running outside this chat.')
+            return fail(toolName, 'Launch target is unavailable.')
           }
           return jsonResult({ ok: true, tool: toolName, ...attemptView(outcome.attempt) })
         }
