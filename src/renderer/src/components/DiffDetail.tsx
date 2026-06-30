@@ -424,6 +424,7 @@ function DiffLines({
           )}
         </div>
       )}
+      <DiffLinesColumnHeader viewMode={viewMode} />
       <div
         className={`diff-lines-stack ${useVirtualization ? 'virtualized' : ''}`}
         ref={scrollRef}
@@ -446,6 +447,23 @@ function DiffLines({
           {visibleRows.map((row) => renderDiffRow(row, viewMode))}
         </div>
       </div>
+    </div>
+  )
+}
+
+function DiffLinesColumnHeader({ viewMode }: { viewMode: DiffViewMode }) {
+  return viewMode === 'split' ? (
+    <div className="diff-lines-column-header split" role="presentation">
+      <span>Old</span>
+      <span>Original</span>
+      <span>New</span>
+      <span>Modified</span>
+    </div>
+  ) : (
+    <div className="diff-lines-column-header inline" role="presentation">
+      <span>Old</span>
+      <span>New</span>
+      <span>Diff</span>
     </div>
   )
 }

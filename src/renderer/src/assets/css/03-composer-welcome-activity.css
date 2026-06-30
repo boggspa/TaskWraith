@@ -9860,6 +9860,44 @@ button.diff-file-row {
   flex-direction: column;
 }
 
+.diff-lines-column-header {
+  flex: 0 0 auto;
+  min-height: 22px;
+  box-sizing: border-box;
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--panel-elevated-bg) 76%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--panel-border) 78%, transparent);
+  font-family: var(--font-sans);
+  font-size: var(--font-size-xs);
+  font-weight: 650;
+  line-height: 22px;
+  text-transform: uppercase;
+}
+
+.diff-lines-column-header.inline {
+  display: grid;
+  grid-template-columns: 4ch 4ch minmax(0, 1fr);
+  min-width: max-content;
+}
+
+.diff-lines-column-header.split {
+  display: grid;
+  grid-template-columns: 4ch minmax(320px, 1fr) 4ch minmax(320px, 1fr);
+  min-width: 780px;
+}
+
+.diff-lines-column-header > span {
+  padding: 0 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border-right: 1px solid color-mix(in srgb, var(--text-primary) 5%, transparent);
+}
+
+.diff-lines-column-header > span:last-child {
+  border-right: 0;
+}
+
 .diff-lines-stack {
   flex: 1;
   min-height: 0;
