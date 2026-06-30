@@ -507,7 +507,6 @@ import {
   RunQueueJob,
   RunEventInput,
   AgentApprovalAction,
-  ApprovalLedgerFilter,
   ApprovalLedgerRequestInput,
   ProviderAdapterDescriptor,
   RunRecoveryRecord,
@@ -851,6 +850,7 @@ import { registerAgenticWorkspaceGrantHandlers } from './ipc/agenticWorkspaceGra
 import { registerUsageRatesHandlers } from './ipc/usageRatesHandlers'
 import { registerScheduledWorkflowHandlers } from './ipc/scheduledWorkflowHandlers'
 import { registerRunQueueHandlers } from './ipc/runQueueHandlers'
+import { registerApprovalLedgerHandlers } from './ipc/approvalLedgerHandlers'
 import { registerDiagnosticsHandlers } from './ipc/diagnosticsHandlers'
 import { getCachedRemoteEnsemblePresets } from './remote/EnsembleRosterPresetsCache'
 import { resolveGeminiCliResumePolicy } from './GeminiSessionPolicy'
@@ -25731,57 +25731,12 @@ if (isGeminiMcpBridgeProcess) {
       buildRunAnalystUnavailableSnapshot,
       randomUUID
     })
-    ipcMain.handle('get-approval-ledger', (_, filter?: ApprovalLedgerFilter) =>
-      AppStore.getApprovalLedger(filter || {})
-    )
-    // Records a user acknowledgement of an approval-mode elevation into the
-    // ApprovalLedger. The warning sheet (ApprovalModeElevationSheet) fires this
-    // best-effort from the renderer on confirm; it is an already-decided entry
-    // (the user clicked "Raise"), so we stamp it as an approved decision rather
-    // than a pending request, with `expiration.mode: 'none'` so the recovery
-    // sweep never touches this terminal row.
-    ipcMain.handle(
-      'record-approval-elevation-ack',
-      (
-        _,
-        input: {
-          provider: string
-          workspacePath: string | null
-          toMode: string
-          tier: number
-        }
-      ) => {
-        const provider = (input?.provider || '').trim() as ProviderId
-        const toMode = String(input?.toMode || '').trim()
-        const tier = Number(input?.tier) || 0
-        const now = new Date().toISOString()
-        const note = `User acknowledged elevation to ${toMode} (Tier ${tier})`
-        const record: ApprovalLedgerRequestInput = {
-          approvalId: `approval-mode-elevation:${randomUUID()}`,
-          provider,
-          method: 'approval/mode-elevation',
-          title: `Approval mode raised to ${toMode}`,
-          body: note,
-          actions: [],
-          status: 'approved',
-          requestedAt: now,
-          respondedAt: now,
-          decision: 'accept',
-          decisionSource: 'user',
-          grantedScope: 'request',
-          expiration: {
-            mode: 'none',
-            description: note
-          },
-          workspacePath: input?.workspacePath || undefined,
-          metadata: {
-            elevation: { toMode, tier },
-            intentNote: note
-          }
-        }
-        recordApprovalLedgerDecision(record)
-      }
-    )
+    registerApprovalLedgerHandlers({
+      getApprovalLedger: (filter) => AppStore.getApprovalLedger(filter || {}),
+      recordApprovalLedgerDecision,
+      randomUUID,
+      getNowIso: () => new Date().toISOString()
+    })
 
     registerDiagnosticsHandlers({
       getProductOperationsStatus: () => getProductOperationsStatus(),
