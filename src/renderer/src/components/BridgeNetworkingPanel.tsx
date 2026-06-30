@@ -1,5 +1,10 @@
 import React, { useCallback, useEffect, useState } from 'react'
 
+const TAILSCALE_MACHINES_URL = 'https://login.tailscale.com/admin/machines'
+const TAILSCALE_DNS_URL = 'https://login.tailscale.com/admin/dns'
+const TAILSCALE_MAGICDNS_HELP_URL = 'https://tailscale.com/kb/1081/magicdns'
+const TAILSCALE_SERVE_HELP_URL = 'https://tailscale.com/kb/1312/serve'
+
 /**
  * BridgeNetworkingPanel — Phase E3 Settings → "Bridge Networking" pane.
  *
@@ -510,6 +515,11 @@ function IosRemoteBridgeSection({
   const switchChecked = config?.envOverride
     ? Boolean(config.effectiveEnabled)
     : (config?.enabled ?? false)
+  const relayDoorExample =
+    tailscale?.suggestedUrl ||
+    (tailscale?.dnsName
+      ? `wss://${tailscale.dnsName}:${tailscale.relayPort || 8443}`
+      : 'wss://<this-mac-magicdns-name>:8443')
 
   return (
     <section className="bridge-networking-section">
@@ -604,6 +614,36 @@ function IosRemoteBridgeSection({
         </span>
       </div>
       {tailscaleMessage && <div className="settings-error">{tailscaleMessage}</div>}
+      <div className="bridge-networking-relay-help">
+        <div className="bridge-networking-relay-help-title">
+          Phone ready but still cannot connect?
+        </div>
+        <p>
+          Confirm the Mac and phone are signed into the same Tailscale account, then find this Mac
+          in the Tailscale app or on the{' '}
+          <a href={TAILSCALE_MACHINES_URL} target="_blank" rel="noreferrer">
+            Machines page
+          </a>
+          . Copy the Mac&apos;s MagicDNS name and map it to the relay door as{' '}
+          <code>{relayDoorExample}</code>.
+        </p>
+        <p>
+          If Repair or Test fails because the Tailscale CLI cannot configure Serve, open{' '}
+          <a href={TAILSCALE_DNS_URL} target="_blank" rel="noreferrer">
+            Tailscale DNS
+          </a>{' '}
+          to check MagicDNS/HTTPS, then paste the same <code>wss://...:8443</code> value into
+          Advanced relay settings below.
+        </p>
+        <div className="bridge-networking-relay-help-links">
+          <a href={TAILSCALE_MAGICDNS_HELP_URL} target="_blank" rel="noreferrer">
+            MagicDNS help
+          </a>
+          <a href={TAILSCALE_SERVE_HELP_URL} target="_blank" rel="noreferrer">
+            Serve help
+          </a>
+        </div>
+      </div>
       <details className="bridge-networking-advanced-relay">
         <summary>Advanced relay settings</summary>
         <label className="settings-service-row">

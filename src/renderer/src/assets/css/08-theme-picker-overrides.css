@@ -1488,6 +1488,37 @@
   align-items: center;
   gap: 8px;
 }
+.bridge-networking-relay-help {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 10px 0 2px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  color: var(--text-secondary);
+  font-size: 0.86em;
+  line-height: 1.45;
+}
+.bridge-networking-relay-help-title {
+  color: var(--text-primary);
+  font-weight: 650;
+}
+.bridge-networking-relay-help p {
+  margin: 0;
+}
+.bridge-networking-relay-help a {
+  color: var(--accent, rgba(120, 180, 255, 0.95));
+  text-decoration: underline;
+}
+.bridge-networking-relay-help code {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+.bridge-networking-relay-help-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+}
 .bridge-networking-advanced-relay {
   border-top: 1px solid rgba(255, 255, 255, 0.06);
   padding-top: 8px;
