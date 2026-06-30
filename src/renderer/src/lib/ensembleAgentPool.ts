@@ -49,10 +49,16 @@ export const ROSTER_PARTICIPANT_DRAG_MIME = 'application/x-tw-roster-participant
 export type PooledAgentIdentity = {
   /** Display name, pool namespace. */
   nickname: string
-  /** Named-identicon slug when the icon was picked from the catalog. */
+  /** Named-identicon slug when the icon was picked from the identicon catalog. */
   slug?: string
-  /** 'named' => the slug drives the SVG; 'seed' => procedural AgentIdenticon. */
-  iconKind: 'named' | 'seed'
+  /**
+   * 'named' => `slug` drives a named-identicon SVG; 'seed' => procedural
+   * AgentIdenticon; 'asset' => `assetKey` drives an app-wide pool icon
+   * (agent-pool-icons / provider glyph / ghost / action / command).
+   */
+  iconKind: 'named' | 'seed' | 'asset'
+  /** App-wide icon-pool key (group-namespaced) when iconKind === 'asset'. */
+  assetKey?: string
   /** Stable seed for the procedural icon (defaults to agentId). */
   seed?: string
   /** 0-359, drives the accent (mirrors the manifest hue spirit). */
@@ -296,7 +302,7 @@ function isPooledAgentIdentity(value: unknown): value is PooledAgentIdentity {
   const entry = value as PooledAgentIdentity
   return (
     typeof entry.nickname === 'string' &&
-    (entry.iconKind === 'named' || entry.iconKind === 'seed') &&
+    (entry.iconKind === 'named' || entry.iconKind === 'seed' || entry.iconKind === 'asset') &&
     typeof entry.hue === 'number' &&
     Number.isFinite(entry.hue)
   )

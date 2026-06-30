@@ -1,7 +1,7 @@
 import type { DragEvent, JSX } from 'react'
 import { getProviderLabel } from '../lib/providerLabels'
-import { pooledAgentIconProps, type PooledAgent } from '../lib/ensembleAgentPool'
-import { AgentIdentityIcon } from './icons/AgentIdentityIcon'
+import { type PooledAgent } from '../lib/ensembleAgentPool'
+import { PooledAgentIcon } from './icons/PooledAgentIcon'
 import type { PooledAgentStatsSummary } from '../../../main/store/types'
 
 interface AgentPoolCardProps {
@@ -43,7 +43,6 @@ export function AgentPoolCard({
   onDragEnd,
   draggable = false
 }: AgentPoolCardProps): JSX.Element {
-  const icon = pooledAgentIconProps(agent)
   return (
     <div
       className={`agent-pool-card${isActive ? ' is-active' : ''}`}
@@ -77,13 +76,7 @@ export function AgentPoolCard({
           ⠿
         </span>
       )}
-      <AgentIdentityIcon
-        name={icon.name}
-        seed={icon.seed}
-        color={icon.color}
-        size={28}
-        className="agent-pool-card-icon"
-      />
+      <PooledAgentIcon agent={agent} size={28} className="agent-pool-card-icon" />
       <div className="agent-pool-card-body">
         <span className="agent-pool-card-name">{agent.identity.nickname}</span>
         <span className="agent-pool-card-sub">{modelSubtitle(agent)}</span>

@@ -38,12 +38,11 @@ import {
 import { getProviderLabel } from '../lib/providerLabels'
 import { ParticipantPickerCluster } from './ParticipantPickerCluster'
 import { AgentPoolContainer } from './AgentPoolContainer'
-import { AgentIdentityIcon } from './icons/AgentIdentityIcon'
+import { PooledAgentIcon } from './icons/PooledAgentIcon'
 import {
   applyPooledAgentToParticipant,
   createPooledAgentFromParticipant,
   listPooledAgents,
-  pooledAgentIconProps,
   pooledAgentToParticipantSnapshot,
   POOLED_AGENT_DRAG_MIME,
   ROSTER_PARTICIPANT_DRAG_MIME,
@@ -933,7 +932,6 @@ export function RosterSettingsPanel({
                   {poolPickerOpen && poolAgents.length > 0 && (
                     <ul className="settings-roster-pool-picker" role="menu">
                       {poolAgents.map((agent) => {
-                        const icon = pooledAgentIconProps(agent)
                         return (
                           <li key={agent.agentId} role="none">
                             <button
@@ -942,12 +940,7 @@ export function RosterSettingsPanel({
                               className="settings-roster-pool-picker-item"
                               onClick={() => addPooledAgentToPreset(agent)}
                             >
-                              <AgentIdentityIcon
-                                name={icon.name}
-                                seed={icon.seed}
-                                color={icon.color}
-                                size={20}
-                              />
+                              <PooledAgentIcon agent={agent} size={20} />
                               <span className="settings-roster-pool-picker-name">
                                 {agent.identity.nickname}
                               </span>
