@@ -97,6 +97,7 @@ import { CommittedDraftField } from './CommittedDraftField'
 import { ComposerPlanPopoverButton } from './ComposerPlanPopoverButton'
 import { shouldOfferPlanImport } from '../lib/planImport'
 import { hasResolvedMention } from '../lib/mentionHighlight'
+import { formatApprovalCountdown, resolveApprovalTimeoutMs } from '../lib/approvalTimeoutCountdown'
 import { getProviderLabel } from '../lib/providerLabels'
 import {
   CLAUDE_DEFAULT_MODELS,
@@ -138,6 +139,7 @@ export interface ComposerProps {
   applyEnsemblePermissionsToAllParticipants: any
   applyEnsembleRosterPreset: any
   approvalMode: any
+  approvalTimeouts: import('../../../main/store/types').AppSettings['approvalTimeouts']
   attachedWindow: any
   chatByIdRef: any
   claudeFastMode: any
@@ -434,6 +436,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     applyEnsemblePermissionsToAllParticipants,
     applyEnsembleRosterPreset,
     approvalMode,
+    approvalTimeouts,
     attachedWindow,
     chatByIdRef,
     claudeFastMode,
@@ -718,6 +721,43 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     const interval = window.setInterval(() => setScheduledNowMs(Date.now()), 1_000)
     return () => window.clearInterval(interval)
   }, [hasVisibleScheduledCountdown])
+
+  const agentApprovalCardRef = useRef<HTMLDivElement | null>(null)
+  const agentApprovalAppearedAtRef = useRef<number | null>(null)
+  const [agentApprovalCountdownMs, setAgentApprovalCountdownMs] = useState<number | null>(null)
+  const agentApprovalTimeoutMs = pendingAgentApproval
+    ? resolveApprovalTimeoutMs(pendingAgentApproval, approvalTimeouts)
+    : null
+
+  useEffect(() => {
+    if (!pendingAgentApproval) {
+      agentApprovalAppearedAtRef.current = null
+      setAgentApprovalCountdownMs(null)
+      return
+    }
+    agentApprovalAppearedAtRef.current = Date.now()
+    const focusTimer = window.setTimeout(() => {
+      agentApprovalCardRef.current
+        ?.querySelector<HTMLButtonElement>('.composer-permission-actions .btn:not(.btn-ghost)')
+        ?.focus()
+    }, 0)
+    return () => window.clearTimeout(focusTimer)
+  }, [pendingAgentApproval?.id])
+
+  useEffect(() => {
+    if (!pendingAgentApproval || agentApprovalTimeoutMs == null) {
+      setAgentApprovalCountdownMs(null)
+      return
+    }
+    const appearedAt = agentApprovalAppearedAtRef.current ?? Date.now()
+    const tick = (): void => {
+      const remaining = appearedAt + agentApprovalTimeoutMs - Date.now()
+      setAgentApprovalCountdownMs(Math.max(0, remaining))
+    }
+    tick()
+    const interval = window.setInterval(tick, 1_000)
+    return () => window.clearInterval(interval)
+  }, [agentApprovalTimeoutMs, pendingAgentApproval?.id])
 
   // Per-chat Ollama tool-control tier + run profile for the composer picker.
   // Read this chat's choice out of providerMetadata (validated against the shared
@@ -2771,10 +2811,19 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                     )}
                     {pendingAgentApproval && (
                       <div
+                        ref={agentApprovalCardRef}
+                        role="alertdialog"
+                        aria-modal="false"
+                        aria-labelledby="composer-agent-approval-title"
+                        aria-describedby={
+                          agentApprovalCountdownMs != null
+                            ? 'composer-agent-approval-countdown'
+                            : undefined
+                        }
                         className={`composer-permission-card provider-${pendingAgentApproval.provider}`}
                       >
                         <div className="composer-permission-title">
-                          <span>{pendingAgentApproval.title}</span>
+                          <span id="composer-agent-approval-title">{pendingAgentApproval.title}</span>
                           <span className="composer-permission-source">
                             {getProviderLabel(pendingAgentApproval.provider)}
                             {/* 1.0.4-AK4 — surface the queue depth so the
@@ -2799,6 +2848,16 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             })()}
                           </span>
                         </div>
+                        {agentApprovalCountdownMs != null && (
+                          <div
+                            id="composer-agent-approval-countdown"
+                            className="composer-permission-countdown"
+                            role="status"
+                            aria-live="polite"
+                          >
+                            Auto-denies in {formatApprovalCountdown(agentApprovalCountdownMs)}
+                          </div>
+                        )}
                         {pendingAgentApproval.body && (
                           <div className="composer-permission-message">
                             {pendingAgentApproval.body}
@@ -4447,6 +4506,8 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
 	                      openGoalPopover(false)
 	                    }}
 	                    title={currentGoalButtonTitle}
+	                    aria-haspopup="dialog"
+	                    aria-expanded={goalPopoverOpen}
 	                    aria-label={
 	                      currentActiveGoal
 	                        ? `Manage active goal: ${currentActiveGoal.objective}`
@@ -4493,6 +4554,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
 	                            value={goalDraft}
 	                            onChange={(event) => setGoalDraft(event.target.value)}
 	                            placeholder="Describe the objective and stopping condition"
+	                            aria-label="Goal objective"
 	                            rows={3}
 	                            maxLength={MAX_ACTIVE_GOAL_OBJECTIVE_CHARS}
 	                          />

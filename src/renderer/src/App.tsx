@@ -86,7 +86,6 @@ import {
   RunRecoveryRecord,
   ProductOperationsStatus,
   ProductUpdateChannel,
-  ProductChangelogSnapshot,
   ChatScope,
   RuntimeProfile,
   HandoffCard,
@@ -110,7 +109,6 @@ import {
   resolveActiveGoalMode,
   updateActiveGoalLifecycle
 } from '../../main/GoalState'
-import type { NativeCapabilitySnapshot } from '../../main/NativeCapabilities'
 import type { HumanCollaborationShare } from '../../main/collaboration/HumanCollaborationStore'
 import type { LocalServerEntry } from '../../main/localServers/types'
 import {
@@ -278,6 +276,9 @@ import { useExternalPathRepoMetadata } from './hooks/useExternalPathRepoMetadata
 import { useUpdateStatus } from './hooks/useUpdateStatus'
 import { useHostWeather } from './hooks/useHostWeather'
 import { useAppVersion } from './hooks/useAppVersion'
+import { useNativeCapabilities } from './hooks/useNativeCapabilities'
+import { useViewportWidth } from './hooks/useViewportWidth'
+import { useChangelog } from './hooks/useChangelog'
 import { useLaunchAttempts } from './hooks/useLaunchAttempts'
 import { useWorkspaceLaunchTargets } from './hooks/useWorkspaceLaunchTargets'
 import {
@@ -1605,6 +1606,17 @@ function App(): React.JSX.Element {
   >({})
   const [ollamaModelInstallPrompt, setOllamaModelInstallPrompt] =
     useState<OllamaModelInstallPrompt | null>(null)
+  useEffect(() => {
+    if (!ollamaModelInstallPrompt) return
+    const handleKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        setOllamaModelInstallPrompt(null)
+      }
+    }
+    document.addEventListener('keydown', handleKeyDown, true)
+    return () => document.removeEventListener('keydown', handleKeyDown, true)
+  }, [ollamaModelInstallPrompt])
   const ollamaInstalledModelKeysRef = useRef<Set<string>>(new Set())
   const ollamaAvailabilityRequestSeqRef = useRef(0)
   const [providerCapabilitiesByProvider, setProviderCapabilitiesByProvider] = useState<
@@ -1894,41 +1906,17 @@ function App(): React.JSX.Element {
    * resets every open. */
   const [showBugReportSheet, setShowBugReportSheet] = useState(false)
   const updateStatus = useUpdateStatus()
-  const [showChangelogSheet, setShowChangelogSheet] = useState(false)
-  const [changelogSnapshot, setChangelogSnapshot] = useState<ProductChangelogSnapshot | null>(null)
-  const autoChangelogOpenedRef = useRef(false)
-  const refreshChangelogSnapshot =
-    useCallback(async (): Promise<ProductChangelogSnapshot | null> => {
-      try {
-        const next = await window.api.changelogSnapshot()
-        setChangelogSnapshot(next)
-        return next
-      } catch {
-        return null
-      }
-    }, [])
-  const handleOpenChangelogSheet = useCallback(() => {
-    setShowChangelogSheet(true)
-    void refreshChangelogSnapshot()
-  }, [refreshChangelogSnapshot])
-  const handleSidebarQuickUpdate = useCallback(() => {
-    const status = updateStatus.snapshot?.status
-    if (status === 'available') {
-      void updateStatus.downloadUpdate()
-      return
-    }
-    if (status === 'downloaded') {
-      void updateStatus.installUpdateNow()
-      return
-    }
-    if (status === 'error') {
-      void updateStatus.checkForUpdates()
-      return
-    }
-    if (status === 'downloading') {
-      handleOpenChangelogSheet()
-    }
-  }, [handleOpenChangelogSheet, updateStatus])
+  // App version for the BugReportSheet's auto-captured row, fetched once on
+  // mount; "unknown" until the IPC resolves so the UI never flashes empty. See
+  // useAppVersion.
+  const appVersion = useAppVersion()
+  const {
+    showChangelogSheet,
+    changelogSnapshot,
+    handleOpenChangelogSheet,
+    handleDismissChangelogSheet,
+    handleSidebarQuickUpdate
+  } = useChangelog(appVersion, updateStatus)
   /** 1.0.4-AK2 — Work Session setup sheet open/closed state.
    * Opened by the composer's "Work Session" button (alongside
    * Turn/Continuous). On confirm, persists the WorkSessionConfig
@@ -1936,31 +1924,6 @@ function App(): React.JSX.Element {
    * prompt so the user clicks Send to launch (avoids re-implementing
    * the full send-message payload composition here). */
   const [showWorkSessionSheet, setShowWorkSessionSheet] = useState(false)
-  // App version for the BugReportSheet's auto-captured row, fetched once on
-  // mount; "unknown" until the IPC resolves so the UI never flashes empty. See
-  // useAppVersion.
-  const appVersion = useAppVersion()
-  useEffect(() => {
-    void refreshChangelogSnapshot()
-  }, [refreshChangelogSnapshot])
-  useEffect(() => {
-    if (autoChangelogOpenedRef.current) return
-    if (!changelogSnapshot || appVersion === 'unknown') return
-    if (changelogSnapshot.pendingUpdateChangelog?.version !== appVersion) return
-    if (changelogSnapshot.lastSeenChangelogVersion === appVersion) return
-    autoChangelogOpenedRef.current = true
-    setShowChangelogSheet(true)
-  }, [appVersion, changelogSnapshot])
-  const handleDismissChangelogSheet = useCallback(() => {
-    setShowChangelogSheet(false)
-    const pendingVersion = changelogSnapshot?.pendingUpdateChangelog?.version
-    if (!pendingVersion || pendingVersion !== appVersion) return
-    if (changelogSnapshot?.lastSeenChangelogVersion === appVersion) return
-    void window.api
-      .markChangelogSeen(appVersion)
-      .then((next) => setChangelogSnapshot(next))
-      .catch(() => {})
-  }, [appVersion, changelogSnapshot])
   const handleSubmitBugReport = useCallback(
     async (submission: BugReportSubmission): Promise<void> => {
       const api = window.api as typeof window.api & {
@@ -2243,13 +2206,11 @@ function App(): React.JSX.Element {
     }
   }
   const [attachedWindow, setAttachedWindow] = useState<AttachedWindowSnapshot | null>(null)
-  const [nativeCapabilities, setNativeCapabilities] = useState<NativeCapabilitySnapshot | null>(
-    null
-  )
-  const ensembleConcurrentLanesAvailable =
-    nativeCapabilities?.featureGates?.concurrentLanes ?? true
-  const ensembleConcurrentWriteLanesAvailable =
-    nativeCapabilities?.featureGates?.concurrentWriteLanes ?? false
+  const {
+    ensembleConcurrentLanesAvailable,
+    ensembleConcurrentWriteLanesAvailable,
+    screenWatchUnavailableReason
+  } = useNativeCapabilities()
   // 1.0.5-AU — Track which chat owns the current attachment so we
   // can auto-detach when the user switches away. Pre-AU the
   // `attachedWindow` state was app-global: attach in Chat A, switch
@@ -2283,10 +2244,6 @@ function App(): React.JSX.Element {
     }
     wasStreaming: boolean
   } | null>(null)
-  const screenWatchUnavailableReason =
-    nativeCapabilities && !nativeCapabilities.screenWatch.available
-      ? nativeCapabilities.screenWatch.reason || 'Appwatch/Appshots are macOS-only in v1.'
-      : null
   useEffect(() => {
     if (!diffActionMenuOpen) return
     const closeFromPointer = (event: MouseEvent): void => {
@@ -3334,18 +3291,6 @@ function App(): React.JSX.Element {
       clearFxBurst()
     }
   }, [isFxEnabled, fxBurstClass])
-
-  useEffect(() => {
-    let cancelled = false
-    const nativeCapabilityLoad = window.api.getNativeCapabilities?.()
-    if (!nativeCapabilityLoad) return
-    void nativeCapabilityLoad.then((snapshot) => {
-      if (!cancelled) setNativeCapabilities(snapshot)
-    })
-    return () => {
-      cancelled = true
-    }
-  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -15059,25 +15004,7 @@ function App(): React.JSX.Element {
     }
   }, [showSkyVisualFx])
 
-  // Tracks the live window width so the inspector's *applied* width can be
-  // clamped to the viewport on launch / window resize (see
-  // `effectiveInspectorWidth`). rAF-coalesced to avoid resize-storm churn.
-  const [viewportWidth, setViewportWidth] = useState(() =>
-    typeof window !== 'undefined' ? window.innerWidth : 1280
-  )
-  useEffect(() => {
-    if (typeof window === 'undefined') return
-    let frame = 0
-    const onResize = () => {
-      window.cancelAnimationFrame(frame)
-      frame = window.requestAnimationFrame(() => setViewportWidth(window.innerWidth))
-    }
-    window.addEventListener('resize', onResize)
-    return () => {
-      window.cancelAnimationFrame(frame)
-      window.removeEventListener('resize', onResize)
-    }
-  }, [])
+  const viewportWidth = useViewportWidth()
 
   const startRightPanelResize = (event: React.MouseEvent<HTMLDivElement>) => {
     event.preventDefault()
@@ -16201,6 +16128,17 @@ function App(): React.JSX.Element {
     })
     setOllamaComposerParityAck(null)
   }
+  useEffect(() => {
+    if (!ollamaComposerParityAck) return
+    const handleKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        setOllamaComposerParityAck(null)
+      }
+    }
+    document.addEventListener('keydown', handleKeyDown, true)
+    return () => document.removeEventListener('keydown', handleKeyDown, true)
+  }, [ollamaComposerParityAck])
   // P2b — unattended-elevation confirm (modeled on the Ollama Tier-4 ack above).
   // The ack is minted ONLY by setWorkflowUnattendedElevation; choosing a non-safe
   // level opens this "are you sure?" gate, and on confirm we call the IPC + refresh.
@@ -16209,6 +16147,17 @@ function App(): React.JSX.Element {
     workspacePath: string
     level: Exclude<UnattendedElevationLevel, 'safe'>
   } | null>(null)
+  useEffect(() => {
+    if (!pendingUnattendedElevation) return
+    const handleKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        setPendingUnattendedElevation(null)
+      }
+    }
+    document.addEventListener('keydown', handleKeyDown, true)
+    return () => document.removeEventListener('keydown', handleKeyDown, true)
+  }, [pendingUnattendedElevation])
   const confirmUnattendedElevation = async (): Promise<void> => {
     const target = pendingUnattendedElevation
     if (!target) return
@@ -21854,6 +21803,7 @@ function App(): React.JSX.Element {
       appearance,
       applyEnsemblePermissionsToAllParticipants,
       applyEnsembleRosterPreset,
+      approvalTimeouts,
       chatByIdRef,
       codexModels,
       composerAboveBarStackAuraClass,
@@ -21993,6 +21943,7 @@ function App(): React.JSX.Element {
       appearance,
       applyEnsemblePermissionsToAllParticipants,
       applyEnsembleRosterPreset,
+      approvalTimeouts,
       chatByIdRef,
       checkOllamaModelAvailability,
       codexModels,
@@ -23348,6 +23299,17 @@ function App(): React.JSX.Element {
               layout={multiview.layout}
               panes={multiview.panes}
               focusedPaneIndex={multiview.focusedPaneIndex}
+              resolvePaneTitle={(paneIndex, pane) => {
+                if (pane.mediaRef?.name) return pane.mediaRef.name
+                if (pane.canvasId) return 'Canvas preview'
+                if (pane.chatId) {
+                  const chat =
+                    chatByIdRef.current.get(pane.chatId) ||
+                    chats.find((candidate) => candidate.appChatId === pane.chatId)
+                  return chat?.title || `Pane ${paneIndex + 1}`
+                }
+                return 'Empty pane'
+              }}
               onClosePane={(paneIndex) => {
                 // Tear down the embedded canvas (if any) before the pane goes away.
                 const canvasId = multiview.panes[paneIndex]?.canvasId
@@ -23893,6 +23855,7 @@ function App(): React.JSX.Element {
               }}
               title={`${showFileEditor ? 'Hide' : 'Show'} file editor`}
               aria-label="Toggle file editor"
+              aria-pressed={showFileEditor}
               disabled={!hasWorkspaceContext}
             >
               <FileMenuSelectionIcon />
@@ -23909,6 +23872,7 @@ function App(): React.JSX.Element {
                 }}
                 title={`${appearance.showInspector ? 'Hide' : 'Show'} inspector`}
                 aria-label="Toggle inspector"
+                aria-pressed={appearance.showInspector}
               >
                 <SidebarCornerIcon direction="right" isOpen={appearance.showInspector} />
               </button>

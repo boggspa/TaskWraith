@@ -1053,7 +1053,8 @@ describe('ApprovalsFooterPopover', () => {
     )
     expect(html).toContain('Write a file')
     expect(html).toContain('sidebar-footer-led is-pending')
-    expect(html).toContain('codex')
+    expect(html).toContain('Codex')
+    expect(html).toContain('aria-label="Write a file, Codex, open thread"')
     // A filing chatId + onJumpToChat present → the row is a clickable button.
     // (The chatId is the map key, so it's present even when the approval's own
     // appChatId is undefined — the previous appChatId-only gate dropped those.)

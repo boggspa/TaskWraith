@@ -32,6 +32,7 @@ import {
   sumHeights,
   getRowHeight,
   measurementKey,
+  measurementContentVersion,
   widthBucket,
   type VirtualRow,
   type VirtualWindow
@@ -42,6 +43,7 @@ import {
   transcriptRowRenderSignatureEqual,
   type TranscriptRowRenderSignature
 } from '../lib/transcriptRowRenderCache'
+import { resolveLiveRevealMessageId } from '../lib/liveRevealMessage'
 import type { PlanChoiceState } from '../lib/planModeChoice'
 import type { DisplayCurrency } from '../lib/formatCost'
 import type { RendererProviderRates } from '../lib/providerRateEstimate'
@@ -479,6 +481,7 @@ function useTranscriptVirtualization(params: {
   autoFollowRef?: React.MutableRefObject<boolean>
   compactDensity: boolean
   forcedRowIndex?: number | null
+  activeLiveRowKey?: string | null
   /**
    * 1.0.6-TV2 — row ids whose tool stack currently has something
    * expanded. Folded into the measurement-cache key (the geometry bit)
@@ -501,6 +504,7 @@ function useTranscriptVirtualization(params: {
     autoFollowRef,
     compactDensity,
     forcedRowIndex,
+    activeLiveRowKey,
     expandedRowIds
   } = params
 
@@ -592,9 +596,17 @@ function useTranscriptVirtualization(params: {
     if (!enabled) return EMPTY_TRANSCRIPT_HEIGHTS
     const m = measurementsRef.current
     const bucket = bucketRef.current
-    return rows.map((row) => getRowHeight(row, m, bucket, expandedRowIds?.has(row.id) ?? false))
+    return rows.map((row) =>
+      getRowHeight(
+        row,
+        m,
+        bucket,
+        expandedRowIds?.has(row.id) ?? false,
+        measurementContentVersion(row, activeLiveRowKey)
+      )
+    )
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled, rows, measureTick, expandedRowIds])
+  }, [enabled, rows, measureTick, expandedRowIds, activeLiveRowKey])
   heightsRef.current = heights
   rowsRef.current = rows
 
@@ -635,7 +647,7 @@ function useTranscriptVirtualization(params: {
   const windowHeights = useMemo(
     () => heights,
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [enabled, rows, expandedRowIds, scrollTick] // deliberately NOT measureTick
+    [enabled, rows, expandedRowIds, activeLiveRowKey, scrollTick] // deliberately NOT measureTick
   )
   const virtualWindow: VirtualWindow = enabled
     ? selectWindow({
@@ -812,6 +824,7 @@ function useTranscriptVirtualization(params: {
     const spacerBottom = spacerBottomRef.current
     let sawNewKey = false
     let sawRewrite = false
+    let sawLiveGrowth = false
     for (let i = 0; i < mountedRows.length; i++) {
       const row = mountedRows[i]
       // 1.0.7 — element + measurement maps key on `rowKey` (`${id}#${index}`),
@@ -827,9 +840,10 @@ function useTranscriptVirtualization(params: {
           : spacerBottom
       const slot = nextEl && nextEl.isConnected ? nextEl.offsetTop - el.offsetTop : el.offsetHeight
       if (!(slot > 0)) continue
+      const isActiveLiveRow = activeLiveRowKey === row.rowKey
       const key = measurementKey(
         row.rowKey,
-        row.contentVersion,
+        measurementContentVersion(row, activeLiveRowKey),
         bucket,
         expandedRowIds?.has(row.id) ?? false
       )
@@ -838,8 +852,15 @@ function useTranscriptVirtualization(params: {
         measurements.set(key, slot)
         sawNewKey = true
       } else if (Math.abs(prev - slot) > 0.5) {
-        measurements.set(key, slot)
-        sawRewrite = true
+        const nextSlot = isActiveLiveRow ? Math.max(prev, slot) : slot
+        if (Math.abs(prev - nextSlot) > 0.5) {
+          measurements.set(key, nextSlot)
+          if (isActiveLiveRow && nextSlot > prev) {
+            sawLiveGrowth = true
+          } else {
+            sawRewrite = true
+          }
+        }
       }
     }
     // 1.0.7 — gate the re-measure bump through the convergence guard. A new key
@@ -847,7 +868,7 @@ function useTranscriptVirtualization(params: {
     // rewrite-only passes (oscillation) is capped so it can't spin React's
     // nested-update limit and crash the transcript surface.
     const decision = decideMeasurePass({
-      sawNewKey,
+      sawNewKey: sawNewKey || sawLiveGrowth,
       sawRewrite,
       rewritePasses: measureRewritePassesRef.current,
       alreadyWarned: measureWarnedRef.current
@@ -857,7 +878,7 @@ function useTranscriptVirtualization(params: {
     // 1.0.7 — record whether THIS pass fully converged (nothing changed). The
     // next pre-paint pass's Phase-1 anchor restore reads this so it only fires
     // once heights have settled — never mid-measure.
-    measureConvergedRef.current = !sawNewKey && !sawRewrite
+    measureConvergedRef.current = !sawNewKey && !sawLiveGrowth && !sawRewrite
     if (decision.shouldWarn) {
       console.warn(
         '[transcript] measurement did not converge after ' +
@@ -1329,8 +1350,15 @@ export const TranscriptPanel = memo(
     const revealChatIsRunning =
       revealChatId != null && Array.isArray(runningChatIds) && runningChatIds.includes(revealChatId)
     const revealRunId = currentRun?.runId ?? currentChat?.runs?.find((run) => !run.endedAt)?.runId
-    const lastDisplayedMessageId =
-      displayMessages.length > 0 ? displayMessages[displayMessages.length - 1].id : null
+    const liveRevealMessageId = useMemo(
+      () =>
+        resolveLiveRevealMessageId(displayMessages, {
+          revealEnabled,
+          revealChatIsRunning,
+          revealRunId
+        }),
+      [displayMessages, revealEnabled, revealChatIsRunning, revealRunId]
+    )
     const displayRunBoundaryByMessageId = useMemo(() => {
       const map = new Map(runBoundaryByMessageId)
       for (const message of displayMessages) {
@@ -1351,6 +1379,14 @@ export const TranscriptPanel = memo(
       () => projectRows(displayMessages, displayRunBoundaryIds),
       [displayMessages, displayRunBoundaryIds]
     )
+    const liveRevealRowKey = useMemo(() => {
+      if (!liveRevealMessageId) return null
+      return (
+        projectedRows.find(
+          (row) => row.id === liveRevealMessageId && row.index === displayMessages.length - 1
+        )?.rowKey ?? null
+      )
+    }, [displayMessages.length, liveRevealMessageId, projectedRows])
     const [pendingFocusTarget, setPendingFocusTarget] = useState<{
       messageId: string
       rowKey?: string
@@ -1395,6 +1431,7 @@ export const TranscriptPanel = memo(
       autoFollowRef,
       compactDensity,
       forcedRowIndex: pendingFocusRowIndex,
+      activeLiveRowKey: liveRevealRowKey,
       expandedRowIds
     })
     const userGutterMarkers = useMemo(
@@ -1703,13 +1740,8 @@ export const TranscriptPanel = memo(
                     .map((chat) => `${chat.appChatId}:${chat.title || ''}:${chat.updatedAt || ''}`)
                     .join('\u0000')}`
                 : ''
-            const revealKey =
-              revealEnabled &&
-              revealChatIsRunning &&
-              (msg.id === lastDisplayedMessageId ||
-                (Boolean(revealRunId) && msg.runId === revealRunId))
-                ? `live:${revealRunId || ''}`
-                : 'plain'
+            const isLiveRevealRow = rowKey === liveRevealRowKey
+            const revealKey = isLiveRevealRow ? `live:${revealRunId || msg.id}` : 'plain'
             const rowSignature: TranscriptRowRenderSignature = {
               rowKey,
               message: msg,
@@ -2147,10 +2179,7 @@ export const TranscriptPanel = memo(
                             }
                           >
                             {msg.role === 'assistant' || msg.role === 'system' || isGuestReply ? (
-                              revealEnabled &&
-                              revealChatIsRunning &&
-                              (msg.id === lastDisplayedMessageId ||
-                                (Boolean(revealRunId) && msg.runId === revealRunId)) ? (
+                              isLiveRevealRow ? (
                                 <RevealingMarkdownMessage
                                   content={msg.content}
                                   chat={currentChat || undefined}
@@ -2301,7 +2330,16 @@ export const TranscriptPanel = memo(
               </div>
             ))}
           {isThinking && (
-            <div key="thinking-indicator" className="message-group">
+            <div
+              key="thinking-indicator"
+              className="message-group"
+              role="status"
+              aria-live="polite"
+              aria-atomic="true"
+            >
+              <span className="sr-only">
+                {(thinkingProviderLabel || currentProviderLabel) ?? 'Agent'} working
+              </span>
               <div
                 className={`message-meta${
                   thinkingProviderClass || thinkingProvider
@@ -2329,7 +2367,11 @@ export const TranscriptPanel = memo(
             <div
               key="guest-thinking-indicator"
               className="message-group guest-participant-thinking-message"
+              role="status"
+              aria-live="polite"
+              aria-atomic="true"
             >
+              <span className="sr-only">{guestThinkingProviderLabel} working</span>
               <div
                 className={`message-meta${
                   guestThinkingProviderClass || guestThinkingProvider
@@ -2352,7 +2394,25 @@ export const TranscriptPanel = memo(
             </div>
           )}
           {showRunCompleteSummary !== false && shouldShowRunCompleteNotice && runCompleteNotice && (
-            <div className={`run-complete-card${isGlobal ? ' is-global-stripped' : ''}`}>
+            <div
+              className={`run-complete-card${isGlobal ? ' is-global-stripped' : ''}`}
+              role="status"
+              aria-live="assertive"
+              aria-atomic="true"
+            >
+              <span className="sr-only">
+                {isGlobal
+                  ? runCompleteNotice.exitCode === 0
+                    ? 'Done'
+                    : runCompleteNotice.exitCode === 130
+                      ? 'Stopped'
+                      : "Couldn't finish"
+                  : runCompleteNotice.exitCode === 0
+                    ? 'Task complete'
+                    : runCompleteNotice.exitCode === 130
+                      ? 'Run cancelled'
+                      : `Task ended with code ${runCompleteNotice.exitCode}`}
+              </span>
               <div className="run-complete-main">
                 <div className="run-complete-metadata">
                   <strong>
@@ -2557,7 +2617,10 @@ export const TranscriptPanel = memo(
                               title={fileChangeActionLabel}
                               onFocus={
                                 hasDiffPreview
-                                  ? (event) => openFileChangeDiffPreview(event, item)
+                                  ? (event) =>
+                                      openFileChangeDiffPreview(event, item, {
+                                        focusTarget: 'preview'
+                                      })
                                   : undefined
                               }
                               onBlur={
@@ -2580,7 +2643,11 @@ export const TranscriptPanel = memo(
                                 title="Preview diff"
                                 onMouseEnter={(event) => openFileChangeDiffPreview(event, item)}
                                 onMouseLeave={scheduleCloseFileChangeDiffPreview}
-                                onFocus={(event) => openFileChangeDiffPreview(event, item)}
+                                onFocus={(event) =>
+                                  openFileChangeDiffPreview(event, item, {
+                                    focusTarget: 'preview'
+                                  })
+                                }
                                 onBlur={scheduleCloseFileChangeDiffPreview}
                                 onClick={(event) => {
                                   event.preventDefault()

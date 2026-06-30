@@ -33,6 +33,7 @@ import type {
   ToolIconAccent,
   ApprovalLedgerRecord
 } from '../../../main/store/types'
+import { getProviderLabel } from '../lib/providerLabels'
 import { selectRecentChats } from '../lib/recentChatsList'
 import { isContentlessRemoteDraftChat } from '../../../main/remote/RemoteDraftChats'
 import { normalizeThreadTitle } from '../../../shared/threadTitles'
@@ -1729,9 +1730,12 @@ function HighlightMatch({ text, query }: { text: string; query: string }): React
   return parts.length > 0 ? parts : text
 }
 
-function getLastRunStatus(
-  chat: ChatRecord
-): { label: string; tone: 'success' | 'warning' | 'danger' | 'muted' } | null {
+type SidebarRunStatusSnapshot = {
+  label: string
+  tone: 'success' | 'warning' | 'danger' | 'muted'
+} | null
+
+function getLastRunStatus(chat: ChatRecord): SidebarRunStatusSnapshot {
   const run = (chat as Partial<ChatListItem>).lastRun || chat.runs?.[chat.runs.length - 1]
   if (!run) return null
   if (run.status === 'sleeping') return { label: 'Sleeping', tone: 'warning' }
@@ -1743,6 +1747,49 @@ function getLastRunStatus(
   if (run.status === 'failed') return { label: 'Failed', tone: 'danger' }
   if (run.status === 'cancelled') return { label: 'Cancelled', tone: 'muted' }
   return { label: run.status || 'Completed', tone: 'muted' }
+}
+
+function sidebarChatRunStatusText(
+  isRunning: boolean,
+  lastRunStatus: SidebarRunStatusSnapshot
+): string | null {
+  if (isRunning) return 'running'
+  if (lastRunStatus) return lastRunStatus.label
+  return null
+}
+
+function buildSidebarChatRowA11y(args: {
+  chatId: string
+  title: string
+  provider?: ProviderId
+  providerLabel?: string
+  selected: boolean
+  isRunning: boolean
+  lastRunStatus: SidebarRunStatusSnapshot
+  prefix?: string
+}): {
+  ariaLabel: string
+  ariaCurrent?: 'page'
+  statusDescribedById?: string
+  statusDescription?: string
+} {
+  const provider = args.providerLabel ?? getProviderName(args.provider)
+  const statusText = sidebarChatRunStatusText(args.isRunning, args.lastRunStatus)
+  const titlePart = args.prefix ? `${args.prefix}: ${args.title}` : args.title
+  const parts = [titlePart, provider]
+  if (statusText) parts.push(statusText)
+  if (args.selected) parts.push('selected')
+  const failed = !args.isRunning && args.lastRunStatus?.tone === 'danger'
+  return {
+    ariaLabel: parts.join(', '),
+    ariaCurrent: args.selected ? 'page' : undefined,
+    ...(failed
+      ? {
+          statusDescribedById: `sidebar-chat-status-${args.chatId}`,
+          statusDescription: `Last run failed: ${args.lastRunStatus!.label}`
+        }
+      : {})
+  }
 }
 
 // Shared shell for the three footer control popovers (Approvals / Shares /
@@ -1821,6 +1868,10 @@ export function ApprovalsFooterPopover({
 
   const pendingShown = pendingApprovals.slice(0, APPROVALS_POPOVER_PENDING_LIMIT)
   const pendingOverflow = pendingApprovals.length - pendingShown.length
+  const pendingLiveSummary =
+    pendingApprovals.length === 0
+      ? 'No pending approvals'
+      : `${pendingApprovals.length} pending approval${pendingApprovals.length === 1 ? '' : 's'}`
 
   return (
     <SidebarFooterPopover
@@ -1829,31 +1880,38 @@ export function ApprovalsFooterPopover({
       navLabel="Approvals & Grants"
       onNav={onOpenSettings}
     >
+      <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+        {pendingLiveSummary}
+      </div>
       {pendingShown.length === 0 ? (
         <div className="sidebar-footer-popover-empty">No pending approvals</div>
       ) : (
         <>
-          {pendingShown.map(({ chatId, approval }) =>
-            chatId && onJumpToChat ? (
+          {pendingShown.map(({ chatId, approval }) => {
+            const providerLabel = getProviderLabel(approval.provider)
+            const rowLabel = chatId && onJumpToChat
+              ? `${approval.title}, ${providerLabel}, open thread`
+              : `${approval.title}, ${providerLabel}`
+            return chatId && onJumpToChat ? (
               <button
                 key={approval.id}
                 type="button"
                 className="sidebar-footer-approval-row is-clickable"
                 onClick={() => onJumpToChat(chatId)}
-                title={approval.title}
+                aria-label={rowLabel}
               >
                 <span className="sidebar-footer-led is-pending" aria-hidden />
                 <span className="sidebar-footer-approval-title">{approval.title}</span>
-                <span className="sidebar-footer-approval-meta">{approval.provider}</span>
+                <span className="sidebar-footer-approval-meta">{providerLabel}</span>
               </button>
             ) : (
-              <div className="sidebar-footer-approval-row" key={approval.id} title={approval.title}>
+              <div className="sidebar-footer-approval-row" key={approval.id} aria-label={rowLabel}>
                 <span className="sidebar-footer-led is-pending" aria-hidden />
                 <span className="sidebar-footer-approval-title">{approval.title}</span>
-                <span className="sidebar-footer-approval-meta">{approval.provider}</span>
+                <span className="sidebar-footer-approval-meta">{providerLabel}</span>
               </div>
             )
-          )}
+          })}
           {pendingOverflow > 0 && (
             <div className="sidebar-footer-popover-more">+{pendingOverflow} more pending</div>
           )}
@@ -3254,6 +3312,15 @@ export function Sidebar({
       : []
     const subProviderColor = `var(--provider-${subChat.provider || 'gemini'}-color)`
     const renameSurfaceId = `linked-${subChat.appChatId}`
+    const subRowA11y = buildSidebarChatRowA11y({
+      chatId: subChat.appChatId,
+      title: subChat.title,
+      provider: subChat.provider,
+      selected: selectedChatId === subChat.appChatId,
+      isRunning: subRunning,
+      lastRunStatus: subLastStatus,
+      prefix: subKindLabel
+    })
     return (
       <div
         role="button"
@@ -3266,7 +3333,15 @@ export function Sidebar({
         } ${subRunning ? 'running' : ''}`}
         onClick={() => onSelectChat(subChat)}
         onKeyDown={(event) => handleChatRowKeyDown(event, subChat)}
+        aria-label={subRowA11y.ariaLabel}
+        aria-current={subRowA11y.ariaCurrent}
+        aria-describedby={subRowA11y.statusDescribedById}
       >
+        {subRowA11y.statusDescription && (
+          <span id={subRowA11y.statusDescribedById} className="sr-only">
+            {subRowA11y.statusDescription}
+          </span>
+        )}
         <span className="sidebar-sub-thread-prefix" aria-hidden>
           {subIsSideChat ? '⇄' : '↳'}
         </span>
@@ -4244,6 +4319,17 @@ export function Sidebar({
                         ? true
                         : !collapsedSubThreadParentIds.has(chat.appChatId)
                       const renameSurfaceId = `ensemble-${chat.appChatId}`
+                      const ensembleRowA11y = buildSidebarChatRowA11y({
+                        chatId: chat.appChatId,
+                        title: chat.title,
+                        providerLabel: 'Ensemble',
+                        selected: selectedChatId === chat.appChatId,
+                        isRunning,
+                        lastRunStatus: isRunning
+                          ? { label: 'Running', tone: 'warning' }
+                          : null,
+                        prefix: subtitle
+                      })
                       return (
                         <div key={`ensemble-${chat.appChatId}`} className="sidebar-chat-family">
                           <div
@@ -4252,6 +4338,8 @@ export function Sidebar({
                             className={`sidebar-item sidebar-chat-item sidebar-ensemble-item provider-ensemble ${selectedChatId === chat.appChatId ? 'active' : ''} ${isRunning ? 'running' : ''}`}
                             onClick={() => onSelectChat(chat)}
                             onKeyDown={(event) => handleChatRowKeyDown(event, chat)}
+                            aria-label={ensembleRowA11y.ariaLabel}
+                            aria-current={ensembleRowA11y.ariaCurrent}
                             {...getChatTileDragProps(chat)}
                           >
                             {subThreads.length > 0 && (
@@ -4544,6 +4632,14 @@ export function Sidebar({
                               )
                               const branchedBadgeTone = liveSubThreadCount > 0 ? 'active' : 'dim'
                               const renameSurfaceId = `workspace-${ws.id}-${chat.appChatId}`
+                              const workspaceRowA11y = buildSidebarChatRowA11y({
+                                chatId: chat.appChatId,
+                                title: chat.title,
+                                provider: chat.provider,
+                                selected: selectedChatId === chat.appChatId,
+                                isRunning: isChatRunning,
+                                lastRunStatus
+                              })
                               return (
                                 <div key={chat.appChatId} className="sidebar-chat-family">
                                   <div
@@ -4552,7 +4648,15 @@ export function Sidebar({
                                     className={`sidebar-item sidebar-chat-item provider-${chat.provider || 'gemini'} ${selectedChatId === chat.appChatId ? 'active' : ''} ${isChatRunning ? 'running' : ''}`}
                                     onClick={() => onSelectChat(chat)}
                                     onKeyDown={(event) => handleChatRowKeyDown(event, chat)}
+                                    aria-label={workspaceRowA11y.ariaLabel}
+                                    aria-current={workspaceRowA11y.ariaCurrent}
+                                    aria-describedby={workspaceRowA11y.statusDescribedById}
                                   >
+                                    {workspaceRowA11y.statusDescription && (
+                                      <span id={workspaceRowA11y.statusDescribedById} className="sr-only">
+                                        {workspaceRowA11y.statusDescription}
+                                      </span>
+                                    )}
                                     {subThreadCount > 0 && (
                                       <span
                                         role="button"
@@ -4703,6 +4807,14 @@ export function Sidebar({
                     const isChatRunning = runningChatIdSet.has(chat.appChatId)
                     const lastRunStatus = getLastRunStatus(chat)
                     const renameSurfaceId = `global-${chat.appChatId}`
+                    const globalRowA11y = buildSidebarChatRowA11y({
+                      chatId: chat.appChatId,
+                      title: chat.title,
+                      provider: chat.provider,
+                      selected: selectedChatId === chat.appChatId,
+                      isRunning: isChatRunning,
+                      lastRunStatus
+                    })
                     return (
                       <div
                         role="button"
@@ -4711,7 +4823,15 @@ export function Sidebar({
                         className={`sidebar-item sidebar-chat-item sidebar-global-chat-item provider-${chat.provider || 'gemini'} ${selectedChatId === chat.appChatId ? 'active' : ''} ${isChatRunning ? 'running' : ''}`}
                         onClick={() => onSelectChat(chat)}
                         onKeyDown={(event) => handleChatRowKeyDown(event, chat)}
+                        aria-label={globalRowA11y.ariaLabel}
+                        aria-current={globalRowA11y.ariaCurrent}
+                        aria-describedby={globalRowA11y.statusDescribedById}
                       >
+                        {globalRowA11y.statusDescription && (
+                          <span id={globalRowA11y.statusDescribedById} className="sr-only">
+                            {globalRowA11y.statusDescription}
+                          </span>
+                        )}
                         <span className="sidebar-chat-copy" title={chat.title}>
                           <span className="sidebar-chat-title-line">
                             <SidebarProviderLabel provider={chat.provider} />
@@ -4829,6 +4949,15 @@ export function Sidebar({
                     const isChatRunning = runningChatIdSet.has(chat.appChatId)
                     const lastRunStatus = getLastRunStatus(chat)
                     const renameSurfaceId = `shared-${chat.appChatId}`
+                    const sharedRowA11y = buildSidebarChatRowA11y({
+                      chatId: chat.appChatId,
+                      title: chat.title || 'Shared chat',
+                      provider: chat.provider,
+                      selected: selectedChatId === chat.appChatId,
+                      isRunning: isChatRunning,
+                      lastRunStatus,
+                      prefix: 'Shared'
+                    })
                     return (
                       <div
                         role="button"
@@ -4841,8 +4970,15 @@ export function Sidebar({
                         }`}
                         onClick={() => onSelectChat(chat)}
                         onKeyDown={(event) => handleChatRowKeyDown(event, chat)}
-                        title={chat.title || 'Shared chat'}
+                        aria-label={sharedRowA11y.ariaLabel}
+                        aria-current={sharedRowA11y.ariaCurrent}
+                        aria-describedby={sharedRowA11y.statusDescribedById}
                       >
+                        {sharedRowA11y.statusDescription && (
+                          <span id={sharedRowA11y.statusDescribedById} className="sr-only">
+                            {sharedRowA11y.statusDescription}
+                          </span>
+                        )}
                         <span className="sidebar-chat-copy" title={chat.title || 'Shared chat'}>
                           <span className="sidebar-chat-title-line">
                             {renderChatProviderBadge(chat)}
@@ -5088,13 +5224,15 @@ export function Sidebar({
             ref={boardCreatorWrapRef}
             className="sidebar-new-menu sidebar-board-creator-menu"
             role="dialog"
+            aria-modal="true"
             aria-label="New Workspace Board"
           >
             <form className="sidebar-board-creator-form" onSubmit={handleBoardCreatorSubmit}>
               <div className="sidebar-board-creator-title">New Workspace Board</div>
-              <label className="sidebar-board-creator-field">
+              <label className="sidebar-board-creator-field" htmlFor="sidebar-board-creator-workspace">
                 <span>Workspace</span>
                 <select
+                  id="sidebar-board-creator-workspace"
                   value={boardCreatorWorkspace?.id || boardCreatorWorkspaceId}
                   onChange={handleBoardCreatorWorkspaceChange}
                   disabled={workspaces.length === 0}
@@ -5106,9 +5244,10 @@ export function Sidebar({
                   ))}
                 </select>
               </label>
-              <label className="sidebar-board-creator-field">
+              <label className="sidebar-board-creator-field" htmlFor="sidebar-board-creator-name">
                 <span>Board name</span>
                 <input
+                  id="sidebar-board-creator-name"
                   type="text"
                   value={boardCreatorName}
                   onChange={(event) => setBoardCreatorName(event.target.value)}
