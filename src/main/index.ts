@@ -542,9 +542,6 @@ import {
   EnsembleParticipant,
   EnsembleWakeupRecord,
   RunEventKind,
-  WorkflowDefinition,
-  WorkspaceBoardCard,
-  WorkspaceBoardDefinition,
   TranscriptMediaRef,
   TranscriptMediaThumbnail
 } from './store/types'
@@ -608,8 +605,7 @@ import {
   buildUnattendedElevationAck,
   isUnattendedElevationAckCurrent,
   type UnattendedElevationAck,
-  type UnattendedElevationLevel,
-  type WorkflowForElevationAck
+  type UnattendedElevationLevel
 } from './UnattendedPostureGate'
 import {
   signUnattendedElevation,
@@ -867,6 +863,7 @@ import { registerAuditHandlers } from './ipc/auditHandlers'
 import { registerEnsembleRosterPresetsHandlers } from './ipc/ensembleRosterPresetsHandlers'
 import { registerAgenticWorkspaceGrantHandlers } from './ipc/agenticWorkspaceGrantHandlers'
 import { registerUsageRatesHandlers } from './ipc/usageRatesHandlers'
+import { registerScheduledWorkflowHandlers } from './ipc/scheduledWorkflowHandlers'
 import { getCachedRemoteEnsemblePresets } from './remote/EnsembleRosterPresetsCache'
 import { resolveGeminiCliResumePolicy } from './GeminiSessionPolicy'
 // 1.0.5-EW26 — Kimi compatibility filter (curated + user-
@@ -25701,194 +25698,63 @@ if (isGeminiMcpBridgeProcess) {
       registerRemoteModelUsageTrigger,
       registerRemoteFirstLaunchStateTrigger
     })
-    // Scheduled tasks
-    ipcMain.handle('get-scheduled-tasks', (_, workspaceId?: string) =>
-      AppStore.getScheduledTasks(workspaceId)
-    )
-	    ipcMain.handle(
-	      'save-scheduled-task',
-	      (
-	        _,
-	        task: Omit<ScheduledTask, 'id' | 'createdAt' | 'updatedAt' | 'status'> &
-          Partial<Pick<ScheduledTask, 'id' | 'createdAt' | 'updatedAt' | 'status'>>
-	      ) => {
-	        const saved = AppStore.saveScheduledTask(sanitizeScheduledTaskForSave(task))
-	        mainWindow?.webContents.send('scheduled-tasks-changed', AppStore.getScheduledTasks())
-	        mainWindow?.webContents.send('workflow-definitions-changed', AppStore.getWorkflowDefinitions())
-	        emitDueScheduledTasks()
-	        return saved
-	      }
-	    )
-    ipcMain.handle('update-scheduled-task', (_, id: string, partial: Partial<ScheduledTask>) => {
-      const sanitized = sanitizeScheduledTaskPatch(id, partial)
-	      if (!sanitized) return null
-	      const updated = AppStore.updateScheduledTask(id, sanitized)
-	      mainWindow?.webContents.send('scheduled-tasks-changed', AppStore.getScheduledTasks())
-	      mainWindow?.webContents.send('workflow-definitions-changed', AppStore.getWorkflowDefinitions())
-	      scheduleNextTaskTimer()
-	      return updated
-	    })
-	    ipcMain.handle('delete-scheduled-task', (_, id: string) => {
-	      AppStore.deleteScheduledTask(id)
-	      mainWindow?.webContents.send('scheduled-tasks-changed', AppStore.getScheduledTasks())
-	      mainWindow?.webContents.send('workflow-definitions-changed', AppStore.getWorkflowDefinitions())
-	      scheduleNextTaskTimer()
-	    })
+    registerScheduledWorkflowHandlers({
+      getScheduledTasks: (workspaceId) => AppStore.getScheduledTasks(workspaceId),
+      saveScheduledTask: (task) => AppStore.saveScheduledTask(task),
+      updateScheduledTask: (id, partial) => AppStore.updateScheduledTask(id, partial),
+      deleteScheduledTask: (id) => AppStore.deleteScheduledTask(id),
+      getWorkflowDefinitions: (workspaceId) => AppStore.getWorkflowDefinitions(workspaceId),
+      getWorkflowDefinition: (id) => AppStore.getWorkflowDefinition(id),
+      saveWorkflowDefinition: (workflow) => AppStore.saveWorkflowDefinition(workflow),
+      updateWorkflowDefinition: (id, partial) => AppStore.updateWorkflowDefinition(id, partial),
+      deleteWorkflowDefinition: (id) => AppStore.deleteWorkflowDefinition(id),
+      getWorkspaceBoards: (workspaceId) => AppStore.getWorkspaceBoards(workspaceId),
+      getWorkspaceBoardCards: (boardId) => AppStore.getWorkspaceBoardCards(boardId),
+      saveWorkspaceBoard: (board) => AppStore.saveWorkspaceBoard(board),
+      updateWorkspaceBoard: (id, partial) => AppStore.updateWorkspaceBoard(id, partial),
+      deleteWorkspaceBoard: (id) => AppStore.deleteWorkspaceBoard(id),
+      saveWorkspaceBoardCard: (card) => AppStore.saveWorkspaceBoardCard(card),
+      updateWorkspaceBoardCard: (id, partial) => AppStore.updateWorkspaceBoardCard(id, partial),
+      deleteWorkspaceBoardCard: (id) => AppStore.deleteWorkspaceBoardCard(id),
+      materializeWorkflowNow: (id) => AppStore.materializeWorkflowNow(id),
+      setWorkflowUnattendedElevation: (id, ack) => AppStore.setWorkflowUnattendedElevation(id, ack),
+      getWorkflowRunSummaries: (workflowId) => AppStore.getWorkflowRunSummaries(workflowId),
+      getWorkflowRunEventsFiltered: (filter) => AppStore.getWorkflowRunEventsFiltered(filter),
 
-	    // Workflows
-	    ipcMain.handle('get-workflow-definitions', (_, workspaceId?: string) =>
-	      AppStore.getWorkflowDefinitions(workspaceId)
-	    )
-	    ipcMain.handle(
-	      'save-workflow-definition',
-	      (
-	        _,
-	        workflow: Omit<
-	          WorkflowDefinition,
-	          'id' | 'createdAt' | 'updatedAt' | 'history' | 'failureStreak'
-	        > &
-	          Partial<
-	            Pick<WorkflowDefinition, 'id' | 'createdAt' | 'updatedAt' | 'history' | 'failureStreak'>
-	          >
-	      ) => {
-	        const saved = AppStore.saveWorkflowDefinition(sanitizeWorkflowForSave(workflow))
-	        mainWindow?.webContents.send('workflow-definitions-changed', AppStore.getWorkflowDefinitions())
-	        bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
-	        emitDueScheduledTasks()
-	        return saved
-	      }
-	    )
-	    ipcMain.handle('update-workflow-definition', (_, id: string, partial: Partial<WorkflowDefinition>) => {
-	      const sanitized = sanitizeWorkflowPatch(id, partial)
-	      if (!sanitized) return null
-	      const updated = AppStore.updateWorkflowDefinition(id, sanitized)
-	      mainWindow?.webContents.send('workflow-definitions-changed', AppStore.getWorkflowDefinitions())
-	      bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
-	      scheduleNextTaskTimer()
-	      return updated
-	    })
-	    ipcMain.handle('delete-workflow-definition', (_, id: string) => {
-	      AppStore.deleteWorkflowDefinition(id)
-	      mainWindow?.webContents.send('workflow-definitions-changed', AppStore.getWorkflowDefinitions())
-	      mainWindow?.webContents.send('scheduled-tasks-changed', AppStore.getScheduledTasks())
-	      bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
-	      scheduleNextTaskTimer()
-	    })
-	    ipcMain.handle('get-workspace-boards', (_, workspaceId?: string) =>
-	      AppStore.getWorkspaceBoards(workspaceId)
-	    )
-	    ipcMain.handle(
-	      'save-workspace-board',
-	      (
-	        _,
-	        board: Omit<WorkspaceBoardDefinition, 'id' | 'createdAt' | 'updatedAt' | 'activity'> &
-	          Partial<
-	            Pick<WorkspaceBoardDefinition, 'id' | 'createdAt' | 'updatedAt' | 'activity'>
-	          >
-	      ) => {
-	        const saved = AppStore.saveWorkspaceBoard(sanitizeWorkspaceBoardForSave(board))
-	        mainWindow?.webContents.send('workspace-boards-changed', {
-	          boards: AppStore.getWorkspaceBoards(),
-	          cards: AppStore.getWorkspaceBoardCards()
-	        })
-	        return saved
-	      }
-	    )
-	    ipcMain.handle('update-workspace-board', (_, id: string, partial: Partial<WorkspaceBoardDefinition>) => {
-	      const updated = AppStore.updateWorkspaceBoard(id, sanitizeWorkspaceBoardPatch(partial))
-	      mainWindow?.webContents.send('workspace-boards-changed', {
-	        boards: AppStore.getWorkspaceBoards(),
-	        cards: AppStore.getWorkspaceBoardCards()
-	      })
-	      return updated
-	    })
-	    ipcMain.handle('delete-workspace-board', (_, id: string) => {
-	      AppStore.deleteWorkspaceBoard(id)
-	      mainWindow?.webContents.send('workspace-boards-changed', {
-	        boards: AppStore.getWorkspaceBoards(),
-	        cards: AppStore.getWorkspaceBoardCards()
-	      })
-	    })
-	    ipcMain.handle('get-workspace-board-cards', (_, boardId?: string) =>
-	      AppStore.getWorkspaceBoardCards(boardId)
-	    )
-	    ipcMain.handle(
-	      'save-workspace-board-card',
-	      (
-	        _,
-	        card: Omit<WorkspaceBoardCard, 'id' | 'createdAt' | 'updatedAt' | 'activity'> &
-	          Partial<Pick<WorkspaceBoardCard, 'id' | 'createdAt' | 'updatedAt' | 'activity'>>
-	      ) => {
-	        const saved = AppStore.saveWorkspaceBoardCard(sanitizeWorkspaceBoardCardForSave(card))
-	        mainWindow?.webContents.send('workspace-boards-changed', {
-	          boards: AppStore.getWorkspaceBoards(),
-	          cards: AppStore.getWorkspaceBoardCards()
-	        })
-	        return saved
-	      }
-	    )
-	    ipcMain.handle('update-workspace-board-card', (_, id: string, partial: Partial<WorkspaceBoardCard>) => {
-	      const updated = AppStore.updateWorkspaceBoardCard(id, sanitizeWorkspaceBoardCardPatch(partial))
-	      mainWindow?.webContents.send('workspace-boards-changed', {
-	        boards: AppStore.getWorkspaceBoards(),
-	        cards: AppStore.getWorkspaceBoardCards()
-	      })
-	      return updated
-	    })
-	    ipcMain.handle('delete-workspace-board-card', (_, id: string) => {
-	      AppStore.deleteWorkspaceBoardCard(id)
-	      mainWindow?.webContents.send('workspace-boards-changed', {
-	        boards: AppStore.getWorkspaceBoards(),
-	        cards: AppStore.getWorkspaceBoardCards()
-	      })
-	    })
-	    ipcMain.handle('run-workflow-now', (_, id: string) => {
-	      const task = AppStore.materializeWorkflowNow(id)
-	      if (task) {
-	        mainWindow?.webContents.send('workflow-definitions-changed', AppStore.getWorkflowDefinitions())
-	        mainWindow?.webContents.send('scheduled-tasks-changed', AppStore.getScheduledTasks())
-	        mainWindow?.webContents.send('scheduled-task-due', task)
-	        bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
-	      }
-	      scheduleNextTaskTimer()
-	      return task
-	    })
-	    // P2 — mint (or revoke) an unattended-elevation ack for a workflow.
-	    // acknowledgedApprovalMode is SERVER-DERIVED from wf.template.approvalMode
-	    // (never renderer-supplied) and the ack is HMAC-signed here. level 'safe'
-	    // (or unknown) revokes (the builder returns undefined). The save/update
-	    // sanitizers strip a renderer-supplied ack, so this IPC is the ONLY mint path.
-	    ipcMain.handle('set-workflow-unattended-elevation', (_, id: string, level: string) => {
-	      const wf = AppStore.getWorkflowDefinition(requireNonEmptyString(id, 'Workflow id'))
-	      if (!wf) return null
-	      const ack = buildUnattendedElevationAck(
-	        wf as WorkflowForElevationAck,
-	        level,
-	        (tuple) =>
-	          signWorkflowUnattendedElevation(
-	            wf.id,
-	            wf.workspacePath,
-	            tuple.level,
-	            tuple.acknowledgedApprovalMode
-	          )
-	      )
-	      const updated = AppStore.setWorkflowUnattendedElevation(id, ack)
-	      mainWindow?.webContents.send('workflow-definitions-changed', AppStore.getWorkflowDefinitions())
-	      bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
-	      return updated
-	    })
+      emitDueScheduledTasks,
+      scheduleNextTaskTimer,
+      buildUnattendedElevationAck,
+      signWorkflowUnattendedElevation,
+      requireNonEmptyString,
+      sanitizeScheduledTaskForSave,
+      sanitizeScheduledTaskPatch,
+      sanitizeWorkflowForSave,
+      sanitizeWorkflowPatch,
+      sanitizeWorkspaceBoardForSave,
+      sanitizeWorkspaceBoardPatch,
+      sanitizeWorkspaceBoardCardForSave,
+      sanitizeWorkspaceBoardCardPatch,
+      broadcastScheduledTasksChanged: () => {
+        mainWindow?.webContents.send('scheduled-tasks-changed', AppStore.getScheduledTasks())
+      },
+      broadcastWorkflowDefinitionsChanged: () => {
+        mainWindow?.webContents.send('workflow-definitions-changed', AppStore.getWorkflowDefinitions())
+      },
+      broadcastScheduledTaskDue: (task) => {
+        mainWindow?.webContents.send('scheduled-task-due', task)
+      },
+      broadcastWorkspaceBoardsChanged: () => {
+        mainWindow?.webContents.send('workspace-boards-changed', {
+          boards: AppStore.getWorkspaceBoards(),
+          cards: AppStore.getWorkspaceBoardCards()
+        })
+      },
+      broadcastRemoteProjectionSnapshot: () => {
+        bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
+      }
+    })
 
-	    // Stage 1 slice 4 — read-only durable run-ledger queries (uncapped, unlike the
-	    // 50-cap WorkflowDefinition.history): per-workflow execution summaries +
-	    // per-execution event drill-in. No mutation / no broadcasts.
-	    ipcMain.handle('get-workflow-run-summaries', (_, workflowId?: string) =>
-	      AppStore.getWorkflowRunSummaries(typeof workflowId === 'string' ? workflowId : undefined)
-	    )
-	    ipcMain.handle('get-workflow-run-events', (_, filter: any = {}) =>
-	      AppStore.getWorkflowRunEventsFiltered(filter || {})
-	    )
-
-	    // Durable run queue. Renderer requests and observes; main owns persistence and leases.
+    // Durable run queue. Renderer requests and observes; main owns persistence and leases.
     ipcMain.handle('get-run-queue-jobs', (_, filter?: RunQueueJobFilter) =>
       runQueueService.getJobs(filter)
     )
