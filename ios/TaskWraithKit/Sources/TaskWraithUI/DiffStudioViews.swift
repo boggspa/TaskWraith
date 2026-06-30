@@ -388,6 +388,7 @@ private struct DiffFileRow: View {
             }
             HStack(spacing: 6) {
                 DiffKindChip(kind: file.kind)
+                DiffStageChip(file: file)
                 Text(file.path)
                     .font(.caption2.monospaced())
                     .foregroundStyle(TWTheme.textMuted)
@@ -426,6 +427,37 @@ struct DiffKindChip: View {
             .padding(.vertical, 2)
             .background(color.opacity(0.14), in: Capsule())
             .foregroundStyle(color)
+    }
+}
+
+/// Staged / Unstaged capsule — mirrors the desktop Diff Studio rail grouping.
+struct DiffStageChip: View {
+    let file: WorkspaceDiffFile
+
+    static func label(for file: WorkspaceDiffFile) -> String? {
+        if file.staged == true && file.unstaged == true { return "Mixed" }
+        if file.staged == true { return "Staged" }
+        if file.unstaged == true { return "Unstaged" }
+        return nil
+    }
+
+    private var label: String? { Self.label(for: file) }
+
+    private var color: Color {
+        if file.staged == true && file.unstaged == true { return TWTheme.statusAttention }
+        if file.staged == true { return TWTheme.statusSuccess }
+        return TWTheme.textMuted
+    }
+
+    var body: some View {
+        if let label {
+            Text(label)
+                .font(.caption2.weight(.semibold))
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(color.opacity(0.12), in: Capsule())
+                .foregroundStyle(color)
+        }
     }
 }
 

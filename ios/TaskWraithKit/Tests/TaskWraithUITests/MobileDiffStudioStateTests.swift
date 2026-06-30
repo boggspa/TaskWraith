@@ -98,6 +98,14 @@ struct MobileDiffStudioStateTests {
         state.selectedPath = "docs/Old.md"
         #expect(state.selectedFileCanStage == true)
         #expect(state.selectedFileCanUnstage == true)
+
+        let labels = Dictionary(uniqueKeysWithValues: state.files.compactMap { file in
+            DiffStageChip.label(for: file).map { (file.path, $0) }
+        })
+        #expect(labels["src/App.swift"] == "Unstaged")
+        #expect(labels["src/ui/Button.swift"] == "Staged")
+        #expect(labels["docs/Old.md"] == "Mixed")
+        #expect(labels["Assets/Icon.png"] == nil)
     }
 
     @MainActor
