@@ -19,8 +19,10 @@ export function resolveActiveGoalMode(
     codexNativeAvailable?: boolean
     claudeNativeAvailable?: boolean
     grokNativeAvailable?: boolean
+    allowProviderNative?: boolean
   } = {}
 ): ActiveGoalMode {
+  if (options.allowProviderNative === false) return 'taskwraith_steered'
   if (provider === 'codex' && options.codexNativeAvailable) return 'codex_native'
   if (provider === 'claude' && options.claudeNativeAvailable) return 'claude_native'
   if (provider === 'grok' && options.grokNativeAvailable) return 'grok_native'
@@ -35,6 +37,7 @@ export function resolveActiveGoalForProvider(
     codexNativeAvailable?: boolean
     claudeNativeAvailable?: boolean
     grokNativeAvailable?: boolean
+    allowProviderNative?: boolean
   } = {}
 ): ActiveGoal | null {
   if (!goal) return null
@@ -67,6 +70,7 @@ export function createActiveGoal(
     codexNativeAvailable?: boolean
     claudeNativeAvailable?: boolean
     grokNativeAvailable?: boolean
+    allowProviderNative?: boolean
   } = {}
 ): ActiveGoal {
   const now = options.now || new Date()
@@ -82,7 +86,8 @@ export function createActiveGoal(
     mode: resolveActiveGoalMode(provider, {
       codexNativeAvailable: options.codexNativeAvailable,
       claudeNativeAvailable: options.claudeNativeAvailable,
-      grokNativeAvailable: options.grokNativeAvailable
+      grokNativeAvailable: options.grokNativeAvailable,
+      allowProviderNative: options.allowProviderNative
     }),
     provider,
     createdAt: timestamp,
@@ -92,6 +97,12 @@ export function createActiveGoal(
 
 export function isUnfinishedActiveGoal(goal: ActiveGoal | null | undefined): boolean {
   return Boolean(goal && goal.status !== 'completed')
+}
+
+export function resolveActiveGoalForEnsemble(goal: ActiveGoal | null | undefined): ActiveGoal | null {
+  if (!goal) return null
+  if (goal.mode === 'taskwraith_steered') return goal
+  return { ...goal, mode: 'taskwraith_steered' }
 }
 
 export function shouldInjectActiveGoal(goal: ActiveGoal | null | undefined): goal is ActiveGoal {

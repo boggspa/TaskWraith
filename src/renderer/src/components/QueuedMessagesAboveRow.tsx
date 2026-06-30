@@ -52,6 +52,7 @@ export interface QueuedMessageRowEntry {
    * parent's action handlers. Backed by `appRunId` on the request. */
   id: string
   provider: ProviderId
+  providerDisplayLabel?: string
   /** What the user typed (or the display variant if the prompt was
    * collapsed for readability). Truncated below for display. */
   prompt: string
@@ -79,11 +80,15 @@ function truncatePrompt(prompt: string): string {
   return `${trimmed.slice(0, PROMPT_PREVIEW_LIMIT)}…`
 }
 
+export function queuedMessageEntryProviderLabel(entry: QueuedMessageRowEntry): string {
+  return entry.providerDisplayLabel?.trim() || getProviderName(entry.provider)
+}
+
 function getPositionedRowLabel(entry: QueuedMessageRowEntry, position: number, total: number): string {
   const prompt = truncatePrompt(entry.prompt)
   const positionLabel = `${position} of ${total}`
   const scheduleLabel = entry.scheduledRunAt ? ` scheduled for ${entry.scheduledRunAt}` : ''
-  return `Queued message ${positionLabel} from ${getProviderName(entry.provider)}${scheduleLabel}: ${prompt}`
+  return `Queued message ${positionLabel} from ${queuedMessageEntryProviderLabel(entry)}${scheduleLabel}: ${prompt}`
 }
 
 function resolveDmRoleLabel(
@@ -247,7 +252,7 @@ function QueuedMessageRow({
   nowMs
 }: QueuedMessageRowProps): React.JSX.Element {
   const rowLabel = getPositionedRowLabel(entry, position, total)
-  const providerLabel = getProviderName(entry.provider)
+  const providerLabel = queuedMessageEntryProviderLabel(entry)
   const moveUpPosition = Math.max(position - 1, 1)
   const moveDownPosition = Math.min(position + 1, total)
   const scheduleCountdown = entry.scheduledRunAt

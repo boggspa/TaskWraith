@@ -44,7 +44,11 @@ import { formatBlackboardForPrompt, selectBlackboardForRound } from './blackboar
 // future-round transcript context (Codex reasoning is retained).
 import { stripReasoningChains } from './EnsembleThinkingEphemerality'
 import { isHumanCollaboratorComment } from './collaboration/HumanCollaboratorMessages'
-import { formatActiveGoalPromptBlock, shouldInjectActiveGoal } from './GoalState'
+import {
+  formatActiveGoalPromptBlock,
+  resolveActiveGoalForEnsemble,
+  shouldInjectActiveGoal
+} from './GoalState'
 
 // 1.0.4-AR2 — mirror of the renderer ceiling
 // (`EnsembleParticipantsAboveRow.MAX_ENSEMBLE_PARTICIPANTS`). Keep
@@ -559,8 +563,9 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
   const hasWorkspaceStanza = workspaceStanza !== null
   const sessionEventsStanza = formatSessionEventsStanza(input.config)
   const workSessionStanza = formatWorkSessionStanza(input.config, orderedParticipants)
-  const activeGoalStanza = shouldInjectActiveGoal(input.chat.activeGoal)
-    ? formatActiveGoalPromptBlock(input.chat.activeGoal)
+  const activeGoal = resolveActiveGoalForEnsemble(input.chat.activeGoal)
+  const activeGoalStanza = shouldInjectActiveGoal(activeGoal)
+    ? formatActiveGoalPromptBlock(activeGoal)
     : ''
   const roleBoundaryLines = formatRoleBoundaryContract(
     input.config,

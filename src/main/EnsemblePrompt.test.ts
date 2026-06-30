@@ -393,6 +393,33 @@ describe('Ensemble prompt composition', () => {
     expect(prompt).toContain('Do not replace, clear, or silently reinterpret the objective')
   })
 
+  it('treats provider-native stored goals as TaskWraith-steered inside ensemble prompts', () => {
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: {
+        ...chat(),
+        provider: 'grok',
+        activeGoal: {
+          id: 'goal-1',
+          objective: 'Keep the ensemble participants aligned.',
+          status: 'active',
+          mode: 'grok_native',
+          provider: 'grok',
+          createdAt: '2026-06-28T00:00:00.000Z',
+          updatedAt: '2026-06-28T00:00:00.000Z'
+        }
+      },
+      config: ensemble,
+      participant: ensemble.participants[0],
+      currentPrompt: 'Continue.',
+      roundId: 'round-1'
+    })
+
+    expect(prompt).toContain('<taskwraith_active_goal>')
+    expect(prompt).toContain('Provider mode: Guided by TaskWraith')
+    expect(prompt).toContain('Keep the ensemble participants aligned.')
+    expect(prompt).not.toContain('Native Grok goal')
+  })
+
   it('can label peer fan-out lane prompts as lower-authority input', () => {
     const prompt = buildEnsembleParticipantPrompt({
       chat: chat(),

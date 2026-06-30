@@ -699,6 +699,7 @@ type SideChatTypePickerOption = {
   id: string
   label: string
   description: string
+  mode?: SideChatCreateMode
   chatId?: string
   agentIdentity?: ReturnType<typeof assignAgentIdentityFromSeed>
 }
@@ -13709,10 +13710,16 @@ function App(): React.JSX.Element {
   // textarea ref + App `prompt`/`setPrompt`.
 
   const currentActiveGoal = currentChat?.activeGoal || null
+  const currentGoalAllowProviderNative = currentChat?.chatKind !== 'ensemble'
   const currentGoalModeOptions = {
-    codexNativeAvailable: Boolean(currentChat?.providerMetadata?.codexGoalNativeAvailable),
-    claudeNativeAvailable: Boolean(currentChat?.providerMetadata?.claudeGoalNativeAvailable),
-    grokNativeAvailable: currentProvider === 'grok'
+    codexNativeAvailable:
+      currentGoalAllowProviderNative &&
+      Boolean(currentChat?.providerMetadata?.codexGoalNativeAvailable),
+    claudeNativeAvailable:
+      currentGoalAllowProviderNative &&
+      Boolean(currentChat?.providerMetadata?.claudeGoalNativeAvailable),
+    grokNativeAvailable: currentGoalAllowProviderNative && currentProvider === 'grok',
+    allowProviderNative: currentGoalAllowProviderNative
   }
   const currentResolvedGoal = resolveActiveGoalForProvider(
     currentActiveGoal,
@@ -13771,9 +13778,14 @@ function App(): React.JSX.Element {
     }
     const now = new Date()
     const mode = resolveActiveGoalMode(currentProvider, {
-      codexNativeAvailable: Boolean(currentChat?.providerMetadata?.codexGoalNativeAvailable),
-      claudeNativeAvailable: Boolean(currentChat?.providerMetadata?.claudeGoalNativeAvailable),
-      grokNativeAvailable: currentProvider === 'grok'
+      codexNativeAvailable:
+        currentGoalAllowProviderNative &&
+        Boolean(currentChat?.providerMetadata?.codexGoalNativeAvailable),
+      claudeNativeAvailable:
+        currentGoalAllowProviderNative &&
+        Boolean(currentChat?.providerMetadata?.claudeGoalNativeAvailable),
+      grokNativeAvailable: currentGoalAllowProviderNative && currentProvider === 'grok',
+      allowProviderNative: currentGoalAllowProviderNative
     })
     const goal: ActiveGoal = existingGoal
       ? {
@@ -13786,9 +13798,14 @@ function App(): React.JSX.Element {
         }
         : createActiveGoal(currentProvider, objective, {
           now,
-          codexNativeAvailable: Boolean(currentChat?.providerMetadata?.codexGoalNativeAvailable),
-          claudeNativeAvailable: Boolean(currentChat?.providerMetadata?.claudeGoalNativeAvailable),
-          grokNativeAvailable: currentProvider === 'grok'
+          codexNativeAvailable:
+            currentGoalAllowProviderNative &&
+            Boolean(currentChat?.providerMetadata?.codexGoalNativeAvailable),
+          claudeNativeAvailable:
+            currentGoalAllowProviderNative &&
+            Boolean(currentChat?.providerMetadata?.claudeGoalNativeAvailable),
+          grokNativeAvailable: currentGoalAllowProviderNative && currentProvider === 'grok',
+          allowProviderNative: currentGoalAllowProviderNative
         })
     if (existingGoal?.status === 'completed') {
       delete goal.completedAt
@@ -15911,7 +15928,8 @@ function App(): React.JSX.Element {
     ? getSteerIndicatorMessage({
         state: steerState,
         chatId: currentChat.appChatId,
-        providerLabel: getProviderLabel(currentProvider)
+        providerLabel: getProviderLabel(currentProvider),
+        turnLabel: isCurrentEnsembleChat ? 'ensemble round' : undefined
       })
     : null
   const isSteerBusyForCurrentChat = isSteerInFlight({
@@ -16340,6 +16358,10 @@ function App(): React.JSX.Element {
   const sideComposerHasMention = Boolean(
     sideChat && hasResolvedMention(sidePrompt, sideChat.ensemble?.participants || [])
   )
+  const handleSideChatChange = (updatedChat: ChatRecord): void => {
+    if (updatedChat.parentChatRelation !== 'sideChat') return
+    updateChatById(updatedChat.appChatId, () => updatedChat)
+  }
   const rememberSideChatComposerSelection = (patch: Record<string, unknown>) => {
     if (!sideChat || isSideEnsembleComposerLocked) return
     updateChatById(sideChat.appChatId, (source) => ({
@@ -16937,11 +16959,20 @@ function App(): React.JSX.Element {
     sidePanelParentChat || (currentChat && !currentChatIsLinkedChild ? currentChat : null)
   const sideChatTypePickerOptions = useMemo<SideChatTypePickerOption[]>(() => {
     if (!sideChatTypePickerParentChat) return []
+    const defaultSideChatMode: SideChatCreateMode =
+      sideChatTypePickerParentChat.chatKind === 'ensemble' ? 'ensembleClone' : 'singleProvider'
     const options: SideChatTypePickerOption[] = [
       {
         id: 'isolated-side-chat',
-        label: 'Side Chat',
-        description: 'Current main agent side chat (isolated)'
+        label:
+          defaultSideChatMode === 'ensembleClone'
+            ? 'Side Ensemble'
+            : 'Side Chat',
+        description:
+          defaultSideChatMode === 'ensembleClone'
+            ? "Clone this ensemble's participants into an isolated side chat"
+            : 'Current main agent side chat (isolated)',
+        mode: defaultSideChatMode
       }
     ]
     const guestChatId =
@@ -17007,7 +17038,9 @@ function App(): React.JSX.Element {
       handleOpenLinkedChatInSidePanelById(option.chatId)
       return
     }
-    void openCurrentSideChatPresentation('split', 'singleProvider')
+    const fallbackMode: SideChatCreateMode =
+      sideChatTypePickerParentChat?.chatKind === 'ensemble' ? 'ensembleClone' : 'singleProvider'
+    void openCurrentSideChatPresentation('split', option.mode || fallbackMode)
   }
   const guestComposerProvider = currentGuestParticipant?.provider || currentProvider
   const guestComposerModelOptionsRaw = getProviderModelOptions(guestComposerProvider)
@@ -17411,6 +17444,7 @@ function App(): React.JSX.Element {
           entries.push({
             id: `ensemble-queued-${ensembleRound.roundId}-${idx}`,
             provider: ensembleProvider,
+            providerDisplayLabel: 'Ensemble',
             prompt: prompts[idx]
           })
         }
@@ -22909,6 +22943,7 @@ function App(): React.JSX.Element {
     handleSetWorkflowUnattended,
     handleSettingsChange,
     handleSideCancel,
+    handleSideChatChange,
     handleSideModelChange,
     handleSideProviderChange,
     handleSideReasoningChange,
@@ -22954,7 +22989,6 @@ function App(): React.JSX.Element {
     isSideChatProviderLocked,
     isSideChatRunning,
     isSideComposerLocked,
-    isSideEnsembleComposerLocked,
     isSideSplitOpen,
     isTerminalDockAvailable,
     isThinking,

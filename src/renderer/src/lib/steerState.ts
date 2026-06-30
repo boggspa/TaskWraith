@@ -225,6 +225,7 @@ export interface SteerIndicatorViewInput {
   state: SteerState
   chatId: string | null | undefined
   providerLabel: string
+  turnLabel?: string
 }
 
 /**
@@ -239,11 +240,12 @@ export function getSteerIndicatorMessage(input: SteerIndicatorViewInput): string
   const { state } = input
   if (state.phase === 'idle') return null
   if (state.chatId !== input.chatId) return null
+  const turnLabel = input.turnLabel || `${input.providerLabel} turn`
   if (state.phase === 'cancelling') {
-    return state.message || `Steering — interrupting current ${input.providerLabel} turn…`
+    return state.message || `Steering — interrupting current ${turnLabel}…`
   }
   if (state.phase === 'dispatching') {
-    return state.message || `Steering — dispatching new ${input.providerLabel} turn…`
+    return state.message || `Steering — dispatching new ${turnLabel}…`
   }
   // `failed` is shown via a raw-log/system-note path in the chat
   // transcript, not the composer indicator, so suppress it here.

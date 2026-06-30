@@ -327,6 +327,7 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   handleSetWorkflowUnattended: MainAppLayoutSidebarProps['handleSetWorkflowUnattended']
   handleSettingsChange: MainAppLayoutSidebarProps['handleSettingsChange']
   handleSideCancel: any
+  handleSideChatChange: any
   handleSideModelChange: any
   handleSideProviderChange: any
   handleSideReasoningChange: any
@@ -372,7 +373,6 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   isSideChatProviderLocked: any
   isSideChatRunning: any
   isSideComposerLocked: any
-  isSideEnsembleComposerLocked: any
   isSideSplitOpen: any
   isTerminalDockAvailable: any
   isThinking: any

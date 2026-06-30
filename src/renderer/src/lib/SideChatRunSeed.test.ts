@@ -128,6 +128,19 @@ describe('side-chat context seed helpers', () => {
     expect(
       formatSideChatParentContextMessage(
         {
+          id: 'm2-ensemble',
+          role: 'assistant',
+          content: 'I found the issue from the review seat.',
+          timestamp: '2026-06-27T12:01:30.000Z',
+          metadata: { ensembleProvider: 'claude', ensembleRole: 'Reviewer' }
+        },
+        'grok'
+      )
+    ).toBe('Claude / Reviewer: I found the issue from the review seat.')
+
+    expect(
+      formatSideChatParentContextMessage(
+        {
           id: 'm3',
           role: 'system',
           content: 'Child result',
@@ -195,6 +208,27 @@ describe('side-chat context seed helpers', () => {
     expect(seed).toContain('User: What changed in the renderer?')
     expect(seed).toContain('Codex parent agent: The scroll hook moved.')
     expect(seed).not.toContain('plain tool output')
+  })
+
+  it('preserves ensemble participant identity in isolated side-chat context snapshots', () => {
+    const seed = buildIsolatedSideChatContextSeed(
+      makeChat({
+        chatKind: 'ensemble',
+        provider: 'grok',
+        messages: [
+          {
+            id: 'assistant',
+            role: 'assistant',
+            content: 'The planner found a smaller patch.',
+            timestamp: '2026-06-27T12:02:00.000Z',
+            metadata: { ensembleProvider: 'codex', ensembleRole: 'Planner' }
+          }
+        ]
+      })
+    )
+
+    expect(seed).toContain('Codex / Planner: The planner found a smaller patch.')
+    expect(seed).not.toContain('Grok parent agent')
   })
 
   it('returns an empty seed when no context messages are eligible', () => {

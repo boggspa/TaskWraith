@@ -6,6 +6,31 @@ const SIDE_CHAT_PARENT_CONTEXT_TURN_LIMIT = 8
 const SIDE_CHAT_PARENT_CONTEXT_CHAR_LIMIT = 5000
 const SIDE_CHAT_PARENT_CONTEXT_MESSAGE_CHAR_LIMIT = 700
 
+function metadataProvider(value: unknown): ProviderId | null {
+  if (
+    value === 'gemini' ||
+    value === 'codex' ||
+    value === 'claude' ||
+    value === 'kimi' ||
+    value === 'grok' ||
+    value === 'cursor' ||
+    value === 'ollama'
+  ) {
+    return value
+  }
+  return null
+}
+
+function ensembleSpeakerLabel(message: ChatMessage): string | null {
+  const provider = metadataProvider(message.metadata?.ensembleProvider)
+  if (!provider) return null
+  const role =
+    typeof message.metadata?.ensembleRole === 'string' && message.metadata.ensembleRole.trim()
+      ? message.metadata.ensembleRole.trim()
+      : null
+  return role ? `${getProviderLabel(provider)} / ${role}` : getProviderLabel(provider)
+}
+
 export function buildHiddenSideChatInitialPrompt(contextPrompt: string, userPrompt: string): string {
   const context = contextPrompt.trim()
   const request = userPrompt.trim()
@@ -41,7 +66,8 @@ export function formatSideChatParentContextMessage(
     return `User: ${truncateSideChatContextText(content, SIDE_CHAT_PARENT_CONTEXT_MESSAGE_CHAR_LIMIT)}`
   }
   if (message.role === 'assistant') {
-    return `${getProviderLabel(parentProvider)} parent agent: ${truncateSideChatContextText(
+    const speaker = ensembleSpeakerLabel(message) || `${getProviderLabel(parentProvider)} parent agent`
+    return `${speaker}: ${truncateSideChatContextText(
       content,
       SIDE_CHAT_PARENT_CONTEXT_MESSAGE_CHAR_LIMIT
     )}`

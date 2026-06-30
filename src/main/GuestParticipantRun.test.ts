@@ -44,6 +44,17 @@ describe('formatGuestParentContextMessage', () => {
     expect(
       formatGuestParentContextMessage(msg({ role: 'assistant', content: 'yo' }), 'claude', label)
     ).toBe('Claude parent agent: yo')
+    expect(
+      formatGuestParentContextMessage(
+        msg({
+          role: 'assistant',
+          content: 'ensemble answer',
+          metadata: { ensembleProvider: 'codex', ensembleRole: 'Planner' }
+        }),
+        'claude',
+        label
+      )
+    ).toBe('Codex / Planner: ensemble answer')
     expect(formatGuestParentContextMessage(msg({ role: 'user', content: '   ' }), 'claude', label)).toBeNull()
   })
   it('skips prior guest replies so the guest never re-reads its own output', () => {
@@ -75,6 +86,24 @@ describe('buildGuestParentTranscriptContext', () => {
     expect(out).toContain('Parent transcript context')
     expect(out).toContain('User: do X')
     expect(out).toContain('Claude parent agent: host did X')
+  })
+  it('preserves ensemble participant identity instead of the seed provider', () => {
+    const out = buildGuestParentTranscriptContext(
+      chat(
+        [
+          msg({
+            role: 'assistant',
+            content: 'planner summary',
+            metadata: { ensembleProvider: 'codex', ensembleRole: 'Planner' }
+          })
+        ],
+        'grok'
+      ),
+      label
+    )
+
+    expect(out).toContain('Codex / Planner: planner summary')
+    expect(out).not.toContain('grok parent agent')
   })
   it('keeps only the last 20 turns', () => {
     const many = Array.from({ length: 30 }, (_, i) => msg({ role: 'user', content: `turn ${i}` }))

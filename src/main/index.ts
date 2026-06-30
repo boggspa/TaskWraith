@@ -20899,6 +20899,7 @@ if (isGeminiMcpBridgeProcess) {
             const objective = normalizeActiveGoalObjective(action.objective)
             if (!objective) return { ok: false, reason: 'Goal objective is required' }
             const provider = assertProviderId(chat.provider ?? 'gemini')
+            const allowProviderNativeGoal = chat.chatKind !== 'ensemble'
             const now = new Date()
             if (activeGoal) {
               activeGoal = {
@@ -20907,19 +20908,27 @@ if (isGeminiMcpBridgeProcess) {
                 provider,
                 mode: resolveActiveGoalMode(provider, {
                   codexNativeAvailable: Boolean(
-                    chat.providerMetadata?.codexGoalNativeAvailable
+                    allowProviderNativeGoal && chat.providerMetadata?.codexGoalNativeAvailable
                   ),
-                  claudeNativeAvailable: Boolean(chat.providerMetadata?.claudeGoalNativeAvailable),
-                  grokNativeAvailable: provider === 'grok'
+                  claudeNativeAvailable: Boolean(
+                    allowProviderNativeGoal && chat.providerMetadata?.claudeGoalNativeAvailable
+                  ),
+                  grokNativeAvailable: allowProviderNativeGoal && provider === 'grok',
+                  allowProviderNative: allowProviderNativeGoal
                 }),
                 updatedAt: now.toISOString()
               }
             } else {
               activeGoal = createActiveGoal(provider, objective, {
                 now,
-                codexNativeAvailable: Boolean(chat.providerMetadata?.codexGoalNativeAvailable),
-                claudeNativeAvailable: Boolean(chat.providerMetadata?.claudeGoalNativeAvailable),
-                grokNativeAvailable: provider === 'grok'
+                codexNativeAvailable: Boolean(
+                  allowProviderNativeGoal && chat.providerMetadata?.codexGoalNativeAvailable
+                ),
+                claudeNativeAvailable: Boolean(
+                  allowProviderNativeGoal && chat.providerMetadata?.claudeGoalNativeAvailable
+                ),
+                grokNativeAvailable: allowProviderNativeGoal && provider === 'grok',
+                allowProviderNative: allowProviderNativeGoal
               })
             }
           } else {

@@ -43,6 +43,16 @@ describe('guestParticipantContext', () => {
     expect(
       formatGuestParentContextMessage(
         msg({
+          role: 'assistant',
+          content: 'ensemble answer',
+          metadata: { ensembleProvider: 'codex', ensembleRole: 'Planner' }
+        }),
+        'grok'
+      )
+    ).toBe('Codex / Planner: ensemble answer')
+    expect(
+      formatGuestParentContextMessage(
+        msg({
           role: 'system',
           content: 'earlier guest reply',
           metadata: { kind: 'guestParticipantReply' }
@@ -66,6 +76,21 @@ describe('guestParticipantContext', () => {
     expect(out).toContain('Parent transcript context')
     expect(out).toContain('User: do X')
     expect(out).toContain('parent agent: host did X')
+
+    const ensembleOut = buildGuestParentTranscriptContext(
+      chat(
+        [
+          msg({
+            role: 'assistant',
+            content: 'planner summary',
+            metadata: { ensembleProvider: 'codex', ensembleRole: 'Planner' }
+          })
+        ],
+        'grok'
+      )
+    )
+    expect(ensembleOut).toContain('Codex / Planner: planner summary')
+    expect(ensembleOut).not.toContain('Grok parent agent')
 
     const many = Array.from({ length: 30 }, (_, i) => msg({ role: 'user', content: `turn ${i}` }))
     const capped = buildGuestParentTranscriptContext(chat(many))

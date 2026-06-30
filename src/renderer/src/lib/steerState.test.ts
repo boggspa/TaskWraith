@@ -301,6 +301,17 @@ describe('steerState', () => {
       ).toBe('Steering — dispatching new Codex turn…')
     })
 
+    it('can describe ensemble steering without leaking the seed provider', () => {
+      expect(
+        getSteerIndicatorMessage({
+          state: beginSteer({ chatId: 'chat-A', now: 0 }),
+          chatId: 'chat-A',
+          providerLabel: 'Grok',
+          turnLabel: 'ensemble round'
+        })
+      ).toBe('Steering — interrupting current ensemble round…')
+    })
+
     it('suppresses the indicator when the chat id does not match', () => {
       expect(
         getSteerIndicatorMessage({

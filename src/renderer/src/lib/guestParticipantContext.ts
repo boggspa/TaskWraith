@@ -9,6 +9,31 @@ const GUEST_PARENT_CONTEXT_TURN_LIMIT = 20
 const GUEST_PARENT_CONTEXT_CHAR_LIMIT = 12000
 const GUEST_PARENT_CONTEXT_MESSAGE_CHAR_LIMIT = 1800
 
+function metadataProvider(value: unknown): ProviderId | null {
+  if (
+    value === 'gemini' ||
+    value === 'codex' ||
+    value === 'claude' ||
+    value === 'kimi' ||
+    value === 'grok' ||
+    value === 'cursor' ||
+    value === 'ollama'
+  ) {
+    return value
+  }
+  return null
+}
+
+function ensembleSpeakerLabel(message: ChatMessage): string | null {
+  const provider = metadataProvider(message.metadata?.ensembleProvider)
+  if (!provider) return null
+  const role =
+    typeof message.metadata?.ensembleRole === 'string' && message.metadata.ensembleRole.trim()
+      ? message.metadata.ensembleRole.trim()
+      : null
+  return role ? `${getProviderLabel(provider)} / ${role}` : getProviderLabel(provider)
+}
+
 export function truncateGuestContextText(value: string, maxChars: number): string {
   if (value.length <= maxChars) return value
   return `${value.slice(0, Math.max(0, maxChars - 1))}…`
@@ -25,7 +50,8 @@ export function formatGuestParentContextMessage(
     return `User: ${truncateGuestContextText(content, GUEST_PARENT_CONTEXT_MESSAGE_CHAR_LIMIT)}`
   }
   if (message.role === 'assistant') {
-    return `${getProviderLabel(parentProvider)} parent agent: ${truncateGuestContextText(
+    const speaker = ensembleSpeakerLabel(message) || `${getProviderLabel(parentProvider)} parent agent`
+    return `${speaker}: ${truncateGuestContextText(
       content,
       GUEST_PARENT_CONTEXT_MESSAGE_CHAR_LIMIT
     )}`

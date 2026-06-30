@@ -5,6 +5,7 @@ import {
   formatActiveGoalPromptBlock,
   MAX_ACTIVE_GOAL_OBJECTIVE_CHARS,
   normalizeActiveGoalObjective,
+  resolveActiveGoalForEnsemble,
   resolveActiveGoalForProvider,
   resolveActiveGoalMode,
   shouldInjectActiveGoal,
@@ -41,6 +42,24 @@ describe('GoalState', () => {
     expect(resolveActiveGoalMode('claude', { claudeNativeAvailable: true })).toBe('claude_native')
     expect(resolveActiveGoalMode('grok')).toBe('taskwraith_steered')
     expect(resolveActiveGoalMode('grok', { grokNativeAvailable: true })).toBe('grok_native')
+  })
+
+  it('can disable provider-native modes for ensemble-owned goals', () => {
+    expect(
+      resolveActiveGoalMode('grok', {
+        grokNativeAvailable: true,
+        allowProviderNative: false
+      })
+    ).toBe('taskwraith_steered')
+    expect(
+      resolveActiveGoalMode('codex', {
+        codexNativeAvailable: true,
+        allowProviderNative: false
+      })
+    ).toBe('taskwraith_steered')
+    expect(resolveActiveGoalMode('ollama', { allowProviderNative: false })).toBe(
+      'taskwraith_steered'
+    )
   })
 
   it('resolves stored goals against the provider handling the next turn', () => {
@@ -102,6 +121,20 @@ describe('GoalState', () => {
     expect(shouldInjectActiveGoal(updateActiveGoalLifecycle(goal, 'blocked', 'Need input'))).toBe(
       false
     )
+  })
+
+  it('normalizes provider-native goals when an ensemble owns the prompt', () => {
+    const nativeGoal = createActiveGoal('grok', 'Keep the ensemble objective visible', {
+      now: new Date('2026-06-22T12:00:00Z'),
+      grokNativeAvailable: true
+    })
+
+    const ensembleGoal = resolveActiveGoalForEnsemble(nativeGoal)
+
+    expect(nativeGoal.mode).toBe('grok_native')
+    expect(ensembleGoal?.provider).toBe('grok')
+    expect(ensembleGoal?.mode).toBe('taskwraith_steered')
+    expect(shouldInjectActiveGoal(ensembleGoal)).toBe(true)
   })
 
   it('formats steering rules for provider prompts', () => {

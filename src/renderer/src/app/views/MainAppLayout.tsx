@@ -58,6 +58,7 @@ import { CombinedModelPicker } from '../../components/CombinedModelPicker'
 import { CombinedPermissionsPicker } from '../../components/CombinedPermissionsPicker'
 import { ComposerProviderPicker } from '../../components/ComposerProviderPicker'
 import { ComposerTextareaContextMenu } from '../../components/ComposerTextareaContextMenu'
+import { EnsembleParticipantsAboveRow } from '../../components/EnsembleParticipantsAboveRow'
 import type { RawLogEntry } from '../../lib/rawLogEntry'
 import { launchPreviewActionTitle } from '../../lib/launchPreviewTargets'
 import { EMPTY_AGENT_QUESTION_QUEUE } from '../../lib/agentQuestionQueue'
@@ -281,6 +282,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   handleSettingsChange,
   handleSideCancel,
   handleSideModelChange,
+  handleSideChatChange,
   handleSideProviderChange,
   handleSideReasoningChange,
   handleSideRun,
@@ -325,7 +327,6 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   isSideChatProviderLocked,
   isSideChatRunning,
   isSideComposerLocked,
-  isSideEnsembleComposerLocked,
   isSideSplitOpen,
   isTerminalDockAvailable,
   isWelcomeChat,
@@ -2181,16 +2182,29 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                 handleSideRun()
               }}
             >
-              {sideQueuedMessagesAboveRowEntries.length > 0 && (
+              {(sideQueuedMessagesAboveRowEntries.length > 0 || sideChat.chatKind === 'ensemble') && (
                 <div className="composer-above-bar-stack side-chat-above-bar-stack">
-                  <QueuedMessagesAboveRow
-                    chat={sideChat}
-                    entries={sideQueuedMessagesAboveRowEntries}
-                    onEdit={(entryId) => handleEditQueuedMessage(entryId, sideChat)}
-                    onDelete={(entryId) => handleDeleteQueuedMessage(entryId, sideChat)}
-                    onSteer={(entryId) => handleSteerToQueuedMessage(entryId, sideChat)}
-                    onReorder={handleReorderQueuedMessages}
-                  />
+                  {sideQueuedMessagesAboveRowEntries.length > 0 && (
+                    <QueuedMessagesAboveRow
+                      chat={sideChat}
+                      entries={sideQueuedMessagesAboveRowEntries}
+                      onEdit={(entryId) => handleEditQueuedMessage(entryId, sideChat)}
+                      onDelete={(entryId) => handleDeleteQueuedMessage(entryId, sideChat)}
+                      onSteer={(entryId) => handleSteerToQueuedMessage(entryId, sideChat)}
+                      onReorder={handleReorderQueuedMessages}
+                    />
+                  )}
+                  {sideChat.chatKind === 'ensemble' && (
+                    <EnsembleParticipantsAboveRow
+                      chat={sideChat}
+                      selectedParticipantId={null}
+                      onSelectParticipant={() => {}}
+                      onChatChange={handleSideChatChange}
+                      composerStyle={appearance.composerStyle}
+                      grokAvailable={grokProviderAvailable}
+                      cursorAvailable={cursorProviderAvailable}
+                    />
+                  )}
                 </div>
               )}
               <div className="composer-inner-module side-chat-inner-module">
@@ -2231,114 +2245,121 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                   <div className="composer-control-footer side-chat-control-footer">
                     <div className="composer-inline-pickers side-chat-inline-pickers">
                       <div className="composer-inline-pickers-left">
-                        <ComposerProviderPicker
-                          provider={sideComposerProvider}
-                          composerStyle={appearance.composerStyle}
-                          grokAvailable={grokProviderAvailable}
-                          cursorAvailable={cursorProviderAvailable}
-                          providerRunPauses={settings?.providerRunPauses}
-                          onSelect={handleSideProviderChange}
-                          disabled={
-                            isSideComposerLocked ||
-                            isSideChatProviderLocked ||
-                            sideChat.chatKind === 'ensemble'
-                          }
-                          activeModelId={sideComposerSelectedModel}
-                          title={
-                            sideChat.chatKind === 'ensemble'
-                              ? 'Side ensemble provider is configured by participants'
-                              : sidePanelRelation === 'subThread'
-                                ? 'Sub-thread provider'
-                                : `${sidePanelKindLabel} provider`
-                          }
-                        />
-                        <CombinedModelPicker
-                          provider={sideComposerProvider}
-                          composerStyle={appearance.composerStyle}
-                          modelOptions={sideComposerModelOptions}
-                          selectedModelId={sideComposerSelectedModel}
-                          onSelectModel={handleSideModelChange}
-                          reasoningOptions={sideComposerReasoningOptions}
-                          selectedReasoning={sideComposerSelectedReasoning}
-                          onSelectReasoning={handleSideReasoningChange}
-                          codexReasoningEffort={sideCodexReasoning}
-                          claudeReasoningEffort={sideClaudeReasoning}
-                          kimiThinkingEnabled={sideKimiThinking}
-                          fastModeCapableModelIds={sideFastModeCapableModelIds}
-                          fastModeEnabled={sideFastModeEnabled}
-                          onToggleFastMode={handleSideToggleFastMode}
-                          disabled={isSideComposerLocked || isSideEnsembleComposerLocked}
-                        />
-                        {sideComposerSelectedModel === 'custom' &&
-                          sideComposerProvider !== 'kimi' && (
-                            <span className="composer-inline-custom-model side-chat-custom-model">
-                              <input
-                                className="composer-inline-input"
-                                type="text"
-                                value={sideComposerSelection?.customModel || ''}
-                                onChange={(event) =>
-                                  rememberSideChatComposerSelection({
-                                    customModel: event.target.value
-                                  })
+                        {sideChat.chatKind === 'ensemble' ? (
+                          <span
+                            className="composer-ensemble-mode side-chat-ensemble-mode"
+                            role="group"
+                            aria-label="Side ensemble participants"
+                            title="Side ensemble providers, models, and permissions are configured on the participant row."
+                          >
+                            Ensemble participants
+                          </span>
+                        ) : (
+                          <>
+                            <ComposerProviderPicker
+                              provider={sideComposerProvider}
+                              composerStyle={appearance.composerStyle}
+                              grokAvailable={grokProviderAvailable}
+                              cursorAvailable={cursorProviderAvailable}
+                              providerRunPauses={settings?.providerRunPauses}
+                              onSelect={handleSideProviderChange}
+                              disabled={isSideComposerLocked || isSideChatProviderLocked}
+                              activeModelId={sideComposerSelectedModel}
+                              title={
+                                sidePanelRelation === 'subThread'
+                                  ? 'Sub-thread provider'
+                                  : `${sidePanelKindLabel} provider`
+                              }
+                            />
+                            <CombinedModelPicker
+                              provider={sideComposerProvider}
+                              composerStyle={appearance.composerStyle}
+                              modelOptions={sideComposerModelOptions}
+                              selectedModelId={sideComposerSelectedModel}
+                              onSelectModel={handleSideModelChange}
+                              reasoningOptions={sideComposerReasoningOptions}
+                              selectedReasoning={sideComposerSelectedReasoning}
+                              onSelectReasoning={handleSideReasoningChange}
+                              codexReasoningEffort={sideCodexReasoning}
+                              claudeReasoningEffort={sideClaudeReasoning}
+                              kimiThinkingEnabled={sideKimiThinking}
+                              fastModeCapableModelIds={sideFastModeCapableModelIds}
+                              fastModeEnabled={sideFastModeEnabled}
+                              onToggleFastMode={handleSideToggleFastMode}
+                              disabled={isSideComposerLocked}
+                            />
+                            {sideComposerSelectedModel === 'custom' &&
+                              sideComposerProvider !== 'kimi' && (
+                                <span className="composer-inline-custom-model side-chat-custom-model">
+                                  <input
+                                    className="composer-inline-input"
+                                    type="text"
+                                    value={sideComposerSelection?.customModel || ''}
+                                    onChange={(event) =>
+                                      rememberSideChatComposerSelection({
+                                        customModel: event.target.value
+                                      })
+                                    }
+                                    placeholder="Model ID"
+                                    disabled={isSideComposerLocked}
+                                  />
+                                  <button
+                                    className="composer-inline-clear"
+                                    type="button"
+                                    onClick={() =>
+                                      rememberSideChatComposerSelection({
+                                        customModel: '',
+                                        selectedModelType: getDefaultModelForProvider(sideComposerProvider)
+                                      })
+                                    }
+                                    disabled={isSideComposerLocked}
+                                    title="Cancel custom model"
+                                    aria-label="Cancel custom model"
+                                  >
+                                    <XSymbolIcon />
+                                  </button>
+                                </span>
+                              )}
+                            <CombinedPermissionsPicker
+                              provider={sideComposerProvider}
+                              composerStyle={appearance.composerStyle}
+                              permissionOptions={sidePermissionOptions}
+                              selectedPermission={sideSelectedPermission}
+                              onSelectPermission={(nextApprovalMode) => {
+                                const applySideSelection = (): void => {
+                                  rememberSideChatComposerSelection({ approvalMode: nextApprovalMode })
                                 }
-                                placeholder="Model ID"
-                                disabled={isSideComposerLocked || isSideEnsembleComposerLocked}
-                              />
-                              <button
-                                className="composer-inline-clear"
-                                type="button"
-                                onClick={() =>
-                                  rememberSideChatComposerSelection({
-                                    customModel: '',
-                                    selectedModelType: getDefaultModelForProvider(sideComposerProvider)
-                                  })
+                                const elevation = decideApprovalElevation({
+                                  from: sideSelectedPermission,
+                                  to: nextApprovalMode,
+                                  provider: sideComposerProvider,
+                                  workspacePath: currentWorkspacePath,
+                                  acknowledgedDefault: acknowledgedElevationDefaults
+                                })
+                                if (!elevation) {
+                                  applySideSelection()
+                                  return
                                 }
-                                disabled={isSideComposerLocked || isSideEnsembleComposerLocked}
-                                title="Cancel custom model"
-                                aria-label="Cancel custom model"
-                              >
-                                <XSymbolIcon />
-                              </button>
-                            </span>
-                          )}
-                        <CombinedPermissionsPicker
-                          provider={sideComposerProvider}
-                          composerStyle={appearance.composerStyle}
-                          permissionOptions={sidePermissionOptions}
-                          selectedPermission={sideSelectedPermission}
-                          onSelectPermission={(nextApprovalMode) => {
-                            const applySideSelection = (): void => {
-                              rememberSideChatComposerSelection({ approvalMode: nextApprovalMode })
-                            }
-                            const elevation = decideApprovalElevation({
-                              from: sideSelectedPermission,
-                              to: nextApprovalMode,
-                              provider: sideComposerProvider,
-                              workspacePath: currentWorkspacePath,
-                              acknowledgedDefault: acknowledgedElevationDefaults
-                            })
-                            if (!elevation) {
-                              applySideSelection()
-                              return
-                            }
-                            setPendingElevation({
-                              tier: elevation.tier,
-                              provider: sideComposerProvider,
-                              workspaceLabel: currentWorkspace?.displayName ?? null,
-                              ackKey: elevation.ackKey,
-                              persistAck: elevation.persistAckOnConfirm,
-                              toMode: nextApprovalMode,
-                              apply: applySideSelection
-                            })
-                          }}
-                          grantServices={sideGrantServices}
-                          enabledGrantIds={sideEnabledGrantIds}
-                          agenticServices={agenticServices}
-                          onToggleGrant={(service, enabled) =>
-                            void handleSetSideAgenticWorkspaceGrant(service, enabled)
-                          }
-                          disabled={isSideComposerLocked || isSideEnsembleComposerLocked}
-                        />
+                                setPendingElevation({
+                                  tier: elevation.tier,
+                                  provider: sideComposerProvider,
+                                  workspaceLabel: currentWorkspace?.displayName ?? null,
+                                  ackKey: elevation.ackKey,
+                                  persistAck: elevation.persistAckOnConfirm,
+                                  toMode: nextApprovalMode,
+                                  apply: applySideSelection
+                                })
+                              }}
+                              grantServices={sideGrantServices}
+                              enabledGrantIds={sideEnabledGrantIds}
+                              agenticServices={agenticServices}
+                              onToggleGrant={(service, enabled) =>
+                                void handleSetSideAgenticWorkspaceGrant(service, enabled)
+                              }
+                              disabled={isSideComposerLocked}
+                            />
+                          </>
+                        )}
                       </div>
                       <div className="composer-inline-actions side-chat-inline-actions">
                         <span className="side-chat-status" aria-live="polite">

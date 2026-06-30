@@ -213,6 +213,26 @@ describe('AppStore global chats', () => {
     )
   })
 
+  it('creates default side chats from ensemble parents as linked ensemble clones', () => {
+    const parent = AppStore.createEnsembleChat()
+    const sideChat = AppStore.createSideChat({
+      parentChatId: parent.appChatId
+    })
+
+    expect(sideChat.parentChatId).toBe(parent.appChatId)
+    expect(sideChat.parentChatRelation).toBe('sideChat')
+    expect(sideChat.chatKind).toBe('ensemble')
+    expect(sideChat.sideChatContext).toMatchObject({
+      mode: 'ensembleClone',
+      lifecycleState: 'active',
+      transcriptVisibility: 'none'
+    })
+    expect(sideChat.title).toContain('Side ensemble')
+    expect(sideChat.ensemble?.participants.map((participant) => participant.id)).toEqual(
+      parent.ensemble?.participants.map((participant) => participant.id)
+    )
+  })
+
   it('creates guest participant children for global, workspace, and sub-thread parents', () => {
     const globalParent = AppStore.createGlobalChat()
     const globalGuest = AppStore.setGuestParticipant({
