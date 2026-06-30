@@ -151,6 +151,10 @@ export const TASKWRAITH_MCP_TOOLS = [
   // console/network. Read-only verbs are auto-allowed; open/screenshot/resize/
   // close are gated like browser_open. Interaction (click/fill) + annotation
   // land in P1; arbitrary `eval` (P2) is signed-elevated (canvasEval service).
+  'launch_list_targets',
+  'launch_start',
+  'launch_stop',
+  'launch_status',
   'canvas_open',
   'canvas_render_html',
   'canvas_open_attachment',

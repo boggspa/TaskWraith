@@ -695,6 +695,12 @@ import {
 } from './canvas/canvasTypes'
 import { createCanvasToolExecutors, isCanvasMcpToolName } from './mcp/CanvasToolExecutors'
 import {
+  createLaunchToolExecutors,
+  isLaunchMcpToolName,
+  type LaunchController,
+  type LaunchToolExecutors
+} from './mcp/LaunchToolExecutors'
+import {
   createImageToolExecutors,
   isImageMcpToolName,
   type ImageToolContext,
@@ -836,6 +842,7 @@ import {
 import { installIpcValidation } from './IpcValidation'
 import { registerPtyHandlers } from './ipc/ptyHandlers'
 import { registerLaunchHandlers } from './ipc/launchHandlers'
+import { discoverLaunchTargets } from './launchTargets/discovery'
 import { registerLocalServersHandlers } from './ipc/localServersHandlers'
 import { registerChatHandlers } from './ipc/chatHandlers'
 import { registerWorkspaceHandlers } from './ipc/workspaceHandlers'
@@ -2250,6 +2257,10 @@ function teardownCanvasSurfacesForWindowClose(): void {
     })
 }
 const canvasToolExecutors = createCanvasToolExecutors({ controller: canvasService })
+// Assigned during app init once LaunchManager + workspace/local-server deps exist
+// (see the registerLaunchHandlers wiring). Held at module scope so the shared MCP
+// dispatcher (executeGeminiMcpTool) can reach it.
+let launchMcpExecutors: LaunchToolExecutors | null = null
 const imageToolExecutors = createImageToolExecutors({
   engine: offscreenImageEngine,
   resolveRasterSource: resolveImageRasterSource,
@@ -7780,6 +7791,24 @@ function previewForGeminiMcpTool(
     }
   }
 
+  // Run-Button launch start/stop spawn / terminate processes — route them to the
+  // shellCommands gate (denied under read-only, never the softer mcpTools). The
+  // EXACT resolved command is shown by LaunchManager.startTarget's own
+  // shellCommands+forcePrompt approval (the command isn't known here, pre-discovery).
+  if (toolName === 'launch_start' || toolName === 'launch_stop') {
+    const ref = String(args.targetId || args.attemptId || '')
+    return {
+      title: toolName === 'launch_start' ? 'Approve Run-Button launch' : 'Approve stopping a launch',
+      body: `${toolName}${ref ? ` ${ref}` : ''}`,
+      service: 'shellCommands' as AgenticServiceId,
+      preview: {
+        kind: 'tool',
+        toolName,
+        params: args
+      }
+    }
+  }
+
   if (toolName === 'get_diagnostics') {
     const source = String(args.source || args.kind || (args.includeLint ? 'all' : 'typescript'))
     const target = String(args.path || args.file || args.project || '.')
@@ -10196,7 +10225,10 @@ function claudeAgenticServiceForTool(toolName: string): AgenticServiceId | null 
     normalized === 'bash' ||
     normalized === 'shell' ||
     normalized === 'run_shell_command' ||
-    normalized.includes('shell_command')
+    normalized.includes('shell_command') ||
+    // Run-Button launch start/stop spawn / terminate processes — shell strictness.
+    normalized === 'launch_start' ||
+    normalized === 'launch_stop'
   ) {
     return 'shellCommands'
   }
@@ -17159,6 +17191,13 @@ async function executeGeminiMcpTool(
     } else if (isCanvasMcpToolName(toolName)) {
       applyRichResult(
         await canvasToolExecutors.executeCanvasTool(toolName, args, context, parentProvider)
+      )
+    } else if (isLaunchMcpToolName(toolName)) {
+      if (!launchMcpExecutors) {
+        throw new Error('Launch tools are not available yet (app still initializing).')
+      }
+      applyRichResult(
+        await launchMcpExecutors.executeLaunchTool(toolName, args, context, parentProvider)
       )
     } else if (isRecallMcpToolName(toolName)) {
       applyRichResult(
@@ -24143,6 +24182,41 @@ if (isGeminiMcpBridgeProcess) {
       localServersSnapshot: () => localServersService.snapshot(),
       platform: process.platform
     })
+    // Agent-facing launch_* MCP tools: the controller mirrors the renderer
+    // launch-start path (discover targets for the RUN's workspace, then
+    // startTarget by id) — agents can only run DISCOVERED, repo-controlled
+    // targets, and startTarget self-gates shellCommands+forcePrompt.
+    const launchMcpController: LaunchController = {
+      listTargets: async (workspacePath) => {
+        if (!workspacePath) return []
+        let registered: string
+        try {
+          registered = requireRegisteredWorkspace(workspacePath, 'Workspace')
+        } catch {
+          return [] // run is not in a registered workspace — nothing launchable
+        }
+        const snapshot = await discoverLaunchTargets({
+          workspacePath: registered,
+          workspaceId: findRegisteredWorkspace(registered)?.id,
+          localServers: localServersService.snapshot().servers,
+          platform: process.platform
+        })
+        return snapshot.targets
+      },
+      start: ({ provider, target, chatId, runId }) =>
+        // The run's own provider (trusted, not agent-supplied); assert it's a live
+        // provider id for the approval-route + audit attribution.
+        launchManager.startTarget({
+          sender: null,
+          provider: assertLiveProviderId(provider),
+          target,
+          chatId,
+          runId
+        }),
+      stop: (attemptId) => launchManager.stopAttempt(attemptId),
+      attempts: () => launchManager.snapshot().attempts
+    }
+    launchMcpExecutors = createLaunchToolExecutors({ controller: launchMcpController })
 
     const updateSnapshotToChangelog = (
       snapshot: UpdateStateSnapshot

@@ -2468,6 +2468,67 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
       }
     },
     {
+      name: 'launch_list_targets',
+      description:
+        'List the runnable "Run Button" targets TaskWraith discovered for this workspace (dev servers, build/test/run targets from package.json scripts, .vscode tasks/launch, Package.swift, .xcodeproj). Read-only. Each entry has a `targetId` (pass to launch_start), `label`, `command`, `kind`, `longRunning`, `runnable`, and any `blockers`. Use this before launch_start — you can only start a discovered target, not an arbitrary command.',
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      },
+      inputSchema: { type: 'object', properties: {} }
+    },
+    {
+      name: 'launch_start',
+      description:
+        'Start a discovered Run-Button target by `targetId` (from launch_list_targets) — e.g. run a dev server or a build. You can ONLY start a target TaskWraith already discovered from repo config, never an arbitrary command. The launch is gated: TaskWraith prompts for approval showing the exact command and working directory before spawning, and the process runs jailed to the workspace. Returns an `attemptId` + status; poll launch_status for detected URLs (a dev server\'s http://localhost:PORT, which you can then open with canvas_open).',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          targetId: { type: 'string', description: 'A targetId from launch_list_targets.' }
+        },
+        required: ['targetId']
+      }
+    },
+    {
+      name: 'launch_stop',
+      description:
+        'Stop a running launch attempt by `attemptId` (from launch_start / launch_status). Terminates the spawned process tree.',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: { attemptId: { type: 'string' } },
+        required: ['attemptId']
+      }
+    },
+    {
+      name: 'launch_status',
+      description:
+        'Return launch attempts (status, detected http://localhost URLs, errors). Pass `attemptId` for one, or omit for all. Read-only; use it to wait for a dev server to come up before canvas_open.',
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: { attemptId: { type: 'string' } }
+      }
+    },
+    {
       name: 'canvas_open',
       description:
         'Open a TaskWraith Canvas: a sandboxed preview of a running app the agent can inspect. Driver "web" (default) loads an http(s) `url` (typically a local dev server, e.g. http://localhost:3000) and supports the full structured surface (snapshot/inspect/click/fill/eval). Driver "device" launches an app by `bundleId` in a booted iOS Simulator (optionally installing a built `appPath` first; optional `udid`, default the booted sim) and is SCREENSHOT-ONLY — only canvas_screenshot/canvas_close apply; the DOM verbs return an error. Returns a canvasId used by every other canvas_* tool. Gated; the web driver blocks file://, link-local and cloud-metadata addresses.',

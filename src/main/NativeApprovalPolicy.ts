@@ -156,7 +156,12 @@ export function taskWraithToolAgenticService(toolName: string): AgenticServiceId
     toolName === 'run_task' ||
     toolName === 'start_background_process' ||
     toolName === 'kill_background_process' ||
-    toolName === 'get_diagnostics'
+    toolName === 'get_diagnostics' ||
+    // Run-Button launches spawn / terminate processes — gate them at shell
+    // strictness in every seam so they're denied under read-only and can never
+    // downgrade to the softer, grantable mcpTools service.
+    toolName === 'launch_start' ||
+    toolName === 'launch_stop'
   )
     return 'shellCommands'
   if (
