@@ -8,7 +8,7 @@ import {
   quickOpenOptionId,
   resolveFileEditorKeyboardCommand
 } from './FileEditorPanel'
-import { EditorPane } from './FileEditorPane'
+import { EditorPane, FILE_EDITOR_BASIC_SETUP } from './FileEditorPane'
 import { FileEditorGitActions } from './FileEditorGitActions'
 import { FileEditorStatusBar } from './FileEditorStatusBar'
 import { EditorTabStrip } from './FileEditorTabStrip'
@@ -182,6 +182,14 @@ describe('WorkspaceFileTree', () => {
 })
 
 describe('EditorPane', () => {
+  it('keeps CodeMirror fold controls enabled while owning autocomplete separately', () => {
+    expect(FILE_EDITOR_BASIC_SETUP).toMatchObject({
+      lineNumbers: true,
+      foldGutter: true,
+      autocompletion: false
+    })
+  })
+
   it('renders the empty editor placeholder before a file is selected', () => {
     const html = renderToStaticMarkup(
       <EditorPane

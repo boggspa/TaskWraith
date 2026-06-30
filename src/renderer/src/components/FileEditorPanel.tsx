@@ -263,6 +263,27 @@ const codeEditorTheme = EditorView.theme(
       color: 'var(--text-muted)',
       borderRight: '1px solid var(--cm-gutter-border)'
     },
+    '.cm-foldGutter': {
+      minWidth: '18px'
+    },
+    '.cm-foldGutter span': {
+      color: 'var(--text-tertiary)',
+      cursor: 'pointer',
+      padding: '0 2px',
+      transition: 'color 0.12s ease, background-color 0.12s ease'
+    },
+    '.cm-foldGutter span:hover': {
+      color: 'var(--accent)',
+      background: 'color-mix(in srgb, var(--accent) 12%, transparent)'
+    },
+    '.cm-foldPlaceholder': {
+      border: '1px solid color-mix(in srgb, var(--accent) 24%, var(--panel-border))',
+      borderRadius: 'var(--radius-xs, 4px)',
+      background: 'color-mix(in srgb, var(--accent) 10%, transparent)',
+      color: 'var(--text-secondary)',
+      margin: '0 2px',
+      padding: '0 5px'
+    },
     '.cm-activeLine': {
       background: 'var(--cm-active-line)'
     },

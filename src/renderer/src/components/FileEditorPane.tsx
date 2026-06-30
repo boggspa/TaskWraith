@@ -9,6 +9,18 @@ export interface EditorPaneProps {
   onContentChange: (value: string) => void
 }
 
+export const FILE_EDITOR_BASIC_SETUP = {
+  lineNumbers: true,
+  foldGutter: true,
+  highlightActiveLine: true,
+  highlightActiveLineGutter: true,
+  bracketMatching: true,
+  closeBrackets: true,
+  autocompletion: false,
+  rectangularSelection: false,
+  crosshairCursor: false
+} as const
+
 export function EditorPane({
   selectedPath,
   content,
@@ -23,17 +35,7 @@ export function EditorPane({
           key={selectedPath}
           value={content}
           height="100%"
-          basicSetup={{
-            lineNumbers: true,
-            foldGutter: true,
-            highlightActiveLine: true,
-            highlightActiveLineGutter: true,
-            bracketMatching: true,
-            closeBrackets: true,
-            autocompletion: false,
-            rectangularSelection: false,
-            crosshairCursor: false
-          }}
+          basicSetup={FILE_EDITOR_BASIC_SETUP}
           editable={!isLoading}
           readOnly={isLoading}
           extensions={editorExtensions}
