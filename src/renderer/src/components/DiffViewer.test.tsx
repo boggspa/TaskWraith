@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, describe, expect, it } from 'vitest'
-import type { GitRepositorySnapshot } from '../../../main/services/GitService'
+import type { GitFileStatus, GitRepositorySnapshot } from '../../../main/services/GitService'
 import type { DiffFileSummary } from '../../../main/store/types'
 import {
   DiffDetail,
@@ -15,7 +15,12 @@ import {
   focusDiffFileContextMenuButton
 } from './DiffFileList'
 import { DiffToolbar } from './DiffToolbar'
-import { DiffViewer, resolveVisibleDiffSelection } from './DiffViewer'
+import {
+  DiffViewer,
+  diffStageGroupForSummary,
+  diffStageGroupLabel,
+  resolveVisibleDiffSelection
+} from './DiffViewer'
 
 const makeLargeUnifiedDiff = (lineCount: number): string => {
   const lines = [
@@ -54,6 +59,16 @@ const makeSmallUnifiedDiff = (path: string, addedLine: string): string =>
     '-old',
     `+${addedLine}`
   ].join('\n')
+
+const makeGitStatus = (overrides: Partial<GitFileStatus> = {}): GitFileStatus => ({
+  path: 'src/file.ts',
+  index: ' ',
+  workingTree: 'M',
+  kind: 'modified',
+  staged: false,
+  unstaged: false,
+  ...overrides
+})
 
 const makeChangedFileSummary = (
   path: string,
@@ -244,6 +259,23 @@ describe('DiffViewer visible selection resolution', () => {
     expect(resolveVisibleDiffSelection([first, second], null)).toBe(first)
     expect(resolveVisibleDiffSelection([], 'src/second.ts')).toBeNull()
   })
+
+  it('classifies files into stage groups for toolbar filtering', () => {
+    const summary = makeChangedFileSummary('src/file.ts', 'change')
+
+    expect(
+      diffStageGroupForSummary(summary, makeGitStatus({ staged: true, unstaged: true }))
+    ).toBe('mixed')
+    expect(
+      diffStageGroupForSummary(summary, makeGitStatus({ staged: false, unstaged: true }))
+    ).toBe('unstaged')
+    expect(
+      diffStageGroupForSummary(summary, makeGitStatus({ staged: true, unstaged: false }))
+    ).toBe('staged')
+    expect(diffStageGroupForSummary({ ...summary, status: 'untracked' })).toBe('untracked')
+    expect(diffStageGroupForSummary(summary)).toBe('other')
+    expect(diffStageGroupLabel('untracked')).toBe('Untracked')
+  })
 })
 
 describe('DiffToolbar', () => {
@@ -253,9 +285,11 @@ describe('DiffToolbar', () => {
         changedCount={3}
         totalCount={5}
         stageCounts={{ mixed: 1, other: 0, staged: 1, unstaged: 1, untracked: 0 }}
+        activeStageGroup="unstaged"
         hideNoise={true}
         fileFilter="src"
         viewMode="split"
+        onStageGroupChange={() => {}}
         onHideNoiseChange={() => {}}
         onFileFilterChange={() => {}}
         onViewModeChange={() => {}}
@@ -267,6 +301,7 @@ describe('DiffToolbar', () => {
     expect(html).toContain('aria-label="Visible change groups"')
     expect(html).toContain('data-stage-group="mixed"')
     expect(html).toContain('data-stage-group="unstaged"')
+    expect(html).toContain('data-active="true"')
     expect(html).toContain('data-stage-group="staged"')
     expect(html).not.toContain('data-stage-group="other"')
     expect(html).toContain('aria-label="Filter changed files"')
