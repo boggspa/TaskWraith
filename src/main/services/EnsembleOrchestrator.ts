@@ -30,6 +30,7 @@ import type {
   ExternalPathGrant,
   PooledAgentIdentitySnapshot,
   ProviderId,
+  RunQueueJobStatus,
   ToolActivity,
   ToolActivityStatus,
   TranscriptMediaRef,
@@ -234,6 +235,11 @@ export interface EnsembleOrchestratorDeps {
     roundId: string,
     status: Extract<EnsembleRoundState['status'], 'completed' | 'cancelled' | 'failed'>
   ) => void
+  transitionRunQueueJob?: (
+    runIdOrId: string,
+    status: RunQueueJobStatus,
+    partial?: { statusReason?: string; lastError?: string }
+  ) => unknown
   releaseWriteIntentsForLane?: (laneId: string) => unknown
   /**
    * Record a non-Boss attempt to drive `ensemble_bossman_control` into the
@@ -6635,6 +6641,7 @@ export class EnsembleOrchestrator {
   ): void {
     run.status = status
     this.flushRun(run, true, reason)
+    this.transitionParticipantRunQueueJob(run, status, reason)
     run.completion?.(status)
     if (run.laneId) {
       try {
@@ -6644,6 +6651,25 @@ export class EnsembleOrchestrator {
       }
     }
     this.runsByRunId.delete(run.runId)
+  }
+
+  private transitionParticipantRunQueueJob(
+    run: ActiveParticipantRun,
+    status: EnsembleParticipantStatus,
+    reason?: string
+  ): void {
+    const transition = this.deps.transitionRunQueueJob
+    if (!transition) return
+    const queueStatus = statusToRunQueueJobStatus(status)
+    if (!queueStatus) return
+    try {
+      transition(run.runId, queueStatus, {
+        ...(reason ? { statusReason: reason } : {}),
+        ...(queueStatus === 'failed' && reason ? { lastError: reason } : {})
+      })
+    } catch {
+      // Active Runs cleanup is best-effort; transcript/round finalization must still complete.
+    }
   }
 
   /**
@@ -7676,6 +7702,17 @@ function statusToRunStatus(status: EnsembleParticipantStatus): string {
   if (status === 'sleeping') return 'sleeping'
   if (status === 'cancelled') return 'cancelled'
   return 'failed'
+}
+
+function statusToRunQueueJobStatus(
+  status: EnsembleParticipantStatus
+): RunQueueJobStatus | undefined {
+  if (status === 'answered' || status === 'yielded' || status === 'sleeping') {
+    return 'completed'
+  }
+  if (status === 'skipped' || status === 'cancelled') return 'cancelled'
+  if (status === 'failed' || status === 'unreachable') return 'failed'
+  return undefined
 }
 
 function mergeTokenTotals(existing: EnsembleParticipant['tokenTotals'], stats: any) {

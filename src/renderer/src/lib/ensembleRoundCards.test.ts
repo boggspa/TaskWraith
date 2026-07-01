@@ -92,7 +92,22 @@ describe('buildEnsembleRoundCardRows', () => {
           enabled: true,
           maxParticipants: 4,
           participants: [],
-          activeRound: { roundId: 'r2', status: 'running', prompt: '', startedAt: '' } as never
+          activeRound: {
+            roundId: 'r2',
+            status: 'running',
+            prompt: '',
+            startedAt: '',
+            activeParticipantId: 'p1',
+            participants: [
+              {
+                participantId: 'p1',
+                provider: 'claude',
+                role: 'Worker',
+                order: 0,
+                status: 'running'
+              }
+            ]
+          } as never
         } as never
       }),
       displayMessages: display,
@@ -156,7 +171,22 @@ describe('buildEnsembleRoundCardRows', () => {
           enabled: true,
           maxParticipants: 4,
           participants: [],
-          activeRound: { roundId: 'r2', status: 'running', prompt: '', startedAt: '' } as never
+          activeRound: {
+            roundId: 'r2',
+            status: 'running',
+            prompt: '',
+            startedAt: '',
+            activeParticipantId: 'p1',
+            participants: [
+              {
+                participantId: 'p1',
+                provider: 'claude',
+                role: 'Worker',
+                order: 0,
+                status: 'running'
+              }
+            ]
+          } as never
         } as never
       }),
       displayMessages: display,
@@ -165,6 +195,37 @@ describe('buildEnsembleRoundCardRows', () => {
     })
     expect(result.map((m) => m.id)).toEqual([ensembleRoundHeaderId('r1'), 'u1', 'a1', 'u2', 'a2'])
     expect(readEnsembleRoundHeader(result[0])?.expanded).toBe(true)
+  })
+
+  it('keeps the latest round flat when live run evidence exists but activeRound is stale', () => {
+    const display = [
+      userPrompt('u1', 'r1'),
+      message('a1', { roundId: 'r1' }),
+      userPrompt('u2', 'r2'),
+      message('a2', { roundId: 'r2' })
+    ]
+    const result = buildEnsembleRoundCardRows({
+      chat: chat({
+        ensemble: {
+          enabled: true,
+          maxParticipants: 4,
+          participants: [],
+          activeRound: {
+            roundId: 'r1',
+            status: 'completed',
+            prompt: '',
+            startedAt: '',
+            endedAt: ''
+          } as never
+        } as never
+      }),
+      displayMessages: display,
+      collapseOlderRounds: true,
+      manualRoundExpansion: NO_OVERRIDES,
+      hasLiveRunEvidence: true
+    })
+    expect(result.map((m) => m.id)).toEqual([ensembleRoundHeaderId('r1'), 'u2', 'a2'])
+    expect(readEnsembleRoundHeader(result[0])?.expanded).toBe(false)
   })
 
   it('honours a manual collapse override on the latest idle round', () => {

@@ -1,7 +1,7 @@
 import type { ChatRecord } from '../../../main/store/types'
 import type { RunCompleteNotice } from './runCompleteNotice'
 import { isEnsembleActiveRoundDispatchLive } from './chatBusyState'
-import { hasKnownInactiveEnsembleRound } from './runningChatVisibility'
+import { hasKnownInactiveEnsembleRound, hasTerminalLastRun } from './runningChatVisibility'
 
 /**
  * Run-queue statuses that count a chat as actively RUNNING — drives the
@@ -40,12 +40,15 @@ export interface DeriveChatIsRunningInput {
 export function deriveChatIsRunning(input: DeriveChatIsRunningInput): boolean {
   const chatId = input.chat?.appChatId
   if (!chatId) return false
-  if (input.chat && hasKnownInactiveEnsembleRound(input.chat)) return false
-  if (input.runningChatIds.has(chatId)) return true
   for (const job of input.runQueueJobs || []) {
     if (job.chatId === chatId && job.status && RUNNING_RUN_QUEUE_STATUSES.has(job.status)) {
       return true
     }
+  }
+  if (input.runningChatIds.has(chatId)) {
+    const staleTerminalEnsembleRun =
+      input.chat && hasKnownInactiveEnsembleRound(input.chat) && hasTerminalLastRun(input.chat)
+    return !staleTerminalEnsembleRun
   }
   if (isEnsembleActiveRoundDispatchLive(input.chat?.ensemble?.activeRound)) return true
   return false

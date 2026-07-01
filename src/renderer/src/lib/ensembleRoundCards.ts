@@ -1,4 +1,5 @@
 import type { ChatMessage, ChatRecord } from '../../../main/store/types'
+import { isEnsembleRoundDispatchLive } from '../../../shared/ensembleRoundLifecycle'
 import { groupEnsembleMessagesByRound } from './ensembleRoundGrouping'
 
 /**
@@ -149,6 +150,12 @@ export interface BuildEnsembleRoundCardRowsInput {
   collapseOlderRounds: boolean
   /** Per-round manual expand/collapse overrides (true = expanded). */
   manualRoundExpansion: ReadonlyMap<string, boolean>
+  /**
+   * Pane-level live run evidence. Used defensively when `activeRound` is stale
+   * or missing after cancel/re-seat churn: the latest round must stay flat
+   * while new output is live, even if the persisted round snapshot lags.
+   */
+  hasLiveRunEvidence?: boolean
 }
 
 /**
@@ -158,7 +165,13 @@ export interface BuildEnsembleRoundCardRowsInput {
  * exact pre-existing render path + referential stability.
  */
 export function buildEnsembleRoundCardRows(input: BuildEnsembleRoundCardRowsInput): ChatMessage[] {
-  const { chat, displayMessages, collapseOlderRounds, manualRoundExpansion } = input
+  const {
+    chat,
+    displayMessages,
+    collapseOlderRounds,
+    manualRoundExpansion,
+    hasLiveRunEvidence = false
+  } = input
   if (!chat || chat.chatKind !== 'ensemble' || !collapseOlderRounds) {
     return displayMessages
   }
@@ -171,8 +184,12 @@ export function buildEnsembleRoundCardRows(input: BuildEnsembleRoundCardRowsInpu
 
   const roundCount = roundItems.length
   const lastRoundId = roundItems[roundItems.length - 1].roundId
-  const activeRoundId = chat.ensemble?.activeRound?.roundId ?? null
-  const hasActiveRound = activeRoundId !== null
+  const activeRound = chat.ensemble?.activeRound
+  const activeRoundId = activeRound?.roundId ?? null
+  const liveActiveRoundId =
+    activeRoundId && isEnsembleRoundDispatchLive(activeRound) ? activeRoundId : null
+  const liveFallbackRoundId = hasLiveRunEvidence ? lastRoundId : null
+  const hasActiveRound = liveActiveRoundId !== null || liveFallbackRoundId !== null
 
   const out: ChatMessage[] = []
   let roundIndex = 0
@@ -186,7 +203,7 @@ export function buildEnsembleRoundCardRows(input: BuildEnsembleRoundCardRowsInpu
 
     // The active round is always rendered flat so streaming output is
     // never hidden behind a collapsed card.
-    if (hasActiveRound && roundId === activeRoundId) {
+    if (roundId === liveActiveRoundId || roundId === liveFallbackRoundId) {
       for (const message of messages) out.push(message)
       continue
     }

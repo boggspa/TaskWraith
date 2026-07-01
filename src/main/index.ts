@@ -27728,6 +27728,10 @@ if (isGeminiMcpBridgeProcess) {
           })
         }
       },
+      transitionRunQueueJob: (runIdOrId, status, partial) =>
+        runQueueServiceRef
+          ? runQueueServiceRef.transitionJob(runIdOrId, status, partial)
+          : getRunRepository().transitionRunQueueJob(runIdOrId, status, partial),
       releaseWriteIntentsForLane: (laneId) => workspaceWriteIntentRegistry.releaseAllForLane(laneId),
       // A non-Boss participant that tries to drive a Boss-only Ensemble MCP
       // control is an attempted control escalation — record it to the durable

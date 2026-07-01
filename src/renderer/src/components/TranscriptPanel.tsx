@@ -1309,9 +1309,10 @@ export const TranscriptPanel = memo(
           chat: currentChat,
           displayMessages: groupedMessages,
           collapseOlderRounds: collapseOlderRounds !== false,
-          manualRoundExpansion
+          manualRoundExpansion,
+          hasLiveRunEvidence: isThinking
         }),
-      [currentChat, groupedMessages, collapseOlderRounds, manualRoundExpansion]
+      [currentChat, groupedMessages, collapseOlderRounds, manualRoundExpansion, isThinking]
     )
     // Map every (pre-collapse) message id → its round id, so navigation
     // (jump-to-message, pinned, side-chat seed) can auto-expand the round

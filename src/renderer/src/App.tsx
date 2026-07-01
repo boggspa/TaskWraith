@@ -580,7 +580,10 @@ import { deriveChatIsRunning, deriveChatRunCompleteNotice } from './lib/chatRunD
 export { TranscriptPanel } from './components/TranscriptPanel'
 import { FILE_DIFF_STATUSES } from './lib/fileDiffStatuses'
 import { RUN_WRITE_TOOLS } from './lib/runWriteTools'
-import type { RunCompleteNotice } from './lib/runCompleteNotice'
+import {
+  deriveVisibleRunCompleteNotice,
+  type RunCompleteNotice
+} from './lib/runCompleteNotice'
 import type { PersistentSessionStatus } from './lib/persistentSessionStatus'
 import { DEFAULT_AGENTIC_SERVICES } from './lib/agenticServicesDefaults'
 import { EMPTY_CHAT_MESSAGES, EMPTY_IMAGE_ATTACHMENTS } from './lib/stableEmpties'
@@ -18775,8 +18778,11 @@ function App(): React.JSX.Element {
     }
     return Object.keys(style).length > 0 ? style : undefined
   }, [ensembleBlendStyle])
-  const visibleRunCompleteNotice =
-    currentGuestParticipant && isCurrentGuestParticipantRunning ? null : runCompleteNotice
+  const visibleRunCompleteNotice = deriveVisibleRunCompleteNotice({
+    notice: runCompleteNotice,
+    isChatRunning: isCurrentChatRunning,
+    isGuestParticipantRunning: Boolean(currentGuestParticipant && isCurrentGuestParticipantRunning)
+  })
   const runCompleteDurationText =
     visibleRunCompleteNotice && !isWelcomeChat
       ? formatWorkDuration(visibleRunCompleteNotice.startedAt, visibleRunCompleteNotice.timestamp)

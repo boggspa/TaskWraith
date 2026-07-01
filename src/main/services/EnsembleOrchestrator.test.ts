@@ -19,6 +19,7 @@ import type {
   EnsembleParticipantStatus,
   EnsembleWakeupRecord,
   ExternalPathGrant,
+  RunQueueJobStatus,
   TranscriptMediaRef,
   UsageRecord,
   WorkSessionConfig
@@ -242,6 +243,11 @@ function makeHarness(
     cancelWakeupTimer?: (wakeupId: string) => void
     persistSessionCheckpoint?: (chat: ChatRecord, reason: string) => void
     completeSessionCheckpoint?: (chatId: string, roundId: string, status: string) => void
+    transitionRunQueueJob?: (
+      runIdOrId: string,
+      status: RunQueueJobStatus,
+      partial?: { statusReason?: string; lastError?: string }
+    ) => unknown
     nowIso?: () => string
     getProviderUsageSnapshot?: (provider: EnsembleParticipant['provider']) => any
     recordUsage?: (entry: Omit<UsageRecord, 'id' | 'timestamp'>) => void
@@ -273,6 +279,7 @@ function makeHarness(
       : { dispatched: true, appRunId: payload.appRunId || '' }
   })
   const cancelRun = vi.fn(options.cancelRun ?? (async () => true))
+  const transitionRunQueueJob = vi.fn(options.transitionRunQueueJob ?? (() => null))
   const probeParticipant = options.probeParticipant ? vi.fn(options.probeParticipant) : undefined
   const orchestrator = new EnsembleOrchestrator({
     getChat: () => chat,
@@ -297,6 +304,7 @@ function makeHarness(
     ...(options.completeSessionCheckpoint
       ? { completeSessionCheckpoint: options.completeSessionCheckpoint }
       : {}),
+    transitionRunQueueJob,
     ...(options.recordUsage ? { recordUsage: options.recordUsage } : {}),
     ...(options.recordBossmanControlRejection
       ? { recordBossmanControlRejection: options.recordBossmanControlRejection }
@@ -310,6 +318,7 @@ function makeHarness(
       return chat
     },
     cancelRun,
+    transitionRunQueueJob,
     dispatched,
     dispatch,
     probeParticipant,
@@ -358,10 +367,28 @@ describe('EnsembleOrchestrator', () => {
         appChatId: 'ensemble-chat'
       },
       {
+        type: 'message',
+        role: 'assistant',
+        delta: true,
+        content: 'Reviewed.'
+      }
+    )
+    harness.orchestrator.handleProviderOutput(
+      'claude',
+      {
+        appRunId: harness.dispatched[0].appRunId,
+        appChatId: 'ensemble-chat'
+      },
+      {
         type: 'result',
         status: 'success',
         stats: { total_tokens: 10 }
       }
+    )
+    expect(harness.transitionRunQueueJob).toHaveBeenCalledWith(
+      harness.dispatched[0].appRunId,
+      'completed',
+      {}
     )
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
     expect(harness.dispatched[1].provider).toBe('codex')
@@ -2918,6 +2945,11 @@ Next action:
     const skipped = await harness.orchestrator.skipActiveParticipant('ensemble-chat')
     expect(skipped).toBe(true)
     expect(harness.cancelRun).toHaveBeenCalledWith('claude', harness.dispatched[0].appRunId)
+    expect(harness.transitionRunQueueJob).toHaveBeenCalledWith(
+      harness.dispatched[0].appRunId,
+      'cancelled',
+      { statusReason: 'Skipped by user.' }
+    )
 
     // Round continues — next participant dispatched without restart.
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
@@ -4709,6 +4741,11 @@ Next action:
     expect(harness.chat.ensemble?.activeRound?.status).toBe('cancelled')
     expect(harness.chat.ensemble?.activeRound?.queuedPrompt).toBeUndefined()
     expect(harness.cancelRun).toHaveBeenCalledWith('claude', harness.dispatched[0].appRunId)
+    expect(harness.transitionRunQueueJob).toHaveBeenCalledWith(
+      harness.dispatched[0].appRunId,
+      'cancelled',
+      { statusReason: 'cancelled' }
+    )
   })
 
   it('does not queue behind a stale runtime whose persisted round already ended', async () => {

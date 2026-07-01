@@ -162,13 +162,58 @@ describe('deriveChatIsRunning', () => {
   it('lets a known-terminal ensemble round override an orphan runningChatIds entry', () => {
     expect(
       deriveChatIsRunning({
-        chat: baseChat(ensemblePatch('completed')),
+        chat: baseChat({
+          ...ensemblePatch('completed'),
+          ...withRuns({ endedAt: '2026-06-09T00:01:00.000Z', exitCode: 0 })
+        }),
         runningChatIds: new Set(['chat-1'])
       })
     ).toBe(false)
   })
 
   it('lets a stale running ensemble snapshot override an orphan runningChatIds entry', () => {
+    expect(
+      deriveChatIsRunning({
+        chat: baseChat({
+          ...ensemblePatch('running'),
+          ...withRuns({ endedAt: '2026-06-09T00:01:00.000Z', exitCode: 0 }),
+          ensemble: {
+            ...ensemblePatch('running').ensemble!,
+            activeRound: {
+              ...ensemblePatch('running').ensemble!.activeRound!,
+              activeParticipantId: undefined,
+              participants: [
+                {
+                  participantId: 'p1',
+                  provider: 'codex',
+                  role: 'Worker',
+                  order: 0,
+                  status: 'answered',
+                  endedAt: '2026-06-09T00:01:00.000Z'
+                }
+              ]
+            }
+          }
+        }),
+        runningChatIds: new Set(['chat-1'])
+      })
+    ).toBe(false)
+  })
+
+  it('lets active run-queue evidence override an inactive ensemble snapshot', () => {
+    expect(
+      deriveChatIsRunning({
+        chat: baseChat({
+          ...ensemblePatch('completed'),
+          ...withRuns({ endedAt: '2026-06-09T00:01:00.000Z', exitCode: 0 })
+        }),
+        runningChatIds: new Set(),
+        runQueueJobs: [{ chatId: 'chat-1', status: 'active' }]
+      })
+    ).toBe(true)
+  })
+
+  it('keeps runningChatIds live for a stale ensemble snapshot until the last run is terminal', () => {
     expect(
       deriveChatIsRunning({
         chat: baseChat({
@@ -193,7 +238,7 @@ describe('deriveChatIsRunning', () => {
         }),
         runningChatIds: new Set(['chat-1'])
       })
-    ).toBe(false)
+    ).toBe(true)
   })
 })
 
