@@ -1163,6 +1163,109 @@
   animation-delay: -0.92s;
 }
 
+.sky-diff-cloud {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 3;
+  width: 184px;
+  height: 64px;
+  opacity: 0;
+  pointer-events: none;
+  transform-origin: 50% 54%;
+  animation: skyDiffCloudFlight var(--sky-diff-duration, 58s) linear both;
+  backface-visibility: hidden;
+  will-change: transform, opacity;
+  filter:
+    drop-shadow(0 10px 14px rgba(0, 0, 0, 0.16))
+    drop-shadow(0 0 18px rgba(255, 255, 255, 0.1));
+}
+
+.sky-diff-cloud-soft {
+  position: absolute;
+  inset: -1px -7px 1px -8px;
+  border-radius: 50% 48% 46% 54% / 58% 64% 36% 42%;
+  background:
+    radial-gradient(ellipse at 12% 68%, rgba(255, 255, 255, 0.34) 0 15%, transparent 16%),
+    radial-gradient(ellipse at 25% 48%, rgba(255, 255, 255, 0.62) 0 23%, transparent 24%),
+    radial-gradient(ellipse at 44% 30%, rgba(255, 255, 255, 0.76) 0 31%, transparent 32%),
+    radial-gradient(ellipse at 66% 36%, rgba(255, 255, 255, 0.58) 0 26%, transparent 27%),
+    radial-gradient(ellipse at 84% 58%, rgba(255, 255, 255, 0.4) 0 20%, transparent 21%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.58), rgba(231, 241, 255, 0.2) 68%, rgba(255, 255, 255, 0.08));
+  box-shadow:
+    inset 0 -10px 22px rgba(206, 219, 236, 0.12),
+    inset 0 8px 18px rgba(255, 255, 255, 0.26);
+  filter: blur(4.8px);
+  opacity: 0.92;
+}
+
+.sky-diff-cloud-card {
+  position: absolute;
+  left: 14px;
+  right: 13px;
+  top: 15px;
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  padding: 5px 7px;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 10px;
+  background:
+    linear-gradient(180deg, rgba(18, 23, 33, 0.58), rgba(10, 14, 22, 0.42)),
+    rgba(255, 255, 255, 0.08);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.22),
+    0 8px 18px rgba(8, 14, 24, 0.16);
+  color: rgba(249, 251, 255, 0.94);
+  font-size: 9.5px;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: 0;
+  white-space: nowrap;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.46);
+}
+
+.sky-diff-cloud-stat {
+  font-variant-numeric: tabular-nums;
+}
+
+.sky-diff-cloud-add {
+  color: #2da44e;
+}
+
+.sky-diff-cloud-delete {
+  color: #cf222e;
+}
+
+.sky-diff-cloud-bars {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 1.5px;
+  min-width: 0;
+}
+
+.sky-diff-cloud-bar {
+  width: 5px;
+  height: 8px;
+  border-radius: 2px;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.18),
+    0 0 7px currentColor;
+}
+
+.sky-diff-cloud-bar.add {
+  color: rgba(45, 164, 78, 0.54);
+  background: #2da44e;
+}
+
+.sky-diff-cloud-bar.delete {
+  color: rgba(207, 34, 46, 0.52);
+  background: #cf222e;
+}
+
 .sky-rainfall,
 .sky-snowfall {
   position: absolute;
@@ -1665,6 +1768,39 @@
   }
 }
 
+@keyframes skyDiffCloudFlight {
+  0% {
+    transform: translate3d(var(--sky-diff-x0), var(--sky-diff-y0), 0) rotate(var(--sky-diff-r0)) scale(var(--sky-diff-scale, 0.94));
+    opacity: 0;
+  }
+  6% {
+    opacity: 0.7;
+  }
+  18% {
+    transform: translate3d(var(--sky-diff-x1), var(--sky-diff-y1), 0) rotate(var(--sky-diff-r1)) scale(calc(var(--sky-diff-scale, 0.94) * 1.04));
+    opacity: 0.78;
+  }
+  38% {
+    transform: translate3d(var(--sky-diff-x2), var(--sky-diff-y2), 0) rotate(var(--sky-diff-r2)) scale(calc(var(--sky-diff-scale, 0.94) * 0.96));
+    opacity: 0.72;
+  }
+  58% {
+    transform: translate3d(var(--sky-diff-x3), var(--sky-diff-y3), 0) rotate(var(--sky-diff-r3)) scale(calc(var(--sky-diff-scale, 0.94) * 1.08));
+    opacity: 0.8;
+  }
+  79% {
+    transform: translate3d(var(--sky-diff-x4), var(--sky-diff-y4), 0) rotate(var(--sky-diff-r4)) scale(calc(var(--sky-diff-scale, 0.94) * 0.98));
+    opacity: 0.68;
+  }
+  94% {
+    opacity: 0.56;
+  }
+  100% {
+    transform: translate3d(var(--sky-diff-x5), var(--sky-diff-y5), 0) rotate(var(--sky-diff-r5)) scale(var(--sky-diff-scale, 0.94));
+    opacity: 0;
+  }
+}
+
 @keyframes skyRainFall {
   0% {
     transform: translate3d(0, -18px, 0) rotate(12deg);
@@ -1773,13 +1909,15 @@
 [data-reduce-motion="true"] .sky-ufo,
 [data-reduce-motion="true"] .sky-ufo::before,
 [data-reduce-motion="true"] .sky-ufo-light,
+[data-reduce-motion="true"] .sky-diff-cloud,
 [data-reduce-motion="true"] .sky-storm .sky-glow::after,
 [data-reduce-motion="true"] .sky-rainfall span,
 [data-reduce-motion="true"] .sky-snowfall span {
   animation: none;
 }
 
-[data-reduce-motion="true"] .sky-ufo {
+[data-reduce-motion="true"] .sky-ufo,
+[data-reduce-motion="true"] .sky-diff-cloud {
   display: none;
 }
 

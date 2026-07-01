@@ -1,6 +1,12 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import { SkyWeatherVisual, type HostWeatherVisualState } from './FxLayers'
+import {
+  createSkyDiffCloudFlight,
+  getNextSkyDiffCloudTiming,
+  getNextSkyUfoTiming,
+  SkyWeatherVisual,
+  type HostWeatherVisualState
+} from './FxLayers'
 
 const weather = (isDay: boolean): HostWeatherVisualState => ({
   kind: 'clear',
@@ -26,5 +32,28 @@ describe('SkyWeatherVisual', () => {
     expect(html).toContain('sky-moon')
     expect(html).toContain('sky-moon-crescent')
     expect(html).toContain('sky-orb')
+  })
+
+  it('offsets the diff-cloud pass from the UFO pass', () => {
+    const bootedAt = 1_000
+    const ufoLaunchAt = bootedAt + 60_000
+    const diffLaunchAt = ufoLaunchAt + 20 * 60_000
+
+    expect(getNextSkyUfoTiming(ufoLaunchAt, bootedAt).delayMs).toBe(0)
+    expect(getNextSkyDiffCloudTiming(ufoLaunchAt, bootedAt).delayMs).toBeGreaterThan(10 * 60_000)
+    expect(getNextSkyDiffCloudTiming(diffLaunchAt, bootedAt).delayMs).toBe(0)
+    expect(getNextSkyUfoTiming(diffLaunchAt, bootedAt).delayMs).toBeGreaterThan(10 * 60_000)
+  })
+
+  it('generates scary diff-cloud deletions with stronger red bars', () => {
+    const flight = createSkyDiffCloudFlight(1)
+    const additions = Number(flight.additions.replace(/[+,]/g, ''))
+    const deletions = Number(flight.deletions.replace(/[-,]/g, ''))
+
+    expect(deletions).toBeGreaterThan(additions)
+    expect(flight.deleteBlockCount).toBeGreaterThan(flight.addBlockCount)
+    expect(flight.style).toMatchObject({
+      '--sky-diff-duration': '58000ms'
+    })
   })
 })

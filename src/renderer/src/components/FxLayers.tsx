@@ -30,6 +30,9 @@ type SkyTimePhase = 'dawn' | 'day' | 'evening' | 'night'
 const SKY_UFO_INITIAL_DELAY_MS = 60_000
 const SKY_UFO_RECURRENCE_MS = 40 * 60_000
 const SKY_UFO_FLIGHT_MS = 60_000
+const SKY_DIFF_CLOUD_INITIAL_DELAY_MS = SKY_UFO_INITIAL_DELAY_MS + SKY_UFO_RECURRENCE_MS / 2
+const SKY_DIFF_CLOUD_RECURRENCE_MS = SKY_UFO_RECURRENCE_MS
+const SKY_DIFF_CLOUD_FLIGHT_MS = 58_000
 const SKY_UFO_RENDERER_BOOTED_AT_MS = Date.now()
 
 interface SkyUfoFlight {
@@ -42,9 +45,23 @@ interface SkyUfoTiming {
   nextDelayMs: number
 }
 
+interface SkyDiffCloudFlight {
+  id: number
+  additions: string
+  deletions: string
+  addBlockCount: number
+  deleteBlockCount: number
+  style: CSSProperties
+}
+
 const randomBetween = (min: number, max: number) => min + Math.random() * (max - min)
 const randomInt = (min: number, max: number) => Math.round(randomBetween(min, max))
 const randomSkyUfoY = () => `clamp(28px, ${randomInt(8, 30)}cqh, 190px)`
+const randomSkyDiffY = () => `clamp(40px, ${randomInt(11, 36)}cqh, 230px)`
+const formatDiffNumber = (value: number) =>
+  Math.round(value)
+    .toString()
+    .replace(/\B(?=(\d{3})+(?!\d))/g, ',')
 
 function createSkyUfoFlight(id: number): SkyUfoFlight {
   return {
@@ -68,26 +85,96 @@ function createSkyUfoFlight(id: number): SkyUfoFlight {
   }
 }
 
-function getNextSkyUfoTiming(now = Date.now()): SkyUfoTiming {
-  const elapsedMs = Math.max(0, now - SKY_UFO_RENDERER_BOOTED_AT_MS)
-  if (elapsedMs < SKY_UFO_INITIAL_DELAY_MS) {
+function getNextCyclicSkyTiming(
+  initialDelayMs: number,
+  recurrenceMs: number,
+  flightMs: number,
+  now = Date.now(),
+  bootedAtMs = SKY_UFO_RENDERER_BOOTED_AT_MS
+): SkyUfoTiming {
+  const elapsedMs = Math.max(0, now - bootedAtMs)
+  if (elapsedMs < initialDelayMs) {
     return {
-      delayMs: SKY_UFO_INITIAL_DELAY_MS - elapsedMs,
-      nextDelayMs: SKY_UFO_RECURRENCE_MS
+      delayMs: initialDelayMs - elapsedMs,
+      nextDelayMs: recurrenceMs
     }
   }
 
-  const cycleOffsetMs = (elapsedMs - SKY_UFO_INITIAL_DELAY_MS) % SKY_UFO_RECURRENCE_MS
-  if (cycleOffsetMs < SKY_UFO_FLIGHT_MS) {
+  const cycleOffsetMs = (elapsedMs - initialDelayMs) % recurrenceMs
+  if (cycleOffsetMs < flightMs) {
     return {
       delayMs: 0,
-      nextDelayMs: SKY_UFO_RECURRENCE_MS - cycleOffsetMs
+      nextDelayMs: recurrenceMs - cycleOffsetMs
     }
   }
 
   return {
-    delayMs: SKY_UFO_RECURRENCE_MS - cycleOffsetMs,
-    nextDelayMs: SKY_UFO_RECURRENCE_MS
+    delayMs: recurrenceMs - cycleOffsetMs,
+    nextDelayMs: recurrenceMs
+  }
+}
+
+export function getNextSkyUfoTiming(now = Date.now(), bootedAtMs = SKY_UFO_RENDERER_BOOTED_AT_MS) {
+  return getNextCyclicSkyTiming(
+    SKY_UFO_INITIAL_DELAY_MS,
+    SKY_UFO_RECURRENCE_MS,
+    SKY_UFO_FLIGHT_MS,
+    now,
+    bootedAtMs
+  )
+}
+
+export function getNextSkyDiffCloudTiming(
+  now = Date.now(),
+  bootedAtMs = SKY_UFO_RENDERER_BOOTED_AT_MS
+) {
+  return getNextCyclicSkyTiming(
+    SKY_DIFF_CLOUD_INITIAL_DELAY_MS,
+    SKY_DIFF_CLOUD_RECURRENCE_MS,
+    SKY_DIFF_CLOUD_FLIGHT_MS,
+    now,
+    bootedAtMs
+  )
+}
+
+export function createSkyDiffCloudFlight(id: number): SkyDiffCloudFlight {
+  const additions = randomInt(1_400, 4_900)
+  const deletions = additions + randomInt(1_900, 8_400)
+  const addBlockCount = randomInt(2, 4)
+  const deleteBlockCount = Math.min(7, addBlockCount + randomInt(2, 4))
+  const fromLeft = Math.random() > 0.5
+  const xStops = fromLeft
+    ? ['-220px', '14cqw', '36cqw', '58cqw', '82cqw', 'calc(100cqw + 220px)']
+    : ['calc(100cqw + 220px)', '82cqw', '58cqw', '36cqw', '14cqw', '-220px']
+
+  return {
+    id,
+    additions: `+${formatDiffNumber(additions)}`,
+    deletions: `-${formatDiffNumber(deletions)}`,
+    addBlockCount,
+    deleteBlockCount,
+    style: {
+      '--sky-diff-duration': `${SKY_DIFF_CLOUD_FLIGHT_MS}ms`,
+      '--sky-diff-scale': randomBetween(0.82, 1.06).toFixed(2),
+      '--sky-diff-x0': xStops[0],
+      '--sky-diff-x1': xStops[1],
+      '--sky-diff-x2': xStops[2],
+      '--sky-diff-x3': xStops[3],
+      '--sky-diff-x4': xStops[4],
+      '--sky-diff-x5': xStops[5],
+      '--sky-diff-y0': randomSkyDiffY(),
+      '--sky-diff-y1': randomSkyDiffY(),
+      '--sky-diff-y2': randomSkyDiffY(),
+      '--sky-diff-y3': randomSkyDiffY(),
+      '--sky-diff-y4': randomSkyDiffY(),
+      '--sky-diff-y5': randomSkyDiffY(),
+      '--sky-diff-r0': `${randomInt(-5, 5)}deg`,
+      '--sky-diff-r1': `${randomInt(-8, 10)}deg`,
+      '--sky-diff-r2': `${randomInt(-10, 8)}deg`,
+      '--sky-diff-r3': `${randomInt(-7, 11)}deg`,
+      '--sky-diff-r4': `${randomInt(-9, 7)}deg`,
+      '--sky-diff-r5': `${randomInt(-4, 6)}deg`
+    } as CSSProperties
   }
 }
 
@@ -183,7 +270,9 @@ export function SkyWeatherVisual({ weather }: { weather: HostWeatherVisualState 
   const localHour = new Date().getHours()
   const skyKind = weather?.kind || 'unknown'
   const skyUfoSequenceRef = useRef(0)
+  const skyDiffCloudSequenceRef = useRef(0)
   const [skyUfoFlight, setSkyUfoFlight] = useState<SkyUfoFlight | null>(null)
+  const [skyDiffCloudFlight, setSkyDiffCloudFlight] = useState<SkyDiffCloudFlight | null>(null)
 
   // Keep the backend daylight signal for core assets like stars vs sun/day state.
   const isNightBase = weather ? !weather.isDay : localHour < 7 || localHour >= 19
@@ -227,6 +316,56 @@ export function SkyWeatherVisual({ weather }: { weather: HostWeatherVisualState 
     }
 
     const timing = getNextSkyUfoTiming()
+    scheduledTimer = window.setTimeout(() => {
+      launchFlight()
+      scheduleRecurring(timing.nextDelayMs)
+    }, timing.delayMs)
+
+    return () => {
+      if (scheduledTimer !== undefined) {
+        window.clearTimeout(scheduledTimer)
+      }
+      if (recurringTimer !== undefined) {
+        window.clearInterval(recurringTimer)
+      }
+      if (clearFlightTimer !== undefined) {
+        window.clearTimeout(clearFlightTimer)
+      }
+    }
+  }, [])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return
+    }
+
+    let scheduledTimer: number | undefined
+    let recurringTimer: number | undefined
+    let clearFlightTimer: number | undefined
+
+    const clearFlight = (id: number) => {
+      setSkyDiffCloudFlight((current) => (current?.id === id ? null : current))
+    }
+
+    const launchFlight = () => {
+      if (clearFlightTimer !== undefined) {
+        window.clearTimeout(clearFlightTimer)
+      }
+
+      const id = skyDiffCloudSequenceRef.current + 1
+      skyDiffCloudSequenceRef.current = id
+      setSkyDiffCloudFlight(createSkyDiffCloudFlight(id))
+      clearFlightTimer = window.setTimeout(() => clearFlight(id), SKY_DIFF_CLOUD_FLIGHT_MS + 500)
+    }
+
+    const scheduleRecurring = (delayMs: number) => {
+      scheduledTimer = window.setTimeout(() => {
+        launchFlight()
+        recurringTimer = window.setInterval(launchFlight, SKY_DIFF_CLOUD_RECURRENCE_MS)
+      }, delayMs)
+    }
+
+    const timing = getNextSkyDiffCloudTiming()
     scheduledTimer = window.setTimeout(() => {
       launchFlight()
       scheduleRecurring(timing.nextDelayMs)
@@ -294,6 +433,31 @@ export function SkyWeatherVisual({ weather }: { weather: HostWeatherVisualState 
           <span className="sky-ufo-light sky-ufo-light-1" />
           <span className="sky-ufo-light sky-ufo-light-2" />
           <span className="sky-ufo-light sky-ufo-light-3" />
+        </div>
+      )}
+      {skyDiffCloudFlight && (
+        <div
+          key={skyDiffCloudFlight.id}
+          className="sky-diff-cloud"
+          style={skyDiffCloudFlight.style}
+        >
+          <span className="sky-diff-cloud-soft" />
+          <span className="sky-diff-cloud-card">
+            <span className="sky-diff-cloud-stat sky-diff-cloud-add">
+              {skyDiffCloudFlight.additions}
+            </span>
+            <span className="sky-diff-cloud-stat sky-diff-cloud-delete">
+              {skyDiffCloudFlight.deletions}
+            </span>
+            <span className="sky-diff-cloud-bars">
+              {Array.from({ length: skyDiffCloudFlight.addBlockCount }).map((_, index) => (
+                <span key={`add-${index}`} className="sky-diff-cloud-bar add" />
+              ))}
+              {Array.from({ length: skyDiffCloudFlight.deleteBlockCount }).map((_, index) => (
+                <span key={`delete-${index}`} className="sky-diff-cloud-bar delete" />
+              ))}
+            </span>
+          </span>
         </div>
       )}
       <div className="sky-rainfall">
