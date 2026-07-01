@@ -1,6 +1,17 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'fs'
 import { dirname } from 'path'
 import { createHash, randomBytes, randomUUID } from 'crypto'
+import {
+  assertSettablePreset,
+  contributionModeForRules,
+  contributionRulesForPreset,
+  deriveContributionRules,
+  effectiveContributionRules,
+  HumanCollaborationDenialError,
+  normalizeContributionRules,
+  type HumanContributionPreset,
+  type HumanContributionRules
+} from './HumanContributionRules'
 
 export type HumanCollaborationMode = 'readOnly' | 'comments'
 export type HumanCollaboratorStatus = 'pending' | 'active' | 'revoked'
@@ -37,6 +48,14 @@ export interface HumanCollaborationShare {
   participants: HumanCollaboratorParticipant[]
   invites: HumanCollaborationInvite[]
   idempotency: Record<string, string>
+  /**
+   * Phase 2 (P2a) contribution rules. OPTIONAL for migration/back-compat: a
+   * share without persisted rules behaves exactly like Phase 1 — callers use
+   * `effectiveContributionRules(share)` which derives from `mode`. Only ever
+   * written by HOST-side APIs (createShare/updateShareRules); collaborator
+   * frames and renderer state are never authority for this field.
+   */
+  contributionRules?: HumanContributionRules
 }
 
 export interface HumanCollaborationSnapshot {
@@ -151,6 +170,8 @@ export class HumanCollaborationStore {
   createShare(args: {
     chatId: string
     mode: HumanCollaborationMode
+    /** Optional P2a preset; when set it wins and `mode` is re-derived from it. */
+    preset?: HumanContributionPreset
     now?: number
     inviteTtlMs?: number
   }): CreateShareResult {
@@ -171,7 +192,22 @@ export class HumanCollaborationStore {
         idempotency: {}
       } satisfies HumanCollaborationShare)
 
-    share.mode = args.mode
+    if (args.preset) {
+      // Host chose an explicit contribution preset: rules win, mode derives.
+      const rules = contributionRulesForPreset(assertSettablePreset(args.preset))
+      share.contributionRules = rules
+      share.mode = contributionModeForRules(rules)
+    } else {
+      share.mode = args.mode
+      // Keep existing rules only while they still agree with the requested
+      // mode; otherwise re-derive so mode stays the Phase 1 source of truth.
+      if (
+        !share.contributionRules ||
+        contributionModeForRules(share.contributionRules) !== share.mode
+      ) {
+        share.contributionRules = deriveContributionRules(share.mode)
+      }
+    }
     share.updatedAt = now
     const inviteToken = randomBytes(24).toString('base64url')
     const roomId = randomUUID()
@@ -219,6 +255,28 @@ export class HumanCollaborationStore {
         ? { ...participant, status: 'revoked', revokedAt: now }
         : participant
     )
+    share.updatedAt = now
+    this.persist()
+    return cloneShare(share)
+  }
+
+  /**
+   * P2a: host-only rules update. Sets the share's contribution rules to the
+   * chosen preset and keeps the legacy `mode` in lockstep so every Phase 1
+   * gate (mode checks, projection, handshake `shareMode`, v1 clients) stays
+   * consistent. Rejects the non-settable direct-dispatch tier.
+   */
+  updateShareRules(args: {
+    shareId: string
+    preset: HumanContributionPreset
+    now?: number
+  }): HumanCollaborationShare | null {
+    const now = args.now ?? Date.now()
+    const share = this.memory.shares.find((candidate) => candidate.shareId === args.shareId)
+    if (!share || !share.enabled) return null
+    const rules = contributionRulesForPreset(assertSettablePreset(args.preset))
+    share.contributionRules = rules
+    share.mode = contributionModeForRules(rules)
     share.updatedAt = now
     this.persist()
     return cloneShare(share)
@@ -363,13 +421,19 @@ export class HumanCollaborationStore {
     const existingByKey =
       share.participants.find((participant) => participant.publicKeyId === args.publicKeyId) || null
     if (existingByKey?.status === 'revoked') {
-      throw new Error('Collaborator identity has been revoked for this share.')
+      throw new HumanCollaborationDenialError(
+        'revoked',
+        'Collaborator identity has been revoked for this share.'
+      )
     }
     const activeCount =
       share.participants.filter((participant) => participant.status === 'active').length
 
     if (!existingByKey && activeCount >= MAX_ACTIVE_COLLABORATORS) {
-      throw new Error('Collaboration share already has the maximum number of active collaborators.')
+      throw new HumanCollaborationDenialError(
+        'quota_exceeded',
+        'Collaboration share already has the maximum number of active collaborators.'
+      )
     }
 
     const tokenHash = hashInviteToken(args.inviteToken)
@@ -396,16 +460,45 @@ export class HumanCollaborationStore {
     chatId: string
     collaboratorId: string
     clientMessageId: string
+    /** P2b contribution intent; plain comment when omitted (v1 clients). */
+    intent?: 'comment' | 'requestHostAction'
   }): { share: HumanCollaborationShare; participant: HumanCollaboratorParticipant; existingMessageId?: string } {
     const share = this.memory.shares.find((candidate) => candidate.shareId === args.shareId)
-    if (!share || !share.enabled) throw new Error('Collaboration share is not active.')
-    if (share.chatId !== args.chatId) throw new Error('Collaboration share does not match chat.')
-    if (share.mode !== 'comments') throw new Error('Collaboration share is read-only.')
+    if (!share) throw new HumanCollaborationDenialError('stale_session', 'Collaboration share is not active.')
+    if (!share.enabled) throw new HumanCollaborationDenialError('revoked', 'Collaboration share is not active.')
+    if (share.chatId !== args.chatId) {
+      throw new HumanCollaborationDenialError('rule_denied', 'Collaboration share does not match chat.')
+    }
+    if (share.mode !== 'comments') {
+      throw new HumanCollaborationDenialError('read_only', 'Collaboration share is read-only.')
+    }
+    // P2a: rules are evaluated in main before EVERY contribution action.
+    // Rules can only narrow what `mode` already allowed (fail-closed).
+    const rules = effectiveContributionRules(share)
+    if (!rules.appendComment) {
+      throw new HumanCollaborationDenialError('rule_denied', 'Collaboration share is read-only.')
+    }
+    if (args.intent === 'requestHostAction' && !rules.requestHostAction) {
+      throw new HumanCollaborationDenialError(
+        'rule_denied',
+        'This share does not accept host-action requests.'
+      )
+    }
+    if (
+      rules.allowedCollaboratorIds &&
+      rules.allowedCollaboratorIds.length > 0 &&
+      !rules.allowedCollaboratorIds.includes(args.collaboratorId)
+    ) {
+      throw new HumanCollaborationDenialError(
+        'rule_denied',
+        'Collaborator is not allowed to contribute under the current rules.'
+      )
+    }
     const participant = share.participants.find(
       (candidate) => candidate.collaboratorId === args.collaboratorId
     )
     if (!participant || participant.status !== 'active') {
-      throw new Error('Collaborator is not active for this share.')
+      throw new HumanCollaborationDenialError('revoked', 'Collaborator is not active for this share.')
     }
     const existingMessageId = share.idempotency[idempotencyKey(args.collaboratorId, args.clientMessageId)]
     return { share: cloneShare(share)!, participant: { ...participant }, existingMessageId }
@@ -419,14 +512,19 @@ export class HumanCollaborationStore {
     messageId: string
   }): number {
     const share = this.memory.shares.find((candidate) => candidate.shareId === args.shareId)
-    if (!share || !share.enabled) throw new Error('Collaboration share is not active.')
-    if (share.chatId !== args.chatId) throw new Error('Collaboration share does not match chat.')
-    if (share.mode !== 'comments') throw new Error('Collaboration share is read-only.')
+    if (!share) throw new HumanCollaborationDenialError('stale_session', 'Collaboration share is not active.')
+    if (!share.enabled) throw new HumanCollaborationDenialError('revoked', 'Collaboration share is not active.')
+    if (share.chatId !== args.chatId) {
+      throw new HumanCollaborationDenialError('rule_denied', 'Collaboration share does not match chat.')
+    }
+    if (share.mode !== 'comments' || !effectiveContributionRules(share).appendComment) {
+      throw new HumanCollaborationDenialError('read_only', 'Collaboration share is read-only.')
+    }
     const participant = share.participants.find(
       (candidate) => candidate.collaboratorId === args.collaboratorId
     )
     if (!participant || participant.status !== 'active') {
-      throw new Error('Collaborator is not active for this share.')
+      throw new HumanCollaborationDenialError('revoked', 'Collaborator is not active for this share.')
     }
     const sequence = share.nextSequence
     share.nextSequence += 1
@@ -570,7 +668,15 @@ function normalizeSnapshot(value: Partial<HumanCollaborationSnapshot>): HumanCol
             idempotency:
               share.idempotency && typeof share.idempotency === 'object'
                 ? { ...share.idempotency }
-                : {}
+                : {},
+            // Fail-closed rules normalization: unknown/forged shapes degrade to
+            // preset baselines, providerDispatch can never widen (P2a).
+            ...(share.contributionRules
+              ? (() => {
+                  const rules = normalizeContributionRules(share.contributionRules)
+                  return rules ? { contributionRules: rules } : {}
+                })()
+              : {})
           }))
       : []
   }

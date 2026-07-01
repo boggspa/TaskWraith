@@ -42,6 +42,8 @@ import {
   HumanCollaborationStore,
   type HumanCollaborationShare
 } from './HumanCollaborationStore'
+import { HumanCollaborationDenialError } from './HumanContributionRules'
+import type { HumanCollaborationAuditLike } from './HumanCollaborationAuditLog'
 
 // Append rate limit (per shareId:collaboratorId). Collaborators are untrusted;
 // each accepted append triggers a whole-chat persist + a projection reseal +
@@ -97,6 +99,8 @@ export interface HumanCollaborationRuntimeDeps<ProjectionType, AppendType> {
     displayName: string
     confirmCode: string
   }) => void
+  /** P2a durable audit sink (admission, session, rejected-contribution events). */
+  audit?: HumanCollaborationAuditLike
   now?: () => number
   log?: (line: string) => void
 }
@@ -180,7 +184,10 @@ export class HumanCollaborationRuntime<ProjectionType = unknown, AppendType = un
     if (method === HUMAN_COLLABORATION_METHODS.disconnect) {
       return this.disconnect(params as HumanCollaborationDisconnectInput) as unknown as Promise<ReturnType>
     }
-    throw new Error(`Unsupported human collaboration method: ${String(method)}`)
+    throw new HumanCollaborationDenialError(
+      'protocol_unsupported',
+      `Unsupported human collaboration method: ${String(method)}`
+    )
   }
 
   async beginAdmission(input: HumanCollaborationBeginHandshakeInput): Promise<HumanCollaborationBeginHandshakeResult> {
@@ -302,6 +309,15 @@ export class HumanCollaborationRuntime<ProjectionType = unknown, AppendType = un
       displayName: share.mode === 'readOnly' ? displayName : existingParticipant?.displayName || displayName,
       confirmCode
     })
+    this.opts.audit?.append({
+      kind: 'admission.began',
+      chatId,
+      shareId,
+      ...(existingParticipant?.collaboratorId
+        ? { collaboratorId: existingParticipant.collaboratorId }
+        : {}),
+      detail: `${mode} · ${share.mode === 'readOnly' ? displayName : existingParticipant?.displayName || displayName}`
+    })
 
     return {
       handshakeId,
@@ -334,6 +350,12 @@ export class HumanCollaborationRuntime<ProjectionType = unknown, AppendType = un
       // A failed admission attempt is terminal: drop the pending handshake (and
       // its derived keys) so it can't be retried and doesn't linger until TTL.
       this.pending.delete(input.handshakeId)
+      this.opts.audit?.append({
+        kind: 'admission.sas_failed',
+        chatId: pending.chatId,
+        shareId: pending.shareId,
+        detail: 'confirm code mismatch'
+      })
       throw new Error('Confirmation code mismatch.')
     }
     const collaboratorPublic = importRawEd25519PublicKey(b64.decode(pending.collaboratorIdentityPubKeyB64))
@@ -342,6 +364,12 @@ export class HumanCollaborationRuntime<ProjectionType = unknown, AppendType = un
     const transcriptValid = verifyEd25519(collaboratorPublic, transcriptHash, collaboratorSig)
     if (!transcriptValid) {
       this.pending.delete(input.handshakeId)
+      this.opts.audit?.append({
+        kind: 'admission.sas_failed',
+        chatId: pending.chatId,
+        shareId: pending.shareId,
+        detail: 'collaborator transcript signature invalid'
+      })
       throw new Error('Collaborator transcript signature invalid.')
     }
 
@@ -382,6 +410,13 @@ export class HumanCollaborationRuntime<ProjectionType = unknown, AppendType = un
     }
     this.sessions.set(sessionId, session)
     this.pending.delete(input.handshakeId)
+    this.opts.audit?.append({
+      kind: 'admission.sas_confirmed',
+      chatId: pending.chatId,
+      shareId: admitted.share.shareId,
+      collaboratorId: participant.collaboratorId,
+      detail: `${pending.mode} · ${participant.displayName}`
+    })
 
     return {
       sessionId,
@@ -435,9 +470,18 @@ export class HumanCollaborationRuntime<ProjectionType = unknown, AppendType = un
   }
 
   async disconnect(input: HumanCollaborationDisconnectInput): Promise<boolean> {
+    const session = this.sessions.get(input.sessionId)
     const removed = this.sessions.delete(input.sessionId)
     this.projectionSubscribers.delete(input.sessionId)
     if (!removed) return false
+    if (session) {
+      this.opts.audit?.append({
+        kind: 'session.disconnected',
+        chatId: session.chatId,
+        shareId: session.shareId,
+        collaboratorId: session.collaboratorId
+      })
+    }
     return true
   }
 
@@ -506,7 +550,10 @@ export class HumanCollaborationRuntime<ProjectionType = unknown, AppendType = un
     if (message.method === HUMAN_COLLABORATION_METHODS.disconnect) {
       return this.disconnect({ sessionId: frame.sessionId })
     }
-    throw new Error(`Unsupported encrypted human collaboration method: ${message.method}`)
+    throw new HumanCollaborationDenialError(
+      'protocol_unsupported',
+      `Unsupported encrypted human collaboration method: ${message.method}`
+    )
   }
 
   sealProjectionUpdate(
@@ -551,29 +598,40 @@ export class HumanCollaborationRuntime<ProjectionType = unknown, AppendType = un
       return
     }
     if (now - state.last < APPEND_MIN_INTERVAL_MS) {
-      throw new Error('Comment rate limit exceeded, slow down.')
+      throw this.rateLimitDenial(session)
     }
     if (now - state.windowStart >= APPEND_WINDOW_MS) {
       state.windowStart = now
       state.count = 0
     }
     if (state.count >= APPEND_MAX_PER_WINDOW) {
-      throw new Error('Comment rate limit exceeded, slow down.')
+      throw this.rateLimitDenial(session)
     }
     state.count += 1
     state.last = now
   }
 
+  private rateLimitDenial(session: RuntimeSession): HumanCollaborationDenialError {
+    this.opts.audit?.append({
+      kind: 'contribution.rejected',
+      chatId: session.chatId,
+      shareId: session.shareId,
+      collaboratorId: session.collaboratorId,
+      code: 'quota_exceeded'
+    })
+    return new HumanCollaborationDenialError('quota_exceeded', 'Comment rate limit exceeded, slow down.')
+  }
+
   private requireActiveSession(sessionId: string): RuntimeSession {
     const session = this.sessions.get(sessionId)
     if (!session) {
-      throw new Error('Collaboration session is not active.')
+      throw new HumanCollaborationDenialError('stale_session', 'Collaboration session is not active.')
     }
     const share = this.opts.store.getShare(session.shareId)
     if (!share || !share.enabled) {
       this.sessions.delete(sessionId)
       this.projectionSubscribers.delete(sessionId)
-      throw new Error('Collaboration share is no longer active.')
+      throw new HumanCollaborationDenialError('revoked', 'Collaboration share is no longer active.')
     }
     const participant = share.participants.find((candidate) => candidate.collaboratorId === session.collaboratorId)
     if (
@@ -583,7 +641,7 @@ export class HumanCollaborationRuntime<ProjectionType = unknown, AppendType = un
     ) {
       this.sessions.delete(sessionId)
       this.projectionSubscribers.delete(sessionId)
-      throw new Error('Collaborator is not active for this share.')
+      throw new HumanCollaborationDenialError('revoked', 'Collaborator is not active for this share.')
     }
     return session
   }

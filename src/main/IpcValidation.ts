@@ -108,6 +108,8 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'human-collaboration:append-comment': ['object'],
   'human-collaboration:projection': ['object'],
   'human-collaboration:promote-comment': ['object'],
+  'human-collaboration:update-share-rules': ['object'],
+  'human-collaboration:audit-log': ['optionalObject'],
   'human-collaboration-runtime:begin-admission': ['object'],
   'human-collaboration-runtime:confirm-sas': ['object'],
   'human-collaboration-runtime:subscribe-projection': ['object'],

@@ -1403,6 +1403,27 @@ declare global {
         chatId: string
         messageId: string
       }) => Promise<{ chat: ChatRecord; draft: string }>
+      humanCollaborationUpdateShareRules: (input: {
+        shareId: string
+        preset: string
+      }) => Promise<unknown | null>
+      humanCollaborationAuditLog: (input?: {
+        chatId?: string
+        limit?: number
+      }) => Promise<
+        Array<{
+          id: string
+          at: number
+          kind: string
+          chatId?: string
+          shareId?: string
+          collaboratorId?: string
+          code?: string
+          preview?: string
+          contentHash?: string
+          detail?: string
+        }>
+      >
       humanCollaborationCollaboratorJoin: (input: {
         shareId: string
         chatId: string

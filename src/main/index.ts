@@ -339,6 +339,7 @@ import {
 } from './services/ApprovalService'
 import { ChatService } from './services/ChatService'
 import { HumanCollaborationStore } from './collaboration/HumanCollaborationStore'
+import { HumanCollaborationAuditLog } from './collaboration/HumanCollaborationAuditLog'
 import { HumanCollaborationIdentityStore } from './collaboration/HumanCollaborationIdentityStore'
 import { HumanCollaborationRuntime } from './collaboration/HumanCollaborationRuntime'
 import { HumanCollaborationHostTransport } from './collaboration/HumanCollaborationHostTransport'
@@ -24873,9 +24874,15 @@ if (isGeminiMcpBridgeProcess) {
     const humanCollaborationStore = new HumanCollaborationStore(
       join(app.getPath('userData'), 'human-collaboration.json')
     )
+    // P2a — bounded, durable audit of host-visible collaboration events
+    // (rules changes, invites, admission, contributions, drafts, revocations).
+    const humanCollaborationAuditLog = new HumanCollaborationAuditLog(
+      join(app.getPath('userData'), 'human-collaboration-audit.json')
+    )
     const chatService = new ChatService({
       appStore: AppStore,
       humanCollaborationStore,
+      humanCollaborationAudit: humanCollaborationAuditLog,
       findRegisteredWorkspace,
       canonicalPath,
       sanitizeChatForSave,
@@ -24987,6 +24994,7 @@ if (isGeminiMcpBridgeProcess) {
         onAdmissionBegan: (info) => {
           mainWindow?.webContents.send('human-collaboration-admission-began', info)
         },
+        audit: humanCollaborationAuditLog,
         log: (line) => console.warn(line)
       })
       humanCollaborationHostTransport.attachRuntime(humanCollaborationRuntime)
@@ -25984,6 +25992,30 @@ if (isGeminiMcpBridgeProcess) {
         broadcastHumanCollaborationUpdate(result.chat.appChatId)
         return result
       }
+    )
+    // P2a — host-only contribution-rules update. The store rejects the
+    // non-settable direct-dispatch tier and keeps legacy `mode` in lockstep.
+    ipcMain.handle(
+      'human-collaboration:update-share-rules',
+      (_, input: { shareId: string; preset: string }) => {
+        const result = chatService.updateHumanCollaborationShareRules({
+          shareId: input.shareId,
+          preset: input.preset as Parameters<
+            typeof chatService.updateHumanCollaborationShareRules
+          >[0]['preset']
+        })
+        if (result) broadcastHumanCollaborationUpdate(result.chatId)
+        return result
+      }
+    )
+    // P2a — bounded, newest-first audit rows for the host's review surfaces.
+    ipcMain.handle(
+      'human-collaboration:audit-log',
+      (_, input?: { chatId?: string; limit?: number }) =>
+        humanCollaborationAuditLog.list({
+          ...(input?.chatId ? { chatId: String(input.chatId) } : {}),
+          ...(typeof input?.limit === 'number' ? { limit: input.limit } : {})
+        })
     )
     // ── Collaborator side: this app instance JOINING someone else's shared chat ──
     // One active join at a time (v1). The client dials the host's relay room,

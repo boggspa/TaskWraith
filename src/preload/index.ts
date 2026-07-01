@@ -1102,6 +1102,13 @@ const api = {
     ipcRenderer.invoke('human-collaboration-runtime:disconnect', input),
   humanCollaborationPromoteComment: (input: { chatId: string; messageId: string }) =>
     ipcRenderer.invoke('human-collaboration:promote-comment', input),
+  // P2a — host-only contribution-rules update (preset: readOnly | comments |
+  // requestHostAction | autoDraft; the direct tier is rejected main-side).
+  humanCollaborationUpdateShareRules: (input: { shareId: string; preset: string }) =>
+    ipcRenderer.invoke('human-collaboration:update-share-rules', input),
+  // P2a — bounded, newest-first collaboration audit rows.
+  humanCollaborationAuditLog: (input?: { chatId?: string; limit?: number }) =>
+    ipcRenderer.invoke('human-collaboration:audit-log', input),
   // Collaborator side (this instance joining someone else's shared chat).
   humanCollaborationCollaboratorJoin: (input: {
     shareId: string

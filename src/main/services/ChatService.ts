@@ -24,6 +24,14 @@ import type {
   HumanCollaborationShare,
   HumanCollaborationStore
 } from '../collaboration/HumanCollaborationStore'
+import {
+  effectiveContributionRules,
+  type HumanContributionPreset
+} from '../collaboration/HumanContributionRules'
+import {
+  auditContentHash,
+  type HumanCollaborationAuditLike
+} from '../collaboration/HumanCollaborationAuditLog'
 
 // Grok + Cursor are first-class providers; no eligibility gate (see ProviderId).
 const PROVIDER_IDS = new Set<ProviderId>(['gemini', 'codex', 'claude', 'kimi', 'grok', 'cursor', 'ollama'])
@@ -84,6 +92,8 @@ export interface ChatServiceStore {
 export interface ChatServiceDeps {
   appStore: ChatServiceStore
   humanCollaborationStore?: HumanCollaborationStore
+  /** P2a durable audit sink for host-visible collaboration events. */
+  humanCollaborationAudit?: HumanCollaborationAuditLike
   findRegisteredWorkspace: (path: string) => WorkspaceRecord | undefined
   canonicalPath: (path: string) => string
   sanitizeChatForSave: (chat: ChatRecord) => ChatRecord
@@ -317,17 +327,57 @@ export class ChatService {
   createHumanCollaborationShare(args: {
     chatId: string
     mode: HumanCollaborationMode
+    preset?: HumanContributionPreset
     inviteTtlMs?: number
   }): CreateShareResult {
     const store = this.requireHumanCollaborationStore()
     const chatId = requireSafeChatId(args.chatId, 'Chat id')
     const chat = this.deps.appStore.getChat(chatId)
     if (!chat || chat.archived) throw new Error('Chat is not available for collaboration.')
-    return store.createShare({
+    const result = store.createShare({
       chatId,
       mode: args.mode === 'comments' ? 'comments' : 'readOnly',
+      ...(args.preset ? { preset: args.preset } : {}),
       inviteTtlMs: args.inviteTtlMs
     })
+    this.deps.humanCollaborationAudit?.append({
+      kind: 'share.created',
+      chatId,
+      shareId: result.share.shareId,
+      detail: `preset ${result.share.contributionRules?.preset ?? result.share.mode}`
+    })
+    this.deps.humanCollaborationAudit?.append({
+      kind: 'invite.created',
+      chatId,
+      shareId: result.share.shareId,
+      detail: `invite ${result.invite.inviteId}`
+    })
+    return result
+  }
+
+  /**
+   * P2a: host-only contribution-rules update. Store enforces that the preset
+   * is settable (the direct-dispatch tier is rejected) and keeps `mode` in
+   * lockstep. Returns null when the share is unknown or already revoked.
+   */
+  updateHumanCollaborationShareRules(args: {
+    shareId: string
+    preset: HumanContributionPreset
+  }): HumanCollaborationShare | null {
+    const store = this.requireHumanCollaborationStore()
+    const updated = store.updateShareRules({
+      shareId: requireNonEmptyString(args.shareId, 'Share id'),
+      preset: args.preset
+    })
+    if (updated) {
+      this.deps.humanCollaborationAudit?.append({
+        kind: 'share.rules_changed',
+        chatId: updated.chatId,
+        shareId: updated.shareId,
+        detail: `preset ${updated.contributionRules?.preset ?? updated.mode}`
+      })
+    }
+    return updated
   }
 
   listHumanCollaborationShares(chatId?: string): HumanCollaborationShare[] {
@@ -337,17 +387,36 @@ export class ChatService {
   }
 
   revokeHumanCollaborationShare(shareId: string): HumanCollaborationShare | null {
-    return this.requireHumanCollaborationStore().revokeShare(requireNonEmptyString(shareId, 'Share id'))
+    const revoked = this.requireHumanCollaborationStore().revokeShare(
+      requireNonEmptyString(shareId, 'Share id')
+    )
+    if (revoked) {
+      this.deps.humanCollaborationAudit?.append({
+        kind: 'share.revoked',
+        chatId: revoked.chatId,
+        shareId: revoked.shareId
+      })
+    }
+    return revoked
   }
 
   revokeHumanCollaborationParticipant(
     shareId: string,
     collaboratorId: string
   ): HumanCollaborationShare | null {
-    return this.requireHumanCollaborationStore().revokeParticipant({
+    const updated = this.requireHumanCollaborationStore().revokeParticipant({
       shareId: requireNonEmptyString(shareId, 'Share id'),
       collaboratorId: requireNonEmptyString(collaboratorId, 'Collaborator id')
     })
+    if (updated) {
+      this.deps.humanCollaborationAudit?.append({
+        kind: 'participant.revoked',
+        chatId: updated.chatId,
+        shareId: updated.shareId,
+        collaboratorId
+      })
+    }
+    return updated
   }
 
   consumeHumanCollaborationInvite(args: {
@@ -356,12 +425,20 @@ export class ChatService {
     displayName: string
     publicKeyId: string
   }): ConsumeInviteResult {
-    return this.requireHumanCollaborationStore().consumeInvite({
+    const result = this.requireHumanCollaborationStore().consumeInvite({
       shareId: requireNonEmptyString(args.shareId, 'Share id'),
       inviteToken: requireNonEmptyString(args.inviteToken, 'Invite token'),
       displayName: requireNonEmptyString(args.displayName, 'Display name'),
       publicKeyId: requireNonEmptyString(args.publicKeyId, 'Collaborator identity')
     })
+    this.deps.humanCollaborationAudit?.append({
+      kind: 'invite.consumed',
+      chatId: result.share.chatId,
+      shareId: result.share.shareId,
+      collaboratorId: result.participant.collaboratorId,
+      detail: result.participant.displayName
+    })
+    return result
   }
 
   appendCollaboratorComment(args: {
@@ -381,11 +458,35 @@ export class ChatService {
       clientMessageId: requireNonEmptyString(args.clientMessageId, 'Client message id')
     })
 
+    // P2a: the share's contribution rules can NARROW the accepted payload size
+    // below the hard 8000 bound above (never widen it).
+    const rules = effectiveContributionRules(validation.share)
+    if (Buffer.byteLength(content, 'utf8') > rules.maxContributionBytes) {
+      this.deps.humanCollaborationAudit?.append({
+        kind: 'contribution.rejected',
+        chatId,
+        shareId: validation.share.shareId,
+        collaboratorId: validation.participant.collaboratorId,
+        code: 'rule_denied',
+        detail: 'contribution exceeds the share byte limit'
+      })
+      throw new Error('Comment is too long for this share.')
+    }
+
     const current = this.deps.appStore.getChat(chatId)
     if (!current || current.archived) throw new Error('Chat is not available for collaboration.')
     if (validation.existingMessageId) {
       const existing = current.messages.find((message) => message.id === validation.existingMessageId)
-      if (existing) return { chat: current, message: existing, deduped: true }
+      if (existing) {
+        this.deps.humanCollaborationAudit?.append({
+          kind: 'contribution.deduped',
+          chatId,
+          shareId: validation.share.shareId,
+          collaboratorId: validation.participant.collaboratorId,
+          contentHash: auditContentHash(content)
+        })
+        return { chat: current, message: existing, deduped: true }
+      }
     }
 
     const messageId = randomUUID()
@@ -412,6 +513,14 @@ export class ChatService {
       updatedAt: Date.now()
     }
     this.deps.appStore.saveChat(updated)
+    this.deps.humanCollaborationAudit?.append({
+      kind: 'contribution.received',
+      chatId,
+      shareId: validation.share.shareId,
+      collaboratorId: validation.participant.collaboratorId,
+      preview: content,
+      contentHash: auditContentHash(content)
+    })
     return { chat: updated, message, deduped: false }
   }
 
@@ -442,6 +551,16 @@ export class ChatService {
     })
     const updated: ChatRecord = { ...chat, messages: updatedMessages, updatedAt: Date.now() }
     this.deps.appStore.saveChat(updated)
+    const promotedMetadata = humanCollaboratorMetadata(message)
+    this.deps.humanCollaborationAudit?.append({
+      kind: 'draft.inserted',
+      chatId,
+      ...(promotedMetadata?.shareId ? { shareId: promotedMetadata.shareId } : {}),
+      ...(promotedMetadata?.collaboratorId
+        ? { collaboratorId: promotedMetadata.collaboratorId }
+        : {}),
+      contentHash: auditContentHash(message.content)
+    })
     return { chat: updated, draft }
   }
 
