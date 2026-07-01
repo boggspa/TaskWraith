@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { join } from 'path'
 import type { BrowserWindow } from 'electron'
 import { ipcMain } from 'electron'
+import { TRANSCRIPT_MEDIA_ASSET_DIR } from '../services/TranscriptMediaAssetStore'
 import { registerMediaAssetHandlers } from './mediaAssetHandlers'
 
 vi.mock('electron', () => ({
@@ -17,7 +19,12 @@ beforeEach(() => {
 
 type RegisteredHandler = (event: unknown, ...args: unknown[]) => unknown
 const VALID_SHA = 'abcdefabcdefabcdefabcdefabcdefabcdefabcdef'
-const VALID_ASSET_PATH = `/tmp/user-data/transcript-media/ab/${VALID_SHA}.png`
+const VALID_ASSET_PATH = join(
+  '/tmp/user-data',
+  TRANSCRIPT_MEDIA_ASSET_DIR,
+  'ab',
+  `${VALID_SHA}.png`
+)
 
 function handlerFor(channel: string): RegisteredHandler {
   const handler = mockedHandle.mock.calls.find(([registered]) => registered === channel)?.[1] as

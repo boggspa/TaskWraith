@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { join } from 'path'
 import { ipcMain } from 'electron'
 import type { ResolvedProviderBinary } from '../providers/CliProviderRuntime'
 import { registerProviderTerminalHandlers } from './providerTerminalHandlers'
@@ -35,18 +36,22 @@ function createResolved(binaryPath: string | null): ResolvedProviderBinary {
 }
 
 function createDeps() {
+  const userDataPath = '/tmp/taskwraith'
   const deps = {
     resolveCliProviderBinary: vi.fn(async (provider: string) =>
       createResolved(`/usr/local/bin/${provider}`)
     ),
-    getUserDataPath: vi.fn(() => '/tmp/taskwraith'),
+    getUserDataPath: vi.fn(() => userDataPath),
     openPath: vi.fn(async () => ''),
     mkdirSync: vi.fn(),
     writeFileSync: vi.fn(),
     chmodSync: vi.fn(),
     getPlatform: vi.fn(() => 'darwin' as NodeJS.Platform)
   }
-  return { deps }
+  return {
+    deps,
+    loginDir: join(userDataPath, 'login')
+  }
 }
 
 describe('registerProviderTerminalHandlers', () => {
@@ -98,7 +103,8 @@ describe('registerProviderTerminalHandlers', () => {
   })
 
   it('quotes commandParts on non-windows and chmods/opens the .command file', async () => {
-    const { deps } = createDeps()
+    const { deps, loginDir } = createDeps()
+    const commandFile = join(loginDir, 'claude-login.command')
     deps.resolveCliProviderBinary.mockResolvedValueOnce(
       createResolved("/Applications/Claude App/claude'o")
     )
@@ -109,24 +115,21 @@ describe('registerProviderTerminalHandlers', () => {
     })
     const script = deps.writeFileSync.mock.calls[0]?.[1]
     expect(script).toContain("'/Applications/Claude App/claude'\\''o' 'auth' 'login'")
-    expect(deps.mkdirSync).toHaveBeenCalledWith('/tmp/taskwraith/login', { recursive: true })
-    expect(deps.writeFileSync).toHaveBeenCalledWith(
-      '/tmp/taskwraith/login/claude-login.command',
-      expect.any(String),
-      { mode: 0o755 }
-    )
-    expect(deps.chmodSync).toHaveBeenCalledWith(
-      '/tmp/taskwraith/login/claude-login.command',
-      0o755
-    )
+    expect(deps.mkdirSync).toHaveBeenCalledWith(loginDir, { recursive: true })
+    expect(deps.writeFileSync).toHaveBeenCalledWith(commandFile, expect.any(String), {
+      mode: 0o755
+    })
+    expect(deps.chmodSync).toHaveBeenCalledWith(commandFile, 0o755)
     expect(deps.writeFileSync.mock.invocationCallOrder[0]).toBeLessThan(
       deps.chmodSync.mock.invocationCallOrder[0]
     )
-    expect(deps.openPath).toHaveBeenCalledWith('/tmp/taskwraith/login/claude-login.command')
+    expect(deps.openPath).toHaveBeenCalledWith(commandFile)
   })
 
   it('generates Windows .ps1/.cmd launchers and opens the .cmd', async () => {
-    const { deps } = createDeps()
+    const { deps, loginDir } = createDeps()
+    const psFile = join(loginDir, 'codex-upgrade.ps1')
+    const cmdFile = join(loginDir, 'codex-upgrade.cmd')
     deps.getPlatform.mockReturnValue('win32')
     registerProviderTerminalHandlers(deps)
 
@@ -135,15 +138,15 @@ describe('registerProviderTerminalHandlers', () => {
     })
     expect(deps.writeFileSync).toHaveBeenNthCalledWith(
       1,
-      '/tmp/taskwraith/login/codex-upgrade.ps1',
+      psFile,
       expect.stringContaining("'npm' 'install' '-g' '@openai/codex@latest'")
     )
     expect(deps.writeFileSync).toHaveBeenNthCalledWith(
       2,
-      '/tmp/taskwraith/login/codex-upgrade.cmd',
+      cmdFile,
       expect.stringContaining('powershell.exe -NoProfile -ExecutionPolicy Bypass -NoExit -File "%~dp0codex-upgrade.ps1"')
     )
-    expect(deps.openPath).toHaveBeenCalledWith('/tmp/taskwraith/login/codex-upgrade.cmd')
+    expect(deps.openPath).toHaveBeenCalledWith(cmdFile)
   })
 
   it('returns shell.openPath error strings and catch-to-string error shapes', async () => {

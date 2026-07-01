@@ -6,7 +6,7 @@ const readCss = (): string =>
   readFileSync(
     join(process.cwd(), 'src/renderer/src/assets/css/10-provider-shell-overrides.css'),
     'utf8'
-  )
+  ).replace(/\r\n/g, '\n')
 
 const cssBlockStartingAt = (source: string, selector: string): string => {
   const start = source.indexOf(selector)
