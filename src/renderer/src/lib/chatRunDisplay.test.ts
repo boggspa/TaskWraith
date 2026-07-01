@@ -36,7 +36,19 @@ const ensemblePatch = (status: 'running' | 'completed' | 'cancelled'): Partial<C
         status,
         prompt: 'go',
         startedAt: '2026-06-09T00:00:00.000Z',
-        participants: []
+        activeParticipantId: status === 'running' ? 'p1' : undefined,
+        participants:
+          status === 'running'
+            ? [
+                {
+                  participantId: 'p1',
+                  provider: 'codex',
+                  role: 'Worker',
+                  order: 0,
+                  status: 'running'
+                }
+              ]
+            : []
       },
       updatedAt: '2026-06-09T00:00:00.000Z'
     }
@@ -143,6 +155,43 @@ describe('deriveChatIsRunning', () => {
           }
         }),
         runningChatIds: new Set()
+      })
+    ).toBe(false)
+  })
+
+  it('lets a known-terminal ensemble round override an orphan runningChatIds entry', () => {
+    expect(
+      deriveChatIsRunning({
+        chat: baseChat(ensemblePatch('completed')),
+        runningChatIds: new Set(['chat-1'])
+      })
+    ).toBe(false)
+  })
+
+  it('lets a stale running ensemble snapshot override an orphan runningChatIds entry', () => {
+    expect(
+      deriveChatIsRunning({
+        chat: baseChat({
+          ...ensemblePatch('running'),
+          ensemble: {
+            ...ensemblePatch('running').ensemble!,
+            activeRound: {
+              ...ensemblePatch('running').ensemble!.activeRound!,
+              activeParticipantId: undefined,
+              participants: [
+                {
+                  participantId: 'p1',
+                  provider: 'codex',
+                  role: 'Worker',
+                  order: 0,
+                  status: 'answered',
+                  endedAt: '2026-06-09T00:01:00.000Z'
+                }
+              ]
+            }
+          }
+        }),
+        runningChatIds: new Set(['chat-1'])
       })
     ).toBe(false)
   })

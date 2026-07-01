@@ -16,6 +16,7 @@ import type {
   ChatRun,
   EnsembleConfig,
   EnsembleParticipant,
+  EnsembleParticipantStatus,
   EnsembleWakeupRecord,
   ExternalPathGrant,
   TranscriptMediaRef,
@@ -4137,6 +4138,42 @@ Next action:
     expect(closeNote?.content).toContain('Round closed')
   })
 
+  it('lets the assigned Boss definitively close the round and drop queued prompts', async () => {
+    const harness = makeHarness()
+    harness.chat.ensemble!.bossmanParticipantId = 'claude'
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Close-out pass.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    expect(harness.dispatched[0].provider).toBe('claude')
+
+    const queued = harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Fresh user prompt that should be dropped.',
+      event: { sender: {} as Electron.WebContents },
+      mode: 'queue'
+    })
+    expect(queued.status).toBe('queued')
+    expect(harness.chat.ensemble?.activeRound?.queuedPrompts).toEqual([
+      'Fresh user prompt that should be dropped.'
+    ])
+
+    expect(
+      harness.orchestrator.markYielded(
+        harness.dispatched[0].appRunId!,
+        'Need to return control to the user.',
+        'user'
+      )
+    ).toBe(true)
+
+    await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('completed'))
+    expect(harness.dispatched).toHaveLength(1)
+    expect(harness.chat.ensemble?.activeRound?.queuedPrompts).toEqual([])
+    expect(harness.chat.ensemble?.activeRound?.queuedPrompt).toBeUndefined()
+  })
+
   it('persists tool calls used by ensemble participants into a role:tool message', async () => {
     // Regression: tool calls used by ensemble participants weren't
     // showing in the transcript. Root cause: the renderer-side tool
@@ -4704,7 +4741,11 @@ Next action:
   })
 
   it('does not queue behind a stale running snapshot with no live dispatch evidence', async () => {
-    const harness = makeHarness()
+    const completedRounds: Array<{ chatId: string; roundId: string; status: string }> = []
+    const harness = makeHarness({
+      completeSessionCheckpoint: (chatId, roundId, status) =>
+        completedRounds.push({ chatId, roundId, status })
+    })
     harness.orchestrator.startRound({
       chatId: 'ensemble-chat',
       prompt: 'Original prompt',
@@ -4738,6 +4779,11 @@ Next action:
     expect(harness.chat.ensemble?.activeRound?.roundId).not.toBe(oldRoundId)
     expect(harness.chat.ensemble?.activeRound?.queuedPrompt).toBeUndefined()
     expect(harness.chat.messages.at(-1)?.content).toBe('Fresh prompt')
+    expect(completedRounds).toContainEqual({
+      chatId: 'ensemble-chat',
+      roundId: oldRoundId,
+      status: 'completed'
+    })
   })
 
   it('can cancel a persisted running round even when its runtime is already gone', async () => {
@@ -5047,14 +5093,7 @@ Next action:
     expect(harness.dispatched[2].provider).toBe('codex')
   })
 
-  it('promotes a participant tagged via @mention even when the speaker yields with the same target', async () => {
-    // Production path the maintainer hit: Claude streams content with @codex,
-    // then calls `ensemble_yield(target='codex')` via the MCP tool.
-    // The yieldTarget branch fires FIRST after completion resolves,
-    // but resolveYieldTargetIndex returns -1 because Codex isn't in
-    // `remaining` (Codex already spoke). The yield branch silently
-    // no-ops. My @-mention code should then fire and re-promote
-    // Codex via the `remaining.unshift(tagged)` path.
+  it('does not re-promote a participant tagged via @mention after they already completed their turn', async () => {
     const harness = makeHarness()
     harness.chat.ensemble!.orchestrationMode = 'continuous'
     harness.chat.ensemble!.participants = [
@@ -5096,10 +5135,9 @@ Next action:
     expect(harness.dispatched[1].provider).toBe('claude')
 
     // Claude speaks (with @codex in content) then yields via tool to
-    // codex. By the time the yieldTarget branch runs, `remaining` is
-    // empty (Claude was the last in the round) — so the yield branch
-    // no-ops. The @-mention branch should fire next and re-promote
-    // Codex for a follow-up turn.
+    // codex. Codex already completed this round, so neither the
+    // yield-target fallback nor the trailing @-mention should append
+    // a continuation turn.
     harness.orchestrator.handleProviderOutput(
       'claude',
       { appRunId: harness.dispatched[1].appRunId, appChatId: 'ensemble-chat' },
@@ -5109,8 +5147,9 @@ Next action:
       }
     )
     harness.orchestrator.markYielded(harness.dispatched[1].appRunId!, 'Passing to Codex', 'codex')
-    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
-    expect(harness.dispatched[2].provider).toBe('codex')
+    await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('completed'))
+    expect(harness.dispatched).toHaveLength(2)
+    expect(harness.chat.ensemble?.activeRound?.continuationHops || 0).toBe(0)
   })
 
   it('resolves turn-bound yield targets by model alias', () => {
@@ -5173,10 +5212,7 @@ Next action:
     expect(resolveYieldTargetIndex(remaining, 'GPT 5.5')).toBe(0)
   })
 
-  it('appends an extra turn when @-tagging a participant who already spoke', async () => {
-    // After-round agent-loop: Claude speaks first, then Codex speaks
-    // and mentions @Planner — Claude (role 'Planner') gets an extra
-    // turn appended so the back-and-forth can continue.
+  it('does not append an extra turn when @-tagging a participant who already reached a terminal status', async () => {
     const harness = makeHarness()
     harness.chat.ensemble!.orchestrationMode = 'continuous'
     harness.chat.ensemble!.participants = [
@@ -5216,7 +5252,8 @@ Next action:
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
     expect(harness.dispatched[1].provider).toBe('codex')
 
-    // Codex finishes and mentions @Planner — Claude should re-enter.
+    // Codex finishes and mentions @Planner — Claude already answered
+    // earlier in this round, so no extra turn should be appended.
     const codexRoute = {
       appRunId: harness.dispatched[1].appRunId,
       appChatId: 'ensemble-chat'
@@ -5231,9 +5268,9 @@ Next action:
       stats: { total_tokens: 10 }
     })
 
-    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
-    expect(harness.dispatched[2].provider).toBe('claude')
-    expect(harness.chat.ensemble?.activeRound?.continuationHops).toBe(1)
+    await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('completed'))
+    expect(harness.dispatched).toHaveLength(2)
+    expect(harness.chat.ensemble?.activeRound?.continuationHops || 0).toBe(0)
   })
 
   it('does not append an extra turn when turn-bound @mention targets an already-spoken participant', async () => {
@@ -5346,70 +5383,113 @@ Next action:
     expect(harness.chat.ensemble?.activeRound?.continuationHops || 0).toBe(0)
   })
 
-  it('caps continuous back-and-forth at the configured handoff limit', async () => {
+  it('does not append continuous continuations for terminal participant statuses', async () => {
     const harness = makeHarness()
     harness.chat.ensemble!.orchestrationMode = 'continuous'
-    harness.chat.ensemble!.maxContinuationHops = 1
-    harness.chat.ensemble!.participants = [
-      {
-        id: 'ensemble-claude',
-        provider: 'claude',
-        enabled: true,
-        role: 'Planner',
-        instructions: 'Plan.',
-        order: 1,
-        permissionPresetId: 'read_only'
-      },
-      {
-        id: 'ensemble-codex',
-        provider: 'codex',
-        enabled: true,
-        role: 'Worker',
-        instructions: 'Work.',
-        order: 2,
-        permissionPresetId: 'workspace_write'
-      }
-    ]
     harness.orchestrator.startRound({
       chatId: 'ensemble-chat',
-      prompt: 'Back and forth, but bounded.',
+      prompt: 'Check terminal statuses.',
       event: { sender: {} as Electron.WebContents }
     })
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
 
-    harness.orchestrator.handleProviderOutput(
-      'claude',
-      { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' },
-      { type: 'result', status: 'success', stats: { total_tokens: 10 } }
-    )
-    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    const runtime = (
+      harness.orchestrator as unknown as {
+        roundsByChatId: Map<
+          string,
+          { continuationHops: number; maxContinuationHops: number }
+        >
+      }
+    ).roundsByChatId.get('ensemble-chat')
+    const appendContinuation = (
+      harness.orchestrator as unknown as {
+        tryAppendContinuationTurn: (
+          runtime: object,
+          remaining: EnsembleParticipant[],
+          participant: EnsembleParticipant,
+          statusMessage: string
+        ) => boolean
+      }
+    ).tryAppendContinuationTurn.bind(harness.orchestrator)
+    const terminalStatuses: EnsembleParticipantStatus[] = [
+      'answered',
+      'yielded',
+      'skipped',
+      'cancelled',
+      'failed',
+      'unreachable'
+    ]
+    const target = harness.chat.ensemble!.participants[1]
 
-    harness.orchestrator.handleProviderOutput(
-      'codex',
-      { appRunId: harness.dispatched[1].appRunId, appChatId: 'ensemble-chat' },
-      { type: 'content', text: '@Planner please review my implementation.' }
-    )
-    harness.orchestrator.handleProviderOutput(
-      'codex',
-      { appRunId: harness.dispatched[1].appRunId, appChatId: 'ensemble-chat' },
-      { type: 'result', status: 'success', stats: { total_tokens: 10 } }
-    )
-    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
+    expect(runtime).toBeTruthy()
+    for (const status of terminalStatuses) {
+      runtime!.continuationHops = 0
+      harness.chat.ensemble!.activeRound = {
+        ...harness.chat.ensemble!.activeRound!,
+        participants: harness.chat.ensemble!.activeRound!.participants.map((participant) =>
+          participant.participantId === target.id
+            ? {
+                ...participant,
+                status
+              }
+            : participant
+        )
+      }
+      const remaining: EnsembleParticipant[] = []
+      expect(
+        appendContinuation(
+          runtime!,
+          remaining,
+          target,
+          `@-mention: extra turn appended for ${target.role}.`
+        )
+      ).toBe(false)
+      expect(remaining).toEqual([])
+      expect(runtime!.continuationHops).toBe(0)
+    }
+  })
 
-    harness.orchestrator.handleProviderOutput(
-      'claude',
-      { appRunId: harness.dispatched[2].appRunId, appChatId: 'ensemble-chat' },
-      { type: 'content', text: '@Worker one more pass would help.' }
-    )
-    harness.orchestrator.handleProviderOutput(
-      'claude',
-      { appRunId: harness.dispatched[2].appRunId, appChatId: 'ensemble-chat' },
-      { type: 'result', status: 'success', stats: { total_tokens: 10 } }
+  it('caps continuous continuation appends at the configured handoff limit', async () => {
+    const harness = makeHarness()
+    harness.chat.ensemble!.orchestrationMode = 'continuous'
+    harness.chat.ensemble!.maxContinuationHops = 1
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Bounded continuation.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    const runtime = (
+      harness.orchestrator as unknown as {
+        roundsByChatId: Map<
+          string,
+          { continuationHops: number; maxContinuationHops: number; continuationLimitNotified?: boolean }
+        >
+      }
+    ).roundsByChatId.get('ensemble-chat')
+    expect(runtime).toBeTruthy()
+    runtime!.continuationHops = 1
+    runtime!.maxContinuationHops = 1
+
+    const appended = (
+      harness.orchestrator as unknown as {
+        tryAppendContinuationTurn: (
+          runtime: object,
+          remaining: EnsembleParticipant[],
+          participant: EnsembleParticipant,
+          statusMessage: string
+        ) => boolean
+      }
+    ).tryAppendContinuationTurn(
+      runtime!,
+      [],
+      harness.chat.ensemble!.participants[1],
+      '@-mention: extra turn appended for Worker.'
     )
 
-    await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('completed'))
-    expect(harness.dispatched).toHaveLength(3)
-    expect(harness.chat.ensemble?.activeRound?.continuationHops).toBe(1)
+    expect(appended).toBe(false)
+    expect(runtime!.continuationLimitNotified).toBe(true)
     expect(harness.chat.messages.map((message) => message.content)).toContain(
       'Continuous handoff limit reached (1/1); returning control to the user.'
     )
@@ -6109,6 +6189,9 @@ Next action:
     // Only the original two dispatches should have happened — the
     // queued continuation was dropped on the terminal-status check.
     expect(harness.dispatched).toHaveLength(2)
+    expect(harness.chat.ensemble?.activeRound?.status).toBe('completed')
+    expect(harness.chat.ensemble?.activeRound?.queuedPrompt).toBeUndefined()
+    expect(harness.chat.ensemble?.activeRound?.queuedPrompts).toEqual([])
   })
 
   it('1.0.4-AK3: drops queued prompts when workSession duration cap elapses at round-end', async () => {

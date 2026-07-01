@@ -634,7 +634,16 @@ describe('RemoteTaskProjection', () => {
       startedAt: ISO,
       queuedPrompt: 'first',
       queuedPrompts: ['first', 'second'],
-      participants: []
+      activeParticipantId: 'p1',
+      participants: [
+        {
+          participantId: 'p1',
+          provider: 'codex',
+          role: 'Worker',
+          order: 0,
+          status: 'running'
+        }
+      ]
     } as NonNullable<NonNullable<ChatRecord['ensemble']>['activeRound']>
 
     expect(combinedQueuedPrompts(activeRound)).toEqual(['first', 'second'])

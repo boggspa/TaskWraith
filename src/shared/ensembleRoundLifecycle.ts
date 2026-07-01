@@ -26,7 +26,7 @@ export function isEnsembleRoundDispatchLive(
     const activeParticipant = participants.find(
       (participant) => participant.participantId === round.activeParticipantId
     )
-    if (!activeParticipant || LIVE_ENSEMBLE_PARTICIPANT_STATUSES.has(activeParticipant.status)) {
+    if (activeParticipant && LIVE_ENSEMBLE_PARTICIPANT_STATUSES.has(activeParticipant.status)) {
       return true
     }
   }
@@ -36,7 +36,7 @@ export function isEnsembleRoundDispatchLive(
   if ((round.pendingWakeupIds?.length || 0) > 0) return true
   if ((round.sleepingParticipantIds?.length || 0) > 0) return true
 
-  if (participants.length === 0) return true
+  if (participants.length === 0) return false
   return participants.some((participant) =>
     LIVE_ENSEMBLE_PARTICIPANT_STATUSES.has(participant.status)
   )

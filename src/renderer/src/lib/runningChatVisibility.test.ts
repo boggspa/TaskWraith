@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
 
-import { hasTerminalLastRun, visibleRunningChatIds } from './runningChatVisibility'
+import {
+  hasKnownInactiveEnsembleRound,
+  hasTerminalLastRun,
+  visibleRunningChatIds
+} from './runningChatVisibility'
 
 describe('visibleRunningChatIds', () => {
   it('returns the original list when no approvals are pending', () => {
@@ -132,6 +136,64 @@ describe('visibleRunningChatIds', () => {
       )
     ).toEqual(['live-chat'])
   })
+
+  it('drops an ensemble chat whose active round is already terminal', () => {
+    expect(
+      visibleRunningChatIds(
+        ['ensemble-chat'],
+        {},
+        {
+          'ensemble-chat': {
+            appChatId: 'ensemble-chat',
+            runs: [{}],
+            ensemble: {
+              activeRound: {
+                roundId: 'round-1',
+                status: 'completed',
+                prompt: 'done',
+                startedAt: '2026-07-01T20:00:00.000Z',
+                endedAt: '2026-07-01T20:01:00.000Z',
+                participants: []
+              }
+            }
+          }
+        }
+      )
+    ).toEqual([])
+  })
+
+  it('drops a stale running ensemble snapshot with no live dispatch evidence', () => {
+    expect(
+      visibleRunningChatIds(
+        ['ensemble-chat'],
+        {},
+        {
+          'ensemble-chat': {
+            appChatId: 'ensemble-chat',
+            runs: [{}],
+            ensemble: {
+              activeRound: {
+                roundId: 'round-1',
+                status: 'running',
+                prompt: 'done',
+                startedAt: '2026-07-01T20:00:00.000Z',
+                participants: [
+                  {
+                    participantId: 'p1',
+                    provider: 'codex',
+                    role: 'Worker',
+                    order: 0,
+                    status: 'answered',
+                    endedAt: '2026-07-01T20:01:00.000Z'
+                  }
+                ]
+              }
+            }
+          }
+        }
+      )
+    ).toEqual([])
+  })
 })
 
 describe('hasTerminalLastRun', () => {
@@ -163,6 +225,51 @@ describe('hasTerminalLastRun', () => {
           { endedAt: 'a', status: 'success' },
           {} // currently running
         ]
+      })
+    ).toBe(false)
+  })
+})
+
+describe('hasKnownInactiveEnsembleRound', () => {
+  it('returns true for a terminal ensemble active round', () => {
+    expect(
+      hasKnownInactiveEnsembleRound({
+        appChatId: 'ensemble-chat',
+        ensemble: {
+          activeRound: {
+            roundId: 'round-1',
+            status: 'completed',
+            prompt: 'done',
+            startedAt: '2026-07-01T20:00:00.000Z',
+            participants: []
+          }
+        }
+      })
+    ).toBe(true)
+  })
+
+  it('returns false when the ensemble active round still has a running participant', () => {
+    expect(
+      hasKnownInactiveEnsembleRound({
+        appChatId: 'ensemble-chat',
+        ensemble: {
+          activeRound: {
+            roundId: 'round-1',
+            status: 'running',
+            prompt: 'go',
+            startedAt: '2026-07-01T20:00:00.000Z',
+            activeParticipantId: 'p1',
+            participants: [
+              {
+                participantId: 'p1',
+                provider: 'codex',
+                role: 'Worker',
+                order: 0,
+                status: 'running'
+              }
+            ]
+          }
+        }
       })
     ).toBe(false)
   })

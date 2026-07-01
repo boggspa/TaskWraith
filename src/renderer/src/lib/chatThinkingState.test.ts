@@ -34,7 +34,16 @@ describe('chatHasInFlightThinkingWork', () => {
               status: 'running',
               prompt: 'go',
               startedAt: '2026-06-09T00:00:00.000Z',
-              participants: []
+              activeParticipantId: 'p1',
+              participants: [
+                {
+                  participantId: 'p1',
+                  provider: 'codex',
+                  role: 'Worker',
+                  order: 0,
+                  status: 'running'
+                }
+              ]
             },
             updatedAt: '2026-06-09T00:00:00.000Z'
           }

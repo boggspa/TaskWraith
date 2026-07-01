@@ -114,6 +114,14 @@ export type EnsembleQueuedSteerResult = {
 }
 
 const BOSSMAN_ASSIGNABLE_PERMISSION_PRESET_SET = new Set<string>(ASSIGNABLE_PERMISSION_PRESETS)
+const CONTINUATION_BLOCKED_PARTICIPANT_STATUSES = new Set<EnsembleParticipantStatus>([
+  'answered',
+  'yielded',
+  'skipped',
+  'cancelled',
+  'failed',
+  'unreachable'
+])
 export type EnsembleQueuedPromptMutationResult = {
   ok: boolean
   prompt?: string
@@ -1978,10 +1986,17 @@ export class EnsembleOrchestrator {
     let existing = this.roundsByChatId.get(input.chatId)
     if (existing) {
       const persistedRound = this.deps.getChat(input.chatId)?.ensemble?.activeRound
-      if (
-        persistedRound?.roundId !== existing.roundId ||
-        !isEnsembleRoundDispatchLive(persistedRound)
-      ) {
+      const persistedRoundLive =
+        persistedRound?.roundId === existing.roundId &&
+        isEnsembleRoundDispatchLive(persistedRound)
+      if (!persistedRoundLive) {
+        if (persistedRound?.roundId === existing.roundId) {
+          this.finalizeInactiveRunningRoundSnapshot(
+            input.chatId,
+            existing.roundId,
+            existing.cancelled ? 'cancelled' : 'completed'
+          )
+        }
         this.roundsByChatId.delete(input.chatId)
         existing = undefined
       }
@@ -2154,6 +2169,36 @@ export class EnsembleOrchestrator {
       prompt: selected.prompt,
       queuedPrompts: nextQueuedPrompts
     }
+  }
+
+  private clearQueuedPromptsForRuntime(runtime: ActiveRoundRuntime): void {
+    runtime.queuedPrompts = []
+    this.updateChatRound(runtime.chatId, (round) =>
+      round?.roundId === runtime.roundId
+        ? {
+            ...round,
+            queuedPrompt: undefined,
+            queuedPrompts: []
+          }
+        : round
+    )
+  }
+
+  private prepareBossYieldToUserClose(runtime: ActiveRoundRuntime): void {
+    this.cancelWakeupsForRuntime(runtime, 'cancelled by Boss closeout')
+    this.clearQueuedPromptsForRuntime(runtime)
+  }
+
+  private finalizeInactiveRunningRoundSnapshot(
+    chatId: string,
+    roundId: string,
+    status: Extract<EnsembleRoundState['status'], 'completed' | 'cancelled' | 'failed'>
+  ): boolean {
+    const round = this.deps.getChat(chatId)?.ensemble?.activeRound
+    if (!round || round.roundId !== roundId || round.status !== 'running') return false
+    if (isEnsembleRoundDispatchLive(round)) return false
+    this.finishRound(chatId, roundId, status)
+    return true
   }
 
   async cancelRound(chatId: string, reason = 'cancelled'): Promise<boolean> {
@@ -4008,13 +4053,21 @@ export class EnsembleOrchestrator {
     )
   }
 
+  private isBossParticipant(
+    chat: ChatRecord,
+    runtime: ActiveRoundRuntime,
+    participantId: string | undefined
+  ): boolean {
+    const bossmanParticipantId = this.activeBossmanParticipantId(chat, runtime)
+    return Boolean(participantId && bossmanParticipantId && participantId === bossmanParticipantId)
+  }
+
   private canRequestLockedWriterFanout(
     chat: ChatRecord,
     runtime: ActiveRoundRuntime,
     run: ActiveParticipantRun
   ): boolean {
-    const bossmanParticipantId = this.activeBossmanParticipantId(chat, runtime)
-    return Boolean(bossmanParticipantId && run.participant.id === bossmanParticipantId)
+    return this.isBossParticipant(chat, runtime, run.participant.id)
   }
 
   private lockedWriterFanoutAuthorizationMessage(
@@ -5572,6 +5625,13 @@ export class EnsembleOrchestrator {
         await completion
       }
       runtime.activeRunId = undefined
+      const bossYieldedToUser =
+        Boolean(runtime.yieldTarget) &&
+        isUserYieldTarget(runtime.yieldTarget) &&
+        this.isBossParticipant(chat, runtime, participant.id)
+      if (bossYieldedToUser) {
+        this.prepareBossYieldToUserClose(runtime)
+      }
       // Short-circuit the for-loop once anything is queued — the
       // round-end handler below picks the next prompt off the array
       // and starts a fresh round. The remaining unspoken participants
@@ -6440,6 +6500,15 @@ export class EnsembleOrchestrator {
     return activeRun
   }
 
+  private activeRoundParticipantStatus(
+    runtime: ActiveRoundRuntime,
+    participantId: string
+  ): EnsembleParticipantStatus | undefined {
+    const round = this.deps.getChat(runtime.chatId)?.ensemble?.activeRound
+    if (!round || round.roundId !== runtime.roundId) return undefined
+    return round.participants.find((participant) => participant.participantId === participantId)?.status
+  }
+
   private tryAppendContinuationTurn(
     runtime: ActiveRoundRuntime,
     remaining: EnsembleParticipant[],
@@ -6448,6 +6517,13 @@ export class EnsembleOrchestrator {
   ): boolean {
     if (runtime.orchestrationMode !== 'continuous') return false
     if (runtime.unreachableParticipantIds?.has(participant.id)) return false
+    const participantStatus = this.activeRoundParticipantStatus(runtime, participant.id)
+    if (
+      participantStatus &&
+      CONTINUATION_BLOCKED_PARTICIPANT_STATUSES.has(participantStatus)
+    ) {
+      return false
+    }
     if (runtime.continuationHops >= runtime.maxContinuationHops) {
       if (!runtime.continuationLimitNotified) {
         runtime.continuationLimitNotified = true
@@ -6976,6 +7052,8 @@ export class EnsembleOrchestrator {
       ...activeRound,
       status,
       activeParticipantId: undefined,
+      queuedPrompt: undefined,
+      queuedPrompts: [],
       endedAt,
       participants: activeRound.participants.map((participant) =>
         participant.status === 'idle'

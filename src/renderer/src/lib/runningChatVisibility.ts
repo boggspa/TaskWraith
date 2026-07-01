@@ -1,4 +1,5 @@
-import type { ProviderId } from '../../../main/store/types'
+import type { EnsembleRoundState, ProviderId } from '../../../main/store/types'
+import { isEnsembleRoundDispatchLive } from '../../../shared/ensembleRoundLifecycle'
 
 /**
  * A subset of `AgentApprovalRequest` that the visibility helper actually
@@ -19,6 +20,9 @@ export interface RunningChatApprovalLike {
 export interface RunningChatRecordLike {
   appChatId: string
   provider?: ProviderId
+  ensemble?: {
+    activeRound?: EnsembleRoundState | null
+  }
   runs?: ReadonlyArray<{
     endedAt?: string
     status?: string
@@ -62,11 +66,23 @@ export function visibleRunningChatIds(
     if (pending && pending.provider === 'kimi') continue
     if (chatsByAppChatId) {
       const chat = chatsByAppChatId[chatId]
+      if (chat && hasKnownInactiveEnsembleRound(chat)) continue
       if (chat && hasTerminalLastRun(chat)) continue
     }
     result.push(chatId)
   }
   return result
+}
+
+/**
+ * True when an ensemble chat has a persisted activeRound snapshot, but that
+ * snapshot no longer has dispatch evidence. This is the renderer-side guard
+ * against orphan `runningChatIds` entries keeping the composer in Stop/queue
+ * mode after the orchestrator has already finalized the ensemble round.
+ */
+export function hasKnownInactiveEnsembleRound(chat: RunningChatRecordLike): boolean {
+  const activeRound = chat.ensemble?.activeRound
+  return Boolean(activeRound && !isEnsembleRoundDispatchLive(activeRound))
 }
 
 /**
