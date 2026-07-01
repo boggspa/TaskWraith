@@ -14,6 +14,9 @@ history, and workspace state stay on your machine throughout.
 - **Plan artifact writes.** Plan workflow can write markdown plan files under
   validated workspace paths while the signed workflow posture prevents ordinary
   read-only recon runs from unlocking that carve-out.
+- **Codex native-review status cards.** Native Codex review progress now flows
+  into review/status cards so transcript activity shows review findings and
+  state without burying the signal in raw provider events.
 - **Ensemble read fan-out skip.** Active read-only scout lanes can be stopped
   before the writer step when the panel has enough evidence.
 - **Boss roster-swap choices.** Boss participants can inspect live participant
@@ -40,6 +43,9 @@ history, and workspace state stay on your machine throughout.
   longer appends one nearly identical system row per lane.
 - **Brokered MCP transcript labels.** Brokered MCP tool calls now render with the
   MCP plug icon and uppercase label.
+- **Inactive participant pickers.** Ensemble participant provider/model pickers
+  stay editable for inactive seats while a round is running, so quota relief and
+  seat swaps do not get blocked by the active speaker.
 
 ### Known Open
 - **Grok interrupted-lane resume.** Grok session-id persistence remains
