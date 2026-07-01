@@ -9,7 +9,7 @@ import {
 const snapshot = (
   overrides: Partial<ProductChangelogSnapshot> = {}
 ): ProductChangelogSnapshot => ({
-  currentVersion: '1.6.9',
+  currentVersion: '1.7.0',
   ...overrides
 })
 
@@ -30,7 +30,7 @@ describe('resolveSidebarQuickUpdateAction', () => {
 
 describe('shouldAutoOpenChangelog', () => {
   it('waits until the snapshot and app version are known', () => {
-    expect(shouldAutoOpenChangelog(null, '1.6.9')).toBe(false)
+    expect(shouldAutoOpenChangelog(null, '1.7.0')).toBe(false)
     expect(shouldAutoOpenChangelog(snapshot(), 'unknown')).toBe(false)
   })
 
@@ -38,10 +38,10 @@ describe('shouldAutoOpenChangelog', () => {
     expect(
       shouldAutoOpenChangelog(
         snapshot({
-          pendingUpdateChangelog: { version: '1.6.9' },
+          pendingUpdateChangelog: { version: '1.7.0' },
           lastSeenChangelogVersion: '1.6.8'
         }),
-        '1.6.9'
+        '1.7.0'
       )
     ).toBe(true)
   })
@@ -52,7 +52,7 @@ describe('shouldAutoOpenChangelog', () => {
         snapshot({
           pendingUpdateChangelog: { version: '1.6.8' }
         }),
-        '1.6.9'
+        '1.7.0'
       )
     ).toBe(false)
   })
@@ -61,10 +61,10 @@ describe('shouldAutoOpenChangelog', () => {
     expect(
       shouldAutoOpenChangelog(
         snapshot({
-          pendingUpdateChangelog: { version: '1.6.9' },
-          lastSeenChangelogVersion: '1.6.9'
+          pendingUpdateChangelog: { version: '1.7.0' },
+          lastSeenChangelogVersion: '1.7.0'
         }),
-        '1.6.9'
+        '1.7.0'
       )
     ).toBe(false)
   })
@@ -72,11 +72,11 @@ describe('shouldAutoOpenChangelog', () => {
 
 describe('shouldMarkChangelogSeenOnDismiss', () => {
   it('skips marking when there is no matching pending changelog', () => {
-    expect(shouldMarkChangelogSeenOnDismiss(null, '1.6.9')).toBe(false)
+    expect(shouldMarkChangelogSeenOnDismiss(null, '1.7.0')).toBe(false)
     expect(
       shouldMarkChangelogSeenOnDismiss(
         snapshot({ pendingUpdateChangelog: { version: '1.6.8' } }),
-        '1.6.9'
+        '1.7.0'
       )
     ).toBe(false)
   })
@@ -85,10 +85,10 @@ describe('shouldMarkChangelogSeenOnDismiss', () => {
     expect(
       shouldMarkChangelogSeenOnDismiss(
         snapshot({
-          pendingUpdateChangelog: { version: '1.6.9' },
+          pendingUpdateChangelog: { version: '1.7.0' },
           lastSeenChangelogVersion: '1.6.8'
         }),
-        '1.6.9'
+        '1.7.0'
       )
     ).toBe(true)
   })
@@ -97,10 +97,10 @@ describe('shouldMarkChangelogSeenOnDismiss', () => {
     expect(
       shouldMarkChangelogSeenOnDismiss(
         snapshot({
-          pendingUpdateChangelog: { version: '1.6.9' },
-          lastSeenChangelogVersion: '1.6.9'
+          pendingUpdateChangelog: { version: '1.7.0' },
+          lastSeenChangelogVersion: '1.7.0'
         }),
-        '1.6.9'
+        '1.7.0'
       )
     ).toBe(false)
   })

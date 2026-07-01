@@ -64,6 +64,9 @@ history, and workspace state stay on your machine throughout.
 - **Ollama literal write-artifact probe.** The Ollama retention/probe item stays
   accepted-open until a controlled artifact-backed repro says otherwise.
 
+The macOS build is notarized + stapled (universal). Windows (unsigned) and Linux
+artifacts are attached by CI after the release is published.
+
 ## 1.6.9 - 2026-06-28
 
 ### Added
