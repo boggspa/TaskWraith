@@ -4187,6 +4187,8 @@ private struct PlanRailControl: View {
 // role, goal/brief, provider/model, move/remove. Long-press-drag chips to
 // reorder. Every commit ships the FULL roster via ensembleRosterUpdate.
 
+private let editableRosterMaxParticipants = 18
+
 public struct EditableRosterStrip: View {
     @ObservedObject var model: RemoteSessionModel
     let threadId: String
@@ -4427,6 +4429,7 @@ public struct EditableRosterStrip: View {
         Menu {
             ForEach(catalogs.map(\.provider), id: \.self) { provider in
                 Button {
+                    guard draft.count < editableRosterMaxParticipants else { return }
                     draft.append(
                         RemoteSessionModel.RosterDraftEntry(
                             id: "draft-\(UUID().uuidString.prefix(8))",
@@ -4444,10 +4447,19 @@ public struct EditableRosterStrip: View {
         } label: {
             Image(systemName: "plus")
                 .font(.caption.weight(.semibold))
-                .foregroundStyle(TWTheme.textSecondary)
+                .foregroundStyle(
+                    draft.count >= editableRosterMaxParticipants
+                        ? TWTheme.textMuted : TWTheme.textSecondary
+                )
                 .frame(width: 24, height: 24)
                 .background(TWTheme.surface3, in: Circle())
         }
+        .disabled(draft.count >= editableRosterMaxParticipants)
+        .accessibilityHint(
+            draft.count >= editableRosterMaxParticipants
+                ? "Ensembles support up to \(editableRosterMaxParticipants) participants."
+                : "Add another participant."
+        )
     }
 
     private func commit() {

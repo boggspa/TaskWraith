@@ -16,6 +16,8 @@
 import SwiftUI
 import TaskWraithKit
 
+private let maxEnsembleRosterParticipants = 18
+
 public struct EnsembleRosterSheet: View {
     @ObservedObject var model: RemoteSessionModel
     let threadId: String
@@ -314,10 +316,17 @@ public struct EnsembleRosterSheet: View {
             } label: {
                 Label("Add participant", systemImage: "plus")
             }
+            .disabled(draft.count >= maxEnsembleRosterParticipants)
+        }
+        footer: {
+            if draft.count >= maxEnsembleRosterParticipants {
+                Text("Ensembles support up to \(maxEnsembleRosterParticipants) participants.")
+            }
         }
     }
 
     private func addParticipant(_ provider: String) {
+        guard draft.count < maxEnsembleRosterParticipants else { return }
         draft.append(
             RemoteSessionModel.RosterDraftEntry(
                 id: "draft-\(UUID().uuidString.prefix(8))",
@@ -391,6 +400,7 @@ public struct EnsembleRosterSheet: View {
     private func applyPreset(_ preset: RemoteEnsemblePreset) {
         let entries = (preset.participants ?? [])
             .sorted { ($0.order ?? 0) < ($1.order ?? 0) }
+            .prefix(maxEnsembleRosterParticipants)
             .map { participant in
                 RemoteSessionModel.RosterDraftEntry(
                     id: "draft-\(UUID().uuidString.prefix(8))",

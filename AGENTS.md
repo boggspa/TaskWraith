@@ -153,7 +153,7 @@ broader-scope audit log.
 ## Ensemble mode (1.6.0) — multi-provider in a single thread
 
 Ensemble chats put multiple providers in the **same** thread (vs
-sub-threads which are isolated). Each chat can have up to 12 named
+sub-threads which are isolated). Each chat can have up to 18 named
 participants with their own provider + model + permission preset +
 role. Participants take turns speaking in `order` ascending; each
 participant sees the full transcript so far (their own messages +
