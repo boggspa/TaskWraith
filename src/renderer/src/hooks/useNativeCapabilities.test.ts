@@ -38,8 +38,8 @@ describe('deriveEnsembleConcurrentLanesAvailable', () => {
 })
 
 describe('deriveEnsembleConcurrentWriteLanesAvailable', () => {
-  it('defaults to false when capabilities are unknown', () => {
-    expect(deriveEnsembleConcurrentWriteLanesAvailable(null)).toBe(false)
+  it('defaults to true when capabilities are unknown', () => {
+    expect(deriveEnsembleConcurrentWriteLanesAvailable(null)).toBe(true)
   })
 
   it('reads concurrentWriteLanes from the snapshot', () => {

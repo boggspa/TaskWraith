@@ -10,7 +10,7 @@ export function deriveEnsembleConcurrentLanesAvailable(
 export function deriveEnsembleConcurrentWriteLanesAvailable(
   nativeCapabilities: NativeCapabilitySnapshot | null
 ): boolean {
-  return nativeCapabilities?.featureGates?.concurrentWriteLanes ?? false
+  return nativeCapabilities?.featureGates?.concurrentWriteLanes ?? true
 }
 
 export function deriveScreenWatchUnavailableReason(

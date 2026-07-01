@@ -85,7 +85,7 @@ describe('NativeCapabilities', () => {
     })
     expect(snapshot.featureGates).toMatchObject({
       concurrentLanes: true,
-      concurrentWriteLanes: false
+      concurrentWriteLanes: true
     })
   })
 })

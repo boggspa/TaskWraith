@@ -6652,7 +6652,7 @@ Next action:
 
   it('1.0.8: ensemble_fanout locked_writers mode is feature-gated', async () => {
     const previous = process.env.TASKWRAITH_CONCURRENT_WRITE_LANES
-    delete process.env.TASKWRAITH_CONCURRENT_WRITE_LANES
+    process.env.TASKWRAITH_CONCURRENT_WRITE_LANES = '0'
     try {
       const harness = makeHarness()
       harness.chat.ensemble!.fanoutPolicy = 'locked_writers_with_boss'

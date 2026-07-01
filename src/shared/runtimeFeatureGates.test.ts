@@ -13,11 +13,11 @@ describe('runtimeFeatureGates', () => {
     ).toBe(false)
   })
 
-  it('keeps write lanes off unless explicitly enabled', () => {
-    expect(buildRuntimeFeatureGateSnapshot({}).concurrentWriteLanes).toBe(false)
+  it('defaults write lanes on unless explicitly disabled', () => {
+    expect(buildRuntimeFeatureGateSnapshot({}).concurrentWriteLanes).toBe(true)
     expect(
-      buildRuntimeFeatureGateSnapshot({ TASKWRAITH_CONCURRENT_WRITE_LANES: '1' })
+      buildRuntimeFeatureGateSnapshot({ TASKWRAITH_CONCURRENT_WRITE_LANES: '0' })
         .concurrentWriteLanes
-    ).toBe(true)
+    ).toBe(false)
   })
 })

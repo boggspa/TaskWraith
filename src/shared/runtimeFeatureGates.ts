@@ -23,6 +23,6 @@ export function buildRuntimeFeatureGateSnapshot(
 ): RuntimeFeatureGateSnapshot {
   return {
     concurrentLanes: envFlagEnabled(env, 'TASKWRAITH_CONCURRENT_LANES', true),
-    concurrentWriteLanes: envFlagEnabled(env, 'TASKWRAITH_CONCURRENT_WRITE_LANES', false)
+    concurrentWriteLanes: envFlagEnabled(env, 'TASKWRAITH_CONCURRENT_WRITE_LANES', true)
   }
 }
