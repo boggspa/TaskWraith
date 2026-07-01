@@ -34,6 +34,10 @@ export type ClaudeWorkflowStatus =
  * Attached to the originating `Workflow` tool activity as `ToolActivity.workflowSummary`.
  */
 export interface ClaudeWorkflowTelemetry {
+  /** Provider that produced this orchestration run (a `ProviderId` string —
+   * typed loosely to keep this module dependency-free). Drives the card's glyph
+   * and accent so a Codex/other-provider run renders with its own identity. */
+  provider?: string
   /** Background task id the SDK assigns to this workflow run. */
   taskId?: string
   /** Originating `Workflow` tool_use id — the key telemetry is associated by. */

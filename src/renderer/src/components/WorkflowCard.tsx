@@ -1,14 +1,19 @@
-import { useMemo, useState } from 'react'
-import type { ToolActivity } from '../../../main/store/types'
+import { useMemo, useState, type CSSProperties } from 'react'
+import type { ProviderId, ToolActivity } from '../../../main/store/types'
 import {
   parseWorkflowScriptMeta,
   type ClaudeWorkflowStatus,
   type ClaudeWorkflowTelemetry
 } from '../../../shared/claudeWorkflow'
 import { WorkflowGlyphIcon } from './AppChromeSymbols'
+import { AgentIdentityIcon } from './icons/AgentIdentityIcon'
 
-interface ClaudeWorkflowCardProps {
+interface WorkflowCardProps {
   activity: ToolActivity
+  /** Resolved provider that produced this orchestration run (from telemetry or
+   * the chat/ensemble attribution). Drives the glyph + accent. Defaults to
+   * claude for backward compatibility with the original Claude-only card. */
+  provider?: ProviderId
 }
 
 const STATUS_LABEL: Record<ClaudeWorkflowStatus, string> = {
@@ -47,21 +52,31 @@ function scriptFromParameters(parameters: Record<string, unknown> | undefined): 
 }
 
 /**
- * Transcript card for a Claude-native `Workflow` tool run — the multi-agent
- * orchestration the Claude desktop app shows its own card for. TaskWraith can't
- * control the workflow, so this is display-only: it shows the live aggregate
- * telemetry that leaks through the Agent SDK stream (name, status, tokens, tool
- * count, elapsed, sub-agent count) plus the phase list parsed from the workflow
- * script. The per-sub-agent token table the desktop card shows is NOT in the
- * wire protocol and is intentionally omitted, not faked.
+ * Transcript card for a provider-native multi-agent orchestration run — the
+ * cousin of the Claude desktop app's workflow card. TaskWraith can't control the
+ * orchestration (it runs inside the provider subprocess), so this is display-only:
+ * it shows the live aggregate telemetry that leaks through the provider stream
+ * (name, status, tokens, tool count, elapsed, sub-agent count) plus any phase
+ * list parsed from the run script. The per-sub-agent token table the Claude
+ * desktop card shows is NOT in any provider's wire protocol and is intentionally
+ * omitted, not faked.
+ *
+ * Provider-appropriate identity: Claude keeps its bespoke `WorkflowGlyphIcon` and
+ * the app's global `--accent`; every other provider gets a seeded design-assets
+ * agent identicon tinted with its own `--provider-<id>-color`. Only ONE glyph is
+ * shown — it represents the orchestration as a whole, because no per-sub-agent
+ * identity is carried on the wire (`agentCount` is a bare number).
  */
-export function ClaudeWorkflowCard({ activity }: ClaudeWorkflowCardProps) {
+export function WorkflowCard({ activity, provider }: WorkflowCardProps) {
   const telemetry: ClaudeWorkflowTelemetry = activity.workflowSummary ?? {}
   const parsedMeta = useMemo(
     () => parseWorkflowScriptMeta(scriptFromParameters(activity.parameters)),
     [activity.parameters]
   )
 
+  const cardProvider: ProviderId =
+    (telemetry.provider as ProviderId | undefined) ?? provider ?? 'claude'
+  const isClaude = cardProvider === 'claude'
   const status: ClaudeWorkflowStatus = telemetry.status ?? 'unknown'
   const isRunning = status === 'running'
   const name = telemetry.workflowName || parsedMeta.name || 'Workflow'
@@ -90,8 +105,22 @@ export function ClaudeWorkflowCard({ activity }: ClaudeWorkflowCardProps) {
   )
   const [expanded, setExpanded] = useState(false)
 
+  // Non-Claude cards tint chrome + glyph with the provider's brand color (theme-
+  // adaptive via the CSS var). Claude deliberately keeps the global `--accent`
+  // (the current look) — its brand color is amber, so switching it would be a
+  // visible regression, not a fix.
+  const rootStyle: CSSProperties | undefined = isClaude
+    ? undefined
+    : ({
+        '--provider-accent': `var(--provider-${cardProvider}-color, var(--accent))`
+      } as CSSProperties)
+
   return (
-    <div className={`claude-workflow-card status-${status}`} data-provider="claude">
+    <div
+      className={`claude-workflow-card status-${status}`}
+      data-provider={cardProvider}
+      style={rootStyle}
+    >
       <button
         type="button"
         className="claude-workflow-card-header"
@@ -100,7 +129,11 @@ export function ClaudeWorkflowCard({ activity }: ClaudeWorkflowCardProps) {
         onClick={hasDetail ? () => setExpanded((current) => !current) : undefined}
       >
         <span className="claude-workflow-card-glyph" aria-hidden>
-          <WorkflowGlyphIcon />
+          {isClaude ? (
+            <WorkflowGlyphIcon />
+          ) : (
+            <AgentIdentityIcon seed={activity.id} size={16} title={name} />
+          )}
         </span>
         <span className="claude-workflow-card-name">{name}</span>
         <span className={`claude-workflow-card-status status-${status}`}>

@@ -100,19 +100,26 @@ export class GeminiStreamAdapter {
   ) {
     if (!parsed || typeof parsed !== 'object') return
 
-    // Claude workflow telemetry rides its own compat line. Intercept BEFORE the
-    // visible-progress / tool-event paths so a `task_notification` summary isn't
-    // mis-rendered as a generic "Summary" tool row.
+    // Provider-native workflow telemetry rides its own compat line. Intercept
+    // BEFORE the visible-progress / tool-event paths so a `task_notification`
+    // summary isn't mis-rendered as a generic "Summary" tool row. The
+    // originating provider is carried at top level; fold it into the telemetry
+    // so the card can pick its glyph/accent (the downstream merge is otherwise
+    // provider-blind).
     if (parsed.type === 'workflow_event') {
+      const workflow =
+        parsed.workflow && typeof parsed.workflow === 'object' && !Array.isArray(parsed.workflow)
+          ? parsed.workflow
+          : {}
       this.onEvent({
         type: 'workflow_telemetry',
         ...(typeof parsed.tool_id === 'string' && parsed.tool_id
           ? { toolUseId: parsed.tool_id }
           : {}),
         telemetry:
-          parsed.workflow && typeof parsed.workflow === 'object' && !Array.isArray(parsed.workflow)
-            ? parsed.workflow
-            : {}
+          typeof parsed.provider === 'string' && parsed.provider && !workflow.provider
+            ? { ...workflow, provider: parsed.provider }
+            : workflow
       })
       return
     }
