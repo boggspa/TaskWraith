@@ -728,6 +728,7 @@ const PLAN_IMPORT_CHIP_LABELS: Record<PlanImportChipId, string> = {
 }
 function permissionPresetToApprovalMode(preset?: string): string {
   if (preset === 'read_only') return 'plan'
+  if (preset === 'plan') return 'plan'
   if (preset === 'workspace_write' || preset === 'full_access') return 'auto_edit'
   return 'default'
 }

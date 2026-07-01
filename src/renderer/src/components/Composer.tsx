@@ -3727,13 +3727,15 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                           const effectiveProvider: ProviderId =
                             ensembleBinding?.provider ?? currentProvider
                           const presetToMode = (preset: string | undefined): string => {
+                            if (preset === 'plan') return 'plan'
                             if (preset === 'read_only') return 'read_only'
                             if (preset === 'workspace_write') return 'auto_edit'
                             if (preset === 'full_access') return 'auto_edit'
                             return 'default'
                           }
                           const modeToPreset = (mode: string): PermissionPresetId => {
-                            if (mode === 'plan' || mode === 'read_only') return 'read_only'
+                            if (mode === 'plan') return 'plan'
+                            if (mode === 'read_only') return 'read_only'
                             if (mode === 'auto_edit') return 'workspace_write'
                             return 'default'
                           }
@@ -3753,9 +3755,9 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               : approvalMode
                           const permissionPickerOptions: PermissionOption[] = ensembleBinding
                             ? [
+                                { value: 'plan', label: PLAN_LABEL },
                                 { value: 'read_only', label: READ_ONLY_RECON_LABEL },
-                                { value: 'default', label: 'Default Approval' },
-                                { value: 'auto_edit', label: 'Full Workspace Access' }
+                                { value: 'default', label: 'Default Approval' }
                               ]
                             : [
                                 { value: 'plan', label: PLAN_LABEL },
