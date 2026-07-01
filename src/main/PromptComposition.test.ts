@@ -367,6 +367,9 @@ describe('composeRunPrompt sub-thread returns', () => {
       'this Cursor workspace run has access to the TaskWraith MCP server'
     )
     expect(result.contextualPrompt).toContain('taskwraith__apply_patch')
+    expect(result.contextualPrompt).toContain('Do not call native Cursor Write or Shell tools')
+    expect(result.contextualPrompt).toContain('mcp_taskwraith-broker-write_file')
+    expect(result.contextualPrompt).toContain('mcp_taskwraith-broker-run_shell_command')
     expect(result.contextualPrompt).toContain('Native provider write/shell paths are constrained')
   })
 

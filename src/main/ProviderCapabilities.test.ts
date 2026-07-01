@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { CURSOR_MCP_SERVER_NAME } from './cursor/CursorMcpBridge'
 import { buildProviderCapabilityContract } from './ProviderCapabilities'
 import type { AgenticServicesSettings, AppSettings } from './store/types'
 
@@ -280,6 +281,9 @@ describe('ProviderCapabilities', () => {
 
       expect(contract.mcp.state).toBe('available')
       expect(contract.mcp.source).toBe('bridge')
+      if (provider === 'cursor') {
+        expect(contract.mcp.serverName).toBe(CURSOR_MCP_SERVER_NAME)
+      }
       expect(contract.mcp.message).toContain('no manual')
       expect(contract.tools.shellCommands.source).toBe('bridge')
       expect(contract.tools.fileChanges.source).toBe('bridge')
@@ -298,6 +302,9 @@ describe('ProviderCapabilities', () => {
 
       expect(contract.mcp.state).toBe('available')
       expect(contract.mcp.source).toBe('bridge')
+      if (provider === 'cursor') {
+        expect(contract.mcp.serverName).toBe(CURSOR_MCP_SERVER_NAME)
+      }
       expect(contract.mcp.tools).toContain('write_file')
       expect(contract.tools.shellCommands.source).toBe('bridge')
       expect(contract.tools.shellCommands.enforcedByTaskWraith).toBe(true)

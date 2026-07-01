@@ -11,7 +11,7 @@ export function taskWraithToolNamespaceHint(provider: ProviderId): string {
     return 'Claude may expose TaskWraith tools as `mcp__TaskWraith__<tool>`.'
   }
   if (provider === 'cursor') {
-    return 'Cursor may expose TaskWraith tools as `taskwraith__<tool>` or under `Mcp(taskwraith:...)`.'
+    return 'Cursor may expose TaskWraith tools as `taskwraith__<tool>` or under `Mcp(taskwraith-broker:...)`.'
   }
   if (provider === 'codex') {
     return 'Codex may expose TaskWraith tools as `TaskWraith__<tool>` or as bare tool names depending on CLI version.'

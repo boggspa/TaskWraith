@@ -31,12 +31,13 @@ export interface BuildCursorCliArgsInput {
   approvalMode?: string | null
   /**
    * True when the TaskWraith MCP bridge is active for this run (a per-run
-   * `.cursor/mcp.json` registering the `taskwraith` MCP server was written, with
-   * an `allow: ["Mcp(taskwraith:*)"]` rule). Adds `--approve-mcps` so the
-   * bridge's tools don't block on the interactive MCP-approval prompt. Only ever
-   * set for write-capable runs (default mode); plan mode executes no MCP tools.
-   * `--approve-mcps` auto-approves MCP servers ONLY — never shell/write — so it
-   * stays within the never-`--force`/`--yolo` rule.
+   * `.cursor/mcp.json` registering the full brokered TaskWraith MCP server was
+   * written, with matching `Mcp(<server>:<tool>)` allow rules). Adds
+   * `--approve-mcps` so the bridge's tools don't block on the interactive
+   * MCP-approval prompt. Only ever set for write-capable runs (default mode);
+   * plan mode executes no MCP tools. `--approve-mcps` auto-approves MCP servers
+   * ONLY — never shell/write — so it stays within the never-`--force`/`--yolo`
+   * rule.
    */
   webBridgeActive?: boolean
 }

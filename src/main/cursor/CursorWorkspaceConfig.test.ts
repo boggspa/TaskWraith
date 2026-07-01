@@ -6,7 +6,11 @@ import {
   mergeCursorDenyRules,
   type CursorConfigFs
 } from './CursorWorkspaceConfig'
-import { buildCursorMcpServerEntry, CURSOR_MCP_ALLOW_RULES } from './CursorMcpBridge'
+import {
+  buildCursorMcpServerEntry,
+  CURSOR_MCP_ALLOW_RULES,
+  CURSOR_MCP_SERVER_NAME
+} from './CursorMcpBridge'
 import {
   buildUserMcpCursorAllowRules,
   buildUserMcpCursorServerEntry,
@@ -134,14 +138,19 @@ describe('applyCursorWriteModeConfig with the TaskWraith MCP bridge', () => {
     const cli = JSON.parse(files.get(CONFIG)!)
     expect(cli.permissions.deny).toContain('Shell(**)')
     expect(cli.permissions.deny).toContain('Write(**)')
-    expect(cli.permissions.allow).toContain('Mcp(taskwraith:*)')
-    expect(cli.permissions.allow).toContain('Mcp(taskwraith-run_shell_command)')
-    expect(cli.permissions.allow).not.toContain('Mcp(taskwraith-*)')
+    expect(cli.permissions.allow).toContain(`Mcp(${CURSOR_MCP_SERVER_NAME}:*)`)
+    expect(cli.permissions.allow).toContain(
+      `Mcp(${CURSOR_MCP_SERVER_NAME}:run_shell_command)`
+    )
+    expect(cli.permissions.allow).toContain(
+      `Mcp(${CURSOR_MCP_SERVER_NAME}-run_shell_command)`
+    )
+    expect(cli.permissions.allow).not.toContain(`Mcp(${CURSOR_MCP_SERVER_NAME}-*)`)
 
     const mcp = JSON.parse(files.get(MCP)!)
-    expect(mcp.mcpServers.taskwraith.command).toBe('/x/electron')
-    expect(mcp.mcpServers.taskwraith.args).toEqual(['/tmp/taskwraith-mcp-server.cjs'])
-    expect(mcp.mcpServers.taskwraith.env).toEqual({ ELECTRON_RUN_AS_NODE: '1' })
+    expect(mcp.mcpServers[CURSOR_MCP_SERVER_NAME].command).toBe('/x/electron')
+    expect(mcp.mcpServers[CURSOR_MCP_SERVER_NAME].args).toEqual(['/tmp/taskwraith-mcp-server.cjs'])
+    expect(mcp.mcpServers[CURSOR_MCP_SERVER_NAME].env).toEqual({ ELECTRON_RUN_AS_NODE: '1' })
 
     restore()
     expect(files.has(CONFIG)).toBe(false)
@@ -159,14 +168,19 @@ describe('applyCursorWriteModeConfig with the TaskWraith MCP bridge', () => {
 
     const cli = JSON.parse(files.get(CONFIG)!)
     expect(cli.permissions.deny).toEqual(['Write(.env)', 'Shell(**)', 'Write(**)'])
-    expect(cli.permissions.allow).toContain('Mcp(taskwraith:*)')
-    expect(cli.permissions.allow).toContain('Mcp(taskwraith-run_shell_command)')
-    expect(cli.permissions.allow).not.toContain('Mcp(taskwraith-*)')
+    expect(cli.permissions.allow).toContain(`Mcp(${CURSOR_MCP_SERVER_NAME}:*)`)
+    expect(cli.permissions.allow).toContain(
+      `Mcp(${CURSOR_MCP_SERVER_NAME}:run_shell_command)`
+    )
+    expect(cli.permissions.allow).toContain(
+      `Mcp(${CURSOR_MCP_SERVER_NAME}-run_shell_command)`
+    )
+    expect(cli.permissions.allow).not.toContain(`Mcp(${CURSOR_MCP_SERVER_NAME}-*)`)
 
     const mcp = JSON.parse(files.get(MCP)!)
     // Other registered servers survive; taskwraith is added.
     expect(mcp.mcpServers.other).toEqual({ command: 'x', args: [] })
-    expect(mcp.mcpServers.taskwraith.command).toBe('/x/electron')
+    expect(mcp.mcpServers[CURSOR_MCP_SERVER_NAME].command).toBe('/x/electron')
 
     restore()
     expect(files.get(CONFIG)).toBe(cliBytes)
@@ -212,14 +226,19 @@ describe('applyCursorWriteModeConfig with the TaskWraith MCP bridge', () => {
     })
 
     const cli = JSON.parse(files.get(CONFIG)!)
-    expect(cli.permissions.allow).toContain('Mcp(taskwraith:*)')
-    expect(cli.permissions.allow).toContain('Mcp(taskwraith-run_shell_command)')
-    expect(cli.permissions.allow).not.toContain('Mcp(taskwraith-*)')
+    expect(cli.permissions.allow).toContain(`Mcp(${CURSOR_MCP_SERVER_NAME}:*)`)
+    expect(cli.permissions.allow).toContain(
+      `Mcp(${CURSOR_MCP_SERVER_NAME}:run_shell_command)`
+    )
+    expect(cli.permissions.allow).toContain(
+      `Mcp(${CURSOR_MCP_SERVER_NAME}-run_shell_command)`
+    )
+    expect(cli.permissions.allow).not.toContain(`Mcp(${CURSOR_MCP_SERVER_NAME}-*)`)
     expect(cli.permissions.allow).toContain('Mcp(user_filesystem:*)')
     expect(cli.permissions.allow).toContain('Mcp(user_docs:*)')
 
     const mcp = JSON.parse(files.get(MCP)!)
-    expect(mcp.mcpServers.taskwraith.command).toBe('/x/electron')
+    expect(mcp.mcpServers[CURSOR_MCP_SERVER_NAME].command).toBe('/x/electron')
     expect(mcp.mcpServers.user_filesystem).toEqual({
       command: 'npx',
       args: ['@modelcontextprotocol/server-filesystem', '/repo'],
@@ -232,9 +251,10 @@ describe('applyCursorWriteModeConfig with the TaskWraith MCP bridge', () => {
     restore()
   })
 
-  it('"B" mode (allowRules only) writes cli.json allow + deny but NO mcp.json', () => {
+  it('allowRules-only setup writes cli.json allow + deny but NO mcp.json', () => {
     const { fs, files } = makeFakeFs()
-    // No mcpConfigPath / serverEntry — relies on the user's global server.
+    // No mcpConfigPath / serverEntry — helper still supports callers that only
+    // need cli.json permission merging.
     const restore = applyCursorWriteModeConfig(fs, CONFIG, DIR, {
       allowRules: CURSOR_MCP_ALLOW_RULES
     })
@@ -242,9 +262,14 @@ describe('applyCursorWriteModeConfig with the TaskWraith MCP bridge', () => {
     const cli = JSON.parse(files.get(CONFIG)!)
     expect(cli.permissions.deny).toContain('Shell(**)')
     expect(cli.permissions.deny).toContain('Write(**)')
-    expect(cli.permissions.allow).toContain('Mcp(taskwraith:*)')
-    expect(cli.permissions.allow).toContain('Mcp(taskwraith-run_shell_command)')
-    expect(cli.permissions.allow).not.toContain('Mcp(taskwraith-*)')
+    expect(cli.permissions.allow).toContain(`Mcp(${CURSOR_MCP_SERVER_NAME}:*)`)
+    expect(cli.permissions.allow).toContain(
+      `Mcp(${CURSOR_MCP_SERVER_NAME}:run_shell_command)`
+    )
+    expect(cli.permissions.allow).toContain(
+      `Mcp(${CURSOR_MCP_SERVER_NAME}-run_shell_command)`
+    )
+    expect(cli.permissions.allow).not.toContain(`Mcp(${CURSOR_MCP_SERVER_NAME}-*)`)
     // The per-run workspace mcp.json must NOT be written in B mode.
     expect(files.has(MCP)).toBe(false)
 

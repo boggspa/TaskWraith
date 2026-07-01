@@ -146,6 +146,21 @@ export function canonicalTaskWraithToolName(toolName: string): string {
     const idx = lower.indexOf('__', 5)
     return idx > 5 ? lower.slice(idx + 2) : lower.slice('mcp__'.length)
   }
+  const cursorMcpPrefixes = [
+    'mcp_taskwraith-broker_',
+    'mcp_taskwraith-broker-',
+    'mcp_taskwraith_',
+    'mcp_taskwraith-',
+    'taskwraith-broker__',
+    'taskwraith_broker__',
+    'taskwraith-broker_',
+    'taskwraith_broker_',
+    'taskwraith-broker-',
+    'taskwraith_broker-'
+  ]
+  for (const prefix of cursorMcpPrefixes) {
+    if (lower.startsWith(prefix)) return lower.slice(prefix.length)
+  }
   if (lower.startsWith('taskwraith__')) return lower.slice('taskwraith__'.length)
   return lower
 }

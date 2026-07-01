@@ -1,13 +1,11 @@
-// 1.0.6-CRUX34 — TaskWraith Cursor MCP web bridge (OQ#2).
+// 1.0.6-CRUX34 — TaskWraith Cursor MCP bridge (OQ#2).
 //
 // The CR-net probes proved native Cursor web tools (webSearch/webFetch) are
 // hard-rejected ("User Rejected") in headless `-p`, and that the
-// `permissions.allow` token matcher does NOT govern them. The OQ#2 spike then
-// proved the constructive path WORKS: a workspace-local `.cursor/mcp.json`
-// registering an TaskWraith MCP server + `allow: ["Mcp(taskwraith:*)"]` +
-// `--approve-mcps` IS invoked by Cursor in headless DEFAULT/write mode (the
-// agent called our `web_fetch` and used the result). Plan mode executes no
-// tools, so this bridge is write/default-mode only (see the blueprint verdict).
+// `permissions.allow` token matcher does NOT govern them. The OQ#2 spike first
+// proved the web-only path, and the full provider path now uses a workspace-local
+// `.cursor/mcp.json` registering a brokered TaskWraith MCP server. Plan mode
+// executes no tools, so this bridge is write/default-mode only.
 //
 // This module is PURE (no Electron / no fs) so it's unit-testable: it owns the
 // MCP server SOURCE (written to a temp file per-run by the caller, so there's no
@@ -19,22 +17,37 @@
 import { TASKWRAITH_MCP_TOOLS } from '../TaskWraithMcpTools'
 import type { CursorCliConfig } from './CursorWorkspaceConfig'
 
-/** Allow rules that pre-approve every tool from the `taskwraith` MCP server.
- *  Cursor has reported brokered denials under both `taskwraith:<tool>` and
- *  `taskwraith-<tool>` names. Keep the colon wildcard for the real server
- *  namespace, but enumerate the hyphen spelling per tool so a workspace MCP
- *  server named `taskwraith-evil` cannot ride a broad `Mcp(taskwraith-*)`
- *  allow rule. This does NOT touch the native Shell/Write deny rules. */
+/** Cursor's older Home MCP bridge used the plain `taskwraith` id for a web-only
+ *  two-tool server. Use a distinct per-run id for the full broker so Cursor
+ *  cannot resolve or approve the wrong server when a user still has that Home
+ *  server enabled. */
+export const CURSOR_LEGACY_WEB_MCP_SERVER_NAME = 'taskwraith'
+
+/** The MCP server name used for the full per-run broker. */
+export const CURSOR_MCP_SERVER_NAME = 'taskwraith-broker'
+
+/** Allow rules that pre-approve every tool from the full TaskWraith MCP server.
+ *  Cursor's documented permission token is `Mcp(server:tool)`, while stream-json
+ *  and rejection messages display brokered calls as `server-tool`. Keep the
+ *  documented wildcard for the real namespace, enumerate documented exact
+ *  `server:tool` entries so we do not depend on wildcard behavior, and retain
+ *  the observed hyphen spellings as a compatibility belt-and-braces fallback.
+ *  Never add a broad prefix wildcard rule: a workspace MCP server with a similar
+ *  name must not ride TaskWraith's approval. This does NOT touch the native
+ *  Shell/Write deny rules. */
 export const CURSOR_MCP_ALLOW_RULES: readonly string[] = [
-  'Mcp(taskwraith:*)',
-  ...TASKWRAITH_MCP_TOOLS.map((tool) => `Mcp(taskwraith-${tool})`)
+  `Mcp(${CURSOR_MCP_SERVER_NAME}:*)`,
+  ...TASKWRAITH_MCP_TOOLS.map((tool) => `Mcp(${CURSOR_MCP_SERVER_NAME}:${tool})`),
+  ...TASKWRAITH_MCP_TOOLS.map((tool) => `Mcp(${CURSOR_MCP_SERVER_NAME}-${tool})`)
 ]
 
-/** The MCP server name (the `taskwraith` in `Mcp(taskwraith:*)` + the mcp.json key). */
-export const CURSOR_MCP_SERVER_NAME = 'taskwraith'
-
 export function isReservedCursorMcpServerName(name: string): boolean {
-  return name === CURSOR_MCP_SERVER_NAME || name.startsWith(`${CURSOR_MCP_SERVER_NAME}-`)
+  return (
+    name === CURSOR_MCP_SERVER_NAME ||
+    name.startsWith(`${CURSOR_MCP_SERVER_NAME}-`) ||
+    name === CURSOR_LEGACY_WEB_MCP_SERVER_NAME ||
+    name.startsWith(`${CURSOR_LEGACY_WEB_MCP_SERVER_NAME}-`)
+  )
 }
 
 /**
@@ -182,7 +195,7 @@ export interface CursorMcpServerInvocation {
 }
 
 /**
- * Build the `mcpServers` entry for the `taskwraith` server. Pure — the caller
+ * Build the `mcpServers` entry for the full TaskWraith broker server. Pure — the caller
  * merges it into the workspace `.cursor/mcp.json` via {@link mergeCursorMcpConfig}.
  */
 export function buildCursorMcpServerEntry(

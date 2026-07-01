@@ -16,11 +16,11 @@
 // caller falls back to read-only (`--mode plan`) if this config can't be applied.
 //
 // Write mode also sets up the TaskWraith MCP bridge: a per-run
-// `.cursor/mcp.json` registering the brokered `taskwraith` MCP server plus an
-// `allow: ["Mcp(taskwraith:*)"]` rule merged into the SAME cli.json write (one
-// write, one restore for both files). Default mode is the only mode where Cursor
-// executes MCP tools (plan mode rejects them), and TaskWraith write mode ==
-// default Cursor mode, so the bridge rides exactly the write-mode trigger.
+// `.cursor/mcp.json` registering the full brokered TaskWraith MCP server plus
+// matching `Mcp(<server>:<tool>)` allow rules merged into the SAME cli.json write
+// (one write, one restore for both files). Default mode is the only mode where
+// Cursor executes MCP tools (plan mode rejects them), and TaskWraith write mode
+// == default Cursor mode, so the bridge rides exactly the write-mode trigger.
 
 import { mergeCursorAllowRules, mergeCursorMcpConfig } from './CursorMcpBridge'
 

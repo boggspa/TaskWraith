@@ -11136,7 +11136,7 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
   // CR6/CRUX parity — TaskWraith-owned write mode. Cursor has no `--deny` argv
   // flag, so a write-capable run writes transient workspace-local Cursor config:
   //   - `.cursor/mcp.json` registers the brokered TaskWraith MCP server.
-  //   - `.cursor/cli.json` allows Mcp(taskwraith:*) and denies native shell/write.
+  //   - `.cursor/cli.json` allows the TaskWraith MCP broker and denies native shell/write.
   //
   // File edits should therefore flow through TaskWraith MCP tools
   // (write_file/replace/apply_patch), which enforce approval policy and workspace

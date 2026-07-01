@@ -56,12 +56,20 @@ describe('canonicalTaskWraithToolName', () => {
     expect(canonicalTaskWraithToolName('mcp__TaskWraith__RUN_SHELL_COMMAND')).toBe(
       'run_shell_command'
     )
+    expect(canonicalTaskWraithToolName('mcp_taskwraith-broker-write_file')).toBe('write_file')
+    expect(canonicalTaskWraithToolName('mcp_taskwraith-broker_run_shell_command')).toBe(
+      'run_shell_command'
+    )
+    expect(canonicalTaskWraithToolName('mcp_taskwraith-read_file')).toBe('read_file')
   })
 })
 
 describe('taskWraithToolServiceIfKnown', () => {
   it('maps native TaskWraith MCP approvals to their real agentic service', () => {
     expect(taskWraithToolServiceIfKnown('mcp__taskwraith__run_shell_command')).toBe('shellCommands')
+    expect(taskWraithToolServiceIfKnown('mcp_taskwraith-broker-run_shell_command')).toBe(
+      'shellCommands'
+    )
     expect(taskWraithToolServiceIfKnown('mcp__taskwraith__get_diagnostics')).toBe(
       'shellCommands'
     )

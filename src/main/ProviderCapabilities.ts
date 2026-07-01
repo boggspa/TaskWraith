@@ -15,6 +15,7 @@ import type {
 } from './store/types'
 import { TASKWRAITH_MCP_TOOLS } from './TaskWraithMcpTools'
 import { providerLabel } from './ProviderAdapters'
+import { CURSOR_MCP_SERVER_NAME } from './cursor/CursorMcpBridge'
 import {
   effectiveOllamaToolControlTier,
   normalizeOllamaToolControlTier,
@@ -443,7 +444,7 @@ function ollamaLocalMcpCapability(input: {
   }
 }
 
-/** Cursor write-mode runs register a transient workspace `taskwraith` MCP server
+/** Cursor write-mode runs register a transient workspace TaskWraith MCP broker
  * backed by the shared TaskWraith broker. Native Cursor shell/write tools are
  * constrained so side effects go through the brokered tools and TaskWraith
  * approval/path checks. */
@@ -462,7 +463,7 @@ function cursorMcpCapability(input: {
     available: enabled,
     enabled,
     installed: enabled,
-    serverName: 'taskwraith',
+    serverName: CURSOR_MCP_SERVER_NAME,
     tools: enabled ? [...TASKWRAITH_MCP_TOOLS] : [],
     message:
       input.requiredForRun
