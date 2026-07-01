@@ -116,6 +116,13 @@ describe('generateModelAliases', () => {
     expect(aliases).not.toContain('fable 5.1')
   })
 
+  it('claude: mythos single-digit version aliases resolve like other Claude families', () => {
+    const aliases = generateModelAliases('claude', 'claude-mythos-5')
+    expect(aliases).toContain('mythos')
+    expect(aliases).toContain('mythos 5')
+    expect(aliases).toContain('claude mythos 5')
+  })
+
   it('kimi: K2.7 Code + Kimi K2.7 Code + suffix forms', () => {
     const aliases = generateModelAliases('kimi', 'kimi-k2.7-code-thinking')
     expect(aliases).toContain('k2.7')

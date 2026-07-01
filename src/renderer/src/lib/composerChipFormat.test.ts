@@ -23,8 +23,9 @@ describe('shortModelName', () => {
     expect(shortModelName('claude', 'Claude Haiku 4.0', 'claude-haiku-4-0')).toBe('Haiku 4.0')
   })
 
-  it('extracts the single-digit Fable version while preserving the -1m marker', () => {
+  it('extracts single-digit Fable/Mythos versions while preserving the -1m marker', () => {
     expect(shortModelName('claude', 'Claude Fable 5', 'claude-fable-5')).toBe('Fable 5')
+    expect(shortModelName('claude', 'Claude Mythos 5', 'claude-mythos-5')).toBe('Mythos 5')
     // -1m is the TaskWraith context-variant marker, NOT a minor version —
     // claude-fable-5-1m must never render as "Fable 5.1".
     expect(shortModelName('claude', 'Claude Fable 5 1M', 'claude-fable-5-1m')).toBe('Fable 5 1M')

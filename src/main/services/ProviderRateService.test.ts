@@ -156,6 +156,13 @@ describe('BAKED_IN_RATES', () => {
       cachedInputUsdPerMillion: 0.16,
       outputUsdPerMillion: 4
     })
+    for (const modelId of ['claude-fable-5', 'claude-mythos-5']) {
+      expect(BAKED_IN_RATES.claude.models.find((model) => model.modelId === modelId)).toMatchObject({
+        inputUsdPerMillion: 10,
+        cachedInputUsdPerMillion: 1,
+        outputUsdPerMillion: 50
+      })
+    }
     expect(BAKED_IN_RATES.gemini.models.find((model) => model.modelId === 'gemini-3.1-pro-preview')).toMatchObject({
       inputUsdPerMillion: 2,
       cachedInputUsdPerMillion: 0.2,

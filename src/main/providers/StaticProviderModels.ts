@@ -184,11 +184,6 @@ export const CLAUDE_THINKING_BUDGET: Record<string, number> = {
   max: 64000,
   ultracode: 64000
 }
-const CLAUDE_TEMPORARILY_UNAVAILABLE_MODEL_IDS = new Set([
-  'fable',
-  'claude-fable-5',
-  'claude-fable-5-1m'
-])
 const CLAUDE_DEFAULT_MODEL = 'claude-sonnet-5'
 // NOTE: keep in sync with the renderer's CLAUDE_DEFAULT_MODELS (App.tsx).
 // This list is served to the renderer via `getAgentModels('claude')` and
@@ -204,6 +199,21 @@ const CLAUDE_STATIC_MODELS = [
     supportedReasoningEfforts: CLAUDE_OPUS_REASONING_EFFORTS,
     defaultReasoningEffort: 'medium',
     additionalSpeedTiers: ['fast']
+  },
+  {
+    id: 'claude-fable-5',
+    label: 'Claude Fable 5',
+    description: '1M context window — adaptive thinking',
+    supportedReasoningEfforts: CLAUDE_OPUS_REASONING_EFFORTS,
+    defaultReasoningEffort: 'medium',
+    additionalSpeedTiers: ['fast']
+  },
+  {
+    id: 'claude-mythos-5',
+    label: 'Claude Mythos 5',
+    description: 'Project Glasswing limited availability — 1M context window',
+    supportedReasoningEfforts: CLAUDE_OPUS_REASONING_EFFORTS,
+    defaultReasoningEffort: 'medium'
   },
   {
     id: CLAUDE_DEFAULT_MODEL,
@@ -415,7 +425,8 @@ export function normalizeCliProviderModel(provider: ProviderId, model?: string |
     // `preview:anthropic:claude-sonnet-5` from before Sonnet 5 went GA) maps
     // to the concrete default — it is never a valid CLI/SDK model name.
     if (lowered.startsWith('preview:')) return CLAUDE_DEFAULT_MODEL
-    if (CLAUDE_TEMPORARILY_UNAVAILABLE_MODEL_IDS.has(lowered)) return CLAUDE_DEFAULT_MODEL
+    if (lowered === 'fable') return 'claude-fable-5'
+    if (lowered === 'mythos') return 'claude-mythos-5'
     if (['sonnet', 'opus', 'haiku'].includes(lowered)) return lowered
     if (trimmed.startsWith('claude-')) {
       // The `-1m` suffix is an TaskWraith-internal marker for the 1M-context

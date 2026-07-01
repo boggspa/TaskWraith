@@ -114,11 +114,6 @@ const CLAUDE_OPUS_REASONING_EFFORTS = claudeReasoningEfforts(
 const CLAUDE_HAIKU_REASONING_EFFORTS = claudeReasoningEfforts(new Set())
 const CLAUDE_THINKING_EFFORTS = CLAUDE_OPUS_REASONING_EFFORTS
 const CLAUDE_DEFAULT_REASONING_EFFORT = 'medium'
-const CLAUDE_TEMPORARILY_HIDDEN_MODEL_IDS = new Set([
-  'fable',
-  'claude-fable-5',
-  'claude-fable-5-1m'
-])
 const CLAUDE_DEFAULT_MODEL = 'claude-sonnet-5'
 const CLAUDE_DEFAULT_MODELS = [
   {
@@ -128,6 +123,21 @@ const CLAUDE_DEFAULT_MODELS = [
     supportedReasoningEfforts: CLAUDE_OPUS_REASONING_EFFORTS,
     defaultReasoningEffort: 'medium',
     additionalSpeedTiers: ['fast']
+  },
+  {
+    id: 'claude-fable-5',
+    label: 'Claude Fable 5',
+    description: '1M context window — adaptive thinking',
+    supportedReasoningEfforts: CLAUDE_OPUS_REASONING_EFFORTS,
+    defaultReasoningEffort: 'medium',
+    additionalSpeedTiers: ['fast']
+  },
+  {
+    id: 'claude-mythos-5',
+    label: 'Claude Mythos 5',
+    description: 'Project Glasswing limited availability — 1M context window',
+    supportedReasoningEfforts: CLAUDE_OPUS_REASONING_EFFORTS,
+    defaultReasoningEffort: 'medium'
   },
   {
     id: CLAUDE_DEFAULT_MODEL,
@@ -150,8 +160,7 @@ const CLAUDE_DEFAULT_MODELS = [
     supportedReasoningEfforts: CLAUDE_OPUS_REASONING_EFFORTS,
     defaultReasoningEffort: 'medium',
     additionalSpeedTiers: ['fast']
-  },
-  ...previewModelsForProvider('claude').map(previewModelForPicker)
+  }
 ] satisfies CodexModelOption[]
 const KIMI_DEFAULT_MODELS = [
   {
@@ -258,9 +267,13 @@ const CLAUDE_MODEL_IDS = new Set([
   'sonnet',
   'opus',
   'haiku',
+  'fable',
+  'mythos',
   'custom',
   'claude-opus-4-8-1m',
+  'claude-fable-5',
   'claude-fable-5-1m',
+  'claude-mythos-5',
   'claude-opus-4-7-1m',
   'claude-sonnet-5',
   'claude-sonnet-4-6',
@@ -272,7 +285,6 @@ const isGeminiModelId = (modelId: string): boolean => GEMINI_MODEL_IDS.has(model
 const isCodexModelId = (modelId: string): boolean =>
   modelId.startsWith('gpt-') || modelId.includes('codex')
 const isClaudeModelId = (modelId: string): boolean =>
-  !CLAUDE_TEMPORARILY_HIDDEN_MODEL_IDS.has(normalizeProviderModelKey(modelId)) &&
   !isPreviewModelPlaceholder(modelId) &&
   // Any preview-namespaced id (catalogued or stale, e.g. a persisted
   // `preview:anthropic:claude-sonnet-5` from before Sonnet 5 went GA) is never

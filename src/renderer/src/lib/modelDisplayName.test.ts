@@ -36,6 +36,7 @@ describe('humaniseModelId', () => {
     it('maps full claude ids to "Claude Opus/Sonnet/Haiku N.N" form', () => {
       expect(humaniseModelId('claude', 'claude-fable-5')).toBe('Claude Fable 5')
       expect(humaniseModelId('claude', 'claude-fable-5-1m')).toBe('Claude Fable 5 (1M)')
+      expect(humaniseModelId('claude', 'claude-mythos-5')).toBe('Claude Mythos 5')
       expect(humaniseModelId('claude', 'claude-sonnet-5')).toBe('Claude Sonnet 5')
       expect(humaniseModelId('claude', 'preview:anthropic:claude-sonnet-5')).toBe(
         'Claude Sonnet 5'
@@ -54,6 +55,7 @@ describe('humaniseModelId', () => {
       expect(humaniseModelId('claude', 'opus')).toBe('Claude Opus')
       expect(humaniseModelId('claude', 'haiku')).toBe('Claude Haiku')
       expect(humaniseModelId('claude', 'fable')).toBe('Claude Fable')
+      expect(humaniseModelId('claude', 'mythos')).toBe('Claude Mythos')
     })
   })
 

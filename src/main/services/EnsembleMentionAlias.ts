@@ -176,10 +176,10 @@ export function generateModelAliases(provider: ProviderId, model: string | undef
     }
   } else if (provider === 'claude') {
     // claude-opus-4-7, claude-sonnet-4-6-thinking → Opus 4.7, Sonnet 4.6.
-    // Fable has a single version digit (claude-fable-5 → Fable 5); the
+    // Fable/Mythos have a single version digit (claude-fable-5 → Fable 5); the
     // optional minor group uses a `$|-` lookahead so claude-fable-5-1m
     // yields version 5 + suffix "1m" rather than version 5.1.
-    const match = id.match(/^claude-(opus|sonnet|haiku|fable)-(\d+)(?:-(\d+))?(?=$|-)(.*)$/)
+    const match = id.match(/^claude-(opus|sonnet|haiku|fable|mythos)-(\d+)(?:-(\d+))?(?=$|-)(.*)$/)
     if (match) {
       const family = match[1]
       const version = match[3] ? `${match[2]}.${match[3]}` : match[2]

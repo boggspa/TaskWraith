@@ -79,11 +79,11 @@ export function shortModelName(provider: ProviderId, modelLabel: string, modelId
 
   if (provider === 'claude') {
     // claude-opus-4-7, claude-sonnet-4-6-thinking → Opus 4.7 / Sonnet 4.6.
-    // Fable uses a single version digit (claude-fable-5 → Fable 5); the
+    // Fable/Mythos use a single version digit (claude-fable-5 → Fable 5); the
     // minor-version group is optional with a `$|-` lookahead so the `-1m`
     // context marker is never mis-read as a minor version (claude-fable-5-1m
     // must be Fable 5, not Fable 5.1).
-    const match = id.match(/^claude-(opus|sonnet|haiku|fable)-(\d+)(?:-(\d+))?(?=$|-)/)
+    const match = id.match(/^claude-(opus|sonnet|haiku|fable|mythos)-(\d+)(?:-(\d+))?(?=$|-)/)
     if (match) {
       const family = match[1].charAt(0).toUpperCase() + match[1].slice(1)
       const version = match[3] ? `${match[2]}.${match[3]}` : match[2]

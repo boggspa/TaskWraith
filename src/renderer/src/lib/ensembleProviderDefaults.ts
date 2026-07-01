@@ -125,13 +125,9 @@ const CODEX_MODELS: CombinedModelPickerModelOption[] = [
 
 const CLAUDE_MODELS: CombinedModelPickerModelOption[] = [
   { id: 'claude-opus-4-8-1m', label: 'Claude Opus 4.8 1M' },
+  { id: 'claude-fable-5', label: 'Claude Fable 5' },
+  { id: 'claude-mythos-5', label: 'Claude Mythos 5' },
   { id: 'claude-sonnet-5', label: 'Claude Sonnet 5' },
-  {
-    id: 'claude-fable-5-1m',
-    label: 'Claude Fable 5 1M',
-    disabled: true,
-    disabledReason: 'Temporarily unavailable from Anthropic'
-  },
   { id: 'claude-opus-4-7-1m', label: 'Claude Opus 4.7 1M' },
   // Sonnet 4.6 is retired from the picker; its tombstone metadata (display
   // name, context window, billing rate) is retained elsewhere for past runs.
@@ -184,12 +180,13 @@ const CODEX_FAST_CAPABLE = new Set<string>(['gpt-5.5', 'gpt-5.4'])
 const CLAUDE_FAST_CAPABLE = new Set<string>([
   'claude-opus-4-8-1m',
   'claude-opus-4-7-1m',
+  'claude-fable-5',
   'claude-fable-5-1m'
 ])
 
-function isClaudeOpusOrFableModel(modelId?: string | null): boolean {
+function isClaudeFullReasoningModel(modelId?: string | null): boolean {
   const normalized = String(modelId || '').toLowerCase()
-  return normalized.includes('opus') || normalized.includes('fable')
+  return normalized.includes('opus') || normalized.includes('fable') || normalized.includes('mythos')
 }
 
 // Sonnet 5 exposes the full Opus-equivalent reasoning ladder (unlike the
@@ -219,7 +216,7 @@ export function getEnsembleReasoningOptions(
         : CODEX_REASONING
     case 'claude':
       if (isClaudeHaikuModel(modelId)) return CLAUDE_HAIKU_REASONING
-      return isClaudeOpusOrFableModel(modelId) || isClaudeSonnet5Model(modelId)
+      return isClaudeFullReasoningModel(modelId) || isClaudeSonnet5Model(modelId)
         ? CLAUDE_OPUS_REASONING
         : CLAUDE_SONNET_REASONING
     case 'kimi':

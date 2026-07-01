@@ -261,7 +261,7 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
     expect(getEnsembleModelDefaults('kimi').defaultModelId).toBe('kimi-k2.7-code')
   })
 
-  it('exposes Sonnet 5 as the default and keeps unavailable Fable rows disabled in ensemble model options', () => {
+  it('exposes returned Claude 5 family rows in ensemble model options', () => {
     const claude = getEnsembleModelDefaults('claude')
     expect(claude.modelOptions.map((option) => option.id)).not.toEqual(
       expect.arrayContaining([
@@ -273,21 +273,19 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
         // Sonnet 4.6 is retired from the picker; the stale preview placeholder is gone.
         'claude-sonnet-4-6',
         'preview:anthropic:claude-sonnet-5',
-        'claude-fable-5'
+        'preview:anthropic:claude-fable-5',
+        'preview:anthropic:claude-mythos-5',
+        'claude-fable-5-1m'
       ])
     )
-    // Sonnet 5 is a real, enabled row now.
-    expect(
-      claude.modelOptions.find((option) => option.id === 'claude-sonnet-5')?.disabled
-    ).toBeFalsy()
-    expect(claude.modelOptions.find((option) => option.id === 'claude-fable-5-1m')).toMatchObject({
-      disabled: true,
-      disabledReason: 'Temporarily unavailable from Anthropic'
-    })
+    expect(claude.modelOptions.find((option) => option.id === 'claude-sonnet-5')?.disabled).toBeFalsy()
+    expect(claude.modelOptions.find((option) => option.id === 'claude-fable-5')?.disabled).toBeFalsy()
+    expect(claude.modelOptions.find((option) => option.id === 'claude-mythos-5')?.disabled).toBeFalsy()
     expect(claude.modelOptions.map((option) => option.id)).toEqual([
       'claude-opus-4-8-1m',
+      'claude-fable-5',
+      'claude-mythos-5',
       'claude-sonnet-5',
-      'claude-fable-5-1m',
       'claude-opus-4-7-1m',
       'claude-haiku-4-5'
     ])
@@ -298,6 +296,8 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
     const sonnet5 = getEnsembleReasoningOptions('claude', 'claude-sonnet-5')
     const sonnetLegacy = getEnsembleReasoningOptions('claude', 'claude-sonnet-4-6')
     const opus = getEnsembleReasoningOptions('claude', 'claude-opus-4-8-1m')
+    const fable = getEnsembleReasoningOptions('claude', 'claude-fable-5')
+    const mythos = getEnsembleReasoningOptions('claude', 'claude-mythos-5')
     const haiku = getEnsembleReasoningOptions('claude', 'claude-haiku-4-5')
     // Sonnet 5 unlocks the full Opus ladder with nothing disabled.
     expect(sonnet5.map((o) => o.value)).toEqual([
@@ -334,6 +334,8 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
       'ultracode'
     ])
     expect(opus.every((o) => !o.disabled)).toBe(true)
+    expect(fable.every((o) => !o.disabled)).toBe(true)
+    expect(mythos.every((o) => !o.disabled)).toBe(true)
     expect(haiku.map((o) => o.value)).toEqual([
       'low',
       'medium',

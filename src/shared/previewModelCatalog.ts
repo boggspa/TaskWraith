@@ -136,9 +136,9 @@ export function isPreviewRiskModel(provider: string, model?: string | null): boo
     return /^gpt-5\.6(?:$|[^0-9])/i.test(id)
   }
   if (provider === 'claude') {
-    // claude-sonnet-5 is GA now (a real, runnable model), so it must not be
-    // flagged as preview-risk. Fable 5 / Mythos 5 remain gated previews.
-    return /\b(?:claude-)?(?:fable|mythos)-5\b/i.test(id)
+    // Concrete Claude 5 family ids are runnable model ids now; only explicit
+    // preview placeholders are blocked by the generic placeholder check above.
+    return false
   }
   return false
 }

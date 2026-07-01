@@ -43,10 +43,12 @@ describe('normalizeCliProviderModel (claude)', () => {
     }
   })
 
-  it('maps temporarily unavailable Fable ids back to the concrete Claude default', () => {
-    expect(normalizeCliProviderModel('claude', 'fable')).toBe('claude-sonnet-5')
-    expect(normalizeCliProviderModel('claude', 'claude-fable-5')).toBe('claude-sonnet-5')
-    expect(normalizeCliProviderModel('claude', 'claude-fable-5-1m')).toBe('claude-sonnet-5')
+  it('keeps returned Fable and Mythos ids runnable', () => {
+    expect(normalizeCliProviderModel('claude', 'fable')).toBe('claude-fable-5')
+    expect(normalizeCliProviderModel('claude', 'mythos')).toBe('claude-mythos-5')
+    expect(normalizeCliProviderModel('claude', 'claude-fable-5')).toBe('claude-fable-5')
+    expect(normalizeCliProviderModel('claude', 'claude-fable-5-1m')).toBe('claude-fable-5')
+    expect(normalizeCliProviderModel('claude', 'claude-mythos-5')).toBe('claude-mythos-5')
   })
 
   it('maps non-runnable / stale Claude preview placeholders back to the concrete default', () => {
@@ -263,14 +265,15 @@ describe('getStaticProviderModels (claude)', () => {
   it('hides Claude preview placeholders unless explicitly requested', () => {
     const ids = models.map((m) => m.id)
     expect(ids).not.toContain('default')
-    expect(ids).not.toContain('claude-fable-5')
+    expect(ids).toContain('claude-fable-5')
+    expect(ids).toContain('claude-mythos-5')
     expect(ids).not.toContain('claude-fable-5-1m')
     expect(ids).not.toContain('preview:anthropic:claude-sonnet-5')
     expect(ids).not.toContain('preview:anthropic:claude-fable-5')
     expect(ids).not.toContain('preview:anthropic:claude-mythos-5')
     expect(ids).not.toContain('claude-opus-4-8')
     expect(ids).toContain('claude-opus-4-8-1m')
-    // Sonnet 5 is now a real, selectable model (no longer a preview placeholder).
+    // Sonnet 5, Fable 5, and Mythos 5 are real selectable rows now.
     expect(ids).toContain('claude-sonnet-5')
   })
 
@@ -279,8 +282,7 @@ describe('getStaticProviderModels (claude)', () => {
       includePreviewModels: true
     }) as StaticModelShape[]
     const previewById = new Map(previewModels.map((m) => [m.id, m]))
-    // Sonnet 5 has GRADUATED out of the preview catalog — it is no longer a
-    // disabled placeholder. Fable 5 / Mythos 5 remain gated previews.
+    // Concrete Claude 5 ids are selectable; stale preview placeholders remain disabled.
     expect(previewById.get('preview:anthropic:claude-sonnet-5')).toBeUndefined()
     expect(previewById.get('preview:anthropic:claude-fable-5')).toMatchObject({
       disabled: true,
@@ -300,11 +302,14 @@ describe('getStaticProviderModels (claude)', () => {
   it('keeps the paid Fast tier on the default 1M Opus rows', () => {
     expect(byId.get('claude-opus-4-8-1m')?.additionalSpeedTiers).toContain('fast')
     expect(byId.get('claude-opus-4-7-1m')?.additionalSpeedTiers).toContain('fast')
+    expect(byId.get('claude-fable-5')?.additionalSpeedTiers).toContain('fast')
   })
 
   it('offers family-specific Claude reasoning efforts', () => {
     const sonnetReasoning = byId.get('claude-sonnet-5')?.supportedReasoningEfforts ?? []
     const opusReasoning = byId.get('claude-opus-4-8-1m')?.supportedReasoningEfforts ?? []
+    const fableReasoning = byId.get('claude-fable-5')?.supportedReasoningEfforts ?? []
+    const mythosReasoning = byId.get('claude-mythos-5')?.supportedReasoningEfforts ?? []
     const haikuReasoning = byId.get('claude-haiku-4-5')?.supportedReasoningEfforts ?? []
     expect(
       sonnetReasoning.map((e) => e.reasoningEffort)
@@ -324,6 +329,8 @@ describe('getStaticProviderModels (claude)', () => {
       'ultracode'
     ])
     expect(opusReasoning.every((e) => !e.disabled)).toBe(true)
+    expect(fableReasoning.every((e) => !e.disabled)).toBe(true)
+    expect(mythosReasoning.every((e) => !e.disabled)).toBe(true)
     expect(haikuReasoning.map((e) => e.reasoningEffort)).toEqual([
       'low',
       'medium',

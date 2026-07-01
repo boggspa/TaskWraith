@@ -74,6 +74,7 @@ const KNOWN_MODEL_LABELS: Record<string, string> = {
   opus: 'Claude Opus',
   haiku: 'Claude Haiku',
   fable: 'Claude Fable',
+  mythos: 'Claude Mythos',
 
   // ── Kimi (extends the original welcomeUsageDashboard.ts
   // mappings; includes the variants visible in the user's
@@ -295,7 +296,7 @@ export function humaniseModelIdCompact(
 }
 
 const DATED_CLAUDE_MODEL_ID =
-  /^claude-(haiku|sonnet|opus|fable)-(\d+)-(\d+)(?:-\d{8})?$/i
+  /^claude-(haiku|sonnet|opus|fable|mythos)-(\d+)-(\d+)(?:-\d{8})?$/i
 
 /**
  * Ultra-compact model label for narrow table cells (Settings → Model usage).

@@ -330,8 +330,8 @@ describe('resolveEffectiveRunPermissions', () => {
     expect(resolved.agenticServices.mediaEditing).toBe('ask')
   })
 
-  it('preserves read-only posture for preview-risk models', () => {
-    for (const model of ['claude-fable-5', 'claude-mythos-5']) {
+  it('preserves read-only posture for stale Claude preview placeholders', () => {
+    for (const model of ['preview:anthropic:claude-fable-5', 'preview:anthropic:claude-mythos-5']) {
       const resolved = resolveEffectiveRunPermissions({
         provider: 'claude',
         workspacePath: '/repo',
@@ -348,18 +348,20 @@ describe('resolveEffectiveRunPermissions', () => {
     }
   })
 
-  it('does not force the read-only preview posture on GA Sonnet 5', () => {
-    const resolved = resolveEffectiveRunPermissions({
-      provider: 'claude',
-      workspacePath: '/repo',
-      model: 'claude-sonnet-5',
-      settings: settings(),
-      presetId: 'full_access'
-    })
+  it('does not force the read-only preview posture on returned Claude 5 models', () => {
+    for (const model of ['claude-sonnet-5', 'claude-fable-5', 'claude-mythos-5']) {
+      const resolved = resolveEffectiveRunPermissions({
+        provider: 'claude',
+        workspacePath: '/repo',
+        model,
+        settings: settings(),
+        presetId: 'full_access'
+      })
 
-    // A preview-risk model would be clamped to plan + readOnly even under
-    // full_access; Sonnet 5 is GA, so it keeps the requested posture.
-    expect(resolved.approvalMode).not.toBe('plan')
-    expect(resolved.readOnly).toBe(false)
+      // A preview placeholder would be clamped to plan + readOnly even under
+      // full_access; returned concrete ids keep the requested posture.
+      expect(resolved.approvalMode).not.toBe('plan')
+      expect(resolved.readOnly).toBe(false)
+    }
   })
 })

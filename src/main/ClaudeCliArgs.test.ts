@@ -56,9 +56,10 @@ describe('normalizeClaudeEffortFlagForModel', () => {
     expect(normalizeClaudeEffortFlagForModel('xhigh', 'claude-sonnet-50')).toBeNull()
   })
 
-  it('allows Opus/Fable/custom models to use the full Claude CLI ladder', () => {
+  it('allows Opus/Fable/Mythos/custom models to use the full Claude CLI ladder', () => {
     expect(normalizeClaudeEffortFlagForModel('xhigh', 'claude-opus-4-8')).toBe('xhigh')
     expect(normalizeClaudeEffortFlagForModel('ultracode', 'claude-fable-5-1m')).toBe('max')
+    expect(normalizeClaudeEffortFlagForModel('xhigh', 'claude-mythos-5')).toBe('xhigh')
     expect(normalizeClaudeEffortFlagForModel('xhigh', 'custom-model')).toBe('xhigh')
   })
 })

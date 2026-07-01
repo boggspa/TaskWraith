@@ -1334,7 +1334,7 @@ function shortModelLabel(provider: ProviderId, model: string | undefined): strin
   if (provider === 'claude') {
     // Optional minor version + `$|-` lookahead: claude-fable-5 → Fable 5,
     // claude-fable-5-1m → Fable 5 (the -1m marker is not a minor version).
-    const match = id.match(/^claude-(opus|sonnet|haiku|fable)-(\d+)(?:-(\d+))?(?=$|-)/)
+    const match = id.match(/^claude-(opus|sonnet|haiku|fable|mythos)-(\d+)(?:-(\d+))?(?=$|-)/)
     if (match) {
       const family = match[1].charAt(0).toUpperCase() + match[1].slice(1)
       return match[3] ? `${family} ${match[2]}.${match[3]}` : `${family} ${match[2]}`

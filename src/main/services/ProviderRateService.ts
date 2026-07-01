@@ -249,9 +249,9 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         inputUsdPerMillion: 10.0,
         outputUsdPerMillion: 50.0,
         cachedInputUsdPerMillion: 1.0,
-        sourceUrl: 'https://www.anthropic.com/pricing',
+        sourceUrl: 'https://platform.claude.com/docs/en/about-claude/models/overview',
         lastVerified: RATE_TABLE_VERSION,
-        notes: 'Frontier tier above Opus (added 2026-06-09). $10/$50 per published rate.'
+        notes: 'Frontier 1M-context model with adaptive thinking. Published rate $10/$50.'
       },
       {
         modelId: 'claude-fable-5-1m',
@@ -261,6 +261,16 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         sourceUrl: 'https://www.anthropic.com/pricing',
         lastVerified: RATE_TABLE_VERSION,
         notes: '1M context window at standard rates — no long-context premium published.'
+      },
+      {
+        modelId: 'claude-mythos-5',
+        inputUsdPerMillion: 10.0,
+        outputUsdPerMillion: 50.0,
+        cachedInputUsdPerMillion: 1.0,
+        sourceUrl: 'https://platform.claude.com/docs/en/about-claude/models/overview',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Project Glasswing limited-availability 1M-context model with adaptive thinking. Published rate $10/$50.'
       },
       {
         modelId: 'claude-opus-4-8',
