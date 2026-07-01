@@ -10,6 +10,7 @@ export const MAX_ENSEMBLE_PARTICIPANTS = 18
 
 export const ASSIGNABLE_PERMISSION_PRESETS = [
   'read_only',
+  'plan',
   'default',
   'workspace_write'
 ] as const
@@ -72,6 +73,7 @@ export type RosterEditResolution =
     }
 
 const ASSIGNABLE_PERMISSION_PRESET_SET = new Set<string>(ASSIGNABLE_PERMISSION_PRESETS)
+const READ_ONLY_ROUND_PERMISSION_PRESET_SET = new Set<string>(['read_only', 'plan'])
 const PATCH_FIELDS = [
   'provider',
   'model',
@@ -234,13 +236,13 @@ function validateParticipantPermissionInput(
   ) {
     return fail(
       'permission_ceiling',
-      'Roster edit rejected: permissionPresetId must be read_only, default, or workspace_write.'
+      'Roster edit rejected: permissionPresetId must be read_only, plan, default, or workspace_write.'
     )
   }
   if (
     roundReadOnly &&
     participant.permissionPresetId !== undefined &&
-    participant.permissionPresetId !== 'read_only'
+    !READ_ONLY_ROUND_PERMISSION_PRESET_SET.has(String(participant.permissionPresetId))
   ) {
     return fail('read_only_posture', 'Roster edit rejected: a read-only round cannot assign write permissions.')
   }

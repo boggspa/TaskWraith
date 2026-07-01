@@ -1964,7 +1964,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
     {
       name: 'ensemble_roster_edit',
       description:
-        'In Ensemble Mode, lets the assigned Boss participant add, remove, or edit participants in the active roster. Boss-only and audited; requires the user\'s Allow Auto Approvals opt-in on the Ensemble. Permission presets are capped at workspace_write, and tool-grant permissionOverrides are narrow-only: service overrides may only deny, network may only deny, approvalMode may only narrow to plan, and external path grants are forbidden.',
+        'In Ensemble Mode, lets the assigned Boss participant add, remove, or edit participants in the active roster. Boss-only and audited; requires the user\'s Allow Auto Approvals opt-in on the Ensemble. Permission presets are capped at workspace_write and include plan/read-only/default assignment, and tool-grant permissionOverrides are narrow-only: service overrides may only deny, network may only deny, approvalMode may only narrow to plan, and external path grants are forbidden.',
       annotations: {
         readOnlyHint: false,
         destructiveHint: false,
@@ -2008,9 +2008,9 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
               thinkingEnabled: { type: 'boolean' },
               permissionPresetId: {
                 type: 'string',
-                enum: ['read_only', 'default', 'workspace_write'],
+                enum: [...ASSIGNABLE_PERMISSION_PRESETS],
                 description:
-                  'Coarse permission preset ceiling. full_access and direct custom assignment are rejected.'
+                  'Coarse permission preset ceiling. plan, read_only, default, and workspace_write are assignable; full_access and direct custom assignment are rejected.'
               },
               permissionOverrides: {
                 type: 'object',

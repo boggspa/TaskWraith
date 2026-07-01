@@ -3242,30 +3242,35 @@ Next action:
     expect(roster).toHaveLength(2)
   })
 
-  it('preserves an explicitly requested assignable preset on replacement', async () => {
-    const initialChat = makeChat()
-    initialChat.ensemble!.bossmanParticipantId = 'claude'
-    const harness = makeHarness({
-      initialChat,
-      probeParticipant: async () => ({ reachable: true })
+  for (const permissionPresetId of ['workspace_write', 'plan'] as const) {
+    it(`preserves an explicitly requested ${permissionPresetId} preset on replacement`, async () => {
+      const initialChat = makeChat()
+      initialChat.ensemble!.bossmanParticipantId = 'claude'
+      const harness = makeHarness({
+        initialChat,
+        probeParticipant: async () => ({ reachable: true })
+      })
+      harness.orchestrator.startRound({
+        chatId: 'ensemble-chat',
+        prompt: 'Plan and execute.',
+        event: { sender: {} as Electron.WebContents }
+      })
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+      const result = await harness.orchestrator.bossmanControlForRun(
+        harness.dispatched[0].appRunId,
+        {
+          action: 'replace_participant',
+          targetParticipantId: 'codex',
+          replacement: { provider: 'kimi', permissionPresetId }
+        }
+      )
+      expect(result.ok).toBe(true)
+      const replacement = harness.chat.ensemble!.participants.find(
+        (participant) => participant.id === result.participantId
+      )
+      expect(replacement?.permissionPresetId).toBe(permissionPresetId)
     })
-    harness.orchestrator.startRound({
-      chatId: 'ensemble-chat',
-      prompt: 'Plan and execute.',
-      event: { sender: {} as Electron.WebContents }
-    })
-    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
-    const result = await harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
-      action: 'replace_participant',
-      targetParticipantId: 'codex',
-      replacement: { provider: 'kimi', permissionPresetId: 'workspace_write' }
-    })
-    expect(result.ok).toBe(true)
-    const replacement = harness.chat.ensemble!.participants.find(
-      (participant) => participant.id === result.participantId
-    )
-    expect(replacement?.permissionPresetId).toBe('workspace_write')
-  })
+  }
 
   it('rejects a replacement when the provider health check fails (replacement_unreachable)', async () => {
     const initialChat = makeChat()

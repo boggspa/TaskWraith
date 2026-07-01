@@ -285,6 +285,7 @@ export type AgenticServicePolicy = 'ask' | 'workspace' | 'allow' | 'deny'
 export type AgenticNetworkPolicy = 'allow' | 'deny'
 export type PermissionPresetId =
   | 'read_only'
+  | 'plan'
   | 'default'
   | 'workspace_write'
   | 'full_access'

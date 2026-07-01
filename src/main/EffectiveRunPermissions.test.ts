@@ -66,17 +66,28 @@ function settings(overrides: Partial<AppSettings> = {}): AppSettings {
 }
 
 describe('resolveEffectiveRunPermissions', () => {
-  it('turns read-only presets into plan mode with write services denied', () => {
-    const resolved = resolveEffectiveRunPermissions({
-      provider: 'claude',
-      workspacePath: '/repo',
-      settings: settings(),
-      presetId: 'read_only'
-    })
-    expect(resolved.approvalMode).toBe('plan')
-    expect(resolved.readOnly).toBe(true)
-    expect(resolved.agenticServices.fileChanges).toBe('deny')
-    expect(resolved.agenticServices.shellCommands).toBe('deny')
+  it('turns plan-style presets into plan mode with write services denied', () => {
+    for (const presetId of ['read_only', 'plan'] as const) {
+      const resolved = resolveEffectiveRunPermissions({
+        provider: 'claude',
+        workspacePath: '/repo',
+        settings: settings(),
+        presetId
+      })
+      expect(resolved.presetId).toBe(presetId)
+      expect(resolved.approvalMode).toBe('plan')
+      expect(resolved.readOnly).toBe(true)
+      expect(resolved.networkAccess).toBe('deny')
+      expect(resolved.agenticServices.fileChanges).toBe('deny')
+      expect(resolved.agenticServices.shellCommands).toBe('deny')
+      expect(resolved.agenticServices.mcpTools).toBe('ask')
+      expect(resolved.agenticServices.subThreadDelegation).toBe('ask')
+      expect(resolved.agenticServices.canvasInteraction).toBe('deny')
+      expect(resolved.agenticServices.crossThreadRead).toBe('deny')
+      expect(resolved.agenticServices.mediaEditing).toBe('deny')
+      expect(resolved.agenticServices.mediaRecording).toBe('deny')
+      expect(resolved.agenticServices.canvasEval).toBe('deny')
+    }
   })
 
   it('denies canvasInteraction under read_only and allows it under full_access', () => {

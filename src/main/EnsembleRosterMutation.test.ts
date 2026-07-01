@@ -64,6 +64,7 @@ describe('evaluateRosterEdit', () => {
     expect(MAX_ENSEMBLE_PARTICIPANTS).toBe(18)
     expect(ASSIGNABLE_PERMISSION_PRESETS).toEqual([
       'read_only',
+      'plan',
       'default',
       'workspace_write'
     ])
@@ -471,6 +472,18 @@ describe('evaluateRosterEdit', () => {
   })
 
   it('enforces the coarse permission ceiling', () => {
+    const planResult = evaluateRosterEdit(
+      {
+        action: 'edit_participant',
+        targetParticipantId: 'worker',
+        participant: { permissionPresetId: 'plan' }
+      },
+      makeContext()
+    )
+    expect(planResult).toMatchObject({ ok: true })
+    if (!planResult.ok) throw new Error(planResult.message)
+    expect(planResult.nextParticipants[1].permissionPresetId).toBe('plan')
+
     for (const permissionPresetId of ['full_access', 'custom'] as const) {
       expect(
         evaluateRosterEdit(
@@ -543,6 +556,17 @@ describe('evaluateRosterEdit', () => {
         makeContext({ roundReadOnly: true })
       )
     ).toMatchObject({ ok: false, error: 'read_only_posture' })
+
+    const planResult = evaluateRosterEdit(
+      {
+        action: 'add_participant',
+        participant: { provider: 'kimi', permissionPresetId: 'plan' }
+      },
+      makeContext({ roundReadOnly: true })
+    )
+    expect(planResult).toMatchObject({ ok: true })
+    if (!planResult.ok) throw new Error(planResult.message)
+    expect(planResult.nextParticipants[2].permissionPresetId).toBe('plan')
 
     const result = evaluateRosterEdit(
       { action: 'add_participant', participant: { provider: 'kimi' } },

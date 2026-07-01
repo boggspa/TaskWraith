@@ -26,34 +26,43 @@ const AGENTIC_SERVICE_IDS: AgenticServiceId[] = [
   'canvasEval'
 ]
 
+const PLAN_READ_ONLY_AGENTIC_SERVICES: PermissionPreset['agenticServices'] = {
+  shellCommands: 'deny',
+  fileChanges: 'deny',
+  mcpTools: 'ask',
+  subThreadDelegation: 'ask',
+  // Load-bearing: with canvas_click/fill now on their own service, the gate's
+  // mcpTools->shellCommands read-only reroute no longer fires for them, so the
+  // read-only DENY must come from THIS preset entry.
+  canvasInteraction: 'deny',
+  // Cross-thread reads are denied under read-only — no reaching into other
+  // threads'/workspaces' run history from a read-only seat.
+  crossThreadRead: 'deny',
+  // Media editing (transcode/encode/probe/mix etc.) is mutating/compute; with
+  // media now on its OWN service the gate's mcpTools->shellCommands read-only
+  // reroute no longer fires for it, so the read-only DENY must come from THIS
+  // preset entry (mirrors canvasInteraction). The deny-survival line in
+  // effectiveAgenticSettings preserves it across the key-by-key rebuild.
+  mediaEditing: 'deny',
+  // Media recording (future capture) is denied under read-only too.
+  mediaRecording: 'deny',
+  // Arbitrary canvas_eval is RCE — never available under read-only.
+  canvasEval: 'deny'
+}
+
 export const DEFAULT_PERMISSION_PRESETS: Record<PermissionPresetId, PermissionPreset> = {
   read_only: {
     id: 'read_only',
     label: 'Read only',
     approvalMode: 'plan',
-    agenticServices: {
-      shellCommands: 'deny',
-      fileChanges: 'deny',
-      mcpTools: 'ask',
-      subThreadDelegation: 'ask',
-      // Load-bearing: with canvas_click/fill now on their own service, the gate's
-      // mcpTools->shellCommands read-only reroute no longer fires for them, so the
-      // read-only DENY must come from THIS preset entry.
-      canvasInteraction: 'deny',
-      // Cross-thread reads are denied under read-only — no reaching into other
-      // threads'/workspaces' run history from a read-only seat.
-      crossThreadRead: 'deny',
-      // Media editing (transcode/encode/probe/mix etc.) is mutating/compute; with
-      // media now on its OWN service the gate's mcpTools->shellCommands read-only
-      // reroute no longer fires for it, so the read-only DENY must come from THIS
-      // preset entry (mirrors canvasInteraction). The deny-survival line in
-      // effectiveAgenticSettings preserves it across the key-by-key rebuild.
-      mediaEditing: 'deny',
-      // Media recording (future capture) is denied under read-only too.
-      mediaRecording: 'deny',
-      // Arbitrary canvas_eval is RCE — never available under read-only.
-      canvasEval: 'deny'
-    },
+    agenticServices: PLAN_READ_ONLY_AGENTIC_SERVICES,
+    networkAccess: 'deny'
+  },
+  plan: {
+    id: 'plan',
+    label: 'Plan',
+    approvalMode: 'plan',
+    agenticServices: PLAN_READ_ONLY_AGENTIC_SERVICES,
     networkAccess: 'deny'
   },
   default: {

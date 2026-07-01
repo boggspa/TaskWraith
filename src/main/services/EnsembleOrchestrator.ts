@@ -3206,7 +3206,7 @@ export class EnsembleOrchestrator {
         roundId: runtime.roundId,
         participantId: targetParticipantId,
         message:
-          'Boss replacement rejected: permissionPresetId must be read_only, default, or workspace_write.',
+          'Boss replacement rejected: permissionPresetId must be read_only, plan, default, or workspace_write.',
         error: 'permission_ceiling'
       }
     }
