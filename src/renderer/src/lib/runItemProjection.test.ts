@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest'
 import type { RunItemEvent } from '../../../shared/runItemEvents'
 import {
   isAssistantRunItemDelta,
-  legacyAssistantDeltaProjectionKey,
   legacyToolEventProjectionKey,
   legacyToolEventProjectionNameKey,
   projectRunItemToolEvents,
@@ -59,12 +58,6 @@ describe('runItemProjection', () => {
   it('narrows assistant run item deltas', () => {
     expect(isAssistantRunItemDelta(event({}))).toBe(true)
     expect(isAssistantRunItemDelta(event({ kind: 'tool/progress' }))).toBe(false)
-  })
-
-  it('builds stable skip keys for projected legacy compat deltas', () => {
-    expect(legacyAssistantDeltaProjectionKey('run-1', 'item-1', 'hello')).toBe(
-      'run-1\u0000item-1\u0000hello'
-    )
   })
 
   it('projects tool progress sidecars into tool use events', () => {

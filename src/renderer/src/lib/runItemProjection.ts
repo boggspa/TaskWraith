@@ -67,14 +67,6 @@ export function projectRunItemAssistantDelta(
   }
 }
 
-export function legacyAssistantDeltaProjectionKey(
-  runId: string,
-  itemId: string | undefined,
-  content: string
-): string {
-  return `${runId}\u0000${itemId || ''}\u0000${content}`
-}
-
 export function legacyToolEventProjectionKey(
   runId: string,
   toolId: string | undefined,

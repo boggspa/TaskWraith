@@ -3,7 +3,6 @@ import type { CSSProperties, ReactNode } from 'react'
 import { GeminiStreamAdapter, NormalizedEvent } from './lib/GeminiAdapter'
 import { applyAssistantDelta } from './lib/applyAssistantDelta'
 import {
-  legacyAssistantDeltaProjectionKey,
   legacyToolEventProjectionKey,
   legacyToolEventProjectionNameKey,
   projectRunItemAssistantDelta,
@@ -1334,7 +1333,6 @@ function App(): React.JSX.Element {
   const runStreamMetricsByRunIdRef = useRef<Map<string, RunStreamMetrics>>(new Map())
   const pendingStreamFlushCharsByRunIdRef = useRef<Map<string, number>>(new Map())
   const pendingStreamFlushCharsByRunItemRef = useRef<Map<string, number>>(new Map())
-  const projectedLegacyAssistantDeltaKeysRef = useRef<Set<string>>(new Set())
   const projectedLegacyToolEventKeysRef = useRef<Set<string>>(new Set())
   const [runQueueJobs, setRunQueueJobs] = useState<RunQueueJob[]>([])
   const [scheduledQueueWakeTick, setScheduledQueueWakeTick] = useState(0)
@@ -10266,13 +10264,6 @@ function App(): React.JSX.Element {
                 projection.itemId,
                 projection.input.incoming.length
               )
-              projectedLegacyAssistantDeltaKeysRef.current.add(
-                legacyAssistantDeltaProjectionKey(
-                  projection.runId,
-                  projection.itemId,
-                  projection.input.incoming
-                )
-              )
               return updated
             }, { coalesce: true })
           }
@@ -10400,17 +10391,23 @@ function App(): React.JSX.Element {
           return
         }
         if (event.type === 'assistant_message_delta' && event.projectedFromRunItem === true) {
-          const incomingItemId = (event as { itemId?: unknown }).itemId
-          const incomingItemIdStr =
-            typeof incomingItemId === 'string' && incomingItemId ? incomingItemId : undefined
-          const projectedKey = legacyAssistantDeltaProjectionKey(
-            currentRunId,
-            incomingItemIdStr,
-            event.content
-          )
-          if (projectedLegacyAssistantDeltaKeysRef.current.delete(projectedKey)) {
-            return
-          }
+          // The run-item sidecar on the SAME stdout line already carried this
+          // delta (the adapter sets the flag only when a non-empty
+          // channel:'assistant' item/delta rode the line), and the
+          // run_item_event handler above is the sole applier — its
+          // ensemble/steer guards mirror the legacy reducer's, so any state
+          // where the sidecar no-ops the legacy would have no-oped too.
+          // Skip unconditionally rather than consulting a content-keyed set:
+          // the previous keyed lookup embedded the compat mapper's
+          // synthesized `<runId>:assistant` itemId on the record side but the
+          // legacy event's (absent) itemId on the lookup side, so every
+          // provider whose legacy content lines carry no itemId
+          // (Claude/Kimi/Grok/Ollama) double-applied each increment. A keyed
+          // set is also structurally weaker here: byte-identical repeated
+          // deltas collapse to one entry, and the record-side add lives
+          // inside a reducer that can defer behind async chat hydration
+          // while this check runs synchronously.
+          return
         }
         if (event.type === 'tool_event') {
           const toolId =
