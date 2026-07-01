@@ -3855,24 +3855,19 @@
   margin-right: 0 !important;
 }
 
-/* Ensemble composer turn/fan-out control keeps the shared rim-highlight glass
- * affordance across shells. This sits after shell-specific exceptions so the
- * outer capsule remains a visible control instead of collapsing to a tiny text
- * token. */
+/* Ensemble composer turn/fan-out control keeps the larger neutral affordance
+ * across shells. This sits after shell-specific exceptions so the outer
+ * capsule remains visible instead of collapsing to a tiny text token. */
 :root [data-composer-control="ensemble-mode"].composer-ensemble-mode {
-  min-height: 32px !important;
-  padding: 3px !important;
-  border: 1px solid var(--composer-ensemble-glass-border) !important;
+  min-height: 30px !important;
+  padding: 2px 4px !important;
+  overflow: visible !important;
+  border: 1px solid color-mix(in srgb, currentColor 18%, transparent) !important;
   border-radius: 100px !important;
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--text-primary) 7%, transparent), transparent),
-    var(--composer-ensemble-glass-bg) !important;
-  backdrop-filter: blur(14px) saturate(1.28) !important;
-  -webkit-backdrop-filter: blur(14px) saturate(1.28) !important;
-  box-shadow:
-    inset 0 1px 0 var(--composer-ensemble-glass-rim),
-    inset 0 0 0 1px color-mix(in srgb, var(--accent-color) 16%, transparent),
-    0 8px 24px var(--composer-ensemble-glass-shadow) !important;
+  background: color-mix(in srgb, currentColor 5%, transparent) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  box-shadow: none !important;
   font-weight: 700;
 }
 
@@ -3883,8 +3878,11 @@
 }
 
 :root [data-composer-control="ensemble-mode"].composer-ensemble-mode .composer-ensemble-hop-meter {
-  min-height: 26px;
-  padding: 5px 10px;
+  box-sizing: border-box;
+  min-height: 24px;
+  justify-content: center;
+  padding: 4px 9px;
+  box-shadow: none;
   font-size: 11px;
   font-weight: 800;
 }
