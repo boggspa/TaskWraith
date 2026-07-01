@@ -28486,6 +28486,12 @@ if (isGeminiMcpBridgeProcess) {
       )
     })
 
+    ipcMain.handle('skip-ensemble-read-fanout', async (_, chatId?: string) => {
+      return ensembleOrchestratorRef?.skipReadFanout(
+        requireNonEmptyString(chatId, 'Ensemble chat id')
+      )
+    })
+
     registerCheckpointHandlers({
       getSessionCheckpointStore: () => sessionCheckpointStoreRef,
       requireNonEmptyString,

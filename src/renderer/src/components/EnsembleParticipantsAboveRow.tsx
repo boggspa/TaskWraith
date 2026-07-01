@@ -98,6 +98,15 @@ function laneStatusToParticipantLabel(status: ConcurrentLane['status']): string 
   }
 }
 
+function isLiveFanoutLane(lane: ConcurrentLane): boolean {
+  return (
+    lane.status === 'pending' ||
+    lane.status === 'running' ||
+    lane.status === 'blocked' ||
+    lane.status === 'awaiting-approval'
+  )
+}
+
 function latestLaneForParticipant(
   lanes: Record<string, ConcurrentLane> | undefined,
   participantId: string
@@ -301,6 +310,12 @@ interface EnsembleParticipantsAboveRowProps {
    */
   onSkipActive?: () => void
   /**
+   * Stop the active read-only fan-out phase while preserving the rest
+   * of the round. The orchestrator only honors this when live fan-out
+   * lanes are read-intent; parallel writer lanes remain protected.
+   */
+  onSkipReadFanout?: () => void
+  /**
    * 1.0.4-AK2 — Stop the active Work Session. Cancels the in-flight
    * round + clears queued continuations + flips
    * `workSession.status` to `'cancelled'`. Wired to
@@ -427,6 +442,7 @@ export function EnsembleParticipantsAboveRow({
   onSelectParticipant,
   onChatChange,
   onSkipActive,
+  onSkipReadFanout,
   onStopWorkSession,
   onRetryParticipant,
   onWakeNowParticipant,
@@ -482,6 +498,12 @@ export function EnsembleParticipantsAboveRow({
 
   const activeRound = chat.ensemble.activeRound
   const isRoundRunning = isEnsembleActiveRoundDispatchLive(activeRound)
+  const liveFanoutLanes = Object.values(activeRound?.lanes || {}).filter(isLiveFanoutLane)
+  const canSkipReadFanout =
+    isRoundRunning &&
+    liveFanoutLanes.length > 0 &&
+    liveFanoutLanes.some((lane) => lane.intent === 'read') &&
+    liveFanoutLanes.every((lane) => lane.intent === 'read')
   const canAddParticipant = !isRoundRunning && participants.length < MAX_ENSEMBLE_PARTICIPANTS
 
   const updateParticipant = (id: string, patch: Partial<EnsembleParticipant>): void => {
@@ -1042,6 +1064,16 @@ export function EnsembleParticipantsAboveRow({
             title="Skip the currently-speaking participant and let the round continue with the next one. The composer's Stop button still cancels the whole round."
           >
             Skip
+          </button>
+        )}
+        {canSkipReadFanout && onSkipReadFanout && (
+          <button
+            type="button"
+            className="btn btn-sm btn-ghost ensemble-above-row-skip"
+            onClick={onSkipReadFanout}
+            title="Stop the active read-only fan-out lanes and continue the round with the remaining serial step. Parallel writer lanes cannot be skipped here."
+          >
+            Skip reads
           </button>
         )}
       </div>

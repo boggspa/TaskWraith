@@ -19744,6 +19744,26 @@ function App(): React.JSX.Element {
           },
           {
             kind: 'action' as const,
+            id: 'taskwraith-ensemble-skip-reads',
+            command: '/ensemble-skip-reads',
+            label: 'Skip read fan-out',
+            description: 'Stop the active read-only fan-out lanes and continue the ensemble round.',
+            group: 'Custom' as const,
+            run: (ctx: SlashCommandRunContext) => {
+              if (!chat || chat.chatKind !== 'ensemble' || !chat.ensemble) {
+                rejectSlashCommandWithDraft(ctx, 'Open an ensemble chat to use /ensemble-skip-reads.')
+                return
+              }
+              void window.api.skipEnsembleReadFanout(chat.appChatId).catch((error) => {
+                rejectSlashCommandWithDraft(
+                  ctx,
+                  `Could not skip read fan-out: ${redactLog(String(error))}`
+                )
+              })
+            }
+          },
+          {
+            kind: 'action' as const,
             id: 'taskwraith-ensemble-steer',
             command: '/ensemble-steer',
             label: 'Steer ensemble round',

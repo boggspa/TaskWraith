@@ -1227,6 +1227,7 @@ declare global {
       }) => Promise<{ ok: boolean; prompt?: string; queuedPrompts?: string[]; error?: string }>
       cancelEnsembleRound: (chatId: string) => Promise<boolean>
       skipEnsembleParticipant: (chatId: string) => Promise<boolean>
+      skipEnsembleReadFanout: (chatId: string) => Promise<boolean>
       getLatestSessionCheckpoint: (chatId: string) => Promise<SessionCheckpointRecord | null>
       acceptSessionCheckpoint: (
         checkpointId: string

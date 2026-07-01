@@ -927,6 +927,8 @@ const api = {
   cancelEnsembleRound: (chatId: string) => ipcRenderer.invoke('cancel-ensemble-round', chatId),
   skipEnsembleParticipant: (chatId: string) =>
     ipcRenderer.invoke('skip-ensemble-participant', chatId),
+  skipEnsembleReadFanout: (chatId: string) =>
+    ipcRenderer.invoke('skip-ensemble-read-fanout', chatId),
   getLatestSessionCheckpoint: (chatId: string) =>
     ipcRenderer.invoke(
       'session-checkpoints:latest',

@@ -1949,6 +1949,10 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                       if (!currentChat) return
                       void window.api.skipEnsembleParticipant(currentChat.appChatId)
                     }}
+                    onSkipReadFanout={() => {
+                      if (!currentChat) return
+                      void window.api.skipEnsembleReadFanout(currentChat.appChatId)
+                    }}
                     onStopWorkSession={() => void handleStopWorkSession()}
                     onRetryParticipant={(participantId) => {
                       // 1.0.4-AT7 — re-dispatch the named participant

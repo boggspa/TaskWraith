@@ -77,6 +77,7 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'remove-queued-ensemble-prompt': ['object'],
   'cancel-ensemble-round': ['chatId'],
   'skip-ensemble-participant': ['chatId'],
+  'skip-ensemble-read-fanout': ['chatId'],
   'session-checkpoints:latest': ['chatId'],
   'session-checkpoints:accept': ['nonEmptyString'],
   'session-checkpoints:dismiss': ['nonEmptyString'],

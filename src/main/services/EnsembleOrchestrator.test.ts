@@ -6687,6 +6687,122 @@ Next action:
     }
   })
 
+  it('1.0.8: skips active read fan-out and continues to the serial writer', async () => {
+    const previous = process.env.TASKWRAITH_CONCURRENT_LANES
+    process.env.TASKWRAITH_CONCURRENT_LANES = '1'
+    try {
+      const harness = makeHarness()
+      harness.chat.ensemble!.participants = [
+        {
+          id: 'claude',
+          provider: 'claude',
+          enabled: true,
+          role: 'Reviewer',
+          instructions: 'Review.',
+          order: 1,
+          permissionPresetId: 'read_only'
+        },
+        {
+          id: 'gemini',
+          provider: 'gemini',
+          enabled: true,
+          role: 'Researcher',
+          instructions: 'Research.',
+          order: 2,
+          permissionPresetId: 'read_only'
+        },
+        {
+          id: 'codex',
+          provider: 'codex',
+          enabled: true,
+          role: 'Worker',
+          instructions: 'Work.',
+          order: 3,
+          permissionPresetId: 'workspace_write'
+        }
+      ]
+
+      harness.orchestrator.startRound({
+        chatId: 'ensemble-chat',
+        prompt: 'Fan out then implement.',
+        event: { sender: {} as Electron.WebContents },
+        concurrentMode: true
+      })
+
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2), { timeout: 1000 })
+      const skipped = await harness.orchestrator.skipReadFanout('ensemble-chat')
+
+      expect(skipped).toBe(true)
+      expect(harness.cancelRun.mock.calls.map(([provider]) => provider).sort()).toEqual([
+        'claude',
+        'gemini'
+      ])
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3), { timeout: 1000 })
+      expect(harness.dispatched[2].provider).toBe('codex')
+      const lanes = Object.values(harness.chat.ensemble?.activeRound?.lanes || {})
+      expect(lanes.map((lane) => lane.status).sort()).toEqual(['cancelled', 'cancelled'])
+      expect(
+        harness.chat.messages.some(
+          (message) =>
+            message.role === 'system' &&
+            typeof message.content === 'string' &&
+            message.content.includes('Read fan-out skipped')
+        )
+      ).toBe(true)
+    } finally {
+      if (previous === undefined) {
+        delete process.env.TASKWRAITH_CONCURRENT_LANES
+      } else {
+        process.env.TASKWRAITH_CONCURRENT_LANES = previous
+      }
+    }
+  })
+
+  it('1.0.8: does not skip active locked writer lanes', async () => {
+    const previousWrite = process.env.TASKWRAITH_CONCURRENT_WRITE_LANES
+    process.env.TASKWRAITH_CONCURRENT_WRITE_LANES = '1'
+    try {
+      const harness = makeHarness()
+      harness.chat.ensemble = {
+        ...harness.chat.ensemble!,
+        bossmanParticipantId: 'claude',
+        fanoutPolicy: 'locked_writers_with_boss'
+      }
+      harness.orchestrator.startRound({
+        chatId: 'ensemble-chat',
+        prompt: 'Boss starts.',
+        event: { sender: {} as Electron.WebContents }
+      })
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1), { timeout: 1000 })
+
+      const fanout = harness.orchestrator.fanoutForRun(harness.dispatched[0].appRunId, {
+        targets: ['Worker'],
+        prompt: 'Edit only the worker files.',
+        mode: 'locked_writers',
+        writeScopes: { Worker: ['src/worker/**'] }
+      })
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2), { timeout: 1000 })
+
+      const skipped = await harness.orchestrator.skipReadFanout('ensemble-chat')
+
+      expect(skipped).toBe(false)
+      expect(harness.cancelRun).not.toHaveBeenCalled()
+      const writerRun = harness.dispatched[1]
+      harness.orchestrator.handleProviderOutput(
+        writerRun.provider,
+        { appRunId: writerRun.appRunId, appChatId: 'ensemble-chat' },
+        { type: 'result', status: 'success' }
+      )
+      await expect(fanout).resolves.toMatchObject({ ok: true, participantIds: ['codex'] })
+    } finally {
+      if (previousWrite === undefined) {
+        delete process.env.TASKWRAITH_CONCURRENT_WRITE_LANES
+      } else {
+        process.env.TASKWRAITH_CONCURRENT_WRITE_LANES = previousWrite
+      }
+    }
+  })
+
   it('1.0.8: legacy concurrent mode keeps writers serial even when the write-lane gate is on', async () => {
     const previousConcurrent = process.env.TASKWRAITH_CONCURRENT_LANES
     const previousWrite = process.env.TASKWRAITH_CONCURRENT_WRITE_LANES

@@ -157,6 +157,55 @@ describe('EnsembleParticipantsAboveRow', () => {
     expect(html).toContain('status-answered')
   })
 
+  it('shows a Skip reads action for active read fan-out lanes without an active speaker', () => {
+    const chat = makeChat([
+      makeParticipant({ id: 'ensemble-claude', provider: 'claude', role: 'Explorer', order: 1 }),
+      makeParticipant({ id: 'ensemble-codex', provider: 'codex', role: 'Worker', order: 2 })
+    ])
+    chat.ensemble!.activeRound = {
+      roundId: 'round-1',
+      status: 'running',
+      prompt: 'Read in parallel.',
+      startedAt: '2026-05-25T15:00:00.000Z',
+      lanes: {
+        'lane-round-1-ensemble-claude-1': {
+          laneId: 'lane-round-1-ensemble-claude-1',
+          participantId: 'ensemble-claude',
+          provider: 'claude',
+          status: 'running',
+          intent: 'read',
+          startedAt: '2026-05-25T15:00:00.000Z'
+        }
+      },
+      participants: [
+        {
+          participantId: 'ensemble-claude',
+          provider: 'claude',
+          role: 'Explorer',
+          order: 1,
+          status: 'running'
+        },
+        {
+          participantId: 'ensemble-codex',
+          provider: 'codex',
+          role: 'Worker',
+          order: 2,
+          status: 'idle'
+        }
+      ]
+    }
+    const html = renderToStaticMarkup(
+      <EnsembleParticipantsAboveRow
+        chat={chat}
+        selectedParticipantId={null}
+        onSelectParticipant={() => undefined}
+        onChatChange={() => undefined}
+        onSkipReadFanout={() => undefined}
+      />
+    )
+    expect(html).toContain('Skip reads')
+  })
+
   it('renders sleeping participant chips for scheduled wakeups', () => {
     const chat = makeChat([
       makeParticipant({ id: 'ensemble-claude', provider: 'claude', role: 'Explorer', order: 1 }),

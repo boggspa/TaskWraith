@@ -69,7 +69,13 @@ import {
   detectComplexityEscalation
 } from '../escalation/ComplexityEscalation'
 import type { SessionCheckpointReason } from '../checkpoints/SessionCheckpoint'
-import { buildLaneId, canStartConcurrentRound, createLane, transitionLane } from '../EnsembleLanes'
+import {
+  buildLaneId,
+  canStartConcurrentRound,
+  createLane,
+  isTerminalLaneStatus,
+  transitionLane
+} from '../EnsembleLanes'
 import { concurrentLanesEnabled, concurrentWriteLanesEnabled } from '../featureGates'
 // 1.0.7 — pure builder turning a finished participant run's stats into the
 // recordUsage payload, so ensemble runs reach usage.json (wall-clock + heatmaps
@@ -2127,6 +2133,47 @@ export class EnsembleOrchestrator {
     this.finalizeRun(active, 'skipped', 'Skipped by user.')
     if (runtime.activeRunId === active.runId) runtime.activeRunId = undefined
     await this.deps.cancelRun(active.participant.provider, active.runId).catch(() => undefined)
+    return true
+  }
+
+  async skipReadFanout(chatId: string): Promise<boolean> {
+    const runtime = this.roundsByChatId.get(chatId)
+    if (!runtime || runtime.cancelled || !runtime.activeScoutRunIds?.size) return false
+    const chat = this.deps.getChat(chatId)
+    const round = chat?.ensemble?.activeRound
+    if (!round?.lanes || round.roundId !== runtime.roundId) return false
+
+    const activeRuns = [...runtime.activeScoutRunIds]
+      .map((runId) => this.runsByRunId.get(runId))
+      .filter((run): run is ActiveParticipantRun => Boolean(run?.laneId))
+    if (activeRuns.length === 0) return false
+
+    const activeLaneForRun = (run: ActiveParticipantRun): ConcurrentLane | undefined => {
+      const lane = run.laneId ? round.lanes?.[run.laneId] : undefined
+      return lane && !isTerminalLaneStatus(lane.status) ? lane : undefined
+    }
+    const writeRuns = activeRuns.filter((run) => activeLaneForRun(run)?.intent === 'write')
+    if (writeRuns.length > 0) return false
+
+    const readRuns = activeRuns.filter((run) => activeLaneForRun(run)?.intent === 'read')
+    if (readRuns.length === 0) return false
+
+    const reason = 'Read fan-out skipped by user.'
+    for (const run of readRuns) {
+      this.finalizeRun(run, 'cancelled', reason)
+      runtime.activeScoutRunIds?.delete(run.runId)
+    }
+    if (runtime.activeScoutRunIds?.size === 0) {
+      runtime.activeScoutRunIds = undefined
+    }
+    this.appendRoundStatus(
+      chatId,
+      runtime.roundId,
+      `Read fan-out skipped · ${readRuns.length} read lane(s) stopped before the writer step.`
+    )
+    for (const run of readRuns) {
+      await this.deps.cancelRun(run.participant.provider, run.runId).catch(() => undefined)
+    }
     return true
   }
 
@@ -6071,15 +6118,19 @@ export class EnsembleOrchestrator {
       try {
         const dispatched = await this.deps.dispatch(payload, { sender: runtime.sender })
         if (!dispatched.dispatched) {
-          const note = formatDispatchFailureNote(participant, { kind: 'unknown', message: '' })
+          if (this.runsByRunId.get(run.runId) === run) {
+            const note = formatDispatchFailureNote(participant, { kind: 'unknown', message: '' })
+            this.appendRoundStatus(runtime.chatId, runtime.roundId, note)
+            this.finalizeRun(run, 'failed', note)
+          }
+        }
+      } catch (error) {
+        if (this.runsByRunId.get(run.runId) === run) {
+          const reason = classifyDispatchError(error)
+          const note = formatDispatchFailureNote(participant, reason)
           this.appendRoundStatus(runtime.chatId, runtime.roundId, note)
           this.finalizeRun(run, 'failed', note)
         }
-      } catch (error) {
-        const reason = classifyDispatchError(error)
-        const note = formatDispatchFailureNote(participant, reason)
-        this.appendRoundStatus(runtime.chatId, runtime.roundId, note)
-        this.finalizeRun(run, 'failed', note)
       }
       return completion
     })
@@ -6101,9 +6152,18 @@ export class EnsembleOrchestrator {
     this.appendRoundStatus(
       runtime.chatId,
       runtime.roundId,
-      options.sourceRunId
-        ? `${label} complete · ${laneRuns.length} lane(s) returned to the caller.`
-        : `${label} complete · returning to serial writer step.`
+      (() => {
+        const skippedCount = laneRuns.filter((run) => run.status === 'cancelled').length
+        if (skippedCount === laneRuns.length) {
+          return `${label} skipped · ${skippedCount} lane(s) stopped.`
+        }
+        if (skippedCount > 0) {
+          return `${label} complete · ${laneRuns.length - skippedCount} lane(s) returned, ${skippedCount} skipped.`
+        }
+        return options.sourceRunId
+          ? `${label} complete · ${laneRuns.length} lane(s) returned to the caller.`
+          : `${label} complete · returning to serial writer step.`
+      })()
     )
     return laneRuns.map((run) => run.laneId).filter((laneId): laneId is string => Boolean(laneId))
   }

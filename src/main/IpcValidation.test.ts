@@ -310,6 +310,7 @@ describe('IpcValidation', () => {
       ])
     ).not.toThrow()
     expect(() => validateIpcArgs('cancel-ensemble-round', ['ensemble-1'])).not.toThrow()
+    expect(() => validateIpcArgs('skip-ensemble-read-fanout', ['ensemble-1'])).not.toThrow()
     expect(() =>
       validateIpcArgs('promote-queued-job-for-steer', [
         { runId: 'run-1', ownerToken: 'owner-1', chatId: 'chat-1' }
