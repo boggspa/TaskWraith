@@ -8280,6 +8280,8 @@
 .composer-combined-picker-trigger[data-permission-value="plan"],
 .composer-combined-picker-trigger[data-permission-value="read_only"],
 .composer-combined-picker-trigger[data-permission-value="plan"]
+  .composer-combined-picker-trigger-primary,
+.composer-combined-picker-trigger[data-permission-value="read_only"]
   .composer-combined-picker-trigger-primary {
   color: #6fb6ff !important;
 }
