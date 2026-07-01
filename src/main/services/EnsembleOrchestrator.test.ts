@@ -4525,6 +4525,132 @@ Next action:
     })
   })
 
+  it('deduplicates repeated ensemble yield tool_use events with the same id', async () => {
+    const harness = makeHarness()
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Review then yield.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    const route = {
+      appRunId: harness.dispatched[0].appRunId,
+      appChatId: 'ensemble-chat'
+    }
+    const useEvent = {
+      type: 'tool_use',
+      tool_id: 'yield-dup',
+      tool_name: 'mcp_TaskWraith_ensemble_yield',
+      parameters: { target: 'Worker' }
+    }
+    harness.orchestrator.handleProviderOutput('claude', route, useEvent)
+    harness.orchestrator.handleProviderOutput('claude', route, useEvent)
+
+    await vi.waitFor(() =>
+      expect(
+        harness.chat.messages.filter(
+          (message) => message.role === 'tool' && message.metadata?.ensembleProvider === 'claude'
+        )
+      ).toHaveLength(1)
+    )
+    let toolMessages = harness.chat.messages.filter(
+      (message) => message.role === 'tool' && message.metadata?.ensembleProvider === 'claude'
+    )
+    expect(toolMessages[0].toolActivities).toHaveLength(1)
+    expect(toolMessages[0].toolActivities?.[0]).toMatchObject({
+      id: 'yield-dup',
+      displayName: 'Reviewer yielding to Worker',
+      status: 'running'
+    })
+
+    harness.orchestrator.handleProviderOutput('claude', route, {
+      type: 'tool_result',
+      tool_id: 'yield-dup',
+      content: 'Yielded.'
+    })
+    harness.orchestrator.handleProviderOutput('claude', route, {
+      type: 'result',
+      status: 'success',
+      stats: { total_tokens: 10 }
+    })
+
+    await vi.waitFor(() =>
+      expect(
+        harness.chat.messages.filter(
+          (message) => message.role === 'tool' && message.metadata?.ensembleProvider === 'claude'
+        )
+      ).toHaveLength(1)
+    )
+    toolMessages = harness.chat.messages.filter(
+      (message) => message.role === 'tool' && message.metadata?.ensembleProvider === 'claude'
+    )
+    expect(toolMessages[0].toolActivities).toHaveLength(1)
+    expect(toolMessages[0].toolActivities?.[0]).toMatchObject({
+      id: 'yield-dup',
+      displayName: 'Reviewer yielded to Worker',
+      status: 'success'
+    })
+  })
+
+  it('completes a pending ensemble yield activity before markYielded finalizes the run', async () => {
+    const harness = makeHarness()
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Review then yield.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    const route = {
+      appRunId: harness.dispatched[0].appRunId,
+      appChatId: 'ensemble-chat'
+    }
+    harness.orchestrator.handleProviderOutput('claude', route, {
+      type: 'tool_use',
+      tool_id: 'yield-before-result',
+      tool_name: 'mcp_TaskWraith_ensemble_yield',
+      parameters: { target: 'Worker' }
+    })
+
+    expect(
+      harness.orchestrator.markYielded(
+        harness.dispatched[0].appRunId!,
+        'Passing to worker.',
+        'Worker'
+      )
+    ).toBe(true)
+
+    harness.orchestrator.handleProviderOutput('claude', route, {
+      type: 'tool_result',
+      tool_id: 'yield-before-result',
+      content: 'Yielded.'
+    })
+
+    await vi.waitFor(() =>
+      expect(
+        harness.chat.messages.filter(
+          (message) => message.role === 'tool' && message.metadata?.ensembleProvider === 'claude'
+        )
+      ).toHaveLength(1)
+    )
+    const toolMessages = harness.chat.messages.filter(
+      (message) => message.role === 'tool' && message.metadata?.ensembleProvider === 'claude'
+    )
+    expect(toolMessages[0].toolActivities).toHaveLength(1)
+    expect(toolMessages[0].toolActivities?.[0]).toMatchObject({
+      id: 'yield-before-result',
+      displayName: 'Reviewer yielded to Worker',
+      status: 'success'
+    })
+    expect(
+      toolMessages.flatMap((message) => message.toolActivities || []).some(
+        (activity) =>
+          String(activity.toolName).includes('ensemble_yield') && activity.status === 'running'
+      )
+    ).toBe(false)
+  })
+
   it('clears queued work when a round is stopped', async () => {
     const harness = makeHarness()
     harness.orchestrator.startRound({

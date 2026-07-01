@@ -10816,6 +10816,14 @@ function App(): React.JSX.Element {
               }
             })
           } else if (event.type === 'tool_event') {
+            // Ensemble tool rows are materialised by EnsembleOrchestrator
+            // (`flushRun` -> chat-updated). The renderer's solo reducer
+            // would append a second local tool message for the same provider
+            // compat event, which is especially visible for ensemble_yield
+            // because yield activities intentionally stay inline.
+            if (updated.chatKind === 'ensemble') {
+              return updated
+            }
             if (isProviderExecutionToolEvent(event)) {
               runContext.toolCallsCount += 1
             }

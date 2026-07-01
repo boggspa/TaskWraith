@@ -1543,6 +1543,39 @@ function buildEnsembleToolActivity(
   }
 }
 
+function upsertEnsembleToolUseActivity(
+  run: ActiveParticipantRun,
+  activity: ToolActivity
+): 'inserted' | 'updated' {
+  if (!run.toolActivities) run.toolActivities = []
+  const existingIndex = run.toolActivities.findIndex((existing) => existing.id === activity.id)
+  if (existingIndex < 0) {
+    run.toolActivities.push(activity)
+    return 'inserted'
+  }
+
+  const existing = run.toolActivities[existingIndex]
+  const existingHasParameters = Object.keys(existing.parameters || {}).length > 0
+  const parameters = existingHasParameters ? existing.parameters : activity.parameters
+  const filePath = existing.filePath || activity.filePath
+  const diffSummary = mergeToolDiffSummaries(existing.diffSummary, activity.diffSummary, filePath)
+  run.toolActivities[existingIndex] = {
+    ...existing,
+    toolName: existing.toolName || activity.toolName,
+    displayName: existingHasParameters ? existing.displayName : activity.displayName,
+    category: existing.category === 'unknown' ? activity.category : existing.category,
+    parameters,
+    ...(filePath ? { filePath } : {}),
+    ...(diffSummary ? { diffSummary } : {}),
+    metadata: {
+      ...(activity.metadata || {}),
+      ...(existing.metadata || {})
+    },
+    rawUseEvent: existing.rawUseEvent || activity.rawUseEvent
+  }
+  return 'updated'
+}
+
 function pairEnsembleToolResult(activity: ToolActivity, event: any, endedAt: string): ToolActivity {
   const status: ToolActivityStatus =
     event?.success === false || event?.error || event?.is_error ? 'error' : 'success'
@@ -2280,8 +2313,40 @@ export class EnsembleOrchestrator {
       const runtime = this.roundsByChatId.get(run.chatId)
       if (runtime) runtime.yieldTarget = target
     }
+    this.completePendingYieldActivity(run, reason, target)
     this.finalizeRun(run, 'yielded', reason || 'Participant yielded.')
     return true
+  }
+
+  private completePendingYieldActivity(
+    run: ActiveParticipantRun,
+    reason?: string,
+    target?: string
+  ): void {
+    if (!run.toolActivities || run.toolActivities.length === 0) return
+    for (let index = run.toolActivities.length - 1; index >= 0; index -= 1) {
+      const activity = run.toolActivities[index]
+      if (stripToolNamespace(activity.toolName) !== 'ensemble_yield') continue
+      if (activity.status !== 'running' && activity.status !== 'pending') return
+      const content = reason || (target ? `Yielded to ${target}.` : 'Yielded.')
+      run.toolActivities[index] = pairEnsembleToolResult(
+        activity,
+        {
+          type: 'tool_result',
+          tool_id: activity.id,
+          success: true,
+          content,
+          result: {
+            ok: true,
+            tool: 'ensemble_yield',
+            ...(reason ? { reason } : {}),
+            ...(target ? { target } : {})
+          }
+        },
+        this.deps.nowIso()
+      )
+      return
+    }
   }
 
   /**
@@ -4891,10 +4956,11 @@ export class EnsembleOrchestrator {
       // participants used tools. Build the activity, push it into
       // the run's timeline at the current position so flushRun can
       // emit it inline between content chunks.
-      if (!run.toolActivities) run.toolActivities = []
       const activity = buildEnsembleToolActivity(payload, this.deps.nowIso(), run.participant)
-      run.toolActivities.push(activity)
-      appendTimelineTool(run, activity.id)
+      const upsert = upsertEnsembleToolUseActivity(run, activity)
+      if (upsert === 'inserted') {
+        appendTimelineTool(run, activity.id)
+      }
       // Diagnostic for the 1.0.3 ship-night investigation — single
       // line per event, low volume, safe to leave in.
 
