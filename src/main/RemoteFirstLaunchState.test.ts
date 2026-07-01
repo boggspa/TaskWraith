@@ -166,7 +166,10 @@ describe('buildRemoteFirstLaunchState', () => {
       'claude-fable-mythos-return-2026-07-01'
     )
     expect(state.notifications.map((notice) => notice.id)).toContain(
-      'changelog-scheduled-queue-2026-06-28'
+      'changelog-plan-mode-workflow-2026-07-01'
+    )
+    expect(state.notifications.map((notice) => notice.id)).toContain(
+      'changelog-ensemble-recovery-2026-07-01'
     )
     expect(state.notifications.map((notice) => notice.id)).toContain(
       'antigravity-not-planned-2026-06-26'

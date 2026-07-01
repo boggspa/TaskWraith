@@ -4,6 +4,50 @@ Notable changes to TaskWraith, the local-first macOS desktop workbench for runni
 and reviewing AI coding agents. Entries are user-facing highlights; execution,
 history, and workspace state stay on your machine throughout.
 
+## 1.7.0 - 2026-07-01
+
+### Added
+- **Plan Mode workflow.** Composer mode now separates Plan workflow from
+  Read-only recon. Plan chats can surface a single proposed plan from the
+  designated owner, approve / customize / dismiss it, and carry the approved
+  artifact path into implementation.
+- **Plan artifact writes.** Plan workflow can write markdown plan files under
+  validated workspace paths while the signed workflow posture prevents ordinary
+  read-only recon runs from unlocking that carve-out.
+- **Ensemble read fan-out skip.** Active read-only scout lanes can be stopped
+  before the writer step when the panel has enough evidence.
+- **Boss roster-swap choices.** Boss participants can inspect live participant
+  ids, provider/model catalogues, context windows, and coarse quota bands before
+  swapping an inactive seat.
+
+### Changed
+- **Ensemble recovery after restart.** Multiple interrupted Ensemble lanes in
+  one chat now collapse into one grouped recovery system message with
+  role/participant labels and provider-session hints.
+- **Ensemble steering reliability.** Steered queued prompts now wait for active
+  round cancellation before redispatching, avoiding overlapping fan-out teardown
+  and queue-persist churn.
+- **Boss and participant boundaries.** Agent-driven roster edits and Boss
+  replacement are capped so agents cannot assign Full Workspace Access; only the
+  user can elevate to that level.
+- **Ollama Ensemble context.** Local lanes preserve their assigned participant
+  role and Lead/Boss routing across tool loops, retries, and compaction.
+
+### Fixed
+- **Plan Mode security.** Workflow mode is signed into run permission posture,
+  and plan-artifact paths reject symlink / realpath escapes.
+- **Recovery transcript noise.** Restarting after interrupted parallel fan-out no
+  longer appends one nearly identical system row per lane.
+- **Brokered MCP transcript labels.** Brokered MCP tool calls now render with the
+  MCP plug icon and uppercase label.
+
+### Known Open
+- **Grok interrupted-lane resume.** Grok session-id persistence remains
+  evidence-first after the steering fix; no source patch is claimed without a
+  fresh post-fix recovery capture.
+- **Ollama literal write-artifact probe.** The Ollama retention/probe item stays
+  accepted-open until a controlled artifact-backed repro says otherwise.
+
 ## 1.6.9 - 2026-06-28
 
 ### Added

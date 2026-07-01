@@ -705,7 +705,8 @@ export function FirstLaunchSheet({
             <div className="first-launch-sheet-safety-block">
               <span className="first-launch-sheet-safety-label">Start cautious, dial up</span>
               <div className="first-launch-sheet-safety-chips">
-                <span className="first-launch-sheet-safety-chip">Plan</span>
+                <span className="first-launch-sheet-safety-chip">Plan workflow</span>
+                <span className="first-launch-sheet-safety-chip">Read-only recon</span>
                 <span className="first-launch-sheet-safety-chip">Default approval</span>
                 <span className="first-launch-sheet-safety-chip">Full workspace access</span>
               </div>
@@ -713,8 +714,8 @@ export function FirstLaunchSheet({
           </div>
           <p className="first-launch-sheet-prose">
             Runs are sandboxed to the workspace you grant — files outside the project are off-limits
-            unless you allow a path. Set the mode per run with the composer&apos;s coloured
-            permission chip.
+            unless you allow a path. Set the workflow and permission for each run from the
+            composer controls before you hit Enter.
           </p>
         </section>
 
@@ -842,15 +843,15 @@ export function FirstLaunchSheet({
               branch is pushed and ready.
             </li>
             <li>
-              <strong>Permission picker colour-codes the mode.</strong> Plan = blue (read-only),
-              Default = neutral, Full Workspace Access / Auto-edit = red (orange in the Codex shell)
-              — these can edit files. Read it before you hit Enter so you know how much freedom the
-              agent has.
+              <strong>Permission picker colour-codes the authority.</strong> Plan workflow is
+              separate from Read-only recon: Plan drafts for approval, Default stays neutral, and
+              Full Workspace Access / Auto-edit can edit files. Check both the workflow and the
+              permission before you hit Enter.
             </li>
             <li>
               <strong>Fast Mode toggle.</strong> Inside the model picker, capable models (Codex
-              GPT-5.5 / 5.4, Claude Opus 1M, and Fable 1M when it returns) expose a Fast tier —
-              useful when you want snappier turns at higher cost.
+              GPT-5.5 / 5.4, Claude Opus 1M, and Claude Fable / Mythos where available) expose a
+              Fast tier — useful when you want snappier turns at higher cost.
             </li>
             <li>
               <strong>Audit tools and shortcuts.</strong> Settings includes MCP and Keyboard

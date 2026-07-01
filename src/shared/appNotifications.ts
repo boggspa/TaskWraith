@@ -129,6 +129,30 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
  */
 export const CHANGELOG_FEATURE_NOTIFICATION_POOL: readonly AppNotification[] = [
   {
+    id: 'changelog-plan-mode-workflow-2026-07-01',
+    kind: 'feature',
+    title: 'Plan Mode is a workflow now.',
+    body: 'Pick Plan to draft one proposed plan and approve it before edits; Read-only (recon) stays separate, and Ensemble chats use the designated plan owner.'
+  },
+  {
+    id: 'changelog-ensemble-recovery-2026-07-01',
+    kind: 'feature',
+    title: 'Crash recovery is cleaner.',
+    body: 'Restarting mid-parallel fan-out now shows one grouped recovery message per chat instead of a row per interrupted lane.'
+  },
+  {
+    id: 'changelog-read-fanout-skip-2026-07-01',
+    kind: 'feature',
+    title: 'Parallel scouts can be skipped.',
+    body: 'When read-only fan-out has enough signal, stop the active scout lanes and move on to the writer step without waiting for every lane to finish.'
+  },
+  {
+    id: 'changelog-boss-roster-swap-2026-07-01',
+    kind: 'feature',
+    title: 'Boss seats get better swap context.',
+    body: 'Boss participants can inspect participant ids, provider/model choices, context windows, and coarse quota bands before swapping an inactive Ensemble seat.'
+  },
+  {
     id: 'changelog-scheduled-queue-2026-06-28',
     kind: 'feature',
     title: 'Scheduled sends are visible now.',

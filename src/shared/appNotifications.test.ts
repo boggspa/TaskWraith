@@ -84,8 +84,8 @@ describe('selectChangelogFeatureNotifications', () => {
       4
     )
     expect(picked.map((n) => n.id)).toEqual([
-      'changelog-scheduled-queue-2026-06-28',
-      'changelog-model-usage-matrix-2026-06-28'
+      'changelog-plan-mode-workflow-2026-07-01',
+      'changelog-ensemble-recovery-2026-07-01'
     ])
   })
 
@@ -97,12 +97,12 @@ describe('selectChangelogFeatureNotifications', () => {
       2
     )
     expect(dayZero.map((n) => n.id)).toEqual([
-      'changelog-scheduled-queue-2026-06-28',
-      'changelog-model-usage-matrix-2026-06-28'
+      'changelog-plan-mode-workflow-2026-07-01',
+      'changelog-ensemble-recovery-2026-07-01'
     ])
     expect(nextDay.map((n) => n.id)).toEqual([
-      'changelog-model-usage-matrix-2026-06-28',
-      'changelog-chat-search-2026-06-28'
+      'changelog-ensemble-recovery-2026-07-01',
+      'changelog-read-fanout-skip-2026-07-01'
     ])
   })
 })
@@ -188,6 +188,30 @@ describe('notification registry', () => {
     expect(scheduled).toBeDefined()
     expect(scheduled?.title).toBe('Scheduled sends are visible now.')
     expect(scheduled?.body).toContain('Schedule clock')
+  })
+
+  it('seeds 1.7.0 workflow and recovery highlights in the dynamic changelog pool', () => {
+    const ids = CHANGELOG_FEATURE_NOTIFICATION_POOL.map((n) => n.id)
+    expect(ids).toEqual(
+      expect.arrayContaining([
+        'changelog-plan-mode-workflow-2026-07-01',
+        'changelog-ensemble-recovery-2026-07-01',
+        'changelog-read-fanout-skip-2026-07-01',
+        'changelog-boss-roster-swap-2026-07-01'
+      ])
+    )
+    const plan = CHANGELOG_FEATURE_NOTIFICATION_POOL.find(
+      (n) => n.id === 'changelog-plan-mode-workflow-2026-07-01'
+    )
+    expect(plan?.body).toContain('Read-only (recon) stays separate')
+    const recovery = CHANGELOG_FEATURE_NOTIFICATION_POOL.find(
+      (n) => n.id === 'changelog-ensemble-recovery-2026-07-01'
+    )
+    expect(recovery?.body).toContain('one grouped recovery message')
+    const rosterSwap = CHANGELOG_FEATURE_NOTIFICATION_POOL.find(
+      (n) => n.id === 'changelog-boss-roster-swap-2026-07-01'
+    )
+    expect(rosterSwap?.body).toContain('provider/model choices')
   })
 
   it('seeds the AntiGravity policy notice as a neutral info card', () => {
