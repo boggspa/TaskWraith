@@ -84,34 +84,13 @@ export const PREVIEW_MODEL_CATALOG: PreviewModelCatalogEntry[] = [
     previewRole: 'Fast triage, board planning, summarization, lightweight subagents',
     supportedReasoningEfforts: OPENAI_GPT56_REASONING_EFFORTS,
     defaultReasoningEffort: 'medium'
-  },
-  {
-    id: 'preview:anthropic:claude-fable-5',
-    provider: 'claude',
-    label: 'Claude Fable 5',
-    description: 'Preview model gated behind explicit Claude preview access.',
-    disabled: true,
-    disabledReason: CLAUDE_PREVIEW_MODEL_ACCESS_REASON,
-    hidden: true,
-    runnable: false,
-    accessState: 'requires_preview_access',
-    previewFamily: 'claude-fable-5',
-    previewRole: 'Future Claude preview model family'
-  },
-  {
-    id: 'preview:anthropic:claude-mythos-5',
-    provider: 'claude',
-    label: 'Claude Mythos 5',
-    description: 'Preview model gated behind explicit Claude preview access.',
-    disabled: true,
-    disabledReason: CLAUDE_PREVIEW_MODEL_ACCESS_REASON,
-    hidden: true,
-    runnable: false,
-    accessState: 'requires_preview_access',
-    previewFamily: 'claude-mythos-5',
-    previewRole: 'Future Claude preview model family'
   }
 ]
+
+const RETIRED_PREVIEW_MODEL_PLACEHOLDER_IDS = new Set([
+  'preview:anthropic:claude-fable-5',
+  'preview:anthropic:claude-mythos-5'
+])
 
 export function previewModelAccessReason(provider: string): string {
   if (provider === 'codex') return OPENAI_PREVIEW_MODEL_ACCESS_REASON
@@ -125,7 +104,10 @@ export function previewModelsForProvider(provider: string): PreviewModelCatalogE
 
 export function isPreviewModelPlaceholder(model?: string | null): boolean {
   const id = normalizePreviewModelKey(model)
-  return PREVIEW_MODEL_CATALOG.some((entry) => entry.id === id)
+  return (
+    PREVIEW_MODEL_CATALOG.some((entry) => entry.id === id) ||
+    RETIRED_PREVIEW_MODEL_PLACEHOLDER_IDS.has(id)
+  )
 }
 
 export function isPreviewRiskModel(provider: string, model?: string | null): boolean {

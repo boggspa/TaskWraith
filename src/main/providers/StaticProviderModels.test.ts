@@ -277,21 +277,16 @@ describe('getStaticProviderModels (claude)', () => {
     expect(ids).toContain('claude-sonnet-5')
   })
 
-  it('can expose disabled Claude preview placeholders behind the preview catalog flag', () => {
+  it('keeps retired Claude preview placeholders out behind the preview catalog flag', () => {
     const previewModels = getStaticProviderModels('claude', {
       includePreviewModels: true
     }) as StaticModelShape[]
     const previewById = new Map(previewModels.map((m) => [m.id, m]))
-    // Concrete Claude 5 ids are selectable; stale preview placeholders remain disabled.
     expect(previewById.get('preview:anthropic:claude-sonnet-5')).toBeUndefined()
-    expect(previewById.get('preview:anthropic:claude-fable-5')).toMatchObject({
-      disabled: true,
-      disabledReason: 'Requires Claude preview access'
-    })
-    expect(previewById.get('preview:anthropic:claude-mythos-5')).toMatchObject({
-      disabled: true,
-      disabledReason: 'Requires Claude preview access'
-    })
+    expect(previewById.get('preview:anthropic:claude-fable-5')).toBeUndefined()
+    expect(previewById.get('preview:anthropic:claude-mythos-5')).toBeUndefined()
+    expect(previewById.get('claude-fable-5')?.disabled).toBeFalsy()
+    expect(previewById.get('claude-mythos-5')?.disabled).toBeFalsy()
   })
 
   it('marks Claude Sonnet 5 as the concrete default and retires Sonnet 4.6 from the picker', () => {
