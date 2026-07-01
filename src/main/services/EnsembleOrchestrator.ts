@@ -410,6 +410,7 @@ export interface EnsembleBossmanControlResult {
     | 'missing_prompt'
     | 'missing_replacement'
     | 'health_check_unavailable'
+    | 'permission_ceiling'
     | 'replacement_unreachable'
     | 'reorder_cooldown'
     | 'queue_failed'
