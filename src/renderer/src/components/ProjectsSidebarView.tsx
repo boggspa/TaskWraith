@@ -4,6 +4,7 @@ import {
   useState,
   type CSSProperties,
   type ChangeEvent,
+  type DragEvent as ReactDragEvent,
   type JSX
 } from 'react'
 import type {
@@ -28,6 +29,9 @@ import { getProviderLabel } from '../lib/providerLabels'
 import { PooledAgentIcon } from './icons/PooledAgentIcon'
 import { ProviderGlyph } from './icons/ProviderGlyph'
 import { IdentityIconPicker } from './IdentityIconPicker'
+
+const EXPANDED_PROJECTS_STORAGE_KEY = 'taskwraith-sidebar-expanded-project-ids'
+const PROJECT_CHAT_DRAG_MIME = 'application/x-taskwraith-chat-id'
 
 interface ProjectsSidebarViewProps {
   chats: ChatRecord[]
@@ -90,6 +94,26 @@ function flattenNodes(nodes: ProjectNode[]): ProjectNode[] {
   return out
 }
 
+function ProjectChevron({ isExpanded }: { isExpanded: boolean }): JSX.Element {
+  return (
+    <span
+      className={`sf-symbol-icon sidebar-tree-chevron ${isExpanded ? 'is-expanded' : ''}`}
+      aria-hidden
+    >
+      <svg
+        viewBox="0 0 16 16"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <path d="M6.2 4.7 10 8.1 6.2 11.5" />
+      </svg>
+    </span>
+  )
+}
+
 function chatProviderId(chat: ChatRecord): ProviderId | 'ensemble' {
   return chat.chatKind === 'ensemble' ? 'ensemble' : chat.provider || 'gemini'
 }
@@ -97,6 +121,17 @@ function chatProviderId(chat: ChatRecord): ProviderId | 'ensemble' {
 function providerLabel(chat: ChatRecord): string {
   if (chat.chatKind === 'ensemble') return 'Ensemble'
   return getProviderLabel(chat.provider || 'gemini')
+}
+
+function workspaceLabel(chat: ChatRecord): string {
+  if (chat.scope === 'global') return 'General'
+  const source = chat.workspacePath || 'Workspace'
+  const parts = source.split(/[\\/]/).filter(Boolean)
+  return parts[parts.length - 1] || source
+}
+
+function chatOptionLabel(chat: ChatRecord): string {
+  return `${chat.title} - ${workspaceLabel(chat)} / ${providerLabel(chat)}`
 }
 
 function chatMatchesSearch(chat: ChatRecord, query: string): boolean {
@@ -156,7 +191,18 @@ export function ProjectsSidebarView({
 }: ProjectsSidebarViewProps): JSX.Element {
   const [projects, setProjects] = useState<Project[]>(() => listProjects())
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null)
-  const [expandedProjectIds, setExpandedProjectIds] = useState<Set<string>>(() => new Set())
+  const [projectDropTargetId, setProjectDropTargetId] = useState<string | null>(null)
+  const [expandedProjectIds, setExpandedProjectIds] = useState<Set<string>>(() => {
+    try {
+      const raw = localStorage.getItem(EXPANDED_PROJECTS_STORAGE_KEY)
+      if (!raw) return new Set<string>()
+      const parsed = JSON.parse(raw)
+      if (!Array.isArray(parsed)) return new Set<string>()
+      return new Set(parsed.filter((value): value is string => typeof value === 'string'))
+    } catch {
+      return new Set<string>()
+    }
+  })
 
   useEffect(() => {
     const refresh = (): void => setProjects(listProjects())
@@ -164,10 +210,18 @@ export function ProjectsSidebarView({
     return subscribeProjects(refresh)
   }, [])
 
+  useEffect(() => {
+    try {
+      localStorage.setItem(EXPANDED_PROJECTS_STORAGE_KEY, JSON.stringify([...expandedProjectIds]))
+    } catch {
+      // Project expansion memory is renderer-local and best-effort.
+    }
+  }, [expandedProjectIds])
+
   const chatById = useMemo(() => {
     const map = new Map<string, ChatRecord>()
     for (const chat of chats) {
-      if (!chat.archived) map.set(chat.appChatId, chat)
+      map.set(chat.appChatId, chat)
     }
     return map
   }, [chats])
@@ -247,6 +301,37 @@ export function ProjectsSidebarView({
     runStoreAction(() => removeChatFromProject(projectId, chatId))
   }
 
+  const onProjectDragOver = (
+    event: ReactDragEvent<HTMLElement>,
+    project: Project
+  ): void => {
+    if (!event.dataTransfer.types.includes(PROJECT_CHAT_DRAG_MIME)) return
+    event.preventDefault()
+    event.dataTransfer.dropEffect = 'copy'
+    if (projectDropTargetId !== project.id) setProjectDropTargetId(project.id)
+  }
+
+  const onProjectDrop = (event: ReactDragEvent<HTMLElement>, project: Project): void => {
+    const chatId = event.dataTransfer.getData(PROJECT_CHAT_DRAG_MIME)
+    if (!chatId) return
+    event.preventDefault()
+    setProjectDropTargetId(null)
+    addMember(project.id, chatId)
+  }
+
+  const onProjectDragLeave = (event: ReactDragEvent<HTMLElement>, project: Project): void => {
+    const rect = event.currentTarget.getBoundingClientRect()
+    const { clientX, clientY } = event
+    if (
+      clientX < rect.left ||
+      clientX > rect.right ||
+      clientY < rect.top ||
+      clientY > rect.bottom
+    ) {
+      setProjectDropTargetId((current) => (current === project.id ? null : current))
+    }
+  }
+
   const visibleNodeIds = useMemo(() => {
     if (!isSearchActive) return new Set(projects.map((project) => project.id))
     const visible = new Set<string>()
@@ -288,33 +373,47 @@ export function ProjectsSidebarView({
   const renderChatRow = (chat: ChatRecord, project: Project): JSX.Element => {
     const provider = chatProviderId(chat)
     const isRunning = runningChatIdSet.has(chat.appChatId)
+    const isArchived = chat.archived === true
     return (
       <div
-        role="button"
-        tabIndex={0}
         key={chat.appChatId}
         className={`sidebar-project-member provider-${provider} ${
           selectedChatId === chat.appChatId ? 'active' : ''
-        } ${isRunning ? 'running' : ''}`}
-        onClick={() => onSelectChat(chat)}
-        onKeyDown={(event) => {
-          if (event.key === 'Enter' || event.key === ' ') {
-            event.preventDefault()
-            onSelectChat(chat)
-          }
-        }}
+        } ${isRunning ? 'running' : ''} ${isArchived ? 'is-archived' : ''}`}
         title={chat.title}
       >
-        <span className={`sidebar-provider-icon provider-${provider}`} aria-hidden>
-          <ProviderGlyph provider={provider} />
-        </span>
-        <span className="sidebar-project-member-copy">
-          <span className="sidebar-project-member-title">
-            <HighlightMatch text={chat.title} query={searchQuery} />
+        <button
+          type="button"
+          className="sidebar-project-member-main"
+          onClick={() => {
+            if (!isArchived) onSelectChat(chat)
+          }}
+          disabled={isArchived}
+          draggable={!isArchived}
+          onDragStart={(event) => {
+            event.dataTransfer.effectAllowed = 'copy'
+            event.dataTransfer.setData(PROJECT_CHAT_DRAG_MIME, chat.appChatId)
+            event.dataTransfer.setData('text/plain', chat.title)
+          }}
+          title={isArchived ? `${chat.title} is archived` : chat.title}
+        >
+          <span className="sidebar-project-member-title-line">
+            <span className={`sidebar-provider-label provider-${provider}`}>
+              <span className={`sidebar-provider-icon provider-${provider}`} aria-hidden>
+                <ProviderGlyph provider={provider} />
+              </span>
+              <span>{providerLabel(chat)}</span>
+            </span>
+            <span className="sidebar-project-member-title">
+              <HighlightMatch text={chat.title} query={searchQuery} />
+            </span>
           </span>
-          <span className="sidebar-project-member-meta">{providerLabel(chat)}</span>
-        </span>
-        {isRunning && <span className="sidebar-chat-busy" title="Task running" />}
+          <span className="sidebar-project-member-meta">
+            {workspaceLabel(chat)}
+            {isArchived && <span className="sidebar-project-archived-chip">Archived</span>}
+          </span>
+          {isRunning && <span className="sidebar-chat-busy" title="Task running" />}
+        </button>
         <button
           type="button"
           className="sidebar-project-icon-button danger"
@@ -336,9 +435,10 @@ export function ProjectsSidebarView({
     if (!visibleNodeIds.has(project.id)) return null
     const expanded = isSearchActive || expandedProjectIds.has(project.id)
     const selected = selectedProjectId === project.id
-    const memberChats = project.memberChatIds
+    const allMemberChats = project.memberChatIds
       .map((id) => chatById.get(id))
       .filter((chat): chat is ChatRecord => Boolean(chat))
+    const memberChats = allMemberChats
       .filter((chat) => !isSearchActive || chatMatchesSearch(chat, searchQuery))
     const availableChats = chats
       .filter((chat) => !chat.archived && !project.memberChatIds.includes(chat.appChatId))
@@ -351,20 +451,16 @@ export function ProjectsSidebarView({
     return (
       <div
         key={project.id}
-        className={`sidebar-project-node ${selected ? 'is-selected' : ''}`}
+        className={`sidebar-project-node ${selected ? 'is-selected' : ''} ${
+          projectDropTargetId === project.id ? 'is-drop-target' : ''
+        }`}
         style={{ '--project-depth': depth } as CSSProperties}
       >
         <div
-          role="button"
-          tabIndex={0}
           className="sidebar-project-row"
-          onClick={() => setSelectedProjectId((current) => (current === project.id ? null : project.id))}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter' || event.key === ' ') {
-              event.preventDefault()
-              setSelectedProjectId((current) => (current === project.id ? null : project.id))
-            }
-          }}
+          onDragOver={(event) => onProjectDragOver(event, project)}
+          onDragLeave={(event) => onProjectDragLeave(event, project)}
+          onDrop={(event) => onProjectDrop(event, project)}
           title={project.name}
         >
           <button
@@ -385,24 +481,34 @@ export function ProjectsSidebarView({
             aria-label={expanded ? 'Collapse project' : 'Expand project'}
             aria-expanded={expanded}
           >
-            {hasChildren ? (expanded ? 'v' : '>') : ''}
+            {hasChildren && <ProjectChevron isExpanded={expanded} />}
           </button>
-          <PooledAgentIcon
-            identity={projectIdentity(project)}
-            size={24}
-            className="sidebar-project-icon"
-          />
-          <span className="sidebar-project-copy">
-            <span className="sidebar-project-name">
-              <HighlightMatch text={project.name} query={searchQuery} />
+          <button
+            type="button"
+            className="sidebar-project-main"
+            onClick={() =>
+              setSelectedProjectId((current) => (current === project.id ? null : project.id))
+            }
+            aria-expanded={selected}
+            title={project.name}
+          >
+            <PooledAgentIcon
+              identity={projectIdentity(project)}
+              size={24}
+              className="sidebar-project-icon"
+            />
+            <span className="sidebar-project-copy">
+              <span className="sidebar-project-name">
+                <HighlightMatch text={project.name} query={searchQuery} />
+              </span>
+              <span className="sidebar-project-meta">
+                {allMemberChats.length} thread{allMemberChats.length === 1 ? '' : 's'}
+                {node.children.length > 0
+                  ? ` / ${node.children.length} folder${node.children.length === 1 ? '' : 's'}`
+                  : ''}
+              </span>
             </span>
-            <span className="sidebar-project-meta">
-              {memberChats.length} thread{memberChats.length === 1 ? '' : 's'}
-              {node.children.length > 0
-                ? ` / ${node.children.length} folder${node.children.length === 1 ? '' : 's'}`
-                : ''}
-            </span>
-          </span>
+          </button>
           <span className="sidebar-project-actions">
             <button
               type="button"
@@ -523,7 +629,7 @@ export function ProjectsSidebarView({
                 <option value="">Choose thread...</option>
                 {availableChats.map((chat) => (
                   <option key={chat.appChatId} value={chat.appChatId}>
-                    {chat.title}
+                    {chatOptionLabel(chat)}
                   </option>
                 ))}
               </select>

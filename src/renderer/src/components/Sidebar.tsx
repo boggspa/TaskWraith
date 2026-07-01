@@ -2227,7 +2227,6 @@ export function Sidebar({
   // Ref to the sidebar search <input>. App.tsx owns the editable key command
   // and bumps `focusSearchRequestId` when it should focus this field.
   const searchInputRef = useRef<HTMLInputElement | null>(null)
-  const [sidebarSearch, setSidebarSearch] = useState('')
   const [projectsSearchResultCount, setProjectsSearchResultCount] = useState(0)
   const [activeSidebarTab, setActiveSidebarTab] = useState<SidebarActiveTab>(() => {
     try {
@@ -2238,6 +2237,17 @@ export function Sidebar({
       return 'threads'
     }
   })
+  const [sidebarSearchByTab, setSidebarSearchByTab] = useState<Record<SidebarActiveTab, string>>({
+    threads: '',
+    projects: ''
+  })
+  const sidebarSearch = sidebarSearchByTab[activeSidebarTab]
+  const setActiveSidebarSearch = useCallback(
+    (next: string): void => {
+      setSidebarSearchByTab((current) => ({ ...current, [activeSidebarTab]: next }))
+    },
+    [activeSidebarTab]
+  )
   const [remoteDeviceConnected, setRemoteDeviceConnected] = useState(false)
   const [pairedDevices, setPairedDevices] = useState<PairedRemoteDeviceSummary[]>([])
   const [expandedWorkspaceIds, setExpandedWorkspaceIds] = useState<Set<string>>(() => {
@@ -2315,7 +2325,7 @@ export function Sidebar({
   const topLevelChats = displayChats.filter(
     (chat) => !isLinkedChildChat(chat) && !workflowChatIds.has(chat.appChatId)
   )
-  const projectSidebarChats = topLevelChats.filter((chat) => !chat.archived)
+  const projectSidebarChats = topLevelChats
   const regularChats = topLevelChats.filter((chat) => chat.chatKind !== 'ensemble')
   const ensembleChats = ensembleModeEnabled
     ? topLevelChats.filter((chat) => chat.chatKind === 'ensemble' && !chat.archived)
@@ -3662,8 +3672,20 @@ export function Sidebar({
               type="button"
               role="tab"
               aria-selected={activeSidebarTab === tab}
+              aria-controls={`sidebar-${tab}-panel`}
               className={`sidebar-view-tab ${activeSidebarTab === tab ? 'is-active' : ''}`}
+              id={`sidebar-${tab}-tab`}
               onClick={() => setActiveSidebarTab(tab)}
+              onKeyDown={(event) => {
+                if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+                event.preventDefault()
+                const nextTab = tab === 'threads' ? 'projects' : 'threads'
+                setActiveSidebarTab(nextTab)
+                window.requestAnimationFrame(() => {
+                  document.getElementById(`sidebar-${nextTab}-tab`)?.focus()
+                })
+              }}
+              tabIndex={activeSidebarTab === tab ? 0 : -1}
             >
               {tab === 'threads' ? 'Threads' : 'Projects'}
             </button>
@@ -3677,7 +3699,7 @@ export function Sidebar({
               ref={searchInputRef}
               type="search"
               value={sidebarSearch}
-              onChange={(event) => setSidebarSearch(event.target.value)}
+              onChange={(event) => setActiveSidebarSearch(event.target.value)}
               onKeyDown={(event) => {
                 // Escape clears a non-empty query, then blurs an
                 // already-empty field — matches the ✕ clear button +
@@ -3685,7 +3707,7 @@ export function Sidebar({
                 if (event.key === 'Escape') {
                   event.preventDefault()
                   if (sidebarSearch) {
-                    setSidebarSearch('')
+                    setActiveSidebarSearch('')
                   } else {
                     event.currentTarget.blur()
                   }
@@ -3712,7 +3734,7 @@ export function Sidebar({
                 <button
                   type="button"
                   className="sidebar-search-clear"
-                  onClick={() => setSidebarSearch('')}
+                  onClick={() => setActiveSidebarSearch('')}
                   title="Clear search"
                   aria-label={
                     activeSidebarTab === 'projects'
@@ -3729,18 +3751,28 @@ export function Sidebar({
 
         <div className="sidebar-hierarchy-scroll">
           {activeSidebarTab === 'projects' ? (
-            <ProjectsSidebarView
-              chats={projectSidebarChats}
-              currentChat={currentChat}
-              activeChatId={selectedChatId}
-              runningChatIds={runningChatIds}
-              searchQuery={sidebarSearchQuery}
-              isSearchActive={isSidebarSearchActive}
-              onSelectChat={onSelectChat}
-              onSearchResultCountChange={setProjectsSearchResultCount}
-            />
+            <div
+              id="sidebar-projects-panel"
+              role="tabpanel"
+              aria-labelledby="sidebar-projects-tab"
+            >
+              <ProjectsSidebarView
+                chats={projectSidebarChats}
+                currentChat={currentChat}
+                activeChatId={selectedChatId}
+                runningChatIds={runningChatIds}
+                searchQuery={sidebarSearchQuery}
+                isSearchActive={isSidebarSearchActive}
+                onSelectChat={onSelectChat}
+                onSearchResultCountChange={setProjectsSearchResultCount}
+              />
+            </div>
           ) : (
-            <>
+            <div
+              id="sidebar-threads-panel"
+              role="tabpanel"
+              aria-labelledby="sidebar-threads-tab"
+            >
           {wrapHierarchySection(
             'active-runs',
             <ActiveRunsSection
@@ -5120,7 +5152,7 @@ export function Sidebar({
                 document.body
               )
             : null}
-            </>
+            </div>
           )}
         </div>
 
