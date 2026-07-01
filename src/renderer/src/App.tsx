@@ -270,6 +270,7 @@ import {
 } from './lib/ComposerSlashCommands'
 import { parsePositiveIntArg, parseSlashToggleArg } from './lib/ensembleSlashCommandArgs'
 import { CreativeActionApprovalModal } from './components/CreativeActionApprovalModal'
+import { ProposedPlanApprovalModal } from './components/ProposedPlanApprovalModal'
 import { WorkspaceRemoteAccessModal } from './components/WorkspaceRemoteAccessModal'
 import { JoinSharedChatModal } from './components/JoinSharedChatModal'
 import { HostAdmissionBanner } from './components/HostAdmissionBanner'
@@ -10645,6 +10646,13 @@ function App(): React.JSX.Element {
                       }
                     : m
                 )
+                if (planTargetId) {
+                  setPendingProposedPlan({
+                    messageId: planTargetId,
+                    title: parsedPlan.title,
+                    body: parsedPlan.body
+                  })
+                }
               }
             }
           } else if (event.type === 'run_started') {
@@ -23447,6 +23455,24 @@ function App(): React.JSX.Element {
         so it overlays any view. Subscribes to main-process broadcasts
         the first time it mounts; renders the queue of pending
         approvals (K3 FCP import, K4 AppleScript, K5 Blender). */}
+      <ProposedPlanApprovalModal
+        open={Boolean(pendingProposedPlan)}
+        title={pendingProposedPlan?.title || ''}
+        body={pendingProposedPlan?.body || ''}
+        chat={currentChat || undefined}
+        isEnsemble={currentChat?.chatKind === 'ensemble'}
+        onApprove={(planBody) => {
+          const targetMessageId = pendingProposedPlan?.messageId
+          if (targetMessageId) handleProposedPlanApprove(targetMessageId, planBody)
+          setPendingProposedPlan(null)
+        }}
+        onDeny={() => {
+          const targetMessageId = pendingProposedPlan?.messageId
+          if (targetMessageId) handleProposedPlanDismiss(targetMessageId)
+          setPendingProposedPlan(null)
+        }}
+        onCancel={() => setPendingProposedPlan(null)}
+      />
       <CreativeActionApprovalModal
         onSubscribe={(handler) => {
           const unsubscribe = window.api.onCreativeActionRequest((payload) =>

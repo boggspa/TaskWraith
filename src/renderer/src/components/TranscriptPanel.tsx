@@ -12,6 +12,7 @@ import { getChatProvider } from '../lib/chatScope'
 import { getProviderLabel } from '../lib/providerLabels'
 import { formatAssistantMessageLabel } from '../lib/assistantMessageLabel'
 import { shortModelName } from '../lib/composerChipFormat'
+import { shouldSurfaceProposedPlanCard } from '../lib/ensemblePlanPolicy'
 import { deriveParticipantRenameContinuity } from '../lib/sessionActivityLedger'
 import { shouldCollapseUserMessage, truncateUserMessagePreview } from '../lib/UserMessageCollapse'
 import {
@@ -916,6 +917,7 @@ export const TranscriptPanel = memo(
     isWelcomeChat,
     isThinking,
     pendingPlanChoice,
+    pendingProposedPlan,
     pendingAgentQuestions,
     onAgentQuestionSubmit,
     onAgentQuestionDismiss,
@@ -1746,6 +1748,22 @@ export const TranscriptPanel = memo(
                     pendingPlanChoice.options.join('\u0000')
                   ].join(':')
                 : ''
+            const shouldSurfacePlanCard = msg.metadata?.proposedPlan
+              ? shouldSurfaceProposedPlanCard({
+                  chatKind: currentChat?.chatKind,
+                  bossmanParticipantId: currentChat?.ensemble?.bossmanParticipantId,
+                  fallbackOwnerParticipantId: undefined,
+                  messageParticipantId:
+                    typeof msg.metadata?.ensembleParticipantId === 'string'
+                      ? msg.metadata?.ensembleParticipantId
+                      : undefined,
+                  isPlanMode: currentChat?.workflowMode === 'plan',
+                  hasExplicitProposedPlanBlock: Boolean(msg.metadata?.proposedPlan)
+                })
+              : false
+            const isModalOwnedPendingPlan =
+              pendingProposedPlan?.messageId === msg.id &&
+              msg.metadata?.proposedPlan?.status === 'pending'
             const pendingAgentQuestionsKey = pendingQuestionsForRow
               .map((question) => `${question.questionId}:${question.askedAt}`)
               .join('\u0000')
@@ -1755,6 +1773,12 @@ export const TranscriptPanel = memo(
                     .map((chat) => `${chat.appChatId}:${chat.title || ''}:${chat.updatedAt || ''}`)
                     .join('\u0000')}`
                 : ''
+            const pendingProposedPlanKey = pendingProposedPlan?.messageId === msg.id
+              ? `${pendingProposedPlan?.messageId || ''}:plan-modal`
+              : ''
+            const auxiliaryKeyWithPendingPlan = auxiliaryKey
+              ? `${auxiliaryKey}|${pendingProposedPlanKey}`
+              : pendingProposedPlanKey
             const isLiveRevealRow = rowKey === liveRevealRowKey
             const revealKey = isLiveRevealRow ? `live:${revealRunId || msg.id}` : 'plain'
             const rowSignature: TranscriptRowRenderSignature = {
@@ -1779,7 +1803,7 @@ export const TranscriptPanel = memo(
               subThreadExpanded: expandedSubThreadResults.has(msg.id),
               pendingPlanChoiceKey,
               pendingAgentQuestionsKey,
-              auxiliaryKey,
+              auxiliaryKey: auxiliaryKeyWithPendingPlan,
               revealKey,
               callbackRefs: [
                 onMessageSelectionCandidate,
@@ -2307,7 +2331,9 @@ export const TranscriptPanel = memo(
                         </div>
                       </div>
                     )}
-                    {msg.metadata?.proposedPlan && (
+                    {shouldSurfacePlanCard &&
+                      msg.metadata?.proposedPlan &&
+                      !isModalOwnedPendingPlan && (
                       <ProposedPlanCard
                         title={msg.metadata.proposedPlan.title}
                         body={msg.metadata.proposedPlan.body}
