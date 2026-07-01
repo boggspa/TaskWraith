@@ -175,6 +175,7 @@ import {
   ensembleFanoutPolicyEnabled,
   normalizeEnsembleFanoutPolicy
 } from './lib/ensembleFanoutPolicy'
+import { removeChatFromAllProjects } from './lib/projectsStore'
 import { createWorkspaceBoardProvenance } from './lib/workspaceBoardProvenance'
 import { PLAN_LABEL, READ_ONLY_RECON_LABEL } from './lib/planModeLabels'
 import {
@@ -6216,6 +6217,7 @@ function App(): React.JSX.Element {
     }
     try {
       await window.api.deleteChat(chatId)
+      removeChatFromAllProjects(chatId)
     } catch (err) {
       console.error('[deleteChat] failed', err)
       // Best-effort: if delete failed, the next chat refresh on focus or

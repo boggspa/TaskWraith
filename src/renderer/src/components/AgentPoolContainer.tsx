@@ -6,8 +6,6 @@ import type {
   PooledAgentStatsSummary
 } from '../../../main/store/types'
 import {
-  accentFromHue,
-  hueForSeed,
   listPooledAgents,
   pooledAgentConfigFromLike,
   POOLED_AGENT_DRAG_MIME,
@@ -17,17 +15,11 @@ import {
   upsertPooledAgent,
   type PooledAgent
 } from '../lib/ensembleAgentPool'
-import { NAMED_AGENT_IDENTICONS } from '../lib/agentIdentityCatalog'
-import {
-  poolIconAssetsByGroup,
-  preparePoolIconSvg,
-  type PoolIconAsset
-} from '../lib/agentPoolIconAssets'
-import { AgentIdentityIcon } from './icons/AgentIdentityIcon'
 import { PooledAgentIcon } from './icons/PooledAgentIcon'
 import { CommittedDraftField } from './CommittedDraftField'
 import { ParticipantPickerCluster } from './ParticipantPickerCluster'
 import { AgentPoolCard } from './AgentPoolCard'
+import { IdentityIconPicker } from './IdentityIconPicker'
 
 interface AgentPoolContainerProps {
   composerStyle: ComposerStyle
@@ -38,19 +30,6 @@ interface AgentPoolContainerProps {
    *  editingRef-reading handler so a dropped participant captures unblurred
    *  edits. Enables the participant→pool drag direction. */
   onSaveParticipantToPool?: (participantId: string) => void
-}
-
-/** A single icon-pool asset rendered in the picker, tinted to its own accent. */
-function PoolAssetSwatch({ asset, size }: { asset: PoolIconAsset; size: number }): JSX.Element {
-  const accent = asset.accent ?? '#9AA0AA'
-  return (
-    <span
-      className="agent-pool-asset-icon"
-      style={{ width: size, height: size, display: 'inline-flex', color: accent }}
-      aria-hidden
-      dangerouslySetInnerHTML={{ __html: preparePoolIconSvg(asset, size, accent) }}
-    />
-  )
 }
 
 /** Synthesize a participant-shaped object so the shared picker cluster can edit
@@ -75,7 +54,6 @@ export function AgentPoolContainer({
 }: AgentPoolContainerProps): JSX.Element {
   const [agents, setAgents] = useState<PooledAgent[]>(() => listPooledAgents())
   const [editId, setEditId] = useState<string | null>(null)
-  const [iconPickerOpen, setIconPickerOpen] = useState(false)
   const [stats, setStats] = useState<Record<string, PooledAgentStatsSummary>>({})
   const [isDropTarget, setIsDropTarget] = useState(false)
   const [nickRejectNonce, setNickRejectNonce] = useState(0)
@@ -219,7 +197,6 @@ export function AgentPoolContainer({
               isActive={agent.agentId === editId}
               stats={stats[agent.agentId]}
               onSelect={(id) => {
-                setIconPickerOpen(false)
                 setEditId((current) => (current === id ? null : id))
               }}
               onDelete={handleDelete}
@@ -251,50 +228,41 @@ export function AgentPoolContainer({
                 placeholder="Nickname"
                 spellCheck={false}
               />
-              <div className="agent-pool-icon-controls">
-                <button
-                  type="button"
-                  className="agent-pool-mini-btn"
-                  onClick={() => setIconPickerOpen((open) => !open)}
-                  aria-expanded={iconPickerOpen}
-                >
-                  Icon…
-                </button>
-                <button
-                  type="button"
-                  className="agent-pool-mini-btn"
-                  title="Reroll the procedural glyph + colour"
-                  onClick={() => {
-                    const seed = `${editing.agentId}#${Date.now().toString(36)}`
-                    updateIdentity(editing, {
-                      iconKind: 'seed',
-                      seed,
-                      slug: undefined,
-                      assetKey: undefined,
-                      accent: accentFromHue(hueForSeed(seed)),
-                      hue: hueForSeed(seed)
-                    })
-                  }}
-                >
-                  Shuffle
-                </button>
-                {editing.identity.iconKind === 'seed' && (
-                  <label className="agent-pool-hue">
-                    <span className="agent-pool-hue-label">Hue</span>
-                    <input
-                      type="range"
-                      min={0}
-                      max={359}
-                      value={editing.identity.hue}
-                      onChange={(event) => {
-                        const hue = Number(event.target.value)
-                        updateIdentity(editing, { hue, accent: accentFromHue(hue) })
-                      }}
-                      aria-label="Icon hue"
-                    />
-                  </label>
-                )}
-              </div>
+              <IdentityIconPicker
+                value={{
+                  iconKind: editing.identity.iconKind,
+                  hue: editing.identity.hue,
+                  slug: editing.identity.slug,
+                  seed: editing.identity.seed,
+                  assetKey: editing.identity.assetKey,
+                  accent: editing.identity.accent
+                }}
+                seedBase={editing.agentId}
+                onChange={(next) =>
+                  updateIdentity(editing, {
+                    iconKind: next.iconKind,
+                    hue: next.hue,
+                    slug: next.slug,
+                    seed: next.seed,
+                    assetKey: next.assetKey,
+                    accent: next.accent
+                  })
+                }
+              />
+              <label
+                className="agent-pool-hue-toggle"
+                title="Tint this icon with its accent colour. Off = monochrome — for pool icons that carry their own colours."
+              >
+                <input
+                  type="checkbox"
+                  checked={editing.identity.hueEnabled ?? true}
+                  onChange={(event) =>
+                    updateIdentity(editing, { hueEnabled: event.target.checked })
+                  }
+                  aria-label="Tint icon with accent colour"
+                />
+                <span>Tint icon</span>
+              </label>
             </div>
             <button
               type="button"
@@ -305,76 +273,6 @@ export function AgentPoolContainer({
               Done
             </button>
           </div>
-
-          {iconPickerOpen && (
-            <div className="agent-pool-icon-picker">
-              {poolIconAssetsByGroup().map((section) => (
-                <div key={section.group} className="agent-pool-icon-section">
-                  <div className="agent-pool-icon-section-label">{section.group}</div>
-                  <div className="agent-pool-icon-grid" role="listbox" aria-label={section.group}>
-                    {section.assets.map((asset) => {
-                      const selected =
-                        editing.identity.iconKind === 'asset' &&
-                        editing.identity.assetKey === asset.key
-                      return (
-                        <button
-                          key={asset.key}
-                          type="button"
-                          role="option"
-                          aria-selected={selected}
-                          className={`agent-pool-icon-cell${selected ? ' is-selected' : ''}`}
-                          title={asset.label}
-                          onClick={() => {
-                            updateIdentity(editing, {
-                              iconKind: 'asset',
-                              assetKey: asset.key,
-                              slug: undefined,
-                              accent: asset.accent ?? editing.identity.accent,
-                              hue: asset.hue ?? editing.identity.hue
-                            })
-                            setIconPickerOpen(false)
-                          }}
-                        >
-                          <PoolAssetSwatch asset={asset} size={26} />
-                        </button>
-                      )
-                    })}
-                  </div>
-                </div>
-              ))}
-              <div className="agent-pool-icon-section">
-                <div className="agent-pool-icon-section-label">Characters</div>
-                <div className="agent-pool-icon-grid" role="listbox" aria-label="Characters">
-                  {NAMED_AGENT_IDENTICONS.map((entry) => {
-                    const selected =
-                      editing.identity.iconKind === 'named' && editing.identity.slug === entry.slug
-                    return (
-                      <button
-                        key={entry.slug}
-                        type="button"
-                        role="option"
-                        aria-selected={selected}
-                        className={`agent-pool-icon-cell${selected ? ' is-selected' : ''}`}
-                        title={entry.name}
-                        onClick={() => {
-                          updateIdentity(editing, {
-                            iconKind: 'named',
-                            slug: entry.slug,
-                            assetKey: undefined,
-                            accent: entry.accent,
-                            hue: entry.hue
-                          })
-                          setIconPickerOpen(false)
-                        }}
-                      >
-                        <AgentIdentityIcon name={entry.name} color={entry.accent} size={26} />
-                      </button>
-                    )
-                  })}
-                </div>
-              </div>
-            </div>
-          )}
 
           <div className="agent-pool-editor-controls">
             <ParticipantPickerCluster

@@ -40,6 +40,7 @@ import { normalizeThreadTitle } from '../../../shared/threadTitles'
 import { IOS_REMOTE_ENABLED } from '../lib/featureFlags'
 import { ActiveRunsSection } from './ActiveRunsSection'
 import { LocalServersSection } from './LocalServersSection'
+import { ProjectsSidebarView } from './ProjectsSidebarView'
 import { useLocalServers } from '../hooks/useLocalServers'
 import { useSidebarHierarchyDrag } from '../hooks/useSidebarHierarchyDrag'
 import {
@@ -395,6 +396,8 @@ const getLinkedChildRouteLabel = (chat: ChatRecord, parentChat: ChatRecord | nul
 
 const EXPANDED_WORKSPACES_STORAGE_KEY = 'taskwraith-sidebar-expanded-workspace-ids'
 const COLLAPSED_SUB_THREAD_PARENTS_STORAGE_KEY = 'taskwraith-sidebar-collapsed-sub-thread-parent-ids'
+const SIDEBAR_ACTIVE_TAB_STORAGE_KEY = 'taskwraith-sidebar-active-tab'
+type SidebarActiveTab = 'threads' | 'projects'
 /**
  * Collapsed-section memory for the top-level sidebar lists
  * (Pinned / Recents / Ensembles / Workspaces / Chats). Set semantics: an id
@@ -2225,6 +2228,16 @@ export function Sidebar({
   // and bumps `focusSearchRequestId` when it should focus this field.
   const searchInputRef = useRef<HTMLInputElement | null>(null)
   const [sidebarSearch, setSidebarSearch] = useState('')
+  const [projectsSearchResultCount, setProjectsSearchResultCount] = useState(0)
+  const [activeSidebarTab, setActiveSidebarTab] = useState<SidebarActiveTab>(() => {
+    try {
+      return localStorage.getItem(SIDEBAR_ACTIVE_TAB_STORAGE_KEY) === 'projects'
+        ? 'projects'
+        : 'threads'
+    } catch {
+      return 'threads'
+    }
+  })
   const [remoteDeviceConnected, setRemoteDeviceConnected] = useState(false)
   const [pairedDevices, setPairedDevices] = useState<PairedRemoteDeviceSummary[]>([])
   const [expandedWorkspaceIds, setExpandedWorkspaceIds] = useState<Set<string>>(() => {
@@ -2282,6 +2295,13 @@ export function Sidebar({
       }
     }
   )
+  useEffect(() => {
+    try {
+      localStorage.setItem(SIDEBAR_ACTIVE_TAB_STORAGE_KEY, activeSidebarTab)
+    } catch {
+      // Tab memory is best-effort renderer-local state.
+    }
+  }, [activeSidebarTab])
   // Unstarted iOS welcome-card drafts (0 messages/runs) are real chat records on
   // the Mac but must never surface as chats in the sidebar — the phone keeps one
   // only so its in-progress welcome screen resolves; the Mac never owns it.
@@ -2295,6 +2315,7 @@ export function Sidebar({
   const topLevelChats = displayChats.filter(
     (chat) => !isLinkedChildChat(chat) && !workflowChatIds.has(chat.appChatId)
   )
+  const projectSidebarChats = topLevelChats.filter((chat) => !chat.archived)
   const regularChats = topLevelChats.filter((chat) => chat.chatKind !== 'ensemble')
   const ensembleChats = ensembleModeEnabled
     ? topLevelChats.filter((chat) => chat.chatKind === 'ensemble' && !chat.archived)
@@ -2460,6 +2481,8 @@ export function Sidebar({
     for (const workspace of visiblePinnedWorkspaces) workspaceIds.add(workspace.id)
     return chatIds.size + workspaceIds.size + workflowIds.size + boardIds.size
   })()
+  const activeSidebarSearchResultCount =
+    activeSidebarTab === 'projects' ? projectsSearchResultCount : sidebarSearchResultCount
 
   // 1.0.3 retiring inline tile action icons — `handleTogglePinChatClick`,
   // `handleTogglePinWorkspaceClick`, and `handleAddChat` were the
@@ -3632,6 +3655,21 @@ export function Sidebar({
           {runningCount > 0 && <span className="sidebar-stat-live">{runningCount} running</span>}
         </div>
 
+        <div className="sidebar-view-tabs" role="tablist" aria-label="Sidebar view">
+          {(['threads', 'projects'] as const).map((tab) => (
+            <button
+              key={tab}
+              type="button"
+              role="tab"
+              aria-selected={activeSidebarTab === tab}
+              className={`sidebar-view-tab ${activeSidebarTab === tab ? 'is-active' : ''}`}
+              onClick={() => setActiveSidebarTab(tab)}
+            >
+              {tab === 'threads' ? 'Threads' : 'Projects'}
+            </button>
+          ))}
+        </div>
+
         <div className="sidebar-search-section">
           <label className="sidebar-search-field">
             <SearchSymbolIcon />
@@ -3653,8 +3691,16 @@ export function Sidebar({
                   }
                 }
               }}
-              placeholder="Search workspaces & threads"
-              aria-label="Search workspaces and chats"
+              placeholder={
+                activeSidebarTab === 'projects'
+                  ? 'Search projects & members'
+                  : 'Search workspaces & threads'
+              }
+              aria-label={
+                activeSidebarTab === 'projects'
+                  ? 'Search projects and project members'
+                  : 'Search workspaces and chats'
+              }
               spellCheck={false}
             />
             {!isSidebarSearchActive && searchShortcutHint && (
@@ -3662,13 +3708,17 @@ export function Sidebar({
             )}
             {isSidebarSearchActive && (
               <>
-                <span className="sidebar-search-result-count">{sidebarSearchResultCount}</span>
+                <span className="sidebar-search-result-count">{activeSidebarSearchResultCount}</span>
                 <button
                   type="button"
                   className="sidebar-search-clear"
                   onClick={() => setSidebarSearch('')}
                   title="Clear search"
-                  aria-label="Clear workspace and thread search"
+                  aria-label={
+                    activeSidebarTab === 'projects'
+                      ? 'Clear project search'
+                      : 'Clear workspace and thread search'
+                  }
                 >
                   <XSymbolIcon />
                 </button>
@@ -3678,6 +3728,19 @@ export function Sidebar({
         </div>
 
         <div className="sidebar-hierarchy-scroll">
+          {activeSidebarTab === 'projects' ? (
+            <ProjectsSidebarView
+              chats={projectSidebarChats}
+              currentChat={currentChat}
+              activeChatId={selectedChatId}
+              runningChatIds={runningChatIds}
+              searchQuery={sidebarSearchQuery}
+              isSearchActive={isSidebarSearchActive}
+              onSelectChat={onSelectChat}
+              onSearchResultCountChange={setProjectsSearchResultCount}
+            />
+          ) : (
+            <>
           {wrapHierarchySection(
             'active-runs',
             <ActiveRunsSection
@@ -5057,6 +5120,8 @@ export function Sidebar({
                 document.body
               )
             : null}
+            </>
+          )}
         </div>
 
         {/* Phase L6 slice 1 — Model Usage card extracted to its own
