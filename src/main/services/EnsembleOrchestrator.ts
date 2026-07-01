@@ -1044,11 +1044,20 @@ function stripToolNamespace(toolName: string): string {
     return idx > 5 ? name.slice(idx + 2) : name
   }
   if (name.startsWith('mcp_') && !name.startsWith('mcp__')) {
-    const knownServerPrefixes = ['mcp_taskwraith_']
+    const knownServerPrefixes = [
+      'mcp_taskwraith-broker_',
+      'mcp_taskwraith-broker-',
+      'mcp_taskwraith_',
+      'mcp_taskwraith-'
+    ]
     for (const prefix of knownServerPrefixes) {
       if (name.startsWith(prefix)) return name.slice(prefix.length)
     }
   }
+  if (name.startsWith('taskwraith-broker__')) return name.slice('taskwraith-broker__'.length)
+  if (name.startsWith('taskwraith_broker__')) return name.slice('taskwraith_broker__'.length)
+  if (name.startsWith('taskwraith-broker_')) return name.slice('taskwraith-broker_'.length)
+  if (name.startsWith('taskwraith_broker_')) return name.slice('taskwraith_broker_'.length)
   if (name.startsWith('taskwraith__')) return name.slice('taskwraith__'.length)
   if (name.startsWith('taskwraith_')) return name.slice('taskwraith_'.length)
   return name
@@ -3207,7 +3216,7 @@ export class EnsembleOrchestrator {
         roundId: runtime.roundId,
         participantId: targetParticipantId,
         message:
-          'Boss replacement rejected: permissionPresetId must be read_only, plan, default, or workspace_write.',
+          'Boss replacement rejected: permissionPresetId must be read_only, plan, or default.',
         error: 'permission_ceiling'
       }
     }

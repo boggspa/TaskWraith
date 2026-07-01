@@ -3028,7 +3028,7 @@ Next action:
         provider: 'kimi',
         role: 'Verifier',
         model: 'kimi-k2',
-        permissionPresetId: 'workspace_write'
+        permissionPresetId: 'plan'
       }
     })
 
@@ -3041,7 +3041,7 @@ Next action:
       provider: 'kimi',
       role: 'Verifier',
       model: 'kimi-k2',
-      permissionPresetId: 'workspace_write'
+      permissionPresetId: 'plan'
     })
     expect(harness.chat.ensemble!.activeRound?.participants).toEqual(
       expect.arrayContaining([
@@ -3242,7 +3242,7 @@ Next action:
     expect(roster).toHaveLength(2)
   })
 
-  for (const permissionPresetId of ['workspace_write', 'plan'] as const) {
+  for (const permissionPresetId of ['read_only', 'plan', 'default'] as const) {
     it(`preserves an explicitly requested ${permissionPresetId} preset on replacement`, async () => {
       const initialChat = makeChat()
       initialChat.ensemble!.bossmanParticipantId = 'claude'
@@ -3298,7 +3298,7 @@ Next action:
     expect(harness.chat.ensemble!.participants.some((p) => p.id === 'codex')).toBe(true)
   })
 
-  for (const permissionPresetId of ['full_access', 'custom'] as const) {
+  for (const permissionPresetId of ['workspace_write', 'full_access', 'custom'] as const) {
     it(`rejects a replacement requesting ${permissionPresetId} (permission_ceiling)`, async () => {
       const initialChat = makeChat()
       initialChat.ensemble!.bossmanParticipantId = 'claude'

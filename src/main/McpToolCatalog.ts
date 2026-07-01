@@ -2010,7 +2010,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
                 type: 'string',
                 enum: [...ASSIGNABLE_PERMISSION_PRESETS],
                 description:
-                  'Coarse permission preset ceiling. plan, read_only, default, and workspace_write are assignable; full_access and direct custom assignment are rejected.'
+                  'Coarse permission preset ceiling. plan, read_only, and default are assignable; full_access, workspace_write, and direct custom assignment are rejected.'
               },
               permissionOverrides: {
                 type: 'object',

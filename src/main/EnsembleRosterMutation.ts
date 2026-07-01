@@ -11,8 +11,7 @@ export const MAX_ENSEMBLE_PARTICIPANTS = 18
 export const ASSIGNABLE_PERMISSION_PRESETS = [
   'read_only',
   'plan',
-  'default',
-  'workspace_write'
+  'default'
 ] as const
 
 export type AssignablePermissionPresetId = (typeof ASSIGNABLE_PERMISSION_PRESETS)[number]
@@ -236,7 +235,7 @@ function validateParticipantPermissionInput(
   ) {
     return fail(
       'permission_ceiling',
-      'Roster edit rejected: permissionPresetId must be read_only, plan, default, or workspace_write.'
+      'Roster edit rejected: permissionPresetId must be read_only, plan, or default.'
     )
   }
   if (

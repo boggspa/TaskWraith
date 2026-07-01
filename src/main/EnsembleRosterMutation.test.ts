@@ -65,8 +65,7 @@ describe('evaluateRosterEdit', () => {
     expect(ASSIGNABLE_PERMISSION_PRESETS).toEqual([
       'read_only',
       'plan',
-      'default',
-      'workspace_write'
+      'default'
     ])
   })
 
@@ -111,7 +110,7 @@ describe('evaluateRosterEdit', () => {
           instructions: 'Review carefully.',
           reasoningEffort: 'high',
           thinkingEnabled: true,
-          permissionPresetId: 'workspace_write',
+          permissionPresetId: 'plan',
           permissionOverrides: {
             approvalMode: 'plan',
             agenticServices: { mcpTools: 'deny' },
@@ -141,7 +140,7 @@ describe('evaluateRosterEdit', () => {
       model: 'kimi-k2',
       reasoningEffort: 'high',
       thinkingEnabled: true,
-      permissionPresetId: 'workspace_write',
+      permissionPresetId: 'plan',
       permissionOverrides: {
         approvalMode: 'plan',
         agenticServices: { mcpTools: 'deny' },
@@ -228,7 +227,7 @@ describe('evaluateRosterEdit', () => {
           instructions: 'Edit only assigned files.',
           reasoningEffort: 'medium',
           fastModeEnabled: true,
-          permissionPresetId: 'workspace_write',
+          permissionPresetId: 'default',
           permissionOverrides: { agenticServices: { shellCommands: 'deny' } }
         }
       },
@@ -251,7 +250,7 @@ describe('evaluateRosterEdit', () => {
       instructions: 'Edit only assigned files.',
       reasoningEffort: 'medium',
       fastModeEnabled: true,
-      permissionPresetId: 'workspace_write',
+      permissionPresetId: 'default',
       permissionOverrides: { agenticServices: { shellCommands: 'deny' } }
     })
   })
@@ -379,7 +378,7 @@ describe('evaluateRosterEdit', () => {
         action: 'edit_participant',
         targetParticipantId: 'worker',
         participant: {
-          permissionPresetId: 'workspace_write',
+          permissionPresetId: 'default',
           permissionOverrides: {
             approvalMode: 'plan',
             agenticServices: { fileChanges: 'deny' },
@@ -409,7 +408,7 @@ describe('evaluateRosterEdit', () => {
     expect(result).toMatchObject({ ok: true })
     if (!result.ok) throw new Error(result.message)
     expect(result.nextParticipants[1]).toMatchObject({
-      permissionPresetId: 'workspace_write',
+      permissionPresetId: 'default',
       permissionOverrides: {
         approvalMode: 'plan',
         agenticServices: { fileChanges: 'deny' },
@@ -549,10 +548,7 @@ describe('evaluateRosterEdit', () => {
   it('does not assign write permissions from a read-only round posture', () => {
     expect(
       evaluateRosterEdit(
-        {
-          action: 'add_participant',
-          participant: { provider: 'kimi', permissionPresetId: 'workspace_write' }
-        },
+        { action: 'add_participant', participant: { provider: 'kimi', permissionPresetId: 'default' } },
         makeContext({ roundReadOnly: true })
       )
     ).toMatchObject({ ok: false, error: 'read_only_posture' })
