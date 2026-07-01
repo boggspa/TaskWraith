@@ -477,13 +477,7 @@ function getActivityDiffPreviewPath(
   diffSummary?: ToolDiffSummary
 ): string {
   const summaryPath = diffSummary?.files?.find((file) => file.path?.trim())?.path
-  return (
-    activityFilePath ||
-    summaryPath ||
-    activity.displayName ||
-    activity.toolName ||
-    'Tool diff'
-  )
+  return activityFilePath || summaryPath || activity.displayName || activity.toolName || 'Tool diff'
 }
 
 const WORKBENCH_DIFF_STATUSES = new Set<DiffFileStatus>([
@@ -1437,12 +1431,7 @@ function getInlineActivityTitle(
     // is one click away in the expanded "Thoughts" card (no Raw Events detour).
     const collapsedReasoning = isReasoningToolName(activity.toolName || '')
     return summary ? (
-      <>
-        {truncateText(
-          summary,
-          collapsedReasoning ? { maxLength: 120, footer: () => '…' } : 120
-        )}
-      </>
+      <>{truncateText(summary, collapsedReasoning ? { maxLength: 120, footer: () => '…' } : 120)}</>
     ) : (
       <>{displayName || activity.displayName || 'Task update'}</>
     )
@@ -1565,9 +1554,7 @@ function hasMarkdownSignal(value: string): boolean {
   return (
     /(^|\n)\s{0,3}(#{1,6}\s+|[-*+]\s+|\d+\.\s+|>\s+|```|~~~)/m.test(value) ||
     /(^|\n)\s{0,3}\|.+\|\s*$/m.test(value) ||
-    /\[[^\]\n]+\]\([^)]+\)|!\[[^\]\n]*\]\([^)]+\)|\*\*[^*\n]+\*\*|`[^`\n]+`/.test(
-      value
-    )
+    /\[[^\]\n]+\]\([^)]+\)|!\[[^\]\n]*\]\([^)]+\)|\*\*[^*\n]+\*\*|`[^`\n]+`/.test(value)
   )
 }
 
@@ -2158,15 +2145,15 @@ function ActivityDiffFiles({
             </span>
             {(file.additions !== undefined || file.deletions !== undefined) &&
               ((file.additions || 0) !== 0 || (file.deletions || 0) !== 0) && (
-              <span className="activity-file-change-stats">
-                <span className="activity-line-stat activity-line-stat-add">
-                  +{file.additions || 0}
+                <span className="activity-file-change-stats">
+                  <span className="activity-line-stat activity-line-stat-add">
+                    +{file.additions || 0}
+                  </span>
+                  <span className="activity-line-stat activity-line-stat-delete">
+                    -{file.deletions || 0}
+                  </span>
                 </span>
-                <span className="activity-line-stat activity-line-stat-delete">
-                  -{file.deletions || 0}
-                </span>
-              </span>
-            )}
+              )}
           </div>
         )
       })}
@@ -2406,7 +2393,9 @@ function ActivityRow({
   // for pending edits that have not reported back yet.
   const inlineStats = inlineStatsForActivity(activity)
   const activityDiffPreviewText =
-    !isErroredToolStatus(activity.status) && isWriteAction ? getActivityDiffPreviewText(activity) : ''
+    !isErroredToolStatus(activity.status) && isWriteAction
+      ? getActivityDiffPreviewText(activity)
+      : ''
   const activityDiffPreviewPath = getActivityDiffPreviewPath(
     activity,
     activityFilePath,
@@ -2725,9 +2714,7 @@ function ActivityRow({
                     type="button"
                     className="activity-diff-preview-bubble"
                     aria-describedby={
-                      activityDiffHoverPreview
-                        ? DIFF_HOVER_PREVIEW_TOOLTIP_ID
-                        : undefined
+                      activityDiffHoverPreview ? DIFF_HOVER_PREVIEW_TOOLTIP_ID : undefined
                     }
                     aria-label={`Preview diff for ${activityDiffPreviewPath}`}
                     title="Preview diff"
