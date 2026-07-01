@@ -22,8 +22,18 @@ history, and workspace state stay on your machine throughout.
 - **Boss roster-swap choices.** Boss participants can inspect live participant
   ids, provider/model catalogues, context windows, and coarse quota bands before
   swapping an inactive seat.
+- **iOS proposed-plan file handoff.** The companion now receives plan artifact
+  paths, shows them on proposed-plan cards, and can jump straight into Files
+  mode for that plan artifact when the paired Mac exposes a workspace scope.
 
 ### Changed
+- **Claude picker line-up.** Mythos 5 is retired from current Claude model
+  pickers while Fable 5 and Sonnet 5 remain visible; historical Mythos chats,
+  aliases, display names, rates, context windows, and CLI normalization stay
+  compatible.
+- **iOS Plan workflow parity.** The companion copy now names Plan workflow
+  directly, and its model context reference mirrors the post-Mythos Claude
+  line-up.
 - **Ensemble recovery after restart.** Multiple interrupted Ensemble lanes in
   one chat now collapse into one grouped recovery system message with
   role/participant labels and provider-session hints.
