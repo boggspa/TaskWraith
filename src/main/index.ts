@@ -185,6 +185,11 @@ import {
 import { backfillRunDiffCounts, toolEvidenceFromActivities } from '../shared/runDiffBackfill'
 import { coerceLiveProvider, DEFAULT_PROVIDER, isRetiredProvider } from '../shared/retiredProviders'
 import { sanitizeRawProviderMediaRefs } from '../shared/transcriptMediaRefSanitize'
+import {
+  isClaudeWorkflowSystemEvent,
+  normalizeClaudeWorkflowEvent,
+  shouldEmitClaudeWorkflowTelemetry
+} from '../shared/claudeWorkflow'
 import { BridgeBroadcaster } from './BridgeBroadcaster'
 import {
   REMOTE_QUESTION_MAX_ANSWER_CHARS,
@@ -9900,6 +9905,41 @@ function handleCursorStreamEvent(state: CliProviderStreamState, event: unknown) 
 // rate constants — NOT a SuperGrok subscription bill. `total_cost_usd` is the
 // field the renderer's extractUsageCostUsd reads, so the `· $x` cost surfaces too.
 
+// Claude-native Workflow lifecycle. When Claude runs its own `Workflow` tool the
+// Agent SDK streams `type:'system'` task frames (task_started/progress/updated/
+// notification). They reach this handler but carry no tool/text content, so we
+// translate the workflow telemetry onto its own `workflow_event` compat line —
+// the renderer keys it back to the originating `Workflow` tool activity (by
+// tool_use id) to drive a Claude workflow card. Scoped to task_type
+// 'local_workflow' so plain background `Task` subagents (same lifecycle frames)
+// don't masquerade as workflows.
+function emitClaudeWorkflowEvent(state: CliProviderStreamState, event: unknown): void {
+  const normalized = normalizeClaudeWorkflowEvent(event)
+  if (!normalized) return
+  const { taskId, toolUseId, taskType, telemetry } = normalized
+
+  const workflowTaskIds = state.claudeWorkflowTaskIds ?? new Set<string>()
+  state.claudeWorkflowTaskIds = workflowTaskIds
+  if (!shouldEmitClaudeWorkflowTelemetry({ taskId, taskType }, workflowTaskIds)) return
+  if (taskType === 'local_workflow' && taskId) workflowTaskIds.add(taskId)
+
+  // The card is anchored to the originating tool activity by its tool_use id;
+  // without one there is nowhere to attach the telemetry.
+  if (!toolUseId) return
+
+  sendAgentCompatLine(
+    state.sender,
+    state.provider,
+    {
+      type: 'workflow_event',
+      tool_id: toolUseId,
+      workflow: telemetry,
+      provider: state.provider
+    },
+    state
+  )
+}
+
 function handleCliProviderJsonEvent(state: CliProviderStreamState, event: any) {
   if (state.provider === 'grok') {
     handleGrokStreamEvent(state, event)
@@ -9907,6 +9947,15 @@ function handleCliProviderJsonEvent(state: CliProviderStreamState, event: any) {
   }
   if (state.provider === 'cursor') {
     handleCursorStreamEvent(state, event)
+    return
+  }
+  if (state.provider === 'claude' && isClaudeWorkflowSystemEvent(event)) {
+    // Task-lifecycle frames carry a TASK-scoped usage aggregate, not a turn
+    // delta. Returning here both drives the workflow card AND skips the generic
+    // extractProviderUsage merge below — which would otherwise double-count the
+    // workflow's tokens into the run total — plus the tool/text/result
+    // extraction that system frames never carry.
+    emitClaudeWorkflowEvent(state, event)
     return
   }
   const sessionId = extractProviderSessionId(event)

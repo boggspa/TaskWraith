@@ -1,5 +1,6 @@
 import type { TodoItem } from '../TodoList'
 import type { AppIconVariant } from '../../shared/iconVariants'
+import type { ClaudeWorkflowTelemetry } from '../../shared/claudeWorkflow'
 import type { UnattendedElevationAck } from '../UnattendedPostureGate'
 import type { TaskWraithPluginResourceProvenance } from '../../shared/plugins/PluginTypes'
 
@@ -3727,6 +3728,11 @@ export interface ToolActivity {
     ensembleProvider?: ProviderId
     ensembleParticipantId?: string
   }
+  /** Live status of a Claude-native `Workflow` run, when this activity IS the
+   * originating `Workflow` tool call. Populated from the SDK's `type:'system'`
+   * task-lifecycle frames (keyed back to this activity by tool_use id) and read
+   * by the transcript's Claude workflow card. Absent for every other tool. */
+  workflowSummary?: ClaudeWorkflowTelemetry
   // Legacy fields preserved for backward compatibility
   affectedFilePath?: string
   operationCategory?: 'update_topic' | 'read_file' | 'edit_file' | 'search' | 'shell' | 'unknown'

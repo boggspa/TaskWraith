@@ -1,4 +1,5 @@
 import { coerceRunItemEvents, type RunItemEvent } from '../../../shared/runItemEvents'
+import type { ClaudeWorkflowTelemetry } from '../../../shared/claudeWorkflow'
 
 export type NormalizedEvent =
   | {
@@ -27,6 +28,10 @@ export type NormalizedEvent =
   | { type: 'assistant_media_refs'; mediaRefs: any[] }
   | { type: 'assistant_message_complete'; content: string; itemId?: string }
   | { type: 'run_item_event'; event: RunItemEvent }
+  // Claude-native Workflow telemetry, keyed back to the originating `Workflow`
+  // tool activity by tool_use id. Not a tool row of its own — the renderer
+  // merges it onto that activity's `workflowSummary` to drive the workflow card.
+  | { type: 'workflow_telemetry'; toolUseId?: string; telemetry: Partial<ClaudeWorkflowTelemetry> }
   | {
       type: 'tool_event'
       name: string
@@ -94,6 +99,23 @@ export class GeminiStreamAdapter {
     hints: { projectedAssistantDeltaFromRunItem?: boolean } = {}
   ) {
     if (!parsed || typeof parsed !== 'object') return
+
+    // Claude workflow telemetry rides its own compat line. Intercept BEFORE the
+    // visible-progress / tool-event paths so a `task_notification` summary isn't
+    // mis-rendered as a generic "Summary" tool row.
+    if (parsed.type === 'workflow_event') {
+      this.onEvent({
+        type: 'workflow_telemetry',
+        ...(typeof parsed.tool_id === 'string' && parsed.tool_id
+          ? { toolUseId: parsed.tool_id }
+          : {}),
+        telemetry:
+          parsed.workflow && typeof parsed.workflow === 'object' && !Array.isArray(parsed.workflow)
+            ? parsed.workflow
+            : {}
+      })
+      return
+    }
 
     if (this.emitVisibleProgress(parsed)) {
       return

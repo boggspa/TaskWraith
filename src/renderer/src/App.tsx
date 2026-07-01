@@ -11,6 +11,7 @@ import {
 } from './lib/runItemProjection'
 import { reconcileChatRefMap } from './lib/reconcileChatRefMap'
 import { messagesRenderEqual } from './lib/messagesRenderEqual'
+import { mergeWorkflowTelemetryIntoMessages } from './lib/workflowTelemetryMessages'
 import { resolveAssistantDeltaTarget } from './lib/assistantDeltaTarget'
 import { mergeTranscriptMediaRefs } from './lib/transcriptMediaRefs'
 import { shouldPreferLiveAssistantContent } from './lib/chatUpdatedAssistantMerge'
@@ -10804,6 +10805,17 @@ function App(): React.JSX.Element {
               reduction.isResult
             ) {
               upsertRunDiffFromTool(reduction.latestToolActivity, runContext.workspacePath)
+            }
+          } else if (event.type === 'workflow_telemetry') {
+            // Claude-native Workflow live status. Merge onto the originating
+            // `Workflow` tool activity (found by tool_use id anywhere in the
+            // transcript) so the workflow card updates in place; no new tool row.
+            if (event.toolUseId) {
+              updated.messages = mergeWorkflowTelemetryIntoMessages(
+                updated.messages,
+                event.toolUseId,
+                event.telemetry
+              )
             }
           } else if (event.type === 'error') {
             updated.messages = [

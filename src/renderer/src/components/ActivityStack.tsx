@@ -28,6 +28,8 @@ import {
   unwrapMcpEnvelope
 } from '../lib/ToolParser'
 import { deriveChildAgentThreadsFromActivities } from '../lib/ChildAgentThreads'
+import { isClaudeWorkflowToolName } from '../../../shared/claudeWorkflow'
+import { ClaudeWorkflowCard } from './ClaudeWorkflowCard'
 import { hasExpandableDetail } from '../lib/ActivityRenderMode'
 import { inlineStatsForActivity } from '../lib/ActivityInlineStats'
 import { displayPathRelativeToWorkspace } from '../lib/ActivityPathDisplay'
@@ -1099,6 +1101,9 @@ function isGroupableActivity(activity: ToolActivity): boolean {
   // (Claude), and any future namespaced variant.
   const tool = (activity.toolName || '').toLowerCase()
   if (tool.includes('ensemble_yield')) return false
+  // Claude-native Workflow runs render as a dedicated live card and must stay
+  // inline (never swept into a "used N tools" compact group), even once terminal.
+  if (isClaudeWorkflowToolName(activity.toolName)) return false
   return true
 }
 
@@ -1994,6 +1999,16 @@ export function ActivityStack({
           onOpenFileChangeInWorkbench={onOpenFileChangeInWorkbench}
         />
       )
+    }
+    // Claude-native Workflow runs get a dedicated live card in place of the
+    // generic tool row / compact trace, in every density mode. Gated to the
+    // Claude participant via the same provider-resolution precedence the rest of
+    // the stack uses, so another provider's same-named tool never matches.
+    if (
+      isClaudeWorkflowToolName(item.activity.toolName) &&
+      activityProvider(item.activity, provider) === 'claude'
+    ) {
+      return <ClaudeWorkflowCard key={item.activity.id} activity={item.activity} />
     }
     const thread = threadByParentId.get(item.activity.id)
     // 1.0.4-AG — when the user has compact density on AND this

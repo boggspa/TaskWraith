@@ -213,6 +213,63 @@ function makeReadActivity(overrides: Partial<ToolActivity> = {}): ToolActivity {
   }
 }
 
+function makeWorkflowActivity(overrides: Partial<ToolActivity> = {}): ToolActivity {
+  return {
+    id: 'toolu_wf_1',
+    toolName: 'Workflow',
+    displayName: 'Workflow',
+    category: 'task',
+    status: 'success',
+    startedAt: '2026-05-26T17:00:00Z',
+    endedAt: '2026-05-26T17:00:01Z',
+    durationMs: 1000,
+    parameters: { script: "export const meta = { name: 'x', phases: [{ title: 'Audit' }] }" },
+    workflowSummary: { workflowName: 'howto-docs-audit', status: 'running', totalTokens: 278700 },
+    ...overrides
+  }
+}
+
+describe('ActivityStack Claude workflow card', () => {
+  it('renders the workflow card for a claude Workflow activity', () => {
+    const html = renderToStaticMarkup(
+      <ActivityStack activities={[makeWorkflowActivity()]} provider="claude" />
+    )
+    expect(html).toContain('claude-workflow-card')
+    expect(html).toContain('howto-docs-audit')
+    expect(html).toContain('278.7k tokens')
+  })
+
+  it('does NOT render the workflow card for a non-claude provider', () => {
+    const html = renderToStaticMarkup(
+      <ActivityStack activities={[makeWorkflowActivity()]} provider="codex" />
+    )
+    expect(html).not.toContain('claude-workflow-card')
+  })
+
+  it('renders the card in compact density too', () => {
+    const html = renderToStaticMarkup(
+      <ActivityStack activities={[makeWorkflowActivity()]} provider="claude" compactDensity />
+    )
+    expect(html).toContain('claude-workflow-card')
+  })
+
+  it('keeps the card inline rather than collapsing it into a compact group', () => {
+    // Two terminal Workflow activities back-to-back must NOT merge into a
+    // "used N tools" group — each is its own live card.
+    const html = renderToStaticMarkup(
+      <ActivityStack
+        activities={[
+          makeWorkflowActivity({ id: 'toolu_wf_1' }),
+          makeWorkflowActivity({ id: 'toolu_wf_2' })
+        ]}
+        provider="claude"
+      />
+    )
+    const cardCount = html.split('claude-workflow-card status-').length - 1
+    expect(cardCount).toBe(2)
+  })
+})
+
 describe('ActivityStack live activity viewport', () => {
   it('wraps settled tool stacks in the viewport when enabled', () => {
     const html = renderToStaticMarkup(

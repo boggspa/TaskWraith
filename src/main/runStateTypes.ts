@@ -119,4 +119,13 @@ export interface CliProviderStreamState {
   grokToolErrorCount?: number
   grokLastToolError?: string
   providerMediaRefKeys?: Set<string>
+  /**
+   * Background-task ids the claude provider has confirmed are LOCAL WORKFLOWS
+   * (task_type === 'local_workflow' on task_started). Later task_progress /
+   * task_updated / task_notification frames carry no task_type, so we gate
+   * workflow-card telemetry emission on membership here — this keeps plain
+   * background `Task` subagents (which share the same lifecycle frames) from
+   * being mistaken for workflows.
+   */
+  claudeWorkflowTaskIds?: Set<string>
 }

@@ -689,4 +689,44 @@ describe('GeminiStreamAdapter', () => {
       })
     )
   })
+
+  it('converts a workflow_event compat line into a workflow_telemetry event', () => {
+    const events: unknown[] = []
+    const adapter = new GeminiStreamAdapter((event) => events.push(event))
+
+    adapter.appendChunk(
+      JSON.stringify({
+        type: 'workflow_event',
+        tool_id: 'toolu_99',
+        provider: 'claude',
+        workflow: { workflowName: 'howto-docs-audit', status: 'running', totalTokens: 1234 }
+      }) + '\n'
+    )
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'workflow_telemetry',
+        toolUseId: 'toolu_99',
+        telemetry: expect.objectContaining({ workflowName: 'howto-docs-audit', status: 'running' })
+      })
+    )
+    // It must NOT be emitted as a generic tool row.
+    expect(events).not.toContainEqual(expect.objectContaining({ type: 'tool_event' }))
+  })
+
+  it('does not mistake a workflow_event summary for a Summary tool row', () => {
+    const events: unknown[] = []
+    const adapter = new GeminiStreamAdapter((event) => events.push(event))
+
+    adapter.appendChunk(
+      JSON.stringify({
+        type: 'workflow_event',
+        tool_id: 'toolu_99',
+        workflow: { status: 'completed', summary: 'All phases complete.' }
+      }) + '\n'
+    )
+
+    expect(events).not.toContainEqual(expect.objectContaining({ type: 'tool_event' }))
+    expect(events).toContainEqual(expect.objectContaining({ type: 'workflow_telemetry' }))
+  })
 })
