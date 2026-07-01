@@ -13,19 +13,48 @@ import { buildHumanCollaborationInvitePayload } from '../lib/humanCollaborationI
  * it pulls the enabled-share list via `humanCollaborationListShares`, resolves
  * chat titles via `getChatList`, and refetches whenever main broadcasts a
  * collaboration update (create / join / comment / revoke). Each share shows its
- * access mode, the participants and their status, any open invites, and a
- * per-share revoke.
- *
- * Per-participant revoke is intentionally deferred — the store only exposes a
- * whole-share revoke today; this panel is the place that gains it later.
+ * contribution rules, the participants and their status, any open invites,
+ * per-participant remove, and a per-share revoke.
  *
  * The pure `SharesPanelView` is split out so the rendering is unit-testable
  * without the IPC bridge (the suite has no jsdom, so effects don't run).
  */
 
-function shareModeLabel(mode: HumanCollaborationShare['mode']): string {
-  return mode === 'readOnly' ? 'Read-only' : 'Comments'
+// P2a rule-preset labels. A share without persisted rules falls back to its
+// Phase 1 mode label (identical strings, so nothing shifts for legacy shares).
+function shareRuleLabel(share: HumanCollaborationShare): string {
+  switch (share.contributionRules?.preset) {
+    case 'readOnly':
+      return 'Read-only'
+    case 'requestHostAction':
+      return 'Host actions'
+    case 'autoDraft':
+      return 'Auto-draft'
+    case 'comments':
+      return 'Comments'
+    default:
+      return share.mode === 'readOnly' ? 'Read-only' : 'Comments'
+  }
 }
+
+const SHARE_RULE_PRESET_OPTIONS: ReadonlyArray<{ value: string; label: string; hint: string }> = [
+  { value: 'readOnly', label: 'View only', hint: 'Collaborators can watch, nothing else.' },
+  {
+    value: 'comments',
+    label: 'Comments — host-reviewed before AI',
+    hint: 'Collaborators can leave comments; you decide what reaches the AI.'
+  },
+  {
+    value: 'requestHostAction',
+    label: 'Request host action — host-reviewed',
+    hint: 'Comments plus structured action requests, all reviewed by you.'
+  },
+  {
+    value: 'autoDraft',
+    label: 'Auto-draft — you still send',
+    hint: 'Action requests pre-fill your composer as a draft; nothing sends itself.'
+  }
+]
 
 function participantStatusLabel(status: HumanCollaboratorParticipant['status']): string {
   if (status === 'active') return 'Active'
@@ -42,6 +71,7 @@ export function SharesPanelView({
   onRevoke,
   onCopyInvite,
   onRevokeParticipant,
+  onChangeRules,
   now
 }: {
   shares: HumanCollaborationShare[]
@@ -52,6 +82,8 @@ export function SharesPanelView({
   onRevoke: (shareId: string) => void
   onCopyInvite?: (share: HumanCollaborationShare) => void
   onRevokeParticipant?: (shareId: string, collaboratorId: string) => void
+  /** P2a: host-only contribution-rules preset change. */
+  onChangeRules?: (shareId: string, preset: string) => void
   // The "current time" for open-invite expiry, supplied by the container so the
   // view stays a pure function of its props (no clock read during render).
   now: number
@@ -84,6 +116,8 @@ export function SharesPanelView({
         <div className="settings-hint">
           Chats you&apos;ve shared with human collaborators. Each collaborator joins over an
           out-of-band invite and a one-time security code; you can stop a share at any time.
+          Collaborator contributions are host-reviewed — nothing reaches the AI unless you
+          insert it as a draft and send it yourself.
         </div>
       </div>
 
@@ -114,8 +148,30 @@ export function SharesPanelView({
                 <div className="shares-panel-card-title-wrap">
                   <span className="shares-panel-card-title">{title}</span>
                   <span className="shares-panel-card-mode">
-                    {shareModeLabel(share.mode)} · {isConnected ? 'Live' : 'Not connected'}
+                    {shareRuleLabel(share)} · {isConnected ? 'Live' : 'Not connected'}
                   </span>
+                  {onChangeRules && (
+                    <select
+                      className="shares-panel-rules-select"
+                      aria-label={`Contribution rules for ${title}`}
+                      value={share.contributionRules?.preset ?? (share.mode === 'readOnly' ? 'readOnly' : 'comments')}
+                      onChange={(event) => onChangeRules(share.shareId, event.target.value)}
+                      title={
+                        SHARE_RULE_PRESET_OPTIONS.find(
+                          (option) =>
+                            option.value ===
+                            (share.contributionRules?.preset ??
+                              (share.mode === 'readOnly' ? 'readOnly' : 'comments'))
+                        )?.hint
+                      }
+                    >
+                      {SHARE_RULE_PRESET_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  )}
                 </div>
                 {onCopyInvite && (
                   <button
@@ -292,6 +348,20 @@ export function SharesPanel() {
     [refresh]
   )
 
+  const handleChangeRules = useCallback(
+    (shareId: string, preset: string) => {
+      if (typeof window.api.humanCollaborationUpdateShareRules !== 'function') return
+      void window.api
+        .humanCollaborationUpdateShareRules({ shareId, preset })
+        .then(() => refresh())
+        .catch(() => {
+          setError('Could not update the share rules.')
+          refresh()
+        })
+    },
+    [refresh]
+  )
+
   const handleCopyInvite = useCallback(
     (share: HumanCollaborationShare) => {
       if (typeof window.api.humanCollaborationCreateShare !== 'function') return
@@ -345,6 +415,7 @@ export function SharesPanel() {
       onRevoke={handleRevoke}
       onCopyInvite={handleCopyInvite}
       onRevokeParticipant={handleRevokeParticipant}
+      onChangeRules={handleChangeRules}
       connectedChatIds={connectedChatIds}
       now={now}
     />

@@ -2294,17 +2294,20 @@ export const TranscriptPanel = memo(
                             )}
                             {isCollaboratorComment && onPromoteCollaboratorComment && (
                               <div className="human-collaborator-actions">
+                                {/* P2a copy: promotion only creates a host-owned
+                                  * DRAFT — the host still reviews and sends. Never
+                                  * label this "Run" or "Prompt" (spec §6). */}
                                 <button
                                   type="button"
                                   className="human-collaborator-promote-btn"
                                   onClick={() => onPromoteCollaboratorComment(msg.id)}
-                                  title="Add this collaborator request to the composer"
+                                  title="Insert this collaborator request into the composer as a draft you review before sending"
                                 >
-                                  Add to Composer
+                                  Insert as draft
                                 </button>
                                 {collaboratorMeta?.promotedAt && (
                                   <span className="human-collaborator-status">
-                                    Added to composer
+                                    Inserted as draft
                                   </span>
                                 )}
                               </div>

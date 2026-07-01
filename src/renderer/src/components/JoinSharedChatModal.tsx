@@ -452,8 +452,9 @@ export function JoinSharedChatModal({
             <h2 className="creative-approval-modal-title">{projection?.title || 'Shared chat'}</h2>
             <div className={connectionClassName}>Connection: {connectionLabel}</div>
             <p className="creative-approval-modal-description">
-              You are following this chat live{mode === 'comments' ? ' and can leave comments' : ' (read-only)'}.
-              The host stays in control of the AI.
+              {mode === 'comments'
+                ? 'You are following this chat live. You can leave comments — the host decides what, if anything, goes to the AI.'
+                : 'You are following this chat live (view only). The host stays in control of the AI.'}
             </p>
             <div className="join-projection-rows" ref={rowsRef}>
               {!projection || projection.rows.length === 0 ? (
@@ -488,7 +489,7 @@ export function JoinSharedChatModal({
                       void handleSendComment()
                     }
                   }}
-                  placeholder="Add a comment for the host…"
+                  placeholder="Leave a comment for the host to review…"
                   rows={2}
                 />
                 <button

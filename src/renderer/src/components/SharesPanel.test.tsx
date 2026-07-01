@@ -231,3 +231,71 @@ describe('SharesPanelView', () => {
     expect(html).not.toContain('Mallory')
   })
 })
+
+/*
+ * P2a — contribution-rules preset picker + host-reviewed labels.
+ */
+describe('SharesPanelView contribution rules (P2a)', () => {
+  it('labels a share from its rules preset and renders the preset picker', () => {
+    const html = renderToStaticMarkup(
+      <SharesPanelView
+        shares={[
+          makeShare({
+            contributionRules: {
+              schemaVersion: 1,
+              preset: 'requestHostAction',
+              viewProjection: true,
+              appendComment: true,
+              requestHostAction: true,
+              createHostDraft: 'host-click',
+              providerDispatch: 'never',
+              maxContributionBytes: 8000,
+              rateLimitProfile: 'comments-v1',
+              auditLevel: 'summary'
+            }
+          }) as never
+        ]}
+        chatTitles={{ 'chat-1': 'Design review' }}
+        loading={false}
+        error={null}
+        onRevoke={() => {}}
+        onChangeRules={() => {}}
+        now={NOW}
+      />
+    )
+    expect(html).toContain('Host actions')
+    expect(html).toContain('Comments — host-reviewed before AI')
+    expect(html).toContain('Auto-draft — you still send')
+    expect(html).toContain('shares-panel-rules-select')
+  })
+
+  it('keeps the legacy Comments label for shares without persisted rules', () => {
+    const html = renderToStaticMarkup(
+      <SharesPanelView
+        shares={[makeShare() as never]}
+        chatTitles={{ 'chat-1': 'Design review' }}
+        loading={false}
+        error={null}
+        onRevoke={() => {}}
+        now={NOW}
+      />
+    )
+    expect(html).toContain('Comments')
+    // No picker unless the container wires onChangeRules.
+    expect(html).not.toContain('shares-panel-rules-select')
+  })
+
+  it('mentions that contributions are host-reviewed before the AI', () => {
+    const html = renderToStaticMarkup(
+      <SharesPanelView
+        shares={[]}
+        chatTitles={{}}
+        loading={false}
+        error={null}
+        onRevoke={() => {}}
+        now={NOW}
+      />
+    )
+    expect(html).toContain('host-reviewed')
+  })
+})
