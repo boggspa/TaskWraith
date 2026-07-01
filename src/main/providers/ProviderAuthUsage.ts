@@ -1346,9 +1346,23 @@ export async function fetchCursorUsageSnapshot(
   return snapshot
 }
 
-const CLAUDE_USAGE_FRESH_TTL_MS = 2 * 60_000
+/*
+ * The Anthropic OAuth usage endpoint rate-limits per ACCOUNT after only a
+ * couple of requests per minute, and this account is shared with other
+ * pollers (a second TaskWraith instance, Limit Counter). At the original
+ * 2-min TTL (Limit Counter parity) the combined fleet saturated the budget
+ * and everyone 429'd for an hour+ at a time. 10 min still tracks the 5h
+ * Session window closely enough while using a fraction of the budget; an
+ * explicit force-refresh still bypasses. The failure backoff stops the
+ * no-negative-cache retry storm: the cache is only written on SUCCESS, so
+ * without it every consumer re-hit the endpoint immediately all through a
+ * 429 streak.
+ */
+const CLAUDE_USAGE_FRESH_TTL_MS = 10 * 60_000
 const CLAUDE_USAGE_STALE_TTL_MS = 4 * 60 * 60_000
+const CLAUDE_USAGE_FAILURE_BACKOFF_MS = 90_000
 let claudeUsageCache: { snapshot: NormalizedProviderUsageSnapshot; fetchedAt: number } | null = null
+let claudeUsageLastFailureAt = 0
 
 export async function readClaudeCredentialsFile(): Promise<ClaudeOAuthCredential | null> {
   const candidates = [
@@ -1457,6 +1471,27 @@ export async function fetchClaudeUsageSnapshot(
   ) {
     return claudeUsageCache.snapshot
   }
+  // Recent failure (usually a 429) → don't re-hit the endpoint yet; serve
+  // the last snapshot as stale. Force bypasses (explicit user refresh).
+  if (
+    !options.force &&
+    claudeUsageLastFailureAt &&
+    now - claudeUsageLastFailureAt < CLAUDE_USAGE_FAILURE_BACKOFF_MS
+  ) {
+    if (claudeUsageCache && now - claudeUsageCache.fetchedAt < CLAUDE_USAGE_STALE_TTL_MS) {
+      return {
+        ...claudeUsageCache.snapshot,
+        stale: true,
+        error: 'Claude OAuth usage fetch is backing off after a recent failure.'
+      }
+    }
+    return usageSnapshotWithPersistedFallback('claude', {
+      provider: 'claude',
+      source: 'claude-oauth-usage',
+      configured: true,
+      error: 'Claude OAuth usage fetch is backing off after a recent failure.'
+    })
+  }
 
   const credential = await getClaudeOAuthCredential()
   if (!credential) {
@@ -1484,9 +1519,11 @@ export async function fetchClaudeUsageSnapshot(
     const payload = await response.json()
     const snapshot = normalizeClaudeUsageSnapshot(payload, credential)
     claudeUsageCache = { snapshot, fetchedAt: Date.now() }
+    claudeUsageLastFailureAt = 0
     cacheProviderUsageSnapshot('claude', snapshot)
     return snapshot
   } catch (error) {
+    claudeUsageLastFailureAt = Date.now()
     if (claudeUsageCache && now - claudeUsageCache.fetchedAt < CLAUDE_USAGE_STALE_TTL_MS) {
       return {
         ...claudeUsageCache.snapshot,
