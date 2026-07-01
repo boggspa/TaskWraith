@@ -1071,11 +1071,15 @@ function getStringParameter(parameters: Record<string, unknown>, keys: string[])
   return ''
 }
 
+// Segments that should render as all-caps acronyms rather than Title-cased
+// (a bare `mcp` base would otherwise humanise to the odd-looking "Mcp").
+const TOOL_NAME_ACRONYMS: Record<string, string> = { mcp: 'MCP' }
+
 function titleCaseToolName(toolName: string): string {
   return toolName
     .split('_')
     .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .map((part) => TOOL_NAME_ACRONYMS[part] ?? part.charAt(0).toUpperCase() + part.slice(1))
     .join(' ')
 }
 
