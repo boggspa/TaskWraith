@@ -452,6 +452,7 @@ export interface RemoteProposedPlan {
   title: string
   bodyPreview: string
   status: 'pending' | 'approved' | 'dismissed'
+  artifactPath?: string
   bodyTruncated?: boolean
 }
 
@@ -1094,11 +1095,13 @@ function buildProposedPlan(message: ChatMessage): RemoteProposedPlan | undefined
   const { preview: bodyPreview, truncated } = sanitizePreview(bodyRaw, REMOTE_PROPOSED_PLAN_BODY_MAX)
   // Neither a usable title nor a body — nothing worth a card.
   if (!title && !bodyPreview) return undefined
+  const artifactPath = stringField(plan.artifactPath, 260)
   const result: RemoteProposedPlan = {
     title: title ?? 'Proposed plan',
     bodyPreview,
     status: status as RemoteProposedPlan['status']
   }
+  if (artifactPath) result.artifactPath = artifactPath
   if (truncated) result.bodyTruncated = true
   return result
 }

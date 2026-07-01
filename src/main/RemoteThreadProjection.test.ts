@@ -516,7 +516,12 @@ describe('RemoteThreadProjection', () => {
           // content was already block-stripped by the renderer before persist.
           content: 'Here is the plan for your review.',
           metadata: {
-            proposedPlan: { title: 'Add A Smoke Test', body: PLAN_BODY, status: 'pending' }
+            proposedPlan: {
+              title: 'Add A Smoke Test',
+              body: PLAN_BODY,
+              status: 'pending',
+              artifactPath: 'docs/plans/smoke-test.md'
+            }
           }
         })
       ])
@@ -524,7 +529,12 @@ describe('RemoteThreadProjection', () => {
       expect(snap.rows[0]).toMatchObject({
         id: 'plan',
         kind: 'assistant', // inline transcript row, NOT 'attention'
-        proposedPlan: { title: 'Add A Smoke Test', bodyPreview: PLAN_BODY, status: 'pending' }
+        proposedPlan: {
+          title: 'Add A Smoke Test',
+          bodyPreview: PLAN_BODY,
+          status: 'pending',
+          artifactPath: 'docs/plans/smoke-test.md'
+        }
       })
       // Card body is sourced from metadata, independent of the row preview; the
       // raw <proposed_plan> block never reaches the phone, and the plan row is

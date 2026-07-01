@@ -63,14 +63,11 @@ public enum ModelContextLengths {
             ]
         case "claude":
             return [
-                (id: "claude-opus-4-8",     label: "Claude Opus 4.8"),
                 (id: "claude-opus-4-8-1m",  label: "Claude Opus 4.8 1M"),
-                (id: "claude-opus-4-7",     label: "Claude Opus 4.7"),
-                (id: "claude-opus-4-7-1m",  label: "Claude Opus 4.7 1M"),
+                (id: "claude-fable-5",      label: "Claude Fable 5"),
                 (id: "claude-sonnet-5",     label: "Claude Sonnet 5"),
-                (id: "claude-sonnet-4-6",   label: "Claude Sonnet 4.6"),
+                (id: "claude-opus-4-7-1m",  label: "Claude Opus 4.7 1M"),
                 (id: "claude-haiku-4-5",    label: "Claude Haiku 4.5"),
-                (id: "claude-opus-4-6",     label: "Claude Opus 4.6 Legacy"),
             ]
         case "kimi":
             return [

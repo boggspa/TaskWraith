@@ -1,7 +1,7 @@
 // Proposed-plan row decode — the wire contract behind the iOS plan card.
 //
 // The Mac projects a Codex-style proposed plan as a structured
-// `row.proposedPlan = {title, bodyPreview, status, bodyTruncated}` field
+// `row.proposedPlan = {title, bodyPreview, status, artifactPath, bodyTruncated}` field
 // (src/main/RemoteThreadProjection.ts buildProposedPlan). This pins the Swift
 // decode: the field names must match the Mac 1:1, an absent field decodes to
 // nil (older Mac builds stay compatible — additive optional + synthesized
@@ -26,11 +26,13 @@ struct ProposedPlanDecodeTests {
             {"id":"m1","role":"assistant","kind":"assistant",
              "proposedPlan":{"title":"Add A Smoke Test",
                              "bodyPreview":"## Plan\\n\\n- step one\\n- step two",
-                             "status":"pending","bodyTruncated":false}}
+                             "status":"pending","artifactPath":"docs/plans/ios-parity.md",
+                             "bodyTruncated":false}}
             """)
         #expect(r.proposedPlan?.title == "Add A Smoke Test")
         #expect(r.proposedPlan?.bodyPreview?.contains("step one") == true)
         #expect(r.proposedPlan?.status == "pending")
+        #expect(r.proposedPlan?.artifactPath == "docs/plans/ios-parity.md")
         #expect(r.proposedPlan?.bodyTruncated == false)
     }
 

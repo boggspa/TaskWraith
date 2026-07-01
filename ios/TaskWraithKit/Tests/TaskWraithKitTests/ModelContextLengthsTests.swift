@@ -62,6 +62,17 @@ struct ModelContextLengthsTests {
         #expect(row?.formatted == "1.0M")
     }
 
+    @Test("claude-fable-5 row: 1_000_000 / 1.0M")
+    func claudeFable5() {
+        let groups = ModelContextLengths.buildGroups()
+        let row = groups.first { $0.provider == "claude" }?
+            .models.first { $0.modelId == "claude-fable-5" }
+        #expect(row != nil)
+        #expect(row?.label == "Claude Fable 5")
+        #expect(row?.contextWindow == 1_000_000)
+        #expect(row?.formatted == "1.0M")
+    }
+
     @Test("claude-sonnet-5 row: 200_000 / 200k")
     func claudeSonnet5() {
         let groups = ModelContextLengths.buildGroups()
@@ -73,17 +84,19 @@ struct ModelContextLengthsTests {
         #expect(row?.formatted == "200k")
     }
 
-    @Test("claude-opus-4-8 row: 200_000 / 200k (two honest rows coexist)")
-    func claudeOpus48() {
+    @Test("claude group mirrors the current picker rows")
+    func claudeGroupMirrorsPickerRows() {
         let groups = ModelContextLengths.buildGroups()
         let claudeModels = groups.first { $0.provider == "claude" }?.models ?? []
-        let row = claudeModels.first { $0.modelId == "claude-opus-4-8" }
-        #expect(row != nil)
-        #expect(row?.contextWindow == 200_000)
-        #expect(row?.formatted == "200k")
-        // Both rows must be present in the same group
-        let has1m = claudeModels.contains { $0.modelId == "claude-opus-4-8-1m" }
-        #expect(has1m)
+        #expect(claudeModels.map(\.modelId) == [
+            "claude-opus-4-8-1m",
+            "claude-fable-5",
+            "claude-sonnet-5",
+            "claude-opus-4-7-1m",
+            "claude-haiku-4-5",
+        ])
+        #expect(!claudeModels.contains { $0.modelId == "claude-opus-4-8" })
+        #expect(!claudeModels.contains { $0.modelId == "claude-mythos-5" })
     }
 
     // MARK: - Codex group

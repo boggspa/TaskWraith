@@ -56,6 +56,10 @@ struct ProposedPlanRow: View {
         let value = plan.bodyPreview?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return value.isEmpty ? "No plan details." : value
     }
+    private var artifactPath: String? {
+        let value = plan.artifactPath?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return value.isEmpty ? nil : value
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
@@ -64,6 +68,23 @@ struct ProposedPlanRow: View {
                 MarkdownLite(displayBody, baseColor: TWTheme.textPrimary)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                if let artifactPath {
+                    HStack(spacing: 6) {
+                        Image(systemName: "doc.text")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(accent)
+                        Text(artifactPath)
+                            .font(.caption2)
+                            .foregroundStyle(TWTheme.textSecondary)
+                            .lineLimit(2)
+                            .textSelection(.enabled)
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .background(TWTheme.surface2.opacity(0.72), in: Capsule())
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel("Plan file \(artifactPath)")
+                }
                 if plan.bodyTruncated == true {
                     Text("Plan truncated — open on desktop to read it in full.")
                         .font(.caption2)

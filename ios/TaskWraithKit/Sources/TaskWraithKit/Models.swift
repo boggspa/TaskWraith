@@ -1277,6 +1277,7 @@ public struct RemoteThreadSnapshot: Codable, Sendable {
             public let title: String?
             public let bodyPreview: String?
             public let status: String?
+            public let artifactPath: String?
             public let bodyTruncated: Bool?
         }
         public let proposedPlan: ProposedPlan?

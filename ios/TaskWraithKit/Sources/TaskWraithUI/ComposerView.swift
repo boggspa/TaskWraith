@@ -394,7 +394,7 @@ struct Composer: View {
             // tells the truth instead of offering a dead picker).
             HStack(spacing: 3) {
                 Image(systemName: "list.bullet.clipboard")
-                Text("Plan · no file changes")
+                Text("Plan workflow")
             }
             .font(twComposerFont(shell.fontDesign, .caption2))
             .padding(.horizontal, 8).padding(.vertical, 3)
@@ -404,7 +404,7 @@ struct Composer: View {
             Menu {
                 Picker("Approval", selection: $approvalMode) {
                     Label("Default Approval", systemImage: "checkmark.shield").tag("default")
-                    Label("Plan / Read-only", systemImage: "list.bullet.clipboard").tag("plan")
+                    Label("Plan workflow", systemImage: "list.bullet.clipboard").tag("plan")
                 }
             } label: {
                 HStack(spacing: 3) {
