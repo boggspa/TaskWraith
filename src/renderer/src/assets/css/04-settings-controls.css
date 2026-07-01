@@ -7658,6 +7658,16 @@ input:disabled, select:disabled, textarea:disabled {
   margin: 0;
 }
 
+.settings-roster-pool-pointer {
+  margin: 14px 0 0;
+  padding: 10px 12px;
+  border: 1px dashed color-mix(in srgb, var(--text-primary) 14%, transparent);
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
 .agent-pool-editor-close {
   flex: 0 0 auto;
   align-self: flex-start;

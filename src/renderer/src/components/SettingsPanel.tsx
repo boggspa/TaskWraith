@@ -93,6 +93,7 @@ import { MessagesBridgePanel } from './MessagesBridgePanel'
 import { ImageGenerationSettingsCard } from './ImageGenerationSettingsCard'
 import { LocalServersSettingsPanel } from './LocalServersSettingsPanel'
 import { RosterSettingsPanel } from './RosterSettingsPanel'
+import { AgentPoolContainer } from './AgentPoolContainer'
 import { PinnedMessagesSettingsPage } from './PinnedMessagesSettingsPage'
 import { UpdateStatusPane } from './UpdateStatusPane'
 import { ModelUsageCard } from './ModelUsageCard'
@@ -2105,6 +2106,7 @@ export type SettingsTab =
   | 'behavior'
   | 'providers'
   | 'roster'
+  | 'agent-pool'
   | 'mcp'
   | 'mcp-servers'
   | 'plugins'
@@ -2203,6 +2205,14 @@ export const SETTINGS_TABS: SettingsTabDefinition[] = [
     group: 'ai-providers',
     description: 'Saved Ensemble participant presets, roles, provider chains, and orchestration defaults.',
     aliases: ['roster', 'ensemble', 'participants', 'roles', 'multi-provider', 'panel'],
+    scope: 'provider'
+  },
+  {
+    id: 'agent-pool',
+    label: 'Agent pool',
+    group: 'ai-providers',
+    description: 'Reusable Agents — provider, model, role, icon and hue — you can add to any Ensemble preset.',
+    aliases: ['agent pool', 'agents', 'pool', 'reusable agents', 'icon', 'hue', 'nickname'],
     scope: 'provider'
   },
   {
@@ -8525,6 +8535,17 @@ export function SettingsPanel({
         {/* ── Roster (ensemble roster presets + per-participant editor) ──── */}
         {activeTab === 'roster' && (
           <RosterSettingsPanel
+            composerStyle={composerStyle}
+            agenticServices={agenticServices}
+            grokAvailable={grokProviderAvailable}
+            cursorAvailable={cursorProviderAvailable}
+          />
+        )}
+
+        {/* ── Agent pool (reusable pooled agents; its own page so large ─────
+             12-18 member rosters don't squash it at the foot of the tab) */}
+        {activeTab === 'agent-pool' && (
+          <AgentPoolContainer
             composerStyle={composerStyle}
             agenticServices={agenticServices}
             grokAvailable={grokProviderAvailable}

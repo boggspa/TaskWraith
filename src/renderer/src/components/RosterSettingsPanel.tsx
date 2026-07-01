@@ -37,7 +37,6 @@ import {
 } from '../lib/ensembleRolePresets'
 import { getProviderLabel } from '../lib/providerLabels'
 import { ParticipantPickerCluster } from './ParticipantPickerCluster'
-import { AgentPoolContainer } from './AgentPoolContainer'
 import { PooledAgentIcon } from './icons/PooledAgentIcon'
 import {
   applyPooledAgentToParticipant,
@@ -972,13 +971,10 @@ export function RosterSettingsPanel({
         </div>
       </div>
 
-      <AgentPoolContainer
-        composerStyle={composerStyle}
-        agenticServices={agenticServices}
-        grokAvailable={grokAvailable}
-        cursorAvailable={cursorAvailable}
-        onSaveParticipantToPool={saveParticipantToPool}
-      />
+      <p className="settings-roster-pool-pointer">
+        Reusable Agents now have their own page — <strong>Settings → Agent pool</strong>. Save a
+        roster participant there with the ☆ button on its row.
+      </p>
     </div>
   )
 }
