@@ -72,7 +72,16 @@ Responsible for the UI:
 ### Layout
 
 - **Header**: draggable chrome area with workspace/chat title and run status indicator.
-- **Sidebar** (`src/renderer/src/components/Sidebar.tsx`): glass navigation surface with workspaces, recent chats, run summary, and settings access.
+- **Sidebar** (`src/renderer/src/components/Sidebar.tsx`): glass navigation
+  surface with a **Threads | Projects** tab strip. **Threads** keeps the
+  existing grouped layout (workspaces, recents, ensembles, pinned, and related
+  sections). **Projects** renders `ProjectsSidebarView.tsx`, wired to
+  `projectsStore.ts` for user-defined hierarchies, membership, and reorder.
+  Project icon + hue editing reuses the shared `IdentityIconPicker.tsx`
+  extracted from Agent Pool customization (`AgentPoolContainer.tsx`). Chat
+  rows can be dropped onto projects via the sidebar chat drag MIME type.
+  Search query state is isolated per tab; the active tab and project expand
+  state persist in renderer `localStorage`.
 - **Transcript / Multiview** (`src/renderer/src/components/` via `App.tsx`):
   one or more live panes with message bubbles, floating composer, per-pane run
   routing, and status chips.
@@ -91,6 +100,13 @@ Responsible for the UI:
 - App settings are saved to the OS user data directory.
 - Chats, run events, approval records, audit run state, usage summaries, and
   active goals are stored locally.
+- **Sidebar Projects** (`projectsStore.ts`, key `taskwraith-sidebar-projects`)
+  persist in renderer `localStorage` and are **profile-global** (not
+  workspace-scoped) so a project can reference chats from any workspace.
+  Membership is stored as chat id lists on each project record. When a chat is
+  deleted (`App.tsx` → `removeChatFromAllProjects`), its id is stripped from
+  every project; archived chats are **not** pruned from membership so unarchive
+  can restore visibility without re-adding the chat manually.
 - Paired-device records, remote bridge settings, APNs token routing data, and
   first-launch/readiness projections are local to the Mac unless explicitly
   transported over the paired E2EE bridge.

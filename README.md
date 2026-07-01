@@ -127,6 +127,11 @@ baseline.
 - **Multiview and Workflows**: Split the workbench into live panes, and run
   Workflows as first-class chat/run objects with scheduled recovery, dedicated
   sidebar space, and optional ensemble execution where enabled.
+- **Sidebar Projects**: Switch the sidebar between **Threads** (workspaces,
+  recents, ensembles, and the existing grouped layout) and **Projects** to
+  build your own cross-workspace folder trees, assign icon + hue per project
+  (same picker as Agent Pool customization), and organize chats by drag-and-drop
+  or add-menu actions.
 - **Thread Goals**: Set a persistent objective with `/goal <objective>` or the
   composer goal control. Codex uses native goal state when the installed runtime
   exposes it; every provider gets a TaskWraith-managed fallback with explicit

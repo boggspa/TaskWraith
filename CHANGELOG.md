@@ -25,6 +25,18 @@ history, and workspace state stay on your machine throughout.
 - **iOS proposed-plan file handoff.** The companion now receives plan artifact
   paths, shows them on proposed-plan cards, and can jump straight into Files
   mode for that plan artifact when the paired Mac exposes a workspace scope.
+- **Projects sidebar tab.** The workspace sidebar now switches between
+  **Threads** (the existing grouped layout) and **Projects**, a user-defined
+  hierarchy for organizing chats across workspaces, providers, or any folder
+  tree you want. Create, rename, nest, reorder, and delete project groups;
+  assign each project an icon and hue with the same picker used for Roster
+  Preset Agent Pool customization; add chats from an overflow menu or by
+  dragging sidebar chat rows onto a project. Search is scoped per tab, expand
+  state persists, archived members stay visible with an **Archived** chip, and
+  the active tab is remembered across sessions. Project data lives in
+  profile-global renderer `localStorage` (not workspace-scoped). Deleting a
+  chat removes its id from every project membership list; archived chats
+  remain listed so unarchive can restore membership.
 
 ### Changed
 - **Claude picker line-up.** Mythos 5 is retired from current Claude model
