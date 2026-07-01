@@ -147,6 +147,49 @@ describe('buildRemoteFirstLaunchState', () => {
     expect(state.ollamaModelCommands.length).toBeGreaterThan(0)
   })
 
+  it('keeps every Claude quota window on the card, including the Fable weekly meter', () => {
+    const claudeUsage: ProviderUsageSummary = {
+      provider: 'claude',
+      configured: true,
+      source: 'claude-oauth-usage',
+      stale: false,
+      fetchedAt: '2026-07-01T23:00:00.000Z',
+      worstBand: 'medium',
+      windows: [
+        { id: 'claude-5h', label: 'Session', band: 'medium', usedPercent: 55 },
+        { id: 'claude-weekly', label: 'Weekly', band: 'low', usedPercent: 10 },
+        { id: 'claude-weekly-fable', label: 'Fable', band: 'low', usedPercent: 18 },
+        // Transitional payloads can still carry a legacy Opus family window.
+        { id: 'claude-weekly-opus', label: 'Opus', band: 'low', usedPercent: 31 }
+      ]
+    } as ProviderUsageSummary
+    const state = buildRemoteFirstLaunchState({
+      generatedAt: '2026-07-01T23:00:00.000Z',
+      workspace,
+      providers: {
+        claude: contract('claude', {
+          available: true,
+          version: '1.0.0',
+          authState: 'authenticated'
+        })
+      },
+      usage: { claude: claudeUsage },
+      notifications: []
+    })
+
+    const card = state.providerCards.find((entry) => entry.id === 'claude')
+    expect(card?.usageWindows.map((window) => window.id)).toEqual([
+      'claude-5h',
+      'claude-weekly',
+      'claude-weekly-fable',
+      'claude-weekly-opus'
+    ])
+    expect(card?.usageWindows.find((window) => window.id === 'claude-weekly-fable')).toMatchObject({
+      label: 'Fable',
+      usedPercent: 18
+    })
+  })
+
   it('projects active app notices for the iOS first-launch sheet', () => {
     const state = buildRemoteFirstLaunchState({
       generatedAt: '2026-06-21T18:02:00.000Z',

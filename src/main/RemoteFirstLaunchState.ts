@@ -281,7 +281,10 @@ function deriveProviderStatus(
 }
 
 function usageWindowsForCard(usage: ProviderUsageSummary | null): RemoteFirstLaunchUsageWindow[] {
-  return (usage?.windows ?? []).slice(0, 3).map((window) => compactUsageWindow(window))
+  // Cap keeps the remote payload bounded, not the card layout (iOS renders
+  // prefix(2) bars + a count). 4 fits Claude's fullest set — Session, Weekly,
+  // Fable, plus a transitional legacy Opus window — without dropping any.
+  return (usage?.windows ?? []).slice(0, 4).map((window) => compactUsageWindow(window))
 }
 
 function compactUsageWindow(window: ProviderUsageWindowSummary): RemoteFirstLaunchUsageWindow {
