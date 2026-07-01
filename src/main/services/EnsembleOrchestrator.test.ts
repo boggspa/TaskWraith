@@ -242,6 +242,7 @@ function makeHarness(
     persistSessionCheckpoint?: (chat: ChatRecord, reason: string) => void
     completeSessionCheckpoint?: (chatId: string, roundId: string, status: string) => void
     nowIso?: () => string
+    getProviderUsageSnapshot?: (provider: EnsembleParticipant['provider']) => any
     recordUsage?: (entry: Omit<UsageRecord, 'id' | 'timestamp'>) => void
     recordBossmanControlRejection?: (rejection: {
       provider: string
@@ -283,6 +284,9 @@ function makeHarness(
     createRunId: (provider) => `${provider}-run-${++counter}`,
     now: () => counter,
     nowIso: options.nowIso ?? (() => `2026-05-24T00:00:0${counter}.000Z`),
+    ...(options.getProviderUsageSnapshot
+      ? { getProviderUsageSnapshot: options.getProviderUsageSnapshot }
+      : {}),
     ...(probeParticipant ? { probeParticipant } : {}),
     ...(options.scheduleWakeupTimer ? { scheduleWakeupTimer: options.scheduleWakeupTimer } : {}),
     ...(options.cancelWakeupTimer ? { cancelWakeupTimer: options.cancelWakeupTimer } : {}),
@@ -1138,6 +1142,78 @@ describe('EnsembleOrchestrator', () => {
       contextWindow: 900_000
     })
     expect(byId.get('codex')?.contextPercent).toBeCloseTo(3.44444, 5)
+  })
+
+  it('lists provider model catalog and quota bands for Boss roster edits', async () => {
+    const chat = makeChat()
+    chat.ensemble!.bossmanParticipantId = 'claude'
+    chat.ensemble!.bossmanAutoApprovals = {
+      enabled: true,
+      mode: 'permission_preset_once',
+      confirmedAt: '2026-05-24T00:00:00.000Z'
+    }
+    const harness = makeHarness({
+      initialChat: chat,
+      getProviderUsageSnapshot: (provider) =>
+        provider === 'codex'
+          ? {
+              provider: 'codex',
+              configured: true,
+              source: 'codex-account',
+              fetchedAt: '2026-05-24T00:00:00.000Z',
+              windows: [
+                {
+                  id: 'weekly',
+                  label: 'Weekly',
+                  runs: 12,
+                  totalTokens: 500_000,
+                  limitLabel: '6% remaining',
+                  trackingOnly: false,
+                  usedPercent: 94
+                }
+              ]
+            }
+          : null
+    })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'List choices.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    const result = harness.orchestrator.listParticipantsForRun(harness.dispatched[0].appRunId)
+
+    expect(result.ok).toBe(true)
+    expect(result.bossmanParticipantId).toBe('claude')
+    expect(result.bossmanAutoApprovalsEnabled).toBe(true)
+    expect(result.rosterEditAllowed).toBe(true)
+    const codex = result.availableProviders?.find((entry) => entry.provider === 'codex')
+    expect(codex?.usage).toMatchObject({
+      provider: 'codex',
+      configured: true,
+      worstBand: 'critical'
+    })
+    expect(codex?.models).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'gpt-5.5',
+          label: 'GPT-5.5',
+          contextWindow: 1_050_000,
+          isDefault: true
+        })
+      ])
+    )
+    const claude = result.availableProviders?.find((entry) => entry.provider === 'claude')
+    expect(claude?.models).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'claude-fable-5',
+          contextWindow: 1_000_000,
+          reasoningEfforts: expect.arrayContaining([expect.objectContaining({ id: 'medium' })])
+        })
+      ])
+    )
   })
 
   it('schedules a wakeup and resumes the same participant in the active round', async () => {
@@ -3083,6 +3159,85 @@ Next action:
     expect(
       harness.probeParticipant?.mock.calls.some(([participant]) => participant.provider === 'kimi')
     ).toBe(true)
+  })
+
+  it('lets the Boss swap a pending participant provider and model through rosterEditForRun', async () => {
+    const initialChat = makeChat()
+    initialChat.ensemble!.bossmanParticipantId = 'claude'
+    initialChat.ensemble!.bossmanAutoApprovals = {
+      enabled: true,
+      mode: 'permission_preset_once',
+      confirmedAt: '2026-05-24T00:00:00.000Z'
+    }
+    initialChat.ensemble!.participants[0].role = 'Boss'
+    initialChat.ensemble!.participants[0].permissionPresetId = 'workspace_write'
+    const harness = makeHarness({
+      initialChat,
+      probeParticipant: async () => ({ reachable: true })
+    })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Plan and execute.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    const result = await harness.orchestrator.rosterEditForRun(harness.dispatched[0].appRunId, {
+      action: 'edit_participant',
+      targetParticipantId: 'codex',
+      participant: {
+        provider: 'kimi',
+        model: 'kimi-k2.7-code',
+        role: 'Quota relief',
+        instructions: 'Pick up the implementation if Codex quota is tight.',
+        reasoningEffort: 'medium'
+      }
+    })
+
+    expect(result.ok).toBe(true)
+    expect(result.participantId).toBe('codex')
+    expect(harness.probeParticipant).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'codex',
+        provider: 'kimi',
+        model: 'kimi-k2.7-code',
+        role: 'Quota relief',
+        reasoningEffort: 'medium'
+      })
+    )
+    expect(
+      harness.chat.ensemble!.participants.find((participant) => participant.id === 'codex')
+    ).toMatchObject({
+      provider: 'kimi',
+      model: 'kimi-k2.7-code',
+      role: 'Quota relief',
+      instructions: 'Pick up the implementation if Codex quota is tight.',
+      reasoningEffort: 'medium'
+    })
+    expect(
+      harness.chat.ensemble!.activeRound?.participants.find(
+        (participant) => participant.participantId === 'codex'
+      )
+    ).toMatchObject({
+      provider: 'kimi',
+      role: 'Quota relief',
+      status: 'idle'
+    })
+
+    harness.orchestrator.handleProviderOutput(
+      'claude',
+      { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'result', status: 'success', stats: { total_tokens: 5 } }
+    )
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    expect(harness.dispatched[1]).toMatchObject({
+      provider: 'kimi',
+      model: 'kimi-k2.7-code',
+      ensembleRun: {
+        participantId: 'codex',
+        role: 'Quota relief'
+      }
+    })
   })
 
   it('rejects roster removal of the configured Boss participant', async () => {

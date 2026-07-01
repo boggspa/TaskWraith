@@ -93,6 +93,8 @@ import {
 import { contextPercent, resolveContextWindow } from '../../shared/contextWindows'
 import { isEnsembleRoundDispatchLive } from '../../shared/ensembleRoundLifecycle'
 import { isPreviewRiskModel } from '../../shared/previewModelCatalog'
+import type { NormalizedProviderUsageSnapshot } from '../ProviderQuotaSnapshots'
+import { summarizeProviderUsage, type ProviderUsageSummary } from '../ProviderUsageStatus'
 import {
   ASSIGNABLE_PERMISSION_PRESETS,
   evaluateRosterEdit,
@@ -101,6 +103,7 @@ import {
   type RosterEditParticipantInput,
   type RosterEditRequest
 } from '../EnsembleRosterMutation'
+import { getStaticProviderModels } from '../providers/StaticProviderModels'
 import { selectableProviderIds } from '../settings/MainSanitizers'
 
 export type EnsembleRunMode = 'normal' | 'queue' | 'steer'
@@ -203,6 +206,9 @@ export interface EnsembleOrchestratorDeps {
    * haven't wired the probe yet.
    */
   probeParticipant?: (participant: EnsembleParticipant) => Promise<ParticipantProbeResult>
+  getProviderUsageSnapshot?: (
+    provider: ProviderId
+  ) => NormalizedProviderUsageSnapshot | null | undefined
   scheduleWakeupTimer?: (wakeup: EnsembleWakeupRecord) => void
   cancelWakeupTimer?: (wakeupId: string) => void
   /**
@@ -317,6 +323,28 @@ interface ActiveParticipantRun {
   flushTimer?: ReturnType<typeof setTimeout>
 }
 
+interface EnsembleParticipantModelCatalogEntry {
+  id: string
+  label: string
+  contextWindow: number
+  isDefault?: boolean
+  description?: string
+  reasoningEfforts?: Array<{
+    id: string
+    disabled?: boolean
+    disabledReason?: string
+  }>
+  defaultReasoningEffort?: string
+  speedTiers?: string[]
+}
+
+interface EnsembleParticipantProviderCatalogEntry {
+  provider: ProviderId
+  label: string
+  usage: ProviderUsageSummary
+  models: EnsembleParticipantModelCatalogEntry[]
+}
+
 interface ConcurrentWriteScopeClaim {
   participantId: string
   participantRole: string
@@ -331,6 +359,67 @@ interface ConcurrentWriteScopePreflight {
   claims: ConcurrentWriteScopeClaim[]
   scopesByParticipantId: Map<string, ConcurrentLaneWriteScope[]>
   matrixSummary: string
+}
+
+function staticModelRecord(model: unknown): Record<string, any> | null {
+  return model && typeof model === 'object' && !Array.isArray(model)
+    ? (model as Record<string, any>)
+    : null
+}
+
+function modelReasoningEfforts(model: Record<string, any>):
+  | EnsembleParticipantModelCatalogEntry['reasoningEfforts']
+  | undefined {
+  if (!Array.isArray(model.supportedReasoningEfforts)) return undefined
+  const efforts = model.supportedReasoningEfforts
+    .map((entry: unknown) => {
+      if (typeof entry === 'string' && entry.trim()) return { id: entry.trim() }
+      const record = staticModelRecord(entry)
+      if (!record) return null
+      const id = typeof record?.reasoningEffort === 'string' ? record.reasoningEffort.trim() : ''
+      if (!id) return null
+      return {
+        id,
+        ...(record.disabled === true ? { disabled: true } : {}),
+        ...(typeof record.disabledReason === 'string' && record.disabledReason.trim()
+          ? { disabledReason: record.disabledReason.trim() }
+          : {})
+      }
+    })
+    .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry))
+  return efforts.length > 0 ? efforts : undefined
+}
+
+function buildParticipantModelCatalog(
+  provider: ProviderId
+): EnsembleParticipantModelCatalogEntry[] {
+  return getStaticProviderModels(provider)
+    .map((model) => {
+      const record = staticModelRecord(model)
+      if (!record) return null
+      const id = typeof record?.id === 'string' ? record.id.trim() : ''
+      if (!id) return null
+      const label =
+        typeof record?.label === 'string' && record.label.trim() ? record.label.trim() : id
+      const reasoningEfforts = modelReasoningEfforts(record)
+      return {
+        id,
+        label,
+        contextWindow: resolveContextWindow(provider, id),
+        ...(record.isDefault === true ? { isDefault: true } : {}),
+        ...(typeof record.description === 'string' && record.description.trim()
+          ? { description: record.description.trim() }
+          : {}),
+        ...(reasoningEfforts ? { reasoningEfforts } : {}),
+        ...(typeof record.defaultReasoningEffort === 'string' && record.defaultReasoningEffort.trim()
+          ? { defaultReasoningEffort: record.defaultReasoningEffort.trim() }
+          : {}),
+        ...(Array.isArray(record.additionalSpeedTiers)
+          ? { speedTiers: record.additionalSpeedTiers.filter((tier) => typeof tier === 'string') }
+          : {})
+      }
+    })
+    .filter((entry): entry is EnsembleParticipantModelCatalogEntry => Boolean(entry))
 }
 
 export interface ScheduleWakeupInput {
@@ -2894,15 +2983,16 @@ export class EnsembleOrchestrator {
         remaining.push(affected)
       }
     } else if (action === 'remove_participant') {
-      runtime.remainingParticipants = remaining.filter(
-        (participant) => participant.id !== affectedParticipantId
-      )
+      const filtered = remaining.filter((participant) => participant.id !== affectedParticipantId)
+      remaining.length = 0
+      remaining.push(...filtered)
     } else {
-      runtime.remainingParticipants = remaining.map(
-        (participant) => nextById.get(participant.id) || participant
-      )
+      const edited = remaining.map((participant) => nextById.get(participant.id) || participant)
+      remaining.length = 0
+      remaining.push(...edited)
     }
-    runtime.remainingParticipants?.sort((a, b) => a.order - b.order)
+    remaining.sort((a, b) => a.order - b.order)
+    runtime.remainingParticipants = remaining
   }
 
   private applyRosterEditToActiveRound(
@@ -4164,6 +4254,10 @@ export class EnsembleOrchestrator {
     chatId?: string
     roundId?: string
     activeParticipantId?: string
+    bossmanParticipantId?: string
+    bossmanAutoApprovalsEnabled?: boolean
+    rosterEditAllowed?: boolean
+    availableProviders?: EnsembleParticipantProviderCatalogEntry[]
     participants?: Array<{
       id: string
       provider: ProviderId
@@ -4194,6 +4288,18 @@ export class EnsembleOrchestrator {
       chatId: chat.appChatId,
       roundId: run.roundId,
       activeParticipantId: run.participant.id,
+      bossmanParticipantId: chat.ensemble.bossmanParticipantId,
+      bossmanAutoApprovalsEnabled: chat.ensemble.bossmanAutoApprovals?.enabled === true,
+      rosterEditAllowed:
+        Boolean(chat.ensemble.bossmanParticipantId) &&
+        chat.ensemble.bossmanAutoApprovals?.enabled === true &&
+        chat.ensemble.bossmanAutoApprovals?.mode === 'permission_preset_once',
+      availableProviders: selectableProviderIds().map((provider) => ({
+        provider,
+        label: providerLabel(provider),
+        usage: summarizeProviderUsage(provider, this.deps.getProviderUsageSnapshot?.(provider)),
+        models: buildParticipantModelCatalog(provider)
+      })),
       participants: (chat.ensemble.participants || []).map((participant) => {
         const participantContext = latestRunContextUsage(chat.runs ?? [], participant.id)
         const participantContextWindow = resolveContextWindow(

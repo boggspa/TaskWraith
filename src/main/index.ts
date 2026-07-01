@@ -27474,6 +27474,7 @@ if (isGeminiMcpBridgeProcess) {
       now: () => Date.now(),
       nowIso: () => new Date().toISOString(),
       probeParticipant: probeEnsembleParticipant,
+      getProviderUsageSnapshot: (provider) => AppStore.getProviderUsageSnapshot(provider),
       scheduleWakeupTimer: (wakeup) => wakeupTimerServiceRef?.schedule(wakeup),
       cancelWakeupTimer: (wakeupId) => wakeupTimerServiceRef?.cancel(wakeupId),
       persistSessionCheckpoint: (chat, reason) =>

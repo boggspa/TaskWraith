@@ -1964,7 +1964,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
     {
       name: 'ensemble_roster_edit',
       description:
-        'In Ensemble Mode, lets the assigned Boss participant add, remove, or edit participants in the active roster. Boss-only and audited; requires the user\'s Allow Auto Approvals opt-in on the Ensemble. Permission presets are capped at workspace_write and include plan/read-only/default assignment, and tool-grant permissionOverrides are narrow-only: service overrides may only deny, network may only deny, approvalMode may only narrow to plan, and external path grants are forbidden.',
+        'In Ensemble Mode, lets the assigned Boss participant add, remove, or edit participants in the active roster, including swapping an inactive participant seat to a different provider/model/reasoning setup when quota walls, poor output, or agreed role changes make that necessary. Boss-only and audited; requires the user\'s Allow Auto Approvals opt-in on the Ensemble. Call list_ensemble_participants first to inspect live participant ids plus available providers, models, context windows, and coarse quota bands. Permission presets are capped at workspace_write and include plan/read-only/default assignment, and tool-grant permissionOverrides are narrow-only: service overrides may only deny, network may only deny, approvalMode may only narrow to plan, and external path grants are forbidden.',
       annotations: {
         readOnlyHint: false,
         destructiveHint: false,
@@ -2054,7 +2054,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
     {
       name: 'list_ensemble_participants',
       description:
-        'In Ensemble Mode, list the current participants, providers, roles, models, per-round statuses, and estimated per-participant context usage for the active round. Context usage fields are latest usage-bearing run estimates: contextTokens is latest input+output tokens, contextWindow is the resolved token window, and contextPercent is a 0-100 usage percentage; in-flight output is not included.',
+        'In Ensemble Mode, list the current participants, providers, roles, models, per-round statuses, Boss roster-edit eligibility, available provider/model catalog, per-model context windows, and coarse provider quota bands for the active round. Boss participants should use this before ensemble_roster_edit when selecting a replacement provider/model. Context usage fields are latest usage-bearing run estimates: contextTokens is latest input+output tokens, contextWindow is the resolved token window, and contextPercent is a 0-100 usage percentage; in-flight output is not included.',
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
