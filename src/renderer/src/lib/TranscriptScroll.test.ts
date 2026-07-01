@@ -383,6 +383,7 @@ describe('TranscriptScroll', () => {
         shouldTreatScrollAsUserScrollAway({
           previousScrollTop: 320,
           nextScrollTop: 260,
+          distanceFromBottom: 60,
           isProgrammatic: false
         })
       ).toBe(true)
@@ -393,6 +394,7 @@ describe('TranscriptScroll', () => {
         shouldTreatScrollAsUserScrollAway({
           previousScrollTop: 260,
           nextScrollTop: 320,
+          distanceFromBottom: 0,
           isProgrammatic: false
         })
       ).toBe(false)
@@ -400,6 +402,7 @@ describe('TranscriptScroll', () => {
         shouldTreatScrollAsUserScrollAway({
           previousScrollTop: 0,
           nextScrollTop: 0,
+          distanceFromBottom: 120,
           isProgrammatic: false
         })
       ).toBe(false)
@@ -410,7 +413,58 @@ describe('TranscriptScroll', () => {
         shouldTreatScrollAsUserScrollAway({
           previousScrollTop: 320,
           nextScrollTop: 260,
+          distanceFromBottom: 60,
           isProgrammatic: true
+        })
+      ).toBe(false)
+    })
+
+    it('ignores the browser clamp after a content-height shrink at the live edge', () => {
+      // Ensemble participant close-out: ActivityStack rows collapse, content
+      // shrinks, the browser clamps scrollTop down to the NEW maximum and the
+      // scroll event lands exactly at the bottom. scrollTop decreased without
+      // any user gesture — auto-follow must survive so the next participant's
+      // stream keeps following.
+      expect(
+        shouldTreatScrollAsUserScrollAway({
+          previousScrollTop: 5000,
+          nextScrollTop: 4700,
+          distanceFromBottom: 0,
+          isProgrammatic: false
+        })
+      ).toBe(false)
+    })
+
+    it('keeps scroll-away sticky to the disengage threshold', () => {
+      // A decrease landing inside the hysteresis dead-band is not user intent
+      // (a drag that shallow could not disengage by distance either)...
+      expect(
+        shouldTreatScrollAsUserScrollAway({
+          previousScrollTop: 5000,
+          nextScrollTop: 4996,
+          distanceFromBottom: STICK_DISENGAGE_PX,
+          isProgrammatic: false
+        })
+      ).toBe(false)
+      // ...while a scrollbar drag landing beyond it still disengages
+      // synchronously.
+      expect(
+        shouldTreatScrollAsUserScrollAway({
+          previousScrollTop: 5000,
+          nextScrollTop: 4990,
+          distanceFromBottom: STICK_DISENGAGE_PX + 1,
+          isProgrammatic: false
+        })
+      ).toBe(true)
+    })
+
+    it('treats non-finite landing metrics as not-user (intent listeners still own disengage)', () => {
+      expect(
+        shouldTreatScrollAsUserScrollAway({
+          previousScrollTop: 5000,
+          nextScrollTop: 4700,
+          distanceFromBottom: Number.NaN,
+          isProgrammatic: false
         })
       ).toBe(false)
     })

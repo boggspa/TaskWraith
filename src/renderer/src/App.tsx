@@ -2641,6 +2641,8 @@ function App(): React.JSX.Element {
         shouldTreatScrollAsUserScrollAway({
           previousScrollTop: lastSideTranscriptScrollTopRef.current,
           nextScrollTop: scroller.scrollTop,
+          distanceFromBottom:
+            scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight,
           isProgrammatic: sideProgrammaticScrollRef.current
         })
       ) {

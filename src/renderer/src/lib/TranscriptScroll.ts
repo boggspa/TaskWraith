@@ -277,10 +277,25 @@ export function shouldDisengageAutoFollow(distanceFromBottom: number): boolean {
  * for layout-thrash reasons, so this cheap direction check lets callers drop
  * auto-follow synchronously before the next streamed message layout effect can
  * snap the viewport back to the bottom.
+ *
+ * A scrollTop decrease alone is NOT sufficient evidence of user intent: when
+ * transcript content SHRINKS while pinned to the bottom (ActivityStack rows
+ * collapsing as a run completes — every ensemble participant close-out — or a
+ * streaming placeholder unmounting), the browser clamps scrollTop down to the
+ * new maximum and emits a scroll event indistinguishable by direction from a
+ * scrollbar drag. Treating that clamp as a scroll-away disengaged auto-follow
+ * at every participant boundary AND suppressed the resize re-pin that exists
+ * to compensate for exactly that collapse. The discriminator is the landing
+ * position: no user gesture can reduce scrollTop while remaining at the live
+ * edge, so a decrease that still lands within the disengage threshold is the
+ * clamp, not the user. (Non-finite `distanceFromBottom` is treated as
+ * not-user via `shouldDisengageAutoFollow`'s guard — the wheel/touch intent
+ * listeners still own disengage if metrics are briefly inconsistent.)
  */
 export function shouldTreatScrollAsUserScrollAway(input: {
   previousScrollTop: number
   nextScrollTop: number
+  distanceFromBottom: number
   isProgrammatic: boolean
 }): boolean {
   if (input.isProgrammatic) return false
@@ -288,7 +303,8 @@ export function shouldTreatScrollAsUserScrollAway(input: {
     return false
   }
   if (input.previousScrollTop <= 0) return false
-  return input.nextScrollTop < input.previousScrollTop - 0.5
+  if (input.nextScrollTop >= input.previousScrollTop - 0.5) return false
+  return shouldDisengageAutoFollow(input.distanceFromBottom)
 }
 
 /**

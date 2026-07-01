@@ -195,6 +195,7 @@ export function useTranscriptScrollState({
         shouldTreatScrollAsUserScrollAway({
           previousScrollTop: lastTranscriptScrollTopRef.current,
           nextScrollTop,
+          distanceFromBottom: scroller.scrollHeight - nextScrollTop - scroller.clientHeight,
           isProgrammatic: expectedProgrammatic
         })
       ) {
