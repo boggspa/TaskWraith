@@ -536,6 +536,7 @@ import {
   type ImageAttachment,
   type ImageAttachmentThumbnail
 } from './lib/imageAttachments'
+import { shouldSurfaceProposedPlanCard } from './lib/ensemblePlanPolicy'
 import { parsePlanModeChoice, type PlanChoiceState } from './lib/planModeChoice'
 import { parseProposedPlan, stripProposedPlanBlock, type ProposedPlanState } from './lib/proposedPlan'
 import { messageAnchorsActivePrompt } from './lib/transcriptDeleteGuard'
@@ -10603,9 +10604,10 @@ function App(): React.JSX.Element {
               // options) takes precedence; otherwise a proposed plan (an
               // explicit <proposed_plan> block in any mode, or a substantive
               // plan-mode turn) gets the approve/implement card.
-              // Ensemble transcripts are authored by the orchestrator (per-
-              // participant), so the anchor/clobber semantics here don't hold —
-              // only surface the plan card for a solo plan-mode run.
+              // Solo plan-mode runs still parse <proposed_plan> inline to derive
+              // title/body. Ensemble transcripts are authored by the
+              // orchestrator, so they hydrate pending modal state from existing
+              // metadata instead.
               const parsedPlan =
                 parsedChoice || !isPlanMode || updated.chatKind === 'ensemble'
                   ? null
@@ -10651,6 +10653,33 @@ function App(): React.JSX.Element {
                     messageId: planTargetId,
                     title: parsedPlan.title,
                     body: parsedPlan.body
+                  })
+                }
+              } else if (updated.chatKind === 'ensemble') {
+                const pendingEnsembleProposedPlan = [...updated.messages].reverse().find((message) => {
+                  const proposedPlan = message.metadata?.proposedPlan
+                  if (!proposedPlan || proposedPlan.status !== 'pending') return false
+
+                  const messageParticipantId =
+                    typeof message.metadata?.ensembleParticipantId === 'string'
+                      ? message.metadata?.ensembleParticipantId
+                      : undefined
+
+                  return shouldSurfaceProposedPlanCard({
+                    chatKind: 'ensemble',
+                    bossmanParticipantId: updated.ensemble?.bossmanParticipantId,
+                    fallbackOwnerParticipantId: undefined,
+                    messageParticipantId,
+                    isPlanMode,
+                    hasExplicitProposedPlanBlock: true
+                  })
+                })
+
+                if (pendingEnsembleProposedPlan?.metadata?.proposedPlan) {
+                  setPendingProposedPlan({
+                    messageId: pendingEnsembleProposedPlan.id,
+                    title: pendingEnsembleProposedPlan.metadata.proposedPlan.title,
+                    body: pendingEnsembleProposedPlan.metadata.proposedPlan.body
                   })
                 }
               }
