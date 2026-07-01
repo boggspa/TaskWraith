@@ -93,7 +93,7 @@ describe('createDefaultEnsembleConfig parity guard', () => {
     const config = createDefaultEnsembleConfig('codex' satisfies ProviderId)
 
     expect(config.enabled).toBe(true)
-    expect(config.maxParticipants).toBe(12)
+    expect(config.maxParticipants).toBe(18)
     expect(config.orchestrationMode).toBe('turn_bound')
     expect(config.maxContinuationHops).toBe(6)
     expect(typeof config.updatedAt).toBe('string')

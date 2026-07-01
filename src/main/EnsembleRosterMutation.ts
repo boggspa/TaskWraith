@@ -6,7 +6,7 @@ import type {
 } from './store/types'
 
 export const MIN_ENSEMBLE_PARTICIPANTS = 2
-export const MAX_ENSEMBLE_PARTICIPANTS = 12
+export const MAX_ENSEMBLE_PARTICIPANTS = 18
 
 export const ASSIGNABLE_PERMISSION_PRESETS = [
   'read_only',

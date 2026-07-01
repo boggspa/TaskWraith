@@ -58,8 +58,10 @@ import {
 // spoke.
 //
 // 1.0.5-EW1 — Ceiling raised 8 → 12 in step with the renderer
-// (chip strip now wraps at 7+ to a 6-column second row).
-const MAX_ENSEMBLE_PARTICIPANTS = 12
+// (chip strip now wraps at 7+ to a 6-column grid).
+// 1.0.5-EW46 — Ceiling raised 12 → 18; six chips per row now
+// yields up to three wrapped rows.
+const MAX_ENSEMBLE_PARTICIPANTS = 18
 
 export interface BuildEnsemblePromptInput {
   chat: ChatRecord
@@ -100,7 +102,7 @@ export function getOrderedEnsembleParticipants(
   // respected the GLOBAL MAX, not the chat's stored max. The
   // chip strip persist (EnsembleParticipantsAboveRow → persist)
   // now ratchets the stored max up on every operation, but a
-  // chat with 12 participants already on disk under the old cap
+  // chat with 12+ participants already on disk under the old cap
   // would silently truncate to 6 on dispatch until the user
   // toggled something. Floor the effective cap at the enabled
   // participant count so the actual panel always speaks.

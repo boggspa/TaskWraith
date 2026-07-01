@@ -386,16 +386,64 @@ describe('decodeBridgeActionPayload', () => {
         expect(withRoster.participants?.[0].model).toBe('claude-fable-5')
         expect(withRoster.participants?.[1].role).toBe('Researcher')
       }
+      const maxRoster = decodeBridgeActionPayload(
+        encode({
+          kind: 'createThread',
+          actionId: 'a-max',
+          workspaceId: 'ws-1',
+          variant: 'ensemble',
+          participants: Array.from({ length: 18 }, () => ({ provider: 'claude' }))
+        })
+      ).payload
+      expect(maxRoster.kind).toBe('createThread')
+      if (maxRoster.kind === 'createThread') {
+        expect(maxRoster.participants).toHaveLength(18)
+      }
       const oversized = decodeBridgeActionPayload(
         encode({
           kind: 'createThread',
           actionId: 'a-big',
           workspaceId: 'ws-1',
           variant: 'ensemble',
-          participants: Array.from({ length: 13 }, () => ({ provider: 'claude' }))
+          participants: Array.from({ length: 19 }, () => ({ provider: 'claude' }))
         })
       ).payload
       expect(oversized.kind).toBe('unknown')
+    })
+
+    it('decodes ensembleRosterUpdate through the 18-participant cap', () => {
+      const maxRoster = decodeBridgeActionPayload(
+        encode({
+          kind: 'ensembleRosterUpdate',
+          actionId: 'a-roster-update-max',
+          workspaceId: 'ws-1',
+          threadId: 'thread-1',
+          participants: Array.from({ length: 18 }, (_, index) => ({
+            id: `participant-${index + 1}`,
+            provider: 'claude',
+            role: `Reviewer ${index + 1}`,
+            enabled: true
+          }))
+        })
+      ).payload
+      expect(maxRoster.kind).toBe('ensembleRosterUpdate')
+      if (maxRoster.kind === 'ensembleRosterUpdate') {
+        expect(maxRoster.participants).toHaveLength(18)
+      }
+
+      const oversized = decodeBridgeActionPayload(
+        encode({
+          kind: 'ensembleRosterUpdate',
+          actionId: 'a-roster-update-big',
+          workspaceId: 'ws-1',
+          threadId: 'thread-1',
+          participants: Array.from({ length: 19 }, (_, index) => ({
+            id: `participant-${index + 1}`,
+            provider: 'claude'
+          }))
+        })
+      ).payload
+      expect(oversized).toMatchObject({ kind: 'unknown', rawKind: 'ensembleRosterUpdate' })
     })
 
     it('decodes a threadSnapshotRequest and classifies it read-only', () => {

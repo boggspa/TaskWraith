@@ -214,13 +214,14 @@ describe('Ensemble prompt composition', () => {
     ])
   })
 
-  // 1.0.5-EW1 — global ceiling raised 8 → 12. A panel with a
-  // 12-participant roster + `maxParticipants: 12` must keep all 12
+  // 1.0.5-EW1 — global ceiling raised 8 → 12.
+  // 1.0.5-EW46 — global ceiling raised 12 → 18. A panel with an
+  // 18-participant roster + `maxParticipants: 18` must keep all 18
   // through the prompt builder; pre-EW1 the constant would have
   // silently clamped to 8 and the user would lose 4 participants
   // from the prompt context without warning.
-  it('honors a 12-participant panel at the new global ceiling', () => {
-    const extras = Array.from({ length: 9 }, (_, idx) => ({
+  it('honors an 18-participant panel at the new global ceiling', () => {
+    const extras = Array.from({ length: 15 }, (_, idx) => ({
       id: `extra-${idx + 1}`,
       provider: 'codex' as const,
       enabled: true,
@@ -229,15 +230,15 @@ describe('Ensemble prompt composition', () => {
       order: 4 + idx,
       permissionPresetId: 'workspace_write' as const
     }))
-    const twelveParticipant: EnsembleConfig = {
+    const eighteenParticipant: EnsembleConfig = {
       ...ensemble,
-      maxParticipants: 12,
+      maxParticipants: 18,
       participants: [...ensemble.participants, ...extras]
     }
-    const ids = getOrderedEnsembleParticipants(twelveParticipant).map((p) => p.id)
-    expect(ids).toHaveLength(12)
+    const ids = getOrderedEnsembleParticipants(eighteenParticipant).map((p) => p.id)
+    expect(ids).toHaveLength(18)
     expect(ids.slice(0, 3)).toEqual(['claude', 'codex', 'gemini'])
-    expect(ids).toContain('extra-9')
+    expect(ids).toContain('extra-15')
   })
 
   // 1.0.4-AR2 — `maxParticipants` of 0 / NaN / negative is treated as

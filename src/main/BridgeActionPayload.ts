@@ -325,6 +325,8 @@ export interface BridgeCreateThreadParticipant {
   role?: string
 }
 
+const MAX_BRIDGE_ENSEMBLE_PARTICIPANTS = 18
+
 export interface BridgeCreateThreadAction extends BridgeActionMetadata {
   kind: 'createThread'
   workspaceId: string
@@ -337,7 +339,7 @@ export interface BridgeCreateThreadAction extends BridgeActionMetadata {
   /** Optional display title seed. */
   title?: string
   /** Ensemble roster override (variant 'ensemble'), in speaking order.
-   * Omitted → the Mac's default roster. Capped at 12 (the panel ceiling);
+   * Omitted → the Mac's default roster. Capped at 18 (the panel ceiling);
    * role/instructions default per provider from the Mac's role seeds. */
   participants?: BridgeCreateThreadParticipant[]
 }
@@ -1316,7 +1318,13 @@ function isCreateThread(v: Record<string, unknown>): boolean {
 }
 
 function isCreateThreadParticipants(value: unknown): boolean {
-  if (!Array.isArray(value) || value.length === 0 || value.length > 12) return false
+  if (
+    !Array.isArray(value) ||
+    value.length === 0 ||
+    value.length > MAX_BRIDGE_ENSEMBLE_PARTICIPANTS
+  ) {
+    return false
+  }
   return value.every(
     (entry) =>
       isRecord(entry) &&
@@ -1687,7 +1695,9 @@ function isEnsembleQueueItem(v: Record<string, unknown>): boolean {
 function isEnsembleRosterUpdate(v: Record<string, unknown>): boolean {
   if (!isWorkspaceThreadAction(v)) return false
   if (!Array.isArray(v.participants)) return false
-  if (v.participants.length < 1 || v.participants.length > 12) return false
+  if (v.participants.length < 1 || v.participants.length > MAX_BRIDGE_ENSEMBLE_PARTICIPANTS) {
+    return false
+  }
   return v.participants.every((entry) => {
     if (!entry || typeof entry !== 'object') return false
     const e = entry as Record<string, unknown>
@@ -1747,6 +1757,8 @@ function isEnsemblePresetMutate(v: Record<string, unknown>): boolean {
       typeof v.name === 'string' &&
       v.name.trim().length > 0 &&
       Array.isArray(v.participants) &&
+      v.participants.length > 0 &&
+      v.participants.length <= MAX_BRIDGE_ENSEMBLE_PARTICIPANTS &&
       v.participants.every(
         (p) =>
           !!p &&

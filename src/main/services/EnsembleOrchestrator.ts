@@ -117,6 +117,7 @@ export type EnsembleQueuedPromptMutationResult = {
  * const isn't reachable from the main process.
  */
 const ENSEMBLE_GLOBAL_USAGE_WORKSPACE_ID = '__taskwraith_global_chats__'
+const MAX_ENSEMBLE_FANOUT_TARGETS = 18
 
 const DEFAULT_CONTINUATION_HOP_LIMIT = 6
 const MAX_CONTINUATION_HOP_LIMIT = 500
@@ -613,7 +614,7 @@ function normalizeTargetList(value: unknown): string[] {
     return value
       .map((entry) => (typeof entry === 'string' ? entry.trim() : ''))
       .filter(Boolean)
-      .slice(0, 12)
+      .slice(0, MAX_ENSEMBLE_FANOUT_TARGETS)
   }
   if (typeof value === 'string' && value.trim()) return [value.trim()]
   return []

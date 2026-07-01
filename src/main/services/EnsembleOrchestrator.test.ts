@@ -22,6 +22,7 @@ import type {
   UsageRecord,
   WorkSessionConfig
 } from '../store/types'
+import { MAX_ENSEMBLE_PARTICIPANTS } from '../EnsembleRosterMutation'
 
 const ensemble: EnsembleConfig = {
   enabled: true,
@@ -3117,15 +3118,18 @@ Next action:
       mode: 'permission_preset_once',
       confirmedAt: '2026-05-24T00:00:00.000Z'
     }
-    initialChat.ensemble!.participants = Array.from({ length: 12 }, (_, index) => ({
-      id: index === 0 ? 'claude' : `worker-${index}`,
-      provider: index === 0 ? 'claude' : 'codex',
-      enabled: true,
-      role: index === 0 ? 'Boss' : `Worker ${index}`,
-      instructions: index === 0 ? 'Manage.' : 'Work.',
-      order: index + 1,
-      permissionPresetId: index === 0 ? 'workspace_write' : 'read_only'
-    }))
+    initialChat.ensemble!.participants = Array.from(
+      { length: MAX_ENSEMBLE_PARTICIPANTS },
+      (_, index) => ({
+        id: index === 0 ? 'claude' : `worker-${index}`,
+        provider: index === 0 ? 'claude' : 'codex',
+        enabled: true,
+        role: index === 0 ? 'Boss' : `Worker ${index}`,
+        instructions: index === 0 ? 'Manage.' : 'Work.',
+        order: index + 1,
+        permissionPresetId: index === 0 ? 'workspace_write' : 'read_only'
+      })
+    )
     const harness = makeHarness({
       initialChat,
       probeParticipant: async () => ({ reachable: true })
@@ -3144,7 +3148,7 @@ Next action:
 
     expect(result.ok).toBe(false)
     expect(result.error).toBe('roster_max')
-    expect(harness.chat.ensemble!.participants).toHaveLength(12)
+    expect(harness.chat.ensemble!.participants).toHaveLength(MAX_ENSEMBLE_PARTICIPANTS)
   })
 
   it('rejects skip with an unknown target participant (stale_target)', async () => {
@@ -6175,6 +6179,60 @@ Next action:
     const result = await fanout
     expect(result.ok).toBe(true)
     expect(result.laneIds).toHaveLength(1)
+  })
+
+  it('dispatches explicit ensemble_fanout targets up to the 18-participant cap', async () => {
+    const harness = makeHarness()
+    harness.chat.ensemble!.fanoutPolicy = 'read_only'
+    const fullRoster: EnsembleParticipant[] = Array.from(
+      { length: MAX_ENSEMBLE_PARTICIPANTS },
+      (_, index) => ({
+        id: index === 0 ? 'lead' : `reviewer-${index}`,
+        provider: index === 0 ? 'codex' : 'claude',
+        enabled: true,
+        role: index === 0 ? 'LeadBoss' : `Reviewer ${index}`,
+        instructions: index === 0 ? 'Coordinate.' : 'Review.',
+        order: index + 1,
+        permissionPresetId: index === 0 ? 'workspace_write' : 'read_only'
+      })
+    )
+    harness.chat.ensemble!.participants = fullRoster.slice(0, 2)
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Lead starts, everyone fans out.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    harness.chat.ensemble!.participants = fullRoster
+
+    const peerCount = MAX_ENSEMBLE_PARTICIPANTS - 1
+    const fanout = harness.orchestrator.fanoutForRun(harness.dispatched[0].appRunId, {
+      targets: Array.from({ length: peerCount }, (_, index) => `Reviewer ${index + 1}`),
+      prompt: 'Inspect this in parallel.'
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(MAX_ENSEMBLE_PARTICIPANTS), {
+      timeout: 1000
+    })
+    const expectedParticipantIds = Array.from(
+      { length: peerCount },
+      (_, index) => `reviewer-${index + 1}`
+    )
+    const laneRuns = harness.dispatched.slice(1)
+    expect(laneRuns.map((payload) => payload.ensembleRun?.participantId)).toEqual(
+      expectedParticipantIds
+    )
+
+    for (const payload of laneRuns) {
+      harness.orchestrator.handleProviderOutput(
+        payload.provider,
+        { appRunId: payload.appRunId, appChatId: 'ensemble-chat' },
+        { type: 'result', status: 'success' }
+      )
+    }
+    await expect(fanout).resolves.toMatchObject({
+      ok: true,
+      participantIds: expectedParticipantIds
+    })
   })
 
   it('1.0.8: ensemble_fanout allows broad fanout from Boss', async () => {

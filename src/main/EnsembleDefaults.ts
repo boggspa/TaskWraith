@@ -110,14 +110,16 @@ export function createDefaultEnsembleConfig(activeProvider?: ProviderId, configu
     enabled: true,
     // 1.0.4-AR2 — track the global ceiling (was 6).
     // 1.0.5-EW1 — ceiling raised 8 → 12. The DEFAULT_ENSEMBLE_ROLES
+    // 1.0.5-EW46 — ceiling raised 12 → 18 while keeping six chips per
+    // wrapped row, so a full panel occupies three rows.
     // seed yields the live providers (claude / codex / kimi / grok /
     // cursor / ollama; gemini retired) so the user starts with a panel
     // well under the cap and has plenty
     // of headroom to add specialists / extra Claudes / etc. before
     // hitting the cap. The chip strip wraps at 7+ to a 6-column
-    // second row, so even a fully-loaded 12-participant panel
+    // grid, so even a fully-loaded 18-participant panel
     // stays navigable. Hard min on the remove path is 2.
-    maxParticipants: 12,
+    maxParticipants: 18,
     orchestrationMode: 'turn_bound',
     maxContinuationHops: 6,
     participants,
