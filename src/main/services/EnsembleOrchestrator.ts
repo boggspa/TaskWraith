@@ -1724,6 +1724,11 @@ interface QueuedRoundEntry {
   discordContextSnapshots?: DiscordContextSnapshot[]
 }
 
+interface YieldReturnFrame {
+  returnParticipantId: string
+  targetParticipantId: string
+}
+
 interface ActiveRoundRuntime {
   chatId: string
   roundId: string
@@ -1808,6 +1813,12 @@ interface ActiveRoundRuntime {
    * remaining participant).
    */
   yieldTarget?: string
+  /**
+   * B8 — explicit-yield repair stack. When A yields to B, A is
+   * remembered here so a real answered turn from B can auto-return to A.
+   * Nested yields unwind LIFO (A→B→C returns C→B, then B→A).
+   */
+  yieldReturnStack?: YieldReturnFrame[]
   /**
    * 1.0.4-AF — round-scoped self-reflective flag. Set when the user
    * opened the round with `/discuss` (alias `/meta`). Threaded into
@@ -2193,6 +2204,7 @@ export class EnsembleOrchestrator {
   private prepareBossYieldToUserClose(runtime: ActiveRoundRuntime): void {
     this.cancelWakeupsForRuntime(runtime, 'cancelled by Boss closeout')
     this.clearQueuedPromptsForRuntime(runtime)
+    this.clearYieldReturnStack(runtime)
   }
 
   private finalizeInactiveRunningRoundSnapshot(
@@ -2241,6 +2253,7 @@ export class EnsembleOrchestrator {
     }
     runtime.cancelled = true
     runtime.queuedPrompts = []
+    this.clearYieldReturnStack(runtime)
     this.cancelWakeupsForRuntime(runtime, reason)
     const roundId = runtime.roundId
     const activeRunIds = new Set<string>()
@@ -2362,11 +2375,48 @@ export class EnsembleOrchestrator {
     // happens in runRound after the current turn finalises).
     if (target) {
       const runtime = this.roundsByChatId.get(run.chatId)
-      if (runtime) runtime.yieldTarget = target
+      if (runtime) {
+        runtime.yieldTarget = target
+        this.pushYieldReturnFrame(runtime, run, target)
+      }
     }
     this.completePendingYieldActivity(run, reason, target)
     this.finalizeRun(run, 'yielded', reason || 'Participant yielded.')
     return true
+  }
+
+  private pushYieldReturnFrame(
+    runtime: ActiveRoundRuntime,
+    run: ActiveParticipantRun,
+    target: string
+  ): void {
+    if (isUserYieldTarget(target)) return
+    const chat = this.deps.getChat(run.chatId)
+    const targetParticipant = resolveYieldTargetParticipant(
+      chat?.ensemble?.participants || [],
+      target,
+      run.participant
+    )
+    if (!targetParticipant?.enabled) return
+    runtime.yieldReturnStack ??= []
+    runtime.yieldReturnStack.push({
+      returnParticipantId: run.participant.id,
+      targetParticipantId: targetParticipant.id
+    })
+  }
+
+  private clearYieldReturnStack(runtime: ActiveRoundRuntime): void {
+    if (runtime.yieldReturnStack?.length) runtime.yieldReturnStack = []
+  }
+
+  private discardYieldReturnFrameForYielder(
+    runtime: ActiveRoundRuntime,
+    returnParticipantId: string
+  ): void {
+    const stack = runtime.yieldReturnStack
+    const frame = stack?.[stack.length - 1]
+    if (!stack?.length || frame?.returnParticipantId !== returnParticipantId) return
+    stack.pop()
   }
 
   private completePendingYieldActivity(
@@ -5658,6 +5708,7 @@ export class EnsembleOrchestrator {
       if (runtime.yieldTarget) {
         if (isUserYieldTarget(runtime.yieldTarget)) {
           routedByYieldTarget = true
+          this.clearYieldReturnStack(runtime)
           remaining.length = 0
           this.appendRoundStatus(
             runtime.chatId,
@@ -5692,8 +5743,20 @@ export class EnsembleOrchestrator {
               )
             }
           }
+          if (!routedByYieldTarget) {
+            this.discardYieldReturnFrameForYielder(runtime, participant.id)
+          }
         }
         runtime.yieldTarget = undefined
+      }
+      if (!routedByYieldTarget) {
+        routedByYieldTarget = this.tryRouteYieldReturn(
+          runtime,
+          remaining,
+          chat,
+          participant,
+          run.status
+        )
       }
       // @-mention auto-promotion (1.0.3 post-ship).
       //
@@ -6515,18 +6578,45 @@ export class EnsembleOrchestrator {
     return round.participants.find((participant) => participant.participantId === participantId)?.status
   }
 
+  private tryRouteYieldReturn(
+    runtime: ActiveRoundRuntime,
+    remaining: EnsembleParticipant[],
+    chat: ChatRecord,
+    completedParticipant: EnsembleParticipant,
+    completedStatus: EnsembleParticipantStatus
+  ): boolean {
+    const stack = runtime.yieldReturnStack
+    const frame = stack?.[stack.length - 1]
+    if (!stack?.length || frame?.targetParticipantId !== completedParticipant.id) return false
+    stack.pop()
+    if (completedStatus !== 'answered') return false
+    const returnParticipant = chat.ensemble?.participants.find(
+      (participant) => participant.id === frame.returnParticipantId && participant.enabled
+    )
+    if (!returnParticipant) return false
+    return this.tryAppendContinuationTurn(
+      runtime,
+      remaining,
+      returnParticipant,
+      `Yield-return: returning to ${returnParticipant.role || returnParticipant.provider} (${returnParticipant.provider}).`,
+      { allowYieldedParticipant: true }
+    )
+  }
+
   private tryAppendContinuationTurn(
     runtime: ActiveRoundRuntime,
     remaining: EnsembleParticipant[],
     participant: EnsembleParticipant,
-    statusMessage: string
+    statusMessage: string,
+    options: { allowYieldedParticipant?: boolean } = {}
   ): boolean {
     if (runtime.orchestrationMode !== 'continuous') return false
     if (runtime.unreachableParticipantIds?.has(participant.id)) return false
     const participantStatus = this.activeRoundParticipantStatus(runtime, participant.id)
     if (
       participantStatus &&
-      CONTINUATION_BLOCKED_PARTICIPANT_STATUSES.has(participantStatus)
+      CONTINUATION_BLOCKED_PARTICIPANT_STATUSES.has(participantStatus) &&
+      !(options.allowYieldedParticipant && participantStatus === 'yielded')
     ) {
       return false
     }
@@ -7069,6 +7159,8 @@ export class EnsembleOrchestrator {
     roundId: string,
     status: Extract<EnsembleRoundState['status'], 'completed' | 'cancelled' | 'failed'>
   ): void {
+    const runtime = this.roundsByChatId.get(chatId)
+    if (runtime?.roundId === roundId) this.clearYieldReturnStack(runtime)
     const chat = this.deps.getChat(chatId)
     if (!chat?.ensemble) return
     const endedAt = this.deps.nowIso()

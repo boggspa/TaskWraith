@@ -5651,6 +5651,230 @@ Next action:
     expect(harness.dispatched[2].provider).toBe('gemini')
   })
 
+  it('auto-returns to the yielding participant after a yielded target answers', async () => {
+    const harness = makeHarness()
+    harness.chat.ensemble!.orchestrationMode = 'continuous'
+    harness.chat.ensemble!.participants = [
+      {
+        id: 'typecheckz',
+        provider: 'claude',
+        enabled: true,
+        role: 'TypeCheckz',
+        instructions: 'Gate.',
+        order: 1,
+        permissionPresetId: 'read_only'
+      },
+      {
+        id: 'fixman',
+        provider: 'codex',
+        enabled: true,
+        role: 'Fixman',
+        instructions: 'Repair.',
+        order: 2,
+        permissionPresetId: 'workspace_write'
+      }
+    ]
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Gate and repair.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    expect(harness.dispatched[0].ensembleRun?.participantId).toBe('typecheckz')
+
+    expect(
+      harness.orchestrator.markYielded(
+        harness.dispatched[0].appRunId!,
+        'Needs repair.',
+        'Fixman'
+      )
+    ).toBe(true)
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    expect(harness.dispatched[1].ensembleRun?.participantId).toBe('fixman')
+
+    const fixmanRoute = {
+      appRunId: harness.dispatched[1].appRunId,
+      appChatId: 'ensemble-chat'
+    }
+    harness.orchestrator.handleProviderOutput('codex', fixmanRoute, {
+      type: 'content',
+      text: 'Repair applied.'
+    })
+    harness.orchestrator.handleProviderOutput('codex', fixmanRoute, {
+      type: 'result',
+      status: 'success',
+      stats: { total_tokens: 10 }
+    })
+
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
+    expect(harness.dispatched[2].ensembleRun?.participantId).toBe('typecheckz')
+    expect(harness.chat.ensemble?.activeRound?.continuationHops).toBe(1)
+    expect(harness.chat.messages.some((message) =>
+      message.content.includes('Yield-return: returning to TypeCheckz')
+    )).toBe(true)
+
+    const typecheckzReturnRoute = {
+      appRunId: harness.dispatched[2].appRunId,
+      appChatId: 'ensemble-chat'
+    }
+    harness.orchestrator.handleProviderOutput('claude', typecheckzReturnRoute, {
+      type: 'content',
+      text: 'Gate passed.'
+    })
+    harness.orchestrator.handleProviderOutput('claude', typecheckzReturnRoute, {
+      type: 'result',
+      status: 'success',
+      stats: { total_tokens: 5 }
+    })
+    await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('completed'))
+  })
+
+  it('unwinds nested yield-return frames in LIFO order', async () => {
+    const harness = makeHarness()
+    harness.chat.ensemble!.orchestrationMode = 'continuous'
+    harness.chat.ensemble!.participants = [
+      {
+        id: 'participant-a',
+        provider: 'claude',
+        enabled: true,
+        role: 'A',
+        instructions: 'First gate.',
+        order: 1,
+        permissionPresetId: 'read_only'
+      },
+      {
+        id: 'participant-b',
+        provider: 'codex',
+        enabled: true,
+        role: 'B',
+        instructions: 'Repair.',
+        order: 2,
+        permissionPresetId: 'workspace_write'
+      },
+      {
+        id: 'participant-c',
+        provider: 'kimi',
+        enabled: true,
+        role: 'C',
+        instructions: 'Deep repair.',
+        order: 3,
+        permissionPresetId: 'default'
+      }
+    ]
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Nested repair chain.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    harness.orchestrator.markYielded(harness.dispatched[0].appRunId!, 'Needs B.', 'participant-b')
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    harness.orchestrator.markYielded(harness.dispatched[1].appRunId!, 'Needs C.', 'participant-c')
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
+
+    const cRoute = {
+      appRunId: harness.dispatched[2].appRunId,
+      appChatId: 'ensemble-chat'
+    }
+    harness.orchestrator.handleProviderOutput('kimi', cRoute, {
+      type: 'content',
+      text: 'C fixed the nested issue.'
+    })
+    harness.orchestrator.handleProviderOutput('kimi', cRoute, {
+      type: 'result',
+      status: 'success',
+      stats: { total_tokens: 5 }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(4))
+    expect(harness.dispatched[3].ensembleRun?.participantId).toBe('participant-b')
+
+    const bReturnRoute = {
+      appRunId: harness.dispatched[3].appRunId,
+      appChatId: 'ensemble-chat'
+    }
+    harness.orchestrator.handleProviderOutput('codex', bReturnRoute, {
+      type: 'content',
+      text: 'B verified C and completed repair.'
+    })
+    harness.orchestrator.handleProviderOutput('codex', bReturnRoute, {
+      type: 'result',
+      status: 'success',
+      stats: { total_tokens: 5 }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(5))
+    expect(harness.dispatched.map((payload) => payload.ensembleRun?.participantId)).toEqual([
+      'participant-a',
+      'participant-b',
+      'participant-c',
+      'participant-b',
+      'participant-a'
+    ])
+    expect(harness.chat.ensemble?.activeRound?.continuationHops).toBe(2)
+
+    const aReturnRoute = {
+      appRunId: harness.dispatched[4].appRunId,
+      appChatId: 'ensemble-chat'
+    }
+    harness.orchestrator.handleProviderOutput('claude', aReturnRoute, {
+      type: 'content',
+      text: 'A re-gated the nested repair.'
+    })
+    harness.orchestrator.handleProviderOutput('claude', aReturnRoute, {
+      type: 'result',
+      status: 'success',
+      stats: { total_tokens: 5 }
+    })
+    await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('completed'))
+  })
+
+  it('clears yield-return frames when the yielded target returns to the user', async () => {
+    const harness = makeHarness()
+    harness.chat.ensemble!.orchestrationMode = 'continuous'
+    harness.chat.ensemble!.participants = [
+      {
+        id: 'typecheckz',
+        provider: 'claude',
+        enabled: true,
+        role: 'TypeCheckz',
+        instructions: 'Gate.',
+        order: 1,
+        permissionPresetId: 'read_only'
+      },
+      {
+        id: 'fixman',
+        provider: 'codex',
+        enabled: true,
+        role: 'Fixman',
+        instructions: 'Repair.',
+        order: 2,
+        permissionPresetId: 'workspace_write'
+      }
+    ]
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Gate and ask user if blocked.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    harness.orchestrator.markYielded(
+      harness.dispatched[0].appRunId!,
+      'Needs repair.',
+      'Fixman'
+    )
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+
+    harness.orchestrator.markYielded(
+      harness.dispatched[1].appRunId!,
+      'Blocked on user input.',
+      'user'
+    )
+    await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('completed'))
+    expect(harness.dispatched).toHaveLength(2)
+    expect(
+      harness.chat.messages.some((message) => message.content.includes('Yield-return: returning'))
+    ).toBe(false)
+  })
+
   it('falls through to default order when yield target is unresolved', async () => {
     const harness = makeHarness()
     harness.orchestrator.startRound({
