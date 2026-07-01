@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState, type ReactElement } from 'react'
 import { createPortal } from 'react-dom'
 import type { ChatRecord } from '../../../main/store/types'
+import { isValidRelativePlanArtifactPath } from '../lib/proposedPlan'
 import { MarkdownMessage } from './MarkdownMessage'
 
 export interface ProposedPlanApprovalModalProps {
   open: boolean
   title: string
   body: string
+  artifactPath?: string
   chat?: ChatRecord
   isEnsemble?: boolean
   onApprove: (planBody: string) => void
@@ -26,6 +28,7 @@ export function ProposedPlanApprovalModal({
   open,
   title,
   body,
+  artifactPath,
   chat,
   isEnsemble,
   onApprove,
@@ -98,6 +101,18 @@ export function ProposedPlanApprovalModal({
     setSubmitted(true)
     action()
   }
+  const canOpenPlanFile = Boolean(
+    chat?.workspacePath && artifactPath && isValidRelativePlanArtifactPath(artifactPath)
+  )
+  const handleOpenPlanFile = (): void => {
+    if (!canOpenPlanFile || !artifactPath || !chat?.workspacePath) return
+    void window.api.openWorkspacePopout({
+      kind: 'file-editor',
+      workspacePath: chat.workspacePath,
+      targetPath: artifactPath,
+      targetView: 'editor'
+    })
+  }
 
   if (!open) return null
 
@@ -150,6 +165,16 @@ export function ProposedPlanApprovalModal({
         )}
 
         <footer className="creative-approval-modal-actions">
+          {canOpenPlanFile && (
+            <button
+              type="button"
+              className="creative-approval-modal-approve-once"
+              disabled={submitted}
+              onClick={handleOpenPlanFile}
+            >
+              Open plan file
+            </button>
+          )}
           <button
             type="button"
             className="creative-approval-modal-reject"

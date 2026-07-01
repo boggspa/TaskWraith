@@ -2338,6 +2338,7 @@ export const TranscriptPanel = memo(
                         title={msg.metadata.proposedPlan.title}
                         body={msg.metadata.proposedPlan.body}
                         status={msg.metadata.proposedPlan.status}
+                        artifactPath={msg.metadata.proposedPlan.artifactPath}
                         chat={currentChat || undefined}
                         onApprove={(planBody) => onProposedPlanApprove(msg.id, planBody)}
                         onDismiss={() => onProposedPlanDismiss(msg.id)}

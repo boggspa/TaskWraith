@@ -1,10 +1,12 @@
 import { useId, useMemo, useState } from 'react'
 import type { ChatRecord } from '../../../main/store/types'
+import { isValidRelativePlanArtifactPath } from '../lib/proposedPlan'
 import { MarkdownMessage } from './MarkdownMessage'
 
 export type ProposedPlanCardProps = {
   title: string
   body: string
+  artifactPath?: string
   /** Decision state — `pending` shows the action row; once decided the card
    *  collapses to a read-only outcome. */
   status: 'pending' | 'approved' | 'dismissed'
@@ -30,6 +32,7 @@ type CardMode = 'view' | 'edit' | 'custom'
 export function ProposedPlanCard({
   title,
   body,
+  artifactPath,
   status,
   chat,
   onApprove,
@@ -51,6 +54,22 @@ export function ProposedPlanCard({
     if (submitted) return
     setSubmitted(true)
     action()
+  }
+
+  const canOpenPlanFile = Boolean(
+    chat?.workspacePath &&
+      artifactPath &&
+      isValidRelativePlanArtifactPath(artifactPath)
+  )
+
+  const handleOpenPlanFile = (): void => {
+    if (!canOpenPlanFile || !artifactPath || !chat?.workspacePath) return
+    void window.api.openWorkspacePopout({
+      kind: 'file-editor',
+      workspacePath: chat.workspacePath,
+      targetPath: artifactPath,
+      targetView: 'editor'
+    })
   }
 
   const editRows = useMemo(
@@ -127,6 +146,16 @@ export function ProposedPlanCard({
             >
               Send response
             </button>
+            {canOpenPlanFile && (
+              <button
+                type="button"
+                className="proposed-plan-btn"
+                disabled={submitted}
+                onClick={handleOpenPlanFile}
+              >
+                Open plan file
+              </button>
+            )}
           </div>
         </div>
       ) : mode === 'edit' ? (
@@ -150,6 +179,16 @@ export function ProposedPlanCard({
           >
             Approve edited plan
           </button>
+          {canOpenPlanFile && (
+            <button
+              type="button"
+              className="proposed-plan-btn"
+              disabled={submitted}
+              onClick={handleOpenPlanFile}
+            >
+              Open plan file
+            </button>
+          )}
         </div>
       ) : (
         <div className="proposed-plan-actions">
@@ -193,6 +232,16 @@ export function ProposedPlanCard({
           >
             Approve &amp; implement
           </button>
+          {canOpenPlanFile && (
+            <button
+              type="button"
+              className="proposed-plan-btn"
+              disabled={submitted}
+              onClick={handleOpenPlanFile}
+            >
+              Open plan file
+            </button>
+          )}
         </div>
       ))}
     </div>

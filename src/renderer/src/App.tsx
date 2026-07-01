@@ -10634,12 +10634,13 @@ function App(): React.JSX.Element {
                   : [...updated.messages].reverse().find((m) => m.role === 'assistant')?.id
                 updated.messages = updated.messages.map((m) =>
                   m.id === planTargetId
-                    ? {
+                  ? {
                         ...m,
                         content: stripProposedPlanBlock(m.content),
                         metadata: {
                           ...(m.metadata || {}),
                           proposedPlan: {
+                            ...(m.metadata?.proposedPlan || {}),
                             title: parsedPlan.title,
                             body: parsedPlan.body,
                             status: 'pending' as const
@@ -10652,7 +10653,9 @@ function App(): React.JSX.Element {
                   setPendingProposedPlan({
                     messageId: planTargetId,
                     title: parsedPlan.title,
-                    body: parsedPlan.body
+                    body: parsedPlan.body,
+                    artifactPath: updated.messages.find((message) => message.id === planTargetId)
+                      ?.metadata?.proposedPlan?.artifactPath
                   })
                 }
               } else if (updated.chatKind === 'ensemble') {
@@ -10679,7 +10682,8 @@ function App(): React.JSX.Element {
                   setPendingProposedPlan({
                     messageId: pendingEnsembleProposedPlan.id,
                     title: pendingEnsembleProposedPlan.metadata.proposedPlan.title,
-                    body: pendingEnsembleProposedPlan.metadata.proposedPlan.body
+                    body: pendingEnsembleProposedPlan.metadata.proposedPlan.body,
+                    artifactPath: pendingEnsembleProposedPlan.metadata.proposedPlan.artifactPath
                   })
                 }
               }
@@ -23488,6 +23492,7 @@ function App(): React.JSX.Element {
         open={Boolean(pendingProposedPlan)}
         title={pendingProposedPlan?.title || ''}
         body={pendingProposedPlan?.body || ''}
+        artifactPath={pendingProposedPlan?.artifactPath}
         chat={currentChat || undefined}
         isEnsemble={currentChat?.chatKind === 'ensemble'}
         onApprove={(planBody) => {

@@ -17,6 +17,8 @@ export type ProposedPlanState = {
   messageId: string
   title: string
   body: string
+  /** Optional validated relative path to the saved plan artifact (main-side). */
+  artifactPath?: string
 }
 
 const PROPOSED_PLAN_BLOCK = /<proposed_plan>([\s\S]*?)<\/proposed_plan>/i
@@ -104,4 +106,17 @@ const PROPOSED_PLAN_BLOCK_GLOBAL = /<proposed_plan>[\s\S]*?<\/proposed_plan>/gi
 export const stripProposedPlanBlock = (text: string): string => {
   if (!PROPOSED_PLAN_BLOCK.test(text)) return text
   return text.replace(PROPOSED_PLAN_BLOCK_GLOBAL, '').trim()
+}
+
+export const isValidRelativePlanArtifactPath = (pathValue: string): boolean => {
+  if (!pathValue) return false
+  const trimmed = pathValue.trim()
+  if (!trimmed) return false
+  if (/^[a-zA-Z]:[\\/]/.test(trimmed)) return false
+  if (trimmed.startsWith('/') || trimmed.startsWith('\\')) return false
+  if (trimmed.includes('://')) return false
+  if (trimmed.startsWith('..') || trimmed.endsWith('/..') || trimmed.endsWith('\\..')) return false
+  const segments = trimmed.split(/[\\/]+/).filter(Boolean)
+  if (segments.includes('..')) return false
+  return true
 }
