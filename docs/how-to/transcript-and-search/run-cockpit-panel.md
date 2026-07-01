@@ -14,7 +14,7 @@ Click the **Run** tab on the right-dock rim (or use the "Open Run rail" toggle) 
 1. Open the **Run** tab in the right dock to see live counts of active, waiting, and failed runs, plus per-provider run counts along the top strip.
 2. Under **Launches**, review any tracked launch processes (command, workspace, branch, output preview); click **Open** to visit a detected preview URL, **Thread** to jump to its chat, or **Stop** to cancel it.
 3. Under **Runs**, click a lane to select it — this drives the Analyst and timeline sections below.
-4. Click **Local AI** in the Analyst section to generate a summary, risks, and next steps for the selected run (uses on-device Apple Foundation Models when available, falling back to a deterministic local summary).
+4. The Analyst section shows a deterministic local summary, risks, and next steps for the selected run automatically. Click **Local AI** to request a richer analysis from on-device Apple Foundation Models via the TaskWraith bridge daemon; if Foundation Models are unavailable or the request fails, the panel shows an error/unavailable notice instead of the AI analysis (select a different run and back to restore the deterministic summary).
 5. Use **Open**, **Cancel**, **Retry**, **Duplicate**, or **Handoff** to act on the selected run directly from the panel.
 6. Scroll down to the embedded timeline for the selected run's recorded events, and to **Handoffs** to dispatch or archive any draft handoff cards.
 

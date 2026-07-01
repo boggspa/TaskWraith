@@ -12,7 +12,7 @@ Appears automatically over the current chat when you raise the **permissions chi
 
 ## How to use it
 1. Open the **permissions chip** in the composer and pick **Default Approval** or **Full Workspace Access**.
-2. Read the warning: Default Approval lets the agent create, edit, and delete files in the workspace without per-step prompts; Full Workspace Access does the same with no per-step confirmation at all.
+2. Read the warning: Default Approval lets the agent create, edit, and delete files in the workspace without per-step prompts; Full Workspace Access goes further, additionally letting the agent run files, with no per-step confirmation at all.
 3. For **Full Workspace Access**, check **"I understand the risks and am on a disposable or recoverable device"** — the **Enable Full Access** button stays disabled until you do.
 4. Click **Continue** (Default Approval) or **Enable Full Access** (Full Workspace Access) to apply the change, or **Cancel** (or press Esc) to stay at the current, safer mode.
 5. You can revoke an elevated permission at any time by reopening the permissions chip and picking a lower preset — no warning is shown when lowering.

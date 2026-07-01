@@ -12,9 +12,9 @@ The Shares tab lists chats you've shared with human collaborators. Each entry sh
 
 ## How to use it
 1. Open **Settings → Integrations → Shares** to see every chat you currently have shared.
-2. Each card shows the chat title, its access mode (**Read-only** or **Comments**), and whether a collaborator is currently connected (**Live** / **Not connected**).
+2. Each card shows the chat title, its access mode (**Read-only** or **Comments**), and whether the share is currently connected over the relay (**Live** / **Not connected**).
 3. Click **Copy invite** to generate a fresh out-of-band invite for that share — paste it to the collaborator yourself.
-4. Under a card's participant list, click **Remove** next to a collaborator to revoke just their access.
+4. Under a card's participant list, each collaborator shows their own status (**Active**, **Pending**, or **Removed**); click **Remove** next to a collaborator to revoke just their access.
 5. Click **Stop sharing** to revoke the whole share immediately; all collaborators lose access at once.
 
 ## Tips & related

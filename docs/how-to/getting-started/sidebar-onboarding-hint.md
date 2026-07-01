@@ -11,7 +11,7 @@ In the **Sidebar**, directly under the **+** (Add workspace) button, when no wor
 <!-- TODO(screenshot): Sidebar onboarding hint card under the + button -->
 
 ## How to use it
-1. Click the card or the **+** button to add a workspace.
+1. Click the **+** button above the card to add a workspace. The card itself is informational only — it isn't clickable.
 2. Follow the workspace picker to select a folder on your Mac.
 
 ## Tips & related

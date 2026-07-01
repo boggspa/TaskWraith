@@ -15,7 +15,7 @@ Renders inline in the transcript, beneath an agent's turn, wherever the agent us
 2. Click an open row again to collapse it; by default opening a new row collapses the previous one.
 3. Hold ⌘ (or Shift) while clicking to keep multiple rows open at once instead of single-open mode.
 4. In an ensemble chat, watch for the "yielding to @\<name\>" row — it shows which participant is taking the next turn.
-5. Enable **Live activity viewport** in Settings → Appearance → Density to stream activity in a bounded, auto-scrolling panel while the agent is actively working.
+5. Enable **Live activity viewport** in Settings → Appearance → Effects & Material → Density to stream activity in a bounded, auto-scrolling panel while the agent is actively working.
 6. Enable **Compact density** in the same section to collapse tool cards to a tighter one-line trace throughout the interface.
 
 ## Tips & related

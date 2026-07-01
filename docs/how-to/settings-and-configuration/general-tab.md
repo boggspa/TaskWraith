@@ -17,7 +17,7 @@ Open **Settings → App → General**.
 4. Toggle **Show Task Complete summary cards** and **Collapse older Ensemble rounds** to control how finished runs and ensemble rounds are presented in the transcript.
 5. Under **Welcome activity heatmaps** and **Dashboard statistics**, show or hide individual heatmaps and stat chips on the new-chat welcome screen, control the Workspaces and Providers dashboard tabs (including auto-cycle timing), and reset dashboard stats back to today.
 6. Enable the **Kimi compatibility filter** to redact known Moonshot-rejected topics from prompts sent to Kimi ensemble participants only — your transcript itself is never modified; optionally turn on the classifier retry pass and add custom trigger phrases.
-7. Turn on **Auto-deny approvals after a timeout** and set per-provider timeout windows (Codex, Claude, Kimi, plus Main authority) so unanswered approvals don't block a run indefinitely.
+7. Turn on **Auto-deny approvals after a timeout** and set the per-provider timeout windows (including Codex, Claude, and Kimi, plus Main authority) so unanswered approvals don't block a run indefinitely. Each provider's window is independent, so faster-hanging runtimes (like Codex sandbox commands) can time out sooner than long-think prompts.
 8. Under **Product operations**, enable Auto-Update and pick an update channel, then use **Refresh health**, **Export diagnostics**, or **Repair install** as needed.
 9. Use **Delete chat history** in the danger zone to permanently remove local chat transcripts and run history from this Mac — workspaces and settings are left intact.
 

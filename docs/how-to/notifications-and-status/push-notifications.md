@@ -14,7 +14,7 @@ Push notifications arrive as system notifications on the paired iPhone/iPad — 
 1. Pair your iPhone or iPad with the Mac first (see the Devices tab) — push notifications only reach paired devices.
 2. On first launch after pairing, allow the notification permission prompt iOS shows you; this registers the device for pushes and re-registers automatically on later launches.
 3. On the Mac, open **Settings → Integrations → Devices → Bridge networking** and add your Apple Push Notifications Auth Key (.p8), Key ID, and Team ID under **Apple Push Notifications (APNs)** — pushes stay inactive for every paired device until this is configured.
-4. Use **Test push** in that panel to confirm delivery to your registered device(s) before relying on it.
+4. Use **Send test push** in that panel to confirm delivery to your registered device(s) before relying on it.
 5. When a push arrives for an approval, tap **Approve** or **Deny** directly on the lock screen (Face ID/passcode is required to confirm), or tap **Open** on a question push to jump into TaskWraith and answer it there.
 6. Tapping a run-finished notification (or any notification body) opens TaskWraith to the relevant chat.
 

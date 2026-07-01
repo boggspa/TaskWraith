@@ -11,7 +11,7 @@ Settings → **AI & Providers → Ensemble roster** for the full editor (create,
 <!-- TODO(screenshot): Ensemble roster settings panel with saved presets -->
 
 ## How to use it
-1. Open Settings → **Ensemble roster**. The left pane lists your saved presets; click **+ New** to create one (seeded with two default participants) or select an existing preset to edit it.
+1. Open **Settings → AI & Providers → Ensemble roster**. The left pane lists your saved presets; click **+ New** to create one (seeded with two default participants) or select an existing preset to edit it.
 2. In the right-hand editor, set **Turn order** (turn-based or continuous) and **Max participants**, then add, remove, or reorder participants with the row controls.
 3. For each participant, pick a provider/model and permissions, write a **Role / nickname** and **Brief / goal**, toggle **Enabled**, and optionally mark one participant **Boss**.
 4. Use **☆ Save to pool** on a row to turn that participant into a reusable Agent, or **+ Add from pool** to drop a saved Agent into the roster; pooled Agents stay linked, so editing the Agent later updates every preset that uses it.

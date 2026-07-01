@@ -3,7 +3,7 @@
 **Platform:** Electron
 
 ## What it is
-Right-click (or click the ⋯ button) on any workspace or chat to open a context menu with actions: New chat, Delegate to sub-thread, Open in side panel, Open in Multiview, Archive, and more.
+Right-click (or click the ⋯ button) on any workspace or chat to open a context menu with actions. Workspace menus include New chat, Pin, Show in Finder, Copy Working Directory, and Remove workspace. Chat menus include Rename, Pin, Archive, Delegate to a sub-thread, Open in Multiview pane, and Delete — plus, for sub-threads, Open beside parent and Open drawer beside parent.
 
 ## Where to find it
 In the **Sidebar**, on any workspace or chat item — click the **⋯** (overflow) button or right-click the item.
@@ -18,4 +18,4 @@ In the **Sidebar**, on any workspace or chat item — click the **⋯** (overflo
 ## Tips & related
 - [Sub-thread delegation](../chats-and-threads/sub-thread-delegation.md)
 - [Side chat](../chats-and-threads/side-chat.md)
-- [Multiview layout](../composer/plus-tools-menu.md)
+- [Canvas multiview pane](../canvas-and-previews/canvas-multiview-pane.md)

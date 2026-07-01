@@ -6,7 +6,7 @@
 The Goal button lets you set an active "Goal" for a chat — an objective and stopping condition that steers the agent (or, where supported, is handed natively to the provider) until you mark it paused, blocked, or complete.
 
 ## Where to find it
-In the **composer's telemetry row** (the icon row beneath the prompt box), next to the Screen Watch and schedule controls. Click the flag-shaped goal icon to open the Goal popover.
+In the **composer's telemetry row** (the icon row beneath the prompt box), next to the Screen Watch and schedule controls. Click the target-shaped goal icon to open the Goal popover.
 
 <!-- TODO(screenshot): Composer goal button popover showing objective and status -->
 

@@ -6,7 +6,7 @@
 A Goal is a thread-level objective and stopping condition attached to a single chat. It carries a lifecycle status — active, paused, blocked, or completed — and, depending on the selected provider, is either steered by TaskWraith or handed off natively to the provider (Codex, Claude, or Grok) to track itself.
 
 ## Where to find it
-In the **composer's control row**, click the flag-shaped **Goal** button to open the Goal popover. The button is disabled until a chat is open.
+In the **composer's control row**, click the target-shaped **Goal** button to open the Goal popover. The button is disabled until a chat is open.
 
 <!-- TODO(screenshot): Goal popover showing objective text and lifecycle status dropdown -->
 

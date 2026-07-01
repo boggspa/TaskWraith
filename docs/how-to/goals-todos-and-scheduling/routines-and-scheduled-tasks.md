@@ -3,7 +3,7 @@
 **Platform:** Electron
 
 ## What it is
-TaskWraith runs agent prompts on a schedule instead of immediately, in two forms: a **one-shot** schedule on a single composer message, and a recurring **Workflow** (manual, one-time, interval, or cron trigger) that re-runs a saved prompt template. Both are dispatched through the same underlying scheduled-task queue.
+TaskWraith runs agent prompts on a schedule instead of immediately, in two forms: a **one-shot** schedule on a single composer message, and a recurring **Workflow** (manual or interval trigger) that re-runs a saved prompt template. Both are dispatched through the same underlying scheduled-task queue.
 
 ## Where to find it
 For a single message: the **clock icon** in the composer's control row. For recurring runs: the **Workflows** section in the sidebar (below Active Runs and Local Servers), including its **+** button to create one.

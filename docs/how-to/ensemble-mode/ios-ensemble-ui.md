@@ -11,7 +11,7 @@ Open any Ensemble chat on the companion app — the chip strip appears automatic
 <!-- TODO(screenshot): iOS companion showing ensemble strip and roster sheet -->
 
 ## How to use it
-1. In an Ensemble chat, view the participant chips above the composer; each shows the provider's glyph, role/provider label, and a status mark (checkmark when done, a waveform while speaking, a lock for a retired provider).
+1. In an Ensemble chat, view the participant chips above the composer; each shows the provider's glyph, role/provider label, and a status mark (checkmark when done, bold label while speaking, a lock for a retired provider).
 2. Tap the **+** at the end of the strip to add a participant from any connected provider, or tap an existing chip to open the Roster page focused on that participant.
 3. In the Roster page, drag a participant's row to reorder turn order, swipe to remove it, or tap **Edit** to enable/disable it.
 4. Tap a participant row to edit its model, reasoning effort, permissions, role, and brief in the chip editor sheet; mark one participant **Boss** there if you want a designated decision-maker.

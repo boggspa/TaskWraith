@@ -12,7 +12,7 @@ It renders inline above the transcript of the parent chat, and only appears whil
 
 ## How to use it
 1. Delegate work to a sub-thread (see Sub-Thread Delegation) from a chat — once it starts running, the ticker appears above the transcript.
-2. Read the ticker: the left side shows the parent agent "orchestrating," and the right side lists a chip per active sub-thread, each labeled with its provider (Codex, Claude, Kimi, Grok, Cursor, or a local Ollama model).
+2. Read the ticker: the left side shows the parent agent "orchestrating," and the right side lists a chip per active sub-thread, each labeled with its provider (Codex, Claude, Kimi, Grok, or Cursor). A local Ollama sub-thread appears as a generic "Sub-thread" chip rather than a named one.
 3. Click a sub-thread chip to jump to that sub-thread's chat.
 4. Let it run — the ticker clears on its own once every sub-thread of the current chat finishes.
 

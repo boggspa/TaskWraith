@@ -12,7 +12,7 @@ Settings → **Behavior** tab → **Timeout windows** section.
 
 ## How to use it
 1. Open Settings → Behavior and check **Auto-deny approvals after a timeout** to turn the feature on.
-2. Set a window (in seconds, 5–3600) for each tunable field: **Codex**, **Claude**, **Kimi**, and **Main authority** (the longer window used for workspace-trust and similar non-provider approvals).
+2. Set a window (in seconds, 5–3600) for each tunable field: **Codex**, **Claude**, **Kimi**, and **Main authority** (the longer window used for workspace-trust and similar non-provider approvals). One extra field for a retired provider still appears in this grid but has no effect on live runs.
 3. Leave the toggle off if you want approvals to block indefinitely instead — useful for hands-off testing.
 4. When a timeout is armed, the pending approval in the composer shows a live "Auto-denies in …" countdown; if it reaches zero before you respond, the request is automatically declined.
 
