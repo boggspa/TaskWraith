@@ -1,9 +1,15 @@
 # Human Collaboration Phase 2 Spec
 
-> Status: **DESIGN** (docs-only plan, no runtime behavior change). Authored
-> 2026-06-26 from codebase recon plus adversarial review. This document is a
-> grounded roadmap for richer human-collaborator contribution rules; it is not
-> a claim that collaborators can drive provider runs today.
+> Status: **IMPLEMENTED (rollout slices 1–5)** as of 2026-07-02. Authored
+> 2026-06-26 from codebase recon plus adversarial review; slices landed as
+> five commits (P2a rules model + bounded audit log, P2a UX copy + preset
+> picker, presence clarity, P2b request-host-action + auto-draft, reconnect
+> productization). Slice 6 — the P2c direct-limited dispatch spike — remains
+> **NOT IMPLEMENTED** by design: it requires its own security review, protocol
+> negotiation, and adversarial test suite before any surface may enable it
+> (§3, §4 Tier P2c). `directLimited` exists only as a rejected-at-every-write-
+> path type name; `providerDispatch` is clamped to `never` everywhere.
+> Collaborators still cannot drive provider runs.
 
 ## 1. Objective
 
