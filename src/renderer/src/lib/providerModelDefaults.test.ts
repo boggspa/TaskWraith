@@ -43,11 +43,11 @@ describe('Codex provider model defaults', () => {
 })
 
 describe('Claude provider model defaults', () => {
-  it('exposes Sonnet 5, Fable 5, and Mythos 5 as real rows', () => {
+  it('exposes Sonnet 5 and Fable 5 as real rows while keeping Mythos out of the picker', () => {
     const ids = CLAUDE_DEFAULT_MODELS.map((model) => model.id)
     expect(ids).not.toContain('default')
     expect(ids).toContain('claude-fable-5')
-    expect(ids).toContain('claude-mythos-5')
+    expect(ids).not.toContain('claude-mythos-5')
     expect(ids).not.toContain('claude-fable-5-1m')
     expect(ids).toContain('claude-sonnet-5')
     expect(ids).not.toContain('preview:anthropic:claude-sonnet-5')
@@ -82,7 +82,7 @@ describe('Claude provider model defaults', () => {
     expect(ids).toContain('claude-opus-4-8-1m')
     expect(ids).toContain('claude-opus-4-7-1m')
     expect(ids).toContain('claude-fable-5')
-    expect(ids).toContain('claude-mythos-5')
+    expect(ids).not.toContain('claude-mythos-5')
   })
 
   it('resolves family-specific Claude reasoning defaults', () => {
@@ -90,7 +90,6 @@ describe('Claude provider model defaults', () => {
     const sonnet5Reasoning = resolveClaudeReasoningEfforts(byId.get('claude-sonnet-5'))
     const opusReasoning = resolveClaudeReasoningEfforts(byId.get('claude-opus-4-8-1m'))
     const fableReasoning = resolveClaudeReasoningEfforts(byId.get('claude-fable-5'))
-    const mythosReasoning = resolveClaudeReasoningEfforts(byId.get('claude-mythos-5'))
     const haikuReasoning = resolveClaudeReasoningEfforts(byId.get('claude-haiku-4-5'))
     // Sonnet 5 shares the full Opus ladder with every effort enabled (unlike the
     // retired Sonnet 4.6, which capped xhigh/ultracode).
@@ -113,7 +112,6 @@ describe('Claude provider model defaults', () => {
     ])
     expect(opusReasoning.every((option) => !option.disabled)).toBe(true)
     expect(fableReasoning.every((option) => !option.disabled)).toBe(true)
-    expect(mythosReasoning.every((option) => !option.disabled)).toBe(true)
     expect(haikuReasoning.map((option) => option.reasoningEffort)).toEqual([
       'low',
       'medium',

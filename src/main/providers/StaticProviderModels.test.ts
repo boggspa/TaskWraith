@@ -266,14 +266,15 @@ describe('getStaticProviderModels (claude)', () => {
     const ids = models.map((m) => m.id)
     expect(ids).not.toContain('default')
     expect(ids).toContain('claude-fable-5')
-    expect(ids).toContain('claude-mythos-5')
+    expect(ids).not.toContain('claude-mythos-5')
     expect(ids).not.toContain('claude-fable-5-1m')
     expect(ids).not.toContain('preview:anthropic:claude-sonnet-5')
     expect(ids).not.toContain('preview:anthropic:claude-fable-5')
     expect(ids).not.toContain('preview:anthropic:claude-mythos-5')
     expect(ids).not.toContain('claude-opus-4-8')
     expect(ids).toContain('claude-opus-4-8-1m')
-    // Sonnet 5, Fable 5, and Mythos 5 are real selectable rows now.
+    // Sonnet 5 and Fable 5 are selectable rows; Mythos 5 stays runnable as a
+    // historical/tombstoned model but is no longer offered in pickers.
     expect(ids).toContain('claude-sonnet-5')
   })
 
@@ -286,7 +287,7 @@ describe('getStaticProviderModels (claude)', () => {
     expect(previewById.get('preview:anthropic:claude-fable-5')).toBeUndefined()
     expect(previewById.get('preview:anthropic:claude-mythos-5')).toBeUndefined()
     expect(previewById.get('claude-fable-5')?.disabled).toBeFalsy()
-    expect(previewById.get('claude-mythos-5')?.disabled).toBeFalsy()
+    expect(previewById.get('claude-mythos-5')).toBeUndefined()
   })
 
   it('marks Claude Sonnet 5 as the concrete default and retires Sonnet 4.6 from the picker', () => {
@@ -304,7 +305,6 @@ describe('getStaticProviderModels (claude)', () => {
     const sonnetReasoning = byId.get('claude-sonnet-5')?.supportedReasoningEfforts ?? []
     const opusReasoning = byId.get('claude-opus-4-8-1m')?.supportedReasoningEfforts ?? []
     const fableReasoning = byId.get('claude-fable-5')?.supportedReasoningEfforts ?? []
-    const mythosReasoning = byId.get('claude-mythos-5')?.supportedReasoningEfforts ?? []
     const haikuReasoning = byId.get('claude-haiku-4-5')?.supportedReasoningEfforts ?? []
     expect(
       sonnetReasoning.map((e) => e.reasoningEffort)
@@ -325,7 +325,6 @@ describe('getStaticProviderModels (claude)', () => {
     ])
     expect(opusReasoning.every((e) => !e.disabled)).toBe(true)
     expect(fableReasoning.every((e) => !e.disabled)).toBe(true)
-    expect(mythosReasoning.every((e) => !e.disabled)).toBe(true)
     expect(haikuReasoning.map((e) => e.reasoningEffort)).toEqual([
       'low',
       'medium',

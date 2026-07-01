@@ -850,7 +850,7 @@ export function FirstLaunchSheet({
             </li>
             <li>
               <strong>Fast Mode toggle.</strong> Inside the model picker, capable models (Codex
-              GPT-5.5 / 5.4, Claude Opus 1M, Claude Fable, and Claude Mythos) expose a Fast tier —
+              GPT-5.5 / 5.4, Claude Opus 1M, and Claude Fable) expose a Fast tier —
               useful when you want snappier turns at higher cost.
             </li>
             <li>

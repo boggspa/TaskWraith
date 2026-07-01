@@ -200,7 +200,7 @@ describe('buildRemoteFirstLaunchState', () => {
     )
     expect(returnedClaude5?.tone).toBe('default')
     expect(returnedClaude5?.accent).toBe('claude')
-    expect(returnedClaude5?.title).toBe('Claude Fable 5 and Mythos 5 access is returning.')
+    expect(returnedClaude5?.title).toBe('Claude Fable 5 access is returning.')
   })
 
   it('surfaces stale usage snapshots and no-workspace access without leaking setup internals', () => {

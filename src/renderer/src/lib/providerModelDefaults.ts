@@ -133,13 +133,6 @@ const CLAUDE_DEFAULT_MODELS = [
     additionalSpeedTiers: ['fast']
   },
   {
-    id: 'claude-mythos-5',
-    label: 'Claude Mythos 5',
-    description: 'Project Glasswing limited availability — 1M context window',
-    supportedReasoningEfforts: CLAUDE_OPUS_REASONING_EFFORTS,
-    defaultReasoningEffort: 'medium'
-  },
-  {
     id: CLAUDE_DEFAULT_MODEL,
     label: 'Claude Sonnet 5',
     description: 'Balanced — extended thinking',

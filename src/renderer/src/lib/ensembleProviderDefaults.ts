@@ -126,7 +126,6 @@ const CODEX_MODELS: CombinedModelPickerModelOption[] = [
 const CLAUDE_MODELS: CombinedModelPickerModelOption[] = [
   { id: 'claude-opus-4-8-1m', label: 'Claude Opus 4.8 1M' },
   { id: 'claude-fable-5', label: 'Claude Fable 5' },
-  { id: 'claude-mythos-5', label: 'Claude Mythos 5' },
   { id: 'claude-sonnet-5', label: 'Claude Sonnet 5' },
   { id: 'claude-opus-4-7-1m', label: 'Claude Opus 4.7 1M' },
   // Sonnet 4.6 is retired from the picker; its tombstone metadata (display

@@ -261,7 +261,7 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
     expect(getEnsembleModelDefaults('kimi').defaultModelId).toBe('kimi-k2.7-code')
   })
 
-  it('exposes returned Claude 5 family rows in ensemble model options', () => {
+  it('exposes returned Claude 5 family rows in ensemble model options without Mythos', () => {
     const claude = getEnsembleModelDefaults('claude')
     expect(claude.modelOptions.map((option) => option.id)).not.toEqual(
       expect.arrayContaining([
@@ -275,16 +275,15 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
         'preview:anthropic:claude-sonnet-5',
         'preview:anthropic:claude-fable-5',
         'preview:anthropic:claude-mythos-5',
+        'claude-mythos-5',
         'claude-fable-5-1m'
       ])
     )
     expect(claude.modelOptions.find((option) => option.id === 'claude-sonnet-5')?.disabled).toBeFalsy()
     expect(claude.modelOptions.find((option) => option.id === 'claude-fable-5')?.disabled).toBeFalsy()
-    expect(claude.modelOptions.find((option) => option.id === 'claude-mythos-5')?.disabled).toBeFalsy()
     expect(claude.modelOptions.map((option) => option.id)).toEqual([
       'claude-opus-4-8-1m',
       'claude-fable-5',
-      'claude-mythos-5',
       'claude-sonnet-5',
       'claude-opus-4-7-1m',
       'claude-haiku-4-5'
