@@ -290,6 +290,10 @@
   color: color-mix(in srgb, #6fb6ff 72%, transparent);
 }
 [data-composer-style="codex"]
+  [data-composer-control="permission"][data-permission-value="read_only"]::after {
+  color: color-mix(in srgb, #6fb6ff 72%, transparent);
+}
+[data-composer-style="codex"]
   [data-composer-control="permission"][data-permission-value="auto_edit"]::after {
   color: color-mix(in srgb, #ef4444 72%, transparent);
 }

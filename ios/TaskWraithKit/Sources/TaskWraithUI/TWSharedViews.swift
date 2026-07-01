@@ -4597,7 +4597,7 @@ struct RosterChipEditor: View {
                 }
                 Section("Permission") {
                     Picker("Approval", selection: permissionBinding) {
-                        Text("Plan / Read-only").tag("read_only")
+                        Text("Read-Only/Recon").tag("read_only")
                         Text("Default approval").tag("default")
                         Text("Full workspace").tag("workspace_write")
                     }

@@ -4,6 +4,7 @@ import { PLAN_LABEL, READ_ONLY_RECON_LABEL, resolvePlanModeLabel } from './planM
 describe('resolvePlanModeLabel', () => {
   it('keeps the legacy preset-only label while callers migrate to workflow mode', () => {
     expect(resolvePlanModeLabel('read_only')).toBe(PLAN_LABEL)
+    expect(resolvePlanModeLabel('plan')).toBe(PLAN_LABEL)
   })
 
   it('uses explicit workflow mode before the permission preset', () => {

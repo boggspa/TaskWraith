@@ -8278,11 +8278,15 @@
  * the permission tint to `!important` re-wins the cascade.
  */
 .composer-combined-picker-trigger[data-permission-value="plan"],
+.composer-combined-picker-trigger[data-permission-value="read_only"],
 .composer-combined-picker-trigger[data-permission-value="plan"]
   .composer-combined-picker-trigger-primary {
   color: #6fb6ff !important;
 }
 .composer-combined-picker-trigger[data-permission-value="plan"] {
+  border-color: color-mix(in srgb, #6fb6ff 36%, var(--composer-border));
+}
+.composer-combined-picker-trigger[data-permission-value="read_only"] {
   border-color: color-mix(in srgb, #6fb6ff 36%, var(--composer-border));
 }
 .composer-combined-picker-trigger[data-permission-value="auto_edit"],
@@ -8304,6 +8308,10 @@
   .composer-combined-picker-row-label {
   color: #6fb6ff;
 }
+.composer-combined-picker-row[data-permission-value="read_only"]
+  .composer-combined-picker-row-label {
+  color: #6fb6ff;
+}
 .composer-combined-picker-row[data-permission-value="auto_edit"]
   .composer-combined-picker-row-label {
   color: #ef4444;
@@ -8315,6 +8323,10 @@
 /* Selected-row checkmark tint, shell-agnostic to match the
  * trigger + row label colours above. */
 .composer-combined-picker-row[data-permission-value="plan"].is-selected
+  .composer-combined-picker-check {
+  color: #6fb6ff;
+}
+.composer-combined-picker-row[data-permission-value="read_only"].is-selected
   .composer-combined-picker-check {
   color: #6fb6ff;
 }
@@ -9545,7 +9557,14 @@
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
   .composer-combined-picker-trigger[data-permission-value="plan"],
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
+  .composer-combined-picker-trigger[data-permission-value="read_only"],
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
   .composer-combined-picker-trigger[data-permission-value="plan"]
+  .composer-combined-picker-trigger-primary {
+  color: #1976d2 !important;
+}
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
+  .composer-combined-picker-trigger[data-permission-value="read_only"]
   .composer-combined-picker-trigger-primary {
   color: #1976d2 !important;
 }
@@ -9563,12 +9582,22 @@
   color: #1976d2;
 }
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
+  .composer-combined-picker-row[data-permission-value="read_only"]
+  .composer-combined-picker-row-label {
+  color: #1976d2;
+}
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
   .composer-combined-picker-row[data-permission-value="auto_edit"]
   .composer-combined-picker-row-label {
   color: #b91c1c;
 }
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
   .composer-combined-picker-row[data-permission-value="plan"].is-selected
+  .composer-combined-picker-check {
+  color: #1976d2;
+}
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
+  .composer-combined-picker-row[data-permission-value="read_only"].is-selected
   .composer-combined-picker-check {
   color: #1976d2;
 }
@@ -9600,6 +9629,10 @@
 }
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"]
   [data-composer-control="permission"][data-permission-value="plan"]::after {
+  color: rgba(25, 118, 210, 0.72) !important;
+}
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"]
+  [data-composer-control="permission"][data-permission-value="read_only"]::after {
   color: rgba(25, 118, 210, 0.72) !important;
 }
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"]
