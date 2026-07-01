@@ -328,6 +328,25 @@ describe('probeGrokUsage', () => {
     expect(pty.killed).toBe(true)
   })
 
+  it('answers the TUI terminal queries (DSR + XTVERSION) it blocks on at startup', async () => {
+    const pty = new FakePty()
+    const clock = new FakeClock()
+    const promise = probeGrokUsage({
+      spawnPty: () => pty,
+      now: () => FIXED_NOW,
+      setTimer: clock.setTimer,
+      clearTimer: clock.clearTimer,
+      timeoutMs: 1000
+    })
+
+    pty.emit('\x1b[?25l\x1b[6n\x1b[>0q')
+    expect(pty.writes).toContain('\x1b[1;1R')
+    expect(pty.writes).toContain('\x1bP>|xterm(370)\x1b\\')
+
+    clock.advance(1000)
+    await promise
+  })
+
   it('early-outs on the weekly-limit /usage screen too', async () => {
     const pty = new FakePty()
     const clock = new FakeClock()
@@ -346,6 +365,60 @@ describe('probeGrokUsage', () => {
     expect(snap.usageKind).toBe('weekly_limit')
     expect(snap.creditsUsedPercent).toBe(98)
     expect(snap.resetAtText).toBe('July 2, 09:04 PT')
+    expect(pty.killed).toBe(true)
+  })
+
+  it('holds a status-line-only reading open for the full /usage screen, then upgrades', async () => {
+    const pty = new FakePty()
+    const clock = new FakeClock()
+    let resolved = false
+    const promise = probeGrokUsage({
+      spawnPty: () => pty,
+      now: () => FIXED_NOW,
+      setTimer: clock.setTimer,
+      clearTimer: clock.clearTimer,
+      readyDelayMs: 100,
+      selectDelayMs: 100
+    }).then((s) => {
+      resolved = true
+      return s
+    })
+
+    // Welcome screen status line arrives first — usable, but no reset window.
+    pty.emit('[stable] Weekly limit left: 2% ·')
+    clock.advance(300)
+    await Promise.resolve()
+    expect(resolved).toBe(false) // did NOT settle on the partial reading
+
+    // The /usage screen streams in → full signal → settles on the beat.
+    pty.emit('Weekly limit: 98%\nNext reset: July 2, 09:04 PT\n')
+    clock.advance(250)
+    const snap = await promise
+    expect(snap.creditsUsedPercent).toBe(98)
+    expect(snap.resetAtText).toBe('July 2, 09:04 PT')
+    expect(snap.limitWindowSeconds).toBe(7 * 24 * 60 * 60)
+  })
+
+  it('falls back to the status-line reading when the /usage screen never renders', async () => {
+    const pty = new FakePty()
+    const clock = new FakeClock()
+    const promise = probeGrokUsage({
+      spawnPty: () => pty,
+      now: () => FIXED_NOW,
+      setTimer: clock.setTimer,
+      clearTimer: clock.clearTimer,
+      readyDelayMs: 100,
+      selectDelayMs: 100
+    })
+
+    pty.emit('[stable] Weekly limit left: 2% ·')
+    clock.advance(100 + 100 + 1500)
+
+    const snap = await promise
+    expect(snap.confidence).toBe('observed')
+    expect(snap.usageKind).toBe('weekly_limit')
+    expect(snap.creditsUsedPercent).toBe(98)
+    expect(snap.resetAtText).toBeNull()
     expect(pty.killed).toBe(true)
   })
 

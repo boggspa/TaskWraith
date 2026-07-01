@@ -283,6 +283,7 @@ export function probeGrokUsage(deps: GrokUsageProbeDeps): Promise<GrokUsageSnaps
   return new Promise<GrokUsageSnapshot>((resolve) => {
     let settled = false
     let buffer = ''
+    let partialFallbackArmed = false
     const timers: unknown[] = []
     let child: GrokPtyLike | null = null
 
@@ -308,14 +309,38 @@ export function probeGrokUsage(deps: GrokUsageProbeDeps): Promise<GrokUsageSnaps
 
     child.onData((data) => {
       buffer += data
-      // Early-out once a full credit/weekly-limit line has streamed in.
+      // The grok TUI (≥0.2.77) BLOCKS at startup waiting for terminal-query
+      // replies a real emulator would send. We are the terminal here, so
+      // answer them or the /usage screen never renders and the probe times
+      // out. DSR cursor-position → "row 1, col 1"; XTVERSION → an xterm id.
+      if (!settled) {
+        if (data.includes('\x1b[6n')) child?.write('\x1b[1;1R')
+        if (data.includes('\x1b[>0q') || data.includes('\x1b[>q')) {
+          child?.write('\x1bP>|xterm(370)\x1b\\')
+        }
+      }
+      const stripped = stripGrokAnsi(buffer)
+      // Early-out once the FULL usage screen has streamed in: a used-percent
+      // line ("Credits used" / "Weekly limit:") or a reset window.
       if (
-        /(?:Credits?\s*used|Weekly\s*limit(?:\s*left|\s*used)?):?\s*<?\s*\d/i.test(
-          stripGrokAnsi(buffer)
-        )
+        /(?:Credits?\s*used|Weekly\s*limit(?:\s*used)?):?\s*<?\s*\d/i.test(stripped) ||
+        /(?:Next\s*reset|Resets):?\s*[A-Za-z0-9]/i.test(stripped)
       ) {
-        // Give one more beat for the reset/pay-as-you-go lines, then parse.
+        // Give one more beat for the remaining lines, then parse.
         timers.push(setTimer(() => finish(parseGrokUsage(buffer, now())), 250))
+      } else if (!partialFallbackArmed && /Weekly\s*limit\s*left:?\s*<?\s*\d/i.test(stripped)) {
+        // The welcome screen's status line ("Weekly limit left: 2%") shows up
+        // BEFORE /usage is even sent. It is a usable reading but has no reset
+        // window, so don't settle on it immediately — leave time for the
+        // /usage screen (sent at readyDelay, selected at +selectDelay) to
+        // render, then fall back to the status-line data.
+        partialFallbackArmed = true
+        timers.push(
+          setTimer(
+            () => finish(parseGrokUsage(buffer, now())),
+            readyDelayMs + selectDelayMs + 1500
+          )
+        )
       }
     })
 
