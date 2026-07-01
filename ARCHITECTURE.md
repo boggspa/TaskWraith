@@ -57,6 +57,15 @@ Responsible for the UI:
   app-server exposes it, while other providers use TaskWraith-managed goal
   steering and lifecycle tools.
 
+Ensemble rounds are coordinated by `EnsembleOrchestrator` in the main process.
+The orchestrator dispatches one participant at a time, supports explicit
+`ensemble_yield` handoffs and `@mention` auto-promotion, and terminates when the
+rotation queue is exhausted. A shared liveness guard (`ensembleRoundLifecycle`)
+prevents stale round records from keeping the composer busy after the actual
+work has finished. Transcript mention chips resolve through the same alias-aware
+shared tokenizer used for routing, so displayed labels match the participant
+role or model alias the user typed.
+
 ## Visual Architecture
 
 ### Appearance System

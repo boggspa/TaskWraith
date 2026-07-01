@@ -68,6 +68,23 @@ history, and workspace state stay on your machine throughout.
 - **Inactive participant pickers.** Ensemble participant provider/model pickers
   stay editable for inactive seats while a round is running, so quota relief and
   seat swaps do not get blocked by the active speaker.
+- **Ensemble Boss close-out.** When the assigned Boss yields to the user, the
+  round now definitively finalizes instead of letting queued mention turns keep
+  the panel alive and bounce turns back.
+- **Ensemble mention rendering.** Transcript mention chips now use the same
+  alias-aware tokenizer as the composer and routing layer, so multi-word model
+  names, role aliases, and mixed words no longer get split or revert to the bare
+  provider name.
+- **Ensemble lifecycle after completion.** Stop glyphs and steer-queue behavior
+  no longer stick around after a round has finished; terminal rounds also clear
+  queued prompts and stale run-queue jobs so the Active Runs sidebar drains
+  correctly.
+- **Task Complete card during live runs.** The "Task Complete / Final Summary"
+  card is hidden whenever the current chat has fresh run evidence, preventing a
+  stale notice from sitting at the bottom of an active round.
+- **Latest Ensemble round collapse.** The transcript no longer collapses the
+  currently live Ensemble round into a card after a cancel or seat change; only
+  genuinely older rounds get the compact card treatment.
 
 ### Known Open
 - **Grok interrupted-lane resume.** Grok session-id persistence remains
