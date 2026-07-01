@@ -166,6 +166,7 @@ import {
   getStoredWorkspaceSidebarWidth
 } from './lib/panelWidths'
 import { getProviderLabel } from './lib/providerLabels'
+import { buildRecoveryMessagesForChat } from './lib/recoveryMessageBatch'
 import {
   GUEST_PARTICIPANT_STEERING_PREAMBLE,
   buildGuestParentTranscriptContext
@@ -9214,18 +9215,6 @@ function App(): React.JSX.Element {
     return queuedRunRequestFromJob(job, workspaces, Array.from(chatByIdRef.current.values()))
   }
 
-  const recoveryMessageId = (record: RunRecoveryRecord): string => `recovery-${record.id}`
-
-  const recoveryMessageContent = (record: RunRecoveryRecord): string => {
-    const providerLabel = getProviderLabel(record.provider)
-    const processText = record.process?.alive
-      ? ` A process with PID ${record.process.pid}${record.process.command ? ` (${record.process.command})` : ''} may still be running outside TaskWraith.`
-      : record.process
-        ? ` No live process was found for the recorded PID ${record.process.pid}.`
-        : ''
-    return `Recovered interrupted ${providerLabel} run after app restart. ${record.reason} TaskWraith marked the run as ${record.recoveredStatus}.${processText} ${record.resumeHint}`
-  }
-
   const applyRecoveryRecordsToChats = async (
     records: RunRecoveryRecord[],
     chatList: ChatRecord[]
@@ -9256,17 +9245,11 @@ function App(): React.JSX.Element {
       const chatRecords = recordsByChatId.get(chat.appChatId) || []
       if (chatRecords.length === 0) return chat
       const existingMessageIds = new Set(chat.messages.map((message) => message.id))
-      const messagesToAdd = chatRecords
-        .filter((record) => !existingMessageIds.has(recoveryMessageId(record)))
-        .map(
-          (record): ChatMessage => ({
-            id: recoveryMessageId(record),
-            role: 'system',
-            content: recoveryMessageContent(record),
-            timestamp: record.recoveredAt,
-            runId: record.runId
-          })
-        )
+      const messagesToAdd = buildRecoveryMessagesForChat(
+        chat.appChatId,
+        chatRecords,
+        existingMessageIds
+      )
       if (messagesToAdd.length === 0) return chat
       return {
         ...chat,
