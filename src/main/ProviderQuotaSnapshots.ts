@@ -454,27 +454,29 @@ export function normalizeClaudeUsageSnapshot(
   )
   if (sevenDay) windows.push(sevenDay)
   /*
-   * 1.0.3 hotfix — the Sonnet + Opus per-family weekly meters were
+   * 1.0.3 hotfix — the Fable + Opus per-family weekly meters were
    * sometimes missing from TaskWraith's Claude usage panel even when
    * Limit Counter (the maintainer's reference app) was clearly showing them.
    * The previous probe only knew the top-level snake/camel pair
    * (`seven_day_sonnet` / `sevenDaySonnet`). Anthropic's OAuth usage
    * response has subtly different shapes across subscription tiers
    * and account types; we now also probe the nested forms used by
-   * `seven_day.sonnet` / `sevenDay.sonnet`, plus the `models.sonnet`
-   * sub-tree some account variants emit. First non-null wins.
+   * `seven_day.fable` / `sevenDay.fable`, plus the `models.fable`
+   * sub-tree some account variants emit. First non-null wins. Legacy
+   * Sonnet keys are still accepted as aliases for the renamed Fable
+   * meter so older cached/provider payload shapes do not disappear.
    * Same broadening for Opus below. If all probes miss but the
    * top-level `seven_day` window is present, we log a one-shot
    * diagnostic so any further field-shape drift surfaces in dev
    * console rather than silently dropping the meter.
    */
-  const sevenDaySonnet = pickClaudeModelWindow(payload, 'sonnet')
-  const sonnetWindow = claudeUsageWindow('claude-weekly-sonnet', 'Sonnet', sevenDaySonnet)
-  if (sonnetWindow) windows.push(sonnetWindow)
+  const sevenDayFable = pickClaudeModelWindow(payload, 'fable')
+  const fableWindow = claudeUsageWindow('claude-weekly-fable', 'Fable', sevenDayFable)
+  if (fableWindow) windows.push(fableWindow)
   const sevenDayOpus = pickClaudeModelWindow(payload, 'opus')
   const opusWindow = claudeUsageWindow('claude-weekly-opus', 'Opus', sevenDayOpus)
   if (opusWindow) windows.push(opusWindow)
-  if (sevenDay && !sonnetWindow && !opusWindow && payload && typeof payload === 'object') {
+  if (sevenDay && !fableWindow && !opusWindow && payload && typeof payload === 'object') {
     logClaudeUsageMissingFamilyWindowOnce(payload)
   }
   const extraUsage = payload?.extraUsage ?? payload?.extra_usage
@@ -512,36 +514,38 @@ export function normalizeClaudeUsageSnapshot(
 /**
  * Pick a Claude per-family weekly window from the OAuth usage payload.
  * Tries every shape Anthropic has been observed to emit, returns the
- * first non-null candidate. Used for both Sonnet + Opus.
+ * first non-null candidate. Used for Fable + Opus.
  *
- *   Top-level snake/camel: `seven_day_sonnet` / `sevenDaySonnet`
- *   Nested under seven_day: `seven_day.sonnet` / `sevenDay.sonnet`
- *   Nested under models: `models.sonnet` / `models.sonnet.weekly` /
- *                        `models.sonnet.seven_day`
- *   Alt prefix: `weekly_sonnet` / `weeklySonnet`
+ *   Top-level snake/camel: `seven_day_fable` / `sevenDayFable`
+ *   Nested under seven_day: `seven_day.fable` / `sevenDay.fable`
+ *   Nested under models: `models.fable` / `models.fable.weekly` /
+ *                        `models.fable.seven_day`
+ *   Alt prefix: `weekly_fable` / `weeklyFable`
  *
- * The `family` argument is the lowercase model family name (`sonnet`
+ * The `family` argument is the lowercase model family name (`fable`
  * or `opus`). Returns whatever's at the matched path; `claudeUsageWindow`
  * decides if there's a usable `utilization` numeric inside.
  */
-function pickClaudeModelWindow(payload: any, family: 'sonnet' | 'opus'): any {
+function pickClaudeModelWindow(payload: any, family: 'fable' | 'opus'): any {
   if (!payload || typeof payload !== 'object') return null
-  const snake = `seven_day_${family}`
-  const camelSuffix = family === 'sonnet' ? 'Sonnet' : 'Opus'
-  const camel = `sevenDay${camelSuffix}`
-  const weeklySnake = `weekly_${family}`
-  const weeklyCamel = `weekly${camelSuffix}`
+  const aliases = family === 'fable' ? ['fable', 'sonnet'] : ['opus']
   const candidates: any[] = [
-    payload[snake],
-    payload[camel],
-    payload[weeklySnake],
-    payload[weeklyCamel],
-    payload?.seven_day?.[family],
-    payload?.sevenDay?.[family],
-    payload?.models?.[family]?.seven_day,
-    payload?.models?.[family]?.sevenDay,
-    payload?.models?.[family]?.weekly,
-    payload?.models?.[family]
+    ...aliases.flatMap((alias) => {
+      const camelSuffix =
+        alias === 'fable' ? 'Fable' : alias === 'sonnet' ? 'Sonnet' : 'Opus'
+      return [
+        payload[`seven_day_${alias}`],
+        payload[`sevenDay${camelSuffix}`],
+        payload[`weekly_${alias}`],
+        payload[`weekly${camelSuffix}`],
+        payload?.seven_day?.[alias],
+        payload?.sevenDay?.[alias],
+        payload?.models?.[alias]?.seven_day,
+        payload?.models?.[alias]?.sevenDay,
+        payload?.models?.[alias]?.weekly,
+        payload?.models?.[alias]
+      ]
+    })
   ]
   for (const candidate of candidates) {
     if (candidate && typeof candidate === 'object') return candidate
@@ -551,7 +555,7 @@ function pickClaudeModelWindow(payload: any, family: 'sonnet' | 'opus'): any {
 
 /**
  * One-shot diagnostic. Fires when a Claude OAuth usage payload has the
- * top-level weekly window but neither Sonnet nor Opus per-family
+ * top-level weekly window but neither Fable nor Opus per-family
  * windows survive normalisation — likely a field-shape drift we
  * haven't accounted for. Logs the payload's top-level keys (NOT
  * values — those may contain credentials/quota) so the user can
@@ -607,14 +611,18 @@ export function projectStaleSnapshotForward(snapshot: any): any {
   const trustRollover =
     !Number.isFinite(fetchedAt) || now - fetchedAt <= STALE_PROJECTION_TRUST_MAX_AGE_MS
   let anyProjected = false
+  let anyRenamed = false
   const projectedWindows = snapshot.windows.map((window: any) => {
     if (!window || typeof window !== 'object') return window
-    const resetAt = typeof window.resetAt === 'string' ? Date.parse(window.resetAt) : NaN
-    const windowSeconds = Number(window.limitWindowSeconds)
+    const normalizedWindow = normalizeLegacyClaudeQuotaWindow(snapshot.provider, window)
+    if (normalizedWindow !== window) anyRenamed = true
+    const resetAt =
+      typeof normalizedWindow.resetAt === 'string' ? Date.parse(normalizedWindow.resetAt) : NaN
+    const windowSeconds = Number(normalizedWindow.limitWindowSeconds)
     if (!Number.isFinite(resetAt) || !Number.isFinite(windowSeconds) || windowSeconds <= 0) {
-      return window
+      return normalizedWindow
     }
-    if (resetAt > now) return window
+    if (resetAt > now) return normalizedWindow
     const windowMs = windowSeconds * 1000
     let nextReset = resetAt
     // Advance by whole windows until we're in the future. Defensive
@@ -625,9 +633,9 @@ export function projectStaleSnapshotForward(snapshot: any): any {
       nextReset += windowMs
       guard += 1
     }
-    if (nextReset <= now) return window
+    if (nextReset <= now) return normalizedWindow
     anyProjected = true
-    const rolled = { ...window, resetAt: new Date(nextReset).toISOString() }
+    const rolled = { ...normalizedWindow, resetAt: new Date(nextReset).toISOString() }
     // Recent → assume a clean rollover (window is fresh at 0%). Too stale →
     // we don't know what's been used; keep last-known %, just fix the clock.
     if (!trustRollover) return rolled
@@ -638,8 +646,22 @@ export function projectStaleSnapshotForward(snapshot: any): any {
       limitLabel: '100% remaining'
     }
   })
-  if (!anyProjected) return snapshot
-  return { ...snapshot, windows: projectedWindows, projected: true }
+  if (!anyProjected && !anyRenamed) return snapshot
+  return { ...snapshot, windows: projectedWindows, ...(anyProjected ? { projected: true } : {}) }
+}
+
+function normalizeLegacyClaudeQuotaWindow(provider: unknown, window: any): any {
+  const id = String(window?.id || '')
+  const label = String(window?.label || '')
+  const isLegacySonnetId = id.toLowerCase() === 'claude-weekly-sonnet'
+  const isLegacySonnetLabel = provider === 'claude' && label.trim().toLowerCase() === 'sonnet'
+  const isLegacySonnetWindow = isLegacySonnetId || isLegacySonnetLabel
+  if (!isLegacySonnetWindow) return window
+  return {
+    ...window,
+    id: id === 'claude-weekly-sonnet' ? 'claude-weekly-fable' : window.id,
+    label: 'Fable'
+  }
 }
 
 let claudeUsageLoggedMissingFamilyFields = false
@@ -660,7 +682,7 @@ function logClaudeUsageMissingFamilyWindowOnce(payload: any): void {
         : null
 
     console.warn(
-      '[claudeUsage] per-family weekly windows (Sonnet / Opus) not found in OAuth payload — ' +
+      '[claudeUsage] per-family weekly windows (Fable / Opus) not found in OAuth payload — ' +
         `top-level keys: ${JSON.stringify(topLevelKeys)}` +
         (sevenDayKeys ? `, seven_day.* keys: ${JSON.stringify(sevenDayKeys)}` : '') +
         (modelsKeys ? `, models.* keys: ${JSON.stringify(modelsKeys)}` : '')

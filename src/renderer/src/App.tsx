@@ -5756,7 +5756,7 @@ function App(): React.JSX.Element {
       ordered.push(buildQuotaAggregate('codex', codexWindows, effectiveCodexUsage))
     }
 
-    // Claude — 5H (Session), Weekly, (Max-gated) Sonnet Weekly, (Max20x) Opus Weekly
+    // Claude — 5H (Session), Weekly, (Max-gated) Fable Weekly, (Max20x) Opus Weekly
     const claudeFresh = (Array.isArray(claudeSnap?.windows) ? claudeSnap.windows : [])
       .map((w: any, i: number) => normalizeQuotaWindow('claude', w, `claude-quota-${i}`))
       .filter((w): w is UsageWindowAggregate => Boolean(w))
@@ -5791,6 +5791,7 @@ function App(): React.JSX.Element {
       if (
         normalized.includes('claude') ||
         normalized.includes('opus') ||
+        normalized.includes('fable') ||
         normalized.includes('sonnet') ||
         normalized.includes('haiku')
       )

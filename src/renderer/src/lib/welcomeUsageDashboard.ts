@@ -465,6 +465,7 @@ const inferProviderFromModelName = (model: string): ProviderId => {
   if (
     normalized.includes('claude') ||
     normalized.includes('opus') ||
+    normalized.includes('fable') ||
     normalized.includes('sonnet') ||
     normalized.includes('haiku')
   )

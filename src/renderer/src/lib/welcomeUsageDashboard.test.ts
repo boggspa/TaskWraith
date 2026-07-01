@@ -527,6 +527,26 @@ describe('buildWelcomeUsageDashboardData model-breakdown filter (Welcome L8)', (
     ])
   })
 
+  it('treats bare Fable model names as Claude usage', () => {
+    const records: UsageRecord[] = [
+      baseRecord({
+        id: 'fable-legacy',
+        provider: undefined,
+        timestamp: NOW - 90_000,
+        model: 'fable',
+        inputTokens: 2_000,
+        outputTokens: 500,
+        totalTokens: 2_500
+      })
+    ]
+
+    const data = buildWelcomeUsageDashboardData(records, [], 'all', NOW)
+
+    expect(data.modelBreakdown.map((m) => [m.provider, m.model, m.label, m.colorClass])).toEqual([
+      ['claude', 'fable', 'Claude Fable', 'provider-claude']
+    ])
+  })
+
   it('treats bare Gemma model names as local Ollama usage', () => {
     const records: UsageRecord[] = [
       baseRecord({

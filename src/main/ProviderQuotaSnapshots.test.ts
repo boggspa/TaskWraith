@@ -133,12 +133,12 @@ describe('ProviderQuotaSnapshots', () => {
     expect(labels).toContain('GPT-5.3-Codex-Spark 5h')
   })
 
-  it('renders Claude Sonnet utilization even without a reset timestamp', () => {
+  it('renders Claude Fable utilization even without a reset timestamp', () => {
     const snapshot = normalizeClaudeUsageSnapshot(
       {
         five_hour: { utilization: 15, reset_at: '2026-05-26T04:39:00Z' },
         seven_day: { utilization: 97, reset_at: '2026-05-26T07:59:00Z' },
-        seven_day_sonnet: { utilization: 3 }
+        seven_day_fable: { utilization: 3 }
       },
       { subscriptionType: 'max_5x' }
     )
@@ -146,9 +146,10 @@ describe('ProviderQuotaSnapshots', () => {
     expect(snapshot.windows?.map((windowEntry) => windowEntry.label)).toEqual([
       'Session',
       'Weekly',
-      'Sonnet'
+      'Fable'
     ])
-    expect(snapshot.windows?.find((windowEntry) => windowEntry.label === 'Sonnet')).toMatchObject({
+    expect(snapshot.windows?.find((windowEntry) => windowEntry.label === 'Fable')).toMatchObject({
+      id: 'claude-weekly-fable',
       usedPercent: 3,
       remainingPercent: 97,
       resetAt: undefined
@@ -182,14 +183,14 @@ describe('ProviderQuotaSnapshots', () => {
     expect(snapshot.windows?.map((windowEntry) => windowEntry.remainingPercent)).toEqual([100, 100])
   })
 
-  describe('Claude per-family weekly probe (sonnet/opus shape drift)', () => {
-    it('finds Sonnet under nested seven_day.sonnet', () => {
+  describe('Claude per-family weekly probe (fable/opus shape drift)', () => {
+    it('finds Fable under nested seven_day.fable', () => {
       const snapshot = normalizeClaudeUsageSnapshot({
-        seven_day: { utilization: 80, sonnet: { utilization: 12 } }
+        seven_day: { utilization: 80, fable: { utilization: 12 } }
       })
       const labels = snapshot.windows?.map((w) => w.label) || []
-      expect(labels).toContain('Sonnet')
-      expect(snapshot.windows?.find((w) => w.label === 'Sonnet')?.usedPercent).toBe(12)
+      expect(labels).toContain('Fable')
+      expect(snapshot.windows?.find((w) => w.label === 'Fable')?.usedPercent).toBe(12)
     })
 
     it('finds Opus under models.opus.weekly', () => {
@@ -202,11 +203,14 @@ describe('ProviderQuotaSnapshots', () => {
       expect(snapshot.windows?.find((w) => w.label === 'Opus')?.usedPercent).toBe(27)
     })
 
-    it('falls back to top-level snake case (existing behaviour)', () => {
+    it('maps legacy Sonnet snake case to the renamed Fable meter', () => {
       const snapshot = normalizeClaudeUsageSnapshot({
         seven_day_sonnet: { utilization: 3 }
       })
-      expect(snapshot.windows?.find((w) => w.label === 'Sonnet')?.usedPercent).toBe(3)
+      expect(snapshot.windows?.find((w) => w.label === 'Fable')).toMatchObject({
+        id: 'claude-weekly-fable',
+        usedPercent: 3
+      })
     })
   })
 
@@ -297,6 +301,33 @@ describe('ProviderQuotaSnapshots', () => {
       expect(projected.projected).toBeUndefined()
       expect(projected.windows[0].usedPercent).toBe(30)
       expect(projected.windows[0].resetAt).toBe(twoHoursFromNow)
+    })
+
+    it('renames cached Claude Sonnet quota windows to Fable', () => {
+      const input = {
+        provider: 'claude',
+        windows: [
+          {
+            id: 'claude-weekly-sonnet',
+            label: 'Sonnet',
+            usedPercent: 18,
+            remainingPercent: 82,
+            runs: 0,
+            totalTokens: 0,
+            trackingOnly: false,
+            limitLabel: '82% remaining'
+          }
+        ]
+      }
+
+      const projected = projectStaleSnapshotForward(input)
+      expect(projected.projected).toBeUndefined()
+      expect(projected.windows[0]).toMatchObject({
+        id: 'claude-weekly-fable',
+        label: 'Fable',
+        usedPercent: 18,
+        remainingPercent: 82
+      })
     })
 
     it('leaves windows without limitWindowSeconds alone (unknown rollover cadence)', () => {
