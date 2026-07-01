@@ -417,6 +417,77 @@ describe('ProviderQuotaSnapshots', () => {
       expect(byLabel('Fable')).toBe(7 * 24 * 60 * 60)
     })
 
+    it('normalizes the real captured live payload (2026-07-01, Max 20x) exactly', () => {
+      // Trimmed verbatim from a live api.anthropic.com/api/oauth/usage
+      // response: every legacy direct family field is null (plus decoy
+      // fields), Fable exists ONLY as a scoped limits[] entry whose scope
+      // nests the name under scope.model.display_name, and the session
+      // aggregate uses group "session" (not "five_hour").
+      const snapshot = normalizeClaudeUsageSnapshot({
+        five_hour: { utilization: 63, resets_at: '2026-07-02T02:10:00.567283+00:00' },
+        seven_day: { utilization: 12, resets_at: '2026-07-07T07:00:00.567305+00:00' },
+        seven_day_oauth_apps: null,
+        seven_day_opus: null,
+        seven_day_sonnet: null,
+        seven_day_cowork: null,
+        tangelo: null,
+        extra_usage: { is_enabled: false },
+        limits: [
+          {
+            kind: 'session',
+            group: 'session',
+            percent: 63,
+            severity: 'normal',
+            resets_at: '2026-07-02T02:10:00.567283+00:00',
+            scope: null,
+            is_active: true
+          },
+          {
+            kind: 'weekly_all',
+            group: 'weekly',
+            percent: 12,
+            severity: 'normal',
+            resets_at: '2026-07-07T07:00:00.567305+00:00',
+            scope: null,
+            is_active: false
+          },
+          {
+            kind: 'weekly_scoped',
+            group: 'weekly',
+            percent: 21,
+            severity: 'normal',
+            resets_at: '2026-07-07T07:00:00.567531+00:00',
+            scope: { model: { id: null, display_name: 'Fable' }, surface: null },
+            is_active: false
+          }
+        ]
+      })
+      expect(
+        snapshot.windows?.map((w) => ({ id: w.id, usedPercent: w.usedPercent, resetAt: w.resetAt }))
+      ).toEqual([
+        { id: 'claude-5h', usedPercent: 63, resetAt: '2026-07-02T02:10:00.567Z' },
+        { id: 'claude-weekly', usedPercent: 12, resetAt: '2026-07-07T07:00:00.567Z' },
+        { id: 'claude-weekly-fable', usedPercent: 21, resetAt: '2026-07-07T07:00:00.567Z' }
+      ])
+    })
+
+    it('builds Session from the live "session"-group limits entry when five_hour vanishes', () => {
+      const snapshot = normalizeClaudeUsageSnapshot({
+        limits: [
+          {
+            kind: 'session',
+            group: 'session',
+            percent: 63,
+            resets_at: '2026-07-02T02:10:00Z',
+            scope: null
+          },
+          { kind: 'weekly_all', group: 'weekly', percent: 12, scope: null }
+        ]
+      })
+      expect(snapshot.windows?.find((w) => w.label === 'Session')?.usedPercent).toBe(63)
+      expect(snapshot.windows?.find((w) => w.label === 'Weekly')?.usedPercent).toBe(12)
+    })
+
     it('tolerates malformed limits[] entries without throwing', () => {
       const snapshot = normalizeClaudeUsageSnapshot({
         limits: [null, 'garbage', { group: 'weekly', kind: 'weekly_scoped' }, {}]

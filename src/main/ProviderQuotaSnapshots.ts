@@ -661,15 +661,18 @@ function pickClaudeScopedLimitWindow(payload: any, family: 'fable' | 'opus'): an
  * Aggregate (non-model-scoped) fallback from limits[]: if Anthropic
  * completes the migration and drops the top-level `five_hour` /
  * `seven_day` fields, the Session and Weekly meters keep working off
- * `{ group: "five_hour"|"weekly", kind: "*_all" }` entries. Scoped
+ * the aggregate limits entries. The live payload (captured 2026-07-01)
+ * names the session bucket `group: "session"` / `kind: "session"`; the
+ * weekly aggregate is `group: "weekly"` / `kind: "weekly_all"`. Scoped
  * per-family buckets never qualify.
  */
 function pickClaudeAggregateLimitWindow(payload: any, group: 'five_hour' | 'weekly'): any {
   const limits = payload?.limits
   if (!Array.isArray(limits)) return null
+  const groupNames = group === 'five_hour' ? ['five_hour', 'session'] : ['weekly']
   for (const entry of limits) {
     if (!entry || typeof entry !== 'object') continue
-    if (String(entry.group ?? '').toLowerCase() !== group) continue
+    if (!groupNames.includes(String(entry.group ?? '').toLowerCase())) continue
     if (
       String(entry.kind ?? '')
         .toLowerCase()

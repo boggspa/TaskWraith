@@ -108,19 +108,13 @@ describe('buildRemoteFirstLaunchState', () => {
       'grok',
       'ollama'
     ])
-    expect(state.providerCards.find((card) => card.id === 'codex')?.statusKind).toBe(
-      'outOfUsage'
-    )
-    expect(state.providerCards.find((card) => card.id === 'claude')?.statusKind).toBe(
-      'needsSignIn'
-    )
+    expect(state.providerCards.find((card) => card.id === 'codex')?.statusKind).toBe('outOfUsage')
+    expect(state.providerCards.find((card) => card.id === 'claude')?.statusKind).toBe('needsSignIn')
     expect(state.providerCards.find((card) => card.id === 'kimi')?.statusKind).toBe('cliMissing')
     expect(state.providerCards.find((card) => card.id === 'cursor')?.statusText).toBe(
       'Not observable'
     )
-    expect(state.providerCards.find((card) => card.id === 'ollama')?.statusKind).toBe(
-      'localReady'
-    )
+    expect(state.providerCards.find((card) => card.id === 'ollama')?.statusKind).toBe('localReady')
   })
 
   it('keeps the payload redacted to labels, coarse statuses, setup hints, and usage windows', () => {
@@ -202,9 +196,7 @@ describe('buildRemoteFirstLaunchState', () => {
     expect(state.notifications.map((notice) => notice.id)).toContain(
       'ollama-local-models-2026-06-30'
     )
-    expect(state.notifications.map((notice) => notice.id)).toContain(
-      'claude-sonnet-5-2026-06-30'
-    )
+    expect(state.notifications.map((notice) => notice.id)).toContain('claude-sonnet-5-2026-06-30')
     expect(state.notifications.map((notice) => notice.id)).toContain(
       'claude-fable-mythos-return-2026-07-01'
     )
@@ -231,9 +223,7 @@ describe('buildRemoteFirstLaunchState', () => {
     expect(antigravity?.kind).toBe('info')
     expect(antigravity?.title).toBe('AntiGravity will not be added.')
 
-    const sonnet = state.notifications.find(
-      (notice) => notice.id === 'claude-sonnet-5-2026-06-30'
-    )
+    const sonnet = state.notifications.find((notice) => notice.id === 'claude-sonnet-5-2026-06-30')
     expect(sonnet?.tone).toBe('default')
     expect(sonnet?.accent).toBe('claude')
     expect(sonnet?.title).toBe('Claude Sonnet 5 is available.')

@@ -50,7 +50,9 @@ export interface RemoteFirstLaunchProviderCard {
   statusText: string
   detail: string
   setupHint: string
-  setupCommands: Array<Pick<ProviderInstallEntry, 'id' | 'label' | 'command' | 'source' | 'platform'>>
+  setupCommands: Array<
+    Pick<ProviderInstallEntry, 'id' | 'label' | 'command' | 'source' | 'platform'>
+  >
   usageWindows: RemoteFirstLaunchUsageWindow[]
   usageGeneratedAt?: string
 }
@@ -77,7 +79,9 @@ export interface RemoteFirstLaunchState {
   notifications: RemoteFirstLaunchNotice[]
   workspace: RemoteFirstLaunchWorkspaceSummary
   providerCards: RemoteFirstLaunchProviderCard[]
-  setupCommands: Array<Pick<ProviderInstallEntry, 'id' | 'label' | 'command' | 'source' | 'platform'>>
+  setupCommands: Array<
+    Pick<ProviderInstallEntry, 'id' | 'label' | 'command' | 'source' | 'platform'>
+  >
   ollamaModelCommands: Array<{ id: string; label: string; command: string }>
 }
 
@@ -93,18 +97,15 @@ const PROVIDER_ORDER: ProviderId[] = ['codex', 'claude', 'kimi', 'cursor', 'grok
 const OPTIONAL_PROVIDERS = new Set<ProviderId>(['kimi', 'cursor', 'grok', 'ollama'])
 
 const PROVIDER_DESCRIPTIONS: Record<ProviderId, string> = {
-  gemini:
-    'Gemini is retired for new runs. Existing Gemini chats remain visible in history.',
+  gemini: 'Gemini is retired for new runs. Existing Gemini chats remain visible in history.',
   codex:
     'OpenAI Codex CLI for fast agentic coding work. Sign-in happens on the Mac through the Codex CLI.',
   claude:
     'Anthropic Claude Code for careful reasoning and edits. OAuth or API-key setup happens on the Mac.',
-  kimi:
-    'Moonshot Kimi for structured tool-call runs. Use it when a Moonshot API key is configured on the Mac.',
+  kimi: 'Moonshot Kimi for structured tool-call runs. Use it when a Moonshot API key is configured on the Mac.',
   cursor:
     'Cursor Composer runs through the Cursor CLI. The CLI may still ask for sign-in on the Mac.',
-  grok:
-    'xAI Grok runs through its local CLI. TaskWraith does not read Grok credentials remotely.',
+  grok: 'xAI Grok runs through its local CLI. TaskWraith does not read Grok credentials remotely.',
   ollama:
     'Local Ollama models run on the Mac with no cloud account required. Pull at least one local model on the Mac.'
 }
@@ -215,7 +216,8 @@ function deriveProviderStatus(
     return {
       kind: 'stale',
       text: 'Stale',
-      detail: 'The last usage/readiness snapshot is cached. Open TaskWraith on the Mac to refresh it.'
+      detail:
+        'The last usage/readiness snapshot is cached. Open TaskWraith on the Mac to refresh it.'
     }
   }
   const availability = contract?.availability
