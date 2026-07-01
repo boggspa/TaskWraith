@@ -66,6 +66,9 @@ export type PooledAgentIdentity = {
   hue: number
   /** Optional explicit #RRGGBB override; otherwise derived from hue. */
   accent?: string
+  /** When false, render the icon monochrome (ignore accent/hue) — for pool
+   * icons that carry their own colour. Absent ⇒ tinted (pre-toggle default). */
+  hueEnabled?: boolean
 }
 
 export type PooledAgentConfig = {
@@ -159,6 +162,23 @@ export function accentFromHue(hue: number): string {
   return `#${toHex(r)}${toHex(g)}${toHex(b)}`.toUpperCase()
 }
 
+/** Neutral ink for a de-tinted (monochrome) pool icon. */
+export const POOL_ICON_NEUTRAL = '#8A8F98'
+
+/**
+ * Resolve the ink for a pool icon, collapsing to a neutral tone when hue tinting
+ * is switched off. Used by every colour path in {@link PooledAgentIcon} so the
+ * toggle can't silently no-op for one icon kind.
+ */
+export function pooledIconColor(
+  accent: string | undefined,
+  hue: number,
+  hueEnabled?: boolean
+): string {
+  if (hueEnabled === false) return POOL_ICON_NEUTRAL
+  return accent || accentFromHue(hue)
+}
+
 export function pooledAgentIdentitySnapshot(agent: PooledAgent): PooledAgentIdentitySnapshot {
   const identity = agent.identity
   const nickname = identity.nickname.trim() || agent.config.role || 'Agent'
@@ -171,7 +191,8 @@ export function pooledAgentIdentitySnapshot(agent: PooledAgent): PooledAgentIden
     ...(identity.accent ? { accent: identity.accent } : {}),
     ...(identity.slug ? { slug: identity.slug } : {}),
     ...(identity.assetKey ? { assetKey: identity.assetKey } : {}),
-    ...(identity.seed ? { seed: identity.seed } : {})
+    ...(identity.seed ? { seed: identity.seed } : {}),
+    ...(typeof identity.hueEnabled === 'boolean' ? { hueEnabled: identity.hueEnabled } : {})
   }
 }
 

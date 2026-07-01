@@ -544,6 +544,8 @@ export interface PooledAgentIdentitySnapshot {
   slug?: string
   assetKey?: string
   seed?: string
+  /** When false, render the icon monochrome (ignore accent). Absent ⇒ tinted. */
+  hueEnabled?: boolean
 }
 
 export interface EnsembleRoundParticipantState {

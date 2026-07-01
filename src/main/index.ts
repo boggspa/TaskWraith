@@ -23181,7 +23181,8 @@ if (isGeminiMcpBridgeProcess) {
         ...(typeof record.assetKey === 'string' && record.assetKey
           ? { assetKey: record.assetKey }
           : {}),
-        ...(typeof record.seed === 'string' && record.seed ? { seed: record.seed } : {})
+        ...(typeof record.seed === 'string' && record.seed ? { seed: record.seed } : {}),
+        ...(typeof record.hueEnabled === 'boolean' ? { hueEnabled: record.hueEnabled } : {})
       }
     }
 

@@ -46,6 +46,8 @@ import {
   pooledAgentIconProps,
   pooledAgentIdentitySnapshot,
   pooledAgentToParticipantSnapshot,
+  pooledIconColor,
+  POOL_ICON_NEUTRAL,
   POOLED_AGENT_STORAGE_KEY,
   propagatePooledAgentToPresets,
   removePooledAgent,
@@ -143,6 +145,27 @@ describe('upsertPooledAgent', () => {
 
   it('rejects an invalid agent', () => {
     expect(() => upsertPooledAgent({ agentId: 'nope' } as unknown as PooledAgent)).toThrow()
+  })
+})
+
+describe('hue toggle', () => {
+  it('pooledIconColor returns the accent when tinting is on or unset', () => {
+    expect(pooledIconColor('#FF0000', 120, true)).toBe('#FF0000')
+    expect(pooledIconColor('#FF0000', 120, undefined)).toBe('#FF0000')
+    expect(pooledIconColor(undefined, 120, undefined)).toBe(accentFromHue(120))
+  })
+
+  it('pooledIconColor collapses to neutral when tinting is off, regardless of accent/hue', () => {
+    expect(pooledIconColor('#FF0000', 120, false)).toBe(POOL_ICON_NEUTRAL)
+    expect(pooledIconColor(undefined, 300, false)).toBe(POOL_ICON_NEUTRAL)
+  })
+
+  it('snapshot carries hueEnabled when set false, and omits it when absent (back-compat)', () => {
+    const agent = createPooledAgentFromParticipant(sampleParticipant())
+    // Absent by default ⇒ key omitted so existing snapshots round-trip unchanged.
+    expect('hueEnabled' in pooledAgentIdentitySnapshot(agent)).toBe(false)
+    const untinted = { ...agent, identity: { ...agent.identity, hueEnabled: false } }
+    expect(pooledAgentIdentitySnapshot(untinted).hueEnabled).toBe(false)
   })
 })
 

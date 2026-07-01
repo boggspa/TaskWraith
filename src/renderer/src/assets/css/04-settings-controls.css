@@ -7643,6 +7643,21 @@ input:disabled, select:disabled, textarea:disabled {
   color: var(--text-secondary);
 }
 
+.agent-pool-hue-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  user-select: none;
+}
+
+.agent-pool-hue-toggle input {
+  margin: 0;
+}
+
 .agent-pool-editor-close {
   flex: 0 0 auto;
   align-self: flex-start;
