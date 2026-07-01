@@ -205,3 +205,82 @@ describe('ChatService collaborator comments', () => {
     expect(collaboration.listShares('chat-1').some((share) => share.enabled)).toBe(false)
   })
 })
+
+/*
+ * Phase 2 (P2b) — structured request-host-action contributions + auto-draft.
+ */
+describe('ChatService collaborator action requests (P2b)', () => {
+  it('rejects an action request under plain comments rules', () => {
+    const { service } = harness()
+    const { shareId, collaboratorId } = admitted(service)
+    expect(() =>
+      service.appendCollaboratorComment({
+        shareId,
+        chatId: 'chat-1',
+        collaboratorId,
+        clientMessageId: 'c-1',
+        content: 'please run the tests',
+        intent: 'requestHostAction'
+      })
+    ).toThrow(/does not accept host-action requests/)
+  })
+
+  it('stamps contributionKind for action requests under requestHostAction rules — no draft, no send', () => {
+    const { service } = harness()
+    const { shareId, collaboratorId } = admitted(service)
+    service.updateHumanCollaborationShareRules({ shareId, preset: 'requestHostAction' })
+
+    const result = service.appendCollaboratorComment({
+      shareId,
+      chatId: 'chat-1',
+      collaboratorId,
+      clientMessageId: 'c-1',
+      content: 'please run the tests',
+      intent: 'requestHostAction'
+    })
+    expect(result.message.metadata?.contributionKind).toBe('requestHostAction')
+    expect(result.message.metadata?.kind).toBe('humanCollaboratorComment')
+    expect(result.message.metadata?.sourceTrust).toBe('external_untrusted')
+    // requestHostAction preset is host-click, not auto-draft: nothing pre-fills.
+    expect(result.autoDraft).toBeUndefined()
+    expect(result.message.metadata?.promotedAt).toBeUndefined()
+  })
+
+  it('autoDraft rules return a wrapped provenance draft, stamped promotedBy auto — never host', () => {
+    const { service } = harness()
+    const { shareId, collaboratorId } = admitted(service)
+    service.updateHumanCollaborationShareRules({ shareId, preset: 'autoDraft' })
+
+    const result = service.appendCollaboratorComment({
+      shareId,
+      chatId: 'chat-1',
+      collaboratorId,
+      clientMessageId: 'c-2',
+      content: 'please add a regression test',
+      intent: 'requestHostAction'
+    })
+    expect(result.autoDraft).toContain('Auto-drafted from an action request by collaborator Alex')
+    expect(result.autoDraft).toContain('external, untrusted')
+    expect(result.autoDraft).toContain('review and edit it before sending')
+    // Provenance: share id, message id, timestamp.
+    expect(result.autoDraft).toContain(shareId)
+    expect(result.autoDraft).toContain(result.message.id)
+    expect(result.message.metadata?.promotedBy).toBe('auto')
+    expect(result.message.metadata?.promotedDraft).toBe(result.autoDraft)
+  })
+
+  it('a plain comment under autoDraft rules never auto-drafts', () => {
+    const { service } = harness()
+    const { shareId, collaboratorId } = admitted(service)
+    service.updateHumanCollaborationShareRules({ shareId, preset: 'autoDraft' })
+    const result = service.appendCollaboratorComment({
+      shareId,
+      chatId: 'chat-1',
+      collaboratorId,
+      clientMessageId: 'c-3',
+      content: 'just a note'
+    })
+    expect(result.autoDraft).toBeUndefined()
+    expect(result.message.metadata?.contributionKind).toBeUndefined()
+  })
+})

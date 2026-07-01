@@ -678,5 +678,76 @@ describe('HumanCollaborationRuntime', () => {
       expect.objectContaining({ kind: 'session.disconnected', collaboratorId: confirmed.collaboratorId })
     )
   })
+
+  it('P2b: sanitizes contribution intent — junk degrades to a plain comment, rules gate action requests', async () => {
+    const store = new HumanCollaborationStore()
+    const share = store.createShare({ chatId: 'chat-1', mode: 'comments', now: 1000, inviteTtlMs: 10000 })
+    const collaborator = makeCollaborationIdentity()
+    const host = generateIdentityKeyPair()
+    const appendComment = vi.fn((input: HumanCollaborationAppendRequest & { intent?: string }) => ({
+      messageId: input.clientMessageId,
+      intentSeen: input.intent
+    }))
+    let clock = 1000
+    const runtime = new HumanCollaborationRuntime({
+      identityKeyPair: host,
+      store,
+      buildProjection: vi.fn(),
+      appendComment,
+      now: () => clock
+    })
+
+    const begin = await runtime.beginAdmission({
+      shareId: share.share.shareId,
+      chatId: 'chat-1',
+      displayName: 'Alex',
+      inviteToken: share.inviteToken,
+      collaboratorIdentityPubKeyB64: collaborator.identityPubKeyB64,
+      collaboratorEphemeralPubKeyB64: collaborator.ephemeralPubKeyB64,
+      collaboratorNonceB64: collaborator.nonceB64
+    })
+    const context = makeTranscriptContext({
+      shareId: share.share.shareId,
+      chatId: 'chat-1',
+      inviteId: begin.inviteId,
+      inviteToken: share.inviteToken,
+      inviteExpiresAt: begin.expiresAt,
+      shareMode: 'comments',
+      hostIdentityPubKeyB64: begin.hostIdentityPubKeyB64,
+      hostEphemeralPubKeyB64: begin.hostEphemeralPubKeyB64,
+      hostNonceB64: begin.hostNonceB64,
+      hostCollaborator: collaborator
+    })
+    const confirmed = await runtime.confirmSas({
+      handshakeId: begin.handshakeId,
+      confirmCode: begin.confirmCode,
+      collaboratorTranscriptSigB64: b64.encode(
+        signEd25519(collaborator.identity.privateKey, computeHumanCollaborationTranscriptHash(context))
+      )
+    })
+
+    // Hostile/junk intent value degrades to a plain comment (no throw, no leak).
+    await runtime.appendComment({
+      sessionId: confirmed.sessionId,
+      clientMessageId: 'j-1',
+      content: 'hello',
+      intent: 'directDispatch' as never
+    })
+    expect(appendComment).toHaveBeenLastCalledWith(
+      expect.objectContaining({ clientMessageId: 'j-1', intent: undefined })
+    )
+
+    // A REAL action request is rule-gated: the comments preset rejects it
+    // (advance the clock past the rate-limit window so the RULES gate decides).
+    clock += 60_000
+    await expect(
+      runtime.appendComment({
+        sessionId: confirmed.sessionId,
+        clientMessageId: 'j-2',
+        content: 'please act',
+        intent: 'requestHostAction'
+      })
+    ).rejects.toThrow(/does not accept host-action requests/)
+  })
 })
 

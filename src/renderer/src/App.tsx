@@ -8602,6 +8602,19 @@ function App(): React.JSX.Element {
       })
     }
 
+    // P2b auto-draft: a collaborator action request under autoDraft rules
+    // pre-fills the composer draft with the wrapped, provenance-carrying text.
+    // Display-only — nothing is sent or queued; the host reviews and sends.
+    let humanCollaborationActionRequestUnsubscribe: (() => void) | null = null
+    if (typeof window.api.onHumanCollaborationActionRequest === 'function') {
+      humanCollaborationActionRequestUnsubscribe = window.api.onHumanCollaborationActionRequest(
+        (payload) => {
+          if (!payload?.chatId || typeof payload.draft !== 'string') return
+          setChatPromptDraft(payload.chatId, payload.draft)
+        }
+      )
+    }
+
     // Trusted audio/video media refs for a foreground solo run. Main constructs
     // these refs and pushes them on this dedicated main-only channel, so unlike
     // the forgeable provider `assistant_media_refs` lane (which sanitizes —
@@ -8718,6 +8731,7 @@ function App(): React.JSX.Element {
     return () => {
       window.api.removeListeners()
       humanCollaborationUnsubscribe?.()
+      humanCollaborationActionRequestUnsubscribe?.()
       trustedMediaRefsUnsubscribe?.()
       yoloUnsubscribe?.()
       agentQuestionUnsubscribe?.()

@@ -12,10 +12,12 @@ import type {
 import { assertSafeChatId } from '../ChatPath'
 import { randomUUID } from 'crypto'
 import {
+  autoDraftedCollaboratorPrompt,
   humanCollaboratorMetadata,
   isHumanCollaboratorComment,
   makeHumanCollaboratorComment,
-  promotedCollaboratorPrompt
+  promotedCollaboratorPrompt,
+  type HumanCollaboratorContributionKind
 } from '../collaboration/HumanCollaboratorMessages'
 import type {
   ConsumeInviteResult,
@@ -447,15 +449,19 @@ export class ChatService {
     collaboratorId: string
     clientMessageId: string
     content: string
-  }): { chat: ChatRecord; message: ChatMessage; deduped: boolean } {
+    /** P2b intent; anything but the exact action-request string is a comment. */
+    intent?: HumanCollaboratorContributionKind
+  }): { chat: ChatRecord; message: ChatMessage; deduped: boolean; autoDraft?: string } {
     const store = this.requireHumanCollaborationStore()
     const content = requireBoundedText(args.content, 'Comment', 8000)
     const chatId = requireSafeChatId(args.chatId, 'Chat id')
+    const isActionRequest = args.intent === 'requestHostAction'
     const validation = store.validateAppend({
       shareId: requireNonEmptyString(args.shareId, 'Share id'),
       chatId,
       collaboratorId: requireNonEmptyString(args.collaboratorId, 'Collaborator id'),
-      clientMessageId: requireNonEmptyString(args.clientMessageId, 'Client message id')
+      clientMessageId: requireNonEmptyString(args.clientMessageId, 'Client message id'),
+      ...(isActionRequest ? { intent: 'requestHostAction' as const } : {})
     })
 
     // P2a: the share's contribution rules can NARROW the accepted payload size
@@ -497,7 +503,7 @@ export class ChatService {
       clientMessageId: args.clientMessageId,
       messageId
     })
-    const message = makeHumanCollaboratorComment({
+    let message = makeHumanCollaboratorComment({
       id: messageId,
       content,
       timestamp: new Date().toISOString(),
@@ -505,8 +511,30 @@ export class ChatService {
       collaboratorId: validation.participant.collaboratorId,
       collaboratorDisplayName: validation.participant.displayName,
       clientMessageId: args.clientMessageId,
-      sequence
+      sequence,
+      ...(isActionRequest ? { contributionKind: 'requestHostAction' as const } : {})
     })
+
+    // P2b auto-draft: under the autoDraft rules an ACTION REQUEST also stamps a
+    // wrapped, provenance-carrying draft onto the row (promotedBy 'auto', never
+    // 'host' — no host click happened) and returns the draft so the caller can
+    // place it in the host composer. It must NEVER send or queue a run; the
+    // host still reviews and sends (spec §4 Tier P2b).
+    const rulesForDraft = effectiveContributionRules(validation.share)
+    let autoDraft: string | undefined
+    if (isActionRequest && rulesForDraft.createHostDraft === 'auto-draft') {
+      autoDraft = autoDraftedCollaboratorPrompt(message)
+      message = {
+        ...message,
+        metadata: {
+          ...(message.metadata || {}),
+          promotedAt: Date.now(),
+          promotedBy: 'auto',
+          promotedDraft: autoDraft
+        }
+      }
+    }
+
     const updated: ChatRecord = {
       ...current,
       messages: [...(current.messages || []), message],
@@ -519,9 +547,20 @@ export class ChatService {
       shareId: validation.share.shareId,
       collaboratorId: validation.participant.collaboratorId,
       preview: content,
-      contentHash: auditContentHash(content)
+      contentHash: auditContentHash(content),
+      ...(isActionRequest ? { detail: 'requestHostAction' } : {})
     })
-    return { chat: updated, message, deduped: false }
+    if (autoDraft) {
+      this.deps.humanCollaborationAudit?.append({
+        kind: 'draft.inserted',
+        chatId,
+        shareId: validation.share.shareId,
+        collaboratorId: validation.participant.collaboratorId,
+        contentHash: auditContentHash(message.content),
+        detail: 'auto-draft'
+      })
+    }
+    return { chat: updated, message, deduped: false, ...(autoDraft ? { autoDraft } : {}) }
   }
 
   promoteCollaboratorComment(args: {

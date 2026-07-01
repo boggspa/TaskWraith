@@ -1129,6 +1129,7 @@ const api = {
   humanCollaborationCollaboratorAppendComment: (input: {
     content: string
     clientMessageId?: string
+    intent?: 'comment' | 'requestHostAction'
   }) => ipcRenderer.invoke('human-collaboration-collaborator:append-comment', input),
   humanCollaborationCollaboratorLeave: () =>
     ipcRenderer.invoke('human-collaboration-collaborator:leave'),
@@ -1369,6 +1370,18 @@ const api = {
     const wrapped = (_event: unknown, payload: { chatId: string }): void => callback(payload)
     ipcRenderer.on('human-collaboration-updated', wrapped)
     return () => ipcRenderer.removeListener('human-collaboration-updated', wrapped)
+  },
+  // P2b auto-draft — the wrapped, provenance-carrying draft for the host
+  // composer (display-only; sending stays a host action).
+  onHumanCollaborationActionRequest: (
+    callback: (payload: { chatId: string; messageId: string; draft: string }) => void
+  ) => {
+    const wrapped = (
+      _event: unknown,
+      payload: { chatId: string; messageId: string; draft: string }
+    ): void => callback(payload)
+    ipcRenderer.on('human-collaboration-action-request', wrapped)
+    return () => ipcRenderer.removeListener('human-collaboration-action-request', wrapped)
   },
   onHumanCollaborationRuntimeProjectionUpdate: (
     callback: (payload: { sessionId: string; projection: unknown }) => void

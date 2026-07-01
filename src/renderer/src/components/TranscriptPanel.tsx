@@ -2006,6 +2006,16 @@ export const TranscriptPanel = memo(
                             >
                               External
                             </span>
+                            {collaboratorMeta?.contributionKind === 'requestHostAction' && (
+                              /* P2b: a structured request for the HOST to act —
+                               * it went to you for review, never to the AI. */
+                              <span
+                                className="message-meta-model-badge human-collaborator-badge human-collaborator-action-request"
+                                title="The collaborator asked you to take an action. Review it; nothing reaches the AI unless you insert and send it."
+                              >
+                                Action request
+                              </span>
+                            )}
                           </div>
                         )
                       }

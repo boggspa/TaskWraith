@@ -24,6 +24,12 @@ export interface HumanShareProjection {
   title: string
   generatedAt: string
   mode: 'readOnly' | 'comments'
+  /**
+   * P2b: the share's contribution-rules preset (display/affordance only — the
+   * collaborator UI uses it to offer "request host action"; every actual
+   * contribution is still validated main-side against the persisted rules).
+   */
+  contributionPreset?: 'readOnly' | 'comments' | 'requestHostAction' | 'autoDraft' | 'directLimited'
   participants: Array<{
     collaboratorId: string
     displayName: string
@@ -75,6 +81,9 @@ export function buildHumanShareProjection(
     title: sanitizeTitle(chat.title || 'Shared chat', chat.workspacePath),
     generatedAt: opts.generatedAt || new Date().toISOString(),
     mode: share.mode,
+    ...(share.contributionRules?.preset
+      ? { contributionPreset: share.contributionRules.preset }
+      : {}),
     participants: share.participants.map((participant) => ({
       collaboratorId: participant.collaboratorId,
       displayName: participant.displayName,

@@ -1453,6 +1453,7 @@ declare global {
       humanCollaborationCollaboratorAppendComment: (input: {
         content: string
         clientMessageId?: string
+        intent?: 'comment' | 'requestHostAction'
       }) => Promise<{ ok: true }>
       humanCollaborationCollaboratorLeave: () => Promise<boolean>
       saveChat: (chat: ChatRecord) => Promise<void>
@@ -1667,6 +1668,9 @@ declare global {
       onUsageChanged: (callback: () => void) => void
       onChatUpdated: (callback: (chat: ChatRecord) => void) => () => void
       onHumanCollaborationUpdated: (callback: (payload: { chatId: string }) => void) => () => void
+      onHumanCollaborationActionRequest: (
+        callback: (payload: { chatId: string; messageId: string; draft: string }) => void
+      ) => () => void
       onHumanCollaborationRuntimeProjectionUpdate: (
         callback: (payload: { sessionId: string; projection: HumanShareProjection }) => void
       ) => () => void

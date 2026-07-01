@@ -452,12 +452,17 @@ export class HumanCollaborationRuntime<ProjectionType = unknown, AppendType = un
       shareId: session.shareId,
       chatId: session.chatId,
       collaboratorId: session.collaboratorId,
-      clientMessageId: input.clientMessageId
+      clientMessageId: input.clientMessageId,
+      // Whitelisted intent: anything but the exact P2b action-request string
+      // degrades to a plain comment (fail-safe for junk/hostile values).
+      ...(input.intent === 'requestHostAction' ? { intent: 'requestHostAction' as const } : {})
     })
 
     const share = this.getActiveShare(session.shareId)
     return this.opts.appendComment({
       ...input,
+      // Sanitized here once so downstream deps never see a hostile intent value.
+      intent: input.intent === 'requestHostAction' ? 'requestHostAction' : undefined,
       sessionId: session.sessionId,
       share,
       shareId: session.shareId,
@@ -568,7 +573,9 @@ export class HumanCollaborationRuntime<ProjectionType = unknown, AppendType = un
       return this.appendComment({
         sessionId: frame.sessionId,
         clientMessageId: requireFrameString(input.clientMessageId, 'Client message id'),
-        content: requireFrameString(input.content, 'Comment')
+        content: requireFrameString(input.content, 'Comment'),
+        // Whitelist at the wire boundary too: only the exact P2b string passes.
+        ...(input.intent === 'requestHostAction' ? { intent: 'requestHostAction' as const } : {})
       })
     }
     if (message.method === HUMAN_COLLABORATION_METHODS.disconnect) {

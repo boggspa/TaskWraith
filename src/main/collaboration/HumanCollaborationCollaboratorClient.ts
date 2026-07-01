@@ -262,11 +262,18 @@ export class HumanCollaborationCollaboratorClient {
     this.sendSealed(HUMAN_COLLABORATION_METHODS.subscribeProjection, { sessionId: this.sessionId })
   }
 
-  appendComment(content: string, clientMessageId: string = randomUUID()): void {
+  appendComment(
+    content: string,
+    clientMessageId: string = randomUUID(),
+    intent?: 'comment' | 'requestHostAction'
+  ): void {
     this.sendSealed(HUMAN_COLLABORATION_METHODS.appendComment, {
       sessionId: this.sessionId,
       clientMessageId,
-      content
+      content,
+      // P2b intent — a pre-P2b host ignores the field (fail-safe: it records a
+      // plain host-reviewed comment); a P2b host validates it against rules.
+      ...(intent === 'requestHostAction' ? { intent } : {})
     })
   }
 

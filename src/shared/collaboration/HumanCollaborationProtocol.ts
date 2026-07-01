@@ -89,6 +89,13 @@ export interface HumanCollaborationAppendCommentInput {
   sessionId: string
   clientMessageId: string
   content: string
+  /**
+   * P2b contribution intent, rides the v1 appendComment method for
+   * compatibility: a pre-P2b host simply ignores the field and records a plain
+   * comment (fail-safe — still an external/untrusted row, still host-reviewed),
+   * while a P2b host validates it against the share's contribution rules.
+   */
+  intent?: 'comment' | 'requestHostAction'
 }
 
 export interface HumanCollaborationDisconnectInput {

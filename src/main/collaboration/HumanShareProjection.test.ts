@@ -213,4 +213,29 @@ describe('buildHumanShareProjection', () => {
       'the env has AWS_SECRET_ACCESS_KEY=[redacted] and key sk-[redacted]'
     )
   })
+
+  it('P2b: exposes the contribution preset when rules are persisted', () => {
+    const withRules = {
+      ...share,
+      contributionRules: {
+        schemaVersion: 1 as const,
+        preset: 'requestHostAction' as const,
+        viewProjection: true,
+        appendComment: true,
+        requestHostAction: true,
+        createHostDraft: 'host-click' as const,
+        providerDispatch: 'never' as const,
+        maxContributionBytes: 8000,
+        rateLimitProfile: 'comments-v1' as const,
+        auditLevel: 'summary' as const
+      }
+    }
+    const projection = buildHumanShareProjection(chat(), withRules, { generatedAt: 'now' })
+    expect(projection.contributionPreset).toBe('requestHostAction')
+    // Legacy share without rules: field absent (older collaborator clients
+    // parse the projection strictly by known fields).
+    const legacy = buildHumanShareProjection(chat(), share, { generatedAt: 'now' })
+    expect(legacy.contributionPreset).toBeUndefined()
+  })
 })
+

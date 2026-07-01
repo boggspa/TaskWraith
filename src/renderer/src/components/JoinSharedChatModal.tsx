@@ -37,6 +37,8 @@ interface ProjectionRow {
 interface Projection {
   title: string
   mode: 'readOnly' | 'comments'
+  /** P2b: the share's contribution preset (affordance only — main re-validates). */
+  contributionPreset?: 'readOnly' | 'comments' | 'requestHostAction' | 'autoDraft' | 'directLimited'
   rows: ProjectionRow[]
   participants: Array<{ collaboratorId: string; displayName: string; status: string }>
   totalRows: number
@@ -155,6 +157,8 @@ export function JoinSharedChatModal({
   const [mode, setMode] = useState<'readOnly' | 'comments'>('comments')
   const [projection, setProjection] = useState<Projection | null>(null)
   const [comment, setComment] = useState('')
+  // P2b: whether the next contribution is a structured "request host action".
+  const [sendAsActionRequest, setSendAsActionRequest] = useState(false)
   const [connectionState, setConnectionState] = useState<ConnectionState>('idle')
   const [busy, setBusy] = useState(false)
   const rowsRef = useRef<HTMLDivElement | null>(null)
@@ -346,16 +350,30 @@ export function JoinSharedChatModal({
           ? 'join-connection-status is-connecting'
           : 'join-connection-status'
 
+  // P2b affordance: the projection advertises the share's contribution preset;
+  // action requests exist only under requestHostAction / autoDraft rules. The
+  // host's main process re-validates every contribution regardless.
+  const actionRequestsAvailable =
+    projection?.contributionPreset === 'requestHostAction' ||
+    projection?.contributionPreset === 'autoDraft'
+
   const handleSendComment = useCallback(async () => {
     const text = comment.trim()
     if (!text) return
     setComment('')
     try {
-      await window.api.humanCollaborationCollaboratorAppendComment({ content: text })
+      await window.api.humanCollaborationCollaboratorAppendComment({
+        content: text,
+        // P2b: send as a structured host-action request only when the share's
+        // rules allow it AND the collaborator ticked the box. Main re-validates.
+        ...(sendAsActionRequest && actionRequestsAvailable
+          ? { intent: 'requestHostAction' as const }
+          : {})
+      })
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not send the comment.')
     }
-  }, [comment])
+  }, [comment, sendAsActionRequest, actionRequestsAvailable])
 
   if (!open) return null
 
@@ -485,6 +503,18 @@ export function JoinSharedChatModal({
               )}
             </div>
             {error && <div className="join-error" role="alert">{error}</div>}
+            {mode === 'comments' && actionRequestsAvailable && (
+              <label className="join-action-request-toggle">
+                <input
+                  type="checkbox"
+                  checked={sendAsActionRequest}
+                  onChange={(event) => setSendAsActionRequest(event.target.checked)}
+                />
+                <span>
+                  Send as action request — goes to the host for review, not to the AI
+                </span>
+              </label>
+            )}
             {mode === 'comments' ? (
               <div className="join-comment-row">
                 <textarea

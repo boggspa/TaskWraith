@@ -24968,16 +24968,27 @@ if (isGeminiMcpBridgeProcess) {
           if (!chat) throw new Error('Chat not found.')
           return buildHumanShareProjection(chat, share)
         },
-        appendComment: ({ shareId, chatId, collaboratorId, clientMessageId, content }) => {
+        appendComment: ({ shareId, chatId, collaboratorId, clientMessageId, content, intent }) => {
           const result = chatService.appendCollaboratorComment({
             shareId,
             chatId,
             collaboratorId,
             clientMessageId,
-            content
+            content,
+            ...(intent === 'requestHostAction' ? { intent: 'requestHostAction' as const } : {})
           })
           broadcastChatUpdated(result.chat)
           broadcastHumanCollaborationUpdate(result.chat.appChatId)
+          // P2b auto-draft: hand the wrapped, provenance-carrying draft to the
+          // host renderer so it can pre-fill the composer. Display-only — the
+          // renderer never sends it; the host reviews and sends.
+          if (result.autoDraft) {
+            mainWindow?.webContents.send('human-collaboration-action-request', {
+              chatId: result.chat.appChatId,
+              messageId: result.message.id,
+              draft: result.autoDraft
+            })
+          }
           return result
         },
         publishProjection: (sessionId, projection) => {
@@ -26114,10 +26125,15 @@ if (isGeminiMcpBridgeProcess) {
     })
     ipcMain.handle(
       'human-collaboration-collaborator:append-comment',
-      (_, input: { content: string; clientMessageId?: string }) => {
+      (_, input: { content: string; clientMessageId?: string; intent?: string }) => {
         const client = humanCollaborationCollaboratorClient
         if (!client) throw new Error('No active collaboration session.')
-        client.appendComment(input.content, input.clientMessageId)
+        client.appendComment(
+          input.content,
+          input.clientMessageId,
+          // P2b — whitelist; anything else degrades to a plain comment.
+          input.intent === 'requestHostAction' ? 'requestHostAction' : undefined
+        )
         return { ok: true }
       }
     )
