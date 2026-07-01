@@ -15,6 +15,13 @@ export interface CodexRunState {
   cwd: string
   workspacePath?: string
   turnId?: string
+  /** When this run IS a native `/review` sub-run, the id of the synthesized
+   * `codex_review` anchor activity the review card attaches its telemetry to
+   * (Codex emits no natural anchor tool-call for a review). Set only for reviews;
+   * its presence is how `review/completed` knows to emit terminal review status. */
+  reviewActivityId?: string
+  reviewTarget?: string
+  reviewModel?: string
   model: string
   approvalMode?: string
   workflowMode?: ChatWorkflowMode

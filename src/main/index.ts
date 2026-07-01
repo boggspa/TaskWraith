@@ -190,6 +190,11 @@ import {
   normalizeClaudeWorkflowEvent,
   shouldEmitClaudeWorkflowTelemetry
 } from '../shared/claudeWorkflow'
+import {
+  CODEX_REVIEW_TOOL_NAME,
+  codexReviewCompletionTelemetry,
+  codexReviewStartTelemetry
+} from '../shared/codexReview'
 import { BridgeBroadcaster } from './BridgeBroadcaster'
 import {
   REMOTE_QUESTION_MAX_ANSWER_CHARS,
@@ -799,9 +804,12 @@ import {
 } from './cursor/CursorWorkspaceConfig'
 import {
   buildCursorMcpServerEntry,
+  buildCursorReadOnlyMcpServerEntry,
   CURSOR_LEGACY_WEB_MCP_SERVER_NAME,
   CURSOR_MCP_ALLOW_RULES,
-  CURSOR_MCP_SERVER_NAME
+  CURSOR_MCP_SERVER_NAME,
+  CURSOR_READONLY_MCP_ALLOW_RULES,
+  CURSOR_SCOPED_MCP_SERVER_NAME
 } from './cursor/CursorMcpBridge'
 import { runGrokAcpTurn, type AcpChildProcess } from './grok/GrokAcpClient'
 import {
@@ -11079,9 +11087,15 @@ async function runGrokProvider(event: Electron.IpcMainInvokeEvent, payload: Agen
 // After writing the transient workspace `.cursor/mcp.json`, approve TaskWraith-owned
 // server names for that workspace via `cursor-agent mcp enable <server>`.
 // Idempotent ("already enabled") and cached in-process per workspace + server, so it
-// spawns at most once for each transient server name per session. Best-effort:
-// failure still leaves the per-run MCP config + --approve-mcps path, and native
-// shell/write remain denied.
+// spawns at most once for each transient server name per session.
+//
+// LOUD FAILURE (was silently best-effort): `mcp enable` is the RELIABLE approval
+// recipe (headless `--approve-mcps` is documented-flaky — see cursorGate.ts), so
+// a non-zero exit / spawn error here means the run would otherwise fall back to
+// that flaky path and reject every MCP call ("User rejected MCP: …"). We now
+// REJECT with the real stderr so the caller can hard-fail loudly instead of
+// launching a run that silently can't use any TaskWraith tool. Only cache the
+// approval on ACTUAL success (never poison the cache on failure).
 const cursorMcpApprovedWorkspaceServers = new Set<string>()
 async function ensureCursorMcpApproved(
   binaryPath: string,
@@ -11090,17 +11104,22 @@ async function ensureCursorMcpApproved(
 ): Promise<void> {
   const key = `${workspace}\0${serverName}`
   if (cursorMcpApprovedWorkspaceServers.has(key)) return
-  await new Promise<void>((resolve) => {
-    try {
-      execFile(
-        binaryPath,
-        ['mcp', 'enable', serverName],
-        { cwd: workspace, timeout: 10000 },
-        () => resolve()
-      )
-    } catch {
-      resolve()
-    }
+  await new Promise<void>((resolve, reject) => {
+    execFile(
+      binaryPath,
+      ['mcp', 'enable', serverName],
+      { cwd: workspace, timeout: 10000 },
+      (error, _stdout, stderr) => {
+        if (error) {
+          const detail = (String(stderr || '').trim() || error.message || '').slice(0, 300)
+          reject(
+            new Error(`cursor-agent mcp enable ${serverName} failed${detail ? `: ${detail}` : ''}`)
+          )
+          return
+        }
+        resolve()
+      }
+    )
   })
   cursorMcpApprovedWorkspaceServers.add(key)
 }
@@ -11147,6 +11166,7 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
   const writeCapable = cursorWriteCapable(payload.approvalMode)
   let restoreCursorConfig: (() => void) | undefined
   let cursorTaskWraithMcpActive = false
+  let cursorTaskWraithReadOnlyMcpActive = false
   if (writeCapable && payload.workspace) {
     try {
       const settings = AppStore.getSettings()
@@ -11189,21 +11209,30 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
       )
       cursorTaskWraithMcpActive = true
     } catch (error) {
+      // HARD-FAIL, don't silently degrade. The old behavior fell back to
+      // `--mode plan` with NO broker, which then rejected EVERY MCP call
+      // ("User rejected MCP: …") while looking like a normal read-only run —
+      // a silent write-mode failure that burned hours of debugging. Write mode
+      // was explicitly requested and its TaskWraith MCP containment could not be
+      // established, so stop the run and surface the real reason instead.
       restoreCursorConfig?.()
+      restoreCursorConfig = undefined
+      cursorTaskWraithMcpActive = false
+      runManager.finish(route.appRunId, 'failed')
+      sendAgentCompatError(
+        event.sender,
+        'cursor',
+        cursorWriteModeSetupFailureMessage(error),
+        route
+      )
       sendAgentCompatLine(
         event.sender,
         'cursor',
-        {
-          type: 'progress',
-          title: 'Cursor write mode fell back to read-only',
-          summary: cursorWriteModeSetupFailureMessage(error),
-          severity: 'warning',
-          provider: 'cursor'
-        },
+        { type: 'result', status: 'failed', stats: {}, provider: 'cursor' },
         route
       )
-      restoreCursorConfig = undefined
-      cursorTaskWraithMcpActive = false
+      sendAgentCompatExit(event.sender, 'cursor', 1, route)
+      return
     }
   }
   const args = buildCursorProviderCliArgs({
@@ -13767,6 +13796,35 @@ function handleCodexNotification(message: any) {
       },
       state
     )
+    if (state.reviewActivityId) {
+      // Native review settled — emit terminal status onto the synthesized anchor
+      // and settle it. Coarse status only (Codex ships no structured findings).
+      const reviewStats = codexUsageToStats(state.tokenUsage, durationMs)
+      const reviewTelemetry = codexReviewCompletionTelemetry({
+        status: turn.status || params.status,
+        durationMs,
+        totalTokens: reviewStats.total_tokens,
+        error: turn.error || params.error
+      })
+      sendAgentCompatLine(
+        state.sender,
+        'codex',
+        { type: 'review_event', tool_id: state.reviewActivityId, review: reviewTelemetry, provider: 'codex' },
+        state
+      )
+      sendAgentCompatLine(
+        state.sender,
+        'codex',
+        {
+          type: 'tool_result',
+          tool_id: state.reviewActivityId,
+          status: reviewTelemetry.status === 'completed' ? 'success' : 'error',
+          output: '',
+          provider: 'codex'
+        },
+        state
+      )
+    }
     sendAgentCompatExit(state.sender, 'codex', 0, state)
     runManager.finish(state.appRunId, 'completed')
     if (activeCodexRunState === state) {
@@ -26655,6 +26713,41 @@ if (isGeminiMcpBridgeProcess) {
           },
           reviewState
         )
+        // Codex emits no natural anchor tool-call for a review, so synthesize a
+        // `codex_review` tool activity the review card hangs its status on. Its
+        // terminal status is emitted from the shared `review/completed` handler
+        // (gated on `reviewState.reviewActivityId`).
+        const reviewActivityId = `codex-review-${randomUUID()}`
+        const reviewStartTelemetry = codexReviewStartTelemetry({ target: params.target, model })
+        reviewState.reviewActivityId = reviewActivityId
+        reviewState.reviewTarget = reviewStartTelemetry.target
+        reviewState.reviewModel = reviewStartTelemetry.model
+        sendAgentCompatLine(
+          event.sender,
+          'codex',
+          {
+            type: 'tool_use',
+            tool_id: reviewActivityId,
+            tool_name: CODEX_REVIEW_TOOL_NAME,
+            parameters: {
+              ...(reviewStartTelemetry.target ? { target: reviewStartTelemetry.target } : {}),
+              ...(reviewStartTelemetry.model ? { model: reviewStartTelemetry.model } : {})
+            },
+            provider: 'codex'
+          },
+          reviewState
+        )
+        sendAgentCompatLine(
+          event.sender,
+          'codex',
+          {
+            type: 'review_event',
+            tool_id: reviewActivityId,
+            review: reviewStartTelemetry,
+            provider: 'codex'
+          },
+          reviewState
+        )
         try {
           const result = await client.request(
             'review/start',
@@ -26673,6 +26766,33 @@ if (isGeminiMcpBridgeProcess) {
           return result
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error)
+          // Settle the synthesized review anchor as failed so its card doesn't
+          // hang on "Reviewing" after the review/start RPC errors (e.g. timeout).
+          if (reviewState.reviewActivityId) {
+            sendAgentCompatLine(
+              reviewState.sender,
+              'codex',
+              {
+                type: 'review_event',
+                tool_id: reviewState.reviewActivityId,
+                review: codexReviewCompletionTelemetry({ status: 'failed', error: message }),
+                provider: 'codex'
+              },
+              reviewState
+            )
+            sendAgentCompatLine(
+              reviewState.sender,
+              'codex',
+              {
+                type: 'tool_result',
+                tool_id: reviewState.reviewActivityId,
+                status: 'error',
+                output: '',
+                provider: 'codex'
+              },
+              reviewState
+            )
+          }
           sendAgentCompatError(reviewState.sender, 'codex', message, reviewState)
           sendAgentCompatExit(reviewState.sender, 'codex', 1, reviewState)
           runManager.finish(reviewState.appRunId, 'failed')
