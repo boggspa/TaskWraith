@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { parseUnifiedDiff, type ParsedDiffLine } from '../lib/unifiedDiffParser'
 
@@ -65,11 +65,13 @@ export interface DiffHoverPreviewLayout {
 export function getDiffHoverPreviewLayout({
   anchor,
   boundary,
+  previewHeight,
   viewportHeight,
   viewportWidth
 }: {
   anchor: DiffHoverPreviewRect
   boundary?: DiffHoverPreviewRect
+  previewHeight?: number
   viewportHeight: number
   viewportWidth: number
 }): DiffHoverPreviewLayout {
@@ -99,19 +101,32 @@ export function getDiffHoverPreviewLayout({
     180,
     Math.min(DIFF_HOVER_PREVIEW_HEIGHT, viewportHeight - DIFF_HOVER_PREVIEW_MARGIN * 2)
   )
+  const measuredHeight =
+    typeof previewHeight === 'number' && Number.isFinite(previewHeight) && previewHeight > 0
+      ? previewHeight
+      : maxHeight
+  const placementHeight = Math.max(1, Math.min(measuredHeight, maxHeight))
   const centeredLeft = boundaryLeft + Math.max(0, (availableWidth - width) / 2)
   const left = Math.max(boundaryLeft, Math.min(centeredLeft, boundaryRight - width))
-  const preferredTop = anchor.top - maxHeight - 10
+  const preferredTop = anchor.top - placementHeight - 10
   const fallbackTop = Math.min(
     anchor.bottom + 10,
-    viewportHeight - maxHeight - DIFF_HOVER_PREVIEW_MARGIN
+    viewportHeight - placementHeight - DIFF_HOVER_PREVIEW_MARGIN
   )
-  const top = preferredTop >= DIFF_HOVER_PREVIEW_MARGIN ? preferredTop : fallbackTop
+  const unclampedTop = preferredTop >= DIFF_HOVER_PREVIEW_MARGIN ? preferredTop : fallbackTop
+  const maxTop = Math.max(
+    DIFF_HOVER_PREVIEW_MARGIN,
+    viewportHeight - placementHeight - DIFF_HOVER_PREVIEW_MARGIN
+  )
+  const top = Math.min(
+    Math.max(DIFF_HOVER_PREVIEW_MARGIN, unclampedTop),
+    maxTop
+  )
 
   return {
     left,
     maxHeight,
-    top: Math.max(DIFF_HOVER_PREVIEW_MARGIN, top),
+    top,
     width
   }
 }
@@ -248,6 +263,7 @@ export function DiffHoverPreviewOverlay({
 }) {
   const overlayRef = useRef<HTMLDivElement | null>(null)
   const actionRef = useRef<HTMLButtonElement | null>(null)
+  const [measuredHeight, setMeasuredHeight] = useState<number | null>(null)
   const preparedDiff = useMemo(
     () =>
       preview?.summary.diffText
@@ -274,6 +290,30 @@ export function DiffHoverPreviewOverlay({
     target?.focus({ preventScroll: true })
   }, [preview?.focusTarget, preview?.summary.path])
 
+  const previewIdentity = preview
+    ? [
+        preview.summary.path,
+        preview.summary.status || '',
+        preview.summary.additions ?? '',
+        preview.summary.deletions ?? '',
+        preview.summary.diffText?.length ?? 0,
+        preview.action?.label || ''
+      ].join('|')
+    : ''
+
+  useLayoutEffect(() => {
+    if (!preview) {
+      if (measuredHeight !== null) setMeasuredHeight(null)
+      return
+    }
+    const height = overlayRef.current?.getBoundingClientRect().height
+    if (!height || !Number.isFinite(height)) return
+    const roundedHeight = Math.ceil(height)
+    setMeasuredHeight((current) =>
+      current !== null && Math.abs(current - roundedHeight) <= 1 ? current : roundedHeight
+    )
+  }, [measuredHeight, preview, previewIdentity])
+
   if (!preview || typeof document === 'undefined') return null
 
   const viewportWidth = typeof window !== 'undefined' ? window.innerWidth : 1024
@@ -281,6 +321,7 @@ export function DiffHoverPreviewOverlay({
   const layout = getDiffHoverPreviewLayout({
     anchor: preview.anchor,
     boundary: preview.boundary,
+    previewHeight: measuredHeight ?? undefined,
     viewportHeight,
     viewportWidth
   })

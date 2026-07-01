@@ -26,6 +26,19 @@ describe('DiffHoverPreview layout', () => {
     expect(layout.top).toBe(130)
   })
 
+  it('positions short measured previews directly above the hovered row', () => {
+    const layout = getDiffHoverPreviewLayout({
+      anchor: rect({ bottom: 780, left: 820, right: 900, top: 748, width: 80 }),
+      boundary: rect({ bottom: 820, left: 48, right: 964, top: 60, width: 916 }),
+      previewHeight: 112,
+      viewportHeight: 900,
+      viewportWidth: 1024
+    })
+
+    expect(layout.maxHeight).toBe(360)
+    expect(layout.top).toBe(626)
+  })
+
   it('clamps to narrow viewports without overflowing the boundary', () => {
     const layout = getDiffHoverPreviewLayout({
       anchor: rect({ bottom: 126, left: 120, right: 280, top: 94, width: 160 }),

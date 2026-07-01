@@ -2731,7 +2731,6 @@ export const TranscriptPanel = memo(
                                   : undefined
                               }
                               aria-label={fileChangeActionLabel}
-                              title={fileChangeActionLabel}
                               onFocus={
                                 canShowHoverPreview
                                   ? (event) =>
@@ -2759,7 +2758,6 @@ export const TranscriptPanel = memo(
                                     : undefined
                                 }
                                 aria-label={`Preview diff for ${item.path}`}
-                                title="Preview diff"
                                 onMouseEnter={(event) => openFileChangeDiffPreview(event, item)}
                                 onMouseLeave={scheduleCloseFileChangeDiffPreview}
                                 onFocus={(event) =>

@@ -2744,7 +2744,6 @@ function ActivityRow({
                       activityDiffHoverPreview ? DIFF_HOVER_PREVIEW_TOOLTIP_ID : undefined
                     }
                     aria-label={`Preview diff for ${activityDiffPreviewPath}`}
-                    title="Preview diff"
                     onMouseEnter={openActivityDiffHoverPreview}
                     onMouseLeave={scheduleCloseActivityDiffHoverPreview}
                     onFocus={(event) =>
