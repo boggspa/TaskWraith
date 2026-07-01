@@ -2263,6 +2263,7 @@ export interface ChatMessage {
       title: string
       body: string
       status: 'pending' | 'approved' | 'dismissed'
+      artifactPath?: string
     }
     /** Presentation-only link preview targets extracted from user-visible prompt text. */
     linkPreviews?: Array<{ url: string; origin: string; host: string }>

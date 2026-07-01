@@ -7164,6 +7164,52 @@ function planArtifactWriteApprovalMetadata(input: {
   }
 }
 
+function planArtifactRelativePathFromMetadata(metadata: Record<string, unknown> | null): string | null {
+  const relativePath = metadata?.relativePath
+  return typeof relativePath === 'string' && relativePath.trim() ? relativePath.trim() : null
+}
+
+function stampPlanArtifactPathOnPendingPlan(
+  appChatId: string | undefined,
+  metadata: Record<string, unknown> | null
+): void {
+  const artifactPath = planArtifactRelativePathFromMetadata(metadata)
+  if (!appChatId || !artifactPath) return
+  const chat = AppStore.getChat(appChatId)
+  if (!chat?.messages?.length) return
+
+  for (let index = chat.messages.length - 1; index >= 0; index -= 1) {
+    const message = chat.messages[index]
+    if (message.role !== 'assistant') continue
+    const messageMetadata = message.metadata as Record<string, unknown> | undefined
+    const proposedPlan = messageMetadata?.proposedPlan as Record<string, unknown> | undefined
+    if (!proposedPlan || proposedPlan.status !== 'pending') continue
+    if (proposedPlan.artifactPath === artifactPath) return
+
+    const messages = [...chat.messages]
+    messages[index] = {
+      ...message,
+      metadata: {
+        ...messageMetadata,
+        proposedPlan: {
+          ...proposedPlan,
+          artifactPath
+        }
+      }
+    } as ChatMessage
+    const updated: ChatRecord = { ...chat, messages, updatedAt: Date.now() }
+    AppStore.saveChat(updated)
+    broadcastChatUpdated(updated)
+    try {
+      bridgeBroadcasterRef?.broadcastThreadUpdated(updated.appChatId)
+      bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
+    } catch (err) {
+      console.warn('[PlanArtifact] bridge broadcast failed:', err)
+    }
+    return
+  }
+}
+
 function planArtifactRawPathFromToolInput(input: unknown, depth = 0): string | null {
   if (!isRecord(input) || depth > 1) return null
   for (const key of ['file_path', 'filePath', 'path', 'notebook_path', 'target_path']) {
@@ -7249,6 +7295,7 @@ async function requestAgenticServiceApproval(
       'request',
       { policy, ...planArtifactWriteMetadata }
     )
+    stampPlanArtifactPathOnPendingPlan(appChatId, planArtifactWriteMetadata)
     return true
   }
 
@@ -12284,6 +12331,7 @@ async function runKimiWireProvider(
                     ...kimiPlanArtifactWriteMetadata
                   }
                 )
+                stampPlanArtifactPathOnPendingPlan(route.appChatId, kimiPlanArtifactWriteMetadata)
                 respondToKimiWireRequest(child, message.id, {
                   request_id: message.params?.payload?.id || message.id,
                   response: 'approve'
@@ -14181,6 +14229,7 @@ function handleCodexServerRequest(message: any) {
       'request',
       { policy: nativePreflight.policy, ...codexPlanArtifactWriteMetadata }
     )
+    stampPlanArtifactPathOnPendingPlan(state.appChatId, codexPlanArtifactWriteMetadata)
     if (method === 'mcpServer/elicitation/request' || method === 'mcp/elicitation/request') {
       codexClient.respond(message.id, { action: 'accept', content: null, _meta: null })
     } else if (method === 'item/permissions/requestApproval') {
@@ -22599,6 +22648,7 @@ if (isGeminiMcpBridgeProcess) {
             const flipped: ChatRecord = {
               ...planChat,
               messages: planMessages,
+              workflowMode: 'normal',
               ...(planChat.chatKind === 'ensemble' && planChat.ensemble?.participants
                 ? {
                     ensemble: {
