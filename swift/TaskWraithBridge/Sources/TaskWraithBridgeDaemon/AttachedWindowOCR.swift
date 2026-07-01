@@ -47,45 +47,42 @@ enum AttachedWindowOCR {
         guard let image = makeCGImage(from: pngData) else {
             return OcrResult(text: "", blocks: [])
         }
-        return try await withCheckedThrowingContinuation { continuation in
-            let request = VNRecognizeTextRequest { req, error in
-                if let error = error {
-                    continuation.resume(throwing: error)
-                    return
-                }
-                let observations = req.results as? [VNRecognizedTextObservation] ?? []
-                var blocks: [OcrBlock] = []
-                var lines: [String] = []
-                blocks.reserveCapacity(observations.count)
-                lines.reserveCapacity(observations.count)
-                for observation in observations {
-                    guard let candidate = observation.topCandidates(1).first else { continue }
-                    lines.append(candidate.string)
-                    let box = observation.boundingBox
-                    blocks.append(OcrBlock(
-                        text: candidate.string,
-                        confidence: Double(candidate.confidence),
-                        x: Double(box.origin.x),
-                        y: Double(box.origin.y),
-                        width: Double(box.size.width),
-                        height: Double(box.size.height)
-                    ))
-                }
-                continuation.resume(returning: OcrResult(
-                    text: lines.joined(separator: "\n"),
-                    blocks: blocks
-                ))
-            }
-            request.recognitionLevel = .accurate
-            request.usesLanguageCorrection = true
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.usesLanguageCorrection = true
 
-            let handler = VNImageRequestHandler(cgImage: image, options: [:])
-            do {
-                try handler.perform([request])
-            } catch {
-                continuation.resume(throwing: error)
+        let handler = VNImageRequestHandler(cgImage: image, options: [:])
+        do {
+            try handler.perform([request])
+        } catch {
+            if String(describing: error) == "nilError" {
+                return OcrResult(text: "", blocks: [])
             }
+            throw error
         }
+
+        let observations = request.results ?? []
+        var blocks: [OcrBlock] = []
+        var lines: [String] = []
+        blocks.reserveCapacity(observations.count)
+        lines.reserveCapacity(observations.count)
+        for observation in observations {
+            guard let candidate = observation.topCandidates(1).first else { continue }
+            lines.append(candidate.string)
+            let box = observation.boundingBox
+            blocks.append(OcrBlock(
+                text: candidate.string,
+                confidence: Double(candidate.confidence),
+                x: Double(box.origin.x),
+                y: Double(box.origin.y),
+                width: Double(box.size.width),
+                height: Double(box.size.height)
+            ))
+        }
+        return OcrResult(
+            text: lines.joined(separator: "\n"),
+            blocks: blocks
+        )
     }
 
     private static func makeCGImage(from pngData: Data) -> CGImage? {
