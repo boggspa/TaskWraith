@@ -412,10 +412,14 @@ export function normalizeKimiUsageSnapshot(payload: unknown): NormalizedProvider
   }
 }
 
+const CLAUDE_SESSION_WINDOW_SECONDS = 5 * 60 * 60
+const CLAUDE_WEEKLY_WINDOW_SECONDS = 7 * 24 * 60 * 60
+
 function claudeUsageWindow(
   id: string,
   label: string,
-  payload: any
+  payload: any,
+  limitWindowSeconds?: number
 ): NormalizedProviderUsageWindow | null {
   if (!payload || typeof payload !== 'object') return null
   const utilization = numericUsageValue(payload.utilization)
@@ -428,10 +432,16 @@ function claudeUsageWindow(
     runs: 0,
     totalTokens: 0,
     limitLabel: `${Math.round(remainingPercent)}% remaining`,
-    resetAt: parseIsoDate(payload.resetAt ?? payload.reset_at),
+    // The live OAuth endpoint emits `resets_at` (Limit Counter parity);
+    // older shapes used `reset_at` / camelCase.
+    resetAt: parseIsoDate(payload.resetAt ?? payload.reset_at ?? payload.resets_at),
     trackingOnly: false,
     usedPercent,
-    remainingPercent
+    remainingPercent,
+    // Known rollover cadence powers the QuotaPace tick (the bare 'Fable' /
+    // 'Opus' labels match none of QuotaPace's label-duration patterns) and
+    // lets projectStaleSnapshotForward roll a stale persisted window over.
+    ...(limitWindowSeconds ? { limitWindowSeconds } : {})
   }
 }
 
@@ -444,13 +454,15 @@ export function normalizeClaudeUsageSnapshot(
   const fiveHour = claudeUsageWindow(
     'claude-5h',
     'Session',
-    payload?.fiveHour ?? payload?.five_hour
+    payload?.fiveHour ?? payload?.five_hour ?? pickClaudeAggregateLimitWindow(payload, 'five_hour'),
+    CLAUDE_SESSION_WINDOW_SECONDS
   )
   if (fiveHour) windows.push(fiveHour)
   const sevenDay = claudeUsageWindow(
     'claude-weekly',
     'Weekly',
-    payload?.sevenDay ?? payload?.seven_day
+    payload?.sevenDay ?? payload?.seven_day ?? pickClaudeAggregateLimitWindow(payload, 'weekly'),
+    CLAUDE_WEEKLY_WINDOW_SECONDS
   )
   if (sevenDay) windows.push(sevenDay)
   /*
@@ -462,7 +474,9 @@ export function normalizeClaudeUsageSnapshot(
    * response has subtly different shapes across subscription tiers
    * and account types; we now also probe the nested forms used by
    * `seven_day.fable` / `sevenDay.fable`, plus the `models.fable`
-   * sub-tree some account variants emit. First non-null wins. Legacy
+   * sub-tree some account variants emit, plus (mid-2026, the current
+   * live shape) `limits[]` entries with `kind: "weekly_scoped"` and a
+   * `scope` naming the family. First non-null wins. Legacy
    * Sonnet keys are still accepted as aliases for the renamed Fable
    * meter so older cached/provider payload shapes do not disappear.
    * Same broadening for Opus below. If all probes miss but the
@@ -471,10 +485,20 @@ export function normalizeClaudeUsageSnapshot(
    * console rather than silently dropping the meter.
    */
   const sevenDayFable = pickClaudeModelWindow(payload, 'fable')
-  const fableWindow = claudeUsageWindow('claude-weekly-fable', 'Fable', sevenDayFable)
+  const fableWindow = claudeUsageWindow(
+    'claude-weekly-fable',
+    'Fable',
+    sevenDayFable,
+    CLAUDE_WEEKLY_WINDOW_SECONDS
+  )
   if (fableWindow) windows.push(fableWindow)
   const sevenDayOpus = pickClaudeModelWindow(payload, 'opus')
-  const opusWindow = claudeUsageWindow('claude-weekly-opus', 'Opus', sevenDayOpus)
+  const opusWindow = claudeUsageWindow(
+    'claude-weekly-opus',
+    'Opus',
+    sevenDayOpus,
+    CLAUDE_WEEKLY_WINDOW_SECONDS
+  )
   if (opusWindow) windows.push(opusWindow)
   if (sevenDay && !fableWindow && !opusWindow && payload && typeof payload === 'object') {
     logClaudeUsageMissingFamilyWindowOnce(payload)
@@ -521,6 +545,15 @@ export function normalizeClaudeUsageSnapshot(
  *   Nested under models: `models.fable` / `models.fable.weekly` /
  *                        `models.fable.seven_day`
  *   Alt prefix: `weekly_fable` / `weeklyFable`
+ *   Limits array (current live shape, mid-2026): `limits[]` entries of
+ *     `{ group: "weekly", kind: "weekly_scoped", percent, resets_at,
+ *        scope: { label: "Fable" } | "fable" | absent }`
+ *
+ * Preference order mirrors Limit Counter (the maintainer's reference
+ * app): direct family fields → scoped `limits[]` entry → legacy Sonnet
+ * aliases. The scoped limits entry must beat `seven_day_sonnet` because
+ * accounts in transition have carried a STALE legacy Sonnet field
+ * alongside the live scoped Fable entry.
  *
  * The `family` argument is the lowercase model family name (`fable`
  * or `opus`). Returns whatever's at the matched path; `claudeUsageWindow`
@@ -528,27 +561,123 @@ export function normalizeClaudeUsageSnapshot(
  */
 function pickClaudeModelWindow(payload: any, family: 'fable' | 'opus'): any {
   if (!payload || typeof payload !== 'object') return null
-  const aliases = family === 'fable' ? ['fable', 'sonnet'] : ['opus']
-  const candidates: any[] = [
-    ...aliases.flatMap((alias) => {
-      const camelSuffix =
-        alias === 'fable' ? 'Fable' : alias === 'sonnet' ? 'Sonnet' : 'Opus'
-      return [
-        payload[`seven_day_${alias}`],
-        payload[`sevenDay${camelSuffix}`],
-        payload[`weekly_${alias}`],
-        payload[`weekly${camelSuffix}`],
-        payload?.seven_day?.[alias],
-        payload?.sevenDay?.[alias],
-        payload?.models?.[alias]?.seven_day,
-        payload?.models?.[alias]?.sevenDay,
-        payload?.models?.[alias]?.weekly,
-        payload?.models?.[alias]
-      ]
-    })
-  ]
+  const directShapes = (alias: string): any[] => {
+    const camelSuffix = alias === 'fable' ? 'Fable' : alias === 'sonnet' ? 'Sonnet' : 'Opus'
+    return [
+      payload[`seven_day_${alias}`],
+      payload[`sevenDay${camelSuffix}`],
+      payload[`weekly_${alias}`],
+      payload[`weekly${camelSuffix}`],
+      payload?.seven_day?.[alias],
+      payload?.sevenDay?.[alias],
+      payload?.models?.[alias]?.seven_day,
+      payload?.models?.[alias]?.sevenDay,
+      payload?.models?.[alias]?.weekly,
+      payload?.models?.[alias]
+    ]
+  }
+  const candidates: any[] =
+    family === 'fable'
+      ? [
+          ...directShapes('fable'),
+          pickClaudeScopedLimitWindow(payload, 'fable'),
+          ...directShapes('sonnet')
+        ]
+      : [...directShapes('opus'), pickClaudeScopedLimitWindow(payload, 'opus')]
   for (const candidate of candidates) {
     if (candidate && typeof candidate === 'object') return candidate
+  }
+  return null
+}
+
+/** Flatten a limits-entry `scope` (string, or object like
+ * `{ label: "Fable" }`) into lowercase text for family matching. Only
+ * string leaf values count (two levels deep) — so `{}` / `{ label: null }`
+ * read as scope-less rather than as an unknown scope. */
+function claudeLimitScopeText(scope: unknown): string {
+  if (typeof scope === 'string') return scope.toLowerCase()
+  if (!scope || typeof scope !== 'object') return ''
+  const parts: string[] = []
+  for (const value of Object.values(scope as Record<string, unknown>)) {
+    if (typeof value === 'string') parts.push(value)
+    else if (value && typeof value === 'object') {
+      for (const nested of Object.values(value as Record<string, unknown>)) {
+        if (typeof nested === 'string') parts.push(nested)
+      }
+    }
+  }
+  return parts.join(' ').toLowerCase()
+}
+
+/** Map a limits[] entry to the `{ utilization, reset_at }` shape
+ * `claudeUsageWindow` consumes; null when it has no usable percent. */
+function claudeLimitEntryWindow(entry: any): any {
+  const utilization = entry.percent ?? entry.utilization
+  if (utilization === undefined || utilization === null) return null
+  return {
+    utilization,
+    reset_at: entry.resets_at ?? entry.reset_at ?? entry.resetAt
+  }
+}
+
+/**
+ * Find a per-family weekly window inside the payload's `limits[]` array
+ * (the shape the OAuth usage endpoint moved to in mid-2026).
+ *
+ * Two passes, so array order can never let the wrong bucket win:
+ *   1. an entry whose kind or scope text explicitly names the family;
+ *   2. (Fable only, when pass 1 found nothing) a `kind: "weekly_scoped"`
+ *      entry with NO scope at all — Limit Counter parity; some accounts
+ *      omit the scope on the Fable bucket. An entry scoped to some OTHER
+ *      bucket ("Opus", "OAuth apps", or a family that doesn't exist yet)
+ *      never qualifies as Fable.
+ */
+function pickClaudeScopedLimitWindow(payload: any, family: 'fable' | 'opus'): any {
+  const limits = payload?.limits
+  if (!Array.isArray(limits)) return null
+  const aliases = family === 'fable' ? ['fable', 'sonnet'] : ['opus']
+  const weeklyEntries = limits.filter(
+    (entry) =>
+      entry && typeof entry === 'object' && String(entry.group ?? '').toLowerCase() === 'weekly'
+  )
+  for (const entry of weeklyEntries) {
+    const kind = String(entry.kind ?? '').toLowerCase()
+    const scopeText = claudeLimitScopeText(entry.scope)
+    if (!aliases.some((alias) => kind.includes(alias) || scopeText.includes(alias))) continue
+    const window = claudeLimitEntryWindow(entry)
+    if (window) return window
+  }
+  if (family !== 'fable') return null
+  for (const entry of weeklyEntries) {
+    if (String(entry.kind ?? '').toLowerCase() !== 'weekly_scoped') continue
+    if (claudeLimitScopeText(entry.scope) !== '') continue
+    const window = claudeLimitEntryWindow(entry)
+    if (window) return window
+  }
+  return null
+}
+
+/**
+ * Aggregate (non-model-scoped) fallback from limits[]: if Anthropic
+ * completes the migration and drops the top-level `five_hour` /
+ * `seven_day` fields, the Session and Weekly meters keep working off
+ * `{ group: "five_hour"|"weekly", kind: "*_all" }` entries. Scoped
+ * per-family buckets never qualify.
+ */
+function pickClaudeAggregateLimitWindow(payload: any, group: 'five_hour' | 'weekly'): any {
+  const limits = payload?.limits
+  if (!Array.isArray(limits)) return null
+  for (const entry of limits) {
+    if (!entry || typeof entry !== 'object') continue
+    if (String(entry.group ?? '').toLowerCase() !== group) continue
+    if (
+      String(entry.kind ?? '')
+        .toLowerCase()
+        .includes('scoped')
+    )
+      continue
+    const window = claudeLimitEntryWindow(entry)
+    if (window) return window
   }
   return null
 }
@@ -680,12 +809,19 @@ function logClaudeUsageMissingFamilyWindowOnce(payload: any): void {
       payload.models && typeof payload.models === 'object'
         ? Object.keys(payload.models).sort()
         : null
+    // group/kind only — scope labels could name private model access.
+    const limitsShapes = Array.isArray(payload.limits)
+      ? payload.limits.map(
+          (entry: any) => `${String(entry?.group ?? '?')}/${String(entry?.kind ?? '?')}`
+        )
+      : null
 
     console.warn(
       '[claudeUsage] per-family weekly windows (Fable / Opus) not found in OAuth payload — ' +
         `top-level keys: ${JSON.stringify(topLevelKeys)}` +
         (sevenDayKeys ? `, seven_day.* keys: ${JSON.stringify(sevenDayKeys)}` : '') +
-        (modelsKeys ? `, models.* keys: ${JSON.stringify(modelsKeys)}` : '')
+        (modelsKeys ? `, models.* keys: ${JSON.stringify(modelsKeys)}` : '') +
+        (limitsShapes ? `, limits[] group/kind: ${JSON.stringify(limitsShapes)}` : '')
     )
   } catch {
     // Best-effort diagnostic — don't let a logging failure crash the

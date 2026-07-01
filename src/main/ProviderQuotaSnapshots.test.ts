@@ -212,6 +212,217 @@ describe('ProviderQuotaSnapshots', () => {
         usedPercent: 3
       })
     })
+
+    it('finds Fable in the limits[] weekly_scoped entry (current live shape)', () => {
+      const snapshot = normalizeClaudeUsageSnapshot({
+        five_hour: { utilization: 28, resets_at: '2026-07-02T03:10:00Z' },
+        seven_day: { utilization: 5, resets_at: '2026-07-07T08:00:00Z' },
+        limits: [
+          {
+            group: 'weekly',
+            kind: 'weekly_all',
+            percent: 5,
+            resets_at: '2026-07-07T08:00:00.000000+00:00'
+          },
+          {
+            group: 'weekly',
+            kind: 'weekly_scoped',
+            percent: 8,
+            resets_at: '2026-07-07T07:59:59.516637+00:00',
+            scope: { label: 'Fable' }
+          }
+        ]
+      })
+      expect(snapshot.windows?.map((w) => w.label)).toEqual(['Session', 'Weekly', 'Fable'])
+      const fable = snapshot.windows?.find((w) => w.label === 'Fable')
+      expect(fable).toMatchObject({
+        id: 'claude-weekly-fable',
+        usedPercent: 8,
+        remainingPercent: 92
+      })
+      expect(fable?.resetAt).toBe('2026-07-07T07:59:59.516Z')
+    })
+
+    it('prefers the live scoped limits entry over a stale legacy seven_day_sonnet field', () => {
+      const snapshot = normalizeClaudeUsageSnapshot({
+        seven_day_sonnet: { utilization: 88 },
+        limits: [
+          {
+            group: 'weekly',
+            kind: 'weekly_scoped',
+            percent: 0,
+            resets_at: '2026-07-07T06:59:59Z',
+            scope: { label: 'Fable' }
+          }
+        ]
+      })
+      expect(snapshot.windows?.find((w) => w.label === 'Fable')?.usedPercent).toBe(0)
+    })
+
+    it('treats a bare weekly_scoped entry with no scope as the Fable window', () => {
+      const snapshot = normalizeClaudeUsageSnapshot({
+        limits: [
+          { group: 'weekly', kind: 'weekly_scoped', percent: 12, resets_at: '2026-07-07T07:00:00Z' }
+        ]
+      })
+      expect(snapshot.windows?.find((w) => w.label === 'Fable')?.usedPercent).toBe(12)
+    })
+
+    it('matches string scopes and kind-embedded family names in limits[]', () => {
+      // String scope routing must hold where the bare-weekly_scoped fallback
+      // CANNOT rescue it: a string 'opus' scope lands on Opus, never Fable.
+      const byScope = normalizeClaudeUsageSnapshot({
+        limits: [{ group: 'weekly', kind: 'weekly_scoped', percent: 31, scope: 'opus' }]
+      })
+      expect(byScope.windows?.find((w) => w.label === 'Opus')?.usedPercent).toBe(31)
+      expect(byScope.windows?.find((w) => w.label === 'Fable')).toBeUndefined()
+      const byKind = normalizeClaudeUsageSnapshot({
+        limits: [{ group: 'weekly', kind: 'weekly_fable', percent: 9 }]
+      })
+      expect(byKind.windows?.find((w) => w.label === 'Fable')?.usedPercent).toBe(9)
+    })
+
+    it('prefers a direct seven_day_fable field over the scoped limits entry', () => {
+      const snapshot = normalizeClaudeUsageSnapshot({
+        seven_day_fable: { utilization: 40 },
+        limits: [{ group: 'weekly', kind: 'weekly_scoped', percent: 8, scope: { label: 'Fable' } }]
+      })
+      expect(snapshot.windows?.find((w) => w.label === 'Fable')?.usedPercent).toBe(40)
+    })
+
+    it('prefers a direct opus field over the opus-scoped limits entry', () => {
+      const snapshot = normalizeClaudeUsageSnapshot({
+        models: { opus: { weekly: { utilization: 55 } } },
+        limits: [{ group: 'weekly', kind: 'weekly_scoped', percent: 31, scope: { label: 'Opus' } }]
+      })
+      expect(snapshot.windows?.find((w) => w.label === 'Opus')?.usedPercent).toBe(55)
+    })
+
+    it('never lets a foreign or bare scoped entry shadow the explicit Fable entry', () => {
+      // An unknown-family bucket ordered FIRST must not be claimed as Fable.
+      const foreignFirst = normalizeClaudeUsageSnapshot({
+        limits: [
+          { group: 'weekly', kind: 'weekly_scoped', percent: 31, scope: { label: 'OAuth apps' } },
+          { group: 'weekly', kind: 'weekly_scoped', percent: 8, scope: { label: 'Fable' } }
+        ]
+      })
+      expect(foreignFirst.windows?.find((w) => w.label === 'Fable')?.usedPercent).toBe(8)
+      // A scope-less entry ordered first loses to the explicitly-scoped one.
+      const bareFirst = normalizeClaudeUsageSnapshot({
+        limits: [
+          { group: 'weekly', kind: 'weekly_scoped', percent: 55 },
+          { group: 'weekly', kind: 'weekly_scoped', percent: 8, scope: { label: 'Fable' } }
+        ]
+      })
+      expect(bareFirst.windows?.find((w) => w.label === 'Fable')?.usedPercent).toBe(8)
+      // An entry scoped to an unknown family alone is never claimed as Fable.
+      const unknownOnly = normalizeClaudeUsageSnapshot({
+        limits: [{ group: 'weekly', kind: 'weekly_scoped', percent: 90, scope: { label: 'Nova' } }]
+      })
+      expect(unknownOnly.windows?.find((w) => w.label === 'Fable')).toBeUndefined()
+    })
+
+    it('builds Session and Weekly from aggregate limits[] entries when top-level fields vanish', () => {
+      const snapshot = normalizeClaudeUsageSnapshot({
+        limits: [
+          {
+            group: 'five_hour',
+            kind: 'five_hour_all',
+            percent: 28,
+            resets_at: '2026-07-02T03:10:00Z'
+          },
+          { group: 'weekly', kind: 'weekly_all', percent: 5, resets_at: '2026-07-07T08:00:00Z' },
+          { group: 'weekly', kind: 'weekly_scoped', percent: 8, scope: { label: 'Fable' } }
+        ]
+      })
+      expect(snapshot.windows?.map((w) => w.label)).toEqual(['Session', 'Weekly', 'Fable'])
+      expect(snapshot.windows?.find((w) => w.label === 'Session')).toMatchObject({
+        usedPercent: 28,
+        resetAt: '2026-07-02T03:10:00.000Z'
+      })
+      expect(snapshot.windows?.find((w) => w.label === 'Weekly')?.usedPercent).toBe(5)
+    })
+
+    it('maps an Opus-scoped limits entry to the Opus meter, not Fable', () => {
+      const snapshot = normalizeClaudeUsageSnapshot({
+        limits: [
+          {
+            group: 'weekly',
+            kind: 'weekly_scoped',
+            percent: 31,
+            resets_at: '2026-07-07T07:00:00Z',
+            scope: { label: 'Opus' }
+          }
+        ]
+      })
+      expect(snapshot.windows?.find((w) => w.label === 'Opus')?.usedPercent).toBe(31)
+      expect(snapshot.windows?.find((w) => w.label === 'Fable')).toBeUndefined()
+    })
+
+    it('routes coexisting Fable and Opus scoped entries to their own meters', () => {
+      const snapshot = normalizeClaudeUsageSnapshot({
+        limits: [
+          { group: 'weekly', kind: 'weekly_scoped', percent: 8, scope: { label: 'Fable' } },
+          { group: 'weekly', kind: 'weekly_scoped', percent: 31, scope: { label: 'Opus' } }
+        ]
+      })
+      expect(snapshot.windows?.find((w) => w.label === 'Fable')?.usedPercent).toBe(8)
+      expect(snapshot.windows?.find((w) => w.label === 'Opus')?.usedPercent).toBe(31)
+    })
+
+    it('never maps weekly_all or non-weekly limits entries to a family meter', () => {
+      const snapshot = normalizeClaudeUsageSnapshot({
+        limits: [
+          { group: 'weekly', kind: 'weekly_all', percent: 49 },
+          { group: 'five_hour', kind: 'weekly_scoped', percent: 66 }
+        ]
+      })
+      expect(snapshot.windows?.find((w) => w.label === 'Fable')).toBeUndefined()
+      expect(snapshot.windows?.find((w) => w.label === 'Opus')).toBeUndefined()
+    })
+
+    it('shows a zero-percent Fable scoped entry (unused Fable still renders)', () => {
+      const snapshot = normalizeClaudeUsageSnapshot({
+        limits: [{ group: 'weekly', kind: 'weekly_scoped', percent: 0, scope: { label: 'Fable' } }]
+      })
+      expect(snapshot.windows?.find((w) => w.label === 'Fable')).toMatchObject({
+        usedPercent: 0,
+        remainingPercent: 100
+      })
+    })
+
+    it('reads the live endpoint\'s "resets_at" reset field on Session/Weekly windows', () => {
+      const snapshot = normalizeClaudeUsageSnapshot({
+        five_hour: { utilization: 28, resets_at: '2026-07-02T03:10:00Z' },
+        seven_day: { utilization: 5, resets_at: '2026-07-07T08:00:00Z' }
+      })
+      expect(snapshot.windows?.find((w) => w.label === 'Session')?.resetAt).toBe(
+        '2026-07-02T03:10:00.000Z'
+      )
+      expect(snapshot.windows?.find((w) => w.label === 'Weekly')?.resetAt).toBe(
+        '2026-07-07T08:00:00.000Z'
+      )
+    })
+
+    it('stamps rollover cadence on every Claude window (pace tick + stale projection)', () => {
+      const snapshot = normalizeClaudeUsageSnapshot({
+        five_hour: { utilization: 28, resets_at: '2026-07-02T03:10:00Z' },
+        seven_day: { utilization: 5, resets_at: '2026-07-07T08:00:00Z' },
+        limits: [{ group: 'weekly', kind: 'weekly_scoped', percent: 8, scope: { label: 'Fable' } }]
+      })
+      const byLabel = (label: string): number | undefined =>
+        snapshot.windows?.find((w) => w.label === label)?.limitWindowSeconds
+      expect(byLabel('Session')).toBe(5 * 60 * 60)
+      expect(byLabel('Weekly')).toBe(7 * 24 * 60 * 60)
+      expect(byLabel('Fable')).toBe(7 * 24 * 60 * 60)
+    })
+
+    it('tolerates malformed limits[] entries without throwing', () => {
+      const snapshot = normalizeClaudeUsageSnapshot({
+        limits: [null, 'garbage', { group: 'weekly', kind: 'weekly_scoped' }, {}]
+      })
+      expect(snapshot.windows?.find((w) => w.label === 'Fable')).toBeUndefined()
+    })
   })
 
   describe('projectStaleSnapshotForward', () => {
