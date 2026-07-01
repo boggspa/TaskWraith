@@ -163,6 +163,9 @@ describe('buildRemoteFirstLaunchState', () => {
       'claude-sonnet-5-2026-06-30'
     )
     expect(state.notifications.map((notice) => notice.id)).toContain(
+      'claude-fable-mythos-return-2026-07-01'
+    )
+    expect(state.notifications.map((notice) => notice.id)).toContain(
       'changelog-scheduled-queue-2026-06-28'
     )
     expect(state.notifications.map((notice) => notice.id)).toContain(
@@ -188,6 +191,13 @@ describe('buildRemoteFirstLaunchState', () => {
     expect(sonnet?.tone).toBe('default')
     expect(sonnet?.accent).toBe('claude')
     expect(sonnet?.title).toBe('Claude Sonnet 5 is available.')
+
+    const returnedClaude5 = state.notifications.find(
+      (notice) => notice.id === 'claude-fable-mythos-return-2026-07-01'
+    )
+    expect(returnedClaude5?.tone).toBe('default')
+    expect(returnedClaude5?.accent).toBe('claude')
+    expect(returnedClaude5?.title).toBe('Claude Fable 5 and Mythos 5 access is returning.')
   })
 
   it('surfaces stale usage snapshots and no-workspace access without leaking setup internals', () => {

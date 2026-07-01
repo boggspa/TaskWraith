@@ -105,6 +105,14 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
     dismissible: true
   },
   {
+    id: 'claude-fable-mythos-return-2026-07-01',
+    kind: 'addition',
+    title: 'Claude Fable 5 and Mythos 5 access is returning.',
+    body: 'Anthropic says Fable 5 and Mythos 5 access is being restored after export controls were lifted. Both rows are back in TaskWraith with 1M context, 128K max output, adaptive thinking, and $10/$50 per MTok pricing; Mythos 5 remains Project Glasswing limited availability.',
+    accent: 'claude',
+    dismissible: true
+  },
+  {
     id: 'antigravity-not-planned-2026-06-26',
     kind: 'info',
     title: 'AntiGravity will not be added.',

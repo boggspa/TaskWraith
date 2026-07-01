@@ -164,6 +164,23 @@ describe('notification registry', () => {
     expect(sonnet?.body).toContain('$2/$10 per MTok')
   })
 
+  it('seeds the Claude Fable/Mythos return notice with official model stats', () => {
+    const returned = PINNED_APP_NOTIFICATIONS.find(
+      (n) => n.id === 'claude-fable-mythos-return-2026-07-01'
+    )
+    expect(returned).toBeDefined()
+    expect(returned && appNotificationTone(returned.kind)).toBe('default')
+    expect(returned && appNotificationAccent(returned)).toBe('claude')
+    expect(returned?.kind).toBe('addition')
+    expect(returned?.title).toBe('Claude Fable 5 and Mythos 5 access is returning.')
+    expect(returned?.body).toContain('export controls were lifted')
+    expect(returned?.body).toContain('1M context')
+    expect(returned?.body).toContain('128K max output')
+    expect(returned?.body).toContain('adaptive thinking')
+    expect(returned?.body).toContain('$10/$50 per MTok')
+    expect(returned?.body).toContain('Project Glasswing')
+  })
+
   it('keeps scheduled sends in the dynamic changelog pool', () => {
     const scheduled = CHANGELOG_FEATURE_NOTIFICATION_POOL.find(
       (n) => n.id === 'changelog-scheduled-queue-2026-06-28'
