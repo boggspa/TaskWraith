@@ -318,6 +318,7 @@ import {
 } from './remote/relayReachability'
 import { deriveAgreementPublicRaw } from '../shared/e2ee/pushSeal'
 import { exportRawEd25519Seed } from '../shared/e2ee/keys'
+import type { KeyPair } from '../shared/e2ee/keys'
 import {
   resolveAutoUpdateServiceEnabled,
   UpdateService,
@@ -24924,26 +24925,35 @@ if (isGeminiMcpBridgeProcess) {
       const hostRelay = collaborationHostRelayUrl()
       if (!hostRelay) return
       const now = Date.now()
-      // Re-open the host's mac-seat ONLY for invites a NEW collaborator can
-      // still consume: unconsumed AND not-yet-expired. Boot re-open does NOT
-      // resume an already-joined collaborator — that session was in-memory and
-      // is gone after a restart, and the invite it consumed can no longer
-      // re-admit (RESUME-1). So a consumed or expired invite's room would just
-      // hold a dead relay seat for the process lifetime.
-      const liveInvites = humanCollaborationStore
-        .listShares()
-        .filter((share) => share.enabled)
-        .flatMap((share) => share.invites)
-        .filter(
-          (invite) =>
-            typeof invite.roomId === 'string' &&
-            typeof invite.consumedAt !== 'number' &&
-            invite.expiresAt > now
+      // Re-open the host's mac-seat for:
+      //  (a) invites a NEW collaborator can still consume (unconsumed + not
+      //      yet expired), and
+      //  (b) Slice 5 reconnect: CONSUMED invites whose collaborator is still an
+      //      ACTIVE participant — the pinned-identity reconnect handshake dials
+      //      the same room, so the host must be listening after a restart. A
+      //      revoked participant's room stays closed (revocation holds).
+      const roomIds = new Set<string>()
+      for (const share of humanCollaborationStore.listShares()) {
+        if (!share.enabled) continue
+        const activeCollaboratorIds = new Set(
+          share.participants
+            .filter((participant) => participant.status === 'active')
+            .map((participant) => participant.collaboratorId)
         )
-      if (liveInvites.length === 0) return
+        for (const invite of share.invites) {
+          if (typeof invite.roomId !== 'string') continue
+          const consumable = typeof invite.consumedAt !== 'number' && invite.expiresAt > now
+          const reconnectSeat =
+            typeof invite.consumedAt === 'number' &&
+            typeof invite.collaboratorId === 'string' &&
+            activeCollaboratorIds.has(invite.collaboratorId)
+          if (consumable || reconnectSeat) roomIds.add(invite.roomId)
+        }
+      }
+      if (roomIds.size === 0) return
       getHumanCollaborationRuntime() // construct runtime + transport
-      for (const invite of liveInvites) {
-        if (invite.roomId) humanCollaborationHostTransport?.openRoom(hostRelay, invite.roomId)
+      for (const roomId of roomIds) {
+        humanCollaborationHostTransport?.openRoom(hostRelay, roomId)
       }
     }
     const getHumanCollaborationRuntime = () => {
@@ -26042,6 +26052,83 @@ if (isGeminiMcpBridgeProcess) {
       humanCollaborationCollaboratorClient?.dispose()
       humanCollaborationCollaboratorClient = null
     }
+    // Slice 5 reconnect — persisted collaborator identity (the host pins it per
+    // participant, so it must survive restarts) + the last-join coordinates a
+    // reconnect needs. Identity uses the same safeStorage-encrypted store as
+    // the host identity; if the keychain is unavailable we fall back to the
+    // Phase 1 per-join ephemeral identity (join still works, reconnect won't).
+    let humanCollaborationCollaboratorIdentity: KeyPair | null = null
+    const loadCollaboratorIdentity = (): KeyPair | undefined => {
+      if (humanCollaborationCollaboratorIdentity) return humanCollaborationCollaboratorIdentity
+      try {
+        humanCollaborationCollaboratorIdentity = new HumanCollaborationIdentityStore(
+          join(app.getPath('userData'), 'human-collaboration-collaborator-identity.json'),
+          safeStorage,
+          (line) => console.warn(line)
+        ).load()
+        return humanCollaborationCollaboratorIdentity
+      } catch (err) {
+        console.warn(
+          `[human-collaboration] collaborator identity unavailable (reconnect disabled): ${
+            err instanceof Error ? err.message : String(err)
+          }`
+        )
+        return undefined
+      }
+    }
+    interface CollaboratorSessionRecord {
+      shareId: string
+      chatId: string
+      collaboratorId: string
+      displayName: string
+      mode: 'readOnly' | 'comments'
+      relayUrls: string[]
+      roomId: string
+      hostIdentityPubKeyB64: string
+      savedAt: number
+    }
+    const collaboratorSessionRecordPath = (): string =>
+      join(app.getPath('userData'), 'human-collaboration-collaborator-session.json')
+    const readCollaboratorSessionRecord = (): CollaboratorSessionRecord | null => {
+      try {
+        const parsed = JSON.parse(
+          fsSync.readFileSync(collaboratorSessionRecordPath(), 'utf8')
+        ) as CollaboratorSessionRecord
+        if (
+          !parsed?.shareId ||
+          !parsed?.chatId ||
+          !parsed?.collaboratorId ||
+          !parsed?.roomId ||
+          !parsed?.hostIdentityPubKeyB64 ||
+          !Array.isArray(parsed?.relayUrls) ||
+          parsed.relayUrls.length === 0
+        ) {
+          return null
+        }
+        return parsed
+      } catch {
+        return null
+      }
+    }
+    const writeCollaboratorSessionRecord = (record: CollaboratorSessionRecord): void => {
+      try {
+        const target = collaboratorSessionRecordPath()
+        fsSync.writeFileSync(`${target}.tmp`, JSON.stringify(record, null, 2), { mode: 0o600 })
+        fsSync.renameSync(`${target}.tmp`, target)
+      } catch (err) {
+        console.warn(
+          `[human-collaboration] could not persist collaborator session: ${
+            err instanceof Error ? err.message : String(err)
+          }`
+        )
+      }
+    }
+    // Join coordinates captured at begin-time; persisted only after a HUMAN
+    // confirms the SAS (a never-confirmed join must not become reconnectable).
+    let pendingCollaboratorJoinContext: Omit<
+      CollaboratorSessionRecord,
+      'collaboratorId' | 'hostIdentityPubKeyB64' | 'savedAt'
+    > | null = null
     ipcMain.handle(
       'human-collaboration-collaborator:join',
       async (
@@ -26079,9 +26166,12 @@ if (isGeminiMcpBridgeProcess) {
           )
         }
         let lastRetryableError: unknown = null
+        const collaboratorIdentity = loadCollaboratorIdentity()
         for (const relayUrl of relayUrls) {
           const client = new HumanCollaborationCollaboratorClient({
             socketFactory: wsTransportSocketFactory,
+            // Slice 5: pinned identity across joins/reconnects when available.
+            ...(collaboratorIdentity ? { identity: collaboratorIdentity } : {}),
             onProjection: (projection) =>
               mainWindow?.webContents.send('human-collaboration-collaborator-projection', { projection }),
             onConnectionChange: (connected) =>
@@ -26102,6 +26192,15 @@ if (isGeminiMcpBridgeProcess) {
               shareMode: input.mode === 'readOnly' ? 'readOnly' : 'comments',
               expectedHostIdentityPubKeyB64: input.hostIdentityPubKeyB64
             })
+            // Captured for persistence at confirm-time (Slice 5 reconnect).
+            pendingCollaboratorJoinContext = {
+              shareId: input.shareId,
+              chatId: input.chatId,
+              displayName: input.displayName,
+              mode: input.mode === 'readOnly' ? 'readOnly' : 'comments',
+              relayUrls,
+              roomId: input.roomId
+            }
             return { confirmCode, chatId: input.chatId, mode: input.mode }
           } catch (err) {
             // Don't leak a half-dead client/socket on a failed candidate.
@@ -26121,7 +26220,87 @@ if (isGeminiMcpBridgeProcess) {
       if (!client) throw new Error('No active collaboration join to confirm.')
       const result = await client.confirmAdmission()
       client.subscribe()
+      // Slice 5: only a HUMAN-CONFIRMED join becomes reconnectable. The pinned
+      // host key comes from the confirm result (the transcript signature was
+      // verified under it); reconnect requires it to match exactly.
+      if (pendingCollaboratorJoinContext && result?.collaboratorId) {
+        writeCollaboratorSessionRecord({
+          ...pendingCollaboratorJoinContext,
+          collaboratorId: result.collaboratorId,
+          hostIdentityPubKeyB64: result.hostIdentityPubKeyB64,
+          savedAt: Date.now()
+        })
+        pendingCollaboratorJoinContext = null
+      }
       return result
+    })
+    // Slice 5 — can this instance reconnect to its last shared chat?
+    ipcMain.handle('human-collaboration-collaborator:last-session', () => {
+      const record = readCollaboratorSessionRecord()
+      if (!record || !loadCollaboratorIdentity()) return { available: false }
+      return {
+        available: true,
+        chatId: record.chatId,
+        displayName: record.displayName,
+        mode: record.mode,
+        savedAt: record.savedAt
+      }
+    })
+    // Slice 5 — pinned-identity reconnect: no invite token, no human SAS
+    // re-compare (the persisted host key already survived one; the handshake
+    // verifies fresh signatures under it, and the host validates our pinned
+    // identity against the participant it originally admitted).
+    ipcMain.handle('human-collaboration-collaborator:reconnect', async () => {
+      const record = readCollaboratorSessionRecord()
+      if (!record) throw new Error('No previous shared chat to reconnect to.')
+      const collaboratorIdentity = loadCollaboratorIdentity()
+      if (!collaboratorIdentity) {
+        throw new Error('Collaborator identity is unavailable, so reconnect is not possible.')
+      }
+      disposeCollaboratorClient()
+      const isRetryable = (err: unknown): boolean => {
+        const message = err instanceof Error ? err.message : String(err)
+        return /transport|connect timed out|timed out|socket|websocket|ECONN|ENOTFOUND|ETIMEDOUT|EHOSTUNREACH|ENETUNREACH/i.test(
+          message
+        )
+      }
+      let lastRetryableError: unknown = null
+      for (const relayUrl of record.relayUrls) {
+        const client = new HumanCollaborationCollaboratorClient({
+          socketFactory: wsTransportSocketFactory,
+          identity: collaboratorIdentity,
+          onProjection: (projection) =>
+            mainWindow?.webContents.send('human-collaboration-collaborator-projection', { projection }),
+          onConnectionChange: (connected) =>
+            mainWindow?.webContents.send('human-collaboration-collaborator-status', { connected }),
+          onError: (err) =>
+            mainWindow?.webContents.send('human-collaboration-collaborator-status', { error: err.message }),
+          log: (line) => console.warn(line)
+        })
+        humanCollaborationCollaboratorClient = client
+        try {
+          client.connect(relayUrl, record.roomId)
+          await client.whenConnected()
+          await client.reconnect({
+            shareId: record.shareId,
+            chatId: record.chatId,
+            collaboratorId: record.collaboratorId,
+            displayName: record.displayName,
+            shareMode: record.mode,
+            expectedHostIdentityPubKeyB64: record.hostIdentityPubKeyB64
+          })
+          client.subscribe()
+          return { chatId: record.chatId, mode: record.mode, displayName: record.displayName }
+        } catch (err) {
+          if (humanCollaborationCollaboratorClient === client) disposeCollaboratorClient()
+          else client.dispose()
+          if (!isRetryable(err)) throw err
+          lastRetryableError = err
+        }
+      }
+      throw lastRetryableError instanceof Error
+        ? lastRetryableError
+        : new Error('Could not reconnect over any known relay URL.')
     })
     ipcMain.handle(
       'human-collaboration-collaborator:append-comment',

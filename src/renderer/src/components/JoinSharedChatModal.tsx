@@ -159,11 +159,23 @@ export function JoinSharedChatModal({
   const [comment, setComment] = useState('')
   // P2b: whether the next contribution is a structured "request host action".
   const [sendAsActionRequest, setSendAsActionRequest] = useState(false)
+  // Slice 5: whether a persisted, reconnectable previous session exists.
+  const [lastSessionAvailable, setLastSessionAvailable] = useState(false)
   const [connectionState, setConnectionState] = useState<ConnectionState>('idle')
   const [busy, setBusy] = useState(false)
   const rowsRef = useRef<HTMLDivElement | null>(null)
   const dialogRef = useRef<HTMLDivElement | null>(null)
   const lastFocusedRef = useRef<HTMLElement | null>(null)
+
+  // Slice 5: check for a reconnectable previous session whenever the modal opens.
+  useEffect(() => {
+    if (!open) return
+    if (typeof window.api.humanCollaborationCollaboratorLastSession !== 'function') return
+    void window.api
+      .humanCollaborationCollaboratorLastSession()
+      .then((result) => setLastSessionAvailable(Boolean(result?.available)))
+      .catch(() => setLastSessionAvailable(false))
+  }, [open])
 
   // Live projection + status while the modal is open.
   useEffect(() => {
@@ -357,6 +369,25 @@ export function JoinSharedChatModal({
     projection?.contributionPreset === 'requestHostAction' ||
     projection?.contributionPreset === 'autoDraft'
 
+  // Slice 5: pinned-identity reconnect — no fresh invite, no SAS re-compare
+  // (main verifies the pinned host key + fresh transcript signatures).
+  const handleReconnect = useCallback(async () => {
+    if (typeof window.api.humanCollaborationCollaboratorReconnect !== 'function') return
+    setBusy(true)
+    setError(null)
+    try {
+      const result = await window.api.humanCollaborationCollaboratorReconnect()
+      setMode(result.mode === 'readOnly' ? 'readOnly' : 'comments')
+      setConnectionState('connected')
+      setStep('viewing')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not reconnect.')
+      setConnectionState('disconnected')
+    } finally {
+      setBusy(false)
+    }
+  }, [])
+
   const handleSendComment = useCallback(async () => {
     const text = comment.trim()
     if (!text) return
@@ -404,6 +435,20 @@ export function JoinSharedChatModal({
             <p className="creative-approval-modal-description">
               Paste the invite the host shared with you, then verify the 6-digit code together.
             </p>
+            {lastSessionAvailable && (
+              /* Slice 5: pinned-identity reconnect to the previous shared chat —
+               * no new invite, no code re-compare (identity was verified once). */
+              <div className="join-reconnect-row">
+                <button
+                  type="button"
+                  className="btn btn-sm btn-secondary join-reconnect-btn"
+                  onClick={() => void handleReconnect()}
+                  disabled={busy || step === 'connecting'}
+                >
+                  Reconnect to your last shared chat
+                </button>
+              </div>
+            )}
             <label className="join-field-label" htmlFor="join-shared-chat-display-name">
               Your name (shown to the host)
             </label>
@@ -471,10 +516,18 @@ export function JoinSharedChatModal({
             <div className={connectionClassName}>Connection: {connectionLabel}</div>
             {connectionState === 'disconnected' && (
               /* P2a presence clarity: offline is a STATE, not an error — say
-               * plainly what still works and how to get back in. */
+               * plainly what still works and how to get back in. Slice 5 adds
+               * pinned-identity reconnect (no fresh invite needed). */
               <div className="join-offline-hint" role="status">
-                Connection lost — you&apos;re offline. You can keep reading what already loaded;
-                ask the host for a fresh invite to rejoin.
+                Connection lost — you&apos;re offline. You can keep reading what already loaded.
+                <button
+                  type="button"
+                  className="btn btn-sm btn-secondary join-reconnect-btn"
+                  onClick={() => void handleReconnect()}
+                  disabled={busy}
+                >
+                  Reconnect
+                </button>
               </div>
             )}
             <p className="creative-approval-modal-description">

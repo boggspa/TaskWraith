@@ -329,4 +329,122 @@ describe('human collaboration transport (loopback)', () => {
     client.dispose()
     hostTransport.dispose()
   })
+
+  it('Slice 5: reconnects with a pinned identity — no invite token, fresh keys, revocation holds', async () => {
+    const relay = makeInMemoryRelay()
+    const chat = makeChat()
+    const store = new HumanCollaborationStore()
+    const created = store.createShare({ chatId: 'chat-1', mode: 'comments', now: 1000, inviteTtlMs: 60_000 })
+
+    const hostIdentity = generateIdentityKeyPair()
+    const hostTransport = new HumanCollaborationHostTransport({ socketFactory: relay })
+    const runtime = new HumanCollaborationRuntime<HumanShareProjection, { ok: true }>({
+      identityKeyPair: hostIdentity,
+      store,
+      buildProjection: (req) => buildHumanShareProjection(chat, req.share),
+      appendComment: (input) => {
+        store.recordAppend({
+          shareId: input.shareId,
+          chatId: input.chatId,
+          collaboratorId: input.collaboratorId,
+          clientMessageId: input.clientMessageId,
+          messageId: `m-${input.clientMessageId}`
+        })
+        return { ok: true }
+      },
+      publishEncryptedProjection: (sessionId, frame) => hostTransport.deliver(sessionId, frame),
+      now: () => 1000
+    })
+    hostTransport.attachRuntime(runtime)
+
+    const relayUrl = 'ws://127.0.0.1:0'
+    const roomId = 'room-reconnect'
+    hostTransport.openRoom(relayUrl, roomId)
+
+    // Original join with a PERSISTED (injected) identity.
+    const pinnedIdentity = generateIdentityKeyPair()
+    const first = new HumanCollaborationCollaboratorClient({
+      socketFactory: relay,
+      identity: pinnedIdentity,
+      now: () => 1000
+    })
+    first.connect(relayUrl, roomId)
+    const admitted = await first.admit({
+      shareId: created.share.shareId,
+      chatId: 'chat-1',
+      inviteToken: created.inviteToken,
+      displayName: 'Alex',
+      shareMode: 'comments'
+    })
+    const hostKeyB64 = admitted.hostIdentityPubKeyB64
+    // Simulate a drop (crash / lost network): dispose without graceful leave.
+    first.dispose()
+    await waitFor(() => !first.isConnected)
+
+    // Reconnect with the SAME identity — no invite token, pinned host key.
+    const second = new HumanCollaborationCollaboratorClient({
+      socketFactory: relay,
+      identity: pinnedIdentity,
+      now: () => 1000
+    })
+    second.connect(relayUrl, roomId)
+    await second.whenConnected()
+    const reconnected = await second.reconnect({
+      shareId: created.share.shareId,
+      chatId: 'chat-1',
+      collaboratorId: admitted.collaboratorId,
+      displayName: 'Alex',
+      shareMode: 'comments',
+      expectedHostIdentityPubKeyB64: hostKeyB64
+    })
+    expect(reconnected.collaboratorId).toBe(admitted.collaboratorId)
+    // Fresh session, not a resumed one.
+    expect(reconnected.sessionId).not.toBe(admitted.sessionId)
+    // The runtime reports the reconnect mode distinctly (host-visible state).
+    expect(runtime.sessionSummaries().some((s) => s.mode === 'reconnect')).toBe(true)
+
+    // A WRONG host pin is refused outright.
+    const wrongPin = new HumanCollaborationCollaboratorClient({
+      socketFactory: relay,
+      identity: pinnedIdentity,
+      now: () => 1000
+    })
+    wrongPin.connect(relayUrl, roomId)
+    await wrongPin.whenConnected()
+    await expect(
+      wrongPin.reconnect({
+        shareId: created.share.shareId,
+        chatId: 'chat-1',
+        collaboratorId: admitted.collaboratorId,
+        displayName: 'Alex',
+        shareMode: 'comments',
+        expectedHostIdentityPubKeyB64: 'not-the-real-host-key'
+      })
+    ).rejects.toThrow(/Host identity changed/)
+    wrongPin.dispose()
+
+    // Revocation holds: a revoked participant cannot reconnect.
+    store.revokeParticipant({ shareId: created.share.shareId, collaboratorId: admitted.collaboratorId })
+    const afterRevoke = new HumanCollaborationCollaboratorClient({
+      socketFactory: relay,
+      identity: pinnedIdentity,
+      now: () => 1000
+    })
+    afterRevoke.connect(relayUrl, roomId)
+    await afterRevoke.whenConnected()
+    await expect(
+      afterRevoke.reconnect({
+        shareId: created.share.shareId,
+        chatId: 'chat-1',
+        collaboratorId: admitted.collaboratorId,
+        displayName: 'Alex',
+        shareMode: 'comments',
+        expectedHostIdentityPubKeyB64: hostKeyB64
+      })
+    ).rejects.toThrow(/not active/)
+    afterRevoke.dispose()
+    second.dispose()
+    hostTransport.dispose()
+  })
 })
+

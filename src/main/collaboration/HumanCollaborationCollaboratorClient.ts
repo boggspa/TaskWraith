@@ -63,8 +63,33 @@ export interface CollaboratorAdmissionInput {
   expectedHostIdentityPubKeyB64?: string
 }
 
+/**
+ * Slice 5 reconnect (spec §2/§9-5): re-establish a session with a PINNED
+ * identity — no invite token, no human SAS re-compare. The trust anchors that
+ * replace the SAS are: (a) the collaborator's persisted identity key, which the
+ * host validates against the participant it admitted originally; (b) the host's
+ * identity key persisted from the original join, which MUST match (required
+ * here, unlike admission where it is optional); (c) fresh transcript signatures
+ * from both sides over fresh ephemerals/nonces (fresh session keys every time).
+ */
+export interface CollaboratorReconnectInput {
+  shareId: string
+  chatId: string
+  collaboratorId: string
+  displayName: string
+  shareMode: 'readOnly' | 'comments'
+  /** REQUIRED for reconnect — the pinned host identity from the original join. */
+  expectedHostIdentityPubKeyB64: string
+}
+
 export interface HumanCollaborationCollaboratorClientOptions {
   socketFactory: TransportSocketFactory
+  /**
+   * Slice 5: persisted collaborator identity. When supplied, the same identity
+   * is presented across joins/reconnects (the host pins it per participant);
+   * omitted → a fresh per-instance identity (Phase 1 behavior, tests).
+   */
+  identity?: KeyPair
   /** Surfaces the locally-computed 6-digit SAS for the out-of-band human compare. */
   onSasCode?: (code: string) => void
   onProjection?: (projection: unknown) => void
@@ -84,7 +109,7 @@ interface PendingRequest {
 
 export class HumanCollaborationCollaboratorClient {
   private readonly opts: HumanCollaborationCollaboratorClientOptions
-  private readonly identity: KeyPair = generateIdentityKeyPair()
+  private readonly identity: KeyPair
   private socket: TransportSocket | null = null
   private connected = false
   private readonly pending = new Map<string, PendingRequest>()
@@ -105,6 +130,13 @@ export class HumanCollaborationCollaboratorClient {
 
   constructor(options: HumanCollaborationCollaboratorClientOptions) {
     this.opts = options
+    this.identity = options.identity ?? generateIdentityKeyPair()
+  }
+
+  /** The identity pubkey this client presents (b64) — persisted callers use it
+   * to correlate the pinned participant across joins/reconnects. */
+  identityPubKeyB64(): string {
+    return b64.encode(exportRawEd25519PublicKey(this.identity.publicKey))
   }
 
   get isConnected(): boolean {
@@ -254,6 +286,90 @@ export class HumanCollaborationCollaboratorClient {
   async admit(input: CollaboratorAdmissionInput): Promise<HumanCollaborationConfirmSasResult> {
     await this.beginAdmission(input)
     return this.confirmAdmission()
+  }
+
+  /**
+   * Slice 5 reconnect: pinned-identity re-admission with NO invite token and NO
+   * human SAS re-compare. Replacement trust anchors (all mandatory):
+   *   1. the host validates our pinned identity key against the participant it
+   *      originally admitted (revoked identities fail closed),
+   *   2. we REQUIRE the host's identity key to match the one persisted at the
+   *      original join (a different host = hard refusal),
+   *   3. both sides sign a FRESH transcript over fresh ephemerals + nonces, so
+   *      every reconnect gets brand-new session keys.
+   * The host still surfaces the reconnect visibly (admission event + session
+   * summaries carry mode 'reconnect'), so it is never silent.
+   */
+  async reconnect(input: CollaboratorReconnectInput): Promise<HumanCollaborationConfirmSasResult> {
+    if (!input.expectedHostIdentityPubKeyB64) {
+      throw new Error('Reconnect requires the pinned host identity key.')
+    }
+    const ephemeral = generateEphemeralKeyPair()
+    const nonce = randomBytes(16)
+    const collaboratorIdentityPubKeyB64 = b64.encode(exportRawEd25519PublicKey(this.identity.publicKey))
+    const collaboratorEphemeralPubKeyB64 = b64.encode(exportRawX25519PublicKey(ephemeral.publicKey))
+    const collaboratorNonceB64 = b64.encode(nonce)
+
+    const begin = (await this.request('begin', {
+      shareId: input.shareId,
+      chatId: input.chatId,
+      displayName: input.displayName,
+      collaboratorId: input.collaboratorId,
+      collaboratorIdentityPubKeyB64,
+      collaboratorEphemeralPubKeyB64,
+      collaboratorNonceB64
+    })) as HumanCollaborationBeginHandshakeResult
+
+    if (begin.mode !== 'reconnect') {
+      throw new Error('Host did not treat this as a reconnect — refusing to continue.')
+    }
+    // Reconstruct the reconnect transcript exactly as the host built it: the
+    // pinned-token placeholder replaces the invite hash (there is no token).
+    const context: HumanCollaborationHandshakeContext = {
+      protocol: HUMAN_COLLABORATION_PROTOCOL,
+      mode: 'reconnect',
+      shareId: input.shareId,
+      chatId: input.chatId,
+      inviteId: begin.inviteId,
+      inviteTokenHash: `pinned:${collaboratorIdentityPubKeyB64}`,
+      inviteExpiresAt: begin.expiresAt,
+      shareMode: input.shareMode,
+      collaboratorId: input.collaboratorId,
+      hostIdentityPubKeyB64: begin.hostIdentityPubKeyB64,
+      collaboratorIdentityPubKeyB64,
+      hostEphemeralPubKeyB64: begin.hostEphemeralPubKeyB64,
+      collaboratorEphemeralPubKeyB64,
+      hostNonceB64: begin.hostNonceB64,
+      collaboratorNonceB64
+    }
+    const transcriptHash = computeHumanCollaborationTranscriptHash(context)
+    if (!transcriptHash.equals(b64.decode(begin.transcriptHashB64))) {
+      throw new Error('Collaboration transcript mismatch — refusing to reconnect.')
+    }
+    const hostIdentity = importRawEd25519PublicKey(b64.decode(begin.hostIdentityPubKeyB64))
+    if (!verifyEd25519(hostIdentity, transcriptHash, b64.decode(begin.hostTranscriptSigB64))) {
+      throw new Error('Host transcript signature invalid — refusing to reconnect.')
+    }
+    // MANDATORY host pin: the SAS is skipped only because this key already
+    // survived a human SAS compare at the original join.
+    if (input.expectedHostIdentityPubKeyB64 !== begin.hostIdentityPubKeyB64) {
+      throw new Error('Host identity changed since the original join — refusing to reconnect.')
+    }
+
+    this.sessionKeys = deriveHumanCollaborationSessionKeys({
+      hostEphemeralPrivate: ephemeral.privateKey,
+      collaboratorEphemeralPublic: importRawX25519PublicKey(b64.decode(begin.hostEphemeralPubKeyB64)),
+      hostNonce: b64.decode(begin.hostNonceB64),
+      collaboratorNonce: nonce
+    })
+    const confirm = (await this.request('confirm', {
+      handshakeId: begin.handshakeId,
+      confirmCode: humanCollaborationConfirmCode(context),
+      collaboratorTranscriptSigB64: b64.encode(signEd25519(this.identity.privateKey, transcriptHash))
+    })) as HumanCollaborationConfirmSasResult
+    this.sessionId = confirm.sessionId
+    this.opts.onEstablished?.({ sessionId: confirm.sessionId, collaboratorId: confirm.collaboratorId })
+    return confirm
   }
 
 

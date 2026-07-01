@@ -1456,6 +1456,18 @@ declare global {
         intent?: 'comment' | 'requestHostAction'
       }) => Promise<{ ok: true }>
       humanCollaborationCollaboratorLeave: () => Promise<boolean>
+      humanCollaborationCollaboratorLastSession: () => Promise<{
+        available: boolean
+        chatId?: string
+        displayName?: string
+        mode?: 'readOnly' | 'comments'
+        savedAt?: number
+      }>
+      humanCollaborationCollaboratorReconnect: () => Promise<{
+        chatId: string
+        mode: 'readOnly' | 'comments'
+        displayName: string
+      }>
       saveChat: (chat: ChatRecord) => Promise<void>
       deleteChat: (chatId: string) => Promise<void>
       reapAbandonedChats: (renderer: {

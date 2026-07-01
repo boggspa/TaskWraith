@@ -1133,6 +1133,11 @@ const api = {
   }) => ipcRenderer.invoke('human-collaboration-collaborator:append-comment', input),
   humanCollaborationCollaboratorLeave: () =>
     ipcRenderer.invoke('human-collaboration-collaborator:leave'),
+  // Slice 5 reconnect — pinned-identity re-admission to the last shared chat.
+  humanCollaborationCollaboratorLastSession: () =>
+    ipcRenderer.invoke('human-collaboration-collaborator:last-session'),
+  humanCollaborationCollaboratorReconnect: () =>
+    ipcRenderer.invoke('human-collaboration-collaborator:reconnect'),
   saveChat: (chat: any) => ipcRenderer.invoke('save-chat', chat),
   deleteChat: (chatId: string) => ipcRenderer.invoke('delete-chat', chatId),
   reapAbandonedChats: (renderer: {
