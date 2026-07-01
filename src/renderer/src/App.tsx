@@ -10819,6 +10819,16 @@ function App(): React.JSX.Element {
                 event.telemetry
               )
             }
+          } else if (event.type === 'review_telemetry') {
+            // Codex native-review live status. Merge onto the synthesized
+            // `codex_review` anchor activity so the review card updates in place.
+            if (event.toolUseId) {
+              updated.messages = mergeReviewTelemetryIntoMessages(
+                updated.messages,
+                event.toolUseId,
+                event.telemetry
+              )
+            }
           } else if (event.type === 'error') {
             updated.messages = [
               ...updated.messages,
@@ -14457,6 +14467,19 @@ function App(): React.JSX.Element {
     setApprovalMode('default')
     setCurrentChat((prev) => {
       if (!prev) return prev
+      const chatWithDefaultRoster =
+        prev.ensemble && prev.ensemble.participants.length
+          ? withSessionActivityLedger(prev, {
+              ...prev,
+              ensemble: {
+                ...prev.ensemble,
+                participants: prev.ensemble.participants.map((participant) => ({
+                  ...participant,
+                  permissionPresetId: 'default'
+                }))
+              }
+            })
+          : prev
       const nextMessage: ChatMessage = {
         id: createMessageId(),
         role: 'user',
@@ -14464,10 +14487,17 @@ function App(): React.JSX.Element {
         timestamp: new Date().toISOString()
       }
       const updated = {
-        ...prev,
+        ...chatWithDefaultRoster,
         workflowMode: 'normal' as const,
-        messages: [...markProposedPlan(prev.messages, messageId, 'approved'), nextMessage]
+        messages: [
+          ...markProposedPlan(chatWithDefaultRoster.messages, messageId, 'approved'),
+          nextMessage
+        ]
       }
+      chatByIdRef.current.set(updated.appChatId, updated)
+      setChats((chatsState) =>
+        chatsState.map((chat) => (chat.appChatId === updated.appChatId ? updated : chat))
+      )
       window.api.saveChat(updated)
       return updated
     })
