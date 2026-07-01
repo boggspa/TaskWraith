@@ -22,7 +22,12 @@
 // Cursor executes MCP tools (plan mode rejects them), and TaskWraith write mode
 // == default Cursor mode, so the bridge rides exactly the write-mode trigger.
 
-import { mergeCursorAllowRules, mergeCursorMcpConfig } from './CursorMcpBridge'
+import {
+  globalCursorMcpNeedsUpdate,
+  mergeCursorAllowRules,
+  mergeCursorMcpConfig,
+  mergeGlobalCursorMcpServers
+} from './CursorMcpBridge'
 
 export interface CursorCliConfig {
   permissions: { allow: string[]; deny: string[] }
@@ -86,6 +91,33 @@ export interface CursorMcpBridgeOptions {
   mcpConfigPath?: string
   /** The `mcpServers` entry (from `buildCursorMcpServerEntry`; omit in "B" mode). */
   serverEntry?: Record<string, unknown>
+}
+
+/**
+ * "B" mode: durably register the TaskWraith broker entries in the GLOBAL
+ * `~/.cursor/mcp.json` so `cursor-agent mcp enable` gives them the persistent
+ * "ready" approval a per-run workspace server never gets. PERSISTENT (never
+ * restored — the whole point is durability) and ADDITIVE (preserves every other
+ * server, incl the user's own). Idempotent: only writes when the broker entries
+ * changed (the socket token rotates each launch, so this refreshes them —
+ * "ready" is keyed on the server NAME, so it survives an args refresh).
+ *
+ * `globalMcpDir` = the user's `~/.cursor` (created if missing). Returns whether a
+ * write happened. Best-effort by design at the caller; throws only on a real fs
+ * failure so the caller can surface it.
+ */
+export function ensureGlobalCursorBrokerRegistered(
+  fs: CursorConfigFs,
+  globalMcpPath: string,
+  globalMcpDir: string,
+  brokerEntries: Record<string, unknown>
+): boolean {
+  const cap = captureFile(fs, globalMcpPath)
+  if (!globalCursorMcpNeedsUpdate(cap.parsed, brokerEntries)) return false
+  const merged = mergeGlobalCursorMcpServers(cap.parsed, brokerEntries)
+  if (!fs.existsSync(globalMcpDir)) fs.mkdirSync(globalMcpDir, { recursive: true })
+  fs.writeFileSync(globalMcpPath, `${JSON.stringify(merged, null, 2)}\n`)
+  return true
 }
 
 export function cursorWriteModeSetupFailureMessage(error: unknown): string {

@@ -3,6 +3,7 @@ import {
   applyCursorWriteModeConfig,
   cursorWriteModeSetupFailureMessage,
   CURSOR_WRITE_MODE_DENY_RULES,
+  ensureGlobalCursorBrokerRegistered,
   mergeCursorDenyRules,
   type CursorConfigFs
 } from './CursorWorkspaceConfig'
@@ -273,5 +274,51 @@ describe('applyCursorWriteModeConfig with the TaskWraith MCP bridge', () => {
 
     restore()
     expect(files.has(CONFIG)).toBe(false)
+  })
+})
+
+describe('ensureGlobalCursorBrokerRegistered (B mode)', () => {
+  const GLOBAL_DIR = '/home/.cursor'
+  const GLOBAL_MCP = '/home/.cursor/mcp.json'
+  const broker = buildCursorMcpServerEntry({ command: '/x/electron', args: ['/s.cjs', '--token', 'T1'] })
+  // buildCursorMcpServerEntry also emits the legacy alias; for the global path the
+  // caller passes buildCursorBrokerMcpServerEntry, but any Record works here.
+  const brokerOnly = { 'taskwraith-broker': (broker as Record<string, unknown>)['taskwraith-broker'] }
+
+  it('writes the broker into a fresh global mcp.json and creates ~/.cursor', () => {
+    const { fs, files, dirs } = makeFakeFs()
+    const wrote = ensureGlobalCursorBrokerRegistered(fs, GLOBAL_MCP, GLOBAL_DIR, brokerOnly)
+    expect(wrote).toBe(true)
+    expect(dirs.has(GLOBAL_DIR)).toBe(true)
+    const cfg = JSON.parse(files.get(GLOBAL_MCP)!)
+    expect(cfg.mcpServers['taskwraith-broker']).toBeDefined()
+  })
+
+  it('PRESERVES the user\'s own global servers (never removes them)', () => {
+    const { fs, files } = makeFakeFs({
+      [GLOBAL_MCP]: JSON.stringify({
+        mcpServers: { taskwraith: { command: 'node', args: ['/web.cjs'] }, agbench: { command: 'node', args: ['/a.cjs'] } }
+      })
+    })
+    ensureGlobalCursorBrokerRegistered(fs, GLOBAL_MCP, GLOBAL_DIR, brokerOnly)
+    const cfg = JSON.parse(files.get(GLOBAL_MCP)!)
+    expect(cfg.mcpServers.taskwraith).toEqual({ command: 'node', args: ['/web.cjs'] })
+    expect(cfg.mcpServers.agbench).toEqual({ command: 'node', args: ['/a.cjs'] })
+    expect(cfg.mcpServers['taskwraith-broker']).toBeDefined()
+  })
+
+  it('is idempotent — no rewrite when the broker entry is unchanged', () => {
+    const { fs, files } = makeFakeFs()
+    expect(ensureGlobalCursorBrokerRegistered(fs, GLOBAL_MCP, GLOBAL_DIR, brokerOnly)).toBe(true)
+    const first = files.get(GLOBAL_MCP)
+    expect(ensureGlobalCursorBrokerRegistered(fs, GLOBAL_MCP, GLOBAL_DIR, brokerOnly)).toBe(false)
+    expect(files.get(GLOBAL_MCP)).toBe(first)
+  })
+
+  it('refreshes (repairs) when the token rotated on a new launch', () => {
+    const { fs } = makeFakeFs()
+    ensureGlobalCursorBrokerRegistered(fs, GLOBAL_MCP, GLOBAL_DIR, brokerOnly)
+    const rotated = { 'taskwraith-broker': { command: '/x/electron', args: ['/s.cjs', '--token', 'T2'] } }
+    expect(ensureGlobalCursorBrokerRegistered(fs, GLOBAL_MCP, GLOBAL_DIR, rotated)).toBe(true)
   })
 })

@@ -10,11 +10,14 @@ import {
   CURSOR_READONLY_MCP_ALLOW_RULES,
   CURSOR_SCOPED_MCP_SERVER_NAME,
   CURSOR_WEB_FETCH_MCP_SERVER_SOURCE,
+  buildCursorBrokerMcpServerEntry,
   buildCursorMcpServerEntry,
   buildCursorReadOnlyMcpServerEntry,
+  globalCursorMcpNeedsUpdate,
   isReservedCursorMcpServerName,
   mergeCursorAllowRules,
-  mergeCursorMcpConfig
+  mergeCursorMcpConfig,
+  mergeGlobalCursorMcpServers
 } from './CursorMcpBridge'
 import { READ_ONLY_MCP_ADVERTISE_TOOLS } from '../mcp/McpAutoAllowedTools'
 
@@ -99,6 +102,45 @@ describe('buildCursorReadOnlyMcpServerEntry', () => {
     const scoped = entry[CURSOR_SCOPED_MCP_SERVER_NAME] as { command: string; args: string[] }
     expect(scoped.command).toBe('/x/electron')
     expect(scoped.args).toContain('--safe-subset')
+  })
+})
+
+describe('B-mode global broker helpers', () => {
+  const invocation = { command: '/x/electron', args: ['/tmp/s.cjs', '--socket', '/sock', '--token', 'T1'] }
+
+  it('buildCursorBrokerMcpServerEntry registers the full broker WITHOUT the legacy alias', () => {
+    const entry = buildCursorBrokerMcpServerEntry(invocation)
+    expect(Object.keys(entry)).toEqual([CURSOR_MCP_SERVER_NAME])
+    expect(entry[CURSOR_LEGACY_WEB_MCP_SERVER_NAME]).toBeUndefined()
+  })
+
+  it('mergeGlobalCursorMcpServers PRESERVES the user\'s own servers and only adds broker keys', () => {
+    const existing = {
+      mcpServers: {
+        taskwraith: { command: 'node', args: ['/web.cjs'] }, // user's global web server
+        agbench: { command: 'node', args: ['/agb.cjs'] }
+      }
+    }
+    const merged = mergeGlobalCursorMcpServers(existing, buildCursorBrokerMcpServerEntry(invocation))
+    const servers = (merged.mcpServers ?? {}) as Record<string, unknown>
+    // user servers untouched
+    expect(servers.taskwraith).toEqual({ command: 'node', args: ['/web.cjs'] })
+    expect(servers.agbench).toEqual({ command: 'node', args: ['/agb.cjs'] })
+    // broker added
+    expect(servers[CURSOR_MCP_SERVER_NAME]).toBeDefined()
+  })
+
+  it('globalCursorMcpNeedsUpdate detects a token refresh (repair-on-stale) but skips a no-op', () => {
+    const entry = buildCursorBrokerMcpServerEntry(invocation)
+    const registered = mergeGlobalCursorMcpServers({ mcpServers: {} }, entry)
+    // identical → no update needed
+    expect(globalCursorMcpNeedsUpdate(registered, entry)).toBe(false)
+    // token rotated (new launch) → needs update
+    const rotated = buildCursorBrokerMcpServerEntry({
+      ...invocation,
+      args: ['/tmp/s.cjs', '--socket', '/sock', '--token', 'T2']
+    })
+    expect(globalCursorMcpNeedsUpdate(registered, rotated)).toBe(true)
   })
 })
 

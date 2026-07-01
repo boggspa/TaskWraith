@@ -73,3 +73,19 @@ export function cursorReadOnlyMcpEnabled(): boolean {
   const v = process.env.TASKWRAITH_CURSOR_READONLY_MCP
   return v !== '0' && v !== 'false' && v !== 'no'
 }
+
+/**
+ * "B" mode: register the TaskWraith broker in the GLOBAL `~/.cursor/mcp.json`
+ * (durable "ready" approval) instead of a per-run WORKSPACE server (which the
+ * live cursor-agent CLI never durably approves → "User rejected MCP" on every
+ * call). DEFAULT ON; TASKWRAITH_CURSOR_GLOBAL_BROKER=0 (or false/no) is an
+ * explicit kill-switch that reverts to the per-run workspace-mcp.json path.
+ *
+ * This is the ONLY place TaskWraith writes global `~/.cursor` for Cursor runs;
+ * the write is additive (never removes a server) and only touches TaskWraith's
+ * own `taskwraith-broker` / `taskwraith-cursor` entries.
+ */
+export function cursorGlobalBrokerEnabled(): boolean {
+  const v = process.env.TASKWRAITH_CURSOR_GLOBAL_BROKER
+  return v !== '0' && v !== 'false' && v !== 'no'
+}

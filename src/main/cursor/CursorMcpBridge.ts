@@ -262,6 +262,69 @@ export function buildCursorReadOnlyMcpServerEntry(
   }
 }
 
+// ── "B" mode: durable GLOBAL registration (~/.cursor/mcp.json) ───────────────
+// The live cursor-agent CLI (2026.06) proved the root cause: `--approve-mcps`
+// approves the SERVER only, and a per-run WORKSPACE `.cursor/mcp.json` server
+// never reaches the durable "approved" state (`cursor-agent mcp list` → "ready"),
+// so headless `-p` rejects its every tool call ("User rejected MCP"). GLOBALLY
+// registered servers DO reach "ready" (the user's `taskwraith` web server does).
+// So B-mode registers the broker(s) in the global `~/.cursor/mcp.json` and relies
+// on `cursor-agent mcp enable <name>` (approval is by NAME, so it survives the
+// per-launch token refresh below). The full broker (write seats) and the
+// safe-subset broker (read-only seats) are distinct names so a seat only enables
+// the one it should have. The legacy `taskwraith` alias is deliberately NOT
+// registered globally — it collides with the user's own global `taskwraith` web
+// server.
+
+/**
+ * Build the GLOBAL broker `mcpServers` entry (full tool surface) WITHOUT the
+ * legacy alias. Pure; merged via {@link mergeGlobalCursorMcpServers}.
+ */
+export function buildCursorBrokerMcpServerEntry(
+  invocation: CursorMcpServerInvocation
+): Record<string, unknown> {
+  return {
+    [CURSOR_MCP_SERVER_NAME]: {
+      command: invocation.command,
+      args: [...invocation.args],
+      ...(invocation.env ? { env: invocation.env } : {})
+    }
+  }
+}
+
+/**
+ * Merge TaskWraith broker entries into a GLOBAL `~/.cursor/mcp.json` shape (or
+ * {}). Unlike {@link mergeCursorMcpConfig} (workspace, which strips reserved
+ * names), this PRESERVES every existing server — including the user's own global
+ * `taskwraith` web server and `agbench` — and only adds/refreshes the exact
+ * broker entries passed (repair-on-stale, since the socket token rotates each
+ * launch). Never removes a server. Pure.
+ */
+export function mergeGlobalCursorMcpServers(
+  existing: unknown,
+  brokerEntries: Record<string, unknown>
+): Record<string, unknown> {
+  const base = asRecord(existing)
+  const servers: Record<string, unknown> = { ...asRecord(base.mcpServers), ...brokerEntries }
+  return { ...base, mcpServers: servers }
+}
+
+/**
+ * Would writing `brokerEntries` change the existing global config? Used to skip
+ * a no-op rewrite (and the resulting cursor-agent config-reload churn) when the
+ * broker entries already match. Compares only the broker keys. Pure.
+ */
+export function globalCursorMcpNeedsUpdate(
+  existing: unknown,
+  brokerEntries: Record<string, unknown>
+): boolean {
+  const servers = asRecord(asRecord(existing).mcpServers)
+  for (const [name, entry] of Object.entries(brokerEntries)) {
+    if (JSON.stringify(servers[name]) !== JSON.stringify(entry)) return true
+  }
+  return false
+}
+
 /**
  * Merge the TaskWraith server entry into an existing `.cursor/mcp.json` shape (or
  * {}), preserving any other registered MCP servers + unknown top-level keys.

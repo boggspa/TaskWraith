@@ -795,14 +795,20 @@ import {
 } from './grok/GrokCliArgs'
 import { grokToolKindToService } from './grok/GrokAcpProtocol'
 import { grokEventToRunEvents, type NormalizedGrokRunEvent } from './grok/GrokStreamingJson'
-import { cursorDebugEnabled, cursorReadOnlyMcpEnabled } from './cursorGate'
+import {
+  cursorDebugEnabled,
+  cursorGlobalBrokerEnabled,
+  cursorReadOnlyMcpEnabled
+} from './cursorGate'
 import { buildCursorProviderCliArgs, cursorWriteCapable } from './cursor/CursorCliArgs'
 import { cursorEventToRunEvents, type NormalizedCursorRunEvent } from './cursor/CursorStreamJson'
 import {
   applyCursorWriteModeConfig,
-  cursorWriteModeSetupFailureMessage
+  cursorWriteModeSetupFailureMessage,
+  ensureGlobalCursorBrokerRegistered
 } from './cursor/CursorWorkspaceConfig'
 import {
+  buildCursorBrokerMcpServerEntry,
   buildCursorMcpServerEntry,
   buildCursorReadOnlyMcpServerEntry,
   CURSOR_LEGACY_WEB_MCP_SERVER_NAME,
@@ -11124,6 +11130,18 @@ async function ensureCursorMcpApproved(
   cursorMcpApprovedWorkspaceServers.add(key)
 }
 
+// "B" mode paths: the user's GLOBAL Cursor MCP registry. This is the ONE place
+// TaskWraith writes global ~/.cursor for a Cursor run (additive, only its own
+// broker entries) — a per-run WORKSPACE server never reaches cursor-agent's
+// durable "ready" approval, so headless -p rejects its calls; a globally
+// registered + `mcp enable`d server does.
+function globalCursorMcpDir(): string {
+  return join(app.getPath('home'), '.cursor')
+}
+function globalCursorMcpPath(): string {
+  return join(globalCursorMcpDir(), 'mcp.json')
+}
+
 // CR4/CR6/CRUX parity — Cursor (Composer 2.5) runtime over the shared CLI streaming
 // machinery (runCliProviderProcess → handleCliProviderJsonEvent → the
 // state.provider==='cursor' branch → the fixture-tested CursorStreamJson mapper).
@@ -11179,29 +11197,49 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
         throw new Error(taskwraithMcpBridgeUnavailableMessage(bridgeCommandStatus))
       }
       await mcpBridgeRuntime.startGeminiMcpBroker()
+      const brokerInvocation = {
+        command: bridgeCommandStatus.command,
+        args: taskwraithMcpBridgeArgs(geminiMcpSocketPath()),
+        env: {
+          [GEMINI_MCP_BRIDGE_ENV]: '1',
+          TASKWRAITH_PARENT_PROVIDER: 'cursor',
+          TASKWRAITH_RUN_ID: route.appRunId || '',
+          TASKWRAITH_CHAT_ID: route.appChatId || ''
+        }
+      }
+      // "B" mode (default): register the broker in the GLOBAL ~/.cursor/mcp.json —
+      // the only registration cursor-agent durably approves (`mcp list` → "ready");
+      // a per-run WORKSPACE server is never approved, so headless -p rejects its
+      // every call ("User rejected MCP"). No colliding legacy `taskwraith` alias.
+      const useGlobalBroker = cursorGlobalBrokerEnabled()
+      if (useGlobalBroker) {
+        ensureGlobalCursorBrokerRegistered(
+          fsSync,
+          globalCursorMcpPath(),
+          globalCursorMcpDir(),
+          buildCursorBrokerMcpServerEntry(brokerInvocation)
+        )
+      }
+      // Workspace cli.json always denies native shell/write + allows the broker's
+      // tools. The workspace mcp.json still carries any USER MCP servers (and, in
+      // legacy "A" mode, the broker itself).
+      const userServerEntry = buildUserMcpCursorServerEntry(userMcpServers)
+      const workspaceServers = useGlobalBroker
+        ? userServerEntry
+        : { ...buildCursorMcpServerEntry(brokerInvocation), ...userServerEntry }
+      const hasWorkspaceServers = Object.keys(workspaceServers).length > 0
       restoreCursorConfig = applyCursorWriteModeConfig(fsSync, cliPath, cursorDir, {
         allowRules: [...CURSOR_MCP_ALLOW_RULES, ...buildUserMcpCursorAllowRules(userMcpServers)],
-        mcpConfigPath: mcpPath,
-        serverEntry: {
-          ...buildCursorMcpServerEntry({
-            command: bridgeCommandStatus.command,
-            args: taskwraithMcpBridgeArgs(geminiMcpSocketPath()),
-            env: {
-              [GEMINI_MCP_BRIDGE_ENV]: '1',
-              TASKWRAITH_PARENT_PROVIDER: 'cursor',
-              TASKWRAITH_RUN_ID: route.appRunId || '',
-              TASKWRAITH_CHAT_ID: route.appChatId || ''
-            }
-          }),
-          ...buildUserMcpCursorServerEntry(userMcpServers)
-        }
+        ...(hasWorkspaceServers ? { mcpConfigPath: mcpPath, serverEntry: workspaceServers } : {})
       })
       await ensureCursorMcpApproved(resolved.binaryPath, payload.workspace)
-      await ensureCursorMcpApproved(
-        resolved.binaryPath,
-        payload.workspace,
-        CURSOR_LEGACY_WEB_MCP_SERVER_NAME
-      )
+      if (!useGlobalBroker) {
+        await ensureCursorMcpApproved(
+          resolved.binaryPath,
+          payload.workspace,
+          CURSOR_LEGACY_WEB_MCP_SERVER_NAME
+        )
+      }
       await Promise.all(
         userMcpServers.map((server) =>
           ensureCursorMcpApproved(resolved.binaryPath!, payload.workspace!, server.serverName)
@@ -11259,21 +11297,32 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
         throw new Error(taskwraithMcpBridgeUnavailableMessage(bridgeCommandStatus))
       }
       await mcpBridgeRuntime.startGeminiMcpBroker()
+      const scopedEntry = buildCursorReadOnlyMcpServerEntry({
+        command: bridgeCommandStatus.command,
+        // --safe-subset: the broker advertises + executes ONLY the read-only
+        // tool set (fail-closed, enforced bridge-side too).
+        args: taskwraithMcpBridgeArgs(geminiMcpSocketPath(), true),
+        env: {
+          [GEMINI_MCP_BRIDGE_ENV]: '1',
+          TASKWRAITH_PARENT_PROVIDER: 'cursor',
+          TASKWRAITH_RUN_ID: route.appRunId || '',
+          TASKWRAITH_CHAT_ID: route.appChatId || ''
+        }
+      })
+      // "B" mode (default): durable GLOBAL registration so the scoped read-only
+      // broker reaches cursor-agent's "ready" approval; else per-run workspace.
+      const useGlobalBroker = cursorGlobalBrokerEnabled()
+      if (useGlobalBroker) {
+        ensureGlobalCursorBrokerRegistered(
+          fsSync,
+          globalCursorMcpPath(),
+          globalCursorMcpDir(),
+          scopedEntry
+        )
+      }
       restoreCursorConfig = applyCursorWriteModeConfig(fsSync, cliPath, cursorDir, {
         allowRules: [...CURSOR_READONLY_MCP_ALLOW_RULES],
-        mcpConfigPath: mcpPath,
-        serverEntry: buildCursorReadOnlyMcpServerEntry({
-          command: bridgeCommandStatus.command,
-          // --safe-subset: the broker advertises + executes ONLY the read-only
-          // tool set (fail-closed, enforced bridge-side too).
-          args: taskwraithMcpBridgeArgs(geminiMcpSocketPath(), true),
-          env: {
-            [GEMINI_MCP_BRIDGE_ENV]: '1',
-            TASKWRAITH_PARENT_PROVIDER: 'cursor',
-            TASKWRAITH_RUN_ID: route.appRunId || '',
-            TASKWRAITH_CHAT_ID: route.appChatId || ''
-          }
-        })
+        ...(useGlobalBroker ? {} : { mcpConfigPath: mcpPath, serverEntry: scopedEntry })
       })
       await ensureCursorMcpApproved(
         resolved.binaryPath,
