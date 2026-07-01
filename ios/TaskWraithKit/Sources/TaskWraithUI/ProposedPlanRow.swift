@@ -60,6 +60,15 @@ struct ProposedPlanRow: View {
         let value = plan.artifactPath?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return value.isEmpty ? nil : value
     }
+    private var artifactWorkspaceId: String? {
+        guard
+            let workspaceId = model.remoteScopeForThread(threadId),
+            !workspaceId.isEmpty,
+            workspaceId != "global"
+        else { return nil }
+        return workspaceId
+    }
+    private var canOpenArtifact: Bool { artifactPath != nil && artifactWorkspaceId != nil }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
@@ -78,6 +87,27 @@ struct ProposedPlanRow: View {
                             .foregroundStyle(TWTheme.textSecondary)
                             .lineLimit(2)
                             .textSelection(.enabled)
+                            .layoutPriority(1)
+                        if canOpenArtifact, let artifactWorkspaceId {
+                            Button {
+                                model.requestFilesMode(
+                                    workspaceId: artifactWorkspaceId,
+                                    targetPath: artifactPath
+                                )
+                            } label: {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "folder")
+                                        .font(.caption2)
+                                    Text("Open")
+                                        .font(.caption2.weight(.semibold))
+                                }
+                                .foregroundStyle(TWTheme.chroma1)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(TWTheme.surface1, in: Capsule())
+                            }
+                            .buttonStyle(.plain)
+                        }
                     }
                     .padding(.horizontal, 8)
                     .padding(.vertical, 5)
