@@ -133,9 +133,10 @@ export function useStableMarkdownMediaValue(
  * The chat slices the markdown subtree's context consumers actually render
  * from. There are exactly two: `AgentMention` reads
  * `providerMetadata.agentIdentities`, and `ParticipantMention` reads
- * `ensemble.participants` (only `id`/`role`/`provider` — which drive the chip's
- * name + `--provider-*` tint — NOT the per-participant `tokenTotals`/status,
- * which churn on every IPC broadcast). Compared BY VALUE so a no-op broadcast is
+ * `ensemble.participants` (only `id`/`role`/`provider`/`model` — which drive
+ * the chip's name, alias matching, and provider/brand tint — NOT the
+ * per-participant `tokenTotals`/status, which churn on every IPC broadcast).
+ * Compared BY VALUE so a no-op broadcast is
  * skipped but a chip refreshes the instant its identity, role, or provider
  * changes (e.g. a Boss replace/reorder or a roster edit mid-stream).
  *
@@ -145,8 +146,8 @@ export function useStableMarkdownMediaValue(
  * the consumers (no visible effect).
  */
 export function participantsChipEqual(
-  a: ReadonlyArray<{ id: string; role: string; provider: string }> | undefined,
-  b: ReadonlyArray<{ id: string; role: string; provider: string }> | undefined
+  a: ReadonlyArray<{ id: string; role: string; provider: string; model?: string }> | undefined,
+  b: ReadonlyArray<{ id: string; role: string; provider: string; model?: string }> | undefined
 ): boolean {
   if (a === b) return true
   const aLen = a?.length ?? 0
@@ -155,7 +156,14 @@ export function participantsChipEqual(
   for (let i = 0; i < aLen; i += 1) {
     const pa = a![i]
     const pb = b![i]
-    if (pa.id !== pb.id || pa.role !== pb.role || pa.provider !== pb.provider) return false
+    if (
+      pa.id !== pb.id ||
+      pa.role !== pb.role ||
+      pa.provider !== pb.provider ||
+      pa.model !== pb.model
+    ) {
+      return false
+    }
   }
   return true
 }

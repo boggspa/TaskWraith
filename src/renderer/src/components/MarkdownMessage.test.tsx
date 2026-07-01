@@ -2,6 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import { MarkdownMessage } from './MarkdownMessage'
 import type { ChatMediaRef } from './ChatMediaPanel'
+import type { ChatRecord, EnsembleParticipant } from '../../../main/store/types'
 
 const AVAILABLE_PNG_REF: ChatMediaRef = {
   id: 'm1',
@@ -12,6 +13,37 @@ const AVAILABLE_PNG_REF: ChatMediaRef = {
   workspaceRelativePath: 'out.png',
   status: 'available',
   thumbnail: { dataBase64: 'iVBORw0KGgo=', mimeType: 'image/png' }
+}
+
+function participant(overrides: Partial<EnsembleParticipant>): EnsembleParticipant {
+  return {
+    id: overrides.id || 'p1',
+    provider: overrides.provider || 'codex',
+    enabled: overrides.enabled ?? true,
+    role: overrides.role || '',
+    instructions: overrides.instructions || '',
+    order: overrides.order ?? 1,
+    model: overrides.model
+  }
+}
+
+function ensembleChat(participants: EnsembleParticipant[]): ChatRecord {
+  return {
+    appChatId: 'ensemble-chat',
+    chatKind: 'ensemble',
+    title: 'Ensemble',
+    createdAt: 1,
+    updatedAt: 1,
+    archived: false,
+    messages: [],
+    runs: [],
+    ensemble: {
+      participants,
+      orchestrationMode: 'continuous',
+      fanoutPolicy: 'read_only',
+      maxContinuationHops: 6
+    }
+  } as unknown as ChatRecord
 }
 
 describe('MarkdownMessage', () => {
@@ -248,5 +280,23 @@ describe('MarkdownMessage', () => {
     const chips = (html.match(/participant-mention--user/g) || []).length
     expect(chips).toBe(2)
     expect(html).toContain('<h2>')
+  })
+
+  it('tokenises transcript participant mentions through the shared multi-word resolver', () => {
+    const html = renderToStaticMarkup(
+      <MarkdownMessage
+        chat={ensembleChat([
+          participant({ id: 'boss', provider: 'claude', role: 'Bossman', model: 'claude-fable-5' }),
+          participant({ id: 'render', provider: 'codex', role: 'RenderWrite', model: 'gpt-5.5' })
+        ])}
+        content={'@Bossman and @GPT 5.5 can inspect memberChats without mangling it.'}
+      />
+    )
+    expect((html.match(/class="participant-mention"/g) || []).length).toBe(2)
+    expect(html).toContain('@Bossman')
+    expect(html).toContain('@GPT 5.5')
+    expect(html).toContain('memberChats')
+    expect(html).not.toContain('@Fable')
+    expect(html).not.toContain('@RenderWrite')
   })
 })

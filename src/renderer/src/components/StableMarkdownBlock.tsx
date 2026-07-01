@@ -5,16 +5,19 @@ import {
   useContext,
   useState,
   type MouseEvent,
+  type ReactElement,
   type ReactNode
 } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { HighlightedCodeBlock } from './HighlightedCodeBlock'
 import { AgentMention } from './AgentMention'
+import { AgentIdentityContext } from './AgentIdentityContext'
 import { ParticipantMention } from './ParticipantMention'
 import { FaviconLink } from './FaviconLink'
 import { MarkdownMediaContext } from './MarkdownMediaContext'
 import { classifyMarkdownLink } from '../lib/classifyMarkdownLink'
+import { tokeniseMentions } from '../lib/mentionHighlight'
 import { resolveInlineMarkdownImage } from '../lib/resolveMarkdownImageRef'
 import {
   recordStreamMarkdownRenderMetric,
@@ -88,52 +91,34 @@ function MarkdownCodeBlock({ content, language }: { content: string; language?: 
  *   - `input` is forced read-only so transcript checkboxes can't be
  *     ticked by the user.
  */
-/**
- * Tokenise a plain-text node into a mix of text and
- * `<ParticipantMention>` chips. The regex matches `@<name>` at word
- * boundaries with letters/digits/dashes — narrow enough to skip
- * common false positives like `email@example.com` (the `@` there is
- * preceded by `l`, not a boundary).
- *
- * Returns the input wrapped in a fragment of strings + chips. The
- * chip itself decides whether the reference resolves to a participant
- * — unresolved references render as raw text via the chip's
- * fallback, so a stray `@somethingelse` in an LLM reply never
- * vanishes.
- *
- * Only runs against `text` nodes whose host message is in an
- * ensemble chat (gated by the chat's `chatKind` via the
- * `AgentIdentityContext` — but ParticipantMention itself is the
- * gate; this tokeniser is cheap enough to always run, the chip
- * collapses to text when no participants exist).
- */
-const PARTICIPANT_MENTION_REGEX = /(^|[\s([{<>"'`!?,;:.])@([A-Za-z][A-Za-z0-9_-]{0,32})/g
-
-function tokeniseParticipantMentions(value: string): ReactNode {
+function tokeniseParticipantMentions(value: string, chat: ChatRecord | undefined): ReactNode {
   if (!value || !value.includes('@')) return value
-  const parts: ReactNode[] = []
-  let lastIndex = 0
-  let match: RegExpExecArray | null
-  PARTICIPANT_MENTION_REGEX.lastIndex = 0
-  while ((match = PARTICIPANT_MENTION_REGEX.exec(value)) !== null) {
-    const [whole, prefix, reference] = match
-    // Position of the `@` (skip the boundary char).
-    const atIndex = match.index + prefix.length
-    if (atIndex > lastIndex) {
-      parts.push(value.slice(lastIndex, atIndex))
+  const segments = tokeniseMentions(value, chat?.ensemble?.participants ?? [])
+  if (segments.length === 1 && segments[0].kind === 'text') return value
+  const parts = segments.map((segment, index) => {
+    if (segment.kind === 'text') return segment.text
+    if (segment.kind === 'user-mention') {
+      return (
+        <ParticipantMention
+          key={`pm-user-${index}-${segment.text}`}
+          reference={segment.text.replace(/^@+/, '')}
+          displayText={segment.text}
+        >
+          {segment.text}
+        </ParticipantMention>
+      )
     }
-    parts.push(
-      <ParticipantMention key={`pm-${atIndex}-${reference}`} reference={reference}>
-        @{reference}
+    return (
+      <ParticipantMention
+        key={`pm-${index}-${segment.participant.id}`}
+        reference={segment.participant.id}
+        participant={segment.participant}
+        displayText={segment.text}
+      >
+        {segment.text}
       </ParticipantMention>
     )
-    lastIndex = atIndex + 1 + reference.length
-    // Guard against zero-length matches (shouldn't happen with this
-    // pattern but cheap insurance against infinite loops).
-    if (whole.length === 0) break
-  }
-  if (parts.length === 0) return value
-  if (lastIndex < value.length) parts.push(value.slice(lastIndex))
+  })
   return (
     <>
       {parts.map((part, idx) => (
@@ -143,25 +128,27 @@ function tokeniseParticipantMentions(value: string): ReactNode {
   )
 }
 
-/**
- * Walk the children handed to a ReactMarkdown component override and
- * tokenise every string child against `tokeniseParticipantMentions`.
- * Non-string children (other chips, code, links) pass through
- * untouched so we don't double-tokenise.
- */
-function processChildren(children: ReactNode): ReactNode {
+function processMarkdownMentionChildren(
+  children: ReactNode,
+  chat: ChatRecord | undefined
+): ReactNode {
   if (children === null || children === undefined) return children
-  if (typeof children === 'string') return tokeniseParticipantMentions(children)
+  if (typeof children === 'string') return tokeniseParticipantMentions(children, chat)
   if (Array.isArray(children)) {
     return children.map((child, idx) =>
       typeof child === 'string' ? (
-        <Fragment key={idx}>{tokeniseParticipantMentions(child)}</Fragment>
+        <Fragment key={idx}>{tokeniseParticipantMentions(child, chat)}</Fragment>
       ) : (
         <Fragment key={idx}>{child}</Fragment>
       )
     )
   }
   return children
+}
+
+function ProcessedMarkdownChildren({ children }: { children: ReactNode }): ReactElement {
+  const chat = useContext(AgentIdentityContext)
+  return <>{processMarkdownMentionChildren(children, chat)}</>
 }
 
 /**
@@ -415,37 +402,37 @@ const MARKDOWN_COMPONENTS: Components = {
   // provider tint. Unresolved references fall through to plain text
   // (the chip's own fallback) so non-ensemble content is unaffected.
   p({ children }) {
-    return <p>{processChildren(children)}</p>
+    return <p><ProcessedMarkdownChildren>{children}</ProcessedMarkdownChildren></p>
   },
   li({ children }) {
-    return <li>{processChildren(children)}</li>
+    return <li><ProcessedMarkdownChildren>{children}</ProcessedMarkdownChildren></li>
   },
   td({ children, node: _node, ...props }) {
-    return <td {...props}>{processChildren(children)}</td>
+    return <td {...props}><ProcessedMarkdownChildren>{children}</ProcessedMarkdownChildren></td>
   },
   th({ children, node: _node, ...props }) {
-    return <th {...props}>{processChildren(children)}</th>
+    return <th {...props}><ProcessedMarkdownChildren>{children}</ProcessedMarkdownChildren></th>
   },
   // Headings tokenise `@Role` / `@user` too, so a mention in a
   // heading gets the same chip as body text (1.0.72 markdown-audit gap-fix —
   // previously only p/li/td/th tokenised, leaving @-tags in headings bare).
   h1({ children }) {
-    return <h1>{processChildren(children)}</h1>
+    return <h1><ProcessedMarkdownChildren>{children}</ProcessedMarkdownChildren></h1>
   },
   h2({ children }) {
-    return <h2>{processChildren(children)}</h2>
+    return <h2><ProcessedMarkdownChildren>{children}</ProcessedMarkdownChildren></h2>
   },
   h3({ children }) {
-    return <h3>{processChildren(children)}</h3>
+    return <h3><ProcessedMarkdownChildren>{children}</ProcessedMarkdownChildren></h3>
   },
   h4({ children }) {
-    return <h4>{processChildren(children)}</h4>
+    return <h4><ProcessedMarkdownChildren>{children}</ProcessedMarkdownChildren></h4>
   },
   h5({ children }) {
-    return <h5>{processChildren(children)}</h5>
+    return <h5><ProcessedMarkdownChildren>{children}</ProcessedMarkdownChildren></h5>
   },
   h6({ children }) {
-    return <h6>{processChildren(children)}</h6>
+    return <h6><ProcessedMarkdownChildren>{children}</ProcessedMarkdownChildren></h6>
   }
 }
 

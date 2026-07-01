@@ -11,6 +11,21 @@ const emptyEnsembleChat = { ensemble: { participants: [] } } as unknown as ChatR
 const reviewerChat = {
   ensemble: { participants: [{ id: 'p1', provider: 'claude', role: 'Reviewer' }] }
 } as unknown as ChatRecord
+const modelAliasChat = {
+  ensemble: {
+    participants: [
+      {
+        id: 'p-codex',
+        provider: 'codex',
+        role: 'RenderWrite',
+        model: 'gpt-5.5',
+        enabled: true,
+        instructions: '',
+        order: 1
+      }
+    ]
+  }
+} as unknown as ChatRecord
 
 describe('ParticipantMention', () => {
   it('renders @user / @human / @you as a distinct user-address chip', () => {
@@ -46,5 +61,18 @@ describe('ParticipantMention', () => {
     expect(html).toContain('class="participant-mention"')
     expect(html).not.toContain('participant-mention--user')
     expect(html).toContain('--provider-claude-color')
+  })
+
+  it('resolves model aliases while preserving the typed mention label', () => {
+    const html = renderToStaticMarkup(
+      <AgentIdentityContext.Provider value={modelAliasChat}>
+        <ParticipantMention reference="GPT 5.5">@GPT 5.5</ParticipantMention>
+      </AgentIdentityContext.Provider>
+    )
+    expect(html).toContain('class="participant-mention"')
+    expect(html).toContain('--provider-codex-color')
+    expect(html).toContain('@GPT 5.5')
+    expect(html).not.toContain('@RenderWrite')
+    expect(html).not.toContain('@Codex')
   })
 })

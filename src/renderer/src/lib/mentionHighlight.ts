@@ -34,6 +34,7 @@ export type MentionTokenSegment =
        * provider tint via `var(--provider-{name}-color)`. */
       kind: 'mention'
       text: string
+      participant: EnsembleParticipant
       provider: ProviderId
       /** CSS hue class. Equals `provider` for most providers, but
        * Ollama-backed display brands resolve to their spoofed upstream
@@ -92,6 +93,7 @@ export function tokeniseMentions(
       segments.push({
         kind: 'mention',
         text: `@${match.text}`,
+        participant: match.participant,
         provider: match.participant.provider,
         providerClass: resolveProviderHueClass(
           match.participant.provider,

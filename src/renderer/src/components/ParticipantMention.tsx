@@ -1,8 +1,11 @@
 import { useContext, type ReactNode } from 'react'
 import { AgentIdentityContext } from './AgentIdentityContext'
 import { getProviderName } from './Sidebar'
-import type { ProviderId } from '../../../main/store/types'
-import { isUserMentionToken } from '../../../main/services/EnsembleMentionAlias'
+import type { EnsembleParticipant, ProviderId } from '../../../main/store/types'
+import {
+  isUserMentionToken,
+  resolvePhraseToParticipant
+} from '../../../main/services/EnsembleMentionAlias'
 import { resolveProviderBrandLabel, resolveProviderHueClass } from '../lib/ollamaDisplayBrand'
 
 interface ParticipantMentionProps {
@@ -14,6 +17,23 @@ interface ParticipantMentionProps {
   /** Raw link text (`@Worker`) when this came from a markdown link.
    * Falls back to the resolved name when not provided. */
   children?: ReactNode
+  /** Already-resolved participant from the shared mention tokeniser. */
+  participant?: EnsembleParticipant
+  /** Exact source text consumed from the transcript, including `@`. */
+  displayText?: string
+}
+
+function textFromChildren(children: ReactNode): string | null {
+  if (typeof children === 'string') return children
+  if (typeof children === 'number') return String(children)
+  if (Array.isArray(children)) {
+    const out = children
+      .map((child) => (typeof child === 'string' || typeof child === 'number' ? String(child) : ''))
+      .join('')
+      .trim()
+    return out || null
+  }
+  return null
 }
 
 /**
@@ -38,20 +58,24 @@ interface ParticipantMentionProps {
  * used everywhere else in the app. Falls back to `--accent` if a
  * variable is somehow unset.
  */
-export function ParticipantMention({ reference, children }: ParticipantMentionProps) {
+export function ParticipantMention({
+  reference,
+  children,
+  participant: resolvedParticipant,
+  displayText
+}: ParticipantMentionProps) {
   const chat = useContext(AgentIdentityContext)
   const participants = chat?.ensemble?.participants ?? []
   const trimmed = reference.trim()
-  const lower = trimmed.toLowerCase()
 
   // Resolve by id first (markdown-link case), then by role, then by
-  // provider name. The role match wins over provider so two
-  // participants on the same provider with distinct roles are
-  // disambiguated correctly.
+  // the shared alias resolver (role/provider/model aliases). The role
+  // match wins inside the shared resolver so two participants on the
+  // same provider with distinct roles are disambiguated correctly.
   const participant =
+    resolvedParticipant ||
     participants.find((p) => p.id === trimmed) ||
-    participants.find((p) => (p.role || '').trim().toLowerCase() === lower) ||
-    participants.find((p) => p.provider === lower)
+    resolvePhraseToParticipant(trimmed, participants)
 
   if (!participant) {
     // `@user` / `@human` / `@you` — an address to the user, not a
@@ -80,12 +104,8 @@ export function ParticipantMention({ reference, children }: ParticipantMentionPr
   const providerClass = resolveProviderHueClass(providerId, participant.model)
   const brandLabel = resolveProviderBrandLabel(providerId, participant.model)
   const tint = `var(--provider-${providerClass}-color, var(--accent))`
-  const displayName =
-    (typeof children === 'string'
-      ? children.replace(/^@+/, '')
-      : Array.isArray(children) && typeof children[0] === 'string'
-        ? (children[0] as string).replace(/^@+/, '')
-        : participant.role || brandLabel || getProviderName(providerId)) || providerId
+  const sourceText = displayText || textFromChildren(children)
+  const displayName = (sourceText?.replace(/^@+/, '') || participant.role || brandLabel || getProviderName(providerId)) || providerId
 
   const titleParts = [brandLabel || getProviderName(providerId)]
   if (participant.role) titleParts.push(participant.role)
