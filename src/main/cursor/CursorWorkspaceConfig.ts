@@ -95,7 +95,7 @@ export function cursorWriteModeSetupFailureMessage(error: unknown): string {
       : typeof error === 'string' && error.trim()
         ? error.trim()
         : 'Unknown setup error.'
-  return `Cursor write-mode MCP setup failed; TaskWraith is falling back to read-only plan mode for this run. ${reason}`
+  return `Cursor write-mode MCP setup failed, so this run was stopped instead of silently degrading to a tool-less read-only run (which would reject every TaskWraith tool call). ${reason}`
 }
 
 interface CapturedFile {

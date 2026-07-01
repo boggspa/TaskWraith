@@ -41,11 +41,11 @@ describe('mergeCursorDenyRules', () => {
 })
 
 describe('cursorWriteModeSetupFailureMessage', () => {
-  it('explains that Cursor write mode is falling back to read-only plan mode', () => {
+  it('explains that the run was stopped rather than silently degraded, with the reason', () => {
     const message = cursorWriteModeSetupFailureMessage(new Error('Bridge unavailable'))
 
     expect(message).toContain('Cursor write-mode MCP setup failed')
-    expect(message).toContain('falling back to read-only plan mode')
+    expect(message).toContain('stopped')
     expect(message).toContain('Bridge unavailable')
   })
 })
