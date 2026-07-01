@@ -229,7 +229,7 @@ function makeWorkflowActivity(overrides: Partial<ToolActivity> = {}): ToolActivi
   }
 }
 
-describe('ActivityStack Claude workflow card', () => {
+describe('ActivityStack workflow card', () => {
   it('renders the workflow card for a claude Workflow activity', () => {
     const html = renderToStaticMarkup(
       <ActivityStack activities={[makeWorkflowActivity()]} provider="claude" />
@@ -239,9 +239,39 @@ describe('ActivityStack Claude workflow card', () => {
     expect(html).toContain('278.7k tokens')
   })
 
-  it('does NOT render the workflow card for a non-claude provider', () => {
+  it('renders the card for a NON-claude provider once it has workflow telemetry', () => {
+    // Generalization: presence of workflowSummary lights the card up for any
+    // provider, with its own identity (data-provider + seeded identicon).
     const html = renderToStaticMarkup(
-      <ActivityStack activities={[makeWorkflowActivity()]} provider="codex" />
+      <ActivityStack
+        activities={[
+          makeWorkflowActivity({
+            id: 'codex_wf_1',
+            toolName: 'Task',
+            workflowSummary: { provider: 'codex', workflowName: 'codex-run', status: 'running' }
+          })
+        ]}
+        provider="codex"
+      />
+    )
+    expect(html).toContain('claude-workflow-card')
+    expect(html).toContain('data-provider="codex"')
+    expect(html).toContain('agent-identity-icon')
+  })
+
+  it('does NOT render the card for a non-claude tool merely NAMED workflow (no telemetry)', () => {
+    // The name-path stays Claude-pinned; without telemetry a non-claude tool
+    // called "workflow" is just a normal tool row.
+    const html = renderToStaticMarkup(
+      <ActivityStack
+        activities={[
+          makeWorkflowActivity({
+            workflowSummary: undefined,
+            parameters: undefined
+          })
+        ]}
+        provider="codex"
+      />
     )
     expect(html).not.toContain('claude-workflow-card')
   })

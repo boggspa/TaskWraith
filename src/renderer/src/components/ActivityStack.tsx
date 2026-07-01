@@ -29,7 +29,7 @@ import {
 } from '../lib/ToolParser'
 import { deriveChildAgentThreadsFromActivities } from '../lib/ChildAgentThreads'
 import { isClaudeWorkflowToolName } from '../../../shared/claudeWorkflow'
-import { ClaudeWorkflowCard } from './ClaudeWorkflowCard'
+import { WorkflowCard } from './WorkflowCard'
 import { hasExpandableDetail } from '../lib/ActivityRenderMode'
 import { inlineStatsForActivity } from '../lib/ActivityInlineStats'
 import { displayPathRelativeToWorkspace } from '../lib/ActivityPathDisplay'
@@ -1101,9 +1101,11 @@ function isGroupableActivity(activity: ToolActivity): boolean {
   // (Claude), and any future namespaced variant.
   const tool = (activity.toolName || '').toLowerCase()
   if (tool.includes('ensemble_yield')) return false
-  // Claude-native Workflow runs render as a dedicated live card and must stay
-  // inline (never swept into a "used N tools" compact group), even once terminal.
-  if (isClaudeWorkflowToolName(activity.toolName)) return false
+  // Provider-native workflow/orchestration runs render as a dedicated live card
+  // and must stay inline (never swept into a "used N tools" compact group), even
+  // once terminal. Matched by a Claude `Workflow` tool name OR the presence of
+  // accumulated workflow telemetry (how non-Claude providers surface).
+  if (activity.workflowSummary || isClaudeWorkflowToolName(activity.toolName)) return false
   return true
 }
 
@@ -2000,15 +2002,26 @@ export function ActivityStack({
         />
       )
     }
-    // Claude-native Workflow runs get a dedicated live card in place of the
-    // generic tool row / compact trace, in every density mode. Gated to the
-    // Claude participant via the same provider-resolution precedence the rest of
-    // the stack uses, so another provider's same-named tool never matches.
+    // Provider-native multi-agent orchestration runs get a dedicated live card
+    // in place of the generic tool row / compact trace, in every density mode.
+    // Two gates: (a) a Claude `Workflow` tool call (name-matched, provider-
+    // pinned to claude) shows the card immediately, even before its first
+    // telemetry frame lands; (b) ANY activity that has accumulated workflow
+    // telemetry (`workflowSummary`, keyed by tool_use id from our own ingestion)
+    // — this is how non-Claude providers (e.g. Codex) light up, without a
+    // provider hardcode. The card resolves its own glyph/accent per provider.
+    const workflowProvider = activityProvider(item.activity, provider)
     if (
-      isClaudeWorkflowToolName(item.activity.toolName) &&
-      activityProvider(item.activity, provider) === 'claude'
+      item.activity.workflowSummary ||
+      (isClaudeWorkflowToolName(item.activity.toolName) && workflowProvider === 'claude')
     ) {
-      return <ClaudeWorkflowCard key={item.activity.id} activity={item.activity} />
+      return (
+        <WorkflowCard
+          key={item.activity.id}
+          activity={item.activity}
+          provider={workflowProvider}
+        />
+      )
     }
     const thread = threadByParentId.get(item.activity.id)
     // 1.0.4-AG — when the user has compact density on AND this

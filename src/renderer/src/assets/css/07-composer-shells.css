@@ -2845,15 +2845,18 @@
  * Renders inside the transcript beneath a Task/Agent activity to expose
  * a sub-agent's own context (seed prompt, sub-tool-calls, final result).
  * ============================================================ */
-/* Claude-native Workflow run card — a display-only mirror of the Claude desktop
- * app's workflow card, driven by the telemetry that leaks through the Agent SDK
- * stream. Inline in the activity timeline, like .child-agent-thread. */
+/* Provider-native workflow/orchestration run card — a display-only mirror of the
+ * Claude desktop app's workflow card, driven by telemetry that leaks through the
+ * provider stream. Inline in the activity timeline, like .child-agent-thread.
+ * `--provider-accent` is set on the root for non-Claude providers (their brand
+ * color); Claude leaves it unset so it falls back to the global --accent (its
+ * current look — Claude's own brand color is amber, which would be a regression). */
 .claude-workflow-card {
   margin: 6px 0 4px;
   padding: 9px 11px 10px;
   border-radius: var(--radius-md);
-  border: 1px solid color-mix(in srgb, var(--accent) 24%, transparent);
-  background: color-mix(in srgb, var(--accent) 5%, transparent);
+  border: 1px solid color-mix(in srgb, var(--provider-accent, var(--accent)) 24%, transparent);
+  background: color-mix(in srgb, var(--provider-accent, var(--accent)) 5%, transparent);
 }
 .claude-workflow-card.status-running {
   border-color: color-mix(in srgb, var(--tool-running) 40%, transparent);
@@ -2895,8 +2898,15 @@
   height: 22px;
   border-radius: 6px;
   flex-shrink: 0;
-  color: color-mix(in srgb, var(--accent) 80%, var(--text-primary) 20%);
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: color-mix(in srgb, var(--provider-accent, var(--accent)) 80%, var(--text-primary) 20%);
+  background: color-mix(in srgb, var(--provider-accent, var(--accent)) 12%, transparent);
+}
+/* Non-Claude cards carry a seeded design-assets agent identicon; keep it in the
+ * provider's brand color across ALL statuses (the glyph is stable identity, not
+ * status) — beats the status-running glyph tint below by specificity. */
+.claude-workflow-card[data-provider]:not([data-provider='claude']) .claude-workflow-card-glyph {
+  color: var(--provider-accent, var(--accent));
+  background: color-mix(in srgb, var(--provider-accent, var(--accent)) 14%, transparent);
 }
 .claude-workflow-card.status-running .claude-workflow-card-glyph {
   color: var(--tool-running);

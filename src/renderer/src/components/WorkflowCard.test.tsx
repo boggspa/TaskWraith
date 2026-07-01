@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import type { ToolActivity } from '../../../main/store/types'
-import { ClaudeWorkflowCard } from './ClaudeWorkflowCard'
+import { WorkflowCard } from './WorkflowCard'
 
 function workflowActivity(overrides: Partial<ToolActivity> = {}): ToolActivity {
   return {
@@ -14,10 +14,10 @@ function workflowActivity(overrides: Partial<ToolActivity> = {}): ToolActivity {
   }
 }
 
-describe('ClaudeWorkflowCard', () => {
+describe('WorkflowCard', () => {
   it('renders the live stat strip from telemetry', () => {
     const html = renderToStaticMarkup(
-      <ClaudeWorkflowCard
+      <WorkflowCard
         activity={workflowActivity({
           workflowSummary: {
             workflowName: 'howto-docs-audit',
@@ -48,7 +48,7 @@ describe('ClaudeWorkflowCard', () => {
       '}'
     ].join('\n')
     const html = renderToStaticMarkup(
-      <ClaudeWorkflowCard
+      <WorkflowCard
         activity={workflowActivity({
           parameters: { script },
           workflowSummary: { status: 'running' }
@@ -61,7 +61,7 @@ describe('ClaudeWorkflowCard', () => {
   })
 
   it('degrades gracefully with no telemetry and no script', () => {
-    const html = renderToStaticMarkup(<ClaudeWorkflowCard activity={workflowActivity()} />)
+    const html = renderToStaticMarkup(<WorkflowCard activity={workflowActivity()} />)
     expect(html).toContain('Workflow')
     expect(html).toContain('claude-workflow-card')
     // No agent count / tokens fabricated.
@@ -71,7 +71,7 @@ describe('ClaudeWorkflowCard', () => {
 
   it('shows a completed status and final summary affordance', () => {
     const html = renderToStaticMarkup(
-      <ClaudeWorkflowCard
+      <WorkflowCard
         activity={workflowActivity({
           workflowSummary: {
             workflowName: 'done-flow',
@@ -85,5 +85,49 @@ describe('ClaudeWorkflowCard', () => {
     )
     expect(html).toContain('Completed')
     expect(html).toContain('status-completed')
+  })
+
+  describe('provider identity', () => {
+    it('keeps Claude on the bespoke glyph + global accent (no provider tint)', () => {
+      const html = renderToStaticMarkup(
+        <WorkflowCard
+          activity={workflowActivity({ workflowSummary: { workflowName: 'wf', status: 'running' } })}
+          provider="claude"
+        />
+      )
+      expect(html).toContain('data-provider="claude"')
+      // Claude must NOT get a provider-accent override (would recolour it amber).
+      expect(html).not.toContain('--provider-accent')
+      // Claude keeps the bespoke workflow glyph, not a seeded agent identicon.
+      expect(html).not.toContain('agent-identity-icon')
+    })
+
+    it('renders a non-Claude provider with a seeded identicon + brand accent', () => {
+      const html = renderToStaticMarkup(
+        <WorkflowCard
+          activity={workflowActivity({
+            id: 'codex_tool_1',
+            toolName: 'Task',
+            workflowSummary: { provider: 'codex', workflowName: 'codex-run', status: 'running' }
+          })}
+          provider="codex"
+        />
+      )
+      expect(html).toContain('data-provider="codex"')
+      expect(html).toContain('--provider-accent')
+      expect(html).toContain('var(--provider-codex-color')
+      // Uses the design-assets agent identicon system for non-Claude glyphs.
+      expect(html).toContain('agent-identity-icon')
+    })
+
+    it('prefers telemetry.provider over the provider prop', () => {
+      const html = renderToStaticMarkup(
+        <WorkflowCard
+          activity={workflowActivity({ workflowSummary: { provider: 'kimi', status: 'running' } })}
+          provider="claude"
+        />
+      )
+      expect(html).toContain('data-provider="kimi"')
+    })
   })
 })
