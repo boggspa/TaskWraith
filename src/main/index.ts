@@ -22405,22 +22405,36 @@ if (isGeminiMcpBridgeProcess) {
               }
             }
             const planChat = AppStore.getChat(action.threadId)
+            if (!planChat) {
+              return { dispatched: false, appRunId: null, reason: 'Plan chat not found' }
+            }
             const planIdx =
-              planChat?.messages.findIndex((m) => m.id === action.proposedPlanImplementOf) ?? -1
-            const planMsg = planIdx >= 0 ? planChat!.messages[planIdx] : undefined
+              planChat.messages.findIndex((m) => m.id === action.proposedPlanImplementOf)
+            const planMsg = planIdx >= 0 ? planChat.messages[planIdx] : undefined
             const planMeta = planMsg?.metadata as Record<string, unknown> | undefined
             const plan = planMeta?.proposedPlan as Record<string, unknown> | undefined
             if (!plan || plan.status !== 'pending') {
               return { dispatched: false, appRunId: null, reason: 'Plan already decided' }
             }
-            const planMessages = [...planChat!.messages]
+            const planMessages = [...planChat.messages]
             planMessages[planIdx] = {
               ...planMsg!,
               metadata: { ...planMeta, proposedPlan: { ...plan, status: 'approved' } }
             } as ChatMessage
             const flipped: ChatRecord = {
-              ...planChat!,
+              ...planChat,
               messages: planMessages,
+              ...(planChat.chatKind === 'ensemble' && planChat.ensemble?.participants
+                ? {
+                    ensemble: {
+                      ...planChat.ensemble,
+                      participants: planChat.ensemble.participants.map((participant) => ({
+                        ...participant,
+                        permissionPresetId: 'default'
+                      }))
+                    }
+                  }
+                : {}),
               updatedAt: Date.now()
             }
             AppStore.saveChat(flipped)
