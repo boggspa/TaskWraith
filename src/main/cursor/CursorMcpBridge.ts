@@ -15,6 +15,7 @@
 // allow, pass --approve-mcps, restore) lives in index.ts / CursorWorkspaceConfig.
 
 import { TASKWRAITH_MCP_TOOLS } from '../TaskWraithMcpTools'
+import { READ_ONLY_MCP_ADVERTISE_TOOLS } from '../mcp/McpAutoAllowedTools'
 import type { CursorCliConfig } from './CursorWorkspaceConfig'
 
 /** Cursor's older Home MCP bridge used the plain `taskwraith` id for a web-only
@@ -26,6 +27,13 @@ export const CURSOR_LEGACY_WEB_MCP_SERVER_NAME = 'taskwraith'
 
 /** The MCP server name used for the full per-run broker. */
 export const CURSOR_MCP_SERVER_NAME = 'taskwraith-broker'
+
+/** The MCP server name used for the READ-ONLY per-run broker (Grok parity —
+ *  mirrors GROK_SCOPED_MCP_SERVER_NAME). A distinct name from the full broker so
+ *  the read-only seat's `.cursor/mcp.json` registers a `--safe-subset` bridge
+ *  that advertises ONLY the non-mutating read tools; the name also keeps the
+ *  read-only and write brokers from colliding in the workspace config. */
+export const CURSOR_SCOPED_MCP_SERVER_NAME = 'taskwraith-cursor'
 
 /** Allow rules that pre-approve every tool from the full TaskWraith MCP server.
  *  Cursor's documented permission token is `Mcp(server:tool)`, while stream-json
@@ -44,10 +52,26 @@ export const CURSOR_MCP_ALLOW_RULES: readonly string[] = [
   ...TASKWRAITH_MCP_TOOLS.map((tool) => `Mcp(${CURSOR_LEGACY_WEB_MCP_SERVER_NAME}-${tool})`)
 ]
 
+/** Allow rules that pre-approve the READ-ONLY scoped broker's tools. The bridge
+ *  is launched `--safe-subset`, so it advertises ONLY READ_ONLY_MCP_ADVERTISE_TOOLS
+ *  (TASKWRAITH_MCP_TOOLS ∩ the gate-skip safe set); enumerate exactly those under
+ *  the scoped server name, with the documented wildcard + the observed hyphen
+ *  spelling as a belt-and-braces fallback. Never lists a mutating tool (the
+ *  safe-subset set is DERIVED and test-guarded), so a read-only seat cannot ride
+ *  this rule to a write. Kept separate from CURSOR_MCP_ALLOW_RULES (the full
+ *  write broker) so the two brokers' approvals never overlap. */
+export const CURSOR_READONLY_MCP_ALLOW_RULES: readonly string[] = [
+  `Mcp(${CURSOR_SCOPED_MCP_SERVER_NAME}:*)`,
+  ...READ_ONLY_MCP_ADVERTISE_TOOLS.map((tool) => `Mcp(${CURSOR_SCOPED_MCP_SERVER_NAME}:${tool})`),
+  ...READ_ONLY_MCP_ADVERTISE_TOOLS.map((tool) => `Mcp(${CURSOR_SCOPED_MCP_SERVER_NAME}-${tool})`)
+]
+
 export function isReservedCursorMcpServerName(name: string): boolean {
   return (
     name === CURSOR_MCP_SERVER_NAME ||
     name.startsWith(`${CURSOR_MCP_SERVER_NAME}-`) ||
+    name === CURSOR_SCOPED_MCP_SERVER_NAME ||
+    name.startsWith(`${CURSOR_SCOPED_MCP_SERVER_NAME}-`) ||
     name === CURSOR_LEGACY_WEB_MCP_SERVER_NAME ||
     name.startsWith(`${CURSOR_LEGACY_WEB_MCP_SERVER_NAME}-`)
   )
@@ -212,6 +236,25 @@ export function buildCursorMcpServerEntry(
   return {
     [CURSOR_MCP_SERVER_NAME]: entry,
     [CURSOR_LEGACY_WEB_MCP_SERVER_NAME]: {
+      command: invocation.command,
+      args: [...invocation.args],
+      ...(invocation.env ? { env: invocation.env } : {})
+    }
+  }
+}
+
+/**
+ * Build the `mcpServers` entry for the READ-ONLY scoped broker (Grok parity).
+ * Registers ONLY the scoped server name (no legacy alias) — the invocation's
+ * args must include the `--safe-subset` flag so the broker advertises only the
+ * non-mutating read tools. Pure; the caller merges it via
+ * {@link mergeCursorMcpConfig}.
+ */
+export function buildCursorReadOnlyMcpServerEntry(
+  invocation: CursorMcpServerInvocation
+): Record<string, unknown> {
+  return {
+    [CURSOR_SCOPED_MCP_SERVER_NAME]: {
       command: invocation.command,
       args: [...invocation.args],
       ...(invocation.env ? { env: invocation.env } : {})

@@ -136,3 +136,67 @@ describe('buildCursorCliArgs', () => {
     expect(args).not.toContain('--yolo')
   })
 })
+
+describe('read-only safe-subset bridge (Grok parity)', () => {
+  const base = { prompt: 'read a thing', workspace: '/ws' }
+
+  it('read-only + readOnlyBridgeActive runs CONTAINED default mode (no --mode plan) with --approve-mcps', () => {
+    const args = buildCursorCliArgs({ ...base, approvalMode: 'plan', readOnlyBridgeActive: true })
+    // Contained default mode: --mode plan would execute NO tools, so it's suppressed.
+    expect(args).not.toContain('plan')
+    expect(args).toContain('--approve-mcps')
+    // Containment must never loosen to --force/--yolo.
+    expect(args).not.toContain('--force')
+    expect(args).not.toContain('--yolo')
+  })
+
+  it('read-only WITHOUT the bridge still runs --mode plan and no --approve-mcps', () => {
+    const args = buildCursorCliArgs({ ...base, approvalMode: 'plan' })
+    expect(args.join(' ')).toContain('--mode plan')
+    expect(args).not.toContain('--approve-mcps')
+  })
+
+  it('readOnlyBridgeActive is ignored for a write-capable seat (write path owns the bridge)', () => {
+    // Write-capable + readOnlyBridgeActive but no webBridgeActive → no flag.
+    const args = buildCursorCliArgs({
+      ...base,
+      approvalMode: 'default',
+      readOnlyBridgeActive: true
+    })
+    expect(args).not.toContain('plan')
+    expect(args).not.toContain('--approve-mcps')
+  })
+
+  it('provider wrapper: read-only seat with taskWraithReadOnlyMcpActive → contained default mode + --approve-mcps', () => {
+    const args = buildCursorProviderCliArgs({
+      ...base,
+      approvalMode: 'plan',
+      taskWraithMcpActive: false,
+      taskWraithReadOnlyMcpActive: true
+    })
+    expect(args).not.toContain('plan')
+    expect(args).toContain('--approve-mcps')
+  })
+
+  it('provider wrapper: full write bridge wins over the read-only flag (single --approve-mcps, no plan)', () => {
+    const args = buildCursorProviderCliArgs({
+      ...base,
+      approvalMode: 'default',
+      taskWraithMcpActive: true,
+      taskWraithReadOnlyMcpActive: true
+    })
+    expect(args).not.toContain('plan')
+    expect(args.filter((a) => a === '--approve-mcps')).toHaveLength(1)
+  })
+
+  it('provider wrapper: no bridge at all → read-only plan mode, no --approve-mcps', () => {
+    const args = buildCursorProviderCliArgs({
+      ...base,
+      approvalMode: 'plan',
+      taskWraithMcpActive: false,
+      taskWraithReadOnlyMcpActive: false
+    })
+    expect(args.join(' ')).toContain('--mode plan')
+    expect(args).not.toContain('--approve-mcps')
+  })
+})

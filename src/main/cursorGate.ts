@@ -59,3 +59,17 @@ export function cursorWebBridgeEnabled(): boolean {
   const v = process.env.TASKWRAITH_CURSOR_WEB
   return v !== '0' && v !== 'false' && v !== 'no'
 }
+
+/**
+ * Read-only Cursor seats get a scoped SAFE-SUBSET TaskWraith MCP broker (Grok
+ * parity) so they can read/inspect instead of getting zero tools. Because Cursor
+ * `--mode plan` executes no tools, this runs the read-only seat in CONTAINED
+ * default mode (native Shell/Write denied + a broker that advertises only the
+ * non-mutating read subset). DEFAULT ON; TASKWRAITH_CURSOR_READONLY_MCP=0 (or
+ * false/no) is an explicit kill-switch that restores the old plan-mode, no-tools
+ * behavior for read-only Cursor seats.
+ */
+export function cursorReadOnlyMcpEnabled(): boolean {
+  const v = process.env.TASKWRAITH_CURSOR_READONLY_MCP
+  return v !== '0' && v !== 'false' && v !== 'no'
+}

@@ -795,7 +795,7 @@ import {
 } from './grok/GrokCliArgs'
 import { grokToolKindToService } from './grok/GrokAcpProtocol'
 import { grokEventToRunEvents, type NormalizedGrokRunEvent } from './grok/GrokStreamingJson'
-import { cursorDebugEnabled } from './cursorGate'
+import { cursorDebugEnabled, cursorReadOnlyMcpEnabled } from './cursorGate'
 import { buildCursorProviderCliArgs, cursorWriteCapable } from './cursor/CursorCliArgs'
 import { cursorEventToRunEvents, type NormalizedCursorRunEvent } from './cursor/CursorStreamJson'
 import {
@@ -11235,15 +11235,83 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
       return
     }
   }
+  // Read-only seat (Grok parity): give it a scoped SAFE-SUBSET TaskWraith MCP
+  // broker so it can still read/inspect (read_file, grep, find_files, …) instead
+  // of getting ZERO tools. Cursor `--mode plan` executes no tools, so a read-only
+  // seat that should read must run in CONTAINED default mode:
+  // applyCursorWriteModeConfig still denies native `Shell(**)`/`Write(**)`, and
+  // the broker is launched `--safe-subset` so it advertises ONLY the non-mutating
+  // read tools — strictly more restrictive than the write path. Best-effort: if
+  // setup fails, the seat just runs `--mode plan` with no tools (the prior
+  // behavior), so nothing is lost and no write capability is ever at stake.
+  if (
+    !writeCapable &&
+    !cursorTaskWraithMcpActive &&
+    payload.workspace &&
+    cursorReadOnlyMcpEnabled()
+  ) {
+    try {
+      const cursorDir = join(payload.workspace, '.cursor')
+      const cliPath = join(cursorDir, 'cli.json')
+      const mcpPath = join(cursorDir, 'mcp.json')
+      const bridgeCommandStatus = taskwraithMcpBridgeCommandStatus()
+      if (!bridgeCommandStatus.available) {
+        throw new Error(taskwraithMcpBridgeUnavailableMessage(bridgeCommandStatus))
+      }
+      await mcpBridgeRuntime.startGeminiMcpBroker()
+      restoreCursorConfig = applyCursorWriteModeConfig(fsSync, cliPath, cursorDir, {
+        allowRules: [...CURSOR_READONLY_MCP_ALLOW_RULES],
+        mcpConfigPath: mcpPath,
+        serverEntry: buildCursorReadOnlyMcpServerEntry({
+          command: bridgeCommandStatus.command,
+          // --safe-subset: the broker advertises + executes ONLY the read-only
+          // tool set (fail-closed, enforced bridge-side too).
+          args: taskwraithMcpBridgeArgs(geminiMcpSocketPath(), true),
+          env: {
+            [GEMINI_MCP_BRIDGE_ENV]: '1',
+            TASKWRAITH_PARENT_PROVIDER: 'cursor',
+            TASKWRAITH_RUN_ID: route.appRunId || '',
+            TASKWRAITH_CHAT_ID: route.appChatId || ''
+          }
+        })
+      })
+      await ensureCursorMcpApproved(
+        resolved.binaryPath,
+        payload.workspace,
+        CURSOR_SCOPED_MCP_SERVER_NAME
+      )
+      cursorTaskWraithReadOnlyMcpActive = true
+    } catch (error) {
+      restoreCursorConfig?.()
+      restoreCursorConfig = undefined
+      cursorTaskWraithReadOnlyMcpActive = false
+      sendAgentCompatLine(
+        event.sender,
+        'cursor',
+        {
+          type: 'progress',
+          title: 'Cursor read-only tools unavailable',
+          summary: `Read-only TaskWraith MCP tools could not be set up; Cursor is running without them (plan mode). ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+          severity: 'warning',
+          provider: 'cursor'
+        },
+        route
+      )
+    }
+  }
   const args = buildCursorProviderCliArgs({
     prompt: payload.prompt,
     workspace: payload.workspace!,
     model: payload.model,
     providerSessionId: payload.providerSessionId,
-    // Honor the chat's approval mode only when the containment config is in
-    // place; otherwise force read-only.
+    // Honor the chat's approval mode only when the WRITE containment config is in
+    // place; otherwise force read-only. A read-only seat with the safe-subset
+    // broker still runs (contained) in default mode via taskWraithReadOnlyMcpActive.
     approvalMode: payload.approvalMode,
-    taskWraithMcpActive: cursorTaskWraithMcpActive
+    taskWraithMcpActive: cursorTaskWraithMcpActive,
+    taskWraithReadOnlyMcpActive: cursorTaskWraithReadOnlyMcpActive
   })
   runCliProviderProcess(event, 'cursor', resolved.binaryPath, args, payload, {
     fallback: false,

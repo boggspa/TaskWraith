@@ -7,12 +7,16 @@ import {
   CURSOR_LEGACY_WEB_MCP_SERVER_NAME,
   CURSOR_MCP_ALLOW_RULES,
   CURSOR_MCP_SERVER_NAME,
+  CURSOR_READONLY_MCP_ALLOW_RULES,
+  CURSOR_SCOPED_MCP_SERVER_NAME,
   CURSOR_WEB_FETCH_MCP_SERVER_SOURCE,
   buildCursorMcpServerEntry,
+  buildCursorReadOnlyMcpServerEntry,
   isReservedCursorMcpServerName,
   mergeCursorAllowRules,
   mergeCursorMcpConfig
 } from './CursorMcpBridge'
+import { READ_ONLY_MCP_ADVERTISE_TOOLS } from '../mcp/McpAutoAllowedTools'
 
 // 1.0.6-CRUX34 (OQ#2) — the Cursor MCP bridge. The live spike proved that a
 // TaskWraith MCP server registered via workspace `.cursor/mcp.json` + Cursor
@@ -43,10 +47,58 @@ describe('CURSOR_MCP_ALLOW_RULES', () => {
   it('reserves the TaskWraith server prefix for brokered tools only', () => {
     expect(isReservedCursorMcpServerName(CURSOR_MCP_SERVER_NAME)).toBe(true)
     expect(isReservedCursorMcpServerName(`${CURSOR_MCP_SERVER_NAME}-evil`)).toBe(true)
+    expect(isReservedCursorMcpServerName(CURSOR_SCOPED_MCP_SERVER_NAME)).toBe(true)
+    expect(isReservedCursorMcpServerName(`${CURSOR_SCOPED_MCP_SERVER_NAME}-evil`)).toBe(true)
     expect(isReservedCursorMcpServerName(CURSOR_LEGACY_WEB_MCP_SERVER_NAME)).toBe(true)
     expect(isReservedCursorMcpServerName('taskwraith-evil')).toBe(true)
     expect(isReservedCursorMcpServerName('taskwraith_backup')).toBe(false)
     expect(isReservedCursorMcpServerName('user_taskwraith')).toBe(false)
+  })
+})
+
+describe('CURSOR_READONLY_MCP_ALLOW_RULES (read-only safe-subset broker)', () => {
+  it('scopes to the read-only server name and covers the wildcard + hyphen spellings', () => {
+    expect(CURSOR_READONLY_MCP_ALLOW_RULES).toContain(`Mcp(${CURSOR_SCOPED_MCP_SERVER_NAME}:*)`)
+    expect(CURSOR_READONLY_MCP_ALLOW_RULES).toContain(
+      `Mcp(${CURSOR_SCOPED_MCP_SERVER_NAME}:read_file)`
+    )
+    expect(CURSOR_READONLY_MCP_ALLOW_RULES).toContain(
+      `Mcp(${CURSOR_SCOPED_MCP_SERVER_NAME}-read_file)`
+    )
+    // Never a broad prefix wildcard (a same-prefixed workspace server must not ride it).
+    expect(CURSOR_READONLY_MCP_ALLOW_RULES).not.toContain(`Mcp(${CURSOR_SCOPED_MCP_SERVER_NAME}-*)`)
+  })
+
+  it('SAFETY: never allows a mutating tool (only the read-only advertise subset)', () => {
+    for (const mutating of ['write_file', 'replace', 'apply_patch', 'run_shell_command']) {
+      expect(CURSOR_READONLY_MCP_ALLOW_RULES).not.toContain(
+        `Mcp(${CURSOR_SCOPED_MCP_SERVER_NAME}:${mutating})`
+      )
+      expect(CURSOR_READONLY_MCP_ALLOW_RULES).not.toContain(
+        `Mcp(${CURSOR_SCOPED_MCP_SERVER_NAME}-${mutating})`
+      )
+    }
+    // Exactly one exact-rule per safe-subset tool (plus the wildcard + hyphen forms).
+    for (const tool of READ_ONLY_MCP_ADVERTISE_TOOLS) {
+      expect(CURSOR_READONLY_MCP_ALLOW_RULES).toContain(
+        `Mcp(${CURSOR_SCOPED_MCP_SERVER_NAME}:${tool})`
+      )
+    }
+  })
+})
+
+describe('buildCursorReadOnlyMcpServerEntry', () => {
+  it('registers ONLY the scoped read-only server (no full broker, no legacy alias)', () => {
+    const entry = buildCursorReadOnlyMcpServerEntry({
+      command: '/x/electron',
+      args: ['/tmp/s.cjs', '--safe-subset']
+    })
+    expect(Object.keys(entry)).toEqual([CURSOR_SCOPED_MCP_SERVER_NAME])
+    expect(entry[CURSOR_MCP_SERVER_NAME]).toBeUndefined()
+    expect(entry[CURSOR_LEGACY_WEB_MCP_SERVER_NAME]).toBeUndefined()
+    const scoped = entry[CURSOR_SCOPED_MCP_SERVER_NAME] as { command: string; args: string[] }
+    expect(scoped.command).toBe('/x/electron')
+    expect(scoped.args).toContain('--safe-subset')
   })
 })
 
