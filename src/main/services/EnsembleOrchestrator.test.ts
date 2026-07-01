@@ -225,6 +225,7 @@ function makeHarness(
   options: {
     initialChat?: ChatRecord
     dispatch?: (payload: AgentRunPayload) => Promise<{ dispatched: boolean; appRunId: string }>
+    cancelRun?: (provider: EnsembleParticipant['provider'], runId?: string) => Promise<boolean>
     /**
      * 1.0.4-AD — optional probe injection. When set, the orchestrator
      * calls it BEFORE each participant's dispatch. Returning
@@ -269,7 +270,7 @@ function makeHarness(
       ? options.dispatch(payload)
       : { dispatched: true, appRunId: payload.appRunId || '' }
   })
-  const cancelRun = vi.fn(async () => true)
+  const cancelRun = vi.fn(options.cancelRun ?? (async () => true))
   const probeParticipant = options.probeParticipant ? vi.fn(options.probeParticipant) : undefined
   const orchestrator = new EnsembleOrchestrator({
     getChat: () => chat,
@@ -1868,7 +1869,17 @@ Next action:
   })
 
   it('steers by cancelling the active run without deleting the replacement round', async () => {
-    const harness = makeHarness()
+    let resolveCancel!: () => void
+    const cancelStarted = vi.fn()
+    const harness = makeHarness({
+      cancelRun: async () => {
+        cancelStarted()
+        await new Promise<void>((resolve) => {
+          resolveCancel = resolve
+        })
+        return true
+      }
+    })
     harness.orchestrator.startRound({
       chatId: 'ensemble-chat',
       prompt: 'Original prompt',
@@ -1885,6 +1896,9 @@ Next action:
     })
 
     expect(steered.status).toBe('steered')
+    expect(cancelStarted).toHaveBeenCalledTimes(1)
+    expect(harness.dispatched).toHaveLength(1)
+    resolveCancel()
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
     expect(harness.cancelRun).toHaveBeenCalledWith('claude', oldRun.appRunId)
     expect(harness.chat.ensemble?.activeRound?.roundId).toBe(steered.roundId)
@@ -1911,7 +1925,17 @@ Next action:
   })
 
   it('steers a queued prompt by index while preserving the remaining FIFO queue', async () => {
-    const harness = makeHarness()
+    let resolveCancel!: () => void
+    const cancelStarted = vi.fn()
+    const harness = makeHarness({
+      cancelRun: async () => {
+        cancelStarted()
+        await new Promise<void>((resolve) => {
+          resolveCancel = resolve
+        })
+        return true
+      }
+    })
     harness.orchestrator.startRound({
       chatId: 'ensemble-chat',
       prompt: 'Original prompt',
@@ -1943,6 +1967,9 @@ Next action:
     })
 
     expect(steered.status).toBe('steered')
+    expect(cancelStarted).toHaveBeenCalledTimes(1)
+    expect(harness.dispatched).toHaveLength(1)
+    resolveCancel()
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
     expect(harness.cancelRun).toHaveBeenCalledWith('claude', oldRun.appRunId)
     expect(harness.chat.ensemble?.activeRound?.roundId).toBe(steered.roundId)

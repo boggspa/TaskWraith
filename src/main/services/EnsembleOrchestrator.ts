@@ -1616,6 +1616,7 @@ interface ActiveRoundRuntime {
    * above-row, and the persistence type stays back-compat).
    */
   queuedPrompts: QueuedRoundEntry[]
+  startAfterCancellation?: Promise<unknown>
   remainingParticipants?: EnsembleParticipant[]
   bossmanParticipantId?: string
   bossmanBaselineParticipantIds?: string[]
@@ -1860,7 +1861,7 @@ export class EnsembleOrchestrator {
     if (existing && !existing.cancelled) {
       this.cancelWakeupsOnUserInput(existing)
       if (input.mode === 'steer') {
-        void this.cancelRound(input.chatId, 'steered')
+        const startAfterCancellation = this.cancelRound(input.chatId, 'steered')
         const roundId = this.beginRound(
           input.chatId,
           prompt,
@@ -1875,7 +1876,8 @@ export class EnsembleOrchestrator {
           input.fanoutPolicy,
           input.discordContextSnapshots,
           input.unattended,
-          input.unattendedElevationLevel
+          input.unattendedElevationLevel,
+          startAfterCancellation
         )
         this.appendRoundStatus(
           input.chatId,
@@ -1965,7 +1967,7 @@ export class EnsembleOrchestrator {
     const { selected, selectedIndex } = resolved
 
     const remainingQueue = runtime.queuedPrompts.filter((_, queuedIndex) => queuedIndex !== selectedIndex)
-    void this.cancelRound(input.chatId, 'steered')
+    const startAfterCancellation = this.cancelRound(input.chatId, 'steered')
     const roundId = this.beginRound(
       input.chatId,
       selected.prompt,
@@ -1978,7 +1980,10 @@ export class EnsembleOrchestrator {
       selected.externalPathGrants ?? [],
       input.concurrentMode,
       input.fanoutPolicy ?? selected.fanoutPolicy,
-      selected.discordContextSnapshots
+      selected.discordContextSnapshots,
+      undefined,
+      undefined,
+      startAfterCancellation
     )
     this.appendRoundStatus(
       input.chatId,
@@ -4831,7 +4836,8 @@ export class EnsembleOrchestrator {
     fanoutPolicy?: EnsembleFanoutPolicy,
     discordContextSnapshotsInput?: DiscordContextSnapshot[],
     unattended?: boolean,
-    unattendedElevationLevel?: UnattendedElevationLevel
+    unattendedElevationLevel?: UnattendedElevationLevel,
+    startAfterCancellation?: Promise<unknown>
   ): string {
     const chat = this.deps.getChat(chatId)
     if (!chat?.ensemble) throw new Error('Ensemble chat not found.')
@@ -4978,6 +4984,7 @@ export class EnsembleOrchestrator {
       ...(effectiveConcurrentMode ? { concurrentMode: true } : {}),
       continuationHops: 0,
       maxContinuationHops,
+      ...(startAfterCancellation ? { startAfterCancellation } : {}),
       ...(selfReflective ? { selfReflective: true } : {}),
       ...(externalPathGrants.length > 0 ? { externalPathGrants: [...externalPathGrants] } : {}),
       ...(unattended ? { unattended: true } : {}),
@@ -4999,6 +5006,12 @@ export class EnsembleOrchestrator {
     runtime: ActiveRoundRuntime,
     participants: EnsembleParticipant[]
   ): Promise<void> {
+    if (runtime.startAfterCancellation) {
+      await runtime.startAfterCancellation.catch(() => undefined)
+      if (runtime.cancelled || this.roundsByChatId.get(runtime.chatId)?.roundId !== runtime.roundId) {
+        return
+      }
+    }
     // Slice C extension (1.0.3) — convert the fixed for-loop into a
     // mutable remaining-queue so `ensemble_yield(target:...)` can
     // reorder upcoming turns after each completion. The original
