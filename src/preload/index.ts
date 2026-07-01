@@ -1406,6 +1406,7 @@ const api = {
     return () => ipcRenderer.removeListener('human-collaboration-runtime-encrypted-frame', wrapped)
   },
   // Host side: a collaborator began admission — surface the 6-digit SAS to compare.
+  // mode 'reconnect' = pinned-identity re-admission (no human SAS compare step).
   onHumanCollaborationAdmissionBegan: (
     callback: (payload: {
       handshakeId: string
@@ -1413,6 +1414,7 @@ const api = {
       shareId: string
       displayName: string
       confirmCode: string
+      mode?: 'admission' | 'reconnect'
     }) => void
   ) => {
     const wrapped = (
@@ -1423,6 +1425,7 @@ const api = {
         shareId: string
         displayName: string
         confirmCode: string
+        mode?: 'admission' | 'reconnect'
       }
     ): void => callback(payload)
     ipcRenderer.on('human-collaboration-admission-began', wrapped)

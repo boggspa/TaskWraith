@@ -218,11 +218,13 @@ describe('HumanCollaborationRuntime', () => {
     const collaborator = makeCollaborationIdentity()
     const host = generateIdentityKeyPair()
     let now = 1000
+    const onAdmissionBegan = vi.fn()
     const runtime = new HumanCollaborationRuntime({
       identityKeyPair: host,
       store,
       buildProjection: vi.fn().mockResolvedValue({ ok: true }),
       appendComment: vi.fn().mockResolvedValue({ ok: true }),
+      onAdmissionBegan,
       now: () => now
     })
 
@@ -235,6 +237,9 @@ describe('HumanCollaborationRuntime', () => {
       collaboratorEphemeralPubKeyB64: collaborator.ephemeralPubKeyB64,
       collaboratorNonceB64: collaborator.nonceB64
     })
+    // The host banner must be able to tell a first admission (SAS compare)
+    // from a pinned-identity reconnect (no compare step).
+    expect(onAdmissionBegan).toHaveBeenLastCalledWith(expect.objectContaining({ mode: 'admission' }))
     const admissionContext = makeTranscriptContext({
       shareId: share.share.shareId,
       chatId: 'chat-1',
@@ -283,6 +288,7 @@ describe('HumanCollaborationRuntime', () => {
       collaboratorNonceB64: reconnectPeer.nonceB64
     })
     expect(reconnect.mode).toBe('reconnect')
+    expect(onAdmissionBegan).toHaveBeenLastCalledWith(expect.objectContaining({ mode: 'reconnect' }))
     const reconnectContext = makeTranscriptContext({
       mode: 'reconnect',
       shareId: share.share.shareId,
@@ -520,6 +526,75 @@ describe('HumanCollaborationRuntime', () => {
     await expect(
       runtime.appendComment({ sessionId: admitted.sessionId, clientMessageId: 'c-3', content: 'ok now' })
     ).resolves.toMatchObject({ ok: true })
+  })
+
+  it('coalesces rate-limit rejection audit rows to one per window', async () => {
+    const store = new HumanCollaborationStore()
+    const share = store.createShare({ chatId: 'chat-1', mode: 'comments', now: 1000, inviteTtlMs: 10000 })
+    const collaborator = makeCollaborationIdentity()
+    const host = generateIdentityKeyPair()
+    let now = 1000
+    const auditEvents: Array<{ kind: string; code?: string }> = []
+    const runtime = new HumanCollaborationRuntime({
+      identityKeyPair: host,
+      store,
+      buildProjection: vi.fn().mockResolvedValue({ ok: true }),
+      appendComment: vi.fn().mockResolvedValue({ ok: true }),
+      audit: { append: (event) => auditEvents.push(event as { kind: string; code?: string }) },
+      now: () => now
+    })
+    const begin = await runtime.beginAdmission({
+      shareId: share.share.shareId,
+      chatId: 'chat-1',
+      displayName: 'Alex',
+      inviteToken: share.inviteToken,
+      collaboratorIdentityPubKeyB64: collaborator.identityPubKeyB64,
+      collaboratorEphemeralPubKeyB64: collaborator.ephemeralPubKeyB64,
+      collaboratorNonceB64: collaborator.nonceB64
+    })
+    const context = makeTranscriptContext({
+      shareId: share.share.shareId,
+      chatId: 'chat-1',
+      inviteId: begin.inviteId,
+      inviteToken: share.inviteToken,
+      inviteExpiresAt: begin.expiresAt,
+      shareMode: 'comments',
+      hostIdentityPubKeyB64: begin.hostIdentityPubKeyB64,
+      hostEphemeralPubKeyB64: begin.hostEphemeralPubKeyB64,
+      hostNonceB64: begin.hostNonceB64,
+      hostCollaborator: collaborator
+    })
+    const admitted = await runtime.confirmSas({
+      handshakeId: begin.handshakeId,
+      confirmCode: begin.confirmCode,
+      collaboratorTranscriptSigB64: b64.encode(
+        signEd25519(collaborator.identity.privateKey, computeHumanCollaborationTranscriptHash(context))
+      )
+    })
+
+    await runtime.appendComment({ sessionId: admitted.sessionId, clientMessageId: 'c-1', content: 'hi' })
+    // A flood of sub-min-interval frames: every one is rejected, but the durable
+    // audit must record at most ONE rejection row per window (each append is a
+    // synchronous full-file rewrite — per-frame rows would be a DoS amplifier).
+    for (let i = 0; i < 25; i++) {
+      now += 10
+      await expect(
+        runtime.appendComment({ sessionId: admitted.sessionId, clientMessageId: `flood-${i}`, content: 'spam' })
+      ).rejects.toThrow(/rate limit/i)
+    }
+    const rejectionRows = () => auditEvents.filter((e) => e.kind === 'contribution.rejected' && e.code === 'quota_exceeded')
+    expect(rejectionRows()).toHaveLength(1)
+
+    // A fresh window gets a fresh (single) rejection row.
+    now += 61_000
+    await runtime.appendComment({ sessionId: admitted.sessionId, clientMessageId: 'c-2', content: 'ok' })
+    for (let i = 0; i < 5; i++) {
+      now += 10
+      await expect(
+        runtime.appendComment({ sessionId: admitted.sessionId, clientMessageId: `flood2-${i}`, content: 'spam' })
+      ).rejects.toThrow(/rate limit/i)
+    }
+    expect(rejectionRows()).toHaveLength(2)
   })
 
   it('drops the pending handshake on a failed SAS confirmation', async () => {

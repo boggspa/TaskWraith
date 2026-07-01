@@ -180,9 +180,14 @@ export function JoinSharedChatModal({
   // Live projection + status while the modal is open.
   useEffect(() => {
     if (!open) return
-    const off = window.api.onHumanCollaborationCollaboratorProjection?.((payload) =>
-      setProjection(payload.projection as Projection)
-    )
+    const off = window.api.onHumanCollaborationCollaboratorProjection?.((payload) => {
+      const next = payload.projection as Projection
+      setProjection(next)
+      // The host can flip the share's rules mid-session; without this the
+      // composer keeps the stale mode until the next reconnect (main still
+      // re-validates, so this is affordance-honesty, not enforcement).
+      if (next?.mode === 'readOnly' || next?.mode === 'comments') setMode(next.mode)
+    })
     const offStatus = window.api.onHumanCollaborationCollaboratorStatus?.((payload) => {
       if (payload.connected === true) setConnectionState('connected')
       else if (payload.connected === false) setConnectionState('disconnected')

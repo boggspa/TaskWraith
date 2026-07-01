@@ -8605,12 +8605,17 @@ function App(): React.JSX.Element {
     // P2b auto-draft: a collaborator action request under autoDraft rules
     // pre-fills the composer draft with the wrapped, provenance-carrying text.
     // Display-only — nothing is sent or queued; the host reviews and sends.
+    // NEVER clobbers a draft the host is already typing (functional update
+    // keeps any non-empty draft; the request stays reviewable on its
+    // transcript row via "Insert as draft").
     let humanCollaborationActionRequestUnsubscribe: (() => void) | null = null
     if (typeof window.api.onHumanCollaborationActionRequest === 'function') {
       humanCollaborationActionRequestUnsubscribe = window.api.onHumanCollaborationActionRequest(
         (payload) => {
           if (!payload?.chatId || typeof payload.draft !== 'string') return
-          setChatPromptDraft(payload.chatId, payload.draft)
+          setComposerDraftForChat(payload.chatId, (previous) =>
+            previous && previous.trim() ? previous : payload.draft
+          )
         }
       )
     }

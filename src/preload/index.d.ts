@@ -1696,6 +1696,7 @@ declare global {
           shareId: string
           displayName: string
           confirmCode: string
+          mode?: 'admission' | 'reconnect'
         }) => void
       ) => () => void
       onHumanCollaborationCollaboratorProjection: (

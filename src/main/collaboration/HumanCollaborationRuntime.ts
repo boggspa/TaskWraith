@@ -91,13 +91,16 @@ export interface HumanCollaborationRuntimeDeps<ProjectionType, AppendType> {
     frame: HumanCollaborationEncryptedFrame
   ) => void | Promise<void>
   /** Fired when a collaborator begins admission, so the HOST can surface the
-   * 6-digit SAS for the out-of-band compare (L6-2). */
+   * 6-digit SAS for the out-of-band compare (L6-2). `mode` distinguishes a
+   * first admission (SAS compare required) from a pinned-identity reconnect
+   * (no human compare step — the UI must not present it as one). */
   onAdmissionBegan?: (info: {
     handshakeId: string
     chatId: string
     shareId: string
     displayName: string
     confirmCode: string
+    mode: HumanCollaborationHandshakeMode
   }) => void
   /** P2a durable audit sink (admission, session, rejected-contribution events). */
   audit?: HumanCollaborationAuditLike
@@ -149,7 +152,12 @@ export class HumanCollaborationRuntime<ProjectionType = unknown, AppendType = un
   // Per shareId:collaboratorId append-rate state (see APPEND_* constants). Key
   // space is tiny (≤2 collaborators/share) and intentionally NOT reset on
   // disconnect, so a flooder cannot bypass the limit by reconnecting.
-  private readonly appendRate = new Map<string, { windowStart: number; count: number; last: number }>()
+  // rejectAuditAt coalesces the durable rejection audit row: a flood of
+  // cheap-to-reject frames must not amplify into one sync disk write each.
+  private readonly appendRate = new Map<
+    string,
+    { windowStart: number; count: number; last: number; rejectAuditAt?: number }
+  >()
 
   constructor(options: HumanCollaborationRuntimeDeps<ProjectionType, AppendType>) {
     this.opts = options
@@ -307,7 +315,8 @@ export class HumanCollaborationRuntime<ProjectionType = unknown, AppendType = un
       chatId,
       shareId,
       displayName: share.mode === 'readOnly' ? displayName : existingParticipant?.displayName || displayName,
-      confirmCode
+      confirmCode,
+      mode
     })
     this.opts.audit?.append({
       kind: 'admission.began',
@@ -629,27 +638,37 @@ export class HumanCollaborationRuntime<ProjectionType = unknown, AppendType = un
       return
     }
     if (now - state.last < APPEND_MIN_INTERVAL_MS) {
-      throw this.rateLimitDenial(session)
+      throw this.rateLimitDenial(session, state, now)
     }
     if (now - state.windowStart >= APPEND_WINDOW_MS) {
       state.windowStart = now
       state.count = 0
     }
     if (state.count >= APPEND_MAX_PER_WINDOW) {
-      throw this.rateLimitDenial(session)
+      throw this.rateLimitDenial(session, state, now)
     }
     state.count += 1
     state.last = now
   }
 
-  private rateLimitDenial(session: RuntimeSession): HumanCollaborationDenialError {
-    this.opts.audit?.append({
-      kind: 'contribution.rejected',
-      chatId: session.chatId,
-      shareId: session.shareId,
-      collaboratorId: session.collaboratorId,
-      code: 'quota_exceeded'
-    })
+  private rateLimitDenial(
+    session: RuntimeSession,
+    state: { rejectAuditAt?: number },
+    now: number
+  ): HumanCollaborationDenialError {
+    // Audit at most one rejection row per collaborator per window: rejections
+    // are cheap for the sender but each audit append is a synchronous
+    // full-file rewrite, so per-frame rows would be a DoS amplifier.
+    if (state.rejectAuditAt === undefined || now - state.rejectAuditAt >= APPEND_WINDOW_MS) {
+      state.rejectAuditAt = now
+      this.opts.audit?.append({
+        kind: 'contribution.rejected',
+        chatId: session.chatId,
+        shareId: session.shareId,
+        collaboratorId: session.collaboratorId,
+        code: 'quota_exceeded'
+      })
+    }
     return new HumanCollaborationDenialError('quota_exceeded', 'Comment rate limit exceeded, slow down.')
   }
 
