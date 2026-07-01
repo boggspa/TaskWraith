@@ -1525,7 +1525,6 @@
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent-color) 60%, transparent);
 }
 
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .composer-ensemble-mode,
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .ensemble-above-mode {
   /* 1.0.3 polish — softer light-mode treatment matching the
    * composer-chip neutral palette. Was heavier (surface-2 84% / border
@@ -1533,6 +1532,14 @@
    * as one of many tokens in the footer. */
   background: color-mix(in srgb, var(--surface-2) 55%, transparent);
   border-color: color-mix(in srgb, var(--surface-border) 50%, transparent);
+}
+
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .composer-ensemble-mode {
+  --composer-ensemble-glass-bg: color-mix(in srgb, var(--surface-2) 68%, transparent);
+  --composer-ensemble-glass-border: color-mix(in srgb, var(--accent-color) 28%, var(--surface-border));
+  --composer-ensemble-glass-rim: rgba(255, 255, 255, 0.72);
+  --composer-ensemble-glass-shadow: rgba(18, 21, 27, 0.12);
+  --composer-ensemble-glass-sheen: color-mix(in srgb, var(--tw-glass-sheen, #fff) 70%, transparent);
 }
 
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .composer-ensemble-hop-meter,
@@ -1779,8 +1786,80 @@
 }
 
 .composer-ensemble-mode {
-  min-height: 24px;
-  gap: 2px;
+  --composer-ensemble-glass-bg: color-mix(in srgb, var(--text-primary) 8%, transparent);
+  --composer-ensemble-glass-border: color-mix(in srgb, var(--accent-color) 34%, transparent);
+  --composer-ensemble-glass-rim: var(--tw-glass-rim-light, rgba(255, 255, 255, 0.42));
+  --composer-ensemble-glass-shadow: rgba(0, 0, 0, 0.2);
+  --composer-ensemble-glass-sheen: var(--tw-glass-sheen, rgba(196, 200, 208, 0.12));
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  min-height: 32px;
+  gap: 3px;
+  padding: 3px;
+  border-color: var(--composer-ensemble-glass-border);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--text-primary) 7%, transparent), transparent),
+    var(--composer-ensemble-glass-bg);
+  backdrop-filter: blur(14px) saturate(1.28);
+  -webkit-backdrop-filter: blur(14px) saturate(1.28);
+  box-shadow:
+    inset 0 1px 0 var(--composer-ensemble-glass-rim),
+    inset 0 0 0 1px color-mix(in srgb, var(--accent-color) 16%, transparent),
+    0 8px 24px var(--composer-ensemble-glass-shadow);
+  color: var(--text-primary);
+  font-weight: 700;
+}
+
+.composer-ensemble-mode::before,
+.composer-ensemble-mode::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+}
+
+.composer-ensemble-mode::before {
+  z-index: 0;
+  background:
+    radial-gradient(
+      130% 100% at 50% -18%,
+      var(--composer-ensemble-glass-sheen),
+      transparent 62%
+    ),
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--composer-ensemble-glass-rim) 62%, transparent) 0%,
+      transparent 34%,
+      transparent 68%,
+      color-mix(in srgb, var(--accent-color) 22%, transparent) 100%
+    );
+  contain: layout paint;
+}
+
+.composer-ensemble-mode::after {
+  z-index: 2;
+  box-shadow:
+    inset 0 1px 0 var(--composer-ensemble-glass-rim),
+    inset 0 -1px 0 color-mix(in srgb, var(--accent-color) 26%, transparent),
+    inset 0 0 0 1px color-mix(in srgb, var(--text-primary) 10%, transparent);
+}
+
+.composer-ensemble-mode > * {
+  position: relative;
+  z-index: 1;
+}
+
+.composer-ensemble-mode :is(.composer-picker-label, .composer-ensemble-mode-button) {
+  font-weight: 700;
+}
+
+:root[data-advanced-fx-refraction="true"][data-advanced-fx-intensity="cinematic"]
+  .composer-ensemble-mode::before,
+:root[data-advanced-fx-refraction="true"][data-advanced-fx-intensity="epic"]
+  .composer-ensemble-mode::before {
+  filter: url(#tw-glass-refract);
 }
 
 .composer-fanout-policy {
@@ -1795,10 +1874,20 @@
 }
 
 .composer-ensemble-hop-meter {
-  margin-left: 2px;
-  min-height: 18px;
-  padding: 2px 6px;
-  font-size: 9px;
+  margin-left: 4px;
+  min-height: 26px;
+  padding: 5px 10px;
+  border: 1px solid color-mix(in srgb, var(--accent-color) 42%, transparent);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--accent-color) 18%, transparent), transparent),
+    color-mix(in srgb, var(--accent-color) 16%, transparent);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--composer-ensemble-glass-rim, #fff) 54%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--accent-color) 16%, transparent);
+  font-size: 11px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
 }
 
 .ensemble-above-row-queued {
