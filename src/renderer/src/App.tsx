@@ -12,6 +12,7 @@ import {
 import { reconcileChatRefMap } from './lib/reconcileChatRefMap'
 import { messagesRenderEqual } from './lib/messagesRenderEqual'
 import { mergeWorkflowTelemetryIntoMessages } from './lib/workflowTelemetryMessages'
+import { mergeReviewTelemetryIntoMessages } from './lib/reviewTelemetryMessages'
 import { resolveAssistantDeltaTarget } from './lib/assistantDeltaTarget'
 import { mergeTranscriptMediaRefs } from './lib/transcriptMediaRefs'
 import { shouldPreferLiveAssistantContent } from './lib/chatUpdatedAssistantMerge'

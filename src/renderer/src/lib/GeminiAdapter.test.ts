@@ -729,4 +729,27 @@ describe('GeminiStreamAdapter', () => {
     expect(events).not.toContainEqual(expect.objectContaining({ type: 'tool_event' }))
     expect(events).toContainEqual(expect.objectContaining({ type: 'workflow_telemetry' }))
   })
+
+  it('converts a review_event compat line into a review_telemetry event', () => {
+    const events: unknown[] = []
+    const adapter = new GeminiStreamAdapter((event) => events.push(event))
+
+    adapter.appendChunk(
+      JSON.stringify({
+        type: 'review_event',
+        tool_id: 'rev_1',
+        provider: 'codex',
+        review: { status: 'running', target: 'uncommitted changes' }
+      }) + '\n'
+    )
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'review_telemetry',
+        toolUseId: 'rev_1',
+        telemetry: expect.objectContaining({ status: 'running', provider: 'codex' })
+      })
+    )
+    expect(events).not.toContainEqual(expect.objectContaining({ type: 'tool_event' }))
+  })
 })

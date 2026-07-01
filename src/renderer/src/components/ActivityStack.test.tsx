@@ -300,6 +300,53 @@ describe('ActivityStack workflow card', () => {
   })
 })
 
+describe('ActivityStack Codex review card', () => {
+  function makeReviewActivity(overrides: Partial<ToolActivity> = {}): ToolActivity {
+    return {
+      id: 'rev_1',
+      toolName: 'codex_review',
+      displayName: 'Codex review',
+      category: 'task',
+      status: 'running',
+      reviewSummary: { provider: 'codex', status: 'running', target: 'uncommitted changes' },
+      ...overrides
+    }
+  }
+
+  it('renders the review card for a codex_review activity with telemetry', () => {
+    const html = renderToStaticMarkup(
+      <ActivityStack activities={[makeReviewActivity()]} provider="codex" />
+    )
+    expect(html).toContain('review-card')
+    expect(html).toContain('Codex Review')
+    expect(html).toContain('uncommitted changes')
+    expect(html).toContain('data-provider="codex"')
+  })
+
+  it('does not render a review card for a non-codex provider on name alone', () => {
+    const html = renderToStaticMarkup(
+      <ActivityStack
+        activities={[makeReviewActivity({ reviewSummary: undefined })]}
+        provider="claude"
+      />
+    )
+    expect(html).not.toContain('review-card')
+  })
+
+  it('keeps the review card inline (not swept into a compact group)', () => {
+    const html = renderToStaticMarkup(
+      <ActivityStack
+        activities={[
+          makeReviewActivity({ id: 'rev_1', status: 'success' }),
+          makeReviewActivity({ id: 'rev_2', status: 'success' })
+        ]}
+        provider="codex"
+      />
+    )
+    expect(html.split('review-card').length - 1).toBe(2)
+  })
+})
+
 describe('ActivityStack live activity viewport', () => {
   it('wraps settled tool stacks in the viewport when enabled', () => {
     const html = renderToStaticMarkup(

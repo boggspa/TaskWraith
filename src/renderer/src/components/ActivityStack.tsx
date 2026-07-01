@@ -29,7 +29,9 @@ import {
 } from '../lib/ToolParser'
 import { deriveChildAgentThreadsFromActivities } from '../lib/ChildAgentThreads'
 import { isClaudeWorkflowToolName } from '../../../shared/claudeWorkflow'
+import { isCodexReviewToolName } from '../../../shared/codexReview'
 import { WorkflowCard } from './WorkflowCard'
+import { ReviewCard } from './ReviewCard'
 import { hasExpandableDetail } from '../lib/ActivityRenderMode'
 import { inlineStatsForActivity } from '../lib/ActivityInlineStats'
 import { displayPathRelativeToWorkspace } from '../lib/ActivityPathDisplay'
@@ -1106,6 +1108,7 @@ function isGroupableActivity(activity: ToolActivity): boolean {
   // once terminal. Matched by a Claude `Workflow` tool name OR the presence of
   // accumulated workflow telemetry (how non-Claude providers surface).
   if (activity.workflowSummary || isClaudeWorkflowToolName(activity.toolName)) return false
+  if (activity.reviewSummary || isCodexReviewToolName(activity.toolName)) return false
   return true
 }
 
@@ -2014,6 +2017,17 @@ export function ActivityStack({
           activity={item.activity}
           provider={workflowProvider}
         />
+      )
+    }
+    // Codex native-review runs get a lightweight status card in the same slot,
+    // anchored to the synthesized `codex_review` activity (presence of
+    // reviewSummary telemetry) or its tool name (pinned to codex).
+    if (
+      item.activity.reviewSummary ||
+      (isCodexReviewToolName(item.activity.toolName) && workflowProvider === 'codex')
+    ) {
+      return (
+        <ReviewCard key={item.activity.id} activity={item.activity} provider={workflowProvider} />
       )
     }
     const thread = threadByParentId.get(item.activity.id)

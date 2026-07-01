@@ -1,5 +1,6 @@
 import { coerceRunItemEvents, type RunItemEvent } from '../../../shared/runItemEvents'
 import type { ClaudeWorkflowTelemetry } from '../../../shared/claudeWorkflow'
+import type { CodexReviewTelemetry } from '../../../shared/codexReview'
 
 export type NormalizedEvent =
   | {
@@ -32,6 +33,9 @@ export type NormalizedEvent =
   // tool activity by tool_use id. Not a tool row of its own — the renderer
   // merges it onto that activity's `workflowSummary` to drive the workflow card.
   | { type: 'workflow_telemetry'; toolUseId?: string; telemetry: Partial<ClaudeWorkflowTelemetry> }
+  // Codex native-review status, keyed back to the synthesized `codex_review`
+  // anchor by tool_use id. Merged onto that activity's `reviewSummary`.
+  | { type: 'review_telemetry'; toolUseId?: string; telemetry: Partial<CodexReviewTelemetry> }
   | {
       type: 'tool_event'
       name: string
@@ -120,6 +124,27 @@ export class GeminiStreamAdapter {
           typeof parsed.provider === 'string' && parsed.provider && !workflow.provider
             ? { ...workflow, provider: parsed.provider }
             : workflow
+      })
+      return
+    }
+
+    // Codex native-review status rides its own compat line, same shape/pattern
+    // as workflow_event — intercept before the tool-event paths so it never
+    // becomes a generic tool row.
+    if (parsed.type === 'review_event') {
+      const review =
+        parsed.review && typeof parsed.review === 'object' && !Array.isArray(parsed.review)
+          ? parsed.review
+          : {}
+      this.onEvent({
+        type: 'review_telemetry',
+        ...(typeof parsed.tool_id === 'string' && parsed.tool_id
+          ? { toolUseId: parsed.tool_id }
+          : {}),
+        telemetry:
+          typeof parsed.provider === 'string' && parsed.provider && !review.provider
+            ? { ...review, provider: parsed.provider }
+            : review
       })
       return
     }

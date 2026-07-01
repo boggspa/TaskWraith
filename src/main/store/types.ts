@@ -1,6 +1,7 @@
 import type { TodoItem } from '../TodoList'
 import type { AppIconVariant } from '../../shared/iconVariants'
 import type { ClaudeWorkflowTelemetry } from '../../shared/claudeWorkflow'
+import type { CodexReviewTelemetry } from '../../shared/codexReview'
 import type { UnattendedElevationAck } from '../UnattendedPostureGate'
 import type { TaskWraithPluginResourceProvenance } from '../../shared/plugins/PluginTypes'
 
@@ -3734,6 +3735,12 @@ export interface ToolActivity {
    * task-lifecycle frames (keyed back to this activity by tool_use id) and read
    * by the transcript's Claude workflow card. Absent for every other tool. */
   workflowSummary?: ClaudeWorkflowTelemetry
+  /** Live status of a Codex native code-review run, when this activity IS the
+   * synthesized `codex_review` anchor. Populated from the review lifecycle
+   * (`review/start` → `review/completed`) and read by the transcript's review
+   * card. Coarse run-status only (target/status/duration/tokens/model) — Codex
+   * emits no structured findings. Absent for every other tool. */
+  reviewSummary?: CodexReviewTelemetry
   // Legacy fields preserved for backward compatibility
   affectedFilePath?: string
   operationCategory?: 'update_topic' | 'read_file' | 'edit_file' | 'search' | 'shell' | 'unknown'
