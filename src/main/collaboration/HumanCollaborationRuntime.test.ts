@@ -604,4 +604,79 @@ describe('HumanCollaborationRuntime', () => {
     }
     await expect(beginOnce()).rejects.toThrow(/too many pending/i)
   })
+
+  it('P2a: exposes per-session summaries and audits admission + disconnect', async () => {
+    const store = new HumanCollaborationStore()
+    const share = store.createShare({ chatId: 'chat-1', mode: 'comments', now: 1000, inviteTtlMs: 10000 })
+    const collaborator = makeCollaborationIdentity()
+    const host = generateIdentityKeyPair()
+    const audit = { append: vi.fn() }
+    const runtime = new HumanCollaborationRuntime({
+      identityKeyPair: host,
+      store,
+      buildProjection: vi.fn(),
+      appendComment: vi.fn(),
+      audit,
+      now: () => 1000
+    })
+
+    expect(runtime.sessionSummaries()).toEqual([])
+
+    const begin = await runtime.beginAdmission({
+      shareId: share.share.shareId,
+      chatId: 'chat-1',
+      displayName: 'Alex',
+      inviteToken: share.inviteToken,
+      collaboratorIdentityPubKeyB64: collaborator.identityPubKeyB64,
+      collaboratorEphemeralPubKeyB64: collaborator.ephemeralPubKeyB64,
+      collaboratorNonceB64: collaborator.nonceB64
+    })
+    expect(audit.append).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'admission.began', chatId: 'chat-1' })
+    )
+
+    const context = makeTranscriptContext({
+      shareId: share.share.shareId,
+      chatId: 'chat-1',
+      inviteId: begin.inviteId,
+      inviteToken: share.inviteToken,
+      inviteExpiresAt: begin.expiresAt,
+      shareMode: 'comments',
+      hostIdentityPubKeyB64: begin.hostIdentityPubKeyB64,
+      hostEphemeralPubKeyB64: begin.hostEphemeralPubKeyB64,
+      hostNonceB64: begin.hostNonceB64,
+      hostCollaborator: collaborator
+    })
+    const confirmed = await runtime.confirmSas({
+      handshakeId: begin.handshakeId,
+      confirmCode: begin.confirmCode,
+      collaboratorTranscriptSigB64: b64.encode(
+        signEd25519(collaborator.identity.privateKey, computeHumanCollaborationTranscriptHash(context))
+      )
+    })
+    expect(audit.append).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'admission.sas_confirmed', collaboratorId: confirmed.collaboratorId })
+    )
+
+    const summaries = runtime.sessionSummaries()
+    expect(summaries).toHaveLength(1)
+    expect(summaries[0]).toMatchObject({
+      chatId: 'chat-1',
+      shareId: share.share.shareId,
+      collaboratorId: confirmed.collaboratorId,
+      displayName: 'Alex',
+      mode: 'admission'
+    })
+    // No key material or sequence state leaks through the summary.
+    expect(Object.keys(summaries[0]).sort()).toEqual(
+      ['chatId', 'collaboratorId', 'displayName', 'establishedAt', 'mode', 'shareId'].sort()
+    )
+
+    await runtime.disconnect({ sessionId: confirmed.sessionId })
+    expect(runtime.sessionSummaries()).toEqual([])
+    expect(audit.append).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'session.disconnected', collaboratorId: confirmed.collaboratorId })
+    )
+  })
 })
+

@@ -451,6 +451,14 @@ export function JoinSharedChatModal({
           <>
             <h2 className="creative-approval-modal-title">{projection?.title || 'Shared chat'}</h2>
             <div className={connectionClassName}>Connection: {connectionLabel}</div>
+            {connectionState === 'disconnected' && (
+              /* P2a presence clarity: offline is a STATE, not an error — say
+               * plainly what still works and how to get back in. */
+              <div className="join-offline-hint" role="status">
+                Connection lost — you&apos;re offline. You can keep reading what already loaded;
+                ask the host for a fresh invite to rejoin.
+              </div>
+            )}
             <p className="creative-approval-modal-description">
               {mode === 'comments'
                 ? 'You are following this chat live. You can leave comments — the host decides what, if anything, goes to the AI.'

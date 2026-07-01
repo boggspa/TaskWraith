@@ -25880,6 +25880,12 @@ if (isGeminiMcpBridgeProcess) {
     ipcMain.handle('human-collaboration:connected-chat-ids', () =>
       humanCollaborationRuntime ? humanCollaborationRuntime.connectedChatIds() : []
     )
+    // P2a presence clarity — per-session summaries (share + collaborator
+    // granularity) so host surfaces can distinguish "participant active" from
+    // "live session connected". Same never-constructs-the-runtime guard.
+    ipcMain.handle('human-collaboration:session-status', () =>
+      humanCollaborationRuntime ? humanCollaborationRuntime.sessionSummaries() : []
+    )
     ipcMain.handle('human-collaboration:revoke-share', (_, shareId: string) => {
       // Close the relay rooms for this share's invites before revoking.
       const target = chatService

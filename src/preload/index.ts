@@ -1109,6 +1109,9 @@ const api = {
   // P2a — bounded, newest-first collaboration audit rows.
   humanCollaborationAuditLog: (input?: { chatId?: string; limit?: number }) =>
     ipcRenderer.invoke('human-collaboration:audit-log', input),
+  // P2a presence clarity — live per-session summaries (share + collaborator).
+  humanCollaborationSessionStatus: () =>
+    ipcRenderer.invoke('human-collaboration:session-status'),
   // Collaborator side (this instance joining someone else's shared chat).
   humanCollaborationCollaboratorJoin: (input: {
     shareId: string

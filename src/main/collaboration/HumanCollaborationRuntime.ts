@@ -500,6 +500,30 @@ export class HumanCollaborationRuntime<ProjectionType = unknown, AppendType = un
     return Array.from(ids)
   }
 
+  /**
+   * P2a presence clarity (spec §6): per-session summaries so host surfaces can
+   * distinguish "participant active in the store" from "live session connected
+   * right now" — per share AND per collaborator, not just per chat. Only
+   * non-sensitive routing fields are exposed (no keys, no sequence state).
+   */
+  sessionSummaries(): Array<{
+    chatId: string
+    shareId: string
+    collaboratorId: string
+    displayName: string
+    establishedAt: number
+    mode: HumanCollaborationHandshakeMode
+  }> {
+    return Array.from(this.sessions.values()).map((session) => ({
+      chatId: session.chatId,
+      shareId: session.shareId,
+      collaboratorId: session.collaboratorId,
+      displayName: session.displayName,
+      establishedAt: session.establishedAt,
+      mode: session.mode
+    }))
+  }
+
   sealForCollaborator(
     sessionId: string,
     message: Omit<HumanCollaborationPlainMessage, 'msgId'> & { msgId?: number }

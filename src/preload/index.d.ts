@@ -1407,6 +1407,16 @@ declare global {
         shareId: string
         preset: string
       }) => Promise<unknown | null>
+      humanCollaborationSessionStatus: () => Promise<
+        Array<{
+          chatId: string
+          shareId: string
+          collaboratorId: string
+          displayName: string
+          establishedAt: number
+          mode: 'admission' | 'reconnect'
+        }>
+      >
       humanCollaborationAuditLog: (input?: {
         chatId?: string
         limit?: number

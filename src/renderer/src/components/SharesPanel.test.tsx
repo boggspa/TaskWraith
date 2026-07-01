@@ -299,3 +299,64 @@ describe('SharesPanelView contribution rules (P2a)', () => {
     expect(html).toContain('host-reviewed')
   })
 })
+
+/*
+ * P2a presence clarity — invite issued / participant active / live / offline
+ * are distinct states (spec §6).
+ */
+describe('SharesPanelView presence states (P2a)', () => {
+  it('shows Offline for an active participant with no live session', () => {
+    const html = renderToStaticMarkup(
+      <SharesPanelView
+        shares={[makeShare() as never]}
+        chatTitles={{ 'chat-1': 'Design review' }}
+        loading={false}
+        error={null}
+        onRevoke={() => {}}
+        liveSessionKeys={new Set<string>()}
+        now={NOW}
+      />
+    )
+    expect(html).toContain('Comments · Offline')
+    expect(html).toContain('is-offline')
+  })
+
+  it('marks the specific collaborator Live when their session is connected', () => {
+    const html = renderToStaticMarkup(
+      <SharesPanelView
+        shares={[makeShare() as never]}
+        chatTitles={{ 'chat-1': 'Design review' }}
+        loading={false}
+        error={null}
+        onRevoke={() => {}}
+        connectedChatIds={new Set(['chat-1'])}
+        liveSessionKeys={new Set(['share-1:c-1'])}
+        now={NOW}
+      />
+    )
+    expect(html).toContain('Comments · Live')
+    expect(html).toContain('is-live')
+  })
+
+  it('labels an unconsumed invite with no participants as Invite issued', () => {
+    const html = renderToStaticMarkup(
+      <SharesPanelView
+        shares={[
+          makeShare({
+            participants: [],
+            invites: [
+              { inviteId: 'i-1', tokenHash: 'h', createdAt: 1, expiresAt: NOW + 60_000 }
+            ]
+          }) as never
+        ]}
+        chatTitles={{ 'chat-1': 'Design review' }}
+        loading={false}
+        error={null}
+        onRevoke={() => {}}
+        now={NOW}
+      />
+    )
+    expect(html).toContain('Invite issued')
+    expect(html).toContain('Invite sent — awaiting collaborator')
+  })
+})

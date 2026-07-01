@@ -72,6 +72,7 @@ export function SharesPanelView({
   onCopyInvite,
   onRevokeParticipant,
   onChangeRules,
+  liveSessionKeys,
   now
 }: {
   shares: HumanCollaborationShare[]
@@ -84,6 +85,8 @@ export function SharesPanelView({
   onRevokeParticipant?: (shareId: string, collaboratorId: string) => void
   /** P2a: host-only contribution-rules preset change. */
   onChangeRules?: (shareId: string, preset: string) => void
+  /** P2a presence clarity: `${shareId}:${collaboratorId}` keys with a LIVE session. */
+  liveSessionKeys?: Set<string>
   // The "current time" for open-invite expiry, supplied by the container so the
   // view stays a pure function of its props (no clock read during render).
   now: number
@@ -98,12 +101,22 @@ export function SharesPanelView({
         const openInvites = share.invites.filter(
           (invite) => typeof invite.consumedAt !== 'number' && invite.expiresAt > now
         ).length
+        // Spec §6: invite issued / participant active / live session connected /
+        // offline are DISTINCT states — don't collapse them into one string.
+        const connectionLabel = isConnected
+          ? 'Live'
+          : participants.length > 0
+            ? 'Offline'
+            : openInvites > 0
+              ? 'Invite issued'
+              : 'Not connected'
         return {
           share,
           title: chatTitles[share.chatId] || 'Shared chat',
           participants,
           openInvites,
-          isConnected
+          isConnected,
+          connectionLabel
         }
       }),
     [shares, chatTitles, now, connectedChatIds]
@@ -142,13 +155,13 @@ export function SharesPanelView({
         </div>
       ) : (
         <ul className="shares-panel-list">
-          {rows.map(({ share, title, participants, openInvites, isConnected }) => (
+          {rows.map(({ share, title, participants, openInvites, connectionLabel }) => (
             <li className="shares-panel-card" key={share.shareId}>
               <div className="shares-panel-card-head">
                 <div className="shares-panel-card-title-wrap">
                   <span className="shares-panel-card-title">{title}</span>
                   <span className="shares-panel-card-mode">
-                    {shareRuleLabel(share)} · {isConnected ? 'Live' : 'Not connected'}
+                    {shareRuleLabel(share)} · {connectionLabel}
                   </span>
                   {onChangeRules && (
                     <select
@@ -212,6 +225,19 @@ export function SharesPanelView({
                         <span className="shares-panel-participant-status">
                           {participantStatusLabel(participant.status)}
                         </span>
+                        {liveSessionKeys && participant.status === 'active' && (
+                          <span
+                            className={`shares-panel-participant-live ${
+                              liveSessionKeys.has(`${share.shareId}:${participant.collaboratorId}`)
+                                ? 'is-live'
+                                : 'is-offline'
+                            }`}
+                          >
+                            {liveSessionKeys.has(`${share.shareId}:${participant.collaboratorId}`)
+                              ? 'Live'
+                              : 'Offline'}
+                          </span>
+                        )}
                         {onRevokeParticipant && (
                           <button
                             type="button"
@@ -249,6 +275,7 @@ export function SharesPanel() {
   // open-invite expiry check is pure and stable across a render pass.
   const [now, setNow] = useState(() => Date.now())
   const [connectedChatIds, setConnectedChatIds] = useState<Set<string>>(new Set())
+  const [liveSessionKeys, setLiveSessionKeys] = useState<Set<string>>(new Set())
 
   const refresh = useCallback(() => {
     setNow(Date.now())
@@ -268,16 +295,32 @@ export function SharesPanel() {
   }, [])
 
   const refreshConnected = useCallback(() => {
-    if (typeof window.api.humanCollaborationConnectedChatIds !== 'function') return
-    void window.api
-      .humanCollaborationConnectedChatIds()
-      .then((ids) => {
-        setConnectedChatIds(new Set(Array.isArray(ids) ? ids : []))
-      })
-      .catch(() => {
-        // Optional/ephemeral endpoint; leave the current connected set unchanged on
-        // best-effort failure to avoid noisy jitter.
-      })
+    if (typeof window.api.humanCollaborationConnectedChatIds === 'function') {
+      void window.api
+        .humanCollaborationConnectedChatIds()
+        .then((ids) => {
+          setConnectedChatIds(new Set(Array.isArray(ids) ? ids : []))
+        })
+        .catch(() => {
+          // Optional/ephemeral endpoint; leave the current connected set unchanged on
+          // best-effort failure to avoid noisy jitter.
+        })
+    }
+    // P2a presence clarity — per-collaborator live-session keys.
+    if (typeof window.api.humanCollaborationSessionStatus === 'function') {
+      void window.api
+        .humanCollaborationSessionStatus()
+        .then((sessions) => {
+          setLiveSessionKeys(
+            new Set(
+              (Array.isArray(sessions) ? sessions : []).map(
+                (session) => `${session.shareId}:${session.collaboratorId}`
+              )
+            )
+          )
+        })
+        .catch(() => {})
+    }
   }, [])
 
   // Resolve chat titles for the shared chatIds. Best-effort — a share whose
@@ -417,6 +460,7 @@ export function SharesPanel() {
       onRevokeParticipant={handleRevokeParticipant}
       onChangeRules={handleChangeRules}
       connectedChatIds={connectedChatIds}
+      liveSessionKeys={liveSessionKeys}
       now={now}
     />
   )
