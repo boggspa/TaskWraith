@@ -360,6 +360,7 @@ import {
   deleteEnsembleRosterPreset,
   listEnsembleRosterPresets,
   materializeParticipantsFromPresetWithBossman,
+  MAX_ROSTER_PRESET_PARTICIPANTS,
   saveEnsembleRosterPresetFromParticipants,
   subscribeEnsembleRosterPresets,
   type EnsembleRosterPreset
@@ -15579,7 +15580,7 @@ function App(): React.JSX.Element {
       )
       const { bossmanParticipantId } = materializedPreset
       const nextMaxParticipants = Math.min(
-        12,
+        MAX_ROSTER_PRESET_PARTICIPANTS,
         Math.max(preset.maxParticipants, participants.length, 2)
       )
       const patchedChat: ChatRecord = {
@@ -15665,14 +15666,15 @@ function App(): React.JSX.Element {
             orchestrationMode: mode,
             // 1.0.4-AR2 — track the global ceiling of 8 (was 6).
             // 1.0.5-EW1 — ceiling raised again 8 → 12. Preserve any
+            // 1.0.5-EW46 — ceiling raised 12 → 18.
             // existing per-chat override that's already within
-            // [2, 12] instead of clobbering it to the cap.
+            // [2, MAX] instead of clobbering it to the cap.
             maxParticipants:
               Number.isFinite(source.ensemble!.maxParticipants) &&
               source.ensemble!.maxParticipants >= 2 &&
-              source.ensemble!.maxParticipants <= 12
+              source.ensemble!.maxParticipants <= MAX_ROSTER_PRESET_PARTICIPANTS
                 ? source.ensemble!.maxParticipants
-                : 12,
+                : MAX_ROSTER_PRESET_PARTICIPANTS,
             maxContinuationHops: source.ensemble!.maxContinuationHops || 6,
             updatedAt: new Date().toISOString()
           }

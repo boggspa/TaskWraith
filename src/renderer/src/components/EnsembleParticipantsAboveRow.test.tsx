@@ -293,7 +293,7 @@ describe('EnsembleParticipantsAboveRow', () => {
     expect(html).not.toContain('ensemble-above-mode-button')
   })
 
-  it('renders the add-participant affordance until the six participant cap', () => {
+  it('renders the add-participant affordance while the roster is below the cap', () => {
     const chat = makeChat([
       makeParticipant({ id: 'ensemble-claude', provider: 'claude', role: 'Explorer', order: 1 }),
       makeParticipant({ id: 'ensemble-codex', provider: 'codex', role: 'Worker', order: 2 })

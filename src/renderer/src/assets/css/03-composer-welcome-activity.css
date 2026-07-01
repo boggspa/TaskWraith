@@ -1192,7 +1192,7 @@
   justify-content: center;
   margin: 18px auto 0;
   /* 1.0.5-EW2 — max-width bumped 720 → 880 so 6 slimmed tiles
-   * fit per row at the 12-participant cap. Below 6 tiles the
+   * fit per row. Below 6 tiles the
    * chain renders tighter than the pre-EW2 layout because
    * tile widths shrank from 120 → 78 min-width. */
   max-width: 880px;

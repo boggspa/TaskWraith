@@ -22,10 +22,11 @@ const ENSEMBLE_FANOUT_POLICIES = new Set<EnsembleFanoutPolicy>([
 /**
  * Ensemble roster floor / ceiling. Mirrors the live-chat guards:
  * `MIN_ENSEMBLE_PARTICIPANTS` in EnsembleParticipantsAboveRow and the
- * `Math.min(12, …)` clamp in App.tsx's `applyEnsembleRosterPreset`.
+ * `MAX_ROSTER_PRESET_PARTICIPANTS` clamp in App.tsx's
+ * `applyEnsembleRosterPreset`.
  */
 export const MIN_ROSTER_PRESET_PARTICIPANTS = 2
-export const MAX_ROSTER_PRESET_PARTICIPANTS = 12
+export const MAX_ROSTER_PRESET_PARTICIPANTS = 18
 const DEFAULT_ROSTER_PRESET_MAX_PARTICIPANTS = 6
 
 function newPresetId(now: number): string {
@@ -136,7 +137,11 @@ function isEnsembleRosterPreset(value: unknown): value is EnsembleRosterPreset {
     (entry.fanoutPolicy === undefined ||
       ENSEMBLE_FANOUT_POLICIES.has(entry.fanoutPolicy as EnsembleFanoutPolicy)) &&
     typeof entry.maxParticipants === 'number' &&
+    entry.maxParticipants >= MIN_ROSTER_PRESET_PARTICIPANTS &&
+    entry.maxParticipants <= MAX_ROSTER_PRESET_PARTICIPANTS &&
     Array.isArray(entry.participants) &&
+    entry.participants.length >= MIN_ROSTER_PRESET_PARTICIPANTS &&
+    entry.participants.length <= MAX_ROSTER_PRESET_PARTICIPANTS &&
     entry.participants.every(isEnsembleRosterParticipantSnapshot)
   )
 }
@@ -261,7 +266,10 @@ export function buildEnsembleRosterPresetFromConfig(
     updatedAt: now,
     orchestrationMode:
       ensemble.orchestrationMode === 'continuous' ? 'continuous' : 'turn_bound',
-    maxParticipants: ensemble.maxParticipants,
+    maxParticipants: Math.max(
+      MIN_ROSTER_PRESET_PARTICIPANTS,
+      Math.min(MAX_ROSTER_PRESET_PARTICIPANTS, ensemble.maxParticipants)
+    ),
     ...(typeof ensemble.maxContinuationHops === 'number'
       ? { maxContinuationHops: ensemble.maxContinuationHops }
       : {}),
@@ -468,25 +476,27 @@ export function saveEnsembleRosterPresetFromParticipants(
     throw new Error('Preset name is required.')
   }
   const bossmanIndex = participants.findIndex((participant) => participant.isBossman === true)
-  const snapshots: EnsembleRosterParticipantSnapshot[] = participants.map((participant, index) => ({
-    provider: participant.provider as ProviderId,
-    enabled: participant.enabled ?? true,
-    role: participant.role || '',
-    instructions: participant.brief || '',
-    order: index + 1,
-    ...(index === bossmanIndex ? { isBossman: true } : {}),
-    ...(participant.model ? { model: participant.model } : {}),
-    ...(participant.permissionPresetId
-      ? { permissionPresetId: participant.permissionPresetId as PermissionPresetId }
-      : {}),
-    ...(participant.reasoningEffort ? { reasoningEffort: participant.reasoningEffort } : {}),
-    ...(typeof participant.fastModeEnabled === 'boolean'
-      ? { fastModeEnabled: participant.fastModeEnabled }
-      : {}),
-    ...(typeof participant.thinkingEnabled === 'boolean'
-      ? { thinkingEnabled: participant.thinkingEnabled }
-      : {})
-  }))
+  const snapshots: EnsembleRosterParticipantSnapshot[] = participants
+    .slice(0, MAX_ROSTER_PRESET_PARTICIPANTS)
+    .map((participant, index) => ({
+      provider: participant.provider as ProviderId,
+      enabled: participant.enabled ?? true,
+      role: participant.role || '',
+      instructions: participant.brief || '',
+      order: index + 1,
+      ...(index === bossmanIndex ? { isBossman: true } : {}),
+      ...(participant.model ? { model: participant.model } : {}),
+      ...(participant.permissionPresetId
+        ? { permissionPresetId: participant.permissionPresetId as PermissionPresetId }
+        : {}),
+      ...(participant.reasoningEffort ? { reasoningEffort: participant.reasoningEffort } : {}),
+      ...(typeof participant.fastModeEnabled === 'boolean'
+        ? { fastModeEnabled: participant.fastModeEnabled }
+        : {}),
+      ...(typeof participant.thinkingEnabled === 'boolean'
+        ? { thinkingEnabled: participant.thinkingEnabled }
+        : {})
+    }))
   const now = Date.now()
   const preset: EnsembleRosterPreset = {
     id: newPresetId(now),

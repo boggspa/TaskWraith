@@ -640,15 +640,15 @@
   justify-content: center;
 }
 
-/* 1.0.5-EW1 — At 7+ participants the chip strip wraps to a second
- * row. Pre-EW1 the strip clipped chips off the left edge silently
+/* 1.0.5-EW1 — At 7+ participants the chip strip wraps to additional
+ * rows. Pre-EW1 the strip clipped chips off the left edge silently
  * (unreachable participants). Switch from the centered horizontal
- * flex layout to a fixed 6-column grid that wraps to row 2 cleanly:
+ * flex layout to a fixed 6-column grid that wraps cleanly:
  *
  *   7 participants → 6 chips on row 1 + 1 on row 2 (with the
  *                    "+ add" button beside it on row 2)
- *   8–11           → wraps as expected
- *   12             → 6 + 6, no "+" (panel is at cap)
+ *   8–17           → wraps as expected
+ *   18             → 6 + 6 + 6, no "+" (panel is at cap)
  *
  * `minmax(0, 1fr)` lets grid items shrink past their intrinsic
  * width — chip labels truncate via the chip-role overflow rules
@@ -716,9 +716,9 @@
 
 /* 1.0.5-EW2 — The "+ add participant" button is now a SIBLING of
  * `.ensemble-above-row-chips` (was a child pre-EW2). At wrap mode
- * the button used to take a grid cell and forced a third row at
- * 12 participants. Pinning it to the right of the row instead
- * keeps the 6×2 grid clean. `flex: 0 0 auto` stops it from
+ * the button used to take a grid cell and forced an extra row at
+ * the previous participant cap. Pinning it to the right of the row instead
+ * keeps the 6-column grid clean. `flex: 0 0 auto` stops it from
  * shrinking; `align-self: center` keeps it vertically centred
  * against either a single-row or wrapped chip strip. */
 .ensemble-above-row > .ensemble-above-add-participant {
@@ -732,7 +732,7 @@
  * (the − abuts the +, sharing the +'s right border as the divider) so the
  * flex:1 chip strip reclaims that slack and its centred chips re-balance. No
  * overall width change. Sibling-guarded so it only kicks in when BOTH buttons
- * are present (e.g. not at the 12-participant cap, where the + is hidden). */
+ * are present (e.g. not at the cap, where the + is hidden). */
 [data-composer-style="codex"] .ensemble-above-row {
   gap: 6px;
 }

@@ -64,13 +64,12 @@ import { getProviderName } from './Sidebar'
 // chat throughout its lifecycle.
 //
 // 1.0.5-EW1 — Ceiling raised again 8 → 12. The chip strip now wraps
-// to a second row at 7+ participants (see CSS: .is-wrapped → grid
-// with 6 equal-width columns) instead of overflowing horizontally,
-// so the strip stays navigable up to the new cap. Agents can
-// sub-delegate via delegate_to_subthread for fanouts wider than the
-// panel — 12 named peers is plenty even for heavy collaborative
-// tasks.
-const MAX_ENSEMBLE_PARTICIPANTS = 12
+// at 7+ participants (see CSS: .is-wrapped → grid with 6 equal-width
+// columns) instead of overflowing horizontally.
+//
+// 1.0.5-EW46 — Ceiling raised 12 → 18. The six-column grid now allows
+// three complete rows for larger panels.
+const MAX_ENSEMBLE_PARTICIPANTS = 18
 const MIN_ENSEMBLE_PARTICIPANTS = 2
 // 1.0.5-EW1 — Threshold at which the chip strip switches from the
 // centered horizontal flex layout to a 6-column grid that wraps to
@@ -941,7 +940,8 @@ export function EnsembleParticipantsAboveRow({
         1.0.5-EW2 — The "+ add participant" button lives OUTSIDE
         the chip strip / grid. Pre-EW2 the button was inside
         `.ensemble-above-row-chips`, which took a grid cell in the
-        wrapped layout and forced a third row at 12 participants
+        wrapped layout and forced an extra row at the previous participant
+        cap
         (6 + 6 chips + 1 standalone "+" cell). Sibling placement
         + flex layout on the parent `.ensemble-above-row` pins
         the button to the right edge of the row at all counts,
