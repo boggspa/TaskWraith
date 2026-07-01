@@ -106,7 +106,7 @@ import {
   resolveClaudeDefaultReasoningEffort
 } from '../lib/providerModelDefaults'
 import { codexReasoningDisplayLabel, claudeReasoningDisplayLabel } from '../lib/composerChipFormat'
-import { PLAN_LABEL, READ_ONLY_RECON_LABEL } from '../lib/planModeLabels'
+import { composerPermissionOptions } from '../lib/planModeLabels'
 import { WORKSPACE_POLICY_SERVICES } from '../lib/workspacePolicyServices'
 import { createPortal } from 'react-dom'
 
@@ -3753,18 +3753,14 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                 ? 'plan'
                                 : 'read_only'
                               : approvalMode
-                          const permissionPickerOptions: PermissionOption[] = ensembleBinding
-                            ? [
-                                { value: 'plan', label: PLAN_LABEL },
-                                { value: 'read_only', label: READ_ONLY_RECON_LABEL },
-                                { value: 'default', label: 'Default Approval' }
-                              ]
-                            : [
-                                { value: 'plan', label: PLAN_LABEL },
-                                { value: 'read_only', label: READ_ONLY_RECON_LABEL },
-                                { value: 'default', label: 'Default Approval' },
-                                { value: 'auto_edit', label: 'Full Workspace Access' }
-                              ]
+                          // Solo AND ensemble share one option list (single source
+                          // of truth). Full Workspace Access is a user-only
+                          // elevation — agents can't self-elevate — so it's offered
+                          // in the ensemble picker too; `handlePermissionSelection`
+                          // maps its `auto_edit` value to the `workspace_write`
+                          // preset via `modeToPreset` for the participant.
+                          const permissionPickerOptions: PermissionOption[] =
+                            composerPermissionOptions()
                           const normalizedWorkspacePath = (currentWorkspace?.path || '').replace(
                             /\/+$/,
                             ''
