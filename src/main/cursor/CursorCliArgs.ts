@@ -53,6 +53,14 @@ export interface BuildCursorCliArgsInput {
    * `webBridgeActive`). Adds `--approve-mcps` and SUPPRESSES `--mode plan`.
    */
   readOnlyBridgeActive?: boolean
+  /**
+   * Emit `--force` alongside the active bridge so the MCP tool CALLS execute
+   * headlessly (see the `--force` note in buildCursorCliArgs). Default (undefined)
+   * = ON whenever the bridge is active. Set to `false` to withhold it (the MCP
+   * tools then get rejected, the pre-fix behavior). Only ever has effect when the
+   * bridge is active — never adds `--force` to a bare/plan run.
+   */
+  forceAllowTools?: boolean
 }
 
 export interface BuildCursorProviderCliArgsInput extends BuildCursorCliArgsInput {
@@ -60,6 +68,9 @@ export interface BuildCursorProviderCliArgsInput extends BuildCursorCliArgsInput
   /** True when the read-only safe-subset broker was set up for this run (only
    *  ever true when `taskWraithMcpActive` is false — the two are exclusive). */
   taskWraithReadOnlyMcpActive?: boolean
+  /** Gate for `--force` (see forceAllowTools). Threaded from cursorForceMcpEnabled();
+   *  index.ts passes `false` when the kill-switch is set. */
+  forceAllowMcpTools?: boolean
 }
 
 /** True only for the canonical Composer 2.5 ids (composer-2.5 / -fast). Any
@@ -86,19 +97,31 @@ export function buildCursorCliArgs(input: BuildCursorCliArgsInput): string[] {
   // read-only-only broker) and must run in DEFAULT mode, because `--mode plan`
   // executes no tools — including the read tools the seat was just given.
   const readOnlyContained = !writeCapable && Boolean(input.readOnlyBridgeActive)
+  const bridgeActive = (writeCapable && Boolean(input.webBridgeActive)) || readOnlyContained
   // Read-only safety: plan mode performs no edits (proven). Write mode runs in
   // default mode; native side effects are contained by the deny-list config.
   // A read-only-contained seat also runs in default mode (contained instead).
-  // NEVER `--force` / `--yolo`.
   if (!writeCapable && !readOnlyContained) {
     args.push('--mode', 'plan')
   }
-  // TaskWraith MCP bridge: pre-approve the TaskWraith MCP server's tools —
-  // guarded by the caller, which sets webBridgeActive / readOnlyBridgeActive
-  // only when it wrote the mcp.json + allow rule. Auto-approves MCP servers
-  // ONLY, not shell/write; the read-only path's broker is safe-subset anyway.
-  if ((writeCapable && input.webBridgeActive) || readOnlyContained) {
+  if (bridgeActive) {
+    // --approve-mcps loads/approves the MCP SERVER so its tools are advertised.
     args.push('--approve-mcps')
+    // --force is REQUIRED for the MCP tool CALLS to execute headlessly: proven
+    // live, `-p` mode rejects every un-interactively-approved MCP tool call
+    // ("User rejected MCP", isReadonly:false) even when the server is enabled
+    // (137 tools) and `--approve-mcps` is set. `--force` = "allow commands
+    // UNLESS EXPLICITLY DENIED"; the caller has written a `.cursor/cli.json`
+    // that explicitly denies `Shell(**)`/`Write(**)` (proven to block native
+    // writes/edits/shell), so --force allows ONLY the TaskWraith broker's MCP
+    // tools — which STILL pass through TaskWraith's approval ledger + workspace/
+    // path checks — and NEVER native side effects. It is therefore emitted ONLY
+    // here, coupled to the bridge + deny-list containment, and NEVER for a bare/
+    // plan/uncontained run (which never sets webBridgeActive/readOnlyBridgeActive).
+    // Opt-out via forceAllowTools:false (falls back to the tools being rejected).
+    if (input.forceAllowTools !== false) {
+      args.push('--force')
+    }
   }
   const resumeId = typeof input.providerSessionId === 'string' ? input.providerSessionId.trim() : ''
   if (resumeId) {
@@ -121,6 +144,7 @@ export function buildCursorProviderCliArgs(input: BuildCursorProviderCliArgsInpu
     approvalMode: input.taskWraithMcpActive ? input.approvalMode : 'plan',
     webBridgeActive: Boolean(input.taskWraithMcpActive),
     readOnlyBridgeActive:
-      !input.taskWraithMcpActive && Boolean(input.taskWraithReadOnlyMcpActive)
+      !input.taskWraithMcpActive && Boolean(input.taskWraithReadOnlyMcpActive),
+    forceAllowTools: input.forceAllowMcpTools
   })
 }

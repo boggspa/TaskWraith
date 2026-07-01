@@ -80,13 +80,32 @@ describe('buildCursorCliArgs', () => {
     expect(args).not.toContain('plan')
   })
 
-  it('NEVER passes --force or --yolo (read-only OR write)', () => {
+  it('NEVER passes --force/--yolo WITHOUT the bridge (bare / plan / uncontained)', () => {
     for (const mode of ['plan', 'default', 'acceptEdits', '']) {
       const args = buildCursorCliArgs({ ...base, approvalMode: mode })
       expect(args).not.toContain('--force')
       expect(args).not.toContain('-f')
       expect(args).not.toContain('--yolo')
     }
+  })
+
+  it('emits --force ONLY with an active bridge (deny-list containment present), never --yolo', () => {
+    // Write seat + bridge → --force (MCP tool calls need it headlessly).
+    const write = buildCursorCliArgs({ ...base, approvalMode: 'default', webBridgeActive: true })
+    expect(write).toContain('--force')
+    expect(write).not.toContain('--yolo')
+    // Read-only-contained seat + safe-subset bridge → --force too.
+    const ro = buildCursorCliArgs({ ...base, approvalMode: 'plan', readOnlyBridgeActive: true })
+    expect(ro).toContain('--force')
+    // Withheld when explicitly disabled (kill-switch) — tools go back to rejected.
+    const off = buildCursorCliArgs({
+      ...base,
+      approvalMode: 'default',
+      webBridgeActive: true,
+      forceAllowTools: false
+    })
+    expect(off).not.toContain('--force')
+    expect(off).toContain('--approve-mcps')
   })
 
   it('forwards only Composer 2.5 model ids', () => {
@@ -130,9 +149,9 @@ describe('buildCursorCliArgs', () => {
     )
   })
 
-  it('still never passes --force / --yolo with the TaskWraith MCP bridge active', () => {
+  it('with the bridge active passes --force (contained) but NEVER --yolo', () => {
     const args = buildCursorCliArgs({ ...base, approvalMode: 'default', webBridgeActive: true })
-    expect(args).not.toContain('--force')
+    expect(args).toContain('--force')
     expect(args).not.toContain('--yolo')
   })
 })
@@ -140,13 +159,15 @@ describe('buildCursorCliArgs', () => {
 describe('read-only safe-subset bridge (Grok parity)', () => {
   const base = { prompt: 'read a thing', workspace: '/ws' }
 
-  it('read-only + readOnlyBridgeActive runs CONTAINED default mode (no --mode plan) with --approve-mcps', () => {
+  it('read-only + readOnlyBridgeActive runs CONTAINED default mode (no --mode plan) with --approve-mcps + --force', () => {
     const args = buildCursorCliArgs({ ...base, approvalMode: 'plan', readOnlyBridgeActive: true })
     // Contained default mode: --mode plan would execute NO tools, so it's suppressed.
     expect(args).not.toContain('plan')
     expect(args).toContain('--approve-mcps')
-    // Containment must never loosen to --force/--yolo.
-    expect(args).not.toContain('--force')
+    // --force so the (safe-subset) MCP read tools execute headlessly; the broker
+    // advertises only read tools + the deny-list blocks native writes, so it's
+    // strictly contained. NEVER --yolo.
+    expect(args).toContain('--force')
     expect(args).not.toContain('--yolo')
   })
 

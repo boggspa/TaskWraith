@@ -89,3 +89,19 @@ export function cursorGlobalBrokerEnabled(): boolean {
   const v = process.env.TASKWRAITH_CURSOR_GLOBAL_BROKER
   return v !== '0' && v !== 'false' && v !== 'no'
 }
+
+/**
+ * Emit `--force` alongside the TaskWraith MCP bridge so Cursor actually EXECUTES
+ * the broker's MCP tool calls headlessly. Proven necessary live: `--approve-mcps`
+ * only approves the SERVER, so `cursor-agent -p` rejects every MCP tool CALL
+ * ("User rejected MCP", isReadonly:false) without `--force`. `--force` = "allow
+ * unless explicitly denied", and the run's `.cursor/cli.json` explicitly denies
+ * native `Shell(**)`/`Write(**)`, so it only unlocks the TaskWraith broker tools
+ * (still governed by TaskWraith's approval ledger), never native side effects.
+ * DEFAULT ON; TASKWRAITH_CURSOR_FORCE_MCP=0 (or false/no) withholds `--force`
+ * (the MCP tools go back to being rejected — the pre-fix behavior).
+ */
+export function cursorForceMcpEnabled(): boolean {
+  const v = process.env.TASKWRAITH_CURSOR_FORCE_MCP
+  return v !== '0' && v !== 'false' && v !== 'no'
+}

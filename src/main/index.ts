@@ -797,6 +797,7 @@ import { grokToolKindToService } from './grok/GrokAcpProtocol'
 import { grokEventToRunEvents, type NormalizedGrokRunEvent } from './grok/GrokStreamingJson'
 import {
   cursorDebugEnabled,
+  cursorForceMcpEnabled,
   cursorGlobalBrokerEnabled,
   cursorReadOnlyMcpEnabled
 } from './cursorGate'
@@ -11407,7 +11408,10 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
     // broker still runs (contained) in default mode via taskWraithReadOnlyMcpActive.
     approvalMode: payload.approvalMode,
     taskWraithMcpActive: cursorTaskWraithMcpActive,
-    taskWraithReadOnlyMcpActive: cursorTaskWraithReadOnlyMcpActive
+    taskWraithReadOnlyMcpActive: cursorTaskWraithReadOnlyMcpActive,
+    // --force (gated) so Cursor executes the broker's MCP tool CALLS headlessly;
+    // safe because the workspace deny-list keeps native shell/write blocked.
+    forceAllowMcpTools: cursorForceMcpEnabled()
   })
   runCliProviderProcess(event, 'cursor', resolved.binaryPath, args, payload, {
     fallback: false,
