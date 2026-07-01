@@ -62,11 +62,19 @@ export function toolNameToFamily(name: string | undefined | null): ToolFamily | 
   let normalised = name.toLowerCase().trim()
   if (!normalised) return null
 
+  // Did the name carry an MCP / TaskWraith-broker namespace? If so, an
+  // otherwise-unmatched tool still gets the generic `mcp` plug icon (below)
+  // rather than falling back to the legacy category icon — a brokered MCP call
+  // reads better as "an MCP tool" than as an undecorated "Used …" row.
+  let strippedMcp = false
+
   // Strip MCP-namespacing — `mcp__TaskWraith__delegate_to_subthread` etc.
   if (normalised.startsWith('mcp__')) {
+    strippedMcp = true
     const idx = normalised.indexOf('__', 5)
     if (idx > 5) normalised = normalised.slice(idx + 2)
   } else if (normalised.startsWith('mcp_')) {
+    strippedMcp = true
     const knownServerPrefixes = [
       'mcp_taskwraith-broker_',
       'mcp_taskwraith-broker-',
@@ -80,16 +88,22 @@ export function toolNameToFamily(name: string | undefined | null): ToolFamily | 
       }
     }
   } else if (normalised.startsWith('taskwraith-broker__')) {
+    strippedMcp = true
     normalised = normalised.slice('taskwraith-broker__'.length)
   } else if (normalised.startsWith('taskwraith_broker__')) {
+    strippedMcp = true
     normalised = normalised.slice('taskwraith_broker__'.length)
   } else if (normalised.startsWith('taskwraith-broker_')) {
+    strippedMcp = true
     normalised = normalised.slice('taskwraith-broker_'.length)
   } else if (normalised.startsWith('taskwraith_broker_')) {
+    strippedMcp = true
     normalised = normalised.slice('taskwraith_broker_'.length)
   } else if (normalised.startsWith('taskwraith__')) {
+    strippedMcp = true
     normalised = normalised.slice('taskwraith__'.length)
   } else if (normalised.startsWith('taskwraith_')) {
+    strippedMcp = true
     normalised = normalised.slice('taskwraith_'.length)
   }
 
@@ -208,6 +222,12 @@ export function toolNameToFamily(name: string | undefined | null): ToolFamily | 
       return 'edit'
     case 'mcp_tool':
     case 'dynamic_tool':
+    // A bare `mcp` base — a brokered MCP call whose inner tool name couldn't be
+    // unwrapped (e.g. some Cursor stream shapes) — plus the raw call wrappers.
+    case 'mcp':
+    case 'callmcptool':
+    case 'call_mcp_tool':
+    case 'use_tool':
       return 'mcp'
   }
 
@@ -274,6 +294,10 @@ export function toolNameToFamily(name: string | undefined | null): ToolFamily | 
   ) {
     return 'file'
   }
+
+  // A namespaced-but-unmatched MCP / TaskWraith-broker tool still gets the plug
+  // icon (it IS an MCP call) rather than the undecorated legacy fallback.
+  if (strippedMcp) return 'mcp'
 
   return null
 }

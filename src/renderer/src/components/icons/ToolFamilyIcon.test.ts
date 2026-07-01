@@ -177,6 +177,21 @@ describe('toolNameToFamily', () => {
     expect(toolNameToFamily('dynamic_tool')).toBe('mcp')
   })
 
+  it('maps a bare `mcp` base + raw call wrappers to the mcp family', () => {
+    // Cursor's brokered call can arrive with the inner tool name unstripped.
+    expect(toolNameToFamily('mcp')).toBe('mcp')
+    expect(toolNameToFamily('MCP')).toBe('mcp')
+    expect(toolNameToFamily('callMcpTool')).toBe('mcp')
+    expect(toolNameToFamily('use_tool')).toBe('mcp')
+  })
+
+  it('falls back to the mcp family for a namespaced-but-unmatched MCP tool', () => {
+    // Was null (undecorated) — a brokered call reads better as an MCP plug icon.
+    expect(toolNameToFamily('mcp__weird__nonsense')).toBe('mcp')
+    expect(toolNameToFamily('mcp_taskwraith-broker-some_new_tool')).toBe('mcp')
+    expect(toolNameToFamily('taskwraith__brand_new_tool')).toBe('mcp')
+  })
+
   it('maps every TaskWraith MCP tool to a custom SVG family', () => {
     const unmapped = TASKWRAITH_MCP_TOOLS.filter((tool) => !toolNameToFamily(tool))
 
@@ -205,9 +220,8 @@ describe('toolNameToFamily', () => {
     expect(toolNameToFamily('MCP__TaskWraith__delegate_to_subthread')).toBe('delegate')
   })
 
-  it('returns null for unknown tool names', () => {
+  it('returns null for unknown, NON-namespaced tool names', () => {
     expect(toolNameToFamily('completely_unknown_tool')).toBeNull()
     expect(toolNameToFamily('xyzzy')).toBeNull()
-    expect(toolNameToFamily('mcp__weird__nonsense')).toBeNull()
   })
 })

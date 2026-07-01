@@ -774,6 +774,17 @@ export function getToolDisplayName(toolName: string, parameters?: Record<string,
       //      can't safely re-split), still with the "Used " prefix.
       //   4. "Used unknown" when toolName is empty / "unknown".
       if (!toolName || toolName === 'unknown') return 'Used unknown'
+      // A brokered MCP call whose inner tool name couldn't be unwrapped (some
+      // Cursor stream shapes surface the bare `mcp` base) — read it as an MCP
+      // tool rather than the raw "Used mcp".
+      if (
+        unqualifiedName === 'mcp' ||
+        unqualifiedName === 'callmcptool' ||
+        unqualifiedName === 'call_mcp_tool' ||
+        unqualifiedName === 'use_tool'
+      ) {
+        return 'Used an MCP tool'
+      }
       const friendly = lookupToolDisplayName(unqualifiedName)
       if (friendly) return friendly
       const titleCased = titleCaseToolName(unqualifiedName)
