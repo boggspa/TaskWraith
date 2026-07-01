@@ -33,6 +33,8 @@ const SKY_UFO_FLIGHT_MS = 60_000
 const SKY_DIFF_CLOUD_INITIAL_DELAY_MS = SKY_UFO_INITIAL_DELAY_MS + SKY_UFO_RECURRENCE_MS / 2
 const SKY_DIFF_CLOUD_RECURRENCE_MS = SKY_UFO_RECURRENCE_MS
 const SKY_DIFF_CLOUD_FLIGHT_MS = 58_000
+const SKY_MEGA_DELETE_DIFF_CLOUD_INITIAL_DELAY_MS =
+  SKY_UFO_INITIAL_DELAY_MS + SKY_UFO_RECURRENCE_MS * 0.75
 const SKY_UFO_RENDERER_BOOTED_AT_MS = Date.now()
 
 interface SkyUfoFlight {
@@ -47,6 +49,7 @@ interface SkyUfoTiming {
 
 interface SkyDiffCloudFlight {
   id: number
+  variant: 'regular' | 'mega-delete'
   additions: string
   deletions: string
   addBlockCount: number
@@ -137,18 +140,42 @@ export function getNextSkyDiffCloudTiming(
   )
 }
 
-export function createSkyDiffCloudFlight(id: number): SkyDiffCloudFlight {
-  const additions = randomInt(1_400, 4_900)
-  const deletions = additions + randomInt(1_900, 8_400)
-  const addBlockCount = randomInt(2, 4)
-  const deleteBlockCount = Math.min(7, addBlockCount + randomInt(2, 4))
+export function getNextSkyMegaDeleteDiffCloudTiming(
+  now = Date.now(),
+  bootedAtMs = SKY_UFO_RENDERER_BOOTED_AT_MS
+) {
+  return getNextCyclicSkyTiming(
+    SKY_MEGA_DELETE_DIFF_CLOUD_INITIAL_DELAY_MS,
+    SKY_DIFF_CLOUD_RECURRENCE_MS,
+    SKY_DIFF_CLOUD_FLIGHT_MS,
+    now,
+    bootedAtMs
+  )
+}
+
+function createSkyDiffCloudFlightFromParts({
+  id,
+  variant,
+  additions,
+  deletions,
+  addBlockCount,
+  deleteBlockCount
+}: {
+  id: number
+  variant: SkyDiffCloudFlight['variant']
+  additions: number
+  deletions: number
+  addBlockCount: number
+  deleteBlockCount: number
+}): SkyDiffCloudFlight {
   const fromLeft = Math.random() > 0.5
   const xStops = fromLeft
-    ? ['-220px', '14cqw', '36cqw', '58cqw', '82cqw', 'calc(100cqw + 220px)']
-    : ['calc(100cqw + 220px)', '82cqw', '58cqw', '36cqw', '14cqw', '-220px']
+    ? ['-280px', '14cqw', '36cqw', '58cqw', '82cqw', 'calc(100cqw + 280px)']
+    : ['calc(100cqw + 280px)', '82cqw', '58cqw', '36cqw', '14cqw', '-280px']
 
   return {
     id,
+    variant,
     additions: `+${formatDiffNumber(additions)}`,
     deletions: `-${formatDiffNumber(deletions)}`,
     addBlockCount,
@@ -176,6 +203,30 @@ export function createSkyDiffCloudFlight(id: number): SkyDiffCloudFlight {
       '--sky-diff-r5': `${randomInt(-4, 6)}deg`
     } as CSSProperties
   }
+}
+
+export function createSkyDiffCloudFlight(id: number): SkyDiffCloudFlight {
+  const additions = randomInt(1_400, 4_900)
+  const addBlockCount = randomInt(2, 4)
+  return createSkyDiffCloudFlightFromParts({
+    id,
+    variant: 'regular',
+    additions,
+    deletions: additions + randomInt(1_900, 8_400),
+    addBlockCount,
+    deleteBlockCount: Math.min(8, addBlockCount + randomInt(2, 4))
+  })
+}
+
+export function createSkyMegaDeleteDiffCloudFlight(id: number): SkyDiffCloudFlight {
+  return createSkyDiffCloudFlightFromParts({
+    id,
+    variant: 'mega-delete',
+    additions: randomInt(1, 9),
+    deletions: randomInt(125_000, 285_000),
+    addBlockCount: 1,
+    deleteBlockCount: randomInt(8, 10)
+  })
 }
 
 /**
@@ -271,8 +322,11 @@ export function SkyWeatherVisual({ weather }: { weather: HostWeatherVisualState 
   const skyKind = weather?.kind || 'unknown'
   const skyUfoSequenceRef = useRef(0)
   const skyDiffCloudSequenceRef = useRef(0)
+  const skyMegaDeleteDiffCloudSequenceRef = useRef(0)
   const [skyUfoFlight, setSkyUfoFlight] = useState<SkyUfoFlight | null>(null)
   const [skyDiffCloudFlight, setSkyDiffCloudFlight] = useState<SkyDiffCloudFlight | null>(null)
+  const [skyMegaDeleteDiffCloudFlight, setSkyMegaDeleteDiffCloudFlight] =
+    useState<SkyDiffCloudFlight | null>(null)
 
   // Keep the backend daylight signal for core assets like stars vs sun/day state.
   const isNightBase = weather ? !weather.isDay : localHour < 7 || localHour >= 19
@@ -316,6 +370,56 @@ export function SkyWeatherVisual({ weather }: { weather: HostWeatherVisualState 
     }
 
     const timing = getNextSkyUfoTiming()
+    scheduledTimer = window.setTimeout(() => {
+      launchFlight()
+      scheduleRecurring(timing.nextDelayMs)
+    }, timing.delayMs)
+
+    return () => {
+      if (scheduledTimer !== undefined) {
+        window.clearTimeout(scheduledTimer)
+      }
+      if (recurringTimer !== undefined) {
+        window.clearInterval(recurringTimer)
+      }
+      if (clearFlightTimer !== undefined) {
+        window.clearTimeout(clearFlightTimer)
+      }
+    }
+  }, [])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return
+    }
+
+    let scheduledTimer: number | undefined
+    let recurringTimer: number | undefined
+    let clearFlightTimer: number | undefined
+
+    const clearFlight = (id: number) => {
+      setSkyMegaDeleteDiffCloudFlight((current) => (current?.id === id ? null : current))
+    }
+
+    const launchFlight = () => {
+      if (clearFlightTimer !== undefined) {
+        window.clearTimeout(clearFlightTimer)
+      }
+
+      const id = skyMegaDeleteDiffCloudSequenceRef.current + 1
+      skyMegaDeleteDiffCloudSequenceRef.current = id
+      setSkyMegaDeleteDiffCloudFlight(createSkyMegaDeleteDiffCloudFlight(id))
+      clearFlightTimer = window.setTimeout(() => clearFlight(id), SKY_DIFF_CLOUD_FLIGHT_MS + 500)
+    }
+
+    const scheduleRecurring = (delayMs: number) => {
+      scheduledTimer = window.setTimeout(() => {
+        launchFlight()
+        recurringTimer = window.setInterval(launchFlight, SKY_DIFF_CLOUD_RECURRENCE_MS)
+      }, delayMs)
+    }
+
+    const timing = getNextSkyMegaDeleteDiffCloudTiming()
     scheduledTimer = window.setTimeout(() => {
       launchFlight()
       scheduleRecurring(timing.nextDelayMs)
@@ -435,30 +539,33 @@ export function SkyWeatherVisual({ weather }: { weather: HostWeatherVisualState 
           <span className="sky-ufo-light sky-ufo-light-3" />
         </div>
       )}
-      {skyDiffCloudFlight && (
-        <div
-          key={skyDiffCloudFlight.id}
-          className="sky-diff-cloud"
-          style={skyDiffCloudFlight.style}
-        >
-          <span className="sky-diff-cloud-soft" />
-          <span className="sky-diff-cloud-card">
-            <span className="sky-diff-cloud-stat sky-diff-cloud-add">
-              {skyDiffCloudFlight.additions}
-            </span>
-            <span className="sky-diff-cloud-stat sky-diff-cloud-delete">
-              {skyDiffCloudFlight.deletions}
-            </span>
-            <span className="sky-diff-cloud-bars">
-              {Array.from({ length: skyDiffCloudFlight.addBlockCount }).map((_, index) => (
-                <span key={`add-${index}`} className="sky-diff-cloud-bar add" />
-              ))}
-              {Array.from({ length: skyDiffCloudFlight.deleteBlockCount }).map((_, index) => (
-                <span key={`delete-${index}`} className="sky-diff-cloud-bar delete" />
-              ))}
-            </span>
-          </span>
-        </div>
+      {[skyDiffCloudFlight, skyMegaDeleteDiffCloudFlight].map(
+        (flight) =>
+          flight && (
+            <div
+              key={`${flight.variant}-${flight.id}`}
+              className={`sky-diff-cloud sky-diff-cloud-${flight.variant}`}
+              style={flight.style}
+            >
+              <span className="sky-diff-cloud-soft" />
+              <span className="sky-diff-cloud-card">
+                <span className="sky-diff-cloud-stat sky-diff-cloud-add">
+                  {flight.additions}
+                </span>
+                <span className="sky-diff-cloud-stat sky-diff-cloud-delete">
+                  {flight.deletions}
+                </span>
+                <span className="sky-diff-cloud-bars">
+                  {Array.from({ length: flight.addBlockCount }).map((_, index) => (
+                    <span key={`add-${index}`} className="sky-diff-cloud-bar add" />
+                  ))}
+                  {Array.from({ length: flight.deleteBlockCount }).map((_, index) => (
+                    <span key={`delete-${index}`} className="sky-diff-cloud-bar delete" />
+                  ))}
+                </span>
+              </span>
+            </div>
+          )
       )}
       <div className="sky-rainfall">
         <span />

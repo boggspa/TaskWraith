@@ -2,7 +2,9 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import {
   createSkyDiffCloudFlight,
+  createSkyMegaDeleteDiffCloudFlight,
   getNextSkyDiffCloudTiming,
+  getNextSkyMegaDeleteDiffCloudTiming,
   getNextSkyUfoTiming,
   SkyWeatherVisual,
   type HostWeatherVisualState
@@ -38,11 +40,16 @@ describe('SkyWeatherVisual', () => {
     const bootedAt = 1_000
     const ufoLaunchAt = bootedAt + 60_000
     const diffLaunchAt = ufoLaunchAt + 20 * 60_000
+    const megaDeleteLaunchAt = ufoLaunchAt + 30 * 60_000
 
     expect(getNextSkyUfoTiming(ufoLaunchAt, bootedAt).delayMs).toBe(0)
     expect(getNextSkyDiffCloudTiming(ufoLaunchAt, bootedAt).delayMs).toBeGreaterThan(10 * 60_000)
     expect(getNextSkyDiffCloudTiming(diffLaunchAt, bootedAt).delayMs).toBe(0)
     expect(getNextSkyUfoTiming(diffLaunchAt, bootedAt).delayMs).toBeGreaterThan(10 * 60_000)
+    expect(getNextSkyMegaDeleteDiffCloudTiming(megaDeleteLaunchAt, bootedAt).delayMs).toBe(0)
+    expect(getNextSkyMegaDeleteDiffCloudTiming(diffLaunchAt, bootedAt).delayMs).toBeGreaterThan(
+      5 * 60_000
+    )
   })
 
   it('generates scary diff-cloud deletions with stronger red bars', () => {
@@ -55,5 +62,17 @@ describe('SkyWeatherVisual', () => {
     expect(flight.style).toMatchObject({
       '--sky-diff-duration': '58000ms'
     })
+  })
+
+  it('generates a separate tiny-addition / huge-deletion diff-cloud variant', () => {
+    const flight = createSkyMegaDeleteDiffCloudFlight(1)
+    const additions = Number(flight.additions.replace(/[+,]/g, ''))
+    const deletions = Number(flight.deletions.replace(/[-,]/g, ''))
+
+    expect(flight.variant).toBe('mega-delete')
+    expect(additions).toBeLessThanOrEqual(9)
+    expect(deletions).toBeGreaterThanOrEqual(125_000)
+    expect(flight.addBlockCount).toBe(1)
+    expect(flight.deleteBlockCount).toBeGreaterThanOrEqual(8)
   })
 })

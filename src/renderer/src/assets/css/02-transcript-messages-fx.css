@@ -1168,8 +1168,8 @@
   top: 0;
   left: 0;
   z-index: 3;
-  width: 184px;
-  height: 64px;
+  width: 236px;
+  height: 82px;
   opacity: 0;
   pointer-events: none;
   transform-origin: 50% 54%;
@@ -1183,7 +1183,7 @@
 
 .sky-diff-cloud-soft {
   position: absolute;
-  inset: -1px -7px 1px -8px;
+  inset: -2px -10px 2px -10px;
   border-radius: 50% 48% 46% 54% / 58% 64% 36% 42%;
   background:
     radial-gradient(ellipse at 12% 68%, rgba(255, 255, 255, 0.34) 0 15%, transparent 16%),
@@ -1201,9 +1201,9 @@
 
 .sky-diff-cloud-card {
   position: absolute;
-  left: 23px;
-  right: 18px;
-  top: 24px;
+  left: 38px;
+  right: 30px;
+  top: 34px;
   display: grid;
   grid-template-columns: auto auto 1fr;
   align-items: center;
@@ -1262,6 +1262,20 @@
 .sky-diff-cloud-bar.delete {
   color: rgba(207, 34, 46, 0.52);
   background: #cf222e;
+}
+
+.sky-diff-cloud-mega-delete .sky-diff-cloud-card {
+  left: 34px;
+  right: 24px;
+  gap: 4px;
+}
+
+.sky-diff-cloud-mega-delete .sky-diff-cloud-delete {
+  font-size: 10.5px;
+}
+
+.sky-diff-cloud-mega-delete .sky-diff-cloud-bar {
+  width: 4.5px;
 }
 
 .sky-rainfall,
