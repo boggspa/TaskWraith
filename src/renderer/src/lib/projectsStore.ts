@@ -144,6 +144,53 @@ function isProject(value: unknown): value is Project {
   )
 }
 
+function migrateProject(value: unknown): Project | null {
+  if (!value || typeof value !== 'object') return null
+  const entry = value as Partial<Project>
+  if (typeof entry.id !== 'string' || entry.id.length === 0) return null
+  if (typeof entry.name !== 'string' || entry.name.trim().length === 0) return null
+  const createdAt =
+    typeof entry.createdAt === 'number' && Number.isFinite(entry.createdAt)
+      ? entry.createdAt
+      : Date.now()
+  const updatedAt =
+    typeof entry.updatedAt === 'number' && Number.isFinite(entry.updatedAt)
+      ? entry.updatedAt
+      : createdAt
+  return {
+    schemaVersion: SCHEMA_VERSION,
+    id: entry.id,
+    name: entry.name.trim(),
+    icon: normalizeIcon(isProjectIcon(entry.icon) ? entry.icon : undefined, entry.id),
+    hue: normalizeHue(entry.hue),
+    parentId: normalizeParentId(entry.parentId),
+    order: Math.max(
+      1,
+      Math.round(
+        typeof entry.order === 'number' && Number.isFinite(entry.order) ? entry.order : 1
+      )
+    ),
+    memberChatIds: normalizeChatIds(entry.memberChatIds),
+    createdAt,
+    updatedAt
+  }
+}
+
+function migrateProjects(candidates: unknown[]): Project[] {
+  const seen = new Set<string>()
+  const projects: Project[] = []
+  for (const candidate of candidates) {
+    const migrated = migrateProject(candidate)
+    if (!isProject(migrated) || seen.has(migrated.id)) continue
+    seen.add(migrated.id)
+    projects.push({
+      ...migrated,
+      icon: cloneIcon(migrated.icon)
+    })
+  }
+  return projects
+}
+
 function readRawProjects(): Project[] {
   if (typeof window === 'undefined') return []
   try {
@@ -151,23 +198,7 @@ function readRawProjects(): Project[] {
     if (!raw) return []
     const parsed = JSON.parse(raw)
     if (!Array.isArray(parsed)) return []
-
-    const seen = new Set<string>()
-    const projects: Project[] = []
-    for (const candidate of parsed) {
-      if (!isProject(candidate) || seen.has(candidate.id)) continue
-      seen.add(candidate.id)
-      projects.push({
-        ...candidate,
-        name: candidate.name.trim(),
-        hue: normalizeHue(candidate.hue),
-        order: Math.max(1, Math.round(candidate.order)),
-        memberChatIds: normalizeChatIds(candidate.memberChatIds),
-        icon: cloneIcon(candidate.icon)
-      })
-    }
-
-    return projects
+    return migrateProjects(parsed)
   } catch {
     return []
   }

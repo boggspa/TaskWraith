@@ -144,6 +144,41 @@ describe('projectsStore CRUD', () => {
     expect(projects[0].id).toBe('x1')
     expect(projects[0].name).toBe('Valid')
   })
+
+  it('migrates compatible stored projects before schema-version validation', () => {
+    fake.localStorage.setItem(
+      PROJECTS_STORAGE_KEY,
+      JSON.stringify([
+        {
+          schemaVersion: 999,
+          id: 'future-compatible',
+          name: '  Future Compatible  ',
+          icon: { iconKind: 'seed', seed: 'future-seed' },
+          hue: 725,
+          parentId: null,
+          order: 2.8,
+          memberChatIds: [' chat-1 ', 'chat-1', '', 'chat-2'],
+          createdAt: 10,
+          updatedAt: 20
+        }
+      ])
+    )
+
+    const projects = listProjects()
+    expect(projects).toHaveLength(1)
+    expect(projects[0]).toMatchObject({
+      schemaVersion: 1,
+      id: 'future-compatible',
+      name: 'Future Compatible',
+      icon: { iconKind: 'seed', seed: 'future-seed' },
+      hue: 5,
+      parentId: null,
+      order: 3,
+      memberChatIds: ['chat-1', 'chat-2'],
+      createdAt: 10,
+      updatedAt: 20
+    })
+  })
 })
 
 describe('projectsStore hierarchy and ordering', () => {
