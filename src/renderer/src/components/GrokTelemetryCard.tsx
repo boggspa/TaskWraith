@@ -60,6 +60,9 @@ export function GrokTelemetryCard(): React.ReactElement {
 
   const observed = snapshot?.confidence === 'observed'
   const display = snapshot?.creditsUsedDisplay || '0%'
+  // Weekly-limit /usage screens (mid-2026 CLI) vs the legacy monthly credit pool.
+  const weekly = snapshot?.usageKind === 'weekly_limit'
+  const kindText = weekly ? 'Weekly limit' : 'Subscription credits'
 
   return (
     <article className="settings-provider-telemetry-card provider-grok" data-provider="grok">
@@ -69,13 +72,13 @@ export function GrokTelemetryCard(): React.ReactElement {
         {snapshot?.planLabel ? <span>{snapshot.planLabel}</span> : null}
       </div>
       <div className="settings-provider-telemetry-meta">
-        <span>Subscription credits</span>
+        <span>{kindText}</span>
         <span>grok cli usage</span>
       </div>
       {observed ? (
         <div className="settings-provider-balance-list">
           <div className="settings-provider-balance">
-            <span>Credits used</span>
+            <span>{weekly ? 'Weekly limit used' : 'Credits used'}</span>
             <strong>{display}</strong>
             {snapshot?.resetAtText ? (
               <small>resets {formatResetWindow(snapshot.resetAtText)}</small>
@@ -84,7 +87,7 @@ export function GrokTelemetryCard(): React.ReactElement {
         </div>
       ) : (
         <div className="settings-provider-balance settings-provider-balance-empty">
-          <span>Credits</span>
+          <span>Usage</span>
           <strong>{loading ? '…' : 'Unavailable'}</strong>
         </div>
       )}

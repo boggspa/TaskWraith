@@ -61,17 +61,29 @@ export function GrokCreditsMeterView({
 }: GrokCreditsMeterViewProps): React.ReactElement {
   const observed = snapshot?.confidence === 'observed'
   const percent = snapshot?.creditsUsedPercent ?? null
+  // xAI moved SuperGrok CLI auth from a monthly credit pool to a weekly limit
+  // (mid-2026); the snapshot says which generation the /usage screen showed.
+  const weekly = snapshot?.usageKind === 'weekly_limit'
+  const windowLabel = weekly ? 'Weekly' : 'Credits'
+  const kindText = weekly ? 'Weekly limit' : 'Subscription credits'
   // For a "<1%" band (display present, percent null) keep the bar near empty
-  // and let the raw display carry the meaning — never invent a number.
+  // and let the raw display carry the meaning — never invent a number. The
+  // weekly ">99%"-style band is the opposite: pin the bar at the band's floor
+  // so it reads near-full.
+  const bandFloor = snapshot?.creditsUsedDisplay.match(/^>(\d[\d.]*)%$/)
   const fraction =
-    percent != null && Number.isFinite(percent) ? Math.max(0, Math.min(1, percent / 100)) : 0
+    percent != null && Number.isFinite(percent)
+      ? Math.max(0, Math.min(1, percent / 100))
+      : bandFloor
+        ? Math.max(0, Math.min(1, Number(bandFloor[1]) / 100))
+        : 0
   const display = snapshot?.creditsUsedDisplay || '0%'
-  const metaText = stale ? 'Subscription credits · stale' : 'Subscription credits'
+  const metaText = stale ? `${kindText} · stale` : kindText
   const pace =
     snapshot?.resetAt && snapshot.limitWindowSeconds && percent != null
       ? computeQuotaPace({
           id: 'grok-credits',
-          label: 'Credits',
+          label: windowLabel,
           runs: 0,
           totalTokens: 0,
           limitLabel: metaText,
@@ -94,9 +106,9 @@ export function GrokCreditsMeterView({
       </div>
       <div className="model-usage-window-list">
         {observed ? (
-          <div className="model-usage-window" title="Grok subscription credits">
+          <div className="model-usage-window" title={`Grok ${kindText.toLowerCase()}`}>
             <div className="model-usage-window-row">
-              <span className="model-usage-window-label">Credits</span>
+              <span className="model-usage-window-label">{windowLabel}</span>
               {snapshot?.resetAtText ? (
                 <span className="model-usage-window-reset">
                   resets {formatResetWindow(snapshot.resetAtText)}
@@ -110,15 +122,15 @@ export function GrokCreditsMeterView({
             </div>
           </div>
         ) : (
-          <div className="model-usage-window" title="Grok subscription credits">
+          <div className="model-usage-window" title="Grok usage">
             <div className="model-usage-window-row">
-              <span className="model-usage-window-label">Credits</span>
+              <span className="model-usage-window-label">Usage</span>
               <span className="model-usage-window-percent">{loading ? '…' : '—'}</span>
             </div>
             <div className="model-usage-window-meta">
               <span>
                 {loading
-                  ? 'Reading subscription credits…'
+                  ? 'Reading Grok usage…'
                   : errored
                     ? 'Could not read the Grok CLI'
                     : 'Usage unavailable'}

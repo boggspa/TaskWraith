@@ -1,28 +1,37 @@
 import { GROK_PROJECTED_INPUT_USD_PER_MILLION, GROK_PROJECTED_OUTPUT_USD_PER_MILLION } from '../index.constants'
-// Grok SUBSCRIPTION-CREDITS usage — distinct from token/cost usage.
+// Grok SUBSCRIPTION-LIMIT usage — distinct from token/cost usage.
 //
-// SuperGrok/grok.com CLI auth bills by a subscription credit pool (a percent +
+// SuperGrok/grok.com CLI auth bills against a subscription pool (a percent +
 // reset window), NOT per-token. There is NO noninteractive command for it
 // (`grok inspect --json` is config-only; no `usage`/`account` subcommand), so
-// the only safe source is the interactive `/usage` → "Show Usage" screen,
-// captured via PTY. This module keeps the PARSER pure + fully unit-tested and
-// isolates the impure PTY capture behind an injected `spawnPty` (testable for
+// the only safe source is the interactive `/usage` screen, captured via PTY.
+// This module keeps the PARSER pure + fully unit-tested and isolates the
+// impure PTY capture behind an injected `spawnPty` (testable for
 // timeout/failure with a fake terminal). No prompt is ever sent (no model call
 // / credit consumption); we never touch ~/.grok or credential files.
+//
+// Two generations of the /usage screen exist:
+//  - legacy (≤ mid-2026): "Credits used: 1.05%" + "Resets: May 31, 16:00 PT"
+//    → a MONTHLY credit pool ('subscription_credits')
+//  - current: "Weekly limit: 98%" + "Next reset: July 2, 09:04 PT", with a
+//    status-line form "Weekly limit left: 2%" → a WEEKLY window
+//    ('weekly_limit'). "Weekly limit: N%" is the USED percent (the CLI shows
+//    "left" only in the explicitly-labelled status-line form).
+// Both are parsed; `usageKind` says which one was observed.
 
 export interface GrokUsageSnapshot {
   provider: 'grok'
   source: 'grok-cli-usage'
-  usageKind: 'subscription_credits'
-  /** Parsed percent (0–100). null when only a coarse band like "<1%" is known. */
+  usageKind: 'subscription_credits' | 'weekly_limit'
+  /** Parsed USED percent (0–100). null when only a coarse band like "<1%" is known. */
   creditsUsedPercent: number | null
   /** Raw display, preserved exactly (e.g. "1.05%", "0%", "<1%"). */
   creditsUsedDisplay: string
-  /** Reset window text exactly as shown (e.g. "May 31, 16:00 PT", "1 Jun"). */
+  /** Reset window text exactly as shown (e.g. "May 31, 16:00 PT", "July 2, 09:04 PT"). */
   resetAtText: string | null
   /** ISO timestamp when robustly parseable; null otherwise (we trust the text). */
   resetAt: string | null
-  /** Grok subscription credits reset on a monthly credit window when parseable. */
+  /** Monthly credit window (legacy) or 7-day weekly window when parseable. */
   limitWindowSeconds: number | null
   /** Plan label when shown (e.g. "Free credits with SuperGrok"). */
   planLabel: string | null
@@ -33,6 +42,7 @@ export interface GrokUsageSnapshot {
 }
 
 export const GROK_CREDIT_WINDOW_SECONDS = 30 * 24 * 60 * 60
+export const GROK_WEEKLY_WINDOW_SECONDS = 7 * 24 * 60 * 60
 
 /** Strip ANSI/VT control sequences while preserving printable text + spaces. */
 export function stripGrokAnsi(input: string): string {
@@ -52,33 +62,55 @@ export function stripGrokAnsi(input: string): string {
   )
 }
 
-function parsePercentDisplay(text: string): { display: string; percent: number | null } | null {
-  // "Credits used: 1.05%" / "Credits used: 0%" / "Credits used: <1%"
+interface ParsedPercent {
+  display: string
+  percent: number | null
+  kind: GrokUsageSnapshot['usageKind']
+}
+
+function parsePercentDisplay(text: string): ParsedPercent | null {
+  const asUsed = (
+    isBand: boolean,
+    raw: string,
+    kind: GrokUsageSnapshot['usageKind']
+  ): ParsedPercent => {
+    const num = Number(raw)
+    return {
+      display: isBand ? `<${raw}%` : `${raw}%`,
+      percent: isBand || !Number.isFinite(num) ? null : num,
+      kind
+    }
+  }
+  // "Credits used: 1.05%" / "Credits used: 0%" / "Credits used: <1%" (legacy)
   const labelled = text.match(/Credits?\s*used:?\s*(<\s*)?(\d[\d.]*)\s*%/i)
-  if (labelled) {
-    const isBand = Boolean(labelled[1])
-    const num = Number(labelled[2])
-    return {
-      display: isBand ? `<${labelled[2]}%` : `${labelled[2]}%`,
-      percent: isBand || !Number.isFinite(num) ? null : num
+  if (labelled) return asUsed(Boolean(labelled[1]), labelled[2], 'subscription_credits')
+  // Status-line form: "Weekly limit left: 2%" / "Weekly limit left: <1%" —
+  // REMAINING percent; convert to used (exact arithmetic, not invented).
+  const weeklyLeft = text.match(/Weekly\s*limit\s*left:?\s*(<\s*)?(\d[\d.]*)\s*%/i)
+  if (weeklyLeft) {
+    const num = Number(weeklyLeft[2])
+    if (Boolean(weeklyLeft[1]) || !Number.isFinite(num)) {
+      // "<1% left" → used is only known as a ">99%" band; never invent a number.
+      return { display: `>${100 - Math.ceil(num || 1)}%`, percent: null, kind: 'weekly_limit' }
     }
+    const used = Number((100 - num).toFixed(2))
+    return { display: `${used}%`, percent: used, kind: 'weekly_limit' }
   }
-  // Status-line form: "<1% used" / "12% used"
+  // "Weekly limit: 98%" / "Weekly limit used: 98%" / "Weekly limit: <1%" — USED percent.
+  const weekly = text.match(/Weekly\s*limit(?:\s*used)?:?\s*(<\s*)?(\d[\d.]*)\s*%/i)
+  if (weekly) return asUsed(Boolean(weekly[1]), weekly[2], 'weekly_limit')
+  // Status-line form: "<1% used" / "12% used" (legacy)
   const used = text.match(/(<\s*)?(\d[\d.]*)\s*%\s*used/i)
-  if (used) {
-    const isBand = Boolean(used[1])
-    const num = Number(used[2])
-    return {
-      display: isBand ? `<${used[2]}%` : `${used[2]}%`,
-      percent: isBand || !Number.isFinite(num) ? null : num
-    }
-  }
+  if (used) return asUsed(Boolean(used[1]), used[2], 'subscription_credits')
   return null
 }
 
 function parseResetText(text: string): string | null {
-  // Capture the reset window, stopping before trailing fields on the same line.
-  const match = text.match(/Resets:?\s*(.+?)\s*(?:Pay\s*as\s*you\s*go|Credits?\s*used|·|\||\n|$)/i)
+  // "Resets: …" (legacy) or "Next reset: …" (weekly screen). Capture the
+  // window, stopping before trailing fields on the same line.
+  const match = text.match(
+    /(?:Next\s*reset|Resets):?\s*(.+?)\s*(?:Pay\s*as\s*you\s*go|Credits?\s*used|Weekly\s*limit|·|\||\n|$)/i
+  )
   if (!match) return null
   const value = match[1].trim()
   return value || null
@@ -189,15 +221,20 @@ export function parseGrokUsage(
   const planLabel = parsePlanLabel(text)
   const payAsYouGoEnabled = parsePayAsYouGo(text)
 
+  const usageKind = credit?.kind ?? 'subscription_credits'
   const base: GrokUsageSnapshot = {
     provider: 'grok',
     source: 'grok-cli-usage',
-    usageKind: 'subscription_credits',
+    usageKind,
     creditsUsedPercent: credit ? credit.percent : null,
     creditsUsedDisplay: credit ? credit.display : '',
     resetAtText,
     resetAt,
-    limitWindowSeconds: resetAt ? GROK_CREDIT_WINDOW_SECONDS : null,
+    limitWindowSeconds: resetAt
+      ? usageKind === 'weekly_limit'
+        ? GROK_WEEKLY_WINDOW_SECONDS
+        : GROK_CREDIT_WINDOW_SECONDS
+      : null,
     planLabel,
     payAsYouGoEnabled,
     refreshedAt,
@@ -271,8 +308,12 @@ export function probeGrokUsage(deps: GrokUsageProbeDeps): Promise<GrokUsageSnaps
 
     child.onData((data) => {
       buffer += data
-      // Early-out once a full credit line has streamed in.
-      if (/Credits?\s*used:?\s*<?\s*\d/i.test(stripGrokAnsi(buffer))) {
+      // Early-out once a full credit/weekly-limit line has streamed in.
+      if (
+        /(?:Credits?\s*used|Weekly\s*limit(?:\s*left|\s*used)?):?\s*<?\s*\d/i.test(
+          stripGrokAnsi(buffer)
+        )
+      ) {
         // Give one more beat for the reset/pay-as-you-go lines, then parse.
         timers.push(setTimer(() => finish(parseGrokUsage(buffer, now())), 250))
       }

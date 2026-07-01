@@ -110,7 +110,31 @@ describe('GrokCreditsMeterView', () => {
 
   it('renders a loading state', () => {
     const html = render({ snapshot: null, loading: true })
-    expect(html).toContain('Reading subscription credits…')
+    expect(html).toContain('Reading Grok usage…')
+  })
+
+  it('renders the weekly-limit /usage screen with Weekly labels', () => {
+    const html = render({
+      snapshot: snap('Weekly limit: 98%\nNext reset: July 2, 09:04 PT')
+    })
+    expect(html).toContain('>Weekly<')
+    expect(html).toContain('98%')
+    expect(html).toContain('Weekly limit')
+    expect(html).toContain('resets July 2, 09:04 PT')
+    expect(html).not.toContain('Subscription credits')
+    expect(html).not.toContain('>Credits<')
+  })
+
+  it('pins the bar near-full for a ">99%" weekly used band', () => {
+    const html = render({ snapshot: snap('Weekly limit left: <1%') })
+    expect(html).toContain('&gt;99%')
+    // The band floor drives the bar width (99%), never an invented exact number.
+    expect(html).toContain('width:99.00%')
+  })
+
+  it('flags a stale weekly reading with the weekly meta text', () => {
+    const html = render({ snapshot: snap('Weekly limit: 98%'), stale: true })
+    expect(html).toContain('Weekly limit · stale')
   })
 
   it('does not flag a fresh observed snapshot as stale', () => {

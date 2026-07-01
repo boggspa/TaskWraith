@@ -82,6 +82,84 @@ describe('parseGrokUsage', () => {
     expect(parseGrokUsage('Pay as you go: on').payAsYouGoEnabled).toBe(true)
   })
 
+  // ── Weekly-limit /usage screen (mid-2026 CLI) ───────────────────────────────
+
+  it('parses the "Weekly limit:" used-percent form as a weekly_limit snapshot', () => {
+    const s = parseGrokUsage('Weekly limit: 98%')
+    expect(s.creditsUsedPercent).toBe(98)
+    expect(s.creditsUsedDisplay).toBe('98%')
+    expect(s.usageKind).toBe('weekly_limit')
+    expect(s.confidence).toBe('observed')
+  })
+
+  it('preserves a "Weekly limit: <1%" band without inventing a number', () => {
+    const s = parseGrokUsage('Weekly limit: <1%')
+    expect(s.creditsUsedPercent).toBeNull()
+    expect(s.creditsUsedDisplay).toBe('<1%')
+    expect(s.usageKind).toBe('weekly_limit')
+  })
+
+  it('converts the status-line "Weekly limit left:" remaining form into used percent', () => {
+    const s = parseGrokUsage('Weekly limit left: 2% · Composer 2.5')
+    expect(s.creditsUsedPercent).toBe(98)
+    expect(s.creditsUsedDisplay).toBe('98%')
+    expect(s.usageKind).toBe('weekly_limit')
+  })
+
+  it('converts a decimal "Weekly limit left:" without float noise', () => {
+    const s = parseGrokUsage('Weekly limit left: 2.5%')
+    expect(s.creditsUsedPercent).toBe(97.5)
+    expect(s.creditsUsedDisplay).toBe('97.5%')
+  })
+
+  it('maps "Weekly limit left: <1%" to a ">99%" used band (no invented number)', () => {
+    const s = parseGrokUsage('Weekly limit left: <1%')
+    expect(s.creditsUsedPercent).toBeNull()
+    expect(s.creditsUsedDisplay).toBe('>99%')
+    expect(s.usageKind).toBe('weekly_limit')
+    expect(s.confidence).toBe('observed')
+  })
+
+  it('captures the "Next reset:" window and derives a 7-day weekly pace window', () => {
+    const s = parseGrokUsage(
+      'Weekly limit: 98%\nNext reset: July 2, 09:04 PT',
+      '2026-07-01T12:00:00.000Z'
+    )
+    expect(s.resetAtText).toBe('July 2, 09:04 PT')
+    expect(s.resetAt).toBe('2026-07-02T16:04:00.000Z')
+    expect(s.limitWindowSeconds).toBe(7 * 24 * 60 * 60)
+  })
+
+  it('parses the full weekly /usage screen (the real capture shape)', () => {
+    const screen = ['Weekly limit: 98%', 'Next reset: July 2, 09:04 PT'].join('\n')
+    const s = parseGrokUsage(screen, '2026-07-01T12:00:00.000Z')
+    expect(s).toMatchObject({
+      provider: 'grok',
+      source: 'grok-cli-usage',
+      usageKind: 'weekly_limit',
+      creditsUsedPercent: 98,
+      creditsUsedDisplay: '98%',
+      resetAtText: 'July 2, 09:04 PT',
+      resetAt: '2026-07-02T16:04:00.000Z',
+      limitWindowSeconds: 7 * 24 * 60 * 60,
+      confidence: 'observed'
+    })
+  })
+
+  it('keeps the legacy credits forms on the monthly window and subscription_credits kind', () => {
+    const s = parseGrokUsage(
+      'Credits used: 1%\nResets: May 31, 16:00 PT',
+      '2026-05-28T00:00:00.000Z'
+    )
+    expect(s.usageKind).toBe('subscription_credits')
+    expect(s.limitWindowSeconds).toBe(30 * 24 * 60 * 60)
+  })
+
+  it('stops the "Next reset" capture before a trailing weekly-limit field on the same line', () => {
+    const s = parseGrokUsage('Next reset: July 2, 09:04 PT  Weekly limit: 98%')
+    expect(s.resetAtText).toBe('July 2, 09:04 PT')
+  })
+
   it('returns an "unavailable" snapshot when no credit signal is present', () => {
     const s = parseGrokUsage('Welcome to grok\nType a message to begin')
     expect(s.confidence).toBe('unavailable')
@@ -247,6 +325,27 @@ describe('probeGrokUsage', () => {
     expect(snap.resetAtText).toBe('May 31, 16:00 PT')
     expect(snap.payAsYouGoEnabled).toBe(false)
     expect(snap.refreshedAt).toBe(FIXED_NOW)
+    expect(pty.killed).toBe(true)
+  })
+
+  it('early-outs on the weekly-limit /usage screen too', async () => {
+    const pty = new FakePty()
+    const clock = new FakeClock()
+    const promise = probeGrokUsage({
+      spawnPty: () => pty,
+      now: () => FIXED_NOW,
+      setTimer: clock.setTimer,
+      clearTimer: clock.clearTimer
+    })
+
+    pty.emit('Weekly limit: 98%\nNext reset: July 2, 09:04 PT\n')
+    clock.advance(250)
+
+    const snap = await promise
+    expect(snap.confidence).toBe('observed')
+    expect(snap.usageKind).toBe('weekly_limit')
+    expect(snap.creditsUsedPercent).toBe(98)
+    expect(snap.resetAtText).toBe('July 2, 09:04 PT')
     expect(pty.killed).toBe(true)
   })
 
