@@ -2,6 +2,11 @@ appId: com.chrisizatt.taskwraith
 productName: TaskWraith
 directories:
   buildResources: build
+# TaskWraith's UI strings are app-authored; keep Electron's own Chromium
+# locale payload small and avoid Electron 39 gendered .lproj resources that
+# current mac signing tooling can reference after packaging prunes them.
+electronLanguages:
+  - en
 files:
   - '!**/.vscode/*'
   - '!src/*'
