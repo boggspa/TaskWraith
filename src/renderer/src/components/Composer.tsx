@@ -80,6 +80,7 @@ import { isNativeSubAgentPreferenceApproval } from '../lib/agentApprovalTypes'
 import { decideApprovalElevation } from '../lib/approvalElevation'
 import { formatScheduledRunTime } from '../lib/dateTimeFormat'
 import { formatScheduledTaskCountdown } from '../lib/scheduledCountdown'
+import { isEnsembleParticipantSeatRuntimeLocked } from '../lib/ensembleParticipantSeatLock'
 import { buildParticipantToolGrantPatch, getParticipantToolGrantIds } from '../lib/ensembleParticipantToolGrants'
 import {
   getDefaultEnsembleParticipantConfig,
@@ -3131,9 +3132,16 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             isCurrentEnsembleChat && selectedParticipant
                               ? selectedParticipant
                               : null
+                          const participantControlsLocked = ensembleBinding
+                            ? isEnsembleParticipantSeatRuntimeLocked(
+                                currentChat?.ensemble?.activeRound,
+                                ensembleBinding.id
+                              )
+                            : false
                           const pickerProvider = ensembleBinding?.provider ?? currentProvider
                           const handleComposerProviderChange = (provider: ProviderId): void => {
                             if (ensembleBinding) {
+                              if (participantControlsLocked) return
                               const defaults = getDefaultEnsembleParticipantConfig(provider)
                               updateSelectedParticipant({
                                 provider,
@@ -3180,12 +3188,18 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               disabled={
                                 isCurrentComposerLocked ||
                                 (!ensembleBinding && isCurrentChatProviderLocked) ||
-                                Boolean(ensembleBinding && isCurrentEnsembleRoundRunning)
+                                Boolean(ensembleBinding && participantControlsLocked)
                               }
                               activeModelId={
                                 ensembleBinding?.model ?? selectedComposerModelType
                               }
-                              title={ensembleBinding ? 'Selected participant provider' : 'Provider'}
+                              title={
+                                participantControlsLocked
+                                  ? 'Participant active in current round'
+                                  : ensembleBinding
+                                    ? 'Selected participant provider'
+                                    : 'Provider'
+                              }
                             />
                           )
                         })()}
@@ -3223,6 +3237,12 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             isCurrentEnsembleChat && selectedParticipant
                               ? selectedParticipant
                               : null
+                          const participantControlsLocked = ensembleBinding
+                            ? isEnsembleParticipantSeatRuntimeLocked(
+                                currentChat?.ensemble?.activeRound,
+                                ensembleBinding.id
+                              )
+                            : false
                           // Resolve the participant's effective settings via the
                           // centralized helper so the per-provider fallbacks
                           // (`'medium'` reasoning, fast-mode→serviceTier inference,
@@ -3336,6 +3356,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                           }
 
                           const handleCombinedModelChange = (nextModel: string) => {
+                            if (ensembleBinding && participantControlsLocked) return
                             if (effectiveProvider === 'ollama') {
                               onOllamaModelSelected?.(
                                 nextModel,
@@ -3460,6 +3481,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                           const handleToggleFastMode =
                             effectiveProvider === 'codex'
                               ? () => {
+                                  if (ensembleBinding && participantControlsLocked) return
                                   const nextTier =
                                     effectiveCodexServiceTier === 'fast' ? '' : 'fast'
                                   if (ensembleBinding) {
@@ -3476,6 +3498,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                 }
                               : effectiveProvider === 'claude'
                                 ? () => {
+                                    if (ensembleBinding && participantControlsLocked) return
                                     const nextFast = !effectiveClaudeFastMode
                                     if (ensembleBinding) {
                                       updateSelectedParticipant({ fastModeEnabled: nextFast })
@@ -3488,6 +3511,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                   }
                                 : effectiveProvider === 'cursor'
                                   ? () => {
+                                      if (ensembleBinding && participantControlsLocked) return
                                       // Cursor fast = the composer-2.5-fast model id;
                                       // swap the selected model (handleCombinedModelChange
                                       // handles both chat-level + ensemble-participant
@@ -3502,6 +3526,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
 
                           const handleCombinedReasoningChange = (value: string) => {
                             if (ensembleBinding) {
+                              if (participantControlsLocked) return
                               if (ensembleBinding.provider === 'kimi') {
                                 updateSelectedParticipant({ thinkingEnabled: value !== 'off' })
                               } else {
@@ -3554,7 +3579,10 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                 fastModeCapableModelIds={fastModeCapableModelIds}
                                 fastModeEnabled={fastModeEnabledForProvider}
                                 onToggleFastMode={handleToggleFastMode}
-                                disabled={isCurrentComposerLocked}
+                                disabled={
+                                  isCurrentComposerLocked ||
+                                  Boolean(ensembleBinding && participantControlsLocked)
+                                }
                               />
                               {!ensembleBinding &&
                                 selectedModelType === 'custom' &&

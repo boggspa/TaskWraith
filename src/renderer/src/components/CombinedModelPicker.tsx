@@ -317,6 +317,10 @@ export function CombinedModelPicker({
   const [activeOllamaProviderId, setActiveOllamaProviderId] = useState<string | null>(null)
   const resetSignatureRef = useRef<string | null>(null)
 
+  useEffect(() => {
+    if (disabled && open) setOpen(false)
+  }, [disabled, open])
+
   const ollamaProviderGroups = useMemo(
     () => (provider === 'ollama' ? buildOllamaProviderGroups(modelOptions) : []),
     [modelOptions, provider]
@@ -608,6 +612,7 @@ export function CombinedModelPicker({
         }
       } else if (event.key === 'Enter') {
         event.preventDefault()
+        if (disabled) return
         if (focusedColumn === 'provider') {
           const option = ollamaProviderGroups[providerHighlight]
           if (option) {
@@ -639,7 +644,8 @@ export function CombinedModelPicker({
     reasoningHighlight,
     onSelectModel,
     onSelectReasoning,
-    visibleModelOptions
+    visibleModelOptions,
+    disabled
   ])
 
   const popoverContent = open && position && (
@@ -670,11 +676,13 @@ export function CombinedModelPicker({
                 type="button"
                 className={`composer-combined-picker-row composer-combined-picker-provider-row ${active ? 'is-selected' : ''} ${idx === providerHighlight && focusedColumn === 'provider' ? 'is-highlighted' : ''}`}
                 data-ollama-provider-class={group.providerClass}
+                disabled={disabled}
                 onMouseEnter={() => {
                   setFocusedColumn('provider')
                   setProviderHighlight(idx)
                 }}
                 onClick={() => {
+                  if (disabled) return
                   setActiveOllamaProviderId(group.id)
                   setProviderHighlight(idx)
                   setModelHighlight(0)
@@ -714,14 +722,14 @@ export function CombinedModelPicker({
               key={option.id}
               type="button"
               className={`composer-combined-picker-row ${option.id === selectedModelId ? 'is-selected' : ''} ${option.disabled ? 'is-disabled' : ''} ${idx === modelHighlight && focusedColumn === 'model' ? 'is-highlighted' : ''}`}
-              disabled={option.disabled}
+              disabled={Boolean(disabled || option.disabled)}
               title={option.disabled ? option.disabledReason || 'Unavailable' : undefined}
               onMouseEnter={() => {
                 setFocusedColumn('model')
                 setModelHighlight(idx)
               }}
               onClick={() => {
-                if (option.disabled) return
+                if (disabled || option.disabled) return
                 onSelectModel(option.id)
                 if (isOllamaProviderPicker) {
                   const parentGroup = ollamaProviderGroups.find((group) =>
@@ -780,14 +788,14 @@ export function CombinedModelPicker({
               type="button"
               className={`composer-combined-picker-row ${option.value === selectedReasoning ? 'is-selected' : ''} ${option.value === 'ultracode' ? 'is-ultracode' : ''} ${option.disabled ? 'is-disabled' : ''} ${idx === reasoningHighlight && focusedColumn === 'reasoning' ? 'is-highlighted' : ''}`}
               data-reasoning-value={option.value}
-              disabled={option.disabled}
+              disabled={Boolean(disabled || option.disabled)}
               title={option.disabled ? option.disabledReason || 'Unavailable for this model' : undefined}
               onMouseEnter={() => {
                 setFocusedColumn('reasoning')
                 setReasoningHighlight(idx)
               }}
               onClick={() => {
-                if (option.disabled) return
+                if (disabled || option.disabled) return
                 onSelectReasoning(option.value)
               }}
             >
@@ -813,10 +821,10 @@ export function CombinedModelPicker({
               type="button"
               className={`composer-combined-picker-row composer-combined-picker-fast-toggle ${fastModeEnabled ? 'is-selected' : ''}`}
               onClick={() => {
-                if (!fastModeCapable) return
+                if (disabled || !fastModeCapable) return
                 onToggleFastMode?.()
               }}
-              disabled={!fastModeCapable}
+              disabled={Boolean(disabled || !fastModeCapable)}
               aria-pressed={Boolean(fastModeEnabled && fastModeCapable)}
               title={
                 fastModeCapable

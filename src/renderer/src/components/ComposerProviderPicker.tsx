@@ -206,6 +206,10 @@ export function ComposerProviderPicker({
   const [open, setOpen] = useState(false)
   const [position, setPosition] = useState<{ left: number; top: number } | null>(null)
 
+  useEffect(() => {
+    if (disabled && open) setOpen(false)
+  }, [disabled, open])
+
   const rows = resolveProviderRows(grokAvailable, cursorAvailable, providerRunPauses)
   const activePauseInfo = getProviderPauseInfo(providerRunPauses, provider)
   const providerHueClass = resolveProviderHueClass(provider, activeModelId)
@@ -271,6 +275,10 @@ export function ComposerProviderPicker({
   }, [open])
 
   const handleSelect = (id: ProviderId): void => {
+    if (disabled) {
+      setOpen(false)
+      return
+    }
     onSelect(id)
     setOpen(false)
   }
@@ -313,7 +321,10 @@ export function ComposerProviderPicker({
         aria-label={title}
         aria-haspopup="dialog"
         aria-expanded={open}
-        onClick={() => setOpen((current) => !current)}
+        onClick={() => {
+          if (disabled) return
+          setOpen((current) => !current)
+        }}
         disabled={disabled}
       >
         <span className="composer-provider-button-icon" aria-hidden="true">
