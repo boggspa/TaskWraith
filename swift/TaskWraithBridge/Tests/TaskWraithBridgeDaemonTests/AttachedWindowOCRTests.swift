@@ -2,6 +2,7 @@ import XCTest
 import CoreGraphics
 import ImageIO
 import UniformTypeIdentifiers
+import Vision
 @testable import TaskWraithBridgeDaemon
 
 /// OCR plumbing tests. We don't exercise Vision's text-recognition accuracy
@@ -34,6 +35,35 @@ final class AttachedWindowOCRTests: XCTestCase {
         let result = try await AttachedWindowOCR.recognize(pngData: garbage)
         XCTAssertEqual(result.text, "")
         XCTAssertTrue(result.blocks.isEmpty)
+    }
+
+    // MARK: - Empty-recognition error classification
+    //
+    // Vision throws on a blank/textless image on some macOS versions (observed
+    // on the release app-host) but returns zero observations on others, so the
+    // throw path can't be exercised deterministically via a real image. These
+    // tests pin the classifier directly: Vision-domain failures degrade to an
+    // empty result, the legacy "nilError" description still matches as a
+    // fallback, and unrelated errors must rethrow.
+
+    func testVisionDomainErrorIsTreatedAsEmpty() {
+        let err = NSError(domain: VNErrorDomain, code: 0, userInfo: nil)
+        XCTAssertTrue(AttachedWindowOCR.isEmptyRecognitionError(err))
+    }
+
+    func testLegacyNilErrorDescriptionIsTreatedAsEmpty() {
+        XCTAssertTrue(AttachedWindowOCR.isEmptyRecognitionError(LegacyNilError()))
+    }
+
+    func testUnrelatedErrorIsNotTreatedAsEmpty() {
+        let err = NSError(domain: NSCocoaErrorDomain, code: 42, userInfo: nil)
+        XCTAssertFalse(AttachedWindowOCR.isEmptyRecognitionError(err))
+    }
+
+    /// Mimics the pre-hardening runtime error whose `String(describing:)` is
+    /// exactly "nilError", exercising the defensive fallback branch.
+    private struct LegacyNilError: Error, CustomStringConvertible {
+        var description: String { "nilError" }
     }
 
     // MARK: - Helpers

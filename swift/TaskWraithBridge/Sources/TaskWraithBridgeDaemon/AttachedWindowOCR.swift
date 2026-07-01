@@ -55,7 +55,14 @@ enum AttachedWindowOCR {
         do {
             try handler.perform([request])
         } catch {
-            if String(describing: error) == "nilError" {
+            // On some macOS versions Vision throws when handed a blank/textless
+            // image instead of returning zero observations (observed on the
+            // release app-host; other machines return an empty result instead).
+            // The image already decoded (makeCGImage succeeded), so a Vision-
+            // domain failure here means "no recognizable text" — degrade to an
+            // empty result because this OCR path is best-effort. Non-Vision
+            // errors still propagate.
+            if isEmptyRecognitionError(error) {
                 return OcrResult(text: "", blocks: [])
             }
             throw error
@@ -83,6 +90,19 @@ enum AttachedWindowOCR {
             text: lines.joined(separator: "\n"),
             blocks: blocks
         )
+    }
+
+    /// Classify a `VNImageRequestHandler.perform` failure as the benign
+    /// "blank/textless image" case (→ empty OCR result) versus a real error
+    /// (→ rethrow). Prefer the stable public `VNErrorDomain` over matching the
+    /// undocumented `"nilError"` runtime description; the string match is kept
+    /// only as a defensive fallback in case a future OS surfaces the empty-image
+    /// case outside `VNErrorDomain`.
+    static func isEmptyRecognitionError(_ error: Error) -> Bool {
+        if (error as NSError).domain == VNErrorDomain {
+            return true
+        }
+        return String(describing: error) == "nilError"
     }
 
     private static func makeCGImage(from pngData: Data) -> CGImage? {
