@@ -154,6 +154,8 @@ describe('ToolParser', () => {
     })
     it('maps read_file to read', () => {
       expect(getToolCategory('read_file')).toBe('read')
+      expect(getToolCategory('mcp_taskwraith-broker-read_file')).toBe('read')
+      expect(getToolCategory('mcp_taskwraith-read_file')).toBe('read')
     })
     it('maps list_directory to read', () => {
       expect(getToolCategory('list_directory')).toBe('read')
@@ -163,6 +165,7 @@ describe('ToolParser', () => {
     })
     it('maps write_file to write', () => {
       expect(getToolCategory('write_file')).toBe('write')
+      expect(getToolCategory('mcp_taskwraith-broker-write_file')).toBe('write')
     })
     it('maps write-like provider variants to write', () => {
       expect(getToolCategory('apply_patch')).toBe('write')
@@ -410,6 +413,9 @@ describe('ToolParser', () => {
     })
     it('uses the dictionary through provider namespace prefixes', () => {
       expect(getToolDisplayName('mcp__TaskWraith__delegate_to_subthread', {})).toBe(
+        'Delegated to sub-thread'
+      )
+      expect(getToolDisplayName('mcp_taskwraith-broker-delegate_to_subthread', {})).toBe(
         'Delegated to sub-thread'
       )
       expect(getToolDisplayName('taskwraith__attached_window_capture', {})).toBe(

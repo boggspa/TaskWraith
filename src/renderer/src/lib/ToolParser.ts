@@ -550,10 +550,27 @@ function stripToolNamespace(toolName: string): string {
     return index > 5 ? toolName.slice(index + 2) : toolName
   }
   if (toolName.startsWith('mcp_') && !toolName.startsWith('mcp__')) {
-    const knownServerPrefixes = ['mcp_taskwraith_']
+    const knownServerPrefixes = [
+      'mcp_taskwraith-broker_',
+      'mcp_taskwraith-broker-',
+      'mcp_taskwraith_',
+      'mcp_taskwraith-'
+    ]
     for (const prefix of knownServerPrefixes) {
       if (toolName.startsWith(prefix)) return toolName.slice(prefix.length)
     }
+  }
+  if (toolName.startsWith('taskwraith-broker__')) {
+    return toolName.slice('taskwraith-broker__'.length)
+  }
+  if (toolName.startsWith('taskwraith_broker__')) {
+    return toolName.slice('taskwraith_broker__'.length)
+  }
+  if (toolName.startsWith('taskwraith-broker_')) {
+    return toolName.slice('taskwraith-broker_'.length)
+  }
+  if (toolName.startsWith('taskwraith_broker_')) {
+    return toolName.slice('taskwraith_broker_'.length)
   }
   if (toolName.startsWith('taskwraith__')) return toolName.slice('taskwraith__'.length)
   if (toolName.startsWith('taskwraith_')) return toolName.slice('taskwraith_'.length)

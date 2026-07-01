@@ -193,6 +193,10 @@ describe('toolNameToFamily', () => {
     expect(toolNameToFamily('mcp__server__write_file')).toBe('edit')
     expect(toolNameToFamily('TaskWraith__git_status')).toBe('git')
     expect(toolNameToFamily('taskwraith__read_file')).toBe('file')
+    expect(toolNameToFamily('mcp_taskwraith-broker-read_file')).toBe('file')
+    expect(toolNameToFamily('mcp_taskwraith-broker_write_file')).toBe('edit')
+    expect(toolNameToFamily('mcp_taskwraith-run_shell_command')).toBe('shell')
+    expect(toolNameToFamily('taskwraith-broker__git_status')).toBe('git')
   })
 
   it('is case-insensitive', () => {

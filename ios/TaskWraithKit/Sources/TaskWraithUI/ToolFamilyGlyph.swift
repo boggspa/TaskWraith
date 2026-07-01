@@ -53,10 +53,26 @@ enum TWToolFamilyResolver {
                 normalized = String(rest[range.upperBound...])
             }
         } else if normalized.hasPrefix("mcp_") {
-            let prefix = "mcp_taskwraith_"
-            if normalized.hasPrefix(prefix) {
-                normalized = String(normalized.dropFirst(prefix.count))
+            let prefixes = [
+                "mcp_taskwraith-broker_",
+                "mcp_taskwraith-broker-",
+                "mcp_taskwraith_",
+                "mcp_taskwraith-"
+            ]
+            for prefix in prefixes {
+                if normalized.hasPrefix(prefix) {
+                    normalized = String(normalized.dropFirst(prefix.count))
+                    break
+                }
             }
+        } else if normalized.hasPrefix("taskwraith-broker__") {
+            normalized = String(normalized.dropFirst("taskwraith-broker__".count))
+        } else if normalized.hasPrefix("taskwraith_broker__") {
+            normalized = String(normalized.dropFirst("taskwraith_broker__".count))
+        } else if normalized.hasPrefix("taskwraith-broker_") {
+            normalized = String(normalized.dropFirst("taskwraith-broker_".count))
+        } else if normalized.hasPrefix("taskwraith_broker_") {
+            normalized = String(normalized.dropFirst("taskwraith_broker_".count))
         } else if normalized.hasPrefix("taskwraith__") {
             normalized = String(normalized.dropFirst("taskwraith__".count))
         } else if normalized.hasPrefix("taskwraith_") {

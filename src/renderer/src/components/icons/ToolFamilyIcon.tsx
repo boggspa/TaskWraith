@@ -67,13 +67,26 @@ export function toolNameToFamily(name: string | undefined | null): ToolFamily | 
     const idx = normalised.indexOf('__', 5)
     if (idx > 5) normalised = normalised.slice(idx + 2)
   } else if (normalised.startsWith('mcp_')) {
-    const knownServerPrefixes = ['mcp_taskwraith_']
+    const knownServerPrefixes = [
+      'mcp_taskwraith-broker_',
+      'mcp_taskwraith-broker-',
+      'mcp_taskwraith_',
+      'mcp_taskwraith-'
+    ]
     for (const prefix of knownServerPrefixes) {
       if (normalised.startsWith(prefix)) {
         normalised = normalised.slice(prefix.length)
         break
       }
     }
+  } else if (normalised.startsWith('taskwraith-broker__')) {
+    normalised = normalised.slice('taskwraith-broker__'.length)
+  } else if (normalised.startsWith('taskwraith_broker__')) {
+    normalised = normalised.slice('taskwraith_broker__'.length)
+  } else if (normalised.startsWith('taskwraith-broker_')) {
+    normalised = normalised.slice('taskwraith-broker_'.length)
+  } else if (normalised.startsWith('taskwraith_broker_')) {
+    normalised = normalised.slice('taskwraith_broker_'.length)
   } else if (normalised.startsWith('taskwraith__')) {
     normalised = normalised.slice('taskwraith__'.length)
   } else if (normalised.startsWith('taskwraith_')) {

@@ -718,8 +718,14 @@ function getReadableActivityDisplayName(activity: ToolActivity): string {
   const displayLooksRaw =
     !displayName ||
     displayName === rawToolName ||
+    lowerDisplay.startsWith('mcp_taskwraith-broker_') ||
+    lowerDisplay.startsWith('mcp_taskwraith-broker-') ||
     lowerDisplay.startsWith('mcp_taskwraith_') ||
+    lowerDisplay.startsWith('mcp_taskwraith-') ||
+    lowerDisplay.startsWith('mcp__taskwraith-broker__') ||
     lowerDisplay.startsWith('mcp__taskwraith__') ||
+    lowerDisplay.startsWith('taskwraith-broker__') ||
+    lowerDisplay.startsWith('taskwraith_broker__') ||
     lowerDisplay.startsWith('taskwraith__') ||
     lowerDisplay.includes('_')
   return displayLooksRaw ? fallback || displayName || rawToolName : displayName
