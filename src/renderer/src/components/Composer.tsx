@@ -41,9 +41,8 @@ import {
 } from '../components/ComposerTextareaContextMenu'
 import { ComposerCumulativeTimecode, ComposerRunTimecode } from '../components/ComposerTimecodes'
 import { ComposerWorkspaceSwitcher } from '../components/ComposerWorkspaceSwitcher'
-import { ContinuousHopsLimitChip } from '../components/ContinuousHopsLimitChip'
 import { CopyTranscriptButton } from '../components/CopyTranscriptButton'
-import { EnsembleModePicker } from '../components/EnsembleModePicker'
+import { EnsembleOrchestrationRow } from '../components/EnsembleOrchestrationRow'
 import { EnsembleParticipantOverflowPopover, EnsembleParticipantsAboveRow } from '../components/EnsembleParticipantsAboveRow'
 import { EnsembleRosterPresetPicker } from '../components/EnsembleRosterPresetPicker'
 import { ExternalPathAboveRow } from '../components/ExternalPathAboveRow'
@@ -724,6 +723,49 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
   const currentWriterFanoutSelected =
     currentEnsembleFanoutPolicy === 'locked_writers_with_boss' ||
     currentEnsembleFanoutPolicy === 'locked_writers_user_preflight'
+
+  // Second row of the roster-presets above-row section — Orchestration /
+  // Fan-Out / Shared History Budget / Turn Budget. These controls used to
+  // crowd the composer's bottom action row (especially with Continuous
+  // enabled); they now get a full row of their own. Built once here because
+  // BOTH roster-preset picker call sites embed it via `secondRow` (the
+  // ensemble welcome hero and the compact in-thread above-row) and the two
+  // must never drift.
+  const renderEnsembleOrchestrationRow = (): React.JSX.Element | null => {
+    if (!isCurrentEnsembleChat || !currentChat?.ensemble) return null
+    return (
+      <EnsembleOrchestrationRow
+        orchestrationMode={
+          currentEnsembleOrchestrationMode === 'continuous' ? 'continuous' : 'turn_bound'
+        }
+        activeOrchestrationMode={
+          activeEnsembleOrchestrationMode === 'continuous' ? 'continuous' : 'turn_bound'
+        }
+        activeFanoutPolicy={activeEnsembleFanoutPolicy}
+        isRoundRunning={isCurrentEnsembleRoundRunning}
+        workSessionActive={
+          currentChat.ensemble.workSession?.status === 'active' ||
+          currentChat.ensemble.workSession?.status === 'paused'
+        }
+        composerStyle={appearance.composerStyle}
+        onSelectMode={(nextMode) => updateCurrentEnsembleOrchestrationMode(nextMode)}
+        onOpenWorkSession={() => setShowWorkSessionSheet(true)}
+        fanoutPolicy={currentEnsembleFanoutPolicy}
+        writerFanoutPolicy={writerFanoutPolicy}
+        writerFanoutSelected={currentWriterFanoutSelected}
+        onFanoutPolicyChange={updateCurrentEnsembleFanoutPolicy}
+        concurrentLanesAvailable={ensembleConcurrentLanesAvailable}
+        concurrentWriteLanesAvailable={ensembleConcurrentWriteLanesAvailable}
+        bossmanAssigned={Boolean(currentChat.ensemble.bossmanParticipantId)}
+        contextChars={currentChat.ensemble.ensembleContextChars}
+        onContextCharsChange={updateCurrentEnsembleContextChars}
+        ollamaContextWarning={ensembleOllamaContextWarning}
+        continuationHops={currentEnsembleContinuationHops}
+        maxContinuationHops={currentEnsembleMaxContinuationHops}
+        onMaxContinuationHopsChange={updateCurrentEnsembleMaxContinuationHops}
+      />
+    )
+  }
 
   useEffect(() => {
     if (!hasVisibleScheduledCountdown) return
@@ -1535,6 +1577,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                       ensemble={currentChat?.ensemble}
                       disabled={isCurrentEnsembleRoundRunning}
                       onApplyPreset={applyEnsembleRosterPreset}
+                      secondRow={renderEnsembleOrchestrationRow()}
                     />
                     {/* Workspace picker on the ensemble welcome too —
                       same affordance as the solo welcome surface above,
@@ -1917,12 +1960,20 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                   the first prompt — configure-before-send is the
                   entire point of the strip.
                 */}
-                {currentChat?.chatKind === 'ensemble' && !isWelcomeChat && (
+                {/* `!isWelcomeChat` avoids doubling the picker the ensemble
+                  welcome hero already shows — EXCEPT on workflow-compose
+                  welcomes, which render the workflow hero instead of the
+                  ensemble hero and would otherwise lose the roster presets
+                  AND the orchestration second row (mode / fan-out / history
+                  budget moved here from the bottom action row). */}
+                {currentChat?.chatKind === 'ensemble' &&
+                  (!isWelcomeChat || isWorkflowChatWelcome) && (
                   <EnsembleRosterPresetPicker
                     ensemble={currentChat.ensemble}
                     disabled={isCurrentEnsembleRoundRunning}
                     onApplyPreset={applyEnsembleRosterPreset}
                     variant="compact"
+                    secondRow={renderEnsembleOrchestrationRow()}
                   />
                 )}
                 {currentChat?.chatKind === 'ensemble' && (
@@ -3032,100 +3083,13 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                         button (see further down). Removing it from this
                         action-row position avoids visually competing with
                         the model picker / send button. */}
-                        {isCurrentEnsembleChat && currentChat?.ensemble && (
-                          <span
-                            className="composer-ensemble-mode"
-                            role="group"
-                            aria-label="Ensemble orchestration mode"
-                            title={
-                              isCurrentEnsembleRoundRunning
-                                ? `Current round: ${activeEnsembleOrchestrationMode === 'continuous' ? 'Continuous' : 'Turn-bound'}${
-                                    activeEnsembleFanoutPolicy === 'read_only'
-                                      ? ' + Read fan-out'
-                                      : activeEnsembleFanoutPolicy === 'off'
-                                        ? ''
-                                        : ' + Writer fan-out'
-                                  }`
-                                : 'Choose whether agents speak once per round or can hand work back and forth.'
-                            }
-                            data-composer-control="ensemble-mode"
-                          >
-                            {/* 1.0.x — Turn / Continuous / Work Session now live
-                              in a hierarchical picker (matching the Model /
-                              Permissions pickers) instead of a segmented toggle.
-                              Fan-out stays a separate composable toggle below. */}
-                            <EnsembleModePicker
-                              mode={
-                                currentEnsembleOrchestrationMode === 'continuous'
-                                  ? 'continuous'
-                                  : 'turn_bound'
-                              }
-                              workSessionActive={
-                                currentChat?.ensemble?.workSession?.status === 'active' ||
-                                currentChat?.ensemble?.workSession?.status === 'paused'
-                              }
-                              composerStyle={appearance.composerStyle}
-                              onSelectMode={(nextMode) =>
-                                updateCurrentEnsembleOrchestrationMode(nextMode)
-                              }
-                              onOpenWorkSession={() => setShowWorkSessionSheet(true)}
-                              contextChars={currentChat?.ensemble?.ensembleContextChars}
-                              onContextCharsChange={updateCurrentEnsembleContextChars}
-                              ollamaContextWarning={ensembleOllamaContextWarning}
-                              concurrentLanesAvailable={ensembleConcurrentLanesAvailable}
-                            />
-                            <span className="composer-fanout-policy" aria-label="Fan-out policy">
-                              <button
-                                type="button"
-                                className={`composer-ensemble-mode-button ${
-                                  currentEnsembleFanoutPolicy === 'off' ? 'is-active' : ''
-                                }`}
-                                onClick={() => updateCurrentEnsembleFanoutPolicy('off')}
-                                title="Run participants serially."
-                              >
-                                Off
-                              </button>
-                              <button
-                                type="button"
-                                className={`composer-ensemble-mode-button ${
-                                  currentEnsembleFanoutPolicy === 'read_only' ? 'is-active' : ''
-                                }`}
-                                onClick={() => updateCurrentEnsembleFanoutPolicy('read_only')}
-                                title={
-                                  ensembleConcurrentLanesAvailable
-                                    ? 'Fan out read-only participants in parallel before writer-capable participants run serially.'
-                                    : 'Parallel lanes are disabled (TASKWRAITH_CONCURRENT_LANES=0); rounds run serially.'
-                                }
-                              >
-                                Read
-                              </button>
-                              <button
-                                type="button"
-                                className={`composer-ensemble-mode-button ${
-                                  currentWriterFanoutSelected ? 'is-active' : ''
-                                } ${!ensembleConcurrentWriteLanesAvailable ? 'is-locked' : ''}`}
-                                disabled={!ensembleConcurrentWriteLanesAvailable}
-                                onClick={() => updateCurrentEnsembleFanoutPolicy(writerFanoutPolicy)}
-                                title={
-                                  ensembleConcurrentWriteLanesAvailable
-                                    ? currentChat?.ensemble?.bossmanParticipantId
-                                      ? 'Writer fan-out is available when the assigned Boss calls ensemble_fanout with explicit writeScopes.'
-                                      : 'Writer fan-out is mediated by user-enabled write-scope preflight: claim scopes, host conflict matrix, then ack.'
-                                    : 'Writer fan-out is disabled (TASKWRAITH_CONCURRENT_WRITE_LANES=0).'
-                                }
-                              >
-                                Writers
-                              </button>
-                            </span>
-                            {activeEnsembleOrchestrationMode === 'continuous' && (
-                              <ContinuousHopsLimitChip
-                                hops={currentEnsembleContinuationHops}
-                                maxHops={currentEnsembleMaxContinuationHops}
-                                onSave={updateCurrentEnsembleMaxContinuationHops}
-                              />
-                            )}
-                          </span>
-                        )}
+                        {/* Ensemble orchestration controls (mode picker /
+                          fan-out toggle / shared-history budget / hop meter)
+                          moved out of this action row — with Continuous
+                          enabled they crowded the footer. They now live as
+                          the labeled second row of the roster-presets
+                          above-row section; see EnsembleOrchestrationRow.tsx
+                          and `renderEnsembleOrchestrationRow` above. */}
                         {/* Provider picker. In solo chats this remains the
                           chat-level provider switch. In Ensemble chats it
                           retargets to the selected participant so users can

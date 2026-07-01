@@ -17,6 +17,12 @@ export interface EnsembleRosterPresetPickerProps {
   disabled?: boolean
   onApplyPreset: (preset: EnsembleRosterPreset) => void
   variant?: 'welcome' | 'compact'
+  /** Optional full-width second row rendered below the preset chips —
+   * the composer passes the ensemble orchestration controls here (see
+   * EnsembleOrchestrationRow) so mode / fan-out / history-budget /
+   * turn-budget live inside the same roster-presets section on every
+   * shell (the root is flex-wrap, so a 100%-basis child wraps cleanly). */
+  secondRow?: React.ReactNode
 }
 
 type PresetNameDialogState =
@@ -42,7 +48,8 @@ export function EnsembleRosterPresetPicker({
   ensemble,
   disabled = false,
   onApplyPreset,
-  variant = 'welcome'
+  variant = 'welcome',
+  secondRow
 }: EnsembleRosterPresetPickerProps): React.JSX.Element | null {
   const [presets, setPresets] = useState<EnsembleRosterPreset[]>(() => listEnsembleRosterPresets())
   const [popoverOpen, setPopoverOpen] = useState(false)
@@ -264,6 +271,9 @@ export function EnsembleRosterPresetPicker({
           </button>
         )}
       </div>
+      {secondRow ? (
+        <div className="ensemble-roster-preset-picker-second-row">{secondRow}</div>
+      ) : null}
       {popoverOpen &&
         popoverPosition &&
         createPortal(

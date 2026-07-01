@@ -8,7 +8,12 @@
  *
  * Fan-out (parallel read-only lanes) is deliberately NOT in here — it's a
  * composable on/off toggle that layers on either mode, so it stays a separate
- * chip beside this picker (per the product decision).
+ * labeled control beside this picker in the orchestration row (per the
+ * product decision).
+ *
+ * The shared-history char-budget slider used to live in a second popover
+ * section; it moved onto the orchestration row itself (see
+ * EnsembleOrchestrationRow.tsx) so the popover is now modes-only.
  *
  * Structurally cloned from ComposerProviderPicker: a `.composer-picker-label`
  * trigger + a portaled `.composer-combined-picker-popover.shell-${style}` so all
@@ -43,26 +48,13 @@ const MODE_ROWS: EnsembleModeRow[] = [
   }
 ]
 
-// Shared-transcript char budget bounds (mirror buildTaggedTranscript's clamp).
-const CONTEXT_MIN = 5_000
-const CONTEXT_MAX = 500_000
-const CONTEXT_DEFAULT = 24_000
-
-function formatCharBudget(chars: number): string {
-  return chars >= 1000 ? `${Math.round(chars / 1000)}K` : `${chars}`
-}
-
 export function EnsembleModePicker({
   mode,
   workSessionActive,
   composerStyle,
   onSelectMode,
   onOpenWorkSession,
-  disabled,
-  contextChars,
-  onContextCharsChange,
-  ollamaContextWarning,
-  concurrentLanesAvailable = true
+  disabled
 }: {
   mode: EnsembleOrchestrationMode
   workSessionActive: boolean
@@ -70,14 +62,6 @@ export function EnsembleModePicker({
   onSelectMode: (mode: EnsembleOrchestrationMode) => void
   onOpenWorkSession: () => void
   disabled?: boolean
-  contextChars?: number
-  onContextCharsChange: (chars: number) => void
-  ollamaContextWarning?: {
-    severity: 'ok' | 'warn' | 'critical'
-    message: string
-    suggestedChars?: number
-  } | null
-  concurrentLanesAvailable?: boolean
 }): React.JSX.Element {
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const popoverRef = useRef<HTMLDivElement | null>(null)
@@ -186,49 +170,6 @@ export function EnsembleModePicker({
                   </button>
                 )
               })}
-            </div>
-            <div className="composer-plus-picker-section composer-ensemble-context-section">
-              <div className="composer-combined-picker-column-header">Shared history budget</div>
-              <input
-                type="range"
-                className="composer-ensemble-context-slider"
-                min={CONTEXT_MIN}
-                max={CONTEXT_MAX}
-                step={5_000}
-                value={contextChars ?? CONTEXT_DEFAULT}
-                onChange={(event) => onContextCharsChange(Number(event.target.value))}
-                aria-label="Shared transcript character budget"
-              />
-              <div className="composer-ensemble-context-value">
-                {formatCharBudget(contextChars ?? CONTEXT_DEFAULT)} chars of recent panel history
-              </div>
-              {ollamaContextWarning ? (
-                <div
-                  className={`composer-ensemble-context-hint severity-${ollamaContextWarning.severity}`}
-                  role="note"
-                >
-                  {ollamaContextWarning.message}
-                  {ollamaContextWarning.suggestedChars &&
-                  ollamaContextWarning.severity !== 'ok' &&
-                  (contextChars ?? CONTEXT_DEFAULT) > ollamaContextWarning.suggestedChars ? (
-                    <button
-                      type="button"
-                      className="composer-ensemble-context-suggest"
-                      onClick={() =>
-                        onContextCharsChange(ollamaContextWarning.suggestedChars ?? CONTEXT_DEFAULT)
-                      }
-                    >
-                      Use {formatCharBudget(ollamaContextWarning.suggestedChars)} for panel
-                    </button>
-                  ) : null}
-                </div>
-              ) : null}
-              {!concurrentLanesAvailable ? (
-                <div className="composer-ensemble-context-hint severity-warn" role="note">
-                  Parallel fan-out lanes are disabled (TASKWRAITH_CONCURRENT_LANES=0). Fan-out
-                  rounds fall back to serial dispatch.
-                </div>
-              ) : null}
             </div>
           </div>,
           document.body

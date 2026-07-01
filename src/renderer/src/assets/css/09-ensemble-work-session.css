@@ -31,6 +31,69 @@
   color: var(--cursor-shell-faint);
 }
 
+/* Orchestration second row (roster-presets section, row 2) — the
+ * Turn/Continuous/Work-Session picker, the labeled Fan-Out toggle, the
+ * shared-history budget slider (moved out of the EnsembleModePicker
+ * popover), and the continuous-mode Turn Budget hop meter. Rendered
+ * INSIDE the roster-preset picker root (which is flex-wrap) as a
+ * 100%-basis child, so every per-shell pill/strip chrome that targets
+ * the picker automatically wraps both rows — no per-shell additions.
+ * Control chrome reuses .composer-ensemble-mode(-button) /
+ * .composer-fanout-policy / .composer-ensemble-hop-meter so the
+ * existing shell + theme overrides keep applying in the new home. */
+.ensemble-roster-preset-picker-second-row {
+  flex-basis: 100%;
+  min-width: 0;
+  display: flex;
+}
+.composer-ensemble-orchestration-row {
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center; /* welcome hero variant centers like the chips row */
+  gap: 6px 16px;
+  min-width: 0;
+}
+.ensemble-roster-preset-picker.is-compact .composer-ensemble-orchestration-row {
+  justify-content: flex-start;
+}
+.composer-orchestration-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+.composer-orchestration-cell-label {
+  white-space: nowrap;
+}
+/* The mode-picker trigger sits bare in its cell (no .composer-ensemble-mode
+ * capsule — see EnsembleOrchestrationRow.tsx header); restore the bold
+ * weight it previously inherited from the capsule's descendant rule. */
+.composer-ensemble-orchestration-row .composer-ensemble-mode-trigger {
+  font-weight: 700;
+}
+.composer-ensemble-orchestration-row .composer-ensemble-context-slider {
+  width: clamp(90px, 16vw, 150px);
+  margin: 0;
+}
+.composer-ensemble-orchestration-row .composer-ensemble-context-value {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.composer-ensemble-orchestration-row .composer-ensemble-hop-meter {
+  margin-left: 0;
+}
+.composer-orchestration-row-hints {
+  flex-basis: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.composer-orchestration-row-hints .composer-ensemble-context-hint {
+  margin-top: 0;
+}
+
 [data-composer-style="codex"]
   .composer-above-bar-stack:not(:has(.ensemble-above-row))
   > .composer-above-bar:not(:first-child) {

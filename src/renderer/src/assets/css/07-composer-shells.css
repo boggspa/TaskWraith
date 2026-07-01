@@ -2515,12 +2515,11 @@
   border-color: color-mix(in srgb, #bbcf66 46%, transparent);
 }
 
-/* D — shared-history char-budget slider in the ensemble Turn picker popover. */
-.composer-ensemble-context-section {
-  border-top: 1px solid color-mix(in srgb, currentColor 12%, transparent);
-  margin-top: 6px;
-  padding-top: 8px;
-}
+/* D — shared-history char-budget slider. Originally a section of the
+ * ensemble Turn picker popover; now lives on the orchestration second
+ * row of the roster-presets above-row (EnsembleOrchestrationRow.tsx),
+ * which sizes the slider via a scoped override in
+ * 09-ensemble-work-session.css. Value/hint/suggest classes are shared. */
 .composer-ensemble-context-slider {
   width: 100%;
   margin: 6px 0 4px;
