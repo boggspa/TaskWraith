@@ -183,7 +183,7 @@ function buildTaskWraithRuntimePreamble(args: {
     ...(args.provider === 'cursor' || args.provider === 'grok'
       ? [
           args.provider === 'cursor'
-            ? 'Use TaskWraith MCP for edits and shell commands. Do not call native Cursor Write or Shell tools; they are intentionally denied. For Cursor, call the per-run taskwraith-broker MCP tools, commonly mcp_taskwraith-broker-write_file, mcp_taskwraith-broker-replace, mcp_taskwraith-broker-apply_patch, and mcp_taskwraith-broker-run_shell_command. If this Cursor build exposes them as taskwraith__<tool> instead, use those aliases. Native provider write/shell paths are constrained so TaskWraith can apply permission policy, workspace/path checks, and transcript/audit logging.'
+            ? 'Use TaskWraith MCP for edits and shell commands. Do not call native Cursor Write or Shell tools; they are intentionally denied. For Cursor, call the per-run taskwraith-broker MCP tools, commonly mcp_taskwraith-broker-write_file, mcp_taskwraith-broker-replace, mcp_taskwraith-broker-apply_patch, and mcp_taskwraith-broker-run_shell_command. If this Cursor build exposes them as mcp_taskwraith-<tool> or taskwraith__<tool> instead, use those aliases. Native provider write/shell paths are constrained so TaskWraith can apply permission policy, workspace/path checks, and transcript/audit logging.'
             : 'Use TaskWraith MCP for edits and shell commands. Native provider write/shell paths are constrained so TaskWraith can apply permission policy, workspace/path checks, and transcript/audit logging.'
         ]
       : []),

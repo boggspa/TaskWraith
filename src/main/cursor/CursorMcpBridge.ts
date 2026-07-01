@@ -18,9 +18,10 @@ import { TASKWRAITH_MCP_TOOLS } from '../TaskWraithMcpTools'
 import type { CursorCliConfig } from './CursorWorkspaceConfig'
 
 /** Cursor's older Home MCP bridge used the plain `taskwraith` id for a web-only
- *  two-tool server. Use a distinct per-run id for the full broker so Cursor
- *  cannot resolve or approve the wrong server when a user still has that Home
- *  server enabled. */
+ *  two-tool server. Keep a transient workspace-local alias for compatibility
+ *  with existing Cursor sessions that still call `mcp_taskwraith-*`; write-mode
+ *  setup points this alias at the full broker after removing stale workspace
+ *  entries with the same reserved name. */
 export const CURSOR_LEGACY_WEB_MCP_SERVER_NAME = 'taskwraith'
 
 /** The MCP server name used for the full per-run broker. */
@@ -38,7 +39,9 @@ export const CURSOR_MCP_SERVER_NAME = 'taskwraith-broker'
 export const CURSOR_MCP_ALLOW_RULES: readonly string[] = [
   `Mcp(${CURSOR_MCP_SERVER_NAME}:*)`,
   ...TASKWRAITH_MCP_TOOLS.map((tool) => `Mcp(${CURSOR_MCP_SERVER_NAME}:${tool})`),
-  ...TASKWRAITH_MCP_TOOLS.map((tool) => `Mcp(${CURSOR_MCP_SERVER_NAME}-${tool})`)
+  ...TASKWRAITH_MCP_TOOLS.map((tool) => `Mcp(${CURSOR_MCP_SERVER_NAME}-${tool})`),
+  ...TASKWRAITH_MCP_TOOLS.map((tool) => `Mcp(${CURSOR_LEGACY_WEB_MCP_SERVER_NAME}:${tool})`),
+  ...TASKWRAITH_MCP_TOOLS.map((tool) => `Mcp(${CURSOR_LEGACY_WEB_MCP_SERVER_NAME}-${tool})`)
 ]
 
 export function isReservedCursorMcpServerName(name: string): boolean {
@@ -201,8 +204,14 @@ export interface CursorMcpServerInvocation {
 export function buildCursorMcpServerEntry(
   invocation: CursorMcpServerInvocation
 ): Record<string, unknown> {
+  const entry = {
+    command: invocation.command,
+    args: [...invocation.args],
+    ...(invocation.env ? { env: invocation.env } : {})
+  }
   return {
-    [CURSOR_MCP_SERVER_NAME]: {
+    [CURSOR_MCP_SERVER_NAME]: entry,
+    [CURSOR_LEGACY_WEB_MCP_SERVER_NAME]: {
       command: invocation.command,
       args: [...invocation.args],
       ...(invocation.env ? { env: invocation.env } : {})

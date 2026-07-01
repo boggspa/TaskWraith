@@ -29,6 +29,15 @@ describe('CURSOR_MCP_ALLOW_RULES', () => {
     expect(CURSOR_MCP_ALLOW_RULES).toContain(`Mcp(${CURSOR_MCP_SERVER_NAME}-run_shell_command)`)
     expect(CURSOR_MCP_ALLOW_RULES).toContain(`Mcp(${CURSOR_MCP_SERVER_NAME}-apply_patch)`)
     expect(CURSOR_MCP_ALLOW_RULES).not.toContain(`Mcp(${CURSOR_MCP_SERVER_NAME}-*)`)
+    expect(CURSOR_MCP_ALLOW_RULES).toContain(
+      `Mcp(${CURSOR_LEGACY_WEB_MCP_SERVER_NAME}:run_shell_command)`
+    )
+    expect(CURSOR_MCP_ALLOW_RULES).toContain(
+      `Mcp(${CURSOR_LEGACY_WEB_MCP_SERVER_NAME}-run_shell_command)`
+    )
+    expect(CURSOR_MCP_ALLOW_RULES).not.toContain(
+      `Mcp(${CURSOR_LEGACY_WEB_MCP_SERVER_NAME}:*)`
+    )
   })
 
   it('reserves the TaskWraith server prefix for brokered tools only', () => {
@@ -45,7 +54,8 @@ describe('buildCursorMcpServerEntry', () => {
   it('builds the broker entry keyed by the server name', () => {
     const entry = buildCursorMcpServerEntry({ command: '/x/electron', args: ['/tmp/s.cjs'] })
     expect(entry).toEqual({
-      [CURSOR_MCP_SERVER_NAME]: { command: '/x/electron', args: ['/tmp/s.cjs'] }
+      [CURSOR_MCP_SERVER_NAME]: { command: '/x/electron', args: ['/tmp/s.cjs'] },
+      [CURSOR_LEGACY_WEB_MCP_SERVER_NAME]: { command: '/x/electron', args: ['/tmp/s.cjs'] }
     })
   })
 
@@ -60,6 +70,11 @@ describe('buildCursorMcpServerEntry', () => {
         command: '/x/electron',
         args: ['/tmp/s.cjs'],
         env: { ELECTRON_RUN_AS_NODE: '1' }
+      },
+      [CURSOR_LEGACY_WEB_MCP_SERVER_NAME]: {
+        command: '/x/electron',
+        args: ['/tmp/s.cjs'],
+        env: { ELECTRON_RUN_AS_NODE: '1' }
       }
     })
   })
@@ -68,9 +83,11 @@ describe('buildCursorMcpServerEntry', () => {
     const args = ['/tmp/s.cjs']
     const entry = buildCursorMcpServerEntry({ command: 'node', args }) as {
       [CURSOR_MCP_SERVER_NAME]: { args: string[] }
+      [CURSOR_LEGACY_WEB_MCP_SERVER_NAME]: { args: string[] }
     }
     args.push('mutated')
     expect(entry[CURSOR_MCP_SERVER_NAME].args).toEqual(['/tmp/s.cjs'])
+    expect(entry[CURSOR_LEGACY_WEB_MCP_SERVER_NAME].args).toEqual(['/tmp/s.cjs'])
   })
 })
 
@@ -78,7 +95,10 @@ describe('mergeCursorMcpConfig', () => {
   it('adds the broker server into an empty/absent config', () => {
     const entry = buildCursorMcpServerEntry({ command: 'node', args: ['/tmp/s.cjs'] })
     expect(mergeCursorMcpConfig(null, entry)).toEqual({
-      mcpServers: { [CURSOR_MCP_SERVER_NAME]: { command: 'node', args: ['/tmp/s.cjs'] } }
+      mcpServers: {
+        [CURSOR_MCP_SERVER_NAME]: { command: 'node', args: ['/tmp/s.cjs'] },
+        [CURSOR_LEGACY_WEB_MCP_SERVER_NAME]: { command: 'node', args: ['/tmp/s.cjs'] }
+      }
     })
   })
 
@@ -92,7 +112,8 @@ describe('mergeCursorMcpConfig', () => {
     expect(merged).toEqual({
       mcpServers: {
         other: { command: 'foo', args: [] },
-        [CURSOR_MCP_SERVER_NAME]: { command: 'node', args: ['/tmp/s.cjs'] }
+        [CURSOR_MCP_SERVER_NAME]: { command: 'node', args: ['/tmp/s.cjs'] },
+        [CURSOR_LEGACY_WEB_MCP_SERVER_NAME]: { command: 'node', args: ['/tmp/s.cjs'] }
       },
       someUnknownTopLevel: { keep: true }
     })
@@ -109,7 +130,7 @@ describe('mergeCursorMcpConfig', () => {
     expect(merged.mcpServers[CURSOR_MCP_SERVER_NAME].command).toBe('node')
   })
 
-  it('drops reserved taskwraith servers before adding the real broker', () => {
+  it('drops reserved taskwraith servers before adding the real broker + legacy alias', () => {
     const existing = {
       mcpServers: {
         other: { command: 'foo', args: [] },
@@ -128,7 +149,10 @@ describe('mergeCursorMcpConfig', () => {
       command: 'node',
       args: ['/tmp/new.cjs']
     })
-    expect(merged.mcpServers.taskwraith).toBeUndefined()
+    expect(merged.mcpServers.taskwraith).toEqual({
+      command: 'node',
+      args: ['/tmp/new.cjs']
+    })
     expect(merged.mcpServers['taskwraith-evil']).toBeUndefined()
     expect(merged.mcpServers[`${CURSOR_MCP_SERVER_NAME}-evil`]).toBeUndefined()
   })
@@ -144,7 +168,16 @@ describe('mergeCursorAllowRules', () => {
     expect(merged.permissions.allow).toContain(
       `Mcp(${CURSOR_MCP_SERVER_NAME}-run_shell_command)`
     )
+    expect(merged.permissions.allow).toContain(
+      `Mcp(${CURSOR_LEGACY_WEB_MCP_SERVER_NAME}:run_shell_command)`
+    )
+    expect(merged.permissions.allow).toContain(
+      `Mcp(${CURSOR_LEGACY_WEB_MCP_SERVER_NAME}-run_shell_command)`
+    )
     expect(merged.permissions.allow).not.toContain(`Mcp(${CURSOR_MCP_SERVER_NAME}-*)`)
+    expect(merged.permissions.allow).not.toContain(
+      `Mcp(${CURSOR_LEGACY_WEB_MCP_SERVER_NAME}:*)`
+    )
     expect(merged.permissions.deny).toEqual([])
   })
 
@@ -160,7 +193,16 @@ describe('mergeCursorAllowRules', () => {
     expect(merged.permissions.allow).toContain(
       `Mcp(${CURSOR_MCP_SERVER_NAME}-run_shell_command)`
     )
+    expect(merged.permissions.allow).toContain(
+      `Mcp(${CURSOR_LEGACY_WEB_MCP_SERVER_NAME}:run_shell_command)`
+    )
+    expect(merged.permissions.allow).toContain(
+      `Mcp(${CURSOR_LEGACY_WEB_MCP_SERVER_NAME}-run_shell_command)`
+    )
     expect(merged.permissions.allow).not.toContain(`Mcp(${CURSOR_MCP_SERVER_NAME}-*)`)
+    expect(merged.permissions.allow).not.toContain(
+      `Mcp(${CURSOR_LEGACY_WEB_MCP_SERVER_NAME}:*)`
+    )
     expect(merged.permissions.deny).toEqual(['Shell(**)'])
   })
 

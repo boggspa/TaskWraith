@@ -799,6 +799,7 @@ import {
 } from './cursor/CursorWorkspaceConfig'
 import {
   buildCursorMcpServerEntry,
+  CURSOR_LEGACY_WEB_MCP_SERVER_NAME,
   CURSOR_MCP_ALLOW_RULES,
   CURSOR_MCP_SERVER_NAME
 } from './cursor/CursorMcpBridge'
@@ -11176,6 +11177,11 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
         }
       })
       await ensureCursorMcpApproved(resolved.binaryPath, payload.workspace)
+      await ensureCursorMcpApproved(
+        resolved.binaryPath,
+        payload.workspace,
+        CURSOR_LEGACY_WEB_MCP_SERVER_NAME
+      )
       await Promise.all(
         userMcpServers.map((server) =>
           ensureCursorMcpApproved(resolved.binaryPath!, payload.workspace!, server.serverName)

@@ -370,6 +370,7 @@ describe('composeRunPrompt sub-thread returns', () => {
     expect(result.contextualPrompt).toContain('Do not call native Cursor Write or Shell tools')
     expect(result.contextualPrompt).toContain('mcp_taskwraith-broker-write_file')
     expect(result.contextualPrompt).toContain('mcp_taskwraith-broker-run_shell_command')
+    expect(result.contextualPrompt).toContain('mcp_taskwraith-<tool>')
     expect(result.contextualPrompt).toContain('Native provider write/shell paths are constrained')
   })
 
