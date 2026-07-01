@@ -88,6 +88,7 @@ import { contextPercent, resolveContextWindow } from '../../shared/contextWindow
 import { isEnsembleRoundDispatchLive } from '../../shared/ensembleRoundLifecycle'
 import { isPreviewRiskModel } from '../../shared/previewModelCatalog'
 import {
+  ASSIGNABLE_PERMISSION_PRESETS,
   evaluateRosterEdit,
   type RosterEditAction,
   type RosterEditError,
@@ -102,6 +103,8 @@ export type EnsembleQueuedSteerResult = {
   roundId?: string
   error?: string
 }
+
+const BOSSMAN_ASSIGNABLE_PERMISSION_PRESET_SET = new Set<string>(ASSIGNABLE_PERMISSION_PRESETS)
 export type EnsembleQueuedPromptMutationResult = {
   ok: boolean
   prompt?: string
@@ -3191,6 +3194,22 @@ export class EnsembleOrchestrator {
         error: 'health_check_unavailable'
       }
     }
+    const requestedPermissionPresetId = input.replacement?.permissionPresetId
+    if (
+      requestedPermissionPresetId &&
+      !BOSSMAN_ASSIGNABLE_PERMISSION_PRESET_SET.has(String(requestedPermissionPresetId))
+    ) {
+      return {
+        ok: false,
+        tool: 'ensemble_bossman_control',
+        action: 'replace_participant',
+        roundId: runtime.roundId,
+        participantId: targetParticipantId,
+        message:
+          'Boss replacement rejected: permissionPresetId must be read_only, default, or workspace_write.',
+        error: 'permission_ceiling'
+      }
+    }
     const replacementId = this.nextReplacementParticipantId(chat.ensemble.participants)
     const replacement: EnsembleParticipant = {
       id: replacementId,
@@ -3203,8 +3222,8 @@ export class EnsembleOrchestrator {
           : target.instructions,
       order: target.order,
       ...(input.replacement?.model ? { model: input.replacement.model } : {}),
-      ...(input.replacement?.permissionPresetId
-        ? { permissionPresetId: input.replacement.permissionPresetId }
+      ...(requestedPermissionPresetId
+        ? { permissionPresetId: requestedPermissionPresetId }
         : target.permissionPresetId
           ? { permissionPresetId: target.permissionPresetId }
           : {}),

@@ -1,5 +1,6 @@
 import { selectableProviderIds } from './settings/MainSanitizers'
 import { TASKWRAITH_MCP_TOOLS, type TaskWraithMcpToolName } from './TaskWraithMcpTools'
+import { ASSIGNABLE_PERMISSION_PRESETS } from './EnsembleRosterMutation'
 
 export interface TaskWraithMcpToolDefinition {
   name: TaskWraithMcpToolName
@@ -1944,7 +1945,12 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
               role: { type: 'string' },
               instructions: { type: 'string' },
               model: { type: 'string' },
-              permissionPresetId: { type: 'string' },
+              permissionPresetId: {
+                type: 'string',
+                enum: [...ASSIGNABLE_PERMISSION_PRESETS],
+                description:
+                  'Coarse permission preset ceiling for boss replacement. full_access and custom are rejected.'
+              },
               reasoningEffort: { type: 'string' },
               fastModeEnabled: { type: 'boolean' },
               thinkingEnabled: { type: 'boolean' }

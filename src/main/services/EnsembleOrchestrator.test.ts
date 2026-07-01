@@ -3242,6 +3242,31 @@ Next action:
     expect(roster).toHaveLength(2)
   })
 
+  it('preserves an explicitly requested assignable preset on replacement', async () => {
+    const initialChat = makeChat()
+    initialChat.ensemble!.bossmanParticipantId = 'claude'
+    const harness = makeHarness({
+      initialChat,
+      probeParticipant: async () => ({ reachable: true })
+    })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Plan and execute.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const result = await harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+      action: 'replace_participant',
+      targetParticipantId: 'codex',
+      replacement: { provider: 'kimi', permissionPresetId: 'workspace_write' }
+    })
+    expect(result.ok).toBe(true)
+    const replacement = harness.chat.ensemble!.participants.find(
+      (participant) => participant.id === result.participantId
+    )
+    expect(replacement?.permissionPresetId).toBe('workspace_write')
+  })
+
   it('rejects a replacement when the provider health check fails (replacement_unreachable)', async () => {
     const initialChat = makeChat()
     initialChat.ensemble!.bossmanParticipantId = 'claude'
@@ -3267,6 +3292,38 @@ Next action:
     // Roster untouched.
     expect(harness.chat.ensemble!.participants.some((p) => p.id === 'codex')).toBe(true)
   })
+
+  for (const permissionPresetId of ['full_access', 'custom'] as const) {
+    it(`rejects a replacement requesting ${permissionPresetId} (permission_ceiling)`, async () => {
+      const initialChat = makeChat()
+      initialChat.ensemble!.bossmanParticipantId = 'claude'
+      const harness = makeHarness({
+        initialChat,
+        probeParticipant: async () => ({ reachable: true })
+      })
+      harness.orchestrator.startRound({
+        chatId: 'ensemble-chat',
+        prompt: 'Plan and execute.',
+        event: { sender: {} as Electron.WebContents }
+      })
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+      const result = await harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+        action: 'replace_participant',
+        targetParticipantId: 'codex',
+        replacement: { provider: 'kimi', permissionPresetId }
+      })
+      expect(result.ok).toBe(false)
+      expect(result.error).toBe('permission_ceiling')
+      expect(harness.chat.ensemble!.participants.some((participant) => participant.id === 'codex')).toBe(
+        true
+      )
+      expect(
+        harness.chat.ensemble!.participants.some(
+          (participant) => participant.id.startsWith('bossman-replacement')
+        )
+      ).toBe(false)
+    })
+  }
 
   it('rejects a replacement that would grow the round beyond its baseline (baseline_exceeded)', async () => {
     const initialChat = makeChat()
