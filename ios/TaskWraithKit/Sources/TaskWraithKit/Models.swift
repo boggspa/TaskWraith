@@ -1140,6 +1140,9 @@ public struct RemoteThreadSnapshot: Codable, Sendable {
             public let slug: String?
             public let assetKey: String?
             public let seed: String?
+            /// When false, render the identity icon monochrome (ignore accent).
+            /// Absent (nil) ⇒ tinted, preserving pre-toggle behaviour.
+            public let hueEnabled: Bool?
         }
         /// Images attached to this message (desktop or phone) — chip count.
         public let imageAttachmentCount: Int?

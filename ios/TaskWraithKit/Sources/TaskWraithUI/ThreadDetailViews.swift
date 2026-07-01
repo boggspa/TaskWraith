@@ -2197,6 +2197,8 @@ struct ThreadAgentIdentity: Equatable {
     let name: String
     let accentHex: String?
     let slug: String?
+    /// When false, render the identity icon monochrome (ignore accent).
+    let hueEnabled: Bool
 
     init?(card: RemoteTaskCard?) {
         guard let card,
@@ -2208,6 +2210,7 @@ struct ThreadAgentIdentity: Equatable {
         name = trimmed
         accentHex = card.agentAccent
         slug = card.agentSlug
+        hueEnabled = true  // Sub-agent cards carry no pooled hue toggle — always tint.
     }
 
     init?(pooled: RemoteThreadSnapshot.Row.PooledAgentIdentity?) {
@@ -2216,9 +2219,43 @@ struct ThreadAgentIdentity: Equatable {
         name = trimmed
         accentHex = pooled?.accent
         slug = pooled?.slug
+        hueEnabled = pooled?.hueEnabled ?? true  // Absent ⇒ tinted (pre-toggle default).
     }
 
     @MainActor var accent: Color { twAgentAccentColor(accentHex) }
+}
+
+/// Transcript-only identity mark: a bare glyph beside the sender name — no circle
+/// fill/stroke ("box"), matching the Electron look. Honors `hueEnabled`: baked
+/// named art shows its own colour when tinted and desaturates to a neutral wash
+/// when hue is off; the procedural ghost inks with the accent (or a neutral tone).
+private struct AgentTranscriptSatellite: View {
+    let name: String
+    let accentHex: String?
+    let slug: String?
+    let hueEnabled: Bool
+    var size: CGFloat = 16
+
+    private var ink: Color {
+        hueEnabled ? twAgentAccentColor(accentHex) : TWTheme.textSecondary
+    }
+
+    var body: some View {
+        Group {
+            if let catalog = AgentIdentityBadge.catalogImage(for: slug) {
+                catalog
+                    .resizable()
+                    .scaledToFit()
+                    .saturation(hueEnabled ? 1 : 0)
+                    .opacity(hueEnabled ? 1 : 0.75)
+            } else {
+                GhostMarkView(size: size)
+                    .colorMultiply(ink)
+            }
+        }
+        .frame(width: size, height: size)
+        .accessibilityLabel(Text(name))
+    }
 }
 
 private struct AgentTranscriptLeadingMark: View {
@@ -2231,13 +2268,15 @@ private struct AgentTranscriptLeadingMark: View {
             if hidden {
                 Color.clear.frame(width: 20, height: 20)
             } else if let identity {
-                AgentIdentityBadge(
+                AgentTranscriptSatellite(
                     name: identity.name,
                     accentHex: identity.accentHex,
                     slug: identity.slug,
-                    size: 20
+                    hueEnabled: identity.hueEnabled,
+                    size: 16
                 )
                 .padding(.top, 1)
+                .frame(width: 20, alignment: .leading)
             } else {
                 Circle()
                     .fill(fallbackAccent)
@@ -2249,38 +2288,7 @@ private struct AgentTranscriptLeadingMark: View {
     }
 }
 
-private struct AgentTranscriptRimModifier: ViewModifier {
-    let identity: ThreadAgentIdentity?
-    let enabled: Bool
-
-    func body(content: Content) -> some View {
-        if let identity, enabled {
-            content
-                .padding(.horizontal, 10)
-                .padding(.vertical, 8)
-                .background(
-                    LinearGradient(
-                        colors: [identity.accent.opacity(0.14), TWTheme.surface1.opacity(0.56)],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    ),
-                    in: RoundedRectangle(cornerRadius: 12)
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .strokeBorder(identity.accent.opacity(0.56), lineWidth: 1.2)
-                )
-        } else {
-            content
-        }
-    }
-}
-
 private extension View {
-    func agentTranscriptRim(_ identity: ThreadAgentIdentity?, enabled: Bool = true) -> some View {
-        modifier(AgentTranscriptRimModifier(identity: identity, enabled: enabled))
-    }
-
     @ViewBuilder
     func composerDiffSheetChrome() -> some View {
         #if os(iOS)
@@ -2685,9 +2693,7 @@ struct ThreadRowView: View, Equatable {
                     .buttonStyle(.plain)
                     .disabled(isExpanding)
                 }
-            }
-            .agentTranscriptRim(activeAgentIdentity)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            }            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.vertical, 5)
     }
@@ -3261,9 +3267,7 @@ struct ToolBurstRowView: View {
                     .font(.caption)
                     .foregroundStyle(TWTheme.textTertiary)
                 }
-            }
-            .agentTranscriptRim(agentIdentity)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            }            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.vertical, 5)
     }
@@ -3378,9 +3382,7 @@ struct StreamingRowView: View {
                         font: TWFont.transcript(),
                         color: TWTheme.textPrimary)
                 }
-            }
-            .agentTranscriptRim(agentIdentity)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            }            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.vertical, 5)
     }
@@ -3427,9 +3429,7 @@ struct StreamingLiveHeader: View {
                         .background(TWTheme.surface3, in: Capsule())
                 }
                 StreamingDots(color: accent)
-            }
-            .agentTranscriptRim(agentIdentity)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            }            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.top, 5)
     }
@@ -3486,9 +3486,7 @@ struct StreamingSegmentRow: View {
                         color: TWTheme.textPrimary,
                         onRevealFrame: onRevealFrame)
                 }
-            }
-            .agentTranscriptRim(agentIdentity)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            }            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.vertical, 5)
     }
@@ -3537,9 +3535,7 @@ struct ThinkingRow: View {
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 9)
-            }
-            .agentTranscriptRim(agentIdentity)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            }            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, 5)

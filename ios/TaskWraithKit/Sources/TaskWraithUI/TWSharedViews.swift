@@ -4727,7 +4727,8 @@ public struct AgentIdentityBadge: View {
     /// Full hand-drawn catalog character (baked from the named SVGs into
     /// the package resources via qlmanage). Nil when the slug has no baked
     /// asset — the minimal ring badge below covers that.
-    private static func catalogImage(for slug: String?) -> Image? {
+    /// Internal (not private) so the transcript satellite can reuse it.
+    static func catalogImage(for slug: String?) -> Image? {
         guard let slug, !slug.isEmpty else { return nil }
         #if canImport(UIKit)
             if let url = Bundle.module.url(
