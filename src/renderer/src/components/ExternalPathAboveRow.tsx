@@ -24,6 +24,7 @@ import { getProviderName } from './Sidebar'
 import { useState } from 'react'
 import { branchTone, GitMergeBadge, GitSyncChip } from './GitStatusChips'
 import { GitCommitControls } from './GitCommitControls'
+import { AnimatedDiffNumber } from './AnimatedDiffNumber'
 import type { GitRepositorySnapshot } from '../../../main/services/GitService'
 
 /**
@@ -303,15 +304,23 @@ export function ExternalPathAboveRow({
             diffStats!.filesChanged === 1 ? 'file' : 'files'
           } changed in this path`}
         >
-          <strong>{diffStats!.filesChanged}</strong>{' '}
+          <AnimatedDiffNumber value={diffStats!.filesChanged} strong />{' '}
           {diffStats!.filesChanged === 1 ? 'file changed' : 'files changed'}
         </span>
       </div>
       {(diffStats!.additions > 0 || diffStats!.deletions > 0) && (
         <div className="composer-above-bar-pill composer-above-bar-pill--stats">
           <span className="composer-above-bar-stats">
-            <span className="composer-diff-add">+{diffStats!.additions}</span>
-            <span className="composer-diff-del">-{diffStats!.deletions}</span>
+            <AnimatedDiffNumber
+              value={diffStats!.additions}
+              prefix="+"
+              className="composer-diff-add"
+            />
+            <AnimatedDiffNumber
+              value={diffStats!.deletions}
+              prefix="-"
+              className="composer-diff-del"
+            />
           </span>
         </div>
       )}

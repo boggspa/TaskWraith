@@ -34,6 +34,7 @@ import { ComposerPlusPicker } from '../components/ComposerPlusPicker'
 import type { ComposerPlusPickerSection } from '../components/ComposerPlusPicker'
 import { ComposerProviderPicker } from '../components/ComposerProviderPicker'
 import { ComposerSlashMenu } from '../components/ComposerSlashMenu'
+import { AnimatedDiffNumber } from '../components/AnimatedDiffNumber'
 import { HumanCollaborationInviteComposerControl } from './HumanCollaborationInviteComposerControl'
 import {
   ComposerTextareaContextMenu,
@@ -1835,17 +1836,21 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               : 'Working tree clean — nothing to commit'
                           }
                         >
-                          <strong>{workspaceDiffStats.filesChanged}</strong>{' '}
+                          <AnimatedDiffNumber value={workspaceDiffStats.filesChanged} strong />{' '}
                           {workspaceDiffStats.filesChanged === 1 ? 'file changed' : 'files changed'}
                         </span>
                         {(workspaceDiffStats.additions > 0 || workspaceDiffStats.deletions > 0) && (
                           <span className="composer-above-bar-stats">
-                            <span className="composer-diff-add">
-                              +{workspaceDiffStats.additions}
-                            </span>
-                            <span className="composer-diff-del">
-                              -{workspaceDiffStats.deletions}
-                            </span>
+                            <AnimatedDiffNumber
+                              value={workspaceDiffStats.additions}
+                              prefix="+"
+                              className="composer-diff-add"
+                            />
+                            <AnimatedDiffNumber
+                              value={workspaceDiffStats.deletions}
+                              prefix="-"
+                              className="composer-diff-del"
+                            />
                           </span>
                         )}
                       </span>
