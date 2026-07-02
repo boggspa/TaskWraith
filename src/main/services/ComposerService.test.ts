@@ -376,6 +376,11 @@ describe('ComposerService', () => {
     expect(payload.workflowMode).toBe('normal')
     expect(payload.composer.workflowMode).toBe('normal')
     expect(payload.effectivePermissions?.readOnly).toBe(true)
+    // Posture split: the Read-Only/Recon row resolves the strict floor preset —
+    // no elevation path (subthread/canvas denied).
+    expect(payload.effectivePermissions?.presetId).toBe('read_only')
+    expect(payload.effectivePermissions?.agenticServices.subThreadDelegation).toBe('deny')
+    expect(payload.effectivePermissions?.agenticServices.canvasInteraction).toBe('deny')
   })
 
   it('uses persisted plan workflow to force plan approval mode', () => {
@@ -383,6 +388,22 @@ describe('ComposerService', () => {
     expect(payload.approvalMode).toBe('plan')
     expect(payload.workflowMode).toBe('plan')
     expect(payload.composer.workflowMode).toBe('plan')
+  })
+
+  it('posture split: a Plan-workflow solo run resolves the plan instrument tier', () => {
+    const payload = compose({ provider: 'claude', workflowMode: 'plan' }, { approvalMode: 'default' })
+    expect(payload.approvalMode).toBe('plan')
+    expect(payload.workflowMode).toBe('plan')
+    expect(payload.effectivePermissions?.readOnly).toBe(true)
+    // The Plan row is now genuinely distinct from Read-Only/Recon: canvas/media/
+    // subthread are approval-queued (the W7 instrument tier)…
+    expect(payload.effectivePermissions?.presetId).toBe('plan')
+    expect(payload.effectivePermissions?.agenticServices.canvasInteraction).toBe('ask')
+    expect(payload.effectivePermissions?.agenticServices.mediaEditing).toBe('ask')
+    expect(payload.effectivePermissions?.agenticServices.subThreadDelegation).toBe('ask')
+    // …while direct writes remain denied (plan is not a write mode).
+    expect(payload.effectivePermissions?.agenticServices.fileChanges).toBe('deny')
+    expect(payload.effectivePermissions?.agenticServices.shellCommands).toBe('deny')
   })
 
   it('1.0.4-AF: strips a leading /discuss token and flags selfReflectiveRequested', () => {

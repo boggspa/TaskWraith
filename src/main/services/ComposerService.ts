@@ -387,7 +387,13 @@ export class ComposerService {
               scope === 'global' ? undefined : effectiveInput.workspace || chat.workspacePath,
             model: requestedModel,
             settings,
-            presetId: 'read_only'
+            // Posture split: the solo composer's two `approvalMode: 'plan'` rows
+            // are distinguished ONLY by workflowMode (the renderer derives the
+            // same 'read_only' vs 'plan' label from it). The Plan row
+            // (workflowMode 'plan') resolves the `plan` instrument tier; the
+            // Read-Only/Recon row (workflowMode 'normal') the strict floor. Both
+            // keep readOnly:true so the signed posture still clears the clamp.
+            presetId: workflowMode === 'plan' ? 'plan' : 'read_only'
           })
         : elevatedPresetId
           ? resolveEffectiveRunPermissions({
