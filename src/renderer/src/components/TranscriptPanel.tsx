@@ -66,6 +66,7 @@ import { isSubThreadDelegationMessage } from './SubThreadDelegationCardModel'
 import { SubThreadReturnCard } from './SubThreadReturnCard'
 import { isSubThreadReturnMessage, subThreadReturnBody } from './SubThreadReturnCardModel'
 import { ParticipantHealthCard } from './ParticipantHealthCard'
+import { ContextCompactionCard } from './ContextCompactionCard'
 import { ProviderRunFailureCard } from './ProviderRunFailureCard'
 import { MarkdownMessage } from './MarkdownMessage'
 import { RevealingMarkdownMessage } from './RevealingMarkdownMessage'
@@ -1706,6 +1707,7 @@ export const TranscriptPanel = memo(
             const isToolActivityStack = msg.role === 'tool' && (msg.toolActivities?.length || 0) > 0
             const isParticipantHealth = msg.metadata?.kind === 'ensembleParticipantHealth'
             const isProviderRunFailure = msg.metadata?.kind === 'providerRunFailure'
+            const isContextCompaction = msg.metadata?.kind === 'contextCompaction'
             const isRoundHeader = isEnsembleRoundHeaderMessage(msg)
             const collaboratorMeta = isCollaboratorComment ? humanCollaboratorMetadata(msg) : null
             const boundaryRun = displayRunBoundaryByMessageId.get(msg.id)
@@ -1719,6 +1721,7 @@ export const TranscriptPanel = memo(
               !isToolActivityStack &&
               !isParticipantHealth &&
               !isProviderRunFailure &&
+              !isContextCompaction &&
               typeof msg.content === 'string'
                 ? msg.content
                 : undefined
@@ -1952,6 +1955,14 @@ export const TranscriptPanel = memo(
                     older transcripts / exports.
                   */
                   <ParticipantHealthCard key={msg.id} message={msg} />
+                ) : isContextCompaction ? (
+                  /*
+                    Provider context compaction (auto or manual). Structured
+                    card with pre→post occupancy; `msg.content` carries the
+                    plain-text summary as the fallback for older transcripts,
+                    exports, and the iOS system-row projection.
+                  */
+                  <ContextCompactionCard key={msg.id} message={msg} />
                 ) : isProviderRunFailure ? (
                   <ProviderRunFailureCard
                     key={msg.id}

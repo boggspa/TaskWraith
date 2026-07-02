@@ -36,6 +36,11 @@ import { coerceLiveProvider, DEFAULT_PROVIDER, isRetiredProvider } from '../../s
 import { sanitizeRawProviderMediaRefs } from '../../shared/transcriptMediaRefSanitize'
 import { normalizeThreadTitle } from '../../shared/threadTitles'
 import {
+  CONTEXT_COMPACTION_MESSAGE_KIND,
+  contextCompactionMessageId,
+  formatContextCompactionSummary
+} from '../../shared/contextCompaction'
+import {
   buildOllamaPullCommand,
   isOllamaModelInstalled,
   normalizeOllamaModelKey
@@ -8101,6 +8106,7 @@ function App(): React.JSX.Element {
                 failureAt: completedAt,
                 headline: failureSnippet.headline,
                 lines: failureSnippet.lines,
+                ...(failureSnippet.hint ? { hint: failureSnippet.hint } : {}),
                 ...(ensembleParticipant
                   ? {
                       ensembleProvider: ensembleParticipant.provider,
@@ -10938,6 +10944,39 @@ function App(): React.JSX.Element {
                 event.toolUseId,
                 event.telemetry
               )
+            }
+          } else if (event.type === 'compaction_notice') {
+            // Provider context compaction. Persist a system card for terminal
+            // signals; 'started' stays transient (no row). Ensemble transcripts
+            // are orchestrator-canonical — the same compat line reaches the
+            // orchestrator, which appends the card main-side, so appending here
+            // too would double-card (and be clobbered by its saveChat anyway).
+            if (event.kind !== 'started' && updated.chatKind !== 'ensemble') {
+              const cardId = contextCompactionMessageId(
+                event.telemetry,
+                `${currentRunId}-${event.kind}`
+              )
+              if (!updated.messages.some((message) => message.id === cardId)) {
+                updated.messages = [
+                  ...updated.messages,
+                  {
+                    id: cardId,
+                    role: 'system',
+                    content: formatContextCompactionSummary(
+                      { kind: event.kind, telemetry: event.telemetry },
+                      getProviderLabel(
+                        (event.telemetry.provider as ProviderId) || effectiveRunProvider
+                      )
+                    ),
+                    timestamp: new Date().toISOString(),
+                    metadata: {
+                      kind: CONTEXT_COMPACTION_MESSAGE_KIND,
+                      contextCompaction: { kind: event.kind, telemetry: event.telemetry },
+                      provider: event.telemetry.provider || effectiveRunProvider
+                    }
+                  }
+                ]
+              }
             }
           } else if (event.type === 'error') {
             updated.messages = [
@@ -16971,6 +17010,53 @@ function App(): React.JSX.Element {
     participants: contextParticipantRows,
     focusedId: focusedContextRow?.id
   }
+  // Provider-native "compact now" for the focused chat (context-meter popover
+  // button + the /compact slash action). Offered only where a real compaction
+  // lever exists: a SOLO claude/codex chat with a linked provider session,
+  // while idle (compacting under a live turn would race the provider process —
+  // Claude shares the per-provider process slot, Codex the active thread turn).
+  // Claude compacts via a normal `/compact` run (the CLI/SDK execute the slash
+  // command with --resume; probe-verified), so the card arrives through the
+  // stream-observation lane; Codex compacts via the thread/compact/start IPC,
+  // whose card is appended main-side. Refs-only body so the callback identity
+  // stays stable for the memoized composer prop bag.
+  const compactChatContext = useCallback(async (chatId: string | null): Promise<void> => {
+    const chat = chatId ? chatByIdRef.current.get(chatId) : null
+    if (!chat || isChatSummaryRecord(chat) || chat.chatKind === 'ensemble') return
+    const provider = getChatProvider(chat)
+    const sessionId = chat.linkedProviderSessionId
+    if (!sessionId) return
+    if (provider === 'codex') {
+      // Failure feedback arrives as the main-authored failed compaction card.
+      await window.api.compactProviderContext({
+        chatId: chat.appChatId,
+        provider: 'codex',
+        providerSessionId: sessionId
+      })
+      return
+    }
+    if (provider === 'claude') {
+      const request = buildRunRequestRef.current(undefined, undefined, {
+        chat,
+        prompt: '/compact'
+      })
+      void executeRunRef.current({ ...request, preserveComposer: true })
+    }
+  }, [])
+  const canCompactCurrentChatContext =
+    !isCurrentEnsembleChat &&
+    !isCurrentChatRunning &&
+    (currentProvider === 'claude' || currentProvider === 'codex') &&
+    Boolean(currentChat?.linkedProviderSessionId)
+  const onCompactContext = useMemo(
+    () =>
+      canCompactCurrentChatContext
+        ? () => {
+            void compactChatContext(currentChatIdRef.current)
+          }
+        : undefined,
+    [canCompactCurrentChatContext, compactChatContext, currentChatIdRef]
+  )
   // 1.0.5-EW25 — pass the user's display currency through so cost
   // numbers respect their Settings → General choice. Defaults to
   // USD if settings haven't hydrated yet, matching the helper's
@@ -20375,14 +20461,34 @@ function App(): React.JSX.Element {
       label: 'Compact context',
       description: isEnsembleChat
         ? 'Insert a context-summary request, or expand for ensemble-specific scopes.'
-        : 'Insert a concise context-summary request for this chat.',
+        : provider === 'claude' || provider === 'codex'
+          ? 'Compact this chat’s provider session (summarize + shrink live context).'
+          : 'Insert a concise context-summary request for this chat.',
       group: 'Custom',
-      run: (ctx) =>
+      run: (ctx) => {
+        // Provider-NATIVE compaction where a real lever exists: a solo
+        // claude/codex chat with a linked session, while idle. Claude runs a
+        // real `/compact` turn (the CLI/SDK execute the slash command with
+        // --resume); Codex drives thread/compact/start. Both produce the
+        // "Context compacted" transcript card. Everything else keeps the
+        // legacy prompt-template scaffold (incl. busy chats, where compacting
+        // would race the live turn).
+        const canNativelyCompact =
+          !isEnsembleChat &&
+          (provider === 'claude' || provider === 'codex') &&
+          Boolean(chat?.linkedProviderSessionId) &&
+          Boolean(chat?.appChatId && !runningChatIds.has(chat.appChatId))
+        if (canNativelyCompact && chat) {
+          ctx.consumeSlashToken()
+          void compactChatContext(chat.appChatId)
+          return
+        }
         insertSlashScaffold(
           ctx,
           /^\/compact\b/i,
           'Create a compact context summary for continuing this chat. Preserve decisions, constraints, open tasks, changed files, risks, and next actions. Do not omit unresolved questions or verification state.\n\n'
         )
+      }
     },
     ...(isEnsembleChat
       ? [
@@ -21605,6 +21711,9 @@ function App(): React.JSX.Element {
       handleGuestToggleFastMode: undefined,
       runtimeProfileControl: null,
       scheduleControls: null,
+      // The base's compact-now handler targets the FOCUSED chat; a pane's
+      // popover must never compact a different chat. Hidden in panes for now.
+      onCompactContext: undefined,
       // ── per-chat identity / display ──
       prompt: composerDraftsByChatId[viewerChatId] || '',
       // Non-focused panes only exist when multiview is split, so always hide the
@@ -22035,6 +22144,7 @@ function App(): React.JSX.Element {
       contextLabel,
       contextMeter,
       contextUsedPercent,
+      onCompactContext,
       currentChatIdRef,
       currentComposerMentionParticipants,
       currentDiscordContextSelection,
@@ -22176,6 +22286,7 @@ function App(): React.JSX.Element {
       contextLabel,
       contextMeter,
       contextUsedPercent,
+      onCompactContext,
       currentChatIdRef,
       currentComposerMentionParticipants,
       currentDiscordContextSelection,
@@ -22691,6 +22802,9 @@ function App(): React.JSX.Element {
         handleGuestToggleFastMode: undefined,
         runtimeProfileControl: null,
         scheduleControls: null,
+        // The base's compact-now handler targets the FOCUSED chat; a pane's
+        // popover must never compact a different chat. Hidden in panes for now.
+        onCompactContext: undefined,
         // ── per-chat identity / display ──
         prompt: composerDraftsByChatId[viewerChatId] || '',
         // Non-focused panes only exist when multiview is split, so always hide the

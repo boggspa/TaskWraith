@@ -1,4 +1,7 @@
+import { isContextOverflowErrorText } from '../../../shared/contextCompaction'
+
 export type ErrorCategory =
+  | 'context_overflow'
   | 'model_capacity_exhausted'
   | 'quota_or_rate_limited'
   | 'untrusted_workspace'
@@ -9,6 +12,13 @@ export type ErrorCategory =
 
 export function classifyError(stderr: string): ErrorCategory {
   const lower = stderr.toLowerCase()
+
+  // Checked first: an overflow message can mention token counts that would
+  // otherwise pattern-match the capacity/quota buckets, and the remedies
+  // differ completely (compact/fresh-thread vs wait/reroute).
+  if (isContextOverflowErrorText(stderr)) {
+    return 'context_overflow'
+  }
 
   if (
     lower.includes('model_capacity_exhausted') ||

@@ -10,6 +10,7 @@ import { createPortal } from 'react-dom'
 import type { ComposerStyle, ProviderId } from '../../../main/store/types'
 import type { ContextMeterModel, ContextMeterRow } from '../lib/contextMeter'
 import { formatContextTokens } from '../lib/contextWindows'
+import { contextPressureSeverity } from '../../../shared/contextCompaction'
 import { humaniseModelIdCompact } from '../lib/modelDisplayName'
 import { getProviderName } from './Sidebar'
 import { ContextWheel } from './AppChromeSymbols'
@@ -23,6 +24,13 @@ interface ContextMeterPopoverProps {
   provider: ProviderId
   composerStyle: ComposerStyle
   disabled?: boolean
+  /**
+   * "Compact context now" — provider-native session compaction for the chat
+   * (Claude `/compact` run / Codex thread/compact/start). Present only when
+   * the chat can compact (solo claude/codex with a linked session, idle);
+   * the button renders once context pressure reaches warn.
+   */
+  onCompactContext?: () => void
 }
 
 interface RowView {
@@ -59,8 +67,13 @@ function MeterRow({ row, focused }: { row: RowView; focused?: boolean }): React.
   const amount = row.windowTokens > 0
     ? `${formatContextTokens(row.usedTokens)} / ${formatContextTokens(row.windowTokens)}`
     : formatContextTokens(row.usedTokens)
+  const severity = contextPressureSeverity(row.percent)
   return (
-    <div className={`context-meter-row${focused ? ' context-meter-row--focused' : ''}`}>
+    <div
+      className={`context-meter-row${focused ? ' context-meter-row--focused' : ''}${
+        severity !== 'ok' ? ` context-meter-row--${severity}` : ''
+      }`}
+    >
       <div className="context-meter-row-head">
         <span className="context-meter-row-dot" style={{ background: accent }} aria-hidden />
         <span className="context-meter-row-primary">{row.primary}</span>
@@ -91,7 +104,8 @@ export function ContextMeterPopover({
   label,
   provider,
   composerStyle,
-  disabled
+  disabled,
+  onCompactContext
 }: ContextMeterPopoverProps): React.JSX.Element {
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const popoverRef = useRef<HTMLDivElement | null>(null)
@@ -156,6 +170,8 @@ export function ContextMeterPopover({
   const rows: RowView[] = participantRows ?? (meter ? [toRowView(meter.solo, false)] : [])
   const roundedPercent = Math.round(percent)
   const isCursorShell = composerStyle === 'cursor'
+  const triggerSeverity = contextPressureSeverity(percent)
+  const showCompactAction = Boolean(onCompactContext) && triggerSeverity !== 'ok'
 
   const popoverContent = open && position && rows.length > 0 && (
     <div
@@ -178,7 +194,21 @@ export function ContextMeterPopover({
           <MeterRow key={row.id} row={row} focused={!!meter?.focusedId && row.id === meter.focusedId} />
         ))}
       </div>
-      <div className="context-meter-foot">Estimated from the latest turn</div>
+      <div className="context-meter-foot">
+        <span>Estimated from the latest turn</span>
+        {showCompactAction && (
+          <button
+            type="button"
+            className="context-meter-compact-button"
+            onClick={() => {
+              setOpen(false)
+              onCompactContext?.()
+            }}
+          >
+            Compact context now
+          </button>
+        )}
+      </div>
     </div>
   )
 
@@ -202,6 +232,7 @@ export function ContextMeterPopover({
           codexShell={composerStyle === 'codex'}
           claudeShell={composerStyle === 'claude'}
           cursorShell={isCursorShell}
+          severity={triggerSeverity}
         />
         {isCursorShell && (
           <span className="composer-context-trigger-pct" aria-hidden="true">

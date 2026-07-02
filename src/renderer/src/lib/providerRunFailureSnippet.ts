@@ -1,4 +1,5 @@
 import type { ProviderId, RunWarning } from '../../../main/store/types'
+import { isContextOverflowErrorText } from '../../../shared/contextCompaction'
 import { getProviderLabel } from './providerLabels'
 import type { RawLogEntry } from './rawLogEntry'
 
@@ -14,6 +15,10 @@ export interface ProviderRunFailureSnippet {
   headline: string
   copyText: string
   lines: ProviderRunFailureLine[]
+  /** Actionable next step when the failure is recognizable (e.g. a context-
+   * window overflow names the /compact escape hatch). Rendered as a distinct
+   * footer row on the failure card, outside the stderr body. */
+  hint?: string
 }
 
 export interface BuildProviderRunFailureSnippetInput {
@@ -106,6 +111,15 @@ export const buildProviderRunFailureSnippet = (
     lines.push({ text: `Provider exited with code ${exitCode}.` })
   }
 
+  // Name the context wall. Scan the PRE-slice pool too: the overflow line can
+  // be pushed out of the visible tail by later shutdown noise.
+  const hitContextWall =
+    lines.some((line) => isContextOverflowErrorText(line.text)) ||
+    collected.some((line) => isContextOverflowErrorText(line.text))
+  const hint = hitContextWall
+    ? 'Context window exhausted — run /compact to shrink this session, or start a fresh thread.'
+    : undefined
+
   const copyText = [
     `[${formatProviderRunFailureTimestamp(failureAt)}] ${speakerLabel} run failed (exit ${exitCode})`,
     '---',
@@ -113,7 +127,8 @@ export const buildProviderRunFailureSnippet = (
       line.timestamp
         ? `[${formatProviderRunFailureTimestamp(line.timestamp)}] ${line.text}`
         : line.text
-    )
+    ),
+    ...(hint ? [hint] : [])
   ].join('\n')
 
   return {
@@ -122,6 +137,7 @@ export const buildProviderRunFailureSnippet = (
     provider,
     headline: `${speakerLabel} failed · exit ${exitCode}`,
     copyText,
-    lines
+    lines,
+    ...(hint ? { hint } : {})
   }
 }

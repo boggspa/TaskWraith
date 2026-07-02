@@ -1976,6 +1976,21 @@
   height: 17.1px;
 }
 
+/* Context-pressure severity tints. Doubled class selector beats every
+ * per-shell color above (incl. Claude's decorative amber and the light-theme
+ * overrides below) without !important — pressure MUST win over shell chrome.
+ * Thresholds: src/shared/contextCompaction.ts (warn ≥80%, critical ≥95%). */
+.context-wheel.context-wheel--warn.context-wheel--warn,
+[data-composer-style="claude"] .context-wheel.context-wheel--warn,
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .context-wheel.context-wheel--warn {
+  color: #f0a93f;
+}
+.context-wheel.context-wheel--critical.context-wheel--critical,
+[data-composer-style="claude"] .context-wheel.context-wheel--critical,
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .context-wheel.context-wheel--critical {
+  color: var(--danger, #e54d4d);
+}
+
 /* Light-theme override for the context donut. Base + Codex
  * variants hardcode `color-mix(#ffffff 65|70%, transparent)`
  * which renders as invisible white on light surfaces. Switch
@@ -4338,4 +4353,37 @@
   color: var(--text-tertiary);
   opacity: 0.8;
   font-style: italic;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+/* Context-pressure severity — amber at warn (≥80%), red at critical (≥95%);
+ * thresholds live in src/shared/contextCompaction.ts (Ollama-pressure parity). */
+.context-meter-row--warn .context-meter-row-pct {
+  color: #f0a93f;
+}
+.context-meter-row--critical .context-meter-row-pct {
+  color: var(--danger, #e54d4d);
+}
+.context-meter-row--warn .context-meter-row-fill {
+  background: #f0a93f !important;
+}
+.context-meter-row--critical .context-meter-row-fill {
+  background: var(--danger, #e54d4d) !important;
+}
+.context-meter-compact-button {
+  margin-left: auto;
+  font-style: normal;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, #f0a93f 55%, var(--panel-border));
+  background: color-mix(in srgb, #f0a93f 12%, transparent);
+  color: var(--text-primary);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.context-meter-compact-button:hover {
+  background: color-mix(in srgb, #f0a93f 22%, transparent);
 }

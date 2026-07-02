@@ -44,6 +44,7 @@ export function ProviderRunFailureCard({
       lines.push({ text, timestamp })
     }
   }
+  const hint = typeof metadata.hint === 'string' && metadata.hint.trim() ? metadata.hint : ''
   const copyText =
     typeof message.content === 'string' && message.content.trim()
       ? message.content
@@ -83,6 +84,7 @@ export function ProviderRunFailureCard({
           </div>
         ))}
       </pre>
+      {hint && <div className="provider-run-failure-card-hint">{hint}</div>}
       <MessageActionsChip
         onCopy={() => onCopy(message.id, copyText)}
         label="provider failure"

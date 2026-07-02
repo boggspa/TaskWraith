@@ -4848,6 +4848,100 @@ html:has(.chat-split-region.chat-split-hidden-for-settings) .transcript-user-gut
   color: var(--provider-openbmb-color, var(--text-primary));
 }
 
+/* Context-compaction card — the transcript record of a provider (or the
+ * host) shrinking a session's live context (auto mid-run, or "compact now").
+ * Same glass/rim vocabulary as .participant-health-card: teal-tinted rim on
+ * success (a healthy maintenance event, not a warning), amber on failure. */
+.context-compaction-card {
+  --context-compaction-rim: color-mix(in srgb, var(--panel-border) 60%, transparent);
+  width: min(100%, 900px);
+  margin: 6px 0;
+  padding: 9px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--context-compaction-rim);
+  background: color-mix(in srgb, var(--surface-elevated) 50%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text-primary) 3%, transparent);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+}
+.context-compaction-card.is-completed {
+  --context-compaction-rim: color-mix(in srgb, #2aa8a0 42%, var(--panel-border));
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, #2aa8a0 9%, transparent),
+    0 0 0 1px color-mix(in srgb, #2aa8a0 8%, transparent);
+}
+.context-compaction-card.is-failed {
+  --context-compaction-rim: color-mix(in srgb, #f0a93f 50%, var(--panel-border));
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, #f0a93f 10%, transparent),
+    0 0 0 1px color-mix(in srgb, #f0a93f 8%, transparent);
+}
+.context-compaction-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-primary);
+  flex-wrap: wrap;
+}
+.context-compaction-card-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.context-compaction-card.is-completed .context-compaction-card-icon {
+  color: #2aa8a0;
+}
+.context-compaction-card.is-failed .context-compaction-card-icon {
+  color: #f0a93f;
+}
+.context-compaction-card-title {
+  font-weight: 600;
+  font-size: var(--font-size-sm);
+}
+.context-compaction-card-detail {
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.context-compaction-card-provider {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px 3px 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface-base) 55%, transparent);
+  border: 1px solid color-mix(in srgb, var(--panel-border) 50%, transparent);
+  font-size: var(--font-size-xs);
+  color: var(--text-primary);
+}
+.context-compaction-card-provider.provider-codex {
+  color: var(--provider-codex-color, var(--text-primary));
+}
+.context-compaction-card-provider.provider-claude {
+  color: var(--provider-claude-color, var(--text-primary));
+}
+.context-compaction-card-provider.provider-kimi {
+  color: var(--provider-kimi-color, var(--text-primary));
+}
+.context-compaction-card-provider.provider-grok {
+  color: var(--provider-grok-color, var(--text-primary));
+}
+.context-compaction-card-provider.provider-cursor {
+  color: var(--provider-cursor-color, var(--text-primary));
+}
+.context-compaction-card-provider.provider-ollama {
+  color: var(--provider-ollama-color, var(--text-primary));
+}
+.context-compaction-card-error {
+  font-family: var(--font-mono, monospace);
+  font-size: var(--font-size-xs);
+  color: color-mix(in srgb, #f0a93f 75%, var(--text-primary));
+  overflow-wrap: anywhere;
+}
+
 /* Provider run failure — compact stderr rim bubble surfaced in the
  * transcript when a solo or ensemble participant exits non-zero.
  * Copy-friendly monospace body; danger rim so failures read at a
@@ -4950,6 +5044,16 @@ html:has(.chat-split-region.chat-split-hidden-for-settings) .transcript-user-gut
 }
 .provider-run-failure-card .message-actions-chip {
   align-self: flex-end;
+}
+/* Actionable footer hint (e.g. context-wall → "/compact or fresh thread").
+ * Amber, prose (not stderr monospace) so the remedy reads apart from the dump. */
+.provider-run-failure-card-hint {
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, #f0a93f 45%, transparent);
+  background: color-mix(in srgb, #f0a93f 9%, transparent);
+  font-size: var(--font-size-xs);
+  color: color-mix(in srgb, var(--text-primary) 88%, #f0a93f 12%);
 }
 
 .subthread-return-card {

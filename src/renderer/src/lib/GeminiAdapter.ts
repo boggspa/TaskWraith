@@ -1,6 +1,10 @@
 import { coerceRunItemEvents, type RunItemEvent } from '../../../shared/runItemEvents'
 import type { ClaudeWorkflowTelemetry } from '../../../shared/claudeWorkflow'
 import type { CodexReviewTelemetry } from '../../../shared/codexReview'
+import type {
+  ContextCompactionSignalKind,
+  ContextCompactionTelemetry
+} from '../../../shared/contextCompaction'
 
 export type NormalizedEvent =
   | {
@@ -36,6 +40,16 @@ export type NormalizedEvent =
   // Codex native-review status, keyed back to the synthesized `codex_review`
   // anchor by tool_use id. Merged onto that activity's `reviewSummary`.
   | { type: 'review_telemetry'; toolUseId?: string; telemetry: Partial<CodexReviewTelemetry> }
+  // Provider context-window compaction (src/shared/contextCompaction.ts) —
+  // rides its own compat line so it can never enter the assistant-text lanes.
+  // The renderer appends a persisted `contextCompaction` system card for
+  // completed/failed signals (solo chats only; the orchestrator is canonical
+  // for ensembles).
+  | {
+      type: 'compaction_notice'
+      kind: ContextCompactionSignalKind
+      telemetry: ContextCompactionTelemetry
+    }
   | {
       type: 'tool_event'
       name: string
@@ -145,6 +159,37 @@ export class GeminiStreamAdapter {
           typeof parsed.provider === 'string' && parsed.provider && !review.provider
             ? { ...review, provider: parsed.provider }
             : review
+      })
+      return
+    }
+
+    // Provider context-compaction signals ride their own compat line, same
+    // pattern as workflow_event/review_event — intercept before the
+    // visible-progress / tool-event paths so they never render as tool rows.
+    if (parsed.type === 'compaction_event') {
+      const compaction =
+        parsed.compaction &&
+        typeof parsed.compaction === 'object' &&
+        !Array.isArray(parsed.compaction)
+          ? parsed.compaction
+          : {}
+      const kind: ContextCompactionSignalKind =
+        compaction.kind === 'started' || compaction.kind === 'failed'
+          ? compaction.kind
+          : 'completed'
+      const telemetry =
+        compaction.telemetry &&
+        typeof compaction.telemetry === 'object' &&
+        !Array.isArray(compaction.telemetry)
+          ? compaction.telemetry
+          : {}
+      this.onEvent({
+        type: 'compaction_notice',
+        kind,
+        telemetry:
+          typeof parsed.provider === 'string' && parsed.provider && !telemetry.provider
+            ? { ...telemetry, provider: parsed.provider }
+            : telemetry
       })
       return
     }

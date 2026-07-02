@@ -172,6 +172,9 @@ export interface ComposerProps {
   contextMeter: any
   contextModelId: any
   contextUsedPercent: any
+  /** Provider-native "compact now" for this chat's linked session (solo
+   * claude/codex, idle). Undefined hides the popover's compact button. */
+  onCompactContext?: () => void
   cumulativeRunBaseMs: any
   currentActiveGoal: any
   currentChat: any
@@ -471,6 +474,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     composerTokenTally,
     contextLabel,
     contextMeter,
+    onCompactContext,
     contextModelId,
     contextUsedPercent,
     cumulativeRunBaseMs,
@@ -3578,6 +3582,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                   label={contextLabel}
                                   provider={currentProvider}
                                   composerStyle={appearance.composerStyle}
+                                  onCompactContext={onCompactContext}
                                 />
                               )}
                               {participantSeatMutation?.queueAtTurnEnd && (
@@ -4053,6 +4058,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             label={contextLabel}
                             provider={currentProvider}
                             composerStyle={appearance.composerStyle}
+                            onCompactContext={onCompactContext}
                           />
                         )}
                         {steerIndicatorMessage && (

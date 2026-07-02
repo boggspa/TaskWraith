@@ -933,7 +933,8 @@ export function ContextWheel({
   label,
   codexShell = false,
   claudeShell = false,
-  cursorShell = false
+  cursorShell = false,
+  severity = 'ok'
 }: {
   percent: number
   label: string
@@ -943,6 +944,9 @@ export function ContextWheel({
   claudeShell?: boolean
   /** Cursor composer shell — 10% smaller ring with a thicker stroke. */
   cursorShell?: boolean
+  /** Context pressure (shared contextPressureSeverity thresholds) — tints the
+   * ring amber at warn (≥80%) and red at critical (≥95%). */
+  severity?: 'ok' | 'warn' | 'critical'
 }) {
   const clamped = Math.max(0, Math.min(100, percent))
   const radius = 5.5
@@ -952,7 +956,7 @@ export function ContextWheel({
   const remainingDash = circumference - dash
   return (
     <span
-      className="context-wheel"
+      className={`context-wheel${severity !== 'ok' ? ` context-wheel--${severity}` : ''}`}
       title={label}
       aria-label={`Context ${Math.round(clamped)}% used (${label})`}
     >
