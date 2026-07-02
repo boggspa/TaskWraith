@@ -17344,12 +17344,25 @@ function App(): React.JSX.Element {
   const compactableParticipantIds = useMemo(() => {
     if (!isCurrentEnsembleChat || isCurrentChatRunning) return undefined
     const ids = (currentChat?.ensemble?.participants || [])
-      .filter(
-        (participant) =>
-          participant.enabled !== false &&
-          (participant.provider === 'claude' || participant.provider === 'codex') &&
-          Boolean(participant.linkedProviderSessionId)
-      )
+      .filter((participant) => {
+        if (participant.enabled === false) return false
+        // Native levers need a resumable session; kimi's host lane carries its
+        // material in-prompt, so any seat that has spoken qualifies.
+        if (
+          participant.provider === 'claude' ||
+          participant.provider === 'codex' ||
+          participant.provider === 'cursor'
+        ) {
+          return Boolean(participant.linkedProviderSessionId)
+        }
+        if (participant.provider === 'kimi') {
+          return (
+            Boolean(participant.linkedProviderSessionId) ||
+            (participant.tokenTotals?.total_tokens || 0) > 0
+          )
+        }
+        return false
+      })
       .map((participant) => participant.id)
     return ids.length > 0 ? ids : undefined
   }, [isCurrentEnsembleChat, isCurrentChatRunning, currentChat])
@@ -20846,10 +20859,16 @@ function App(): React.JSX.Element {
               // (success or failure) is appended main-side, which also
               // re-checks round liveness authoritatively.
               const seat = slashSelectedParticipant
+              const seatSessionOk =
+                Boolean(seat?.linkedProviderSessionId) ||
+                (seat?.provider === 'kimi' && (seat?.tokenTotals?.total_tokens || 0) > 0)
               const canNativelyCompactSeat =
                 Boolean(seat) &&
-                (seat!.provider === 'claude' || seat!.provider === 'codex') &&
-                Boolean(seat!.linkedProviderSessionId) &&
+                (seat!.provider === 'claude' ||
+                  seat!.provider === 'codex' ||
+                  seat!.provider === 'cursor' ||
+                  seat!.provider === 'kimi') &&
+                seatSessionOk &&
                 Boolean(chat?.appChatId && !runningChatIds.has(chat.appChatId))
               if (canNativelyCompactSeat && chat && seat) {
                 ctx.consumeSlashToken()
