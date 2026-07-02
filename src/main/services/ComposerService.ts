@@ -320,6 +320,7 @@ export class ComposerService {
       codexHandoffsApplied,
       isGlobalRun: scope === 'global',
       approvalMode,
+      workflowMode,
       runtimePreambleVersion: metadataString(chat, 'taskWraithRuntimePreambleVersion'),
       runtimePreambleProvider: metadataString(chat, 'taskWraithRuntimePreambleProvider'),
       providerLabel: getProviderLabel(provider),

@@ -1574,7 +1574,53 @@ describe('Ollama ensemble prompt budgeting', () => {
     expect(prompt).toContain('Local Ollama participant notes:')
     expect(prompt).toContain('TaskWraith gives you real workspace tools')
     expect(prompt).toContain('sized for your local context window')
-    expect(prompt).toContain('TaskWraith local-scout workflow')
+    // Ensemble ollama seats get the findings-shaped recon hint unless they
+    // are the designated plan owner of a plan-workflow chat — the old
+    // plan-drafting scout hint contradicted the read_only anti-plan rule.
+    expect(prompt).toContain('TaskWraith local-recon workflow')
+    expect(prompt).not.toContain('When the plan is ready, ask the user')
+  })
+
+  it('keeps the plan-drafting hint only for the designated plan owner of a plan-workflow chat', () => {
+    const ollamaParticipant: EnsembleParticipant = {
+      id: 'ollama-gemma',
+      provider: 'ollama',
+      enabled: true,
+      role: 'Builder',
+      instructions: 'Add smoke tests.',
+      order: 4,
+      permissionPresetId: 'workspace_write',
+      model: 'gemma4:12b'
+    }
+    const planChat = { ...chat(), workflowMode: 'plan' as const }
+    const baseConfig = {
+      ...ensemble,
+      participants: [...ensemble.participants, ollamaParticipant],
+      ensembleContextChars: 200_000
+    }
+    // No bossman → the LAST ordered participant is the plan owner, which is
+    // this ollama seat: it keeps the plan-shaped scout hint.
+    const ownerPrompt = buildEnsembleParticipantPrompt({
+      chat: planChat,
+      config: baseConfig,
+      participant: ollamaParticipant,
+      currentPrompt: 'Add a Zig joke test.',
+      roundId: 'round-ollama-owner',
+      chatContextTurns: 10
+    })
+    expect(ownerPrompt).toContain('TaskWraith local-scout workflow')
+    // A bossman elsewhere on the panel owns the plan → this ollama seat is a
+    // contributor and gets the recon hint even in plan workflow.
+    const contributorPrompt = buildEnsembleParticipantPrompt({
+      chat: planChat,
+      config: { ...baseConfig, bossmanParticipantId: 'claude' },
+      participant: ollamaParticipant,
+      currentPrompt: 'Add a Zig joke test.',
+      roundId: 'round-ollama-contributor',
+      chatContextTurns: 10
+    })
+    expect(contributorPrompt).toContain('TaskWraith local-recon workflow')
+    expect(contributorPrompt).not.toContain('When the plan is ready, ask the user')
   })
 })
 

@@ -20,7 +20,10 @@ const PROVIDER_LABELS: Record<ProviderId, string> = {
 const MAX_MESSAGE_CHARS = 4000
 const MAX_TRANSCRIPT_CHARS = 24000
 import { formatScoutBriefsForPrompt, type ScoutBriefRecord } from './ScoutBrief'
-import { ollamaScoutDelegateWorkflowHint } from './ollama/OllamaModelProfiles'
+import {
+  ollamaScoutDelegateWorkflowHint,
+  type OllamaWorkflowHintIntent
+} from './ollama/OllamaModelProfiles'
 import {
   OLLAMA_ENSEMBLE_MAX_CONTEXT_TURNS,
   OLLAMA_ENSEMBLE_MAX_TRANSCRIPT_CHARS,
@@ -591,6 +594,17 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
     orderedParticipants,
     input.participant
   )
+  // Recon-aware ollama workflow hint: the local-scout hint used to say
+  // "draft a short implementation plan… ask the user", directly
+  // contradicting the read_only anti-plan rule further down for every
+  // read-only local seat. Only the designated plan owner in a
+  // plan-workflow chat keeps the plan-shaped variant; every other ollama
+  // seat gets the findings-shaped recon hint.
+  const ollamaHintIntent: OllamaWorkflowHintIntent =
+    isPlanWorkflowChat(input.chat) &&
+    resolveEnsemblePlanOwnerId(input.config, orderedParticipants) === input.participant.id
+      ? 'plan'
+      : 'recon'
   // Threaded into the tagged-transcript builder so every
   // `[Provider / Role #pN]` header carries the same handle the
   // roster + self-label use.
@@ -653,7 +667,7 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
           ollamaTranscriptBudget?.autoCompacted
             ? '- The tagged transcript below is auto-compacted for your local context window; call list_directory or read_file when you need file contents the transcript omitted.'
             : '- The tagged transcript below is sized for your local context window; call list_directory or read_file when you need more file detail.',
-          ollamaScoutDelegateWorkflowHint(input.participant.model)
+          ollamaScoutDelegateWorkflowHint(input.participant.model, ollamaHintIntent)
         ]
       : []),
     '',

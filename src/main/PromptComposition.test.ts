@@ -597,7 +597,8 @@ describe('composeRunPrompt sub-thread returns', () => {
     expect(result.applicationLog).toContain(
       `${resolveOllamaContextBudget('qwen3.5:9b').maxBlockChars} char cap`
     )
-    expect(result.contextualPrompt).toContain('local-scout workflow')
+    // No workflowMode supplied → recon variant (findings-shaped) by default.
+    expect(result.contextualPrompt).toContain('local-recon workflow')
     expect(result.contextTurnsApplied).toBeLessThanOrEqual(10)
   })
 
@@ -665,7 +666,7 @@ describe('composeRunPrompt sub-thread returns', () => {
 
     expect(result.contextualPrompt).toContain('Prior Ollama session memory')
     expect(result.contextualPrompt.indexOf('Prior Ollama session memory')).toBeLessThan(
-      result.contextualPrompt.indexOf('local-scout workflow')
+      result.contextualPrompt.indexOf('local-recon workflow')
     )
   })
 
@@ -867,5 +868,106 @@ describe('image-tool discoverability (PR5)', () => {
       runtimePreambleProvider: 'claude'
     })
     expect(result.contextualPrompt).not.toContain('TaskWraith image tools are available over MCP')
+  })
+})
+
+describe('composeRunPrompt read-only recon steer', () => {
+  const base = {
+    finalPrompt: 'Review the auth module for risks.',
+    messages: [] as ChatMessage[],
+    chatContextTurns: 6,
+    codexHandoffsApplied: [] as string[],
+    isGlobalRun: false,
+    approvalMode: 'plan',
+    providerLabel: 'Kimi'
+  }
+
+  it('injects the recon steer for a plan-approvalMode run on a NORMAL workflow (Read-Only/Recon)', () => {
+    const result = composeRunPrompt({
+      ...base,
+      provider: 'kimi',
+      workflowMode: 'normal'
+    })
+    expect(result.contextualPrompt).toContain('TaskWraith read-only recon turn')
+    expect(result.contextualPrompt).toContain('this turn IS the deliverable')
+    expect(result.applicationLog).toContain('recon steer injected')
+    // Plan mode still suppresses the runtime preamble — steer is standalone.
+    expect(result.contextualPrompt).not.toContain('TaskWraith runtime note')
+  })
+
+  it('does NOT inject the steer for Plan workflow, despite the byte-identical posture', () => {
+    const result = composeRunPrompt({
+      ...base,
+      provider: 'kimi',
+      workflowMode: 'plan'
+    })
+    expect(result.contextualPrompt).not.toContain('TaskWraith read-only recon turn')
+    expect(result.applicationLog).not.toContain('recon steer injected')
+  })
+
+  it('does NOT inject the steer when workflowMode is absent (legacy caller)', () => {
+    const result = composeRunPrompt({
+      ...base,
+      provider: 'kimi'
+    })
+    expect(result.contextualPrompt).not.toContain('TaskWraith read-only recon turn')
+  })
+
+  it('does NOT inject the steer on non-plan approval modes', () => {
+    const result = composeRunPrompt({
+      ...base,
+      provider: 'claude',
+      providerLabel: 'Claude',
+      approvalMode: 'default',
+      workflowMode: 'normal'
+    })
+    expect(result.contextualPrompt).not.toContain('TaskWraith read-only recon turn')
+  })
+
+  it('does NOT inject the steer on global runs', () => {
+    const result = composeRunPrompt({
+      ...base,
+      provider: 'kimi',
+      isGlobalRun: true,
+      workflowMode: 'normal'
+    })
+    expect(result.contextualPrompt).not.toContain('TaskWraith read-only recon turn')
+  })
+
+  it('excludes ollama (approvalMode is force-plan there; the tier hint carries its posture text)', () => {
+    const result = composeRunPrompt({
+      ...base,
+      provider: 'ollama',
+      providerLabel: 'Ollama',
+      workflowMode: 'normal',
+      ollamaToolControlTier: 'read_only'
+    })
+    expect(result.contextualPrompt).not.toContain('TaskWraith read-only recon turn')
+  })
+})
+
+describe('composeRunPrompt ollama workflow-hint intent', () => {
+  const base = {
+    provider: 'ollama' as const,
+    finalPrompt: 'Investigate the failing login flow in src/auth.',
+    messages: [] as ChatMessage[],
+    chatContextTurns: 6,
+    codexHandoffsApplied: [] as string[],
+    isGlobalRun: false,
+    approvalMode: 'plan',
+    providerLabel: 'Ollama',
+    ollamaToolControlTier: 'read_only' as const
+  }
+
+  it('uses the findings-shaped recon hint for normal-workflow read-only runs', () => {
+    const result = composeRunPrompt({ ...base, workflowMode: 'normal' })
+    expect(result.contextualPrompt).toContain('TaskWraith local-recon workflow')
+    expect(result.contextualPrompt).not.toContain('draft a short implementation plan')
+  })
+
+  it('keeps the plan-drafting scout hint for Plan-workflow runs', () => {
+    const result = composeRunPrompt({ ...base, workflowMode: 'plan' })
+    expect(result.contextualPrompt).toContain('TaskWraith local-scout workflow')
+    expect(result.contextualPrompt).toContain('When the plan is ready, ask the user')
   })
 })

@@ -92,6 +92,25 @@ const TASKWRAITH_IMAGE_TOOLS_NOTE =
   'TaskWraith image tools are available over MCP: image_edit (blur/redact/crop/resize an existing image), svg_rasterize (render an SVG you produced to a PNG — the transcript does not show SVG inline), and image_generate (text-to-image, only when the user has enabled it with an API key in Settings; otherwise the call is refused). Prefer these over shelling out or pasting data URLs.'
 
 /**
+ * Read-Only/Recon posture steer (spike 2 of
+ * docs/ensemble-posture-fanout-preamble-design.md). Plan-mode runs skip the
+ * runtime preamble entirely, which previously left a solo Read-Only/Recon
+ * turn with ZERO posture text — while several providers' native plan personas
+ * (activated because both presets share `approvalMode: 'plan'`) pushed
+ * plan-shaped output. Modeled on GROK_READ_ONLY_PROMPT_PREAMBLE plus the
+ * ensemble anti-plan rule in EnsemblePrompt.ts. Belt-and-braces: the primary
+ * fix is not activating the provider's plan persona for recon seats at all
+ * (see isReconRunPosture call sites); this steer shapes the output of
+ * providers that still conflate the two.
+ */
+export const TASKWRAITH_RECON_STEER_NOTE = [
+  'TaskWraith read-only recon turn: you are running under a Read-Only/Recon posture (review/investigation), NOT Plan workflow.',
+  'Answer the request directly and in place: report findings, evidence (cite files/lines where relevant), and risks.',
+  'Do not draft a step-by-step implementation plan, do not present a plan for approval, and do not stop to ask whether to proceed — this turn IS the deliverable.',
+  'Writes and shell mutations are unavailable on this turn: if a change would be needed, describe what you would change and why instead of attempting it.'
+].join('\n')
+
+/**
  * Shared edit-discipline note appended to every write-capable cloud-provider
  * preamble (gemini/claude/kimi/codex/cursor/grok). Plan-mode/read-only runs
  * never reach these preambles, so this only governs runs that can actually
@@ -509,6 +528,13 @@ export interface ComposeRunPromptInput {
   isGlobalRun: boolean
   /** Resolved approval mode for the run ('default' | 'plan' | etc.). */
   approvalMode: string
+  /** Chat workflow mode for the run ('plan' = Plan workflow, 'normal'
+   * otherwise). Gates the read-only recon steer: only an EXPLICIT 'normal'
+   * paired with `approvalMode === 'plan'` (i.e. Read-Only/Recon, which shares
+   * the plan approvalMode wire value) injects it. Absent = unknown legacy
+   * caller = no steer, preserving pre-spike behavior. Also picks the
+   * plan-vs-recon variant of the Ollama tier workflow hint. */
+  workflowMode?: string
   /** Version of the TaskWraith runtime preamble already known to this provider session. */
   runtimePreambleVersion?: string | null
   /** Provider whose runtime preamble version was last persisted for this chat. */
@@ -756,6 +782,22 @@ export function composeRunPrompt(input: ComposeRunPromptInput): ComposeRunPrompt
     runtimePreambleInjected = true
   }
 
+  // (3b) Read-Only/Recon steer — mutually exclusive with the runtime preamble
+  // (which requires approvalMode !== 'plan'). Fires per-turn because posture
+  // can change turn-to-turn via the composer picker. Ollama is excluded: its
+  // approvalMode is force-'plan' on every run (the tool tier is its real
+  // posture) and its posture text is the tier-aware workflow hint below.
+  // Global runs are excluded to keep General chats non-technical.
+  if (
+    provider !== 'ollama' &&
+    !isGlobalRun &&
+    approvalMode === 'plan' &&
+    input.workflowMode === 'normal'
+  ) {
+    contextualPrompt = `${TASKWRAITH_RECON_STEER_NOTE}\n\n${contextualPrompt}`
+    applicationLog = `${applicationLog}; recon steer injected`
+  }
+
   // Resumed-session image discoverability: the full preamble (which already
   // names the image tools) is suppressed on resumable sessions, so if THIS turn
   // is image-related, re-inject just the image-tools note. Skipped when the full
@@ -777,7 +819,15 @@ export function composeRunPrompt(input: ComposeRunPromptInput): ComposeRunPrompt
     const promptIntent = ollamaPromptIntent || 'workspace'
     if (promptIntent === 'workspace') {
       const sessionMemoryBlock = formatOllamaSessionMemoryForPrompt(ollamaSessionMemory)
-      const scoutHint = ollamaTierAwareWorkflowHint(nextModel, ollamaToolControlTier)
+      const scoutHint = ollamaTierAwareWorkflowHint(
+        nextModel,
+        ollamaToolControlTier,
+        // Read-only tier + Plan workflow keeps the plan-drafting scout hint;
+        // everything else (incl. absent workflowMode) gets the recon variant
+        // so a read-only local seat reports findings instead of being told
+        // to "draft a short implementation plan".
+        input.workflowMode === 'plan' ? 'plan' : 'recon'
+      )
       contextualPrompt = [sessionMemoryBlock, scoutHint, contextualPrompt]
         .filter(Boolean)
         .join('\n\n')

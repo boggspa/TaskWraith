@@ -109,10 +109,29 @@ describe('ollamaLocalToolSystemPrompt', () => {
 
 describe('workflow hints', () => {
   it('documents scout escalation without defaulting to cloud implementation', () => {
-    expect(ollamaScoutDelegateWorkflowHint('qwen3.5:9b')).toContain('continue locally')
-    expect(ollamaScoutDelegateWorkflowHint('ornith:35b')).toContain('higher tier/profile')
-    expect(ollamaScoutDelegateWorkflowHint('lfm2.5:8b')).toContain('continue locally')
-    expect(ollamaScoutDelegateWorkflowHint('ornith:35b')).not.toContain('Codex or Claude')
+    expect(ollamaScoutDelegateWorkflowHint('qwen3.5:9b', 'plan')).toContain('continue locally')
+    expect(ollamaScoutDelegateWorkflowHint('ornith:35b', 'plan')).toContain('higher tier/profile')
+    expect(ollamaScoutDelegateWorkflowHint('lfm2.5:8b', 'plan')).toContain('continue locally')
+    expect(ollamaScoutDelegateWorkflowHint('ornith:35b', 'plan')).not.toContain('Codex or Claude')
+    // Default stays the plan variant so intent-unaware callers keep behavior.
+    expect(ollamaScoutDelegateWorkflowHint('qwen3.5:9b')).toContain(
+      'TaskWraith local-scout workflow'
+    )
+  })
+
+  it('emits a findings-shaped recon variant that never asks the model to draft a plan', () => {
+    for (const model of ['qwen3.5:9b', 'ornith:35b', 'some-unknown-model']) {
+      const hint = ollamaScoutDelegateWorkflowHint(model, 'recon')
+      expect(hint).toContain('TaskWraith local-recon workflow')
+      expect(hint).toContain('read-only review turn, not a planning turn')
+      expect(hint).not.toContain('implementation plan.')
+      expect(hint).not.toContain('When the plan is ready')
+      expect(hint).not.toContain('ask the user whether to continue')
+    }
+    // Non-read_only tiers ignore the intent entirely.
+    expect(ollamaTierAwareWorkflowHint('gpt-oss:20b', 'approved_edits', 'recon')).toContain(
+      'approved-patcher workflow'
+    )
   })
 
   it('documents approved patcher behavior without default delegation', () => {

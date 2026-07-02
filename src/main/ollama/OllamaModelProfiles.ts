@@ -271,13 +271,36 @@ export function ollamaLocalToolSystemPrompt(
   return lines.join('\n')
 }
 
-export function ollamaScoutDelegateWorkflowHint(modelId?: string | null): string {
-  return ollamaTierAwareWorkflowHint(modelId, 'read_only')
+/**
+ * Which flavor of the read-only-tier workflow hint to emit.
+ *
+ *   - 'plan'  — legacy local-scout hint: search/read, then DRAFT A PLAN and
+ *     ask the user how to proceed. Correct only when the run is genuinely in
+ *     Plan workflow (or, in an ensemble, when this seat is the designated
+ *     plan owner of a plan-workflow chat).
+ *   - 'recon' — findings-shaped hint: search/read, then report findings in
+ *     place. Correct for Read-Only/Recon posture, which is review posture,
+ *     not plan ownership (spike 2 of
+ *     docs/ensemble-posture-fanout-preamble-design.md — the plan-drafting
+ *     hint on read-only tiers was TaskWraith's own self-inflicted source of
+ *     plan-shaped recon output for local models).
+ *
+ * Defaults to 'plan' so callers that have not been made intent-aware keep
+ * their existing behavior. Tiers other than read_only ignore the intent.
+ */
+export type OllamaWorkflowHintIntent = 'plan' | 'recon'
+
+export function ollamaScoutDelegateWorkflowHint(
+  modelId?: string | null,
+  intent: OllamaWorkflowHintIntent = 'plan'
+): string {
+  return ollamaTierAwareWorkflowHint(modelId, 'read_only', intent)
 }
 
 export function ollamaTierAwareWorkflowHint(
   modelId?: string | null,
-  tier: OllamaToolControlTier | string | undefined | null = 'read_only'
+  tier: OllamaToolControlTier | string | undefined | null = 'read_only',
+  intent: OllamaWorkflowHintIntent = 'plan'
 ): string {
   const normalizedTier = normalizeOllamaToolControlTier(tier)
   const family = resolveOllamaModelFamily(modelId || '')
@@ -309,7 +332,7 @@ export function ollamaTierAwareWorkflowHint(
       'Delegation is available only through TaskWraith tools in this tier; use it for broad refactors or long autonomous loops, not as a default.'
     ].join(' ')
   }
-  const scout =
+  const capableScoutFamily =
     family === 'qwen3_5_9b' ||
     family === 'qwen3_6_35b' ||
     family === 'qwen3_4b' ||
@@ -321,8 +344,19 @@ export function ollamaTierAwareWorkflowHint(
     family === 'granite4_1_3b' ||
     family === 'granite4_1_30b' ||
     family === 'nemotron3_33b'
-      ? 'Use this Ollama thread to search, read the relevant files, and draft a short implementation plan.'
-      : 'Use this local thread to explore the workspace and outline the next steps.'
+  if (intent === 'recon') {
+    return [
+      'TaskWraith local-recon workflow:',
+      capableScoutFamily
+        ? 'Use this Ollama thread to search, read the relevant files, and report your findings directly.'
+        : 'Use this local thread to explore the workspace and report what you find.',
+      'This is a read-only review turn, not a planning turn: answer in place with findings, evidence, and risks, plus handoff-worthy next steps only when they are genuinely useful. Do not draft an implementation plan and do not stop to ask whether to proceed.',
+      'Do not attempt repo-wide refactors or full test-suite repair loops without confirming scope, tier, context, and verification path.'
+    ].join(' ')
+  }
+  const scout = capableScoutFamily
+    ? 'Use this Ollama thread to search, read the relevant files, and draft a short implementation plan.'
+    : 'Use this local thread to explore the workspace and outline the next steps.'
   return [
     'TaskWraith local-scout workflow:',
     scout,
