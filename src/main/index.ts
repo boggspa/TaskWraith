@@ -997,6 +997,7 @@ import { tryRunGeminiApi } from './GeminiApiProvider'
 import { handleEnsembleContinue } from './EnsembleContinue'
 import { evaluateBossmanAutoApproval } from './BossmanAutoApproval'
 import { resolveRosterUpdateBossmanAssignment } from './EnsembleRosterUpdate'
+import { buildEnsembleYieldToolResult } from './EnsembleYieldToolResult'
 import { handleScoutBrief, type ScoutBriefConfidence } from './ScoutBrief'
 import { makeBlackboardEntry, upsertBlackboardEntry } from './blackboard/Blackboard'
 import { WorkspaceWriteIntentRegistry, type WriteIntentToken } from './WorkspaceWriteIntentRegistry'
@@ -17791,17 +17792,14 @@ async function executeGeminiMcpTool(
       // runtime and reorders the remaining participants so the
       // named target speaks next. Unresolved targets fall through
       // to default ordering — see EnsembleOrchestrator.runRound.
-      const yielded = ensembleOrchestratorRef?.markYielded(
-        context.appRunId || '',
-        optionalString(args.reason),
-        optionalString(args.target)
+      const reason = optionalString(args.reason)
+      const target = optionalString(args.target)
+      const yielded = Boolean(
+        ensembleOrchestratorRef?.markYielded(context.appRunId || '', reason, target)
       )
-      text = mcpJson({
-        ok: Boolean(yielded),
-        tool: 'ensemble_yield',
-        reason: optionalString(args.reason),
-        target: optionalString(args.target)
-      })
+      const result = buildEnsembleYieldToolResult({ yielded, reason, target })
+      toolIsError = result.ok === false
+      text = mcpJson(result)
     } else if (toolName === 'ensemble_send') {
       const result = ensembleOrchestratorRef?.sendSideMessageForRun(context.appRunId, {
         to: args.to,
