@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { foldBridgeRunText } from './BridgeTextFold'
+import { foldBridgeRunText, isTaggedCumulativeRestatement } from './BridgeTextFold'
 
 describe('foldBridgeRunText', () => {
   it('appends the first chunk onto empty assembled text', () => {
@@ -34,5 +34,22 @@ describe('foldBridgeRunText', () => {
 
   it('no-ops empty incoming via append (caller drops it)', () => {
     expect(foldBridgeRunText('Reading.', '')).toEqual({ kind: 'append' })
+  })
+})
+
+describe('isTaggedCumulativeRestatement', () => {
+  it('matches each tag main uses to mark a restatement', () => {
+    // Claude divergent envelope.
+    expect(isTaggedCumulativeRestatement({ cumulative: true })).toBe(true)
+    // Cursor snapshot frames (index.ts applyCursorRunEvent).
+    expect(isTaggedCumulativeRestatement({ runItemCumulative: true })).toBe(true)
+    // Forward-compat parity with RunItemEventCompat's mapping.
+    expect(isTaggedCumulativeRestatement({ snapshot: true })).toBe(true)
+  })
+
+  it('treats an untagged compat payload as a verbatim increment', () => {
+    expect(isTaggedCumulativeRestatement({})).toBe(false)
+    // Only literal true counts — truthy strings/1 are not the wire contract.
+    expect(isTaggedCumulativeRestatement({ cumulative: 1, runItemCumulative: 'true' })).toBe(false)
   })
 })

@@ -176,7 +176,7 @@ import {
 } from './codex/CodexEventFormatting'
 import { BridgeDaemonClient } from './BridgeDaemonClient'
 import { bridgeResultDiffStats } from './bridge/BridgeToolDiffStats'
-import { foldBridgeRunText } from './bridge/BridgeTextFold'
+import { foldBridgeRunText, isTaggedCumulativeRestatement } from './bridge/BridgeTextFold'
 import {
   bridgeAssistantMessageMetadata,
   bridgeModelMetadataFromEvent,
@@ -6445,7 +6445,13 @@ function bridgeResultFailed(payload: Record<string, unknown>): boolean {
 function materializeBridgeRunProviderOutput(
   provider: ProviderId,
   routed: AgentRunRoute,
-  payload: any
+  payload: any,
+  // True only when called from the sendAgentCompatLine chokepoint, whose
+  // payloads carry exhaustive restatement tags (isTaggedCumulativeRestatement)
+  // — untagged text is then a verbatim increment. The raw-stdout JSON lane
+  // (legacy provider protocols, no tags) leaves this false and keeps the
+  // shape-detecting appendBridgeRunText.
+  options: { trustedCompatLane?: boolean } = {}
 ): void {
   const runId = routed.appRunId
   if (!runId) return
@@ -6492,12 +6498,23 @@ function materializeBridgeRunProviderOutput(
         // Chain link 2/3 (see registerBridgeRunTranscript).
         console.log(`[bridge-run] first delta run=${runId} (+${text.length} chars)`)
       }
-      if (payload.cumulative === true && state.content.trim().length > 0) {
+      if (isTaggedCumulativeRestatement(payload) && state.content.trim().length > 0) {
+        // Tagged restatement (Claude divergent envelope `cumulative`, Cursor
+        // snapshot `runItemCumulative`): only the tail beyond the assembled
+        // text is new; a divergent or stale restatement is dropped — the
+        // streamed deltas already hold the turn.
         const fold = foldBridgeRunText(state.content, text)
         if (fold.kind === 'skip') return
         if (fold.kind === 'append') return
         state.content = text
         appendBridgeRunTextFragment(state, fold.tail)
+      } else if (options.trustedCompatLane) {
+        // Untagged compat delta = verbatim increment (see
+        // isTaggedCumulativeRestatement) — append without shape detection so
+        // a repeated chunk that byte-matches the assembled text isn't
+        // swallowed as a stale snapshot. Desktop parity: trustedIncremental.
+        state.content += text
+        appendBridgeRunTextFragment(state, text)
       } else {
         appendBridgeRunText(state, text)
       }
@@ -6587,17 +6604,19 @@ function materializeBackgroundSubThreadProviderOutput(
     // appends. (The tagged-cumulative case is also a superset/divergent and is
     // handled by the same fold — divergent envelopes that aren't a clean
     // superset fall through to append, matching the pre-fold behavior.)
-    if (payload.cumulative === true && state.content.trim().length > 0) {
+    if (isTaggedCumulativeRestatement(payload) && state.content.trim().length > 0) {
       const fold = foldBridgeRunText(state.content, payload.text)
       // A clean superset replaces; otherwise (divergent) skip the restatement
       // — the streamed deltas already hold the turn.
       if (fold.kind === 'tail') state.content = payload.text
       // skip / append-divergent → leave the accumulated deltas as-is
     } else {
-      const fold = foldBridgeRunText(state.content, payload.text)
-      if (fold.kind !== 'skip') {
-        state.content = fold.kind === 'tail' ? payload.text : state.content + payload.text
-      }
+      // This materializer only runs from the sendAgentCompatLine chokepoint,
+      // so an untagged delta is a verbatim increment (see
+      // isTaggedCumulativeRestatement) — plain append, no shape detection.
+      // The fold used here previously swallowed a repeated chunk that
+      // byte-matched the accumulated text. Desktop parity: trustedIncremental.
+      state.content += payload.text
     }
     if (!state.flushedOnce) {
       flushBackgroundSubThreadTranscript(runId)
@@ -13108,7 +13127,7 @@ function sendAgentCompatLine(
   )
   if (!transcriptVisible) return
   materializeBackgroundSubThreadProviderOutput(provider, routed, payload)
-  materializeBridgeRunProviderOutput(provider, routed, payload)
+  materializeBridgeRunProviderOutput(provider, routed, payload, { trustedCompatLane: true })
   ensembleOrchestratorRef?.handleProviderOutput(provider, routed, payload)
   // Audit completion bridge — settles a tracked audit role-run on its terminal
   // `result` event (lifting token/cost/duration). No-ops for non-audit runs.

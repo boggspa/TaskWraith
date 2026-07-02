@@ -148,3 +148,48 @@ public enum StreamingSnapshotFold {
         return .append
     }
 }
+
+/// Decides whether one compat-line content delta goes through
+/// ``StreamingSnapshotFold`` (restatement shape detection) or appends
+/// verbatim. Desktop parity: `trustedIncremental` (commit 77cca2171).
+///
+/// Main's adapters tag every full-turn restatement — `cumulative` on the
+/// Claude divergent envelope (handled by the caller's skip, since the live
+/// bubble already holds the streamed deltas), `runItemCumulative`/`snapshot`
+/// on Cursor snapshot frames — and a six-provider audit found every other
+/// re-send path is prefix-sliced before forwarding. So on a line that
+/// verifiably came from the audited compat chokepoint, an UNTAGGED delta is a
+/// verbatim increment and must append even when it byte-matches the bubble
+/// (a repeated chunk like "test ", "test " was being fold-swallowed as a
+/// stale snapshot). Lines without that provenance (legacy raw stdout) keep
+/// the fold.
+public enum StreamingDeltaRouting {
+    public enum Decision: Equatable, Sendable {
+        /// Reconcile via ``StreamingSnapshotFold`` — tagged snapshot
+        /// restatements and all untrusted/legacy lines.
+        case fold
+        /// Verbatim increment from the audited compat lane — append as-is.
+        case appendVerbatim
+    }
+
+    public static func decide(
+        taggedSnapshotRestatement: Bool,
+        trustedCompatLine: Bool
+    ) -> Decision {
+        if taggedSnapshotRestatement { return .fold }
+        return trustedCompatLine ? .appendVerbatim : .fold
+    }
+
+    /// Provenance check: only the compat chokepoint synthesizes a non-empty
+    /// assistant `item/delta` sidecar onto the wire line — the same
+    /// structural marker the desktop derives `projectedFromRunItem` from.
+    /// Legacy raw-stdout lines never carry `runItemEvents`.
+    public static func hasAssistantDeltaSidecar(_ runItemEvents: Any?) -> Bool {
+        guard let events = runItemEvents as? [[String: Any]] else { return false }
+        return events.contains { event in
+            (event["kind"] as? String) == "item/delta"
+                && (event["channel"] as? String) == "assistant"
+                && !(((event["delta"] as? String) ?? "").isEmpty)
+        }
+    }
+}

@@ -273,3 +273,62 @@ struct StreamingSnapshotFoldTests {
             ])
     }
 }
+
+@Suite("StreamingDeltaRouting")
+struct StreamingDeltaRoutingTests {
+    @Test func taggedSnapshotRestatementAlwaysFolds() {
+        // Cursor runItemCumulative/snapshot frames reconcile via the fold
+        // regardless of provenance.
+        #expect(
+            StreamingDeltaRouting.decide(
+                taggedSnapshotRestatement: true, trustedCompatLine: true) == .fold)
+        #expect(
+            StreamingDeltaRouting.decide(
+                taggedSnapshotRestatement: true, trustedCompatLine: false) == .fold)
+    }
+
+    @Test func untaggedTrustedCompatLineAppendsVerbatim() {
+        // Desktop trustedIncremental parity: an untagged delta from the
+        // audited compat chokepoint is a verbatim increment — a repeated
+        // chunk that byte-matches the bubble must not be fold-swallowed.
+        #expect(
+            StreamingDeltaRouting.decide(
+                taggedSnapshotRestatement: false, trustedCompatLine: true) == .appendVerbatim)
+    }
+
+    @Test func untaggedUntrustedLineKeepsShapeDetection() {
+        // Legacy raw-stdout lines carry no tags — the fold stays.
+        #expect(
+            StreamingDeltaRouting.decide(
+                taggedSnapshotRestatement: false, trustedCompatLine: false) == .fold)
+    }
+
+    @Test func assistantDeltaSidecarEstablishesProvenance() {
+        let line: [String: Any] = [
+            "runItemEvents": [
+                ["kind": "item/delta", "channel": "assistant", "delta": "Hello"]
+            ]
+        ]
+        #expect(StreamingDeltaRouting.hasAssistantDeltaSidecar(line["runItemEvents"]))
+    }
+
+    @Test func nonAssistantOrEmptySidecarsDoNotEstablishProvenance() {
+        // Missing entirely (legacy raw line).
+        #expect(!StreamingDeltaRouting.hasAssistantDeltaSidecar(nil))
+        // Tool sidecar only — the line's text was not projected.
+        #expect(
+            !StreamingDeltaRouting.hasAssistantDeltaSidecar([
+                ["kind": "tool/progress", "toolName": "read_file"]
+            ]))
+        // Empty assistant delta cannot vouch for the legacy text.
+        #expect(
+            !StreamingDeltaRouting.hasAssistantDeltaSidecar([
+                ["kind": "item/delta", "channel": "assistant", "delta": ""]
+            ]))
+        // Non-assistant channel.
+        #expect(
+            !StreamingDeltaRouting.hasAssistantDeltaSidecar([
+                ["kind": "item/delta", "channel": "stdout", "delta": "x"]
+            ]))
+    }
+}

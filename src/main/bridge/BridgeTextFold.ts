@@ -20,10 +20,33 @@
  * (NOT including tool-part content) — i.e. BridgeRunTranscriptState.content.
  */
 
-export type BridgeTextFold =
-  | { kind: 'append' }
-  | { kind: 'skip' }
-  | { kind: 'tail'; tail: string }
+export type BridgeTextFold = { kind: 'append' } | { kind: 'skip' } | { kind: 'tail'; tail: string }
+
+/**
+ * True when a compat-line payload explicitly marks a full-turn cumulative
+ * restatement. Mirrors RunItemEventCompat's mapping (`cumulative ||
+ * runItemCumulative || snapshot`) — the complete tag set main's adapters use:
+ * `cumulative` on the Claude divergent envelope, `runItemCumulative` on
+ * Cursor snapshot frames.
+ *
+ * On the compat lane (sendAgentCompatLine payloads) this predicate is
+ * EXHAUSTIVE: a six-provider audit (see commit 77cca2171) found every path
+ * that can re-send already-streamed text is either prefix-sliced before
+ * forwarding or carries one of these tags, so an untagged compat delta is a
+ * verbatim increment and must be appended without shape detection — a
+ * repeated chunk that byte-matches the assembled text ("test ", "test ")
+ * would otherwise be swallowed by `foldBridgeRunText` as a stale snapshot.
+ * Raw/legacy lanes (non-compat stdout) carry no tags and keep the fold.
+ */
+export function isTaggedCumulativeRestatement(payload: {
+  cumulative?: unknown
+  runItemCumulative?: unknown
+  snapshot?: unknown
+}): boolean {
+  return (
+    payload.cumulative === true || payload.runItemCumulative === true || payload.snapshot === true
+  )
+}
 
 export function foldBridgeRunText(rendered: string, incoming: string): BridgeTextFold {
   if (!incoming) return { kind: 'append' } // caller no-ops on empty text anyway
