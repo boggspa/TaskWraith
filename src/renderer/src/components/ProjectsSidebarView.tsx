@@ -649,6 +649,7 @@ export function ProjectsSidebarView({
     <section className="sidebar-projects-view" aria-label="Projects">
       <div className="sidebar-section-header sidebar-projects-header">
         <button type="button" className="sidebar-section-header-toggle" disabled>
+          <ProjectChevron isExpanded />
           <h4 className="sidebar-section-title">Projects</h4>
         </button>
         <button

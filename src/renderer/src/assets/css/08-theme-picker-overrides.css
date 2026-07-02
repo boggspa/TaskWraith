@@ -3857,7 +3857,7 @@
 }
 
 /* Sidebar section headers should not paint full-width bars behind labels.
-   Pinned, Ensembles, and Workspace Boards join Workspaces/Chats/Recents on
+   Pinned, Ensembles, Projects, and Workspace Boards join Workspaces/Chats/Recents on
    the strip-the-rect list so the inline rim-highlight treatment below applies
    uniformly. */
 .app-sidebar .sidebar-workspace-scroll .sidebar-section-header,
@@ -3867,6 +3867,7 @@
 .app-sidebar .sidebar-local-servers-section .sidebar-section-header,
 .app-sidebar .sidebar-workflows-section .sidebar-section-header,
 .app-sidebar .sidebar-workspace-boards-section .sidebar-section-header,
+.app-sidebar .sidebar-projects-view .sidebar-section-header,
 .app-sidebar .sidebar-recents-section .sidebar-section-header,
 .app-sidebar .sidebar-pinned-section .sidebar-section-header,
 .app-sidebar .sidebar-ensembles-section .sidebar-section-header,
@@ -3877,6 +3878,7 @@
 [data-appearance="native_glass"][data-reduce-transparency="false"] .app-sidebar .sidebar-local-servers-section .sidebar-section-header,
 [data-appearance="native_glass"][data-reduce-transparency="false"] .app-sidebar .sidebar-workflows-section .sidebar-section-header,
 [data-appearance="native_glass"][data-reduce-transparency="false"] .app-sidebar .sidebar-workspace-boards-section .sidebar-section-header,
+[data-appearance="native_glass"][data-reduce-transparency="false"] .app-sidebar .sidebar-projects-view .sidebar-section-header,
 [data-appearance="native_glass"][data-reduce-transparency="false"] .app-sidebar .sidebar-pinned-section .sidebar-section-header,
 [data-appearance="native_glass"][data-reduce-transparency="false"] .app-sidebar .sidebar-ensembles-section .sidebar-section-header,
 [data-appearance="native_glass"][data-reduce-transparency="false"] .app-sidebar .sidebar-shared-section .sidebar-section-header {
@@ -3891,6 +3893,7 @@
 .app-sidebar .sidebar-local-servers-section .sidebar-section-title,
 .app-sidebar .sidebar-workflows-section .sidebar-section-title,
 .app-sidebar .sidebar-workspace-boards-section .sidebar-section-title,
+.app-sidebar .sidebar-projects-header .sidebar-section-title,
 .app-sidebar .sidebar-workspace-scroll .sidebar-section-title,
 .app-sidebar .sidebar-chats-section .sidebar-section-title,
 .app-sidebar .sidebar-chats-header .sidebar-section-title,
@@ -3947,6 +3950,7 @@
 [data-appearance="native_glass"][data-reduce-transparency="false"] .app-sidebar .sidebar-local-servers-section .sidebar-section-title,
 [data-appearance="native_glass"][data-reduce-transparency="false"] .app-sidebar .sidebar-workflows-section .sidebar-section-title,
 [data-appearance="native_glass"][data-reduce-transparency="false"] .app-sidebar .sidebar-workspace-boards-section .sidebar-section-title,
+[data-appearance="native_glass"][data-reduce-transparency="false"] .app-sidebar .sidebar-projects-header .sidebar-section-title,
 [data-appearance="native_glass"][data-reduce-transparency="false"] .app-sidebar .sidebar-workspace-scroll .sidebar-section-title,
 [data-appearance="native_glass"][data-reduce-transparency="false"] .app-sidebar .sidebar-chats-section .sidebar-section-title,
 [data-appearance="native_glass"][data-reduce-transparency="false"] .app-sidebar .sidebar-chats-header .sidebar-section-title,
