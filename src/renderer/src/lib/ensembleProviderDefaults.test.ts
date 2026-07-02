@@ -261,7 +261,7 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
     expect(getEnsembleModelDefaults('kimi').defaultModelId).toBe('kimi-k2.7-code')
   })
 
-  it('exposes returned Claude 5 family rows in ensemble model options without Mythos', () => {
+  it('exposes returned Claude 5 family rows and Sonnet 4.6 Legacy without Mythos', () => {
     const claude = getEnsembleModelDefaults('claude')
     expect(claude.modelOptions.map((option) => option.id)).not.toEqual(
       expect.arrayContaining([
@@ -270,8 +270,6 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
         'claude-opus-4-8',
         'claude-opus-4-7',
         'claude-opus-4-6',
-        // Sonnet 4.6 is retired from the picker; the stale preview placeholder is gone.
-        'claude-sonnet-4-6',
         'preview:anthropic:claude-sonnet-5',
         'preview:anthropic:claude-fable-5',
         'preview:anthropic:claude-mythos-5',
@@ -285,6 +283,7 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
       'claude-opus-4-8-1m',
       'claude-fable-5',
       'claude-sonnet-5',
+      'claude-sonnet-4-6',
       'claude-opus-4-7-1m',
       'claude-haiku-4-5'
     ])

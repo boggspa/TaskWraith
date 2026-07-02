@@ -175,6 +175,9 @@ const claudeReasoningEfforts = (enabled: ReadonlySet<string>) =>
 const CLAUDE_OPUS_REASONING_EFFORTS = claudeReasoningEfforts(
   new Set(['low', 'medium', 'high', 'xhigh', 'max', 'ultracode'])
 )
+const CLAUDE_SONNET_REASONING_EFFORTS = claudeReasoningEfforts(
+  new Set(['low', 'medium', 'high', 'max'])
+)
 const CLAUDE_HAIKU_REASONING_EFFORTS = claudeReasoningEfforts(new Set())
 export const CLAUDE_THINKING_BUDGET: Record<string, number> = {
   low: 2048,
@@ -211,16 +214,17 @@ const CLAUDE_STATIC_MODELS = [
   {
     id: CLAUDE_DEFAULT_MODEL,
     label: 'Claude Sonnet 5',
-    description: 'Balanced — extended thinking',
+    description: '1M context window — extended thinking',
     isDefault: true,
     supportedReasoningEfforts: CLAUDE_OPUS_REASONING_EFFORTS,
     defaultReasoningEffort: 'medium'
   },
   {
-    id: 'claude-haiku-4-5',
-    label: 'Claude Haiku 4.5',
-    description: 'Fast & efficient',
-    supportedReasoningEfforts: CLAUDE_HAIKU_REASONING_EFFORTS
+    id: 'claude-sonnet-4-6',
+    label: 'Claude Sonnet 4.6 Legacy',
+    description: '200K context window — legacy Sonnet',
+    supportedReasoningEfforts: CLAUDE_SONNET_REASONING_EFFORTS,
+    defaultReasoningEffort: 'medium'
   },
   {
     id: 'claude-opus-4-7-1m',
@@ -229,6 +233,12 @@ const CLAUDE_STATIC_MODELS = [
     supportedReasoningEfforts: CLAUDE_OPUS_REASONING_EFFORTS,
     defaultReasoningEffort: 'medium',
     additionalSpeedTiers: ['fast']
+  },
+  {
+    id: 'claude-haiku-4-5',
+    label: 'Claude Haiku 4.5',
+    description: 'Fast & efficient',
+    supportedReasoningEfforts: CLAUDE_HAIKU_REASONING_EFFORTS
   },
   { id: 'custom', label: 'Custom model ID' }
 ]

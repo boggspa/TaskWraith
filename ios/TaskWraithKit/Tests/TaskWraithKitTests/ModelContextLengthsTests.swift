@@ -73,13 +73,24 @@ struct ModelContextLengthsTests {
         #expect(row?.formatted == "1.0M")
     }
 
-    @Test("claude-sonnet-5 row: 200_000 / 200k")
+    @Test("claude-sonnet-5 row: 1_000_000 / 1.0M")
     func claudeSonnet5() {
         let groups = ModelContextLengths.buildGroups()
         let row = groups.first { $0.provider == "claude" }?
             .models.first { $0.modelId == "claude-sonnet-5" }
         #expect(row != nil)
         #expect(row?.label == "Claude Sonnet 5")
+        #expect(row?.contextWindow == 1_000_000)
+        #expect(row?.formatted == "1.0M")
+    }
+
+    @Test("claude-sonnet-4-6 row: 200_000 / 200k")
+    func claudeSonnet46Legacy() {
+        let groups = ModelContextLengths.buildGroups()
+        let row = groups.first { $0.provider == "claude" }?
+            .models.first { $0.modelId == "claude-sonnet-4-6" }
+        #expect(row != nil)
+        #expect(row?.label == "Claude Sonnet 4.6 Legacy")
         #expect(row?.contextWindow == 200_000)
         #expect(row?.formatted == "200k")
     }
@@ -92,6 +103,7 @@ struct ModelContextLengthsTests {
             "claude-opus-4-8-1m",
             "claude-fable-5",
             "claude-sonnet-5",
+            "claude-sonnet-4-6",
             "claude-opus-4-7-1m",
             "claude-haiku-4-5",
         ])

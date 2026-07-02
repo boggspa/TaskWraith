@@ -50,6 +50,7 @@ describe('Claude provider model defaults', () => {
     expect(ids).not.toContain('claude-mythos-5')
     expect(ids).not.toContain('claude-fable-5-1m')
     expect(ids).toContain('claude-sonnet-5')
+    expect(ids).toContain('claude-sonnet-4-6')
     expect(ids).not.toContain('preview:anthropic:claude-sonnet-5')
     expect(ids).not.toContain('preview:anthropic:claude-fable-5')
     expect(ids).not.toContain('preview:anthropic:claude-mythos-5')
@@ -88,11 +89,12 @@ describe('Claude provider model defaults', () => {
   it('resolves family-specific Claude reasoning defaults', () => {
     const byId = new Map(CLAUDE_DEFAULT_MODELS.map((model) => [model.id, model]))
     const sonnet5Reasoning = resolveClaudeReasoningEfforts(byId.get('claude-sonnet-5'))
+    const legacySonnetReasoning = resolveClaudeReasoningEfforts(byId.get('claude-sonnet-4-6'))
     const opusReasoning = resolveClaudeReasoningEfforts(byId.get('claude-opus-4-8-1m'))
     const fableReasoning = resolveClaudeReasoningEfforts(byId.get('claude-fable-5'))
     const haikuReasoning = resolveClaudeReasoningEfforts(byId.get('claude-haiku-4-5'))
-    // Sonnet 5 shares the full Opus ladder with every effort enabled (unlike the
-    // retired Sonnet 4.6, which capped xhigh/ultracode).
+    // Sonnet 5 shares the full Opus ladder with every effort enabled; legacy
+    // Sonnet 4.6 still caps xhigh/ultracode.
     expect(sonnet5Reasoning.map((option) => option.reasoningEffort)).toEqual([
       'low',
       'medium',
@@ -102,6 +104,11 @@ describe('Claude provider model defaults', () => {
       'ultracode'
     ])
     expect(sonnet5Reasoning.filter((option) => option.disabled)).toEqual([])
+    expect(
+      legacySonnetReasoning
+        .filter((option) => option.disabled)
+        .map((option) => option.reasoningEffort)
+    ).toEqual(['xhigh', 'ultracode'])
     expect(opusReasoning.map((option) => option.reasoningEffort)).toEqual([
       'low',
       'medium',

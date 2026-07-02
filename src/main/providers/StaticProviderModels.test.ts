@@ -73,7 +73,7 @@ describe('normalizeCliProviderModel (claude)', () => {
     expect(normalizeCliProviderModel('claude', 'custom')).toBe('claude-sonnet-5')
   })
 
-  it('keeps the retired Sonnet 4.6 id runnable for historical selections', () => {
+  it('keeps the legacy Sonnet 4.6 id runnable for historical selections', () => {
     expect(normalizeCliProviderModel('claude', 'claude-sonnet-4-6')).toBe('claude-sonnet-4-6')
   })
 })
@@ -290,9 +290,15 @@ describe('getStaticProviderModels (claude)', () => {
     expect(previewById.get('claude-mythos-5')).toBeUndefined()
   })
 
-  it('marks Claude Sonnet 5 as the concrete default and retires Sonnet 4.6 from the picker', () => {
-    expect(byId.get('claude-sonnet-5')).toMatchObject({ isDefault: true })
-    expect(byId.get('claude-sonnet-4-6')).toBeUndefined()
+  it('marks Claude Sonnet 5 as the default and keeps Sonnet 4.6 Legacy selectable', () => {
+    expect(byId.get('claude-sonnet-5')).toMatchObject({
+      isDefault: true,
+      description: '1M context window — extended thinking'
+    })
+    expect(byId.get('claude-sonnet-4-6')).toMatchObject({
+      label: 'Claude Sonnet 4.6 Legacy',
+      description: '200K context window — legacy Sonnet'
+    })
   })
 
   it('keeps the paid Fast tier on the default 1M Opus rows', () => {
@@ -303,6 +309,7 @@ describe('getStaticProviderModels (claude)', () => {
 
   it('offers family-specific Claude reasoning efforts', () => {
     const sonnetReasoning = byId.get('claude-sonnet-5')?.supportedReasoningEfforts ?? []
+    const legacySonnetReasoning = byId.get('claude-sonnet-4-6')?.supportedReasoningEfforts ?? []
     const opusReasoning = byId.get('claude-opus-4-8-1m')?.supportedReasoningEfforts ?? []
     const fableReasoning = byId.get('claude-fable-5')?.supportedReasoningEfforts ?? []
     const haikuReasoning = byId.get('claude-haiku-4-5')?.supportedReasoningEfforts ?? []
@@ -315,6 +322,11 @@ describe('getStaticProviderModels (claude)', () => {
         .filter((e) => e.disabled)
         .map((e) => e.reasoningEffort)
     ).toEqual([])
+    expect(
+      legacySonnetReasoning
+        .filter((e) => e.disabled)
+        .map((e) => e.reasoningEffort)
+    ).toEqual(['xhigh', 'ultracode'])
     expect(opusReasoning.map((e) => e.reasoningEffort)).toEqual([
       'low',
       'medium',
