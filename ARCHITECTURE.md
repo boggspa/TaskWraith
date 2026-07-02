@@ -73,6 +73,12 @@ the capability keys a run claims to affect, the evidence refs that support each
 capability cell, completion claims, unsupported claims, touched files, and any
 repo-convention observations gathered during the run.
 
+Agents emit packs through the `evidence_pack_write` MCP tool. The tool stamps
+workspace, chat, run, and provider context from the active run, accepts ergonomic
+aliases such as `cells`, `claims`, and `changedFiles`, persists the pack, and
+returns a ledger summary. `completion_claim_check` uses the same model rules to
+check planned final-answer language before the agent claims work is done.
+
 The Capability Ledger is not a separate source of truth. It is the longitudinal
 projection of accumulated Evidence Packs for a workspace, using the latest
 cell status per capability plus merged evidence refs and completion-claim

@@ -66,6 +66,11 @@ export const MCP_AUTO_ALLOWED_TOOLS = new Set<TaskWraithMcpToolName>([
   'goal_blocked',
   // 1.4.2 — goal-step checklist updates are non-mutating run coordination.
   'todo_write',
+  // Evidence Packs are run-observability/progress records, not workspace
+  // mutation. Read-only agents must still be able to leave auditable evidence
+  // and check whether completion language is supported.
+  'evidence_pack_write',
+  'completion_claim_check',
   // 1.0.71+ — workspace READ tools (see header). Read-only + host-gate-safe:
   // writes/shell are NOT here, so they still hit the gate and are denied under
   // read_only. This is what gives read-only Claude/Kimi parity with Gemini's

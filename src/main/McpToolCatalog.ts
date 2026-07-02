@@ -867,6 +867,104 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
       }
     },
     {
+      name: 'evidence_pack_write',
+      description:
+        'Persist a structured Evidence Pack for the active run: capability cells, completion claims, changed files, and supporting evidence refs. TaskWraith stamps workspace/chat/run/provider context.',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          title: { type: 'string', description: 'Short title for this evidence pack.' },
+          mapEntries: {
+            type: 'array',
+            description:
+              'Optional capability/scope map entries. Use provenance for decomposition confidence, not test status.',
+            maxItems: 200,
+            items: { type: 'object' }
+          },
+          capabilityCells: {
+            type: 'array',
+            description:
+              'Evidence-backed capability statuses. Each cell should include capabilityKey, status, and evidenceRefs when claiming verified or partial progress.',
+            maxItems: 200,
+            items: { type: 'object' }
+          },
+          cells: {
+            type: 'array',
+            description: 'Alias for capabilityCells.',
+            maxItems: 200,
+            items: { type: 'object' }
+          },
+          completionClaims: {
+            type: 'array',
+            description:
+              'Claims the final response wants to make. Each claim should include supported=true only when evidenceRefs back it.',
+            maxItems: 100,
+            items: { type: 'object' }
+          },
+          claims: {
+            type: 'array',
+            description: 'Alias for completionClaims.',
+            maxItems: 100,
+            items: { type: 'object' }
+          },
+          diffTouchedFiles: {
+            type: 'array',
+            description: 'Workspace-relative files touched by this run.',
+            maxItems: 200,
+            items: { type: 'string' }
+          },
+          changedFiles: {
+            type: 'array',
+            description: 'Alias for diffTouchedFiles.',
+            maxItems: 200,
+            items: { type: 'string' }
+          },
+          finalAnswer: {
+            type: 'string',
+            description:
+              'Optional planned final answer. If provided, TaskWraith checks completion-style language against this Evidence Pack.'
+          },
+          pack: {
+            type: 'object',
+            description:
+              'Optional wrapper containing the same Evidence Pack fields. Top-level aliases are still honored.'
+          }
+        }
+      }
+    },
+    {
+      name: 'completion_claim_check',
+      description:
+        'Check whether completion-style language in a planned final answer is backed by the active run Evidence Pack. Returns shouldRevise/canClaimComplete and a recommended caveat.',
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          finalText: { type: 'string', description: 'Planned final answer to check.' },
+          finalAnswer: { type: 'string', description: 'Alias for finalText.' },
+          runId: {
+            type: 'string',
+            description: 'Optional run id. Defaults to the active run id.'
+          },
+          chatId: {
+            type: 'string',
+            description: 'Optional chat id. Defaults to the active chat id.'
+          }
+        }
+      }
+    },
+    {
       name: 'list_subthreads',
       description:
         'List lifecycle-aware sub-threads under the active parent chat, including readiness to read results.',

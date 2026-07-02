@@ -5,6 +5,7 @@ import type {
   CapabilityMapEntry,
   CapabilityMapProvenance,
   CapabilityStallSignal,
+  CompletionClaimSupportAssessment,
   EvidenceCapabilityStatus,
   EvidencePackCapabilityCell,
   EvidencePackCompletionClaim,
@@ -58,6 +59,14 @@ const MAX_MAP_ENTRIES = 200
 const MAX_CELLS = 200
 const MAX_CLAIMS = 100
 const STALL_WINDOW = 3
+const COMPLETION_LANGUAGE_PATTERNS: Array<{ phrase: string; pattern: RegExp }> = [
+  { phrase: 'done', pattern: /\b(done|all done)\b/i },
+  { phrase: 'implemented', pattern: /\b(implemented|implementation is complete)\b/i },
+  { phrase: 'fixed', pattern: /\b(fixed|resolved)\b/i },
+  { phrase: 'ready', pattern: /\b(ready|ready for review|ready to ship)\b/i },
+  { phrase: 'complete', pattern: /\b(complete|completed|finished)\b/i },
+  { phrase: 'shipped', pattern: /\b(shipped|landed)\b/i }
+]
 
 function text(value: unknown, max = MAX_NOTE_LENGTH): string | undefined {
   if (typeof value !== 'string') return undefined
@@ -256,6 +265,113 @@ export function normalizeEvidencePackRecord(
       : {}),
     createdAt: isoOrNow(input.createdAt, nowIso),
     updatedAt: isoOrNow(input.updatedAt, nowIso)
+  }
+}
+
+export function detectCompletionLanguage(value: unknown): string[] {
+  const source = text(value, 4000)
+  if (!source) return []
+  const phrases: string[] = []
+  for (const item of COMPLETION_LANGUAGE_PATTERNS) {
+    if (item.pattern.test(source)) phrases.push(item.phrase)
+  }
+  return [...new Set(phrases)]
+}
+
+export function assessCompletionClaimSupport(
+  finalText: unknown,
+  packs: EvidencePackRecord[],
+  options: { workspaceId?: string; chatId?: string; runId?: string } = {}
+): CompletionClaimSupportAssessment {
+  const completionPhrases = detectCompletionLanguage(finalText)
+  const scopedPacks = packs.filter((pack) => {
+    if (options.workspaceId && pack.workspaceId !== options.workspaceId) return false
+    if (options.chatId && pack.chatId !== options.chatId) return false
+    if (options.runId && pack.runId !== options.runId) return false
+    return true
+  })
+  const evidencePackIds = scopedPacks.map((pack) => pack.id)
+  const claims = scopedPacks.flatMap((pack) => pack.completionClaims)
+  const supportedClaims = claims.filter((claim) => claim.supported && claim.evidenceRefs.length > 0)
+  const unsupportedClaims = claims.filter((claim) => !claim.supported)
+  const verifiedCells = scopedPacks.flatMap((pack) =>
+    pack.capabilityCells.filter((cell) => cell.status === 'verified' && cell.evidenceRefs.length > 0)
+  )
+  const partialCells = scopedPacks.flatMap((pack) =>
+    pack.capabilityCells.filter((cell) => cell.status === 'partial' && cell.evidenceRefs.length > 0)
+  )
+  const supportingEvidenceRefs = [
+    ...supportedClaims.flatMap((claim) => claim.evidenceRefs),
+    ...verifiedCells.flatMap((cell) => cell.evidenceRefs)
+  ].slice(0, MAX_EVIDENCE_REFS)
+
+  if (completionPhrases.length === 0) {
+    return {
+      status: 'no_completion_claim',
+      hasCompletionLanguage: false,
+      completionPhrases,
+      evidencePackIds,
+      supportedClaims,
+      unsupportedClaims,
+      supportingEvidenceRefs,
+      message: 'No completion-style claim was detected.'
+    }
+  }
+
+  if (unsupportedClaims.length > 0) {
+    return {
+      status: 'unsupported',
+      hasCompletionLanguage: true,
+      completionPhrases,
+      evidencePackIds,
+      supportedClaims,
+      unsupportedClaims,
+      supportingEvidenceRefs,
+      message: 'Completion-style language is present, but the Evidence Pack records unsupported claims.',
+      recommendedCaveat:
+        'Do not present this as complete. Name the unsupported claim and the evidence still needed.'
+    }
+  }
+
+  if (supportedClaims.length > 0 || verifiedCells.length > 0) {
+    return {
+      status: 'supported',
+      hasCompletionLanguage: true,
+      completionPhrases,
+      evidencePackIds,
+      supportedClaims,
+      unsupportedClaims,
+      supportingEvidenceRefs,
+      message: 'Completion-style language is supported by evidence-backed claims or verified capability cells.'
+    }
+  }
+
+  if (partialCells.length > 0) {
+    return {
+      status: 'partial',
+      hasCompletionLanguage: true,
+      completionPhrases,
+      evidencePackIds,
+      supportedClaims,
+      unsupportedClaims,
+      supportingEvidenceRefs: partialCells.flatMap((cell) => cell.evidenceRefs).slice(0, MAX_EVIDENCE_REFS),
+      message: 'Completion-style language is too strong for partial evidence.',
+      recommendedCaveat:
+        'Say this is partially implemented or still under validation, and list the missing proof.'
+    }
+  }
+
+  return {
+    status: 'unsupported',
+    hasCompletionLanguage: true,
+    completionPhrases,
+    evidencePackIds,
+    supportedClaims,
+    unsupportedClaims,
+    supportingEvidenceRefs,
+    message: 'Completion-style language is unsupported because no evidence-backed completion claim was found.',
+    recommendedCaveat:
+      'Avoid done/implemented/ready wording until an Evidence Pack includes supported claims or verified cells.'
   }
 }
 

@@ -688,6 +688,10 @@ import {
   isWorkspaceBoardMcpToolName
 } from './mcp/WorkspaceBoardToolExecutors'
 import {
+  createEvidenceToolExecutors,
+  isEvidenceMcpToolName
+} from './mcp/EvidenceToolExecutors'
+import {
   buildProviderSignals,
   createAuditRoleDispatcher,
   createAuditRuntime,
@@ -4462,6 +4466,13 @@ const workspaceBoardToolExecutors = createWorkspaceBoardToolExecutors({
   updateWorkspaceBoardCard: (id, partial) => AppStore.updateWorkspaceBoardCard(id, partial)
 })
 
+const evidenceToolExecutors = createEvidenceToolExecutors({
+  getChat: (chatId) => AppStore.getChat(chatId) ?? undefined,
+  getEvidencePacks: (workspaceId) => AppStore.getEvidencePacks(workspaceId),
+  saveEvidencePack: (pack) => AppStore.saveEvidencePack(pack),
+  getCapabilityLedgerSnapshot: (workspaceId) => AppStore.getCapabilityLedgerSnapshot(workspaceId)
+})
+
 // Shared per-app audit runtime: one artifact collector + one runId→context
 // registry + the audit MCP tool executors. The orchestrator (Slice 5c-2b)
 // registers a role-run before dispatch so an `audit_*` tool call routes to the
@@ -4543,6 +4554,13 @@ function emitWorkspaceBoardsChanged(): void {
     cards: AppStore.getWorkspaceBoardCards()
   })
   bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
+}
+
+function emitEvidencePacksChanged(): void {
+  safeSendToWebContents(mainWindow, 'evidence-packs-changed', {
+    packs: AppStore.getEvidencePacks(),
+    ledger: AppStore.getCapabilityLedgerSnapshot()
+  })
 }
 
 function persistRunSessionQueueState(session: ReturnType<typeof runManager.get>): void {
@@ -18703,6 +18721,18 @@ async function executeGeminiMcpTool(
       text = mcpJson(result.result)
       if (!toolIsError && toolName === 'workspace_board_apply_plan') {
         emitWorkspaceBoardsChanged()
+      }
+    } else if (isEvidenceMcpToolName(toolName)) {
+      const result = await evidenceToolExecutors.executeEvidenceMcpTool(
+        toolName,
+        args,
+        context,
+        { provider: parentProvider, runId: context.appRunId }
+      )
+      toolIsError = result.isError
+      text = mcpJson(result.result)
+      if (!toolIsError && toolName === 'evidence_pack_write') {
+        emitEvidencePacksChanged()
       }
     } else if (isWorkspaceMcpToolName(toolName)) {
       if (WORKSPACE_WIDE_WRITE_LOCK_TOOLS.has(toolName)) {

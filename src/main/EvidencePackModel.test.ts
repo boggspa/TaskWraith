@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
+  assessCompletionClaimSupport,
+  detectCompletionLanguage,
   detectDeterministicCapabilityStalls,
   normalizeEvidencePackRecord,
   projectCapabilityLedgerFromEvidencePacks
@@ -152,5 +154,71 @@ describe('EvidencePackModel', () => {
     ])
 
     expect(signals.some((signal) => signal.kind === 'partial_without_new_evidence')).toBe(true)
+  })
+
+  it('detects completion-style language conservatively', () => {
+    expect(detectCompletionLanguage('Implemented and ready for review.')).toEqual([
+      'implemented',
+      'ready'
+    ])
+    expect(detectCompletionLanguage('I inspected the code and found the blocker.')).toEqual([])
+  })
+
+  it('marks completion claims supported only when evidence backs the run', () => {
+    const assessment = assessCompletionClaimSupport('Implemented and ready.', [
+      pack('pack-1', {
+        chatId: 'chat-1',
+        runId: 'run-1',
+        completionClaims: [
+          {
+            claim: 'Import button fixtures work.',
+            supported: true,
+            evidenceRefs: [{ path: 'src/import.test.ts', line: 12 }]
+          }
+        ]
+      })
+    ], { workspaceId: 'workspace-1', chatId: 'chat-1', runId: 'run-1' })
+
+    expect(assessment.status).toBe('supported')
+    expect(assessment.supportingEvidenceRefs).toEqual([{ path: 'src/import.test.ts', line: 12 }])
+  })
+
+  it('forces a caveat for completion language with only partial evidence', () => {
+    const assessment = assessCompletionClaimSupport('Fixed and complete.', [
+      pack('pack-1', {
+        chatId: 'chat-1',
+        runId: 'run-1',
+        capabilityCells: [
+          {
+            capabilityKey: 'ui-import',
+            status: 'partial',
+            evidenceRefs: [{ path: 'fixtures/button.json' }]
+          }
+        ]
+      })
+    ], { workspaceId: 'workspace-1', chatId: 'chat-1', runId: 'run-1' })
+
+    expect(assessment.status).toBe('partial')
+    expect(assessment.recommendedCaveat).toContain('partially implemented')
+  })
+
+  it('marks unsupported completion claims as unsupported even when the final answer sounds done', () => {
+    const assessment = assessCompletionClaimSupport('Done.', [
+      pack('pack-1', {
+        chatId: 'chat-1',
+        runId: 'run-1',
+        completionClaims: [
+          {
+            claim: 'Arbitrary UI import works.',
+            supported: false,
+            evidenceRefs: [],
+            note: 'Only static fixtures were checked.'
+          }
+        ]
+      })
+    ], { workspaceId: 'workspace-1', chatId: 'chat-1', runId: 'run-1' })
+
+    expect(assessment.status).toBe('unsupported')
+    expect(assessment.recommendedCaveat).toContain('Do not present this as complete')
   })
 })

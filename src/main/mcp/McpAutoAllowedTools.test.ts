@@ -22,7 +22,9 @@ describe('MCP_AUTO_ALLOWED_TOOLS', () => {
       'workspace_board_preview_plan',
       'list_background_processes',
       'read_background_process',
-      'list_active_runs'
+      'list_active_runs',
+      'evidence_pack_write',
+      'completion_claim_check'
     ] as const) {
       expect(autoAllowedTools.has(tool)).toBe(true)
     }
@@ -80,7 +82,9 @@ describe('READ_ONLY_MCP_ADVERTISE_TOOLS', () => {
       'workspace_board_preview_plan',
       'list_background_processes',
       'read_background_process',
-      'list_active_runs'
+      'list_active_runs',
+      'evidence_pack_write',
+      'completion_claim_check'
     ] as const) {
       expect(READ_ONLY_MCP_ADVERTISE_TOOLS).toContain(tool)
     }
@@ -142,7 +146,9 @@ describe('isReadOnlyAdvertisedTool (bridge scope guard)', () => {
       'workspace_board_preview_plan',
       'list_background_processes',
       'read_background_process',
-      'list_active_runs'
+      'list_active_runs',
+      'evidence_pack_write',
+      'completion_claim_check'
     ]) {
       expect(isReadOnlyAdvertisedTool(tool)).toBe(true)
     }

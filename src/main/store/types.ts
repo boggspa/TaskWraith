@@ -3628,6 +3628,24 @@ export interface CapabilityLedgerSnapshot {
   stallSignals: CapabilityStallSignal[]
 }
 
+export type CompletionClaimSupportStatus =
+  | 'no_completion_claim'
+  | 'supported'
+  | 'partial'
+  | 'unsupported'
+
+export interface CompletionClaimSupportAssessment {
+  status: CompletionClaimSupportStatus
+  hasCompletionLanguage: boolean
+  completionPhrases: string[]
+  evidencePackIds: string[]
+  supportedClaims: EvidencePackCompletionClaim[]
+  unsupportedClaims: EvidencePackCompletionClaim[]
+  supportingEvidenceRefs: AuditEvidenceRef[]
+  message: string
+  recommendedCaveat?: string
+}
+
 export type RepoConventionIndexEntryKind =
   | 'component_family'
   | 'utility'
