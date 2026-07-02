@@ -302,6 +302,15 @@ export interface EnsembleOrchestratorDeps {
  */
 type ParticipantTimelineEntry = { kind: 'content'; text: string } | { kind: 'tool'; toolId: string }
 
+/**
+ * Spike 5 — providers whose sessions genuinely resume with full history
+ * across ensemble turns, making them eligible for the slim resumed-turn
+ * prompt. Kimi's --resume restores a session token (not the transcript),
+ * Grok's default ACP transport opens a fresh session every turn, and
+ * Ollama is stateless — all three must keep the full shell.
+ */
+const SLIM_RESUME_PROVIDERS: ReadonlySet<ProviderId> = new Set(['claude', 'codex', 'cursor'])
+
 interface ActiveParticipantRun {
   chatId: string
   roundId: string
@@ -340,6 +349,12 @@ interface ActiveParticipantRun {
    */
   mediaRefs?: TranscriptMediaRef[]
   startedAt: string
+  /**
+   * Spike 5 — the ensemble prompt-shell stamp in effect when this run was
+   * dispatched. Persisted onto the participant's `promptShellVersion` in
+   * flushRun so the NEXT dispatch can decide slim-vs-full.
+   */
+  promptShellStamp?: string
   /**
    * Aggregate text for back-compat consumers (per-run token stats,
    * "did this run produce any output" checks, etc.). Stays in sync

@@ -3,6 +3,7 @@ import {
   buildDupProviderModelLabels,
   buildEnsembleParticipantPrompt,
   buildParticipantTokenMap,
+  computeEnsemblePromptShellStamp,
   ensembleSpeakerForMessage as buildEnsembleSpeaker,
   formatFileChangeDigest,
   formatRoundModeInstructions,
@@ -1969,5 +1970,75 @@ describe('Same-provider duplicate panels carry model labels (1.0.7)', () => {
     expect(labels.has('gem-c')).toBe(false)
     // Solo-provider seats are never labelled.
     expect(labels.has('claude-solo')).toBe(false)
+  })
+})
+
+/*
+ * Spike 5 — prompt-shell stamp + slim resumed-turn prompt shape.
+ */
+describe('computeEnsemblePromptShellStamp', () => {
+  it('is stable, order-independent, and sensitive to shell-relevant changes', () => {
+    const base = { ...ensemble, participants: ensemble.participants.map((p) => ({ ...p })) }
+    const stamp = computeEnsemblePromptShellStamp(base)
+    expect(computeEnsemblePromptShellStamp(base)).toBe(stamp)
+    // Speaking-order reshuffle of the same seats → same stamp.
+    const reordered = { ...base, participants: [...base.participants].reverse() }
+    expect(computeEnsemblePromptShellStamp(reordered)).toBe(stamp)
+    // A role-instructions change is shell-relevant → new stamp.
+    const edited = {
+      ...base,
+      participants: base.participants.map((p, index) =>
+        index === 0 ? { ...p, instructions: 'Completely new instructions.' } : p
+      )
+    }
+    expect(computeEnsemblePromptShellStamp(edited)).not.toBe(stamp)
+    // A stage-role change is shell-relevant too.
+    const staged = {
+      ...base,
+      participants: base.participants.map((p, index) =>
+        index === 0 ? { ...p, stageRole: 'reviewer' as const } : p
+      )
+    }
+    expect(computeEnsemblePromptShellStamp(staged)).not.toBe(stamp)
+  })
+})
+
+describe('slim resumed-turn prompt shape', () => {
+  it('carries only dynamic turn context and a delta transcript', () => {
+    const base = chat()
+    base.messages = [
+      {
+        id: 'own-1',
+        role: 'assistant',
+        content: 'My earlier turn.',
+        timestamp: '2026-05-24T00:00:01.000Z',
+        metadata: { ensembleProvider: 'claude', ensembleParticipantId: 'claude' }
+      },
+      {
+        id: 'peer-1',
+        role: 'assistant',
+        content: 'NEW-PEER-WORK landed after your turn.',
+        timestamp: '2026-05-24T00:00:02.000Z',
+        metadata: { ensembleProvider: 'codex', ensembleParticipantId: 'codex' }
+      }
+    ]
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: base,
+      config: ensemble,
+      participant: ensemble.participants.find((entry) => entry.id === 'claude')!,
+      currentPrompt: 'Continue.',
+      roundId: 'round-slim',
+      chatContextTurns: 6,
+      slimTurn: true
+    })
+    expect(prompt).toContain('TaskWraith Ensemble Mode — resumed turn')
+    expect(prompt).toContain('New since your previous turn')
+    expect(prompt).toContain('NEW-PEER-WORK')
+    // The seat's own earlier turn is NOT re-sent — its session has it.
+    expect(prompt).not.toContain('My earlier turn.')
+    // Full-shell sections stay out.
+    expect(prompt).not.toContain('Participant roster:')
+    expect(prompt).not.toContain('Rules:')
+    expect(prompt).toContain('Respond now as')
   })
 })

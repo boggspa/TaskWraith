@@ -512,6 +512,17 @@ export interface EnsembleParticipant {
   stageRole?: EnsembleStageRole
   linkedProviderSessionId?: string | null
   /**
+   * Spike 5 (slim resumed-turn prompts) — the ensemble prompt-shell stamp
+   * (`computeEnsemblePromptShellStamp`) this seat last received a FULL
+   * prompt for. When the stamp still matches at dispatch time AND the
+   * provider session resumes natively, the turn prompt may be slimmed to
+   * the dynamic parts only (gated by TASKWRAITH_ENSEMBLE_SLIM_RESUME).
+   * The stamp hashes the roster identity, so any roster change falls back
+   * to a full prompt automatically. Persisted alongside
+   * linkedProviderSessionId in the orchestrator's flushRun.
+   */
+  promptShellVersion?: string
+  /**
    * Slice D — per-participant reasoning + speed + thinking settings.
    * All optional; orchestrator dispatch falls back to provider
    * defaults when absent so existing ensemble chats remain valid.

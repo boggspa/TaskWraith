@@ -25,6 +25,7 @@ import type {
   WorkSessionConfig
 } from '../store/types'
 import { MAX_ENSEMBLE_PARTICIPANTS } from '../EnsembleRosterMutation'
+import { computeEnsemblePromptShellStamp } from '../EnsemblePrompt'
 
 const ensemble: EnsembleConfig = {
   enabled: true,
@@ -8815,5 +8816,99 @@ describe('scout briefs persist to the blackboard', () => {
     const after = harness.chat.ensemble?.blackboard || []
     expect(after).toHaveLength(1)
     expect(after[0].value).toContain('Updated: lock removed')
+  })
+})
+
+/*
+ * Spike 5 — slim resumed-turn prompts (TASKWRAITH_ENSEMBLE_SLIM_RESUME).
+ * A resumable seat whose persisted shell stamp matches the current config
+ * gets only the dynamic turn context; first turns / stamp mismatches /
+ * non-resumable providers keep the full shell.
+ */
+describe('slim resumed-turn prompts', () => {
+  it('sends the slim prompt only for stamped resumable seats, and stamps seats on flush', async () => {
+    const previous = process.env.TASKWRAITH_ENSEMBLE_SLIM_RESUME
+    process.env.TASKWRAITH_ENSEMBLE_SLIM_RESUME = '1'
+    try {
+      const chat = makeChat()
+      const stamp = computeEnsemblePromptShellStamp(chat.ensemble!)
+      chat.ensemble!.participants = chat.ensemble!.participants.map((participant) =>
+        participant.id === 'claude'
+          ? {
+              ...participant,
+              linkedProviderSessionId: 'claude-session-1',
+              promptShellVersion: stamp
+            }
+          : participant
+      )
+      const harness = makeHarness({ initialChat: chat })
+      harness.orchestrator.startRound({
+        chatId: 'ensemble-chat',
+        prompt: 'Round two, continue.',
+        event: { sender: {} as Electron.WebContents }
+      })
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+      // Claude (stamped + resumable) gets the slim shell.
+      expect(harness.dispatched[0].provider).toBe('claude')
+      expect(harness.dispatched[0].prompt).toContain('TaskWraith Ensemble Mode — resumed turn')
+      expect(harness.dispatched[0].prompt).not.toContain('Participant roster:')
+      expect(harness.dispatched[0].prompt).toContain('Current user request:')
+      // Complete Claude's run → the next (unstamped) seat gets the FULL shell.
+      harness.orchestrator.handleProviderOutput(
+        'claude',
+        { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' },
+        { type: 'message', role: 'assistant', delta: true, content: 'Continuing.' }
+      )
+      harness.orchestrator.handleProviderOutput(
+        'claude',
+        { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' },
+        { type: 'result', status: 'success', stats: { total_tokens: 5 } }
+      )
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+      expect(harness.dispatched[1].prompt).toContain('Participant roster:')
+      // Complete the codex run — flushRun persists the stamp so codex's
+      // NEXT dispatch is slim-eligible.
+      harness.orchestrator.handleProviderOutput(
+        'codex',
+        { appRunId: harness.dispatched[1].appRunId, appChatId: 'ensemble-chat' },
+        { type: 'message', role: 'assistant', delta: true, content: 'Done.' }
+      )
+      harness.orchestrator.handleProviderOutput(
+        'codex',
+        { appRunId: harness.dispatched[1].appRunId, appChatId: 'ensemble-chat' },
+        { type: 'result', status: 'success', stats: { total_tokens: 5 } }
+      )
+      await vi.waitFor(() => {
+        const codexSeat = harness.chat.ensemble?.participants.find(
+          (participant) => participant.id === 'codex'
+        )
+        expect(codexSeat?.promptShellVersion).toBe(stamp)
+      })
+    } finally {
+      if (previous === undefined) delete process.env.TASKWRAITH_ENSEMBLE_SLIM_RESUME
+      else process.env.TASKWRAITH_ENSEMBLE_SLIM_RESUME = previous
+    }
+  })
+
+  it('falls back to the full shell when the flag is off even for stamped seats', async () => {
+    const chat = makeChat()
+    const stamp = computeEnsemblePromptShellStamp(chat.ensemble!)
+    chat.ensemble!.participants = chat.ensemble!.participants.map((participant) =>
+      participant.id === 'claude'
+        ? {
+            ...participant,
+            linkedProviderSessionId: 'claude-session-1',
+            promptShellVersion: stamp
+          }
+        : participant
+    )
+    const harness = makeHarness({ initialChat: chat })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Round two, continue.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    expect(harness.dispatched[0].prompt).toContain('Participant roster:')
   })
 })

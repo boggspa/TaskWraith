@@ -13,6 +13,18 @@ export function concurrentWriteLanesEnabled(): boolean {
   return buildRuntimeFeatureGateSnapshot(process.env).concurrentWriteLanes
 }
 
+/**
+ * Spike 5 (docs/ensemble-posture-fanout-preamble-design.md) — slim ensemble
+ * turn prompts for seats whose provider session natively resumes
+ * (claude/codex/cursor). Opt-in while the prompt-shape change is validated:
+ * the full ~5.5k-char shell re-sent every turn duplicates history those
+ * sessions already hold.
+ */
+export function ensembleSlimResumeEnabled(): boolean {
+  const value = process.env.TASKWRAITH_ENSEMBLE_SLIM_RESUME
+  return value === '1' || value === 'true' || value === 'yes'
+}
+
 export function composerContenteditableEnabled(): boolean {
   const value = process.env.TASKWRAITH_COMPOSER_CONTENTEDITABLE
   return value === '1' || value === 'true' || value === 'yes'
