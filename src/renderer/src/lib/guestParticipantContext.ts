@@ -34,6 +34,10 @@ function ensembleSpeakerLabel(message: ChatMessage): string | null {
   return role ? `${getProviderLabel(provider)} / ${role}` : getProviderLabel(provider)
 }
 
+function isRetiredExternalChannelInboundMessage(message: ChatMessage): boolean {
+  return message.metadata?.kind === 'channelInbound'
+}
+
 export function truncateGuestContextText(value: string, maxChars: number): string {
   if (value.length <= maxChars) return value
   return `${value.slice(0, Math.max(0, maxChars - 1))}…`
@@ -43,6 +47,7 @@ export function formatGuestParentContextMessage(
   message: ChatMessage,
   parentProvider: ProviderId
 ): string | null {
+  if (isRetiredExternalChannelInboundMessage(message)) return null
   const content = message.content?.trim()
   if (!content) return null
   if (message.metadata?.kind === 'guestParticipantReply') return null

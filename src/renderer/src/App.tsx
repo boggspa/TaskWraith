@@ -10302,7 +10302,7 @@ function App(): React.JSX.Element {
       } else {
         const lastUserMessage = [...chatToUpdate.messages]
           .reverse()
-          .find((message) => message.role === 'user')
+          .find((message) => message.role === 'user' && message.metadata?.kind !== 'channelInbound')
         runStartedAt = lastUserMessage?.timestamp || runStartedAt
         promptMessageId = lastUserMessage?.id
       }
@@ -14727,6 +14727,7 @@ function App(): React.JSX.Element {
   const handleOpenSideChatFromMessage = useCallback(
     (message: ChatMessage) => {
       if (!canCreateSideChatFromCurrent || !currentChat || !message?.id) return
+      if (message.metadata?.kind === 'channelInbound') return
       setSideChatSeedMessageId(message.id)
       const roleLabel =
         message.role === 'user'

@@ -31,6 +31,10 @@ function ensembleSpeakerLabel(message: ChatMessage): string | null {
   return role ? `${getProviderLabel(provider)} / ${role}` : getProviderLabel(provider)
 }
 
+function isRetiredExternalChannelInboundMessage(message: ChatMessage): boolean {
+  return message.metadata?.kind === 'channelInbound'
+}
+
 export function buildHiddenSideChatInitialPrompt(contextPrompt: string, userPrompt: string): string {
   const context = contextPrompt.trim()
   const request = userPrompt.trim()
@@ -60,6 +64,7 @@ export function formatSideChatParentContextMessage(
   message: ChatMessage,
   parentProvider: ProviderId
 ): string | null {
+  if (isRetiredExternalChannelInboundMessage(message)) return null
   const content = message.content?.trim()
   if (!content) return null
   if (message.role === 'user') {

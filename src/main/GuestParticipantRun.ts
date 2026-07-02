@@ -16,6 +16,7 @@
  * free of any renderer/main label-resolution split.
  */
 
+import { isRetiredExternalChannelInboundMessage } from './LegacyExternalChannelHistory'
 import type { ChatMessage, ChatRecord, ProviderId } from './store/types'
 
 /** Injected provider → display label (renderer `getProviderLabel`, main
@@ -79,6 +80,7 @@ export function formatGuestParentContextMessage(
   parentProvider: ProviderId,
   providerLabel: ProviderLabelFn
 ): string | null {
+  if (isRetiredExternalChannelInboundMessage(message)) return null
   const content = message.content?.trim()
   if (!content) return null
   if (message.metadata?.kind === 'guestParticipantReply') return null

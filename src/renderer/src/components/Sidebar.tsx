@@ -1307,6 +1307,9 @@ function chatMatchesSearch(chat: ChatRecord, query: string): boolean {
   if (!query) return true
   const provider = getProviderName(chat.provider)
   const summary = chat as Partial<ChatListItem>
+  const searchableMessages = (chat.messages || []).filter(
+    (message) => message.metadata?.kind !== 'channelInbound'
+  )
   const searchableText = [
     chat.title,
     provider,
@@ -1314,7 +1317,7 @@ function chatMatchesSearch(chat: ChatRecord, query: string): boolean {
     chat.linkedGeminiSessionId,
     chat.linkedProviderSessionId,
     summary.searchText,
-    ...(chat.messages || []).map((message) => `${message.role} ${message.content}`)
+    ...searchableMessages.map((message) => `${message.role} ${message.content}`)
   ].join(' ')
   return searchableText.toLowerCase().includes(query)
 }
@@ -1336,6 +1339,7 @@ function getChatContentMatchSnippet(chat: ChatRecord, query: string): string | n
     return summaryPreview
   }
   for (const message of chat.messages || []) {
+    if (message.metadata?.kind === 'channelInbound') continue
     const content = message.content || ''
     const matchIndex = content.toLowerCase().indexOf(query)
     if (matchIndex < 0) continue

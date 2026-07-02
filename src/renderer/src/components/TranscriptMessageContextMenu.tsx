@@ -53,6 +53,10 @@ function focusMenuButton(
   buttons[nextIndex]?.focus()
 }
 
+function canOpenSideChatFromMessage(message: ChatMessage): boolean {
+  return message.metadata?.kind !== 'channelInbound'
+}
+
 export function buildTranscriptMessageContextMenuItems({
   selection,
   onCopyMessage,
@@ -78,7 +82,7 @@ export function buildTranscriptMessageContextMenuItems({
       onSelect: () => onTogglePinMessage(message.id)
     })
   }
-  if (!selection.copyOnly && onOpenSideChatFromMessage) {
+  if (!selection.copyOnly && onOpenSideChatFromMessage && canOpenSideChatFromMessage(message)) {
     items.push({
       id: 'side-chat',
       label: 'Open side chat',

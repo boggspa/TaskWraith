@@ -28,6 +28,7 @@ import { normalizeThreadTitle } from '../shared/threadTitles'
 import { isEnsembleRoundDispatchLive } from '../shared/ensembleRoundLifecycle'
 import { collectExternalPathGrantsFromMetadata } from './store/ExternalPathGrants'
 import { isContentlessRemoteDraftChat, remoteDraftVariant } from './remote/RemoteDraftChats'
+import { isRetiredExternalChannelInboundMessage } from './LegacyExternalChannelHistory'
 import { computeMergedTodosByLane, TODO_SOLO_LANE, type TodoStatus } from './TodoList'
 import type { CanvasSessionSummary } from './canvas/canvasTypes'
 
@@ -1463,7 +1464,9 @@ function previewForChat(
   chat: ChatRecord,
   maxChars: number
 ): { preview: string; truncated: boolean } {
-  const lastMessage = [...(chat.messages ?? [])].reverse().find((message) => message.content)
+  const lastMessage = [...(chat.messages ?? [])]
+    .reverse()
+    .find((message) => message.content && !isRetiredExternalChannelInboundMessage(message))
   return sanitizeText(lastMessage?.content || chat.title || '', maxChars)
 }
 

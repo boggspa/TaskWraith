@@ -417,6 +417,8 @@ function TranscriptMessageFooter({
 }): React.JSX.Element | null {
   const timestamp = formatTranscriptMessageFooterTime(message.timestamp)
   const hasActionContent = copyContent !== undefined
+  const canOpenSideChatFromMessage =
+    Boolean(onOpenSideChatFromMessage) && message.metadata?.kind !== 'channelInbound'
 
   if (!timestamp && !hasActionContent) return null
 
@@ -428,7 +430,7 @@ function TranscriptMessageFooter({
           onTogglePin={onTogglePinMessage ? () => onTogglePinMessage(message.id) : undefined}
           onDelete={onDeleteMessage ? () => onDeleteMessage(message.id) : undefined}
           onOpenSideChat={
-            onOpenSideChatFromMessage ? () => onOpenSideChatFromMessage(message) : undefined
+            canOpenSideChatFromMessage ? () => onOpenSideChatFromMessage?.(message) : undefined
           }
           pinned={pinned}
           copied={copied}

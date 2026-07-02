@@ -4,6 +4,7 @@ import fs from 'node:fs/promises'
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 
 import { isPathInsideWorkspace } from '../AgenticPolicy'
+import { isRetiredExternalChannelInboundMessage } from '../LegacyExternalChannelHistory'
 import { getSubThreadResumeSessionId as defaultGetSubThreadResumeSessionId } from '../SubThreadRecall'
 import type {
   ChatMessage,
@@ -1765,14 +1766,17 @@ export function executeReadSubthreadResult(
     runCount: chat.runs?.length || 0,
     runs: includeRuns ? (chat.runs || []).map((run) => summarizeChatRun(run)) : undefined,
     messages: includeMessages
-      ? (chat.messages || []).slice(-messageLimit).map((message) => ({
-          id: message.id,
-          role: message.role,
-          timestamp: message.timestamp,
-          runId: message.runId,
-          metadata: message.metadata,
-          content: message.content
-        }))
+      ? (chat.messages || [])
+          .filter((message) => !isRetiredExternalChannelInboundMessage(message))
+          .slice(-messageLimit)
+          .map((message) => ({
+            id: message.id,
+            role: message.role,
+            timestamp: message.timestamp,
+            runId: message.runId,
+            metadata: message.metadata,
+            content: message.content
+          }))
       : undefined,
     runEvents
   }

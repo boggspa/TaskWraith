@@ -47,6 +47,7 @@ import { formatBlackboardForPrompt, selectBlackboardForRound } from './blackboar
 // future-round transcript context (Codex reasoning is retained).
 import { stripReasoningChains } from './EnsembleThinkingEphemerality'
 import { isHumanCollaboratorComment } from './collaboration/HumanCollaboratorMessages'
+import { isRetiredExternalChannelInboundMessage } from './LegacyExternalChannelHistory'
 import {
   formatActiveGoalPromptBlock,
   resolveActiveGoalForEnsemble,
@@ -1274,7 +1275,10 @@ function buildTaggedTranscript(
   let windowSize =
     maxChars > MAX_TRANSCRIPT_CHARS ? Math.max(baseWindow, Math.ceil(maxChars / 600)) : baseWindow
   const filtered = messages.filter(
-    (message) => message.role !== 'tool' && !isHumanCollaboratorComment(message)
+    (message) =>
+      message.role !== 'tool' &&
+      !isHumanCollaboratorComment(message) &&
+      !isRetiredExternalChannelInboundMessage(message)
   )
   // Spike 6 (docs/ensemble-posture-fanout-preamble-design.md) — "since your
   // last turn" widening. A fixed window (12 messages by default) means a

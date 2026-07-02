@@ -365,7 +365,6 @@ Candidate clusters, subject to fresh recon:
 - iOS remote config and pairing
 - human collaboration
 - chat CRUD still inline after existing `chatHandlers`
-- message channels and messages bridge
 - ensemble controls and wakeups
 - approval response handlers
 - Gemini session/PTY controls

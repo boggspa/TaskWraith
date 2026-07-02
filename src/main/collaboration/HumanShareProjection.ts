@@ -1,6 +1,7 @@
 import os from 'os'
 import type { ChatMessage, ChatRecord } from '../store/types'
 import { redactSecrets } from '../../shared/secretRedaction'
+import { isRetiredExternalChannelInboundMessage } from '../LegacyExternalChannelHistory'
 import {
   humanCollaboratorMetadata,
   isHumanCollaboratorComment
@@ -66,7 +67,9 @@ export function buildHumanShareProjection(
   const maxRows = clamp(opts.maxRows ?? DEFAULT_MAX_ROWS, 1, 300)
   const maxPreviewChars = clamp(opts.maxPreviewChars ?? DEFAULT_MAX_PREVIEW_CHARS, 120, 4000)
   const maxBytes = clamp(opts.maxBytes ?? DEFAULT_MAX_BYTES, 8_000, 900_000)
-  const projectable = (chat.messages || []).filter((message) => Boolean(message?.id))
+  const projectable = (chat.messages || []).filter(
+    (message) => Boolean(message?.id) && !isRetiredExternalChannelInboundMessage(message)
+  )
   const rows = projectable.slice(Math.max(0, projectable.length - maxRows)).map((message) =>
     projectRow(message, {
       maxPreviewChars,

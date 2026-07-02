@@ -8,12 +8,14 @@ export function readMessagePinnedAt(
 }
 
 export function isPinnedChatMessage(message: ChatMessage): boolean {
+  if (message.metadata?.kind === 'channelInbound') return false
   return readMessagePinnedAt(message.metadata) !== null
 }
 
 export function buildPinnedMessageSummary(
   message: ChatMessage
 ): PinnedMessageSummary | null {
+  if (message.metadata?.kind === 'channelInbound') return null
   const pinnedAt = readMessagePinnedAt(message.metadata)
   if (pinnedAt === null) return null
   return {
@@ -38,7 +40,10 @@ export function buildPinnedMessageSummaries(
 export function countMessagesWithPinnedMetadata(
   messages: readonly ChatMessage[] | null | undefined
 ): number {
-  return (messages || []).filter((message) => typeof message.metadata?.pinnedAt === 'number').length
+  return (messages || []).filter(
+    (message) =>
+      message.metadata?.kind !== 'channelInbound' && typeof message.metadata?.pinnedAt === 'number'
+  ).length
 }
 
 export function toggleChatMessagePin(message: ChatMessage, pinnedAt: number): ChatMessage {

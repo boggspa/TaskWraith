@@ -74,7 +74,12 @@ function messageLabel(message: ChatMessage): string {
   return 'You'
 }
 
+function isRetiredExternalChannelInboundMessage(message: ChatMessage): boolean {
+  return message.metadata?.kind === 'channelInbound'
+}
+
 export function currentChatSearchTextForMessage(message: ChatMessage): string {
+  if (isRetiredExternalChannelInboundMessage(message)) return ''
   const parts: string[] = [messageLabel(message), message.role, message.content].filter(
     (part): part is string => Boolean(part)
   )
@@ -88,12 +93,15 @@ export function currentChatSearchTextForMessage(message: ChatMessage): string {
 export function buildCurrentChatSearchTargets(
   messages: readonly ChatMessage[]
 ): CurrentChatSearchTarget[] {
-  return messages.map((message, index) => ({
-    messageId: message.id,
-    rowKey: `${message.id}#${index}`,
-    label: messageLabel(message),
-    text: currentChatSearchTextForMessage(message)
-  }))
+  return messages
+    .map((message, index) => ({ message, index }))
+    .filter(({ message }) => !isRetiredExternalChannelInboundMessage(message))
+    .map(({ message, index }) => ({
+      messageId: message.id,
+      rowKey: `${message.id}#${index}`,
+      label: messageLabel(message),
+      text: currentChatSearchTextForMessage(message)
+    }))
 }
 
 function buildPreview(text: string, normalizedQuery: string): string {

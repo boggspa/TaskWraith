@@ -75,6 +75,7 @@ import type {
 } from '../lib/ComposerSlashCommands'
 import { parseSideSlashCommand } from '../lib/SideSlashCommand'
 import type { SideSlashCommand } from '../lib/SideSlashCommand'
+import { lastRetryableEnsembleUserPrompt } from '../lib/ensembleRetryPrompt'
 import { renderAgentApprovalPreview } from '../lib/agentApprovalPreview'
 import { isNativeSubAgentPreferenceApproval } from '../lib/agentApprovalTypes'
 import { decideApprovalElevation } from '../lib/approvalElevation'
@@ -2080,10 +2081,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                       // Fall back to a quiet info log when there's
                       // no prior user prompt to retry against.
                       if (!currentChat) return
-                      const lastUserMessage = [...(currentChat.messages || [])]
-                        .reverse()
-                        .find((m) => m.role === 'user')
-                      const retryPrompt = lastUserMessage?.content?.trim()
+                      const retryPrompt = lastRetryableEnsembleUserPrompt(currentChat.messages)
                       if (!retryPrompt) {
                         setRawLogs((prev) => [
                           ...prev,

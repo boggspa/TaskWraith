@@ -75,8 +75,14 @@ export const resolveCockpitRunSource = (
     : null
   const run = chat?.runs?.find((item) => item.runId === lane.runId) || null
   const prompt = run
-    ? chat?.messages.find((message) => message.id === run.promptMessageId)?.content ||
-      [...(chat?.messages || [])].reverse().find((message) => message.role === 'user')?.content ||
+    ? chat?.messages.find(
+        (message) =>
+          message.id === run.promptMessageId && message.metadata?.kind !== 'channelInbound'
+      )?.content ||
+      [...(chat?.messages || [])]
+        .reverse()
+        .find((message) => message.role === 'user' && message.metadata?.kind !== 'channelInbound')
+        ?.content ||
       lane.promptPreview ||
       ''
     : lane.promptPreview || ''
@@ -188,7 +194,10 @@ export const buildRunLanes = (
         runtimeProfileName: getRuntimeProfileLabel(runtimeProfiles, run.runtimeProfileId),
         handoffSourceRunId: run.handoffSourceRunId,
         promptPreview: compactPromptPreview(
-          chat.messages.find((message) => message.id === run.promptMessageId)?.content
+          chat.messages.find(
+            (message) =>
+              message.id === run.promptMessageId && message.metadata?.kind !== 'channelInbound'
+          )?.content
         ),
         touchedFiles: extractRunTouchedFiles(run),
         updatedAt: run.endedAt || run.startedAt

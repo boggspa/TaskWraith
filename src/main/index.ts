@@ -932,6 +932,7 @@ import {
   sanitiseForKimi
 } from './lib/kimiSanitiser'
 import { buildConversationContextBlock, composeRunPrompt } from './PromptComposition'
+import { isRetiredExternalChannelInboundMessage } from './LegacyExternalChannelHistory'
 import {
   createActiveGoal,
   normalizeActiveGoalObjective,
@@ -2842,6 +2843,7 @@ const recallToolExecutors = createRecallToolExecutors({
     if (!chat) return null
     const parts: string[] = [chat.title || '']
     for (const message of chat.messages || []) {
+      if (isRetiredExternalChannelInboundMessage(message)) continue
       if (message.role === 'user' || message.role === 'assistant') {
         parts.push(message.content || '')
       }

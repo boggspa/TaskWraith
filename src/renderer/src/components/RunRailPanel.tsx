@@ -162,7 +162,11 @@ function buildAnalystRequest(source: RunSource, replay: RunEventReplay | null): 
     promptPreview:
       source.lane?.promptPreview ||
       compactPromptPreview(
-        source.chat?.messages.find((message) => message.id === source.run?.promptMessageId)?.content
+        source.chat?.messages.find(
+          (message) =>
+            message.id === source.run?.promptMessageId &&
+            message.metadata?.kind !== 'channelInbound'
+        )?.content
       ),
     workspacePath: source.run?.effectiveWorkspacePath || source.lane?.workspacePath || source.chat?.workspacePath,
     touchedFiles: source.lane?.touchedFiles || [],

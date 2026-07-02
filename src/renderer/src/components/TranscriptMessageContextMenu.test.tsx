@@ -77,6 +77,18 @@ describe('TranscriptMessageContextMenu', () => {
     expect(onDeleteMessage).toHaveBeenCalledWith('message-1')
   })
 
+  it('omits side-chat actions for retired external-channel inbound rows', () => {
+    const items = buildTranscriptMessageContextMenuItems({
+      selection: selection({
+        message: message({ role: 'user', metadata: { kind: 'channelInbound' } })
+      }),
+      onCopyMessage: () => {},
+      onOpenSideChatFromMessage: () => {}
+    })
+
+    expect(items.map((item) => item.id)).toEqual(['copy'])
+  })
+
   it('omits actions whose callbacks are not available', () => {
     const items = buildTranscriptMessageContextMenuItems({
       selection: selection(),

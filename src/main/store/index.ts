@@ -3,6 +3,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 import { coerceLiveProvider, DEFAULT_PROVIDER } from '../../shared/retiredProviders'
 import { redactSecrets } from '../../shared/secretRedaction'
+import { isRetiredExternalChannelInboundMessage } from '../LegacyExternalChannelHistory'
 import type { TaskWraithPluginResourceProvenance } from '../../shared/plugins/PluginTypes'
 import type { UnattendedElevationAck } from '../UnattendedPostureGate'
 import {
@@ -256,6 +257,15 @@ const LEGACY_TASKWRAITH_FONT_STACK =
   '"SF Pro", "SF Pro Text", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Roboto, Arial, sans-serif'
 const TASKWRAITH_DEFAULT_FONT_STACK =
   '"Avenir Next", Avenir, system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif'
+const RETIRED_SETTINGS_KEYS = ['messageBridgeEnabled', 'messageBridgePollIntervalMs'] as const
+
+function stripRetiredSettingsKeys<T extends Record<string, unknown>>(input: T): T {
+  const next = { ...input }
+  for (const key of RETIRED_SETTINGS_KEYS) {
+    delete next[key]
+  }
+  return next as T
+}
 
 function normalizeWorkflowExecutionRecord(
   value: unknown,
@@ -1214,13 +1224,16 @@ function migrateLegacySettingsIfMissing() {
     }
 
     try {
-      const legacySettings = JSON.parse(
-        fs.readFileSync(legacySettingsPath, 'utf-8')
-      ) as Partial<AppSettings>
-      writeJson(settingsPath, {
-        ...legacySettings,
-        geminiMcpBridgeLastStatus: undefined
-      })
+      const legacySettings = JSON.parse(fs.readFileSync(legacySettingsPath, 'utf-8')) as
+        | (Partial<AppSettings> & Record<string, unknown>)
+        | null
+      writeJson(
+        settingsPath,
+        stripRetiredSettingsKeys({
+          ...(legacySettings || {}),
+          geminiMcpBridgeLastStatus: undefined
+        })
+      )
       writeJson(legacySettingsMigrationPath, {
         migratedAt: new Date().toISOString(),
         source: legacySettingsPath
@@ -1517,7 +1530,9 @@ export class AppStore {
   // Settings
   static getSettings(): AppSettings {
     migrateLegacySettingsIfMissing()
-    const stored = readJson<Partial<AppSettings>>(settingsPath, {})
+    const stored = stripRetiredSettingsKeys(
+      readJson<Partial<AppSettings> & Record<string, unknown>>(settingsPath, {})
+    )
     const storedDashboardStatPrefs = objectOrUndefined(stored.dashboardStatPrefs)
     const storedWelcomeHeatmapPrefs = objectOrUndefined(stored.welcomeHeatmapPrefs)
     const storedApprovalModeElevationAcks = objectOrUndefined(
@@ -1654,7 +1669,10 @@ export class AppStore {
 
   static updateSettings(partial: Partial<AppSettings>) {
     const current = this.getSettings()
-    writeJson(settingsPath, { ...current, ...partial })
+    writeJson(
+      settingsPath,
+      stripRetiredSettingsKeys({ ...current, ...partial } as Record<string, unknown>)
+    )
   }
 
   static getDefaultRuntimeProfiles(): RuntimeProfile[] {
@@ -1925,7 +1943,9 @@ export class AppStore {
 
   static toChatListItem(chat: ChatRecord): ChatListItem {
     const normalizedChat = this.normalizeChatRecord(chat)
-    const messages = Array.isArray(normalizedChat.messages) ? normalizedChat.messages : []
+    const messages = Array.isArray(normalizedChat.messages)
+      ? normalizedChat.messages.filter((message) => !isRetiredExternalChannelInboundMessage(message))
+      : []
     const runs = Array.isArray(normalizedChat.runs) ? normalizedChat.runs : []
     const lastRun = summarizeLastRun(runs[runs.length - 1])
     const recentMessageSearch = messages
@@ -2099,6 +2119,7 @@ export class AppStore {
 
     for (const chat of this.getChats(workspaceId)) {
       const messages = (chat.messages || [])
+        .filter((message) => !isRetiredExternalChannelInboundMessage(message))
         .map((message) => {
           const pinnedAt = message.metadata?.pinnedAt
           if (typeof pinnedAt !== 'number' || !Number.isFinite(pinnedAt)) return null

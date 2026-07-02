@@ -51,6 +51,7 @@ import {
   createToolResultMediaRefs,
   extractMcpImageBlocksFromRawResult
 } from './services/TranscriptMediaService'
+import { isRetiredExternalChannelInboundMessage } from './LegacyExternalChannelHistory'
 import { matchOllamaBrand } from '../shared/ollamaBrandTable'
 
 export type RemoteDisplayCurrency = 'USD' | 'GBP' | 'EUR'
@@ -2125,7 +2126,11 @@ export function projectRemoteThread(
   runs: ChatRun[] | undefined,
   opts: RemoteProjectionOptions
 ): RemoteThreadSnapshot {
-  const all = Array.isArray(messages) ? messages.filter((m) => m && typeof m.id === 'string') : []
+  const all = Array.isArray(messages)
+    ? messages.filter(
+        (m) => m && typeof m.id === 'string' && !isRetiredExternalChannelInboundMessage(m)
+      )
+    : []
   const previewMax = opts.previewMaxChars ?? DEFAULT_PREVIEW_MAX
   const generatedAt = opts.generatedAt ?? new Date().toISOString()
   const fallbackPooledAgentIdentity = normalizePooledAgentIdentity(opts.pooledAgentIdentity)

@@ -5,6 +5,7 @@ import {
   humanCollaboratorMetadata,
   isHumanCollaboratorComment
 } from './collaboration/HumanCollaboratorMessages'
+import { isRetiredExternalChannelInboundMessage } from './LegacyExternalChannelHistory'
 
 export interface TranscriptMarkdownExportResult {
   markdown: string
@@ -19,8 +20,12 @@ export interface TranscriptMarkdownExportOptions {
   homeDir?: string
 }
 
+function exportableTranscriptMessages(chat: ChatRecord): ChatMessage[] {
+  return (chat.messages || []).filter((message) => !isRetiredExternalChannelInboundMessage(message))
+}
+
 export function estimateChatMarkdownTranscriptChars(chat: ChatRecord): number {
-  const messages = chat.messages || []
+  const messages = exportableTranscriptMessages(chat)
   return messages.reduce((total, message) => {
     const activityCost = (message.toolActivities || []).length * 160
     const attachmentCost = ['imageAttachments', 'attachments', 'mediaRefs'].reduce((sum, key) => {
@@ -308,7 +313,11 @@ export function buildChatMarkdownTranscript(
 ): TranscriptMarkdownExportResult {
   const omissions = new Set<string>()
   const replacements = pathReplacements(chat, options)
-  const messages = chat.messages || []
+  const rawMessages = chat.messages || []
+  const messages = exportableTranscriptMessages(chat)
+  if (messages.length !== rawMessages.length) {
+    omissions.add('retired external channel messages omitted')
+  }
   const copiedAt = options.copiedAt || new Date().toISOString()
   const provider = providerLabel(chat.provider || 'gemini', true)
   const header = [
