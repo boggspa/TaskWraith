@@ -6,6 +6,7 @@ import {
   providerLabel
 } from './ProviderAdapters'
 import type { ProviderAdapter } from './ProviderAdapters'
+import type { ProviderId } from './store/types'
 
 function adapter(provider: 'gemini' | 'codex'): ProviderAdapter {
   return {
@@ -47,6 +48,8 @@ describe('ProviderAdapters', () => {
     expect(providerLabel('codex')).toBe('Codex')
     expect(providerLabel('claude')).toBe('Claude')
     expect(providerLabel('kimi')).toBe('Kimi')
+    expect(providerLabel('grok')).toBe('Grok')
+    expect(providerLabel('cursor')).toBe('Cursor')
     expect(providerLabel('ollama')).toBe('Ollama')
     expect(defaultProviderDescriptor('codex')).toMatchObject({
       provider: 'codex',
@@ -67,13 +70,18 @@ describe('ProviderAdapters', () => {
       }
     })
     expect(
-      ['gemini', 'codex', 'claude', 'kimi', 'ollama'].map(
-        (provider) =>
-          defaultProviderDescriptor(
-            provider as 'gemini' | 'codex' | 'claude' | 'kimi' | 'ollama'
-          ).runChannel
+      (['gemini', 'codex', 'claude', 'kimi', 'grok', 'cursor', 'ollama'] as const).map(
+        (provider) => defaultProviderDescriptor(provider).runChannel
       )
-    ).toEqual(['run-agent', 'run-agent', 'run-agent', 'run-agent', 'run-agent'])
+    ).toEqual([
+      'run-agent',
+      'run-agent',
+      'run-agent',
+      'run-agent',
+      'run-agent',
+      'run-agent',
+      'run-agent'
+    ])
   })
 
   it('enforces one adapter per provider and requires registered providers', () => {
@@ -107,11 +115,13 @@ describe('defaultProviderDescriptor capabilities', () => {
   // renderer consume to decide what to render. Pinning them as tests
   // means any change is reviewable; silently flipping (e.g. removing
   // image support from Gemini) requires touching this file.
-  const allProviders: Array<'gemini' | 'codex' | 'claude' | 'kimi' | 'ollama'> = [
+  const allProviders: ProviderId[] = [
     'gemini',
     'codex',
     'claude',
     'kimi',
+    'grok',
+    'cursor',
     'ollama'
   ]
 
@@ -169,6 +179,29 @@ describe('defaultProviderDescriptor capabilities', () => {
     expect(cap.approvalModes).toEqual(['default'])
     expect(cap.reasoningEffort).toBe(false)
     expect(cap.imageAttachments).toBe(true)
+  })
+
+  it('pins Cursor and Grok mode-scoped TaskWraith bridge caveats', () => {
+    for (const provider of ['cursor', 'grok'] as const) {
+      const descriptor = defaultProviderDescriptor(provider)
+      expect(descriptor.features.agentBenchMcpBridge).toBe(false)
+      expect(descriptor.capabilities.approvalModes).toEqual(['plan', 'default'])
+
+      const caveat = descriptor.capabilityCaveats?.find(
+        (entry) => entry.id === `${provider}-taskwraith-bridge-write-mode-only`
+      )
+      expect(caveat).toMatchObject({
+        severity: 'info',
+        capability: 'taskwraithMcpBridge',
+        title: 'TaskWraith MCP bridge is mode-scoped'
+      })
+      expect(caveat?.message).toContain('write-capable')
+      expect(caveat?.message).toContain('TaskWraith approvals')
+
+      const projected = providerAdapterDescriptor(descriptor)
+      expect(projected.capabilityCaveats).toEqual(descriptor.capabilityCaveats)
+      expect(projected.capabilityCaveats).not.toBe(descriptor.capabilityCaveats)
+    }
   })
 
   it('declares Ollama as token-streaming after HTTP chunk forwarding', () => {

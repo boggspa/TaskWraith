@@ -65,7 +65,7 @@ export class ProviderAdapterRegistry<TPayload = unknown, TEvent = unknown> {
 export function providerAdapterDescriptor(
   adapter: ProviderAdapterDescriptor
 ): ProviderAdapterDescriptor {
-  return {
+  const descriptor: ProviderAdapterDescriptor = {
     provider: adapter.provider,
     label: adapter.label,
     transport: adapter.transport,
@@ -78,6 +78,10 @@ export function providerAdapterDescriptor(
       speedTiers: [...adapter.capabilities.speedTiers]
     }
   }
+  if (adapter.capabilityCaveats) {
+    descriptor.capabilityCaveats = adapter.capabilityCaveats.map((caveat) => ({ ...caveat }))
+  }
+  return descriptor
 }
 
 export function createProviderAdapterRegistry<TPayload = unknown, TEvent = unknown>(
@@ -185,10 +189,11 @@ export function defaultProviderDescriptor(provider: ProviderId): ProviderAdapter
     // First-class Grok. G6 landed persistent sessions (headless `--resume`);
     // G5c landed file-write mode (`acceptEdits` + Edit/Write, diff/PR-reviewed —
     // `approvalModes: ['plan','default']`). Still NO app-managed per-tool
-    // approval cards + no MCP bridge: native shell stays denied and shell
-    // mediation (the TaskWraith MCP + approval ledger) is the gated ACP path
-    // (G5c-ACP). Without this branch grok would inherit the Claude default
-    // below, advertising providerManagedMcp it does not have.
+    // approval cards. The full TaskWraith MCP bridge is mode-scoped: read-only
+    // runs stay safe-subset/provider-delegated unless separately enabled, while
+    // write-capable ACP runs auto-inject the governed bridge. Without this
+    // branch grok would inherit the Claude default below, advertising
+    // providerManagedMcp it does not have.
     return {
       provider,
       label: providerLabel(provider),
@@ -213,7 +218,17 @@ export function defaultProviderDescriptor(provider: ProviderId): ProviderAdapter
         sessionResumption: true,
         perThreadMcp: false,
         assistantTextStreaming: 'token'
-      }
+      },
+      capabilityCaveats: [
+        {
+          id: 'grok-taskwraith-bridge-write-mode-only',
+          severity: 'info',
+          capability: 'taskwraithMcpBridge',
+          title: 'TaskWraith MCP bridge is mode-scoped',
+          message:
+            'Read-only Grok runs do not advertise the full TaskWraith MCP bridge by default; write-capable Grok ACP runs auto-inject a scoped bridge so side effects route through TaskWraith approvals and path checks.'
+        }
+      ]
     }
   }
   if (provider === 'cursor') {
@@ -222,8 +237,9 @@ export function defaultProviderDescriptor(provider: ProviderId): ProviderAdapter
     // (`approvalModes: ['plan','default']`): 'plan' = read-only (--mode plan),
     // 'default' = file-write contained by a workspace-local deny-list (native
     // shell denied; edits diff/PR-reviewed — Grok-parity). NO app-managed
-    // per-tool approval cards + no MCP bridge: native side effects are contained
-    // by --mode plan / the deny-list, not per-tool cards. Without this branch
+    // per-tool approval cards. The full TaskWraith MCP bridge is mode-scoped:
+    // read-only runs stay provider-delegated unless separately enabled, while
+    // write-capable runs auto-inject the governed bridge. Without this branch
     // cursor would inherit the Claude default below, advertising capabilities it
     // does not have.
     return {
@@ -250,7 +266,17 @@ export function defaultProviderDescriptor(provider: ProviderId): ProviderAdapter
         sessionResumption: true,
         perThreadMcp: false,
         assistantTextStreaming: 'token'
-      }
+      },
+      capabilityCaveats: [
+        {
+          id: 'cursor-taskwraith-bridge-write-mode-only',
+          severity: 'info',
+          capability: 'taskwraithMcpBridge',
+          title: 'TaskWraith MCP bridge is mode-scoped',
+          message:
+            'Read-only Cursor runs do not advertise the full TaskWraith MCP bridge by default; write-capable Cursor runs auto-inject a scoped broker so side effects route through TaskWraith approvals and path checks.'
+        }
+      ]
     }
   }
   if (provider === 'ollama') {

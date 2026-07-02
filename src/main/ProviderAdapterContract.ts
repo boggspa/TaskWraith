@@ -68,6 +68,8 @@ const KNOWN_PROVIDER_IDS: ReadonlySet<string> = new Set<ProviderId>([
   'codex',
   'claude',
   'kimi',
+  'grok',
+  'cursor',
   'ollama'
 ])
 
@@ -189,7 +191,8 @@ export function runProviderAdapterContractTests<TPayload = unknown, TEvent = unk
         runChannel: adapter.runChannel,
         capabilitySource: adapter.capabilitySource,
         features: adapter.features,
-        capabilities: adapter.capabilities
+        capabilities: adapter.capabilities,
+        capabilityCaveats: adapter.capabilityCaveats
       }
       // Descriptor projection should be identity for the descriptor fields.
       expect(descriptor.provider).toBe(adapter.provider)

@@ -1396,6 +1396,14 @@ export interface ProviderAdapterFeatureFlags {
   hostCommandFallback: boolean
 }
 
+export interface ProviderAdapterCapabilityCaveat {
+  id: string
+  severity: 'info' | 'warning'
+  capability: 'taskwraithMcpBridge' | 'providerMcp' | 'approvalModes'
+  title: string
+  message: string
+}
+
 /** Static per-provider capability declarations.
  *
  * `features` (above) describes INFRASTRUCTURE characteristics —
@@ -1455,6 +1463,7 @@ export interface ProviderAdapterDescriptor {
   capabilitySource: 'taskwraith' | 'provider' | 'bridge' | 'mixed'
   features: ProviderAdapterFeatureFlags
   capabilities: ProviderAdapterCapabilities
+  capabilityCaveats?: ProviderAdapterCapabilityCaveat[]
 }
 
 export type RuntimeWorkspaceMode = 'local' | 'worktree' | 'container'
