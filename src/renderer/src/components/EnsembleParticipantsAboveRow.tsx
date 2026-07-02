@@ -41,6 +41,11 @@ import type {
 } from '../../../main/store/types'
 import { getDefaultEnsembleParticipantConfig } from '../lib/ensembleProviderDefaults'
 import {
+  ENSEMBLE_STAGE_ROLE_HINT,
+  ENSEMBLE_STAGE_ROLE_OPTIONS,
+  normalizeEnsembleStageRole
+} from '../lib/ensembleStageRoles'
+import {
   ENSEMBLE_ROLE_PRESET_CUSTOM,
   ENSEMBLE_ROLE_PRESETS,
   resolveRolePresetId,
@@ -1950,6 +1955,28 @@ export function EnsembleParticipantOverflowPopover({
             placeholder={`${getProviderName(participant.provider)} role`}
           />
         ) : null}
+      </label>
+      <label className="ensemble-above-overflow-role" title={ENSEMBLE_STAGE_ROLE_HINT}>
+        <span className="ensemble-above-overflow-label">Stage</span>
+        <select
+          className="ensemble-above-overflow-role-picker"
+          value={participant.stageRole || ''}
+          disabled={locked}
+          onChange={(event) => {
+            const next = normalizeEnsembleStageRole(event.target.value)
+            // Spike-4 stage roles — a discrete select (no draft buffering
+            // needed); undefined clears the stage back to permission-
+            // inferred scheduling.
+            onPatch({ stageRole: next })
+          }}
+        >
+          <option value="">Any (by permissions)</option>
+          {ENSEMBLE_STAGE_ROLE_OPTIONS.map((option) => (
+            <option key={option.id} value={option.id} title={option.description}>
+              {option.label}
+            </option>
+          ))}
+        </select>
       </label>
       <label className="ensemble-above-overflow-instructions">
         <span className="ensemble-above-overflow-label">Goal / brief</span>

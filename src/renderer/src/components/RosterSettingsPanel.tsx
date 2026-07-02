@@ -36,6 +36,11 @@ import {
   roleLabelForPresetId
 } from '../lib/ensembleRolePresets'
 import { getProviderLabel } from '../lib/providerLabels'
+import {
+  ENSEMBLE_STAGE_ROLE_HINT,
+  ENSEMBLE_STAGE_ROLE_OPTIONS,
+  normalizeEnsembleStageRole
+} from '../lib/ensembleStageRoles'
 import { ParticipantPickerCluster } from './ParticipantPickerCluster'
 import { PooledAgentIcon } from './icons/PooledAgentIcon'
 import {
@@ -334,6 +339,25 @@ function RosterParticipantRow({
               ))}
             </select>
           </div>
+        </div>
+
+        <div className="settings-roster-field" title={ENSEMBLE_STAGE_ROLE_HINT}>
+          <span className="settings-roster-field-label">Stage</span>
+          <select
+            className="settings-roster-select"
+            value={participant.stageRole || ''}
+            aria-label="Staged fan-out stage"
+            onChange={(event) =>
+              onPatch(participant.id, { stageRole: normalizeEnsembleStageRole(event.target.value) })
+            }
+          >
+            <option value="">Any (by permissions)</option>
+            {ENSEMBLE_STAGE_ROLE_OPTIONS.map((option) => (
+              <option key={option.id} value={option.id} title={option.description}>
+                {option.label}
+              </option>
+            ))}
+          </select>
         </div>
 
         <div className="settings-roster-field">
