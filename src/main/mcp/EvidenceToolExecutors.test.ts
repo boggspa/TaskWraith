@@ -1,6 +1,10 @@
+import fs from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
+
 import { describe, expect, it } from 'vitest'
 import { projectCapabilityLedgerFromEvidencePacks } from '../EvidencePackModel'
-import type { ChatRecord, EvidencePackRecord } from '../store/types'
+import type { ChatRecord, EvidencePackRecord, RepoConventionIndexSnapshot } from '../store/types'
 import {
   executeEvidenceMcpTool,
   isEvidenceMcpToolName,
@@ -33,9 +37,19 @@ function context(chatId: string): WorkspaceToolContext {
   }
 }
 
+function contextForPath(chatId: string, workspacePath: string): WorkspaceToolContext {
+  return {
+    scope: 'workspace',
+    cwd: workspacePath,
+    workspacePath,
+    appChatId: chatId
+  }
+}
+
 function createStore(): EvidenceToolStore & { __addChat(chat: ChatRecord): void } {
   const chats = new Map<string, ChatRecord>()
   const packs: EvidencePackRecord[] = []
+  const conventionIndexes: RepoConventionIndexSnapshot[] = []
   const now = '2026-07-02T18:00:00.000Z'
 
   return {
@@ -71,6 +85,18 @@ function createStore(): EvidenceToolStore & { __addChat(chat: ChatRecord): void 
         { workspaceId, now: new Date(now) }
       )
     },
+    saveRepoConventionIndex(snapshot) {
+      const saved: RepoConventionIndexSnapshot = {
+        schemaVersion: 1,
+        workspaceId: snapshot.workspaceId || 'ws-1',
+        workspacePath: snapshot.workspacePath,
+        generatedAt: snapshot.generatedAt || now,
+        entries: snapshot.entries || [],
+        staleReason: snapshot.staleReason
+      }
+      conventionIndexes.push(saved)
+      return saved
+    },
     __addChat(chat) {
       chats.set(chat.appChatId, chat)
     }
@@ -80,6 +106,7 @@ function createStore(): EvidenceToolStore & { __addChat(chat: ChatRecord): void 
 describe('EvidenceToolExecutors', () => {
   it('recognizes Evidence Pack MCP tools', () => {
     expect(isEvidenceMcpToolName('scope_radar')).toBe(true)
+    expect(isEvidenceMcpToolName('repo_convention_scan')).toBe(true)
     expect(isEvidenceMcpToolName('evidence_pack_write')).toBe(true)
     expect(isEvidenceMcpToolName('completion_claim_check')).toBe(true)
     expect(isEvidenceMcpToolName('workspace_search')).toBe(false)
@@ -144,6 +171,54 @@ describe('EvidenceToolExecutors', () => {
       radar: { riskLevel: 'low' }
     })
     expect(store.getEvidencePacks('ws-1')).toHaveLength(0)
+  })
+
+  it('scans and records a Repo Convention Index for the active workspace', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'tw-conventions-'))
+    try {
+      await fs.mkdir(path.join(root, 'src', 'renderer', 'src', 'components'), { recursive: true })
+      await fs.mkdir(path.join(root, 'src', 'renderer', 'src', 'assets', 'css'), { recursive: true })
+      await fs.mkdir(path.join(root, 'src', 'main'), { recursive: true })
+      await fs.mkdir(path.join(root, 'node_modules'), { recursive: true })
+      await fs.writeFile(path.join(root, 'package.json'), '{"scripts":{"test":"vitest"}}')
+      await fs.writeFile(path.join(root, 'src', 'renderer', 'src', 'components', 'Button.tsx'), 'export function Button() { return null }')
+      await fs.writeFile(path.join(root, 'src', 'renderer', 'src', 'assets', 'css', 'theme.css'), ':root {}')
+      await fs.writeFile(path.join(root, 'src', 'main', 'Button.test.ts'), 'test("x", () => {})')
+
+      const store = createStore()
+      store.__addChat(workspaceChat('chat-1', 'ws-1', root))
+
+      const result = await executeEvidenceMcpTool(
+        store,
+        'repo_convention_scan',
+        {},
+        contextForPath('chat-1', root),
+        { provider: 'codex', runId: 'run-1' }
+      )
+
+      expect(result.isError).toBe(false)
+      expect(result.result).toMatchObject({
+        ok: true,
+        tool: 'repo_convention_scan',
+        recorded: true,
+        summary: {
+          entryCount: expect.any(Number),
+          truncated: false
+        },
+        snapshot: {
+          workspaceId: 'ws-1',
+          workspacePath: root
+        }
+      })
+      const entries = (result.result as any).snapshot.entries.map((entry: any) => entry.id)
+      expect(entries).toContain('package-manager-node')
+      expect(entries).toContain('component-family-react')
+      expect(entries).toContain('style-system-existing-assets')
+      expect(entries).toContain('test-convention-nearby')
+      expect(entries).toContain('generated-paths-avoid-editing')
+    } finally {
+      await fs.rm(root, { recursive: true, force: true })
+    }
   })
 
   it('writes an agent-stamped Evidence Pack and checks the planned final answer', async () => {

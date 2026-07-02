@@ -70,6 +70,7 @@ export const MCP_AUTO_ALLOWED_TOOLS = new Set<TaskWraithMcpToolName>([
   // mutation. Read-only agents must still be able to leave auditable evidence
   // and check whether completion language is supported.
   'scope_radar',
+  'repo_convention_scan',
   'evidence_pack_write',
   'completion_claim_check',
   // 1.0.71+ — workspace READ tools (see header). Read-only + host-gate-safe:

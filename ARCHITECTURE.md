@@ -112,6 +112,13 @@ timestamps. They can be built from scans, curated corrections, and conventions
 observed in Evidence Packs; stale entries are refreshed or deprecated as agents
 mutate the repo.
 
+`repo_convention_scan` is the deterministic scanner for that index. It walks a
+bounded active-workspace file inventory, detects package/tooling files,
+component families, Electron process boundaries, test surfaces, style-system
+assets, generated/dependency paths, and do-not-repeat rules, then persists the
+snapshot by default. Coherence Gate uses this as the repo facts layer before it
+decides whether a diff introduced duplicate abstractions or slop bloat.
+
 ## Visual Architecture
 
 ### Appearance System

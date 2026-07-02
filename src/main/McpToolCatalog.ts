@@ -900,6 +900,34 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
       }
     },
     {
+      name: 'repo_convention_scan',
+      description:
+        'Scan the active workspace file tree and build a deterministic Repo Convention Index: package/tooling signals, UI component families, process boundaries, tests, style systems, generated paths, and do-not-repeat rules. Records the snapshot by default; pass record=false for preview only.',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          record: {
+            type: 'boolean',
+            description: 'When true or omitted, persist the scanned convention index.'
+          },
+          maxFiles: {
+            type: 'number',
+            description: 'Maximum file/directory entries to inspect. Defaults to 4000; capped by TaskWraith.'
+          },
+          includeHidden: {
+            type: 'boolean',
+            description: 'Include hidden files except heavy generated folders. Defaults to false.'
+          }
+        }
+      }
+    },
+    {
       name: 'evidence_pack_write',
       description:
         'Persist a structured Evidence Pack for the active run: capability cells, completion claims, changed files, and supporting evidence refs. TaskWraith stamps workspace/chat/run/provider context.',

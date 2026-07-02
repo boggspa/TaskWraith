@@ -4471,7 +4471,8 @@ const evidenceToolExecutors = createEvidenceToolExecutors({
   getChat: (chatId) => AppStore.getChat(chatId) ?? undefined,
   getEvidencePacks: (workspaceId) => AppStore.getEvidencePacks(workspaceId),
   saveEvidencePack: (pack) => AppStore.saveEvidencePack(pack),
-  getCapabilityLedgerSnapshot: (workspaceId) => AppStore.getCapabilityLedgerSnapshot(workspaceId)
+  getCapabilityLedgerSnapshot: (workspaceId) => AppStore.getCapabilityLedgerSnapshot(workspaceId),
+  saveRepoConventionIndex: (snapshot) => AppStore.saveRepoConventionIndex(snapshot)
 })
 
 // Shared per-app audit runtime: one artifact collector + one runId→context

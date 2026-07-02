@@ -1,16 +1,25 @@
+import fs from 'node:fs/promises'
+import path from 'node:path'
+
 import { assessCompletionClaimSupport } from '../EvidencePackModel'
+import {
+  buildRepoConventionIndexSnapshot,
+  summarizeRepoConventionIndexScan
+} from '../RepoConventionIndexBuilder'
 import { buildScopeRadarResult } from '../ScopeRadarModel'
 import type {
   CapabilityLedgerSnapshot,
   ChatRecord,
   CompletionClaimSupportAssessment,
   EvidencePackRecord,
-  ProviderId
+  ProviderId,
+  RepoConventionIndexSnapshot
 } from '../store/types'
 import type { WorkspaceToolContext } from './WorkspaceToolExecutors'
 
 export const EVIDENCE_MCP_TOOL_NAMES = [
   'scope_radar',
+  'repo_convention_scan',
   'evidence_pack_write',
   'completion_claim_check'
 ] as const
@@ -22,6 +31,9 @@ export interface EvidenceToolStore {
   getEvidencePacks: (workspaceId?: string) => EvidencePackRecord[]
   saveEvidencePack: (pack: Partial<EvidencePackRecord>) => EvidencePackRecord
   getCapabilityLedgerSnapshot: (workspaceId?: string) => CapabilityLedgerSnapshot
+  saveRepoConventionIndex: (
+    snapshot: Partial<RepoConventionIndexSnapshot>
+  ) => RepoConventionIndexSnapshot
 }
 
 export interface EvidenceToolMetadata {
@@ -107,6 +119,70 @@ function boolArg(value: unknown, fallback: boolean): boolean {
   return fallback
 }
 
+function numberArg(value: unknown, fallback: number, min: number, max: number): number {
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed)) return fallback
+  return Math.max(min, Math.min(max, Math.trunc(parsed)))
+}
+
+const REPO_SCAN_SKIP_DIRS = new Set([
+  '.git',
+  'node_modules',
+  'dist',
+  'build',
+  'coverage',
+  '.next',
+  '.nuxt',
+  '.vite',
+  '.turbo',
+  'DerivedData',
+  '.swiftpm',
+  '.gradle',
+  'target',
+  'out'
+])
+
+async function collectRepoConventionFiles(
+  workspacePath: string,
+  options: { maxFiles: number; includeHidden: boolean }
+): Promise<{ files: string[]; truncated: boolean }> {
+  const root = path.resolve(workspacePath)
+  const files: string[] = []
+  const queue: string[] = ['']
+  let truncated = false
+  while (queue.length > 0) {
+    const relativeDir = queue.shift() || ''
+    const absoluteDir = path.join(root, relativeDir)
+    let entries: Array<{ name: string; isDirectory(): boolean; isFile(): boolean }>
+    try {
+      entries = await fs.readdir(absoluteDir, { withFileTypes: true })
+    } catch {
+      continue
+    }
+    entries.sort((a, b) => a.name.localeCompare(b.name))
+    for (const dirent of entries) {
+      if (!options.includeHidden && dirent.name.startsWith('.') && dirent.name !== '.github') {
+        continue
+      }
+      const relativePath = path.posix.join(relativeDir.replace(/\\/g, '/'), dirent.name)
+      if (dirent.isDirectory()) {
+        if (REPO_SCAN_SKIP_DIRS.has(dirent.name)) {
+          files.push(relativePath)
+        } else {
+          queue.push(relativePath)
+        }
+      } else if (dirent.isFile()) {
+        files.push(relativePath)
+      }
+      if (files.length >= options.maxFiles) {
+        truncated = true
+        return { files, truncated }
+      }
+    }
+  }
+  return { files, truncated }
+}
+
 function summarizeLedger(snapshot: CapabilityLedgerSnapshot) {
   return {
     workspaceId: snapshot.workspaceId,
@@ -187,6 +263,38 @@ export async function executeEvidenceMcpTool(
           recorded: Boolean(recordedEvidencePack),
           ...(recordedEvidencePack ? { evidencePack: recordedEvidencePack } : {}),
           ...(ledger ? { ledger: summarizeLedger(ledger) } : {})
+        },
+        isError: false
+      }
+    }
+
+    if (toolName === 'repo_convention_scan') {
+      if (!workspace.workspacePath) {
+        throw new Error('repo_convention_scan requires an active workspace path.')
+      }
+      const maxFiles = numberArg(args.maxFiles, 4000, 100, 12000)
+      const includeHidden = boolArg(args.includeHidden, false)
+      const shouldRecord = boolArg(args.record, true)
+      const scan = await collectRepoConventionFiles(workspace.workspacePath, {
+        maxFiles,
+        includeHidden
+      })
+      const snapshot = buildRepoConventionIndexSnapshot({
+        workspaceId: workspace.workspaceId,
+        workspacePath: workspace.workspacePath,
+        files: scan.files
+      })
+      const saved = shouldRecord ? store.saveRepoConventionIndex(snapshot) : undefined
+      return {
+        result: {
+          ok: true,
+          tool: toolName,
+          recorded: Boolean(saved),
+          summary: summarizeRepoConventionIndexScan(saved || snapshot, {
+            fileCount: scan.files.length,
+            truncated: scan.truncated
+          }),
+          snapshot: saved || snapshot
         },
         isError: false
       }
