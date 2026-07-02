@@ -38,6 +38,7 @@ export const TASKWRAITH_MCP_TOOLS = [
   'test_result_summary',
   'scope_radar',
   'repo_convention_scan',
+  'coherence_gate_check',
   'evidence_pack_write',
   'completion_claim_check',
   'list_subthreads',

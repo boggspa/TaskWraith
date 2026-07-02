@@ -71,6 +71,7 @@ export const MCP_AUTO_ALLOWED_TOOLS = new Set<TaskWraithMcpToolName>([
   // and check whether completion language is supported.
   'scope_radar',
   'repo_convention_scan',
+  'coherence_gate_check',
   'evidence_pack_write',
   'completion_claim_check',
   // 1.0.71+ — workspace READ tools (see header). Read-only + host-gate-safe:

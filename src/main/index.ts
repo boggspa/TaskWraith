@@ -4472,6 +4472,7 @@ const evidenceToolExecutors = createEvidenceToolExecutors({
   getEvidencePacks: (workspaceId) => AppStore.getEvidencePacks(workspaceId),
   saveEvidencePack: (pack) => AppStore.saveEvidencePack(pack),
   getCapabilityLedgerSnapshot: (workspaceId) => AppStore.getCapabilityLedgerSnapshot(workspaceId),
+  getRepoConventionIndexes: (workspaceId) => AppStore.getRepoConventionIndexes(workspaceId),
   saveRepoConventionIndex: (snapshot) => AppStore.saveRepoConventionIndex(snapshot)
 })
 
@@ -18737,7 +18738,12 @@ async function executeGeminiMcpTool(
       )
       toolIsError = result.isError
       text = mcpJson(result.result)
-      if (!toolIsError && (toolName === 'evidence_pack_write' || toolName === 'scope_radar')) {
+      if (
+        !toolIsError &&
+        (toolName === 'evidence_pack_write' ||
+          toolName === 'scope_radar' ||
+          toolName === 'repo_convention_scan')
+      ) {
         emitEvidencePacksChanged()
       }
     } else if (isWorkspaceMcpToolName(toolName)) {

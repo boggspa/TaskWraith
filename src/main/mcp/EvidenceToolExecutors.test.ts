@@ -85,6 +85,9 @@ function createStore(): EvidenceToolStore & { __addChat(chat: ChatRecord): void 
         { workspaceId, now: new Date(now) }
       )
     },
+    getRepoConventionIndexes(workspaceId) {
+      return conventionIndexes.filter((snapshot) => !workspaceId || snapshot.workspaceId === workspaceId)
+    },
     saveRepoConventionIndex(snapshot) {
       const saved: RepoConventionIndexSnapshot = {
         schemaVersion: 1,
@@ -107,6 +110,7 @@ describe('EvidenceToolExecutors', () => {
   it('recognizes Evidence Pack MCP tools', () => {
     expect(isEvidenceMcpToolName('scope_radar')).toBe(true)
     expect(isEvidenceMcpToolName('repo_convention_scan')).toBe(true)
+    expect(isEvidenceMcpToolName('coherence_gate_check')).toBe(true)
     expect(isEvidenceMcpToolName('evidence_pack_write')).toBe(true)
     expect(isEvidenceMcpToolName('completion_claim_check')).toBe(true)
     expect(isEvidenceMcpToolName('workspace_search')).toBe(false)
@@ -219,6 +223,57 @@ describe('EvidenceToolExecutors', () => {
     } finally {
       await fs.rm(root, { recursive: true, force: true })
     }
+  })
+
+  it('checks coherence against the latest stored convention index', async () => {
+    const store = createStore()
+    store.__addChat(workspaceChat('chat-1', 'ws-1', '/repo'))
+    store.saveRepoConventionIndex({
+      workspaceId: 'ws-1',
+      workspacePath: '/repo',
+      generatedAt: '2026-07-02T18:00:00.000Z',
+      entries: [
+        {
+          id: 'generated-paths-avoid-editing',
+          kind: 'generated_path',
+          title: 'Generated paths are not source edits',
+          paths: ['dist'],
+          provenance: 'scan',
+          updatedAt: '2026-07-02T18:00:00.000Z'
+        }
+      ]
+    })
+
+    const result = await executeEvidenceMcpTool(
+      store,
+      'coherence_gate_check',
+      {
+        prompt: 'Make my app import UI. It should support arbitrary UI.',
+        changedFiles: ['dist/bundle.js', 'src/importer/PlaceholderAdapter.ts'],
+        newFiles: ['src/importer/PlaceholderAdapter.ts'],
+        placeholderFiles: ['src/importer/PlaceholderAdapter.ts']
+      },
+      context('chat-1'),
+      { provider: 'codex', runId: 'run-1' }
+    )
+
+    expect(result.isError).toBe(false)
+    expect(result.result).toMatchObject({
+      ok: true,
+      tool: 'coherence_gate_check',
+      workspaceId: 'ws-1',
+      canProceed: false,
+      shouldReview: true,
+      gate: {
+        status: 'block',
+        conventionIndexGeneratedAt: '2026-07-02T18:00:00.000Z',
+        scopeRiskLevel: 'high'
+      }
+    })
+    const kinds = (result.result as any).gate.findings.map((finding: any) => finding.kind)
+    expect(kinds).toContain('generated_path_edit')
+    expect(kinds).toContain('placeholder_only_work')
+    expect(kinds).toContain('missing_validation_evidence')
   })
 
   it('writes an agent-stamped Evidence Pack and checks the planned final answer', async () => {

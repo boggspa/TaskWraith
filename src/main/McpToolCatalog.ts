@@ -928,6 +928,84 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
       }
     },
     {
+      name: 'coherence_gate_check',
+      description:
+        'Run a deterministic coherence gate over planned or actual changed files. Compares touched paths against Scope Radar scope, slop budget, validation evidence, and the latest Repo Convention Index to flag generated-path edits, placeholder work, broad styling drift, duplicate-abstraction risk, and missing validation.',
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          prompt: {
+            type: 'string',
+            description:
+              'Optional task prompt. When scopeRadar is omitted, TaskWraith derives a Scope Radar map from this prompt.'
+          },
+          scopeRadar: {
+            type: 'object',
+            description: 'Optional Scope Radar result to use for allowed surfaces and slop budget.'
+          },
+          repoConventionIndex: {
+            type: 'object',
+            description:
+              'Optional Repo Convention Index. If omitted, TaskWraith uses the latest stored index for the active workspace.'
+          },
+          touchedFiles: {
+            type: 'array',
+            description:
+              'Workspace-relative files touched or expected to be touched. Items may be strings or {path,status,isPlaceholder}.',
+            maxItems: 300,
+            items: { type: ['string', 'object'] }
+          },
+          changedFiles: {
+            type: 'array',
+            description: 'Alias for touchedFiles.',
+            maxItems: 300,
+            items: { type: ['string', 'object'] }
+          },
+          diffTouchedFiles: {
+            type: 'array',
+            description: 'Alias for touchedFiles, usually copied from an Evidence Pack.',
+            maxItems: 300,
+            items: { type: ['string', 'object'] }
+          },
+          newFiles: {
+            type: 'array',
+            description: 'Workspace-relative files newly added by the run.',
+            maxItems: 300,
+            items: { type: ['string', 'object'] }
+          },
+          placeholderFiles: {
+            type: 'array',
+            description: 'Files known to be placeholder/stub-only output.',
+            maxItems: 100,
+            items: { type: ['string', 'object'] }
+          },
+          validationCommands: {
+            type: 'array',
+            description: 'Commands, screenshot checks, or manual validation gates run for this diff.',
+            maxItems: 50,
+            items: { type: 'string' }
+          },
+          validationEvidenceRefs: {
+            type: 'array',
+            description: 'Evidence refs that prove validation, such as test files or screenshot checks.',
+            maxItems: 100,
+            items: { type: 'object' }
+          },
+          pack: {
+            type: 'object',
+            description:
+              'Optional Evidence Pack-shaped wrapper. capabilityCells, claims, and diffTouchedFiles are used as gate evidence.'
+          }
+        }
+      }
+    },
+    {
       name: 'evidence_pack_write',
       description:
         'Persist a structured Evidence Pack for the active run: capability cells, completion claims, changed files, and supporting evidence refs. TaskWraith stamps workspace/chat/run/provider context.',

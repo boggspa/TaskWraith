@@ -25,6 +25,7 @@ describe('MCP_AUTO_ALLOWED_TOOLS', () => {
       'list_active_runs',
       'scope_radar',
       'repo_convention_scan',
+      'coherence_gate_check',
       'evidence_pack_write',
       'completion_claim_check'
     ] as const) {
@@ -87,6 +88,7 @@ describe('READ_ONLY_MCP_ADVERTISE_TOOLS', () => {
       'list_active_runs',
       'scope_radar',
       'repo_convention_scan',
+      'coherence_gate_check',
       'evidence_pack_write',
       'completion_claim_check'
     ] as const) {
@@ -153,6 +155,7 @@ describe('isReadOnlyAdvertisedTool (bridge scope guard)', () => {
       'list_active_runs',
       'scope_radar',
       'repo_convention_scan',
+      'coherence_gate_check',
       'evidence_pack_write',
       'completion_claim_check'
     ]) {

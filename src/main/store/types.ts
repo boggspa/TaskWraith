@@ -3729,6 +3729,53 @@ export interface RepoConventionIndexSnapshot {
   staleReason?: string
 }
 
+export type CoherenceGateStatus = 'pass' | 'warn' | 'block'
+
+export type CoherenceGateFindingSeverity = 'info' | 'warning' | 'blocker'
+
+export type CoherenceGateFindingKind =
+  | 'generated_path_edit'
+  | 'placeholder_only_work'
+  | 'slop_budget_exceeded'
+  | 'broad_styling_drift'
+  | 'duplicate_abstraction_risk'
+  | 'scope_surface_mismatch'
+  | 'missing_validation_evidence'
+  | 'repo_convention_missing'
+
+export interface CoherenceGateFinding {
+  kind: CoherenceGateFindingKind
+  severity: CoherenceGateFindingSeverity
+  title: string
+  detail: string
+  paths?: string[]
+  conventionEntryIds?: string[]
+  capabilityKeys?: string[]
+  evidenceRefs?: AuditEvidenceRef[]
+}
+
+export interface CoherenceGateCounts {
+  touchedFiles: number
+  newFiles: number
+  placeholderFiles: number
+  broadStylingChanges: number
+  duplicatePatternRisks: number
+  validationEvidenceRefs: number
+}
+
+export interface CoherenceGateResult {
+  schemaVersion: 1
+  generatedAt: string
+  status: CoherenceGateStatus
+  summary: string
+  findings: CoherenceGateFinding[]
+  counts: CoherenceGateCounts
+  slopBudget?: ScopeRadarSlopBudget
+  desiredCapability?: string
+  scopeRiskLevel?: ScopeRadarResult['riskLevel']
+  conventionIndexGeneratedAt?: string
+}
+
 export interface AuditProjectProfile {
   stack?: string[]
   testSurface?: string[]

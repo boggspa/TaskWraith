@@ -119,6 +119,14 @@ assets, generated/dependency paths, and do-not-repeat rules, then persists the
 snapshot by default. Coherence Gate uses this as the repo facts layer before it
 decides whether a diff introduced duplicate abstractions or slop bloat.
 
+`coherence_gate_check` is the deterministic pre/post-diff guard. It accepts
+touched files, new files, placeholder files, validation evidence, optional Scope
+Radar context, and the latest Repo Convention Index, then flags generated-path
+edits, placeholder-only work, slop-budget overages, broad styling drift,
+duplicate-abstraction risk, scope-surface mismatch, and missing validation
+evidence. The gate records no workspace mutations; agents can call it from
+read-only planning or review seats before making completion claims.
+
 ## Visual Architecture
 
 ### Appearance System

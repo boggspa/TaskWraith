@@ -1,6 +1,11 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 
+import {
+  buildCoherenceGateResult,
+  type BuildCoherenceGateInput,
+  type CoherenceGateFileInput
+} from '../CoherenceGateModel'
 import { assessCompletionClaimSupport } from '../EvidencePackModel'
 import {
   buildRepoConventionIndexSnapshot,
@@ -11,6 +16,7 @@ import type {
   CapabilityLedgerSnapshot,
   ChatRecord,
   CompletionClaimSupportAssessment,
+  AuditEvidenceRef,
   EvidencePackRecord,
   ProviderId,
   RepoConventionIndexSnapshot
@@ -20,6 +26,7 @@ import type { WorkspaceToolContext } from './WorkspaceToolExecutors'
 export const EVIDENCE_MCP_TOOL_NAMES = [
   'scope_radar',
   'repo_convention_scan',
+  'coherence_gate_check',
   'evidence_pack_write',
   'completion_claim_check'
 ] as const
@@ -31,6 +38,7 @@ export interface EvidenceToolStore {
   getEvidencePacks: (workspaceId?: string) => EvidencePackRecord[]
   saveEvidencePack: (pack: Partial<EvidencePackRecord>) => EvidencePackRecord
   getCapabilityLedgerSnapshot: (workspaceId?: string) => CapabilityLedgerSnapshot
+  getRepoConventionIndexes: (workspaceId?: string) => RepoConventionIndexSnapshot[]
   saveRepoConventionIndex: (
     snapshot: Partial<RepoConventionIndexSnapshot>
   ) => RepoConventionIndexSnapshot
@@ -117,6 +125,83 @@ function boolArg(value: unknown, fallback: boolean): boolean {
     if (normalized === 'false' || normalized === 'no' || normalized === '0') return false
   }
   return fallback
+}
+
+function arrayArg(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : []
+}
+
+function fileInput(value: unknown): string | CoherenceGateFileInput | undefined {
+  if (typeof value === 'string' && value.trim()) return value.trim()
+  const source = record(value)
+  const rawPath = optionalString(source.path) || optionalString(source.file)
+  if (!rawPath) return undefined
+  return {
+    path: rawPath,
+    ...(optionalString(source.status)
+      ? { status: optionalString(source.status) as CoherenceGateFileInput['status'] }
+      : {}),
+    ...(typeof source.isPlaceholder === 'boolean'
+      ? { isPlaceholder: source.isPlaceholder }
+      : {})
+  }
+}
+
+function fileInputs(...values: unknown[]): Array<string | CoherenceGateFileInput> {
+  return values
+    .flatMap((value) => arrayArg(value))
+    .map(fileInput)
+    .filter((item): item is string | CoherenceGateFileInput => Boolean(item))
+}
+
+function evidenceRefInput(value: unknown): AuditEvidenceRef | undefined {
+  const source = record(value)
+  const path = optionalString(source.path)
+  if (!path) return undefined
+  const line = Number(source.line)
+  return {
+    path,
+    ...(Number.isFinite(line) && line > 0 ? { line: Math.trunc(line) } : {}),
+    ...(optionalString(source.note) || optionalString(source.reason)
+      ? { note: optionalString(source.note) || optionalString(source.reason) }
+      : {})
+  }
+}
+
+function evidenceRefInputs(value: unknown): AuditEvidenceRef[] {
+  return arrayArg(value)
+    .map(evidenceRefInput)
+    .filter((item): item is AuditEvidenceRef => Boolean(item))
+}
+
+function stringInputs(value: unknown): string[] {
+  return arrayArg(value)
+    .map(optionalString)
+    .filter((item): item is string => Boolean(item))
+}
+
+function latestRepoConventionIndex(
+  store: EvidenceToolStore,
+  workspaceId: string
+): RepoConventionIndexSnapshot | undefined {
+  return [...store.getRepoConventionIndexes(workspaceId)].sort((a, b) =>
+    b.generatedAt.localeCompare(a.generatedAt)
+  )[0]
+}
+
+function gateEvidencePack(args: Record<string, unknown>): BuildCoherenceGateInput['evidencePack'] {
+  const input = evidencePackInput(args)
+  const capabilityCells = arrayArg(input.capabilityCells) as EvidencePackRecord['capabilityCells']
+  const completionClaims = arrayArg(input.completionClaims) as EvidencePackRecord['completionClaims']
+  const diffTouchedFiles = fileInputs(input.diffTouchedFiles).map((item) =>
+    typeof item === 'string' ? item : item.path
+  )
+  if (!capabilityCells.length && !completionClaims.length && !diffTouchedFiles.length) return undefined
+  return {
+    capabilityCells,
+    completionClaims,
+    diffTouchedFiles
+  }
 }
 
 function numberArg(value: unknown, fallback: number, min: number, max: number): number {
@@ -295,6 +380,48 @@ export async function executeEvidenceMcpTool(
             truncated: scan.truncated
           }),
           snapshot: saved || snapshot
+        },
+        isError: false
+      }
+    }
+
+    if (toolName === 'coherence_gate_check') {
+      const prompt =
+        optionalString(args.prompt) ||
+        optionalString(args.task) ||
+        optionalString(args.userPrompt) ||
+        optionalString(args.intent)
+      const scopeRadar = record(args.scopeRadar).schemaVersion
+        ? (record(args.scopeRadar) as unknown as ReturnType<typeof buildScopeRadarResult>)
+        : prompt
+          ? buildScopeRadarResult({
+              prompt,
+              currentState: optionalString(args.currentState) || optionalString(args.current_state)
+            })
+          : undefined
+      const suppliedConventionIndex = record(args.repoConventionIndex).schemaVersion
+        ? (record(args.repoConventionIndex) as unknown as RepoConventionIndexSnapshot)
+        : undefined
+      const gate = buildCoherenceGateResult({
+        touchedFiles: fileInputs(args.touchedFiles, args.changedFiles, args.diffTouchedFiles),
+        changedFiles: fileInputs(args.changedFiles, args.diffTouchedFiles),
+        newFiles: fileInputs(args.newFiles, args.addedFiles),
+        placeholderFiles: fileInputs(args.placeholderFiles, args.stubFiles),
+        validationEvidenceRefs: evidenceRefInputs(args.validationEvidenceRefs),
+        validationCommands: stringInputs(args.validationCommands),
+        evidencePack: gateEvidencePack(args),
+        scopeRadar,
+        repoConventionIndex:
+          suppliedConventionIndex || latestRepoConventionIndex(store, workspace.workspaceId)
+      })
+      return {
+        result: {
+          ok: true,
+          tool: toolName,
+          workspaceId: workspace.workspaceId,
+          gate,
+          canProceed: gate.status !== 'block',
+          shouldReview: gate.status !== 'pass'
         },
         isError: false
       }
