@@ -553,16 +553,19 @@ describe('evaluateRosterEdit', () => {
       )
     ).toMatchObject({ ok: false, error: 'read_only_posture' })
 
-    const planResult = evaluateRosterEdit(
-      {
-        action: 'add_participant',
-        participant: { provider: 'kimi', permissionPresetId: 'plan' }
-      },
-      makeContext({ roundReadOnly: true })
-    )
-    expect(planResult).toMatchObject({ ok: true })
-    if (!planResult.ok) throw new Error(planResult.message)
-    expect(planResult.nextParticipants[2].permissionPresetId).toBe('plan')
+    // Posture split: `plan` is now strictly MORE permissive than read_only
+    // (approval-gated canvas/media instruments + subthread delegation), so a
+    // read-only round must reject a mid-round swap to `plan`, just like `default`
+    // — otherwise a Boss/agent could re-open elevation on a locked-down seat.
+    expect(
+      evaluateRosterEdit(
+        {
+          action: 'add_participant',
+          participant: { provider: 'kimi', permissionPresetId: 'plan' }
+        },
+        makeContext({ roundReadOnly: true })
+      )
+    ).toMatchObject({ ok: false, error: 'read_only_posture' })
 
     const result = evaluateRosterEdit(
       { action: 'add_participant', participant: { provider: 'kimi' } },

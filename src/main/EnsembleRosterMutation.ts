@@ -85,7 +85,12 @@ export type RosterEditResolution =
     }
 
 const ASSIGNABLE_PERMISSION_PRESET_SET = new Set<string>(ASSIGNABLE_PERMISSION_PRESETS)
-const READ_ONLY_ROUND_PERMISSION_PRESET_SET = new Set<string>(['read_only', 'plan'])
+// A read-only round may only (re)assign the genuine read_only floor. After the
+// posture split `plan` is strictly MORE permissive than read_only (approval-
+// gated canvas/media instruments + subthread delegation), so allowing a mid-
+// round swap to `plan` would let a Boss/agent re-open that elevation on a seat
+// the read-only round locked down. `plan` is intentionally NOT in this set.
+const READ_ONLY_ROUND_PERMISSION_PRESET_SET = new Set<string>(['read_only'])
 const PATCH_FIELDS = [
   'provider',
   'model',
