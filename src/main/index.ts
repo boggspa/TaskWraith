@@ -14576,6 +14576,8 @@ async function compactProviderContextForRequest(payload: {
   provider: 'claude' | 'codex' | 'cursor' | 'kimi'
   providerSessionId?: string
   participantId?: string
+  /** 'auto' only from the orchestrator's post-round trigger; IPC = manual. */
+  trigger?: 'auto' | 'manual'
 }): Promise<{ ok: boolean; error?: string }> {
   let providerSessionId = payload.providerSessionId
   let model: string | undefined
@@ -14636,7 +14638,7 @@ async function compactProviderContextForRequest(payload: {
       providerSessionId,
       model,
       cardMetadata,
-      trigger: 'manual'
+      trigger: payload.trigger || 'manual'
     })
   }
   if (payload.provider === 'claude') {
@@ -28847,6 +28849,12 @@ if (isGeminiMcpBridgeProcess) {
       now: () => Date.now(),
       nowIso: () => new Date().toISOString(),
       probeParticipant: probeEnsembleParticipant,
+      // Wave 3 seat compaction — the dispatch barrier + the post-round
+      // auto-trigger's route into the maintenance lane (frozen labels and the
+      // round-liveness re-check live in compactProviderContextForRequest).
+      awaitPendingSeatCompaction: (participantId) => pendingSeatCompactions.get(participantId),
+      compactSeatContext: ({ chatId, participantId, provider, trigger }) =>
+        compactProviderContextForRequest({ chatId, provider, participantId, trigger }),
       getProviderUsageSnapshot: (provider) => AppStore.getProviderUsageSnapshot(provider),
       scheduleWakeupTimer: (wakeup) => wakeupTimerServiceRef?.schedule(wakeup),
       cancelWakeupTimer: (wakeupId) => wakeupTimerServiceRef?.cancel(wakeupId),

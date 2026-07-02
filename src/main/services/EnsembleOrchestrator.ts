@@ -53,6 +53,8 @@ import {
 } from '../EnsembleErrors'
 import { resolveHealthEntryPresentation } from '../../shared/ollamaBrandTable'
 import {
+  CONTEXT_AUTO_COMPACT_COOLDOWN_MS,
+  CONTEXT_AUTO_COMPACT_PERCENT,
   CONTEXT_COMPACTION_MESSAGE_KIND,
   contextCompactionMessageId,
   contextPressureSeverity,
@@ -233,6 +235,21 @@ export interface EnsembleOrchestratorDeps {
    * haven't wired the probe yet.
    */
   probeParticipant?: (participant: EnsembleParticipant) => Promise<ParticipantProbeResult>
+  /**
+   * Wave 3 seat compaction — host maintenance-lane compaction for cursor/kimi
+   * seats. `awaitPendingSeatCompaction` returns the in-flight compaction
+   * promise for a seat (if any); every participant dispatch awaits it so a
+   * round started mid-compaction can't race the seat's session reset.
+   * `compactSeatContext` powers the post-round auto-trigger. Both optional so
+   * the unit-test harness can omit them (no-ops).
+   */
+  awaitPendingSeatCompaction?: (participantId: string) => Promise<unknown> | undefined
+  compactSeatContext?: (input: {
+    chatId: string
+    participantId: string
+    provider: 'cursor' | 'kimi'
+    trigger: 'auto'
+  }) => Promise<{ ok: boolean; error?: string }>
   getProviderUsageSnapshot?: (
     provider: ProviderId
   ) => NormalizedProviderUsageSnapshot | null | undefined
@@ -6269,6 +6286,13 @@ export class EnsembleOrchestrator {
           ? 'Resumed from TaskWraith transcript context; no native provider session id was available.'
           : undefined
 
+      // Wave 3 — a seat compaction in flight (post-round auto or manual) may be
+      // about to REPLACE this participant's provider session; dispatching
+      // against the old one would strand the turn in an abandoned session.
+      // Await it (bounded by the lane's own 240s timeout) and refresh the
+      // session/summary fields the compaction may have rewritten.
+      await this.awaitSeatCompactionBeforeDispatch(runtime.chatId, participant)
+
       const run = this.seedParticipantRun(chat, runtime, participant, { sleepResumeWarning })
       runtime.activeRunId = run.runId
       const completion = new Promise<EnsembleParticipantStatus>((resolve) => {
@@ -7109,6 +7133,13 @@ export class EnsembleOrchestrator {
     // spreads its `chat` parameter to compose the next save. Using
     // the stale `chat` would clobber the status note we just
     // appended.
+    // Wave 3 — same seat-compaction barrier as the serial path, for every
+    // fan-out lane (a cursor read-only lane can be mid-compaction too).
+    await Promise.all(
+      participants.map((participant) =>
+        this.awaitSeatCompactionBeforeDispatch(runtime.chatId, participant)
+      )
+    )
     const laneRuns: ActiveParticipantRun[] = participants.map((participant) => {
       const freshChat = this.deps.getChat(runtime.chatId) || chat
       const dispatchMode = options.forceReadOnlyDispatch ? 'read_only' : mode
@@ -8089,6 +8120,7 @@ export class EnsembleOrchestrator {
           : 'round-failed'
     )
     this.completeCheckpoint(chatId, roundId, status)
+    this.maybeAutoCompactSeatsAfterRound(chatId, status)
   }
 
   private appendRoundStatus(chatId: string, roundId: string, content: string): void {
@@ -8260,6 +8292,88 @@ export class EnsembleOrchestrator {
       },
       'round-updated'
     )
+  }
+
+  /** Wave 3 — per-seat auto-compaction cooldown (attempts, success or not). */
+  private seatAutoCompactLastAttemptAt = new Map<string, number>()
+
+  /**
+   * Await an in-flight host seat compaction for this participant, then refresh
+   * the roster object's session/summary fields from the persisted chat — the
+   * compaction may have cleared the cursor seat's session id, and dispatching
+   * with the stale one would resume the abandoned session.
+   */
+  private async awaitSeatCompactionBeforeDispatch(
+    chatId: string,
+    participant: EnsembleParticipant
+  ): Promise<void> {
+    const pending = this.deps.awaitPendingSeatCompaction?.(participant.id)
+    if (!pending) return
+    await Promise.resolve(pending).catch(() => {})
+    const refreshed = this.deps
+      .getChat(chatId)
+      ?.ensemble?.participants?.find((candidate) => candidate.id === participant.id)
+    if (refreshed) {
+      participant.linkedProviderSessionId = refreshed.linkedProviderSessionId
+      participant.contextCompactionSummary = refreshed.contextCompactionSummary
+    }
+  }
+
+  /**
+   * Wave 3 — post-round host auto-compaction for cursor/kimi seats (the
+   * providers with no native lever). Runs in the idle dead-time after a
+   * COMPLETED round: deferred a tick so a chained queued round is visible,
+   * then compacts only the single WORST seat at/over the shared 90%
+   * threshold, one attempt per seat per cooldown window. Fire-and-forget —
+   * the maintenance lane cards success/failure itself, and the dispatch-wait
+   * above protects any round that starts mid-compaction.
+   */
+  private maybeAutoCompactSeatsAfterRound(
+    chatId: string,
+    status: Extract<EnsembleRoundState['status'], 'completed' | 'cancelled' | 'failed'>
+  ): void {
+    if (status !== 'completed') return
+    const compactSeatContext = this.deps.compactSeatContext
+    if (!compactSeatContext) return
+    if (this.deps.getSettings().hostAutoCompactEnabled === false) return
+    setTimeout(() => {
+      try {
+        if (this.deps.getSettings().hostAutoCompactEnabled === false) return
+        const chat = this.deps.getChat(chatId)
+        if (!chat?.ensemble) return
+        if (this.roundsByChatId.has(chatId)) return
+        if (isEnsembleRoundDispatchLive(chat.ensemble.activeRound)) return
+        let worst: { participant: EnsembleParticipant; percent: number } | null = null
+        for (const participant of chat.ensemble.participants || []) {
+          if (participant.enabled === false) continue
+          if (participant.provider !== 'cursor' && participant.provider !== 'kimi') continue
+          if (participant.provider === 'cursor' && !participant.linkedProviderSessionId) continue
+          const lastAttempt = this.seatAutoCompactLastAttemptAt.get(participant.id) || 0
+          if (this.deps.now() - lastAttempt < CONTEXT_AUTO_COMPACT_COOLDOWN_MS) continue
+          const usage = latestRunContextUsage(chat.runs ?? [], participant.id)
+          const windowTokens = resolveContextWindow(
+            participant.provider,
+            participant.model,
+            usage.totalTokenLimit
+          )
+          const percent = contextPercent(usage.tokens, windowTokens)
+          if (percent < CONTEXT_AUTO_COMPACT_PERCENT) continue
+          if (!worst || percent > worst.percent) worst = { participant, percent }
+        }
+        if (!worst) return
+        this.seatAutoCompactLastAttemptAt.set(worst.participant.id, this.deps.now())
+        void compactSeatContext({
+          chatId,
+          participantId: worst.participant.id,
+          provider: worst.participant.provider as 'cursor' | 'kimi',
+          trigger: 'auto'
+        }).catch(() => {
+          // Best-effort: the lane cards its own failures; cooldown holds.
+        })
+      } catch {
+        // Best-effort maintenance — never let it disturb round bookkeeping.
+      }
+    }, 250)
   }
 
   private clearRuntimeIfCurrent(runtime: ActiveRoundRuntime): void {
