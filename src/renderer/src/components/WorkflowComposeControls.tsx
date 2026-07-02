@@ -24,13 +24,6 @@ export interface WorkflowComposeControlsProps {
   onIntervalMinutesChange: (minutes: number) => void
   maxRunsPerDay: number
   onMaxRunsPerDayChange: (max: number) => void
-  ensembleEnabled: boolean
-  onEnsembleEnabledChange: (enabled: boolean) => void
-  /** Locked once the workflow has been created/started — render the toggle disabled. */
-  ensembleLocked?: boolean
-  /** Hide the ensemble toggle entirely (E2 ships single-provider workflows; the
-   *  ensemble toggle + its above-row animation arrive in a later slice). */
-  showEnsembleToggle?: boolean
   /**
    * P2b: the chosen UNATTENDED permission level. Default 'safe' (read-only). This
    * is captured as INTENT only — the verified ack is minted post-save by the
@@ -40,9 +33,6 @@ export interface WorkflowComposeControlsProps {
   unattendedLevel: UnattendedElevationLevel
   onUnattendedLevelChange: (level: UnattendedElevationLevel) => void
 }
-
-const ENSEMBLE_LOCKED_TITLE =
-  "Ensemble mode can't be changed after the workflow starts."
 
 const UNATTENDED_LEVEL_OPTIONS: ReadonlyArray<{
   level: UnattendedElevationLevel
@@ -60,10 +50,6 @@ export function WorkflowComposeControls({
   onIntervalMinutesChange,
   maxRunsPerDay,
   onMaxRunsPerDayChange,
-  ensembleEnabled,
-  onEnsembleEnabledChange,
-  ensembleLocked = false,
-  showEnsembleToggle = true,
   unattendedLevel,
   onUnattendedLevelChange
 }: WorkflowComposeControlsProps): React.JSX.Element {
@@ -71,40 +57,6 @@ export function WorkflowComposeControls({
 
   return (
     <div className="workflow-compose-controls">
-      {showEnsembleToggle && (
-        <div className="workflow-creator-field">
-          <span id="workflow-compose-ensemble-label">Run as ensemble</span>
-          <div
-            className="workflow-creator-segmented"
-            role="group"
-            aria-labelledby="workflow-compose-ensemble-label"
-            aria-disabled={ensembleLocked || undefined}
-            title={ensembleLocked ? ENSEMBLE_LOCKED_TITLE : undefined}
-          >
-            <button
-              type="button"
-              className={ensembleEnabled ? 'is-active' : ''}
-              onClick={() => onEnsembleEnabledChange(true)}
-              disabled={ensembleLocked}
-              aria-pressed={ensembleEnabled}
-              title={ensembleLocked ? ENSEMBLE_LOCKED_TITLE : undefined}
-            >
-              On
-            </button>
-            <button
-              type="button"
-              className={ensembleEnabled ? '' : 'is-active'}
-              onClick={() => onEnsembleEnabledChange(false)}
-              disabled={ensembleLocked}
-              aria-pressed={!ensembleEnabled}
-              title={ensembleLocked ? ENSEMBLE_LOCKED_TITLE : undefined}
-            >
-              Off
-            </button>
-          </div>
-        </div>
-      )}
-
       <div className="workflow-creator-field">
         <span id="workflow-compose-cadence-label">Cadence</span>
         <div

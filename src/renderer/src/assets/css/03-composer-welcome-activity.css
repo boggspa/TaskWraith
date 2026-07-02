@@ -1025,47 +1025,6 @@
   font-size: var(--font-size-sm);
 }
 
-.welcome-chat-kind-toggle {
-  margin-top: 12px;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 30px;
-  padding: 3px;
-  border: 1px solid color-mix(in srgb, var(--panel-border) 76%, transparent);
-  border-radius: 9px;
-  background: color-mix(in srgb, var(--panel-bg-solid, var(--surface-1)) 58%, transparent);
-  color: var(--text-secondary);
-}
-
-.welcome-chat-kind-toggle-label {
-  padding: 0 8px;
-  font-size: var(--font-size-xs);
-  font-weight: 680;
-  letter-spacing: 0;
-  text-transform: uppercase;
-}
-
-.welcome-chat-kind-toggle-button {
-  min-width: 46px;
-  min-height: 24px;
-  border: 0;
-  border-radius: 7px;
-  padding: 0 10px;
-  background: color-mix(in srgb, var(--panel-border) 34%, transparent);
-  color: var(--text-secondary);
-  font: inherit;
-  font-size: var(--font-size-xs);
-  font-weight: 720;
-  cursor: pointer;
-}
-
-.welcome-chat-kind-toggle-button[data-active='true'] {
-  background: color-mix(in srgb, var(--accent) 24%, transparent);
-  color: var(--text-primary);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 36%, transparent);
-}
-
 /* Slice F follow-up (1.0.3) — ensemble welcome variant. Renders the
  * orchestration order as a chevron-arrow chain (Claude → Codex →
  * Gemini → Kimi) so the user sees the speaking sequence at a glance.
@@ -4587,6 +4546,51 @@
   animation: none;
 }
 
+.composer-ensemble-toggle-control-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.composer-ensemble-toggle-button {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px 4px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: color-mix(in srgb, var(--text-secondary) 58%, transparent);
+  cursor: pointer;
+  transition: color 120ms ease, background 120ms ease, border-color 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.composer-ensemble-toggle-button:hover:not(:disabled),
+.composer-ensemble-toggle-button.is-open {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.composer-ensemble-toggle-button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.composer-ensemble-toggle-button.is-active {
+  color: color-mix(in srgb, var(--provider-ensemble-color, var(--accent)) 86%, var(--text-primary));
+  background: color-mix(in srgb, var(--provider-ensemble-color, var(--accent)) 12%, transparent);
+  border-color: color-mix(in srgb, var(--provider-ensemble-color, var(--accent)) 34%, transparent);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--provider-ensemble-color, var(--accent)) 18%, transparent);
+}
+
+.composer-ensemble-toggle-button .provider-glyph {
+  width: 14px;
+  height: 14px;
+  --provider-accent: currentColor !important;
+}
+
 .composer-goal-control-wrap {
   position: relative;
   display: inline-flex;
@@ -5108,6 +5112,103 @@
 }
 
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .composer-goal-popover {
+  background: color-mix(in srgb, var(--surface-1) 78%, transparent);
+  border-color: var(--surface-border);
+  box-shadow:
+    0 18px 44px rgba(0, 0, 0, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.7);
+  color: var(--surface-text);
+}
+
+.composer-ensemble-toggle-popover {
+  position: fixed;
+  z-index: 12000;
+  width: min(236px, calc(100vw - 16px));
+  max-height: min(180px, calc(100vh - 16px));
+  overflow: hidden;
+  padding: 10px;
+  transform: translate(-50%, -100%);
+  border: 1px solid color-mix(in srgb, var(--panel-border) 90%, transparent);
+  border-radius: var(--radius-md, 10px);
+  background: color-mix(in srgb, var(--panel-elevated-bg) 96%, transparent);
+  box-shadow:
+    0 18px 44px rgba(0, 0, 0, 0.32),
+    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 6%, transparent);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: calc(var(--font-size-xs) + 1px);
+  isolation: isolate;
+}
+
+.composer-ensemble-toggle-popover.is-below {
+  transform: translate(-50%, 0);
+}
+
+.composer-ensemble-toggle-popover-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+  padding: 0 2px;
+}
+
+.composer-ensemble-toggle-popover-title {
+  font-size: var(--font-size-sm);
+  font-weight: 700;
+}
+
+.composer-ensemble-toggle-state {
+  flex: 0 0 auto;
+  padding: 2px 7px;
+  border-radius: 999px;
+  color: color-mix(in srgb, var(--text-secondary) 88%, transparent);
+  background: color-mix(in srgb, var(--text-secondary) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--panel-border) 52%, transparent);
+  font-size: var(--font-size-xs);
+  font-weight: 650;
+}
+
+.composer-ensemble-toggle-segmented {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 3px;
+  padding: 3px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--panel-border) 58%, transparent);
+}
+
+.composer-ensemble-toggle-segmented button {
+  appearance: none;
+  -webkit-appearance: none;
+  min-height: 27px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: color-mix(in srgb, var(--text-primary) 74%, transparent);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.composer-ensemble-toggle-segmented button:hover,
+.composer-ensemble-toggle-segmented button:focus-visible {
+  outline: none;
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--text-primary) 9%, transparent);
+}
+
+.composer-ensemble-toggle-segmented button.is-active {
+  color: color-mix(in srgb, var(--provider-ensemble-color, var(--accent)) 88%, var(--text-primary));
+  background: color-mix(in srgb, var(--provider-ensemble-color, var(--accent)) 16%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--provider-ensemble-color, var(--accent)) 28%, transparent);
+}
+
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .composer-ensemble-toggle-popover {
   background: color-mix(in srgb, var(--surface-1) 78%, transparent);
   border-color: var(--surface-border);
   box-shadow:

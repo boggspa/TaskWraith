@@ -13,8 +13,6 @@ function renderControls(
       onIntervalMinutesChange={vi.fn()}
       maxRunsPerDay={24}
       onMaxRunsPerDayChange={vi.fn()}
-      ensembleEnabled={false}
-      onEnsembleEnabledChange={vi.fn()}
       unattendedLevel="safe"
       onUnattendedLevelChange={vi.fn()}
       {...overrides}

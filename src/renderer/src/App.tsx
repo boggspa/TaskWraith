@@ -2079,9 +2079,8 @@ function App(): React.JSX.Element {
     // object), behind a Tier-4-style confirm. Default 'safe' = no elevation.
     unattendedLevel: UnattendedElevationLevel
   } | null>(null)
-  // Guards the async chat-recreate in handleToggleWorkflowEnsemble so a fast
-  // double-click can't spawn (and orphan) a second ensemble draft chat.
-  const workflowEnsembleTogglingRef = useRef(false)
+  // Guards the async chat-recreate behind the welcome Ensemble footer control
+  // so a fast double-click can't spawn (and orphan) a second draft chat.
   const welcomeEnsembleTogglingRef = useRef(false)
   const [scheduleRunAtByChatId, setScheduleRunAtForChat] = usePerChatState('')
   const [dueScheduledTasks, setDueScheduledTasks] = useState<ScheduledTask[]>([])
@@ -4638,7 +4637,7 @@ function App(): React.JSX.Element {
       await selectGlobalChat(existingGlobalChats[0])
     } else {
       try {
-        await handleNewSingleGlobalChat()
+        await handleNewDefaultGlobalChat()
       } catch (error) {
         console.warn(
           '[TaskWraith] Failed to create initial general chat on launch:',
@@ -6516,19 +6515,44 @@ function App(): React.JSX.Element {
     reapAbandonedChatsAfterCreate(newChat.appChatId)
   }
 
-  const handleNewSingleGlobalChat = async () => {
+  const handleNewSingleGlobalChat = async (): Promise<ChatRecord | null> => {
     setActiveWorkspaceBoardId(null)
-    if (typeof window.api.createGlobalChat !== 'function') return
+    if (typeof window.api.createGlobalChat !== 'function') return null
     const newChat = await window.api.createGlobalChat()
     setChats((prev) => mergeChatRecord(prev, newChat))
     await selectGlobalChat(newChat)
     reapAbandonedChatsAfterCreate(newChat.appChatId)
+    return newChat
   }
 
-  const handleNewEnsemble = async (): Promise<ChatRecord | null> => {
+  const handleNewGlobalEnsembleChat = async (): Promise<ChatRecord | null> => {
     setActiveWorkspaceBoardId(null)
     if (settings?.ensembleModeEnabled === false) return null
+    const newChat = await window.api.createEnsembleChat()
+    setChats((prev) => mergeChatRecord(prev, newChat))
+    await selectGlobalChat(newChat)
+    reapAbandonedChatsAfterCreate(newChat.appChatId)
+    return newChat
+  }
+
+  const handleNewEnsemble = async (
+    workspaceOverride?: Pick<WorkspaceRecord, 'id' | 'path'> | null
+  ): Promise<ChatRecord | null> => {
+    setActiveWorkspaceBoardId(null)
+    if (settings?.ensembleModeEnabled === false) return null
+    const overrideWorkspace: WorkspaceRecord | null = workspaceOverride
+      ? workspaces.find((workspace) => workspace.id === workspaceOverride.id) || {
+          id: workspaceOverride.id,
+          path: workspaceOverride.path,
+          displayName:
+            workspaceOverride.path.split(/[\\/]/).filter(Boolean).pop() || 'Workspace',
+          lastOpenedAt: Date.now(),
+          createdAt: Date.now(),
+          pinned: false
+        }
+      : null
     const workspace =
+      overrideWorkspace ||
       currentWorkspace ||
       (currentChat?.scope === 'workspace' ? getWorkspaceForChat(currentChat) : null)
     const args =
@@ -6561,6 +6585,25 @@ function App(): React.JSX.Element {
     return newChat
   }
 
+  const handleNewDefaultGlobalChat = async (): Promise<ChatRecord | null> => {
+    if (settings?.ensembleModeEnabled !== false) {
+      const ensembleChat = await handleNewGlobalEnsembleChat()
+      if (ensembleChat) return ensembleChat
+    }
+    return handleNewSingleGlobalChat()
+  }
+
+  const handleNewDefaultWorkspaceChat = async (
+    wsId: string,
+    wsPath: string
+  ): Promise<ChatRecord> => {
+    if (settings?.ensembleModeEnabled !== false) {
+      const ensembleChat = await handleNewEnsemble({ id: wsId, path: wsPath })
+      if (ensembleChat) return ensembleChat
+    }
+    return handleNewChat(wsId, wsPath)
+  }
+
   // Shared beta launcher: preserve the user's chosen chat kind instead of
   // always dropping into a General chat before creating the collaborator share.
   const handleStartSharedChat = async (
@@ -6575,16 +6618,11 @@ function App(): React.JSX.Element {
         window.alert('Open a workspace first to create a shared workspace chat.')
         return
       }
-      sharedChat = await handleNewChat(workspace.id, workspace.path)
+      sharedChat = await handleNewDefaultWorkspaceChat(workspace.id, workspace.path)
     } else if (variant === 'ensemble') {
       sharedChat = await handleNewEnsemble()
     } else {
-      if (typeof window.api.createGlobalChat !== 'function') return
-      const newChat = await window.api.createGlobalChat()
-      setChats((prev) => mergeChatRecord(prev, newChat))
-      await selectGlobalChat(newChat)
-      reapAbandonedChatsAfterCreate(newChat.appChatId)
-      sharedChat = newChat
+      sharedChat = await handleNewDefaultGlobalChat()
     }
     if (sharedChat) {
       await shareChatIdAndCopyInvite(sharedChat.appChatId, {
@@ -12519,79 +12557,60 @@ function App(): React.JSX.Element {
   // the old modal. The WorkflowDefinition is saved on first send.
   const handleOpenWorkflowCompose = async () => {
     if (!currentWorkspace) return // workflows are workspace-scoped
-    await handleNewChat(currentWorkspace.id, currentWorkspace.path)
-    const chatId = currentChatIdRef.current
+    const ensembleEnabled = settings?.ensembleModeEnabled !== false
+    const chat = ensembleEnabled
+      ? await handleNewEnsemble(currentWorkspace)
+      : await handleNewChat(currentWorkspace.id, currentWorkspace.path)
+    const chatId = chat?.appChatId || currentChatIdRef.current
     if (!chatId) return
     setWorkflowDraft({
       chatId,
       cadence: 'manual',
       intervalMinutes: 60,
       maxRunsPerDay: 24,
-      ensembleEnabled: false,
+      ensembleEnabled,
       unattendedLevel: 'safe'
     })
   }
 
-  // Run-as-ensemble toggle on the workflow welcome. A chat's kind is fixed at
-  // creation, so flipping ensemble RECREATES the draft chat (single↔ensemble)
-  // and carries the typed prompt across; the EnsembleParticipantsAboveRow then
-  // appears/disappears (it gates on chatKind === 'ensemble'). The abandoned
-  // empty draft chat is cleaned up.
-  const handleToggleWorkflowEnsemble = async (enabled: boolean) => {
-    const draft = workflowDraft
-    if (!draft || !currentWorkspace || draft.ensembleEnabled === enabled) return
-    if (workflowEnsembleTogglingRef.current) return
-    workflowEnsembleTogglingRef.current = true
-    try {
-      const oldChatId = draft.chatId
-      const carriedPrompt = prompt
-      if (enabled) {
-        await handleNewEnsemble()
-      } else {
-        await handleNewChat(currentWorkspace.id, currentWorkspace.path)
-      }
-      const newChatId = currentChatIdRef.current
-      if (!newChatId || newChatId === oldChatId) return
-      setWorkflowDraft({ ...draft, chatId: newChatId, ensembleEnabled: enabled })
-      if (carriedPrompt.trim()) {
-        setChatPromptDraft(newChatId, carriedPrompt)
-        setPrompt(carriedPrompt)
-      }
-      setChats((prev) => prev.filter((chat) => chat.appChatId !== oldChatId))
-      chatByIdRef.current.delete(oldChatId)
-      try {
-        await window.api.deleteChat(oldChatId)
-      } catch {
-        /* best-effort cleanup of the abandoned empty draft chat */
-      }
-    } finally {
-      workflowEnsembleTogglingRef.current = false
-    }
-  }
-
+  // Footer Ensemble toggle for welcome chats. A chat's kind is fixed at
+  // creation, so flipping Ensemble recreates the empty draft chat and carries
+  // the typed prompt across. The abandoned draft is removed after the new one
+  // is selected.
   const handleToggleWelcomeEnsemble = async (enabled: boolean) => {
-    if (!isWelcomeChat || isWorkflowChatWelcome || !currentChat?.appChatId) return
+    if (!isWelcomeChat || !currentChat?.appChatId) return
+    if (settings?.ensembleModeEnabled === false && enabled) return
     if (isCurrentEnsembleChat === enabled) return
     if (welcomeEnsembleTogglingRef.current) return
     welcomeEnsembleTogglingRef.current = true
     try {
       const oldChatId = currentChat.appChatId
       const carriedPrompt = prompt
+      const workflowDraftForCurrent =
+        workflowDraft?.chatId === oldChatId ? workflowDraft : null
+      const workspace =
+        currentChat.scope === 'workspace'
+          ? getWorkspaceForChat(currentChat) || currentWorkspace
+          : null
+      let newChat: ChatRecord | null = null
       if (enabled) {
-        await handleNewEnsemble()
+        newChat = workspace?.id && workspace.path
+          ? await handleNewEnsemble(workspace)
+          : await handleNewGlobalEnsembleChat()
       } else {
-        const workspace =
-          currentChat.scope === 'workspace'
-            ? getWorkspaceForChat(currentChat) || currentWorkspace
-            : null
-        if (workspace?.id && workspace.path) {
-          await handleNewChat(workspace.id, workspace.path)
-        } else {
-          await handleNewSingleGlobalChat()
-        }
+        newChat = workspace?.id && workspace.path
+          ? await handleNewChat(workspace.id, workspace.path)
+          : await handleNewSingleGlobalChat()
       }
-      const newChatId = currentChatIdRef.current
+      const newChatId = newChat?.appChatId || currentChatIdRef.current
       if (!newChatId || newChatId === oldChatId) return
+      if (workflowDraftForCurrent) {
+        setWorkflowDraft({
+          ...workflowDraftForCurrent,
+          chatId: newChatId,
+          ensembleEnabled: enabled
+        })
+      }
       if (carriedPrompt.trim()) {
         setChatPromptDraft(newChatId, carriedPrompt)
         setPrompt(carriedPrompt)
@@ -15164,7 +15183,7 @@ function App(): React.JSX.Element {
 
   const createNewChatFromKeyboard = (): boolean => {
     if (isChatPopoutWindow) return false
-    void handleNewSingleGlobalChat()
+    void handleNewDefaultGlobalChat()
     return true
   }
 
@@ -21847,7 +21866,6 @@ function App(): React.JSX.Element {
     handleSetAgenticWorkspaceGrant,
     handleSteer,
     handleToggleWelcomeEnsemble,
-    handleToggleWorkflowEnsemble,
     handleTrustWorkspaceClick,
     handleWelcomeSuggestion,
     markCurrentGoalBlocked,
@@ -23161,10 +23179,10 @@ function App(): React.JSX.Element {
     handleManualUsageRefresh,
     handleMessageSelectionCandidate,
     handleNavigateToWorkspace,
-    handleNewChat,
+    handleNewChat: handleNewDefaultWorkspaceChat,
     handleNewEnsemble,
+    handleNewDefaultGlobalChat,
     handleNewGlobalChat,
-    handleNewSingleGlobalChat,
     handleOpenChangelogSheet,
     handleOpenCockpitThread,
     handleOpenInMultiview,
