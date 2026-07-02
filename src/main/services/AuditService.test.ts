@@ -169,6 +169,48 @@ describe('AuditService', () => {
     })
   })
 
+  it('binds automatic approval decisions to the route permission posture', () => {
+    const permissionPosture = {
+      schemaVersion: 1,
+      approvalMode: 'plan',
+      workflowMode: 'plan',
+      presetId: 'plan',
+      readOnly: true,
+      externalPathGrantCount: 0,
+      postureHash: 'posture-hash',
+      signature: 'signed-posture',
+      signaturePresent: true
+    } as const
+    const { records } = makeDeps()
+    const service = new AuditService(
+      makeDeps({
+        recordApprovalLedgerDecision: (input) => records.push(input),
+        approvalRouteContext: vi.fn(() => ({
+          runId: 'run-1',
+          chatId: 'chat-1',
+          workspacePath: '/workspace',
+          permissionPosture
+        }))
+      }).deps
+    )
+    service.recordAutomaticApprovalDecision(
+      'codex',
+      { appRunId: 'run-1', appChatId: 'chat-1' },
+      'mcpTools',
+      '/workspace',
+      { method: 'mcp/call', title: 'Call MCP tool' },
+      'autoDeny',
+      'policy',
+      'request',
+      { reason: 'network-denied' }
+    )
+
+    expect(records[0]?.metadata).toEqual({
+      reason: 'network-denied',
+      permissionPosture
+    })
+  })
+
   it('records Boss auto approvals as request-scoped ledger decisions with participant metadata', () => {
     const { records } = makeDeps()
     const service = new AuditService(

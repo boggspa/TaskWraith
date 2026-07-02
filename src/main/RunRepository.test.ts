@@ -80,6 +80,69 @@ describe('RunRepository', () => {
     }
   })
 
+  it('persists permission posture snapshots on queue jobs and lifecycle events', () => {
+    const permissionPosture = {
+      schemaVersion: 1,
+      approvalMode: 'plan',
+      workflowMode: 'plan',
+      presetId: 'plan',
+      readOnly: true,
+      networkAccess: 'deny',
+      externalPathGrantCount: 0,
+      postureHash: 'posture-hash',
+      signature: 'signed-posture',
+      signaturePresent: true
+    } as const
+    const repository = new RunRepository({
+      providerLabel: (provider) => provider,
+      permissionPostureForSession: vi.fn(() => permissionPosture),
+      emitRunQueueChanged: vi.fn(),
+      emitRunEventsChanged: vi.fn()
+    })
+    const getExisting = vi.spyOn(AppStore, 'getRunQueueJob').mockReturnValue(null)
+    const saveQueue = vi
+      .spyOn(AppStore, 'saveRunQueueJob')
+      .mockImplementation((input: any) => input)
+    const append = vi.spyOn(AppStore, 'appendRunEvent').mockImplementation((input: any) => ({
+      schemaVersion: 1,
+      id: 'event-1',
+      sequence: 1,
+      timestamp: '2026-05-08T00:00:00.000Z',
+      ...input
+    }))
+    const session: any = {
+      runId: 'run-1',
+      provider: 'codex',
+      appChatId: 'chat-1',
+      workspacePath: '/repo',
+      status: 'running',
+      startedAt: Date.parse('2026-05-08T00:00:00.000Z'),
+      updatedAt: Date.parse('2026-05-08T00:00:01.000Z'),
+      approvalIds: new Set(),
+      sessionGrants: new Set()
+    }
+
+    try {
+      repository.persistSessionQueueState(session)
+      repository.appendLifecycleEvent('created', session)
+
+      expect(saveQueue).toHaveBeenCalledWith(
+        expect.objectContaining({
+          runId: 'run-1',
+          permissionPosture
+        })
+      )
+      expect(append.mock.results[0]?.value?.payload).toMatchObject({
+        eventType: 'created',
+        permissionPosture
+      })
+    } finally {
+      getExisting.mockRestore()
+      saveQueue.mockRestore()
+      append.mockRestore()
+    }
+  })
+
   it('reads run events after the last seen sequence', () => {
     const repository = new RunRepository({
       providerLabel: (provider) => provider,

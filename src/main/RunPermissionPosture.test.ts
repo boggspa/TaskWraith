@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
   approvalModeRank,
+  buildRunPermissionPostureSnapshot,
   canonicalRunPermissionPosture,
   clampUntrustedRunPosture,
   coerceApprovalMode,
@@ -215,6 +216,66 @@ describe('canonical posture + sign/verify', () => {
     expect(verifyRunPermissionPosture(SECRET, 'auto_edit', perms, '')).toBe(false)
     expect(verifyRunPermissionPosture(SECRET, 'auto_edit', perms, undefined)).toBe(false)
     expect(verifyRunPermissionPosture(SECRET, 'auto_edit', perms, 'not-hex!!')).toBe(false)
+  })
+
+  it('builds durable snapshots without retaining raw prompt text', () => {
+    const perms = {
+      ...fullAccessPerms(),
+      externalPathGrants: [
+        {
+          id: 'grant-1',
+          provider: 'codex',
+          path: '/repo/extra',
+          kind: 'directory',
+          access: 'read',
+          duration: 'thisRun',
+          createdAt: '2026-07-02T00:00:00.000Z'
+        }
+      ],
+      workspaceGrantServiceIds: ['shellCommands']
+    } satisfies EffectiveRunPermissions
+    const context = {
+      provider: 'codex',
+      scope: 'workspace',
+      appRunId: 'run-1',
+      appChatId: 'chat-1',
+      prompt: 'Sensitive user prompt',
+      workflowMode: 'normal',
+      runtimeProfileId: 'builtin:codex:local'
+    }
+    const signature = signRunPermissionPosture(SECRET, 'auto_edit', perms, context)
+    const snapshot = buildRunPermissionPostureSnapshot({
+      approvalMode: 'auto_edit',
+      workflowMode: 'normal',
+      effectivePermissions: perms,
+      signature,
+      context
+    })
+
+    expect(snapshot).toMatchObject({
+      schemaVersion: 1,
+      approvalMode: 'auto_edit',
+      workflowMode: 'normal',
+      presetId: 'full_access',
+      readOnly: false,
+      networkAccess: 'allow',
+      externalPathGrantCount: 1,
+      workspaceGrantServiceIds: ['shellCommands'],
+      signature,
+      signaturePresent: true,
+      context: {
+        provider: 'codex',
+        scope: 'workspace',
+        appRunId: 'run-1',
+        appChatId: 'chat-1',
+        workflowMode: 'normal',
+        runtimeProfileId: 'builtin:codex:local'
+      }
+    })
+    expect(snapshot.postureHash).toHaveLength(64)
+    expect(snapshot.externalPathGrantHash).toHaveLength(64)
+    expect(snapshot.context?.promptHash).toHaveLength(64)
+    expect(JSON.stringify(snapshot)).not.toContain('Sensitive user prompt')
   })
 
   it('fails closed when effectivePermissions cannot be canonicalized', () => {

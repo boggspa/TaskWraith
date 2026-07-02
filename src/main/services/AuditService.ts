@@ -4,7 +4,8 @@ import type {
   AgentApprovalAction,
   AgenticServiceId,
   ApprovalLedgerRequestInput,
-  ProviderId
+  ProviderId,
+  RunPermissionPostureSnapshot
 } from '../store/types'
 
 export interface ApprovalRouteContext {
@@ -17,6 +18,7 @@ export interface ApprovalRouteContext {
   chatId?: string
   workspaceId?: string
   workspacePath?: string
+  permissionPosture?: RunPermissionPostureSnapshot
 }
 
 export interface AutomaticApprovalRequest {
@@ -88,6 +90,10 @@ export class AuditService {
     try {
       const now = this.nowIso()
       const context = this.deps.approvalRouteContext(provider, route)
+      const metadataWithPosture = mergePermissionPostureMetadata(
+        metadata,
+        context.permissionPosture
+      )
       this.deps.recordApprovalLedgerDecision({
         approvalId: `${decision}-${service}-${this.nowMs()}-${this.idSuffix()}`,
         provider,
@@ -110,7 +116,7 @@ export class AuditService {
         workspacePath: workspacePath || context.workspacePath,
         providerSessionId: context.session?.providerSessionId,
         providerRunId: context.session?.providerRunId,
-        metadata
+        metadata: metadataWithPosture
       })
     } catch (error) {
       this.logError('Failed to record automatic approval ledger decision', error)
@@ -135,6 +141,17 @@ export class AuditService {
       return
     }
     console.error(message, error)
+  }
+}
+
+function mergePermissionPostureMetadata(
+  metadata: Record<string, unknown>,
+  permissionPosture: RunPermissionPostureSnapshot | undefined
+): Record<string, unknown> {
+  if (!permissionPosture) return metadata
+  return {
+    ...metadata,
+    permissionPosture
   }
 }
 

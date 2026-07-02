@@ -531,7 +531,8 @@ import {
   RunEventKind,
   TranscriptMediaRef,
   TranscriptMediaThumbnail,
-  PooledAgentIdentitySnapshot
+  PooledAgentIdentitySnapshot,
+  RunPermissionPostureSnapshot
 } from './store/types'
 import type { AgentRunPayload, AgentRunRoute } from './run/AgentRunTypes'
 import {
@@ -585,6 +586,7 @@ import { buildCodexStatusSnapshot } from './CodexStatusSnapshot'
 import { resolveEffectiveRunPermissions, isPlanInstrumentGrantHold } from './EffectiveRunPermissions'
 import { isReconRunPosture } from './ReconPosture'
 import {
+  buildRunPermissionPostureSnapshot,
   clampUntrustedRunPosture,
   signRunPermissionPosture,
   verifyRunPermissionPosture,
@@ -4080,6 +4082,99 @@ function runPostureContextFromPayload(payload: {
   }
 }
 
+function permissionPostureSnapshotFromSession(
+  session:
+    | {
+        runId?: string
+        appChatId?: string
+        provider?: ProviderId
+        workspacePath?: string
+        state?: unknown
+      }
+    | undefined
+): RunPermissionPostureSnapshot | undefined {
+  const state = session?.state
+  if (!state || typeof state !== 'object' || Array.isArray(state)) return undefined
+  const record = state as {
+    approvalMode?: unknown
+    workflowMode?: unknown
+    runtimeProfileId?: unknown
+    effectivePermissions?: unknown
+    effectivePermissionsSignature?: unknown
+    appRunId?: unknown
+    appChatId?: unknown
+    prompt?: unknown
+  }
+  const effectivePermissions = isRecord(record.effectivePermissions)
+    ? (record.effectivePermissions as unknown as EffectiveRunPermissions)
+    : undefined
+  const approvalMode = optionalString(record.approvalMode)
+  if (!approvalMode && !effectivePermissions) return undefined
+  return buildRunPermissionPostureSnapshot({
+    approvalMode,
+    workflowMode: record.workflowMode === 'plan' ? 'plan' : 'normal',
+    effectivePermissions,
+    signature: optionalString(record.effectivePermissionsSignature),
+    context: {
+      provider: session.provider,
+      scope: session.workspacePath ? 'workspace' : 'global',
+      appRunId: optionalString(record.appRunId) || optionalString(session.runId),
+      appChatId: optionalString(record.appChatId) || optionalString(session.appChatId),
+      prompt: typeof record.prompt === 'string' ? record.prompt : null,
+      workflowMode: record.workflowMode === 'plan' ? 'plan' : 'normal',
+      runtimeProfileId: optionalString(record.runtimeProfileId)
+    }
+  })
+}
+
+function mergePermissionPostureMetadata(
+  metadata: Record<string, unknown> | undefined,
+  permissionPosture: RunPermissionPostureSnapshot | undefined
+): Record<string, unknown> | undefined {
+  if (!permissionPosture) return metadata
+  return {
+    ...(metadata ?? {}),
+    permissionPosture
+  }
+}
+
+function persistRunPermissionPostureOnChatRun(session: {
+  runId: string
+  appChatId?: string
+  state?: unknown
+  provider?: ProviderId
+  workspacePath?: string
+}): void {
+  if (!session.appChatId) return
+  const permissionPosture = permissionPostureSnapshotFromSession(session)
+  if (!permissionPosture) return
+  const chat = AppStore.getChat(session.appChatId)
+  if (!chat?.runs?.length) return
+  const runIndex = chat.runs.findIndex((run) => run.runId === session.runId)
+  if (runIndex < 0) return
+  const existingRun = chat.runs[runIndex]
+  if (
+    existingRun.permissionPosture?.postureHash === permissionPosture.postureHash &&
+    existingRun.permissionPosture?.signature === permissionPosture.signature
+  ) {
+    return
+  }
+  const runs = [...chat.runs]
+  runs[runIndex] = {
+    ...existingRun,
+    permissionPosture,
+    approvalMode: existingRun.approvalMode || permissionPosture.approvalMode,
+    workflowMode: existingRun.workflowMode || permissionPosture.workflowMode
+  }
+  const updated = {
+    ...chat,
+    runs,
+    updatedAt: Date.now()
+  }
+  AppStore.saveChat(updated)
+  broadcastChatUpdated(updated)
+}
+
 function normalizeAgentRunPayload(rawPayload: unknown): AgentRunPayload {
   const payload = requireRecord(rawPayload, 'Run payload')
   // Universal run-dispatch chokepoint (renderer + main-built ensemble / sub-thread
@@ -4395,6 +4490,7 @@ function getRunRepository(): RunRepository {
   if (!runRepository) {
     runRepository = new RunRepository({
       providerLabel: providerDisplayName,
+      permissionPostureForSession: permissionPostureSnapshotFromSession,
       emitRunQueueChanged,
       emitRunEventsChanged
     })
@@ -4559,6 +4655,7 @@ runManager.onChange((event) => {
     })
     return
   }
+  persistRunPermissionPostureOnChatRun(event.session)
   persistRunSessionQueueState(event.session)
   expireRunScopedApprovalLedger(event.session)
   getRunRepository().appendLifecycleEvent(event.type, event.session)
@@ -6982,7 +7079,8 @@ function approvalRouteContext(provider: ProviderId, route?: AgentRunRoute | null
     runId,
     chatId,
     workspaceId: chat?.workspaceId,
-    workspacePath: session?.workspacePath || chat?.workspacePath
+    workspacePath: session?.workspacePath || chat?.workspacePath,
+    permissionPosture: permissionPostureSnapshotFromSession(session)
   }
 }
 
@@ -7027,7 +7125,7 @@ function recordApprovalLedgerRequest(
       providerSessionId: context.session?.providerSessionId,
       providerRunId: context.session?.providerRunId,
       rpcId: payload.requestId,
-      metadata: options.metadata
+      metadata: mergePermissionPostureMetadata(options.metadata, context.permissionPosture)
     })
   } catch (error) {
     console.error('Failed to record approval ledger request', error)
@@ -10381,6 +10479,7 @@ function runCliProviderProcess(
     externalPathGrants: payload.externalPathGrants,
     runtimeProfileId: payload.runtimeProfileId,
     effectivePermissions: payload.effectivePermissions,
+    effectivePermissionsSignature: payload.effectivePermissionsSignature,
     ensembleRun: payload.ensembleRun,
     ...route
   }
@@ -11006,6 +11105,7 @@ async function tryRunClaudeSdk(
     externalPathGrants: payload.externalPathGrants,
     runtimeProfileId: payload.runtimeProfileId,
     effectivePermissions: payload.effectivePermissions,
+    effectivePermissionsSignature: payload.effectivePermissionsSignature,
     ensembleRun: payload.ensembleRun,
     ...route
   }
@@ -11797,6 +11897,7 @@ async function runGrokAcpProvider(event: Electron.IpcMainInvokeEvent, payload: A
     externalPathGrants: payload.externalPathGrants,
     runtimeProfileId: payload.runtimeProfileId,
     effectivePermissions: payload.effectivePermissions,
+    effectivePermissionsSignature: payload.effectivePermissionsSignature,
     ensembleRun: payload.ensembleRun,
     ...route
   }
@@ -12248,6 +12349,7 @@ async function runKimiWireProvider(
     externalPathGrants: payload.externalPathGrants,
     runtimeProfileId: payload.runtimeProfileId,
     effectivePermissions: payload.effectivePermissions,
+    effectivePermissionsSignature: payload.effectivePermissionsSignature,
     ensembleRun: payload.ensembleRun,
     ...route
   }

@@ -47,6 +47,7 @@ function lookupEnsembleQueueMetadata(
 
 export interface RunRepositoryOptions {
   providerLabel: (provider: RunSession['provider']) => string
+  permissionPostureForSession?: (session: RunSession) => RunQueueJob['permissionPosture'] | undefined
   emitRunQueueChanged: () => void
   emitRunEventsChanged: (record: {
     runId: string
@@ -107,6 +108,7 @@ export class RunRepository {
     const status = this.mapRunSessionStatusToQueueStatus(session.status)
     const existing = AppStore.getRunQueueJob(session.runId)
     const ensembleMetadata = lookupEnsembleQueueMetadata(session)
+    const permissionPosture = this.options.permissionPostureForSession?.(session)
     const processLike = session.process as unknown as
       | {
           pid?: unknown
@@ -132,6 +134,7 @@ export class RunRepository {
       processStartedAt: processPid
         ? existing?.processStartedAt || new Date(session.startedAt).toISOString()
         : undefined,
+      ...(permissionPosture ? { permissionPosture } : {}),
       status
     }
 
@@ -149,6 +152,7 @@ export class RunRepository {
         scope: partial.workspacePath ? 'workspace' : 'global',
         source: 'system',
         status,
+        ...(permissionPosture ? { permissionPosture } : {}),
         promptPreview: `${this.options.providerLabel(session.provider)} run`
       })
     }
@@ -555,6 +559,7 @@ export class RunRepository {
     eventType: 'created' | 'updated' | 'removed',
     session: RunSession
   ): RunEventRecord | null {
+    const permissionPosture = this.options.permissionPostureForSession?.(session)
     return this.appendRunEvent({
       runId: session.runId,
       chatId: session.appChatId,
@@ -573,7 +578,8 @@ export class RunRepository {
         updatedAt: session.updatedAt,
         hasProcess: Boolean(session.process),
         hasAbortController: Boolean(session.abortController),
-        approvalIds: [...session.approvalIds]
+        approvalIds: [...session.approvalIds],
+        ...(permissionPosture ? { permissionPosture } : {})
       }
     })
   }

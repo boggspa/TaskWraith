@@ -441,6 +441,31 @@ export interface EffectiveRunPermissions {
   readOnly: boolean
 }
 
+export interface RunPermissionPostureSnapshot {
+  schemaVersion: 1
+  approvalMode?: string
+  workflowMode?: ChatWorkflowMode
+  presetId?: PermissionPresetId
+  readOnly?: boolean
+  agenticServices?: Record<AgenticServiceId, AgenticServicePolicy>
+  networkAccess?: AgenticNetworkPolicy
+  externalPathGrantCount: number
+  externalPathGrantHash?: string
+  workspaceGrantServiceIds?: AgenticServiceId[]
+  postureHash: string
+  signature?: string
+  signaturePresent: boolean
+  context?: {
+    provider?: string
+    scope?: string
+    appRunId?: string
+    appChatId?: string
+    workflowMode?: string
+    runtimeProfileId?: string
+    promptHash?: string
+  }
+}
+
 export type EnsembleParticipantStatus =
   | 'idle'
   | 'running'
@@ -2393,6 +2418,7 @@ export interface ChatRun {
   actualModel?: string
   approvalMode?: string
   workflowMode?: ChatWorkflowMode
+  permissionPosture?: RunPermissionPostureSnapshot
   status?: string // RunStatus
   warnings?: RunWarning[]
   exitCode?: number
@@ -3947,6 +3973,7 @@ export interface RunQueueJob {
   attempt: number
   promptPreview?: string
   request?: RunQueueRequestSnapshot
+  permissionPosture?: RunPermissionPostureSnapshot
   providerSessionId?: string
   providerRunId?: string
   processPid?: number

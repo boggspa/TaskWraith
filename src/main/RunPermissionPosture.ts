@@ -1,5 +1,5 @@
-import { createHmac, timingSafeEqual } from 'node:crypto'
-import type { EffectiveRunPermissions } from './store/types'
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto'
+import type { EffectiveRunPermissions, RunPermissionPostureSnapshot } from './store/types'
 
 /**
  * Downgrade-only clamp for a run's permission posture
@@ -198,6 +198,54 @@ export interface ClampedRunPosture {
   reason?: RunPostureDowngradeReason
 }
 
+export interface RunPermissionPostureSnapshotInput {
+  approvalMode?: string | null
+  workflowMode?: string | null
+  effectivePermissions?: EffectiveRunPermissions | null
+  signature?: string | null
+  context?: RunPermissionPostureContext | null
+}
+
+export function buildRunPermissionPostureSnapshot(
+  input: RunPermissionPostureSnapshotInput
+): RunPermissionPostureSnapshot {
+  const normalizedContext = normalizeRunPermissionPostureContext(input.context)
+  const canonical = canonicalRunPermissionPosture(
+    input.approvalMode,
+    input.effectivePermissions,
+    normalizedContext
+  )
+  const signature = normalizeContextString(input.signature)
+  const grants = input.effectivePermissions?.externalPathGrants ?? []
+  const externalPathGrantHash = grants.length
+    ? sha256Hex(stableStringify(grants))
+    : undefined
+  const context = snapshotContext(normalizedContext)
+
+  return {
+    schemaVersion: 1,
+    ...(input.approvalMode ? { approvalMode: input.approvalMode } : {}),
+    ...(input.workflowMode === 'plan' || input.workflowMode === 'normal'
+      ? { workflowMode: input.workflowMode }
+      : {}),
+    ...(input.effectivePermissions
+      ? {
+          presetId: input.effectivePermissions.presetId,
+          readOnly: input.effectivePermissions.readOnly,
+          agenticServices: input.effectivePermissions.agenticServices,
+          networkAccess: input.effectivePermissions.networkAccess,
+          workspaceGrantServiceIds: [...input.effectivePermissions.workspaceGrantServiceIds]
+        }
+      : {}),
+    externalPathGrantCount: grants.length,
+    ...(externalPathGrantHash ? { externalPathGrantHash } : {}),
+    postureHash: sha256Hex(canonical),
+    ...(signature ? { signature } : {}),
+    signaturePresent: Boolean(signature),
+    ...(context ? { context } : {})
+  }
+}
+
 function normalizeRunPermissionPostureContext(
   context?: RunPermissionPostureContext | null
 ): RunPermissionPostureContext | null {
@@ -215,6 +263,27 @@ function normalizeRunPermissionPostureContext(
 
 function normalizeContextString(value: string | null | undefined): string | null {
   return typeof value === 'string' && value.length > 0 ? value : null
+}
+
+function snapshotContext(
+  context: RunPermissionPostureContext | null
+): RunPermissionPostureSnapshot['context'] | undefined {
+  if (!context) return undefined
+  const promptHash = context.prompt ? sha256Hex(context.prompt) : undefined
+  const snapshot = {
+    ...(context.provider ? { provider: context.provider } : {}),
+    ...(context.scope ? { scope: context.scope } : {}),
+    ...(context.appRunId ? { appRunId: context.appRunId } : {}),
+    ...(context.appChatId ? { appChatId: context.appChatId } : {}),
+    ...(context.workflowMode ? { workflowMode: context.workflowMode } : {}),
+    ...(context.runtimeProfileId ? { runtimeProfileId: context.runtimeProfileId } : {}),
+    ...(promptHash ? { promptHash } : {})
+  }
+  return Object.keys(snapshot).length > 0 ? snapshot : undefined
+}
+
+function sha256Hex(value: string): string {
+  return createHash('sha256').update(value).digest('hex')
 }
 
 /**

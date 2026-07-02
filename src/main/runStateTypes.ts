@@ -29,6 +29,7 @@ export interface CodexRunState {
   externalPathGrants?: ExternalPathGrant[]
   runtimeProfileId?: string
   effectivePermissions?: EffectiveRunPermissions
+  effectivePermissionsSignature?: string
   ensembleRun?: EnsembleRunIdentity
   appRunId?: string
   appChatId?: string
@@ -69,6 +70,7 @@ export interface GeminiToolContext {
   externalPathGrants?: ExternalPathGrant[]
   runtimeProfileId?: string
   effectivePermissions?: EffectiveRunPermissions
+  effectivePermissionsSignature?: string
   ensembleRun?: EnsembleRunIdentity
 }
 
@@ -118,6 +120,7 @@ export interface CliProviderStreamState {
   externalPathGrants?: ExternalPathGrant[]
   runtimeProfileId?: string
   effectivePermissions?: EffectiveRunPermissions
+  effectivePermissionsSignature?: string
   ensembleRun?: EnsembleRunIdentity
   runId?: string | null
   appRunId?: string
