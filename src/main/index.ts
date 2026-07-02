@@ -608,7 +608,7 @@ import {
   previewModelCatalogEnabledForProvider
 } from '../shared/previewModelCatalog'
 import { buildCodexStatusSnapshot } from './CodexStatusSnapshot'
-import { resolveEffectiveRunPermissions } from './EffectiveRunPermissions'
+import { resolveEffectiveRunPermissions, isPlanInstrumentGrantHold } from './EffectiveRunPermissions'
 import { isReconRunPosture } from './ReconPosture'
 import {
   clampUntrustedRunPosture,
@@ -7135,7 +7135,12 @@ function resolveNativeApprovalPreflight(args: {
     // canvasEval (RCE) is signed-elevated: clamp to a prompt even under session
     // YOLO or a (non-existent, but defence-in-depth) grant on the Codex path.
     // mediaRecording (future capture) is likewise non-grantable: never auto-allow.
-    neverAutoAllow: args.service === 'canvasEval' || args.service === 'mediaRecording',
+    // plan-preset instruments (canvasInteraction/mediaEditing) are approval-only:
+    // a standing/session grant must not zero-click them under `plan` (W7-b rung).
+    neverAutoAllow:
+      args.service === 'canvasEval' ||
+      args.service === 'mediaRecording' ||
+      isPlanInstrumentGrantHold(effectivePermissions?.presetId, args.service),
     effectivePermissions
   })
 }
@@ -7472,7 +7477,14 @@ async function requestAgenticServiceApproval(
   // (deny above still wins). The Codex gate enforces the same via neverAutoAllow.
   // mediaRecording (future capture) shares the same non-grantable invariant: it is
   // never promoted above its default-deny by session-YOLO/grant/preset.
-  const neverAutoAllow = service === 'canvasEval' || service === 'mediaRecording'
+  // plan-preset instruments (canvasInteraction/mediaEditing) are approval-only:
+  // a standing/session grant must NOT zero-click them under `plan` (standing
+  // instrument grants are the conformance-gated W7-b rung), so they join
+  // neverAutoAllow here — which forces the prompt on every auto-allow path below.
+  const neverAutoAllow =
+    service === 'canvasEval' ||
+    service === 'mediaRecording' ||
+    isPlanInstrumentGrantHold(effectivePermissions?.presetId, service)
   if (
     sessionYoloState.enabled &&
     !effectivePermissions?.readOnly &&
