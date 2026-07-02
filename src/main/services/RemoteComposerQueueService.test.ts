@@ -110,6 +110,7 @@ describe('buildRemoteComposerQueueDispatchAction', () => {
           provider: 'codex',
           text: 'Open a follow-up PR.',
           approvalMode: 'plan',
+          workflowMode: 'plan',
           model: 'o4-mini',
           reasoningEffort: 'low',
           claudeReasoningEffort: null,
@@ -130,6 +131,7 @@ describe('buildRemoteComposerQueueDispatchAction', () => {
         provider: 'codex',
         text: 'Open a follow-up PR.',
         approvalMode: 'plan',
+        workflowMode: 'plan',
         model: 'o4-mini',
         reasoningEffort: 'low',
         claudeReasoningEffort: null,
@@ -200,4 +202,3 @@ describe('classifyRemoteComposerQueueDispatchFailure', () => {
     ).toBe('13')
   })
 })
-

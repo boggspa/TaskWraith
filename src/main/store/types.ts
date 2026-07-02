@@ -2342,6 +2342,16 @@ export interface ChatMessage {
     parentChatId?: string
     /** User pin timestamp (ms since epoch). Missing means not pinned. */
     pinnedAt?: number
+    /** User thumbs feedback on an ASSISTANT message. This field is the render
+     *  state + toggle key only; the durable, attributed (provider/model/role/run)
+     *  audit signal is written to the thumbs receipt ledger. `reason`/`note` are
+     *  the optional thumbs-down category + free-text (local-only). */
+    feedback?: {
+      vote: 'up' | 'down'
+      at: number
+      reason?: string
+      note?: string
+    }
     /** Plan-mode proposed plan presented for approval (the ProposedPlanCard).
      *  Persisted on the message so the card survives reload + the decision,
      *  and the raw <proposed_plan> block is stripped from `content`. */
@@ -3930,6 +3940,7 @@ export interface RunQueueRequestSnapshot {
     provider: string
     text: string
     approvalMode?: string
+    workflowMode?: ChatWorkflowMode
     model?: string
     reasoningEffort?: string | null
     claudeReasoningEffort?: string | null

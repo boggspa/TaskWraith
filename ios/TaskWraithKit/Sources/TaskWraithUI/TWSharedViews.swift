@@ -4187,7 +4187,8 @@ private struct PlanRailControl: View {
 // role, goal/brief, provider/model, move/remove. Long-press-drag chips to
 // reorder. Every commit ships the FULL roster via ensembleRosterUpdate.
 
-private let editableRosterMaxParticipants = 18
+// Keep in step with EnsembleRosterSheet and the Mac roster cap.
+private let editableRosterMaxParticipants = 20
 
 public struct EditableRosterStrip: View {
     @ObservedObject var model: RemoteSessionModel
@@ -4607,6 +4608,7 @@ struct RosterChipEditor: View {
                 Section("Permission") {
                     Picker("Approval", selection: permissionBinding) {
                         Text("Read-Only/Recon").tag("read_only")
+                        Text("Plan workflow").tag("plan")
                         Text("Default approval").tag("default")
                         Text("Full workspace").tag("workspace_write")
                     }

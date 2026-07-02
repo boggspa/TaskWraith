@@ -80,6 +80,7 @@ export function buildRemoteComposerQueueDispatchAction(
       provider: remote.provider,
       text: remote.text,
       ...(remote.approvalMode ? { approvalMode: remote.approvalMode } : {}),
+      ...(remote.workflowMode ? { workflowMode: remote.workflowMode } : {}),
       ...(remote.model ? { model: remote.model } : {}),
       ...(remote.reasoningEffort !== undefined ? { reasoningEffort: remote.reasoningEffort } : {}),
       ...(remote.claudeReasoningEffort !== undefined
@@ -131,4 +132,3 @@ export function classifyRemoteComposerQueueDispatchFailure(
     lastError: reason || 'Remote queued prompt failed to dispatch.'
   }
 }
-

@@ -106,6 +106,10 @@ export interface BridgeComposerPromptAction extends BridgeActionMetadata {
   provider: string
   /** Optional approval-mode override; allowlist will reject if not allowed. */
   approvalMode?: string
+  /** Product workflow posture. `approvalMode:"plan"` + no workflowMode remains
+   * the legacy/safe read-only floor; `workflowMode:"plan"` means the real Plan
+   * workflow with approval-gated instruments. */
+  workflowMode?: 'normal' | 'plan'
   /** Optional model override (provider-specific). */
   model?: string
   /** Codex/Grok-style reasoning effort override. */
@@ -1275,6 +1279,7 @@ function isComposerPrompt(v: Record<string, unknown>): boolean {
     typeof v.text === 'string' &&
     typeof v.provider === 'string' &&
     (v.approvalMode === undefined || typeof v.approvalMode === 'string') &&
+    (v.workflowMode === undefined || v.workflowMode === 'normal' || v.workflowMode === 'plan') &&
     (v.model === undefined || typeof v.model === 'string') &&
     (v.reasoningEffort === undefined ||
       v.reasoningEffort === null ||

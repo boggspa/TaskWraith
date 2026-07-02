@@ -784,6 +784,7 @@ describe('decodeBridgeActionPayload', () => {
         text: 'find the auth bug',
         provider: 'gemini',
         approvalMode: 'plan',
+        workflowMode: 'plan',
         model: 'gemini-2.5-pro',
         contextTurns: 5
       })
@@ -792,8 +793,24 @@ describe('decodeBridgeActionPayload', () => {
       if (payload.kind === 'composerPrompt') {
         expect(payload.text).toBe('find the auth bug')
         expect(payload.provider).toBe('gemini')
+        expect(payload.workflowMode).toBe('plan')
         expect(payload.contextTurns).toBe(5)
       }
+    })
+
+    it('rejects a composerPrompt with an invalid workflowMode', () => {
+      const { payload } = decodeBridgeActionPayload(
+        encode({
+          kind: 'composerPrompt',
+          workspaceId: 'ws-1',
+          threadId: 't-1',
+          text: 'x',
+          provider: 'claude',
+          approvalMode: 'plan',
+          workflowMode: 'write_everything'
+        })
+      )
+      expect(payload).toMatchObject({ kind: 'unknown', rawKind: 'composerPrompt' })
     })
 
     it('decodes a composerPrompt carrying proposedPlanImplementOf (plan implement run)', () => {
@@ -914,13 +931,15 @@ describe('decodeBridgeActionPayload', () => {
           threadId: 't-1',
           text: 'run this after the current turn',
           provider: 'codex',
-          approvalMode: 'plan'
+          approvalMode: 'plan',
+          workflowMode: 'plan'
         })
       ).payload
       expect(prompt.kind).toBe('composerQueuePrompt')
       if (prompt.kind === 'composerQueuePrompt') {
         expect(prompt.provider).toBe('codex')
         expect(prompt.approvalMode).toBe('plan')
+        expect(prompt.workflowMode).toBe('plan')
       }
 
       const item = decodeBridgeActionPayload(

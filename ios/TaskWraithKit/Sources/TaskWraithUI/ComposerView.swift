@@ -64,10 +64,38 @@ struct Composer: View {
     @State private var inputFocused: Bool = false
     /// Drives the context-donut → context-meter popover.
     @State private var showContextMeter = false
-    /// Scope-global chat — every phone-origin turn is clamped to plan mode
-    /// (no file mutation) by the Mac; the composer pins the picker to match.
+    /// Scope-global chat — every phone-origin turn is clamped to the
+    /// read-only floor by the Mac; the composer pins the picker to match.
     private var isGlobalChat: Bool {
         card.isGlobalScope && newTaskWorkspaceId == nil
+    }
+    private var bridgeApprovalMode: String? {
+        if isGlobalChat { return "plan" }
+        switch approvalMode {
+        case "read_only", "plan":
+            return "plan"
+        case "default":
+            return nil
+        default:
+            return approvalMode
+        }
+    }
+    private var bridgeWorkflowMode: String? {
+        !isGlobalChat && approvalMode == "plan" ? "plan" : nil
+    }
+    private var approvalIconName: String {
+        switch approvalMode {
+        case "plan": return "list.bullet.clipboard"
+        case "read_only": return "eye"
+        default: return "checkmark.shield"
+        }
+    }
+    private var approvalDisplayLabel: String {
+        switch approvalMode {
+        case "plan": return "Plan"
+        case "read_only": return "Read-Only/Recon"
+        default: return "Default"
+        }
     }
     @State private var selectedProvider: String = "claude"
     @State private var selectedModelId: String?
@@ -390,11 +418,11 @@ struct Composer: View {
     private var approvalControl: some View {
         if isGlobalChat {
             // T72 — phone-origin turns in global chats ALWAYS run in
-            // plan mode (the Mac forces it server-side; this chip just
+            // read-only mode (the Mac forces it server-side; this chip
             // tells the truth instead of offering a dead picker).
             HStack(spacing: 3) {
-                Image(systemName: "list.bullet.clipboard")
-                Text("Plan workflow")
+                Image(systemName: "eye")
+                Text("Read-Only/Recon")
             }
             .font(twComposerFont(shell.fontDesign, .caption2))
             .padding(.horizontal, 8).padding(.vertical, 3)
@@ -403,15 +431,14 @@ struct Composer: View {
         } else {
             Menu {
                 Picker("Approval", selection: $approvalMode) {
+                    Label("Read-Only/Recon", systemImage: "eye").tag("read_only")
                     Label("Default Approval", systemImage: "checkmark.shield").tag("default")
                     Label("Plan workflow", systemImage: "list.bullet.clipboard").tag("plan")
                 }
             } label: {
                 HStack(spacing: 3) {
-                    Image(
-                        systemName: approvalMode == "plan"
-                            ? "list.bullet.clipboard" : "checkmark.shield")
-                    Text(approvalMode == "plan" ? "Plan" : "Default")
+                    Image(systemName: approvalIconName)
+                    Text(approvalDisplayLabel)
                 }
                 .font(twComposerFont(shell.fontDesign, .caption2))
                 .padding(.horizontal, 8).padding(.vertical, 3)
@@ -419,7 +446,7 @@ struct Composer: View {
                 .foregroundStyle(TWTheme.textSecondary)
             }
             .accessibilityLabel("Approval mode")
-            .accessibilityValue(approvalMode == "plan" ? "Plan" : "Default")
+            .accessibilityValue(approvalDisplayLabel)
         }
     }
 
@@ -820,7 +847,8 @@ struct Composer: View {
         #if canImport(UIKit)
             model.continueTask(
                 card, prompt: text,
-                approvalMode: isGlobalChat ? "plan" : (approvalMode == "default" ? nil : approvalMode),
+                approvalMode: bridgeApprovalMode,
+                workflowMode: bridgeWorkflowMode,
                 model: selectedModelId,
                 providerOverride: canChangeProvider ? selectedProvider : nil,
                 reasoningEffort: selectedReasoningEffort,
@@ -831,7 +859,8 @@ struct Composer: View {
         #else
             model.continueTask(
                 card, prompt: text,
-                approvalMode: isGlobalChat ? "plan" : (approvalMode == "default" ? nil : approvalMode),
+                approvalMode: bridgeApprovalMode,
+                workflowMode: bridgeWorkflowMode,
                 model: selectedModelId,
                 providerOverride: canChangeProvider ? selectedProvider : nil,
                 reasoningEffort: selectedReasoningEffort,
@@ -848,7 +877,8 @@ struct Composer: View {
         } else {
             model.queueComposerPrompt(
                 card, prompt: trimmed,
-                approvalMode: isGlobalChat ? "plan" : (approvalMode == "default" ? nil : approvalMode),
+                approvalMode: bridgeApprovalMode,
+                workflowMode: bridgeWorkflowMode,
                 model: selectedModelId,
                 providerOverride: canChangeProvider ? selectedProvider : nil,
                 reasoningEffort: selectedReasoningEffort,

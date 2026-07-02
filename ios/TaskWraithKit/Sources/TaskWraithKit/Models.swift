@@ -1610,7 +1610,8 @@ public enum BridgeAction {
     /// and the run appears live in the desktop transcript too.
     public static func composerPrompt(
         workspaceId: String, threadId: String, provider: String, text: String,
-        approvalMode: String? = nil, model: String? = nil, extraWorkspaceIds: [String]? = nil,
+        approvalMode: String? = nil, workflowMode: String? = nil,
+        model: String? = nil, extraWorkspaceIds: [String]? = nil,
         reasoningEffort: String? = nil, imageAttachments: [[String: Any]]? = nil,
         proposedPlanImplementOf: String? = nil,
         actionId: String = UUID().uuidString
@@ -1620,6 +1621,7 @@ public enum BridgeAction {
             "threadId": threadId, "provider": provider, "text": text,
         ]
         if let approvalMode { payload["approvalMode"] = approvalMode }
+        if let workflowMode { payload["workflowMode"] = workflowMode }
         if let model { payload["model"] = model }
         if let reasoningEffort, !reasoningEffort.isEmpty {
             if provider.lowercased() == "claude" {
@@ -1642,7 +1644,8 @@ public enum BridgeAction {
 
     public static func composerQueuePrompt(
         workspaceId: String, threadId: String, provider: String, text: String,
-        approvalMode: String? = nil, model: String? = nil, extraWorkspaceIds: [String]? = nil,
+        approvalMode: String? = nil, workflowMode: String? = nil,
+        model: String? = nil, extraWorkspaceIds: [String]? = nil,
         reasoningEffort: String? = nil, actionId: String = UUID().uuidString
     ) -> [String: Any] {
         var payload: [String: Any] = [
@@ -1650,6 +1653,7 @@ public enum BridgeAction {
             "threadId": threadId, "provider": provider, "text": text,
         ]
         if let approvalMode { payload["approvalMode"] = approvalMode }
+        if let workflowMode { payload["workflowMode"] = workflowMode }
         if let model { payload["model"] = model }
         if let reasoningEffort, !reasoningEffort.isEmpty {
             if provider.lowercased() == "claude" {

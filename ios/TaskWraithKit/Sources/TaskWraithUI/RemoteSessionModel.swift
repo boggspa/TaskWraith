@@ -3355,7 +3355,7 @@ public final class RemoteSessionModel: ObservableObject {
         public var role: String
         public var brief: String
         public var enabled: Bool
-        /// Per-participant approval preset (read_only | default | workspace_write).
+        /// Per-participant approval preset (read_only | plan | default | workspace_write).
         public var permissionPresetId: String?
         /// Per-participant reasoning effort (provider-interpreted); Kimi uses
         /// thinkingEnabled instead.
@@ -3559,7 +3559,7 @@ public final class RemoteSessionModel: ObservableObject {
     /// same pending stack.
     public func queueComposerPrompt(
         _ card: RemoteTaskCard, prompt: String, approvalMode: String? = nil,
-        model: String? = nil, providerOverride: String? = nil,
+        workflowMode: String? = nil, model: String? = nil, providerOverride: String? = nil,
         reasoningEffort: String? = nil, extraWorkspaceIds: [String]? = nil
     ) {
         guard !card.isEnsemble, let thread = card.threadId else { return }
@@ -3570,7 +3570,7 @@ public final class RemoteSessionModel: ObservableObject {
         send(
             BridgeAction.composerQueuePrompt(
                 workspaceId: ws, threadId: thread, provider: provider, text: trimmed,
-                approvalMode: approvalMode, model: model,
+                approvalMode: approvalMode, workflowMode: workflowMode, model: model,
                 extraWorkspaceIds: extraWorkspaceIds,
                 reasoningEffort: reasoningEffort),
             successLabel: "Queued.")
@@ -4393,7 +4393,7 @@ public final class RemoteSessionModel: ObservableObject {
     /// claim navigationTarget and reload the detail pane).
     public func continueTask(
         _ card: RemoteTaskCard, prompt: String, approvalMode: String? = nil,
-        model: String? = nil, providerOverride: String? = nil,
+        workflowMode: String? = nil, model: String? = nil, providerOverride: String? = nil,
         reasoningEffort: String? = nil,
         imageAttachments: [[String: Any]]? = nil,
         extraWorkspaceIds: [String]? = nil,
@@ -4438,7 +4438,7 @@ public final class RemoteSessionModel: ObservableObject {
             send(
                 BridgeAction.composerPrompt(
                     workspaceId: ws, threadId: thread, provider: provider, text: prompt,
-                    approvalMode: approvalMode, model: model,
+                    approvalMode: approvalMode, workflowMode: workflowMode, model: model,
                     extraWorkspaceIds: extraWorkspaceIds,
                     reasoningEffort: reasoningEffort,
                     imageAttachments: imageAttachments),

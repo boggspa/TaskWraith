@@ -21915,6 +21915,7 @@ if (isGeminiMcpBridgeProcess) {
         provider: string
         text: string
         approvalMode?: string
+        workflowMode?: 'normal' | 'plan'
         model?: string
         reasoningEffort?: string | null
         claudeReasoningEffort?: string | null
@@ -21964,6 +21965,7 @@ if (isGeminiMcpBridgeProcess) {
             selectedModelType: action.model || 'default',
             customModel: '',
             approvalMode: action.approvalMode || 'default',
+            workflowMode: action.workflowMode === 'plan' ? 'plan' : 'normal',
             sessionTrust: false,
             imageAttachments: [],
             ...(action.reasoningEffort !== undefined
@@ -21978,6 +21980,7 @@ if (isGeminiMcpBridgeProcess) {
               provider,
               text,
               ...(action.approvalMode ? { approvalMode: action.approvalMode } : {}),
+              ...(action.workflowMode === 'plan' ? { workflowMode: 'plan' } : {}),
               ...(action.model ? { model: action.model } : {}),
               ...(action.reasoningEffort !== undefined
                 ? { reasoningEffort: action.reasoningEffort }
@@ -23418,10 +23421,13 @@ if (isGeminiMcpBridgeProcess) {
           const internalQueueDispatch = remoteComposerInternalDispatches.get(action)
           // T72 — global chats are conversational from the phone, but every
           // phone-origin turn runs READ-ONLY: approvalMode is forced to
-          // 'plan' here regardless of what arrived (the allowlist already
+          // provider-plan here regardless of what arrived (the allowlist already
           // denies non-plan; this is the defense-in-depth layer), and
           // secondary workspace grants are refused (they would attach file
-          // access to a chat that must have none).
+          // access to a chat that must have none). Workspace phone turns use
+          // workflowMode to distinguish the read-only floor from the product
+          // Plan workflow; old phone builds omit workflowMode and therefore
+          // keep the safe read-only behavior.
           const isGlobalScope = action.workspaceId === GLOBAL_REMOTE_SCOPE
           const workspaceRecord = isGlobalScope
             ? null
@@ -23440,7 +23446,13 @@ if (isGeminiMcpBridgeProcess) {
               reason: 'Global chats cannot attach workspace grants from a paired device'
             }
           }
-          const effectiveApprovalMode = isGlobalScope ? 'plan' : action.approvalMode
+          const effectiveWorkflowMode =
+            !isGlobalScope && action.workflowMode === 'plan' ? 'plan' : 'normal'
+          const effectiveApprovalMode = isGlobalScope
+            ? 'plan'
+            : effectiveWorkflowMode === 'plan'
+              ? 'plan'
+              : action.approvalMode
           // Need a sender for adapter event streaming. The main renderer
           // window is the natural target — iOS-initiated runs surface in
           // the desktop transcript live. When no window is open (rare —
@@ -23884,7 +23896,7 @@ if (isGeminiMcpBridgeProcess) {
             codexHandoffsApplied: [],
             isGlobalRun: isGlobalScope,
             approvalMode: effectiveApprovalMode || 'default',
-            workflowMode: chat.workflowMode === 'plan' ? 'plan' : 'normal',
+            workflowMode: effectiveWorkflowMode,
             providerLabel: providerLabel(provider),
             // Ollama continuity is NOT a session id — it's the persisted
             // tool-trajectory memory + tier the desktop composer injects.
@@ -23904,13 +23916,19 @@ if (isGeminiMcpBridgeProcess) {
               `[bridge-run] composed ${composed.contextTurnsApplied} context turns for run=${runId}`
             )
           }
+          const bridgePermissionPresetId =
+            effectiveWorkflowMode === 'plan'
+              ? 'plan'
+              : effectiveApprovalMode === 'plan'
+                ? 'read_only'
+                : undefined
           const bridgeEffectivePermissions =
-            effectiveApprovalMode === 'plan'
+            bridgePermissionPresetId
               ? resolveEffectiveRunPermissions({
                   provider,
                   workspacePath: isGlobalScope ? undefined : workspaceRecord?.path,
                   settings: AppStore.getSettings(),
-                  presetId: 'read_only'
+                  presetId: bridgePermissionPresetId
                 })
               : undefined
           const payload: AgentRunPayload = {
@@ -23927,6 +23945,7 @@ if (isGeminiMcpBridgeProcess) {
             appChatId: chat.appChatId,
             appRunId: runId,
             approvalMode: effectiveApprovalMode,
+            workflowMode: effectiveWorkflowMode,
             ...(bridgeEffectivePermissions
               ? { effectivePermissions: bridgeEffectivePermissions }
               : {}),
