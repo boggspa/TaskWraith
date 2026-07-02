@@ -27,6 +27,7 @@ import {
   ApprovalLedgerRequestInput,
   AgentApprovalAction,
   ApprovalLedgerScope,
+  MessageFeedbackReceipt,
   ProviderId,
   GuestParticipantConfig,
   SideChatMode,
@@ -118,6 +119,13 @@ import {
   serializeAgentStatRecord,
   type AgentStatRecord
 } from '../AgentStatsStore'
+import {
+  buildMessageFeedbackReceipts,
+  capMessageFeedbackReceipts,
+  filterMessageFeedbackReceipts,
+  normalizeMessageFeedbackReceipt,
+  type MessageFeedbackReceiptFilter
+} from '../MessageFeedbackLedger'
 import { normalizeWorkflowLoopConfig } from '../WorkflowLoopModel'
 import {
   normalizeEvidencePackRecord,
@@ -210,12 +218,15 @@ const writeRunQueueJobs = (jobs: RunQueueJob[]): void =>
 const runRecoveryPath = path.join(userDataPath, 'run-recovery.json')
 const workspaceChangesPath = path.join(userDataPath, 'workspace-changes.json')
 const approvalLedgerPath = path.join(userDataPath, 'approval-ledger.json')
+const messageFeedbackLedgerPath = path.join(userDataPath, 'thumbs-ledger.json')
 // Single choke point for approval-ledger writes: cap retained non-live history
 // (capApprovalLedgerRecords) so the full synchronous rewrite on every approval
 // event stays bounded. Live records (pending + active session/workspace grants)
 // are always kept.
 const writeApprovalLedger = (records: ApprovalLedgerRecord[]): void =>
   writeJson(approvalLedgerPath, capApprovalLedgerRecords(records))
+const writeMessageFeedbackLedger = (records: MessageFeedbackReceipt[]): void =>
+  writeJson(messageFeedbackLedgerPath, capMessageFeedbackReceipts(records))
 const productCrashesPath = path.join(userDataPath, 'product-crashes.json')
 const runtimeProfilesPath = path.join(userDataPath, 'runtime-profiles.json')
 const handoffCardsPath = path.join(userDataPath, 'handoff-cards.json')
@@ -2192,6 +2203,25 @@ export class AppStore {
     return chatPathForId(chatsDir, chatId)
   }
 
+  private static readChatForFeedbackBaseline(chatId: string, chatPath: string): ChatRecord | null {
+    const cached = this.chatRecordCache.get(chatId)?.record
+    if (cached) return cached
+    if (!fs.existsSync(chatPath)) return null
+    const parsed = readJson<ChatRecord | null>(chatPath, null)
+    return parsed ? this.normalizeChatRecord(parsed) : null
+  }
+
+  private static readMessageFeedbackLedger(): MessageFeedbackReceipt[] {
+    const records = readJson<unknown[]>(messageFeedbackLedgerPath, [])
+    return capMessageFeedbackReceipts(records.map(normalizeMessageFeedbackReceipt).filter(Boolean))
+  }
+
+  static getMessageFeedbackReceipts(
+    filter: MessageFeedbackReceiptFilter = {}
+  ): MessageFeedbackReceipt[] {
+    return filterMessageFeedbackReceipts(this.readMessageFeedbackLedger(), filter)
+  }
+
   static createChat(workspaceId: string, workspacePath: string): ChatRecord {
     const settings = this.getSettings()
     const chat: ChatRecord = {
@@ -2682,6 +2712,10 @@ export class AppStore {
     const normalizedChat = this.normalizeChatRecord(compactChatForPersist(chat))
     normalizedChat.updatedAt = Date.now()
     const chatPath = chatPathForId(chatsDir, normalizedChat.appChatId)
+    const previousChatForFeedback = this.readChatForFeedbackBaseline(
+      normalizedChat.appChatId,
+      chatPath
+    )
     if (deletedChatIds.has(normalizedChat.appChatId) && !fs.existsSync(chatPath)) {
       return
     }
@@ -2710,6 +2744,11 @@ export class AppStore {
     const index = readJson<Record<string, ChatListItem>>(chatListIndexPath, {})
     index[normalizedChat.appChatId] = this.toChatListItem(normalizedChat)
     writeJson(chatListIndexPath, index)
+    try {
+      this.harvestMessageFeedbackReceipts(previousChatForFeedback, normalizedChat)
+    } catch (e) {
+      console.error('Failed to harvest message feedback receipts', e)
+    }
     // Agent Pool (Phase 2) — harvest finalized-run stats for any pooled-agent
     // participant. Best-effort: a harvest failure must never break the save.
     try {
@@ -4175,6 +4214,25 @@ export class AppStore {
         : undefined)
       if (agentId) this.recordAgentRunDelta(agentId, chatId, run)
     }
+  }
+
+  /**
+   * saveChat hook — harvest assistant thumbs feedback into a bounded durable
+   * receipt ledger. This records the attributed human signal behind the
+   * renderer-only `message.metadata.feedback` pressed state. Scoped to THIS
+   * chat save; never scans the chat corpus.
+   */
+  private static harvestMessageFeedbackReceipts(
+    previousChat: ChatRecord | null,
+    nextChat: ChatRecord
+  ): void {
+    const existingLedger = this.readMessageFeedbackLedger()
+    const receipts = buildMessageFeedbackReceipts(previousChat, nextChat, existingLedger, {
+      now: () => Date.now(),
+      idFactory: () => randomUUID()
+    })
+    if (receipts.length === 0) return
+    writeMessageFeedbackLedger([...existingLedger, ...receipts])
   }
 
   /**

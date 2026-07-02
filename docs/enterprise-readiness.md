@@ -374,6 +374,13 @@ What exists:
 
 - The thumbs UI capture layer is shipped and persists a message-local feedback
   state.
+- `saveChat` now harvests assistant-message feedback into a bounded
+  `thumbs-ledger.json` receipt store. Receipts include set/flip/clear/update
+  semantics and attribution to chat, workspace, message, run, provider, model,
+  and ensemble role/lane when available.
+- Existing UI-only feedback state is backfilled into the receipt store on the
+  next chat save, and repeated saves are idempotent against the latest ledger
+  state.
 - Message attribution can resolve to `(provider, model, role, run)` through
   `message.runId -> ChatRun` for solo and ensemble messages.
 - EvidencePack/capability-ledger substrate exists for cited positive and
@@ -382,18 +389,18 @@ What exists:
 
 What is missing:
 
-- No durable human feedback receipt ledger exists yet.
 - Thumbs are not yet harvested into AgentStats, EvidencePacks, casting records,
   or exportable audit bundles.
-- No optional reason taxonomy exists for negative feedback.
+- No optional reason taxonomy UI exists for negative feedback.
 - No "recast this turn with a different model" follow-through exists.
 - No iOS parity exists for feedback capture.
 
 Target:
 
-- Add a bounded, capped `thumbs-ledger.json` receipt store with attribution:
-  vote, timestamp, provider, model, role, run id, chat id, workspace id,
-  original message id, optional reason category, and optional note.
+- Keep the bounded, capped `thumbs-ledger.json` receipt store authoritative for
+  analytics and export. Receipt fields cover vote, timestamp, provider, model,
+  role, run id, chat id, workspace id, original message id, optional reason
+  category, and optional note.
 - Keep `message.metadata.feedback` as the UI pressed-state cache; make the
   ledger the source of truth for analytics and export. Toggle, clear, and flip
   semantics should update both surfaces deterministically.
@@ -478,7 +485,7 @@ brokered providers.
 
 Do this before presenting thumbs as more than local UI state.
 
-- Add the durable thumbs receipt ledger and harvest/toggle semantics.
+- Keep the durable thumbs receipt ledger covered by save-hook tests.
 - Add reason capture and model/role aggregation.
 - Feed AgentStats and future EvidencePack/casting ledgers from the same receipt
   objects.

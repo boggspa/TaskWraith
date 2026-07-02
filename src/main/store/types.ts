@@ -2482,6 +2482,37 @@ export interface ChatRun {
   runAnalyst?: RunAnalystSnapshot
 }
 
+export type MessageFeedbackVote = 'up' | 'down'
+
+export type MessageFeedbackReceiptAction = 'set' | 'flip' | 'clear' | 'update'
+
+export interface MessageFeedbackReceipt {
+  schemaVersion: 1
+  id: string
+  source: 'message_metadata'
+  action: MessageFeedbackReceiptAction
+  chatId: string
+  workspaceId?: string
+  workspacePath?: string
+  messageId: string
+  runId?: string
+  provider?: ProviderId
+  model?: string
+  role?: string
+  ensembleParticipantId?: string
+  ensembleLaneId?: string
+  ensembleRole?: string
+  vote?: MessageFeedbackVote
+  previousVote?: MessageFeedbackVote
+  at: number
+  recordedAt: number
+  reason?: string
+  note?: string
+  /** Free-text feedback can contain sensitive transcript/project details.
+   *  Default audit exports must redact it unless explicitly allowed. */
+  noteSensitive?: true
+}
+
 export interface RunAnalystSignal {
   label: string
   value: string
