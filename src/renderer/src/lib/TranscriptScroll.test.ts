@@ -1,6 +1,7 @@
 import { afterEach, describe, it, expect, vi } from 'vitest'
 import {
   STICK_ENGAGE_PX,
+  STICK_REENGAGE_DOWNWARD_PX,
   STICK_DISENGAGE_PX,
   PROGRAMMATIC_SCROLL_EPSILON_PX,
   captureChatScrollState,
@@ -303,7 +304,7 @@ describe('TranscriptScroll', () => {
       ).toBe(true)
     })
 
-    it('does not re-engage from app-owned scroll writes or non-bottom positions', () => {
+    it('does not re-engage from app-owned scroll writes', () => {
       expect(
         shouldReengageAutoFollowAfterScroll({
           distanceFromBottom: 1,
@@ -313,15 +314,76 @@ describe('TranscriptScroll', () => {
           isProgrammatic: true
         })
       ).toBe(false)
-      expect(
-        shouldReengageAutoFollowAfterScroll({
-          distanceFromBottom: STICK_ENGAGE_PX + 1,
-          userScrolledAwayInThisFrame: true,
-          previousScrollTop: 260,
-          nextScrollTop: 300,
-          isProgrammatic: false
-        })
-      ).toBe(false)
+    })
+
+    describe('downward re-engage band (STICK_REENGAGE_DOWNWARD_PX)', () => {
+      it('re-engages a deliberate downward return that lands near the moving live edge', () => {
+        // Streaming growth keeps the exact bottom out of reach of a drag —
+        // landing a few px short after moving DOWN still means "take me to
+        // the live edge" (Claude/Codex re-lock on this gesture).
+        expect(
+          shouldReengageAutoFollowAfterScroll({
+            distanceFromBottom: STICK_ENGAGE_PX + 1,
+            userScrolledAwayInThisFrame: true,
+            previousScrollTop: 260,
+            nextScrollTop: 300,
+            isProgrammatic: false
+          })
+        ).toBe(true)
+        expect(
+          shouldReengageAutoFollowAfterScroll({
+            distanceFromBottom: STICK_REENGAGE_DOWNWARD_PX,
+            userScrolledAwayInThisFrame: true,
+            previousScrollTop: 260,
+            nextScrollTop: 300,
+            isProgrammatic: false
+          })
+        ).toBe(true)
+      })
+
+      it('never captures a stop beyond the band', () => {
+        expect(
+          shouldReengageAutoFollowAfterScroll({
+            distanceFromBottom: STICK_REENGAGE_DOWNWARD_PX + 1,
+            userScrolledAwayInThisFrame: true,
+            previousScrollTop: 260,
+            nextScrollTop: 300,
+            isProgrammatic: false
+          })
+        ).toBe(false)
+      })
+
+      it('requires a real downward user movement — positional landings stay strict', () => {
+        // A shrink clamp or anchor write can land inside the band without
+        // any gesture; those must keep the 2px path.
+        expect(
+          shouldReengageAutoFollowAfterScroll({
+            distanceFromBottom: 30,
+            userScrolledAwayInThisFrame: true,
+            previousScrollTop: 300,
+            nextScrollTop: 260,
+            isProgrammatic: false
+          })
+        ).toBe(false)
+        expect(
+          shouldReengageAutoFollowAfterScroll({
+            distanceFromBottom: 30,
+            userScrolledAwayInThisFrame: false,
+            previousScrollTop: 260,
+            nextScrollTop: 300,
+            isProgrammatic: false
+          })
+        ).toBe(false)
+        expect(
+          shouldReengageAutoFollowAfterScroll({
+            distanceFromBottom: 30,
+            userScrolledAwayInThisFrame: true,
+            previousScrollTop: 260,
+            nextScrollTop: 300,
+            isProgrammatic: true
+          })
+        ).toBe(false)
+      })
     })
   })
 
@@ -726,6 +788,27 @@ describe('TranscriptScroll', () => {
       // against an off-by-one reset bug from the caller — show
       // nothing rather than a confusing "↓ -2 new messages".
       expect(shouldShowJumpToLatestPill({ autoFollow: false, unreadCount: -1 })).toBe(false)
+    })
+
+    it('shows the pill during an active stream even with zero unread messages', () => {
+      // Text growth inside ONE bubble never bumps the message-count-based
+      // unread number, so a user who scrolled up mid-answer needs the
+      // affordance from the streaming signal instead.
+      expect(
+        shouldShowJumpToLatestPill({ autoFollow: false, unreadCount: 0, streamingActive: true })
+      ).toBe(true)
+    })
+
+    it('never shows the pill while auto-follow is engaged, streaming or not', () => {
+      expect(
+        shouldShowJumpToLatestPill({ autoFollow: true, unreadCount: 0, streamingActive: true })
+      ).toBe(false)
+    })
+
+    it('hides the pill after the stream ends when nothing is unread', () => {
+      expect(
+        shouldShowJumpToLatestPill({ autoFollow: false, unreadCount: 0, streamingActive: false })
+      ).toBe(false)
     })
   })
 

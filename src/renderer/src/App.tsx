@@ -2202,6 +2202,7 @@ function App(): React.JSX.Element {
     unreadFromBottomCount,
     showJumpToLatestPill,
     handleJumpToLatest,
+    relockToLatest: relockMainTranscriptToLatest,
     beginManualTranscriptJump: beginManualMainTranscriptJump,
     prepareMessageJump: prepareMainTranscriptMessageJump,
     clearPendingMessageJump: clearPendingMainTranscriptMessageJump,
@@ -2211,7 +2212,8 @@ function App(): React.JSX.Element {
   } = useTranscriptScrollState({
     chatId: currentChat?.appChatId ?? null,
     messages: currentChat?.messages,
-    runCompleteNotice
+    runCompleteNotice,
+    streamingActive: currentChat ? runningChatIds.has(currentChat.appChatId) : false
   })
   const sideTranscriptScrollRef = useRef<HTMLDivElement>(null)
   const sideTranscriptContentRef = useRef<HTMLDivElement>(null)
@@ -10088,6 +10090,13 @@ function App(): React.JSX.Element {
         }
         promptMessageId = userMessage.id
         chatToUpdate.messages = [...chatToUpdate.messages, userMessage]
+        if (isRunVisibleAtStart) {
+          // Sending a prompt re-locks the transcript to the live edge — the
+          // messages layout effect performs the snap when the user bubble
+          // renders (Claude/Codex parity: your own send always returns you
+          // to the conversation tail, even if you were reading history).
+          relockMainTranscriptToLatest()
+        }
         if (discordContextReads.length > 0) {
           chatToUpdate.messages = [
             ...chatToUpdate.messages,

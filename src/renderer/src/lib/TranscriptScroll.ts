@@ -54,6 +54,21 @@ export const STICK_ENGAGE_PX = 2
  */
 export const STICK_DISENGAGE_PX = 4
 
+/**
+ * Wider re-engage band for a DELIBERATE downward return. The 2px engage
+ * band is right for passive landings, but while a run is streaming the
+ * exact live edge is a moving target: the user drags/wheels down to catch
+ * up, content grows under them, and by the time the rAF evaluate reads the
+ * metrics they are tens of pixels short — follow never re-arms and the
+ * transcript runs away (Claude/Codex re-lock in this gesture). A downward
+ * user movement (the scroll-away flag is set, so a real gesture owns the
+ * scroll) that lands within this band re-engages; the caller then snaps the
+ * remaining distance so the gesture completes at the live edge. Kept small
+ * enough that stopping a paragraph above the bottom to read is never
+ * captured.
+ */
+export const STICK_REENGAGE_DOWNWARD_PX = 48
+
 export const PROGRAMMATIC_SCROLL_EPSILON_PX = 1
 
 export interface ChatScrollState {
@@ -230,13 +245,24 @@ export function shouldReengageAutoFollowAfterScroll(input: {
   nextScrollTop: number
   isProgrammatic: boolean
 }): boolean {
-  if (!shouldEngageAutoFollow(input.distanceFromBottom)) return false
-  if (!input.userScrolledAwayInThisFrame) return true
-  if (input.isProgrammatic) return false
-  if (!Number.isFinite(input.previousScrollTop) || !Number.isFinite(input.nextScrollTop)) {
-    return false
+  const movedDown =
+    Number.isFinite(input.previousScrollTop) &&
+    Number.isFinite(input.nextScrollTop) &&
+    input.nextScrollTop > input.previousScrollTop + 0.5
+  if (shouldEngageAutoFollow(input.distanceFromBottom)) {
+    if (!input.userScrolledAwayInThisFrame) return true
+    if (input.isProgrammatic) return false
+    return movedDown
   }
-  return input.nextScrollTop > input.previousScrollTop + 0.5
+  // Deliberate downward return that lands NEAR the live edge (see
+  // STICK_REENGAGE_DOWNWARD_PX): re-arm even though streamed growth kept the
+  // exact edge out of reach. Gated on the scroll-away flag so positional
+  // landings a user never made (shrink clamps, anchor writes) cannot re-arm
+  // — those keep the strict 2px path above.
+  if (!Number.isFinite(input.distanceFromBottom)) return false
+  if (input.isProgrammatic) return false
+  if (!input.userScrolledAwayInThisFrame) return false
+  return movedDown && input.distanceFromBottom <= STICK_REENGAGE_DOWNWARD_PX
 }
 
 export function expectedBottomScrollTop(input: {
@@ -475,16 +501,19 @@ export function shouldRepinAfterTranscriptResize(input: {
  * the user has a one-tap way back to the live edge without losing their
  * place mid-read.
  *
- * Visibility rule — both must hold:
- *   1. `autoFollow` is currently disengaged (user is reading older
- *      content); if the transcript is already pinned to the bottom the
- *      user can see the new messages directly and the pill would be
- *      noise.
- *   2. `unreadCount > 0`; without at least one new message there is
- *      nothing to advertise.
+ * Visibility rule — `autoFollow` must be disengaged (user is reading older
+ * content; if the transcript is already pinned to the bottom the user can
+ * see the new messages directly and the pill would be noise), AND at least
+ * one of:
+ *   1. `unreadCount > 0` — whole new messages arrived below the viewport.
+ *   2. `streamingActive` — a run is streaming into the CURRENT tail bubble.
+ *      Text growth inside one message never bumps the message-count-based
+ *      unread number, so a user who scrolls up mid-answer would otherwise
+ *      get no affordance at all back to the live edge (Claude/Codex show
+ *      their jump arrow for this case).
  *
  * Defensive against malformed inputs: a NaN/negative count is treated
- * as zero (no pill). This mirrors the
+ * as zero (no pill unless streaming). This mirrors the
  * `shouldEngageAutoFollow`/`shouldDisengageAutoFollow` non-finite
  * guards so the visibility logic stays robust against any future caller
  * that hands in a stale or partially-initialised value.
@@ -492,8 +521,10 @@ export function shouldRepinAfterTranscriptResize(input: {
 export function shouldShowJumpToLatestPill(input: {
   autoFollow: boolean
   unreadCount: number
+  streamingActive?: boolean
 }): boolean {
   if (input.autoFollow) return false
+  if (input.streamingActive === true) return true
   if (!Number.isFinite(input.unreadCount)) return false
   return input.unreadCount > 0
 }

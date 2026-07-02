@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 
 import {
   CODE_BLOCK_RESIZE_EVENT,
+  STICK_ENGAGE_PX,
   captureChatScrollState,
   expectedBottomScrollTop,
   isExpectedProgrammaticScroll,
@@ -21,6 +22,10 @@ export interface UseTranscriptScrollStateInput {
   chatId: string | null
   messages: readonly unknown[] | undefined
   runCompleteNotice: unknown
+  /** True while a run is streaming into this chat — keeps the
+   *  jump-to-latest pill visible when follow is off even though text growth
+   *  inside one bubble never bumps the message-count-based unread number. */
+  streamingActive?: boolean
 }
 
 export interface RestoreTranscriptScrollOptions {
@@ -30,12 +35,20 @@ export interface RestoreTranscriptScrollOptions {
 export function useTranscriptScrollState({
   chatId,
   messages,
-  runCompleteNotice
+  runCompleteNotice,
+  streamingActive
 }: UseTranscriptScrollStateInput) {
   const transcriptScrollRef = useRef<HTMLDivElement>(null)
   const transcriptContentRef = useRef<HTMLDivElement>(null)
   const autoFollowRef = useRef(true)
   const userScrolledAwayInFrameRef = useRef(false)
+  // True from a jump-to-latest click until the scroll arrives at the live
+  // edge (or the user cancels with an upward gesture). The smooth-scroll
+  // flight passes through positions far from the bottom; without this the
+  // rAF evaluate's positional disengage would kill the follow the click
+  // just armed, and a mid-flight content growth would strand the jump short
+  // of the bottom with the pill re-appearing.
+  const jumpInFlightRef = useRef(false)
   const repinRafIdRef = useRef<number | null>(null)
   const lastTranscriptScrollTopRef = useRef(0)
   const programmaticScrollTargetRef = useRef<number | null>(null)
@@ -80,11 +93,27 @@ export function useTranscriptScrollState({
     if (!scroller) return
     autoFollowRef.current = true
     userScrolledAwayInFrameRef.current = false
+    jumpInFlightRef.current = true
     if (unreadFromBottomCountRef.current !== 0) {
       unreadFromBottomCountRef.current = 0
       setUnreadFromBottomCount(0)
     }
     scroller.scrollTo({ top: scroller.scrollHeight, behavior: 'smooth' })
+  }, [])
+
+  // Arm follow without a scroll of its own — for gestures where the NEXT
+  // messages layout-effect snap should carry the viewport down (sending a
+  // prompt while scrolled up: the reply belongs to the user's action, so the
+  // transcript re-locks to the live edge exactly like Claude/Codex do).
+  const relockToLatest = useCallback(() => {
+    autoFollowRef.current = true
+    userScrolledAwayInFrameRef.current = false
+    jumpInFlightRef.current = false
+    pendingTranscriptJumpChatIdRef.current = null
+    if (unreadFromBottomCountRef.current !== 0) {
+      unreadFromBottomCountRef.current = 0
+      setUnreadFromBottomCount(0)
+    }
   }, [])
 
   const handleJumpToLatestRef = useRef(handleJumpToLatest)
@@ -127,6 +156,7 @@ export function useTranscriptScrollState({
   const beginManualTranscriptJump = useCallback(() => {
     autoFollowRef.current = false
     userScrolledAwayInFrameRef.current = true
+    jumpInFlightRef.current = false
     clearProgrammaticScrollTarget()
     pendingTranscriptJumpChatIdRef.current = null
     if (repinRafIdRef.current !== null) {
@@ -139,6 +169,7 @@ export function useTranscriptScrollState({
     pendingTranscriptJumpChatIdRef.current = targetChatId
     autoFollowRef.current = false
     userScrolledAwayInFrameRef.current = true
+    jumpInFlightRef.current = false
   }, [])
 
   const clearPendingMessageJump = useCallback(() => {
@@ -154,6 +185,12 @@ export function useTranscriptScrollState({
       rafId = null
       const previousScrollTop = lastTranscriptScrollTopRef.current
       const nextScrollTop = scroller.scrollTop
+      const distanceFromBottom = scroller.scrollHeight - nextScrollTop - scroller.clientHeight
+      if (distanceFromBottom <= STICK_ENGAGE_PX) {
+        // The live edge is reached by any means — a jump flight (smooth or
+        // snapped short by the messages effect) has arrived.
+        jumpInFlightRef.current = false
+      }
       const expectedProgrammatic = isExpectedProgrammaticScroll({
         expectedScrollTop: programmaticScrollTargetRef.current,
         nextScrollTop
@@ -164,7 +201,6 @@ export function useTranscriptScrollState({
         return
       }
       programmaticScrollTargetRef.current = null
-      const distanceFromBottom = scroller.scrollHeight - nextScrollTop - scroller.clientHeight
       if (
         shouldReengageAutoFollowAfterScroll({
           distanceFromBottom,
@@ -180,7 +216,17 @@ export function useTranscriptScrollState({
           unreadFromBottomCountRef.current = 0
           setUnreadFromBottomCount(0)
         }
-      } else if (shouldDisengageAutoFollow(distanceFromBottom)) {
+        if (distanceFromBottom > STICK_ENGAGE_PX) {
+          // Band re-engage (STICK_REENGAGE_DOWNWARD_PX): the deliberate
+          // downward return landed near — but not at — the moving live
+          // edge. Complete the gesture so the user is actually pinned.
+          snapScrollToBottom(scroller)
+        }
+      } else if (!jumpInFlightRef.current && shouldDisengageAutoFollow(distanceFromBottom)) {
+        // Positional disengage — suppressed while a jump-to-latest flight
+        // owns the descent (its intermediate positions are far from the
+        // bottom by construction; user gestures cancel the flight via the
+        // intent/scroll-away paths below and re-enable this branch).
         autoFollowRef.current = false
       }
       lastTranscriptScrollTopRef.current = nextScrollTop
@@ -202,6 +248,7 @@ export function useTranscriptScrollState({
         clearProgrammaticScrollTarget()
         userScrolledAwayInFrameRef.current = true
         autoFollowRef.current = false
+        jumpInFlightRef.current = false
       }
       if (rafId !== null) return
       rafId = requestAnimationFrame(evaluate)
@@ -212,7 +259,7 @@ export function useTranscriptScrollState({
       scroller.removeEventListener('scroll', onScroll)
       if (rafId !== null) cancelAnimationFrame(rafId)
     }
-  }, [chatId, clearProgrammaticScrollTarget])
+  }, [chatId, clearProgrammaticScrollTarget, snapScrollToBottom])
 
   useEffect(() => {
     return () => clearProgrammaticScrollTarget()
@@ -227,6 +274,7 @@ export function useTranscriptScrollState({
       if (scroller.scrollTop > 0) {
         userScrolledAwayInFrameRef.current = true
         autoFollowRef.current = false
+        jumpInFlightRef.current = false
       }
     }
 
@@ -402,6 +450,7 @@ export function useTranscriptScrollState({
     const hasPendingManualJump = Boolean(chatId && pendingTranscriptJumpChatIdRef.current === chatId)
     autoFollowRef.current = !hasPendingManualJump
     userScrolledAwayInFrameRef.current = hasPendingManualJump
+    jumpInFlightRef.current = false
     if (unreadFromBottomCountRef.current !== 0) {
       unreadFromBottomCountRef.current = 0
       setUnreadFromBottomCount(0)
@@ -440,9 +489,11 @@ export function useTranscriptScrollState({
     unreadFromBottomCount,
     showJumpToLatestPill: shouldShowJumpToLatestPill({
       autoFollow: autoFollowRef.current,
-      unreadCount: unreadFromBottomCount
+      unreadCount: unreadFromBottomCount,
+      streamingActive: streamingActive === true
     }),
     handleJumpToLatest,
+    relockToLatest,
     beginManualTranscriptJump,
     prepareMessageJump,
     clearPendingMessageJump,
