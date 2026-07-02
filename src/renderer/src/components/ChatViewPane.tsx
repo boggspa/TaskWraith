@@ -31,7 +31,7 @@ import {
  */
 export interface ChatViewPaneProps extends Omit<
   BuildChatViewPropsInput,
-  'onDeleteMessage' | 'onTogglePinMessage'
+  'onDeleteMessage' | 'onTogglePinMessage' | 'onMessageFeedback'
 > {
   paneIndex: number
   /**
@@ -95,6 +95,12 @@ export interface ChatViewPaneProps extends Omit<
   topRightChromeActions?: ChatViewPaneChromeAction[]
   onDeleteMessage?: (paneIndex: number, chatId: string, messageId: string) => void
   onTogglePinMessage?: (paneIndex: number, chatId: string, messageId: string) => void
+  onMessageFeedback?: (
+    paneIndex: number,
+    chatId: string,
+    messageId: string,
+    vote: 'up' | 'down'
+  ) => void
   /** Optional visual-focus callback for pane selection affordances. */
   onFocusPane?: (paneIndex: number, chatId: string) => void
   ariaLabel?: string
@@ -182,6 +188,7 @@ export function chatViewPanePropsEqual(a: ChatViewPaneProps, b: ChatViewPaneProp
     a.onMessageSelectionCandidate === b.onMessageSelectionCandidate &&
     a.onDeleteMessage === b.onDeleteMessage &&
     a.onTogglePinMessage === b.onTogglePinMessage &&
+    a.onMessageFeedback === b.onMessageFeedback &&
     a.refs === b.refs &&
     a.paneIndex === b.paneIndex &&
     // The shared <Composer> is driven entirely by this object; a new identity
@@ -407,6 +414,10 @@ function ChatViewPaneInner(props: ChatViewPaneProps) {
               onTogglePinMessage: props.onTogglePinMessage
                 ? (messageId) =>
                     chatId && props.onTogglePinMessage?.(props.paneIndex, chatId, messageId)
+                : undefined,
+              onMessageFeedback: props.onMessageFeedback
+                ? (messageId, vote) =>
+                    chatId && props.onMessageFeedback?.(props.paneIndex, chatId, messageId, vote)
                 : undefined
             })}
           />

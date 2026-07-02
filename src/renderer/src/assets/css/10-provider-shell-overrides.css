@@ -442,6 +442,18 @@
   color: var(--accent);
   background: color-mix(in srgb, var(--accent) 18%, transparent);
 }
+.message-actions-chip-button--thumbs-up.is-active,
+.message-actions-chip-button--thumbs-up:hover,
+.message-actions-chip-button--thumbs-up:focus-visible {
+  color: var(--success, #37b24d);
+  background: color-mix(in srgb, var(--success, #37b24d) 18%, transparent);
+}
+.message-actions-chip-button--thumbs-down.is-active,
+.message-actions-chip-button--thumbs-down:hover,
+.message-actions-chip-button--thumbs-down:focus-visible {
+  color: var(--warning, #e8894a);
+  background: color-mix(in srgb, var(--warning, #e8894a) 18%, transparent);
+}
 .message-actions-chip-button--delete:hover,
 .message-actions-chip-button--delete:focus-visible {
   color: var(--danger, #ff6363);

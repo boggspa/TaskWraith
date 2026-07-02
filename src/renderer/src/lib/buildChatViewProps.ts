@@ -46,6 +46,7 @@ export interface BuildChatViewPropsInput {
   onCopyMessage: TranscriptPanelProps['onCopyMessage']
   onDeleteMessage?: TranscriptPanelProps['onDeleteMessage']
   onTogglePinMessage?: TranscriptPanelProps['onTogglePinMessage']
+  onMessageFeedback?: TranscriptPanelProps['onMessageFeedback']
   onOpenSideChatFromMessage?: TranscriptPanelProps['onOpenSideChatFromMessage']
   onMessageSelectionCandidate?: TranscriptPanelProps['onMessageSelectionCandidate']
   onPreviewImage: TranscriptPanelProps['onPreviewImage']
@@ -127,6 +128,7 @@ export function buildChatViewProps(input: BuildChatViewPropsInput): TranscriptPa
     onCopyMessage: input.onCopyMessage,
     onDeleteMessage: input.onDeleteMessage ?? NOOP,
     onTogglePinMessage: input.onTogglePinMessage,
+    onMessageFeedback: input.onMessageFeedback,
     onOpenSideChatFromMessage: input.onOpenSideChatFromMessage,
     onMessageSelectionCandidate: input.onMessageSelectionCandidate,
     onPreviewImage: input.onPreviewImage,

@@ -515,6 +515,7 @@ import {
   countMessagesWithPinnedMetadata,
   toggleChatMessagePin
 } from './lib/pinnedMessages'
+import { applyChatMessageFeedback } from './lib/messageFeedback'
 import {
   buildRightDockTabs,
   resolveActiveRightDockTab,
@@ -14650,6 +14651,23 @@ function App(): React.JSX.Element {
     [updateChatById]
   )
 
+  const toggleFeedbackMessageInChat = useCallback(
+    (chat: ChatRecord | null | undefined, messageId: string, vote: 'up' | 'down') => {
+      if (!chat || !messageId) return
+      const at = Date.now()
+      updateChatById(chat.appChatId, (source) => {
+        let changed = false
+        const messages = source.messages.map((message) => {
+          if (message.id !== messageId) return message
+          changed = true
+          return applyChatMessageFeedback(message, vote, at)
+        })
+        return changed ? { ...source, messages, updatedAt: Date.now() } : source
+      })
+    },
+    [updateChatById]
+  )
+
   const updatePinnedNotesForChat = useCallback(
     (chatId: string | null | undefined, notes: string) => {
       if (!chatId) return
@@ -21253,6 +21271,13 @@ function App(): React.JSX.Element {
     },
     [togglePinMessageInChat]
   )
+  const handleMultiviewPaneMessageFeedback = useCallback(
+    (_paneIndex: number, chatId: string, messageId: string, vote: 'up' | 'down') => {
+      const paneChat = chatByIdRef.current.get(chatId)
+      toggleFeedbackMessageInChat(paneChat, messageId, vote)
+    },
+    [toggleFeedbackMessageInChat]
+  )
   const handleReviewDiffForChat = useCallback(
     async (chat: ChatRecord, provider: ProviderId, workspace: WorkspaceRecord | null) => {
       if (!workspace?.path || isPreparingDiffReview) return
@@ -22372,6 +22397,7 @@ function App(): React.JSX.Element {
         onCopyMessage={handleCopyMessage}
         onDeleteMessage={handleMultiviewPaneDeleteMessage}
         onTogglePinMessage={handleMultiviewPaneTogglePinMessage}
+        onMessageFeedback={handleMultiviewPaneMessageFeedback}
         onPreviewImage={setPreviewChatMediaRef}
         onDetachToPane={openMediaPane}
         currency={displayCurrency}

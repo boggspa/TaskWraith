@@ -13,7 +13,7 @@ export interface TranscriptMessageContextMenuSelection {
 }
 
 export interface TranscriptMessageContextMenuItem {
-  id: 'copy' | 'pin' | 'side-chat' | 'delete'
+  id: 'copy' | 'pin' | 'thumbs-up' | 'thumbs-down' | 'side-chat' | 'delete'
   label: string
   intent?: 'danger'
   disabled?: boolean
@@ -25,6 +25,7 @@ interface TranscriptMessageContextMenuProps {
   onCopyMessage: (messageId: string, content: string) => void
   onDeleteMessage?: (messageId: string) => void
   onTogglePinMessage?: (messageId: string) => void
+  onMessageFeedback?: (messageId: string, vote: 'up' | 'down') => void
   onOpenSideChatFromMessage?: (message: ChatMessage) => void
   onClose: () => void
 }
@@ -62,6 +63,7 @@ export function buildTranscriptMessageContextMenuItems({
   onCopyMessage,
   onDeleteMessage,
   onTogglePinMessage,
+  onMessageFeedback,
   onOpenSideChatFromMessage
 }: Omit<TranscriptMessageContextMenuProps, 'onClose'> & {
   selection: TranscriptMessageContextMenuSelection
@@ -80,6 +82,22 @@ export function buildTranscriptMessageContextMenuItems({
       id: 'pin',
       label: pinned ? 'Unpin message' : 'Pin message',
       onSelect: () => onTogglePinMessage(message.id)
+    })
+  }
+  // Thumbs feedback — assistant messages only (rate the agent's output).
+  const feedbackVote = message.metadata?.feedback?.vote
+  const canRateMessage =
+    message.role === 'assistant' && message.metadata?.kind !== 'channelInbound'
+  if (!selection.copyOnly && onMessageFeedback && canRateMessage) {
+    items.push({
+      id: 'thumbs-up',
+      label: feedbackVote === 'up' ? 'Remove good rating' : 'Good response',
+      onSelect: () => onMessageFeedback(message.id, 'up')
+    })
+    items.push({
+      id: 'thumbs-down',
+      label: feedbackVote === 'down' ? 'Remove poor rating' : 'Poor response',
+      onSelect: () => onMessageFeedback(message.id, 'down')
     })
   }
   if (!selection.copyOnly && onOpenSideChatFromMessage && canOpenSideChatFromMessage(message)) {
@@ -105,6 +123,7 @@ export function TranscriptMessageContextMenu({
   onCopyMessage,
   onDeleteMessage,
   onTogglePinMessage,
+  onMessageFeedback,
   onOpenSideChatFromMessage,
   onClose
 }: TranscriptMessageContextMenuProps): React.JSX.Element | null {
@@ -146,6 +165,7 @@ export function TranscriptMessageContextMenu({
     onCopyMessage,
     onDeleteMessage,
     onTogglePinMessage,
+    onMessageFeedback,
     onOpenSideChatFromMessage
   })
   const viewportWidth = typeof window !== 'undefined' ? window.innerWidth : 1024

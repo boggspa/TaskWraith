@@ -15,6 +15,7 @@ export interface TranscriptRowRenderSignature {
   highlighted: boolean
   copied: boolean
   pinned: boolean
+  feedbackVote: 'up' | 'down' | null
   expandedUser: boolean
   activityExpansionKey: string
   subThreadExpanded: boolean
@@ -77,6 +78,7 @@ export function transcriptRowRenderSignatureEqual(
   if (prev.highlighted !== next.highlighted) return false
   if (prev.copied !== next.copied) return false
   if (prev.pinned !== next.pinned) return false
+  if (prev.feedbackVote !== next.feedbackVote) return false
   if (prev.expandedUser !== next.expandedUser) return false
   if (prev.activityExpansionKey !== next.activityExpansionKey) return false
   if (prev.subThreadExpanded !== next.subThreadExpanded) return false

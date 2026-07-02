@@ -11,6 +11,7 @@ import { ensembleRoundStatusClass } from '../lib/ensembleRoundStatusClass'
 import { getChatProvider } from '../lib/chatScope'
 import { getProviderLabel } from '../lib/providerLabels'
 import { formatAssistantMessageLabel } from '../lib/assistantMessageLabel'
+import { readMessageFeedbackVote } from '../lib/messageFeedback'
 import { shortModelName } from '../lib/composerChipFormat'
 import { shouldSurfaceProposedPlanCard } from '../lib/ensemblePlanPolicy'
 import { deriveParticipantRenameContinuity } from '../lib/sessionActivityLedger'
@@ -252,6 +253,8 @@ export type TranscriptPanelProps = {
   onCopyMessage: (messageId: string, content: string) => void
   onDeleteMessage: (messageId: string) => void
   onTogglePinMessage?: (messageId: string) => void
+  /** Thumbs feedback on an assistant message (up/down; host writes the receipt). */
+  onMessageFeedback?: (messageId: string, vote: 'up' | 'down') => void
   onPromoteCollaboratorComment?: (messageId: string) => void
   onMessageSelectionCandidate?: (message: ChatMessage) => void
   onOpenSideChatFromMessage?: (message: ChatMessage) => void
@@ -399,6 +402,7 @@ function TranscriptMessageFooter({
   align,
   onCopyMessage,
   onTogglePinMessage,
+  onMessageFeedback,
   onDeleteMessage,
   onOpenSideChatFromMessage,
   pinned,
@@ -410,6 +414,7 @@ function TranscriptMessageFooter({
   align: 'start' | 'end'
   onCopyMessage: (messageId: string, content: string) => void
   onTogglePinMessage?: (messageId: string) => void
+  onMessageFeedback?: (messageId: string, vote: 'up' | 'down') => void
   onDeleteMessage?: (messageId: string) => void
   onOpenSideChatFromMessage?: (message: ChatMessage) => void
   pinned: boolean
@@ -419,6 +424,13 @@ function TranscriptMessageFooter({
   const hasActionContent = copyContent !== undefined
   const canOpenSideChatFromMessage =
     Boolean(onOpenSideChatFromMessage) && message.metadata?.kind !== 'channelInbound'
+  // Thumbs feedback is an ASSISTANT-only signal (rate what the agent produced,
+  // never the user's own turn or a channel-inbound relay).
+  const canRateMessage =
+    Boolean(onMessageFeedback) &&
+    message.role === 'assistant' &&
+    message.metadata?.kind !== 'channelInbound'
+  const thumbsVote = readMessageFeedbackVote(message)
 
   if (!timestamp && !hasActionContent) return null
 
@@ -428,11 +440,22 @@ function TranscriptMessageFooter({
         <MessageActionsChip
           onCopy={() => onCopyMessage(message.id, copyContent)}
           onTogglePin={onTogglePinMessage ? () => onTogglePinMessage(message.id) : undefined}
+          onThumbsUp={
+            canRateMessage && onMessageFeedback
+              ? () => onMessageFeedback(message.id, 'up')
+              : undefined
+          }
+          onThumbsDown={
+            canRateMessage && onMessageFeedback
+              ? () => onMessageFeedback(message.id, 'down')
+              : undefined
+          }
           onDelete={onDeleteMessage ? () => onDeleteMessage(message.id) : undefined}
           onOpenSideChat={
             canOpenSideChatFromMessage ? () => onOpenSideChatFromMessage?.(message) : undefined
           }
           pinned={pinned}
+          thumbsVote={thumbsVote}
           copied={copied}
           label={label}
         />
@@ -976,6 +999,7 @@ export const TranscriptPanel = memo(
     onCopyMessage,
     onDeleteMessage,
     onTogglePinMessage,
+    onMessageFeedback,
     onPromoteCollaboratorComment,
     onMessageSelectionCandidate,
     onOpenSideChatFromMessage,
@@ -1818,6 +1842,7 @@ export const TranscriptPanel = memo(
               highlighted: isPinnedMessageTarget,
               copied: copiedId === msg.id,
               pinned: isPinned,
+              feedbackVote: readMessageFeedbackVote(msg),
               expandedUser: expandedUserMessages.has(msg.id),
               activityExpansionKey: activityExpansionIds
                 ? Array.from(activityExpansionIds).sort().join('\u0000')
@@ -1835,6 +1860,7 @@ export const TranscriptPanel = memo(
                 onOpenSideChatFromRun,
                 onCopyMessage,
                 onTogglePinMessage,
+                onMessageFeedback,
                 onDeleteMessage,
                 onOpenSideChatFromMessage,
                 onPromoteCollaboratorComment,
@@ -2423,6 +2449,7 @@ export const TranscriptPanel = memo(
                   align={msg.role === 'user' ? 'end' : 'start'}
                   onCopyMessage={onCopyMessage}
                   onTogglePinMessage={onTogglePinMessage}
+                  onMessageFeedback={onMessageFeedback}
                   onDeleteMessage={onDeleteMessage}
                   onOpenSideChatFromMessage={onOpenSideChatFromMessage}
                   pinned={isPinned}
@@ -2872,6 +2899,7 @@ export const TranscriptPanel = memo(
           selection={activeMessageContextMenu}
           onCopyMessage={onCopyMessage}
           onTogglePinMessage={onTogglePinMessage}
+          onMessageFeedback={onMessageFeedback}
           onOpenSideChatFromMessage={onOpenSideChatFromMessage}
           onDeleteMessage={onDeleteMessage}
           onClose={closeMessageContextMenu}

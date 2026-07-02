@@ -39,6 +39,7 @@ const signature = (
   highlighted: false,
   copied: false,
   pinned: false,
+  feedbackVote: null,
   expandedUser: false,
   activityExpansionKey: '',
   subThreadExpanded: false,
