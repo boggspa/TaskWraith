@@ -536,31 +536,6 @@ describe('MainSanitizers settings patches', () => {
     })
   })
 
-  it('requires explicit booleans for iMessage scheduled polling', () => {
-    const settings = makeSettings({
-      messageBridgeEnabled: false,
-      messageBridgePollIntervalMs: 30_000
-    })
-    const { sanitizeSettingsPatch } = makeSanitizers(settings)
-
-    expect(
-      sanitizeSettingsPatch({
-        messageBridgeEnabled: true,
-        messageBridgePollIntervalMs: 250
-      })
-    ).toMatchObject({
-      messageBridgeEnabled: true,
-      messageBridgePollIntervalMs: 5_000
-    })
-    expect(
-      sanitizeSettingsPatch({
-        messageBridgeEnabled: 'false'
-      })
-    ).toMatchObject({
-      messageBridgeEnabled: false
-    })
-  })
-
   it('sanitizes Ollama tool-control tiers and gates provider parity on acknowledgement', () => {
     const settings = makeSettings()
     const { sanitizeSettingsPatch } = makeSanitizers(settings)
@@ -645,22 +620,6 @@ describe('MainSanitizers settings patches', () => {
       })
     ).toMatchObject({
       ollamaRunProfiles: {}
-    })
-  })
-
-  it('preserves current iMessage polling state for malformed enablement patches', () => {
-    const settings = makeSettings({
-      messageBridgeEnabled: true,
-      messageBridgePollIntervalMs: 30_000
-    })
-    const { sanitizeSettingsPatch } = makeSanitizers(settings)
-
-    expect(
-      sanitizeSettingsPatch({
-        messageBridgeEnabled: ''
-      })
-    ).toMatchObject({
-      messageBridgeEnabled: true
     })
   })
 

@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { GitRepositorySnapshot } from '../../main/services/GitService'
 import { DiffViewer } from './components/DiffViewer'
 import { FileEditorPanel } from './components/FileEditorPanel'
 import { TaskWraithWorkbench } from './components/TaskWraithWorkbench'
 import { useAppearance } from './hooks/useAppearance'
 
-export type PopoutKind = 'file-editor' | 'diff-studio' | 'workbench' | 'permission-helper'
+export type PopoutKind = 'file-editor' | 'diff-studio' | 'workbench'
 
 type WorkspaceDiff = Awaited<ReturnType<typeof window.api.getDiff>>
 
@@ -16,10 +16,7 @@ interface PopoutOpenFileRequest {
 }
 
 const parsePopoutKind = (value: string | null): PopoutKind | null => {
-  return value === 'file-editor' ||
-    value === 'diff-studio' ||
-    value === 'workbench' ||
-    value === 'permission-helper'
+  return value === 'file-editor' || value === 'diff-studio' || value === 'workbench'
     ? value
     : null
 }
@@ -283,10 +280,6 @@ export function PopoutApp() {
     }
   }, [dirtyBufferCount])
 
-  if (kind === 'permission-helper') {
-    return <PermissionHelperPopout />
-  }
-
   if (!kind || !workspacePath) {
     return (
       <main className="popout-root">
@@ -374,62 +367,6 @@ export function PopoutApp() {
             onDirtyChange={setDirtyBufferCount}
           />
         )}
-      </section>
-    </main>
-  )
-}
-
-function PermissionHelperPopout() {
-  const [status, setStatus] = useState('Drag the app tile into System Settings if macOS asks.')
-
-  const beginDrag = useCallback((event: DragEvent<HTMLButtonElement>) => {
-    event.preventDefault()
-    window.api.startMessagesPermissionHelperDrag()
-    setStatus('Dragging TaskWraith app...')
-  }, [])
-
-  const revealApp = useCallback(async () => {
-    try {
-      const result = await window.api.revealMessagesPermissionHelperApp()
-      setStatus(
-        result.ok ? 'Revealed TaskWraith in Finder.' : result.error || 'Could not reveal app.'
-      )
-    } catch (error) {
-      setStatus(error instanceof Error ? error.message : 'Could not reveal app.')
-    }
-  }, [])
-
-  return (
-    <main className="popout-root permission-helper-root" data-popout-kind="permission-helper">
-      <section className="permission-helper-panel" aria-label="TaskWraith permission helper">
-        <div className="permission-helper-title">
-          <span>Automation setup</span>
-          <strong>TaskWraith app target</strong>
-        </div>
-        <button
-          type="button"
-          className="permission-helper-drag-card"
-          draggable
-          onDragStart={beginDrag}
-          onClick={() => void revealApp()}
-          aria-label="Drag TaskWraith app into System Settings"
-        >
-          <div className="permission-helper-icon" aria-hidden="true">
-            TW
-          </div>
-          <div>
-            <strong>TaskWraith app</strong>
-            <span>Drag into Privacy &amp; Security if needed</span>
-          </div>
-        </button>
-        <div className="permission-helper-actions">
-          <button type="button" className="btn btn-sm btn-ghost" onClick={() => void revealApp()}>
-            Reveal in Finder
-          </button>
-        </div>
-        <p className="permission-helper-status" role="status" aria-live="polite">
-          {status}
-        </p>
       </section>
     </main>
   )

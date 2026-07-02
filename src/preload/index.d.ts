@@ -108,24 +108,6 @@ import type {
   HumanCollaborationSubscribeProjectionInput
 } from '../shared/collaboration/HumanCollaborationProtocol'
 import type {
-  MessageChannelBinding,
-  MessageChannelBindingInput
-} from '../main/channels/MessageChannelTypes'
-import type {
-  LocalWebChannelOutboundMessage,
-  LocalWebChannelSubmitInput
-} from '../main/channels/LocalWebChannelAdapter'
-import type { MessageChannelAdapterRuntimeStatus } from '../main/channels/MessageChannelAdapter'
-import type { MessageChannelCursor } from '../main/channels/MessageChannelCursorStore'
-import type { MessageChannelAuditRecord } from '../main/channels/MessageChannelAuditStore'
-import type {
-  MessageChannelPollSummary,
-  MessagesBridgeConversationListResult,
-  MessagesBridgeConversationsParams,
-  MessagesBridgePollResult,
-  MessagesBridgePollParams
-} from '../main/channels/MessageChannelGatewayService'
-import type {
   DiscordContextSelection,
   DiscordContextTargets,
   DiscordContextSnapshot,
@@ -1334,61 +1316,6 @@ declare global {
       removeGuestParticipant: (
         parentChatId: string
       ) => Promise<{ parent: ChatRecord; guest?: ChatRecord }>
-      listMessageChannelAdapters: () => Promise<MessageChannelAdapterRuntimeStatus[]>
-      listMessageChannelBindings: () => Promise<MessageChannelBinding[]>
-      upsertMessageChannelBinding: (
-        input: MessageChannelBindingInput
-      ) => Promise<MessageChannelBinding>
-      archiveMessageChannelBinding: (bindingId: string) => Promise<MessageChannelBinding | null>
-      sendMessageChannelTest: (bindingId: string) => Promise<{
-        ok: true
-        bindingId: string
-        recipientHandle: string
-        result?: unknown
-      }>
-      pollMessageChannelBinding: (
-        bindingId: string
-      ) => Promise<MessageChannelPollSummary & { bindingId: string }>
-      peekMessageChannelBinding: (
-        bindingId: string
-      ) => Promise<MessagesBridgePollResult & { bindingId: string }>
-      getMessagesBridgeStatus: () => Promise<{
-        ok: boolean
-        platform: string
-        pollSupported: boolean
-        sendTextSupported: boolean
-        sendAttachmentSupported?: boolean
-        reason?: string
-        [key: string]: unknown
-      }>
-      openMessagesPermissionHelper: () => Promise<{
-        ok: true
-        appName: string
-        dragTarget: string
-      }>
-      startMessagesPermissionHelperDrag: () => void
-      revealMessagesPermissionHelperApp: () => Promise<{ ok: boolean; error?: string }>
-      listMessagesBridgeConversations: (
-        params?: MessagesBridgeConversationsParams
-      ) => Promise<MessagesBridgeConversationListResult>
-      pollMessageChannelsOnce: (
-        params?: MessagesBridgePollParams
-      ) => Promise<MessageChannelPollSummary>
-      submitLocalWebChannelMessage: (input: LocalWebChannelSubmitInput) => Promise<{
-        ok: true
-        message: MessagesBridgePollResult['messages'][number]
-        summary: MessageChannelPollSummary
-      }>
-      drainLocalWebChannelOutbox: (params?: { accountId?: string; chatGuid?: string }) => Promise<{
-        ok: true
-        messages: LocalWebChannelOutboundMessage[]
-      }>
-      listMessageChannelCursors: () => Promise<MessageChannelCursor[]>
-      clearMessageChannelCursors: () => Promise<{ ok: boolean }>
-      clearMessageChannelBindingCursor: (
-        bindingId: string
-      ) => Promise<{ ok: boolean; bindingId: string }>
-      listMessageChannelAudit: (limit?: number) => Promise<MessageChannelAuditRecord[]>
       listDiscordContextTargets: () => Promise<DiscordContextTargets>
       readDiscordContext: (selection: DiscordContextSelection) => Promise<DiscordContextSnapshot>
       humanCollaborationCreateShare: (input: {

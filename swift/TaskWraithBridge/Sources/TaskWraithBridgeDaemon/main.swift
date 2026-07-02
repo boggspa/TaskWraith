@@ -166,8 +166,7 @@ dispatcher.register("bridge.status") { _ in
         "remoteTransportEnabled": false,
         "screenWatchEnabled": true,
         "creativeAppsEnabled": true,
-        "editorOpenEnabled": true,
-        "messagesBridgeEnabled": true
+        "editorOpenEnabled": true
     ]
 }
 
@@ -1322,85 +1321,6 @@ dispatcher.register("workspace.revealInFinder") { params in
         )
     }
     return try FinderReveal.reveal(filePath: filePath)
-}
-
-// MARK: - iMessage / Messages.app bridge RPCs
-//
-// This is deliberately a local Messages.app bridge, not an iMessage protocol
-// client. The daemon reads the user's local Messages database in read-only
-// mode and sends via Messages.app automation, so TaskWraith never handles
-// Apple ID credentials, IDS/APNs auth, or direct iMessage transport.
-
-dispatcher.register("messages.status") { _ in
-    return try encodeAsJSONObject(MessagesBridge.status())
-}
-
-dispatcher.register("messages.poll") { params in
-    let parsed: MessagesPollParams
-    do {
-        parsed = try decodeParams(params, as: MessagesPollParams.self)
-    } catch {
-        throw JSONRPCError(
-            code: JSONRPCErrorCode.invalidParams,
-            message: "Invalid messages.poll params: \(error.localizedDescription)"
-        )
-    }
-    do {
-        return try encodeAsJSONObject(MessagesBridge.poll(parsed))
-    } catch let err as MessagesBridgeError {
-        throw JSONRPCError(code: JSONRPCErrorCode.bridgeUnavailable, message: err.localizedDescription)
-    }
-}
-
-dispatcher.register("messages.conversations") { params in
-    let parsed: MessagesConversationsParams
-    do {
-        parsed = try decodeParams(params, as: MessagesConversationsParams.self)
-    } catch {
-        throw JSONRPCError(
-            code: JSONRPCErrorCode.invalidParams,
-            message: "Invalid messages.conversations params: \(error.localizedDescription)"
-        )
-    }
-    do {
-        return try encodeAsJSONObject(MessagesBridge.conversations(parsed))
-    } catch let err as MessagesBridgeError {
-        throw JSONRPCError(code: JSONRPCErrorCode.bridgeUnavailable, message: err.localizedDescription)
-    }
-}
-
-dispatcher.register("messages.sendText") { params in
-    let parsed: MessagesSendTextParams
-    do {
-        parsed = try decodeParams(params, as: MessagesSendTextParams.self)
-    } catch {
-        throw JSONRPCError(
-            code: JSONRPCErrorCode.invalidParams,
-            message: "Invalid messages.sendText params: \(error.localizedDescription)"
-        )
-    }
-    do {
-        return try encodeAsJSONObject(MessagesBridge.sendText(parsed))
-    } catch let err as MessagesBridgeError {
-        throw JSONRPCError(code: JSONRPCErrorCode.bridgeUnavailable, message: err.localizedDescription)
-    }
-}
-
-dispatcher.register("messages.sendAttachment") { params in
-    let parsed: MessagesSendAttachmentParams
-    do {
-        parsed = try decodeParams(params, as: MessagesSendAttachmentParams.self)
-    } catch {
-        throw JSONRPCError(
-            code: JSONRPCErrorCode.invalidParams,
-            message: "Invalid messages.sendAttachment params: \(error.localizedDescription)"
-        )
-    }
-    do {
-        return try encodeAsJSONObject(MessagesBridge.sendAttachment(parsed))
-    } catch let err as MessagesBridgeError {
-        throw JSONRPCError(code: JSONRPCErrorCode.bridgeUnavailable, message: err.localizedDescription)
-    }
 }
 
 // MARK: - Dispatch loop

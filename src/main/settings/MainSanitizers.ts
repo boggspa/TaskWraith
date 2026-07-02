@@ -119,8 +119,6 @@ const SETTINGS_PATCH_KEYS = new Set<keyof AppSettings>([
   'bridgeDaemonEnabled',
   'localServersDetachSpawns',
   'localServersStopOnQuit',
-  'messageBridgeEnabled',
-  'messageBridgePollIntervalMs',
   'codexSandboxFallback',
   'autoUpdateEnabled',
   'updateChannel',
@@ -1524,17 +1522,6 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
     if ('localServersStopOnQuit' in sanitized) {
       const value = sanitized.localServersStopOnQuit
       sanitized.localServersStopOnQuit = typeof value === 'boolean' ? value : Boolean(value)
-    }
-    if ('messageBridgeEnabled' in sanitized) {
-      const value = sanitized.messageBridgeEnabled
-      sanitized.messageBridgeEnabled =
-        typeof value === 'boolean' ? value : deps.getSettings().messageBridgeEnabled
-    }
-    if ('messageBridgePollIntervalMs' in sanitized) {
-      const value = Number(sanitized.messageBridgePollIntervalMs)
-      sanitized.messageBridgePollIntervalMs = Number.isFinite(value)
-        ? Math.max(5_000, Math.trunc(value))
-        : deps.getSettings().messageBridgePollIntervalMs
     }
     if ('sidebarOpacityOverride' in sanitized) {
       const value = sanitized.sidebarOpacityOverride

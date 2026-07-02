@@ -69,7 +69,7 @@ membership against `IPC_ARGUMENT_SCHEMAS` at extraction time.
 | `ensembleHandlers.ts` | Ensemble orchestration | `create-ensemble-chat`, `run-/cancel-ensemble-round`, `skip-ensemble-participant`, `wake-/cancel-ensemble-participant-wakeup` |
 | `providerAuthHandlers.ts` | Provider auth + API keys + login terminals | claude/kimi/gemini auth-status, store/clear API keys, gemini OAuth profiles/login, codex usage credential, `provider:open-login/logout/upgrade-terminal`, `provider:open-kimi-upgrade-terminal` |
 | `bridgeHandlers.ts` | iOS remote bridge / Tailscale / pairing / attach-window / sticky-appwatch | `bridge-networking-status`, `bridge-allowlist-*`, `bridge-*-pairing`, `bridge-list-paired-devices`, `bridge-unpair-device`, `get-/set-ios-remote-config`, `ios-remote-tailscale-*`, `attach-window:*`, `sticky-appwatch:*` |
-| `messageChannelHandlers.ts` | iMessage/Discord channel bridges | `message-channels:*`, `messages-bridge:*`, `discord-context:*` |
+| `discordContextHandlers.ts` | Read-only Discord composer context | `discord-context:*` |
 | `agentRunHandlers.ts` (last; highest coupling) | Agent run + provider dispatch | `run-agent`, `compose-run`, `cancel-agent-run`, `respond-agent-approval`, `get-agent-status`/`-rate-limits`/`-mcp-status`/`-models`, `get-provider-capabilities`/`-adapters`, agent-thread fork/rollback/review, `answer-/cancel-agent-question`, approvals (`get-approval-ledger`, `record-approval-elevation-ack`) |
 | `geminiSessionHandlers.ts` (last; highest coupling) | Gemini PTY/session + MCP bridge | `run-gemini`, `cancel-gemini`, `write-gemini-input`, `start-/stop-/write-/resize-gemini-session`, `list-gemini-sessions`, `get-gemini-version`/`-capabilities`, `*-gemini-mcp-bridge*` |
 

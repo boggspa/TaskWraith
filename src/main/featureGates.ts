@@ -30,16 +30,3 @@ export function composerContenteditableEnabled(): boolean {
   const value = process.env.TASKWRAITH_COMPOSER_CONTENTEDITABLE
   return value === '1' || value === 'true' || value === 'yes'
 }
-
-export function channelGatewayEnabled(input?: {
-  isPackaged?: boolean
-  appName?: string
-}): boolean {
-  const disabled = process.env.TASKWRAITH_MESSAGES_BRIDGE === '0'
-  if (disabled) return false
-  const isPackaged = Boolean(input?.isPackaged)
-  if (!isPackaged) return true
-  return /\bdebug\b/i.test(input?.appName || '')
-}
-
-export const messagesBridgeEnabled = channelGatewayEnabled

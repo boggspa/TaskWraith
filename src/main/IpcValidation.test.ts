@@ -481,44 +481,6 @@ describe('IpcValidation', () => {
     expect(() => validateIpcArgs('bridge-allowlist-clear', [])).not.toThrow()
   })
 
-  it('accepts iMessage bridge settings panel IPC APIs', () => {
-    expect(() => validateIpcArgs('message-channels:list-bindings', [])).not.toThrow()
-    expect(() => validateIpcArgs('message-channels:list-adapters', [])).not.toThrow()
-    expect(() =>
-      validateIpcArgs('message-channels:upsert-binding', [
-        {
-          channel: 'imessage',
-          accountId: 'mac-default',
-          chatGuid: 'iMessage;-;+15555550100',
-          allowedHandles: ['+15555550100'],
-          appChatId: 'chat-1',
-          provider: 'codex'
-        }
-      ])
-    ).not.toThrow()
-    expect(() => validateIpcArgs('message-channels:archive-binding', ['binding-1'])).not.toThrow()
-    expect(() => validateIpcArgs('message-channels:send-test', ['binding-1'])).not.toThrow()
-    expect(() => validateIpcArgs('message-channels:poll-binding', ['binding-1'])).not.toThrow()
-    expect(() => validateIpcArgs('message-channels:peek-binding', ['binding-1'])).not.toThrow()
-    expect(() => validateIpcArgs('message-channels:list-cursors', [])).not.toThrow()
-    expect(() => validateIpcArgs('message-channels:clear-cursors', [])).not.toThrow()
-    expect(() =>
-      validateIpcArgs('message-channels:clear-binding-cursor', ['binding-1'])
-    ).not.toThrow()
-    expect(() => validateIpcArgs('message-channels:list-audit', [50])).not.toThrow()
-    expect(() => validateIpcArgs('message-channels:poll-once', [{ limit: 25 }])).not.toThrow()
-    expect(() => validateIpcArgs('messages-bridge:status', [])).not.toThrow()
-    expect(() => validateIpcArgs('messages-bridge:open-permission-helper', [])).not.toThrow()
-    expect(() =>
-      validateIpcArgs('messages-bridge:reveal-permission-helper-app', [])
-    ).not.toThrow()
-    expect(() =>
-      validateIpcArgs('messages-bridge:list-conversations', [{ accountId: 'mac-default' }])
-    ).not.toThrow()
-    expect(() => validateIpcArgs('messages-bridge:list-conversations', [])).not.toThrow()
-    expect(() => validateIpcArgs('messages-bridge:list-conversations', ['bad'])).toThrow(/object/)
-  })
-
   it('accepts read-only startup/status APIs used by the shell', () => {
     expect(() => validateIpcArgs('get-claude-auth-status', [])).not.toThrow()
     expect(() => validateIpcArgs('get-kimi-auth-status', [])).not.toThrow()

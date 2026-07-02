@@ -421,8 +421,7 @@ with an equal or stronger control:
   in a review queue until the host clicks?
 - Should direct-limited dispatch be limited to plan/read-only forever, or can
   the host grant tool-capable modes per collaborator after external review?
-- Where should durable collaboration audit live: a new store, run events, or
-  the existing message-channel audit pattern?
+- Where should durable collaboration audit live: a new store or run events?
 - Should the max two collaborators per share remain for all Phase 2 tiers?
 - What is the retention policy for contribution records and redacted previews?
 - Should collaborator-side identity become a reusable local profile across

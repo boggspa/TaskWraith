@@ -105,7 +105,6 @@ describe('PopoutApp open-file broadcast routing', () => {
     expect(popoutKindReceivesOpenFileBroadcast('file-editor')).toBe(true)
     expect(popoutKindReceivesOpenFileBroadcast('diff-studio')).toBe(true)
     expect(popoutKindReceivesOpenFileBroadcast('workbench')).toBe(true)
-    expect(popoutKindReceivesOpenFileBroadcast('permission-helper')).toBe(false)
     expect(popoutKindReceivesOpenFileBroadcast(null)).toBe(false)
   })
 

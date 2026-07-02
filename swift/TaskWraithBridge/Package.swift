@@ -30,10 +30,7 @@ let package = Package(
         .target(name: "TaskWraithAudioKernel"),
         .executableTarget(
             name: "TaskWraithBridgeDaemon",
-            dependencies: ["TaskWraithAudioKernel"],
-            linkerSettings: [
-                .linkedLibrary("sqlite3")
-            ]
+            dependencies: ["TaskWraithAudioKernel"]
         ),
         .testTarget(
             name: "TaskWraithBridgeDaemonTests",

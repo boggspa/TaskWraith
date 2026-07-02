@@ -39,18 +39,18 @@ describe('resolveSettingsTabFromSlashArg', () => {
   })
 
   it('falls back when the resolved tab is feature-gated', () => {
-    const messagesHidden = (tab: string) => tab !== 'messages'
+    const pairingHidden = (tab: string) => tab !== 'pairing'
 
     expect(
-      resolveSettingsTabFromSlashArg('channels', {
+      resolveSettingsTabFromSlashArg('devices', {
         settingsTabs: SETTINGS_TABS,
-        isTabVisible: messagesHidden
+        isTabVisible: pairingHidden
       })
     ).toBe('behavior')
     expect(
       resolveSettingsTabFromSlashArg('providers', {
         settingsTabs: SETTINGS_TABS,
-        isTabVisible: messagesHidden
+        isTabVisible: pairingHidden
       })
     ).toBe('providers')
   })

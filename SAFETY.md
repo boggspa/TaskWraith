@@ -16,9 +16,9 @@ checklist for changes that add or widen app authority.
   workflow, remote allowlist, and provider-parity local-model modes should never
   be implied by a UI shortcut.
 - Treat optional surfaces such as iOS remote access, human collaboration, Screen
-  Watch, Canvas/browser tooling, creative-app AppleScript, Discord context, and
-  message-channel bridges as advanced features. They should stay off until the
-  user intentionally configures them.
+  Watch, Canvas/browser tooling, creative-app AppleScript, and Discord context
+  as advanced features. They should stay off until the user intentionally
+  configures them.
 - Keep "what can leave the Mac" understandable. Provider-visible prompts, file
   snippets, command output, screenshots, media-derived context, and diagnostics
   exports should be described plainly where the feature is exposed.

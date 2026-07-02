@@ -116,7 +116,6 @@ Once captured (all at once or per section), tell Claude and it will wire the `![
 | Save as | Platform | Capture | Where to find it |
 |---|---|---|---|
 | `settings-and-configuration__appearance-tab.png` | Electron | Appearance tab showing theme selector, accent color picker, and FX Labs section | Open **Settings → App → Appearance**. |
-| `settings-and-configuration__channels-tab.png` | Electron | Channels tab showing bridge configuration and gateway status | Go to **Settings → Channels**. |
 | `settings-and-configuration__devices-tab.png` | Electron | Devices tab showing QR code, paired devices list, and networking options | **Settings → Integrations → Devices**. |
 | `settings-and-configuration__general-tab.png` | Electron | General tab showing behavior settings, context turns slider, and product ops section | Open **Settings → App → General**. |
 | `settings-and-configuration__keyboard-shortcuts-tab.png` | Electron | Keyboard shortcuts tab showing editable keybinding list | Open the sidebar footer **Settings** entry, then choose **Keyboard shortcuts** under the App group in the Settings sidebar rail. |

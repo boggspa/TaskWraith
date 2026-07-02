@@ -10,14 +10,14 @@ import {
 import { SettingsSidebar } from './SettingsSidebar'
 
 describe('Settings tabs', () => {
-  it('hides dev/debug-only Channels while exposing Devices by default', () => {
+  it('does not include the retired Channels tab while exposing Devices by default', () => {
     const visibleTabs = getVisibleSettingsTabs().map((tab) => tab.id)
+    const allTabs = SETTINGS_TABS.map((tab) => tab.id)
 
+    expect(allTabs).not.toContain('messages')
     expect(visibleTabs).not.toContain('messages')
     expect(visibleTabs).toContain('pairing')
-    expect(isSettingsTabVisible('messages')).toBe(false)
     expect(isSettingsTabVisible('pairing')).toBe(true)
-    expect(resolveVisibleSettingsTab('messages')).toBe('behavior')
     expect(resolveVisibleSettingsTab('pairing')).toBe('pairing')
   })
 
@@ -36,10 +36,10 @@ describe('Settings tabs', () => {
     expect(html).toContain('AI &amp; Providers')
   })
 
-  it('omits Channels from the Settings sidebar while showing Devices', () => {
+  it('shows Devices in the Settings sidebar', () => {
     const html = renderToStaticMarkup(
       <SettingsSidebar
-        activeTab="messages"
+        activeTab="pairing"
         onTabChange={vi.fn()}
         onBackToApp={vi.fn()}
         appVersion="1.1.0"

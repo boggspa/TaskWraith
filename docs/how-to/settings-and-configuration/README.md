@@ -22,7 +22,6 @@ Settings is a full-app takeover panel where you configure everything about TaskW
 - [Local servers tab](local-servers-tab.md) — dev servers and watchers running under workspaces, with lifecycle controls.
 - [Devices tab](devices-tab.md) — iPhone/iPad pairing, remote workspace access, Tailscale, bridge networking, and push wake.
 - [Shares tab](shares-tab.md) — chats shared with human collaborators, access mode, and per-share revoke.
-- [Channels tab](channels-tab.md) — local and self-hosted message channel gateway controls.
 
 ### Data
 - [Safety & Privacy tab](safety-and-privacy-tab.md) — risk posture, local history, provider data flow, mobile visibility, and grant status.

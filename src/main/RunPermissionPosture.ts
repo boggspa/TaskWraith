@@ -15,8 +15,8 @@ import type { EffectiveRunPermissions } from './store/types'
  *     main-composed payload back to us — UNTRUSTED: a buggy/compromised
  *     renderer, or the future imported-plan execute path, can tamper the
  *     posture between `compose-run` and `run-agent`);
- *   - EnsembleOrchestrator, message-channel dispatch, sub-thread delegation,
- *     and the solo-chat wakeup service (MAIN-BUILT — these legitimately carry
+ *   - EnsembleOrchestrator, sub-thread delegation, and the solo-chat wakeup
+ *     service (MAIN-BUILT — these legitimately carry
  *     `approvalMode` / `effectivePermissions` derived from presets, overrides,
  *     inheritance, or persisted chat posture, and are never exposed to the
  *     renderer for mutation before dispatch).

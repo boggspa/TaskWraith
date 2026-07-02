@@ -18,8 +18,8 @@ import type {
 } from './store/types'
 import { truncateOpaqueMarkdown, wrapOpaqueMarkdownBlock } from './MarkdownFenceSerializer'
 import { nativeSubAgentPromptInstruction } from './NativeSubAgentPolicy'
-import { channelInboundReplayText, isChannelInboundMessage } from './ChannelPromptReplay'
 import { isHumanCollaboratorComment } from './collaboration/HumanCollaboratorMessages'
+import { isRetiredExternalChannelInboundMessage } from './LegacyExternalChannelHistory'
 import {
   taskWraithToolNameForProvider,
   taskWraithToolNamespaceHint
@@ -423,6 +423,7 @@ export function buildConversationContextBlock(
     (message) =>
       (message.role === 'user' || message.role === 'assistant') &&
       !isHumanCollaboratorComment(message) &&
+      !isRetiredExternalChannelInboundMessage(message) &&
       Boolean(message.content && message.content.trim())
   )
 
@@ -448,7 +449,7 @@ export function buildConversationContextBlock(
   }
 
   const lines = windowedMessages.map((item) => {
-    const content = isChannelInboundMessage(item) ? channelInboundReplayText(item) : item.content
+    const content = item.content
     return `${item.role === 'user' ? 'User' : 'Assistant'}: ${sanitizeContextText(content, budget.maxCharsPerTurn)}`
   })
 

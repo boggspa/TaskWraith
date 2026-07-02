@@ -13,8 +13,6 @@ export default defineConfig(({ mode }) => {
     .trim()
     .toLowerCase()
   const iosRemoteEnabled = iosRemoteOverride !== '0' && iosRemoteOverride !== 'false'
-  const channelGatewayEnabled =
-    process.env.IOS_CHANNELS_TRUE === '1' || env.IOS_CHANNELS_TRUE === '1'
   return {
     // No build-time credential baking. Earlier Gemini login plumbing carried
     // public CLI OAuth client metadata via build-time defines; even non-secret
@@ -23,9 +21,7 @@ export default defineConfig(({ mode }) => {
     preload: {},
     renderer: {
       define: {
-        __IOS_REMOTE_TRUE__: JSON.stringify(iosRemoteEnabled),
-        __CHANNELS_GATEWAY_ENABLED__: JSON.stringify(channelGatewayEnabled),
-        __MESSAGES_BRIDGE_ENABLED__: JSON.stringify(channelGatewayEnabled)
+        __IOS_REMOTE_TRUE__: JSON.stringify(iosRemoteEnabled)
       },
       resolve: {
         alias: {

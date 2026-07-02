@@ -22,7 +22,7 @@ review, Diff Studio, or TaskWraith-owned tool parity.
 | Image generation | Enable the tool and paste an OpenAI or xAI image API key. | Optional, off by default |
 | iOS Remote | Install the companion app, pair it with the Mac, optionally add Tailscale for off-LAN access. | Working beta / TestFlight phased |
 | Screen Watch | Grant macOS window/screen capture permission when attaching a window. | Optional advanced surface |
-| Discord / message bridges | Bot tokens, Matrix credentials, iMessage permissions, or local bridge setup. | Mixed: Discord context is usable; channel bridges are unfinished/gated |
+| Discord Context | Bot token and guild IDs for read-only composer context. | Supported optional context attachment |
 | Creative app automation | Install Final Cut Pro, Logic Pro, or Blender and approve macOS Automation prompts. | Super experimental / WIP |
 | Custom external MCP servers | Configure them in the provider's own config files. | Provider-owned/manual |
 
@@ -142,11 +142,9 @@ Captured frames are tool inputs. They may be sent to the active provider as
 visual context, so avoid attaching windows that contain secrets, credentials,
 private messages, or customer data.
 
-## Discord And Message Bridges
+## Discord Context
 
-These surfaces are optional and should not be part of a first-run setup.
-
-### Discord Context
+This surface is optional and should not be part of a first-run setup.
 
 Discord Context is a read-only composer attachment. It can read recent messages
 from channels your bot can access, label that content as untrusted context, and
@@ -170,24 +168,6 @@ EOF
 ```
 
 Restart TaskWraith after changing this file.
-
-### Message Bridges
-
-The broader message/channel bridge surface is unfinished and gated. Treat it as
-developer-preview infrastructure, not a normal user setup path.
-
-Current adapter directions include:
-
-- **Telegram:** create a bot with BotFather and set
-  `TASKWRAITH_TELEGRAM_BOT_TOKEN` before launching TaskWraith.
-- **Matrix:** set `TASKWRAITH_MATRIX_HOMESERVER_URL` and
-  `TASKWRAITH_MATRIX_ACCESS_TOKEN` before launching TaskWraith.
-- **iMessage:** local experimental access may require macOS Full Disk Access and
-  Automation permissions, followed by an app restart.
-- **Local web:** self-hosted/local control surface for development.
-
-Use exact contact allowlists and scratch workspaces while testing. Inbound
-messages should be treated as external/untrusted context.
 
 ## Creative App Automation
 
@@ -237,5 +217,5 @@ For cautious users, enable optional surfaces in this order:
 5. Tailscale for off-LAN iOS Remote.
 6. Screen Watch on a non-sensitive window.
 7. Discord read-only context.
-8. Message bridges, creative app automation, and custom external MCP only after
-   the core workflow is familiar.
+8. Creative app automation and custom external MCP only after the core workflow
+   is familiar.

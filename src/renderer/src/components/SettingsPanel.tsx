@@ -75,7 +75,7 @@ import {
   sanitizeKeyCommandOverrides,
   type KeyCommandId
 } from '../lib/keyCommands'
-import { CHANNELS_GATEWAY_ENABLED, IOS_REMOTE_ENABLED } from '../lib/featureFlags'
+import { IOS_REMOTE_ENABLED } from '../lib/featureFlags'
 // RemoteWorkspacesPanel was previously rendered here under the
 // `remote-workspaces` tab. It now lives inside `PairingPage` (the
 // "Devices" tab) so paired-device QR + workspace allowlist sit
@@ -89,7 +89,6 @@ import { ApprovalLedgerPanel } from './ApprovalLedgerPanel'
 import { PairingPage } from './PairingPage'
 import { SharesPanel } from './SharesPanel'
 import { CommittedDraftField } from './CommittedDraftField'
-import { MessagesBridgePanel } from './MessagesBridgePanel'
 import { ImageGenerationSettingsCard } from './ImageGenerationSettingsCard'
 import { LocalServersSettingsPanel } from './LocalServersSettingsPanel'
 import { RosterSettingsPanel } from './RosterSettingsPanel'
@@ -2115,7 +2114,6 @@ export type SettingsTab =
   | 'key-commands'
   | 'approval-ledger'
   | 'safety-privacy'
-  | 'messages'
   | 'pairing'
   | 'shares'
   | 'workspaces'
@@ -2335,14 +2333,6 @@ export const SETTINGS_TABS: SettingsTabDefinition[] = [
     scope: 'global'
   },
   {
-    id: 'messages',
-    label: 'Channels',
-    group: 'integrations',
-    description: 'Local and self-hosted message channel gateway controls.',
-    aliases: ['imessage', 'sms', 'gateway', 'channel', 'messages bridge'],
-    scope: 'device'
-  },
-  {
     id: 'safety-privacy',
     label: 'Safety & Privacy',
     group: 'data',
@@ -2392,8 +2382,7 @@ export const SETTINGS_TABS: SettingsTabDefinition[] = [
 ]
 
 const FEATURE_GATED_SETTINGS_TABS = new Set<SettingsTab>([
-  ...(IOS_REMOTE_ENABLED ? [] : (['pairing'] as SettingsTab[])),
-  ...(CHANNELS_GATEWAY_ENABLED ? [] : (['messages'] as SettingsTab[]))
+  ...(IOS_REMOTE_ENABLED ? [] : (['pairing'] as SettingsTab[]))
 ])
 
 export function isSettingsTabVisible(tab: SettingsTab): boolean {
@@ -8548,9 +8537,6 @@ export function SettingsPanel({
             onOpenPinnedMessage={onOpenPinnedMessage}
           />
         )}
-
-        {/* ── Channels (local/self-hosted message gateway) ─────────────── */}
-        {activeTab === 'messages' && <MessagesBridgePanel />}
 
         {/* ── Roster (ensemble roster presets + per-participant editor) ──── */}
         {activeTab === 'roster' && (

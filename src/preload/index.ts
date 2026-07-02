@@ -14,16 +14,6 @@ import type {
 } from '../main/store/types'
 import type { AppShellStatsSnapshot } from '../main/services/AppShellStatsService'
 import type { SessionCheckpointRecord } from '../main/checkpoints/SessionCheckpoint'
-import type { MessageChannelBindingInput } from '../main/channels/MessageChannelTypes'
-import type {
-  LocalWebChannelOutboundMessage,
-  LocalWebChannelSubmitInput
-} from '../main/channels/LocalWebChannelAdapter'
-import type {
-  MessagesBridgeConversationsParams,
-  MessagesBridgePollResult,
-  MessagesBridgePollParams
-} from '../main/channels/MessageChannelGatewayService'
 import type {
   DiscordContextSelection,
   DiscordContextSnapshot
@@ -1047,52 +1037,6 @@ const api = {
   }) => ipcRenderer.invoke('set-guest-participant', args),
   removeGuestParticipant: (parentChatId: string) =>
     ipcRenderer.invoke('remove-guest-participant', parentChatId),
-  listMessageChannelAdapters: () => ipcRenderer.invoke('message-channels:list-adapters'),
-  listMessageChannelBindings: () => ipcRenderer.invoke('message-channels:list-bindings'),
-  upsertMessageChannelBinding: (input: MessageChannelBindingInput) =>
-    ipcRenderer.invoke('message-channels:upsert-binding', input),
-  archiveMessageChannelBinding: (bindingId: string) =>
-    ipcRenderer.invoke('message-channels:archive-binding', bindingId),
-  sendMessageChannelTest: (bindingId: string) =>
-    ipcRenderer.invoke('message-channels:send-test', bindingId),
-  pollMessageChannelBinding: (bindingId: string) =>
-    ipcRenderer.invoke('message-channels:poll-binding', bindingId),
-  peekMessageChannelBinding: (bindingId: string) =>
-    ipcRenderer.invoke('message-channels:peek-binding', bindingId) as Promise<
-      MessagesBridgePollResult & { bindingId: string }
-    >,
-  getMessagesBridgeStatus: () => ipcRenderer.invoke('messages-bridge:status'),
-  openMessagesPermissionHelper: () =>
-    ipcRenderer.invoke('messages-bridge:open-permission-helper') as Promise<{
-      ok: true
-      appName: string
-      dragTarget: string
-    }>,
-  startMessagesPermissionHelperDrag: () => {
-    ipcRenderer.send('messages-bridge:start-permission-helper-drag')
-  },
-  revealMessagesPermissionHelperApp: () =>
-    ipcRenderer.invoke('messages-bridge:reveal-permission-helper-app') as Promise<{
-      ok: boolean
-      error?: string
-    }>,
-  listMessagesBridgeConversations: (params: MessagesBridgeConversationsParams = {}) =>
-    ipcRenderer.invoke('messages-bridge:list-conversations', params),
-  pollMessageChannelsOnce: (params: MessagesBridgePollParams = {}) =>
-    ipcRenderer.invoke('message-channels:poll-once', params),
-  submitLocalWebChannelMessage: (input: LocalWebChannelSubmitInput) =>
-    ipcRenderer.invoke('message-channels:submit-web-message', input),
-  drainLocalWebChannelOutbox: (params: { accountId?: string; chatGuid?: string } = {}) =>
-    ipcRenderer.invoke('message-channels:drain-web-outbox', params) as Promise<{
-      ok: true
-      messages: LocalWebChannelOutboundMessage[]
-    }>,
-  listMessageChannelCursors: () => ipcRenderer.invoke('message-channels:list-cursors'),
-  clearMessageChannelCursors: () => ipcRenderer.invoke('message-channels:clear-cursors'),
-  clearMessageChannelBindingCursor: (bindingId: string) =>
-    ipcRenderer.invoke('message-channels:clear-binding-cursor', bindingId),
-  listMessageChannelAudit: (limit?: number) =>
-    ipcRenderer.invoke('message-channels:list-audit', limit),
   listDiscordContextTargets: () => ipcRenderer.invoke('discord-context:list-targets'),
   readDiscordContext: (selection: DiscordContextSelection) =>
     ipcRenderer.invoke('discord-context:read-channel', selection),

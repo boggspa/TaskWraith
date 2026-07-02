@@ -1872,10 +1872,6 @@ export interface AppSettings {
   /** Local Servers — stop agent-spawned servers still running when TaskWraith
    * quits. Off by default. */
   localServersStopOnQuit?: boolean
-  /** Local macOS Messages.app bridge polling. Off by default; when enabled,
-   * main polls allowlisted iMessage bindings through the local bridge daemon. */
-  messageBridgeEnabled?: boolean
-  messageBridgePollIntervalMs?: number
   codexSandboxFallback: CodexSandboxFallbackMode
   /** Settings -> General "Enable Auto-Update". Defaults on; when false,
    * the updater service stays disabled even on stable/nightly channels. */

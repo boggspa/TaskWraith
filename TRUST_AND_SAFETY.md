@@ -74,13 +74,12 @@ Leave these disabled during first-run testing:
 - Screen Watch and attached-window capture.
 - Canvas/browser automation.
 - Creative-app AppleScript automation.
-- External message-channel bridges.
 - Full-workspace or unattended workflow grants.
 
 When you are ready to enable optional surfaces, see
 [ADVANCED_OPTIONAL_SETUP.md](ADVANCED_OPTIONAL_SETUP.md) for the external steps
-around Ollama models, API keys, iOS/Tailscale pairing, Screen Watch, message
-bridges, creative apps, and custom MCP servers.
+around Ollama models, API keys, iOS/Tailscale pairing, Screen Watch, creative
+apps, and custom MCP servers.
 
 ## Capability Matrix
 
@@ -99,7 +98,6 @@ bridges, creative apps, and custom MCP servers.
 | Canvas/browser-like tools | Optional advanced surface. | The page or preview surface you expose to the agent. | URLs, page content, screenshots, and actions may reach the provider depending on the tool. | High-risk actions are policy-gated and should be treated as code/data execution. |
 | Creative-app automation | Off unless configured and approved. | Supported app state and AppleScript automation targets such as Final Cut Pro or Logic Pro. | App snapshots or command results may be sent to the provider. | AppleScript dispatch is approval-gated and logged. |
 | Discord context | Off unless a bot token/server is configured. | Recent messages from configured Discord channels the bot can read. | Channel context is attached to provider prompts as untrusted context. | Read-only; TaskWraith does not post back to Discord through this feature. |
-| Message-channel bridges | Off unless configured. | Local message-channel metadata and messages within configured routes. | Routed message content may become untrusted context or audit records. | Channel bindings, cursors, and audit entries are stored locally. |
 | Media and image tools | User/provider initiated. | Transcript media, generated images, selected audio/video files, and decoded frames. | Media-derived context may be sent to providers or external generation APIs you configure. | Media refs use trusted channels; generated artifacts remain reviewable locally. |
 | Usage and diagnostics | Local collection. | Provider usage summaries, app status, crashes, and diagnostics exports. | Diagnostics leave the machine only if you export/share them. | Stored under local app data; exports should be treated as sensitive. |
 
@@ -123,7 +121,6 @@ Common local state includes:
   records.
 - `human-collaboration.json` and the local collaboration identity record when
   collaborator features are used.
-- `channels/` message-channel bindings, cursors, and audit logs when configured.
 - Transcript media assets, media staging, Canvas state, and generated artifacts.
 
 TaskWraith does not store provider account passwords in the repository. Provider
