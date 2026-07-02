@@ -332,21 +332,28 @@ Target:
 
 ### B5.8 - Provider capability caveat pinning
 
+Shipped in `a683ec16e`.
+
 What exists:
 
 - Dynamic capability contracts are explicit about Cursor/Grok write-mode bridge
   injection.
+- Static provider descriptors now carry serializable capability caveats for
+  Cursor and Grok explaining that the full TaskWraith MCP bridge is mode-scoped:
+  read-only runs do not advertise it by default, while write-capable runs
+  auto-inject a governed bridge.
+- Descriptor tests now cover Cursor and Grok alongside the older provider set
+  and assert the caveat survives descriptor projection.
 
 What is missing:
 
-- Static provider descriptors used by iOS/desktop UX do not pin the same caveat,
-  and descriptor tests omit Cursor/Grok coverage.
+- No B5.8-specific blocker remains. Future UI work can choose how prominently
+  to render `capabilityCaveats`.
 
 Target:
 
-- Add a static/dynamic caveat field for provider surfaces whose full TaskWraith
-  MCP bridge is injected only in write-mode or only for particular modes.
-- Extend descriptor tests to include Cursor and Grok.
+- Keep static descriptor caveats aligned with dynamic capability contracts when
+  provider bridge behavior changes.
 
 ### B5.9 - Human feedback and casting receipts
 
@@ -464,9 +471,8 @@ Do this before claiming provider parity is fully auditable across local and
 brokered providers.
 
 - Freeze or explicitly revoke Ollama tool-control tiers during an active run.
-- Pin Cursor/Grok static provider caveats to match their dynamic capability
+- Keep Cursor/Grok static provider caveats pinned to their dynamic capability
   descriptors.
-- Add the missing desktop seat-change stage-role mutation path.
 
 ### Phase 4c - Human feedback receipts
 
