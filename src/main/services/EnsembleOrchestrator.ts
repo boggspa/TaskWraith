@@ -140,7 +140,9 @@ export type EnsembleQueuedPromptMutationResult = {
  * const isn't reachable from the main process.
  */
 const ENSEMBLE_GLOBAL_USAGE_WORKSPACE_ID = '__taskwraith_global_chats__'
-const MAX_ENSEMBLE_FANOUT_TARGETS = 18
+// 1.7.x — 18 → 20 in step with MAX_ENSEMBLE_PARTICIPANTS (a fanout can
+// target every roster peer, so the two ceilings must match).
+const MAX_ENSEMBLE_FANOUT_TARGETS = 20
 
 const DEFAULT_CONTINUATION_HOP_LIMIT = 6
 const MAX_CONTINUATION_HOP_LIMIT = 500

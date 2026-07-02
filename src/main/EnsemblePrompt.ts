@@ -61,7 +61,9 @@ import {
 // (chip strip now wraps at 7+ to a 6-column grid).
 // 1.0.5-EW46 — Ceiling raised 12 → 18; six chips per row now
 // yields up to three wrapped rows.
-const MAX_ENSEMBLE_PARTICIPANTS = 18
+// 1.7.x — Ceiling raised 18 → 20; the chip strip now wraps into
+// balanced rows of at most 5 (up to four rows at cap).
+const MAX_ENSEMBLE_PARTICIPANTS = 20
 
 export interface BuildEnsemblePromptInput {
   chat: ChatRecord

@@ -6,7 +6,9 @@ import type {
 } from './store/types'
 
 export const MIN_ENSEMBLE_PARTICIPANTS = 2
-export const MAX_ENSEMBLE_PARTICIPANTS = 18
+// 1.7.x — 18 → 20 in step with the renderer strip's balanced rows of
+// at most 5 chips (EnsembleParticipantsAboveRow.MAX_ENSEMBLE_PARTICIPANTS).
+export const MAX_ENSEMBLE_PARTICIPANTS = 20
 
 export const ASSIGNABLE_PERMISSION_PRESETS = [
   'read_only',

@@ -785,15 +785,23 @@
   justify-content: center;
 }
 
-/* 1.0.5-EW1 — At 7+ participants the chip strip wraps to additional
- * rows. Pre-EW1 the strip clipped chips off the left edge silently
- * (unreachable participants). Switch from the centered horizontal
- * flex layout to a fixed 6-column grid that wraps cleanly:
+/* 1.7.x — At 6+ participants the chip strip wraps into BALANCED rows
+ * of at most 5 chips (was a fixed 6-column grid at 7+). The grid has
+ * 60 fractional tracks (LCM of the possible row lengths 3 / 4 / 5);
+ * each chip carries an inline `grid-column: span 60/rowLen` (20 / 15 /
+ * 12) computed by computeEnsembleChipGridSpans in
+ * EnsembleParticipantsAboveRow.tsx. Every row's spans sum to exactly
+ * 60, so auto-flow breaks lines precisely at the intended boundaries:
  *
- *   7 participants → 6 chips on row 1 + 1 on row 2 (with the
- *                    "+ add" button beside it on row 2)
- *   8–17           → wraps as expected
- *   18             → 6 + 6 + 6, no "+" (panel is at cap)
+ *   6  → 3 + 3          11 → 3 + 4 + 4       16 → 4 + 4 + 4 + 4
+ *   7  → 3 + 4          13 → 4 + 4 + 5       18 → 4 + 4 + 5 + 5
+ *   10 → 5 + 5          15 → 5 + 5 + 5       20 → 5 + 5 + 5 + 5
+ *
+ * Chips stay DIRECT children of the one grid, so drag-reorder
+ * hit-testing and the per-chip container queries are unaffected.
+ * Track gutters INSIDE a span are covered by the chip itself, so the
+ * visible chip gap is just the single 6px gutter (inherited from the
+ * base `gap`) at each span boundary — no per-chip margins needed.
  *
  * `minmax(0, 1fr)` lets grid items shrink past their intrinsic
  * width — chip labels truncate via the chip-role overflow rules
@@ -808,7 +816,7 @@
  * glow on both rows when the strip wraps. */
 .ensemble-above-row-chips.is-wrapped {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(60, minmax(0, 1fr));
   grid-auto-flow: row;
   justify-content: stretch;
   overflow: visible;

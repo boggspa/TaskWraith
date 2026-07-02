@@ -325,7 +325,9 @@ export interface BridgeCreateThreadParticipant {
   role?: string
 }
 
-const MAX_BRIDGE_ENSEMBLE_PARTICIPANTS = 18
+// 1.7.x — 18 → 20 in step with MAX_ENSEMBLE_PARTICIPANTS so phone-side
+// roster edits accept the same panel sizes the Mac strip allows.
+const MAX_BRIDGE_ENSEMBLE_PARTICIPANTS = 20
 
 export interface BridgeCreateThreadAction extends BridgeActionMetadata {
   kind: 'createThread'

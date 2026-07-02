@@ -61,7 +61,7 @@ function externalGrant(): ExternalPathGrant {
 describe('evaluateRosterEdit', () => {
   it('exports the main-side roster bounds and assignable preset ceiling', () => {
     expect(MIN_ENSEMBLE_PARTICIPANTS).toBe(2)
-    expect(MAX_ENSEMBLE_PARTICIPANTS).toBe(18)
+    expect(MAX_ENSEMBLE_PARTICIPANTS).toBe(20)
     expect(ASSIGNABLE_PERMISSION_PRESETS).toEqual([
       'read_only',
       'plan',

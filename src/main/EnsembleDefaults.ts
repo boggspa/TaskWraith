@@ -116,10 +116,10 @@ export function createDefaultEnsembleConfig(activeProvider?: ProviderId, configu
     // cursor / ollama; gemini retired) so the user starts with a panel
     // well under the cap and has plenty
     // of headroom to add specialists / extra Claudes / etc. before
-    // hitting the cap. The chip strip wraps at 7+ to a 6-column
-    // grid, so even a fully-loaded 18-participant panel
+    // hitting the cap. The chip strip wraps at 6+ into balanced rows
+    // of at most 5, so even a fully-loaded 20-participant panel
     // stays navigable. Hard min on the remove path is 2.
-    maxParticipants: 18,
+    maxParticipants: 20,
     orchestrationMode: 'turn_bound',
     maxContinuationHops: 6,
     participants,

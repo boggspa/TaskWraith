@@ -64,18 +64,56 @@ import { getProviderName } from './Sidebar'
 // chat throughout its lifecycle.
 //
 // 1.0.5-EW1 — Ceiling raised again 8 → 12. The chip strip now wraps
-// at 7+ participants (see CSS: .is-wrapped → grid with 6 equal-width
-// columns) instead of overflowing horizontally.
+// at 7+ participants instead of overflowing horizontally.
 //
-// 1.0.5-EW46 — Ceiling raised 12 → 18. The six-column grid now allows
-// three complete rows for larger panels.
-const MAX_ENSEMBLE_PARTICIPANTS = 18
+// 1.0.5-EW46 — Ceiling raised 12 → 18 (three rows of the then-6-column
+// grid).
+//
+// 1.7.x — Ceiling 18 → 20 and the wrapped layout reworked from a fixed
+// 6-column grid to balanced rows of AT MOST 5 chips (4 rows max at the
+// 20 cap), so role names truncate less. Keep in sync with the
+// main-process copies (EnsembleRosterMutation.ts, EnsemblePrompt.ts)
+// and MAX_ROSTER_PRESET_PARTICIPANTS in ensembleRosterPresets.ts.
+const MAX_ENSEMBLE_PARTICIPANTS = 20
 const MIN_ENSEMBLE_PARTICIPANTS = 2
-// 1.0.5-EW1 — Threshold at which the chip strip switches from the
-// centered horizontal flex layout to a 6-column grid that wraps to
-// a second row. 7 = "more chips than fit cleanly on one row at
-// readable size".
-const ENSEMBLE_CHIPS_WRAP_THRESHOLD = 7
+// Threshold at which the chip strip switches from the centered
+// content-width flex layout to the balanced-rows grid. 6 is the first
+// count that no longer fits the 5-per-row ceiling on a single row.
+const ENSEMBLE_CHIPS_WRAP_THRESHOLD = 6
+// Ceiling of chips per row in the wrapped layout.
+const ENSEMBLE_CHIP_ROW_MAX = 5
+// The wrapped strip is one CSS grid with 60 fractional tracks (LCM of
+// the possible row lengths 3 / 4 / 5), and every chip spans
+// 60 ÷ row-length tracks (20 / 15 / 12 — all exact). Each row's spans
+// sum to exactly 60, so `grid-auto-flow: row` breaks lines precisely at
+// the intended row boundaries while chips stay DIRECT children of the
+// grid — the drag-reorder hit-testing (`resolveReorderDropTarget`) and
+// the per-chip `@container ensemble-chip` queries carry over untouched.
+export const ENSEMBLE_CHIP_GRID_TRACKS = 60
+
+/**
+ * Balanced row distribution for the wrapped chip strip: rows hold at
+ * most ENSEMBLE_CHIP_ROW_MAX chips, split as evenly as possible, with
+ * the remainder landing on the LATER rows (7 → 3+4, 13 → 4+4+5,
+ * 18 → 4+4+5+5 …) so the strip reads top-light per the product spec.
+ */
+export function computeEnsembleChipRowDistribution(count: number): number[] {
+  if (count <= 0) return []
+  const rows = Math.ceil(count / ENSEMBLE_CHIP_ROW_MAX)
+  const base = Math.floor(count / rows)
+  const remainder = count % rows
+  return Array.from({ length: rows }, (_, index) =>
+    index < rows - remainder ? base : base + 1
+  )
+}
+
+/** Per-chip `grid-column` span for the wrapped strip (index-aligned
+ * with the participants array). */
+export function computeEnsembleChipGridSpans(count: number): number[] {
+  return computeEnsembleChipRowDistribution(count).flatMap((rowLength) =>
+    Array.from({ length: rowLength }, () => ENSEMBLE_CHIP_GRID_TRACKS / rowLength)
+  )
+}
 
 function laneStatusToParticipantLabel(status: ConcurrentLane['status']): string {
   switch (status) {
@@ -547,6 +585,13 @@ export function EnsembleParticipantsAboveRow({
     liveFanoutLanes.some((lane) => lane.intent === 'read') &&
     liveFanoutLanes.every((lane) => lane.intent === 'read')
   const canAddParticipant = !isRoundRunning && participants.length < MAX_ENSEMBLE_PARTICIPANTS
+  // Index-aligned `grid-column` spans for the wrapped balanced-rows
+  // layout; null in single-row flex mode (≤5 chips) where chips size
+  // to their content instead.
+  const chipGridSpans =
+    participants.length >= ENSEMBLE_CHIPS_WRAP_THRESHOLD
+      ? computeEnsembleChipGridSpans(participants.length)
+      : null
 
   const updateParticipant = (id: string, patch: Partial<EnsembleParticipant>): void => {
     if (isRoundRunning) return
@@ -885,15 +930,15 @@ export function EnsembleParticipantsAboveRow({
       <div
         ref={chipsContainerRef}
         className={`ensemble-above-row-chips ${
-          // 1.0.5-EW1 — Switch to the wrapping grid layout at 7+
-          // participants so the strip never clips. Below the
-          // threshold we keep the centred horizontal flex layout —
-          // most ensembles live there.
+          // Switch to the balanced-rows grid at 6+ participants (the
+          // first count exceeding the 5-per-row ceiling) so the strip
+          // never clips. Below the threshold we keep the centred
+          // content-width flex layout — most ensembles live there.
           participants.length >= ENSEMBLE_CHIPS_WRAP_THRESHOLD ? 'is-wrapped' : ''
         } ${dragGhost ? 'is-chip-dragging' : ''}`}
         data-participant-count={participants.length}
       >
-        {participants.map((participant) => {
+        {participants.map((participant, participantIndex) => {
           const state = activeRound?.participants.find(
             (item) => item.participantId === participant.id
           )
@@ -947,6 +992,7 @@ export function EnsembleParticipantsAboveRow({
             <ParticipantChip
               key={participant.id}
               participant={participant}
+              gridSpan={chipGridSpans?.[participantIndex]}
               statusLabel={statusLabel}
               statusTooltip={wakeupTooltip || statusTooltip}
               dimmed={!participant.enabled}
@@ -1281,6 +1327,9 @@ function EnsembleAddParticipantButton({
 
 interface ParticipantChipProps {
   participant: EnsembleParticipant
+  /** `grid-column` span in the wrapped balanced-rows strip (see
+   * computeEnsembleChipGridSpans); undefined in single-row flex mode. */
+  gridSpan?: number
   statusLabel: string
   /**
    * 1.0.4-AD — optional human-readable explanation surfaced in the
@@ -1354,6 +1403,7 @@ interface ParticipantChipProps {
 
 function ParticipantChip({
   participant,
+  gridSpan,
   statusLabel,
   statusTooltip,
   dimmed,
@@ -1485,6 +1535,7 @@ function ParticipantChip({
       data-linked-session={participant.linkedProviderSessionId ? 'true' : undefined}
       onPointerDown={handlePointerDown}
       className={`ensemble-above-chip provider-${providerClass} ${isSelected ? 'is-selected' : ''} ${dimmed ? 'is-dimmed' : ''} ${isDragOver ? 'is-drag-over' : ''} ${isDragging ? 'is-dragging' : ''}`}
+      style={gridSpan !== undefined ? { gridColumn: `span ${gridSpan}` } : undefined}
       // 1.0.4-AT1 — surface the participant's linked provider
       // session in the tooltip so the user can verify which thread
       // the next dispatch will resume against. Pre-AT1 there was

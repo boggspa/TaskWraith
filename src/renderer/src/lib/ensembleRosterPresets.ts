@@ -26,7 +26,8 @@ const ENSEMBLE_FANOUT_POLICIES = new Set<EnsembleFanoutPolicy>([
  * `applyEnsembleRosterPreset`.
  */
 export const MIN_ROSTER_PRESET_PARTICIPANTS = 2
-export const MAX_ROSTER_PRESET_PARTICIPANTS = 18
+// 1.7.x — 18 → 20 in step with MAX_ENSEMBLE_PARTICIPANTS.
+export const MAX_ROSTER_PRESET_PARTICIPANTS = 20
 const DEFAULT_ROSTER_PRESET_MAX_PARTICIPANTS = 6
 
 function newPresetId(now: number): string {

@@ -7184,7 +7184,7 @@ Next action:
     expect(result.laneIds).toHaveLength(1)
   })
 
-  it('dispatches explicit ensemble_fanout targets up to the 18-participant cap', async () => {
+  it('dispatches explicit ensemble_fanout targets up to the participant cap', async () => {
     const harness = makeHarness()
     harness.chat.ensemble!.fanoutPolicy = 'read_only'
     const fullRoster: EnsembleParticipant[] = Array.from(

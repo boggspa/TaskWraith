@@ -1,7 +1,10 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import {
+  ENSEMBLE_CHIP_GRID_TRACKS,
   EnsembleParticipantsAboveRow,
+  computeEnsembleChipGridSpans,
+  computeEnsembleChipRowDistribution,
   resolveParticipantSelectionAfterRemoval
 } from './EnsembleParticipantsAboveRow'
 import type { ChatRecord, EnsembleParticipant } from '../../../main/store/types'
@@ -424,5 +427,106 @@ describe('EnsembleParticipantsAboveRow', () => {
     expect(html).toContain('ensemble-above-chip-captain-hat')
     expect(html).toContain('aria-label="Boss Bossman"')
     expect(html).toContain('aria-label="Captain Deputy"')
+  })
+
+  describe('computeEnsembleChipRowDistribution', () => {
+    it('matches the balanced ≤5-per-row product spec for every count up to the 20 cap', () => {
+      // Verbatim from the product spec: rows only expand to accommodate
+      // participants; remainder lands on the LATER rows.
+      const expected: Record<number, number[]> = {
+        1: [1],
+        2: [2],
+        3: [3],
+        4: [4],
+        5: [5],
+        6: [3, 3],
+        7: [3, 4],
+        8: [4, 4],
+        9: [4, 5],
+        10: [5, 5],
+        11: [3, 4, 4],
+        12: [4, 4, 4],
+        13: [4, 4, 5],
+        14: [4, 5, 5],
+        15: [5, 5, 5],
+        16: [4, 4, 4, 4],
+        17: [4, 4, 4, 5],
+        18: [4, 4, 5, 5],
+        19: [4, 5, 5, 5],
+        20: [5, 5, 5, 5]
+      }
+      for (const [count, rows] of Object.entries(expected)) {
+        expect(computeEnsembleChipRowDistribution(Number(count)), `count ${count}`).toEqual(rows)
+      }
+    })
+
+    it('yields index-aligned grid spans that fill each 60-track row exactly', () => {
+      for (let count = 6; count <= 20; count++) {
+        const spans = computeEnsembleChipGridSpans(count)
+        expect(spans.length, `count ${count}`).toBe(count)
+        // Every span divides the track count exactly (3→20, 4→15, 5→12)…
+        for (const span of spans) {
+          expect([12, 15, 20]).toContain(span)
+        }
+        // …and the spans of each row sum to exactly one full 60-track line,
+        // so grid-auto-flow breaks precisely at the intended boundaries.
+        let lineTotal = 0
+        for (const span of spans) {
+          lineTotal += span
+          expect(lineTotal, `count ${count}`).toBeLessThanOrEqual(ENSEMBLE_CHIP_GRID_TRACKS)
+          if (lineTotal === ENSEMBLE_CHIP_GRID_TRACKS) lineTotal = 0
+        }
+        expect(lineTotal, `count ${count} must end on a full row`).toBe(0)
+      }
+    })
+  })
+
+  it('renders wrapped chips with balanced-row grid spans at 6+ participants', () => {
+    const providers = ['claude', 'codex', 'kimi', 'grok', 'cursor', 'ollama', 'claude'] as const
+    const chat = makeChat(
+      providers.map((provider, index) =>
+        makeParticipant({
+          id: `ensemble-${provider}-${index}`,
+          provider,
+          role: `Seat ${index + 1}`,
+          order: index + 1
+        })
+      )
+    )
+    const html = renderToStaticMarkup(
+      <EnsembleParticipantsAboveRow
+        chat={chat}
+        selectedParticipantId={null}
+        onSelectParticipant={() => undefined}
+        onChatChange={() => undefined}
+      />
+    )
+    expect(html).toContain('is-wrapped')
+    // 7 participants → 3 + 4: three span-20 chips then four span-15 chips.
+    expect(html.match(/grid-column:span 20/g) || []).toHaveLength(3)
+    expect(html.match(/grid-column:span 15/g) || []).toHaveLength(4)
+  })
+
+  it('keeps the content-width flex layout (no spans) below the wrap threshold', () => {
+    const chat = makeChat(
+      ['claude', 'codex', 'kimi', 'grok', 'cursor'].map((provider, index) =>
+        makeParticipant({
+          id: `ensemble-${provider}`,
+          provider: provider as EnsembleParticipant['provider'],
+          role: `Seat ${index + 1}`,
+          order: index + 1
+        })
+      )
+    )
+    const html = renderToStaticMarkup(
+      <EnsembleParticipantsAboveRow
+        chat={chat}
+        selectedParticipantId={null}
+        onSelectParticipant={() => undefined}
+        onChatChange={() => undefined}
+      />
+    )
+    expect(html).not.toContain('is-wrapped')
+    expect(html).not.toContain('grid-column:span')
   })
 })
