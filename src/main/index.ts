@@ -967,7 +967,7 @@ import {
 } from './mcp/McpAutoAllowedTools'
 import { executeWebMcpTool, isWebMcpToolName } from './mcp/WebTools'
 import { inheritedSubThreadPermissions } from './SubThreadPermissions'
-import { isReadOnlyBlockedTool } from './ToolClassTaxonomy'
+import { isNetworkAccessBlockedTool, isReadOnlyBlockedTool } from './ToolClassTaxonomy'
 import {
   detectCrossProviderDelegationMisuse,
   crossProviderDelegationWarningMessage
@@ -7080,12 +7080,29 @@ function getAgenticServicePolicy(
   return permissionService.getServicePolicy(service, settings)
 }
 
+function networkAccessBlockedToolName(
+  toolName: string | null | undefined,
+  effectivePermissions?: EffectiveRunPermissions
+): string | null {
+  const raw = String(toolName || '').trim()
+  if (!raw) return null
+  const canonical = canonicalTaskWraithToolName(raw)
+  return isNetworkAccessBlockedTool(canonical, effectivePermissions, AppStore.getSettings())
+    ? canonical
+    : null
+}
+
+function networkAccessBlockedMessage(toolName: string): string {
+  return `${toolName} was denied because network access is disabled for this run.`
+}
+
 function resolveNativeApprovalPreflight(args: {
   provider: ProviderId
   service: AgenticServiceId | undefined
   workspacePath?: string
   runId?: string
   externalPathDetection?: PendingExternalPathDetection
+  toolName?: string
 }): NativeApprovalPreflight {
   if (!args.service) return { kind: 'none' }
   const settings = AppStore.getSettings()
@@ -7093,6 +7110,9 @@ function resolveNativeApprovalPreflight(args: {
   const effectivePermissions = session?.state?.effectivePermissions as
     | EffectiveRunPermissions
     | undefined
+  if (networkAccessBlockedToolName(args.toolName, effectivePermissions)) {
+    return { kind: 'deny', policy: 'deny', effectivePermissions }
+  }
   const effectiveSettings = effectiveAgenticSettings(settings, effectivePermissions)
   const resolution = permissionService.resolvePermission(
     args.provider,
@@ -7380,6 +7400,35 @@ async function requestAgenticServiceApproval(
   // scope and free.
   const appChatId = session?.state?.appChatId
   const auditRoute = { appRunId: request.runId, ...(appChatId ? { appChatId } : {}) }
+  const previewToolName =
+    request.preview && typeof request.preview === 'object' && !Array.isArray(request.preview)
+      ? request.preview.toolName
+      : undefined
+  const networkBlockedTool = networkAccessBlockedToolName(previewToolName, effectivePermissions)
+  if (networkBlockedTool) {
+    auditService.recordAutomaticApprovalDecision(
+      provider,
+      auditRoute,
+      service,
+      workspacePath,
+      request,
+      'autoDeny',
+      'policy',
+      'request',
+      {
+        policy: 'deny',
+        networkAccess: 'deny',
+        toolName: networkBlockedTool,
+        rationale: 'Network access is disabled for this run.',
+        ...(ensembleApproval ? { ensembleParticipant: ensembleApproval.preview } : {})
+      }
+    )
+    safeSendToSender(sender, 'agent-error', {
+      provider,
+      error: networkAccessBlockedMessage(networkBlockedTool)
+    })
+    return false
+  }
   const effectiveSettings = effectiveAgenticSettings(settings, effectivePermissions)
   const resolution = permissionService.resolvePermission(
     provider,
@@ -12557,7 +12606,8 @@ async function runKimiWireProvider(
                 service: kimiGateService || undefined,
                 workspacePath: workspacePathForKimiApproval,
                 runId: route.appRunId,
-                externalPathDetection
+                externalPathDetection,
+                toolName: kimiCanonicalToolName || kimiToolName
               })
               const actions: AgentApprovalAction[] = externalPathDetection
                 ? ['grantExternalPathRead', 'grantExternalPathEdit', 'declineExternalPath']
@@ -15292,7 +15342,8 @@ function handleCodexServerRequest(message: any) {
     service: gateService,
     workspacePath: workspacePathForCodexApproval,
     runId: state.appRunId,
-    externalPathDetection
+    externalPathDetection,
+    toolName: codexCanonicalToolName || probedToolName
   })
   const policy = nativePreflight.kind === 'none' ? 'ask' : nativePreflight.policy
   const actions: AgentApprovalAction[] = externalPathDetection
@@ -18614,11 +18665,16 @@ async function executeGeminiMcpTool(
     // read-only/plan preset denies them with the generic "File changes denied"
     // — which gives the agent no idea the fix is a write-capable preset (and, for
     // image_generate, an enabled key). Tell it the actual requirement.
-    const deniedError =
+    const networkBlockedTool = networkAccessBlockedToolName(toolName, context.effectivePermissions)
+    const mediaToolDenied =
       isImageMcpToolName(toolName) ||
       isImageGenMcpToolName(toolName) ||
       isAudioMcpToolName(toolName) ||
       isFfmpegMcpToolName(toolName)
+    const deniedError =
+      networkBlockedTool
+        ? networkAccessBlockedMessage(networkBlockedTool)
+        : mediaToolDenied
         ? `Media tool ${toolName} was denied: it is gated as File changes and needs a write-capable permission preset (not read-only/plan)${
             toolName === 'image_generate'
               ? ', and image generation must be enabled with an API key in TaskWraith Settings'

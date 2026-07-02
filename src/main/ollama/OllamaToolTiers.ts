@@ -31,6 +31,8 @@ export const OLLAMA_READ_TOOL_NAMES = [
   'tw_recall_read_events'
 ] as const satisfies readonly OllamaToolName[]
 
+const OLLAMA_NETWORK_TOOL_NAMES = new Set<OllamaToolName>(['web_search', 'web_fetch'])
+
 export const OLLAMA_FILE_EDIT_TOOL_NAMES = [
   'write_file',
   'replace',
@@ -119,11 +121,13 @@ export function chatOllamaToolControlTier(
 }
 
 export function ollamaToolNamesForTier(
-  tier: OllamaToolControlTier | string | undefined | null
+  tier: OllamaToolControlTier | string | undefined | null,
+  options: { networkAccess?: string | null } = {}
 ): OllamaToolName[] {
   const normalized = normalizeOllamaToolControlTier(tier)
+  let names: OllamaToolName[]
   if (normalized === 'provider_parity') {
-    return [
+    names = [
       ...OLLAMA_READ_TOOL_NAMES,
       ...OLLAMA_FILE_EDIT_TOOL_NAMES,
       ...OLLAMA_SHELL_TOOL_NAMES,
@@ -132,23 +136,25 @@ export function ollamaToolNamesForTier(
       ...OLLAMA_TIER3_COORDINATION_TOOL_NAMES,
       ...OLLAMA_TIER4_EXTRA_TOOL_NAMES
     ]
-  }
-  if (normalized === 'approved_shell') {
-    return [
+  } else if (normalized === 'approved_shell') {
+    names = [
       ...OLLAMA_READ_TOOL_NAMES,
       ...OLLAMA_FILE_EDIT_TOOL_NAMES,
       ...OLLAMA_SHELL_TOOL_NAMES,
       ...OLLAMA_TIER3_COORDINATION_TOOL_NAMES
     ]
-  }
-  if (normalized === 'approved_edits') {
-    return [
+  } else if (normalized === 'approved_edits') {
+    names = [
       ...OLLAMA_READ_TOOL_NAMES,
       ...OLLAMA_FILE_EDIT_TOOL_NAMES,
       ...OLLAMA_TIER3_COORDINATION_TOOL_NAMES
     ]
+  } else {
+    names = [...OLLAMA_READ_TOOL_NAMES]
   }
-  return [...OLLAMA_READ_TOOL_NAMES]
+  return options.networkAccess === 'deny'
+    ? names.filter((toolName) => !OLLAMA_NETWORK_TOOL_NAMES.has(toolName))
+    : names
 }
 
 /**
@@ -223,9 +229,10 @@ export function effectiveOllamaToolControlTier(
 
 export function ollamaToolAllowedInTier(
   toolName: string,
-  tier: OllamaToolControlTier | string | undefined | null
+  tier: OllamaToolControlTier | string | undefined | null,
+  options: { networkAccess?: string | null } = {}
 ): boolean {
-  return ollamaToolNamesForTier(tier).includes(toolName as OllamaToolName)
+  return ollamaToolNamesForTier(tier, options).includes(toolName as OllamaToolName)
 }
 
 export function ollamaToolRequiresIntent(toolName: string): boolean {

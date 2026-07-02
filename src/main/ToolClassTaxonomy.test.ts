@@ -3,6 +3,7 @@ import {
   classifyTool,
   groupToolsByClass,
   isReadOnlyBlockedTool,
+  isNetworkAccessBlockedTool,
   READ_ONLY_TOOL_PRESET,
   TOOL_CLASS_LABELS,
   TOOL_CLASS_ORDER
@@ -45,6 +46,31 @@ describe('classifyTool', () => {
     expect(classifyTool('kill_background_process')).toBe('workspace_write')
     expect(classifyTool('get_diagnostics')).toBe('workspace_write')
     expect(classifyTool('something_brand_new')).toBe('workspace_write')
+  })
+})
+
+describe('isNetworkAccessBlockedTool', () => {
+  it('blocks web-read tools when the effective run posture denies network access', () => {
+    const denied = { networkAccess: 'deny' }
+    expect(isNetworkAccessBlockedTool('web_search', denied)).toBe(true)
+    expect(isNetworkAccessBlockedTool('web_fetch', denied)).toBe(true)
+    expect(isNetworkAccessBlockedTool('read_file', denied)).toBe(false)
+    expect(isNetworkAccessBlockedTool('write_file', denied)).toBe(false)
+  })
+
+  it('treats the global network deny setting as stronger than a run-level allow', () => {
+    expect(
+      isNetworkAccessBlockedTool(
+        'web_search',
+        { networkAccess: 'allow' },
+        { agenticServices: { networkAccess: 'deny' } }
+      )
+    ).toBe(true)
+  })
+
+  it('does not block web reads when network access is allowed', () => {
+    expect(isNetworkAccessBlockedTool('web_search', { networkAccess: 'allow' })).toBe(false)
+    expect(isNetworkAccessBlockedTool('web_fetch')).toBe(false)
   })
 })
 

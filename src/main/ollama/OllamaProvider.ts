@@ -309,6 +309,7 @@ export interface OllamaOpeningMessagesInput {
   harnessEnabled: boolean
   promptIntent: OllamaPromptIntent
   toolControlTier: OllamaToolControlTier | string | undefined | null
+  networkAccess?: string | null
   model: string
   workspaceIndexBlock: string
   userPrompt: string
@@ -324,7 +325,8 @@ export function buildOllamaOpeningMessages(input: OllamaOpeningMessagesInput): O
   const systemPromptParts = [
     input.toolProtocolEnabled
       ? ollamaLocalToolSystemPrompt(input.toolControlTier, input.model, {
-          intent: input.promptIntent
+          intent: input.promptIntent,
+          networkAccess: input.networkAccess
         })
       : '',
     input.harnessEnabled && workspaceIntent
@@ -959,17 +961,19 @@ export async function getOllamaStatusSnapshot(
 
 export async function getOllamaCapabilityContract(
   deps: Pick<OllamaProviderDeps, 'getSettings'>,
-  request: { workspacePath?: string; approvalMode?: string } = {}
+  request: { workspacePath?: string; approvalMode?: string; networkAccess?: string | null } = {}
 ): Promise<ProviderCapabilityContract> {
   const settings = deps.getSettings()
   const tier = effectiveOllamaToolControlTier(settings, request.workspacePath)
-  const toolNames = ollamaToolNamesForTier(tier)
+  const approvalMode = request.approvalMode || 'plan'
+  const networkAccess = request.networkAccess || settings.agenticServices?.networkAccess
+  const toolNames = ollamaToolNamesForTier(tier, { networkAccess })
   const status = await getOllamaStatusSnapshot(settings)
   return buildProviderCapabilityContract({
     provider: 'ollama',
     settings,
     workspacePath: request.workspacePath,
-    approvalMode: request.approvalMode || 'plan',
+    approvalMode,
     status,
     mcpStatus: {
       available:
@@ -1449,10 +1453,10 @@ function ollamaNativeToolParameters(
  * support (gpt-oss, qwen, etc.) emit structured `tool_calls` against these. */
 export function ollamaNativeToolDefinitions(
   tier: OllamaToolControlTier | string | undefined | null,
-  options?: { compact?: boolean }
+  options?: { compact?: boolean; networkAccess?: string | null }
 ): OllamaNativeToolDefinition[] {
   const compact = Boolean(options?.compact)
-  return ollamaToolNamesForTier(tier).map((toolName) => {
+  return ollamaToolNamesForTier(tier, { networkAccess: options?.networkAccess }).map((toolName) => {
     const { description, properties, required } = ollamaNativeToolParameters(toolName, compact)
     return {
       type: 'function',
@@ -2160,14 +2164,21 @@ export async function runOllamaProvider(
       ensembleRun ||
       runProfile.compactToolSchemas === true ||
       ollamaUsesCompactToolSchemas(model, modelInfo)
+    const runtimeNetworkAccess =
+      settings.agenticServices?.networkAccess === 'deny'
+        ? 'deny'
+        : payload.effectivePermissions?.networkAccess || settings.agenticServices?.networkAccess
     const nativeToolDefs = toolProtocolEnabled && nativeToolsSupported && runProfile.protocolMode !== 'json_only'
-      ? ollamaNativeToolDefinitions(toolControlTier, { compact: compactToolSchemas })
+      ? ollamaNativeToolDefinitions(toolControlTier, {
+          compact: compactToolSchemas,
+          networkAccess: runtimeNetworkAccess
+        })
       : []
     const availableToolNames =
       nativeToolDefs.length > 0
         ? nativeToolDefs.map((def) => def.function.name)
         : toolProtocolEnabled
-          ? ollamaToolNamesForTier(toolControlTier)
+          ? ollamaToolNamesForTier(toolControlTier, { networkAccess: runtimeNetworkAccess })
           : []
     const modelTemperature = ollamaModelFamilyTemperature(model)
     const thinkingLevel = resolveOllamaThinkingLevel(model, runProfile)
@@ -2212,6 +2223,7 @@ export async function runOllamaProvider(
       harnessEnabled,
       promptIntent,
       toolControlTier,
+      networkAccess: runtimeNetworkAccess,
       model,
       workspaceIndexBlock,
       userPrompt,

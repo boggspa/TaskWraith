@@ -230,4 +230,13 @@ describe('ollamaToolNamesForTier (edit-tool gating sanity)', () => {
     expect(ollamaToolRequiresIntent('git_create_pr')).toBe(true)
     expect(ollamaToolRequiresIntent('cancel_active_run')).toBe(true)
   })
+
+  it('filters only network tools when the resolved run posture denies network access', () => {
+    const names = ollamaToolNamesForTier('provider_parity', { networkAccess: 'deny' })
+    expect(names).toContain('read_file')
+    expect(names).toContain('write_file')
+    expect(names).toContain('run_shell_command')
+    expect(names).not.toContain('web_search')
+    expect(names).not.toContain('web_fetch')
+  })
 })

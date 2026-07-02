@@ -272,6 +272,18 @@ export function isReadOnlyBlockedTool(
   )
 }
 
+export function isNetworkAccessBlockedTool(
+  toolName: string,
+  effectivePermissions?: { networkAccess?: string | null },
+  settings?: { agenticServices?: { networkAccess?: string | null } | null }
+): boolean {
+  const networkAccess =
+    settings?.agenticServices?.networkAccess === 'deny'
+      ? 'deny'
+      : effectivePermissions?.networkAccess
+  return networkAccess === 'deny' && classifyTool(toolName) === 'web_read'
+}
+
 /**
  * Group a list of tool names by class. Every class key is present (empty array
  * when none) so callers can render a stable layout; per-class order follows the

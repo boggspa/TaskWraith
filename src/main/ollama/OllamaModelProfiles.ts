@@ -222,11 +222,13 @@ function describeTool(toolName: OllamaToolName): string | null {
 export function ollamaLocalToolSystemPrompt(
   tier: OllamaToolControlTier | string | undefined | null = 'read_only',
   modelId?: string | null,
-  options: { intent?: OllamaPromptIntent } = {}
+  options: { intent?: OllamaPromptIntent; networkAccess?: string | null } = {}
 ): string {
   const intent = options.intent ?? 'workspace'
   const normalizedTier = normalizeOllamaToolControlTier(tier)
-  const tools = ollamaToolNamesForTier(normalizedTier)
+  const tools = ollamaToolNamesForTier(normalizedTier, {
+    networkAccess: options.networkAccess
+  })
   const hasWebTools = tools.includes('web_search') || tools.includes('web_fetch')
   const familyLines = modelId?.trim()
     ? ollamaModelFamilyPromptLines(modelId, intent, normalizedTier)

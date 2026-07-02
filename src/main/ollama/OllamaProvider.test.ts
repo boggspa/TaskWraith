@@ -1944,6 +1944,16 @@ describe('parseOllamaToolRequest', () => {
     expect(prompt).toContain('web_fetch returns the readable text')
   })
 
+  it('omits live internet copy when the resolved run posture denies network access', () => {
+    const prompt = ollamaLocalToolSystemPrompt('read_only', 'gpt-oss:latest', {
+      networkAccess: 'deny'
+    })
+    expect(prompt).not.toContain('You CAN access the live internet')
+    expect(prompt).not.toContain('- web_search:')
+    expect(prompt).not.toContain('- web_fetch:')
+    expect(prompt).toContain('- read_file:')
+  })
+
   it('tells local models not to announce a tool call without issuing it', () => {
     const prompt = ollamaLocalToolSystemPrompt('read_only')
     expect(prompt).toContain('Do NOT announce or describe a tool call in prose')
@@ -2164,6 +2174,14 @@ describe('ollamaNativeToolDefinitions', () => {
     expect(webSearch?.type).toBe('function')
     expect(webSearch?.function.parameters.required).toEqual(['query'])
     expect(webSearch?.function.parameters.properties).toHaveProperty('query')
+  })
+
+  it('omits native web schemas when the resolved run posture denies network access', () => {
+    const defs = ollamaNativeToolDefinitions('read_only', { networkAccess: 'deny' })
+    const names = defs.map((def) => def.function.name)
+    expect(names).toContain('read_file')
+    expect(names).not.toContain('web_search')
+    expect(names).not.toContain('web_fetch')
   })
 
   it('expands with the tier and marks mutating tool intents as required', () => {
