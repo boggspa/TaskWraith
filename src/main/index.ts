@@ -13874,6 +13874,15 @@ function emitCodexContextCompaction(
     }
     state.contextCompactionPreTokens = undefined
     state.contextCompactionStartedAtMs = undefined
+    // A manual compaction can race a freshly-dispatched turn: once a run state
+    // exists, notifications route HERE instead of the pending registry, so the
+    // awaiting IPC would phantom-timeout (and card a spurious failure). Settle
+    // it — the manual lane's card append dedupes against this lane's via the
+    // shared deterministic message id (the contextCompaction item id).
+    if (pendingManual) {
+      pendingManual.itemId = opts.itemId || pendingManual.itemId
+      pendingManual.settle({ ok: true })
+    }
   }
   emitContextCompactionCompatLine(state.sender, 'codex', { kind, telemetry }, state)
 }
