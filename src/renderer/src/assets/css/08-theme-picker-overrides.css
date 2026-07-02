@@ -9712,6 +9712,15 @@
   font-weight: 400;
 }
 
+/* The unified Ollama permissions/runtime chip has two text runs:
+ * permission posture + runtime tier/grants. Codex and Claude shells flatten
+ * generic trigger gaps for model-picker parity, so restore a small gap only on
+ * this Ollama-only control. */
+[data-composer-style="codex"] .composer-ollama-permission-runtime-trigger,
+[data-composer-style="claude"] .composer-ollama-permission-runtime-trigger {
+  gap: 6px !important;
+}
+
 [data-composer-style="gemini"] .composer-combined-picker-trigger {
   background: color-mix(in srgb, #5a8cff 14%, transparent);
   border-color: color-mix(in srgb, #5a8cff 24%, transparent);

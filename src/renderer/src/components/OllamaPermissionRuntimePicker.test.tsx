@@ -54,6 +54,7 @@ describe('OllamaPermissionRuntimePicker', () => {
     expect(html).toContain('Default Approval')
     expect(html).toContain('Tier 4')
     expect(html).toContain('1 grant')
+    expect(html).toContain('composer-ollama-permission-runtime-trigger')
     expect(html).toContain('data-composer-control="permission"')
     expect(html).not.toContain('data-composer-control="ollama-tier"')
     expect(html).toContain('data-ollama-tier="provider_parity"')
