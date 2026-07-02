@@ -192,6 +192,8 @@ import {
 } from '../shared/claudeWorkflow'
 import {
   CONTEXT_COMPACTION_MESSAGE_KIND,
+  CONTEXT_COMPACTION_SUMMARY_MAX_CHARS,
+  CONTEXT_COMPACTION_SUMMARY_PROMPT,
   contextCompactionDedupeKey,
   contextCompactionMessageId,
   codexContextCompactionItemId,
@@ -824,7 +826,7 @@ import {
   cursorGlobalBrokerEnabled,
   cursorReadOnlyMcpEnabled
 } from './cursorGate'
-import { buildCursorProviderCliArgs, cursorWriteCapable } from './cursor/CursorCliArgs'
+import { buildCursorCliArgs, buildCursorProviderCliArgs, cursorWriteCapable } from './cursor/CursorCliArgs'
 import { cursorEventToRunEvents, type NormalizedCursorRunEvent } from './cursor/CursorStreamJson'
 import {
   applyCursorWriteModeConfig,
@@ -947,7 +949,7 @@ import {
   parseCustomKeywords,
   sanitiseForKimi
 } from './lib/kimiSanitiser'
-import { composeRunPrompt } from './PromptComposition'
+import { buildConversationContextBlock, composeRunPrompt } from './PromptComposition'
 import {
   createActiveGoal,
   normalizeActiveGoalObjective,
@@ -14333,6 +14335,236 @@ async function compactClaudeProviderContext(payload: {
 }
 
 /**
+ * Host-side SEAT compaction for ensemble cursor/kimi participants (wave 3) —
+ * the providers with no native compaction lever. A maintenance-lane one-shot
+ * CLI spawn OUTSIDE the run registry (mirrors compactClaudeProviderContext):
+ *  - cursor: `-p --mode plan --resume <seatSession>` with the summarize
+ *    instruction — the seat's native session holds the accumulated context
+ *    (every round re-embeds the tagged transcript into it, which is exactly
+ *    why cursor seats bloat). On success the seat's linkedProviderSessionId
+ *    is CLEARED so the next round starts a fresh session, seeded by the
+ *    summary block EnsemblePrompt now injects.
+ *  - kimi: `--print --plan` with the transcript material built in-prompt
+ *    (its --resume token restores no usable history) — the seat keeps its
+ *    token; the summary becomes durable memory of rounds that fell off the
+ *    tagged-transcript budget.
+ * The pending registry is awaited by the orchestrator's dispatch path so a
+ * round started mid-compaction can't race the session reset.
+ */
+const pendingSeatCompactions = new Map<string, Promise<{ ok: boolean; error?: string }>>()
+
+function seatRunPreTokens(chat: ChatRecord, participantId: string): number | undefined {
+  const run = [...(chat.runs || [])]
+    .reverse()
+    .find((candidate) => candidate?.ensembleParticipantId === participantId && candidate?.stats)
+  const stats = run?.stats as Record<string, unknown> | undefined
+  const input = typeof stats?.input_tokens === 'number' ? stats.input_tokens : 0
+  const output = typeof stats?.output_tokens === 'number' ? stats.output_tokens : 0
+  const total = input + output
+  return Number.isFinite(total) && total > 0 ? total : undefined
+}
+
+async function compactCliSeatContext(payload: {
+  chatId: string
+  participantId: string
+  provider: 'cursor' | 'kimi'
+  providerSessionId?: string | null
+  model?: string
+  cardMetadata?: Record<string, unknown>
+  trigger?: 'auto' | 'manual'
+}): Promise<{ ok: boolean; error?: string }> {
+  const existing = pendingSeatCompactions.get(payload.participantId)
+  if (existing) return { ok: false, error: 'A compaction is already in progress for this seat.' }
+  const work = (async (): Promise<{ ok: boolean; error?: string }> => {
+    const chat = AppStore.getChat(payload.chatId)
+    if (!chat) return { ok: false, error: 'Chat not found.' }
+    const startedAtMs = Date.now()
+    const trigger = payload.trigger || 'manual'
+    const preTokens = seatRunPreTokens(chat, payload.participantId)
+    const workspace = chat.workspacePath || globalRunCwd()
+    const coversThroughTimestamp = [...(chat.messages || [])]
+      .reverse()
+      .find((message) => Boolean(message.timestamp))?.timestamp
+    let args: string[]
+    if (payload.provider === 'cursor') {
+      if (!payload.providerSessionId) {
+        return { ok: false, error: 'This cursor seat has no provider session to compact yet.' }
+      }
+      args = buildCursorCliArgs({
+        approvalMode: 'plan',
+        workspace,
+        providerSessionId: payload.providerSessionId,
+        model: payload.model,
+        prompt: CONTEXT_COMPACTION_SUMMARY_PROMPT
+      })
+    } else {
+      // Kimi: the resume token restores no usable history — carry the material
+      // in-prompt. A generous block: the summary is only as good as its input.
+      const material = buildConversationContextBlock(chat.messages || [], 20, '', {
+        maxTurns: 20,
+        maxCharsPerTurn: 800,
+        maxBlockChars: 12_000
+      })
+      const kimiPrompt = material
+        ? `${material}\n${CONTEXT_COMPACTION_SUMMARY_PROMPT}`
+        : CONTEXT_COMPACTION_SUMMARY_PROMPT
+      args = ['--print', '--plan', '--output-format', 'stream-json', '--work-dir', workspace]
+      appendKimiModelArgs(args, normalizeCliProviderModel('kimi', payload.model))
+      args.push('--prompt', kimiPrompt)
+      if (payload.providerSessionId) args.push('--resume', payload.providerSessionId)
+    }
+    const resolved = await resolveCliProviderBinary(payload.provider, undefined)
+    if (!resolved.binaryPath) {
+      return {
+        ok: false,
+        error: resolved.error || `${providerLabel(payload.provider)} CLI was not found.`
+      }
+    }
+    const plan = createCliSpawnPlan(resolved.binaryPath, args)
+    let summaryText = ''
+    let timedOut = false
+    const exitCode = await new Promise<number>((resolve) => {
+      const child = spawn(plan.command, plan.args, {
+        shell: plan.shell,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: createCliEnv({}, resolved.binaryPath)
+      })
+      const killTimer = setTimeout(() => {
+        timedOut = true
+        try {
+          child.kill()
+        } catch {
+          // Already gone.
+        }
+      }, 240_000)
+      let buffer = ''
+      const handleLine = (line: string): void => {
+        const trimmed = line.trim()
+        if (!trimmed) return
+        let parsed: Record<string, unknown> | null = null
+        try {
+          parsed = JSON.parse(trimmed)
+        } catch {
+          return // banners / non-JSON noise — never summary material
+        }
+        if (payload.provider === 'cursor') {
+          for (const event of cursorEventToRunEvents({ json: parsed ?? undefined })) {
+            if (event.type !== 'content' || !event.text) continue
+            const rawType =
+              event.raw && typeof event.raw === 'object'
+                ? (event.raw as { type?: unknown }).type
+                : undefined
+            // Full-turn `assistant` frames are cumulative snapshots (replace);
+            // `text` frames are streamed deltas (append).
+            if (rawType === 'assistant') summaryText = event.text
+            else summaryText += event.text
+          }
+        } else {
+          const text = extractProviderText(parsed)
+          if (text) summaryText += text
+        }
+      }
+      child.stdout?.on('data', (chunk: Buffer) => {
+        buffer += chunk.toString('utf8')
+        const lines = buffer.split('\n')
+        buffer = lines.pop() || ''
+        for (const line of lines) handleLine(line)
+      })
+      child.on('error', () => {
+        clearTimeout(killTimer)
+        resolve(-1)
+      })
+      child.on('close', (code) => {
+        clearTimeout(killTimer)
+        if (buffer.trim()) handleLine(buffer)
+        resolve(typeof code === 'number' ? code : -1)
+      })
+    })
+    const trimmedSummary = summaryText.trim().slice(0, CONTEXT_COMPACTION_SUMMARY_MAX_CHARS)
+    const succeeded = exitCode === 0 && !timedOut && trimmedSummary.length > 0
+    const telemetry: ContextCompactionTelemetry = {
+      provider: payload.provider,
+      trigger,
+      durationMs: Date.now() - startedAtMs,
+      ...(preTokens !== undefined ? { preTokens } : {}),
+      ...(succeeded
+        ? {}
+        : {
+            error: timedOut
+              ? 'Timed out waiting for the seat summarize turn.'
+              : exitCode !== 0
+                ? `Seat summarize turn failed (exit ${exitCode}).`
+                : 'Seat summarize turn returned no summary.'
+          })
+    }
+    const signal: ContextCompactionSignal = {
+      kind: succeeded ? 'completed' : 'failed',
+      telemetry
+    }
+    if (succeeded) {
+      // Read-modify-write against the FRESH record (idle-only + the
+      // orchestrator dispatch-wait keep this from racing round flushes).
+      const fresh = AppStore.getChat(payload.chatId)
+      if (fresh?.ensemble) {
+        const participants = (fresh.ensemble.participants || []).map((participant) =>
+          participant.id === payload.participantId
+            ? {
+                ...participant,
+                contextCompactionSummary: {
+                  text: trimmedSummary,
+                  createdAt: new Date().toISOString(),
+                  provider: payload.provider,
+                  ...(preTokens !== undefined ? { preTokens } : {}),
+                  ...(coversThroughTimestamp ? { coversThroughTimestamp } : {})
+                },
+                // Cursor: abandon the bloated seat session — next round starts
+                // fresh, seeded once by the injected summary block.
+                ...(payload.provider === 'cursor' ? { linkedProviderSessionId: null } : {})
+              }
+            : participant
+        )
+        const updated: ChatRecord = {
+          ...fresh,
+          ensemble: { ...fresh.ensemble, participants },
+          updatedAt: Date.now()
+        }
+        AppStore.saveChat(updated)
+        broadcastChatUpdated(updated)
+      }
+    }
+    appendContextCompactionMessageToChat(
+      payload.chatId,
+      signal,
+      `seat-${payload.participantId}-${startedAtMs}`,
+      payload.cardMetadata
+    )
+    const lastSeatRunId = [...(chat.runs || [])]
+      .reverse()
+      .find((run) => run?.ensembleParticipantId === payload.participantId && run?.runId)?.runId
+    const lastRunId = lastSeatRunId || [...(chat.runs || [])].reverse().find((r) => r?.runId)?.runId
+    if (lastRunId) {
+      appendDurableRunEventForRoute(
+        payload.provider,
+        { appRunId: lastRunId, appChatId: payload.chatId },
+        'context_compaction',
+        'control',
+        formatContextCompactionSummary(signal, providerLabel(payload.provider)),
+        { compaction: signal, seat: payload.participantId }
+      )
+    }
+    return signal.kind === 'completed'
+      ? { ok: true }
+      : { ok: false, error: signal.telemetry.error }
+  })()
+  pendingSeatCompactions.set(payload.participantId, work)
+  try {
+    return await work
+  } finally {
+    pendingSeatCompactions.delete(payload.participantId)
+  }
+}
+
+/**
  * Unified entry for the `compact-provider-context` IPC. Solo chats compact
  * the chat's own linked session; ensemble requests name a participant, whose
  * seat session + frozen presentation labels are resolved here (rounds must be
@@ -14341,13 +14573,21 @@ async function compactClaudeProviderContext(payload: {
  */
 async function compactProviderContextForRequest(payload: {
   chatId: string
-  provider: 'claude' | 'codex'
+  provider: 'claude' | 'codex' | 'cursor' | 'kimi'
   providerSessionId?: string
   participantId?: string
 }): Promise<{ ok: boolean; error?: string }> {
   let providerSessionId = payload.providerSessionId
   let model: string | undefined
   let cardMetadata: Record<string, unknown> | undefined
+  // Solo cursor/kimi compaction is the RENDERER's summarize-run lane (wave 2)
+  // — this channel only owns their ensemble seats.
+  if ((payload.provider === 'cursor' || payload.provider === 'kimi') && !payload.participantId) {
+    return {
+      ok: false,
+      error: `Solo ${providerLabel(payload.provider)} chats compact via /compact in the chat itself.`
+    }
+  }
   if (payload.participantId) {
     const chat = AppStore.getChat(payload.chatId)
     if (!chat?.ensemble) {
@@ -14366,13 +14606,15 @@ async function compactProviderContextForRequest(payload: {
     if (participant.provider !== payload.provider) {
       return { ok: false, error: 'Participant provider does not match the request.' }
     }
-    if (!participant.linkedProviderSessionId) {
+    // Kimi seats carry their material in-prompt, so a session token is
+    // optional; every other provider needs a resumable session to compact.
+    if (!participant.linkedProviderSessionId && payload.provider !== 'kimi') {
       return {
         ok: false,
         error: 'This participant has no provider session yet — it must speak first.'
       }
     }
-    providerSessionId = participant.linkedProviderSessionId
+    providerSessionId = participant.linkedProviderSessionId || undefined
     model = participant.model
     const presentation = resolveHealthEntryPresentation(
       participant.provider,
@@ -14385,6 +14627,17 @@ async function compactProviderContextForRequest(payload: {
       displayParticipantLabel: `${presentation.displayProviderLabel} / ${role}`,
       displayHueClass: presentation.displayHueClass
     }
+  }
+  if (payload.provider === 'cursor' || payload.provider === 'kimi') {
+    return compactCliSeatContext({
+      chatId: payload.chatId,
+      participantId: payload.participantId!,
+      provider: payload.provider,
+      providerSessionId,
+      model,
+      cardMetadata,
+      trigger: 'manual'
+    })
   }
   if (payload.provider === 'claude') {
     if (!providerSessionId) {

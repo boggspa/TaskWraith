@@ -10,7 +10,7 @@ export interface ContextCompactionHandlersDeps {
    */
   compactProviderContext: (payload: {
     chatId: string
-    provider: 'claude' | 'codex'
+    provider: 'claude' | 'codex' | 'cursor' | 'kimi'
     providerSessionId?: string
     participantId?: string
   }) => Promise<{ ok: boolean; error?: string }>
@@ -31,7 +31,12 @@ export function registerContextCompactionHandlers(deps: ContextCompactionHandler
     ): Promise<{ ok: boolean; error?: string }> => {
       const chatId = deps.requireNonEmptyString(payload?.chatId, 'Chat id')
       const provider = deps.requireNonEmptyString(payload?.provider, 'Provider')
-      if (provider !== 'codex' && provider !== 'claude') {
+      if (
+        provider !== 'codex' &&
+        provider !== 'claude' &&
+        provider !== 'cursor' &&
+        provider !== 'kimi'
+      ) {
         return { ok: false, error: `Manual context compaction is not supported for ${provider}.` }
       }
       const providerSessionId =
