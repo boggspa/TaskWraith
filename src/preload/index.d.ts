@@ -135,6 +135,10 @@ import type {
   GitResult
 } from '../main/services/GitService'
 import type {
+  GitSnapshotChangedPayload,
+  GitSnapshotInvalidationReason
+} from '../main/services/GitSnapshotPublisher'
+import type {
   FallbackPromotedSteerInput,
   FallbackPromotedSteerJobResult,
   LeasePromotedSteerInput,
@@ -520,6 +524,18 @@ declare global {
         workspacePath?: string
         repoPath?: string
       }) => Promise<GitResult<GitRepositorySnapshot>>
+      gitSubscribeSnapshot: (
+        payload: {
+          workspacePath?: string
+          repoPath?: string
+        },
+        callback: (payload: GitSnapshotChangedPayload) => void
+      ) => () => void
+      gitInvalidateSnapshot: (payload: {
+        workspacePath?: string
+        repoPath?: string
+        reason?: GitSnapshotInvalidationReason
+      }) => Promise<{ ok: true } | { ok: false; error: string }>
       gitStage: (payload: {
         workspacePath?: string
         repoPath?: string

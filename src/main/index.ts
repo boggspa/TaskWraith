@@ -413,6 +413,7 @@ import {
 import { SettingsService } from './services/SettingsService'
 import { WorkspaceService } from './services/WorkspaceService'
 import { GitService } from './services/GitService'
+import { GitSnapshotPublisher } from './services/GitSnapshotPublisher'
 import type {
   GitPrReadiness,
   GitPrSummary,
@@ -24693,6 +24694,37 @@ if (isGeminiMcpBridgeProcess) {
     })
 
     const gitService = new GitService()
+    const gitSnapshotPublisher = new GitSnapshotPublisher({ gitService })
+    const liveGitSnapshotLastInvalidation = new Map<string, number>()
+    runEventBus.subscribe({
+      id: 'desktop-git-live-snapshots',
+      handle(event) {
+        if (
+          event.channel !== 'agent-output' &&
+          event.channel !== 'gemini-output' &&
+          event.channel !== 'agent-exit' &&
+          event.channel !== 'gemini-exit'
+        ) {
+          return
+        }
+        const threadId = extractThreadId(event.payload)
+        if (!threadId) return
+        const chat = AppStore.getChat(threadId)
+        const workspacePath = chat?.workspacePath
+        if (!workspacePath) return
+        if (event.channel === 'agent-exit' || event.channel === 'gemini-exit') {
+          setTimeout(() => {
+            gitSnapshotPublisher.invalidatePath(workspacePath, 'run-diff')
+          }, 100).unref?.()
+          return
+        }
+        const now = Date.now()
+        const last = liveGitSnapshotLastInvalidation.get(threadId) ?? 0
+        if (now - last < 500) return
+        liveGitSnapshotLastInvalidation.set(threadId, now)
+        gitSnapshotPublisher.invalidatePath(workspacePath, 'run-diff')
+      }
+    })
 
     // Phase G2: auto-update wiring. User-enabled by default, with an env
     // override for staging. Effective checks still only run in packaged builds
@@ -27039,6 +27071,7 @@ if (isGeminiMcpBridgeProcess) {
       resolvePath: (pathValue) => resolve(pathValue),
       pathSeparator: sep,
       gitService,
+      gitSnapshotPublisher,
       openExternal: (url) => shell.openExternal(url)
     })
 

@@ -99,6 +99,27 @@ function createDeps() {
         async () => ({ ok: true, data: { url: 'https://example.test/pr/1' } })
       )
     },
+    gitSnapshotPublisher: {
+      subscribe: vi.fn<NonNullable<GitHandlersDeps['gitSnapshotPublisher']>['subscribe']>(
+        async (subscription) => ({
+          ok: true,
+          data: {
+            subscriptionId: subscription.subscriptionId,
+            requestedPath: subscription.requestedPath,
+            repoRoot: subscription.requestedPath,
+            snapshot: { requestedPath: subscription.requestedPath, repoRoot: subscription.requestedPath } as any,
+            generation: 1
+          }
+        })
+      ),
+      unsubscribe: vi.fn<NonNullable<GitHandlersDeps['gitSnapshotPublisher']>['unsubscribe']>(),
+      unsubscribeWebContents:
+        vi.fn<NonNullable<GitHandlersDeps['gitSnapshotPublisher']>['unsubscribeWebContents']>(),
+      invalidatePath:
+        vi.fn<NonNullable<GitHandlersDeps['gitSnapshotPublisher']>['invalidatePath']>(),
+      publishSnapshot:
+        vi.fn<NonNullable<GitHandlersDeps['gitSnapshotPublisher']>['publishSnapshot']>()
+    },
     openExternal: vi.fn<GitHandlersDeps['openExternal']>(async (_url: string) => undefined)
   } satisfies GitHandlersDeps
 
@@ -110,6 +131,9 @@ describe('registerGitHandlers', () => {
     registerGitHandlers(createDeps().deps)
 
     expect(handlerFor('git:snapshot')).toBeTypeOf('function')
+    expect(handlerFor('git:subscribe-snapshot')).toBeTypeOf('function')
+    expect(handlerFor('git:unsubscribe-snapshot')).toBeTypeOf('function')
+    expect(handlerFor('git:invalidate-snapshot')).toBeTypeOf('function')
     expect(handlerFor('git:stage')).toBeTypeOf('function')
     expect(handlerFor('git:unstage')).toBeTypeOf('function')
     expect(handlerFor('git:commit')).toBeTypeOf('function')
@@ -163,6 +187,53 @@ describe('registerGitHandlers', () => {
       update: undefined,
       patch: undefined
     })
+    expect(deps.gitSnapshotPublisher.publishSnapshot).toHaveBeenCalledWith(
+      expect.objectContaining({ repoPath: '/repo' }),
+      'git-action'
+    )
+  })
+
+  it('subscribes and invalidates live snapshots through the same read scope', async () => {
+    const { deps } = createDeps()
+    deps.findRegisteredWorkspace.mockReturnValue({ id: 'ws-1' })
+    const sender = {
+      id: 7,
+      send: vi.fn(),
+      isDestroyed: vi.fn(() => false),
+      once: vi.fn(),
+      removeListener: vi.fn()
+    }
+    registerGitHandlers(deps)
+
+    await expect(
+      handlerFor('git:subscribe-snapshot')({ sender }, { workspacePath: '/repo', subscriptionId: 'sub-1' })
+    ).resolves.toEqual({
+      ok: true,
+      data: {
+        subscriptionId: 'sub-1',
+        requestedPath: '/repo',
+        repoRoot: '/repo',
+        snapshot: { requestedPath: '/repo', repoRoot: '/repo' },
+        generation: 1
+      }
+    })
+    expect(deps.gitSnapshotPublisher.subscribe).toHaveBeenCalledWith(
+      expect.objectContaining({
+        subscriptionId: 'sub-1',
+        requestedPath: '/repo',
+        webContentsId: 7
+      })
+    )
+
+    await expect(
+      handlerFor('git:invalidate-snapshot')({}, { workspacePath: '/repo', reason: 'run-diff' })
+    ).resolves.toEqual({ ok: true })
+    expect(deps.gitSnapshotPublisher.invalidatePath).toHaveBeenCalledWith('/repo', 'run-diff')
+
+    await expect(
+      handlerFor('git:unsubscribe-snapshot')({}, { subscriptionId: 'sub-1' })
+    ).resolves.toEqual({ ok: true })
+    expect(deps.gitSnapshotPublisher.unsubscribe).toHaveBeenCalledWith('sub-1')
   })
 
   it('allows signed external grants only for git:snapshot and rejects mutating actions', async () => {

@@ -32,6 +32,11 @@ import type {
   GitResult
 } from '../main/services/GitService'
 import type {
+  GitSnapshotChangedPayload,
+  GitSnapshotInvalidationReason,
+  GitSnapshotSubscribeResult
+} from '../main/services/GitSnapshotPublisher'
+import type {
   FallbackPromotedSteerInput,
   FallbackPromotedSteerJobResult,
   LeasePromotedSteerInput,
@@ -222,6 +227,43 @@ const api = {
   probeGrokUsage: () => ipcRenderer.invoke('grok-usage:probe'),
   gitSnapshot: (payload: { workspacePath?: string; repoPath?: string }) =>
     ipcRenderer.invoke('git:snapshot', payload) as Promise<GitResult<GitRepositorySnapshot>>,
+  gitSubscribeSnapshot: (
+    payload: { workspacePath?: string; repoPath?: string },
+    callback: (payload: GitSnapshotChangedPayload) => void
+  ) => {
+    const subscriptionId =
+      globalThis.crypto?.randomUUID?.() ||
+      `git-snapshot-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    let active = true
+    const wrapped = (_event: unknown, update: GitSnapshotChangedPayload): void => {
+      if (update?.subscriptionId === subscriptionId) callback(update)
+    }
+    ipcRenderer.on('git:snapshot-changed', wrapped)
+    void ipcRenderer
+      .invoke('git:subscribe-snapshot', { ...payload, subscriptionId })
+      .then((result: GitSnapshotSubscribeResult) => {
+        if (!active || !result?.ok) return
+        callback({
+          subscriptionId,
+          requestedPath: result.data.requestedPath,
+          repoRoot: result.data.repoRoot,
+          snapshot: result.data.snapshot,
+          generation: result.data.generation,
+          reason: 'subscribe'
+        })
+      })
+      .catch(() => {})
+    return () => {
+      active = false
+      ipcRenderer.removeListener('git:snapshot-changed', wrapped)
+      void ipcRenderer.invoke('git:unsubscribe-snapshot', { subscriptionId }).catch(() => {})
+    }
+  },
+  gitInvalidateSnapshot: (payload: {
+    workspacePath?: string
+    repoPath?: string
+    reason?: GitSnapshotInvalidationReason
+  }) => ipcRenderer.invoke('git:invalidate-snapshot', payload) as Promise<{ ok: true } | { ok: false; error: string }>,
   gitStage: (payload: {
     workspacePath?: string
     repoPath?: string

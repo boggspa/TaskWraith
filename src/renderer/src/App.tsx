@@ -1953,6 +1953,16 @@ function App(): React.JSX.Element {
       window.removeEventListener('focus', onFocus)
     }
   }, [currentWorkspacePath, runCompleteNotice?.timestamp])
+
+  useEffect(() => {
+    if (!currentWorkspacePath || !window.api.gitSubscribeSnapshot) return undefined
+    return window.api.gitSubscribeSnapshot(
+      { workspacePath: currentWorkspacePath },
+      (payload) => {
+        setPrimaryGitSnapshot(payload.snapshot)
+      }
+    )
+  }, [currentWorkspacePath])
   type AttachedWindowSnapshot = {
     handleID: string
     windowMeta: {
@@ -17089,6 +17099,23 @@ function App(): React.JSX.Element {
       window.removeEventListener('focus', onFocus)
     }
   }, [externalWorkspacePathsKey, runCompleteNotice?.timestamp])
+
+  useEffect(() => {
+    const paths = externalWorkspacePathsKey ? externalWorkspacePathsKey.split('\n') : []
+    if (paths.length === 0 || !window.api.gitSubscribeSnapshot) return undefined
+    const unsubscribers = paths.map((path) =>
+      window.api.gitSubscribeSnapshot({ repoPath: path }, (payload) => {
+        setExternalGitSnapshots((prev) => ({
+          ...prev,
+          [path]: payload.snapshot
+        }))
+      })
+    )
+    return () => {
+      unsubscribers.forEach((unsubscribe) => unsubscribe())
+    }
+  }, [externalWorkspacePathsKey])
+
   // Multiview — fetch a live git snapshot for every VISIBLE pane's workspace path
   // so each pane's composer above-row reports its OWN diff stats. Mirrors the
   // primary/external snapshot effects (refetch on the pane-paths set, run-finish,
@@ -17136,6 +17163,23 @@ function App(): React.JSX.Element {
       window.removeEventListener('focus', onFocus)
     }
   }, [multiviewPaneWorkspacePathsKey, runCompleteNotice?.timestamp])
+
+  useEffect(() => {
+    const paths = multiviewPaneWorkspacePathsKey ? multiviewPaneWorkspacePathsKey.split('\n') : []
+    if (paths.length === 0 || !window.api.gitSubscribeSnapshot) return undefined
+    const unsubscribers = paths.map((path) =>
+      window.api.gitSubscribeSnapshot({ workspacePath: path }, (payload) => {
+        setGitSnapshotByWorkspace((prev) => ({
+          ...prev,
+          [path]: payload.snapshot
+        }))
+      })
+    )
+    return () => {
+      unsubscribers.forEach((unsubscribe) => unsubscribe())
+    }
+  }, [multiviewPaneWorkspacePathsKey])
+
   const currentProviderModelOptions = getProviderModelOptions(currentProvider)
   const currentGuestParticipant =
     currentChat && currentChat.chatKind !== 'ensemble' ? currentChat.guestParticipant : undefined
@@ -18609,6 +18653,28 @@ function App(): React.JSX.Element {
     currentWorkspace?.isGitRepo,
     primaryGitSnapshot
   ])
+
+  const liveGitInvalidationKey = useMemo(
+    () =>
+      displayFileChangeSummaries
+        .map(
+          (item) =>
+            `${item.path}:${item.status}:${item.additions ?? ''}:${item.deletions ?? ''}`
+        )
+        .join('\n'),
+    [displayFileChangeSummaries]
+  )
+
+  useEffect(() => {
+    if (!currentWorkspacePath || !liveGitInvalidationKey || !window.api.gitInvalidateSnapshot) {
+      return
+    }
+    void window.api.gitInvalidateSnapshot({
+      workspacePath: currentWorkspacePath,
+      reason: 'run-diff'
+    })
+  }, [currentWorkspacePath, liveGitInvalidationKey])
+
   const transcriptMessages = currentChat?.messages || EMPTY_CHAT_MESSAGES
   // Welcome-surface gate. Extracted into `lib/welcomeState` so the
   // predicate is independently unit-tested (see `welcomeState.test.ts`).

@@ -1,4 +1,4 @@
-import { ipcMain } from 'electron'
+import { ipcMain, type IpcMainInvokeEvent } from 'electron'
 import type { ChatRecord, ExternalPathGrant } from '../store/types'
 import type {
   GitCommitInput,
@@ -12,9 +12,23 @@ import type {
   GitStageInput,
   GitUnstageInput
 } from '../services/GitService'
+import type {
+  GitSnapshotInvalidationReason,
+  GitSnapshotPublisher
+} from '../services/GitSnapshotPublisher'
 
 type GitIpcPayload = { workspacePath?: string; repoPath?: string }
+type GitSnapshotSubscribePayload = GitIpcPayload & { subscriptionId?: string }
+type GitSnapshotInvalidatePayload = GitIpcPayload & { reason?: GitSnapshotInvalidationReason }
 type GitIpcScope = 'registered-workspace' | 'registered-or-granted-read'
+
+const GIT_SNAPSHOT_INVALIDATION_REASONS = new Set<GitSnapshotInvalidationReason>([
+  'subscribe',
+  'filesystem',
+  'manual',
+  'git-action',
+  'run-diff'
+])
 
 export interface GitHandlersDeps {
   getChats: () => ChatRecord[]
@@ -35,6 +49,10 @@ export interface GitHandlersDeps {
     | 'pullRequestStatus'
     | 'pullRequestReadiness'
     | 'createPullRequest'
+  >
+  gitSnapshotPublisher?: Pick<
+    GitSnapshotPublisher,
+    'subscribe' | 'unsubscribe' | 'unsubscribeWebContents' | 'invalidatePath' | 'publishSnapshot'
   >
   openExternal: (url: string) => Promise<unknown>
 }
@@ -96,10 +114,84 @@ function gitPayloadPath(
   }
 }
 
+function gitSnapshotInvalidationReason(value: unknown): GitSnapshotInvalidationReason {
+  return typeof value === 'string' &&
+    GIT_SNAPSHOT_INVALIDATION_REASONS.has(value as GitSnapshotInvalidationReason)
+    ? (value as GitSnapshotInvalidationReason)
+    : 'manual'
+}
+
 export function registerGitHandlers(deps: GitHandlersDeps): void {
+  const subscriptionCleanups = new Map<string, () => void>()
+
   ipcMain.handle('git:snapshot', async (_event, payload?: GitIpcPayload) => {
     const repo = gitPayloadPath(deps, payload, 'registered-or-granted-read')
     return repo.ok ? deps.gitService.snapshot(repo.path) : repo
+  })
+
+  ipcMain.handle(
+    'git:subscribe-snapshot',
+    async (
+      event: IpcMainInvokeEvent,
+      payload?: GitSnapshotSubscribePayload
+    ): Promise<
+      | Awaited<ReturnType<NonNullable<GitHandlersDeps['gitSnapshotPublisher']>['subscribe']>>
+      | { ok: false; error: string }
+    > => {
+      if (!deps.gitSnapshotPublisher) {
+        return { ok: false, error: 'Live git snapshots are unavailable.' }
+      }
+      const subscriptionId =
+        typeof payload?.subscriptionId === 'string' ? payload.subscriptionId.trim() : ''
+      if (!subscriptionId) return { ok: false, error: 'Subscription id is required.' }
+      const repo = gitPayloadPath(deps, payload, 'registered-or-granted-read')
+      if (!repo.ok) return repo
+      const sender = event.sender
+      subscriptionCleanups.get(subscriptionId)?.()
+      const onDestroyed = (): void => {
+        deps.gitSnapshotPublisher?.unsubscribe(subscriptionId)
+        subscriptionCleanups.delete(subscriptionId)
+      }
+      const cleanup = (): void => {
+        sender.removeListener('destroyed', onDestroyed)
+        deps.gitSnapshotPublisher?.unsubscribe(subscriptionId)
+        subscriptionCleanups.delete(subscriptionId)
+      }
+      sender.once('destroyed', onDestroyed)
+      subscriptionCleanups.set(subscriptionId, cleanup)
+      const result = await deps.gitSnapshotPublisher.subscribe({
+        subscriptionId,
+        requestedPath: repo.path,
+        webContentsId: sender.id,
+        send: (snapshotPayload) => {
+          if (!sender.isDestroyed()) {
+            sender.send('git:snapshot-changed', snapshotPayload)
+          }
+        }
+      })
+      if (!result.ok) {
+        subscriptionCleanups.get(subscriptionId)?.()
+      }
+      return result
+    }
+  )
+
+  ipcMain.handle('git:unsubscribe-snapshot', async (_event, payload?: { subscriptionId?: string }) => {
+    const subscriptionId =
+      typeof payload?.subscriptionId === 'string' ? payload.subscriptionId.trim() : ''
+    if (subscriptionId) {
+      const cleanup = subscriptionCleanups.get(subscriptionId)
+      if (cleanup) cleanup()
+      else deps.gitSnapshotPublisher?.unsubscribe(subscriptionId)
+    }
+    return { ok: true }
+  })
+
+  ipcMain.handle('git:invalidate-snapshot', async (_event, payload?: GitSnapshotInvalidatePayload) => {
+    const repo = gitPayloadPath(deps, payload, 'registered-or-granted-read')
+    if (!repo.ok) return repo
+    deps.gitSnapshotPublisher?.invalidatePath(repo.path, gitSnapshotInvalidationReason(payload?.reason))
+    return { ok: true }
   })
 
   ipcMain.handle(
@@ -110,13 +202,15 @@ export function registerGitHandlers(deps: GitHandlersDeps): void {
     ): Promise<GitResult<GitRepositorySnapshot> | { ok: false; error: string }> => {
       const repo = gitPayloadPath(deps, payload, 'registered-workspace')
       if (!repo.ok) return repo
-      return deps.gitService.stage({
+      const result = await deps.gitService.stage({
         repoPath: repo.path,
         paths: payload?.paths,
         all: payload?.all,
         update: payload?.update,
         patch: payload?.patch
       })
+      if (result.ok) deps.gitSnapshotPublisher?.publishSnapshot(result.data, 'git-action')
+      return result
     }
   )
 
@@ -128,10 +222,12 @@ export function registerGitHandlers(deps: GitHandlersDeps): void {
     ): Promise<GitResult<GitRepositorySnapshot> | { ok: false; error: string }> => {
       const repo = gitPayloadPath(deps, payload, 'registered-workspace')
       if (!repo.ok) return repo
-      return deps.gitService.unstage({
+      const result = await deps.gitService.unstage({
         repoPath: repo.path,
         paths: payload?.paths
       })
+      if (result.ok) deps.gitSnapshotPublisher?.publishSnapshot(result.data, 'git-action')
+      return result
     }
   )
 
@@ -143,10 +239,12 @@ export function registerGitHandlers(deps: GitHandlersDeps): void {
     ): Promise<GitResult<GitRepositorySnapshot> | { ok: false; error: string }> => {
       const repo = gitPayloadPath(deps, payload, 'registered-workspace')
       if (!repo.ok) return repo
-      return deps.gitService.commit({
+      const result = await deps.gitService.commit({
         repoPath: repo.path,
         message: payload?.message || ''
       })
+      if (result.ok) deps.gitSnapshotPublisher?.publishSnapshot(result.data, 'git-action')
+      return result
     }
   )
 
@@ -158,11 +256,13 @@ export function registerGitHandlers(deps: GitHandlersDeps): void {
     ): Promise<GitResult<GitRepositorySnapshot> | { ok: false; error: string }> => {
       const repo = gitPayloadPath(deps, payload, 'registered-workspace')
       if (!repo.ok) return repo
-      return deps.gitService.push({
+      const result = await deps.gitService.push({
         repoPath: repo.path,
         setUpstream: payload?.setUpstream,
         remote: payload?.remote
       })
+      if (result.ok) deps.gitSnapshotPublisher?.publishSnapshot(result.data, 'git-action')
+      return result
     }
   )
 
