@@ -3,7 +3,7 @@ import type { ProviderId } from '../../../main/store/types'
 import { formatContextTokens } from '../lib/contextWindows'
 import { formatCostAlwaysOn, type DisplayCurrency } from '../lib/formatCost'
 import { estimateRunCostUsd, type RendererProviderRates } from '../lib/providerRateEstimate'
-import { formatTallySuffix, type ChatTokenTally } from '../lib/threadTokenTally'
+import { formatTallySuffix, tallyCostUsd, type ChatTokenTally } from '../lib/threadTokenTally'
 
 const LIVE_TICK_MS = 1000
 const APPROX_CHARS_PER_TOKEN = 4
@@ -83,11 +83,13 @@ export const LiveThreadTokenTally = memo(function LiveThreadTokenTally({
     const liveCostUsd = running
       ? estimateRunCostUsd(providerRates, provider, model, 0, liveOutputExtra)
       : 0
-    const totalCostUsd = baseTally.explicitCostUsd + liveCostUsd
+    const baseCostUsd = tallyCostUsd(baseTally)
+    const totalCostUsd = baseCostUsd + liveCostUsd
+    const hasProjectedCost = (baseTally.estimatedCostUsd || 0) > 0 || liveCostUsd > 0
     if (dualCostAndRam) {
       const tallyForSuffix =
         running && liveCostUsd > 0
-          ? { ...baseTally, explicitCostUsd: totalCostUsd }
+          ? { ...baseTally, estimatedCostUsd: (baseTally.estimatedCostUsd || 0) + liveCostUsd }
           : baseTally
       return `${tokenLabel}${formatTallySuffix(provider, tallyForSuffix, currency, overestimatePercent, {
         dualCostAndRam: true,
@@ -98,7 +100,7 @@ export const LiveThreadTokenTally = memo(function LiveThreadTokenTally({
       totalCostUsd > 0
         ? formatCostAlwaysOn(totalCostUsd, currency, undefined, overestimatePercent)
         : ''
-    const prefix = running && liveCostUsd > 0 ? '~' : ''
+    const prefix = hasProjectedCost ? '~' : ''
     return `${tokenLabel}${cost ? ` · ${prefix}${cost}` : ''}`
   }, [
     baseTally,

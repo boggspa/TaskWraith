@@ -1205,6 +1205,45 @@ describe('RemoteThreadProjection', () => {
       expect(summary?.costText).toBe('~$1.75')
     })
 
+    it('prices cli-default runs against the provider default model instead of the first rate row', () => {
+      const summary = buildRunSummary(
+        [
+          {
+            runId: 'run-default-cost',
+            provider: 'claude',
+            requestedModel: 'cli-default',
+            stats: {
+              input_tokens: 1_000_000,
+              output_tokens: 100_000
+            }
+          } as unknown as ChatRun
+        ],
+        {
+          currency: 'USD',
+          providerRates: {
+            baseline: {
+              claude: {
+                models: [
+                  {
+                    modelId: 'claude-fable-5',
+                    inputUsdPerMillion: 10,
+                    outputUsdPerMillion: 50
+                  },
+                  {
+                    modelId: 'claude-sonnet-5',
+                    inputUsdPerMillion: 3,
+                    outputUsdPerMillion: 15
+                  }
+                ]
+              }
+            }
+          }
+        }
+      )
+
+      expect(summary?.costText).toBe('~$4.50')
+    })
+
     it('projects cumulative conversation cost separately from the latest run cost', () => {
       const snap = project(
         { kind: 'latestN', n: 10 },

@@ -107,6 +107,25 @@ describe('resolveModelRate', () => {
     expect(resolveModelRate(RATES, 'codex', 'totally-unknown')?.modelId).toBe('gpt-5.5')
   })
 
+  it('resolves default sentinels before falling back to the first rate entry', () => {
+    const rates: RendererProviderRates = {
+      claude: [
+        { modelId: 'claude-fable-5', inputUsdPerMillion: 10, outputUsdPerMillion: 50 },
+        { modelId: 'claude-sonnet-5', inputUsdPerMillion: 3, outputUsdPerMillion: 15 }
+      ],
+      gemini: [
+        { modelId: 'gemini-3.1-pro', inputUsdPerMillion: 2, outputUsdPerMillion: 12 },
+        { modelId: 'gemini-3.1-flash-lite', inputUsdPerMillion: 0.3, outputUsdPerMillion: 2.5 }
+      ]
+    }
+
+    expect(resolveModelRate(rates, 'claude', 'cli-default')?.modelId).toBe('claude-sonnet-5')
+    expect(resolveModelRate(rates, 'claude', undefined)?.modelId).toBe('claude-sonnet-5')
+    expect(resolveModelRate(rates, 'gemini', 'flash-lite')?.modelId).toBe(
+      'gemini-3.1-flash-lite'
+    )
+  })
+
   it('returns null for unknown provider or empty rate list', () => {
     expect(resolveModelRate(RATES, undefined, 'gpt-5.5')).toBeNull()
     expect(resolveModelRate(RATES, 'gemini', 'gemini-3.1-pro')).toBeNull()

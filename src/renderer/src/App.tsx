@@ -16778,8 +16778,8 @@ function App(): React.JSX.Element {
     [sideChat?.runs]
   )
   const sideChatTokenTally = useMemo(
-    () => buildChatTokenTally(sideChat?.runs || []),
-    [sideChat?.runs]
+    () => buildChatTokenTally(sideChat?.runs || [], { providerRates }),
+    [sideChat?.runs, providerRates]
   )
   const sideLiveRunOutputTokens = useMemo(() => {
     if (!isSideChatRunning || !sideChat) return 0
@@ -16826,8 +16826,8 @@ function App(): React.JSX.Element {
     ? currentEnsembleRound?.startedAt || currentRun?.startedAt || null
     : null
   const chatTokenTally = useMemo(
-    () => buildChatTokenTally(currentChat?.runs || []),
-    [currentChat?.runs]
+    () => buildChatTokenTally(currentChat?.runs || [], { providerRates }),
+    [currentChat?.runs, providerRates]
   )
   const liveRunOutputTokens = useMemo(() => {
     if (!isCurrentChatRunning || !currentChat) return 0
@@ -17011,14 +17011,16 @@ function App(): React.JSX.Element {
       currentChat?.runs || [],
       currentChat?.ensemble?.participants || [],
       displayCurrency,
-      overestimatePercent
+      overestimatePercent,
+      providerRates
     )
   }, [
     isCurrentEnsembleChat,
     currentChat?.runs,
     currentChat?.ensemble?.participants,
     displayCurrency,
-    overestimatePercent
+    overestimatePercent,
+    providerRates
   ])
   const threadTokenTallyTooltip = ensembleTallyBreakdown
     ? `${contextLabel}\n\n${ensembleTallyBreakdown}`
@@ -21183,7 +21185,7 @@ function App(): React.JSX.Element {
         )
       })
     }
-    const viewerTokenTally = buildChatTokenTally(viewerChat.runs || [])
+    const viewerTokenTally = buildChatTokenTally(viewerChat.runs || [], { providerRates })
     const viewerLiveOutputTokens = (() => {
       if (!viewerIsRunning) return 0
       const activeRunIds = new Set(
@@ -22456,7 +22458,7 @@ function App(): React.JSX.Element {
           )
         })
       }
-      const viewerTokenTally = buildChatTokenTally(viewerChat.runs || [])
+      const viewerTokenTally = buildChatTokenTally(viewerChat.runs || [], { providerRates })
       const viewerLiveOutputTokens = (() => {
         if (!viewerIsRunning) return 0
         const activeRunIds = new Set(

@@ -50,6 +50,33 @@ export type RendererProviderRates = Partial<Record<ProviderId, RendererModelRate
 const isFiniteNonNeg = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value) && value >= 0
 
+const DEFAULT_RATE_MODEL_BY_PROVIDER: Partial<Record<ProviderId, string>> = {
+  codex: 'gpt-5.5',
+  claude: 'claude-sonnet-5',
+  gemini: 'gemini-3.1-flash-lite',
+  kimi: 'kimi-k2.7-code',
+  grok: 'grok-build',
+  cursor: 'composer-2.5-fast',
+  ollama: 'qwen3:4b-instruct'
+}
+
+const DEFAULT_MODEL_SENTINELS = new Set(['', 'default', 'cli-default', 'custom', 'best'])
+const CODEX_DEFAULT_SENTINELS = new Set(['auto', 'pro', 'flash', 'flash-lite'])
+
+function canonicalRateModelId(
+  provider: ProviderId | undefined,
+  model: string | undefined
+): string {
+  const trimmed = (model || '').trim()
+  const key = trimmed.toLowerCase()
+  const fallback = provider ? DEFAULT_RATE_MODEL_BY_PROVIDER[provider] : undefined
+  if (!provider || !fallback) return trimmed
+  if (DEFAULT_MODEL_SENTINELS.has(key)) return fallback
+  if (provider === 'codex' && CODEX_DEFAULT_SENTINELS.has(key)) return fallback
+  if (provider === 'gemini' && key === 'flash-lite') return fallback
+  return trimmed
+}
+
 export interface RunCostEstimateOptions {
   /** Input tokens that were served from provider prompt-cache. */
   cacheReadInputTokens?: number
@@ -125,7 +152,7 @@ export function resolveModelRate(
   if (!provider) return null
   const table = rates[provider]
   if (!table || table.length === 0) return null
-  const wanted = (model || '').trim().toLowerCase()
+  const wanted = canonicalRateModelId(provider, model).toLowerCase()
   if (wanted) {
     const exact = table.find((r) => r.modelId.toLowerCase() === wanted)
     if (exact) return exact
