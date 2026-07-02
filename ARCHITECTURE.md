@@ -79,6 +79,13 @@ aliases such as `cells`, `claims`, and `changedFiles`, persists the pack, and
 returns a ledger summary. `completion_claim_check` uses the same model rules to
 check planned final-answer language before the agent claims work is done.
 
+`scope_radar` is the pre-work normalizer for vague or high-load prompts. It
+turns messy intent into a desired capability, inferred capability map,
+prerequisite/known/unknown/speculative slice kinds, evidence requirements,
+allowed surfaces, non-goals, open questions, and a slop budget. By default it
+records that map as an Evidence Pack for the active run so the ledger has
+pre-implementation scope before later packs add implementation evidence.
+
 The Capability Ledger is not a separate source of truth. It is the longitudinal
 projection of accumulated Evidence Packs for a workspace, using the latest
 cell status per capability plus merged evidence refs and completion-claim

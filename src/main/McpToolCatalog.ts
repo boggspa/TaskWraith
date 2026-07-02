@@ -867,6 +867,39 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
       }
     },
     {
+      name: 'scope_radar',
+      description:
+        'Normalize a messy user prompt into a pre-work capability map: desired capability, slice kinds, evidence required, allowed surfaces, non-goals, open questions, and slop budget. By default records the inferred map as an Evidence Pack for the active run; pass record=false for preview only.',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          prompt: {
+            type: 'string',
+            description: 'The user task or messy intent to normalize before implementation.'
+          },
+          task: { type: 'string', description: 'Alias for prompt.' },
+          userPrompt: { type: 'string', description: 'Alias for prompt.' },
+          currentState: {
+            type: 'string',
+            description:
+              'Optional known baseline: what currently works, fails, or has already been inspected.'
+          },
+          record: {
+            type: 'boolean',
+            description:
+              'When true or omitted, persist the inferred map as an Evidence Pack for this run. Set false for preview only.'
+          }
+        },
+        required: ['prompt']
+      }
+    },
+    {
       name: 'evidence_pack_write',
       description:
         'Persist a structured Evidence Pack for the active run: capability cells, completion claims, changed files, and supporting evidence refs. TaskWraith stamps workspace/chat/run/provider context.',

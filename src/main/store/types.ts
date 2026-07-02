@@ -3659,6 +3659,47 @@ export interface CompletionClaimSupportAnnotation {
   assessedAt: string
 }
 
+export type ScopeRadarSliceKind =
+  | 'prerequisite'
+  | 'known'
+  | 'unknown'
+  | 'speculative'
+
+export interface ScopeRadarSlopBudget {
+  maxNewFiles: number
+  maxNewAbstractions: number
+  maxPlaceholderFiles: number
+  maxBroadStylingChanges: number
+  maxDuplicatedPatterns: number
+  note: string
+}
+
+export interface ScopeRadarQuestion {
+  id: string
+  question: string
+  reason: string
+}
+
+export interface ScopeRadarResult {
+  schemaVersion: 1
+  title: string
+  prompt: string
+  riskLevel: 'low' | 'medium' | 'high'
+  desiredCapability: string
+  currentState?: string
+  capabilityMap: CapabilityMapEntry[]
+  sliceKinds: Record<string, ScopeRadarSliceKind>
+  evidenceRequired: string[]
+  allowedSurfaces: string[]
+  nonGoals: string[]
+  questions: ScopeRadarQuestion[]
+  slopBudget: ScopeRadarSlopBudget
+  evidencePackDraft: Pick<
+    EvidencePackRecord,
+    'mapEntries' | 'capabilityCells' | 'completionClaims' | 'diffTouchedFiles'
+  >
+}
+
 export type RepoConventionIndexEntryKind =
   | 'component_family'
   | 'utility'

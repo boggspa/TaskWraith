@@ -79,9 +79,71 @@ function createStore(): EvidenceToolStore & { __addChat(chat: ChatRecord): void 
 
 describe('EvidenceToolExecutors', () => {
   it('recognizes Evidence Pack MCP tools', () => {
+    expect(isEvidenceMcpToolName('scope_radar')).toBe(true)
     expect(isEvidenceMcpToolName('evidence_pack_write')).toBe(true)
     expect(isEvidenceMcpToolName('completion_claim_check')).toBe(true)
     expect(isEvidenceMcpToolName('workspace_search')).toBe(false)
+  })
+
+  it('records a Scope Radar map as an Evidence Pack for the active run', async () => {
+    const store = createStore()
+    store.__addChat(workspaceChat('chat-1', 'ws-1', '/repo'))
+
+    const result = await executeEvidenceMcpTool(
+      store,
+      'scope_radar',
+      { prompt: 'Make my app import UI. It should support arbitrary UI.' },
+      context('chat-1'),
+      { provider: 'codex', runId: 'run-1' }
+    )
+
+    expect(result.isError).toBe(false)
+    expect(result.result).toMatchObject({
+      ok: true,
+      tool: 'scope_radar',
+      recorded: true,
+      radar: {
+        riskLevel: 'high',
+        sliceKinds: {
+          'source-format-contract': 'prerequisite',
+          'arbitrary-ui-coverage': 'speculative'
+        }
+      },
+      evidencePack: {
+        workspaceId: 'ws-1',
+        chatId: 'chat-1',
+        runId: 'run-1',
+        provider: 'codex'
+      },
+      ledger: {
+        capabilityCount: expect.any(Number),
+        mapEntryCount: expect.any(Number)
+      }
+    })
+    expect(store.getEvidencePacks('ws-1')).toHaveLength(1)
+    expect(store.getEvidencePacks('ws-1')[0]?.capabilityCells[0]?.status).toBe('unverified')
+  })
+
+  it('can preview Scope Radar without recording evidence', async () => {
+    const store = createStore()
+    store.__addChat(workspaceChat('chat-1', 'ws-1', '/repo'))
+
+    const result = await executeEvidenceMcpTool(
+      store,
+      'scope_radar',
+      { prompt: 'Add retry button to failed upload card.', record: false },
+      context('chat-1'),
+      { provider: 'codex', runId: 'run-1' }
+    )
+
+    expect(result.isError).toBe(false)
+    expect(result.result).toMatchObject({
+      ok: true,
+      tool: 'scope_radar',
+      recorded: false,
+      radar: { riskLevel: 'low' }
+    })
+    expect(store.getEvidencePacks('ws-1')).toHaveLength(0)
   })
 
   it('writes an agent-stamped Evidence Pack and checks the planned final answer', async () => {

@@ -36,6 +36,7 @@ export const TASKWRAITH_MCP_TOOLS = [
   'workspace_board_preview_plan',
   'workspace_board_apply_plan',
   'test_result_summary',
+  'scope_radar',
   'evidence_pack_write',
   'completion_claim_check',
   'list_subthreads',

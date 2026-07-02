@@ -23,6 +23,7 @@ describe('MCP_AUTO_ALLOWED_TOOLS', () => {
       'list_background_processes',
       'read_background_process',
       'list_active_runs',
+      'scope_radar',
       'evidence_pack_write',
       'completion_claim_check'
     ] as const) {
@@ -83,6 +84,7 @@ describe('READ_ONLY_MCP_ADVERTISE_TOOLS', () => {
       'list_background_processes',
       'read_background_process',
       'list_active_runs',
+      'scope_radar',
       'evidence_pack_write',
       'completion_claim_check'
     ] as const) {
@@ -147,6 +149,7 @@ describe('isReadOnlyAdvertisedTool (bridge scope guard)', () => {
       'list_background_processes',
       'read_background_process',
       'list_active_runs',
+      'scope_radar',
       'evidence_pack_write',
       'completion_claim_check'
     ]) {

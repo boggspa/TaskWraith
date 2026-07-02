@@ -18736,7 +18736,7 @@ async function executeGeminiMcpTool(
       )
       toolIsError = result.isError
       text = mcpJson(result.result)
-      if (!toolIsError && toolName === 'evidence_pack_write') {
+      if (!toolIsError && (toolName === 'evidence_pack_write' || toolName === 'scope_radar')) {
         emitEvidencePacksChanged()
       }
     } else if (isWorkspaceMcpToolName(toolName)) {

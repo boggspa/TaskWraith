@@ -1,4 +1,5 @@
 import { assessCompletionClaimSupport } from '../EvidencePackModel'
+import { buildScopeRadarResult } from '../ScopeRadarModel'
 import type {
   CapabilityLedgerSnapshot,
   ChatRecord,
@@ -9,6 +10,7 @@ import type {
 import type { WorkspaceToolContext } from './WorkspaceToolExecutors'
 
 export const EVIDENCE_MCP_TOOL_NAMES = [
+  'scope_radar',
   'evidence_pack_write',
   'completion_claim_check'
 ] as const
@@ -95,6 +97,16 @@ function finalTextFromArgs(args: Record<string, unknown>): string | undefined {
   )
 }
 
+function boolArg(value: unknown, fallback: boolean): boolean {
+  if (typeof value === 'boolean') return value
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase()
+    if (normalized === 'true' || normalized === 'yes' || normalized === '1') return true
+    if (normalized === 'false' || normalized === 'no' || normalized === '0') return false
+  }
+  return fallback
+}
+
 function summarizeLedger(snapshot: CapabilityLedgerSnapshot) {
   return {
     workspaceId: snapshot.workspaceId,
@@ -139,6 +151,46 @@ export async function executeEvidenceMcpTool(
 ): Promise<{ result: unknown; isError: boolean }> {
   try {
     const workspace = resolveEvidenceWorkspace(store, args, context)
+
+    if (toolName === 'scope_radar') {
+      const prompt =
+        optionalString(args.prompt) ||
+        optionalString(args.task) ||
+        optionalString(args.userPrompt) ||
+        optionalString(args.intent)
+      if (!prompt) throw new Error('scope_radar requires a non-empty prompt.')
+      const radar = buildScopeRadarResult({
+        prompt,
+        currentState: optionalString(args.currentState) || optionalString(args.current_state)
+      })
+      const shouldRecord = boolArg(args.record, true)
+      const recordedEvidencePack = shouldRecord
+        ? store.saveEvidencePack({
+            title: radar.title,
+            workspaceId: workspace.workspaceId,
+            workspacePath: workspace.workspacePath,
+            chatId: workspace.chatId,
+            runId: metadata.runId,
+            provider: metadata.provider,
+            mapEntries: radar.evidencePackDraft.mapEntries,
+            capabilityCells: radar.evidencePackDraft.capabilityCells,
+            completionClaims: radar.evidencePackDraft.completionClaims,
+            diffTouchedFiles: radar.evidencePackDraft.diffTouchedFiles
+          })
+        : undefined
+      const ledger = shouldRecord ? store.getCapabilityLedgerSnapshot(workspace.workspaceId) : undefined
+      return {
+        result: {
+          ok: true,
+          tool: toolName,
+          radar,
+          recorded: Boolean(recordedEvidencePack),
+          ...(recordedEvidencePack ? { evidencePack: recordedEvidencePack } : {}),
+          ...(ledger ? { ledger: summarizeLedger(ledger) } : {})
+        },
+        isError: false
+      }
+    }
 
     if (toolName === 'evidence_pack_write') {
       const input = evidencePackInput(args)
