@@ -82,9 +82,10 @@ Shipped in `5c2e34b70`.
 - Assistant messages can now capture thumbs up/down feedback in the message row
   and context menu.
 - The visible state persists on `message.metadata.feedback` through the existing
-  chat-save path, with no dedicated IPC or server-side receipt yet.
-- This is the UI capture layer only. The enterprise-relevant receipt ledger,
-  model/role aggregation, reason capture, and recast actions remain B5 work.
+  chat-save path.
+- The durable, local `thumbs-ledger.json` receipt layer now harvests those
+  message states on save. Model/role aggregation, reason capture, recast
+  actions, export bundling, and iOS parity remain B5 work.
 
 ### Adjacent stage-role bridge work
 
@@ -407,7 +408,7 @@ What exists:
 - `saveChat` now harvests assistant-message feedback into a bounded
   `thumbs-ledger.json` receipt store. Receipts include set/flip/clear/update
   semantics and attribution to chat, workspace, message, run, provider, model,
-  and ensemble role/lane when available.
+  and ensemble role/lane/stage role when available.
 - Existing UI-only feedback state is backfilled into the receipt store on the
   next chat save, and repeated saves are idempotent against the latest ledger
   state.
@@ -429,8 +430,8 @@ Target:
 
 - Keep the bounded, capped `thumbs-ledger.json` receipt store authoritative for
   analytics and export. Receipt fields cover vote, timestamp, provider, model,
-  role, run id, chat id, workspace id, original message id, optional reason
-  category, and optional note.
+  role, stage role, run id, chat id, workspace id, original message id, optional
+  reason category, and optional note.
 - Keep `message.metadata.feedback` as the UI pressed-state cache; make the
   ledger the source of truth for analytics and export. Toggle, clear, and flip
   semantics should update both surfaces deterministically.

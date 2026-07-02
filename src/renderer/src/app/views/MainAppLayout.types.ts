@@ -573,6 +573,7 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   threadSearchQuery: any
   threadSearchShortcutHint: any
   threadSearchVisible: any
+  toggleFeedbackMessageInChat: any
   togglePinMessageInChat: any
   transcriptContentRef: any
   transcriptJumpRequest: any

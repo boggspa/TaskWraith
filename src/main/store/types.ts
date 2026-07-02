@@ -2504,6 +2504,7 @@ export interface MessageFeedbackReceipt {
   ensembleParticipantId?: string
   ensembleLaneId?: string
   ensembleRole?: string
+  ensembleStageRole?: EnsembleStageRole
   vote?: MessageFeedbackVote
   previousVote?: MessageFeedbackVote
   at: number

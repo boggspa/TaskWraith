@@ -24085,6 +24085,7 @@ function App(): React.JSX.Element {
     threadSearchQuery,
     threadSearchShortcutHint,
     threadSearchVisible,
+    toggleFeedbackMessageInChat,
     togglePinMessageInChat,
     transcriptContentRef,
     transcriptJumpRequest,

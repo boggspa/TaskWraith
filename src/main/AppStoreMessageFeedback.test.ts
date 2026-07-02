@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import fs from 'fs'
 import { AppStore } from './store'
-import type { ChatRecord } from './store/types'
+import type { ChatRecord, ChatRun } from './store/types'
 
 const userDataPath = vi.hoisted(() => `/tmp/taskwraith-message-feedback-test-${process.pid}`)
 
@@ -13,7 +13,8 @@ vi.mock('electron', () => ({
 
 function makeChat(
   id: string,
-  feedback?: { vote: 'up' | 'down'; at: number; reason?: string; note?: string }
+  feedback?: { vote: 'up' | 'down'; at: number; reason?: string; note?: string },
+  runOverrides: Partial<ChatRun> = {}
 ): ChatRecord {
   return {
     appChatId: id,
@@ -44,7 +45,8 @@ function makeChat(
         endedAt: '2026-07-02T12:00:00.000Z',
         requestedModel: 'gpt-5.5',
         actualModel: 'gpt-5.5-xhigh',
-        status: 'success'
+        status: 'success',
+        ...runOverrides
       }
     ]
   }
@@ -109,5 +111,30 @@ describe('AppStore message feedback receipts', () => {
       previousVote: 'down'
     })
     expect(receipts[2].vote).toBeUndefined()
+  })
+
+  it('preserves ensemble lane and stage role attribution from the producing run', () => {
+    const chat = makeChat(
+      'feedback-chat-ensemble-stage',
+      { vote: 'down', at: 3000, reason: 'wrong-model-for-role' },
+      {
+        ensembleParticipantId: 'participant-reviewer',
+        ensembleLaneId: 'round-1:participant-reviewer:0',
+        ensembleRole: 'Reviewer',
+        ensembleStageRole: 'reviewer'
+      }
+    )
+
+    AppStore.saveChat(chat)
+
+    const receipts = AppStore.getMessageFeedbackReceipts({ chatId: chat.appChatId })
+    expect(receipts[0]).toMatchObject({
+      ensembleParticipantId: 'participant-reviewer',
+      ensembleLaneId: 'round-1:participant-reviewer:0',
+      ensembleRole: 'Reviewer',
+      ensembleStageRole: 'reviewer',
+      vote: 'down',
+      reason: 'wrong-model-for-role'
+    })
   })
 })

@@ -37,6 +37,10 @@ function text(value: unknown, max = 500): string | undefined {
   return trimmed ? trimmed.slice(0, max) : undefined
 }
 
+function stageRole(value: unknown): 'scout' | 'worker' | 'reviewer' | undefined {
+  return value === 'scout' || value === 'worker' || value === 'reviewer' ? value : undefined
+}
+
 function feedbackState(message: ChatMessage | null | undefined): FeedbackState | null {
   const feedback = message?.metadata?.feedback
   if (!feedback || (feedback.vote !== 'up' && feedback.vote !== 'down')) return null
@@ -139,6 +143,7 @@ function receiptForTransition(
     ...(ensembleParticipantId ? { ensembleParticipantId } : {}),
     ...(run?.ensembleLaneId ? { ensembleLaneId: run.ensembleLaneId } : {}),
     ...(run?.ensembleRole ? { ensembleRole: run.ensembleRole } : {}),
+    ...(run?.ensembleStageRole ? { ensembleStageRole: run.ensembleStageRole } : {}),
     ...(current ? { vote: current.vote } : {}),
     ...(previous ? { previousVote: previous.vote } : {}),
     at: current?.at || now,
@@ -223,6 +228,7 @@ export function normalizeMessageFeedbackReceipt(
   if (input.action !== 'clear' && !vote) return null
   const at = Number(input.at)
   const recordedAt = Number(input.recordedAt)
+  const ensembleStageRole = stageRole(input.ensembleStageRole)
   return {
     schemaVersion: MESSAGE_FEEDBACK_LEDGER_SCHEMA_VERSION,
     id: input.id,
@@ -241,6 +247,7 @@ export function normalizeMessageFeedbackReceipt(
       : {}),
     ...(text(input.ensembleLaneId, 160) ? { ensembleLaneId: text(input.ensembleLaneId, 160) } : {}),
     ...(text(input.ensembleRole, 160) ? { ensembleRole: text(input.ensembleRole, 160) } : {}),
+    ...(ensembleStageRole ? { ensembleStageRole } : {}),
     ...(vote ? { vote } : {}),
     ...(previousVote ? { previousVote } : {}),
     at: Number.isFinite(at) && at > 0 ? Math.floor(at) : Date.now(),
