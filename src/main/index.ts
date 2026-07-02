@@ -857,6 +857,7 @@ import {
   effectiveOllamaToolControlTier,
   ollamaToolAllowedInTier,
   ollamaToolNamesForTier,
+  resolveOllamaExecutionToolControlTier
 } from './ollama/OllamaToolTiers'
 import { normalizeOllamaSessionMemory } from './ollama/OllamaRunMemory'
 import { ollamaMidRunTierBumpMessage } from './ollama/OllamaTierSuggestion'
@@ -16520,15 +16521,14 @@ async function executeOllamaLocalTool(
   request: OllamaToolExecutionRequest
 ): Promise<OllamaToolExecutionResult> {
   const workspacePath = canonicalPath(requireNonEmptyString(request.workspacePath, 'Workspace'))
-  // Per-chat tier: a chat that picked e.g. approved_shell in the composer must be
-  // able to run shell tools even when the GLOBAL default is read_only (and vice
-  // versa — a chat can downgrade). Read the chat's validated tier and fall back
-  // to the global default when absent. This mirrors the run dispatch, which
-  // carries the same effective tier on the payload at compose time.
+  // Live runs carry the run-start tier on every tool request. Prefer that
+  // receipt so settings/chat changes cannot silently reshape a running tool
+  // surface. Older/internal callers that omit it keep the historical fallback.
   const gateChat = request.appChatId ? AppStore.getChat(request.appChatId) : undefined
-  const tier = effectiveOllamaToolControlTier(
+  const tier = resolveOllamaExecutionToolControlTier(
     AppStore.getSettings(),
     workspacePath,
+    request.toolControlTier,
     chatOllamaToolControlTier(gateChat?.providerMetadata)
   )
   const context: WorkspaceToolContext = {

@@ -227,6 +227,24 @@ export function effectiveOllamaToolControlTier(
     : 'read_only'
 }
 
+/**
+ * Resolve the tier used by a local Ollama tool execution. A live run passes its
+ * run-start tier on every tool request; that carried tier is the auditable
+ * receipt for the advertised tool surface and must not be re-derived from
+ * mutable settings mid-run. Older/internal callers that do not carry a tier keep
+ * the historical live fallback.
+ */
+export function resolveOllamaExecutionToolControlTier(
+  settings: Pick<AppSettings, 'ollamaToolControlTier' | 'ollamaProviderParityWorkspaceGrants'>,
+  workspacePath?: string | null,
+  requestTier?: OllamaToolControlTier | string | null,
+  chatTier?: OllamaToolControlTier | string | null
+): OllamaToolControlTier {
+  return isOllamaToolControlTier(requestTier)
+    ? requestTier
+    : effectiveOllamaToolControlTier(settings, workspacePath, chatTier)
+}
+
 export function ollamaToolAllowedInTier(
   toolName: string,
   tier: OllamaToolControlTier | string | undefined | null,

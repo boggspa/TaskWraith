@@ -299,20 +299,20 @@ What exists:
 - Ollama computes a run-start tool-control tier and advertises tools from that
   tier.
 - The local tool request carries a `toolControlTier` field.
+- The local execution gate now prefers that request-carried run-start tier and
+  falls back to live settings/chat metadata only for callers that do not carry a
+  tier.
 
 What is missing:
 
-- The execution gate currently re-resolves the Ollama tier from current
-  settings/chat metadata instead of treating the run-start tier as the frozen
-  run receipt.
+- If product policy wants mid-run revocation instead of frozen run receipts,
+  revocation still needs to be explicit and audited.
 
 Target:
 
-- Either use the run-start tier for execution, or make live revocation explicit
-  and audited.
-- Add a test that starts an Ollama run with a shell-capable tier, changes the
-  chat/global tier before a shell call, and asserts the gate uses the frozen
-  tier or records a revocation decision.
+- Keep the run-start tier as the default execution receipt.
+- Add explicit revocation events later only if managed policy requires live
+  cancellation of an active Ollama tool surface.
 
 ### B5.7 - Stage-role desktop mutation parity
 
