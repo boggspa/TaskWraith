@@ -224,7 +224,20 @@ const ORCHESTRATION_TOOLS = new Set<string>([
   // crossThreadRead approval service (Slice 3), not by the tool class.
   'tw_recall_find',
   'tw_recall_read',
-  'tw_recall_read_events'
+  'tw_recall_read_events',
+  // Evidence-pack / run-observability tools. These read the prompt/workspace/
+  // diff and persist their output to the INTERNAL evidence-pack store
+  // (userData/evidence-packs.json), never the workspace — the same observe-class
+  // artifact sink as the transcript. They are members of MCP_AUTO_ALLOWED_TOOLS
+  // (read-only agents must still leave auditable evidence), so they MUST classify
+  // as non-write or the auto-allow safety invariant fails. Verified non-mutating
+  // (no fs writes to workspace, no spawn, no network).
+  'prompt_task_normalize',
+  'scope_radar',
+  'repo_convention_scan',
+  'coherence_gate_check',
+  'evidence_pack_write',
+  'completion_claim_check'
 ])
 
 /** Bucket a single tool name. Unknown → workspace_write (safe default). */
