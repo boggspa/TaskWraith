@@ -100,6 +100,7 @@ const SETTINGS_PATCH_KEYS = new Set<keyof AppSettings>([
   'currency',
   'currencyOverestimatePercent',
   'showRunCompleteSummary',
+  'hostAutoCompactEnabled',
   'ensembleCollapseOlderRounds',
   'modelUsagePanelView',
   'modelUsageExternalUsage',
@@ -1300,6 +1301,10 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
     if ('showRunCompleteSummary' in sanitized) {
       const value = sanitized.showRunCompleteSummary
       sanitized.showRunCompleteSummary = typeof value === 'boolean' ? value : Boolean(value)
+    }
+    if ('hostAutoCompactEnabled' in sanitized) {
+      const value = sanitized.hostAutoCompactEnabled
+      sanitized.hostAutoCompactEnabled = typeof value === 'boolean' ? value : Boolean(value)
     }
     if ('ensembleCollapseOlderRounds' in sanitized) {
       const value = sanitized.ensembleCollapseOlderRounds

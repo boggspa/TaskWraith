@@ -36,7 +36,11 @@ import { coerceLiveProvider, DEFAULT_PROVIDER, isRetiredProvider } from '../../s
 import { sanitizeRawProviderMediaRefs } from '../../shared/transcriptMediaRefSanitize'
 import { normalizeThreadTitle } from '../../shared/threadTitles'
 import {
+  CONTEXT_AUTO_COMPACT_COOLDOWN_MS,
+  CONTEXT_AUTO_COMPACT_PERCENT,
   CONTEXT_COMPACTION_MESSAGE_KIND,
+  CONTEXT_COMPACTION_SUMMARY_MAX_CHARS,
+  CONTEXT_COMPACTION_SUMMARY_PROMPT,
   contextCompactionMessageId,
   formatContextCompactionSummary
 } from '../../shared/contextCompaction'
@@ -4734,6 +4738,9 @@ function App(): React.JSX.Element {
     if (next.showRunCompleteSummary !== undefined) {
       settingsPatch.showRunCompleteSummary = next.showRunCompleteSummary
     }
+    if (next.hostAutoCompactEnabled !== undefined) {
+      settingsPatch.hostAutoCompactEnabled = next.hostAutoCompactEnabled
+    }
     if (next.ensembleCollapseOlderRounds !== undefined) {
       settingsPatch.ensembleCollapseOlderRounds = next.ensembleCollapseOlderRounds
     }
@@ -7808,6 +7815,150 @@ function App(): React.JSX.Element {
     }
   }
 
+  // ── Host-side fallback compaction (Cursor/Kimi) ────────────────────────────
+  // Pending summarize runs keyed by appRunId, consumed on that run's exit.
+  // Ref-only state — a run interrupted by app restart simply never finalizes
+  // (no summary stored, no session reset: fail-safe, half-state-free).
+  const pendingHostCompactionsRef = useRef(
+    new Map<
+      string,
+      {
+        chatId: string
+        provider: ProviderId
+        trigger: 'manual' | 'auto'
+        preTokens?: number
+        startedAtMs: number
+      }
+    >()
+  )
+  /** Loop breaker for the auto-trigger: one host-compaction attempt per chat
+   * per cooldown window, success or failure. */
+  const lastHostCompactionAttemptAtByChatIdRef = useRef(new Map<string, number>())
+  /** Late-bound handle to compactChatContext (defined much later, next to the
+   * context-meter assembly) so the exit-hook trigger below can dispatch it. */
+  const compactChatContextRef = useRef<
+    ((chatId: string | null, trigger?: 'manual' | 'auto') => Promise<void>) | null
+  >(null)
+  /**
+   * Consume a finished host-compaction summarize run: capture its final
+   * assistant message as the stored summary, reset Cursor's provider session
+   * (Kimi keeps its token — its cross-turn context is injection-bounded), and
+   * append the compaction card. Failure (non-zero exit / empty summary) cards
+   * a failure instead. Idempotent via delete-on-read + deterministic card id.
+   */
+  const finalizeHostCompactionRun = (completedRunId: string, exitCode: number): void => {
+    const pending = pendingHostCompactionsRef.current.get(completedRunId)
+    if (!pending) return
+    pendingHostCompactionsRef.current.delete(completedRunId)
+    const chat = chatByIdRef.current.get(pending.chatId)
+    const summaryMessage = chat
+      ? [...chat.messages]
+          .reverse()
+          .find(
+            (message) =>
+              message.role === 'assistant' &&
+              message.runId === completedRunId &&
+              Boolean(message.content && message.content.trim())
+          )
+      : undefined
+    const succeeded = exitCode === 0 && Boolean(summaryMessage)
+    const telemetry = {
+      provider: pending.provider,
+      trigger: pending.trigger,
+      ...(pending.preTokens !== undefined ? { preTokens: pending.preTokens } : {}),
+      durationMs: Date.now() - pending.startedAtMs,
+      ...(succeeded
+        ? {}
+        : {
+            error:
+              exitCode === 0
+                ? 'Summarize turn returned no summary.'
+                : `Summarize turn failed (exit ${exitCode}).`
+          })
+    }
+    const signal = { kind: succeeded ? ('completed' as const) : ('failed' as const), telemetry }
+    const cardId = contextCompactionMessageId(telemetry, `host-${completedRunId}-${signal.kind}`)
+    const summaryText = succeeded
+      ? summaryMessage!.content.trim().slice(0, CONTEXT_COMPACTION_SUMMARY_MAX_CHARS)
+      : ''
+    updateChatById(pending.chatId, (updated) => {
+      if (updated.messages.some((message) => message.id === cardId)) return updated
+      return {
+        ...updated,
+        ...(succeeded
+          ? {
+              // Cursor: abandon the bloated provider session — the next turn
+              // starts fresh and composeRunPrompt injects the summary once.
+              ...(pending.provider === 'cursor' ? { linkedProviderSessionId: undefined } : {}),
+              contextCompactionSummary: {
+                text: summaryText,
+                createdAt: new Date().toISOString(),
+                provider: pending.provider,
+                ...(pending.preTokens !== undefined ? { preTokens: pending.preTokens } : {}),
+                // The summary covers everything through its own reply, so the
+                // compact turn itself also drops out of transcript injection.
+                coversThroughTimestamp: summaryMessage!.timestamp
+              }
+            }
+          : {}),
+        messages: [
+          ...updated.messages,
+          {
+            id: cardId,
+            role: 'system',
+            content: formatContextCompactionSummary(signal, getProviderLabel(pending.provider)),
+            timestamp: new Date().toISOString(),
+            metadata: {
+              kind: CONTEXT_COMPACTION_MESSAGE_KIND,
+              contextCompaction: signal,
+              provider: pending.provider
+            }
+          }
+        ]
+      }
+    })
+  }
+  /**
+   * Post-run-exit auto-compaction for providers with no native lever. Fires in
+   * the idle dead-time right after a turn seals — never in a user's dispatch
+   * path — when the honest context proxy crosses CONTEXT_AUTO_COMPACT_PERCENT.
+   * Fresh closure each render (rides the appEventHandlersRef bag), so it reads
+   * live settings/queue state. Claude/Codex self-compact natively — excluded.
+   */
+  const maybeAutoCompactAfterRunExit = (chatId: string | undefined, exitCode: number): void => {
+    if (!chatId) return
+    // Clean exits only: a cancelled exit is usually a steer about to
+    // re-dispatch (racing it with a synthetic run would collide), and a failed
+    // exit already surfaces the overflow classifier + manual /compact hint.
+    if (exitCode !== 0) return
+    if (settings?.hostAutoCompactEnabled === false) return
+    const chat = chatByIdRef.current.get(chatId)
+    if (!chat || isChatSummaryRecord(chat) || chat.chatKind === 'ensemble') return
+    const provider = getChatProvider(chat)
+    if (provider !== 'cursor' && provider !== 'kimi') return
+    // Never chain off an in-flight compaction, and respect the cooldown.
+    if ([...pendingHostCompactionsRef.current.values()].some((p) => p.chatId === chatId)) return
+    const lastAttempt = lastHostCompactionAttemptAtByChatIdRef.current.get(chatId) || 0
+    if (Date.now() - lastAttempt < CONTEXT_AUTO_COMPACT_COOLDOWN_MS) return
+    // A queued follow-up is about to pump — don't race it with a synthetic run.
+    if (
+      runQueueJobs.some((job) => job.chatId === chatId && ACTIVE_RUN_QUEUE_STATUSES.has(job.status))
+    ) {
+      return
+    }
+    const latestRun = [...(chat.runs || [])].reverse().find((run) => run?.stats)
+    const usedTokens = currentContextTokens(chat.runs || [], {
+      liveOutputTokens: 0,
+      isRunning: false
+    })
+    const windowTokens = resolveContextWindow(
+      provider,
+      latestRun?.actualModel || latestRun?.requestedModel || '',
+      extractUsageLimits(latestRun?.stats).totalTokenLimit
+    )
+    if (contextPercent(usedTokens, windowTokens) < CONTEXT_AUTO_COMPACT_PERCENT) return
+    void compactChatContextRef.current?.(chatId, 'auto')
+  }
   const appEventHandlersRef = useRef({
     appendThreadRawLog,
     clearActiveRunContext,
@@ -7822,7 +7973,9 @@ function App(): React.JSX.Element {
     enqueueApprovalForChat,
     advanceApprovalQueueForChat,
     showAttachmentPermissionRequest,
-    triggerFxBurst
+    triggerFxBurst,
+    finalizeHostCompactionRun,
+    maybeAutoCompactAfterRunExit
   })
   appEventHandlersRef.current = {
     appendThreadRawLog,
@@ -7838,7 +7991,9 @@ function App(): React.JSX.Element {
     enqueueApprovalForChat,
     advanceApprovalQueueForChat,
     showAttachmentPermissionRequest,
-    triggerFxBurst
+    triggerFxBurst,
+    finalizeHostCompactionRun,
+    maybeAutoCompactAfterRunExit
   }
 
   // IPC Listeners
@@ -8135,6 +8290,15 @@ function App(): React.JSX.Element {
         }
         return updated
       })
+
+      // Host-side compaction: consume a finished summarize run (store summary,
+      // reset Cursor session, card), THEN — for ordinary exits — check whether
+      // this chat just crossed the auto-compact threshold. Order matters: the
+      // finalize consumes the pending record so a compaction run can never
+      // re-trigger itself, and the trigger's own guards (cooldown, queue,
+      // provider, percent) keep it a no-op everywhere else.
+      handlers.finalizeHostCompactionRun(completedRunId, exitCode)
+      handlers.maybeAutoCompactAfterRunExit(completedRunChatId, exitCode)
 
       // 1.0.6-TV7 — per-WRITE-workspace run diff summaries. Additive +
       // fully isolated from the primary snapshot diff below: derived
@@ -17070,47 +17234,101 @@ function App(): React.JSX.Element {
   // stream-observation lane; Codex compacts via the thread/compact/start IPC,
   // whose card is appended main-side. Refs-only body so the callback identity
   // stays stable for the memoized composer prop bag.
-  const compactChatContext = useCallback(async (chatId: string | null): Promise<void> => {
-    const chat = chatId ? chatByIdRef.current.get(chatId) : null
-    if (!chat || isChatSummaryRecord(chat) || chat.chatKind === 'ensemble') return
-    const provider = getChatProvider(chat)
-    const sessionId = chat.linkedProviderSessionId
-    if (!sessionId) return
-    if (provider === 'codex') {
-      // Failure feedback arrives as the main-authored failed compaction card.
-      await window.api.compactProviderContext({
-        chatId: chat.appChatId,
-        provider: 'codex',
-        providerSessionId: sessionId
-      })
-      return
-    }
-    if (provider === 'claude') {
-      const request = buildRunRequestRef.current(undefined, undefined, {
-        chat,
-        prompt: '/compact',
-        // Review fix: never fold the composer's staged attachments into the
-        // compaction dispatch (buildRunRequest falls back to composer state).
-        imageAttachments: []
-      })
-      void executeRunRef.current({
-        ...request,
-        // Review fix: `/compact` must reach the CLI/SDK with the slash at
-        // position 0 — verbatim composition skips every prepend (runtime
-        // preamble, goal, recon steer, guest/sub-thread blocks) that would
-        // demote it to prose. Discord context rides the same rule.
-        verbatimPrompt: true,
-        discordContextSelection: undefined,
-        discordContextSnapshots: undefined,
-        preserveComposer: true
-      })
-    }
-  }, [])
+  const compactChatContext = useCallback(
+    async (chatId: string | null, trigger: 'manual' | 'auto' = 'manual'): Promise<void> => {
+      const chat = chatId ? chatByIdRef.current.get(chatId) : null
+      if (!chat || isChatSummaryRecord(chat) || chat.chatKind === 'ensemble') return
+      const provider = getChatProvider(chat)
+      const sessionId = chat.linkedProviderSessionId
+      if (provider === 'codex') {
+        if (!sessionId) return
+        // Failure feedback arrives as the main-authored failed compaction card.
+        await window.api.compactProviderContext({
+          chatId: chat.appChatId,
+          provider: 'codex',
+          providerSessionId: sessionId
+        })
+        return
+      }
+      if (provider === 'claude') {
+        if (!sessionId) return
+        const request = buildRunRequestRef.current(undefined, undefined, {
+          chat,
+          prompt: '/compact',
+          // Review fix: never fold the composer's staged attachments into the
+          // compaction dispatch (buildRunRequest falls back to composer state).
+          imageAttachments: []
+        })
+        void executeRunRef.current({
+          ...request,
+          // Review fix: `/compact` must reach the CLI/SDK with the slash at
+          // position 0 — verbatim composition skips every prepend (runtime
+          // preamble, goal, recon steer, guest/sub-thread blocks) that would
+          // demote it to prose. Discord context rides the same rule.
+          verbatimPrompt: true,
+          discordContextSelection: undefined,
+          discordContextSnapshots: undefined,
+          preserveComposer: true
+        })
+        return
+      }
+      if (provider === 'cursor' || provider === 'kimi') {
+        // Host-side fallback: no native lever exists, so compaction is a REAL
+        // summarize turn on the session, captured on exit by
+        // finalizeHostCompactionRun (stores chat.contextCompactionSummary,
+        // resets Cursor's provider session, appends the card). Cursor needs a
+        // session to summarize (its context lives provider-side); Kimi's
+        // context is the injected transcript, so it only needs material.
+        if (provider === 'cursor' && !sessionId) return
+        if (provider === 'kimi' && !(chat.messages || []).some((m) => m.role === 'assistant'))
+          return
+        if ([...pendingHostCompactionsRef.current.values()].some((p) => p.chatId === chat.appChatId))
+          return
+        const preTokens = currentContextTokens(chat.runs || [], {
+          liveOutputTokens: 0,
+          isRunning: false
+        })
+        const request = buildRunRequestRef.current(undefined, undefined, {
+          chat,
+          prompt: CONTEXT_COMPACTION_SUMMARY_PROMPT,
+          // Muscle-memory display: the transcript shows the familiar command,
+          // the provider receives the full summarize instruction.
+          displayPrompt: '/compact',
+          imageAttachments: []
+        })
+        const appRunId = request.appRunId || createAppRunId()
+        pendingHostCompactionsRef.current.set(appRunId, {
+          chatId: chat.appChatId,
+          provider,
+          trigger,
+          preTokens: preTokens > 0 ? preTokens : undefined,
+          startedAtMs: Date.now()
+        })
+        lastHostCompactionAttemptAtByChatIdRef.current.set(chat.appChatId, Date.now())
+        void executeRunRef.current({
+          ...request,
+          appRunId,
+          // Cursor's session holds the full context — send the instruction
+          // verbatim. Kimi's context IS the injected transcript, so the
+          // summarize turn must ride normal composition to see any material.
+          verbatimPrompt: provider === 'cursor',
+          discordContextSelection: undefined,
+          discordContextSnapshots: undefined,
+          preserveComposer: true
+        })
+      }
+    },
+    []
+  )
+  compactChatContextRef.current = compactChatContext
   const canCompactCurrentChatContext =
     !isCurrentEnsembleChat &&
     !isCurrentChatRunning &&
-    (currentProvider === 'claude' || currentProvider === 'codex') &&
-    Boolean(currentChat?.linkedProviderSessionId)
+    ((currentProvider === 'claude' || currentProvider === 'codex' || currentProvider === 'cursor'
+      ? Boolean(currentChat?.linkedProviderSessionId)
+      : currentProvider === 'kimi'
+        ? Boolean(currentChat?.messages?.some((m) => m.role === 'assistant'))
+        : false))
   const onCompactContext = useMemo(
     () =>
       canCompactCurrentChatContext
@@ -17119,6 +17337,41 @@ function App(): React.JSX.Element {
           }
         : undefined,
     [canCompactCurrentChatContext, compactChatContext, currentChatIdRef]
+  )
+  // Per-seat compaction (ensemble meter rows + /compact-selected): native
+  // claude/codex seats with a linked session, offered only while the round is
+  // idle. The main-side router re-checks round liveness authoritatively.
+  const compactableParticipantIds = useMemo(() => {
+    if (!isCurrentEnsembleChat || isCurrentChatRunning) return undefined
+    const ids = (currentChat?.ensemble?.participants || [])
+      .filter(
+        (participant) =>
+          participant.enabled !== false &&
+          (participant.provider === 'claude' || participant.provider === 'codex') &&
+          Boolean(participant.linkedProviderSessionId)
+      )
+      .map((participant) => participant.id)
+    return ids.length > 0 ? ids : undefined
+  }, [isCurrentEnsembleChat, isCurrentChatRunning, currentChat])
+  const onCompactParticipant = useMemo(
+    () =>
+      compactableParticipantIds
+        ? (participantId: string) => {
+            const chatId = currentChatIdRef.current
+            const chat = chatId ? chatByIdRef.current.get(chatId) : null
+            const participant = chat?.ensemble?.participants?.find(
+              (candidate) => candidate.id === participantId
+            )
+            if (!chat || !participant) return
+            // The failed/completed card is appended main-side either way.
+            void window.api.compactProviderContext({
+              chatId: chat.appChatId,
+              provider: participant.provider,
+              participantId
+            })
+          }
+        : undefined,
+    [compactableParticipantIds, currentChatIdRef]
   )
   // 1.0.5-EW25 — pass the user's display currency through so cost
   // numbers respect their Settings → General choice. Defaults to
@@ -20524,7 +20777,7 @@ function App(): React.JSX.Element {
       label: 'Compact context',
       description: isEnsembleChat
         ? 'Insert a context-summary request, or expand for ensemble-specific scopes.'
-        : provider === 'claude' || provider === 'codex'
+        : provider === 'claude' || provider === 'codex' || provider === 'cursor' || provider === 'kimi'
           ? 'Compact this chat’s provider session (summarize + shrink live context).'
           : 'Insert a concise context-summary request for this chat.',
       group: 'Custom',
@@ -20538,9 +20791,12 @@ function App(): React.JSX.Element {
         // would race the live turn).
         const canNativelyCompact =
           !isEnsembleChat &&
-          (provider === 'claude' || provider === 'codex') &&
-          Boolean(chat?.linkedProviderSessionId) &&
-          Boolean(chat?.appChatId && !runningChatIds.has(chat.appChatId))
+          Boolean(chat?.appChatId && !runningChatIds.has(chat.appChatId)) &&
+          (provider === 'claude' || provider === 'codex' || provider === 'cursor'
+            ? Boolean(chat?.linkedProviderSessionId)
+            : provider === 'kimi'
+              ? Boolean(chat?.messages?.some((m) => m.role === 'assistant'))
+              : false)
         if (canNativelyCompact && chat) {
           ctx.consumeSlashToken()
           void compactChatContext(chat.appChatId)
@@ -20581,14 +20837,35 @@ function App(): React.JSX.Element {
                   getProviderLabel(slashSelectedParticipant?.provider || provider)
                 }`
               : 'Selected participant context',
-            description: 'Insert a summary request scoped to the selected ensemble participant.',
+            description:
+              'Compact the selected seat’s provider session (claude/codex), or insert a scoped summary request.',
             group: 'Custom' as const,
-            run: (ctx: SlashCommandRunContext) =>
+            run: (ctx: SlashCommandRunContext) => {
+              // Native seat compaction where a real lever exists: a claude or
+              // codex participant with a linked session, round idle. The card
+              // (success or failure) is appended main-side, which also
+              // re-checks round liveness authoritatively.
+              const seat = slashSelectedParticipant
+              const canNativelyCompactSeat =
+                Boolean(seat) &&
+                (seat!.provider === 'claude' || seat!.provider === 'codex') &&
+                Boolean(seat!.linkedProviderSessionId) &&
+                Boolean(chat?.appChatId && !runningChatIds.has(chat.appChatId))
+              if (canNativelyCompactSeat && chat && seat) {
+                ctx.consumeSlashToken()
+                void window.api.compactProviderContext({
+                  chatId: chat.appChatId,
+                  provider: seat.provider,
+                  participantId: seat.id
+                })
+                return
+              }
               insertSlashScaffold(
                 ctx,
                 /^\/compact-selected\b/i,
                 'Create a compact context summary for the selected participant only. Capture that participant’s role, relevant prior statements, assigned tasks, constraints, open questions, and next action. Do not reset or alter other participants’ context.\n\n'
               )
+            }
           }
         ]
       : []),
@@ -21777,6 +22054,8 @@ function App(): React.JSX.Element {
       // The base's compact-now handler targets the FOCUSED chat; a pane's
       // popover must never compact a different chat. Hidden in panes for now.
       onCompactContext: undefined,
+      onCompactParticipant: undefined,
+      compactableParticipantIds: undefined,
       // ── per-chat identity / display ──
       prompt: composerDraftsByChatId[viewerChatId] || '',
       // Non-focused panes only exist when multiview is split, so always hide the
@@ -22208,6 +22487,8 @@ function App(): React.JSX.Element {
       contextMeter,
       contextUsedPercent,
       onCompactContext,
+      onCompactParticipant,
+      compactableParticipantIds,
       currentChatIdRef,
       currentComposerMentionParticipants,
       currentDiscordContextSelection,
@@ -22350,6 +22631,8 @@ function App(): React.JSX.Element {
       contextMeter,
       contextUsedPercent,
       onCompactContext,
+      onCompactParticipant,
+      compactableParticipantIds,
       currentChatIdRef,
       currentComposerMentionParticipants,
       currentDiscordContextSelection,
@@ -22868,6 +23151,8 @@ function App(): React.JSX.Element {
         // The base's compact-now handler targets the FOCUSED chat; a pane's
         // popover must never compact a different chat. Hidden in panes for now.
         onCompactContext: undefined,
+        onCompactParticipant: undefined,
+        compactableParticipantIds: undefined,
         // ── per-chat identity / display ──
         prompt: composerDraftsByChatId[viewerChatId] || '',
         // Non-focused panes only exist when multiview is split, so always hide the

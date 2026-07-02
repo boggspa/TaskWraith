@@ -1293,6 +1293,7 @@ declare global {
         chatId: string
         provider: string
         providerSessionId?: string
+        participantId?: string
       }) => Promise<{ ok: boolean; error?: string }>
       cancelEnsembleParticipantWakeup: (
         wakeupId: string

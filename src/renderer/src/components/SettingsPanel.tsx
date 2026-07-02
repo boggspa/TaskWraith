@@ -154,6 +154,7 @@ interface SettingsPanelProps {
   currencyOverestimatePercent?: number
   /** Settings → General toggle for Task Complete / Final Summary cards. */
   showRunCompleteSummary?: AppSettings['showRunCompleteSummary']
+  hostAutoCompactEnabled?: AppSettings['hostAutoCompactEnabled']
   /** Settings → General toggle: collapse older Ensemble rounds into cards. */
   ensembleCollapseOlderRounds?: AppSettings['ensembleCollapseOlderRounds']
   /**
@@ -268,6 +269,7 @@ interface SettingsPanelProps {
     currencyOverestimatePercent?: number
     /** Settings → General toggle for Task Complete / Final Summary cards. */
     showRunCompleteSummary?: AppSettings['showRunCompleteSummary']
+    hostAutoCompactEnabled?: AppSettings['hostAutoCompactEnabled']
     /** Settings → General toggle: collapse older Ensemble rounds into cards. */
     ensembleCollapseOlderRounds?: AppSettings['ensembleCollapseOlderRounds']
     /**
@@ -2914,6 +2916,7 @@ export function SettingsPanel({
   currency,
   currencyOverestimatePercent,
   showRunCompleteSummary,
+  hostAutoCompactEnabled,
   ensembleCollapseOlderRounds,
   dashboardStatPrefs,
   welcomeHeatmapPrefs,
@@ -4979,6 +4982,23 @@ export function SettingsPanel({
                 <p className="settings-hint">
                   Controls the Final Summary / Task Complete section after a run finishes. Turning
                   this off hides the completion card while keeping the transcript and run telemetry.
+                </p>
+              </div>
+
+              <div className="settings-group">
+                <label className="settings-checkbox">
+                  <input
+                    type="checkbox"
+                    checked={hostAutoCompactEnabled !== false}
+                    onChange={(e) => onChange({ hostAutoCompactEnabled: e.target.checked })}
+                  />
+                  <span>Auto-compact Cursor / Kimi context</span>
+                </label>
+                <p className="settings-hint">
+                  When a Cursor or Kimi chat crosses ~90% of its context window after a turn,
+                  TaskWraith runs a visible summarize turn and compacts the session automatically
+                  (a “Context compacted” card records it). Claude and Codex compact natively and
+                  are unaffected. Manual /compact stays available either way.
                 </p>
               </div>
 

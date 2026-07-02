@@ -173,8 +173,12 @@ export interface ComposerProps {
   contextModelId: any
   contextUsedPercent: any
   /** Provider-native "compact now" for this chat's linked session (solo
-   * claude/codex, idle). Undefined hides the popover's compact button. */
+   * chats, idle). Undefined hides the popover's compact button. */
   onCompactContext?: () => void
+  /** Per-seat compaction for ensemble participant rows in the meter popover
+   * (native claude/codex seats, round idle). */
+  onCompactParticipant?: (participantId: string) => void
+  compactableParticipantIds?: readonly string[]
   cumulativeRunBaseMs: any
   currentActiveGoal: any
   currentChat: any
@@ -475,6 +479,8 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     contextLabel,
     contextMeter,
     onCompactContext,
+    onCompactParticipant,
+    compactableParticipantIds,
     contextModelId,
     contextUsedPercent,
     cumulativeRunBaseMs,
@@ -3583,6 +3589,8 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                   provider={currentProvider}
                                   composerStyle={appearance.composerStyle}
                                   onCompactContext={onCompactContext}
+                                  onCompactParticipant={onCompactParticipant}
+                                  compactableParticipantIds={compactableParticipantIds}
                                 />
                               )}
                               {participantSeatMutation?.queueAtTurnEnd && (
@@ -4059,6 +4067,8 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             provider={currentProvider}
                             composerStyle={appearance.composerStyle}
                             onCompactContext={onCompactContext}
+                            onCompactParticipant={onCompactParticipant}
+                            compactableParticipantIds={compactableParticipantIds}
                           />
                         )}
                         {steerIndicatorMessage && (

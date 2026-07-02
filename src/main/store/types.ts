@@ -1662,6 +1662,12 @@ export interface AppSettings {
    * cards. Defaults to true; optional so older settings files keep showing the
    * card until the user explicitly disables it. */
   showRunCompleteSummary?: boolean
+  /** Settings → General toggle for host auto-compaction: when a Cursor/Kimi
+   * solo chat crosses ~90% context after a turn, the host dispatches a
+   * summarize turn and compacts the session automatically (Claude/Codex
+   * self-compact natively and are unaffected). Defaults to true; the
+   * summarize turn is a real, visible provider run. */
+  hostAutoCompactEnabled?: boolean
   /** Settings → General toggle: collapse older Ensemble rounds into
    * expandable round cards in the transcript (the most recent / active
    * round stays expanded). Defaults to true; optional so older settings
@@ -2486,6 +2492,25 @@ export interface ChatRecord {
   /** Per-thread markdown notes shown above this chat's pinned messages. */
   pinnedNotes?: string
   linkedProviderSessionId?: string
+  /**
+   * Host-side context compaction (src/shared/contextCompaction.ts) — the
+   * stored session summary for providers with no native compaction lever.
+   * Cursor: written when the host summarize-and-reset flow completes (the
+   * session id above is cleared so the next turn starts fresh and
+   * composeRunPrompt injects this block once). Kimi: written without a
+   * session reset (its cross-turn context is injection-bounded); the block
+   * upgrades the lossy recent-transcript window, and messages at/before
+   * `coversThroughTimestamp` drop out of future transcript injection.
+   */
+  contextCompactionSummary?: {
+    text: string
+    createdAt: string
+    provider: ProviderId
+    /** Context occupancy (tokens) of the session when the summary was taken. */
+    preTokens?: number
+    /** Transcript messages at/before this are covered by `text`. */
+    coversThroughTimestamp?: string
+  }
   providerMetadata?: Record<string, unknown>
   linkedGeminiSessionId?: string
   activeGoal?: ActiveGoal

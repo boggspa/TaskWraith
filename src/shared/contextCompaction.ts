@@ -161,6 +161,33 @@ export function codexContextCompactionItemId(item: unknown): string | undefined 
 export const CONTEXT_PRESSURE_WARN_PERCENT = 80
 export const CONTEXT_PRESSURE_CRITICAL_PERCENT = 95
 
+/**
+ * Host auto-compaction trigger for providers with no native lever
+ * (Cursor/Kimi). Sits between warn and critical: past the warn band (so we
+ * don't compact eagerly and grind away detail) but with ~10% of the window
+ * still free — the summarize turn itself needs headroom to run.
+ */
+export const CONTEXT_AUTO_COMPACT_PERCENT = 90
+
+/** One host auto-compaction attempt per chat per window — breaks retry loops
+ * when the summarize turn itself keeps failing. */
+export const CONTEXT_AUTO_COMPACT_COOLDOWN_MS = 10 * 60 * 1000
+
+// ── Host-side fallback compaction (Cursor/Kimi) ─────────────────────────────
+
+/**
+ * The summarize instruction dispatched as a REAL turn when the host compacts
+ * a session for providers with no native `/compact` equivalent. Shares copy
+ * with the composer's `/compact` prompt template so both lanes converge on
+ * the same summary shape.
+ */
+export const CONTEXT_COMPACTION_SUMMARY_PROMPT =
+  'Create a compact context summary for continuing this chat. Preserve decisions, constraints, open tasks, changed files, risks, and next actions. Do not omit unresolved questions or verification state.'
+
+/** Stored-summary size cap — the block is re-injected into future prompts, so
+ * it must stay well under every provider's context-injection budget. */
+export const CONTEXT_COMPACTION_SUMMARY_MAX_CHARS = 8_000
+
 export type ContextPressureSeverity = 'ok' | 'warn' | 'critical'
 
 export function contextPressureSeverity(percent: number): ContextPressureSeverity {

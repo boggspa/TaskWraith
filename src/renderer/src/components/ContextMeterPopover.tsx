@@ -26,11 +26,18 @@ interface ContextMeterPopoverProps {
   disabled?: boolean
   /**
    * "Compact context now" — provider-native session compaction for the chat
-   * (Claude `/compact` run / Codex thread/compact/start). Present only when
-   * the chat can compact (solo claude/codex with a linked session, idle);
-   * the button renders once context pressure reaches warn.
+   * (Claude `/compact` run / Codex thread/compact/start / Cursor-Kimi host
+   * summarize turn). Present only when the chat can compact (solo chat with
+   * compactable state, idle); the button renders once pressure reaches warn.
    */
   onCompactContext?: () => void
+  /**
+   * Per-seat compaction for ensemble participant rows (native claude/codex
+   * seats with a linked session, round idle). Rows outside
+   * `compactableParticipantIds` render no button.
+   */
+  onCompactParticipant?: (participantId: string) => void
+  compactableParticipantIds?: readonly string[]
 }
 
 interface RowView {
@@ -47,9 +54,7 @@ function toRowView(row: ContextMeterRow, isParticipant: boolean): RowView {
   const providerName = getProviderName(row.provider)
   const model = humaniseModelIdCompact(row.provider, row.modelId)
   const primary = isParticipant ? row.role?.trim() || providerName : providerName
-  const detail = isParticipant
-    ? [providerName, model].filter(Boolean).join(' · ')
-    : model
+  const detail = isParticipant ? [providerName, model].filter(Boolean).join(' · ') : model
   return {
     id: row.id,
     primary,
@@ -61,12 +66,21 @@ function toRowView(row: ContextMeterRow, isParticipant: boolean): RowView {
   }
 }
 
-function MeterRow({ row, focused }: { row: RowView; focused?: boolean }): React.JSX.Element {
+function MeterRow({
+  row,
+  focused,
+  onCompact
+}: {
+  row: RowView
+  focused?: boolean
+  onCompact?: () => void
+}): React.JSX.Element {
   const accent = `var(--provider-${row.provider}-color, var(--accent))`
   const pctText = `${Math.round(row.percent)}%`
-  const amount = row.windowTokens > 0
-    ? `${formatContextTokens(row.usedTokens)} / ${formatContextTokens(row.windowTokens)}`
-    : formatContextTokens(row.usedTokens)
+  const amount =
+    row.windowTokens > 0
+      ? `${formatContextTokens(row.usedTokens)} / ${formatContextTokens(row.windowTokens)}`
+      : formatContextTokens(row.usedTokens)
   const severity = contextPressureSeverity(row.percent)
   return (
     <div
@@ -78,6 +92,16 @@ function MeterRow({ row, focused }: { row: RowView; focused?: boolean }): React.
         <span className="context-meter-row-dot" style={{ background: accent }} aria-hidden />
         <span className="context-meter-row-primary">{row.primary}</span>
         {row.detail && <span className="context-meter-row-detail">{row.detail}</span>}
+        {onCompact && (
+          <button
+            type="button"
+            className="context-meter-row-compact-button"
+            title={`Compact ${row.primary}'s session context`}
+            onClick={onCompact}
+          >
+            Compact
+          </button>
+        )}
         <span className="context-meter-row-pct">{pctText}</span>
       </div>
       <div
@@ -105,7 +129,9 @@ export function ContextMeterPopover({
   provider,
   composerStyle,
   disabled,
-  onCompactContext
+  onCompactContext,
+  onCompactParticipant,
+  compactableParticipantIds
 }: ContextMeterPopoverProps): React.JSX.Element {
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const popoverRef = useRef<HTMLDivElement | null>(null)
@@ -164,9 +190,10 @@ export function ContextMeterPopover({
     }
   }, [open])
 
-  const participantRows = meter?.participants && meter.participants.length > 0
-    ? meter.participants.map((row) => toRowView(row, true))
-    : null
+  const participantRows =
+    meter?.participants && meter.participants.length > 0
+      ? meter.participants.map((row) => toRowView(row, true))
+      : null
   const rows: RowView[] = participantRows ?? (meter ? [toRowView(meter.solo, false)] : [])
   const roundedPercent = Math.round(percent)
   const isCursorShell = composerStyle === 'cursor'
@@ -191,7 +218,19 @@ export function ContextMeterPopover({
       </div>
       <div className="context-meter-rows">
         {rows.map((row) => (
-          <MeterRow key={row.id} row={row} focused={!!meter?.focusedId && row.id === meter.focusedId} />
+          <MeterRow
+            key={row.id}
+            row={row}
+            focused={!!meter?.focusedId && row.id === meter.focusedId}
+            onCompact={
+              participantRows && onCompactParticipant && compactableParticipantIds?.includes(row.id)
+                ? () => {
+                    setOpen(false)
+                    onCompactParticipant(row.id)
+                  }
+                : undefined
+            }
+          />
         ))}
       </div>
       <div className="context-meter-foot">

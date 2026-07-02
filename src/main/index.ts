@@ -202,6 +202,8 @@ import {
   type ContextCompactionSignal,
   type ContextCompactionTelemetry
 } from '../shared/contextCompaction'
+import { isEnsembleRoundDispatchLive } from '../shared/ensembleRoundLifecycle'
+import { resolveHealthEntryPresentation } from '../shared/ollamaBrandTable'
 import {
   CODEX_REVIEW_TOOL_NAME,
   codexReviewCompletionTelemetry,
@@ -14062,16 +14064,21 @@ function handleCodexManualCompactionNotification(message: any): void {
 function appendContextCompactionMessageToChat(
   chatId: string,
   signal: ContextCompactionSignal,
-  idFallbackScope: string
+  idFallbackScope: string,
+  extraMetadata?: Record<string, unknown>
 ): boolean {
   const chat = AppStore.getChat(chatId)
   if (!chat) return false
   const messageId = contextCompactionMessageId(signal.telemetry, idFallbackScope)
   if (chat.messages.some((message) => message.id === messageId)) return false
   const provider = (signal.telemetry.provider || chat.provider) as ProviderId | undefined
+  const participantLabel =
+    typeof extraMetadata?.displayParticipantLabel === 'string'
+      ? extraMetadata.displayParticipantLabel
+      : undefined
   const summary = formatContextCompactionSummary(
     signal,
-    provider ? providerLabel(provider) : undefined
+    participantLabel || (provider ? providerLabel(provider) : undefined)
   )
   const updated: ChatRecord = {
     ...chat,
@@ -14088,7 +14095,8 @@ function appendContextCompactionMessageToChat(
             kind: signal.kind,
             telemetry: signal.telemetry
           },
-          ...(provider ? { provider } : {})
+          ...(provider ? { provider } : {}),
+          ...(extraMetadata || {})
         }
       }
     ],
@@ -14111,6 +14119,9 @@ function appendContextCompactionMessageToChat(
 async function compactCodexProviderContext(payload: {
   chatId: string
   providerSessionId?: string
+  /** Frozen ensemble-participant presentation for the card (see
+   * resolveEnsembleCompactionTarget); absent on solo chats. */
+  cardMetadata?: Record<string, unknown>
 }): Promise<{ ok: boolean; error?: string }> {
   const chat = AppStore.getChat(payload.chatId)
   if (!chat) return { ok: false, error: 'Chat not found.' }
@@ -14209,7 +14220,8 @@ async function compactCodexProviderContext(payload: {
   appendContextCompactionMessageToChat(
     payload.chatId,
     signal,
-    `manual-${threadId}-${startedAtMs}`
+    `manual-${threadId}-${startedAtMs}`,
+    payload.cardMetadata
   )
   const lastRunId = [...(chat.runs || [])].reverse().find((run) => run?.runId)?.runId
   if (lastRunId) {
@@ -14223,6 +14235,173 @@ async function compactCodexProviderContext(payload: {
     )
   }
   return result
+}
+
+/**
+ * Host-triggered Claude context compaction for sessions that can't ride a
+ * normal run — ensemble participant seats. A maintenance-lane SDK call, NOT an
+ * agent run: no run registry, no transcript streaming, tools hard-denied
+ * (plan permission mode + deny-all canUseTool; `/compact` is provider-internal
+ * and never calls tools). Emits only the compaction card + durable event.
+ * Solo Claude chats keep the visible `/compact` run lane instead.
+ */
+const activeClaudeManualCompactions = new Set<string>()
+async function compactClaudeProviderContext(payload: {
+  chatId: string
+  providerSessionId: string
+  model?: string
+  cardMetadata?: Record<string, unknown>
+}): Promise<{ ok: boolean; error?: string }> {
+  const chat = AppStore.getChat(payload.chatId)
+  if (!chat) return { ok: false, error: 'Chat not found.' }
+  if (activeClaudeManualCompactions.has(payload.providerSessionId)) {
+    return { ok: false, error: 'A compaction is already in progress for this session.' }
+  }
+  const sdk = await loadOptionalClaudeSdk()
+  if (!sdk?.query) {
+    return { ok: false, error: 'Claude Agent SDK is unavailable — cannot compact this seat.' }
+  }
+  activeClaudeManualCompactions.add(payload.providerSessionId)
+  const startedAtMs = Date.now()
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 180_000)
+  let observed: ContextCompactionSignal | null = null
+  let streamError: string | undefined
+  try {
+    const model = normalizeCliProviderModel('claude', payload.model)
+    const stream = sdk.query({
+      prompt: '/compact',
+      options: {
+        cwd: chat.workspacePath || globalRunCwd(),
+        ...(model && model !== 'default' ? { model } : {}),
+        permissionMode: 'plan',
+        resume: payload.providerSessionId,
+        abortController: controller,
+        canUseTool: async () => ({
+          behavior: 'deny' as const,
+          message: 'Compaction turns run tool-free.'
+        })
+      }
+    })
+    for await (const message of stream) {
+      const signal = normalizeClaudeContextCompactionEvent(message)
+      if (!signal) continue
+      if (signal.kind === 'completed') observed = signal
+      else if (signal.kind === 'failed' && !observed) observed = signal
+    }
+  } catch (error) {
+    streamError = error instanceof Error ? error.message : String(error)
+  } finally {
+    clearTimeout(timer)
+    activeClaudeManualCompactions.delete(payload.providerSessionId)
+  }
+  const signal: ContextCompactionSignal =
+    observed && observed.kind === 'completed'
+      ? observed
+      : (observed ?? {
+          kind: 'failed',
+          telemetry: {
+            error: streamError || 'Claude did not report a compaction for this session.'
+          }
+        })
+  signal.telemetry = {
+    ...signal.telemetry,
+    provider: 'claude',
+    trigger: signal.telemetry.trigger || 'manual',
+    durationMs: signal.telemetry.durationMs ?? Date.now() - startedAtMs
+  }
+  appendContextCompactionMessageToChat(
+    payload.chatId,
+    signal,
+    `manual-claude-${payload.providerSessionId}-${startedAtMs}`,
+    payload.cardMetadata
+  )
+  const lastRunId = [...(chat.runs || [])].reverse().find((run) => run?.runId)?.runId
+  if (lastRunId) {
+    appendDurableRunEventForRoute(
+      'claude',
+      { appRunId: lastRunId, appChatId: payload.chatId },
+      'context_compaction',
+      'control',
+      formatContextCompactionSummary(signal, providerLabel('claude')),
+      { compaction: signal, manual: true }
+    )
+  }
+  return signal.kind === 'completed'
+    ? { ok: true }
+    : { ok: false, error: signal.telemetry.error }
+}
+
+/**
+ * Unified entry for the `compact-provider-context` IPC. Solo chats compact
+ * the chat's own linked session; ensemble requests name a participant, whose
+ * seat session + frozen presentation labels are resolved here (rounds must be
+ * idle — compacting under a live round would race the orchestrator's
+ * dispatch/flush cycle).
+ */
+async function compactProviderContextForRequest(payload: {
+  chatId: string
+  provider: 'claude' | 'codex'
+  providerSessionId?: string
+  participantId?: string
+}): Promise<{ ok: boolean; error?: string }> {
+  let providerSessionId = payload.providerSessionId
+  let model: string | undefined
+  let cardMetadata: Record<string, unknown> | undefined
+  if (payload.participantId) {
+    const chat = AppStore.getChat(payload.chatId)
+    if (!chat?.ensemble) {
+      return { ok: false, error: 'Participant compaction requires an ensemble chat.' }
+    }
+    if (isEnsembleRoundDispatchLive(chat.ensemble.activeRound)) {
+      return {
+        ok: false,
+        error: 'A round is live — wait for the panel to finish before compacting a seat.'
+      }
+    }
+    const participant = (chat.ensemble.participants || []).find(
+      (candidate) => candidate.id === payload.participantId
+    )
+    if (!participant) return { ok: false, error: 'Participant not found on this ensemble.' }
+    if (participant.provider !== payload.provider) {
+      return { ok: false, error: 'Participant provider does not match the request.' }
+    }
+    if (!participant.linkedProviderSessionId) {
+      return {
+        ok: false,
+        error: 'This participant has no provider session yet — it must speak first.'
+      }
+    }
+    providerSessionId = participant.linkedProviderSessionId
+    model = participant.model
+    const presentation = resolveHealthEntryPresentation(
+      participant.provider,
+      participant.model,
+      providerLabel(participant.provider)
+    )
+    const role = (participant.role || 'Participant').trim()
+    cardMetadata = {
+      ensembleParticipantId: participant.id,
+      displayParticipantLabel: `${presentation.displayProviderLabel} / ${role}`,
+      displayHueClass: presentation.displayHueClass
+    }
+  }
+  if (payload.provider === 'claude') {
+    if (!providerSessionId) {
+      return { ok: false, error: 'This chat has no Claude session to compact yet.' }
+    }
+    return compactClaudeProviderContext({
+      chatId: payload.chatId,
+      providerSessionId,
+      model,
+      cardMetadata
+    })
+  }
+  return compactCodexProviderContext({
+    chatId: payload.chatId,
+    providerSessionId,
+    cardMetadata
+  })
 }
 
 function handleCodexNotification(message: any) {
@@ -29593,7 +29772,7 @@ if (isGeminiMcpBridgeProcess) {
     })
 
     registerContextCompactionHandlers({
-      compactCodexProviderContext,
+      compactProviderContext: compactProviderContextForRequest,
       requireNonEmptyString
     })
 

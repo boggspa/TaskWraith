@@ -555,6 +555,21 @@ export interface ComposeRunPromptInput {
    * prose instead of executing the command.
    */
   verbatimPrompt?: boolean
+  /**
+   * Host-side compaction summary stored on the chat (ChatRecord field of the
+   * same name). Injected as a "Prior session summary" block for providers
+   * whose cross-turn context is host-fed: Cursor only on a FRESH session (the
+   * compaction flow cleared the session id; once the new session resumes
+   * natively its own history carries the summary), Kimi/Grok on every turn
+   * (their context IS the injected block). Messages at/before
+   * `coversThroughTimestamp` drop out of the recent-transcript injection so
+   * the two blocks never double-cover.
+   */
+  contextCompactionSummary?: {
+    text: string
+    createdAt: string
+    coversThroughTimestamp?: string
+  } | null
 }
 
 export interface ComposeRunPromptResult {
@@ -666,6 +681,24 @@ export function composeRunPrompt(input: ComposeRunPromptInput): ComposeRunPrompt
     codexPreviousModelKey &&
     codexNextModelKey &&
     codexPreviousModelKey !== codexNextModelKey
+  // Host-side compaction summary (see the input doc). Filter the covered
+  // messages out of transcript injection FIRST so the summary block and the
+  // recent-transcript block never double-cover the same turns.
+  const compactionSummary = input.contextCompactionSummary || null
+  const compactionBoundaryMs = compactionSummary?.coversThroughTimestamp
+    ? Date.parse(compactionSummary.coversThroughTimestamp)
+    : Number.NaN
+  const contextMessages = Number.isFinite(compactionBoundaryMs)
+    ? messages.filter((message) => {
+        const at = Date.parse(message.timestamp)
+        return !Number.isFinite(at) || at > compactionBoundaryMs
+      })
+    : messages
+  const compactionSummaryBlock =
+    compactionSummary?.text &&
+    (provider === 'kimi' || provider === 'grok' || (provider === 'cursor' && !resumeSessionId))
+      ? `Prior session summary (context was compacted ${compactionSummary.createdAt}):\n${compactionSummary.text}`
+      : ''
   const kimiNeedsContextInjection = provider === 'kimi'
   // Grok over its DEFAULT ACP transport opens a fresh `session/new` every turn
   // and never resumes prior history (there is no ACP `session/load`; the headless
@@ -702,13 +735,23 @@ export function composeRunPrompt(input: ComposeRunPromptInput): ComposeRunPrompt
     shouldAppendContextForRun
       ? appendConversationContext(
           finalPrompt,
-          messages,
+          contextMessages,
           contextTurnsApplied,
           finalPrompt,
           contextBudget
         )
       : finalPrompt
   )
+  // Prior-session compaction summary — sits ABOVE the recent-transcript block
+  // (older material first). When a transcript block was injected the prompt
+  // already carries the "Current user request" marker, so a plain prefix keeps
+  // the ordering summary → recent transcript → request; otherwise wrap the
+  // bare prompt with the marker so downstream inserts (goal) stay anchored.
+  if (compactionSummaryBlock) {
+    contextualPrompt = contextualPrompt.includes('Current user request:\n')
+      ? `${compactionSummaryBlock}\n\n${contextualPrompt}`
+      : `${compactionSummaryBlock}\n\nCurrent user request:\n${contextualPrompt}`
+  }
   const activeGoalContext = shouldInjectActiveGoal(input.activeGoal)
     ? formatActiveGoalPromptBlock(input.activeGoal)
     : ''
@@ -716,10 +759,7 @@ export function composeRunPrompt(input: ComposeRunPromptInput): ComposeRunPrompt
     if (!activeGoalContext) return prompt
     const currentRequestMarker = `Current user request:\n${finalPrompt}`
     if (prompt.includes(currentRequestMarker)) {
-      return prompt.replace(
-        currentRequestMarker,
-        `${activeGoalContext}\n\n${currentRequestMarker}`
-      )
+      return prompt.replace(currentRequestMarker, `${activeGoalContext}\n\n${currentRequestMarker}`)
     }
     return `${activeGoalContext}\n\nCurrent user request:\n${prompt}`
   }
@@ -774,6 +814,9 @@ export function composeRunPrompt(input: ComposeRunPromptInput): ComposeRunPrompt
   contextualPrompt = injectActiveGoalContext(contextualPrompt)
   if (activeGoalContext) {
     applicationLog = `${applicationLog}; active goal injected`
+  }
+  if (compactionSummaryBlock) {
+    applicationLog = `${applicationLog}; prior-session compaction summary injected`
   }
 
   // (3) Write-capable cloud/runtime preamble. Keep this compact and invariant:

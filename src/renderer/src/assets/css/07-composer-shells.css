@@ -4391,3 +4391,23 @@
 .context-meter-compact-button:hover {
   background: color-mix(in srgb, #f0a93f 22%, transparent);
 }
+/* Per-participant seat compaction — quieter than the footer CTA (it appears
+ * on every compactable row, pressure or not, so it must not shout). */
+.context-meter-row-compact-button {
+  margin-left: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--panel-border) 70%, transparent);
+  background: color-mix(in srgb, var(--surface-base) 55%, transparent);
+  color: var(--text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+.context-meter-row-compact-button:hover {
+  border-color: color-mix(in srgb, #f0a93f 55%, var(--panel-border));
+  background: color-mix(in srgb, #f0a93f 12%, transparent);
+  color: var(--text-primary);
+}

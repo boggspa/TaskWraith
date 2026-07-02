@@ -994,11 +994,14 @@ const api = {
   wakeEnsembleParticipantNow: (wakeupId: string) =>
     ipcRenderer.invoke('wake-ensemble-participant-now', wakeupId) as Promise<boolean>,
   // Provider-native "compact now" for a chat's linked provider session
-  // (Codex thread/compact/start; Claude compacts via a normal `/compact` run).
+  // (Codex thread/compact/start; solo Claude compacts via a normal `/compact`
+  // run instead). With `participantId`, targets one ensemble seat's session
+  // (Claude seats use the main-side maintenance lane).
   compactProviderContext: (payload: {
     chatId: string
     provider: string
     providerSessionId?: string
+    participantId?: string
   }) =>
     ipcRenderer.invoke('compact-provider-context', payload) as Promise<{
       ok: boolean

@@ -323,6 +323,7 @@ export class ComposerService {
     const composed = composeRunPrompt({
       provider,
       verbatimPrompt: input.verbatimPrompt === true,
+      contextCompactionSummary: chat.contextCompactionSummary || null,
       finalPrompt: contextualFinalPrompt,
       messages: chat.messages || [],
       chatContextTurns: settings.chatContextTurns,

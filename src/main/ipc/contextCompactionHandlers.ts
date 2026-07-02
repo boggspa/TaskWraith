@@ -2,14 +2,17 @@ import { ipcMain } from 'electron'
 
 export interface ContextCompactionHandlersDeps {
   /**
-   * Drive a provider-native "compact now" for a chat's linked provider session.
-   * Currently Codex-only (`thread/compact/start` on the persistent app-server);
-   * Claude manual compaction is dispatched renderer-side as a normal `/compact`
-   * run, so it never reaches this channel.
+   * Drive a provider-native "compact now" for a chat's linked provider
+   * session, or — when `participantId` is set — for one ensemble seat's
+   * session (Codex `thread/compact/start`; Claude via the maintenance-lane
+   * SDK `/compact` call). Solo Claude chats compact through a normal
+   * `/compact` run renderer-side and never reach this channel.
    */
-  compactCodexProviderContext: (payload: {
+  compactProviderContext: (payload: {
     chatId: string
+    provider: 'claude' | 'codex'
     providerSessionId?: string
+    participantId?: string
   }) => Promise<{ ok: boolean; error?: string }>
   requireNonEmptyString: (value: unknown, label: string) => string
 }
@@ -19,18 +22,27 @@ export function registerContextCompactionHandlers(deps: ContextCompactionHandler
     'compact-provider-context',
     async (
       _event,
-      payload?: { chatId?: string; provider?: string; providerSessionId?: string }
+      payload?: {
+        chatId?: string
+        provider?: string
+        providerSessionId?: string
+        participantId?: string
+      }
     ): Promise<{ ok: boolean; error?: string }> => {
       const chatId = deps.requireNonEmptyString(payload?.chatId, 'Chat id')
       const provider = deps.requireNonEmptyString(payload?.provider, 'Provider')
-      if (provider !== 'codex') {
+      if (provider !== 'codex' && provider !== 'claude') {
         return { ok: false, error: `Manual context compaction is not supported for ${provider}.` }
       }
       const providerSessionId =
         typeof payload?.providerSessionId === 'string' && payload.providerSessionId.trim()
           ? payload.providerSessionId.trim()
           : undefined
-      return deps.compactCodexProviderContext({ chatId, providerSessionId })
+      const participantId =
+        typeof payload?.participantId === 'string' && payload.participantId.trim()
+          ? payload.participantId.trim()
+          : undefined
+      return deps.compactProviderContext({ chatId, provider, providerSessionId, participantId })
     }
   )
 }

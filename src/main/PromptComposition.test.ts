@@ -971,3 +971,84 @@ describe('composeRunPrompt ollama workflow-hint intent', () => {
     expect(result.contextualPrompt).toContain('When the plan is ready, ask the user')
   })
 })
+
+describe('composeRunPrompt host-compaction summary injection', () => {
+  const summary = {
+    text: 'Decisions: ship slice 1. Open task: wire tests.',
+    createdAt: '2026-07-02T10:00:00Z',
+    coversThroughTimestamp: '2026-07-02T10:00:00Z'
+  }
+  const coveredTurn = message({
+    id: 'covered',
+    role: 'assistant',
+    content: 'OLD covered detail from before the compaction.',
+    timestamp: '2026-07-01T09:00:00Z'
+  })
+  const freshTurn = message({
+    id: 'fresh',
+    role: 'assistant',
+    content: 'FRESH detail after the compaction.',
+    timestamp: '2026-07-02T11:00:00Z'
+  })
+
+  it('injects the summary above the transcript block for Kimi and filters covered turns', () => {
+    const result = composeRunPrompt({
+      provider: 'kimi',
+      finalPrompt: 'Continue the work.',
+      messages: [coveredTurn, freshTurn],
+      chatContextTurns: 6,
+      codexHandoffsApplied: [],
+      isGlobalRun: false,
+      approvalMode: 'default',
+      providerLabel: 'Kimi',
+      contextCompactionSummary: summary
+    })
+    expect(result.contextualPrompt).toContain('Prior session summary (context was compacted')
+    expect(result.contextualPrompt).toContain('Decisions: ship slice 1.')
+    expect(result.contextualPrompt).toContain('FRESH detail after the compaction.')
+    // Covered by the summary → dropped from transcript injection.
+    expect(result.contextualPrompt).not.toContain('OLD covered detail')
+    // Ordering: summary block sits above the recent transcript.
+    expect(result.contextualPrompt.indexOf('Prior session summary')).toBeLessThan(
+      result.contextualPrompt.indexOf('FRESH detail')
+    )
+    expect(result.applicationLog).toContain('prior-session compaction summary injected')
+  })
+
+  it('injects for Cursor only on a fresh session (post-reset), never on resume', () => {
+    const base = {
+      provider: 'cursor' as const,
+      finalPrompt: 'Continue the work.',
+      messages: [freshTurn],
+      chatContextTurns: 6,
+      codexHandoffsApplied: [],
+      isGlobalRun: false,
+      approvalMode: 'default',
+      providerLabel: 'Cursor',
+      contextCompactionSummary: summary
+    }
+    const fresh = composeRunPrompt(base)
+    expect(fresh.contextualPrompt).toContain('Prior session summary')
+    expect(fresh.contextualPrompt).toContain('Current user request:\nContinue the work.')
+    // Once the new session resumes natively, its own history carries the
+    // summary — no re-injection.
+    const resumed = composeRunPrompt({ ...base, resumeSessionId: 'cursor-session-2' })
+    expect(resumed.contextualPrompt).not.toContain('Prior session summary')
+  })
+
+  it('never injects into a verbatim slash dispatch', () => {
+    const result = composeRunPrompt({
+      provider: 'kimi',
+      finalPrompt: '/compact',
+      messages: [freshTurn],
+      chatContextTurns: 6,
+      codexHandoffsApplied: [],
+      isGlobalRun: false,
+      approvalMode: 'default',
+      providerLabel: 'Kimi',
+      verbatimPrompt: true,
+      contextCompactionSummary: summary
+    })
+    expect(result.contextualPrompt).toBe('/compact')
+  })
+})
