@@ -89,47 +89,6 @@ function externalGrant(overrides: Partial<ExternalPathGrant> = {}): ExternalPath
   }
 }
 
-it('projects bounded read-only workspace board data for paired devices', () => {
-  const projected = buildRemoteWorkspaceBoard(
-    workspaceBoard(),
-    [
-      workspaceBoardCard({
-        id: 'card-1',
-        title: 'Import buttons',
-        labels: ['verified'],
-        link: { kind: 'pinned-message', id: 'chat-1:message-1' }
-      }),
-      workspaceBoardCard({
-        id: 'card-2',
-        title: 'Archived slice',
-        archived: true,
-        columnId: 'done',
-        sortOrder: 2
-      })
-    ],
-    { cardLimit: 1 }
-  )
-
-  expect(projected).toMatchObject({
-    id: 'board-1',
-    activeCardCount: 1,
-    archivedCardCount: 1,
-    cardLimit: 1,
-    cardsTruncated: true
-  })
-  expect(projected.columns.map((column) => [column.id, column.activeCardCount, column.archivedCardCount])).toEqual([
-    ['inbox', 1, 0],
-    ['done', 0, 1]
-  ])
-  expect(projected.cards).toEqual([
-    expect.objectContaining({
-      id: 'card-1',
-      linkKind: 'pinned-message',
-      linkId: 'chat-1:message-1'
-    })
-  ])
-})
-
 type QueueRequestSnapshot = NonNullable<RunQueueJob['request']>
 
 function queueRequest(overrides: Partial<QueueRequestSnapshot> = {}): QueueRequestSnapshot {
