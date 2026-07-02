@@ -57,6 +57,10 @@ interface ResolveAssistantDeltaTargetInput {
   incoming: string
   /** True when main tagged this as a full-turn cumulative restatement. */
   cumulative?: boolean
+  /** True on the run-item sidecar lane, whose producer reliably tags every
+   *  restatement — an untagged delta is then a verbatim increment and must
+   *  never be shape-detected as a restatement (see assistantDeltaMerge). */
+  trustedIncremental?: boolean
 }
 
 /** The current turn's trailing maximal run of assistant|tool messages (stops
@@ -106,8 +110,13 @@ export function resolveAssistantDeltaTarget(
 
   // A restatement re-sends the whole turn: tagged `cumulative`, OR an untagged
   // snapshot that supersets the pre-tool text. A genuine delta is a short
-  // suffix and never restarts from the full pre-tool prose, so it won't match.
+  // suffix and never restarts from the full pre-tool prose, so it won't match —
+  // except on the trusted-incremental lane, where an untagged delta is a
+  // verbatim increment BY CONTRACT (restatements are always tagged upstream),
+  // so the shape heuristic must not misread a post-burst chunk that happens to
+  // start with the pre-burst text.
   const supersetsPreBurst =
+    input.trustedIncremental !== true &&
     preBurst.length > 0 &&
     input.incoming.length >= preBurst.length &&
     input.incoming.startsWith(preBurst)

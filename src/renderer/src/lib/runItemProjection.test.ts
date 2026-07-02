@@ -41,6 +41,7 @@ describe('runItemProjection', () => {
         incoming: 'hello',
         runId: 'run-1',
         cumulative: true,
+        trustedIncremental: true,
         itemId: 'item-1',
         providerModelMetadata: {
           providerModel: 'qwen3:4b-instruct',

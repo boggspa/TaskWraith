@@ -133,4 +133,43 @@ describe('resolveAssistantDeltaTarget', () => {
       resolveAssistantDeltaTarget(messages, { incoming: 'anything', cumulative: true })
     ).toEqual({ action: 'append' })
   })
+
+  describe('trusted-incremental lane (run-item sidecar deltas)', () => {
+    it('does not misread a post-burst increment that supersets the pre-burst text', () => {
+      // Pre-burst bubble "Done. ", tool burst, then a genuine post-burst chunk
+      // that HAPPENS to start with the same prose. The untagged-superset
+      // heuristic would classify it as a restatement and strip/skip the
+      // overlap; on the trusted lane an untagged delta is a verbatim
+      // increment, so it opens the post-burst segment whole.
+      const messages = [assistant('a1', 'Done. '), tool('t1')]
+      expect(
+        resolveAssistantDeltaTarget(messages, {
+          incoming: 'Done. All checks passed.',
+          trustedIncremental: true
+        })
+      ).toEqual({ action: 'append' })
+    })
+
+    it('does not swallow a post-burst repeat equal to the pre-burst text', () => {
+      // Same shape as the swallow: incoming === preBurst → tail '' → the
+      // untagged heuristic returned skip. Trusted increments must append.
+      const messages = [assistant('a1', 'ok'), tool('t1')]
+      expect(
+        resolveAssistantDeltaTarget(messages, { incoming: 'ok', trustedIncremental: true })
+      ).toEqual({ action: 'append' })
+    })
+
+    it('still distributes an explicitly tagged cumulative restatement', () => {
+      // The tag wins over the lane hint: whole-turn restatement spanning the
+      // tool boundary distributes only its post-tool tail.
+      const messages = [assistant('a1', 'Intro.'), tool('t1')]
+      expect(
+        resolveAssistantDeltaTarget(messages, {
+          incoming: 'Intro. Tail after tool.',
+          cumulative: true,
+          trustedIncremental: true
+        })
+      ).toEqual({ action: 'appendText', text: ' Tail after tool.' })
+    })
+  })
 })

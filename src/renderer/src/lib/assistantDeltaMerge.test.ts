@@ -82,4 +82,42 @@ describe('resolveAssistantDeltaMerge', () => {
       })
     })
   })
+
+  describe('trusted-incremental lane (run-item sidecar deltas)', () => {
+    // The compat mapper tags every restatement, so an untagged sidecar delta
+    // is a verbatim increment by contract — shape detection must not swallow
+    // a legitimate repeat that happens to byte-match the bubble.
+    it('appends a repeat that exactly equals the bubble', () => {
+      expect(resolveAssistantDeltaMerge('test ', 'test ', { trustedIncremental: true })).toEqual({
+        action: 'append'
+      })
+    })
+
+    it('appends an increment that happens to superset the bubble', () => {
+      expect(resolveAssistantDeltaMerge('no ', 'no no ', { trustedIncremental: true })).toEqual({
+        action: 'append'
+      })
+    })
+
+    it('appends an increment that happens to prefix the bubble', () => {
+      expect(resolveAssistantDeltaMerge('la la la', 'la ', { trustedIncremental: true })).toEqual({
+        action: 'append'
+      })
+    })
+
+    it('still replaces on an explicit cumulative tag (tag wins over the lane hint)', () => {
+      expect(
+        resolveAssistantDeltaMerge('Hello', 'Hello world', {
+          cumulative: true,
+          trustedIncremental: true
+        })
+      ).toEqual({ action: 'replace', content: 'Hello world' })
+    })
+
+    it('keeps the empty-incoming no-op', () => {
+      expect(resolveAssistantDeltaMerge('text', '', { trustedIncremental: true })).toEqual({
+        action: 'append'
+      })
+    })
+  })
 })

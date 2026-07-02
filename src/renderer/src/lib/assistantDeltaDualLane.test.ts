@@ -201,16 +201,16 @@ describe('assistant delta dual-lane dedupe', () => {
     expect(result[0].content).toBe('visible')
   })
 
-  it('never doubles or trebles byte-identical repeated deltas (keyed-set collapse regression)', () => {
-    // A Set-based content key collapses two identical (runId,itemId,content)
-    // entries into one, so the second legacy twin used to fall through and
-    // apply on top of the run-item application. KNOWN pre-existing limit
-    // (unchanged by the flag-only skip, verified identical before/after): a
-    // repeat that exactly equals the whole bubble is shape-detected as a
-    // restatement by resolveAssistantDeltaMerge and swallowed, so the second
-    // 'test ' does not append. If the merge layer ever learns to trust
-    // sidecar `cumulative:false` as a verbatim increment, tighten this to
-    // 'test test '.
+  it('applies byte-identical repeated deltas exactly twice (trusted-incremental append)', () => {
+    // Two regressions in one: (a) a Set-based content key collapses two
+    // identical (runId,itemId,content) entries into one, so the second legacy
+    // twin used to fall through and apply on top of the run-item application
+    // (tripling); (b) before the sidecar lane carried `trustedIncremental`,
+    // a repeat that exactly equals the whole bubble was shape-detected as a
+    // restatement by resolveAssistantDeltaMerge and SWALLOWED ('test ' once).
+    // Untagged sidecar deltas are verbatim increments by contract — a
+    // six-provider audit confirmed every restatement path is either
+    // prefix-sliced main-side or cumulative-tagged — so the repeat appends.
     const { adapter, messages } = createDualLaneHarness(CHAT, RUN)
     for (const sequenceStart of [1, 2]) {
       adapter.appendChunk(
@@ -225,7 +225,23 @@ describe('assistant delta dual-lane dedupe', () => {
     }
     const result = messages()
     expect(result).toHaveLength(1)
-    expect(result[0].content).toBe('test ')
+    expect(result[0].content).toBe('test test ')
+  })
+
+  it('keeps shape detection on the legacy lane for untagged restatements', () => {
+    // A no-sidecar line (legacy lane, no trustedIncremental) that supersets
+    // the bubble must still be recognised as a restatement and REPLACE —
+    // untagged Cursor banner/text-style lines rely on this.
+    const { adapter, messages } = createDualLaneHarness(CHAT, RUN)
+    adapter.appendChunk(
+      JSON.stringify({ type: 'content', text: 'Hello', provider: 'claude' }) + '\n'
+    )
+    adapter.appendChunk(
+      JSON.stringify({ type: 'content', text: 'Hello world', provider: 'claude' }) + '\n'
+    )
+    const result = messages()
+    expect(result).toHaveLength(1)
+    expect(result[0].content).toBe('Hello world')
   })
 
   it('replaces on cumulative sidecar snapshots without doubling (Cursor shape)', () => {

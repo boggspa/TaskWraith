@@ -61,6 +61,11 @@ export function projectRunItemAssistantDelta(
       incoming: event.delta,
       runId: event.runId,
       cumulative: event.cumulative === true,
+      // The sidecar lane's compat mapper tags every restatement
+      // (cumulative || runItemCumulative || snapshot), so an untagged
+      // item/delta is a verbatim increment — append it even when it
+      // byte-matches the bubble (see resolveAssistantDeltaMerge).
+      trustedIncremental: true,
       itemId: event.itemId,
       providerModelMetadata
     }

@@ -50,7 +50,7 @@ export type AssistantDeltaMerge =
 export function resolveAssistantDeltaMerge(
   current: string,
   incoming: string,
-  options: { cumulative?: boolean } = {}
+  options: { cumulative?: boolean; trustedIncremental?: boolean } = {}
 ): AssistantDeltaMerge {
   // Empty incoming → nothing to add; let the caller no-op via append.
   if (!incoming) return { action: 'append' }
@@ -58,6 +58,18 @@ export function resolveAssistantDeltaMerge(
   // Explicit tag from main (it shape-detected a full re-statement that
   // diverged from the streamed deltas) is authoritative.
   if (options.cumulative) return { action: 'replace', content: incoming }
+
+  // Run-item sidecar lane: main's compat mapper tags every restatement
+  // (`cumulative || runItemCumulative || snapshot`), and every provider
+  // either prefix-slices superset restatements main-side (Claude/Kimi
+  // handleCliProviderJsonEvent, Codex item-completed tail, Ollama
+  // unstreamedOllamaContent) or tags them (Cursor snapshot frames) — so an
+  // untagged sidecar delta is a VERBATIM increment and must append even
+  // when it happens to equal or prefix the bubble byte-wise (a repeated
+  // chunk like "test ","test " was being shape-swallowed below). The
+  // legacy lane never sets this and keeps full shape detection: untagged
+  // Cursor banner/text lines still rely on it.
+  if (options.trustedIncremental) return { action: 'append' }
 
   // Nothing streamed yet → first chunk; plain append (onto '').
   if (!current) return { action: 'append' }

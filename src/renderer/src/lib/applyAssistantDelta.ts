@@ -39,6 +39,11 @@ export interface AssistantDeltaInput {
   runId?: string
   /** True when main tagged this as a full-turn cumulative restatement. */
   cumulative?: boolean
+  /** True on the run-item sidecar lane (projectRunItemAssistantDelta): the
+   *  compat mapper tags every restatement, so an untagged delta appends
+   *  verbatim, bypassing restatement shape detection. Never set on the
+   *  legacy lane. */
+  trustedIncremental?: boolean
   /** Codex `itemId`, when present — drives the inter-item `---` separator. */
   itemId?: string
   /** Pre-resolved provider model metadata (Ollama), stamped onto the bubble. */
@@ -75,7 +80,8 @@ export function applyAssistantDelta(
 
   const deltaTarget = resolveAssistantDeltaTarget(messages, {
     incoming: input.incoming,
-    cumulative: input.cumulative === true
+    cumulative: input.cumulative === true,
+    trustedIncremental: input.trustedIncremental === true
   })
 
   if (deltaTarget.action === 'skip') {
@@ -119,7 +125,8 @@ export function applyAssistantDelta(
     const idx = deltaTarget.index
     const target = messages[idx]
     const merge = resolveAssistantDeltaMerge(target.content, input.incoming, {
-      cumulative: input.cumulative === true
+      cumulative: input.cumulative === true,
+      trustedIncremental: input.trustedIncremental === true
     })
     if (merge.action === 'skip') {
       // Stale/duplicate re-statement we already render — untouched.
