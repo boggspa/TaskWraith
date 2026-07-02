@@ -15758,7 +15758,7 @@ function App(): React.JSX.Element {
       const participants = hydrateParticipantsWithPooledAgentIdentity(
         materializedPreset.participants
       )
-      const { bossmanParticipantId } = materializedPreset
+      const { bossmanParticipantId, secondInCommandParticipantId } = materializedPreset
       const nextMaxParticipants = Math.min(
         MAX_ROSTER_PRESET_PARTICIPANTS,
         Math.max(preset.maxParticipants, participants.length, 2)
@@ -15787,6 +15787,7 @@ function App(): React.JSX.Element {
             : {}),
           participants,
           bossmanParticipantId,
+          secondInCommandParticipantId,
           bossmanAutoApprovals: undefined,
           updatedAt: new Date().toISOString()
         }

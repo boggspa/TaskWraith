@@ -433,6 +433,7 @@ export interface RemoteEnsembleRosterEntry {
   fastModeEnabled?: boolean
   thinkingEnabled?: boolean
   isBossman?: boolean
+  isSecondInCommand?: boolean
 }
 
 /** A saved ensemble roster preset projected to paired devices (iOS Roster
@@ -456,6 +457,7 @@ export interface RemoteEnsembleState {
   orchestrationMode?: string
   activeParticipantId?: string
   bossmanParticipantId?: string
+  secondInCommandParticipantId?: string
   continuationHops?: number
   maxContinuationHops?: number
   queuedPromptCount: number
@@ -1218,6 +1220,7 @@ export function buildRemoteEnsembleState(chat: ChatRecord): RemoteEnsembleState 
     activeParticipantId:
       projectedRoundStatus === 'running' ? activeRound?.activeParticipantId : undefined,
     bossmanParticipantId: ensemble.bossmanParticipantId,
+    secondInCommandParticipantId: ensemble.secondInCommandParticipantId,
     continuationHops: activeRound?.continuationHops,
     maxContinuationHops: activeRound?.maxContinuationHops ?? ensemble.maxContinuationHops,
     queuedPromptCount: queuedPrompts.length,
@@ -1242,6 +1245,9 @@ export function buildRemoteEnsembleState(chat: ChatRecord): RemoteEnsembleState 
           enabled: participant.enabled,
           order: participant.order,
           ...(participant.id === ensemble.bossmanParticipantId ? { isBossman: true } : {}),
+          ...(participant.id === ensemble.secondInCommandParticipantId
+            ? { isSecondInCommand: true }
+            : {}),
           ...(participant.model ? { model: participant.model } : {}),
           ...(contextTokens > 0 ? { contextTokens } : {}),
           ...(participant.instructions

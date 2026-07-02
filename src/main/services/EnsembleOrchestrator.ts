@@ -514,6 +514,7 @@ export interface EnsembleBossmanControlResult {
     | 'no_active_round'
     | 'bossman_not_configured'
     | 'not_bossman'
+    | 'second_in_command_standby'
     | 'invalid_action'
     | 'stale_round'
     | 'stale_target'
@@ -549,6 +550,7 @@ export interface EnsembleRosterEditResult {
     | 'no_active_round'
     | 'bossman_not_configured'
     | 'not_bossman'
+    | 'second_in_command_standby'
     | 'invalid_action'
     | 'stale_round'
     | 'unknown_provider'
@@ -2716,52 +2718,47 @@ export class EnsembleOrchestrator {
         error: 'stale_round'
       }
     }
-    const bossmanParticipantId =
-      runtime.bossmanParticipantId ||
-      chat.ensemble.activeRound?.bossmanParticipantId ||
-      chat.ensemble.bossmanParticipantId
-    if (!bossmanParticipantId) {
-      return {
-        ok: false,
-        tool: 'ensemble_bossman_control',
-        action,
-        roundId: runtime.roundId,
-        message: 'Boss control rejected: no Boss is assigned for this Ensemble.',
-        error: 'bossman_not_configured'
-      }
-    }
-    if (caller.participant.id !== bossmanParticipantId) {
+    const authority = this.resolveBossAuthorityForCaller(chat, runtime, caller.participant.id)
+    if (!authority.ok) {
+      const statusReason =
+        authority.error === 'bossman_not_configured'
+          ? 'no Boss is assigned for this Ensemble'
+          : authority.message
       this.appendRoundStatus(
         caller.chatId,
         runtime.roundId,
-        `Boss control rejected from ${caller.participant.role || caller.participant.provider}: only the assigned Boss may use ensemble_bossman_control.`
+        `Boss control rejected from ${caller.participant.role || caller.participant.provider}: ${statusReason}.`
       )
-      // An impostor control attempt is a security-relevant event — record it to
-      // the durable audit ledger, not just the transcript.
-      this.deps.recordBossmanControlRejection?.({
-        provider: caller.participant.provider,
-        workspacePath: chat.workspacePath,
-        chatId: caller.chatId,
-        runId: caller.runId,
-        metadata: {
-          kind: 'bossman_control_rejected',
-          rejectionReason: 'not_bossman',
-          action,
-          roundId: runtime.roundId,
-          attemptingParticipantId: caller.participant.id,
-          attemptingParticipantRole: caller.participant.role,
-          attemptingProvider: caller.participant.provider,
-          assignedBossmanParticipantId: bossmanParticipantId
-        }
-      })
+      if (authority.error !== 'bossman_not_configured') {
+        // An unauthorized control attempt is a security-relevant event — record
+        // it to the durable audit ledger, not just the transcript.
+        this.deps.recordBossmanControlRejection?.({
+          provider: caller.participant.provider,
+          workspacePath: chat.workspacePath,
+          chatId: caller.chatId,
+          runId: caller.runId,
+          metadata: {
+            kind: 'bossman_control_rejected',
+            rejectionReason: authority.error,
+            action,
+            roundId: runtime.roundId,
+            attemptingParticipantId: caller.participant.id,
+            attemptingParticipantRole: caller.participant.role,
+            attemptingProvider: caller.participant.provider,
+            assignedBossmanParticipantId: authority.bossmanParticipantId,
+            assignedSecondInCommandParticipantId: authority.secondInCommandParticipantId,
+            primaryUnavailableReason: authority.primaryUnavailableReason
+          }
+        })
+      }
       return {
         ok: false,
         tool: 'ensemble_bossman_control',
         action,
         roundId: runtime.roundId,
         participantId: caller.participant.id,
-        message: 'Boss control rejected: caller is not the assigned Boss participant.',
-        error: 'not_bossman'
+        message: `Boss control rejected: ${authority.message}.`,
+        error: authority.error
       }
     }
 
@@ -2926,47 +2923,41 @@ export class EnsembleOrchestrator {
         error: 'stale_round'
       }
     }
-    const bossmanParticipantId = this.activeBossmanParticipantId(chat, runtime)
-    if (!bossmanParticipantId) {
-      return {
-        ok: false,
-        tool: 'ensemble_roster_edit',
-        action,
-        roundId: runtime.roundId,
-        message: 'Roster edit rejected: no Boss is assigned for this Ensemble.',
-        error: 'bossman_not_configured'
-      }
-    }
-    if (caller.participant.id !== bossmanParticipantId) {
+    const authority = this.resolveBossAuthorityForCaller(chat, runtime, caller.participant.id)
+    if (!authority.ok) {
       this.appendRoundStatus(
         caller.chatId,
         runtime.roundId,
-        `Roster edit rejected from ${caller.participant.role || caller.participant.provider}: only the assigned Boss may use ensemble_roster_edit.`
+        `Roster edit rejected from ${caller.participant.role || caller.participant.provider}: ${authority.message}.`
       )
-      this.deps.recordBossmanControlRejection?.({
-        provider: caller.participant.provider,
-        workspacePath: chat.workspacePath,
-        chatId: caller.chatId,
-        runId: caller.runId,
-        metadata: {
-          kind: 'roster_edit_rejected',
-          rejectionReason: 'not_bossman',
-          action,
-          roundId: runtime.roundId,
-          attemptingParticipantId: caller.participant.id,
-          attemptingParticipantRole: caller.participant.role,
-          attemptingProvider: caller.participant.provider,
-          assignedBossmanParticipantId: bossmanParticipantId
-        }
-      })
+      if (authority.error !== 'bossman_not_configured') {
+        this.deps.recordBossmanControlRejection?.({
+          provider: caller.participant.provider,
+          workspacePath: chat.workspacePath,
+          chatId: caller.chatId,
+          runId: caller.runId,
+          metadata: {
+            kind: 'roster_edit_rejected',
+            rejectionReason: authority.error,
+            action,
+            roundId: runtime.roundId,
+            attemptingParticipantId: caller.participant.id,
+            attemptingParticipantRole: caller.participant.role,
+            attemptingProvider: caller.participant.provider,
+            assignedBossmanParticipantId: authority.bossmanParticipantId,
+            assignedSecondInCommandParticipantId: authority.secondInCommandParticipantId,
+            primaryUnavailableReason: authority.primaryUnavailableReason
+          }
+        })
+      }
       return {
         ok: false,
         tool: 'ensemble_roster_edit',
         action,
         roundId: runtime.roundId,
         participantId: caller.participant.id,
-        message: 'Roster edit rejected: caller is not the assigned Boss participant.',
-        error: 'not_bossman'
+        message: `Roster edit rejected: ${authority.message}.`,
+        error: authority.error
       }
     }
 
@@ -2997,7 +2988,7 @@ export class EnsembleOrchestrator {
       },
       {
         participants: chat.ensemble.participants,
-        bossmanParticipantId,
+        bossmanParticipantId: authority.rosterGuardParticipantId,
         autoApprovals: chat.ensemble.bossmanAutoApprovals,
         roundReadOnly: preflightCallerPermissions.readOnly,
         nextParticipantId: () => this.nextRosterEditParticipantId(chat.ensemble!.participants)
@@ -3071,47 +3062,45 @@ export class EnsembleOrchestrator {
         error: 'not_ensemble'
       }
     }
-    const latestBossmanParticipantId = this.activeBossmanParticipantId(latestChat, runtime)
-    if (!latestBossmanParticipantId) {
-      return {
-        ok: false,
-        tool: 'ensemble_roster_edit',
-        action,
-        roundId: runtime.roundId,
-        message: 'Roster edit rejected: no Boss is assigned for this Ensemble.',
-        error: 'bossman_not_configured'
-      }
-    }
-    if (caller.participant.id !== latestBossmanParticipantId) {
+    const latestAuthority = this.resolveBossAuthorityForCaller(
+      latestChat,
+      runtime,
+      caller.participant.id
+    )
+    if (!latestAuthority.ok) {
       this.appendRoundStatus(
         caller.chatId,
         runtime.roundId,
-        `Roster edit rejected from ${caller.participant.role || caller.participant.provider}: only the assigned Boss may use ensemble_roster_edit.`
+        `Roster edit rejected from ${caller.participant.role || caller.participant.provider}: ${latestAuthority.message}.`
       )
-      this.deps.recordBossmanControlRejection?.({
-        provider: caller.participant.provider,
-        workspacePath: latestChat.workspacePath,
-        chatId: caller.chatId,
-        runId: caller.runId,
-        metadata: {
-          kind: 'roster_edit_rejected',
-          rejectionReason: 'not_bossman',
-          action,
-          roundId: runtime.roundId,
-          attemptingParticipantId: caller.participant.id,
-          attemptingParticipantRole: caller.participant.role,
-          attemptingProvider: caller.participant.provider,
-          assignedBossmanParticipantId: latestBossmanParticipantId
-        }
-      })
+      if (latestAuthority.error !== 'bossman_not_configured') {
+        this.deps.recordBossmanControlRejection?.({
+          provider: caller.participant.provider,
+          workspacePath: latestChat.workspacePath,
+          chatId: caller.chatId,
+          runId: caller.runId,
+          metadata: {
+            kind: 'roster_edit_rejected',
+            rejectionReason: latestAuthority.error,
+            action,
+            roundId: runtime.roundId,
+            attemptingParticipantId: caller.participant.id,
+            attemptingParticipantRole: caller.participant.role,
+            attemptingProvider: caller.participant.provider,
+            assignedBossmanParticipantId: latestAuthority.bossmanParticipantId,
+            assignedSecondInCommandParticipantId: latestAuthority.secondInCommandParticipantId,
+            primaryUnavailableReason: latestAuthority.primaryUnavailableReason
+          }
+        })
+      }
       return {
         ok: false,
         tool: 'ensemble_roster_edit',
         action,
         roundId: runtime.roundId,
         participantId: caller.participant.id,
-        message: 'Roster edit rejected: caller is not the assigned Boss participant.',
-        error: 'not_bossman'
+        message: `Roster edit rejected: ${latestAuthority.message}.`,
+        error: latestAuthority.error
       }
     }
     const latestCaller =
@@ -3130,7 +3119,7 @@ export class EnsembleOrchestrator {
       },
       {
         participants: latestChat.ensemble.participants,
-        bossmanParticipantId: latestBossmanParticipantId,
+        bossmanParticipantId: latestAuthority.rosterGuardParticipantId,
         autoApprovals: latestChat.ensemble.bossmanAutoApprovals,
         roundReadOnly: callerPermissions.readOnly,
         nextParticipantId: () => this.nextRosterEditParticipantId(latestChat.ensemble!.participants)
@@ -3183,12 +3172,21 @@ export class EnsembleOrchestrator {
       runtime.roundId,
       resolution.nextParticipants
     )
+    const nextSecondInCommandParticipantId =
+      latestChat.ensemble.secondInCommandParticipantId &&
+      latestChat.ensemble.secondInCommandParticipantId !== latestChat.ensemble.bossmanParticipantId &&
+      resolution.nextParticipants.some(
+        (participant) => participant.id === latestChat.ensemble!.secondInCommandParticipantId
+      )
+        ? latestChat.ensemble.secondInCommandParticipantId
+        : undefined
     this.saveChatWithCheckpoint(
       {
         ...latestChat,
         ensemble: {
           ...latestChat.ensemble,
           participants: resolution.nextParticipants,
+          secondInCommandParticipantId: nextSecondInCommandParticipantId,
           activeRound,
           ...(action === 'edit_participant' && affectedBefore && affectedAfter
             ? {
@@ -3558,6 +3556,9 @@ export class EnsembleOrchestrator {
       const filtered = remaining.filter((participant) => participant.id !== affectedParticipantId)
       remaining.length = 0
       remaining.push(...filtered)
+      if (runtime.secondInCommandParticipantId === affectedParticipantId) {
+        runtime.secondInCommandParticipantId = undefined
+      }
     } else {
       const edited = remaining.map((participant) => nextById.get(participant.id) || participant)
       remaining.length = 0
@@ -3601,6 +3602,10 @@ export class EnsembleOrchestrator {
       activeParticipantId:
         round.activeParticipantId && nextById.has(round.activeParticipantId)
           ? round.activeParticipantId
+          : undefined,
+      secondInCommandParticipantId:
+        round.secondInCommandParticipantId && nextById.has(round.secondInCommandParticipantId)
+          ? round.secondInCommandParticipantId
           : undefined,
       participants: participantStates
     }
@@ -4090,6 +4095,9 @@ export class EnsembleOrchestrator {
           activeRound,
           ...(latestEnsemble.bossmanParticipantId === targetParticipantId
             ? { bossmanParticipantId: undefined, bossmanAutoApprovals: undefined }
+            : {}),
+          ...(latestEnsemble.secondInCommandParticipantId === targetParticipantId
+            ? { secondInCommandParticipantId: undefined }
             : {}),
           updatedAt: this.deps.nowIso()
         },
@@ -4655,8 +4663,8 @@ export class EnsembleOrchestrator {
     runtime: ActiveRoundRuntime,
     participantId: string | undefined
   ): boolean {
-    const bossmanParticipantId = this.activeBossmanParticipantId(chat, runtime)
-    return Boolean(participantId && bossmanParticipantId && participantId === bossmanParticipantId)
+    if (!participantId) return false
+    return this.resolveBossAuthorityForCaller(chat, runtime, participantId).ok
   }
 
   private canRequestLockedWriterFanout(
@@ -4664,7 +4672,7 @@ export class EnsembleOrchestrator {
     runtime: ActiveRoundRuntime,
     run: ActiveParticipantRun
   ): boolean {
-    return this.isBossParticipant(chat, runtime, run.participant.id)
+    return this.resolveBossAuthorityForCaller(chat, runtime, run.participant.id).ok
   }
 
   private lockedWriterFanoutAuthorizationMessage(
@@ -4672,11 +4680,15 @@ export class EnsembleOrchestrator {
     runtime: ActiveRoundRuntime,
     run: ActiveParticipantRun
   ): string {
-    const bossmanParticipantId = this.activeBossmanParticipantId(chat, runtime)
-    if (!bossmanParticipantId) {
+    const authority = this.resolveBossAuthorityForCaller(chat, runtime, run.participant.id)
+    if (authority.ok) return 'Locked writer fan-out authorized.'
+    if (authority.error === 'bossman_not_configured') {
       return 'Locked writer fan-out rejected: no Boss is assigned, so writer lanes require a user write-scope preflight before parallel mutation is allowed.'
     }
-    return `Locked writer fan-out rejected from ${run.participant.role || providerLabel(run.participant.provider)}: only the assigned Boss may authorize parallel writer lanes.`
+    if (authority.error === 'second_in_command_standby') {
+      return `Locked writer fan-out rejected from ${run.participant.role || providerLabel(run.participant.provider)}: the assigned Boss is still available, so second-in-command remains standby.`
+    }
+    return `Locked writer fan-out rejected from ${run.participant.role || providerLabel(run.participant.provider)}: only the assigned Boss, or second-in-command while Boss is unavailable, may authorize parallel writer lanes.`
   }
 
   private recordFanoutAuthorizationRejection(
@@ -4699,6 +4711,9 @@ export class EnsembleOrchestrator {
           assignedBossmanParticipantId: runtime
             ? this.activeBossmanParticipantId(chat, runtime)
             : chat.ensemble?.bossmanParticipantId,
+          assignedSecondInCommandParticipantId: runtime
+            ? this.activeSecondInCommandParticipantId(chat, runtime)
+            : chat.ensemble?.secondInCommandParticipantId,
           ...metadata
         }
       })
@@ -4970,6 +4985,9 @@ export class EnsembleOrchestrator {
     roundId?: string
     activeParticipantId?: string
     bossmanParticipantId?: string
+    secondInCommandParticipantId?: string
+    bossmanAuthorityRole?: 'boss' | 'second_in_command'
+    bossmanPrimaryUnavailableReason?: string
     bossmanAutoApprovalsEnabled?: boolean
     rosterEditAllowed?: boolean
     availableProviders?: EnsembleParticipantProviderCatalogEntry[]
@@ -4998,15 +5016,24 @@ export class EnsembleOrchestrator {
         participant.status
       ])
     )
+    const runtime = this.roundsByChatId.get(run.chatId)
+    const authority = runtime
+      ? this.resolveBossAuthorityForCaller(chat, runtime, run.participant.id)
+      : null
     return {
       ok: true,
       chatId: chat.appChatId,
       roundId: run.roundId,
       activeParticipantId: run.participant.id,
       bossmanParticipantId: chat.ensemble.bossmanParticipantId,
+      secondInCommandParticipantId: chat.ensemble.secondInCommandParticipantId,
+      ...(authority?.ok ? { bossmanAuthorityRole: authority.role } : {}),
+      ...(authority?.ok && authority.primaryUnavailableReason
+        ? { bossmanPrimaryUnavailableReason: authority.primaryUnavailableReason }
+        : {}),
       bossmanAutoApprovalsEnabled: chat.ensemble.bossmanAutoApprovals?.enabled === true,
       rosterEditAllowed:
-        Boolean(chat.ensemble.bossmanParticipantId) &&
+        authority?.ok === true &&
         chat.ensemble.bossmanAutoApprovals?.enabled === true &&
         chat.ensemble.bossmanAutoApprovals?.mode === 'permission_preset_once',
       availableProviders: selectableProviderIds().map((provider) => ({
@@ -5756,6 +5783,12 @@ export class EnsembleOrchestrator {
         throw new Error(concurrentCheck.reason || 'Concurrent Ensemble dispatch is not available.')
       }
     }
+    const secondInCommandParticipantId =
+      chat.ensemble.secondInCommandParticipantId &&
+      chat.ensemble.secondInCommandParticipantId !== chat.ensemble.bossmanParticipantId &&
+      ordered.some((participant) => participant.id === chat.ensemble!.secondInCommandParticipantId)
+        ? chat.ensemble.secondInCommandParticipantId
+        : undefined
     const round: EnsembleRoundState = {
       roundId,
       status: 'running',
@@ -5767,6 +5800,7 @@ export class EnsembleOrchestrator {
       ...(chat.ensemble.bossmanParticipantId
         ? { bossmanParticipantId: chat.ensemble.bossmanParticipantId }
         : {}),
+      ...(secondInCommandParticipantId ? { secondInCommandParticipantId } : {}),
       bossmanBaselineParticipantIds: ordered.map((participant) => participant.id),
       bossmanBaselineParticipantCount: ordered.length,
       ...(effectiveConcurrentMode ? { concurrentMode: true } : {}),
@@ -5846,6 +5880,7 @@ export class EnsembleOrchestrator {
       ...(chat.ensemble.bossmanParticipantId
         ? { bossmanParticipantId: chat.ensemble.bossmanParticipantId }
         : {}),
+      ...(secondInCommandParticipantId ? { secondInCommandParticipantId } : {}),
       bossmanBaselineParticipantIds: ordered.map((participant) => participant.id),
       bossmanBaselineParticipantCount: ordered.length,
       orchestrationMode,
@@ -6336,22 +6371,30 @@ export class EnsembleOrchestrator {
           )
 
       if (tagMatches.length > 0) {
-        const bossmanParticipantId =
-          runtime.bossmanParticipantId ||
-          chat.ensemble?.activeRound?.bossmanParticipantId ||
-          chat.ensemble?.bossmanParticipantId
-        const bossmanMatch = bossmanParticipantId
-          ? tagMatches.find((tagMatch) => tagMatch.participant.id === bossmanParticipantId)
+        const bossmanParticipantId = this.activeBossmanParticipantId(chat, runtime)
+        const secondInCommandParticipantId = this.activeSecondInCommandParticipantId(chat, runtime)
+        const primary = this.primaryBossUnavailable(chat, runtime, bossmanParticipantId)
+        const priorityAuthorityId =
+          primary.unavailable && secondInCommandParticipantId
+            ? secondInCommandParticipantId
+            : bossmanParticipantId
+        const priorityAuthorityMatch = priorityAuthorityId
+          ? tagMatches.find((tagMatch) => tagMatch.participant.id === priorityAuthorityId)
           : undefined
         const routeableTagMatches =
-          bossmanMatch && tagMatches.some((tagMatch) => tagMatch.participant.id !== bossmanMatch.participant.id)
-            ? [bossmanMatch]
+          priorityAuthorityMatch &&
+          tagMatches.some((tagMatch) => tagMatch.participant.id !== priorityAuthorityMatch.participant.id)
+            ? [priorityAuthorityMatch]
             : tagMatches
-        if (bossmanMatch && routeableTagMatches.length !== tagMatches.length) {
+        if (priorityAuthorityMatch && routeableTagMatches.length !== tagMatches.length) {
+          const authorityLabel =
+            priorityAuthorityMatch.participant.id === bossmanParticipantId
+              ? 'Boss'
+              : 'active second-in-command'
           this.appendRoundStatus(
             runtime.chatId,
             runtime.roundId,
-            `@-mention: ${participantDisplayName(bossmanMatch.participant)} is Boss and takes routing priority over advisory participant mentions.`
+            `@-mention: ${participantDisplayName(priorityAuthorityMatch.participant)} is ${authorityLabel} and takes routing priority over advisory participant mentions.`
           )
         }
         const seenTagged = new Set<string>()
@@ -6725,6 +6768,10 @@ export class EnsembleOrchestrator {
   private canRequestBroadFanout(chat: ChatRecord, run: ActiveParticipantRun): boolean {
     const ensemble = chat.ensemble
     if (!ensemble) return false
+    const runtime = this.roundsByChatId.get(run.chatId)
+    if (runtime && this.resolveBossAuthorityForCaller(chat, runtime, run.participant.id).ok) {
+      return true
+    }
     const workSession = ensemble.workSession
     const authorityIds = new Set(
       [

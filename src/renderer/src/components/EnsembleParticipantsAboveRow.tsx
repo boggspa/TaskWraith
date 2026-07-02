@@ -534,13 +534,32 @@ export function EnsembleParticipantsAboveRow({
       participantId && participants.some((participant) => participant.id === participantId)
         ? participantId
         : undefined
+    const existingSecondInCommandParticipantId = chat.ensemble?.secondInCommandParticipantId
     patchEnsemble({
       bossmanParticipantId: nextBossmanParticipantId,
+      secondInCommandParticipantId:
+        existingSecondInCommandParticipantId &&
+        existingSecondInCommandParticipantId !== nextBossmanParticipantId
+          ? existingSecondInCommandParticipantId
+          : undefined,
       bossmanAutoApprovals:
         nextBossmanParticipantId &&
         nextBossmanParticipantId === chat.ensemble?.bossmanParticipantId
           ? chat.ensemble.bossmanAutoApprovals
           : undefined
+    })
+  }
+
+  const setSecondInCommandParticipant = (participantId: string | undefined): void => {
+    if (isRoundRunning) return
+    const nextSecondInCommandParticipantId =
+      participantId &&
+      participantId !== chat.ensemble?.bossmanParticipantId &&
+      participants.some((participant) => participant.id === participantId)
+        ? participantId
+        : undefined
+    patchEnsemble({
+      secondInCommandParticipantId: nextSecondInCommandParticipantId
     })
   }
 
@@ -602,6 +621,13 @@ export function EnsembleParticipantsAboveRow({
       nextParticipants.some((participant) => participant.id === existingBossmanParticipantId)
         ? existingBossmanParticipantId
         : undefined
+    const existingSecondInCommandParticipantId = chat.ensemble?.secondInCommandParticipantId
+    const secondInCommandParticipantId =
+      existingSecondInCommandParticipantId &&
+      existingSecondInCommandParticipantId !== bossmanParticipantId &&
+      nextParticipants.some((participant) => participant.id === existingSecondInCommandParticipantId)
+        ? existingSecondInCommandParticipantId
+        : undefined
     const nextChat: ChatRecord = {
       ...chat,
       ensemble: {
@@ -609,6 +635,7 @@ export function EnsembleParticipantsAboveRow({
         maxParticipants: clampedMax,
         participants: nextParticipants.map((p, idx) => ({ ...p, order: idx + 1 })),
         bossmanParticipantId,
+        secondInCommandParticipantId,
         bossmanAutoApprovals: bossmanParticipantId
           ? chat.ensemble?.bossmanAutoApprovals
           : undefined,
@@ -893,11 +920,16 @@ export function EnsembleParticipantsAboveRow({
               onCloseOverflow={() => setOverflowOpenId(null)}
               onPatch={(patch) => updateParticipant(participant.id, patch)}
               isBossman={chat.ensemble?.bossmanParticipantId === participant.id}
+              isSecondInCommand={
+                chat.ensemble?.secondInCommandParticipantId === participant.id &&
+                chat.ensemble?.bossmanParticipantId !== participant.id
+              }
               autoApprovalsEnabled={
                 chat.ensemble?.bossmanParticipantId === participant.id &&
                 chat.ensemble?.bossmanAutoApprovals?.enabled === true
               }
               onSetBossman={setBossmanParticipant}
+              onSetSecondInCommand={setSecondInCommandParticipant}
               onToggleBossmanAutoApprovals={setBossmanAutoApprovals}
               locked={isRoundRunning}
               onDragStart={(info) => {
@@ -1218,8 +1250,10 @@ interface ParticipantChipProps {
   onCloseOverflow: () => void
   onPatch: (patch: Partial<EnsembleParticipant>) => void
   isBossman: boolean
+  isSecondInCommand: boolean
   autoApprovalsEnabled: boolean
   onSetBossman: (participantId: string | undefined) => void
+  onSetSecondInCommand: (participantId: string | undefined) => void
   onToggleBossmanAutoApprovals: (enabled: boolean) => void
   locked: boolean
   /**
@@ -1276,8 +1310,10 @@ function ParticipantChip({
   onCloseOverflow,
   onPatch,
   isBossman,
+  isSecondInCommand,
   autoApprovalsEnabled,
   onSetBossman,
+  onSetSecondInCommand,
   onToggleBossmanAutoApprovals,
   locked,
   onDragStart,
@@ -1296,6 +1332,21 @@ function ParticipantChip({
   const providerDisplayName =
     resolveProviderBrandLabel(participant.provider, participant.model) ||
     getProviderName(participant.provider)
+  const authorityPrefix = isBossman
+    ? 'Boss · '
+    : isSecondInCommand
+      ? 'Second-in-command · '
+      : ''
+  const authorityAriaPrefix = isBossman
+    ? 'Boss '
+    : isSecondInCommand
+      ? 'Second-in-command '
+      : ''
+  const authorityTitle = isBossman
+    ? 'Boss'
+    : isSecondInCommand
+      ? 'Second-in-command'
+      : ''
   const handlePointerDown = useCallback(
     (event: React.PointerEvent) => {
       // Left-click only. Right-click / middle-click fall through to
@@ -1386,8 +1437,8 @@ function ParticipantChip({
       // participant's detail popover to see linkage state.
       title={
         participant.linkedProviderSessionId
-          ? `${isBossman ? 'Boss · ' : ''}${providerDisplayName} — ${participant.role || 'Participant'} · Linked session: ${participant.linkedProviderSessionId}`
-          : `${isBossman ? 'Boss · ' : ''}${providerDisplayName} — ${participant.role || 'Participant'}`
+          ? `${authorityPrefix}${providerDisplayName} — ${participant.role || 'Participant'} · Linked session: ${participant.linkedProviderSessionId}`
+          : `${authorityPrefix}${providerDisplayName} — ${participant.role || 'Participant'}`
       }
     >
       {/*
@@ -1404,7 +1455,7 @@ function ParticipantChip({
         role="button"
         tabIndex={0}
         aria-pressed={isSelected}
-        aria-label={`${isBossman ? 'Boss ' : ''}${participant.role || providerDisplayName}`}
+        aria-label={`${authorityAriaPrefix}${participant.role || providerDisplayName}`}
         onKeyDown={(event) => {
           if (event.key === 'Enter' || event.key === ' ') {
             event.preventDefault()
@@ -1426,12 +1477,15 @@ function ParticipantChip({
         <span
           className="ensemble-above-chip-role"
           title={
-            isBossman
-              ? `Boss — ${participant.role || providerDisplayName}`
+            authorityTitle
+              ? `${authorityTitle} — ${participant.role || providerDisplayName}`
               : participant.role || providerDisplayName
           }
         >
           {isBossman ? <BossmanCrownIcon className="ensemble-above-chip-crown" /> : null}
+          {isSecondInCommand ? (
+            <BossmanCrownIcon className="ensemble-above-chip-crown is-second-in-command" />
+          ) : null}
           {participant.role || getProviderName(participant.provider)}
         </span>
         {/* 1.0.4-AV2 — per-participant token-spend chip. Renders
@@ -1525,8 +1579,10 @@ function ParticipantChip({
           participant={participant}
           onPatch={onPatch}
           isBossman={isBossman}
+          isSecondInCommand={isSecondInCommand}
           autoApprovalsEnabled={autoApprovalsEnabled}
           onSetBossman={onSetBossman}
+          onSetSecondInCommand={onSetSecondInCommand}
           onToggleBossmanAutoApprovals={onToggleBossmanAutoApprovals}
           locked={locked}
           onClose={onCloseOverflow}
@@ -1545,8 +1601,10 @@ interface OverflowPopoverProps {
   participant: EnsembleParticipant
   onPatch: (patch: Partial<EnsembleParticipant>) => void
   isBossman: boolean
+  isSecondInCommand: boolean
   autoApprovalsEnabled: boolean
   onSetBossman: (participantId: string | undefined) => void
+  onSetSecondInCommand: (participantId: string | undefined) => void
   onToggleBossmanAutoApprovals: (enabled: boolean) => void
   /* 1.0.5-EW22 — `onRemove` / `canRemove` removed. Remove gesture
    * moved to the row's "-" sibling button. */
@@ -1567,8 +1625,10 @@ export function EnsembleParticipantOverflowPopover({
   participant,
   onPatch,
   isBossman,
+  isSecondInCommand,
   autoApprovalsEnabled,
   onSetBossman,
+  onSetSecondInCommand,
   onToggleBossmanAutoApprovals,
   locked,
   onClose,
@@ -1686,7 +1746,9 @@ export function EnsembleParticipantOverflowPopover({
         transform: 'translateY(-100%)'
       }}
       role="dialog"
-      aria-label={`Edit ${isBossman ? 'Boss ' : ''}${getProviderName(participant.provider)} role and enabled state`}
+      aria-label={`Edit ${
+        isBossman ? 'Boss ' : isSecondInCommand ? 'second-in-command ' : ''
+      }${getProviderName(participant.provider)} role and enabled state`}
     >
       <label className="ensemble-above-overflow-enable">
         <input
@@ -1707,6 +1769,27 @@ export function EnsembleParticipantOverflowPopover({
         <span className="ensemble-above-overflow-bossman-label">
           <BossmanCrownIcon className="ensemble-above-overflow-crown" />
           Boss
+        </span>
+      </label>
+      <label
+        className={`ensemble-above-overflow-bossman${isBossman ? ' is-disabled' : ''}`}
+        title={
+          isBossman
+            ? 'Boss cannot also be second-in-command.'
+            : 'Second-in-command can use Boss controls only when Boss is unavailable.'
+        }
+      >
+        <input
+          type="checkbox"
+          checked={isSecondInCommand}
+          disabled={locked || isBossman}
+          onChange={(event) =>
+            onSetSecondInCommand(event.target.checked ? participant.id : undefined)
+          }
+        />
+        <span className="ensemble-above-overflow-bossman-label">
+          <BossmanCrownIcon className="ensemble-above-overflow-crown is-second-in-command" />
+          2nd in command
         </span>
       </label>
       <label

@@ -468,6 +468,8 @@ export interface BridgeRosterParticipant {
   thinkingEnabled?: boolean
   /** Optional per-roster marker. Exactly one true value assigns Boss. */
   isBossman?: boolean
+  /** Optional per-roster marker. Exactly one true value assigns backup Boss. */
+  isSecondInCommand?: boolean
 }
 
 export interface BridgeSetThreadNotesAction extends BridgeActionMetadata {
@@ -1714,6 +1716,9 @@ function isEnsembleRosterUpdate(v: Record<string, unknown>): boolean {
     if (e.fastModeEnabled !== undefined && typeof e.fastModeEnabled !== 'boolean') return false
     if (e.thinkingEnabled !== undefined && typeof e.thinkingEnabled !== 'boolean') return false
     if (e.isBossman !== undefined && typeof e.isBossman !== 'boolean') return false
+    if (e.isSecondInCommand !== undefined && typeof e.isSecondInCommand !== 'boolean') {
+      return false
+    }
     return true
   })
 }

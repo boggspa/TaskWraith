@@ -271,6 +271,7 @@ function formatAuthorityLines(
   const workSession = config.workSession
   const authorityIds = [
     config.bossmanParticipantId,
+    config.secondInCommandParticipantId,
     workSession?.leadParticipantId,
     workSession?.managerParticipantId
   ].filter(Boolean) as string[]
@@ -286,8 +287,14 @@ function formatAuthorityLines(
   return [
     isAuthority
       ? `- Authority rule: you are one of the configured Lead/Boss/manager seats (${labels}). Coordinate and verify before assigning broad execution.`
-      : `- Authority rule: configured Lead/Boss/manager seat(s) are ${labels}. Do not override their plan, complete the session, or redirect broad work before they speak or explicitly assign it.`
+      : `- Authority rule: configured Lead/Boss/manager seat(s) are ${labels}. Do not override their plan, complete the session, or redirect broad work before they speak or explicitly assign it.`,
+    config.secondInCommandParticipantId
+      ? currentParticipantId === config.secondInCommandParticipantId
+        ? '- Second-in-command rule: you are standby authority. Do not use Boss control or roster-edit tools while the assigned Boss is available; if Boss is disabled, unreachable, failed, cancelled, skipped, or visibly rate-limited, you may act as backup Boss using the same permission ceilings.'
+        : '- Second-in-command rule: the backup Boss remains standby while the assigned Boss is available and only becomes controlling authority when Boss is unavailable.'
+      : ''
   ]
+    .filter(Boolean)
 }
 
 function isPlanWorkflowChat(chat: ChatRecord): boolean {
@@ -669,21 +676,19 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
     // banned, just exceptional.
     '- Address participants by their **participant (role) name** (e.g. `@Farmer`, `@Merchant`) or **model name** (e.g. `@Sonnet 4.6`, `@Flash Lite`) exactly as shown in the roster — these route deterministically to the participant you mean. Do NOT address peers by bare provider name (`@gemini`, `@claude`) unless that provider has exactly one participant on this panel: with same-provider peers a provider tag resolves non-deterministically and your message may reach the wrong panelist.',
     '- If another participant should handle this turn, call ensemble_yield with a short reason and optional target.',
-    '- Use ensemble_fanout when multiple peers should work in parallel. Default read_only fan-out only targets read-only participants; locked_writers fan-out is feature-gated, requires the assigned Boss as caller with explicit writeScopes for writer targets, and relies on workspace write locks. When no Boss is assigned, automatic writer fan-out is host-mediated by user-enabled write-scope claim + matrix-ack preflight rather than peer tool calls.',
-    '- If you are the assigned Boss and Boss Auto Approvals are enabled, use list_ensemble_participants before ensemble_roster_edit to inspect participant ids, available providers/models, model context windows, and coarse provider quota bands; then you may swap a non-active participant seat provider/model/reasoning or adjust role instructions/mini-goals when quota walls, weak output, or agreed role changes warrant it.',
+    '- Use ensemble_fanout when multiple peers should work in parallel. Default read_only fan-out only targets read-only participants; locked_writers fan-out is feature-gated, requires the assigned Boss (or active second-in-command after Boss unavailability) as caller with explicit writeScopes for writer targets, and relies on workspace write locks. When no Boss is assigned, automatic writer fan-out is host-mediated by user-enabled write-scope claim + matrix-ack preflight rather than peer tool calls.',
+    '- If you are the assigned Boss, or the second-in-command after Boss is unavailable, and Boss Auto Approvals are enabled, use list_ensemble_participants before ensemble_roster_edit to inspect participant ids, available providers/models, model context windows, and coarse provider quota bands; then you may swap a non-active participant seat provider/model/reasoning/permissions or adjust role instructions/mini-goals when quota walls, weak output, or agreed role changes warrant it.',
     '- Use blackboard_post only for durable shared facts, decisions, risks, or do-not-repeat notes. Do not use the blackboard for conversational side messages.',
     '- In Continuous mode, only request another handoff when more agent work is genuinely useful; otherwise return control to the user.',
     '- Respect your permission preset. Read-only roles should not attempt file or shell mutations.',
     '- Respond as yourself only. Do not impersonate other participants.',
-    // 1.0.4-AF — Plan/Ensemble precedence note. Ensemble Mode is an
-    // orchestration mode; Plan Mode is a per-participant permission
-    // posture. The two compose: if the user invokes Plan Mode for
-    // this run, this participant must produce a plan rather than
-    // execute, even though the surrounding ensemble round may include
-    // other participants operating at their own permission presets.
-    // Without this note, panelists were confused about whether a Plan
-    // Mode invocation gates the entire round or only the speaker.
-    '- Plan Mode and Ensemble Mode compose: Plan Mode is a per-participant permission posture (this run only); Ensemble Mode is the orchestration mode. If your approval mode is `plan`, respect the read-only posture even within an ensemble round — produce a plan, do not execute. Other participants may still operate at their default permission preset; their posture is not yours.',
+    // 1.0.4-AF / Adv-1 — Plan/Ensemble precedence note. Ensemble
+    // Mode is an orchestration mode; Plan workflow is where plan
+    // artifacts belong. Do not infer "produce a plan" from a
+    // read-only runtime posture: read-only review/recon seats should
+    // report findings in place unless the explicit plan-owner rule
+    // below assigns a `<proposed_plan>` block.
+    '- Plan Mode and Ensemble Mode compose: Plan workflow is where plan artifacts belong; follow the explicit plan-owner rule when this chat is in plan workflow. A `read_only` permission preset is review posture, not plan ownership: produce findings/review in place, do not execute mutations, and do not create plan artifacts unless the plan-owner rule explicitly assigns you.',
     ...planOwnerLines,
     // 1.0.4-AF / AR8 — deictic-resolution rule. Three branches:
     //

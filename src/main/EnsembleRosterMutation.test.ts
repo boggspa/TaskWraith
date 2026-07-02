@@ -572,4 +572,52 @@ describe('evaluateRosterEdit', () => {
     if (!result.ok) throw new Error(result.message)
     expect(result.nextParticipants[2].permissionPresetId).toBe('read_only')
   })
+
+  it('clears stale provider-specific state when a participant changes provider', () => {
+    const result = evaluateRosterEdit(
+      {
+        action: 'edit_participant',
+        targetParticipantId: 'worker',
+        participant: { provider: 'claude' }
+      },
+      makeContext({
+        participants: [
+          participant({
+            id: 'boss',
+            provider: 'claude',
+            role: 'Boss',
+            order: 1,
+            permissionPresetId: 'workspace_write'
+          }),
+          participant({
+            id: 'worker',
+            provider: 'codex',
+            role: 'Worker',
+            order: 2,
+            model: 'gpt-5.5',
+            runtimeProfileId: 'approved_patcher',
+            geminiAuthProfileId: 'gemini-auth',
+            ollamaToolControlTier: 'approved_edits',
+            ollamaRunProfile: 'approved_patcher',
+            reasoningEffort: 'high',
+            serviceTier: 'fast',
+            linkedProviderSessionId: 'codex-session'
+          })
+        ]
+      })
+    )
+
+    expect(result).toMatchObject({ ok: true, affectedParticipantId: 'worker' })
+    if (!result.ok) throw new Error(result.message)
+    const worker = result.nextParticipants.find((entry) => entry.id === 'worker')
+    expect(worker).toMatchObject({ provider: 'claude' })
+    expect(worker?.model).toBeUndefined()
+    expect(worker?.runtimeProfileId).toBeUndefined()
+    expect(worker?.geminiAuthProfileId).toBeUndefined()
+    expect(worker?.ollamaToolControlTier).toBeUndefined()
+    expect(worker?.ollamaRunProfile).toBeUndefined()
+    expect(worker?.reasoningEffort).toBeUndefined()
+    expect(worker?.serviceTier).toBeUndefined()
+    expect(worker?.linkedProviderSessionId).toBeUndefined()
+  })
 })

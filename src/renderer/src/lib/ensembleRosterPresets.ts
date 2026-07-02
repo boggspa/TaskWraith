@@ -40,6 +40,7 @@ export type EnsembleRosterParticipantSnapshot = {
   instructions: string
   order: number
   isBossman?: boolean
+  isSecondInCommand?: boolean
   /**
    * Link back to a Settings → Roster pooled Agent (`pooled-agent-<uuid>`).
    * Present only on participants sourced from the Agent Pool. Editing the
@@ -285,7 +286,8 @@ export function buildEnsembleRosterPresetFromConfig(
       : {}),
     participants: snapshotParticipantsForPreset(
       ensemble.participants || [],
-      ensemble.bossmanParticipantId
+      ensemble.bossmanParticipantId,
+      ensemble.secondInCommandParticipantId
     )
   }
 }
@@ -298,18 +300,25 @@ export function buildEnsembleRosterPresetFromConfig(
  */
 export function snapshotParticipantsForPreset(
   participants: EnsembleParticipant[],
-  bossmanParticipantId?: string
+  bossmanParticipantId?: string,
+  secondInCommandParticipantId?: string
 ): EnsembleRosterParticipantSnapshot[] {
   const sorted = [...participants].sort((a, b) => a.order - b.order)
   return sorted.map((participant, index) =>
-    snapshotParticipant(participant, index + 1, participant.id === bossmanParticipantId)
+    snapshotParticipant(
+      participant,
+      index + 1,
+      participant.id === bossmanParticipantId,
+      participant.id === secondInCommandParticipantId && participant.id !== bossmanParticipantId
+    )
   )
 }
 
 function snapshotParticipant(
   participant: EnsembleParticipant,
   order: number,
-  isBossman = false
+  isBossman = false,
+  isSecondInCommand = false
 ): EnsembleRosterParticipantSnapshot {
   return {
     provider: participant.provider,
@@ -318,6 +327,7 @@ function snapshotParticipant(
     instructions: participant.instructions,
     order,
     ...(isBossman ? { isBossman: true } : {}),
+    ...(isSecondInCommand ? { isSecondInCommand: true } : {}),
     ...(participant.pooledAgentId ? { pooledAgentId: participant.pooledAgentId } : {}),
     ...(participant.pooledAgentIdentity
       ? { pooledAgentIdentity: participant.pooledAgentIdentity }
@@ -360,15 +370,27 @@ export function materializeParticipantsFromPreset(
 
 export function materializeParticipantsFromPresetWithBossman(
   snapshots: EnsembleRosterParticipantSnapshot[]
-): { participants: EnsembleParticipant[]; bossmanParticipantId?: string } {
+): {
+  participants: EnsembleParticipant[]
+  bossmanParticipantId?: string
+  secondInCommandParticipantId?: string
+} {
   const sorted = [...snapshots].sort((a, b) => a.order - b.order)
   const existing = new Set<string>()
   let bossmanParticipantId: string | undefined
+  let secondInCommandParticipantId: string | undefined
   const participants = sorted.map((snapshot, index) => {
     const id = nextParticipantId(existing, index + 1)
     existing.add(id)
     if (snapshot.isBossman === true && !bossmanParticipantId) {
       bossmanParticipantId = id
+    }
+    if (
+      snapshot.isSecondInCommand === true &&
+      !secondInCommandParticipantId &&
+      snapshot.isBossman !== true
+    ) {
+      secondInCommandParticipantId = id
     }
     return {
       id,
@@ -402,7 +424,7 @@ export function materializeParticipantsFromPresetWithBossman(
       linkedProviderSessionId: null
     }
   })
-  return { participants, bossmanParticipantId }
+  return { participants, bossmanParticipantId, secondInCommandParticipantId }
 }
 
 function cloneSnapshot(
@@ -469,6 +491,7 @@ export function saveEnsembleRosterPresetFromParticipants(
     fastModeEnabled?: boolean
     thinkingEnabled?: boolean
     isBossman?: boolean
+    isSecondInCommand?: boolean
   }>
 ): EnsembleRosterPreset {
   const trimmed = name.trim()
@@ -476,6 +499,9 @@ export function saveEnsembleRosterPresetFromParticipants(
     throw new Error('Preset name is required.')
   }
   const bossmanIndex = participants.findIndex((participant) => participant.isBossman === true)
+  const secondInCommandIndex = participants.findIndex(
+    (participant, index) => participant.isSecondInCommand === true && index !== bossmanIndex
+  )
   const snapshots: EnsembleRosterParticipantSnapshot[] = participants
     .slice(0, MAX_ROSTER_PRESET_PARTICIPANTS)
     .map((participant, index) => ({
@@ -485,6 +511,7 @@ export function saveEnsembleRosterPresetFromParticipants(
       instructions: participant.brief || '',
       order: index + 1,
       ...(index === bossmanIndex ? { isBossman: true } : {}),
+      ...(index === secondInCommandIndex ? { isSecondInCommand: true } : {}),
       ...(participant.model ? { model: participant.model } : {}),
       ...(participant.permissionPresetId
         ? { permissionPresetId: participant.permissionPresetId as PermissionPresetId }

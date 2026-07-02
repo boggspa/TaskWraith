@@ -84,6 +84,55 @@
 .composer-ensemble-orchestration-row .composer-ensemble-hop-meter {
   margin-left: 0;
 }
+/* Roster-presets second row uses the controls as satellite text buttons, not
+ * footer-style pill groups. Keep the click targets and popovers, but remove
+ * the local container chrome for the mode picker, fan-out group, and hop meter. */
+:root .composer-ensemble-orchestration-row .composer-ensemble-mode-trigger,
+:root .composer-ensemble-orchestration-row .composer-ensemble-mode-button,
+:root .composer-ensemble-orchestration-row .composer-ensemble-hop-meter {
+  min-height: auto !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+:root .composer-ensemble-orchestration-row .composer-ensemble-mode-trigger {
+  padding: 0 !important;
+  color: var(--text-primary) !important;
+}
+:root
+  .composer-ensemble-orchestration-row
+  [data-composer-control='ensemble-mode'].composer-ensemble-mode {
+  min-height: auto !important;
+  gap: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+:root .composer-ensemble-orchestration-row .composer-fanout-policy {
+  gap: 10px;
+}
+:root .composer-ensemble-orchestration-row .composer-ensemble-mode-button {
+  padding: 0 !important;
+}
+:root .composer-ensemble-orchestration-row .composer-ensemble-mode-button.is-active {
+  background: transparent !important;
+  color: var(--text-primary) !important;
+  font-weight: 800;
+}
+:root .composer-ensemble-orchestration-row .composer-ensemble-hop-meter {
+  padding: 0 !important;
+  color: color-mix(in srgb, var(--accent-color) 82%, var(--text-primary)) !important;
+}
+:root .composer-ensemble-orchestration-row .composer-ensemble-hop-meter:is(:hover, .is-open) {
+  color: color-mix(in srgb, var(--accent-color) 96%, var(--text-primary)) !important;
+}
 .composer-orchestration-row-hints {
   flex-basis: 100%;
   display: flex;
@@ -1140,6 +1189,11 @@
   filter: drop-shadow(0 0 4px color-mix(in srgb, var(--warning, #e6b450) 34%, transparent));
 }
 
+.ensemble-above-chip-crown.is-second-in-command {
+  color: color-mix(in srgb, var(--text-secondary, #aeb4c0) 78%, #ffffff);
+  filter: drop-shadow(0 0 4px color-mix(in srgb, #c7ced8 32%, transparent));
+}
+
 /* Scale down role text inside very narrow chips so more characters stay
  * legible before ellipsis. 1.0.5-EW43 — only fires in wrapped grid mode
  * now: the `ensemble-chip` query container lives on `.is-wrapped` chips,
@@ -1309,6 +1363,10 @@
 
 .ensemble-above-overflow-crown {
   color: color-mix(in srgb, var(--warning, #e6b450) 90%, #ffffff);
+}
+
+.ensemble-above-overflow-crown.is-second-in-command {
+  color: color-mix(in srgb, var(--text-secondary, #aeb4c0) 78%, #ffffff);
 }
 
 .ensemble-above-overflow-auto-approval {

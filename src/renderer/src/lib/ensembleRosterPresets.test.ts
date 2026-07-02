@@ -186,7 +186,8 @@ describe('ensembleRosterPresets — capture + materialize', () => {
       'Boss panel',
       {
         ...sampleEnsemble(),
-        bossmanParticipantId: 'ensemble-participant-1'
+        bossmanParticipantId: 'ensemble-participant-1',
+        secondInCommandParticipantId: 'ensemble-participant-2'
       },
       1_700_000_000_000
     )
@@ -194,14 +195,22 @@ describe('ensembleRosterPresets — capture + materialize', () => {
       false,
       true
     ])
+    expect(preset.participants.map((participant) => participant.isSecondInCommand === true)).toEqual([
+      true,
+      false
+    ])
     const materialized = materializeParticipantsFromPresetWithBossman(preset.participants)
     expect(materialized.bossmanParticipantId).toBe(materialized.participants[1].id)
+    expect(materialized.secondInCommandParticipantId).toBe(materialized.participants[0].id)
     const resnapshot = snapshotParticipantsForPreset(
       materialized.participants,
-      materialized.bossmanParticipantId
+      materialized.bossmanParticipantId,
+      materialized.secondInCommandParticipantId
     )
     expect(resnapshot.filter((participant) => participant.isBossman === true)).toHaveLength(1)
+    expect(resnapshot.filter((participant) => participant.isSecondInCommand === true)).toHaveLength(1)
     expect(resnapshot[1].isBossman).toBe(true)
+    expect(resnapshot[0].isSecondInCommand).toBe(true)
   })
 })
 

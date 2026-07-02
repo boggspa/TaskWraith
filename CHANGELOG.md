@@ -55,6 +55,10 @@ history, and workspace state stay on your machine throughout.
 - **Boss and participant boundaries.** Agent-driven roster edits and Boss
   replacement are capped so agents cannot assign Full Workspace Access; only the
   user can elevate to that level.
+- **Ensemble read-only review posture.** Read-only ensemble seats are now
+  instructed to produce findings and review in place, separate from plan-workflow
+  ownership, so review lanes no longer emit plan artifacts when asked to inspect
+  work.
 - **Ollama Ensemble context.** Local lanes preserve their assigned participant
   role and Lead/Boss routing across tool loops, retries, and compaction.
 

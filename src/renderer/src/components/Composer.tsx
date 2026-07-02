@@ -1524,6 +1524,12 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                     currentChat.ensemble.bossmanParticipantId ===
                                     overflowParticipant.id
                                   }
+                                  isSecondInCommand={
+                                    currentChat.ensemble.secondInCommandParticipantId ===
+                                      overflowParticipant.id &&
+                                    currentChat.ensemble.bossmanParticipantId !==
+                                      overflowParticipant.id
+                                  }
                                   autoApprovalsEnabled={
                                     currentChat.ensemble.bossmanParticipantId ===
                                       overflowParticipant.id &&
@@ -1537,14 +1543,36 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                       )
                                         ? participantId
                                         : undefined
+                                    const existingSecondInCommandParticipantId =
+                                      currentChat.ensemble?.secondInCommandParticipantId
                                     persistWelcomeEnsemblePatch({
                                       bossmanParticipantId: nextBossmanParticipantId,
+                                      secondInCommandParticipantId:
+                                        existingSecondInCommandParticipantId &&
+                                        existingSecondInCommandParticipantId !==
+                                          nextBossmanParticipantId
+                                          ? existingSecondInCommandParticipantId
+                                          : undefined,
                                       bossmanAutoApprovals:
                                         nextBossmanParticipantId &&
                                         nextBossmanParticipantId ===
                                           currentChat.ensemble?.bossmanParticipantId
                                           ? currentChat.ensemble?.bossmanAutoApprovals
                                           : undefined
+                                    })
+                                  }}
+                                  onSetSecondInCommand={(participantId) => {
+                                    const nextSecondInCommandParticipantId =
+                                      participantId &&
+                                      participantId !== currentChat.ensemble?.bossmanParticipantId &&
+                                      currentChat.ensemble?.participants.some(
+                                        (participant) => participant.id === participantId
+                                      )
+                                        ? participantId
+                                        : undefined
+                                    persistWelcomeEnsemblePatch({
+                                      secondInCommandParticipantId:
+                                        nextSecondInCommandParticipantId
                                     })
                                   }}
                                   onToggleBossmanAutoApprovals={(enabled) => {

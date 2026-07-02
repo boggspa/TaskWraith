@@ -403,4 +403,26 @@ describe('EnsembleParticipantsAboveRow', () => {
     expect(html).not.toContain('ensemble-above-chip-crown')
     expect(html).not.toContain('Boss')
   })
+
+  it('renders a silver second-in-command crown separately from Boss', () => {
+    const chat = makeChat([
+      makeParticipant({ id: 'ensemble-claude', provider: 'claude', role: 'Bossman', order: 1 }),
+      makeParticipant({ id: 'ensemble-codex', provider: 'codex', role: 'Deputy', order: 2 })
+    ])
+    chat.ensemble!.bossmanParticipantId = 'ensemble-claude'
+    chat.ensemble!.secondInCommandParticipantId = 'ensemble-codex'
+    const html = renderToStaticMarkup(
+      <EnsembleParticipantsAboveRow
+        chat={chat}
+        selectedParticipantId={null}
+        onSelectParticipant={() => undefined}
+        onChatChange={() => undefined}
+      />
+    )
+    const crownHits = html.match(/ensemble-above-chip-crown/g) || []
+    expect(crownHits.length).toBe(2)
+    expect(html).toContain('ensemble-above-chip-crown is-second-in-command')
+    expect(html).toContain('aria-label="Boss Bossman"')
+    expect(html).toContain('aria-label="Second-in-command Deputy"')
+  })
 })

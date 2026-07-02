@@ -21692,6 +21692,7 @@ if (isGeminiMcpBridgeProcess) {
             next,
             {
               bossmanParticipantId: chat.ensemble.bossmanParticipantId,
+              secondInCommandParticipantId: chat.ensemble.secondInCommandParticipantId,
               bossmanAutoApprovals: chat.ensemble.bossmanAutoApprovals
             }
           )
@@ -21708,7 +21709,10 @@ if (isGeminiMcpBridgeProcess) {
                     bossmanParticipantId: bossmanResolution.bossmanParticipantId,
                     bossmanAutoApprovals: bossmanResolution.bossmanAutoApprovals
                   }
-                : { bossmanParticipantId: undefined, bossmanAutoApprovals: undefined })
+                : { bossmanParticipantId: undefined, bossmanAutoApprovals: undefined }),
+              ...(bossmanResolution.secondInCommandParticipantId
+                ? { secondInCommandParticipantId: bossmanResolution.secondInCommandParticipantId }
+                : { secondInCommandParticipantId: undefined })
             },
             updatedAt: Date.now()
           }

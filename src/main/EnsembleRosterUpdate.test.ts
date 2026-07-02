@@ -27,6 +27,7 @@ describe('resolveRosterUpdateBossmanAssignment', () => {
       participants,
       {
         bossmanParticipantId: 'claude',
+        secondInCommandParticipantId: 'codex',
         bossmanAutoApprovals: {
           enabled: true,
           mode: 'permission_preset_once' as const,
@@ -38,7 +39,39 @@ describe('resolveRosterUpdateBossmanAssignment', () => {
     expect(result).toMatchObject({
       ok: true,
       bossmanParticipantId: 'claude',
+      secondInCommandParticipantId: 'codex',
       bossmanAutoApprovals: { enabled: true }
+    })
+  })
+
+  it('moves second-in-command to the single true marker', () => {
+    const result = resolveRosterUpdateBossmanAssignment(
+      [
+        { isBossman: true, isSecondInCommand: false },
+        { isBossman: false, isSecondInCommand: false },
+        { isBossman: false, isSecondInCommand: true }
+      ],
+      participants,
+      {
+        bossmanParticipantId: 'claude',
+        secondInCommandParticipantId: 'codex',
+        bossmanAutoApprovals: {
+          enabled: true,
+          mode: 'permission_preset_once' as const,
+          confirmedAt: '2026-06-26T00:00:00.000Z'
+        }
+      }
+    )
+
+    expect(result).toEqual({
+      ok: true,
+      bossmanParticipantId: 'claude',
+      secondInCommandParticipantId: 'kimi',
+      bossmanAutoApprovals: {
+        enabled: true,
+        mode: 'permission_preset_once',
+        confirmedAt: '2026-06-26T00:00:00.000Z'
+      }
     })
   })
 
@@ -73,6 +106,23 @@ describe('resolveRosterUpdateBossmanAssignment', () => {
     expect(result).toEqual({
       ok: false,
       error: 'Only one participant may be marked as Boss.'
+    })
+  })
+
+  it('rejects multiple second-in-command markers', () => {
+    const result = resolveRosterUpdateBossmanAssignment(
+      [
+        { isBossman: false, isSecondInCommand: true },
+        { isBossman: false, isSecondInCommand: true },
+        { isBossman: false, isSecondInCommand: false }
+      ],
+      participants,
+      {}
+    )
+
+    expect(result).toEqual({
+      ok: false,
+      error: 'Only one participant may be marked as second-in-command.'
     })
   })
 })

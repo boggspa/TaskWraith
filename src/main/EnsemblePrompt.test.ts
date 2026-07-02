@@ -835,21 +835,22 @@ describe('Ensemble prompt composition', () => {
     expect(prompt).not.toContain('refer to the active workspace named in `Round subject:`')
   })
 
-  it('1.0.4-AF: always includes the Plan/Ensemble precedence note in the Rules', () => {
+  it('Adv-1: treats read-only ensemble seats as review posture, not plan ownership', () => {
     // The note documents the orthogonal-modes contract for every
-    // participant regardless of approval mode or self-reflective
-    // state, so even a default round carries it.
+    // participant, but a read-only preset must not be framed as an
+    // instruction to produce a plan artifact.
     const prompt = buildEnsembleParticipantPrompt({
       chat: chat(),
       config: ensemble,
-      participant: ensemble.participants[1],
-      currentPrompt: 'Implement.',
+      participant: ensemble.participants[0],
+      currentPrompt: 'Review this.',
       roundId: 'round-1'
     })
     expect(prompt).toContain('Plan Mode and Ensemble Mode compose')
-    expect(prompt).toContain('per-participant permission posture')
-    expect(prompt).toContain('produce a plan, do not execute')
-    expect(prompt).toContain('Other participants may still operate')
+    expect(prompt).toContain('A `read_only` permission preset is review posture')
+    expect(prompt).toContain('produce findings/review in place')
+    expect(prompt).not.toContain('produce a plan, do not execute')
+    expect(prompt).not.toContain('<proposed_plan>')
   })
 
   it('adds an ensemble plan-owner rule for the boss participant in plan workflow', () => {
@@ -865,6 +866,7 @@ describe('Ensemble prompt composition', () => {
     expect(prompt).toContain('you are the designated plan synthesizer')
     expect(prompt).toContain('<proposed_plan>...</proposed_plan>')
     expect(prompt).toContain('emit exactly one')
+    expect(prompt).toContain('Plan workflow is where plan artifacts belong')
     expect(prompt).not.toContain('do NOT emit a `<proposed_plan>` block')
   })
 

@@ -59,6 +59,7 @@ type RosterEditing = {
   meta: Omit<EnsembleRosterPreset, 'participants'>
   participants: EnsembleParticipant[]
   bossmanParticipantId?: string
+  secondInCommandParticipantId?: string
 }
 
 interface RosterSettingsPanelProps {
@@ -122,9 +123,11 @@ interface RosterParticipantRowProps {
   cursorAvailable: boolean
   showApplyToAll: boolean
   isBossman: boolean
+  isSecondInCommand: boolean
   onMove: (id: string, direction: -1 | 1) => void
   onRemove: (id: string) => void
   onSetBossman: (id: string | undefined) => void
+  onSetSecondInCommand: (id: string | undefined) => void
   onPatch: (id: string, patch: Partial<EnsembleParticipant>, persist?: boolean) => void
   onFlush: () => void
   onApplyPermissionsToAll: (source: EnsembleParticipant) => void
@@ -142,9 +145,11 @@ function RosterParticipantRow({
   cursorAvailable,
   showApplyToAll,
   isBossman,
+  isSecondInCommand,
   onMove,
   onRemove,
   onSetBossman,
+  onSetSecondInCommand,
   onPatch,
   onFlush,
   onApplyPermissionsToAll,
@@ -251,6 +256,16 @@ function RosterParticipantRow({
             aria-pressed={isBossman}
           >
             Boss
+          </button>
+          <button
+            type="button"
+            className={`settings-roster-bossman${isSecondInCommand ? ' is-active' : ''}`}
+            onClick={() => onSetSecondInCommand(isSecondInCommand ? undefined : participant.id)}
+            title={isSecondInCommand ? 'Clear second-in-command' : 'Set as second-in-command'}
+            aria-pressed={isSecondInCommand}
+            disabled={isBossman}
+          >
+            2nd
           </button>
           <button
             type="button"
@@ -372,7 +387,11 @@ export function RosterSettingsPanel({
     try {
       upsertEnsembleRosterPreset({
         ...next.meta,
-        participants: snapshotParticipantsForPreset(next.participants, next.bossmanParticipantId)
+        participants: snapshotParticipantsForPreset(
+          next.participants,
+          next.bossmanParticipantId,
+          next.secondInCommandParticipantId
+        )
       })
     } catch {
       // floor/name guards keep this valid; defensive
@@ -421,7 +440,8 @@ export function RosterSettingsPanel({
     const loaded: RosterEditing = {
       meta,
       participants: hydratedParticipants,
-      bossmanParticipantId: materialized.bossmanParticipantId
+      bossmanParticipantId: materialized.bossmanParticipantId,
+      secondInCommandParticipantId: materialized.secondInCommandParticipantId
     }
     editingRef.current = loaded
     dirtyRef.current = false
@@ -681,7 +701,11 @@ export function RosterSettingsPanel({
         ...current,
         participants,
         bossmanParticipantId:
-          current.bossmanParticipantId === id ? undefined : current.bossmanParticipantId
+          current.bossmanParticipantId === id ? undefined : current.bossmanParticipantId,
+        secondInCommandParticipantId:
+          current.secondInCommandParticipantId === id
+            ? undefined
+            : current.secondInCommandParticipantId
       })
     },
     [commit]
@@ -693,7 +717,29 @@ export function RosterSettingsPanel({
       if (!current) return
       commit({
         ...current,
-        bossmanParticipantId: id && current.participants.some((p) => p.id === id) ? id : undefined
+        bossmanParticipantId: id && current.participants.some((p) => p.id === id) ? id : undefined,
+        secondInCommandParticipantId:
+          id && current.secondInCommandParticipantId === id
+            ? undefined
+            : current.secondInCommandParticipantId
+      })
+    },
+    [commit]
+  )
+
+  const setSecondInCommandParticipant = useCallback(
+    (id: string | undefined): void => {
+      const current = editingRef.current
+      if (!current) return
+      const nextId =
+        id &&
+        id !== current.bossmanParticipantId &&
+        current.participants.some((participant) => participant.id === id)
+          ? id
+          : undefined
+      commit({
+        ...current,
+        secondInCommandParticipantId: nextId
       })
     },
     [commit]
@@ -895,9 +941,14 @@ export function RosterSettingsPanel({
                     cursorAvailable={cursorAvailable}
                     showApplyToAll={orderedParticipants.length > 1}
                     isBossman={editing.bossmanParticipantId === participant.id}
+                    isSecondInCommand={
+                      editing.secondInCommandParticipantId === participant.id &&
+                      editing.bossmanParticipantId !== participant.id
+                    }
                     onMove={moveParticipant}
                     onRemove={removeParticipant}
                     onSetBossman={setBossmanParticipant}
+                    onSetSecondInCommand={setSecondInCommandParticipant}
                     onPatch={patchParticipant}
                     onFlush={flushText}
                     onApplyPermissionsToAll={applyPermissionsToAll}

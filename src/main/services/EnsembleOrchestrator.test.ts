@@ -1244,6 +1244,89 @@ describe('EnsembleOrchestrator', () => {
     )
   })
 
+  it('rejects second-in-command roster edit while Boss is available', async () => {
+    const chat = makeChat()
+    chat.ensemble!.participants = [
+      { ...chat.ensemble!.participants[0], order: 2 },
+      { ...chat.ensemble!.participants[1], order: 1 }
+    ]
+    chat.ensemble!.bossmanParticipantId = 'claude'
+    chat.ensemble!.secondInCommandParticipantId = 'codex'
+    chat.ensemble!.bossmanAutoApprovals = {
+      enabled: true,
+      mode: 'permission_preset_once',
+      confirmedAt: '2026-05-24T00:00:00.000Z'
+    }
+    const harness = makeHarness({ initialChat: chat })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Continue.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    expect(harness.dispatched[0].ensembleRun?.participantId).toBe('codex')
+
+    const result = await harness.orchestrator.rosterEditForRun(
+      harness.dispatched[0].appRunId,
+      {
+        action: 'edit_participant',
+        targetParticipantId: 'claude',
+        participant: { role: 'Primary' }
+      }
+    )
+
+    expect(result.ok).toBe(false)
+    expect(result.error).toBe('second_in_command_standby')
+  })
+
+  it('allows second-in-command roster edit when Boss is disabled for the round', async () => {
+    const chat = makeChat()
+    chat.ensemble!.participants = [
+      { ...chat.ensemble!.participants[0], enabled: false },
+      chat.ensemble!.participants[1],
+      {
+        id: 'kimi',
+        provider: 'kimi',
+        enabled: true,
+        role: 'Analyst',
+        instructions: 'Analyze.',
+        order: 3,
+        permissionPresetId: 'read_only'
+      }
+    ]
+    chat.ensemble!.bossmanParticipantId = 'claude'
+    chat.ensemble!.secondInCommandParticipantId = 'codex'
+    chat.ensemble!.bossmanAutoApprovals = {
+      enabled: true,
+      mode: 'permission_preset_once',
+      confirmedAt: '2026-05-24T00:00:00.000Z'
+    }
+    const harness = makeHarness({ initialChat: chat })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Continue.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    expect(harness.dispatched[0].ensembleRun?.participantId).toBe('codex')
+
+    const listed = harness.orchestrator.listParticipantsForRun(harness.dispatched[0].appRunId)
+    expect(listed.bossmanAuthorityRole).toBe('second_in_command')
+    const result = await harness.orchestrator.rosterEditForRun(
+      harness.dispatched[0].appRunId,
+      {
+        action: 'edit_participant',
+        targetParticipantId: 'kimi',
+        participant: { role: 'Quota Relief' }
+      }
+    )
+
+    expect(result.ok).toBe(true)
+    expect(harness.chat.ensemble?.participants.find((participant) => participant.id === 'kimi')?.role).toBe(
+      'Quota Relief'
+    )
+  })
+
   it('schedules a wakeup and resumes the same participant in the active round', async () => {
     const scheduled: EnsembleWakeupRecord[] = []
     const harness = makeHarness({
@@ -3418,7 +3501,7 @@ Next action:
       })
     )
     expect(harness.chat.ensemble!.sessionActivityLedger?.at(-1)).toMatchObject({
-      changedBy: 'orchestrator',
+      changedBy: 'user',
       target: 'claude',
       oldValue: expect.stringContaining('Claude / claude-model'),
       newValue: expect.stringContaining('Codex / gpt-5.5'),

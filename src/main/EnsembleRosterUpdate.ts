@@ -1,5 +1,6 @@
 type BossmanRosterEntry = {
   isBossman?: boolean
+  isSecondInCommand?: boolean
 }
 
 type BossmanRosterParticipant = {
@@ -10,6 +11,7 @@ export type BossmanRosterUpdateResolution<TAutoApprovals = unknown> =
   | {
       ok: true
       bossmanParticipantId?: string
+      secondInCommandParticipantId?: string
       bossmanAutoApprovals?: TAutoApprovals
     }
   | {
@@ -24,6 +26,7 @@ export function resolveRosterUpdateBossmanAssignment<TAutoApprovals>(
   participants: ReadonlyArray<BossmanRosterParticipant>,
   previous: {
     bossmanParticipantId?: string
+    secondInCommandParticipantId?: string
     bossmanAutoApprovals?: TAutoApprovals
   }
 ): BossmanRosterUpdateResolution<TAutoApprovals> {
@@ -35,6 +38,16 @@ export function resolveRosterUpdateBossmanAssignment<TAutoApprovals>(
   if (markedIndexes.length > 1) {
     return { ok: false, error: 'Only one participant may be marked as Boss.' }
   }
+  const secondMarkerWasSpecified = entries.some((entry) =>
+    hasOwn.call(entry, 'isSecondInCommand')
+  )
+  const markedSecondIndexes = entries
+    .map((entry, index) => (entry.isSecondInCommand === true ? index : -1))
+    .filter((index) => index >= 0)
+
+  if (markedSecondIndexes.length > 1) {
+    return { ok: false, error: 'Only one participant may be marked as second-in-command.' }
+  }
 
   const markedBossmanParticipantId =
     markedIndexes.length === 1 ? participants[markedIndexes[0]]?.id : undefined
@@ -45,12 +58,28 @@ export function resolveRosterUpdateBossmanAssignment<TAutoApprovals>(
       ? previous.bossmanParticipantId
       : undefined
   const bossmanParticipantId = markedBossmanParticipantId ?? preservedBossmanParticipantId
+  const markedSecondInCommandParticipantId =
+    markedSecondIndexes.length === 1 ? participants[markedSecondIndexes[0]]?.id : undefined
+  const preservedSecondInCommandParticipantId =
+    !secondMarkerWasSpecified &&
+    previous.secondInCommandParticipantId &&
+    previous.secondInCommandParticipantId !== bossmanParticipantId &&
+    participants.some((participant) => participant.id === previous.secondInCommandParticipantId)
+      ? previous.secondInCommandParticipantId
+      : undefined
+  const secondInCommandParticipantId =
+    markedSecondInCommandParticipantId &&
+    markedSecondInCommandParticipantId !== bossmanParticipantId
+      ? markedSecondInCommandParticipantId
+      : preservedSecondInCommandParticipantId
   const bossmanAutoApprovals =
     bossmanParticipantId && bossmanParticipantId === previous.bossmanParticipantId
       ? previous.bossmanAutoApprovals
       : undefined
 
-  return bossmanParticipantId
-    ? { ok: true, bossmanParticipantId, bossmanAutoApprovals }
-    : { ok: true }
+  return {
+    ok: true,
+    ...(bossmanParticipantId ? { bossmanParticipantId, bossmanAutoApprovals } : {}),
+    ...(secondInCommandParticipantId ? { secondInCommandParticipantId } : {})
+  }
 }
