@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { createDefaultEnsembleConfig } from './EnsembleDefaults'
+import { MAX_ENSEMBLE_PARTICIPANTS } from './EnsemblePrompt'
 import type { ProviderId } from './store/types'
 import { getDefaultEnsembleParticipantConfig } from '../renderer/src/lib/ensembleProviderDefaults'
 
@@ -93,7 +94,12 @@ describe('createDefaultEnsembleConfig parity guard', () => {
     const config = createDefaultEnsembleConfig('codex' satisfies ProviderId)
 
     expect(config.enabled).toBe(true)
-    expect(config.maxParticipants).toBe(18)
+    // Parity guard against the prompt-builder ceiling: EnsembleDefaults
+    // hard-codes its own literal, so assert it tracks the canonical
+    // exported cap rather than a test-local number that goes stale on
+    // the next cap raise (this assertion sat at 18 after the 18 → 20
+    // bump for exactly that reason).
+    expect(config.maxParticipants).toBe(MAX_ENSEMBLE_PARTICIPANTS)
     expect(config.orchestrationMode).toBe('turn_bound')
     expect(config.maxContinuationHops).toBe(6)
     expect(typeof config.updatedAt).toBe('string')

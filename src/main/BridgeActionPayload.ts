@@ -327,7 +327,10 @@ export interface BridgeCreateThreadParticipant {
 
 // 1.7.x — 18 → 20 in step with MAX_ENSEMBLE_PARTICIPANTS so phone-side
 // roster edits accept the same panel sizes the Mac strip allows.
-const MAX_BRIDGE_ENSEMBLE_PARTICIPANTS = 20
+// Exported so the decode tests build their at-cap / oversized fixtures
+// from this constant (with a cross-seam parity assertion against
+// EnsemblePrompt's MAX_ENSEMBLE_PARTICIPANTS) instead of literals.
+export const MAX_BRIDGE_ENSEMBLE_PARTICIPANTS = 20
 
 export interface BridgeCreateThreadAction extends BridgeActionMetadata {
   kind: 'createThread'
@@ -341,7 +344,8 @@ export interface BridgeCreateThreadAction extends BridgeActionMetadata {
   /** Optional display title seed. */
   title?: string
   /** Ensemble roster override (variant 'ensemble'), in speaking order.
-   * Omitted → the Mac's default roster. Capped at 18 (the panel ceiling);
+   * Omitted → the Mac's default roster. Capped at
+   * MAX_BRIDGE_ENSEMBLE_PARTICIPANTS (the panel ceiling);
    * role/instructions default per provider from the Mac's role seeds. */
   participants?: BridgeCreateThreadParticipant[]
 }

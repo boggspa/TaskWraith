@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   BridgeActionPayloadDecodeError,
+  MAX_BRIDGE_ENSEMBLE_PARTICIPANTS,
   actionIdFromPayload,
   decodeBridgeActionPayload,
   expiresAtFromPayload,
@@ -9,6 +10,7 @@ import {
   workspaceIdFromPayload,
   type BridgeActionPayload
 } from './BridgeActionPayload'
+import { MAX_ENSEMBLE_PARTICIPANTS } from './EnsemblePrompt'
 
 function encode(obj: unknown): string {
   return Buffer.from(JSON.stringify(obj), 'utf-8').toString('base64')
@@ -386,18 +388,23 @@ describe('decodeBridgeActionPayload', () => {
         expect(withRoster.participants?.[0].model).toBe('claude-fable-5')
         expect(withRoster.participants?.[1].role).toBe('Researcher')
       }
+      // Fixtures derive from the exported cap so the next ceiling change
+      // cannot leave this test silently asserting the previous limit
+      // (this pair sat at 18/19 after the 18 → 20 raise).
       const maxRoster = decodeBridgeActionPayload(
         encode({
           kind: 'createThread',
           actionId: 'a-max',
           workspaceId: 'ws-1',
           variant: 'ensemble',
-          participants: Array.from({ length: 18 }, () => ({ provider: 'claude' }))
+          participants: Array.from({ length: MAX_BRIDGE_ENSEMBLE_PARTICIPANTS }, () => ({
+            provider: 'claude'
+          }))
         })
       ).payload
       expect(maxRoster.kind).toBe('createThread')
       if (maxRoster.kind === 'createThread') {
-        expect(maxRoster.participants).toHaveLength(18)
+        expect(maxRoster.participants).toHaveLength(MAX_BRIDGE_ENSEMBLE_PARTICIPANTS)
       }
       const oversized = decodeBridgeActionPayload(
         encode({
@@ -405,20 +412,30 @@ describe('decodeBridgeActionPayload', () => {
           actionId: 'a-big',
           workspaceId: 'ws-1',
           variant: 'ensemble',
-          participants: Array.from({ length: 19 }, () => ({ provider: 'claude' }))
+          participants: Array.from({ length: MAX_BRIDGE_ENSEMBLE_PARTICIPANTS + 1 }, () => ({
+            provider: 'claude'
+          }))
         })
       ).payload
       expect(oversized.kind).toBe('unknown')
     })
 
-    it('decodes ensembleRosterUpdate through the 18-participant cap', () => {
+    it('keeps the bridge roster cap in step with the prompt-builder ceiling', () => {
+      // Cross-seam parity guard: the cap lives at several seams
+      // (MAX_ENSEMBLE_PARTICIPANTS in EnsemblePrompt, this bridge decoder,
+      // the renderer chip strip). Phone-side roster edits must accept the
+      // same panel sizes the Mac strip allows.
+      expect(MAX_BRIDGE_ENSEMBLE_PARTICIPANTS).toBe(MAX_ENSEMBLE_PARTICIPANTS)
+    })
+
+    it('decodes ensembleRosterUpdate through the participant cap', () => {
       const maxRoster = decodeBridgeActionPayload(
         encode({
           kind: 'ensembleRosterUpdate',
           actionId: 'a-roster-update-max',
           workspaceId: 'ws-1',
           threadId: 'thread-1',
-          participants: Array.from({ length: 18 }, (_, index) => ({
+          participants: Array.from({ length: MAX_BRIDGE_ENSEMBLE_PARTICIPANTS }, (_, index) => ({
             id: `participant-${index + 1}`,
             provider: 'claude',
             role: `Reviewer ${index + 1}`,
@@ -428,7 +445,7 @@ describe('decodeBridgeActionPayload', () => {
       ).payload
       expect(maxRoster.kind).toBe('ensembleRosterUpdate')
       if (maxRoster.kind === 'ensembleRosterUpdate') {
-        expect(maxRoster.participants).toHaveLength(18)
+        expect(maxRoster.participants).toHaveLength(MAX_BRIDGE_ENSEMBLE_PARTICIPANTS)
       }
 
       const oversized = decodeBridgeActionPayload(
@@ -437,10 +454,13 @@ describe('decodeBridgeActionPayload', () => {
           actionId: 'a-roster-update-big',
           workspaceId: 'ws-1',
           threadId: 'thread-1',
-          participants: Array.from({ length: 19 }, (_, index) => ({
-            id: `participant-${index + 1}`,
-            provider: 'claude'
-          }))
+          participants: Array.from(
+            { length: MAX_BRIDGE_ENSEMBLE_PARTICIPANTS + 1 },
+            (_, index) => ({
+              id: `participant-${index + 1}`,
+              provider: 'claude'
+            })
+          )
         })
       ).payload
       expect(oversized).toMatchObject({ kind: 'unknown', rawKind: 'ensembleRosterUpdate' })

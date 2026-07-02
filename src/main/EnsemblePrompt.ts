@@ -65,8 +65,11 @@ import {
 // 1.0.5-EW46 — Ceiling raised 12 → 18; six chips per row now
 // yields up to three wrapped rows.
 // 1.7.x — Ceiling raised 18 → 20; the chip strip now wraps into
-// balanced rows of at most 5 (up to four rows at cap).
-const MAX_ENSEMBLE_PARTICIPANTS = 20
+// balanced rows of at most 5 (up to four rows at cap). Exported so the
+// parity-guard tests (EnsembleDefaults / BridgeActionPayload) assert
+// against THIS constant instead of a literal that goes stale on the
+// next cap change.
+export const MAX_ENSEMBLE_PARTICIPANTS = 20
 
 export interface BuildEnsemblePromptInput {
   chat: ChatRecord
