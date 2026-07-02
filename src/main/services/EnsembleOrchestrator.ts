@@ -5969,6 +5969,16 @@ export class EnsembleOrchestrator {
       const readers: EnsembleParticipant[] = []
       const writers: EnsembleParticipant[] = []
       for (const participant of remaining) {
+        // Spike 4 (staged fan-out) — explicit stage roles override inferred
+        // eligibility: reviewers NEVER join the round-start read pass (the
+        // stage gate in the serial loop defers them until writers land), and
+        // explicit workers take a serial turn even when their permissions
+        // resolve read-only. Unstaged participants and scouts keep the
+        // permission-inferred partition.
+        if (participant.stageRole === 'reviewer' || participant.stageRole === 'worker') {
+          writers.push(participant)
+          continue
+        }
         const permissions = chatForFanout
           ? this.resolveFanoutEligibilityPermissions(
               chatForFanout,
@@ -6061,6 +6071,17 @@ export class EnsembleOrchestrator {
     // specific transcript note ("Yield target X unreachable. Routing
     // to next-in-rotation Y.") instead of the generic skip note.
     let yieldedTargetParticipantId: string | null = null
+    // Spike 4 (staged fan-out) — reviewer stage-gate state. Stage-role
+    // reviewers wait until every non-reviewer turn has drained, EXCEPT when
+    // explicitly routed by a yield / yield-return / @-mention (agent-directed
+    // routing outranks the declarative stage — ids land in the exempt set at
+    // each promotion point). `reviewerWaveEligible` mirrors the round-start
+    // read-pass gates so the closing review wave obeys the same policy/env
+    // switches as the opening scout pass; when concurrency is unavailable
+    // reviewers still run LAST, just serially.
+    const stageGateExemptIds = new Set<string>()
+    const reviewerDeferralNoted = new Set<string>()
+    const reviewerWaveEligible = shouldRunReadOnlyFanout
     // 1.0.4 — round-end all-unreachable fallback. Counts every
     // dispatch attempt and how many of those attempts failed with
     // `kind: 'unreachable'`. If the round exhausts `remaining` with
@@ -6070,8 +6091,68 @@ export class EnsembleOrchestrator {
       if (runtime.cancelled) break
       const chat = this.deps.getChat(runtime.chatId)
       if (!chat?.ensemble) break
+      // Spike 4 — closing review wave: once only stage-role reviewers (and
+      // leftovers already dispatched via mid-round ensemble_fanout) remain,
+      // run the read-only-eligible reviewers as ONE parallel pass — the
+      // inverse of the round-start scout pass. Wave members are spliced out
+      // of `remaining` BEFORE the pass so nothing double-dispatches (the
+      // pass itself does not mark fannedOutParticipantIds — only the
+      // ensemble_fanout tool path does). Ineligible reviewers
+      // (write-capable presets) fall through to serial turns below.
+      if (
+        reviewerWaveEligible &&
+        remaining.length >= 2 &&
+        remaining.every(
+          (entry) =>
+            entry.stageRole === 'reviewer' || runtime.fannedOutParticipantIds?.has(entry.id)
+        )
+      ) {
+        const pendingReviewers = remaining.filter(
+          (entry) =>
+            entry.stageRole === 'reviewer' && !runtime.fannedOutParticipantIds?.has(entry.id)
+        )
+        const eligibleReviewers = pendingReviewers.filter(
+          (entry) =>
+            this.resolveFanoutEligibilityPermissions(chat, runtime, entry, 'read_only').readOnly
+        )
+        if (eligibleReviewers.length >= 2) {
+          const eligibleIds = new Set(eligibleReviewers.map((entry) => entry.id))
+          const rest = remaining.filter((entry) => !eligibleIds.has(entry.id))
+          remaining.splice(0, remaining.length, ...rest)
+          await this.runParallelFanoutPass(runtime, chat, eligibleReviewers, {
+            mode: 'read_only',
+            label: 'Review wave'
+          })
+          continue
+        }
+      }
       const participant = remaining.shift()!
       if (runtime.fannedOutParticipantIds?.has(participant.id)) {
+        continue
+      }
+      // Spike 4 — defer stage-role reviewers while any non-reviewer still
+      // awaits its turn this round. Explicitly-routed reviewers (yield /
+      // yield-return / @-mention promotions populate stageGateExemptIds)
+      // run immediately instead. Rotation always terminates: the gate
+      // requires a pending non-reviewer, and each rotation moves the queue
+      // toward that participant's turn.
+      if (
+        participant.stageRole === 'reviewer' &&
+        !stageGateExemptIds.has(participant.id) &&
+        remaining.some(
+          (entry) =>
+            entry.stageRole !== 'reviewer' && !runtime.fannedOutParticipantIds?.has(entry.id)
+        )
+      ) {
+        remaining.push(participant)
+        if (!reviewerDeferralNoted.has(participant.id)) {
+          reviewerDeferralNoted.add(participant.id)
+          this.appendRoundStatus(
+            runtime.chatId,
+            runtime.roundId,
+            `${participant.role || providerLabel(participant.provider)} is a reviewer; deferring their turn until the other participants finish.`
+          )
+        }
         continue
       }
       const wasYieldTarget = yieldedTargetParticipantId === participant.id
@@ -6432,6 +6513,8 @@ export class EnsembleOrchestrator {
         if (orderedTargets.length > 0) {
           const rest = remaining.filter((entry) => !remainingTargetIds.has(entry.id))
           remaining.splice(0, remaining.length, ...orderedTargets, ...rest)
+          // Spike 4 — an explicit @-mention outranks the reviewer stage gate.
+          for (const target of orderedTargets) stageGateExemptIds.add(target.id)
           this.appendRoundStatus(
             runtime.chatId,
             runtime.roundId,
@@ -6445,12 +6528,18 @@ export class EnsembleOrchestrator {
         )
         if (runtime.orchestrationMode === 'continuous') {
           for (const tagged of extraTargets.slice().reverse()) {
-            this.tryAppendContinuationTurn(
-              runtime,
-              remaining,
-              tagged,
-              `@-mention: extra turn appended for ${tagged.role || tagged.provider}.`
-            )
+            if (
+              this.tryAppendContinuationTurn(
+                runtime,
+                remaining,
+                tagged,
+                `@-mention: extra turn appended for ${tagged.role || tagged.provider}.`
+              )
+            ) {
+              // Spike 4 — an explicitly summoned extra turn outranks the
+              // reviewer stage gate.
+              stageGateExemptIds.add(tagged.id)
+            }
           }
         } else {
           for (const tagged of extraTargets) {
@@ -6471,6 +6560,9 @@ export class EnsembleOrchestrator {
       // sufficient for that case).
       if (routedByYieldTarget && remaining.length > 0) {
         yieldedTargetParticipantId = remaining[0].id
+        // Spike 4 — an explicit yield / yield-return promotion outranks the
+        // reviewer stage gate for the promoted participant.
+        stageGateExemptIds.add(remaining[0].id)
       }
     }
 

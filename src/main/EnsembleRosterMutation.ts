@@ -1,9 +1,12 @@
 import type {
   EnsembleParticipant,
+  EnsembleStageRole,
   PermissionOverrides,
   PermissionPresetId,
   ProviderId
 } from './store/types'
+
+const ENSEMBLE_STAGE_ROLES = new Set<string>(['scout', 'worker', 'reviewer'])
 
 export const MIN_ENSEMBLE_PARTICIPANTS = 2
 // 1.7.x — 18 → 20 in step with the renderer strip's balanced rows of
@@ -49,6 +52,8 @@ export interface RosterEditParticipantInput {
   serviceTier?: string | null
   permissionPresetId?: PermissionPresetId | string | null
   permissionOverrides?: PermissionOverrides | null
+  /** Staged fan-out stage ('scout' | 'worker' | 'reviewer'); null clears. */
+  stageRole?: EnsembleStageRole | string | null
   linkedProviderSessionId?: string | null
 }
 
@@ -96,6 +101,7 @@ const PATCH_FIELDS = [
   'serviceTier',
   'permissionPresetId',
   'permissionOverrides',
+  'stageRole',
   'linkedProviderSessionId'
 ] as const
 
@@ -133,6 +139,8 @@ function evaluateAdd(req: RosterEditRequest, ctx: RosterEditContext): RosterEdit
 
   const ceiling = validateParticipantPermissionInput(participant, ctx.roundReadOnly)
   if (ceiling) return ceiling
+  const stageRoleError = validateStageRoleInput(participant)
+  if (stageRoleError) return stageRoleError
   if (ctx.participants.length >= MAX_ENSEMBLE_PARTICIPANTS) {
     return fail('roster_max', 'Roster add rejected: the Ensemble roster is already at the maximum size.')
   }
@@ -161,6 +169,9 @@ function evaluateAdd(req: RosterEditRequest, ctx: RosterEditContext): RosterEdit
       : {}),
     ...(typeof participant.thinkingEnabled === 'boolean'
       ? { thinkingEnabled: participant.thinkingEnabled }
+      : {}),
+    ...(participant.stageRole && ENSEMBLE_STAGE_ROLES.has(String(participant.stageRole))
+      ? { stageRole: participant.stageRole as EnsembleStageRole }
       : {}),
     ...(permissionOverrides ? { permissionOverrides } : {})
   }
@@ -212,6 +223,8 @@ function evaluateEdit(req: RosterEditRequest, ctx: RosterEditContext): RosterEdi
 
   const ceiling = validateParticipantPermissionInput(participant, ctx.roundReadOnly)
   if (ceiling) return ceiling
+  const stageRoleError = validateStageRoleInput(participant)
+  if (stageRoleError) return stageRoleError
 
   const targetIndex = ctx.participants.findIndex(
     (participant) => participant.id === req.targetParticipantId
@@ -237,6 +250,22 @@ function evaluateEdit(req: RosterEditRequest, ctx: RosterEditContext): RosterEdi
     affectedParticipantId: target.id,
     summary: `Edited ${participantLabel(nextTarget)} in the Ensemble roster.`
   }
+}
+
+function validateStageRoleInput(
+  participant: RosterEditParticipantInput
+): Extract<RosterEditResolution, { ok: false }> | null {
+  if (
+    participant.stageRole !== undefined &&
+    participant.stageRole !== null &&
+    !ENSEMBLE_STAGE_ROLES.has(String(participant.stageRole))
+  ) {
+    return fail(
+      'invalid_request',
+      'Roster edit rejected: stageRole must be scout, worker, or reviewer (or null to clear).'
+    )
+  }
+  return null
 }
 
 function validateParticipantPermissionInput(
@@ -354,6 +383,13 @@ function applyParticipantPatch(
   }
   if (hasOwn.call(patch, 'thinkingEnabled') && typeof patch.thinkingEnabled === 'boolean') {
     next.thinkingEnabled = patch.thinkingEnabled
+  }
+  if (hasOwn.call(patch, 'stageRole')) {
+    if (patch.stageRole && ENSEMBLE_STAGE_ROLES.has(String(patch.stageRole))) {
+      next.stageRole = patch.stageRole as EnsembleStageRole
+    } else {
+      delete next.stageRole
+    }
   }
   if (hasOwn.call(patch, 'serviceTier')) {
     if (patch.serviceTier) next.serviceTier = patch.serviceTier

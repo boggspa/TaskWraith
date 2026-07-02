@@ -3,6 +3,7 @@ import type {
   EnsembleFanoutPolicy,
   EnsembleOrchestrationMode,
   EnsembleParticipant,
+  EnsembleStageRole,
   PermissionOverrides,
   PermissionPresetId,
   PooledAgentIdentitySnapshot,
@@ -56,6 +57,8 @@ export type EnsembleRosterParticipantSnapshot = {
   geminiAuthProfileId?: string | null
   permissionPresetId?: PermissionPresetId
   permissionOverrides?: PermissionOverrides
+  /** Staged fan-out stage (spike 4) — see EnsembleStageRole in store/types. */
+  stageRole?: EnsembleStageRole
   reasoningEffort?: string
   fastModeEnabled?: boolean
   thinkingEnabled?: boolean
@@ -111,6 +114,8 @@ function readRawPresets(): EnsembleRosterPreset[] {
   }
 }
 
+const ENSEMBLE_STAGE_ROLES = new Set<EnsembleStageRole>(['scout', 'worker', 'reviewer'])
+
 function isEnsembleRosterParticipantSnapshot(
   value: unknown
 ): value is EnsembleRosterParticipantSnapshot {
@@ -121,7 +126,9 @@ function isEnsembleRosterParticipantSnapshot(
     typeof entry.enabled === 'boolean' &&
     typeof entry.role === 'string' &&
     typeof entry.instructions === 'string' &&
-    typeof entry.order === 'number'
+    typeof entry.order === 'number' &&
+    (entry.stageRole === undefined ||
+      ENSEMBLE_STAGE_ROLES.has(entry.stageRole as EnsembleStageRole))
   )
 }
 
@@ -344,6 +351,7 @@ function snapshotParticipant(
     ...(participant.permissionOverrides
       ? { permissionOverrides: clonePermissionOverrides(participant.permissionOverrides) }
       : {}),
+    ...(participant.stageRole ? { stageRole: participant.stageRole } : {}),
     ...(participant.reasoningEffort ? { reasoningEffort: participant.reasoningEffort } : {}),
     ...(typeof participant.fastModeEnabled === 'boolean'
       ? { fastModeEnabled: participant.fastModeEnabled }
@@ -414,6 +422,7 @@ export function materializeParticipantsFromPresetWithBossman(
       ...(snapshot.permissionOverrides
         ? { permissionOverrides: clonePermissionOverrides(snapshot.permissionOverrides) }
         : {}),
+      ...(snapshot.stageRole ? { stageRole: snapshot.stageRole } : {}),
       ...(snapshot.reasoningEffort ? { reasoningEffort: snapshot.reasoningEffort } : {}),
       ...(typeof snapshot.fastModeEnabled === 'boolean'
         ? { fastModeEnabled: snapshot.fastModeEnabled }

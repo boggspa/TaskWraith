@@ -8598,3 +8598,171 @@ describe('worstConsecutiveFileEditFailure (work-session supervisor guard)', () =
     expect(r).toEqual({ filePath: 'a.ts', failures: 2 })
   })
 })
+
+/*
+ * Spike 4 (docs/ensemble-posture-fanout-preamble-design.md) — staged
+ * fan-out. Stage-role reviewers are excluded from the round-start read
+ * pass and deferred behind every non-reviewer turn; once only reviewers
+ * remain, eligible ones run as one parallel read-only "Review wave".
+ */
+describe('staged fan-out (stageRole)', () => {
+  function completeRun(harness: ReturnType<typeof makeHarness>, index: number, text: string): void {
+    harness.orchestrator.handleProviderOutput(
+      harness.dispatched[index].provider as EnsembleParticipant['provider'],
+      { appRunId: harness.dispatched[index].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'message', role: 'assistant', delta: true, content: text }
+    )
+    harness.orchestrator.handleProviderOutput(
+      harness.dispatched[index].provider as EnsembleParticipant['provider'],
+      { appRunId: harness.dispatched[index].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'result', status: 'success', stats: { total_tokens: 5 } }
+    )
+  }
+
+  it('defers a stage-role reviewer behind non-reviewer turns in a serial round', async () => {
+    const harness = makeHarness()
+    harness.chat.ensemble!.participants = [
+      {
+        id: 'claude',
+        provider: 'claude',
+        enabled: true,
+        role: 'Auditor',
+        instructions: 'Review the work.',
+        order: 1,
+        permissionPresetId: 'read_only',
+        stageRole: 'reviewer'
+      },
+      {
+        id: 'codex',
+        provider: 'codex',
+        enabled: true,
+        role: 'Builder',
+        instructions: 'Do the work.',
+        order: 2,
+        permissionPresetId: 'workspace_write'
+      }
+    ]
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Build it, then review it.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    // Despite order 1, the reviewer waits: the Builder dispatches first.
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    expect(harness.dispatched[0].provider).toBe('codex')
+    const deferralNote = harness.chat.messages.find((message) =>
+      message.content?.includes('is a reviewer; deferring their turn')
+    )
+    expect(deferralNote).toBeTruthy()
+    completeRun(harness, 0, 'Built.')
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    expect(harness.dispatched[1].provider).toBe('claude')
+  })
+
+  it('keeps reviewers out of the round-start read pass and runs them as a closing review wave', async () => {
+    const harness = makeHarness()
+    harness.chat.ensemble!.fanoutPolicy = 'read_only'
+    harness.chat.ensemble!.participants = [
+      {
+        id: 'claude-rev',
+        provider: 'claude',
+        enabled: true,
+        role: 'Reviewer A',
+        instructions: 'Review.',
+        order: 1,
+        permissionPresetId: 'read_only',
+        stageRole: 'reviewer'
+      },
+      {
+        id: 'kimi-rev',
+        provider: 'kimi',
+        enabled: true,
+        role: 'Reviewer B',
+        instructions: 'Review.',
+        order: 2,
+        permissionPresetId: 'read_only',
+        stageRole: 'reviewer'
+      },
+      {
+        id: 'codex',
+        provider: 'codex',
+        enabled: true,
+        role: 'Builder',
+        instructions: 'Do the work.',
+        order: 3,
+        permissionPresetId: 'workspace_write'
+      }
+    ]
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Build then review.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    // Pre-spike both read_only reviewers would have fanned out at round
+    // start, BEFORE the Builder's work existed. Now the Builder goes first.
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    expect(harness.dispatched[0].provider).toBe('codex')
+    completeRun(harness, 0, 'Built the feature.')
+    // With only reviewers left, both dispatch concurrently as one wave.
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
+    expect(new Set(harness.dispatched.slice(1).map((payload) => payload.provider))).toEqual(
+      new Set(['claude', 'kimi'])
+    )
+    const waveNote = harness.chat.messages.find((message) =>
+      message.content?.includes('Review wave')
+    )
+    expect(waveNote).toBeTruthy()
+  })
+
+  it('lets an explicit yield target run a reviewer immediately (routing outranks the stage gate)', async () => {
+    const harness = makeHarness()
+    harness.chat.ensemble!.participants = [
+      {
+        id: 'codex',
+        provider: 'codex',
+        enabled: true,
+        role: 'Builder',
+        instructions: 'Do the work.',
+        order: 1,
+        permissionPresetId: 'workspace_write'
+      },
+      {
+        id: 'claude',
+        provider: 'claude',
+        enabled: true,
+        role: 'Auditor',
+        instructions: 'Review the work.',
+        order: 2,
+        permissionPresetId: 'read_only',
+        stageRole: 'reviewer'
+      },
+      {
+        id: 'kimi',
+        provider: 'kimi',
+        enabled: true,
+        role: 'Helper',
+        instructions: 'Help.',
+        order: 3,
+        permissionPresetId: 'read_only'
+      }
+    ]
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Start building.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    expect(harness.dispatched[0].provider).toBe('codex')
+    // Builder explicitly yields to the Auditor: the reviewer speaks next
+    // even though the Helper (a non-reviewer) still awaits its turn.
+    expect(
+      harness.orchestrator.markYielded(
+        harness.dispatched[0].appRunId!,
+        'Need a review now.',
+        'Auditor'
+      )
+    ).toBe(true)
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    expect(harness.dispatched[1].provider).toBe('claude')
+  })
+})

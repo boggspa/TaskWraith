@@ -393,3 +393,23 @@ describe('buildProviderChangeParticipantPatch', () => {
     expect(patch.linkedProviderSessionId).toBeNull()
   })
 })
+
+describe('stageRole snapshot round-trip (spike 4)', () => {
+  it('carries stageRole through snapshot → materialize and omits it when absent', () => {
+    const config = sampleEnsemble()
+    // The Planner is config.participants[0] but sorts to preset index 1
+    // (order 2), so key the assertions by role, not array position.
+    config.participants[0].stageRole = 'reviewer'
+    const preset = buildEnsembleRosterPresetFromConfig('Staged panel', config, 1_700_000_000_000)
+    const plannerSnapshot = preset.participants.find((entry) => entry.role === 'Planner')
+    const builderSnapshot = preset.participants.find((entry) => entry.role === 'Builder')
+    expect(plannerSnapshot?.stageRole).toBe('reviewer')
+    expect(builderSnapshot).not.toHaveProperty('stageRole')
+
+    const materialized = materializeParticipantsFromPreset(preset.participants)
+    const planner = materialized.find((entry) => entry.role === 'Planner')
+    const builder = materialized.find((entry) => entry.role === 'Builder')
+    expect(planner?.stageRole).toBe('reviewer')
+    expect(builder).not.toHaveProperty('stageRole')
+  })
+})

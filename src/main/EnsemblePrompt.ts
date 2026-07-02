@@ -661,6 +661,24 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
     sanitizeText(
       input.participant.instructions || 'Contribute a concise, useful response for your role.'
     ),
+    // Spike 4 — declared dispatch stage. Emitted only when the seat carries
+    // an explicit stageRole so unstaged rosters keep their prompt shape.
+    ...(input.participant.stageRole === 'reviewer'
+      ? [
+          '',
+          'Stage role: reviewer — your turn was deliberately scheduled after the other participants finished their work this round. Review what changed (the transcript carries per-turn tool and file-change summaries), verify claims against the workspace, and report findings; do not redo or extend the work itself.'
+        ]
+      : input.participant.stageRole === 'scout'
+        ? [
+            '',
+            'Stage role: scout — you run at the start of the round to investigate. Gather the facts your peers will need and report them crisply; leave implementation to the worker seats.'
+          ]
+        : input.participant.stageRole === 'worker'
+          ? [
+              '',
+              'Stage role: worker — you take a serial implementation turn. Act on the request (and any scout findings above) directly.'
+            ]
+          : []),
     ...(isOllamaParticipant
       ? [
           '',

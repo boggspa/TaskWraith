@@ -621,3 +621,84 @@ describe('evaluateRosterEdit', () => {
     expect(worker?.linkedProviderSessionId).toBeUndefined()
   })
 })
+
+describe('stageRole roster edits (spike 4)', () => {
+  it('sets, preserves, and clears stageRole through edit_participant', () => {
+    const set = evaluateRosterEdit(
+      {
+        action: 'edit_participant',
+        targetParticipantId: 'worker',
+        participant: { stageRole: 'reviewer' }
+      },
+      makeContext()
+    )
+    expect(set).toMatchObject({ ok: true })
+    if (!set.ok) throw new Error(set.message)
+    expect(set.nextParticipants[1]).toMatchObject({ id: 'worker', stageRole: 'reviewer' })
+
+    // An unrelated edit leaves an existing stageRole untouched.
+    const ctxWithStage = makeContext()
+    ctxWithStage.participants = set.nextParticipants
+    const unrelated = evaluateRosterEdit(
+      {
+        action: 'edit_participant',
+        targetParticipantId: 'worker',
+        participant: { role: 'Renamed lane' }
+      },
+      ctxWithStage
+    )
+    if (!unrelated.ok) throw new Error(unrelated.message)
+    expect(unrelated.nextParticipants[1]).toMatchObject({
+      role: 'Renamed lane',
+      stageRole: 'reviewer'
+    })
+
+    // Explicit null clears the stage.
+    const cleared = evaluateRosterEdit(
+      {
+        action: 'edit_participant',
+        targetParticipantId: 'worker',
+        participant: { stageRole: null }
+      },
+      ctxWithStage
+    )
+    if (!cleared.ok) throw new Error(cleared.message)
+    expect(cleared.nextParticipants[1].stageRole).toBeUndefined()
+  })
+
+  it('rejects unrecognized stageRole values on edit and add', () => {
+    expect(
+      evaluateRosterEdit(
+        {
+          action: 'edit_participant',
+          targetParticipantId: 'worker',
+          participant: { stageRole: 'boss' }
+        },
+        makeContext()
+      )
+    ).toMatchObject({ ok: false, error: 'invalid_request' })
+    expect(
+      evaluateRosterEdit(
+        {
+          action: 'add_participant',
+          participant: { provider: 'claude', stageRole: 'manager' }
+        },
+        makeContext()
+      )
+    ).toMatchObject({ ok: false, error: 'invalid_request' })
+  })
+
+  it('carries a valid stageRole through add_participant', () => {
+    const result = evaluateRosterEdit(
+      {
+        action: 'add_participant',
+        participant: { provider: 'claude', role: 'Auditor', stageRole: 'reviewer' }
+      },
+      makeContext()
+    )
+    expect(result).toMatchObject({ ok: true })
+    if (!result.ok) throw new Error(result.message)
+    const added = result.nextParticipants[result.nextParticipants.length - 1]
+    expect(added).toMatchObject({ role: 'Auditor', stageRole: 'reviewer' })
+  })
+})

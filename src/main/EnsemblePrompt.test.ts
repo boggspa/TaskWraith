@@ -1342,6 +1342,41 @@ describe('formatToolTraceSummary', () => {
 })
 
 /*
+ * Spike 4 — stage-role stanza. Only explicitly staged seats get the
+ * extra line; unstaged rosters keep their prompt shape byte-identical.
+ */
+describe('stage-role prompt stanza', () => {
+  it('tells a reviewer seat it was scheduled after the work landed', () => {
+    const reviewer: EnsembleParticipant = {
+      ...ensemble.participants[0],
+      stageRole: 'reviewer'
+    }
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: chat(),
+      config: { ...ensemble, participants: [reviewer, ...ensemble.participants.slice(1)] },
+      participant: reviewer,
+      currentPrompt: 'Review the change.',
+      roundId: 'round-stage',
+      chatContextTurns: 6
+    })
+    expect(prompt).toContain('Stage role: reviewer')
+    expect(prompt).toContain('do not redo or extend the work itself')
+  })
+
+  it('emits no stage line for unstaged participants', () => {
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: chat(),
+      config: ensemble,
+      participant: ensemble.participants[0],
+      currentPrompt: 'Just answer.',
+      roundId: 'round-unstaged',
+      chatContextTurns: 6
+    })
+    expect(prompt).not.toContain('Stage role:')
+  })
+})
+
+/*
  * Spike 3 — per-file change digest rendered next to the tool-trace
  * line. The diff summaries were already computed on ToolActivity but
  * never surfaced, so writers could not see WHAT peers changed.
