@@ -4479,7 +4479,7 @@ html:has(.chat-split-region.chat-split-hidden-for-settings) .transcript-user-gut
       transparent 78%
     );
   filter: blur(5px);
-  opacity: 0.76;
+  opacity: 0.38;
 }
 
 @keyframes working-ghost-pulse {
