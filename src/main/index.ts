@@ -591,6 +591,7 @@ import {
 } from '../shared/previewModelCatalog'
 import { buildCodexStatusSnapshot } from './CodexStatusSnapshot'
 import { resolveEffectiveRunPermissions } from './EffectiveRunPermissions'
+import { isReconRunPosture } from './ReconPosture'
 import {
   clampUntrustedRunPosture,
   signRunPermissionPosture,
@@ -5625,6 +5626,9 @@ function composeDelegatedProviderPrompt(args: {
     codexHandoffsApplied: [],
     isGlobalRun: (args.subThread.scope ?? 'workspace') === 'global',
     approvalMode: args.approvalMode,
+    // Sub-threads are never plan-workflow chats, so a read-only delegated
+    // turn is a recon turn: the child should report findings, not plan.
+    workflowMode: args.subThread.workflowMode === 'plan' ? 'plan' : 'normal',
     providerLabel: providerLabel(args.provider),
     nativeSubAgentRequests: settings.nativeSubAgentRequests
   }).contextualPrompt
@@ -12123,7 +12127,17 @@ async function runKimiWireProvider(
       promptSent = true
       promptSequence += 1
       activePromptId = `prompt-${Date.now()}-${promptSequence}`
-      if (payload.approvalMode === 'plan' && !planModeSent) {
+      // Recon seats (Read-Only/Recon posture on a NORMAL-workflow run) must
+      // NOT flip on Kimi's native plan mode: plan mode installs a plan-shaped
+      // provider system prompt that outranks any in-prompt anti-plan rule,
+      // turning review/recon turns into plan artifacts. Write containment does
+      // not depend on it — the wire ApprovalRequest gate below auto-denies
+      // read-only-blocked services from the signed effectivePermissions either
+      // way. `isReconRunPosture` reads only post-clamp HMAC-covered fields
+      // (workflowMode + presetId), so this cannot be steered by the renderer.
+      // The print-mode fallback intentionally keeps `--plan` — that flag is
+      // what makes the non-interactive fallback safe.
+      if (payload.approvalMode === 'plan' && !planModeSent && !isReconRunPosture(payload)) {
         planModeSent = true
         child.stdin?.write(
           JSON.stringify({
@@ -12704,6 +12718,11 @@ async function runKimiProvider(event: Electron.IpcMainInvokeEvent, payload: Agen
   }
 
   const model = normalizeCliProviderModel('kimi', payload.model)
+  // `--plan` stays UNCONDITIONAL here — including for recon seats that the
+  // wire path deliberately runs without plan mode (isReconRunPosture). Print
+  // mode is non-interactive and auto-approves Kimi's provider tool calls, so
+  // the plan flag is the only thing making this fallback safe; a recon turn
+  // that degrades to print mode accepts plan-shaped output as the tradeoff.
   const args = [
     '--print',
     '--plan',
@@ -22948,6 +22967,7 @@ if (isGeminiMcpBridgeProcess) {
             codexHandoffsApplied: [],
             isGlobalRun: isGlobalScope,
             approvalMode: effectiveApprovalMode || 'default',
+            workflowMode: chat.workflowMode === 'plan' ? 'plan' : 'normal',
             providerLabel: providerLabel(provider),
             // Ollama continuity is NOT a session id — it's the persisted
             // tool-trajectory memory + tier the desktop composer injects.
@@ -28220,6 +28240,7 @@ if (isGeminiMcpBridgeProcess) {
               codexHandoffsApplied: [],
               isGlobalRun: isGlobalScope,
               approvalMode: approvalMode || 'default',
+              workflowMode: guestChat.workflowMode === 'plan' ? 'plan' : 'normal',
               providerLabel: providerLabel(provider)
             })
             const guestEffectivePermissions =
