@@ -852,6 +852,9 @@ export function classifyRemoteKind(message: ChatMessage): RemoteThreadRowKind {
   // tool row — classifying them 'assistant' keeps remote clients from folding
   // them into adjacent tool groups or suppressing them mid-stream.
   if (metaKind === 'guestParticipantReply') return 'assistant'
+  // Context-compaction cards degrade to a plain system row on the phone — the
+  // message `content` carries the formatted "Context compacted · X → Y" summary.
+  if (metaKind === 'contextCompaction') return 'system'
   if (message.role === 'tool') return 'tool'
   if (message.role === 'user') return 'user'
   if (message.role === 'error') return 'error'

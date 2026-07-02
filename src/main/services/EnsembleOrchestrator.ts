@@ -8,6 +8,7 @@ import {
 import type { RunPermissionPostureContext } from '../RunPermissionPosture'
 import {
   buildEnsembleParticipantPrompt,
+  computeEnsemblePromptShellStamp,
   getOrderedEnsembleParticipants,
   providerLabel
 } from '../EnsemblePrompt'
@@ -51,6 +52,14 @@ import {
   type DispatchFailureReason
 } from '../EnsembleErrors'
 import { resolveHealthEntryPresentation } from '../../shared/ollamaBrandTable'
+import {
+  CONTEXT_COMPACTION_MESSAGE_KIND,
+  contextCompactionMessageId,
+  contextPressureSeverity,
+  formatContextCompactionSummary,
+  type ContextCompactionSignal,
+  type ContextPressureSeverity
+} from '../../shared/contextCompaction'
 import type { ScoutBriefRecord } from '../ScoutBrief'
 import { updateActiveGoalLifecycle } from '../GoalState'
 import { findTerminalSynthesizerRoundSummary } from '../EnsembleRoundSummary'
@@ -79,7 +88,11 @@ import {
   isTerminalLaneStatus,
   transitionLane
 } from '../EnsembleLanes'
-import { concurrentLanesEnabled, concurrentWriteLanesEnabled } from '../featureGates'
+import {
+  concurrentLanesEnabled,
+  concurrentWriteLanesEnabled,
+  ensembleSlimResumeEnabled
+} from '../featureGates'
 // 1.0.7 — pure builder turning a finished participant run's stats into the
 // recordUsage payload, so ensemble runs reach usage.json (wall-clock + heatmaps
 // + provider totals). Ensemble runs complete here, not via handleProviderExit.
@@ -5049,6 +5062,7 @@ export class EnsembleOrchestrator {
       contextTokens: number
       contextWindow: number
       contextPercent: number
+      contextSeverity: ContextPressureSeverity
     }>
   } {
     if (!runId) return { ok: false, error: 'list_ensemble_participants requires an active run id.' }
@@ -5106,7 +5120,13 @@ export class EnsembleOrchestrator {
           status: states.get(participant.id) || 'idle',
           contextTokens: participantContext.tokens,
           contextWindow: participantContextWindow,
-          contextPercent: contextPercent(participantContext.tokens, participantContextWindow)
+          contextPercent: contextPercent(participantContext.tokens, participantContextWindow),
+          // Boss-facing pressure grade (warn ≥80% / critical ≥95%) so a roster
+          // manager can see which seat is nearing its window without doing the
+          // division itself.
+          contextSeverity: contextPressureSeverity(
+            contextPercent(participantContext.tokens, participantContextWindow)
+          )
         }
       })
     }
@@ -5565,6 +5585,17 @@ export class EnsembleOrchestrator {
       if (incoming.length > 0) {
         run.mediaRefs = mergeTranscriptMediaRefs(run.mediaRefs, incoming)
         this.flushRun(run)
+      }
+      return true
+    }
+    // Provider context compaction (src/shared/contextCompaction.ts). Ensemble
+    // transcripts are orchestrator-canonical, so the card is persisted HERE
+    // (the renderer's compaction_notice branch skips ensemble chats). Consumed
+    // either way so the signal never falls through to the content lanes.
+    if (payload?.type === 'compaction_event') {
+      const signal = payload.compaction as ContextCompactionSignal | undefined
+      if (signal && typeof signal === 'object' && signal.kind !== 'started') {
+        this.appendContextCompactionCard(run, runId, signal)
       }
       return true
     }
@@ -6234,6 +6265,24 @@ export class EnsembleOrchestrator {
         ? { ...chat.ensemble, selfReflective: true }
         : chat.ensemble
       const chatContextTurns = this.deps.getSettings().chatContextTurns
+      // Spike 5 — slim resumed-turn prompt (TASKWRAITH_ENSEMBLE_SLIM_RESUME,
+      // default OFF). Eligible only when: the flag is on; the seat's provider
+      // session genuinely resumes across turns (claude/codex/cursor — Kimi's
+      // --resume restores a token not history, Grok-ACP opens a fresh session
+      // per turn, Ollama is stateless); a resume id exists; this is NOT a
+      // wakeup re-entry (those explicitly rebuild working memory from the
+      // transcript); and the seat's persisted shell stamp matches the current
+      // config (roster/rules/instructions unchanged since its last full
+      // briefing). The fresh stamp is recorded on the run either way and
+      // persisted by flushRun next to linkedProviderSessionId.
+      const promptShellStamp = computeEnsemblePromptShellStamp(ensembleConfigForRound)
+      run.promptShellStamp = promptShellStamp
+      const slimTurn =
+        ensembleSlimResumeEnabled() &&
+        SLIM_RESUME_PROVIDERS.has(participant.provider) &&
+        Boolean(run.providerSessionId || participant.linkedProviderSessionId) &&
+        !resumeWakeup &&
+        participant.promptShellVersion === promptShellStamp
       const prompt = buildEnsembleParticipantPrompt({
         chat,
         config: ensembleConfigForRound,
@@ -6246,7 +6295,8 @@ export class EnsembleOrchestrator {
         // 1.0.4-AK6 — thread fan-out briefs into the writer's prompt
         // when a parallel fan-out pass just completed. Empty array
         // (or undefined) skips the section entirely.
-        scoutBriefs: runtime.scoutBriefs
+        scoutBriefs: runtime.scoutBriefs,
+        slimTurn
       })
       const promptWithDiscordContext = `${prompt}${formatDiscordContextPromptAppendix(
         runtime.discordContextSnapshots
@@ -7799,6 +7849,10 @@ export class EnsembleOrchestrator {
       return {
         ...participant,
         ...(run.providerSessionId ? { linkedProviderSessionId: run.providerSessionId } : {}),
+        // Spike 5 — record which prompt-shell stamp this seat has now seen,
+        // enabling the slim resumed-turn prompt on its NEXT dispatch (as
+        // long as the config still hashes to the same stamp).
+        ...(run.promptShellStamp ? { promptShellVersion: run.promptShellStamp } : {}),
         ...(tokenTotals ? { tokenTotals } : {})
       }
     })
@@ -8125,6 +8179,59 @@ export class EnsembleOrchestrator {
       ],
       updatedAt: this.deps.now()
     }, 'round-updated')
+  }
+
+  /**
+   * Persist a participant's context-compaction card into the canonical
+   * ensemble transcript. Idempotent via the deterministic message id
+   * (provider event uuid, else runId+kind), so duplicate signals across
+   * flush/replay lanes converge on one card. Presentation labels are FROZEN
+   * at stamp time, matching the participant-health card contract.
+   */
+  private appendContextCompactionCard(
+    run: ActiveParticipantRun,
+    runId: string,
+    signal: ContextCompactionSignal
+  ): void {
+    const chat = this.deps.getChat(run.chatId)
+    if (!chat?.ensemble) return
+    const participant = run.participant
+    const messageId = contextCompactionMessageId(signal.telemetry, `${runId}-${signal.kind}`)
+    if (chat.messages.some((message) => message.id === messageId)) return
+    const presentation = resolveHealthEntryPresentation(
+      participant.provider,
+      participant.model,
+      providerLabel(participant.provider)
+    )
+    const role = (participant.role || 'Participant').trim()
+    const displayParticipantLabel = `${presentation.displayProviderLabel} / ${role}`
+    this.saveChatWithCheckpoint(
+      {
+        ...chat,
+        messages: [
+          ...chat.messages,
+          {
+            id: messageId,
+            role: 'system',
+            // Human-readable fallback for exports and the iOS system row.
+            content: formatContextCompactionSummary(signal, displayParticipantLabel),
+            timestamp: this.deps.nowIso(),
+            metadata: {
+              kind: CONTEXT_COMPACTION_MESSAGE_KIND,
+              contextCompaction: { kind: signal.kind, telemetry: signal.telemetry },
+              provider: participant.provider,
+              ensembleParticipantId: participant.id,
+              ensembleRoundId: run.roundId,
+              // Frozen at stamp time — never recomputed from the live roster.
+              displayParticipantLabel,
+              displayHueClass: presentation.displayHueClass
+            }
+          }
+        ],
+        updatedAt: this.deps.now()
+      },
+      'round-updated'
+    )
   }
 
   private clearRuntimeIfCurrent(runtime: ActiveRoundRuntime): void {
