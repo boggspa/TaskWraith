@@ -152,6 +152,30 @@ describe('WorkspaceBoardView', () => {
               evidenceRefs: [{ path: 'tests/import-buttons.test.ts', line: 8 }],
               latestEvidencePackId: 'pack-1',
               updatedAt: '2026-07-02T12:00:00.000Z'
+            },
+            {
+              capabilityKey: 'import-layout',
+              title: 'Import layout',
+              status: 'partial',
+              evidenceRefs: [{ path: 'tests/import-layout.test.ts', line: 18 }],
+              latestEvidencePackId: 'pack-2',
+              updatedAt: '2026-07-02T12:05:00.000Z'
+            },
+            {
+              capabilityKey: 'import-styles',
+              title: 'Import styles',
+              status: 'blocked',
+              evidenceRefs: [],
+              latestEvidencePackId: 'pack-3',
+              updatedAt: '2026-07-02T12:06:00.000Z'
+            },
+            {
+              capabilityKey: 'arbitrary-ui',
+              title: 'Arbitrary UI',
+              status: 'unsupported',
+              evidenceRefs: [],
+              latestEvidencePackId: 'pack-4',
+              updatedAt: '2026-07-02T12:07:00.000Z'
             }
           ],
           mapEntries: [
@@ -186,10 +210,16 @@ describe('WorkspaceBoardView', () => {
     )
 
     expect(html).toContain('Capability ledger')
-    expect(html).toContain('1 capabilities')
+    expect(html).toContain('4 capabilities')
     expect(html).toContain('50% unsupported')
     expect(html).toContain('1 stall signal')
     expect(html).toContain('Verified · Import buttons')
+    expect(html).toContain('Partial')
+    expect(html).toContain('Blocked')
+    expect(html).toContain('Unsupported')
+    expect(html).toContain('Latest evidence')
+    expect(html).toContain('tests/import-layout.test.ts:18')
+    expect(html).toContain('Agent changed files but progress did not move')
   })
 
   it('matches card filters against linked metadata and attention state', () => {

@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type DragEvent, type FormEvent } from 'react'
 import type {
+  AuditEvidenceRef,
+  CapabilityLedgerCell,
   CapabilityLedgerSnapshot,
   ChatRecord,
   RunQueueJob,
@@ -196,6 +198,38 @@ function capabilityBadgeTone(status: string): 'muted' | 'warning' | 'danger' | '
   if (status === 'blocked' || status === 'unsupported') return 'danger'
   if (status === 'unverified') return 'warning'
   return 'muted'
+}
+
+const CAPABILITY_STATUS_ORDER: CapabilityLedgerCell['status'][] = [
+  'verified',
+  'partial',
+  'blocked',
+  'unsupported',
+  'unverified'
+]
+
+function capabilityStatusCounts(cells: CapabilityLedgerCell[]) {
+  const counts = new Map<CapabilityLedgerCell['status'], number>()
+  for (const status of CAPABILITY_STATUS_ORDER) counts.set(status, 0)
+  for (const cell of cells) counts.set(cell.status, (counts.get(cell.status) || 0) + 1)
+  return CAPABILITY_STATUS_ORDER.map((status) => ({
+    status,
+    label: formatCapabilityStatus(status),
+    count: counts.get(status) || 0,
+    tone: capabilityBadgeTone(status)
+  }))
+}
+
+function latestEvidenceCells(cells: CapabilityLedgerCell[]): CapabilityLedgerCell[] {
+  return [...cells]
+    .filter((cell) => cell.evidenceRefs.length > 0)
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+    .slice(0, 3)
+}
+
+function formatEvidenceRef(ref?: AuditEvidenceRef): string {
+  if (!ref) return 'No evidence refs'
+  return `${ref.path}${ref.line ? `:${ref.line}` : ''}`
 }
 
 function draftFromCard(card: WorkspaceBoardCard): DetailDraft {
@@ -542,6 +576,14 @@ export function WorkspaceBoardView({
   }, [board?.workspaceId, capabilityLedger])
   const visibleCapabilityCells = useMemo(
     () => (boardCapabilityLedger?.cells || []).slice(0, 6),
+    [boardCapabilityLedger]
+  )
+  const progressStatusCounts = useMemo(
+    () => capabilityStatusCounts(boardCapabilityLedger?.cells || []),
+    [boardCapabilityLedger]
+  )
+  const recentEvidenceCells = useMemo(
+    () => latestEvidenceCells(boardCapabilityLedger?.cells || []),
     [boardCapabilityLedger]
   )
   const unsupportedClaimRateLabel = boardCapabilityLedger
@@ -989,7 +1031,7 @@ export function WorkspaceBoardView({
       </header>
 
       {boardCapabilityLedger && (
-        <section className="workspace-board-intake" aria-label="Capability ledger">
+        <section className="workspace-board-intake workspace-board-ledger" aria-label="Capability ledger">
           <div className="workspace-board-intake-copy">
             <strong>Capability ledger</strong>
             <span>
@@ -1017,6 +1059,42 @@ export function WorkspaceBoardView({
               </span>
             ))}
           </div>
+          <div className="workspace-board-ledger-grid" aria-label="Project progress by capability status">
+            {progressStatusCounts.map((item) => (
+              <span key={item.status} className={`workspace-board-ledger-stat tone-${item.tone}`}>
+                <strong>{item.count}</strong>
+                {item.label}
+              </span>
+            ))}
+          </div>
+          {(recentEvidenceCells.length > 0 || boardCapabilityLedger.stallSignals.length > 0) && (
+            <div className="workspace-board-ledger-details">
+              {recentEvidenceCells.length > 0 && (
+                <div className="workspace-board-ledger-detail" aria-label="Latest capability evidence">
+                  <strong>Latest evidence</strong>
+                  {recentEvidenceCells.map((cell) => (
+                    <span key={cell.capabilityKey}>
+                      {formatCapabilityStatus(cell.status)} · {cell.title} · {formatEvidenceRef(cell.evidenceRefs[0])}
+                    </span>
+                  ))}
+                </div>
+              )}
+              {boardCapabilityLedger.stallSignals.length > 0 && (
+                <div className="workspace-board-ledger-detail" aria-label="Capability stall signals">
+                  <strong>Progress stall</strong>
+                  {boardCapabilityLedger.stallSignals.slice(0, 2).map((signal, index) => (
+                    <span key={`${signal.kind}-${index}`}>
+                      {signal.kind === 'diff_without_capability_delta'
+                        ? 'Agent changed files but progress did not move'
+                        : formatCapabilityStatus(signal.kind)}
+                      {' · '}
+                      {signal.note}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </section>
       )}
 
