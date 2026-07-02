@@ -27,6 +27,7 @@ import type {
   EnsembleParticipantStatus,
   EnsembleRunIdentity,
   EnsembleRoundState,
+  EnsembleStageRole,
   EnsembleWakeupRecord,
   ExternalPathGrant,
   PooledAgentIdentitySnapshot,
@@ -132,6 +133,7 @@ export type EnsembleQueuedSteerResult = {
 }
 
 const BOSSMAN_ASSIGNABLE_PERMISSION_PRESET_SET = new Set<string>(ASSIGNABLE_PERMISSION_PRESETS)
+const ENSEMBLE_SEAT_STAGE_ROLES = new Set<string>(['scout', 'worker', 'reviewer'])
 const SESSION_ACTIVITY_LEDGER_LIMIT = 40
 const CONTINUATION_BLOCKED_PARTICIPANT_STATUSES = new Set<EnsembleParticipantStatus>([
   'answered',
@@ -1272,7 +1274,8 @@ function participantSeatValue(participant: EnsembleParticipant): string {
   const provider = providerLabel(participant.provider)
   const model = participant.model ? ` / ${participant.model}` : ''
   const role = participant.role ? ` (${participant.role})` : ''
-  return `${provider}${model}${role}`
+  const stage = participant.stageRole ? ` [${participant.stageRole}]` : ''
+  return `${provider}${model}${role}${stage}`
 }
 
 function hasSeatChangePatch(patch: RosterEditParticipantInput | undefined | null): boolean {
@@ -1292,6 +1295,7 @@ function hasSeatChangePatch(patch: RosterEditParticipantInput | undefined | null
     Object.prototype.hasOwnProperty.call(patch, 'serviceTier') ||
     Object.prototype.hasOwnProperty.call(patch, 'permissionPresetId') ||
     Object.prototype.hasOwnProperty.call(patch, 'permissionOverrides') ||
+    Object.prototype.hasOwnProperty.call(patch, 'stageRole') ||
     Object.prototype.hasOwnProperty.call(patch, 'linkedProviderSessionId')
   )
 }
@@ -1370,6 +1374,13 @@ function applySeatChangePatch(
   if (Object.prototype.hasOwnProperty.call(patch, 'permissionOverrides')) {
     if (patch.permissionOverrides) next.permissionOverrides = patch.permissionOverrides
     else delete next.permissionOverrides
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, 'stageRole')) {
+    if (patch.stageRole && ENSEMBLE_SEAT_STAGE_ROLES.has(String(patch.stageRole))) {
+      next.stageRole = patch.stageRole as EnsembleStageRole
+    } else {
+      delete next.stageRole
+    }
   }
   if (Object.prototype.hasOwnProperty.call(patch, 'linkedProviderSessionId')) {
     if (typeof patch.linkedProviderSessionId === 'string' || patch.linkedProviderSessionId === null) {

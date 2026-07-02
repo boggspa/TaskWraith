@@ -319,16 +319,16 @@ Target:
 What exists:
 
 - Roster/preset editing and bridge editing can carry stage role.
+- Desktop participant seat changes now recognize, apply, clear, and label
+  `stageRole`.
 
 What is missing:
 
-- One desktop seat-change path does not recognize, apply, clear, or label
-  `stageRole`.
+- Stage-role dispatch receipts are still tracked under B5.5.
 
 Target:
 
-- Add `stageRole` to the seat-change patch/apply/audit path.
-- Test stage-only set and clear through participant seat changes.
+- Keep stage-only set and clear covered through participant seat-change tests.
 
 ### B5.8 - Provider capability caveat pinning
 

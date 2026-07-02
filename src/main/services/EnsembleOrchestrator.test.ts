@@ -3563,6 +3563,84 @@ Next action:
     )
   })
 
+  it('applies a user-requested inactive participant stage role immediately', async () => {
+    const harness = makeHarness()
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Plan and execute.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    const result = await harness.orchestrator.requestParticipantSeatChange({
+      chatId: 'ensemble-chat',
+      participantId: 'codex',
+      participant: {
+        stageRole: 'reviewer'
+      },
+      changedBy: 'user',
+      reason: 'User made Codex the reviewer.'
+    })
+
+    expect(result).toMatchObject({
+      ok: true,
+      status: 'applied',
+      participantId: 'codex'
+    })
+    expect(
+      harness.chat.ensemble!.participants.find((participant) => participant.id === 'codex')
+    ).toMatchObject({
+      provider: 'codex',
+      stageRole: 'reviewer'
+    })
+    expect(harness.chat.ensemble!.sessionActivityLedger?.at(-1)).toMatchObject({
+      changedBy: 'user',
+      target: 'codex',
+      oldValue: expect.stringContaining('Codex / codex-model'),
+      newValue: expect.stringContaining('[reviewer]'),
+      reason: 'User made Codex the reviewer.'
+    })
+  })
+
+  it('clears a user-requested inactive participant stage role immediately', async () => {
+    const initialChat = makeChat()
+    initialChat.ensemble!.participants[1].stageRole = 'reviewer'
+    const harness = makeHarness({ initialChat })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Plan and execute.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    const result = await harness.orchestrator.requestParticipantSeatChange({
+      chatId: 'ensemble-chat',
+      participantId: 'codex',
+      participant: {
+        stageRole: null
+      },
+      changedBy: 'user',
+      reason: 'User cleared the reviewer stage.'
+    })
+
+    expect(result).toMatchObject({
+      ok: true,
+      status: 'applied',
+      participantId: 'codex'
+    })
+    expect(
+      harness.chat.ensemble!.participants.find((participant) => participant.id === 'codex')
+        ?.stageRole
+    ).toBeUndefined()
+    expect(harness.chat.ensemble!.sessionActivityLedger?.at(-1)).toMatchObject({
+      changedBy: 'user',
+      target: 'codex',
+      oldValue: expect.stringContaining('[reviewer]'),
+      newValue: expect.not.stringContaining('[reviewer]'),
+      reason: 'User cleared the reviewer stage.'
+    })
+  })
+
   it('rejects roster removal of the configured Boss participant', async () => {
     const initialChat = makeChat()
     initialChat.ensemble!.bossmanParticipantId = 'claude'
