@@ -147,6 +147,30 @@ describe('AppStore workspace boards', () => {
     ).toThrow('Board card link kind is invalid.')
   })
 
+  it('bounds local-server card links to runtime process ids', () => {
+    const board = saveBoard('board-a', 'ws-a', '/repo-a')
+    const card = AppStore.saveWorkspaceBoardCard({
+      boardId: board.id,
+      workspaceId: board.workspaceId,
+      columnId: 'ready',
+      title: 'Local server',
+      sortOrder: 1,
+      link: { kind: 'local-server', id: ' 5173 ' }
+    })
+
+    expect(card.link).toEqual({ kind: 'local-server', id: '5173' })
+    expect(() =>
+      AppStore.saveWorkspaceBoardCard({
+        boardId: board.id,
+        workspaceId: board.workspaceId,
+        columnId: 'ready',
+        title: 'Forged local server',
+        sortOrder: 2,
+        link: { kind: 'local-server', id: 'not-a-pid' }
+      })
+    ).toThrow('Board card local server link must use a runtime process id.')
+  })
+
   it('surfaces workspace board persistence failures to callers', () => {
     const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(1234)
     const tempPath = path.join(userDataPath, `workspace-boards.json.${process.pid}.1234.tmp`)

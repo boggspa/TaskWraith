@@ -3208,7 +3208,11 @@ export class AppStore {
       return link
     }
     if (link.kind === 'local-server') {
-      return link
+      const serverPid = link.id.trim()
+      if (!/^[1-9]\d*$/.test(serverPid)) {
+        throw new Error('Board card local server link must use a runtime process id.')
+      }
+      return { kind: link.kind, id: serverPid }
     }
     throw new Error('Board card link kind is invalid.')
   }
