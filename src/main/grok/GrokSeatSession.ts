@@ -255,6 +255,19 @@ export class GrokSeatSession {
       if (message.id === SESSION_NEW_RPC_ID && message.result) {
         const result = message.result as { sessionId?: string }
         this.sessionId = typeof result.sessionId === 'string' ? result.sessionId : ''
+        if (!this.sessionId) {
+          // Review P2 — a session/new result with no usable sessionId would
+          // otherwise park every future turn forever (sessionRequested is
+          // already true, so nothing would ever resolve the session). Fail
+          // closed: warn, kill, and let the next turn respawn fresh.
+          const turn = this.activeTurn || this.pendingPromptTurn
+          turn?.onEvent({
+            type: 'provider_warning',
+            text: 'Grok ACP session/new returned no sessionId; restarting the seat session.'
+          })
+          this.child.kill('SIGINT')
+          continue
+        }
         const parked = this.pendingPromptTurn
         if (parked) {
           this.pendingPromptTurn = null
@@ -374,6 +387,11 @@ export class GrokSeatSessionRegistry {
       existing.lastUsedAt = this.now()
       return { session: existing.session, reused: true }
     }
+    // Review P1 (documented tradeoff): this disposes a BUSY session too. The
+    // orchestrator serializes a seat's turns, so a busy entry here is either
+    // a cancelled-round orphan (killing it is the cleanup we want) or a
+    // same-key collision from a forged/duplicated participantId — worst case
+    // one killed turn in the caller's own app, never an escalation.
     existing?.session.dispose()
     const session = new GrokSeatSession(factory())
     this.entries.set(key, { session, fingerprint, lastUsedAt: this.now() })

@@ -2001,6 +2001,55 @@ describe('computeEnsemblePromptShellStamp', () => {
     }
     expect(computeEnsemblePromptShellStamp(staged)).not.toBe(stamp)
   })
+
+  it('review F2: order, work session, self-reflective, and fan-out policy all change the stamp', () => {
+    const base = { ...ensemble, participants: ensemble.participants.map((p) => ({ ...p })) }
+    const stamp = computeEnsemblePromptShellStamp(base)
+    // Speaking-order VALUES changing (not just array position) → new stamp:
+    // order drives #pN tokens, plan-owner resolution, first/last-speaker rules.
+    const reordered = {
+      ...base,
+      participants: base.participants.map((p, index) => ({
+        ...p,
+        order: base.participants.length - index
+      }))
+    }
+    expect(computeEnsemblePromptShellStamp(reordered)).not.toBe(stamp)
+    const withWorkSession = {
+      ...base,
+      workSession: {
+        enabled: true,
+        status: 'active' as const,
+        objective: 'Ship the feature',
+        acceptanceCriteria: 'It works.',
+        allowedParticipantIds: null,
+        permissionPresetId: 'workspace_write' as const,
+        maxRoundsPerProvider: 5,
+        maxDurationMs: 1000,
+        enableScoutPass: false,
+        roundsUsed: { codex: 0, claude: 0, gemini: 0, kimi: 0, grok: 0, cursor: 0, ollama: 0 },
+        totalRoundsUsed: 0
+      }
+    }
+    const workSessionStamp = computeEnsemblePromptShellStamp(withWorkSession)
+    expect(workSessionStamp).not.toBe(stamp)
+    // Round-usage counters churn every round and must NOT change the stamp.
+    const usedWorkSession = {
+      ...withWorkSession,
+      workSession: {
+        ...withWorkSession.workSession,
+        totalRoundsUsed: 3,
+        roundsUsed: { ...withWorkSession.workSession.roundsUsed, codex: 3 }
+      }
+    }
+    expect(computeEnsemblePromptShellStamp(usedWorkSession)).toBe(workSessionStamp)
+    expect(
+      computeEnsemblePromptShellStamp({ ...base, selfReflective: true })
+    ).not.toBe(stamp)
+    expect(
+      computeEnsemblePromptShellStamp({ ...base, fanoutPolicy: 'read_only' as const })
+    ).not.toBe(stamp)
+  })
 })
 
 describe('slim resumed-turn prompt shape', () => {

@@ -6059,17 +6059,23 @@ export class EnsembleOrchestrator {
     if (shouldRunReadOnlyFanout && !runtime.cancelled) {
       const readers: EnsembleParticipant[] = []
       const writers: EnsembleParticipant[] = []
+      // Spike 4 (staged fan-out) + review F1 — three-way partition:
+      //   readers  — read-only-eligible, unstaged or scout → round-start
+      //              parallel read pass.
+      //   writers  — NOT read-only-eligible → candidates for the
+      //              locked-writer fan-out block below. Stage-role REVIEWERS
+      //              are excluded even when write-capable: a reviewer must
+      //              never be dispatched at round start, and the
+      //              user-preflight write-claim pass requires EVERY member of
+      //              `writers` to produce a valid claim (review F1: a
+      //              reviewer's missing claim rejected the whole preflight
+      //              and it was dispatched a write-claim lane before any work
+      //              existed).
+      //   neither  — reviewers and read-only-eligible stage workers stay in
+      //              `remaining` for the serial loop, where the reviewer
+      //              stage gate defers reviewers until non-reviewers finish.
       for (const participant of remaining) {
-        // Spike 4 (staged fan-out) — explicit stage roles override inferred
-        // eligibility: reviewers NEVER join the round-start read pass (the
-        // stage gate in the serial loop defers them until writers land), and
-        // explicit workers take a serial turn even when their permissions
-        // resolve read-only. Unstaged participants and scouts keep the
-        // permission-inferred partition.
-        if (participant.stageRole === 'reviewer' || participant.stageRole === 'worker') {
-          writers.push(participant)
-          continue
-        }
+        if (participant.stageRole === 'reviewer') continue
         const permissions = chatForFanout
           ? this.resolveFanoutEligibilityPermissions(
               chatForFanout,
@@ -6079,17 +6085,20 @@ export class EnsembleOrchestrator {
             )
           : null
         if (permissions?.readOnly) {
-          readers.push(participant)
+          // Explicit stage workers take a serial turn even when their
+          // permissions resolve read-only.
+          if (participant.stageRole !== 'worker') readers.push(participant)
         } else {
           writers.push(participant)
         }
       }
       if (readers.length >= 2 && chatForFanout) {
-        // Replace `remaining` with the writers-only subset so the
-        // serial while-loop below processes them in original order
-        // after the read-only fan-out completes.
-        remaining.length = 0
-        remaining.push(...writers)
+        // Remove ONLY the dispatched readers from `remaining` (preserving
+        // original order) so the serial while-loop below still sees stage
+        // reviewers / read-only stage workers alongside the writers.
+        const readerIds = new Set(readers.map((reader) => reader.id))
+        const rest = remaining.filter((participant) => !readerIds.has(participant.id))
+        remaining.splice(0, remaining.length, ...rest)
         await this.runParallelFanoutPass(runtime, chatForFanout, readers, {
           mode: 'read_only'
         })
@@ -6291,7 +6300,6 @@ export class EnsembleOrchestrator {
       // briefing). The fresh stamp is recorded on the run either way and
       // persisted by flushRun next to linkedProviderSessionId.
       const promptShellStamp = computeEnsemblePromptShellStamp(ensembleConfigForRound)
-      run.promptShellStamp = promptShellStamp
       const slimTurn =
         ensembleSlimResumeEnabled() &&
         SLIM_RESUME_PROVIDERS.has(participant.provider) &&
@@ -6447,6 +6455,11 @@ export class EnsembleOrchestrator {
         this.finalizeRun(run, 'failed', note)
       } else {
         dispatchAttempts += 1
+        // Review F2c — record the shell stamp only once the provider
+        // actually RECEIVED this prompt. Stamping before dispatch let a
+        // spawn/preflight failure persist a stamp for a shell the session
+        // never saw, wrongly slim-qualifying the next turn.
+        run.promptShellStamp = promptShellStamp
         await completion
       }
       runtime.activeRunId = undefined

@@ -8912,3 +8912,89 @@ describe('slim resumed-turn prompts', () => {
     expect(harness.dispatched[0].prompt).toContain('Participant roster:')
   })
 })
+
+/*
+ * Review F1 regression — a stage-role reviewer must never be swept into the
+ * locked-writers write-claim preflight (it used to be dispatched a
+ * write-scope claim lane at round start, and its missing claim rejected the
+ * whole preflight). With a reviewer on the roster the round degrades to
+ * serial writers with an explanatory note; the reviewer still goes last.
+ */
+describe('locked-writers preflight excludes stage reviewers', () => {
+  it('keeps the reviewer out of the round-start preflight and defers it to the end', async () => {
+    const harness = makeHarness()
+    harness.chat.ensemble!.fanoutPolicy = 'locked_writers_user_preflight'
+    harness.chat.ensemble!.participants = [
+      {
+        id: 'codex',
+        provider: 'codex',
+        enabled: true,
+        role: 'Builder A',
+        instructions: 'Build.',
+        order: 1,
+        permissionPresetId: 'workspace_write'
+      },
+      {
+        id: 'claude',
+        provider: 'claude',
+        enabled: true,
+        role: 'Builder B',
+        instructions: 'Build.',
+        order: 2,
+        permissionPresetId: 'workspace_write'
+      },
+      {
+        id: 'kimi',
+        provider: 'kimi',
+        enabled: true,
+        role: 'Auditor',
+        instructions: 'Review.',
+        order: 3,
+        permissionPresetId: 'read_only',
+        stageRole: 'reviewer'
+      }
+    ]
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Build it, then review.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    // No write-claim preflight lane reached ANY participant.
+    expect(
+      harness.dispatched.every(
+        (payload) => !(payload.prompt || '').includes('Write-scope claim')
+      )
+    ).toBe(true)
+    // Serial fallback: Builder A speaks first; the reviewer is NOT dispatched.
+    expect(harness.dispatched[0].provider).toBe('codex')
+    const fallbackNote = harness.chat.messages.find((message) =>
+      message.content?.includes('no intervening serial participants')
+    )
+    expect(fallbackNote).toBeTruthy()
+  })
+})
+
+/*
+ * Review F2c regression — a failed dispatch must NOT persist the prompt-shell
+ * stamp: the provider session never saw the shell, so the next turn must not
+ * slim-qualify against it.
+ */
+describe('shell stamp persistence requires a successful dispatch', () => {
+  it('leaves promptShellVersion unset when dispatch fails', async () => {
+    const harness = makeHarness({
+      dispatch: async (payload) => ({ dispatched: false, appRunId: payload.appRunId || '' })
+    })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Try to run.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() =>
+      expect(harness.chat.ensemble?.activeRound?.status).not.toBe('running')
+    )
+    for (const participant of harness.chat.ensemble?.participants || []) {
+      expect(participant.promptShellVersion).toBeUndefined()
+    }
+  })
+})

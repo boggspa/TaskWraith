@@ -228,3 +228,24 @@ describe('GrokSeatSessionRegistry', () => {
     expect(children[2].killed).toBe(true)
   })
 })
+
+describe('session/new hardening (review P2)', () => {
+  it('fails closed when session/new returns no sessionId instead of parking turns forever', () => {
+    const child = new FakeAcpChild()
+    const session = new GrokSeatSession({ cwd: '/repo', spawnProcess: () => child })
+    const first = makeTurn()
+    session.runTurn(first.turn)
+    child.emit({ jsonrpc: '2.0', id: 1, result: {} })
+    child.emit({ jsonrpc: '2.0', id: 2, result: {} }) // no sessionId
+    expect(child.killed).toBe(true)
+    expect(session.isAlive()).toBe(false)
+    expect(first.ends).toEqual([
+      { turnComplete: false, terminalStatus: 'seat-session-exited', processExited: true }
+    ])
+    expect(
+      first.events.some(
+        (event) => event.type === 'provider_warning' && String(event.text).includes('no sessionId')
+      )
+    ).toBe(true)
+  })
+})
