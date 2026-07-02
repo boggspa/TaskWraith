@@ -8365,8 +8365,17 @@ export class EnsembleOrchestrator {
           if (participant.enabled === false) continue
           if (participant.provider !== 'cursor' && participant.provider !== 'kimi') continue
           if (participant.provider === 'cursor' && !participant.linkedProviderSessionId) continue
-          const lastAttempt = this.seatAutoCompactLastAttemptAt.get(participant.id) || 0
-          if (this.deps.now() - lastAttempt < CONTEXT_AUTO_COMPACT_COOLDOWN_MS) continue
+          // Cooldown applies only to a seat we've ALREADY attempted — a
+          // genuinely-new seat (no recorded attempt) is never held back. Using
+          // `|| 0` here would conflate "never attempted" with "attempted at
+          // t=0", falsely cooling a fresh seat within COOLDOWN of the epoch.
+          const lastAttempt = this.seatAutoCompactLastAttemptAt.get(participant.id)
+          if (
+            lastAttempt !== undefined &&
+            this.deps.now() - lastAttempt < CONTEXT_AUTO_COMPACT_COOLDOWN_MS
+          ) {
+            continue
+          }
           const usage = latestRunContextUsage(chat.runs ?? [], participant.id)
           const windowTokens = resolveContextWindow(
             participant.provider,
