@@ -765,6 +765,7 @@ import {
   brokerRequest as mcpBridgeBrokerRequest,
   createMcpBridgeRuntime,
   GEMINI_MCP_AUDIT_SUBSET_ARG,
+  GEMINI_MCP_PLAN_SUBSET_ARG,
   GEMINI_MCP_SAFE_SUBSET_ARG,
   mcpToolCallResponseFromBrokerResult as mcpBridgeToolCallResponseFromBrokerResult,
   startGeminiMcpBridgeProcess as startGeminiMcpBridgeProcessWithDeps
@@ -1485,9 +1486,10 @@ const {
 
 function taskwraithMcpBridgeArgs(
   socketPath: string = geminiMcpSocketPath(),
-  safeSubset = false
+  safeSubset = false,
+  planSubset = false
 ): string[] {
-  return mcpBridgeRuntime.taskwraithMcpBridgeArgs(socketPath, safeSubset)
+  return mcpBridgeRuntime.taskwraithMcpBridgeArgs(socketPath, safeSubset, planSubset)
 }
 
 // Late-bound APNs handles. Constructed inside `app.whenReady()` (because
@@ -11537,11 +11539,17 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
         throw new Error(taskwraithMcpBridgeUnavailableMessage(bridgeCommandStatus))
       }
       await mcpBridgeRuntime.startGeminiMcpBroker()
+      // Plan-tier seat: a plan-preset (not read_only) Cursor seat widens the safe
+      // subset to the plan instruments (canvas actuation + media), host-gated by the
+      // broker. A read_only seat keeps the strict subset. This block only runs for a
+      // non-write-capable seat, so presetId distinguishes plan from read_only.
+      const cursorPlanSeat = payload.effectivePermissions?.presetId === 'plan'
       const scopedEntry = buildCursorReadOnlyMcpServerEntry({
         command: bridgeCommandStatus.command,
-        // --safe-subset: the broker advertises + executes ONLY the read-only
-        // tool set (fail-closed, enforced bridge-side too).
-        args: taskwraithMcpBridgeArgs(geminiMcpSocketPath(), true),
+        // --safe-subset (+ --plan-subset for a plan seat): the broker advertises +
+        // executes ONLY the read-only tool set (fail-closed), widened to the
+        // host-gated plan instruments when the seat is on the plan preset.
+        args: taskwraithMcpBridgeArgs(geminiMcpSocketPath(), true, cursorPlanSeat),
         env: {
           [GEMINI_MCP_BRIDGE_ENV]: '1',
           TASKWRAITH_PARENT_PROVIDER: 'cursor',
@@ -11792,6 +11800,12 @@ async function runGrokAcpProvider(event: Electron.IpcMainInvokeEvent, payload: A
       }
       await mcpBridgeRuntime.startGeminiMcpBroker()
       const safeSubset = grokReadOnlySeat
+      // Plan-tier seat: a plan-preset (not read_only) Grok seat widens the safe
+      // subset to the plan instruments (canvas actuation + media), which the broker
+      // then host-gates (canvasInteraction/mediaEditing = 'ask' under plan). A
+      // read_only seat stays on the strict subset. Only meaningful when safeSubset
+      // is set (a write-capable seat already advertises the full brokered server).
+      const grokPlanSeat = safeSubset && payload.effectivePermissions?.presetId === 'plan'
       // Audit role-run: also advertise the audit_* tool namespace to Grok's
       // per-turn ACP bridge. Grok's bridge env is an explicit ACP list (not
       // inherited), so set BOTH the --audit-subset arg (appended LAST, after the
@@ -11799,7 +11813,7 @@ async function runGrokAcpProvider(event: Electron.IpcMainInvokeEvent, payload: A
       // the matching env entry. (Read-only Grok shares the plan-mode bridge gap;
       // this only takes effect when the bridge is actually advertised above.)
       const grokAuditRun = Boolean(payload.auditRun)
-      const grokBridgeArgs = taskwraithMcpBridgeArgs(geminiMcpSocketPath(), safeSubset)
+      const grokBridgeArgs = taskwraithMcpBridgeArgs(geminiMcpSocketPath(), safeSubset, grokPlanSeat)
       grokMcpServers = [
         {
           // ACP McpServer is an UNTAGGED enum: the stdio variant is
@@ -20080,6 +20094,13 @@ function startGeminiMcpBridgeProcess(): void {
   // not depend on the parent forwarding env to the MCP child).
   if (process.argv.includes(GEMINI_MCP_SAFE_SUBSET_ARG)) {
     process.env.TASKWRAITH_MCP_SAFE_SUBSET = '1'
+  }
+  // Plan-tier scope: a bridge launched with --plan-subset (a plan-preset Grok/
+  // Cursor seat) widens the safe subset to the plan instruments. Translate the
+  // argv flag to the env the tools/list + tools/call guard reads, so the scope is
+  // atomic with the spawn (does not depend on env forwarding to the MCP child).
+  if (process.argv.includes(GEMINI_MCP_PLAN_SUBSET_ARG)) {
+    process.env.TASKWRAITH_MCP_PLAN_SUBSET = '1'
   }
   // Audit role-run scope: a bridge launched with --audit-subset additionally
   // advertises the audit_* tool namespace. Mirrors the safe-subset translation

@@ -8,7 +8,7 @@ import os from 'os'
 import { dirname, join, resolve } from 'path'
 import type { WebContents } from 'electron'
 import { TASKWRAITH_MCP_TOOLS, type TaskWraithMcpToolName } from '../TaskWraithMcpTools'
-import { isReadOnlyAdvertisedTool } from './McpAutoAllowedTools'
+import { isPlanAdvertisedTool, isReadOnlyAdvertisedTool } from './McpAutoAllowedTools'
 // Audit MCP tool definitions — advertised ONLY to audit role-runs (the bridge
 // child carries TASKWRAITH_MCP_AUDIT=1, set per-run at the provider spawn site).
 // AuditToolExecutors imports McpToolDefinition from here as `import type` (erased
@@ -54,6 +54,14 @@ export const GEMINI_MCP_TOKEN_ARG = '--token'
 // auto-runs MCP tools with NO host gate — so the advertised list + the call
 // reject ARE the entire safety boundary, and the scope must travel with the spawn.
 export const GEMINI_MCP_SAFE_SUBSET_ARG = '--safe-subset'
+// Plan-tier scope flag. Layered ON TOP of --safe-subset for a `plan` (not
+// read_only) bridge seat: the advertised/allowed set widens from the read-only
+// safe subset to ALSO include the plan instruments (canvas actuation + media),
+// which remain host-gated on the main side (they are not auto-allowed). Carried
+// in ARGV like --safe-subset so it is atomic with the spawn; the bootstrap
+// translates it to TASKWRAITH_MCP_PLAN_SUBSET=1 (read by the tools/list + call
+// guard). Absent → the seat stays scoped to the strict read-only subset.
+export const GEMINI_MCP_PLAN_SUBSET_ARG = '--plan-subset'
 // Audit scope flag. Carried in the bridge ARGV (atomic with the spawn, like
 // safe-subset) AND/OR inherited via env: a bridge launched for an audit role-run
 // also advertises the audit_* tool namespace. The bootstrap translates this arg
@@ -528,6 +536,13 @@ export function handleMcpJsonRpcMessage(
     // tools/call gate below is the matching enforcement.
     const safeSubsetOnly =
       (deps.env?.TASKWRAITH_MCP_SAFE_SUBSET ?? process.env.TASKWRAITH_MCP_SAFE_SUBSET) === '1'
+    // Plan-tier bridge seat (TASKWRAITH_MCP_PLAN_SUBSET=1, layered on safe-subset):
+    // widen the advertised set from the strict read-only subset to ALSO include the
+    // plan instruments (canvas actuation + media), which stay host-gated on the main
+    // side. A read_only seat (flag absent) keeps the strict subset.
+    const planSubset =
+      (deps.env?.TASKWRAITH_MCP_PLAN_SUBSET ?? process.env.TASKWRAITH_MCP_PLAN_SUBSET) === '1'
+    const isAdvertisedForSeat = planSubset ? isPlanAdvertisedTool : isReadOnlyAdvertisedTool
     // Audit role-run bridge (TASKWRAITH_MCP_AUDIT=1): additionally advertise the
     // audit_* tool namespace so the role-run can record findings/verdicts/profile.
     // The flag is set per-run at the provider spawn site and never on a normal
@@ -536,7 +551,7 @@ export function handleMcpJsonRpcMessage(
     const auditSubset = (deps.env?.TASKWRAITH_MCP_AUDIT ?? process.env.TASKWRAITH_MCP_AUDIT) === '1'
     const allTools = deps.getMcpToolDefinitions()
     const baseTools = safeSubsetOnly
-      ? allTools.filter((tool) => isReadOnlyAdvertisedTool(tool.name))
+      ? allTools.filter((tool) => isAdvertisedForSeat(tool.name))
       : allTools
     const tools = auditSubset ? [...baseTools, ...auditToolDefinitions()] : baseTools
     writeMcpResponse(id, { tools }, transport, stdout)
@@ -552,8 +567,18 @@ export function handleMcpJsonRpcMessage(
     // host gate, so a non-advertised (mutating) tool must be rejected right here.
     const safeSubsetOnly =
       (deps.env?.TASKWRAITH_MCP_SAFE_SUBSET ?? process.env.TASKWRAITH_MCP_SAFE_SUBSET) === '1'
-    if (safeSubsetOnly && !isReadOnlyAdvertisedTool(String(name))) {
-      bridgeLog(`tools/call REJECTED (read-only scope) name=${String(name)} id=${String(id)}`)
+    // Plan seats widen the allowed set to the plan instruments (canvas actuation +
+    // media), which are still host-gated in the broker (they are not auto-allowed).
+    // read_only seats stay on the strict read-only subset. The main-side host gate
+    // remains the enforcement for the instruments; this reject just keeps
+    // write/shell tools out for BOTH seats.
+    const planSubset =
+      (deps.env?.TASKWRAITH_MCP_PLAN_SUBSET ?? process.env.TASKWRAITH_MCP_PLAN_SUBSET) === '1'
+    const isAdvertisedForSeat = planSubset ? isPlanAdvertisedTool : isReadOnlyAdvertisedTool
+    if (safeSubsetOnly && !isAdvertisedForSeat(String(name))) {
+      bridgeLog(
+        `tools/call REJECTED (${planSubset ? 'plan' : 'read-only'} scope) name=${String(name)} id=${String(id)}`
+      )
       writeMcpError(
         id,
         -32601,
@@ -776,7 +801,8 @@ export class McpBridgeRuntime {
 
   taskwraithMcpBridgeArgs(
     socketPath: string = this.deps.getGeminiMcpSocketPath(),
-    safeSubset = false
+    safeSubset = false,
+    planSubset = false
   ): string[] {
     return [
       ...(this.deps.isDev() ? [this.deps.getAppPath()] : []),
@@ -788,7 +814,11 @@ export class McpBridgeRuntime {
       // Read-only seat (Grok): append the scope flag LAST so socket/token
       // index-based parsing is unaffected. Default false keeps the Gemini/Kimi
       // launch args byte-identical (bridgeArgsMatchCurrentLaunch still matches).
-      ...(safeSubset ? [GEMINI_MCP_SAFE_SUBSET_ARG] : [])
+      ...(safeSubset ? [GEMINI_MCP_SAFE_SUBSET_ARG] : []),
+      // Plan-tier seat: widen the safe-subset to the plan instruments. Appended
+      // after --safe-subset, still index-safe; default false keeps the persistent
+      // Gemini/Kimi launch args byte-identical (bridgeArgsMatchCurrentLaunch).
+      ...(planSubset ? [GEMINI_MCP_PLAN_SUBSET_ARG] : [])
     ]
   }
 

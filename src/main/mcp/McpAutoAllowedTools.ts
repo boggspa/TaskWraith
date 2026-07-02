@@ -1,4 +1,8 @@
-import { TASKWRAITH_MCP_TOOLS, type TaskWraithMcpToolName } from '../TaskWraithMcpTools'
+import {
+  MEDIA_EDITING_TOOLS,
+  TASKWRAITH_MCP_TOOLS,
+  type TaskWraithMcpToolName
+} from '../TaskWraithMcpTools'
 
 /**
  * MCP tools that skip the per-call approval modal (auto-allowed).
@@ -135,4 +139,41 @@ export const READ_ONLY_MCP_ADVERTISE_TOOLS: ReadonlyArray<TaskWraithMcpToolName>
  */
 export function isReadOnlyAdvertisedTool(name: string): boolean {
   return (READ_ONLY_MCP_ADVERTISE_TOOLS as readonly string[]).includes(name)
+}
+
+/**
+ * Plan-tier instrument tools: the approval-gated instruments a `plan` seat may
+ * reach that a `read_only` seat may not — canvas actuation (canvas_click /
+ * canvas_fill) and media compute (the mediaEditing-service tools). CRITICAL
+ * INVARIANT: none of these are in MCP_AUTO_ALLOWED_TOOLS, so every one still hits
+ * the host approval gate (requestAgenticServiceApproval) when invoked. Advertising
+ * them to a plan bridge seat makes them REACHABLE and approval-queued, NEVER
+ * auto-run — the enforcement stays the main-side gate (canvasInteraction /
+ * mediaEditing = 'ask' under the plan preset). A read_only seat never sees them.
+ */
+export const PLAN_INSTRUMENT_ADVERTISE_TOOLS: ReadonlyArray<TaskWraithMcpToolName> = Object.freeze(
+  TASKWRAITH_MCP_TOOLS.filter(
+    (tool) => tool === 'canvas_click' || tool === 'canvas_fill' || MEDIA_EDITING_TOOLS.has(tool)
+  )
+)
+
+/**
+ * The advertise set for a `plan` bridge seat: the read-only safe subset PLUS the
+ * plan-tier instruments. Still fail-closed — anything outside this set is rejected
+ * at the bridge; everything inside it is either auto-allowed-safe (the read-only
+ * subset) or host-gated (the instruments). DERIVED, never hand-listed.
+ */
+export const PLAN_MCP_ADVERTISE_TOOLS: ReadonlyArray<TaskWraithMcpToolName> = Object.freeze([
+  ...READ_ONLY_MCP_ADVERTISE_TOOLS,
+  ...PLAN_INSTRUMENT_ADVERTISE_TOOLS
+])
+
+/**
+ * Is this bare tool name advertised to a `plan` bridge seat (read-only subset +
+ * plan instruments)? Used by the bridge tools/list + tools/call scope when the
+ * seat carries the plan-subset flag. Unknown / mutating (write/shell) tools return
+ * false, so they stay rejected exactly as for a read_only seat.
+ */
+export function isPlanAdvertisedTool(name: string): boolean {
+  return (PLAN_MCP_ADVERTISE_TOOLS as readonly string[]).includes(name)
 }

@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest'
+import { MEDIA_EDITING_TOOLS } from '../TaskWraithMcpTools'
 import {
   MCP_AUTO_ALLOWED_TOOLS,
   MCP_APP_STATE_MUTATION_TOOLS,
+  PLAN_INSTRUMENT_ADVERTISE_TOOLS,
   READ_ONLY_MCP_ADVERTISE_TOOLS,
+  isPlanAdvertisedTool,
   isReadOnlyAdvertisedTool
 } from './McpAutoAllowedTools'
 
@@ -199,6 +202,72 @@ describe('isReadOnlyAdvertisedTool (bridge scope guard)', () => {
       'totally_unknown_future_tool'
     ]) {
       expect(isReadOnlyAdvertisedTool(tool)).toBe(false)
+    }
+  })
+
+  it('does NOT advertise the plan instruments to a read_only seat', () => {
+    // canvas actuation + media are the plan tier — a read_only seat must not see them.
+    expect(isReadOnlyAdvertisedTool('canvas_click')).toBe(false)
+    expect(isReadOnlyAdvertisedTool('canvas_fill')).toBe(false)
+    for (const tool of MEDIA_EDITING_TOOLS) {
+      expect(isReadOnlyAdvertisedTool(tool)).toBe(false)
+    }
+  })
+})
+
+describe('PLAN_MCP_ADVERTISE_TOOLS / isPlanAdvertisedTool (plan-seat bridge scope)', () => {
+  const autoAllowedTools = MCP_AUTO_ALLOWED_TOOLS as ReadonlySet<string>
+
+  it('advertises canvas actuation + every media-editing tool to a plan seat', () => {
+    expect(isPlanAdvertisedTool('canvas_click')).toBe(true)
+    expect(isPlanAdvertisedTool('canvas_fill')).toBe(true)
+    for (const tool of MEDIA_EDITING_TOOLS) {
+      expect(isPlanAdvertisedTool(tool)).toBe(true)
+    }
+  })
+
+  it('is a strict superset of the read-only advertise set', () => {
+    for (const tool of READ_ONLY_MCP_ADVERTISE_TOOLS) {
+      expect(isPlanAdvertisedTool(tool)).toBe(true)
+    }
+  })
+
+  it('SAFETY INVARIANT: every plan instrument is NOT auto-allowed (stays host-gated)', () => {
+    // If any plan instrument were also in MCP_AUTO_ALLOWED_TOOLS it would EXECUTE
+    // on a plan bridge seat with NO approval — defeating per-invocation approval.
+    // They must all route through the main-side host gate.
+    expect(PLAN_INSTRUMENT_ADVERTISE_TOOLS.length).toBeGreaterThan(0)
+    for (const tool of PLAN_INSTRUMENT_ADVERTISE_TOOLS) {
+      expect(autoAllowedTools.has(tool)).toBe(false)
+    }
+  })
+
+  it('SAFETY: still rejects the write/shell floor, RCE, and non-instrument gated tools', () => {
+    for (const tool of [
+      'write_file',
+      'replace',
+      'apply_patch',
+      'run_shell_command',
+      'git_stage',
+      'git_commit',
+      'git_push',
+      'git_create_pr',
+      'delete_path',
+      'move_path',
+      'rename_path',
+      'start_background_process',
+      'kill_background_process',
+      'run_task',
+      // canvas_eval (RCE) + canvas window lifecycle are NOT plan instruments.
+      'canvas_eval',
+      'canvas_open',
+      // subthread delegation is a plan capability but deliberately out of the
+      // bridge-parity scope (canvas + media only); it keeps its own gate.
+      'delegate_to_subthread',
+      'workspace_board_apply_plan',
+      'totally_unknown_future_tool'
+    ]) {
+      expect(isPlanAdvertisedTool(tool)).toBe(false)
     }
   })
 })
