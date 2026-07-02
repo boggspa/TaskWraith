@@ -11037,7 +11037,21 @@ async function tryRunClaudeSdk(
     options: {
       cwd: payload.workspace!,
       model: model === 'default' ? undefined : model,
-      permissionMode: claudePermissionModeForApproval(payload.approvalMode),
+      // Spike 8 (docs/ensemble-posture-fanout-preamble-design.md) —
+      // Read-Only/Recon seats run in DEFAULT permission mode instead of
+      // Claude Code's native plan mode: plan mode installs a plan-shaped
+      // system prompt (+ ExitPlanMode) that turns review/recon turns into
+      // plan artifacts. Write containment does not change: every tool call
+      // (native Edit/Write/Bash included) routes through canUseClaudeSdkTool
+      // below, where the run's signed read_only effectivePermissions deny
+      // fileChanges/shellCommands hard — and the plan-artifact write
+      // carve-out requires workflowMode 'plan', which a recon run never
+      // carries. isReconRunPosture reads only post-clamp HMAC-covered
+      // fields. The CLI fallback (tryRunClaudeCli) has NO canUseTool and
+      // deliberately keeps native plan mode for recon seats.
+      permissionMode: isReconRunPosture(payload)
+        ? 'default'
+        : claudePermissionModeForApproval(payload.approvalMode),
       resume: payload.providerSessionId || undefined,
       abortController: controller,
       canUseTool: (toolNameOrRequest: unknown, input?: unknown) =>
@@ -11150,6 +11164,11 @@ async function runClaudeProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
   const baseArgs = [
     ...buildClaudeCliArgs({
       prompt: payload.prompt,
+      // Spike 8 note: UNLIKE the SDK path, recon seats keep native plan mode
+      // here — this headless CLI path has no canUseTool callback, so plan
+      // mode's own no-write behavior IS the containment. A recon turn that
+      // degrades to the CLI fallback accepts plan-shaped output as the
+      // tradeoff (same accepted-degradation shape as Kimi's print fallback).
       permissionMode: claudePermissionModeForApproval(payload.approvalMode),
       model,
       providerSessionId: payload.providerSessionId || null,
