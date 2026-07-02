@@ -42,3 +42,22 @@ export function grokReadOnlyMcpAdvertiseEnabled(): boolean {
   const value = process.env.TASKWRAITH_GROK_READONLY_MCP
   return value === '1' || value === 'true' || value === 'yes'
 }
+
+/**
+ * Spike 7 (docs/ensemble-posture-fanout-preamble-design.md) — sub-gate for
+ * persistent per-seat Grok ACP sessions in ensembles. When ON, a TOOLLESS
+ * read-only ensemble Grok seat keeps one `grok agent stdio` process + ACP
+ * session alive across its turns (GrokSeatSession), giving it provider-native
+ * cross-turn memory instead of a fresh `session/new` per turn.
+ *
+ * Default OFF — a deliberate seatbelt: grok's ACP implementation has not been
+ * live-observed accepting a SECOND `session/prompt` on one session. Verify
+ * with TASKWRAITH_GROK_DEBUG=1 + this flag on one panel; a failed second
+ * prompt fails that turn closed and respawns fresh (never hangs a round).
+ * Never applies to seats that advertise TaskWraith MCP servers (the bridge
+ * env bakes per-run routing identity into session/new) or write seats.
+ */
+export function grokSeatSessionsEnabled(): boolean {
+  const value = process.env.TASKWRAITH_GROK_SEAT_SESSIONS
+  return value === '1' || value === 'true' || value === 'yes'
+}

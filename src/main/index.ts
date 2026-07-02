@@ -803,14 +803,18 @@ import {
 import { RunRepository } from './RunRepository'
 import { PermissionService } from './PermissionService'
 import { ProviderPreflightService } from './ProviderPreflightService'
-import { grokAcpEnabled, grokReadOnlyMcpAdvertiseEnabled } from './grokGate'
+import {
+  grokAcpEnabled,
+  grokReadOnlyMcpAdvertiseEnabled,
+  grokSeatSessionsEnabled
+} from './grokGate'
 import {
   grokWriteCapable,
   buildGrokAcpCliArgs,
   buildGrokProviderCliArgs,
   buildGrokProviderPrompt
 } from './grok/GrokCliArgs'
-import { grokToolKindToService } from './grok/GrokAcpProtocol'
+import { grokToolKindToService, type AcpPermissionRequest } from './grok/GrokAcpProtocol'
 import { grokEventToRunEvents, type NormalizedGrokRunEvent } from './grok/GrokStreamingJson'
 import {
   cursorDebugEnabled,
@@ -836,6 +840,7 @@ import {
   CURSOR_SCOPED_MCP_SERVER_NAME
 } from './cursor/CursorMcpBridge'
 import { runGrokAcpTurn, type AcpChildProcess } from './grok/GrokAcpClient'
+import { GrokSeatSessionRegistry } from './grok/GrokSeatSession'
 import {
   estimateProjectedTokenUsage,
   probeGrokUsage,
@@ -11649,6 +11654,11 @@ function grokAcpEmptyToolFailureMessage(state: CliProviderStreamState): string {
   }`
 }
 
+// Spike 7 — one persistent-seat registry for the app lifetime. Entries are
+// keyed `${chatId}:${participantId}`, reaped lazily on acquire (30-min idle
+// TTL), and disposed on will-quit.
+const grokSeatSessionRegistry = new GrokSeatSessionRegistry()
+
 async function runGrokAcpProvider(event: Electron.IpcMainInvokeEvent, payload: AgentRunPayload) {
   const route = routeWithRunId('grok', payload)
   const resolved = await resolveCliProviderBinary('grok', payload.runtimeProfile)
@@ -11803,50 +11813,37 @@ async function runGrokAcpProvider(event: Electron.IpcMainInvokeEvent, payload: A
     readOnlySeat: grokReadOnlySeat
   })
 
-  runGrokAcpTurn({
-    // Read-only seat: prepend the read-only steer so Grok answers from
-    // read/inspection tools instead of attempting a write the host gate will
-    // refuse — a refused write makes Grok hard-cancel and dead-end with no
-    // answer. Write-capable seats get the WRITE steer (use Write/Edit, adapt
-    // rather than end the turn on a refusal). Every ACP turn opens a fresh
-    // session/new (no Grok-side resume threads through here), so the steer must
-    // ride each turn's prompt; there's no prior turn for Grok to remember it
-    // from, hence no redundant re-injection to avoid.
-    prompt: buildGrokProviderPrompt(payload.prompt, payload.approvalMode, payload.activeGoal),
-    cwd: payload.workspace!,
-    mcpServers: grokMcpServers,
-    spawnProcess: () => {
-      const child = spawn(binaryPath, grokAcpArgs, {
-        cwd: payload.workspace!,
-        shell: false,
-        env: createCliEnv(
-          {
-            FORCE_COLOR: '0',
-            NO_COLOR: '1',
-            TASKWRAITH_PARENT_PROVIDER: 'grok',
-            TASKWRAITH_RUN_ID: route.appRunId || '',
-            TASKWRAITH_CHAT_ID: route.appChatId || ''
-          },
-          binaryPath
-        )
-      })
-      // NOTE: do NOT end stdin — ACP keeps the stdio channel open for requests.
-      return child as unknown as AcpChildProcess
-    },
-    onProcess: (child) => {
-      const proc = child as unknown as ReturnType<typeof spawn>
-      runManager.attachProcess(route.appRunId!, proc)
-      cliProviderProcesses.set('grok', proc)
-    },
-    // G5c-ACP — client-mediated tool approval. Grok asks before running a
-    // permission-requiring tool (shell/edit/…) via session/request_permission;
-    // route it through TaskWraith's approval ledger (the same card + policy +
-    // audit path Claude/Codex use). Read-only (plan / unset) never allows a
-    // tool. requestAgenticServiceApproval resolves the policy (auto-allow on a
-    // prior session/workspace grant, else prompt) and returns the boolean.
-    // The G5a transport seam turns 'deny' into a rejected outcome, so nothing
-    // runs without an explicit allow — no silent shell.
-    onPermissionRequest: async (request) => {
+  const grokSpawnAcpProcess = (): AcpChildProcess => {
+    const child = spawn(binaryPath, grokAcpArgs, {
+      cwd: payload.workspace!,
+      shell: false,
+      env: createCliEnv(
+        {
+          FORCE_COLOR: '0',
+          NO_COLOR: '1',
+          TASKWRAITH_PARENT_PROVIDER: 'grok',
+          // Spike 7 note: for a persistent SEAT session this run-id env stamp
+          // goes stale after the first turn. That is inert by construction —
+          // seat sessions are TOOLLESS (no bridge child ever inherits it).
+          TASKWRAITH_RUN_ID: route.appRunId || '',
+          TASKWRAITH_CHAT_ID: route.appChatId || ''
+        },
+        binaryPath
+      )
+    })
+    // NOTE: do NOT end stdin — ACP keeps the stdio channel open for requests.
+    return child as unknown as AcpChildProcess
+  }
+
+  // G5c-ACP — client-mediated tool approval. Grok asks before running a
+  // permission-requiring tool (shell/edit/…) via session/request_permission;
+  // route it through TaskWraith's approval ledger (the same card + policy +
+  // audit path Claude/Codex use). Read-only (plan / unset) never allows a
+  // tool. requestAgenticServiceApproval resolves the policy (auto-allow on a
+  // prior session/workspace grant, else prompt) and returns the boolean.
+  // The G5a transport seam turns 'deny' into a rejected outcome, so nothing
+  // runs without an explicit allow — no silent shell.
+  const grokPermissionHandler = async (request: AcpPermissionRequest) => {
       // Allow OUR read-only scoped bridge's safe tools (the advertised
       // non-mutating subset) even on a read-only seat — that read/coordination
       // surface is exactly what this seat was given. Without this, Grok asks to
@@ -11871,10 +11868,13 @@ async function runGrokAcpProvider(event: Electron.IpcMainInvokeEvent, payload: A
         }
       )
       return allowed ? 'allow' : 'deny'
-    },
-    onEvent: (evt) => applyGrokRunEvent(state, evt),
-    onRawFrame: (direction, message) => maybeLogGrokRawAcp(direction, message),
-    onClose: (code, turnComplete, terminalStatus) => {
+    }
+
+  const finishGrokAcpTurn = (
+    code: number | null,
+    turnComplete: boolean,
+    terminalStatus?: string
+  ): void => {
       if (!state.completed) {
         state.completed = true
         const stopReason = normalizeGrokStopReason(terminalStatus)
@@ -11921,7 +11921,78 @@ async function runGrokAcpProvider(event: Electron.IpcMainInvokeEvent, payload: A
         finalStopReason !== 'success' ||
         (state.assistantText.trim().length === 0 && (state.grokToolErrorCount || 0) > 0)
       runManager.finish(route.appRunId!, finalFailed ? 'failed' : 'completed')
+  }
+
+  const grokProviderPrompt = buildGrokProviderPrompt(
+    payload.prompt,
+    payload.approvalMode,
+    payload.activeGoal
+  )
+
+  // Spike 7 (docs/ensemble-posture-fanout-preamble-design.md) — persistent
+  // per-seat ACP session for ensemble Grok seats, behind
+  // TASKWRAITH_GROK_SEAT_SESSIONS (default OFF). Eligibility is deliberately
+  // narrow: an ensemble seat (stable participantId to key on), READ-ONLY, and
+  // TOOLLESS (grokMcpServers empty — the bridge env bakes TASKWRAITH_RUN_ID
+  // into session/new, so a reused session would route broker approvals to a
+  // stale run; toolless seats have no consumer of the stale stamp). The
+  // fingerprint covers binary + argv (incl. read-only deny rules) + cwd, so a
+  // posture/model change disposes the old process instead of riding it.
+  const grokSeatParticipantId = payload.ensembleRun?.participantId
+  if (
+    grokSeatSessionsEnabled() &&
+    grokSeatParticipantId &&
+    grokReadOnlySeat &&
+    grokMcpServers.length === 0
+  ) {
+    const seatKey = `${route.appChatId || 'chat'}:${grokSeatParticipantId}`
+    const seatFingerprint = JSON.stringify([binaryPath, grokAcpArgs, payload.workspace])
+    const { session, reused } = grokSeatSessionRegistry.acquire(seatKey, seatFingerprint, () => ({
+      cwd: payload.workspace!,
+      spawnProcess: grokSpawnAcpProcess,
+      onRawFrame: (direction, message) => maybeLogGrokRawAcp(direction, message)
+    }))
+    const seatProcess = session.process() as unknown as ReturnType<typeof spawn>
+    runManager.attachProcess(route.appRunId!, seatProcess)
+    cliProviderProcesses.set('grok', seatProcess)
+    if (reused) {
+      applyGrokRunEvent(state, {
+        type: 'provider_warning',
+        text: 'Grok seat session resumed — this turn continues the seat’s live ACP session (provider-native memory).'
+      })
     }
+    session.runTurn({
+      prompt: grokProviderPrompt,
+      onEvent: (evt) => applyGrokRunEvent(state, evt),
+      onPermissionRequest: grokPermissionHandler,
+      onTurnEnd: (turnComplete, terminalStatus, processExited) =>
+        finishGrokAcpTurn(processExited && !turnComplete ? 1 : 0, turnComplete, terminalStatus)
+    })
+    return
+  }
+
+  runGrokAcpTurn({
+    // Read-only seat: prepend the read-only steer so Grok answers from
+    // read/inspection tools instead of attempting a write the host gate will
+    // refuse — a refused write makes Grok hard-cancel and dead-end with no
+    // answer. Write-capable seats get the WRITE steer (use Write/Edit, adapt
+    // rather than end the turn on a refusal). Every ACP turn opens a fresh
+    // session/new (no Grok-side resume threads through here), so the steer must
+    // ride each turn's prompt; there's no prior turn for Grok to remember it
+    // from, hence no redundant re-injection to avoid.
+    prompt: grokProviderPrompt,
+    cwd: payload.workspace!,
+    mcpServers: grokMcpServers,
+    spawnProcess: grokSpawnAcpProcess,
+    onProcess: (child) => {
+      const proc = child as unknown as ReturnType<typeof spawn>
+      runManager.attachProcess(route.appRunId!, proc)
+      cliProviderProcesses.set('grok', proc)
+    },
+    onPermissionRequest: grokPermissionHandler,
+    onEvent: (evt) => applyGrokRunEvent(state, evt),
+    onRawFrame: (direction, message) => maybeLogGrokRawAcp(direction, message),
+    onClose: finishGrokAcpTurn
   })
 }
 
@@ -25043,6 +25114,9 @@ if (isGeminiMcpBridgeProcess) {
       // Clear every armed wall-clock budget timer so a pending kill never fires
       // mid-quit. (Timers are also .unref()'d, so this is belt-and-braces.)
       workflowBudgetRegistry.disposeAll()
+      // Spike 7 — kill any persistent Grok seat processes (they outlive their
+      // runs by design, so the per-run process registry doesn't cover them).
+      grokSeatSessionRegistry.disposeAll()
       iosRemoteRuntime?.dispose()
       humanCollaborationHostTransport?.dispose()
       humanCollaborationCollaboratorClient?.dispose()
