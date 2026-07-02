@@ -8612,7 +8612,25 @@ function App(): React.JSX.Element {
             (m) =>
               m.role === 'system' && m.metadata?.kind === 'agentQuestion' && !incomingIds.has(m.id)
           )
-          const orphans = [...orphanedLiveAssistants, ...orphanedAgentQuestionMarkers]
+          /*
+           * Context-compaction cards share the agentQuestion hazard exactly:
+           * the renderer appends them to the LIVE record when a solo run's
+           * compact_boundary streams in, but the 200ms debounced saveChat may
+           * not have flushed them when a main-side `chat-updated` broadcast
+           * (built from the pre-card disk snapshot) arrives — the merge would
+           * silently drop the card. Same conservative kind-scoped preserve.
+           */
+          const orphanedContextCompactionCards = liveChat.messages.filter(
+            (m) =>
+              m.role === 'system' &&
+              m.metadata?.kind === 'contextCompaction' &&
+              !incomingIds.has(m.id)
+          )
+          const orphans = [
+            ...orphanedLiveAssistants,
+            ...orphanedAgentQuestionMarkers,
+            ...orphanedContextCompactionCards
+          ]
           if (
             mergedMessages.length !== chat.messages.length ||
             orphans.length > 0 ||
@@ -9945,6 +9963,7 @@ function App(): React.JSX.Element {
           geminiAuthProfileId: request.geminiAuthProfileId,
           handoffSourceRunId: request.handoffSourceRunId,
           discordContextSnapshots: request.discordContextSnapshots,
+          ...(request.verbatimPrompt ? { verbatimPrompt: true } : {}),
           chatSnapshot: runChat
         })
       } catch (error) {
@@ -17038,9 +17057,22 @@ function App(): React.JSX.Element {
     if (provider === 'claude') {
       const request = buildRunRequestRef.current(undefined, undefined, {
         chat,
-        prompt: '/compact'
+        prompt: '/compact',
+        // Review fix: never fold the composer's staged attachments into the
+        // compaction dispatch (buildRunRequest falls back to composer state).
+        imageAttachments: []
       })
-      void executeRunRef.current({ ...request, preserveComposer: true })
+      void executeRunRef.current({
+        ...request,
+        // Review fix: `/compact` must reach the CLI/SDK with the slash at
+        // position 0 — verbatim composition skips every prepend (runtime
+        // preamble, goal, recon steer, guest/sub-thread blocks) that would
+        // demote it to prose. Discord context rides the same rule.
+        verbatimPrompt: true,
+        discordContextSelection: undefined,
+        discordContextSnapshots: undefined,
+        preserveComposer: true
+      })
     }
   }, [])
   const canCompactCurrentChatContext =

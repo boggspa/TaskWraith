@@ -11133,6 +11133,15 @@ async function runClaudeProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
       workflowBudgetRegistry.onExit(route.appRunId)
       return
     }
+    // Review fix: a `/compact` dispatch is NOT safely re-runnable — if the SDK
+    // stream threw AFTER the compaction executed (user stop, transient stream
+    // error), a CLI re-run would compact the freshly-compacted session a
+    // second time and grind away preserved detail. Fail the run instead.
+    if (payload.prompt.trim() === '/compact') {
+      runManager.finish(route.appRunId, 'failed')
+      sendAgentCompatExit(event.sender, 'claude', 1, route)
+      return
+    }
   }
 
   const resolved = await resolveCliProviderBinary('claude', payload.runtimeProfile)
@@ -13991,6 +14000,10 @@ interface PendingCodexManualCompaction {
   postTokens?: number
   itemSeen?: boolean
   settle: (result: { ok: boolean; error?: string }) => void
+  /** Resolves when the compaction settles — the dispatch path awaits this so
+   * a turn started mid-compaction can't have the compaction turn's lifecycle
+   * frames (turn/started → turn/completed) drive the NEW run's state. */
+  completion?: Promise<{ ok: boolean; error?: string }>
 }
 const pendingCodexManualCompactions = new Map<string, PendingCodexManualCompaction>()
 
@@ -14103,22 +14116,23 @@ async function compactCodexProviderContext(payload: {
   if (!chat) return { ok: false, error: 'Chat not found.' }
   const threadId = payload.providerSessionId || chat.linkedProviderSessionId
   if (!threadId || !isCodexAppServerThreadId(threadId)) {
-    return {
-      ok: false,
-      error: 'This chat has no resumable Codex thread yet — send a message first.'
-    }
+    // Review fix: card the failure — a stale renderer can offer the button on
+    // a chat whose session id turned out to be a codex-exec fallback id, and a
+    // silent no-op contradicts the "failure feedback arrives as the card"
+    // contract the renderer relies on.
+    const error = 'This chat has no resumable Codex thread yet — send a message first.'
+    appendContextCompactionMessageToChat(
+      payload.chatId,
+      { kind: 'failed', telemetry: { provider: 'codex', trigger: 'manual', error } },
+      `manual-invalid-${Date.now()}`
+    )
+    return { ok: false, error }
   }
+  // Review fix (TOCTOU): reserve the thread SYNCHRONOUSLY before any await —
+  // the old shape checked the guard here but registered after ensureStarted,
+  // so a double-click raced two compactions and orphaned the first record.
   if (pendingCodexManualCompactions.has(threadId)) {
     return { ok: false, error: 'A compaction is already in progress for this chat.' }
-  }
-  const client = getCodexClient()
-  try {
-    await client.ensureStarted(app.getVersion())
-  } catch (error) {
-    return {
-      ok: false,
-      error: `Codex app-server unavailable: ${error instanceof Error ? error.message : String(error)}`
-    }
   }
   const startedAtMs = Date.now()
   let settled = false
@@ -14144,6 +14158,21 @@ async function compactCodexProviderContext(payload: {
     })
   })
   const pending = pendingCodexManualCompactions.get(threadId)!
+  pending.completion = completion
+  const client = getCodexClient()
+  // Review fix: the notification handler is normally attached by the RUN path
+  // (runCodexAppServer) — a manual compaction issued before the first codex
+  // run of the app session would otherwise stream its notifications into the
+  // void and phantom-timeout despite succeeding server-side.
+  client.setNotificationHandler(handleCodexNotification)
+  try {
+    await client.ensureStarted(app.getVersion())
+  } catch (error) {
+    pending.settle({
+      ok: false,
+      error: `Codex app-server unavailable: ${error instanceof Error ? error.message : String(error)}`
+    })
+  }
   try {
     try {
       await client.request('thread/compact/start', { threadId }, 30_000)
@@ -14538,6 +14567,28 @@ function handleCodexNotification(message: any) {
   }
 
   if (message.method === 'turn/completed' || message.method === 'review/completed') {
+    // Review fix: a contextCompaction item that STARTED in this turn but never
+    // completed means the compaction failed or was interrupted — settle the
+    // pending manual record here (success settles from item/completed in
+    // emitCodexContextCompaction) so the awaiting IPC doesn't phantom-timeout
+    // for 180s and then card a misleading generic timeout. Checked BEFORE the
+    // completed guard because the compaction turn can trail the run's own
+    // terminal turn when a compaction was requested against a busy thread.
+    const pendingManualAtTurnEnd = state.threadId
+      ? pendingCodexManualCompactions.get(state.threadId)
+      : undefined
+    if (pendingManualAtTurnEnd && state.contextCompactionStartedAtMs !== undefined) {
+      const turnAtEnd = params.turn || params.review || {}
+      const turnErrorDetail = codexString(turnAtEnd?.error?.message ?? turnAtEnd?.error)
+      pendingManualAtTurnEnd.settle({
+        ok: false,
+        error:
+          turnErrorDetail ||
+          `Codex compaction turn ${codexString(turnAtEnd.status) || 'ended'} before compacting.`
+      })
+      state.contextCompactionStartedAtMs = undefined
+      state.contextCompactionPreTokens = undefined
+    }
     if (state.completed) return
     state.completed = true
     // Residual 1 — the run ended; drop any deferred interrupt for its thread.
@@ -15385,6 +15436,18 @@ async function runCodexAppServer(event: Electron.IpcMainInvokeEvent, payload: Ag
     payload.providerSessionId && isCodexAppServerThreadId(payload.providerSessionId)
       ? payload.providerSessionId
       : null
+  // Review fix (critical): a turn dispatched while a manual compaction turn is
+  // in flight on this thread would register its run state and then adopt the
+  // COMPACTION turn's lifecycle — turn/started stamps the compaction turnId
+  // onto the new run and the compaction's turn/completed finalizes it, so the
+  // user's real reply streams into a dead run. Compactions take seconds; wait
+  // them out (the pending record's own 180s timer bounds this).
+  const pendingCompactionAtDispatch = resumableThreadId
+    ? pendingCodexManualCompactions.get(resumableThreadId)?.completion
+    : undefined
+  if (pendingCompactionAtDispatch) {
+    await pendingCompactionAtDispatch.catch(() => {})
+  }
   if (payload.providerSessionId && !resumableThreadId) {
     // A codex-exec fallback session id (`codex-exec-<ts>`) is not a valid
     // app-server thread UUID — resuming it throws "invalid thread id" and
@@ -28141,7 +28204,13 @@ if (isGeminiMcpBridgeProcess) {
       }
       const dispatchResult = await runCoordinator.dispatch(routedPayload, event)
       // Snapshot the dispatched request so a later quota wall can re-run it.
-      if (AppStore.getSettings().autoFailoverEnabled && dispatchResult.appRunId) {
+      // A provider-native `/compact` dispatch is excluded: failing it over
+      // would send the literal slash text to a DIFFERENT provider as prose.
+      if (
+        AppStore.getSettings().autoFailoverEnabled &&
+        dispatchResult.appRunId &&
+        routedPayload.prompt?.trim() !== '/compact'
+      ) {
         failoverSnapshotByRun.set(dispatchResult.appRunId, captureFailoverSnapshot(routedPayload))
       }
       return dispatchResult

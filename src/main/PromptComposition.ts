@@ -547,6 +547,14 @@ export interface ComposeRunPromptInput {
   guestParticipant?: GuestParticipantConfig
   /** Persistent thread objective controlled by /goal and the composer goal control. */
   activeGoal?: ActiveGoal | null
+  /**
+   * Send `finalPrompt` to the provider VERBATIM — no context injection, no
+   * runtime preamble, no goal/recon/guest blocks. Used for provider-native
+   * slash dispatches (the Claude `/compact` run): any prepended block pushes
+   * the slash off the start of the prompt and the CLI/SDK then treats it as
+   * prose instead of executing the command.
+   */
+  verbatimPrompt?: boolean
 }
 
 export interface ComposeRunPromptResult {
@@ -595,6 +603,18 @@ export function composeRunPrompt(input: ComposeRunPromptInput): ComposeRunPrompt
     ollamaToolControlTier,
     ollamaSessionMemory
   } = input
+  if (input.verbatimPrompt) {
+    // Provider-native slash dispatch (e.g. the Claude `/compact` run): every
+    // block this function can PREPEND — runtime preamble, goal, recon steer,
+    // guest/sub-thread context, transcript injection — would push the slash
+    // off the start of the prompt and stop the provider executing it. Send
+    // the prompt untouched; the session's own history is what's being acted on.
+    return {
+      contextualPrompt: finalPrompt,
+      contextTurnsApplied: 0,
+      applicationLog: `${providerLabel}: verbatim slash dispatch — prompt composition skipped.`
+    }
+  }
   const contextBudget = resolveContextBudget(provider, nextModel)
   const nativeSubAgentInstruction = nativeSubAgentPromptInstruction(
     nativeSubAgentRequests,

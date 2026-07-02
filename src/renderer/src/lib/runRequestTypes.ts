@@ -59,6 +59,10 @@ export interface QueuedRunRequest {
    * an independent decision — the next send might be a full round.
    */
   dmTargetParticipantId?: string
+  /** Provider-native slash dispatch (e.g. the Claude `/compact` run): compose
+   * the prompt VERBATIM — no context injection or preamble prepends, which
+   * would push the slash off the start and stop the provider executing it. */
+  verbatimPrompt?: boolean
 }
 
 export interface RunRouteEventPayload {

@@ -1976,21 +1976,6 @@
   height: 17.1px;
 }
 
-/* Context-pressure severity tints. Doubled class selector beats every
- * per-shell color above (incl. Claude's decorative amber and the light-theme
- * overrides below) without !important — pressure MUST win over shell chrome.
- * Thresholds: src/shared/contextCompaction.ts (warn ≥80%, critical ≥95%). */
-.context-wheel.context-wheel--warn.context-wheel--warn,
-[data-composer-style="claude"] .context-wheel.context-wheel--warn,
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .context-wheel.context-wheel--warn {
-  color: #f0a93f;
-}
-.context-wheel.context-wheel--critical.context-wheel--critical,
-[data-composer-style="claude"] .context-wheel.context-wheel--critical,
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .context-wheel.context-wheel--critical {
-  color: var(--danger, #e54d4d);
-}
-
 /* Light-theme override for the context donut. Base + Codex
  * variants hardcode `color-mix(#ffffff 65|70%, transparent)`
  * which renders as invisible white on light surfaces. Switch
@@ -2002,6 +1987,25 @@
 }
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"] .context-wheel {
   color: rgba(29, 29, 31, 0.66);
+}
+
+/* Context-pressure severity tints — LAST in the donut cascade on purpose:
+ * every selector here ties-or-beats the shell/theme rules above ((0,3,0) vs
+ * the codex light-theme rule's (0,3,0), (0,3,0) vs Claude's (0,2,0) amber),
+ * and source order settles the ties, so pressure always wins over chrome
+ * without !important. Review fix: this block previously sat ABOVE the
+ * light-theme overrides, which silently out-cascaded warn/critical on the
+ * codex shell in light/mist/sage themes.
+ * Thresholds: src/shared/contextCompaction.ts (warn ≥80%, critical ≥95%). */
+.context-wheel.context-wheel--warn.context-wheel--warn,
+[data-composer-style="claude"] .context-wheel.context-wheel--warn,
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .context-wheel.context-wheel--warn {
+  color: #f0a93f;
+}
+.context-wheel.context-wheel--critical.context-wheel--critical,
+[data-composer-style="claude"] .context-wheel.context-wheel--critical,
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .context-wheel.context-wheel--critical {
+  color: var(--danger, #e54d4d);
 }
 
 /* ============================================================

@@ -277,6 +277,9 @@ interface ComposerRunInput {
   handoffSourceRunId?: string
   discordContextSnapshots?: DiscordContextSnapshot[]
   chatSnapshot?: ChatRecord
+  /** Provider-native slash dispatch: compose the prompt verbatim (no
+   * context/preamble blocks) so the leading slash stays executable. */
+  verbatimPrompt?: boolean
 }
 
 interface ComposerRunMetadata {

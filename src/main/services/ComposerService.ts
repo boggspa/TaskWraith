@@ -87,6 +87,9 @@ export interface ComposerInput {
   handoffSourceRunId?: string
   discordContextSnapshots?: DiscordContextSnapshot[]
   chatSnapshot?: ChatRecord
+  /** Send the prompt to the provider verbatim (no context/preamble blocks) —
+   * provider-native slash dispatches only (see ComposeRunPromptInput). */
+  verbatimPrompt?: boolean
 }
 
 export interface ComposerRunMetadata {
@@ -176,6 +179,14 @@ export class ComposerService {
     const settings = this.deps.getSettings()
     const dispatchResolution = resolveProviderDispatch(settings, requestedProvider)
     const provider = dispatchResolution.provider
+    // A verbatim slash dispatch is provider-native — rerouting it (provider
+    // pause plans) would hand the literal slash text to a different provider
+    // as prose. Fail visibly instead; the renderer surfaces compose errors.
+    if (input.verbatimPrompt === true && provider !== requestedProvider) {
+      throw new Error(
+        `${getProviderLabel(requestedProvider)} is paused with a reroute to ${getProviderLabel(provider)} — resume it before compacting this session.`
+      )
+    }
     const rawInputBeforeReroute =
       typeof input.userInput === 'string'
         ? input.userInput
@@ -311,6 +322,7 @@ export class ComposerService {
       : undefined
     const composed = composeRunPrompt({
       provider,
+      verbatimPrompt: input.verbatimPrompt === true,
       finalPrompt: contextualFinalPrompt,
       messages: chat.messages || [],
       chatContextTurns: settings.chatContextTurns,
