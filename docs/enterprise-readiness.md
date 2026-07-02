@@ -1,6 +1,6 @@
 # Enterprise readiness plan
 
-Status: 2026-07-02
+Status: 2026-07-03
 
 This document tracks the current enterprise-facing posture after the July 2026
 permission, plan-mode, audit, iOS bridge, and staged-roster work. It is meant to
@@ -234,20 +234,39 @@ What exists:
 
 - User MCP server shape is sanitized.
 - Transport-specific readiness checks exist.
+- The launch builder now has an optional allowlist policy decision point before
+  enabled user MCP servers materialize into provider launch config. It can gate
+  transports, stdio command roots, remote URL hosts, header names, env keys,
+  and plugin provenance / plugin ids, and can report blocked-server reasons to
+  callers.
 - Audit/previews redact values for display.
 
 What is missing:
 
-- Enterprise allowlist for transports, command paths, URL hosts, headers, env
-  keys, and plugin/materialized server provenance.
-- A policy decision point before enabled user MCP servers attach to provider
-  launches.
+- No managed policy source feeds the allowlist yet, so default behavior remains
+  permissive for existing user settings and provider launches.
+- The allowlist is launch-time only. Save-time validation, locked Settings UI,
+  and plugin materialization policy still need the B5.3 managed-policy plane.
+- Plugin provenance checks are syntactic until a managed policy service
+  revalidates installed plugin state, resource kind, object id, and manifest
+  hash.
+- Command-root checks are a launch allowlist, not a sandbox; symlink/realpath
+  validation and argument policy need to come with managed policy enforcement.
+- Remote checks currently gate host patterns, not full URL egress policy for
+  scheme, port, path, userinfo, or DNS-rebinding behavior.
+- Long-lived provider app servers, especially Codex app-server, need an
+  explicit restart or re-materialization path before mid-session policy changes
+  can remove previously attached user MCP servers.
+- Blocked-server reasons are callback-ready but are not yet written into
+  diagnostics or audit bundles.
 
 Target:
 
-- Define allowed transports, local command roots, URL host patterns, header
-  names, env keys, and plugin provenance requirements.
-- Enforce at sanitize/save time and again at launch time.
+- Feed the launch allowlist from managed policy, then enforce compatible checks
+  at sanitize/save time and again at launch time.
+- Keep command-root, remote-host, env/header, and provenance decisions
+  centralized in the user-MCP launch builder so Codex, Claude, Cursor, and
+  provider capability previews cannot drift.
 - Export blocked-server reasons in diagnostics and audit bundles.
 
 ### B5.5 - Stage-role and queued-dispatch receipts
