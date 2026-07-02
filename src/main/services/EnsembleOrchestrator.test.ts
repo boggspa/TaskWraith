@@ -8766,3 +8766,54 @@ describe('staged fan-out (stageRole)', () => {
     expect(harness.dispatched[1].provider).toBe('claude')
   })
 })
+
+/*
+ * Spike 6 — durable scout briefs. `runtime.scoutBriefs` dies with the
+ * round; recordScoutBrief now also upserts a session-scoped blackboard
+ * entry so the hand-off context survives into later rounds' digests.
+ */
+describe('scout briefs persist to the blackboard', () => {
+  it('upserts a session-scoped blackboard entry per brief and replaces on re-brief', async () => {
+    const harness = makeHarness()
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Investigate.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const runId = harness.dispatched[0].appRunId!
+
+    harness.orchestrator.recordScoutBrief(runId, {
+      participantId: 'claude',
+      participantRole: 'Reviewer',
+      provider: 'claude',
+      findings: 'Module X locks shared state.',
+      confidence: 'high',
+      recommendations: ['serialize access'],
+      emittedAt: '2026-05-24T00:00:01.000Z'
+    })
+    const blackboard = harness.chat.ensemble?.blackboard || []
+    expect(blackboard).toHaveLength(1)
+    expect(blackboard[0]).toMatchObject({
+      participantId: 'claude',
+      key: 'scout-brief:Reviewer',
+      scope: 'session',
+      derivedFrom: 'scout_brief'
+    })
+    expect(blackboard[0].value).toContain('Module X locks shared state.')
+    expect(blackboard[0].value).toContain('Recommends: serialize access')
+
+    // Same participant briefs again → replaces, not stacks.
+    harness.orchestrator.recordScoutBrief(runId, {
+      participantId: 'claude',
+      participantRole: 'Reviewer',
+      provider: 'claude',
+      findings: 'Updated: lock removed in module X.',
+      confidence: 'high',
+      emittedAt: '2026-05-24T00:00:02.000Z'
+    })
+    const after = harness.chat.ensemble?.blackboard || []
+    expect(after).toHaveLength(1)
+    expect(after[0].value).toContain('Updated: lock removed')
+  })
+})

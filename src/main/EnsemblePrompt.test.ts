@@ -1342,6 +1342,63 @@ describe('formatToolTraceSummary', () => {
 })
 
 /*
+ * Spike 6 — "since your last turn" transcript widening. The fixed
+ * message window could exclude a participant's own previous turn in a
+ * long round; when the prompt is built FOR that participant the window
+ * widens back to their last assistant message (char budget still caps).
+ */
+describe('since-last-turn transcript widening', () => {
+  function chatWithLongRound(): ChatRecord {
+    const base = chat()
+    const messages = [
+      {
+        id: 'own-turn',
+        role: 'assistant' as const,
+        content: 'MY-EARLIER-ANALYSIS of the auth module.',
+        timestamp: '2026-05-24T00:00:01.000Z',
+        metadata: { ensembleProvider: 'claude', ensembleParticipantId: 'claude' }
+      },
+      ...Array.from({ length: 10 }, (_, index) => ({
+        id: `peer-${index}`,
+        role: 'assistant' as const,
+        content: `Peer update ${index}.`,
+        timestamp: `2026-05-24T00:00:1${index}.000Z`,
+        metadata: { ensembleProvider: 'codex', ensembleParticipantId: 'codex' }
+      }))
+    ]
+    return { ...base, messages }
+  }
+
+  it('widens the window back to the participant own last turn', () => {
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: chatWithLongRound(),
+      config: ensemble,
+      participant: ensemble.participants.find((entry) => entry.id === 'claude')!,
+      currentPrompt: 'Continue your work.',
+      roundId: 'round-delta',
+      // 2 turns → 4-message default window: the own turn (11 messages back)
+      // would be dropped without the widening.
+      chatContextTurns: 2
+    })
+    expect(prompt).toContain('MY-EARLIER-ANALYSIS')
+  })
+
+  it('keeps the default window for participants with no prior turn', () => {
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: chatWithLongRound(),
+      config: ensemble,
+      participant: ensemble.participants.find((entry) => entry.id === 'codex')!,
+      currentPrompt: 'Continue your work.',
+      roundId: 'round-delta-2',
+      chatContextTurns: 2
+    })
+    // Codex's own last turn (peer-9) is inside the default window already,
+    // so the early claude message stays out — no unconditional widening.
+    expect(prompt).not.toContain('MY-EARLIER-ANALYSIS')
+  })
+})
+
+/*
  * Spike 4 — stage-role stanza. Only explicitly staged seats get the
  * extra line; unstaged rosters keep their prompt shape byte-identical.
  */

@@ -627,7 +627,9 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
     ollamaTranscriptBudget?.contextTurns ?? input.chatContextTurns ?? 6,
     participantTokens,
     ollamaTranscriptBudget?.contextChars ?? input.config.ensembleContextChars,
-    dupProviderModelLabels
+    dupProviderModelLabels,
+    // Spike 6 — widen the window back to this participant's own last turn.
+    input.participant.id
   )
 
   return [
@@ -1100,7 +1102,8 @@ function buildTaggedTranscript(
   contextTurns: number,
   participantTokens?: Map<string, string>,
   contextChars?: number,
-  modelLabels?: Map<string, string>
+  modelLabels?: Map<string, string>,
+  sinceParticipantId?: string
 ): string {
   // Total shared-transcript char budget — user-adjustable per ensemble
   // (5K–500K via the Turn picker); falls back to the default cap. This is the
@@ -1112,11 +1115,34 @@ function buildTaggedTranscript(
   // raised budget widens the window enough to actually fill it (~600 chars/line
   // estimate), floored at the turn-window.
   const baseWindow = Math.max(1, contextTurns * 2)
-  const windowSize =
+  let windowSize =
     maxChars > MAX_TRANSCRIPT_CHARS ? Math.max(baseWindow, Math.ceil(maxChars / 600)) : baseWindow
-  const relevant = messages
-    .filter((message) => message.role !== 'tool' && !isHumanCollaboratorComment(message))
-    .slice(-windowSize)
+  const filtered = messages.filter(
+    (message) => message.role !== 'tool' && !isHumanCollaboratorComment(message)
+  )
+  // Spike 6 (docs/ensemble-posture-fanout-preamble-design.md) — "since your
+  // last turn" widening. A fixed window (12 messages by default) means a
+  // writer late in a large round can lose everything since its previous turn
+  // — including its OWN prior contribution. When the caller identifies the
+  // participant being prompted, widen the window (never shrink it) so it
+  // reaches back to that participant's most recent assistant turn plus one
+  // message of lead-in. The char budget below stays the hard cap: the
+  // newest-first fill still drops the oldest lines when the widened window
+  // exceeds it, so provider/context budgets (incl. Ollama's model-aware
+  // budget) are never blown.
+  if (sinceParticipantId) {
+    for (let i = filtered.length - 1; i >= 0; i--) {
+      const message = filtered[i]
+      if (
+        message.role === 'assistant' &&
+        message.metadata?.ensembleParticipantId === sinceParticipantId
+      ) {
+        windowSize = Math.max(windowSize, filtered.length - i + 1)
+        break
+      }
+    }
+  }
+  const relevant = filtered.slice(-windowSize)
   // Fill from the MOST RECENT message backward so the budget keeps recent
   // context and truncation drops the OLDEST, not the newest. Output stays
   // chronological (unshift). For a non-truncated window this is identical to the

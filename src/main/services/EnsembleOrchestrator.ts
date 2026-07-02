@@ -61,6 +61,7 @@ import { sanitizeRawProviderMediaRefs } from '../../shared/transcriptMediaRefSan
 // corrections propagate to next round's prompts as a compact digest.
 import {
   deriveBlackboardFromRoundSummary,
+  makeBlackboardEntry,
   upsertBlackboardEntry
 } from '../blackboard/Blackboard'
 // M5 (1.0.7) — emit advisory complexity-escalation signals at round end
@@ -4978,6 +4979,50 @@ export class EnsembleOrchestrator {
     if (!runtime) return
     if (!runtime.scoutBriefs) runtime.scoutBriefs = []
     runtime.scoutBriefs.push(brief)
+    // Spike 6 (docs/ensemble-posture-fanout-preamble-design.md) — durable
+    // copy on the shared blackboard. `runtime.scoutBriefs` dies with the
+    // round runtime, so pre-spike a brief was invisible to every subsequent
+    // round even though it often carries exactly the hand-off context a
+    // later writer needs. Session scope survives round turnover; the stable
+    // (participantId, key, scope) upsert means a re-scouting participant
+    // replaces its prior brief instead of stacking; deterministic id keeps
+    // this clock/random-free.
+    const chat = this.deps.getChat(run.chatId)
+    if (!chat?.ensemble) return
+    const briefValue = [
+      brief.findings,
+      ...(brief.recommendations?.length
+        ? [`Recommends: ${brief.recommendations.join('; ')}`]
+        : []),
+      ...(brief.blockers?.length ? [`Blockers: ${brief.blockers.join('; ')}`] : [])
+    ].join(' — ')
+    const entry = makeBlackboardEntry({
+      id: `${runtime.roundId}-scout-${brief.participantId}`,
+      chatId: chat.appChatId,
+      roundId: runtime.roundId,
+      participantId: brief.participantId,
+      key: `scout-brief:${brief.participantRole || brief.participantId}`,
+      value: briefValue,
+      category: 'note',
+      scope: 'session',
+      derivedFrom: 'scout_brief',
+      createdAt: brief.emittedAt
+    })
+    if (!entry) return
+    this.saveChatWithCheckpoint(
+      {
+        ...chat,
+        ensemble: {
+          ...chat.ensemble,
+          blackboard: upsertBlackboardEntry(chat.ensemble.blackboard || [], entry),
+          updatedAt: this.deps.nowIso()
+        },
+        updatedAt: this.deps.now()
+      },
+      // Mid-round config-state change — same checkpoint class as the other
+      // in-flight round mutations (SessionCheckpointReason is a closed union).
+      'round-updated'
+    )
   }
 
   listParticipantsForRun(runId: string | undefined): {
