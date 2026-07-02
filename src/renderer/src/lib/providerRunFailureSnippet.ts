@@ -111,11 +111,10 @@ export const buildProviderRunFailureSnippet = (
     lines.push({ text: `Provider exited with code ${exitCode}.` })
   }
 
-  // Name the context wall. Scan the PRE-slice pool too: the overflow line can
-  // be pushed out of the visible tail by later shutdown noise.
-  const hitContextWall =
-    lines.some((line) => isContextOverflowErrorText(line.text)) ||
-    collected.some((line) => isContextOverflowErrorText(line.text))
+  // Name the context wall. Scan only the DISPLAYED lines: the stderr pool is
+  // chat-scoped, so a stale overflow line from an EARLIER run could otherwise
+  // trigger the hint on an unrelated failure without even being visible.
+  const hitContextWall = lines.some((line) => isContextOverflowErrorText(line.text))
   const hint = hitContextWall
     ? 'Context window exhausted — run /compact to shrink this session, or start a fresh thread.'
     : undefined

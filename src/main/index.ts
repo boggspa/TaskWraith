@@ -14198,6 +14198,28 @@ async function compactCodexProviderContext(payload: {
 
 function handleCodexNotification(message: any) {
   const state = findCodexRunStateForMessage(message)
+  const notificationThreadId = String(
+    message?.params?.threadId ||
+      message?.params?.thread?.id ||
+      message?.params?.item?.threadId ||
+      message?.params?.turn?.threadId ||
+      ''
+  )
+  // Manual compactions are keyed strictly by threadId, and they must win over
+  // findCodexRunStateForMessage's ACTIVE-STATE FALLBACK: compacting idle chat A
+  // while a different codex chat B is running resolves to B's state, whose
+  // thread-mismatch guard below would silently swallow A's compaction frames —
+  // stranding the awaiting IPC into a phantom timeout + spurious failure card.
+  // (When a run state DOES match the thread — a turn dispatched mid-compact —
+  // the state lane handles the frames and settles the pending record itself.)
+  if (
+    notificationThreadId &&
+    pendingCodexManualCompactions.has(notificationThreadId) &&
+    (!state || state.threadId !== notificationThreadId)
+  ) {
+    handleCodexManualCompactionNotification(message)
+    return
+  }
   if (!state) {
     // Between-turns manual compactions still stream item/turn notifications —
     // route them to the pending manual-compaction registry instead of
