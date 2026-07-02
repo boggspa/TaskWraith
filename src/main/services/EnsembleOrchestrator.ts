@@ -31,6 +31,7 @@ import type {
   PooledAgentIdentitySnapshot,
   ProviderId,
   RunQueueJobStatus,
+  SessionActivityLedgerEntry,
   ToolActivity,
   ToolActivityStatus,
   TranscriptMediaRef,
@@ -115,6 +116,7 @@ export type EnsembleQueuedSteerResult = {
 }
 
 const BOSSMAN_ASSIGNABLE_PERMISSION_PRESET_SET = new Set<string>(ASSIGNABLE_PERMISSION_PRESETS)
+const SESSION_ACTIVITY_LEDGER_LIMIT = 40
 const CONTINUATION_BLOCKED_PARTICIPANT_STATUSES = new Set<EnsembleParticipantStatus>([
   'answered',
   'yielded',
@@ -539,6 +541,7 @@ export interface EnsembleRosterEditResult {
   message: string
   roundId?: string
   participantId?: string
+  deferred?: boolean
   error?:
     | RosterEditError
     | 'no_active_run'
@@ -551,6 +554,24 @@ export interface EnsembleRosterEditResult {
     | 'unknown_provider'
     | 'health_check_unavailable'
     | 'participant_unreachable'
+}
+
+export interface EnsembleParticipantSeatChangeInput {
+  chatId: string
+  participantId: string
+  participant: RosterEditParticipantInput
+  changedBy?: SessionActivityLedgerEntry['changedBy']
+  reason?: string
+}
+
+export interface EnsembleParticipantSeatChangeResult {
+  ok: boolean
+  status?: 'applied' | 'queued'
+  chat?: ChatRecord
+  message: string
+  participantId?: string
+  roundId?: string
+  error?: 'not_ensemble' | 'stale_target' | 'invalid_patch'
 }
 
 export interface EnsembleSideMessageInput {
@@ -1197,6 +1218,119 @@ function participantLabel(participant?: EnsembleParticipant): string {
   return participant.role || participant.provider
 }
 
+function participantSeatValue(participant: EnsembleParticipant): string {
+  const provider = providerLabel(participant.provider)
+  const model = participant.model ? ` / ${participant.model}` : ''
+  const role = participant.role ? ` (${participant.role})` : ''
+  return `${provider}${model}${role}`
+}
+
+function hasSeatChangePatch(patch: RosterEditParticipantInput | undefined | null): boolean {
+  if (!patch) return false
+  return (
+    Object.prototype.hasOwnProperty.call(patch, 'provider') ||
+    Object.prototype.hasOwnProperty.call(patch, 'model') ||
+    Object.prototype.hasOwnProperty.call(patch, 'runtimeProfileId') ||
+    Object.prototype.hasOwnProperty.call(patch, 'geminiAuthProfileId') ||
+    Object.prototype.hasOwnProperty.call(patch, 'ollamaToolControlTier') ||
+    Object.prototype.hasOwnProperty.call(patch, 'ollamaRunProfile') ||
+    Object.prototype.hasOwnProperty.call(patch, 'role') ||
+    Object.prototype.hasOwnProperty.call(patch, 'instructions') ||
+    Object.prototype.hasOwnProperty.call(patch, 'reasoningEffort') ||
+    Object.prototype.hasOwnProperty.call(patch, 'fastModeEnabled') ||
+    Object.prototype.hasOwnProperty.call(patch, 'thinkingEnabled') ||
+    Object.prototype.hasOwnProperty.call(patch, 'serviceTier') ||
+    Object.prototype.hasOwnProperty.call(patch, 'permissionPresetId') ||
+    Object.prototype.hasOwnProperty.call(patch, 'permissionOverrides') ||
+    Object.prototype.hasOwnProperty.call(patch, 'linkedProviderSessionId')
+  )
+}
+
+function applySeatChangePatch(
+  target: EnsembleParticipant,
+  patch: RosterEditParticipantInput
+): EnsembleParticipant {
+  const next: EnsembleParticipant = { ...target, linkedProviderSessionId: target.linkedProviderSessionId }
+  if (
+    Object.prototype.hasOwnProperty.call(patch, 'provider') &&
+    typeof patch.provider === 'string' &&
+    patch.provider
+  ) {
+    next.provider = patch.provider as ProviderId
+    next.linkedProviderSessionId = null
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, 'model')) {
+    if (patch.model) next.model = patch.model
+    else delete next.model
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, 'runtimeProfileId')) {
+    if (patch.runtimeProfileId) next.runtimeProfileId = patch.runtimeProfileId
+    else delete next.runtimeProfileId
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, 'geminiAuthProfileId')) {
+    if (typeof patch.geminiAuthProfileId === 'string' || patch.geminiAuthProfileId === null) {
+      next.geminiAuthProfileId = patch.geminiAuthProfileId
+    } else {
+      delete next.geminiAuthProfileId
+    }
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, 'ollamaToolControlTier')) {
+    if (patch.ollamaToolControlTier) next.ollamaToolControlTier = patch.ollamaToolControlTier
+    else delete next.ollamaToolControlTier
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, 'ollamaRunProfile')) {
+    if (patch.ollamaRunProfile) next.ollamaRunProfile = patch.ollamaRunProfile
+    else delete next.ollamaRunProfile
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, 'role') && typeof patch.role === 'string') {
+    next.role = patch.role
+  }
+  if (
+    Object.prototype.hasOwnProperty.call(patch, 'instructions') &&
+    typeof patch.instructions === 'string'
+  ) {
+    next.instructions = patch.instructions
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, 'reasoningEffort')) {
+    if (patch.reasoningEffort) next.reasoningEffort = patch.reasoningEffort
+    else delete next.reasoningEffort
+  }
+  if (
+    Object.prototype.hasOwnProperty.call(patch, 'fastModeEnabled') &&
+    typeof patch.fastModeEnabled === 'boolean'
+  ) {
+    next.fastModeEnabled = patch.fastModeEnabled
+  }
+  if (
+    Object.prototype.hasOwnProperty.call(patch, 'thinkingEnabled') &&
+    typeof patch.thinkingEnabled === 'boolean'
+  ) {
+    next.thinkingEnabled = patch.thinkingEnabled
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, 'serviceTier')) {
+    if (patch.serviceTier) next.serviceTier = patch.serviceTier
+    else delete next.serviceTier
+  }
+  if (
+    Object.prototype.hasOwnProperty.call(patch, 'permissionPresetId') &&
+    patch.permissionPresetId
+  ) {
+    next.permissionPresetId = patch.permissionPresetId as EnsembleParticipant['permissionPresetId']
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, 'permissionOverrides')) {
+    if (patch.permissionOverrides) next.permissionOverrides = patch.permissionOverrides
+    else delete next.permissionOverrides
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, 'linkedProviderSessionId')) {
+    if (typeof patch.linkedProviderSessionId === 'string' || patch.linkedProviderSessionId === null) {
+      next.linkedProviderSessionId = patch.linkedProviderSessionId
+    } else {
+      delete next.linkedProviderSessionId
+    }
+  }
+  return next
+}
+
 const PROPOSED_PLAN_BLOCK = /<proposed_plan>([\s\S]*?)<\/proposed_plan>/i
 const PROPOSED_PLAN_BLOCK_GLOBAL = /<proposed_plan>[\s\S]*?<\/proposed_plan>/gi
 
@@ -1729,6 +1863,15 @@ interface YieldReturnFrame {
   targetParticipantId: string
 }
 
+interface PendingParticipantSeatChange {
+  participantId: string
+  before: EnsembleParticipant
+  after: EnsembleParticipant
+  changedBy: SessionActivityLedgerEntry['changedBy']
+  reason: string
+  queuedAt: string
+}
+
 interface ActiveRoundRuntime {
   chatId: string
   roundId: string
@@ -1766,6 +1909,7 @@ interface ActiveRoundRuntime {
   startAfterCancellation?: Promise<unknown>
   remainingParticipants?: EnsembleParticipant[]
   bossmanParticipantId?: string
+  secondInCommandParticipantId?: string
   bossmanBaselineParticipantIds?: string[]
   bossmanBaselineParticipantCount?: number
   activeRunId?: string
@@ -1819,6 +1963,7 @@ interface ActiveRoundRuntime {
    * Nested yields unwind LIFO (A→B→C returns C→B, then B→A).
    */
   yieldReturnStack?: YieldReturnFrame[]
+  pendingParticipantSeatChanges?: PendingParticipantSeatChange[]
   /**
    * 1.0.4-AF — round-scoped self-reflective flag. Set when the user
    * opened the round with `/discuss` (alias `/meta`). Threaded into
@@ -2254,6 +2399,7 @@ export class EnsembleOrchestrator {
     runtime.cancelled = true
     runtime.queuedPrompts = []
     this.clearYieldReturnStack(runtime)
+    runtime.pendingParticipantSeatChanges = undefined
     this.cancelWakeupsForRuntime(runtime, reason)
     const roundId = runtime.roundId
     const activeRunIds = new Set<string>()
@@ -3004,6 +3150,33 @@ export class EnsembleOrchestrator {
     const affectedBefore = latestChat.ensemble.participants.find(
       (participant) => participant.id === resolution.affectedParticipantId
     )
+    const affectedAfter = resolution.nextParticipants.find(
+      (participant) => participant.id === resolution.affectedParticipantId
+    )
+    if (
+      action === 'edit_participant' &&
+      affectedBefore &&
+      affectedAfter &&
+      this.isParticipantActivelyExecuting(runtime, resolution.affectedParticipantId)
+    ) {
+      const queued = this.queueOrApplyParticipantSeatChange({
+        chat: latestChat,
+        runtime,
+        before: affectedBefore,
+        after: affectedAfter,
+        changedBy: 'orchestrator',
+        reason: 'Boss roster edit queued while the participant was active.'
+      })
+      return {
+        ok: queued.ok,
+        tool: 'ensemble_roster_edit',
+        action,
+        roundId: runtime.roundId,
+        participantId: resolution.affectedParticipantId,
+        message: queued.message,
+        deferred: true
+      }
+    }
     this.applyRosterEditToRuntime(runtime, action, resolution.affectedParticipantId, resolution.nextParticipants)
     const activeRound = this.applyRosterEditToActiveRound(
       latestChat.ensemble.activeRound,
@@ -3017,6 +3190,20 @@ export class EnsembleOrchestrator {
           ...latestChat.ensemble,
           participants: resolution.nextParticipants,
           activeRound,
+          ...(action === 'edit_participant' && affectedBefore && affectedAfter
+            ? {
+                sessionActivityLedger: [
+                  ...(latestChat.ensemble.sessionActivityLedger || []),
+                  this.createSeatChangeActivityEntry(
+                    affectedBefore,
+                    affectedAfter,
+                    'orchestrator',
+                    'Boss roster edit applied immediately.',
+                    this.deps.nowIso()
+                  )
+                ].slice(-SESSION_ACTIVITY_LEDGER_LIMIT)
+              }
+            : {}),
           updatedAt: this.deps.nowIso()
         },
         updatedAt: this.deps.now()
@@ -3035,7 +3222,10 @@ export class EnsembleOrchestrator {
       resolution.affectedParticipantId
     const verb =
       action === 'add_participant' ? 'added' : action === 'remove_participant' ? 'removed' : 'edited'
-    const message = `Boss ${verb} ${label}.`
+    const message =
+      action === 'edit_participant' && affectedBefore && affectedAfter
+        ? `Authoritative seat change applied for ${label}: ${participantSeatValue(affectedBefore)} -> ${participantSeatValue(affectedAfter)}.`
+        : `Boss ${verb} ${label}.`
     this.appendRoundStatus(runtime.chatId, runtime.roundId, message)
     return {
       ok: true,
@@ -3044,6 +3234,222 @@ export class EnsembleOrchestrator {
       roundId: runtime.roundId,
       participantId: resolution.affectedParticipantId,
       message
+    }
+  }
+
+  async requestParticipantSeatChange(
+    input: EnsembleParticipantSeatChangeInput
+  ): Promise<EnsembleParticipantSeatChangeResult> {
+    const chat = this.deps.getChat(input.chatId)
+    if (!chat?.ensemble) {
+      return {
+        ok: false,
+        message: 'Participant seat change rejected: chat is not an Ensemble chat.',
+        error: 'not_ensemble'
+      }
+    }
+    const before = chat.ensemble.participants.find(
+      (participant) => participant.id === input.participantId
+    )
+    if (!before) {
+      return {
+        ok: false,
+        message: 'Participant seat change rejected: target participant is not in the roster.',
+        error: 'stale_target'
+      }
+    }
+    if (!hasSeatChangePatch(input.participant)) {
+      return {
+        ok: false,
+        message: 'Participant seat change rejected: no supported seat fields were provided.',
+        error: 'invalid_patch'
+      }
+    }
+    const provider =
+      typeof input.participant.provider === 'string' ? input.participant.provider : undefined
+    if (provider && !selectableProviderIds().includes(provider as ProviderId)) {
+      return {
+        ok: false,
+        message: `Participant seat change rejected: ${provider} is not a live selectable provider.`,
+        error: 'invalid_patch'
+      }
+    }
+    const after = applySeatChangePatch(before, input.participant)
+    const runtime = this.roundsByChatId.get(chat.appChatId)
+    return this.queueOrApplyParticipantSeatChange({
+      chat,
+      runtime:
+        runtime && runtime.roundId === chat.ensemble.activeRound?.roundId && !runtime.cancelled
+          ? runtime
+          : undefined,
+      before,
+      after,
+      changedBy: input.changedBy || 'user',
+      reason: input.reason || 'Participant seat changed by user.'
+    })
+  }
+
+  private queueOrApplyParticipantSeatChange(input: {
+    chat: ChatRecord
+    runtime?: ActiveRoundRuntime
+    before: EnsembleParticipant
+    after: EnsembleParticipant
+    changedBy: SessionActivityLedgerEntry['changedBy']
+    reason: string
+  }): EnsembleParticipantSeatChangeResult {
+    const { chat, runtime, before, after, changedBy, reason } = input
+    if (runtime && this.isParticipantActivelyExecuting(runtime, before.id)) {
+      const queuedAt = this.deps.nowIso()
+      runtime.pendingParticipantSeatChanges = [
+        ...(runtime.pendingParticipantSeatChanges || []).filter(
+          (change) => change.participantId !== before.id
+        ),
+        {
+          participantId: before.id,
+          before,
+          after,
+          changedBy,
+          reason,
+          queuedAt
+        }
+      ]
+      const message =
+        `Authoritative seat change queued for ${participantLabel(before)}: ` +
+        `${participantSeatValue(before)} -> ${participantSeatValue(after)}. ` +
+        'It will apply at that participant turn boundary.'
+      this.appendRoundStatus(runtime.chatId, runtime.roundId, message)
+      return {
+        ok: true,
+        status: 'queued',
+        chat: this.deps.getChat(chat.appChatId) || chat,
+        message,
+        participantId: before.id,
+        roundId: runtime.roundId
+      }
+    }
+
+    const applied = this.applyParticipantSeatChangeToChat({
+      chat,
+      runtime,
+      before,
+      after,
+      changedBy,
+      reason,
+      boundary: false
+    })
+    return {
+      ok: true,
+      status: 'applied',
+      chat: applied,
+      message: `Authoritative seat change applied for ${participantLabel(before)}.`,
+      participantId: before.id,
+      roundId: runtime?.roundId
+    }
+  }
+
+  private isParticipantActivelyExecuting(
+    runtime: ActiveRoundRuntime,
+    participantId: string
+  ): boolean {
+    const activeRun = runtime.activeRunId ? this.runsByRunId.get(runtime.activeRunId) : undefined
+    if (activeRun?.participant.id === participantId) return true
+    for (const runId of runtime.activeScoutRunIds || []) {
+      if (this.runsByRunId.get(runId)?.participant.id === participantId) return true
+    }
+    return false
+  }
+
+  private applyPendingParticipantSeatChangeFor(
+    runtime: ActiveRoundRuntime,
+    participantId: string
+  ): void {
+    const pending = runtime.pendingParticipantSeatChanges || []
+    const index = pending.findIndex((change) => change.participantId === participantId)
+    if (index < 0) return
+    const [change] = pending.splice(index, 1)
+    if (pending.length === 0) runtime.pendingParticipantSeatChanges = undefined
+    const chat = this.deps.getChat(runtime.chatId)
+    const current = chat?.ensemble?.participants.find(
+      (participant) => participant.id === participantId
+    )
+    if (!chat?.ensemble || !current) return
+    const after = { ...change.after, order: current.order }
+    this.applyParticipantSeatChangeToChat({
+      chat,
+      runtime,
+      before: current,
+      after,
+      changedBy: change.changedBy,
+      reason: change.reason,
+      boundary: true
+    })
+  }
+
+  private applyParticipantSeatChangeToChat(input: {
+    chat: ChatRecord
+    runtime?: ActiveRoundRuntime
+    before: EnsembleParticipant
+    after: EnsembleParticipant
+    changedBy: SessionActivityLedgerEntry['changedBy']
+    reason: string
+    boundary: boolean
+  }): ChatRecord {
+    const { chat, runtime, before, after, changedBy, reason, boundary } = input
+    const nowIso = this.deps.nowIso()
+    const nextParticipants = chat.ensemble!.participants.map((participant) =>
+      participant.id === before.id ? { ...after, order: participant.order } : participant
+    )
+    const activeRound = runtime
+      ? this.applyRosterEditToActiveRound(chat.ensemble!.activeRound, runtime.roundId, nextParticipants)
+      : chat.ensemble!.activeRound
+    const activityEntry = this.createSeatChangeActivityEntry(
+      before,
+      after,
+      changedBy,
+      reason,
+      nowIso
+    )
+    const saved: ChatRecord = {
+      ...chat,
+      ensemble: {
+        ...chat.ensemble!,
+        participants: nextParticipants,
+        activeRound,
+        sessionActivityLedger: [
+          ...(chat.ensemble!.sessionActivityLedger || []),
+          activityEntry
+        ].slice(-SESSION_ACTIVITY_LEDGER_LIMIT),
+        updatedAt: nowIso
+      },
+      updatedAt: this.deps.now()
+    }
+    this.saveChatWithCheckpoint(saved, 'participant-updated')
+    if (runtime) {
+      this.applyRosterEditToRuntime(runtime, 'edit_participant', before.id, nextParticipants)
+      const message =
+        `Authoritative seat change ${boundary ? 'applied at turn boundary' : 'applied'} for ` +
+        `${participantLabel(before)}: ${participantSeatValue(before)} -> ${participantSeatValue(after)}.`
+      this.appendRoundStatus(runtime.chatId, runtime.roundId, message)
+    }
+    return this.deps.getChat(chat.appChatId) || saved
+  }
+
+  private createSeatChangeActivityEntry(
+    before: EnsembleParticipant,
+    after: EnsembleParticipant,
+    changedBy: SessionActivityLedgerEntry['changedBy'],
+    reason: string,
+    timestamp: string
+  ): SessionActivityLedgerEntry {
+    return {
+      id: `ensemble-seat-change-${before.id}-${this.deps.now()}`,
+      timestamp,
+      changedBy,
+      scope: 'participant',
+      target: before.id,
+      oldValue: participantSeatValue(before),
+      newValue: participantSeatValue(after),
+      reason
     }
   }
 
@@ -4107,6 +4513,141 @@ export class EnsembleOrchestrator {
       chat.ensemble?.activeRound?.bossmanParticipantId ||
       chat.ensemble?.bossmanParticipantId
     )
+  }
+
+  private activeSecondInCommandParticipantId(
+    chat: ChatRecord,
+    runtime: ActiveRoundRuntime
+  ): string | undefined {
+    return (
+      runtime.secondInCommandParticipantId ||
+      chat.ensemble?.activeRound?.secondInCommandParticipantId ||
+      chat.ensemble?.secondInCommandParticipantId
+    )
+  }
+
+  private primaryBossUnavailable(
+    chat: ChatRecord,
+    runtime: ActiveRoundRuntime,
+    bossmanParticipantId: string | undefined
+  ): { unavailable: boolean; reason?: string; liveBossmanParticipantId?: string } {
+    if (!bossmanParticipantId) {
+      return { unavailable: true, reason: 'no Boss is assigned' }
+    }
+    const rosterBoss = chat.ensemble?.participants.find(
+      (participant) => participant.id === bossmanParticipantId
+    )
+    if (!rosterBoss) {
+      return { unavailable: true, reason: 'the assigned Boss is no longer in the roster' }
+    }
+    if (rosterBoss.enabled === false) {
+      return {
+        unavailable: true,
+        reason: `${rosterBoss.role || providerLabel(rosterBoss.provider)} is disabled`,
+        liveBossmanParticipantId: bossmanParticipantId
+      }
+    }
+    const round = chat.ensemble?.activeRound
+    if (round?.roundId === runtime.roundId) {
+      const state = round.participants.find(
+        (participant) => participant.participantId === bossmanParticipantId
+      )
+      if (!state) {
+        return {
+          unavailable: true,
+          reason: 'the assigned Boss is not part of this active round',
+          liveBossmanParticipantId: bossmanParticipantId
+        }
+      }
+      if (
+        state.status === 'failed' ||
+        state.status === 'unreachable' ||
+        state.status === 'cancelled' ||
+        state.status === 'skipped'
+      ) {
+        return {
+          unavailable: true,
+          reason:
+            state.lastFailureReason ||
+            state.reason ||
+            `${rosterBoss.role || providerLabel(rosterBoss.provider)} is ${state.status}`,
+          liveBossmanParticipantId: bossmanParticipantId
+        }
+      }
+    }
+    return { unavailable: false, liveBossmanParticipantId: bossmanParticipantId }
+  }
+
+  private resolveBossAuthorityForCaller(
+    chat: ChatRecord,
+    runtime: ActiveRoundRuntime,
+    callerParticipantId: string
+  ):
+    | {
+        ok: true
+        role: 'boss' | 'second_in_command'
+        bossmanParticipantId: string
+        secondInCommandParticipantId?: string
+        rosterGuardParticipantId: string
+        primaryUnavailableReason?: string
+      }
+    | {
+        ok: false
+        error: 'bossman_not_configured' | 'second_in_command_standby' | 'not_bossman'
+        message: string
+        bossmanParticipantId?: string
+        secondInCommandParticipantId?: string
+        primaryUnavailableReason?: string
+      } {
+    const bossmanParticipantId = this.activeBossmanParticipantId(chat, runtime)
+    const secondInCommandParticipantId = this.activeSecondInCommandParticipantId(chat, runtime)
+    const primary = this.primaryBossUnavailable(chat, runtime, bossmanParticipantId)
+    if (!bossmanParticipantId) {
+      return {
+        ok: false,
+        error: 'bossman_not_configured',
+        message: 'no Boss is assigned for this Ensemble',
+        secondInCommandParticipantId,
+        primaryUnavailableReason: primary.reason
+      }
+    }
+    if (callerParticipantId === bossmanParticipantId) {
+      return {
+        ok: true,
+        role: 'boss',
+        bossmanParticipantId,
+        secondInCommandParticipantId,
+        rosterGuardParticipantId: bossmanParticipantId
+      }
+    }
+    if (callerParticipantId === secondInCommandParticipantId) {
+      if (primary.unavailable) {
+        return {
+          ok: true,
+          role: 'second_in_command',
+          bossmanParticipantId,
+          secondInCommandParticipantId,
+          rosterGuardParticipantId: primary.liveBossmanParticipantId || secondInCommandParticipantId,
+          primaryUnavailableReason: primary.reason
+        }
+      }
+      return {
+        ok: false,
+        error: 'second_in_command_standby',
+        message: 'the assigned Boss is still available, so the second-in-command remains standby',
+        bossmanParticipantId,
+        secondInCommandParticipantId
+      }
+    }
+    return {
+      ok: false,
+      error: 'not_bossman',
+      message:
+        'only the assigned Boss, or the second-in-command while the Boss is unavailable, may use this control',
+      bossmanParticipantId,
+      secondInCommandParticipantId,
+      primaryUnavailableReason: primary.unavailable ? primary.reason : undefined
+    }
   }
 
   private isBossParticipant(
@@ -5681,6 +6222,7 @@ export class EnsembleOrchestrator {
         await completion
       }
       runtime.activeRunId = undefined
+      this.applyPendingParticipantSeatChangeFor(runtime, participant.id)
       const bossYieldedToUser =
         Boolean(runtime.yieldTarget) &&
         isUserYieldTarget(runtime.yieldTarget) &&
@@ -6441,6 +6983,9 @@ export class EnsembleOrchestrator {
     const completionPromises = await Promise.all(dispatchPromises)
     await Promise.all(completionPromises)
     if (runtime.cancelled) return []
+    for (const run of laneRuns) {
+      this.applyPendingParticipantSeatChangeFor(runtime, run.participant.id)
+    }
     options.onCompleteRuns?.(laneRuns)
 
     for (const run of laneRuns) {
@@ -7160,7 +7705,10 @@ export class EnsembleOrchestrator {
     status: Extract<EnsembleRoundState['status'], 'completed' | 'cancelled' | 'failed'>
   ): void {
     const runtime = this.roundsByChatId.get(chatId)
-    if (runtime?.roundId === roundId) this.clearYieldReturnStack(runtime)
+    if (runtime?.roundId === roundId) {
+      this.clearYieldReturnStack(runtime)
+      runtime.pendingParticipantSeatChanges = undefined
+    }
     const chat = this.deps.getChat(chatId)
     if (!chat?.ensemble) return
     const endedAt = this.deps.nowIso()

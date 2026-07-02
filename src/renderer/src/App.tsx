@@ -574,6 +574,7 @@ import { ChatViewPane, type ChatViewPaneChromeAction } from './components/ChatVi
 import { type ComposerProps } from './components/Composer'
 import { removedCanvasIds, useMultiviewState } from './hooks/useMultiviewState'
 import { deriveChatIsRunning, deriveChatRunCompleteNotice } from './lib/chatRunDisplay'
+import { resolveEnsembleParticipantSeatMutationState } from './lib/ensembleParticipantSeatLock'
 // Re-exported so the existing `TranscriptPanel.test.tsx` (which imports it
 // from './App') keeps resolving after the component moved to its own module.
 export { TranscriptPanel } from './components/TranscriptPanel'
@@ -15609,6 +15610,113 @@ function App(): React.JSX.Element {
     currentEnsembleRound?.maxContinuationHops ??
     6
   const isCurrentEnsembleRoundRunning = isEnsembleActiveRoundDispatchLive(currentEnsembleRound)
+  const queuedSeatPatchKeys = useMemo(
+    () =>
+      [
+        'provider',
+        'model',
+        'role',
+        'instructions',
+        'reasoningEffort',
+        'fastModeEnabled',
+        'thinkingEnabled',
+        'permissionPresetId',
+        'permissionOverrides',
+        'serviceTier',
+        'runtimeProfileId',
+        'geminiAuthProfileId',
+        'linkedProviderSessionId',
+        'ollamaToolControlTier',
+        'ollamaRunProfile'
+      ] as const,
+    []
+  )
+  const buildQueuedSeatPatch = useCallback(
+    (patch: Partial<EnsembleParticipant>): Record<string, unknown> | null => {
+      const participant: Record<string, unknown> = {}
+      const patchRecord = patch as Record<string, unknown>
+      for (const key of queuedSeatPatchKeys) {
+        if (Object.prototype.hasOwnProperty.call(patch, key)) {
+          participant[key] = patchRecord[key]
+        }
+      }
+      return Object.keys(participant).length > 0 ? participant : null
+    },
+    [queuedSeatPatchKeys]
+  )
+  const applyChatSnapshot = useCallback((nextChat: ChatRecord): void => {
+    chatByIdRef.current.set(nextChat.appChatId, nextChat)
+    setCurrentChat((prev) => (prev?.appChatId === nextChat.appChatId ? nextChat : prev))
+    setChats((prev) => prev.map((c) => (c.appChatId === nextChat.appChatId ? nextChat : c)))
+  }, [])
+  const requestQueuedParticipantSeatChange = useCallback(
+    (
+      sourceChat: ChatRecord,
+      participantId: string,
+      patch: Partial<EnsembleParticipant>
+    ): boolean => {
+      const participant = buildQueuedSeatPatch(patch)
+      if (!participant) return false
+      void window.api
+        .requestEnsembleParticipantSeatChange({
+          chatId: sourceChat.appChatId,
+          participantId,
+          participant: participant as never,
+          reason: 'Renderer participant seat change'
+        })
+        .then((result) => {
+          if (result?.chat) applyChatSnapshot(result.chat)
+          if (!result?.ok && result?.error) {
+            window.alert(result.error)
+          }
+        })
+        .catch((error) => {
+          window.alert(error instanceof Error ? error.message : 'Seat change failed.')
+        })
+      return true
+    },
+    [applyChatSnapshot, buildQueuedSeatPatch]
+  )
+  const patchParticipantImmediate = useCallback(
+    (
+      sourceChat: ChatRecord,
+      participantId: string,
+      patch: Partial<EnsembleParticipant>
+    ): ChatRecord => {
+      const patchedChat: ChatRecord = {
+        ...sourceChat,
+        ensemble: sourceChat.ensemble
+          ? {
+              ...sourceChat.ensemble,
+              participants: sourceChat.ensemble.participants.map((participant) =>
+                participant.id === participantId ? { ...participant, ...patch } : participant
+              ),
+              updatedAt: new Date().toISOString()
+            }
+          : sourceChat.ensemble,
+        updatedAt: Date.now()
+      }
+      return withSessionActivityLedger(sourceChat, patchedChat)
+    },
+    []
+  )
+  const patchParticipantWithSeatGate = useCallback(
+    (
+      sourceChat: ChatRecord,
+      participantId: string,
+      patch: Partial<EnsembleParticipant>
+    ): ChatRecord | null => {
+      const mutationState = resolveEnsembleParticipantSeatMutationState(
+        sourceChat.ensemble?.activeRound,
+        participantId
+      )
+      if (mutationState.queueAtTurnEnd && requestQueuedParticipantSeatChange(sourceChat, participantId, patch)) {
+        return null
+      }
+      return patchParticipantImmediate(sourceChat, participantId, patch)
+    },
+    [patchParticipantImmediate, requestQueuedParticipantSeatChange]
+  )
   // Slice F v2 (1.0.3) — write-through helper used by the composer
   // pickers when an ensemble chip is selected. Patches the targeted
   // participant in chat.ensemble.participants and persists. Same
@@ -15618,44 +15726,28 @@ function App(): React.JSX.Element {
   const updateSelectedParticipant = useCallback(
     (patch: Partial<EnsembleParticipant>) => {
       if (!isCurrentEnsembleChat || !selectedParticipant || !currentChat?.ensemble) return
-      const patchedChat: ChatRecord = {
-        ...currentChat,
-        ensemble: {
-          ...currentChat.ensemble,
-          participants: currentChat.ensemble.participants.map((p) =>
-            p.id === selectedParticipant.id ? { ...p, ...patch } : p
-          ),
-          updatedAt: new Date().toISOString()
-        }
-      }
-      const nextChat = withSessionActivityLedger(currentChat, patchedChat)
-      chatByIdRef.current.set(nextChat.appChatId, nextChat)
-      setCurrentChat((prev) => (prev?.appChatId === nextChat.appChatId ? nextChat : prev))
-      setChats((prev) => prev.map((c) => (c.appChatId === nextChat.appChatId ? nextChat : c)))
+      const nextChat = patchParticipantWithSeatGate(currentChat, selectedParticipant.id, patch)
+      if (!nextChat) return
+      applyChatSnapshot(nextChat)
       void window.api.saveChat(nextChat)
     },
-    [isCurrentEnsembleChat, selectedParticipant, currentChat]
+    [
+      applyChatSnapshot,
+      isCurrentEnsembleChat,
+      patchParticipantWithSeatGate,
+      selectedParticipant,
+      currentChat
+    ]
   )
   const patchEnsembleParticipantById = useCallback(
     (participantId: string, patch: Partial<EnsembleParticipant>) => {
       if (!isCurrentEnsembleChat || !currentChat?.ensemble) return
-      const patchedChat: ChatRecord = {
-        ...currentChat,
-        ensemble: {
-          ...currentChat.ensemble,
-          participants: currentChat.ensemble.participants.map((p) =>
-            p.id === participantId ? { ...p, ...patch } : p
-          ),
-          updatedAt: new Date().toISOString()
-        }
-      }
-      const nextChat = withSessionActivityLedger(currentChat, patchedChat)
-      chatByIdRef.current.set(nextChat.appChatId, nextChat)
-      setCurrentChat((prev) => (prev?.appChatId === nextChat.appChatId ? nextChat : prev))
-      setChats((prev) => prev.map((c) => (c.appChatId === nextChat.appChatId ? nextChat : c)))
+      const nextChat = patchParticipantWithSeatGate(currentChat, participantId, patch)
+      if (!nextChat) return
+      applyChatSnapshot(nextChat)
       void window.api.saveChat(nextChat)
     },
-    [isCurrentEnsembleChat, currentChat]
+    [applyChatSnapshot, isCurrentEnsembleChat, patchParticipantWithSeatGate, currentChat]
   )
   const applyEnsembleRosterPreset = useCallback(
     (preset: EnsembleRosterPreset) => {
@@ -21356,37 +21448,17 @@ function App(): React.JSX.Element {
     }
     const paneUpdateSelectedParticipant = (patch: Partial<EnsembleParticipant>): void => {
       if (!paneSlashParticipant) return
-      updateChatById(viewerChatId, (source) => ({
-        ...source,
-        ensemble: source.ensemble
-          ? {
-              ...source.ensemble,
-              participants: source.ensemble.participants.map((participant) =>
-                participant.id === paneSlashParticipant.id ? { ...participant, ...patch } : participant
-              ),
-              updatedAt: new Date().toISOString()
-            }
-          : source.ensemble,
-        updatedAt: Date.now()
-      }))
+      const nextChat = patchParticipantWithSeatGate(viewerChat, paneSlashParticipant.id, patch)
+      if (!nextChat) return
+      updateChatById(viewerChatId, () => nextChat)
     }
     const panePatchParticipantById = (
       participantId: string,
       patch: Partial<EnsembleParticipant>
     ): void => {
-      updateChatById(viewerChatId, (source) => ({
-        ...source,
-        ensemble: source.ensemble
-          ? {
-              ...source.ensemble,
-              participants: source.ensemble.participants.map((participant) =>
-                participant.id === participantId ? { ...participant, ...patch } : participant
-              ),
-              updatedAt: new Date().toISOString()
-            }
-          : source.ensemble,
-        updatedAt: Date.now()
-      }))
+      const nextChat = patchParticipantWithSeatGate(viewerChat, participantId, patch)
+      if (!nextChat) return
+      updateChatById(viewerChatId, () => nextChat)
     }
     const paneComposerCtx: ComposerProps = {
       // Slice H: spread the MEMOISED stable base (chat-independent props + bagged

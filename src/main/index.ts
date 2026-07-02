@@ -399,6 +399,7 @@ import {
   formatSessionCheckpointResumePrompt,
   type SessionCheckpointStore
 } from './checkpoints/SessionCheckpoint'
+import type { RosterEditParticipantInput } from './EnsembleRosterMutation'
 import { appendBugReport } from './services/BugReportService'
 import { RunCoordinator } from './services/RunCoordinator'
 import { RunLifecycleCoordinator } from './services/RunLifecycleCoordinator'
@@ -28718,6 +28719,153 @@ if (isGeminiMcpBridgeProcess) {
     ipcMain.handle('cancel-ensemble-round', async (_, chatId?: string) => {
       return ensembleOrchestratorRef?.cancelRound(requireNonEmptyString(chatId, 'Ensemble chat id'))
     })
+
+    ipcMain.handle(
+      'request-ensemble-participant-seat-change',
+      async (
+        _,
+        payload?: {
+          chatId?: string
+          participantId?: string
+          participant?: Record<string, unknown> | null
+          reason?: unknown
+        }
+      ) => {
+        if (AppStore.getSettings().ensembleModeEnabled === false) {
+          throw new Error('Ensemble Mode is disabled.')
+        }
+        const chatId = requireNonEmptyString(payload?.chatId, 'Ensemble chat id')
+        const participantId = requireNonEmptyString(payload?.participantId, 'Participant id')
+        const rawParticipant =
+          payload?.participant && typeof payload.participant === 'object' && !Array.isArray(payload.participant)
+            ? payload.participant
+            : {}
+        const participant: RosterEditParticipantInput = {}
+        if (typeof rawParticipant.provider === 'string') participant.provider = rawParticipant.provider
+        if (typeof rawParticipant.model === 'string' || rawParticipant.model === null) {
+          participant.model = rawParticipant.model
+        }
+        if (
+          typeof rawParticipant.runtimeProfileId === 'string' ||
+          rawParticipant.runtimeProfileId === null ||
+          Object.prototype.hasOwnProperty.call(rawParticipant, 'runtimeProfileId')
+        ) {
+          participant.runtimeProfileId =
+            typeof rawParticipant.runtimeProfileId === 'string' ||
+            rawParticipant.runtimeProfileId === null
+              ? rawParticipant.runtimeProfileId
+              : undefined
+        }
+        if (
+          typeof rawParticipant.geminiAuthProfileId === 'string' ||
+          rawParticipant.geminiAuthProfileId === null ||
+          Object.prototype.hasOwnProperty.call(rawParticipant, 'geminiAuthProfileId')
+        ) {
+          participant.geminiAuthProfileId =
+            typeof rawParticipant.geminiAuthProfileId === 'string' ||
+            rawParticipant.geminiAuthProfileId === null
+              ? rawParticipant.geminiAuthProfileId
+              : undefined
+        }
+        if (
+          typeof rawParticipant.ollamaToolControlTier === 'string' ||
+          rawParticipant.ollamaToolControlTier === null ||
+          Object.prototype.hasOwnProperty.call(rawParticipant, 'ollamaToolControlTier')
+        ) {
+          participant.ollamaToolControlTier =
+            typeof rawParticipant.ollamaToolControlTier === 'string' ||
+            rawParticipant.ollamaToolControlTier === null
+              ? (rawParticipant.ollamaToolControlTier as RosterEditParticipantInput['ollamaToolControlTier'])
+              : undefined
+        }
+        if (
+          typeof rawParticipant.ollamaRunProfile === 'string' ||
+          rawParticipant.ollamaRunProfile === null ||
+          Object.prototype.hasOwnProperty.call(rawParticipant, 'ollamaRunProfile')
+        ) {
+          participant.ollamaRunProfile =
+            typeof rawParticipant.ollamaRunProfile === 'string' ||
+            rawParticipant.ollamaRunProfile === null
+              ? (rawParticipant.ollamaRunProfile as RosterEditParticipantInput['ollamaRunProfile'])
+              : undefined
+        }
+        if (typeof rawParticipant.role === 'string') participant.role = rawParticipant.role
+        if (typeof rawParticipant.instructions === 'string') {
+          participant.instructions = rawParticipant.instructions
+        }
+        if (
+          typeof rawParticipant.reasoningEffort === 'string' ||
+          rawParticipant.reasoningEffort === null
+        ) {
+          participant.reasoningEffort = rawParticipant.reasoningEffort
+        }
+        if (typeof rawParticipant.fastModeEnabled === 'boolean') {
+          participant.fastModeEnabled = rawParticipant.fastModeEnabled
+        }
+        if (typeof rawParticipant.thinkingEnabled === 'boolean') {
+          participant.thinkingEnabled = rawParticipant.thinkingEnabled
+        }
+        if (
+          typeof rawParticipant.serviceTier === 'string' ||
+          rawParticipant.serviceTier === null ||
+          Object.prototype.hasOwnProperty.call(rawParticipant, 'serviceTier')
+        ) {
+          participant.serviceTier =
+            typeof rawParticipant.serviceTier === 'string' || rawParticipant.serviceTier === null
+              ? rawParticipant.serviceTier
+              : undefined
+        }
+        if (
+          typeof rawParticipant.permissionPresetId === 'string' ||
+          rawParticipant.permissionPresetId === null
+        ) {
+          participant.permissionPresetId = rawParticipant.permissionPresetId
+        }
+        if (
+          rawParticipant.permissionOverrides === null ||
+          (rawParticipant.permissionOverrides &&
+            typeof rawParticipant.permissionOverrides === 'object' &&
+            !Array.isArray(rawParticipant.permissionOverrides)) ||
+          Object.prototype.hasOwnProperty.call(rawParticipant, 'permissionOverrides')
+        ) {
+          participant.permissionOverrides =
+            rawParticipant.permissionOverrides === null ||
+            (rawParticipant.permissionOverrides &&
+              typeof rawParticipant.permissionOverrides === 'object' &&
+              !Array.isArray(rawParticipant.permissionOverrides))
+              ? (rawParticipant.permissionOverrides as RosterEditParticipantInput['permissionOverrides'])
+              : undefined
+        }
+        if (
+          typeof rawParticipant.linkedProviderSessionId === 'string' ||
+          rawParticipant.linkedProviderSessionId === null ||
+          Object.prototype.hasOwnProperty.call(rawParticipant, 'linkedProviderSessionId')
+        ) {
+          participant.linkedProviderSessionId =
+            typeof rawParticipant.linkedProviderSessionId === 'string' ||
+            rawParticipant.linkedProviderSessionId === null
+              ? rawParticipant.linkedProviderSessionId
+              : undefined
+        }
+        const result =
+          (await ensembleOrchestratorRef?.requestParticipantSeatChange({
+            chatId,
+            participantId,
+            participant,
+            changedBy: 'user',
+            reason: optionalString(payload?.reason) || 'Participant seat changed by user.'
+          })) ?? {
+            ok: false,
+            message: 'Participant seat change rejected: Ensemble orchestrator is not initialized.',
+            error: 'not_ensemble'
+          }
+        const updated = AppStore.getChat(chatId)
+        if (updated) broadcastChatUpdated(updated)
+        broadcastThreadUpdate(chatId)
+        bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
+        return result
+      }
+    )
 
     ipcMain.handle('skip-ensemble-participant', async (_, chatId?: string) => {
       return ensembleOrchestratorRef?.skipActiveParticipant(

@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import type { ChatRecord, EnsembleRoundState } from '../../../main/store/types'
-import { isEnsembleParticipantSeatRuntimeLocked } from './ensembleParticipantSeatLock'
+import {
+  isEnsembleParticipantSeatRuntimeLocked,
+  resolveEnsembleParticipantSeatMutationState
+} from './ensembleParticipantSeatLock'
 
 type EnsembleRound = NonNullable<NonNullable<ChatRecord['ensemble']>['activeRound']>
 
@@ -107,5 +110,23 @@ describe('isEnsembleParticipantSeatRuntimeLocked', () => {
     expect(
       isEnsembleParticipantSeatRuntimeLocked(round({ status: 'completed' }), 'p1')
     ).toBe(false)
+  })
+})
+
+describe('resolveEnsembleParticipantSeatMutationState', () => {
+  it('marks active runtime seats as queued-at-turn-end mutations', () => {
+    expect(resolveEnsembleParticipantSeatMutationState(round(), 'p1')).toEqual({
+      locked: true,
+      queueAtTurnEnd: true,
+      message: 'This seat is executing. Provider/model changes apply at turn end.'
+    })
+  })
+
+  it('keeps idle seats immediately mutable', () => {
+    expect(resolveEnsembleParticipantSeatMutationState(round(), 'p2')).toEqual({
+      locked: false,
+      queueAtTurnEnd: false,
+      message: null
+    })
   })
 })

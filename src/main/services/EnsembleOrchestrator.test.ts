@@ -3257,9 +3257,14 @@ Next action:
       status: 'idle'
     })
 
+    const activeRoute = { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' }
+    harness.orchestrator.handleProviderOutput('claude', activeRoute, {
+      type: 'content',
+      text: 'Seat change will apply after this turn.'
+    })
     harness.orchestrator.handleProviderOutput(
       'claude',
-      { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' },
+      activeRoute,
       { type: 'result', status: 'success', stats: { total_tokens: 5 } }
     )
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
@@ -3271,6 +3276,207 @@ Next action:
         role: 'Quota relief'
       }
     })
+  })
+
+  it('queues a Boss roster seat swap for the actively executing participant until turn boundary', async () => {
+    const initialChat = makeChat()
+    initialChat.ensemble!.bossmanParticipantId = 'claude'
+    initialChat.ensemble!.bossmanAutoApprovals = {
+      enabled: true,
+      mode: 'permission_preset_once',
+      confirmedAt: '2026-05-24T00:00:00.000Z'
+    }
+    initialChat.ensemble!.participants[0].role = 'Boss'
+    initialChat.ensemble!.participants[0].permissionPresetId = 'workspace_write'
+    const harness = makeHarness({
+      initialChat,
+      probeParticipant: async () => ({ reachable: true })
+    })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Plan and execute.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    const result = await harness.orchestrator.rosterEditForRun(harness.dispatched[0].appRunId, {
+      action: 'edit_participant',
+      targetParticipantId: 'claude',
+      participant: {
+        provider: 'codex',
+        model: 'gpt-5.5',
+        role: 'Boss'
+      }
+    })
+
+    expect(result).toMatchObject({
+      ok: true,
+      participantId: 'claude',
+      deferred: true
+    })
+    expect(
+      harness.chat.ensemble!.participants.find((participant) => participant.id === 'claude')
+    ).toMatchObject({
+      provider: 'claude',
+      model: 'claude-model'
+    })
+    expect(harness.chat.messages.at(-1)?.content).toContain(
+      'Authoritative seat change queued for Boss'
+    )
+
+    const activeRoute = { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' }
+    harness.orchestrator.handleProviderOutput('claude', activeRoute, {
+      type: 'content',
+      text: 'User-requested change will apply after this turn.'
+    })
+    harness.orchestrator.handleProviderOutput(
+      'claude',
+      activeRoute,
+      { type: 'result', status: 'success', stats: { total_tokens: 5 } }
+    )
+
+    await vi.waitFor(() =>
+      expect(
+        harness.chat.ensemble!.participants.find((participant) => participant.id === 'claude')
+      ).toMatchObject({
+        provider: 'codex',
+        model: 'gpt-5.5',
+        role: 'Boss'
+      })
+    )
+    expect(
+      harness.chat.ensemble!.activeRound?.participants.find(
+        (participant) => participant.participantId === 'claude'
+      )
+    ).toMatchObject({
+      provider: 'codex',
+      role: 'Boss',
+      status: 'answered'
+    })
+    expect(harness.chat.ensemble!.sessionActivityLedger?.at(-1)).toMatchObject({
+      changedBy: 'orchestrator',
+      scope: 'participant',
+      target: 'claude',
+      oldValue: expect.stringContaining('Claude / claude-model'),
+      newValue: expect.stringContaining('Codex / gpt-5.5')
+    })
+    expect(harness.chat.messages.at(-1)?.content).toContain(
+      'Authoritative seat change applied at turn boundary for Boss'
+    )
+  })
+
+  it('queues a user-requested seat swap for the actively executing participant', async () => {
+    const harness = makeHarness()
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Plan and execute.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    const result = await harness.orchestrator.requestParticipantSeatChange({
+      chatId: 'ensemble-chat',
+      participantId: 'claude',
+      participant: {
+        provider: 'codex',
+        model: 'gpt-5.5',
+        runtimeProfileId: 'runtime-active-seat',
+        serviceTier: 'fast',
+        linkedProviderSessionId: null
+      },
+      changedBy: 'user',
+      reason: 'User changed the active seat.'
+    })
+
+    expect(result).toMatchObject({
+      ok: true,
+      status: 'queued',
+      participantId: 'claude'
+    })
+    expect(
+      harness.chat.ensemble!.participants.find((participant) => participant.id === 'claude')
+    ).toMatchObject({
+      provider: 'claude',
+      model: 'claude-model'
+    })
+
+    harness.orchestrator.handleProviderOutput(
+      'claude',
+      { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'result', status: 'success', stats: { total_tokens: 5 } }
+    )
+
+    await vi.waitFor(() =>
+      expect(
+        harness.chat.ensemble!.participants.find((participant) => participant.id === 'claude')
+      ).toMatchObject({
+        provider: 'codex',
+        model: 'gpt-5.5',
+        runtimeProfileId: 'runtime-active-seat',
+        serviceTier: 'fast',
+        linkedProviderSessionId: null
+      })
+    )
+    expect(harness.chat.ensemble!.sessionActivityLedger?.at(-1)).toMatchObject({
+      changedBy: 'orchestrator',
+      target: 'claude',
+      oldValue: expect.stringContaining('Claude / claude-model'),
+      newValue: expect.stringContaining('Codex / gpt-5.5'),
+      reason: 'User changed the active seat.'
+    })
+  })
+
+  it('applies a user-requested inactive participant seat swap immediately', async () => {
+    const harness = makeHarness()
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Plan and execute.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    const result = await harness.orchestrator.requestParticipantSeatChange({
+      chatId: 'ensemble-chat',
+      participantId: 'codex',
+      participant: {
+        provider: 'kimi',
+        model: 'kimi-k2.7-code',
+        role: 'Quota relief'
+      },
+      changedBy: 'user',
+      reason: 'User changed an inactive seat.'
+    })
+
+    expect(result).toMatchObject({
+      ok: true,
+      status: 'applied',
+      participantId: 'codex'
+    })
+    expect(
+      harness.chat.ensemble!.participants.find((participant) => participant.id === 'codex')
+    ).toMatchObject({
+      provider: 'kimi',
+      model: 'kimi-k2.7-code',
+      role: 'Quota relief'
+    })
+    expect(
+      harness.chat.ensemble!.activeRound?.participants.find(
+        (participant) => participant.participantId === 'codex'
+      )
+    ).toMatchObject({
+      provider: 'kimi',
+      role: 'Quota relief',
+      status: 'idle'
+    })
+    expect(harness.chat.ensemble!.sessionActivityLedger?.at(-1)).toMatchObject({
+      changedBy: 'user',
+      target: 'codex',
+      oldValue: expect.stringContaining('Codex / codex-model'),
+      newValue: expect.stringContaining('Kimi / kimi-k2.7-code')
+    })
+    expect(harness.chat.messages.at(-1)?.content).toContain(
+      'Authoritative seat change applied for Worker'
+    )
   })
 
   it('rejects roster removal of the configured Boss participant', async () => {

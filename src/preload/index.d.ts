@@ -54,6 +54,7 @@ import {
   WorkspaceBoardCard,
   WorkspaceBoardDefinition,
   EnsembleFanoutPolicy,
+  PermissionOverrides,
   PooledAgentStatsSummary
 } from '../main/store/types'
 import type {
@@ -1226,6 +1227,36 @@ declare global {
         textPrefix?: string
       }) => Promise<{ ok: boolean; prompt?: string; queuedPrompts?: string[]; error?: string }>
       cancelEnsembleRound: (chatId: string) => Promise<boolean>
+      requestEnsembleParticipantSeatChange: (payload: {
+        chatId: string
+        participantId: string
+        participant: {
+          provider?: string
+          model?: string | null
+          role?: string
+          instructions?: string
+          reasoningEffort?: string | null
+          fastModeEnabled?: boolean
+          thinkingEnabled?: boolean
+          permissionPresetId?: string | null
+          permissionOverrides?: PermissionOverrides | null
+          serviceTier?: string | null
+          runtimeProfileId?: string | null
+          geminiAuthProfileId?: string | null
+          linkedProviderSessionId?: string | null
+          ollamaToolControlTier?: string | null
+          ollamaRunProfile?: string | null
+        }
+        reason?: string
+      }) => Promise<{
+        ok: boolean
+        status?: 'applied' | 'queued'
+        chat?: ChatRecord
+        message: string
+        participantId?: string
+        roundId?: string
+        error?: 'not_ensemble' | 'stale_target' | 'invalid_patch' | string
+      }>
       skipEnsembleParticipant: (chatId: string) => Promise<boolean>
       skipEnsembleReadFanout: (chatId: string) => Promise<boolean>
       getLatestSessionCheckpoint: (chatId: string) => Promise<SessionCheckpointRecord | null>

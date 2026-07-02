@@ -35,13 +35,19 @@ export type RosterEditError =
 export interface RosterEditParticipantInput {
   provider?: ProviderId | string
   model?: string | null
+  runtimeProfileId?: string | null
+  geminiAuthProfileId?: string | null
+  ollamaToolControlTier?: EnsembleParticipant['ollamaToolControlTier'] | null
+  ollamaRunProfile?: EnsembleParticipant['ollamaRunProfile'] | null
   role?: string
   instructions?: string
   reasoningEffort?: string | null
   fastModeEnabled?: boolean
   thinkingEnabled?: boolean
+  serviceTier?: string | null
   permissionPresetId?: PermissionPresetId | string | null
   permissionOverrides?: PermissionOverrides | null
+  linkedProviderSessionId?: string | null
 }
 
 export interface RosterEditRequest {
@@ -76,13 +82,19 @@ const READ_ONLY_ROUND_PERMISSION_PRESET_SET = new Set<string>(['read_only', 'pla
 const PATCH_FIELDS = [
   'provider',
   'model',
+  'runtimeProfileId',
+  'geminiAuthProfileId',
+  'ollamaToolControlTier',
+  'ollamaRunProfile',
   'role',
   'instructions',
   'reasoningEffort',
   'fastModeEnabled',
   'thinkingEnabled',
+  'serviceTier',
   'permissionPresetId',
-  'permissionOverrides'
+  'permissionOverrides',
+  'linkedProviderSessionId'
 ] as const
 
 const hasOwn = Object.prototype.hasOwnProperty
@@ -286,12 +298,44 @@ function applyParticipantPatch(
   patch: RosterEditParticipantInput
 ): EnsembleParticipant {
   const next: EnsembleParticipant = { ...target }
+  let providerChanged = false
   if (hasOwn.call(patch, 'provider') && isNonEmptyString(patch.provider)) {
-    next.provider = patch.provider as ProviderId
+    const provider = patch.provider as ProviderId
+    providerChanged = provider !== target.provider
+    next.provider = provider
+    if (providerChanged) {
+      delete next.runtimeProfileId
+      delete next.geminiAuthProfileId
+      delete next.ollamaToolControlTier
+      delete next.ollamaRunProfile
+      delete next.model
+      delete next.reasoningEffort
+      delete next.serviceTier
+      delete next.linkedProviderSessionId
+    }
   }
   if (hasOwn.call(patch, 'model')) {
     if (patch.model) next.model = patch.model
     else delete next.model
+  }
+  if (hasOwn.call(patch, 'runtimeProfileId')) {
+    if (patch.runtimeProfileId) next.runtimeProfileId = patch.runtimeProfileId
+    else delete next.runtimeProfileId
+  }
+  if (hasOwn.call(patch, 'geminiAuthProfileId')) {
+    if (typeof patch.geminiAuthProfileId === 'string' || patch.geminiAuthProfileId === null) {
+      next.geminiAuthProfileId = patch.geminiAuthProfileId
+    } else {
+      delete next.geminiAuthProfileId
+    }
+  }
+  if (hasOwn.call(patch, 'ollamaToolControlTier')) {
+    if (patch.ollamaToolControlTier) next.ollamaToolControlTier = patch.ollamaToolControlTier
+    else delete next.ollamaToolControlTier
+  }
+  if (hasOwn.call(patch, 'ollamaRunProfile')) {
+    if (patch.ollamaRunProfile) next.ollamaRunProfile = patch.ollamaRunProfile
+    else delete next.ollamaRunProfile
   }
   if (hasOwn.call(patch, 'role') && typeof patch.role === 'string') {
     next.role = patch.role
@@ -309,6 +353,10 @@ function applyParticipantPatch(
   if (hasOwn.call(patch, 'thinkingEnabled') && typeof patch.thinkingEnabled === 'boolean') {
     next.thinkingEnabled = patch.thinkingEnabled
   }
+  if (hasOwn.call(patch, 'serviceTier')) {
+    if (patch.serviceTier) next.serviceTier = patch.serviceTier
+    else delete next.serviceTier
+  }
   if (hasOwn.call(patch, 'permissionPresetId') && patch.permissionPresetId) {
     next.permissionPresetId = patch.permissionPresetId as PermissionPresetId
   }
@@ -316,6 +364,13 @@ function applyParticipantPatch(
     const overrides = clonePermissionOverrides(patch.permissionOverrides)
     if (overrides) next.permissionOverrides = overrides
     else delete next.permissionOverrides
+  }
+  if (hasOwn.call(patch, 'linkedProviderSessionId')) {
+    if (typeof patch.linkedProviderSessionId === 'string' || patch.linkedProviderSessionId === null) {
+      next.linkedProviderSessionId = patch.linkedProviderSessionId
+    } else {
+      delete next.linkedProviderSessionId
+    }
   }
   return next
 }

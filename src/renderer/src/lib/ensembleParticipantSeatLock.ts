@@ -36,3 +36,23 @@ export function isEnsembleParticipantSeatRuntimeLocked(
       lane.participantId === targetParticipantId && LOCKED_LANE_STATUSES.has(lane.status)
   )
 }
+
+export interface EnsembleParticipantSeatMutationState {
+  locked: boolean
+  queueAtTurnEnd: boolean
+  message: string | null
+}
+
+export function resolveEnsembleParticipantSeatMutationState(
+  round: EnsembleRoundState | null | undefined,
+  participantId: string | null | undefined
+): EnsembleParticipantSeatMutationState {
+  const locked = isEnsembleParticipantSeatRuntimeLocked(round, participantId)
+  return {
+    locked,
+    queueAtTurnEnd: locked,
+    message: locked
+      ? 'This seat is executing. Provider/model changes apply at turn end.'
+      : null
+  }
+}

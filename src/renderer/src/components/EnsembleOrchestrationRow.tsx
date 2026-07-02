@@ -10,10 +10,10 @@
  * provider/model/permission pickers for footer space. Now the row has
  * a full line of real estate and each control gets an explicit label:
  *
- *   Orchestration: [Turn/Continuous/Work Session picker]
+ *   Mode:          [Turn/Continuous/Work Session picker]
  *   Fan-Out:       [Off | Read | Write]
- *   Shared History Budget: [slider] 24K chars
- *   Turn Budget:   [n/m hop meter]           (continuous mode only)
+ *   History:       [slider] 24K chars
+ *   Turns:         [n/m hop meter]           (continuous mode only)
  *
  * The shared-history slider moved OUT of the EnsembleModePicker
  * popover onto this row (the picker now holds only the three
@@ -96,6 +96,8 @@ export function EnsembleOrchestrationRow({
   onMaxContinuationHopsChange: (nextMax: number) => void
 }): React.JSX.Element {
   const effectiveContextChars = contextChars ?? CONTEXT_DEFAULT
+  const visibleOllamaContextWarning =
+    ollamaContextWarning?.severity === 'ok' ? null : ollamaContextWarning
   return (
     <div
       className="composer-ensemble-orchestration-row"
@@ -115,7 +117,7 @@ export function EnsembleOrchestrationRow({
     >
       <span className="composer-orchestration-cell">
         <span className="ensemble-roster-preset-picker-label composer-orchestration-cell-label">
-          Orchestration
+          Mode
         </span>
         <EnsembleModePicker
           mode={orchestrationMode}
@@ -173,7 +175,7 @@ export function EnsembleOrchestrationRow({
       </span>
       <span className="composer-orchestration-cell composer-orchestration-cell-history">
         <span className="ensemble-roster-preset-picker-label composer-orchestration-cell-label">
-          Shared History Budget
+          History
         </span>
         <input
           type="range"
@@ -193,7 +195,7 @@ export function EnsembleOrchestrationRow({
       {activeOrchestrationMode === 'continuous' && (
         <span className="composer-orchestration-cell">
           <span className="ensemble-roster-preset-picker-label composer-orchestration-cell-label">
-            Turn Budget
+            Turns
           </span>
           <ContinuousHopsLimitChip
             hops={continuationHops}
@@ -202,25 +204,27 @@ export function EnsembleOrchestrationRow({
           />
         </span>
       )}
-      {(ollamaContextWarning || !concurrentLanesAvailable) && (
+      {(visibleOllamaContextWarning || !concurrentLanesAvailable) && (
         <div className="composer-orchestration-row-hints">
-          {ollamaContextWarning ? (
+          {visibleOllamaContextWarning ? (
             <div
-              className={`composer-ensemble-context-hint severity-${ollamaContextWarning.severity}`}
+              className={`composer-ensemble-context-hint severity-${visibleOllamaContextWarning.severity}`}
               role="note"
             >
-              {ollamaContextWarning.message}
-              {ollamaContextWarning.suggestedChars &&
-              ollamaContextWarning.severity !== 'ok' &&
-              effectiveContextChars > ollamaContextWarning.suggestedChars ? (
+              {visibleOllamaContextWarning.message}
+              {visibleOllamaContextWarning.suggestedChars &&
+              visibleOllamaContextWarning.severity !== 'ok' &&
+              effectiveContextChars > visibleOllamaContextWarning.suggestedChars ? (
                 <button
                   type="button"
                   className="composer-ensemble-context-suggest"
                   onClick={() =>
-                    onContextCharsChange(ollamaContextWarning.suggestedChars ?? CONTEXT_DEFAULT)
+                    onContextCharsChange(
+                      visibleOllamaContextWarning.suggestedChars ?? CONTEXT_DEFAULT
+                    )
                   }
                 >
-                  Use {formatCharBudget(ollamaContextWarning.suggestedChars)} for panel
+                  Use {formatCharBudget(visibleOllamaContextWarning.suggestedChars)} for panel
                 </button>
               ) : null}
             </div>

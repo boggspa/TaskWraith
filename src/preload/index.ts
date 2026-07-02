@@ -925,6 +925,12 @@ const api = {
   removeQueuedEnsemblePrompt: (payload: { chatId: string; index: number; textPrefix?: string }) =>
     ipcRenderer.invoke('remove-queued-ensemble-prompt', payload),
   cancelEnsembleRound: (chatId: string) => ipcRenderer.invoke('cancel-ensemble-round', chatId),
+  requestEnsembleParticipantSeatChange: (payload: {
+    chatId: string
+    participantId: string
+    participant: Record<string, unknown>
+    reason?: string
+  }) => ipcRenderer.invoke('request-ensemble-participant-seat-change', payload),
   skipEnsembleParticipant: (chatId: string) =>
     ipcRenderer.invoke('skip-ensemble-participant', chatId),
   skipEnsembleReadFanout: (chatId: string) =>

@@ -675,6 +675,9 @@ export interface EnsembleRoundState {
   /** Boss captured at round start. Event-bound control commands must
    * resolve against this id rather than mutable role/provider labels. */
   bossmanParticipantId?: string
+  /** Backup Boss captured at round start. This participant remains
+   * standby authority unless the primary Boss is unavailable. */
+  secondInCommandParticipantId?: string
   /** Participant ids present at the start of the round. Used to detect
    * replacement/addition commands that would exceed the round baseline. */
   bossmanBaselineParticipantIds?: string[]
@@ -942,6 +945,10 @@ export interface EnsembleConfig {
   /** Optional user-designated Ensemble manager. No Boss is assigned by
    * default; controls are rejected unless the active run belongs to this id. */
   bossmanParticipantId?: string
+  /** Optional user-designated backup Boss. This seat uses Boss-like
+   * controls only when the primary Boss is missing, disabled, unreachable,
+   * or failed for the active round. */
+  secondInCommandParticipantId?: string
   /** Opt-in auto-approval preference. The current runtime only records and
    * surfaces this explicit consent; approval execution remains constrained by
    * the permission ledger/policy layer. */
