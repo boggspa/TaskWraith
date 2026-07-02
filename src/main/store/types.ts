@@ -2330,6 +2330,8 @@ export interface ChatMessage {
       status: 'pending' | 'approved' | 'dismissed'
       artifactPath?: string
     }
+    /** Deterministic Evidence Pack check for completion-style final answers. */
+    completionClaimSupport?: CompletionClaimSupportAnnotation
     /** Presentation-only link preview targets extracted from user-visible prompt text. */
     linkPreviews?: Array<{ url: string; origin: string; host: string }>
     /** Local filesystem paths of images attached to this message (desktop
@@ -3644,6 +3646,17 @@ export interface CompletionClaimSupportAssessment {
   supportingEvidenceRefs: AuditEvidenceRef[]
   message: string
   recommendedCaveat?: string
+}
+
+export interface CompletionClaimSupportAnnotation {
+  status: CompletionClaimSupportStatus
+  hasCompletionLanguage: boolean
+  completionPhrases: string[]
+  evidencePackIds: string[]
+  supportingEvidenceRefs: AuditEvidenceRef[]
+  message: string
+  recommendedCaveat?: string
+  assessedAt: string
 }
 
 export type RepoConventionIndexEntryKind =

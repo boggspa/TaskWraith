@@ -5883,6 +5883,44 @@ html:has(.chat-split-region.chat-split-hidden-for-settings) .transcript-user-gut
   gap: var(--space-sm);
 }
 
+.completion-claim-card {
+  margin-top: 6px;
+  border-radius: calc(var(--radius-sm) * 2);
+  border: 1px solid rgba(255,255,255,0.14);
+  background: rgba(255,255,255,0.045);
+  padding: var(--space-sm);
+  max-width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.completion-claim-card.tone-danger {
+  border-color: color-mix(in srgb, var(--danger) 48%, transparent);
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+}
+
+.completion-claim-card.tone-warning {
+  border-color: color-mix(in srgb, var(--warning) 46%, transparent);
+  background: color-mix(in srgb, var(--warning) 10%, transparent);
+}
+
+.completion-claim-card-title {
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.completion-claim-card-body,
+.completion-claim-card-meta {
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+}
+
+.completion-claim-card-meta {
+  color: var(--text-tertiary);
+}
+
 .plan-choice-question {
   font-size: var(--font-size-xs);
   color: var(--text-secondary);

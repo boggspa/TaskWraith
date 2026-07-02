@@ -98,6 +98,20 @@ import {
   useDiffHoverPreviewState
 } from './DiffHoverPreview'
 
+function completionClaimSupportTone(message: ChatMessage): 'warning' | 'danger' | null {
+  const status = message.metadata?.completionClaimSupport?.status
+  if (status === 'partial') return 'warning'
+  if (status === 'unsupported') return 'danger'
+  return null
+}
+
+function completionClaimSupportTitle(message: ChatMessage): string {
+  const status = message.metadata?.completionClaimSupport?.status
+  if (status === 'partial') return 'Completion claim needs caveat'
+  if (status === 'unsupported') return 'Unsupported completion claim'
+  return ''
+}
+
 export type TranscriptPanelProps = {
   scrollRef: React.RefObject<HTMLDivElement | null>
   /**
@@ -1709,6 +1723,8 @@ export const TranscriptPanel = memo(
             const isProviderRunFailure = msg.metadata?.kind === 'providerRunFailure'
             const isContextCompaction = msg.metadata?.kind === 'contextCompaction'
             const isRoundHeader = isEnsembleRoundHeaderMessage(msg)
+            const completionSupportTone = completionClaimSupportTone(msg)
+            const completionSupport = msg.metadata?.completionClaimSupport
             const collaboratorMeta = isCollaboratorComment ? humanCollaboratorMetadata(msg) : null
             const boundaryRun = displayRunBoundaryByMessageId.get(msg.id)
             const isSideChatSeedMessage = Boolean(
@@ -2337,6 +2353,22 @@ export const TranscriptPanel = memo(
                           </div>
                         )
                       })()
+                    )}
+                    {completionSupportTone && completionSupport && (
+                      <div className={`completion-claim-card tone-${completionSupportTone}`}>
+                        <div className="completion-claim-card-title">
+                          {completionClaimSupportTitle(msg)}
+                        </div>
+                        <div className="completion-claim-card-body">
+                          {completionSupport.recommendedCaveat || completionSupport.message}
+                        </div>
+                        {completionSupport.evidencePackIds.length > 0 && (
+                          <div className="completion-claim-card-meta">
+                            {completionSupport.evidencePackIds.length} evidence pack
+                            {completionSupport.evidencePackIds.length === 1 ? '' : 's'} checked
+                          </div>
+                        )}
+                      </div>
                     )}
                     {pendingPlanChoice && pendingPlanChoice.messageId === msg.id && (
                       <div className="plan-choice-card">
