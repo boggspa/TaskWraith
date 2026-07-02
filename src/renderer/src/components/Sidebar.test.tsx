@@ -493,9 +493,8 @@ describe('Sidebar shared chat create options', () => {
         ({ variant, label, disabled }) => ({ variant, label, disabled })
       )
     ).toEqual([
-      { variant: 'global', label: 'General Chat - Shared', disabled: false },
-      { variant: 'workspace', label: 'Workspace Chat - Shared', disabled: false },
-      { variant: 'ensemble', label: 'Ensemble Chat - Shared', disabled: false }
+      { variant: 'global', label: 'Shared General Chat', disabled: false },
+      { variant: 'workspace', label: 'Shared Workspace Chat', disabled: false }
     ])
 
     expect(
@@ -504,8 +503,7 @@ describe('Sidebar shared chat create options', () => {
       )
     ).toEqual([
       { variant: 'global', disabled: false },
-      { variant: 'workspace', disabled: true },
-      { variant: 'ensemble', disabled: true }
+      { variant: 'workspace', disabled: true }
     ])
   })
 

@@ -813,7 +813,7 @@ export function FirstLaunchSheet({
               </span>
             </div>
             <div className="first-launch-sheet-ensemble-footer">
-              <span>+ New → New Ensemble</span>
+              <span>Toggle Ensemble before first send</span>
               <span>Turn / Continuous in the composer</span>
             </div>
           </div>

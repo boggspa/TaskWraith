@@ -2082,6 +2082,7 @@ function App(): React.JSX.Element {
   // Guards the async chat-recreate in handleToggleWorkflowEnsemble so a fast
   // double-click can't spawn (and orphan) a second ensemble draft chat.
   const workflowEnsembleTogglingRef = useRef(false)
+  const welcomeEnsembleTogglingRef = useRef(false)
   const [scheduleRunAtByChatId, setScheduleRunAtForChat] = usePerChatState('')
   const [dueScheduledTasks, setDueScheduledTasks] = useState<ScheduledTask[]>([])
   const [runningChatIds, setRunningChatIds] = useState<Set<string>>(new Set())
@@ -4626,29 +4627,23 @@ function App(): React.JSX.Element {
       }
       console.warn('[chat-popout] requested chat was not found:', chatPopoutChatIdRef.current)
     }
-    if (wsList.length > 0) {
-      // Sort by lastOpenedAt descending
-      const sorted = [...wsList].sort((a, b) => b.lastOpenedAt - a.lastOpenedAt)
-      await handleSelectExistingWorkspace(sorted[0])
+    // Default open lands on General Chat, matching the masthead "New Chat"
+    // contract instead of inheriting whichever workspace/chat kind was used
+    // last. Workspaces remain one click away in the sidebar and the + New
+    // picker has an explicit "New Workspace Chat" route.
+    const existingGlobalChats = allChats
+      .filter((chat) => isGlobalChat(chat))
+      .sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0))
+    if (existingGlobalChats.length > 0) {
+      await selectGlobalChat(existingGlobalChats[0])
     } else {
-      // First-launch / zero-workspace case: prefer an existing global chat so
-      // the composer is immediately usable in workspace-less mode, falling
-      // back to creating a fresh global chat. Both paths route through
-      // selectGlobalChat which sets scope='global' on the active chat.
-      const existingGlobalChats = allChats
-        .filter((chat) => isGlobalChat(chat))
-        .sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0))
-      if (existingGlobalChats.length > 0) {
-        await selectGlobalChat(existingGlobalChats[0])
-      } else {
-        try {
-          await handleNewGlobalChat()
-        } catch (error) {
-          console.warn(
-            '[TaskWraith] Failed to create initial global chat for workspace-less first launch:',
-            error
-          )
-        }
+      try {
+        await handleNewSingleGlobalChat()
+      } catch (error) {
+        console.warn(
+          '[TaskWraith] Failed to create initial general chat on launch:',
+          error
+        )
       }
     }
     setInitialRouteReady(true)
@@ -6515,6 +6510,15 @@ function App(): React.JSX.Element {
       reapAbandonedChatsAfterCreate(newChat.appChatId)
       return
     }
+    const newChat = await window.api.createGlobalChat()
+    setChats((prev) => mergeChatRecord(prev, newChat))
+    await selectGlobalChat(newChat)
+    reapAbandonedChatsAfterCreate(newChat.appChatId)
+  }
+
+  const handleNewSingleGlobalChat = async () => {
+    setActiveWorkspaceBoardId(null)
+    if (typeof window.api.createGlobalChat !== 'function') return
     const newChat = await window.api.createGlobalChat()
     setChats((prev) => mergeChatRecord(prev, newChat))
     await selectGlobalChat(newChat)
@@ -12565,6 +12569,45 @@ function App(): React.JSX.Element {
     }
   }
 
+  const handleToggleWelcomeEnsemble = async (enabled: boolean) => {
+    if (!isWelcomeChat || isWorkflowChatWelcome || !currentChat?.appChatId) return
+    if (isCurrentEnsembleChat === enabled) return
+    if (welcomeEnsembleTogglingRef.current) return
+    welcomeEnsembleTogglingRef.current = true
+    try {
+      const oldChatId = currentChat.appChatId
+      const carriedPrompt = prompt
+      if (enabled) {
+        await handleNewEnsemble()
+      } else {
+        const workspace =
+          currentChat.scope === 'workspace'
+            ? getWorkspaceForChat(currentChat) || currentWorkspace
+            : null
+        if (workspace?.id && workspace.path) {
+          await handleNewChat(workspace.id, workspace.path)
+        } else {
+          await handleNewSingleGlobalChat()
+        }
+      }
+      const newChatId = currentChatIdRef.current
+      if (!newChatId || newChatId === oldChatId) return
+      if (carriedPrompt.trim()) {
+        setChatPromptDraft(newChatId, carriedPrompt)
+        setPrompt(carriedPrompt)
+      }
+      setChats((prev) => prev.filter((chat) => chat.appChatId !== oldChatId))
+      chatByIdRef.current.delete(oldChatId)
+      try {
+        await window.api.deleteChat(oldChatId)
+      } catch {
+        /* best-effort cleanup of the abandoned empty draft chat */
+      }
+    } finally {
+      welcomeEnsembleTogglingRef.current = false
+    }
+  }
+
   // First send on a workflow-compose chat: capture the prompt + run settings into
   // a WorkflowDefinition (reusing the same template/trigger builders as the modal)
   // rather than dispatching a one-off run. The chat becomes the workflow's thread.
@@ -15121,14 +15164,7 @@ function App(): React.JSX.Element {
 
   const createNewChatFromKeyboard = (): boolean => {
     if (isChatPopoutWindow) return false
-    const workspace =
-      currentWorkspace ||
-      (currentChat?.scope === 'workspace' ? getWorkspaceForChat(currentChat) : null)
-    if (workspace?.id && workspace.path) {
-      void handleNewChat(workspace.id, workspace.path)
-    } else {
-      void handleNewGlobalChat()
-    }
+    void handleNewSingleGlobalChat()
     return true
   }
 
@@ -21810,6 +21846,7 @@ function App(): React.JSX.Element {
     handleSelectWorkspace,
     handleSetAgenticWorkspaceGrant,
     handleSteer,
+    handleToggleWelcomeEnsemble,
     handleToggleWorkflowEnsemble,
     handleTrustWorkspaceClick,
     handleWelcomeSuggestion,
@@ -23127,6 +23164,7 @@ function App(): React.JSX.Element {
     handleNewChat,
     handleNewEnsemble,
     handleNewGlobalChat,
+    handleNewSingleGlobalChat,
     handleOpenChangelogSheet,
     handleOpenCockpitThread,
     handleOpenInMultiview,

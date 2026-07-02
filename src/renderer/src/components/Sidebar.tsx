@@ -77,34 +77,25 @@ export interface SharedChatCreateOption {
 }
 
 export function getSharedChatCreateOptions({
-  hasWorkspace,
-  ensembleModeEnabled
+  hasWorkspace
 }: {
   hasWorkspace: boolean
-  ensembleModeEnabled: boolean
+  ensembleModeEnabled?: boolean
 }): SharedChatCreateOption[] {
   return [
     {
       variant: 'global',
-      label: 'General Chat - Shared',
+      label: 'Shared General Chat',
       title: 'Create a shared general chat',
       disabled: false
     },
     {
       variant: 'workspace',
-      label: 'Workspace Chat - Shared',
+      label: 'Shared Workspace Chat',
       title: hasWorkspace
         ? 'Create a shared workspace chat'
         : 'Open a workspace first to create a shared workspace chat',
       disabled: !hasWorkspace
-    },
-    {
-      variant: 'ensemble',
-      label: 'Ensemble Chat - Shared',
-      title: ensembleModeEnabled
-        ? 'Create a shared ensemble chat'
-        : 'Enable Ensemble mode to create a shared ensemble chat',
-      disabled: !ensembleModeEnabled
     }
   ]
 }
@@ -1163,9 +1154,8 @@ function SidebarChatTitleEditable({
 
 /**
  * `EnsembleSymbolIcon` — two overlapping circles to convey "multiple
- * agents collaborating" in the same thread. Used by the `+ New` menu
- * dropdown alongside the New Chat / New Workspace items, and also for
- * the Ensembles sidebar section header's empty-state caption.
+ * agents collaborating" in the same thread. Used by the Ensembles sidebar
+ * section header and empty-state caption.
  */
 function EnsembleSymbolIcon() {
   return (
@@ -2139,6 +2129,7 @@ export function Sidebar({
 }: SidebarProps) {
   const [hoveredWorkspace, setHoveredWorkspace] = useState<string | null>(null)
   const [newMenuOpen, setNewMenuOpen] = useState(false)
+  const [newMenuSharedOpen, setNewMenuSharedOpen] = useState(false)
   const [sharedCreateMenuOpen, setSharedCreateMenuOpen] = useState(false)
   const [boardCreatorOpen, setBoardCreatorOpen] = useState(false)
   const [boardCreatorWorkspaceId, setBoardCreatorWorkspaceId] = useState('')
@@ -2651,21 +2642,34 @@ export function Sidebar({
     currentWorkspace?.displayName || (currentChat?.scope === 'global' ? 'General chats' : 'TaskWraith')
   const runningCount = runningChatIdSet.size
   // The masthead "+ New → New Chat" item exclusively creates a General
-  // (scope:'global') chat, regardless of the active workspace. Workspace
-  // chats are created from the per-workspace row affordances (or by entering
-  // a workspace); "New Workspace" below is the separate folder flow.
+  // (scope:'global') chat, regardless of the active workspace. The separate
+  // "New Workspace Chat" row creates a deterministic chat in the current
+  // workspace, falling back to the most recently opened workspace.
   const primaryNewTitle = 'New general chat'
+  const defaultWorkspaceForNewChat =
+    currentWorkspace ||
+    [...workspaces].sort((a, b) => (b.lastOpenedAt || 0) - (a.lastOpenedAt || 0))[0] ||
+    null
   const handlePrimaryNewChat = () => {
     setNewMenuOpen(false)
+    setNewMenuSharedOpen(false)
     onNewGlobalChat()
+  }
+  const handleNewWorkspaceChat = () => {
+    if (!defaultWorkspaceForNewChat) return
+    setNewMenuOpen(false)
+    setNewMenuSharedOpen(false)
+    onNewChat(defaultWorkspaceForNewChat.id, defaultWorkspaceForNewChat.path)
   }
   const handleNewEnsemble = () => {
     setNewMenuOpen(false)
+    setNewMenuSharedOpen(false)
     expandSidebarSection('ensembles')
     onNewEnsemble()
   }
   const handleNewWorkflow = () => {
     setNewMenuOpen(false)
+    setNewMenuSharedOpen(false)
     expandSidebarSection('workflows')
     onCreateWorkflow?.()
   }
@@ -2703,6 +2707,7 @@ export function Sidebar({
   })
   const handleCreateSharedChat = (variant: SharedChatCreateVariant) => {
     setNewMenuOpen(false)
+    setNewMenuSharedOpen(false)
     setSharedCreateMenuOpen(false)
     expandSidebarSection('shared')
     onCreateSharedChat?.(variant)
@@ -2721,10 +2726,12 @@ export function Sidebar({
       if (!wrap) return
       if (event.target instanceof Node && wrap.contains(event.target)) return
       setNewMenuOpen(false)
+      setNewMenuSharedOpen(false)
     }
     const handleKeyDown = (event: globalThis.KeyboardEvent) => {
       if (event.key === 'Escape') {
         setNewMenuOpen(false)
+        setNewMenuSharedOpen(false)
       }
     }
     document.addEventListener('mousedown', handleMouseDown)
@@ -3539,7 +3546,11 @@ export function Sidebar({
               className="sidebar-primary-action"
               onClick={() => {
                 setSharedCreateMenuOpen(false)
-                setNewMenuOpen((current) => !current)
+                setNewMenuOpen((current) => {
+                  const next = !current
+                  if (next) setNewMenuSharedOpen(false)
+                  return next
+                })
               }}
               title="Create"
               aria-label="Create"
@@ -3565,25 +3576,17 @@ export function Sidebar({
                   type="button"
                   role="menuitem"
                   className="sidebar-new-menu-item"
-                  onClick={() => {
-                    setNewMenuOpen(false)
-                    onSelectWorkspaceDialog()
-                  }}
+                  onClick={handleNewWorkspaceChat}
+                  disabled={!defaultWorkspaceForNewChat}
+                  title={
+                    defaultWorkspaceForNewChat
+                      ? `New workspace chat in ${defaultWorkspaceForNewChat.displayName}`
+                      : 'Add a workspace first to create a workspace chat'
+                  }
                 >
                   <FolderSymbolIcon />
-                  <span className="sidebar-new-menu-item-label">New Workspace</span>
+                  <span className="sidebar-new-menu-item-label">New Workspace Chat</span>
                 </button>
-                {ensembleModeEnabled && (
-                  <button
-                    type="button"
-                    role="menuitem"
-                    className="sidebar-new-menu-item"
-                    onClick={handleNewEnsemble}
-                  >
-                    <EnsembleSymbolIcon />
-                    <span className="sidebar-new-menu-item-label">New Ensemble</span>
-                  </button>
-                )}
                 {onCreateWorkflow && (
                   <button
                     type="button"
@@ -3620,12 +3623,26 @@ export function Sidebar({
                 )}
                 {onCreateSharedChat && (
                   <>
-                    {sharedChatCreateOptions.map((option) => (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="sidebar-new-menu-item sidebar-new-menu-shared-toggle"
+                      onClick={() => setNewMenuSharedOpen((current) => !current)}
+                      aria-expanded={newMenuSharedOpen}
+                      title="Show shared chat options"
+                    >
+                      <PeopleSymbolIcon />
+                      <span className="sidebar-new-menu-item-label">Shared...</span>
+                      <span className="sidebar-new-menu-chevron" aria-hidden>
+                        <ChevronSymbolIcon isExpanded={newMenuSharedOpen} />
+                      </span>
+                    </button>
+                    {newMenuSharedOpen && sharedChatCreateOptions.map((option) => (
                       <button
                         type="button"
                         role="menuitem"
                         key={option.variant}
-                        className="sidebar-new-menu-item"
+                        className="sidebar-new-menu-item sidebar-new-menu-subitem"
                         onClick={() => handleCreateSharedChat(option.variant)}
                         disabled={option.disabled}
                         title={option.title}
@@ -3643,6 +3660,7 @@ export function Sidebar({
                     className="sidebar-new-menu-item"
                     onClick={() => {
                       setNewMenuOpen(false)
+                      setNewMenuSharedOpen(false)
                       onJoinSharedChat()
                     }}
                     title="Join a shared chat — paste an invite to follow along"
@@ -4378,17 +4396,17 @@ export function Sidebar({
                   Empty-state caption. Gives ensembles the same
                   discoverability Workspaces gets when the list is
                   empty — without it, fresh users never see the
-                  section at all and have to learn the feature from
-                  the `+ New` menu alone. The caption nudges them at
-                  the trigger by name so the link is obvious.
+                  section at all. The caption points at the section
+                  header action now that the masthead picker keeps chat
+                  creation deterministic.
                 */
                   <div className="sidebar-ensembles-empty" role="note">
                     <span className="sidebar-ensembles-empty-icon" aria-hidden>
                       <EnsembleSymbolIcon />
                     </span>
                     <span className="sidebar-ensembles-empty-copy">
-                      No ensembles yet. Use <strong>+ New → New Ensemble</strong> to put two or more
-                      providers in the same thread.
+                      No ensembles yet. Use the <strong>Ensembles +</strong> button to put two or
+                      more providers in the same thread.
                     </span>
                   </div>
                 ) : (

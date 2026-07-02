@@ -242,7 +242,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   handleNavigateToWorkspace,
   handleNewChat,
   handleNewEnsemble,
-  handleNewGlobalChat,
+  handleNewSingleGlobalChat,
   handleOpenChangelogSheet,
   handleOpenCockpitThread,
   handleOpenInMultiview,
@@ -613,7 +613,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                 onRemoveWorkspace={handleRemoveWorkspace}
                 onSelectWorkspaceDialog={handleSelectWorkspace}
                 onNewChat={handleNewChat}
-                onNewGlobalChat={handleNewGlobalChat}
+                onNewGlobalChat={handleNewSingleGlobalChat}
                 onNewEnsemble={handleNewEnsemble}
                 ensembleModeEnabled={isEnsembleModeEnabled}
                 onSelectChat={handleSelectChat}

@@ -281,6 +281,7 @@ export interface ComposerProps {
   handleSteer: any
   handleSteerToQueuedMessage: any
   handleStopWorkSession: any
+  handleToggleWelcomeEnsemble: any
   handleToggleWorkflowEnsemble: any
   handleTrustWorkspaceClick: any
   handleWelcomeSuggestion: any
@@ -581,6 +582,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     handleSteer,
     handleSteerToQueuedMessage,
     handleStopWorkSession,
+    handleToggleWelcomeEnsemble,
     handleToggleWorkflowEnsemble,
     handleTrustWorkspaceClick,
     handleWelcomeSuggestion,
@@ -764,6 +766,24 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
         maxContinuationHops={currentEnsembleMaxContinuationHops}
         onMaxContinuationHopsChange={updateCurrentEnsembleMaxContinuationHops}
       />
+    )
+  }
+
+  const renderWelcomeEnsembleToggle = (): React.JSX.Element | null => {
+    if (!isWelcomeChat || isWorkflowChatWelcome || !isEnsembleModeEnabled) return null
+    return (
+      <div className="welcome-chat-kind-toggle">
+        <span className="welcome-chat-kind-toggle-label">Ensemble</span>
+        <button
+          type="button"
+          className="welcome-chat-kind-toggle-button"
+          data-active={isCurrentEnsembleChat ? 'true' : 'false'}
+          aria-pressed={isCurrentEnsembleChat}
+          onClick={() => handleToggleWelcomeEnsemble(!isCurrentEnsembleChat)}
+        >
+          {isCurrentEnsembleChat ? 'On' : 'Off'}
+        </button>
+      </div>
     )
   }
 
@@ -1422,6 +1442,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                         </>
                       )}
                     </h1>
+                    {renderWelcomeEnsembleToggle()}
                     {orderedEnabled.length === 0 ? (
                       <p className="welcome-hero-ensemble-empty">
                         No providers enabled yet. Open any chip below to turn one back on, then
@@ -1693,6 +1714,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                   <span>{welcomeCopy.heading.afterWorkspace}</span>
                 </h1>
                 {welcomeCopy.subheading ? <p>{welcomeCopy.subheading}</p> : null}
+                {renderWelcomeEnsembleToggle()}
                 {/*
                   Welcome workspace picker (1.0.3). The sidebar already has a
                   workspace list, but landing on the welcome screen of a new

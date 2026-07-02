@@ -74,6 +74,7 @@ type MainAppLayoutSidebarProps = {
   handleNewChat: SidebarProps['onNewChat']
   handleNewEnsemble: SidebarProps['onNewEnsemble']
   handleNewGlobalChat: SidebarProps['onNewGlobalChat']
+  handleNewSingleGlobalChat: SidebarProps['onNewGlobalChat']
   handleOpenChangelogSheet: NonNullable<SidebarProps['onOpenChangelog']>
   handleOpenInMultiview: NonNullable<SidebarProps['onOpenInMultiview']>
   handleOpenLinkedChatInSidePanelFromSidebar: NonNullable<SidebarProps['onOpenChatInSidePanel']>
@@ -289,6 +290,7 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   handleNewChat: MainAppLayoutSidebarProps['handleNewChat']
   handleNewEnsemble: MainAppLayoutSidebarProps['handleNewEnsemble']
   handleNewGlobalChat: MainAppLayoutSidebarProps['handleNewGlobalChat']
+  handleNewSingleGlobalChat: MainAppLayoutSidebarProps['handleNewSingleGlobalChat']
   handleOpenChangelogSheet: MainAppLayoutSidebarProps['handleOpenChangelogSheet']
   handleOpenCockpitThread: any
   handleOpenInMultiview: MainAppLayoutSidebarProps['handleOpenInMultiview']

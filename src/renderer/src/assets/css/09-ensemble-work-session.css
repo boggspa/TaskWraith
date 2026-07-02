@@ -198,24 +198,26 @@
  * elevated shadow). Outside-click + Escape dismissal lives in the React
  * component; this stylesheet only covers chrome. */
 .sidebar-new-menu {
+  --sidebar-picker-bg-solid: var(--panel-bg-solid, var(--surface-1, #1c1c20));
   position: absolute;
   top: calc(100% + 8px);
   right: 0;
   z-index: 80;
-  min-width: 200px;
+  width: min(260px, calc(var(--sidebar-width, 280px) - 28px));
+  min-width: 220px;
   padding: 6px;
   display: flex;
   flex-direction: column;
   gap: 2px;
   border: 1px solid color-mix(in srgb, var(--panel-border) 82%, transparent);
   border-radius: 14px;
-  background: color-mix(in srgb, var(--panel-elevated-bg) 88%, transparent);
+  background: color-mix(in srgb, var(--sidebar-picker-bg-solid) 75%, transparent);
   backdrop-filter: blur(20px) saturate(160%);
   -webkit-backdrop-filter: blur(20px) saturate(160%);
   box-shadow:
     0 1px 0 inset color-mix(in srgb, #ffffff 10%, transparent),
-    0 14px 38px rgba(0, 0, 0, 0.34),
-    0 0 0 1px color-mix(in srgb, var(--accent) 12%, transparent);
+    0 18px 46px rgba(0, 0, 0, 0.38),
+    0 0 0 1px color-mix(in srgb, var(--accent) 10%, transparent);
   /* Subtle fade-in so the popover doesn't pop in jarringly when the
    * user hits the `+ New` button. ~140ms matches the slash-menu's
    * cadence so popovers feel like one family. */
@@ -224,12 +226,13 @@
 }
 
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .sidebar-new-menu {
+  --sidebar-picker-bg-solid: var(--surface-1, #ffffff);
   border-color: var(--surface-border);
-  background: color-mix(in srgb, var(--surface-1) 86%, transparent);
+  background: color-mix(in srgb, var(--sidebar-picker-bg-solid) 75%, transparent);
   color: var(--surface-text);
   box-shadow:
     0 1px 0 inset rgba(255, 255, 255, 0.72),
-    0 14px 38px rgba(0, 0, 0, 0.14),
+    0 18px 46px rgba(0, 0, 0, 0.16),
     0 0 0 1px color-mix(in srgb, var(--accent) 8%, transparent);
 }
 
@@ -242,6 +245,7 @@
   top: 112px;
   left: 14px;
   right: 14px;
+  width: auto;
   min-width: 0;
   padding: 10px;
   gap: 10px;
@@ -314,6 +318,25 @@
 .sidebar-new-menu-item:disabled:hover,
 .sidebar-new-menu-item:disabled:focus-visible {
   background: transparent;
+}
+
+.sidebar-new-menu-subitem {
+  padding-left: 34px;
+}
+
+.sidebar-new-menu-chevron {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  color: color-mix(in srgb, var(--text-primary) 58%, transparent);
+}
+
+.sidebar-new-menu-chevron .sf-symbol-icon {
+  width: 14px;
+  height: 14px;
 }
 
 .sidebar-new-menu-item:hover .sf-symbol-icon,
