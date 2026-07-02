@@ -59,7 +59,10 @@ const CLAUDE_COMPACT_BOUNDARY = {
   session_id: 'bc082119-dccf-426d-bcfc-5935153e63a3'
 }
 
-const CODEX_COMPACTION_ITEM = { type: 'contextCompaction', id: '4d644396-5994-43f2-b82a-0569607ae0f5' }
+const CODEX_COMPACTION_ITEM = {
+  type: 'contextCompaction',
+  id: '4d644396-5994-43f2-b82a-0569607ae0f5'
+}
 
 describe('isClaudeContextCompactionSystemEvent', () => {
   it('matches compacting status, compact_result status, and compact_boundary frames', () => {
@@ -72,7 +75,11 @@ describe('isClaudeContextCompactionSystemEvent', () => {
   it('ignores non-compaction system frames and non-system frames', () => {
     // Plain status heartbeat (SDK emits status:'requesting' during tool turns).
     expect(
-      isClaudeContextCompactionSystemEvent({ type: 'system', subtype: 'status', status: 'requesting' })
+      isClaudeContextCompactionSystemEvent({
+        type: 'system',
+        subtype: 'status',
+        status: 'requesting'
+      })
     ).toBe(false)
     expect(isClaudeContextCompactionSystemEvent({ type: 'system', subtype: 'init' })).toBe(false)
     expect(
@@ -161,9 +168,9 @@ describe('contextPressureSeverity', () => {
 
 describe('isContextOverflowErrorText', () => {
   it('matches known provider overflow messages', () => {
-    expect(
-      isContextOverflowErrorText('prompt is too long: 213448 tokens > 200000 maximum')
-    ).toBe(true)
+    expect(isContextOverflowErrorText('prompt is too long: 213448 tokens > 200000 maximum')).toBe(
+      true
+    )
     expect(isContextOverflowErrorText("This model's maximum context length is 128000 tokens")).toBe(
       true
     )

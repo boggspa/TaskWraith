@@ -27,7 +27,13 @@ interface ContextCompactionCardProps {
 function compactionIcon(failed: boolean): React.JSX.Element {
   if (failed) {
     return (
-      <svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <svg
+        width="14"
+        height="14"
+        viewBox="0 0 14 14"
+        fill="none"
+        xmlns="http://www.w3.org/2000/svg"
+      >
         <path
           d="M7 1.5L13 12H1L7 1.5Z"
           stroke="currentColor"

@@ -69,7 +69,12 @@ describe('ContextCompactionCard', () => {
             displayParticipantLabel: 'Codex / Worker',
             contextCompaction: {
               kind: 'completed',
-              telemetry: { provider: 'codex', trigger: 'auto', preTokens: 850000, postTokens: 96000 }
+              telemetry: {
+                provider: 'codex',
+                trigger: 'auto',
+                preTokens: 850000,
+                postTokens: 96000
+              }
             }
           }
         })}
@@ -81,9 +86,7 @@ describe('ContextCompactionCard', () => {
 
   it('returns null for non-compaction messages', () => {
     const html = renderToStaticMarkup(
-      <ContextCompactionCard
-        message={makeMessage({ metadata: { kind: 'providerRunFailure' } })}
-      />
+      <ContextCompactionCard message={makeMessage({ metadata: { kind: 'providerRunFailure' } })} />
     )
     expect(html).toBe('')
   })
