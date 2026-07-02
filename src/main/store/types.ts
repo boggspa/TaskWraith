@@ -473,6 +473,25 @@ export type EnsembleFanoutPolicy =
   | 'locked_writers_with_boss'
   | 'locked_writers_user_preflight'
 
+/**
+ * Staged fan-out (docs/ensemble-posture-fanout-preamble-design.md, spike 4) —
+ * optional per-participant dispatch stage:
+ *
+ *   - 'scout'    — read-only investigator; joins the round-start parallel
+ *                  read pass exactly like an unstaged read-only participant.
+ *   - 'worker'   — always takes a serial turn, even when its permissions
+ *                  would qualify it for the round-start read pass.
+ *   - 'reviewer' — deferred until every non-reviewer in the round has spoken
+ *                  (or been dropped), then runs: as a parallel read-only
+ *                  "review wave" when ≥2 eligible reviewers remain, serially
+ *                  otherwise. Explicit routing (ensemble_yield / @-mention)
+ *                  outranks the deferral.
+ *
+ * Absent ⇒ pre-stage behavior (fan-out eligibility inferred purely from
+ * permissions), so existing chats, presets, and iOS rosters are untouched.
+ */
+export type EnsembleStageRole = 'scout' | 'worker' | 'reviewer'
+
 export interface EnsembleParticipant {
   id: string
   provider: ProviderId
@@ -489,6 +508,8 @@ export interface EnsembleParticipant {
   ollamaRunProfile?: OllamaRunProfileId
   permissionPresetId?: PermissionPresetId
   permissionOverrides?: PermissionOverrides
+  /** See EnsembleStageRole — absent means pre-stage dispatch behavior. */
+  stageRole?: EnsembleStageRole
   linkedProviderSessionId?: string | null
   /**
    * Slice D — per-participant reasoning + speed + thinking settings.
@@ -2606,6 +2627,10 @@ export type RunEventKind =
   | 'diff'
   | 'final_message'
   | 'lifecycle'
+  // Provider context-window compaction (src/shared/contextCompaction.ts) —
+  // a provider (or the host, for manual Codex compacts) shrank the session's
+  // live context. Distinct from ChatCompaction.ts disk-size compaction.
+  | 'context_compaction'
   // Audit orchestration workflow (see src/main/audit/AuditOrchestrator.ts) —
   // each audit role-run writes phase/finding/verdict/gate events to its own
   // run-events ledger so the inline card + iOS card can replay it live.

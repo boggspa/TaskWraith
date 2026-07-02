@@ -33,6 +33,18 @@ export interface CodexRunState {
   appRunId?: string
   appChatId?: string
   tokenUsage?: any
+  /** Context tokens (`tokenUsage.last.totalTokens`) snapshotted when a
+   * `contextCompaction` item STARTS, so the completion card can report an
+   * honest pre→post shrink (post comes from the compaction turn's own
+   * `thread/tokenUsage/updated`). */
+  contextCompactionPreTokens?: number
+  /** Wall-clock ms when the in-flight `contextCompaction` item started
+   * (drives the completed card's duration). */
+  contextCompactionStartedAtMs?: number
+  /** `contextCompaction` item ids already announced for this run — dedupes the
+   * item lane against the deprecated `thread/compacted` notification (and
+   * defensive re-delivery) so each compaction is announced at most once. */
+  contextCompactionAnnouncedIds?: Set<string>
   assistantTextByItemId: Map<string, string>
   timelineStartedItemIds: Set<string>
   reasoningTextByItemId: Map<string, string>
@@ -135,4 +147,11 @@ export interface CliProviderStreamState {
    * being mistaken for workflows.
    */
   claudeWorkflowTaskIds?: Set<string>
+  /**
+   * Dedupe keys (src/shared/contextCompaction.ts contextCompactionDedupeKey)
+   * for compaction signals already emitted this run. Claude re-emits the same
+   * compaction-failed status frame more than once per attempt (probe-observed),
+   * so emission gates on membership here.
+   */
+  contextCompactionSeen?: Set<string>
 }

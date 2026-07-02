@@ -1286,6 +1286,11 @@ declare global {
         checkpointId: string
       ) => Promise<{ ok: true; checkpoint: SessionCheckpointRecord } | { ok: false; error: string }>
       wakeEnsembleParticipantNow: (wakeupId: string) => Promise<boolean>
+      compactProviderContext: (payload: {
+        chatId: string
+        provider: string
+        providerSessionId?: string
+      }) => Promise<{ ok: boolean; error?: string }>
       cancelEnsembleParticipantWakeup: (
         wakeupId: string
       ) => Promise<{ ok: boolean; error?: string }>

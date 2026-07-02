@@ -993,6 +993,17 @@ const api = {
     >,
   wakeEnsembleParticipantNow: (wakeupId: string) =>
     ipcRenderer.invoke('wake-ensemble-participant-now', wakeupId) as Promise<boolean>,
+  // Provider-native "compact now" for a chat's linked provider session
+  // (Codex thread/compact/start; Claude compacts via a normal `/compact` run).
+  compactProviderContext: (payload: {
+    chatId: string
+    provider: string
+    providerSessionId?: string
+  }) =>
+    ipcRenderer.invoke('compact-provider-context', payload) as Promise<{
+      ok: boolean
+      error?: string
+    }>,
   cancelEnsembleParticipantWakeup: (wakeupId: string) =>
     ipcRenderer.invoke('cancel-ensemble-participant-wakeup', wakeupId) as Promise<{
       ok: boolean

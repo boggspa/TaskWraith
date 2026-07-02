@@ -191,6 +191,18 @@ import {
   shouldEmitClaudeWorkflowTelemetry
 } from '../shared/claudeWorkflow'
 import {
+  CONTEXT_COMPACTION_MESSAGE_KIND,
+  contextCompactionDedupeKey,
+  contextCompactionMessageId,
+  codexContextCompactionItemId,
+  formatContextCompactionSummary,
+  isClaudeContextCompactionSystemEvent,
+  isCodexContextCompactionItem,
+  normalizeClaudeContextCompactionEvent,
+  type ContextCompactionSignal,
+  type ContextCompactionTelemetry
+} from '../shared/contextCompaction'
+import {
   CODEX_REVIEW_TOOL_NAME,
   codexReviewCompletionTelemetry,
   codexReviewStartTelemetry
@@ -900,6 +912,7 @@ import { registerAppearanceHandlers } from './ipc/appearanceHandlers'
 import { registerDiscordContextHandlers } from './ipc/discordContextHandlers'
 import { registerFileIconHandlers } from './ipc/fileIconHandlers'
 import { registerCheckpointHandlers } from './ipc/checkpointHandlers'
+import { registerContextCompactionHandlers } from './ipc/contextCompactionHandlers'
 import { registerApnsHandlers } from './ipc/apnsHandlers'
 import { registerImageGenerationHandlers } from './ipc/imageGenerationHandlers'
 import { registerMediaAssetHandlers } from './ipc/mediaAssetHandlers'
@@ -10089,6 +10102,46 @@ function emitClaudeWorkflowEvent(state: CliProviderStreamState, event: unknown):
   )
 }
 
+// Provider context-window compaction (Claude lane). The claude subprocess
+// streams `system/status(compacting|compact_result)` and `system/compact_boundary`
+// frames when it compacts — auto mid-turn, or manually when a `/compact` prompt
+// is dispatched with `--resume` (probe-verified in print mode AND via the SDK).
+// Translate them onto a `compaction_event` compat line: unknown to the run-item
+// compat mapper (so it can never leak into the assistant-text dedupe lanes), it
+// fans out to the renderer card, the ensemble orchestrator, and a durable
+// `context_compaction` run event.
+function emitContextCompactionCompatLine(
+  sender: Electron.WebContents,
+  provider: ProviderId,
+  signal: ContextCompactionSignal,
+  route?: AgentRunRoute | null
+): void {
+  sendAgentCompatLine(
+    sender,
+    provider,
+    {
+      type: 'compaction_event',
+      compaction: {
+        kind: signal.kind,
+        telemetry: { ...signal.telemetry, provider }
+      },
+      provider
+    },
+    route
+  )
+}
+
+function emitClaudeContextCompactionEvent(state: CliProviderStreamState, event: unknown): void {
+  const signal = normalizeClaudeContextCompactionEvent(event)
+  if (!signal) return
+  const seen = state.contextCompactionSeen ?? new Set<string>()
+  state.contextCompactionSeen = seen
+  const key = contextCompactionDedupeKey(signal)
+  if (seen.has(key)) return
+  seen.add(key)
+  emitContextCompactionCompatLine(state.sender, state.provider, signal, state)
+}
+
 function handleCliProviderJsonEvent(state: CliProviderStreamState, event: any) {
   if (state.provider === 'grok') {
     handleGrokStreamEvent(state, event)
@@ -10105,6 +10158,13 @@ function handleCliProviderJsonEvent(state: CliProviderStreamState, event: any) {
     // workflow's tokens into the run total — plus the tool/text/result
     // extraction that system frames never carry.
     emitClaudeWorkflowEvent(state, event)
+    return
+  }
+  if (state.provider === 'claude' && isClaudeContextCompactionSystemEvent(event)) {
+    // Compaction frames carry CONTEXT sizes (pre/post tokens), not turn usage —
+    // early-return so they never reach extractProviderUsage's monotonic merge,
+    // and never fall through the generic text/result extraction.
+    emitClaudeContextCompactionEvent(state, event)
     return
   }
   const sessionId = extractProviderSessionId(event)
@@ -13148,7 +13208,9 @@ function sendAgentCompatLine(
       ? 'provider_raw'
       : payload?.type === 'tool_use' || payload?.type === 'tool_result'
         ? 'tool'
-        : 'provider_raw'
+        : payload?.type === 'compaction_event'
+          ? 'context_compaction'
+          : 'provider_raw'
   appendDurableRunEventForRoute(
     provider,
     routed,
@@ -13156,7 +13218,9 @@ function sendAgentCompatLine(
     'raw',
     !transcriptVisible && payload?.tool_name === 'ollama_thinking'
       ? 'Ollama thinking trace'
-      : `Provider output${payload?.type ? `: ${payload.type}` : ''}`,
+      : payload?.type === 'compaction_event' && payload?.compaction?.telemetry
+        ? formatContextCompactionSummary(payload.compaction)
+        : `Provider output${payload?.type ? `: ${payload.type}` : ''}`,
     payload,
     'provider'
   )
@@ -13757,9 +13821,291 @@ function emitCodexPlanItem(state: CodexRunState, item: any) {
 
 
 
+// ── Provider context compaction (Codex lane) ────────────────────────────────
+// Codex compactions arrive as `contextCompaction` thread items riding their own
+// turn (probe-verified on 0.139.0: `thread/compact/start` resolves immediately,
+// then turn/started → item/started → thread/tokenUsage/updated → item/completed
+// → turn/completed). Auto-compactions (the 850k `model_auto_compact_token_limit`
+// TaskWraith already configures for long-context models) use the same item lane.
+
+function codexCurrentContextTokens(state: CodexRunState): number | undefined {
+  const usage = state.tokenUsage
+  const candidate =
+    typeof usage?.last?.totalTokens === 'number'
+      ? usage.last.totalTokens
+      : typeof usage?.totalTokens === 'number'
+        ? usage.totalTokens
+        : undefined
+  return Number.isFinite(candidate) ? candidate : undefined
+}
+
+function emitCodexContextCompaction(
+  state: CodexRunState,
+  kind: 'started' | 'completed',
+  opts: { itemId?: string; dedupeKey?: string; onlyIfNoneAnnounced?: boolean } = {}
+): void {
+  const announced = state.contextCompactionAnnouncedIds ?? new Set<string>()
+  state.contextCompactionAnnouncedIds = announced
+  // The deprecated `thread/compacted` notification is a fallback for servers
+  // that predate the item lane — skip it whenever the item lane already spoke.
+  if (opts.onlyIfNoneAnnounced && announced.size > 0) return
+  const key = `${kind}:${opts.itemId || opts.dedupeKey || 'compaction'}`
+  if (announced.has(key)) return
+  announced.add(key)
+  const pendingManual = state.threadId
+    ? pendingCodexManualCompactions.get(state.threadId)
+    : undefined
+  const telemetry: ContextCompactionTelemetry = {
+    provider: 'codex',
+    trigger: pendingManual ? 'manual' : 'auto'
+  }
+  if (opts.itemId) telemetry.eventUuid = opts.itemId
+  if (kind === 'completed') {
+    if (state.contextCompactionPreTokens !== undefined) {
+      telemetry.preTokens = state.contextCompactionPreTokens
+    }
+    const post = codexCurrentContextTokens(state)
+    // The compaction turn's own tokenUsage update lands BEFORE item/completed
+    // (probe-observed); if it didn't, `post` still reads the pre value — omit
+    // it rather than card a no-op "shrink".
+    if (post !== undefined && post !== telemetry.preTokens) telemetry.postTokens = post
+    if (state.contextCompactionStartedAtMs) {
+      telemetry.durationMs = Date.now() - state.contextCompactionStartedAtMs
+    }
+    state.contextCompactionPreTokens = undefined
+    state.contextCompactionStartedAtMs = undefined
+  }
+  emitContextCompactionCompatLine(state.sender, 'codex', { kind, telemetry }, state)
+}
+
+/**
+ * A user-triggered `thread/compact/start` issued BETWEEN turns has no live
+ * TaskWraith run state, so its notifications would otherwise be dropped by
+ * `handleCodexNotification`'s state guard. Registered per threadId while the
+ * host-side compaction IPC awaits completion.
+ */
+interface PendingCodexManualCompaction {
+  chatId: string
+  threadId: string
+  startedAtMs: number
+  itemId?: string
+  postTokens?: number
+  itemSeen?: boolean
+  settle: (result: { ok: boolean; error?: string }) => void
+}
+const pendingCodexManualCompactions = new Map<string, PendingCodexManualCompaction>()
+
+function handleCodexManualCompactionNotification(message: any): void {
+  const params = message?.params || {}
+  const threadId = params.threadId || params.thread?.id
+  if (!threadId) return
+  const pending = pendingCodexManualCompactions.get(threadId)
+  if (!pending) return
+  if (message.method === 'thread/tokenUsage/updated') {
+    const lastTotal = params.tokenUsage?.last?.totalTokens
+    if (typeof lastTotal === 'number' && Number.isFinite(lastTotal)) {
+      pending.postTokens = lastTotal
+    }
+    return
+  }
+  if (
+    (message.method === 'item/started' || message.method === 'item/completed') &&
+    isCodexContextCompactionItem(params.item)
+  ) {
+    pending.itemId = codexContextCompactionItemId(params.item) || pending.itemId
+    if (message.method === 'item/completed') pending.itemSeen = true
+    return
+  }
+  if (message.method === 'thread/compacted') {
+    pending.itemSeen = true
+    return
+  }
+  if (message.method === 'turn/completed') {
+    const status = codexString(params.turn?.status)
+    const turnError = params.turn?.error
+    if (pending.itemSeen && status !== 'failed') {
+      pending.settle({ ok: true })
+    } else {
+      const detail = codexString(turnError?.message ?? turnError)
+      pending.settle({
+        ok: false,
+        error: detail || `Codex compaction turn ${status || 'ended'} without compacting.`
+      })
+    }
+    return
+  }
+  if (message.method === 'error') {
+    const detail = codexString(params.error?.message ?? params.message ?? params)
+    pending.settle({ ok: false, error: detail || 'Codex reported an error during compaction.' })
+  }
+}
+
+/**
+ * Append the persisted "Context compacted" system card to a chat, keyed by a
+ * deterministic message id (the idempotency mechanism — replays and duplicate
+ * signals converge on the same id and no-op). Main-authored so it also reaches
+ * chats with no renderer in the foreground (bridge/iOS via `chat-updated`).
+ * Returns true when a new card was appended.
+ */
+function appendContextCompactionMessageToChat(
+  chatId: string,
+  signal: ContextCompactionSignal,
+  idFallbackScope: string
+): boolean {
+  const chat = AppStore.getChat(chatId)
+  if (!chat) return false
+  const messageId = contextCompactionMessageId(signal.telemetry, idFallbackScope)
+  if (chat.messages.some((message) => message.id === messageId)) return false
+  const provider = (signal.telemetry.provider || chat.provider) as ProviderId | undefined
+  const summary = formatContextCompactionSummary(
+    signal,
+    provider ? providerLabel(provider) : undefined
+  )
+  const updated: ChatRecord = {
+    ...chat,
+    messages: [
+      ...chat.messages,
+      {
+        id: messageId,
+        role: 'system',
+        content: summary,
+        timestamp: new Date().toISOString(),
+        metadata: {
+          kind: CONTEXT_COMPACTION_MESSAGE_KIND,
+          contextCompaction: {
+            kind: signal.kind,
+            telemetry: signal.telemetry
+          },
+          ...(provider ? { provider } : {})
+        }
+      }
+    ],
+    updatedAt: Date.now()
+  }
+  AppStore.saveChat(updated)
+  broadcastChatUpdated(updated)
+  return true
+}
+
+/**
+ * Host-triggered Codex context compaction ("compact now"). Claude's manual
+ * compaction is dispatched renderer-side as a normal `/compact` run (the CLI
+ * executes the slash command with `--resume`; probe-verified) — Codex instead
+ * exposes a first-class `thread/compact/start` RPC on the persistent
+ * app-server, which this drives end to end: register a pending record (so the
+ * between-turns notifications aren't dropped), fire the RPC, await the
+ * compaction turn, then persist the transcript card + durable run event.
+ */
+async function compactCodexProviderContext(payload: {
+  chatId: string
+  providerSessionId?: string
+}): Promise<{ ok: boolean; error?: string }> {
+  const chat = AppStore.getChat(payload.chatId)
+  if (!chat) return { ok: false, error: 'Chat not found.' }
+  const threadId = payload.providerSessionId || chat.linkedProviderSessionId
+  if (!threadId || !isCodexAppServerThreadId(threadId)) {
+    return {
+      ok: false,
+      error: 'This chat has no resumable Codex thread yet — send a message first.'
+    }
+  }
+  if (pendingCodexManualCompactions.has(threadId)) {
+    return { ok: false, error: 'A compaction is already in progress for this chat.' }
+  }
+  const client = getCodexClient()
+  try {
+    await client.ensureStarted(app.getVersion())
+  } catch (error) {
+    return {
+      ok: false,
+      error: `Codex app-server unavailable: ${error instanceof Error ? error.message : String(error)}`
+    }
+  }
+  const startedAtMs = Date.now()
+  let settled = false
+  const completion = new Promise<{ ok: boolean; error?: string }>((resolve) => {
+    const finish = (result: { ok: boolean; error?: string }) => {
+      if (settled) return
+      settled = true
+      pendingCodexManualCompactions.delete(threadId)
+      resolve(result)
+    }
+    const timer = setTimeout(
+      () => finish({ ok: false, error: 'Timed out waiting for Codex to compact.' }),
+      180_000
+    )
+    pendingCodexManualCompactions.set(threadId, {
+      chatId: payload.chatId,
+      threadId,
+      startedAtMs,
+      settle: (result) => {
+        clearTimeout(timer)
+        finish(result)
+      }
+    })
+  })
+  const pending = pendingCodexManualCompactions.get(threadId)!
+  try {
+    try {
+      await client.request('thread/compact/start', { threadId }, 30_000)
+    } catch (firstError) {
+      // A cold app-server may not have the thread loaded — resume, retry once.
+      await client.request('thread/resume', { threadId, persistExtendedHistory: true }, 30_000)
+      try {
+        await client.request('thread/compact/start', { threadId }, 30_000)
+      } catch {
+        throw firstError
+      }
+    }
+  } catch (error) {
+    pending.settle({
+      ok: false,
+      error: `Codex rejected the compaction request: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    })
+  }
+  const result = await completion
+  const telemetry: ContextCompactionTelemetry = {
+    provider: 'codex',
+    trigger: 'manual',
+    durationMs: Date.now() - startedAtMs
+  }
+  if (pending.itemId) telemetry.eventUuid = pending.itemId
+  if (pending.postTokens !== undefined) telemetry.postTokens = pending.postTokens
+  if (!result.ok && result.error) telemetry.error = result.error
+  const signal: ContextCompactionSignal = {
+    kind: result.ok ? 'completed' : 'failed',
+    telemetry
+  }
+  appendContextCompactionMessageToChat(
+    payload.chatId,
+    signal,
+    `manual-${threadId}-${startedAtMs}`
+  )
+  const lastRunId = [...(chat.runs || [])].reverse().find((run) => run?.runId)?.runId
+  if (lastRunId) {
+    appendDurableRunEventForRoute(
+      'codex',
+      { appRunId: lastRunId, appChatId: payload.chatId },
+      'context_compaction',
+      'control',
+      formatContextCompactionSummary(signal, providerLabel('codex')),
+      { compaction: signal, manual: true }
+    )
+  }
+  return result
+}
+
 function handleCodexNotification(message: any) {
   const state = findCodexRunStateForMessage(message)
-  if (!state) return
+  if (!state) {
+    // Between-turns manual compactions still stream item/turn notifications —
+    // route them to the pending manual-compaction registry instead of
+    // dropping them with the state guard.
+    handleCodexManualCompactionNotification(message)
+    return
+  }
 
   const params = message.params || {}
   const messageThreadId = params.threadId || params.thread?.id
@@ -13798,6 +14144,16 @@ function handleCodexNotification(message: any) {
     state.tokenUsage = params.tokenUsage || params.usage || params
     // Per-occurrence budget kill: Codex's live token signal.
     if (state.appRunId) workflowBudgetRegistry.onUsage(state.appRunId, state.tokenUsage)
+    return
+  }
+
+  if (message.method === 'thread/compacted') {
+    // Deprecated legacy compaction notification (0.139 emits contextCompaction
+    // items instead) — announce only when the item lane hasn't already.
+    emitCodexContextCompaction(state, 'completed', {
+      dedupeKey: `legacy:${params.turnId || params.turn?.id || 'turn'}`,
+      onlyIfNoneAnnounced: true
+    })
     return
   }
 
@@ -13857,6 +14213,16 @@ function handleCodexNotification(message: any) {
 
   if (message.method === 'item/started') {
     const item = params.item
+    if (isCodexContextCompactionItem(item)) {
+      // Snapshot the pre-compaction occupancy now; the compaction turn's own
+      // tokenUsage update overwrites `state.tokenUsage` before item/completed.
+      state.contextCompactionPreTokens = codexCurrentContextTokens(state)
+      state.contextCompactionStartedAtMs = Date.now()
+      emitCodexContextCompaction(state, 'started', {
+        itemId: codexContextCompactionItemId(item)
+      })
+      return
+    }
     if (item?.type === 'reasoning') {
       return
     }
@@ -13899,6 +14265,12 @@ function handleCodexNotification(message: any) {
 
   if (message.method === 'item/completed') {
     const item = params.item
+    if (isCodexContextCompactionItem(item)) {
+      emitCodexContextCompaction(state, 'completed', {
+        itemId: codexContextCompactionItemId(item)
+      })
+      return
+    }
     if (item?.type === 'agentMessage') {
       const itemId = codexTimelineItemId(params, 'codex-agent-message')
       // Phase K1 — token-omission fix. Previously this block only used
@@ -29015,6 +29387,11 @@ if (isGeminiMcpBridgeProcess) {
       getSessionCheckpointStore: () => sessionCheckpointStoreRef,
       requireNonEmptyString,
       formatSessionCheckpointResumePrompt
+    })
+
+    registerContextCompactionHandlers({
+      compactCodexProviderContext,
+      requireNonEmptyString
     })
 
     // 1.0.5-N7 — User-initiated Wake-Now from the participant chip
