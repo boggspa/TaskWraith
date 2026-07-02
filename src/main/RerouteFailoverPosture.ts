@@ -18,18 +18,29 @@ import { isRetiredProvider } from '../shared/retiredProviders'
 /**
  * Authority rank of each permission preset, for the non-escalation comparison.
  * Higher = more authority. An unknown / absent preset is treated as `default`
- * (1) — the safe assumption (no write authority granted).
+ * (the safe assumption — prompt-on-action, no standing write authority).
+ *
+ * `plan` sits STRICTLY between `read_only` and `default`: after the posture
+ * split it permits approval-gated instruments (canvas actuation, media compute,
+ * subthread delegation) that `read_only` denies, but — unlike `default` — it
+ * still cannot edit files or run shell. Keeping `plan` above `read_only` here is
+ * what makes `isNonEscalatingPreset` correctly BAIL a read_only → plan reroute
+ * target (an escalation) while still allowing plan → read_only (de-escalation).
+ * `reroutePresetId` never actually emits a `plan` target today, so this entry is
+ * defense-in-depth against a future producer that does.
  */
+const DEFAULT_PRESET_AUTHORITY_RANK = 2
 const PRESET_AUTHORITY_RANK: Readonly<Record<string, number>> = {
   read_only: 0,
-  custom: 1,
-  default: 1,
-  workspace_write: 2,
-  full_access: 3
+  plan: 1,
+  custom: 2,
+  default: 2,
+  workspace_write: 3,
+  full_access: 4
 }
 
 export function presetAuthorityRank(presetId: string | null | undefined): number {
-  return presetId ? (PRESET_AUTHORITY_RANK[presetId] ?? 1) : 1
+  return presetId ? (PRESET_AUTHORITY_RANK[presetId] ?? DEFAULT_PRESET_AUTHORITY_RANK) : DEFAULT_PRESET_AUTHORITY_RANK
 }
 
 /**

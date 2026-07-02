@@ -49,6 +49,14 @@ describe('isNonEscalatingPreset', () => {
     expect(presetAuthorityRank('workspace_write')).toBeLessThan(presetAuthorityRank('full_access'))
     expect(presetAuthorityRank(undefined)).toBe(presetAuthorityRank('default'))
   })
+  it('plan ranks strictly between read_only and default (posture split)', () => {
+    expect(presetAuthorityRank('read_only')).toBeLessThan(presetAuthorityRank('plan'))
+    expect(presetAuthorityRank('plan')).toBeLessThan(presetAuthorityRank('default'))
+    // read_only → plan is an escalation (plan adds approval-gated instruments) and must bail;
+    // plan → read_only is a de-escalation and is safe.
+    expect(isNonEscalatingPreset('plan', 'read_only')).toBe(false)
+    expect(isNonEscalatingPreset('read_only', 'plan')).toBe(true)
+  })
 })
 
 describe('reroutePresetId + isNonEscalatingPreset compose to fail safe', () => {
