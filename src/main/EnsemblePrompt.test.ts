@@ -2091,3 +2091,73 @@ describe('slim resumed-turn prompt shape', () => {
     expect(prompt).toContain('Respond now as')
   })
 })
+
+describe('seat compaction summary injection (wave 3)', () => {
+  function seatCompactedInput() {
+    const base = chat()
+    const covered = {
+      id: 'old-1',
+      role: 'assistant' as const,
+      content: 'OLD covered panel detail from round one.',
+      timestamp: '2026-05-23T00:00:00.000Z',
+      metadata: { ensembleProvider: 'claude' as const, ensembleRole: 'Reviewer' }
+    }
+    const compactedEnsemble: EnsembleConfig = {
+      ...ensemble,
+      participants: ensemble.participants.map((participant, index) =>
+        index === 1
+          ? {
+              ...participant,
+              provider: 'cursor' as const,
+              contextCompactionSummary: {
+                text: 'Seat summary: shipped slice one; open risk in auth flow.',
+                createdAt: '2026-05-23T12:00:00.000Z',
+                provider: 'cursor' as const,
+                coversThroughTimestamp: '2026-05-23T12:00:00.000Z'
+              }
+            }
+          : participant
+      )
+    }
+    return {
+      chat: { ...base, messages: [covered, ...base.messages], ensemble: compactedEnsemble },
+      config: compactedEnsemble
+    }
+  }
+
+  it('injects the seat summary above the tagged transcript and filters covered messages', () => {
+    const { chat: compactedChat, config } = seatCompactedInput()
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: compactedChat,
+      config,
+      participant: config.participants[1],
+      currentPrompt: 'Continue the panel work.',
+      roundId: 'round-2',
+      chatContextTurns: 6
+    })
+    expect(prompt).toContain('Prior seat summary (context was compacted')
+    expect(prompt).toContain('shipped slice one; open risk in auth flow.')
+    // Covered by the summary → dropped from THIS seat's transcript window.
+    expect(prompt).not.toContain('OLD covered panel detail')
+    // Newer material still flows verbatim.
+    expect(prompt).toContain('Review response')
+    // Ordering: summary block sits above the tagged transcript.
+    expect(prompt.indexOf('Prior seat summary')).toBeLessThan(
+      prompt.indexOf('Recent tagged transcript:')
+    )
+  })
+
+  it('leaves other seats untouched (no summary block, full window)', () => {
+    const { chat: compactedChat, config } = seatCompactedInput()
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: compactedChat,
+      config,
+      participant: config.participants[0],
+      currentPrompt: 'Continue the panel work.',
+      roundId: 'round-2',
+      chatContextTurns: 6
+    })
+    expect(prompt).not.toContain('Prior seat summary')
+    expect(prompt).toContain('OLD covered panel detail')
+  })
+})

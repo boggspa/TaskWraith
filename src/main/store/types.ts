@@ -512,6 +512,24 @@ export interface EnsembleParticipant {
   stageRole?: EnsembleStageRole
   linkedProviderSessionId?: string | null
   /**
+   * Host-side SEAT compaction (src/shared/contextCompaction.ts) — the stored
+   * session summary for cursor/kimi participants (no native compaction lever).
+   * Cursor seats bloat because every round re-embeds the tagged transcript
+   * into the seat's native session: compaction stores this summary AND clears
+   * `linkedProviderSessionId` above (fresh seat session next round). Kimi
+   * seats keep their token (injection-bounded) — the summary is durable
+   * memory of rounds that fell off the tagged-transcript budget.
+   * EnsemblePrompt injects it above the tagged transcript and drops messages
+   * at/before `coversThroughTimestamp` from that seat's transcript window.
+   */
+  contextCompactionSummary?: {
+    text: string
+    createdAt: string
+    provider: ProviderId
+    preTokens?: number
+    coversThroughTimestamp?: string
+  }
+  /**
    * Spike 5 (slim resumed-turn prompts) — the ensemble prompt-shell stamp
    * (`computeEnsemblePromptShellStamp`) this seat last received a FULL
    * prompt for. When the stamp still matches at dispatch time AND the

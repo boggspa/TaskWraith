@@ -698,11 +698,40 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
         }
       )
     : null
+  // Host-side SEAT compaction (wave 3): a compacted cursor/kimi seat carries a
+  // durable summary of the rounds that fell off the tagged-transcript budget
+  // (and, for cursor, of the provider session that was reset). Inject it ABOVE
+  // the transcript, drop the messages it covers from THIS seat's transcript
+  // window, and fund it from the seat's transcript char budget so the prompt
+  // does not grow. Full-briefing turns only — a compacted cursor seat has no
+  // session to resume (slim turns never apply), and kimi seats are never
+  // slim-eligible.
+  const seatCompactionSummary = input.participant.contextCompactionSummary
+  const seatSummaryBlock = seatCompactionSummary?.text
+    ? [
+        `Prior seat summary (context was compacted ${seatCompactionSummary.createdAt}):`,
+        sanitizeText(seatCompactionSummary.text).slice(0, 8_000)
+      ].join('\n')
+    : ''
+  const seatCompactionBoundaryMs = seatCompactionSummary?.coversThroughTimestamp
+    ? Date.parse(seatCompactionSummary.coversThroughTimestamp)
+    : Number.NaN
+  const seatTranscriptMessages = Number.isFinite(seatCompactionBoundaryMs)
+    ? (input.chat.messages || []).filter((message) => {
+        const at = Date.parse(message.timestamp)
+        return !Number.isFinite(at) || at > seatCompactionBoundaryMs
+      })
+    : input.chat.messages || []
+  const baseSeatTranscriptChars =
+    ollamaTranscriptBudget?.contextChars ?? input.config.ensembleContextChars
+  const seatTranscriptChars = seatSummaryBlock
+    ? Math.max(4_000, (baseSeatTranscriptChars ?? 24_000) - seatSummaryBlock.length)
+    : baseSeatTranscriptChars
   const transcript = buildTaggedTranscript(
-    input.chat.messages || [],
+    seatTranscriptMessages,
     ollamaTranscriptBudget?.contextTurns ?? input.chatContextTurns ?? 6,
     participantTokens,
-    ollamaTranscriptBudget?.contextChars ?? input.config.ensembleContextChars,
+    seatTranscriptChars,
     dupProviderModelLabels,
     // Spike 6 — widen the window back to this participant's own last turn.
     input.participant.id
@@ -999,6 +1028,10 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
           sanitizeText(input.config.lastRoundSummary).slice(0, 2000)
         ]
       : []),
+    // Wave 3 — this seat's own compaction summary (older material than the
+    // tagged transcript window below; messages it covers are filtered out of
+    // that window for this seat).
+    ...(seatSummaryBlock ? ['', seatSummaryBlock] : []),
     '',
     'Recent tagged transcript:',
     transcript || '[No prior transcript]',
