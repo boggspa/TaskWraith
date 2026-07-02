@@ -241,8 +241,12 @@
  * .app-transcript.chat-scope-global beats the single-class per-provider rules
  * without !important. */
 .app-transcript.chat-scope-global:not(.welcome-mode) {
-  --composer-content-max-width: 760px;
   --chat-side-gutter: clamp(32px, 6vw, 96px);
+}
+.app-transcript.chat-scope-global:not(.welcome-mode) .transcript-inner {
+  /* Keep the legacy General Chat reading column narrow without shrinking the
+   * modern composer shell, which also consumes --composer-content-max-width. */
+  max-width: min(100%, 760px);
 }
 .app-transcript.chat-scope-global .message-bubble.assistant {
   line-height: 1.68;
