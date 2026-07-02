@@ -17413,7 +17413,10 @@ function App(): React.JSX.Element {
         ) {
           return Boolean(participant.linkedProviderSessionId)
         }
-        if (participant.provider === 'kimi') {
+        // Kimi + Grok host lanes carry their material in-prompt, so any seat
+        // that has spoken qualifies. Grok reports projected token totals; a
+        // seat with no runs has none yet.
+        if (participant.provider === 'kimi' || participant.provider === 'grok') {
           return (
             Boolean(participant.linkedProviderSessionId) ||
             (participant.tokenTotals?.total_tokens || 0) > 0
@@ -20909,23 +20912,26 @@ function App(): React.JSX.Element {
                 }`
               : 'Selected participant context',
             description:
-              'Compact the selected seat’s provider session (claude/codex), or insert a scoped summary request.',
+              'Compact the selected seat’s provider session (claude/codex/cursor/kimi/grok), or insert a scoped summary request.',
             group: 'Custom' as const,
             run: (ctx: SlashCommandRunContext) => {
-              // Native seat compaction where a real lever exists: a claude or
-              // codex participant with a linked session, round idle. The card
-              // (success or failure) is appended main-side, which also
-              // re-checks round liveness authoritatively.
+              // Seat compaction where a real lever exists: a seat that has
+              // spoken (session for claude/codex/cursor; in-prompt material for
+              // kimi/grok), round idle. The card (success or failure) is
+              // appended main-side, which also re-checks round liveness
+              // authoritatively.
               const seat = slashSelectedParticipant
               const seatSessionOk =
                 Boolean(seat?.linkedProviderSessionId) ||
-                (seat?.provider === 'kimi' && (seat?.tokenTotals?.total_tokens || 0) > 0)
+                ((seat?.provider === 'kimi' || seat?.provider === 'grok') &&
+                  (seat?.tokenTotals?.total_tokens || 0) > 0)
               const canNativelyCompactSeat =
                 Boolean(seat) &&
                 (seat!.provider === 'claude' ||
                   seat!.provider === 'codex' ||
                   seat!.provider === 'cursor' ||
-                  seat!.provider === 'kimi') &&
+                  seat!.provider === 'kimi' ||
+                  seat!.provider === 'grok') &&
                 seatSessionOk &&
                 Boolean(chat?.appChatId && !runningChatIds.has(chat.appChatId))
               if (canNativelyCompactSeat && chat && seat) {

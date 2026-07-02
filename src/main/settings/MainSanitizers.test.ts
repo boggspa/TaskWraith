@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
   createMainSanitizers,
+  normalizeEnsembleRunIdentity,
   normalizeAuditRunIdentity,
   sanitizeAuditOrchestration
 } from './MainSanitizers'
@@ -24,6 +25,53 @@ describe('normalizeAuditRunIdentity', () => {
     expect(normalizeAuditRunIdentity({ auditRunId: 'a1', role: 'hacker' })).toBeUndefined()
     expect(normalizeAuditRunIdentity(null)).toBeUndefined()
     expect(normalizeAuditRunIdentity({ role: 'recon' })).toBeUndefined() // missing id
+  })
+})
+
+describe('normalizeEnsembleRunIdentity', () => {
+  it('preserves lane and stage-role dispatch identity', () => {
+    expect(
+      normalizeEnsembleRunIdentity({
+        roundId: 'round-1',
+        participantId: 'codex-worker',
+        laneId: 'lane-round-1-codex-worker-1',
+        provider: 'codex',
+        role: 'Worker',
+        stageRole: 'worker',
+        order: 2,
+        ensembleContextChars: 24000,
+        ensembleContextTurns: 4
+      })
+    ).toEqual({
+      roundId: 'round-1',
+      participantId: 'codex-worker',
+      laneId: 'lane-round-1-codex-worker-1',
+      provider: 'codex',
+      role: 'Worker',
+      stageRole: 'worker',
+      order: 2,
+      ensembleContextChars: 24000,
+      ensembleContextTurns: 4
+    })
+  })
+
+  it('drops invalid stage roles rather than preserving untrusted values', () => {
+    expect(
+      normalizeEnsembleRunIdentity({
+        roundId: 'round-1',
+        participantId: 'codex-worker',
+        provider: 'codex',
+        role: 'Worker',
+        stageRole: 'boss',
+        order: 2
+      })
+    ).toEqual({
+      roundId: 'round-1',
+      participantId: 'codex-worker',
+      provider: 'codex',
+      role: 'Worker',
+      order: 2
+    })
   })
 })
 

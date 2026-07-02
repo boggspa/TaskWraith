@@ -10,7 +10,7 @@ export interface ContextCompactionHandlersDeps {
    */
   compactProviderContext: (payload: {
     chatId: string
-    provider: 'claude' | 'codex' | 'cursor' | 'kimi'
+    provider: 'claude' | 'codex' | 'cursor' | 'kimi' | 'grok'
     providerSessionId?: string
     participantId?: string
   }) => Promise<{ ok: boolean; error?: string }>
@@ -35,7 +35,8 @@ export function registerContextCompactionHandlers(deps: ContextCompactionHandler
         provider !== 'codex' &&
         provider !== 'claude' &&
         provider !== 'cursor' &&
-        provider !== 'kimi'
+        provider !== 'kimi' &&
+        provider !== 'grok'
       ) {
         return { ok: false, error: `Manual context compaction is not supported for ${provider}.` }
       }

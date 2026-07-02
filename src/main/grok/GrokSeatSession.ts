@@ -403,6 +403,21 @@ export class GrokSeatSessionRegistry {
     this.entries.clear()
   }
 
+  /**
+   * Dispose one seat's live session and drop it from the registry — the seat's
+   * next turn respawns a fresh `session/new`. This is the "reset" arm of host
+   * seat compaction for Grok: a persistent seat accumulates server-side context
+   * that no `--resume` can shrink, so compaction summarizes the transcript and
+   * then discards the live session here. No-op when the key isn't held.
+   */
+  disposeSeat(key: string): boolean {
+    const entry = this.entries.get(key)
+    if (!entry) return false
+    entry.session.dispose()
+    this.entries.delete(key)
+    return true
+  }
+
   private sweep(): void {
     const cutoff = this.now() - GROK_SEAT_SESSION_IDLE_MS
     for (const [key, entry] of this.entries) {

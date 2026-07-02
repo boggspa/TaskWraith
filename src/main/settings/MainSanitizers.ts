@@ -489,11 +489,17 @@ function sanitizeUpdateChangelog(value: unknown): ProductUpdateChangelog | undef
 
 export function normalizeEnsembleRunIdentity(value: unknown): EnsembleRunIdentity | undefined {
   if (!isRecord(value)) return undefined
+  const stageRole =
+    value.stageRole === 'scout' || value.stageRole === 'worker' || value.stageRole === 'reviewer'
+      ? value.stageRole
+      : undefined
   return {
     roundId: requireNonEmptyString(value.roundId, 'Ensemble round id'),
     participantId: requireNonEmptyString(value.participantId, 'Ensemble participant id'),
+    ...(optionalString(value.laneId) ? { laneId: optionalString(value.laneId) } : {}),
     provider: assertProviderId(value.provider),
     role: optionalString(value.role) || 'Participant',
+    ...(stageRole ? { stageRole } : {}),
     order: optionalNumber(value.order) ?? 0,
     ...(optionalNumber(value.ensembleContextChars) !== undefined
       ? { ensembleContextChars: optionalNumber(value.ensembleContextChars) }

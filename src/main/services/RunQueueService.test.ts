@@ -291,6 +291,30 @@ describe('RunQueueService', () => {
     )
   })
 
+  it('preserves ensemble lane and stage metadata on generic queue requests', () => {
+    const { deps, repository } = makeDeps()
+    const service = new RunQueueService(deps)
+    service.requestJob({
+      runId: 'ensemble-run',
+      provider: 'codex',
+      workspacePath: '/input',
+      chatId: 'chat-1',
+      ensembleParticipantId: 'participant-codex',
+      ensembleLaneId: 'lane-round-1-participant-codex-1',
+      ensembleRole: 'Worker',
+      ensembleStageRole: 'worker'
+    })
+    expect(repository.saveRunQueueJob).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId: 'ensemble-run',
+        ensembleParticipantId: 'participant-codex',
+        ensembleLaneId: 'lane-round-1-participant-codex-1',
+        ensembleRole: 'Worker',
+        ensembleStageRole: 'worker'
+      })
+    )
+  })
+
   it('preserves remote source and remoteComposer snapshot fields', () => {
     const { deps, repository } = makeDeps()
     const service = new RunQueueService(deps)

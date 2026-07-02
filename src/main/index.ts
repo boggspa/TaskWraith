@@ -799,6 +799,7 @@ import {
 import {
   grokWriteCapable,
   buildGrokAcpCliArgs,
+  buildGrokCliArgs,
   buildGrokProviderCliArgs,
   buildGrokProviderPrompt
 } from './grok/GrokCliArgs'
@@ -7257,6 +7258,8 @@ function ensembleApprovalContext(
     `Ensemble participant: ${label}`,
     `Provider: ${provider}`,
     `Role: ${role}`,
+    identity.stageRole ? `Stage: ${identity.stageRole}` : undefined,
+    identity.laneId ? `Lane: ${identity.laneId}` : undefined,
     `Service: ${AGENTIC_SERVICE_LABELS[service]}`,
     workspacePath ? `Workspace: ${workspacePath}` : undefined
   ].filter(Boolean)
@@ -7266,8 +7269,10 @@ function ensembleApprovalContext(
     preview: {
       roundId: identity.roundId,
       participantId: identity.participantId,
+      ...(identity.laneId ? { laneId: identity.laneId } : {}),
       provider: identity.provider,
       role,
+      ...(identity.stageRole ? { stageRole: identity.stageRole } : {}),
       order: identity.order,
       service,
       workspacePath
@@ -13427,6 +13432,8 @@ function getAgentToolContext(
     sessionTrust: state.sessionTrust,
     externalPathGrants: state.externalPathGrants,
     effectivePermissions: state.effectivePermissions,
+    effectivePermissionsSignature: state.effectivePermissionsSignature,
+    ensembleRun: state.ensembleRun,
     runtimeProfileId: state.runtimeProfileId
   }
 }
@@ -14546,7 +14553,7 @@ function seatRunPreTokens(chat: ChatRecord, participantId: string): number | und
 async function compactCliSeatContext(payload: {
   chatId: string
   participantId: string
-  provider: 'cursor' | 'kimi'
+  provider: 'cursor' | 'kimi' | 'grok'
   providerSessionId?: string | null
   model?: string
   cardMetadata?: Record<string, unknown>
@@ -14577,20 +14584,34 @@ async function compactCliSeatContext(payload: {
         prompt: CONTEXT_COMPACTION_SUMMARY_PROMPT
       })
     } else {
-      // Kimi: the resume token restores no usable history — carry the material
-      // in-prompt. A generous block: the summary is only as good as its input.
+      // Kimi + Grok: no re-openable session to resume against (Kimi's --resume
+      // token restores no usable history; a Grok ensemble seat's context lives
+      // in its LIVE ACP process, not a resumable id). So carry the material
+      // in-prompt and run a fresh read-only summarize turn. A generous block:
+      // the summary is only as good as its input.
       const material = buildConversationContextBlock(chat.messages || [], 20, '', {
         maxTurns: 20,
         maxCharsPerTurn: 800,
         maxBlockChars: 12_000
       })
-      const kimiPrompt = material
+      const seatPrompt = material
         ? `${material}\n${CONTEXT_COMPACTION_SUMMARY_PROMPT}`
         : CONTEXT_COMPACTION_SUMMARY_PROMPT
-      args = ['--print', '--plan', '--output-format', 'stream-json', '--work-dir', workspace]
-      appendKimiModelArgs(args, normalizeCliProviderModel('kimi', payload.model))
-      args.push('--prompt', kimiPrompt)
-      if (payload.providerSessionId) args.push('--resume', payload.providerSessionId)
+      if (payload.provider === 'grok') {
+        // Read-only headless summarize (`-p ... --permission-mode plan`), fully
+        // independent of the live seat session (which is disposed on success).
+        args = buildGrokCliArgs({
+          prompt: seatPrompt,
+          workspace,
+          model: payload.model,
+          approvalMode: 'plan'
+        })
+      } else {
+        args = ['--print', '--plan', '--output-format', 'stream-json', '--work-dir', workspace]
+        appendKimiModelArgs(args, normalizeCliProviderModel('kimi', payload.model))
+        args.push('--prompt', seatPrompt)
+        if (payload.providerSessionId) args.push('--resume', payload.providerSessionId)
+      }
     }
     const resolved = await resolveCliProviderBinary(payload.provider, undefined)
     if (!resolved.binaryPath) {
@@ -14637,6 +14658,12 @@ async function compactCliSeatContext(payload: {
             // `text` frames are streamed deltas (append).
             if (rawType === 'assistant') summaryText = event.text
             else summaryText += event.text
+          }
+        } else if (payload.provider === 'grok') {
+          // Grok streaming-json answer tokens (`{type:'text',data}`) map to
+          // pure `content` deltas — no cumulative snapshots to de-dupe.
+          for (const event of grokEventToRunEvents({ json: parsed ?? undefined })) {
+            if (event.type === 'content' && event.text) summaryText += event.text
           }
         } else {
           const text = extractProviderText(parsed)
@@ -14710,6 +14737,14 @@ async function compactCliSeatContext(payload: {
         AppStore.saveChat(updated)
         broadcastChatUpdated(updated)
       }
+      if (payload.provider === 'grok') {
+        // Grok's reset arm: the accumulated context lives in the live per-seat
+        // ACP process (seat sessions), which no `--resume` can shrink. Dispose
+        // it so the next turn respawns a fresh `session/new` seeded only by the
+        // injected summary block + the boundary-filtered tagged transcript.
+        // Keyed exactly as the seat-session acquire site (`chatId:participantId`).
+        grokSeatSessionRegistry.disposeSeat(`${payload.chatId}:${payload.participantId}`)
+      }
     }
     appendContextCompactionMessageToChat(
       payload.chatId,
@@ -14752,7 +14787,7 @@ async function compactCliSeatContext(payload: {
  */
 async function compactProviderContextForRequest(payload: {
   chatId: string
-  provider: 'claude' | 'codex' | 'cursor' | 'kimi'
+  provider: 'claude' | 'codex' | 'cursor' | 'kimi' | 'grok'
   providerSessionId?: string
   participantId?: string
   /** 'auto' only from the orchestrator's post-round trigger; IPC = manual. */
@@ -14761,9 +14796,13 @@ async function compactProviderContextForRequest(payload: {
   let providerSessionId = payload.providerSessionId
   let model: string | undefined
   let cardMetadata: Record<string, unknown> | undefined
-  // Solo cursor/kimi compaction is the RENDERER's summarize-run lane (wave 2)
-  // — this channel only owns their ensemble seats.
-  if ((payload.provider === 'cursor' || payload.provider === 'kimi') && !payload.participantId) {
+  const isHostSeatProvider =
+    payload.provider === 'cursor' || payload.provider === 'kimi' || payload.provider === 'grok'
+  // Host seat providers (cursor/kimi/grok) only compact as ENSEMBLE seats here.
+  // Solo cursor/kimi compact through the RENDERER's summarize-run lane (wave 2);
+  // solo grok has no host lever yet (its ACP default reinjects the transcript,
+  // so a solo grok chat cannot overflow from accumulation).
+  if (isHostSeatProvider && !payload.participantId) {
     return {
       ok: false,
       error: `Solo ${providerLabel(payload.provider)} chats compact via /compact in the chat itself.`
@@ -14787,9 +14826,14 @@ async function compactProviderContextForRequest(payload: {
     if (participant.provider !== payload.provider) {
       return { ok: false, error: 'Participant provider does not match the request.' }
     }
-    // Kimi seats carry their material in-prompt, so a session token is
-    // optional; every other provider needs a resumable session to compact.
-    if (!participant.linkedProviderSessionId && payload.provider !== 'kimi') {
+    // Kimi and Grok seats carry their material in-prompt (no re-openable
+    // session to resume against), so a session token is optional; every other
+    // provider needs a resumable session to compact.
+    if (
+      !participant.linkedProviderSessionId &&
+      payload.provider !== 'kimi' &&
+      payload.provider !== 'grok'
+    ) {
       return {
         ok: false,
         error: 'This participant has no provider session yet — it must speak first.'
@@ -14809,7 +14853,7 @@ async function compactProviderContextForRequest(payload: {
       displayHueClass: presentation.displayHueClass
     }
   }
-  if (payload.provider === 'cursor' || payload.provider === 'kimi') {
+  if (payload.provider === 'cursor' || payload.provider === 'kimi' || payload.provider === 'grok') {
     return compactCliSeatContext({
       chatId: payload.chatId,
       participantId: payload.participantId!,

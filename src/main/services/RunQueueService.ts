@@ -282,6 +282,15 @@ export class RunQueueService {
       id: optionalString(record.id) || runId,
       runId,
       provider,
+      ensembleParticipantId: optionalString(record.ensembleParticipantId),
+      ensembleLaneId: optionalString(record.ensembleLaneId),
+      ensembleRole: optionalString(record.ensembleRole),
+      ensembleStageRole:
+        record.ensembleStageRole === 'scout' ||
+        record.ensembleStageRole === 'worker' ||
+        record.ensembleStageRole === 'reviewer'
+          ? record.ensembleStageRole
+          : undefined,
       scope,
       workspacePath,
       workspaceId,

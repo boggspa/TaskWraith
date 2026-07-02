@@ -825,6 +825,7 @@ export interface EnsembleRunIdentity {
   laneId?: string
   provider: ProviderId
   role: string
+  stageRole?: EnsembleStageRole
   order: number
   /** Configured shared-history char budget captured for this participant run. */
   ensembleContextChars?: number
@@ -2472,6 +2473,7 @@ export interface ChatRun {
   ensembleParticipantId?: string
   ensembleLaneId?: string
   ensembleRole?: string
+  ensembleStageRole?: EnsembleStageRole
   ensembleOrder?: number
   pooledAgentId?: string
   pooledAgentIdentity?: PooledAgentIdentitySnapshot
@@ -4007,7 +4009,9 @@ export interface RunQueueJob {
   runId: string
   provider: ProviderId
   ensembleParticipantId?: string
+  ensembleLaneId?: string
   ensembleRole?: string
+  ensembleStageRole?: EnsembleStageRole
   scope?: ChatScope
   workspaceId?: string
   workspacePath?: string

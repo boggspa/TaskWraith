@@ -1218,7 +1218,9 @@ function summarizeLastRun(
     geminiAuthProfileId: run.geminiAuthProfileId,
     ensembleRoundId: run.ensembleRoundId,
     ensembleParticipantId: run.ensembleParticipantId,
+    ensembleLaneId: run.ensembleLaneId,
     ensembleRole: run.ensembleRole,
+    ensembleStageRole: run.ensembleStageRole,
     ensembleOrder: run.ensembleOrder
   }
 }

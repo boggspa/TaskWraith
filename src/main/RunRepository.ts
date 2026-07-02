@@ -31,7 +31,7 @@ const STEER_PROMOTING_STATUS: RunQueueJobStatusLike = 'steer_promoting'
 
 function lookupEnsembleQueueMetadata(
   session: RunSession
-): Pick<RunQueueJob, 'ensembleParticipantId' | 'ensembleRole'> {
+): Pick<RunQueueJob, 'ensembleParticipantId' | 'ensembleLaneId' | 'ensembleRole' | 'ensembleStageRole'> {
   const chatId = typeof session.appChatId === 'string' ? session.appChatId.trim() : ''
   const runId = typeof session.runId === 'string' ? session.runId.trim() : ''
   if (!chatId || !runId) return {}
@@ -41,7 +41,9 @@ function lookupEnsembleQueueMetadata(
     ...(matchedRun.ensembleParticipantId
       ? { ensembleParticipantId: matchedRun.ensembleParticipantId }
       : {}),
-    ...(matchedRun.ensembleRole ? { ensembleRole: matchedRun.ensembleRole } : {})
+    ...(matchedRun.ensembleLaneId ? { ensembleLaneId: matchedRun.ensembleLaneId } : {}),
+    ...(matchedRun.ensembleRole ? { ensembleRole: matchedRun.ensembleRole } : {}),
+    ...(matchedRun.ensembleStageRole ? { ensembleStageRole: matchedRun.ensembleStageRole } : {})
   }
 }
 
@@ -148,7 +150,9 @@ export class RunRepository {
         chatId: session.appChatId,
         workspacePath: partial.workspacePath,
         ensembleParticipantId: partial.ensembleParticipantId,
+        ensembleLaneId: partial.ensembleLaneId,
         ensembleRole: partial.ensembleRole,
+        ensembleStageRole: partial.ensembleStageRole,
         scope: partial.workspacePath ? 'workspace' : 'global',
         source: 'system',
         status,
@@ -560,6 +564,7 @@ export class RunRepository {
     session: RunSession
   ): RunEventRecord | null {
     const permissionPosture = this.options.permissionPostureForSession?.(session)
+    const ensembleMetadata = lookupEnsembleQueueMetadata(session)
     return this.appendRunEvent({
       runId: session.runId,
       chatId: session.appChatId,
@@ -573,6 +578,7 @@ export class RunRepository {
       summary: `Runtime session ${eventType}: ${session.status}`,
       payload: {
         eventType,
+        ...(Object.keys(ensembleMetadata).length > 0 ? { ensembleRun: ensembleMetadata } : {}),
         status: session.status,
         startedAt: session.startedAt,
         updatedAt: session.updatedAt,

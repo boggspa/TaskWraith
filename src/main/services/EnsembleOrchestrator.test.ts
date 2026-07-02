@@ -395,6 +395,36 @@ describe('EnsembleOrchestrator', () => {
     expect(harness.dispatched[1].provider).toBe('codex')
   })
 
+  it('freezes participant stage role on dispatch payloads and chat runs', async () => {
+    const initialChat = makeChat()
+    initialChat.ensemble!.participants[0].stageRole = 'worker'
+    const harness = makeHarness({ initialChat })
+
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Please review and implement.',
+      event: { sender: {} as Electron.WebContents }
+    })
+
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    expect(harness.dispatched[0].ensembleRun).toMatchObject({
+      participantId: 'claude',
+      role: 'Reviewer',
+      stageRole: 'worker'
+    })
+    expect(harness.chat.runs[0]).toMatchObject({
+      ensembleParticipantId: 'claude',
+      ensembleRole: 'Reviewer',
+      ensembleStageRole: 'worker'
+    })
+
+    harness.chat.ensemble!.participants[0].stageRole = 'reviewer'
+    expect(harness.chat.runs[0]).toMatchObject({
+      ensembleParticipantId: 'claude',
+      ensembleStageRole: 'worker'
+    })
+  })
+
   it('stamps pooled-agent identity onto ensemble runs and messages', async () => {
     const chat = makeChat()
     const pooledAgentIdentity = {

@@ -190,7 +190,9 @@ describe('RunRepository', () => {
           status: 'running',
           startedAt: '2026-05-08T00:00:00.000Z',
           ensembleParticipantId: 'participant-grok',
-          ensembleRole: 'Reviewer'
+          ensembleLaneId: 'lane-round-1-participant-grok-1',
+          ensembleRole: 'Reviewer',
+          ensembleStageRole: 'reviewer'
         }
       ]
     } as any)
@@ -223,7 +225,9 @@ describe('RunRepository', () => {
           runId: 'run-ensemble',
           chatId: 'chat-ensemble',
           ensembleParticipantId: 'participant-grok',
-          ensembleRole: 'Reviewer'
+          ensembleLaneId: 'lane-round-1-participant-grok-1',
+          ensembleRole: 'Reviewer',
+          ensembleStageRole: 'reviewer'
         })
       )
       expect(emitRunQueueChanged).toHaveBeenCalledTimes(1)
@@ -231,6 +235,64 @@ describe('RunRepository', () => {
       getExisting.mockRestore()
       getChat.mockRestore()
       save.mockRestore()
+    }
+  })
+
+  it('mirrors ensemble lane and stage metadata into lifecycle event payloads', () => {
+    const repository = new RunRepository({
+      providerLabel: (provider) => provider,
+      emitRunQueueChanged: vi.fn(),
+      emitRunEventsChanged: vi.fn()
+    })
+    const getChat = vi.spyOn(AppStore, 'getChat').mockReturnValue({
+      appChatId: 'chat-ensemble',
+      runs: [
+        {
+          runId: 'run-ensemble',
+          provider: 'grok',
+          status: 'running',
+          startedAt: '2026-05-08T00:00:00.000Z',
+          ensembleParticipantId: 'participant-grok',
+          ensembleLaneId: 'lane-round-1-participant-grok-1',
+          ensembleRole: 'Reviewer',
+          ensembleStageRole: 'reviewer'
+        }
+      ]
+    } as any)
+    const append = vi.spyOn(AppStore, 'appendRunEvent').mockImplementation((input: any) => ({
+      schemaVersion: 1,
+      id: 'event-1',
+      sequence: 1,
+      timestamp: '2026-05-08T00:00:00.000Z',
+      ...input
+    }))
+
+    try {
+      repository.appendLifecycleEvent('created', {
+        runId: 'run-ensemble',
+        provider: 'grok',
+        appChatId: 'chat-ensemble',
+        workspacePath: '/repo',
+        status: 'running',
+        startedAt: Date.parse('2026-05-08T00:00:00.000Z'),
+        updatedAt: Date.parse('2026-05-08T00:00:01.000Z'),
+        approvalIds: new Set(),
+        sessionGrants: new Set()
+      } as any)
+
+      expect(getChat).toHaveBeenCalledWith('chat-ensemble')
+      expect(append.mock.results[0]?.value?.payload).toMatchObject({
+        eventType: 'created',
+        ensembleRun: {
+          ensembleParticipantId: 'participant-grok',
+          ensembleLaneId: 'lane-round-1-participant-grok-1',
+          ensembleRole: 'Reviewer',
+          ensembleStageRole: 'reviewer'
+        }
+      })
+    } finally {
+      getChat.mockRestore()
+      append.mockRestore()
     }
   })
 
