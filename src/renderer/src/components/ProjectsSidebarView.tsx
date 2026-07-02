@@ -4,6 +4,7 @@ import {
   useState,
   type CSSProperties,
   type ChangeEvent,
+  type FormEvent,
   type DragEvent as ReactDragEvent,
   type JSX
 } from 'react'
@@ -47,6 +48,16 @@ interface ProjectsSidebarViewProps {
 interface ProjectNode {
   project: Project
   children: ProjectNode[]
+}
+
+interface ProjectDraft {
+  parentId: string | null
+  name: string
+}
+
+export function normalizeProjectCreateName(name: string): string | null {
+  const trimmed = name.trim()
+  return trimmed.length > 0 ? trimmed : null
 }
 
 function sortProjects(left: Project, right: Project): number {
@@ -192,6 +203,7 @@ export function ProjectsSidebarView({
   const [projects, setProjects] = useState<Project[]>(() => listProjects())
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null)
   const [projectDropTargetId, setProjectDropTargetId] = useState<string | null>(null)
+  const [projectDraft, setProjectDraft] = useState<ProjectDraft | null>(null)
   const [expandedProjectIds, setExpandedProjectIds] = useState<Set<string>>(() => {
     try {
       const raw = localStorage.getItem(EXPANDED_PROJECTS_STORAGE_KEY)
@@ -262,10 +274,16 @@ export function ProjectsSidebarView({
     }
   }
 
-  const promptForProject = (parentId: string | null): void => {
-    const name = window.prompt(parentId ? 'New child project name' : 'New project name')
-    const trimmed = name?.trim()
+  const startProjectDraft = (parentId: string | null): void => {
+    setProjectDraft({ parentId, name: '' })
+  }
+
+  const submitProjectDraft = (event: FormEvent<HTMLFormElement>): void => {
+    event.preventDefault()
+    if (!projectDraft) return
+    const trimmed = normalizeProjectCreateName(projectDraft.name)
     if (!trimmed) return
+    const parentId = projectDraft.parentId
     runStoreAction(() => {
       const project = createProject({ name: trimmed, parentId })
       if (parentId) {
@@ -273,6 +291,50 @@ export function ProjectsSidebarView({
       }
       return project
     })
+    setProjectDraft(null)
+  }
+
+  const projectDraftParentName = projectDraft?.parentId
+    ? projects.find((project) => project.id === projectDraft.parentId)?.name
+    : null
+
+  const projectDraftLabel = projectDraft?.parentId
+    ? projectDraftParentName
+      ? `New child in ${projectDraftParentName}`
+      : 'New child project'
+    : 'New project'
+
+  const renderProjectDraftForm = (): JSX.Element | null => {
+    if (!projectDraft) return null
+    const canSubmit = normalizeProjectCreateName(projectDraft.name) !== null
+    return (
+      <form className="sidebar-project-create-form" onSubmit={submitProjectDraft}>
+        <label className="sidebar-project-create-label" htmlFor="sidebar-project-create-name">
+          {projectDraftLabel}
+        </label>
+        <div className="sidebar-project-create-controls">
+          <input
+            id="sidebar-project-create-name"
+            className="sidebar-project-create-input"
+            value={projectDraft.name}
+            onChange={(event) =>
+              setProjectDraft((draft) => (draft ? { ...draft, name: event.target.value } : draft))
+            }
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') setProjectDraft(null)
+            }}
+            placeholder="Project name"
+            autoFocus
+          />
+          <button type="submit" className="sidebar-project-create-submit" disabled={!canSubmit}>
+            Create
+          </button>
+          <button type="button" className="sidebar-project-create-cancel" onClick={() => setProjectDraft(null)}>
+            Cancel
+          </button>
+        </div>
+      </form>
+    )
   }
 
   const promptRename = (project: Project): void => {
@@ -515,7 +577,7 @@ export function ProjectsSidebarView({
               className="sidebar-project-icon-button"
               onClick={(event) => {
                 event.stopPropagation()
-                promptForProject(project.id)
+                startProjectDraft(project.id)
               }}
               title="New child project"
               aria-label={`New child project under ${project.name}`}
@@ -655,7 +717,7 @@ export function ProjectsSidebarView({
         <button
           type="button"
           className="sidebar-section-header-action sidebar-project-create"
-          onClick={() => promptForProject(null)}
+          onClick={() => startProjectDraft(null)}
           title="New project"
           aria-label="New project"
         >
@@ -663,13 +725,17 @@ export function ProjectsSidebarView({
         </button>
       </div>
 
+      {renderProjectDraftForm()}
+
       {projects.length === 0 ? (
         <div className="sidebar-empty-state sidebar-project-empty">
           <strong>No projects yet</strong>
           <span>Create a project to group threads across workspaces, providers, or folders.</span>
-          <button type="button" className="sidebar-project-create-large" onClick={() => promptForProject(null)}>
-            New project
-          </button>
+          {!projectDraft && (
+            <button type="button" className="sidebar-project-create-large" onClick={() => startProjectDraft(null)}>
+              New project
+            </button>
+          )}
         </div>
       ) : isSearchActive && visibleNodeIds.size === 0 ? (
         <div className="sidebar-empty-state">
