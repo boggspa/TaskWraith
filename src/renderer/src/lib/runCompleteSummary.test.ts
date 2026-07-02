@@ -135,6 +135,19 @@ describe('buildEnsembleRoundSummaryRows', () => {
 })
 
 describe('buildRunCompleteSummaryRows', () => {
+  it('distinguishes Plan workflow from read-only posture even though both use provider plan mode', () => {
+    expect(
+      buildRunCompleteSummaryRows(
+        run({ provider: 'codex', approvalMode: 'plan', workflowMode: 'plan' })
+      )
+    ).toContainEqual({ label: 'Mode', value: 'Plan' })
+    expect(
+      buildRunCompleteSummaryRows(
+        run({ provider: 'codex', approvalMode: 'plan', workflowMode: 'normal' })
+      )
+    ).toContainEqual({ label: 'Mode', value: 'Read-only' })
+  })
+
   it('renders Ollama model and RAM as local hardware telemetry', () => {
     const rows = buildRunCompleteSummaryRows(
       run({

@@ -175,9 +175,12 @@ const formatRunStatusLabel = (status?: string): string => {
     .join(' ')
 }
 
-const formatApprovalModeLabel = (mode?: string): string => {
+const formatApprovalModeLabel = (
+  run?: Pick<ChatRun, 'approvalMode' | 'workflowMode'> | null
+): string => {
+  const mode = run?.approvalMode
   if (!mode) return 'Unknown'
-  if (mode === 'plan') return 'Read-only'
+  if (mode === 'plan') return run?.workflowMode === 'plan' ? 'Plan' : 'Read-only'
   if (mode === 'auto_edit') return 'Auto edit'
   return formatRunStatusLabel(mode)
 }
@@ -312,7 +315,7 @@ export const buildRunCompleteSummaryRows = (run?: ChatRun | null): RunCompleteSu
   const rows: RunCompleteSummaryRow[] = []
   const model = run.actualModel || run.requestedModel
   if (model) rows.push({ label: 'Model', value: humaniseModelId(run.provider, model) || model })
-  rows.push({ label: 'Mode', value: formatApprovalModeLabel(run.approvalMode) })
+  rows.push({ label: 'Mode', value: formatApprovalModeLabel(run) })
   rows.push({ label: 'Status', value: formatRunStatusLabel(run.status) })
 
   const durationMs = getRunDurationMs(run)
@@ -413,9 +416,9 @@ export const buildEnsembleRoundSummaryRows = (
   // participant in a round currently shares the chat-level preset, so
   // varying values would indicate per-participant overrides worth
   // surfacing too. Keep it simple for now and show the first.
-  const firstApprovalMode = roundRuns.find((run) => run.approvalMode)?.approvalMode
-  if (firstApprovalMode) {
-    rows.push({ label: 'Mode', value: formatApprovalModeLabel(firstApprovalMode) })
+  const firstModeRun = roundRuns.find((run) => run.approvalMode)
+  if (firstModeRun) {
+    rows.push({ label: 'Mode', value: formatApprovalModeLabel(firstModeRun) })
   }
 
   rows.push({

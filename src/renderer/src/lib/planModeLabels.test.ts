@@ -26,8 +26,8 @@ describe('composerPermissionOptions', () => {
 })
 
 describe('resolvePlanModeLabel', () => {
-  it('keeps the legacy preset-only label while callers migrate to workflow mode', () => {
-    expect(resolvePlanModeLabel('read_only')).toBe(PLAN_LABEL)
+  it('keeps plan distinct from bare read-only posture', () => {
+    expect(resolvePlanModeLabel('read_only')).toBe(READ_ONLY_RECON_LABEL)
     expect(resolvePlanModeLabel('plan')).toBe(PLAN_LABEL)
   })
 

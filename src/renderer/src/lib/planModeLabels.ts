@@ -33,9 +33,7 @@ export function resolvePlanModeLabel(
   if (typeof input === 'object' && input !== null) {
     if (input.workflowMode === 'plan') return PLAN_LABEL
     if (input.workflowMode === 'normal') return READ_ONLY_RECON_LABEL
-    return input.permissionPresetId === 'read_only' || input.permissionPresetId === 'plan'
-      ? PLAN_LABEL
-      : READ_ONLY_RECON_LABEL
+    return input.permissionPresetId === 'plan' ? PLAN_LABEL : READ_ONLY_RECON_LABEL
   }
-  return input === 'read_only' || input === 'plan' ? PLAN_LABEL : READ_ONLY_RECON_LABEL
+  return input === 'plan' ? PLAN_LABEL : READ_ONLY_RECON_LABEL
 }

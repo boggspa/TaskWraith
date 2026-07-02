@@ -741,7 +741,7 @@ type SideChatSeedContext = {
   transcriptVisibility?: NonNullable<ChatRecord['sideChatContext']>['transcriptVisibility']
 }
 const PLAN_IMPORT_CHIP_LABELS: Record<PlanImportChipId, string> = {
-  read_only: PLAN_LABEL,
+  read_only: READ_ONLY_RECON_LABEL,
   ask_before_edits: 'Ask before edits',
   no_shell: 'No shell',
   no_network: 'No network',
@@ -10794,7 +10794,10 @@ function App(): React.JSX.Element {
             }
           } else if (event.type === 'assistant_message_complete') {
             if (isVisibleRunChat() && updated.chatKind !== 'ensemble') setIsThinking(false)
-            const isPlanMode = updated.runs?.[updated.runs.length - 1]?.approvalMode === 'plan'
+            const lastRun = updated.runs?.[updated.runs.length - 1]
+            const lastWorkflowMode = lastRun?.workflowMode || updated.workflowMode
+            const isPlanMode =
+              lastRun?.approvalMode === 'plan' && lastWorkflowMode === 'plan'
             const parsedChoice = parsePlanModeChoice(event.content)
             // The complete event carries the FULL turn, so treat it as a
             // cumulative restatement: it may reach back across a trailing
@@ -10899,7 +10902,7 @@ function App(): React.JSX.Element {
               // orchestrator, so they hydrate pending modal state from existing
               // metadata instead.
               const parsedPlan =
-                parsedChoice || !isPlanMode || updated.chatKind === 'ensemble'
+                parsedChoice || updated.chatKind === 'ensemble'
                   ? null
                   : parseProposedPlan(event.content, isPlanMode)
               setPendingPlanChoice(
