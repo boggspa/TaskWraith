@@ -50,14 +50,17 @@ export function grokReadOnlyMcpAdvertiseEnabled(): boolean {
  * session alive across its turns (GrokSeatSession), giving it provider-native
  * cross-turn memory instead of a fresh `session/new` per turn.
  *
- * Default OFF — a deliberate seatbelt: grok's ACP implementation has not been
- * live-observed accepting a SECOND `session/prompt` on one session. Verify
- * with TASKWRAITH_GROK_DEBUG=1 + this flag on one panel; a failed second
- * prompt fails that turn closed and respawns fresh (never hangs a round).
- * Never applies to seats that advertise TaskWraith MCP servers (the bridge
- * env bakes per-run routing identity into session/new) or write seats.
+ * Default ON (user opt-in, 2026-07-02) with TASKWRAITH_GROK_SEAT_SESSIONS=0
+ * as the kill switch. One protocol assumption remains live-unverified: grok's
+ * ACP accepting a SECOND `session/prompt` on one session. The failure mode is
+ * contained — a rejected second prompt fails that turn closed and the seat
+ * respawns fresh next turn (never hangs a round) — but if Grok ensemble seats
+ * start failing every second turn, flip the kill switch and check a
+ * TASKWRAITH_GROK_DEBUG=1 capture. Never applies to seats that advertise
+ * TaskWraith MCP servers (the bridge env bakes per-run routing identity into
+ * session/new) or write seats.
  */
 export function grokSeatSessionsEnabled(): boolean {
   const value = process.env.TASKWRAITH_GROK_SEAT_SESSIONS
-  return value === '1' || value === 'true' || value === 'yes'
+  return value !== '0' && value !== 'false' && value !== 'no'
 }

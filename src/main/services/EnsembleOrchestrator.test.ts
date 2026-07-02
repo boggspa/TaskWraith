@@ -8890,7 +8890,9 @@ describe('slim resumed-turn prompts', () => {
     }
   })
 
-  it('falls back to the full shell when the flag is off even for stamped seats', async () => {
+  it('falls back to the full shell when the kill switch is set even for stamped seats', async () => {
+    const previous = process.env.TASKWRAITH_ENSEMBLE_SLIM_RESUME
+    process.env.TASKWRAITH_ENSEMBLE_SLIM_RESUME = '0'
     const chat = makeChat()
     const stamp = computeEnsemblePromptShellStamp(chat.ensemble!)
     chat.ensemble!.participants = chat.ensemble!.participants.map((participant) =>
@@ -8908,8 +8910,13 @@ describe('slim resumed-turn prompts', () => {
       prompt: 'Round two, continue.',
       event: { sender: {} as Electron.WebContents }
     })
-    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
-    expect(harness.dispatched[0].prompt).toContain('Participant roster:')
+    try {
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+      expect(harness.dispatched[0].prompt).toContain('Participant roster:')
+    } finally {
+      if (previous === undefined) delete process.env.TASKWRAITH_ENSEMBLE_SLIM_RESUME
+      else process.env.TASKWRAITH_ENSEMBLE_SLIM_RESUME = previous
+    }
   })
 })
 
