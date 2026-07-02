@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { resolveEffectiveRunPermissions } from './EffectiveRunPermissions'
+import {
+  isPlanInstrumentGrantHold,
+  resolveEffectiveRunPermissions
+} from './EffectiveRunPermissions'
 import type { AppSettings, ExternalPathGrant } from './store/types'
 
 function settings(overrides: Partial<AppSettings> = {}): AppSettings {
@@ -66,7 +69,7 @@ function settings(overrides: Partial<AppSettings> = {}): AppSettings {
 }
 
 describe('resolveEffectiveRunPermissions', () => {
-  it('turns plan-style presets into plan mode with write services denied', () => {
+  it('keeps read_only and plan both no-write, no-network, plan approvalMode', () => {
     for (const presetId of ['read_only', 'plan'] as const) {
       const resolved = resolveEffectiveRunPermissions({
         provider: 'claude',
@@ -78,16 +81,106 @@ describe('resolveEffectiveRunPermissions', () => {
       expect(resolved.approvalMode).toBe('plan')
       expect(resolved.readOnly).toBe(true)
       expect(resolved.networkAccess).toBe('deny')
+      // Shared floor: neither preset can write, run shell, eval, capture, or
+      // cross-thread-read — the split only diverges on the instrument services.
       expect(resolved.agenticServices.fileChanges).toBe('deny')
       expect(resolved.agenticServices.shellCommands).toBe('deny')
       expect(resolved.agenticServices.mcpTools).toBe('ask')
-      expect(resolved.agenticServices.subThreadDelegation).toBe('ask')
-      expect(resolved.agenticServices.canvasInteraction).toBe('deny')
       expect(resolved.agenticServices.crossThreadRead).toBe('deny')
-      expect(resolved.agenticServices.mediaEditing).toBe('deny')
       expect(resolved.agenticServices.mediaRecording).toBe('deny')
       expect(resolved.agenticServices.canvasEval).toBe('deny')
     }
+  })
+
+  it('read_only is the strict floor — no elevation path (subthread/canvas/media denied)', () => {
+    const resolved = resolveEffectiveRunPermissions({
+      provider: 'claude',
+      workspacePath: '/repo',
+      settings: settings(),
+      presetId: 'read_only'
+    })
+    expect(resolved.agenticServices.subThreadDelegation).toBe('deny')
+    expect(resolved.agenticServices.canvasInteraction).toBe('deny')
+    expect(resolved.agenticServices.mediaEditing).toBe('deny')
+  })
+
+  it('plan is the instrument tier — subthread/canvas/media approval-queued (ask), never a write', () => {
+    const resolved = resolveEffectiveRunPermissions({
+      provider: 'claude',
+      workspacePath: '/repo',
+      settings: settings(),
+      presetId: 'plan'
+    })
+    expect(resolved.agenticServices.subThreadDelegation).toBe('ask')
+    expect(resolved.agenticServices.canvasInteraction).toBe('ask')
+    expect(resolved.agenticServices.mediaEditing).toBe('ask')
+    expect(resolved.agenticServices.fileChanges).toBe('deny')
+    expect(resolved.agenticServices.shellCommands).toBe('deny')
+    expect(resolved.agenticServices.mediaRecording).toBe('deny')
+    expect(resolved.agenticServices.canvasEval).toBe('deny')
+  })
+
+  it('read_only and plan differ ONLY on the instrument services (guard against re-merge/drift)', () => {
+    const base = { provider: 'claude' as const, workspacePath: '/repo', settings: settings() }
+    const readOnly = resolveEffectiveRunPermissions({ ...base, presetId: 'read_only' }).agenticServices
+    const plan = resolveEffectiveRunPermissions({ ...base, presetId: 'plan' }).agenticServices
+    const INSTRUMENT_SERVICES: readonly string[] = [
+      'subThreadDelegation',
+      'canvasInteraction',
+      'mediaEditing'
+    ]
+    for (const service of Object.keys(readOnly) as (keyof typeof readOnly)[]) {
+      if (INSTRUMENT_SERVICES.includes(service)) {
+        // plan RELAXES read_only's deny to an approval prompt on these three.
+        expect(readOnly[service]).toBe('deny')
+        expect(plan[service]).toBe('ask')
+      } else {
+        // everything else is byte-identical — plan is a strict superset.
+        expect(plan[service]).toBe(readOnly[service])
+      }
+    }
+  })
+
+  it('plan instruments stay per-invocation — a standing workspace grant does NOT auto-allow them', () => {
+    const grants = [
+      {
+        id: 'grant-canvas',
+        provider: 'claude' as const,
+        workspacePath: '/repo',
+        service: 'canvasInteraction' as const,
+        createdAt: '2026-05-24T00:00:00.000Z',
+        updatedAt: '2026-05-24T00:00:00.000Z'
+      },
+      {
+        id: 'grant-media',
+        provider: 'claude' as const,
+        workspacePath: '/repo',
+        service: 'mediaEditing' as const,
+        createdAt: '2026-05-24T00:00:00.000Z',
+        updatedAt: '2026-05-24T00:00:00.000Z'
+      }
+    ]
+    // Under plan the standing grant is ignored — instruments remain a prompt
+    // (standing per-workspace instrument grants are the conformance-gated W7-b rung).
+    const plan = resolveEffectiveRunPermissions({
+      provider: 'claude',
+      workspacePath: '/repo',
+      settings: settings({ agenticWorkspaceGrants: grants }),
+      presetId: 'plan'
+    })
+    expect(plan.agenticServices.canvasInteraction).toBe('ask')
+    expect(plan.agenticServices.mediaEditing).toBe('ask')
+
+    // The SAME grant auto-allows in-workspace under default — proving the grant
+    // is real and the immunity is plan-specific, not a global de-grant.
+    const def = resolveEffectiveRunPermissions({
+      provider: 'claude',
+      workspacePath: '/repo',
+      settings: settings({ agenticWorkspaceGrants: grants }),
+      presetId: 'default'
+    })
+    expect(def.agenticServices.canvasInteraction).toBe('workspace')
+    expect(def.agenticServices.mediaEditing).toBe('workspace')
   })
 
   it('denies canvasInteraction under read_only and allows it under full_access', () => {
@@ -374,5 +467,29 @@ describe('resolveEffectiveRunPermissions', () => {
       expect(resolved.approvalMode).not.toBe('plan')
       expect(resolved.readOnly).toBe(false)
     }
+  })
+})
+
+describe('isPlanInstrumentGrantHold — gate-level grant immunity for plan instruments', () => {
+  it('holds (forces a prompt) for plan + canvas/media instruments', () => {
+    expect(isPlanInstrumentGrantHold('plan', 'canvasInteraction')).toBe(true)
+    expect(isPlanInstrumentGrantHold('plan', 'mediaEditing')).toBe(true)
+  })
+
+  it('does NOT hold for plan + non-instrument services (subthread was already grantable)', () => {
+    // subThreadDelegation was ASK + grantable under plan before the split — a
+    // grant hold here would be a regression, so it is deliberately excluded.
+    expect(isPlanInstrumentGrantHold('plan', 'subThreadDelegation')).toBe(false)
+    expect(isPlanInstrumentGrantHold('plan', 'mcpTools')).toBe(false)
+    expect(isPlanInstrumentGrantHold('plan', 'fileChanges')).toBe(false)
+  })
+
+  it('does NOT hold under other presets — canvas/media stay normally grantable there', () => {
+    for (const preset of ['read_only', 'default', 'workspace_write', 'full_access', 'custom']) {
+      expect(isPlanInstrumentGrantHold(preset, 'canvasInteraction')).toBe(false)
+      expect(isPlanInstrumentGrantHold(preset, 'mediaEditing')).toBe(false)
+    }
+    expect(isPlanInstrumentGrantHold(undefined, 'canvasInteraction')).toBe(false)
+    expect(isPlanInstrumentGrantHold(null, 'mediaEditing')).toBe(false)
   })
 })

@@ -4,29 +4,34 @@ import type { EffectiveRunPermissions } from './store/types'
  * Recon-seat detection — spike 1 of
  * `docs/ensemble-posture-fanout-preamble-design.md`.
  *
- * `read_only` (Recon) and `plan` resolve to byte-identical permission
- * presets (`approvalMode: 'plan'` — see `DEFAULT_PERMISSION_PRESETS` in
- * EffectiveRunPermissions.ts), because 'plan' is the canonical no-write
- * wire value required by `clampUntrustedRunPosture` (a trusted plan
- * posture MUST carry `readOnly: true`, and every fail-closed downgrade
- * lands on plan + read_only). Provider adapters that key their native
- * PLAN persona off `approvalMode === 'plan'` therefore turn every
- * Read-Only/Recon turn into a plan-shaped turn.
+ * `read_only` (Recon) and `plan` share the same `approvalMode: 'plan'`
+ * WIRE value and both carry `readOnly: true`, so provider adapters that
+ * key their native PLAN persona off `approvalMode === 'plan'` turn every
+ * Read-Only/Recon turn into a plan-shaped turn. But the two presets are
+ * NOT identical: after the posture split they resolve to DISTINCT service
+ * maps (see `DEFAULT_PERMISSION_PRESETS` in EffectiveRunPermissions.ts) —
+ * `plan` relaxes the instrument services (canvasInteraction / mediaEditing
+ * / subThreadDelegation) to 'ask', while `read_only` denies them. 'plan'
+ * is still the canonical no-write wire value required by
+ * `clampUntrustedRunPosture` (a trusted plan posture MUST carry
+ * `readOnly: true`, and every fail-closed downgrade lands on the STRICT
+ * read_only map). Do NOT re-merge the two maps, and do NOT widen the
+ * predicate below to accept presetId 'plan' — recon is read_only ONLY.
  *
- * This helper recovers the recon intent from the two fields that DO
- * record it — both already inside the posture HMAC
- * (`RunPermissionPostureContext.workflowMode` + the signed
+ * Because both presets share the 'plan' approvalMode, recon intent must be
+ * recovered from the two fields that DO record it — both already inside the
+ * posture HMAC (`RunPermissionPostureContext.workflowMode` + the signed
  * `effectivePermissions` object), so consuming them adds no new trust
  * surface:
  *
- *   - `workflowMode` — solo composer picker: 'plan' = Plan workflow,
- *     'normal' = Read-Only/Recon (ComposerService stamps
- *     presetId 'read_only' for BOTH). `normalizeAgentRunPayload` forces
- *     'normal' when the clamp downgrades an unverifiable posture, so
- *     downgraded runs read as recon: containment is unchanged (the
- *     effectivePermissions service denies do the enforcement, not the
- *     provider's plan persona) and findings-shaped output is the right
- *     degraded behavior.
+ *   - `workflowMode` — solo composer picker: 'plan' = Plan workflow
+ *     (ComposerService stamps presetId 'plan' — the instrument tier),
+ *     'normal' = Read-Only/Recon (presetId 'read_only' — the strict floor).
+ *     `normalizeAgentRunPayload` forces 'normal' when the clamp downgrades
+ *     an unverifiable posture, so downgraded runs read as recon: containment
+ *     is unchanged (the effectivePermissions service denies do the
+ *     enforcement, not the provider's plan persona) and findings-shaped
+ *     output is the right degraded behavior.
  *   - `effectivePermissions.presetId` — ensemble seats: 'read_only'
  *     (recon/review seat) vs 'plan' (plan seat).
  *

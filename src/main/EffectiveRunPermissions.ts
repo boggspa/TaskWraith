@@ -26,27 +26,77 @@ const AGENTIC_SERVICE_IDS: AgenticServiceId[] = [
   'canvasEval'
 ]
 
-const PLAN_READ_ONLY_AGENTIC_SERVICES: PermissionPreset['agenticServices'] = {
+// Posture split (roadmap T1 / W7 down-payment). `read_only` and `plan` used to
+// share ONE service map, so the two presets were byte-identical and the
+// permission lattice lied: the UI offered two postures that enforced the same
+// thing. They now have DISTINCT maps and MUST NOT be re-merged.
+//
+// Both keep `approvalMode: 'plan'` (the provider wire value — Grok/Cursor
+// physically run `--mode plan` and cannot write) and `readOnly: true`, so
+// NEITHER can edit files, run shell, eval, capture, cross-thread-read, or write
+// directly. The ONLY axis on which they differ is which agent INSTRUMENTS a
+// human may approve mid-run:
+//
+//   read_only (the strict floor — "Recon"): no elevation path at all.
+//     subThreadDelegation is DENY (a read_only seat cannot spawn a subthread
+//     that would inherit no read_only posture — the one real escalation vector),
+//     and canvas actuation + media compute stay DENY.
+//   plan (the instruments tier): subthread delegation, canvas actuation
+//     (canvas_click/fill), and media-compute (transcode/render/probe) are ASK —
+//     permitted only through per-invocation human approval. read_only < plan.
+//
+// canvas_click/fill route to `canvasInteraction` and media tools to
+// `mediaEditing` — their OWN services, NOT the generic `mcpTools` service — so
+// the gate's `isReadOnlyBlockedTool` mcpTools->shellCommands reroute never fires
+// for them and the ASK/DENY verdict comes straight from THESE preset entries.
+// (Verified across the Claude/Kimi/Codex/shared-MCP gate sites.) The
+// deny-survival line in effectiveAgenticSettings preserves each DENY across the
+// key-by-key rebuild.
+const READ_ONLY_AGENTIC_SERVICES: PermissionPreset['agenticServices'] = {
   shellCommands: 'deny',
   fileChanges: 'deny',
   mcpTools: 'ask',
-  subThreadDelegation: 'ask',
-  // Load-bearing: with canvas_click/fill now on their own service, the gate's
-  // mcpTools->shellCommands read-only reroute no longer fires for them, so the
-  // read-only DENY must come from THIS preset entry.
+  // No elevation path: a read_only seat may not delegate to a subthread (which
+  // would inherit no read_only posture). This is the load-bearing delta from
+  // `plan` — it is DENY here, ASK there.
+  subThreadDelegation: 'deny',
+  // Canvas actuation (canvas_click/fill) mutates the app surface — denied under
+  // read_only; approval-queued under `plan`.
   canvasInteraction: 'deny',
   // Cross-thread reads are denied under read-only — no reaching into other
-  // threads'/workspaces' run history from a read-only seat.
+  // threads'/workspaces' run history from a read-only seat. (Not an instrument;
+  // stays DENY under `plan` too.)
   crossThreadRead: 'deny',
-  // Media editing (transcode/encode/probe/mix etc.) is mutating/compute; with
-  // media now on its OWN service the gate's mcpTools->shellCommands read-only
-  // reroute no longer fires for it, so the read-only DENY must come from THIS
-  // preset entry (mirrors canvasInteraction). The deny-survival line in
-  // effectiveAgenticSettings preserves it across the key-by-key rebuild.
+  // Media editing (transcode/encode/probe/mix etc.) is mutating/compute — denied
+  // under read_only; approval-queued under `plan`.
   mediaEditing: 'deny',
-  // Media recording (future capture) is denied under read-only too.
+  // Media recording (future capture) is non-grantable — denied under both.
   mediaRecording: 'deny',
-  // Arbitrary canvas_eval is RCE — never available under read-only.
+  // Arbitrary canvas_eval is RCE — never available under read_only OR plan.
+  canvasEval: 'deny'
+}
+
+// `plan` = read_only PLUS the approval-gated instrument belt (W7 down-payment).
+// Strict superset of read_only: it only ever RELAXES read_only's DENY to ASK on
+// the instrument services, never the reverse, so plan is always ≥ read_only in
+// authority. Delivery is conditional-by-design: `preserveExplicitDeny` clamps
+// any of these ASK entries back to DENY when the user's GLOBAL agenticServices
+// setting for that service is 'deny' (a global kill switch always wins).
+const PLAN_AGENTIC_SERVICES: PermissionPreset['agenticServices'] = {
+  shellCommands: 'deny',
+  fileChanges: 'deny',
+  mcpTools: 'ask',
+  // Plan may delegate to a subthread with per-invocation approval.
+  subThreadDelegation: 'ask',
+  // Instrument: canvas actuation permitted under plan via human approval.
+  canvasInteraction: 'ask',
+  // Not an instrument — cross-thread history reads stay denied under plan.
+  crossThreadRead: 'deny',
+  // Instrument: media compute permitted under plan via human approval.
+  mediaEditing: 'ask',
+  // Capture is non-grantable — denied under plan too.
+  mediaRecording: 'deny',
+  // Arbitrary canvas_eval is RCE — never available under plan.
   canvasEval: 'deny'
 }
 
@@ -55,14 +105,14 @@ export const DEFAULT_PERMISSION_PRESETS: Record<PermissionPresetId, PermissionPr
     id: 'read_only',
     label: 'Read only',
     approvalMode: 'plan',
-    agenticServices: PLAN_READ_ONLY_AGENTIC_SERVICES,
+    agenticServices: READ_ONLY_AGENTIC_SERVICES,
     networkAccess: 'deny'
   },
   plan: {
     id: 'plan',
     label: 'Plan',
     approvalMode: 'plan',
-    agenticServices: PLAN_READ_ONLY_AGENTIC_SERVICES,
+    agenticServices: PLAN_AGENTIC_SERVICES,
     networkAccess: 'deny'
   },
   default: {
@@ -130,6 +180,40 @@ const PREVIEW_RISK_PROMPT_SERVICES: AgenticServiceId[] = [
   'mediaEditing'
 ]
 
+// The `plan` preset relaxes these instrument services from read_only's DENY to
+// ASK — but ONLY as per-invocation approval (the W7 down-payment rung). A
+// standing workspace grant must NOT silently upgrade them to auto-allow under
+// `plan`: standing per-workspace instrument grants are the W7-b rung, gated on
+// the instrument-conformance suite, not this change. They stay grantable under
+// `default`/`full_access`, where the user opted into that authority tier.
+// (subThreadDelegation is deliberately absent — it was already ASK + grantable
+// under `plan` before the split, so grant-immunity there would be a regression.)
+export const PLAN_APPROVAL_ONLY_INSTRUMENT_SERVICES: ReadonlySet<AgenticServiceId> =
+  new Set<AgenticServiceId>(['canvasInteraction', 'mediaEditing'])
+
+/**
+ * Should a would-be automatic approval of `service` be downgraded to a
+ * per-invocation prompt because the run is on the `plan` preset and the service
+ * is one of plan's approval-only instruments (canvasInteraction / mediaEditing)?
+ *
+ * This is the ENFORCEMENT-GATE half of the resolver's `PLAN_APPROVAL_ONLY_*`
+ * guard. The resolver keeps these entries at 'ask' (never upgrading to
+ * 'workspace') in the resolved map, but the approval gate re-derives grant
+ * status straight from the raw grants store — which is preset-blind — so a
+ * standing workspace grant or an in-run session grant would otherwise
+ * auto-allow these instruments under `plan` with no human approval. Callers
+ * fold this into their `neverAutoAllow` flag so EVERY auto-allow path
+ * (policy/grant, session-YOLO, Bossman, native preflight) forces the prompt.
+ * Under `default` / `full_access` this returns false, so those tiers keep
+ * auto-allowing the same tools as before.
+ */
+export function isPlanInstrumentGrantHold(
+  presetId: string | null | undefined,
+  service: AgenticServiceId | null | undefined
+): boolean {
+  return presetId === 'plan' && !!service && PLAN_APPROVAL_ONLY_INSTRUMENT_SERVICES.has(service)
+}
+
 export function resolveEffectiveRunPermissions(
   input: ResolveEffectiveRunPermissionsInput
 ): EffectiveRunPermissions {
@@ -148,7 +232,11 @@ export function resolveEffectiveRunPermissions(
   for (const service of AGENTIC_SERVICE_IDS) {
     const next = overrideServices[service] || presetServices[service] || agenticServices[service]
     agenticServices[service] = preserveExplicitDeny(baseServices[service], next)
-    if (workspaceGrantServiceIds.includes(service) && agenticServices[service] === 'ask') {
+    if (
+      workspaceGrantServiceIds.includes(service) &&
+      agenticServices[service] === 'ask' &&
+      !(presetId === 'plan' && PLAN_APPROVAL_ONLY_INSTRUMENT_SERVICES.has(service))
+    ) {
       agenticServices[service] = 'workspace'
     }
   }
