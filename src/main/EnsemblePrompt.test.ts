@@ -4,6 +4,7 @@ import {
   buildEnsembleParticipantPrompt,
   buildParticipantTokenMap,
   ensembleSpeakerForMessage as buildEnsembleSpeaker,
+  formatFileChangeDigest,
   formatRoundModeInstructions,
   formatSameProviderDisambiguationNote,
   formatToolTraceSummary,
@@ -1337,6 +1338,79 @@ describe('formatToolTraceSummary', () => {
       ta('edit')
     ])
     expect(summary).toBe('(tools: edit)')
+  })
+})
+
+/*
+ * Spike 3 — per-file change digest rendered next to the tool-trace
+ * line. The diff summaries were already computed on ToolActivity but
+ * never surfaced, so writers could not see WHAT peers changed.
+ */
+describe('formatFileChangeDigest', () => {
+  const write = (
+    path: string,
+    additions?: number,
+    deletions?: number,
+    overrides: Partial<ToolActivity> = {}
+  ): ToolActivity => ({
+    id: `${path}-${Math.random().toString(36).slice(2, 8)}`,
+    toolName: 'apply_patch',
+    displayName: 'apply_patch',
+    category: 'write',
+    status: 'success',
+    diffSummary: {
+      source: 'patch_preview',
+      confidence: 'exact',
+      files: [{ path, additions, deletions }]
+    },
+    ...overrides
+  })
+
+  it('returns the empty string when nothing changed files', () => {
+    expect(formatFileChangeDigest(undefined)).toBe('')
+    expect(formatFileChangeDigest([])).toBe('')
+    expect(
+      formatFileChangeDigest([
+        {
+          id: 'r1',
+          toolName: 'read_file',
+          displayName: 'read_file',
+          category: 'read',
+          status: 'success'
+        }
+      ])
+    ).toBe('')
+  })
+
+  it('renders per-file adds/dels and merges repeated edits to one path', () => {
+    const digest = formatFileChangeDigest([
+      write('src/foo.ts', 40, 5),
+      write('src/foo.ts', 2, 2),
+      write('src/bar.ts', 3, 0)
+    ])
+    expect(digest).toBe('(files changed: src/foo.ts +42/-7 · src/bar.ts +3/-0)')
+  })
+
+  it('orders by descending churn, then alphabetically, capped at 6 paths', () => {
+    const activities = [
+      write('small.ts', 1, 0),
+      write('big.ts', 100, 50),
+      ...['a.ts', 'b.ts', 'c.ts', 'd.ts', 'e.ts'].map((path) => write(path, 10, 0))
+    ]
+    const digest = formatFileChangeDigest(activities)
+    expect(digest.startsWith('(files changed: big.ts +100/-50')).toBe(true)
+    expect(digest).toContain('…(+1 more)')
+    expect(digest).not.toContain('small.ts')
+  })
+
+  it('lists a bare write filePath when no structured diff exists', () => {
+    const digest = formatFileChangeDigest([
+      write('ignored', undefined, undefined, {
+        diffSummary: undefined,
+        filePath: 'src/touched.ts'
+      })
+    ])
+    expect(digest).toBe('(files changed: src/touched.ts)')
   })
 })
 

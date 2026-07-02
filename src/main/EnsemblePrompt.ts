@@ -951,6 +951,80 @@ export function formatToolTraceSummary(activities: readonly ToolActivity[] | und
 }
 
 /**
+ * Spike 3 (docs/ensemble-posture-fanout-preamble-design.md) — compact
+ * per-file change digest for the tagged transcript.
+ *
+ * The tool-trace line above collapses peers' edits into
+ * `(tools: apply_patch × 4)` — no file names, no sizes — even though
+ * per-file diff summaries are already computed and stored on each
+ * `ToolActivity.diffSummary` by the orchestrator. That left later
+ * writers unable to see WHAT changed since their last turn without
+ * re-reading the workspace. This renders the stored summaries as one
+ * extra line:
+ *
+ *   (files changed: src/foo.ts +42/-7 · src/bar.ts +3/-0 · …(+2 more))
+ *
+ * - Aggregated by path across the message's activities (repeated edits
+ *   to one file merge their adds/dels).
+ * - Additions/deletions omitted when the summary carried none (a bare
+ *   `write` activity's filePath still lists the touched file).
+ * - Ordered by descending total churn, then alphabetically; capped at
+ *   6 paths with an "…(+N more)" suffix, mirroring the tools line.
+ *
+ * Exported for unit-testing in isolation; the trip through
+ * `buildTaggedTranscript` is covered by the prompt-builder tests.
+ */
+export function formatFileChangeDigest(activities: readonly ToolActivity[] | undefined): string {
+  if (!activities || activities.length === 0) return ''
+  const byPath = new Map<string, { additions: number; deletions: number; counted: boolean }>()
+  const record = (
+    path: string | undefined,
+    additions: number | undefined,
+    deletions: number | undefined
+  ): void => {
+    const key = (path || '').trim()
+    if (!key) return
+    const entry = byPath.get(key) || { additions: 0, deletions: 0, counted: false }
+    if (typeof additions === 'number' && Number.isFinite(additions)) {
+      entry.additions += Math.max(0, additions)
+      entry.counted = true
+    }
+    if (typeof deletions === 'number' && Number.isFinite(deletions)) {
+      entry.deletions += Math.max(0, deletions)
+      entry.counted = true
+    }
+    byPath.set(key, entry)
+  }
+  for (const activity of activities) {
+    const files = activity.diffSummary?.files
+    if (files && files.length > 0) {
+      for (const file of files) record(file.path, file.additions, file.deletions)
+      continue
+    }
+    // No structured diff — a write-category activity still names the file
+    // it touched, which is the load-bearing half of the digest.
+    if (activity.category === 'write' && activity.filePath) {
+      record(activity.filePath, undefined, undefined)
+    }
+  }
+  if (byPath.size === 0) return ''
+  const ordered = Array.from(byPath.entries()).sort((a, b) => {
+    const churnA = a[1].additions + a[1].deletions
+    const churnB = b[1].additions + b[1].deletions
+    if (churnB !== churnA) return churnB - churnA
+    return a[0].localeCompare(b[0])
+  })
+  const HEAD = 6
+  const head = ordered.slice(0, HEAD)
+  const tail = ordered.length - head.length
+  const segments = head.map(([path, entry]) =>
+    entry.counted ? `${path} +${entry.additions}/-${entry.deletions}` : path
+  )
+  const suffix = tail > 0 ? ` · …(+${tail} more)` : ''
+  return `(files changed: ${segments.join(' · ')}${suffix})`
+}
+
+/**
  * 1.0.7 — stable per-participant handle for the agent-visible
  * transcript tag (`[Codex / Planner #p3]`).
  *
@@ -1051,7 +1125,9 @@ function buildTaggedTranscript(
     // produce the response. Pure prose messages (no tools) skip
     // the line so the transcript stays lean.
     const trace = formatToolTraceSummary(message.toolActivities)
-    const body = trace ? `${trace}\n${text}` : text
+    const fileDigest = formatFileChangeDigest(message.toolActivities)
+    const traceLines = [trace, fileDigest].filter(Boolean).join('\n')
+    const body = traceLines ? `${traceLines}\n${text}` : text
     const line = `[${tag}]\n${body}`
     if (used + line.length > maxChars && lines.length > 0) {
       truncated = true
