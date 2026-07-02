@@ -457,7 +457,11 @@ import {
   renderPlanImportItems
 } from './lib/planImportPresentation'
 import { applyRecoveryRecordsToChatRuns } from './lib/recoverChatRunTerminals'
-import { visibleRunningChatIds } from './lib/runningChatVisibility'
+import {
+  hasKnownInactiveEnsembleRound,
+  hasTerminalLastRun,
+  visibleRunningChatIds
+} from './lib/runningChatVisibility'
 import {
   DEFAULT_STEER_CANCEL_TIMEOUT_MS,
   DEFAULT_STEER_POLL_INTERVAL_MS,
@@ -2213,7 +2217,15 @@ function App(): React.JSX.Element {
     chatId: currentChat?.appChatId ?? null,
     messages: currentChat?.messages,
     runCompleteNotice,
-    streamingActive: currentChat ? runningChatIds.has(currentChat.appChatId) : false
+    // Raw runningChatIds is purely additive when an exit is missed; apply the
+    // same terminal-last-run / inactive-ensemble-round filters the sidebar
+    // badge uses so an orphaned entry can't pin a phantom streaming pill.
+    streamingActive: Boolean(
+      currentChat &&
+        runningChatIds.has(currentChat.appChatId) &&
+        !hasTerminalLastRun(currentChat) &&
+        !hasKnownInactiveEnsembleRound(currentChat)
+    )
   })
   const sideTranscriptScrollRef = useRef<HTMLDivElement>(null)
   const sideTranscriptContentRef = useRef<HTMLDivElement>(null)
@@ -10090,13 +10102,6 @@ function App(): React.JSX.Element {
         }
         promptMessageId = userMessage.id
         chatToUpdate.messages = [...chatToUpdate.messages, userMessage]
-        if (isRunVisibleAtStart) {
-          // Sending a prompt re-locks the transcript to the live edge — the
-          // messages layout effect performs the snap when the user bubble
-          // renders (Claude/Codex parity: your own send always returns you
-          // to the conversation tail, even if you were reading history).
-          relockMainTranscriptToLatest()
-        }
         if (discordContextReads.length > 0) {
           chatToUpdate.messages = [
             ...chatToUpdate.messages,
@@ -11520,6 +11525,18 @@ function App(): React.JSX.Element {
       return
     }
 
+    // Gesture-time re-lock (Claude/Codex parity): the composer submit is the
+    // user's action, so the visible transcript returns to the live edge NOW —
+    // for the queued branch too (the send is the gesture; the drain minutes
+    // later is not). Scheduled tasks and queue drains re-enter via executeRun
+    // directly and must never relock a reading user.
+    if (
+      !request.existingPrompt &&
+      (request.chatRecord?.appChatId || currentChat?.appChatId) ===
+        (currentChatIdRef.current || currentChat?.appChatId)
+    ) {
+      relockMainTranscriptToLatest()
+    }
     if (isChatBusy(request.chatRecord?.appChatId || currentChat?.appChatId)) {
       queueRunRequest(request)
       if (shouldDispatchGuest && parentChat?.appChatId) {
@@ -12287,6 +12304,11 @@ function App(): React.JSX.Element {
     const targetChatId = request.chatRecord?.appChatId || currentChat?.appChatId
     if (!targetChatId) {
       return
+    }
+    // Steering is a composer gesture in the visible chat — same re-lock as a
+    // fresh send (gesture-time only; see handleRun).
+    if (!existingPrompt && targetChatId === (currentChatIdRef.current || currentChat?.appChatId)) {
+      relockMainTranscriptToLatest()
     }
 
     const targetChat = request.chatRecord || currentChat

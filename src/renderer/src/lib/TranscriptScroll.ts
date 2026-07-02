@@ -57,17 +57,27 @@ export const STICK_DISENGAGE_PX = 4
 /**
  * Wider re-engage band for a DELIBERATE downward return. The 2px engage
  * band is right for passive landings, but while a run is streaming the
- * exact live edge is a moving target: the user drags/wheels down to catch
- * up, content grows under them, and by the time the rAF evaluate reads the
+ * exact live edge is a moving target: the user wheels down to catch up,
+ * content grows under them, and by the time the rAF evaluate reads the
  * metrics they are tens of pixels short — follow never re-arms and the
- * transcript runs away (Claude/Codex re-lock in this gesture). A downward
- * user movement (the scroll-away flag is set, so a real gesture owns the
- * scroll) that lands within this band re-engages; the caller then snaps the
- * remaining distance so the gesture completes at the live edge. Kept small
- * enough that stopping a paragraph above the bottom to read is never
- * captured.
+ * transcript runs away (Claude/Codex re-lock in this gesture). A landing
+ * inside this band re-engages ONLY under a recent, verified downward input
+ * gesture (`recentDownwardIntent`: wheel/touch/keys — the signals scroll
+ * EVENTS cannot fake); the caller then snaps the remaining distance so the
+ * gesture completes at the live edge. Scrollbar scrubs, shrink clamps, and
+ * unarmed restore writes produce no input gesture and keep the strict 2px
+ * path — so pausing a drag near the bottom to read is never captured, and
+ * an app-owned reflow can never convert a reading position into a re-lock.
  */
 export const STICK_REENGAGE_DOWNWARD_PX = 48
+
+/**
+ * How long a downward wheel/touch/key gesture vouches for a near-bottom
+ * landing. Long enough to cover the gesture's own momentum and the rAF
+ * evaluate that follows it; short enough that a stale flick can't hand the
+ * band to an unrelated later layout shift.
+ */
+export const DOWNWARD_INTENT_WINDOW_MS = 400
 
 export const PROGRAMMATIC_SCROLL_EPSILON_PX = 1
 
@@ -244,6 +254,12 @@ export function shouldReengageAutoFollowAfterScroll(input: {
   previousScrollTop: number
   nextScrollTop: number
   isProgrammatic: boolean
+  /** True when a downward wheel/touch/key gesture happened within
+   *  DOWNWARD_INTENT_WINDOW_MS and no upward gesture followed it. Scroll
+   *  EVENTS can't prove a gesture (scrollbar scrubs, restore writes, and a
+   *  frame-coalesced net movement all look alike), so the wide band demands
+   *  this out-of-band evidence. */
+  recentDownwardIntent: boolean
 }): boolean {
   const movedDown =
     Number.isFinite(input.previousScrollTop) &&
@@ -256,12 +272,14 @@ export function shouldReengageAutoFollowAfterScroll(input: {
   }
   // Deliberate downward return that lands NEAR the live edge (see
   // STICK_REENGAGE_DOWNWARD_PX): re-arm even though streamed growth kept the
-  // exact edge out of reach. Gated on the scroll-away flag so positional
-  // landings a user never made (shrink clamps, anchor writes) cannot re-arm
-  // — those keep the strict 2px path above.
+  // exact edge out of reach. Demands BOTH the scroll-away flag (a user owns
+  // the scroll) and a recent verified downward gesture — net-downward scroll
+  // movement alone can be an app-owned restore write or a coalesced frame
+  // whose LAST input was actually upward.
   if (!Number.isFinite(input.distanceFromBottom)) return false
   if (input.isProgrammatic) return false
   if (!input.userScrolledAwayInThisFrame) return false
+  if (!input.recentDownwardIntent) return false
   return movedDown && input.distanceFromBottom <= STICK_REENGAGE_DOWNWARD_PX
 }
 

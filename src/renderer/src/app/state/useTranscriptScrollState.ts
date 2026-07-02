@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 
 import {
   CODE_BLOCK_RESIZE_EVENT,
+  DOWNWARD_INTENT_WINDOW_MS,
   STICK_ENGAGE_PX,
   captureChatScrollState,
   expectedBottomScrollTop,
@@ -49,6 +50,12 @@ export function useTranscriptScrollState({
   // just armed, and a mid-flight content growth would strand the jump short
   // of the bottom with the pill re-appearing.
   const jumpInFlightRef = useRef(false)
+  // Timestamp of the last downward wheel/touch/key gesture; zeroed by any
+  // upward gesture or scroll-away. Vouches for the wide re-engage band
+  // (STICK_REENGAGE_DOWNWARD_PX) — scroll events alone can't distinguish a
+  // real downward return from an unarmed restore write or a coalesced frame
+  // whose last input was upward.
+  const downwardIntentAtRef = useRef(0)
   const repinRafIdRef = useRef<number | null>(null)
   const lastTranscriptScrollTopRef = useRef(0)
   const programmaticScrollTargetRef = useRef<number | null>(null)
@@ -207,7 +214,9 @@ export function useTranscriptScrollState({
           userScrolledAwayInThisFrame: userScrolledAwayInFrameRef.current,
           previousScrollTop,
           nextScrollTop,
-          isProgrammatic: false
+          isProgrammatic: false,
+          recentDownwardIntent:
+            Date.now() - downwardIntentAtRef.current < DOWNWARD_INTENT_WINDOW_MS
         })
       ) {
         autoFollowRef.current = true
@@ -249,6 +258,7 @@ export function useTranscriptScrollState({
         userScrolledAwayInFrameRef.current = true
         autoFollowRef.current = false
         jumpInFlightRef.current = false
+        downwardIntentAtRef.current = 0
       }
       if (rafId !== null) return
       rafId = requestAnimationFrame(evaluate)
@@ -269,16 +279,25 @@ export function useTranscriptScrollState({
     const scroller = transcriptScrollRef.current
     if (!scroller) return
 
-    const handleUpwardIntent = (deltaY: number) => {
+    const handleScrollIntent = (deltaY: number) => {
+      if (deltaY > 0) {
+        // Downward gesture — vouches for the wide re-engage band for a
+        // short window (see DOWNWARD_INTENT_WINDOW_MS).
+        downwardIntentAtRef.current = Date.now()
+        return
+      }
       if (deltaY >= 0) return
       if (scroller.scrollTop > 0) {
         userScrolledAwayInFrameRef.current = true
         autoFollowRef.current = false
         jumpInFlightRef.current = false
+        // The user's LAST input is upward — a stale downward flick must not
+        // hand the band to this frame's coalesced net movement.
+        downwardIntentAtRef.current = 0
       }
     }
 
-    const onWheel = (event: WheelEvent) => handleUpwardIntent(event.deltaY)
+    const onWheel = (event: WheelEvent) => handleScrollIntent(event.deltaY)
 
     let lastTouchY: number | null = null
     const onTouchStart = (event: TouchEvent) => {
@@ -287,7 +306,7 @@ export function useTranscriptScrollState({
     const onTouchMove = (event: TouchEvent) => {
       const currentY = event.touches[0]?.clientY ?? null
       if (currentY === null || lastTouchY === null) return
-      handleUpwardIntent(lastTouchY - currentY)
+      handleScrollIntent(lastTouchY - currentY)
       lastTouchY = currentY
     }
     const onTouchEnd = () => {
@@ -296,7 +315,11 @@ export function useTranscriptScrollState({
 
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'PageUp' || event.key === 'ArrowUp' || event.key === 'Home') {
-        handleUpwardIntent(-1)
+        handleScrollIntent(-1)
+        return
+      }
+      if (event.key === 'PageDown' || event.key === 'ArrowDown') {
+        handleScrollIntent(1)
         return
       }
       if (event.key === 'End') {

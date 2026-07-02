@@ -275,7 +275,8 @@ describe('TranscriptScroll', () => {
           userScrolledAwayInThisFrame: false,
           previousScrollTop: 300,
           nextScrollTop: 300,
-          isProgrammatic: false
+          isProgrammatic: false,
+            recentDownwardIntent: false
         })
       ).toBe(true)
     })
@@ -287,7 +288,8 @@ describe('TranscriptScroll', () => {
           userScrolledAwayInThisFrame: true,
           previousScrollTop: 300,
           nextScrollTop: 260,
-          isProgrammatic: false
+          isProgrammatic: false,
+            recentDownwardIntent: false
         })
       ).toBe(false)
     })
@@ -299,7 +301,8 @@ describe('TranscriptScroll', () => {
           userScrolledAwayInThisFrame: true,
           previousScrollTop: 260,
           nextScrollTop: 300,
-          isProgrammatic: false
+          isProgrammatic: false,
+            recentDownwardIntent: false
         })
       ).toBe(true)
     })
@@ -311,7 +314,8 @@ describe('TranscriptScroll', () => {
           userScrolledAwayInThisFrame: true,
           previousScrollTop: 260,
           nextScrollTop: 300,
-          isProgrammatic: true
+          isProgrammatic: true,
+            recentDownwardIntent: false
         })
       ).toBe(false)
     })
@@ -327,7 +331,8 @@ describe('TranscriptScroll', () => {
             userScrolledAwayInThisFrame: true,
             previousScrollTop: 260,
             nextScrollTop: 300,
-            isProgrammatic: false
+            isProgrammatic: false,
+            recentDownwardIntent: true
           })
         ).toBe(true)
         expect(
@@ -336,7 +341,8 @@ describe('TranscriptScroll', () => {
             userScrolledAwayInThisFrame: true,
             previousScrollTop: 260,
             nextScrollTop: 300,
-            isProgrammatic: false
+            isProgrammatic: false,
+            recentDownwardIntent: true
           })
         ).toBe(true)
       })
@@ -348,7 +354,24 @@ describe('TranscriptScroll', () => {
             userScrolledAwayInThisFrame: true,
             previousScrollTop: 260,
             nextScrollTop: 300,
-            isProgrammatic: false
+            isProgrammatic: false,
+            recentDownwardIntent: true
+          })
+        ).toBe(false)
+      })
+
+      it('requires a recent verified downward gesture — scroll events alone cannot arm the band', () => {
+        // Scrollbar scrubs, unarmed restore writes, and a coalesced frame
+        // whose last input was upward all present as net-downward scroll
+        // movement; only wheel/touch/key gestures vouch for the band.
+        expect(
+          shouldReengageAutoFollowAfterScroll({
+            distanceFromBottom: 30,
+            userScrolledAwayInThisFrame: true,
+            previousScrollTop: 260,
+            nextScrollTop: 300,
+            isProgrammatic: false,
+            recentDownwardIntent: false
           })
         ).toBe(false)
       })
@@ -362,7 +385,8 @@ describe('TranscriptScroll', () => {
             userScrolledAwayInThisFrame: true,
             previousScrollTop: 300,
             nextScrollTop: 260,
-            isProgrammatic: false
+            isProgrammatic: false,
+            recentDownwardIntent: false
           })
         ).toBe(false)
         expect(
@@ -371,7 +395,8 @@ describe('TranscriptScroll', () => {
             userScrolledAwayInThisFrame: false,
             previousScrollTop: 260,
             nextScrollTop: 300,
-            isProgrammatic: false
+            isProgrammatic: false,
+            recentDownwardIntent: false
           })
         ).toBe(false)
         expect(
@@ -380,7 +405,8 @@ describe('TranscriptScroll', () => {
             userScrolledAwayInThisFrame: true,
             previousScrollTop: 260,
             nextScrollTop: 300,
-            isProgrammatic: true
+            isProgrammatic: true,
+            recentDownwardIntent: false
           })
         ).toBe(false)
       })
