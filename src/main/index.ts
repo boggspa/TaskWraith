@@ -22328,7 +22328,17 @@ if (isGeminiMcpBridgeProcess) {
                   : {}),
                 ...(entry.thinkingEnabled !== undefined
                   ? { thinkingEnabled: entry.thinkingEnabled }
-                  : {})
+                  : {}),
+                // Staged fan-out stage (spike 4). The decoder guarantees
+                // '' | scout | worker | reviewer when present; '' clears back
+                // to permission-inferred scheduling, absent preserves ...base.
+                ...(entry.stageRole === 'scout' ||
+                entry.stageRole === 'worker' ||
+                entry.stageRole === 'reviewer'
+                  ? { stageRole: entry.stageRole }
+                  : entry.stageRole === ''
+                    ? { stageRole: undefined }
+                    : {})
               }
             })
           } catch (err) {

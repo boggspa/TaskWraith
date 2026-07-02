@@ -106,6 +106,11 @@ function mapSnapshot(
       : {}),
     ...(typeof entry.thinkingEnabled === 'boolean'
       ? { thinkingEnabled: entry.thinkingEnabled }
+      : {}),
+    ...(entry.stageRole === 'scout' ||
+    entry.stageRole === 'worker' ||
+    entry.stageRole === 'reviewer'
+      ? { stageRole: entry.stageRole }
       : {})
   }
 }

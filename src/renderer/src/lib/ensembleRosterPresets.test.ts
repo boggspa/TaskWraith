@@ -42,6 +42,7 @@ import {
   listEnsembleRosterPresets,
   materializeParticipantsFromPreset,
   materializeParticipantsFromPresetWithBossman,
+  saveEnsembleRosterPresetFromParticipants,
   snapshotParticipantsForPreset,
   subscribeEnsembleRosterPresets,
   upsertEnsembleRosterPreset,
@@ -411,5 +412,18 @@ describe('stageRole snapshot round-trip (spike 4)', () => {
     const builder = materialized.find((entry) => entry.role === 'Builder')
     expect(planner?.stageRole).toBe('reviewer')
     expect(builder).not.toHaveProperty('stageRole')
+  })
+})
+
+describe('bridge preset save carries stageRole (spike 4 iOS parity)', () => {
+  it('keeps valid stages and drops junk values', () => {
+    const preset = saveEnsembleRosterPresetFromParticipants('Phone panel', [
+      { provider: 'claude', role: 'Auditor', stageRole: 'reviewer' },
+      { provider: 'codex', role: 'Builder', stageRole: 'boss' },
+      { provider: 'kimi', role: 'Scout', stageRole: 'scout' }
+    ])
+    expect(preset.participants[0].stageRole).toBe('reviewer')
+    expect(preset.participants[1]).not.toHaveProperty('stageRole')
+    expect(preset.participants[2].stageRole).toBe('scout')
   })
 })

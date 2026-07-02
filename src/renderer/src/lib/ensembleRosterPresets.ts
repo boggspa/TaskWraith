@@ -500,6 +500,8 @@ export function saveEnsembleRosterPresetFromParticipants(
     reasoningEffort?: string
     fastModeEnabled?: boolean
     thinkingEnabled?: boolean
+    /** Staged fan-out stage ('scout' | 'worker' | 'reviewer'); other values ignored. */
+    stageRole?: string
     isBossman?: boolean
     isSecondInCommand?: boolean
   }>
@@ -532,6 +534,11 @@ export function saveEnsembleRosterPresetFromParticipants(
         : {}),
       ...(typeof participant.thinkingEnabled === 'boolean'
         ? { thinkingEnabled: participant.thinkingEnabled }
+        : {}),
+      ...(participant.stageRole === 'scout' ||
+      participant.stageRole === 'worker' ||
+      participant.stageRole === 'reviewer'
+        ? { stageRole: participant.stageRole }
         : {})
     }))
   const now = Date.now()

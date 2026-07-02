@@ -432,6 +432,9 @@ export interface RemoteEnsembleRosterEntry {
   reasoningEffort?: string
   fastModeEnabled?: boolean
   thinkingEnabled?: boolean
+  /** Staged fan-out stage ('scout' | 'worker' | 'reviewer') — spike 4; the
+   * iOS Roster page displays and round-trips it via ensembleRosterUpdate. */
+  stageRole?: string
   isBossman?: boolean
   isSecondInCommand?: boolean
 }
@@ -1258,7 +1261,8 @@ export function buildRemoteEnsembleState(chat: ChatRecord): RemoteEnsembleState 
             : {}),
           ...(participant.reasoningEffort ? { reasoningEffort: participant.reasoningEffort } : {}),
           ...(participant.fastModeEnabled ? { fastModeEnabled: true } : {}),
-          ...(participant.thinkingEnabled ? { thinkingEnabled: true } : {})
+          ...(participant.thinkingEnabled ? { thinkingEnabled: true } : {}),
+          ...(participant.stageRole ? { stageRole: participant.stageRole } : {})
         }
       }),
     workSessionStatus: ensemble.workSession?.status

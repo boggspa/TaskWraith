@@ -1867,3 +1867,35 @@ describe('payloadIsMutating', () => {
     expect(payloadIsMutating({ kind: 'unknown', rawKind: 'futureKind', raw: {} })).toBe(true)
   })
 })
+
+describe('ensembleRosterUpdate stageRole (staged fan-out)', () => {
+  function rosterUpdate(stageRole: unknown): unknown {
+    return {
+      kind: 'ensembleRosterUpdate',
+      actionId: 'a-stage-1',
+      workspaceId: 'ws-1',
+      threadId: 'thread-1',
+      participants: [
+        { id: 'p1', provider: 'claude', role: 'Auditor', enabled: true, stageRole },
+        { id: 'p2', provider: 'codex', role: 'Builder', enabled: true }
+      ]
+    }
+  }
+
+  it('decodes valid stages and the empty-string clear', () => {
+    for (const stage of ['scout', 'worker', 'reviewer', '']) {
+      const { payload } = decodeBridgeActionPayload(encode(rosterUpdate(stage)))
+      expect(payload.kind).toBe('ensembleRosterUpdate')
+      if (payload.kind === 'ensembleRosterUpdate') {
+        expect(payload.participants[0].stageRole).toBe(stage)
+      }
+    }
+  })
+
+  it('rejects unrecognized stage values', () => {
+    for (const stage of ['boss', 42, {}]) {
+      const { payload } = decodeBridgeActionPayload(encode(rosterUpdate(stage)))
+      expect(payload.kind).toBe('unknown')
+    }
+  })
+})

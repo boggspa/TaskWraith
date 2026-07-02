@@ -16,7 +16,8 @@
 import SwiftUI
 import TaskWraithKit
 
-private let maxEnsembleRosterParticipants = 18
+// 1.7.x — 18 -> 20 in step with the Mac's MAX_ENSEMBLE_PARTICIPANTS.
+private let maxEnsembleRosterParticipants = 20
 
 public struct EnsembleRosterSheet: View {
     @ObservedObject var model: RemoteSessionModel
@@ -67,6 +68,7 @@ public struct EnsembleRosterSheet: View {
                     reasoningEffort: entry.reasoningEffort,
                     fastModeEnabled: entry.fastModeEnabled ?? false,
                     thinkingEnabled: entry.thinkingEnabled ?? false,
+                    stageRole: entry.stageRole,
                     isBossman: entry.isBossman ?? false
                 )
             }
@@ -413,6 +415,7 @@ public struct EnsembleRosterSheet: View {
                     reasoningEffort: participant.reasoningEffort,
                     fastModeEnabled: participant.fastModeEnabled ?? false,
                     thinkingEnabled: participant.thinkingEnabled ?? false,
+                    stageRole: participant.stageRole,
                     isBossman: participant.isBossman ?? false
                 )
             }

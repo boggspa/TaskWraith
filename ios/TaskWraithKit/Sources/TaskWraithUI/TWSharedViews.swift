@@ -4236,6 +4236,7 @@ public struct EditableRosterStrip: View {
                     reasoningEffort: entry.reasoningEffort,
                     fastModeEnabled: entry.fastModeEnabled ?? false,
                     thinkingEnabled: entry.thinkingEnabled ?? false,
+                    stageRole: entry.stageRole,
                     isBossman: entry.isBossman ?? false
                 )
             }
@@ -4537,6 +4538,14 @@ struct RosterChipEditor: View {
             set: { entry.reasoningEffort = $0 }
         )
     }
+    /// "" = no stage (permission-inferred scheduling); mapped to nil on the
+    /// draft so the bridge sends the explicit "" clear.
+    private var stageBinding: Binding<String> {
+        Binding(
+            get: { entry.stageRole ?? "" },
+            set: { entry.stageRole = $0.isEmpty ? nil : $0 }
+        )
+    }
 
     var body: some View {
         NavigationStack {
@@ -4602,6 +4611,21 @@ struct RosterChipEditor: View {
                         Text("Full workspace").tag("workspace_write")
                     }
                     .pickerStyle(.menu)
+                }
+                Section {
+                    Picker("Fan-out stage", selection: stageBinding) {
+                        Text("Any (by permissions)").tag("")
+                        Text("Scout — investigates first").tag("scout")
+                        Text("Worker — serial turn").tag("worker")
+                        Text("Reviewer — runs after the others").tag("reviewer")
+                    }
+                    .pickerStyle(.menu)
+                } header: {
+                    Text("Stage")
+                } footer: {
+                    Text(
+                        "Scouts investigate at round start, workers take serial implementation turns, reviewers wait for the others and then verify the work."
+                    )
                 }
                 if entry.provider.lowercased() == "kimi" {
                     Section("Reasoning") {

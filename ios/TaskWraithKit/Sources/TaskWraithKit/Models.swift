@@ -1054,12 +1054,16 @@ public struct RemoteEnsembleState: Codable, Sendable {
         public let reasoningEffort: String?
         public let fastModeEnabled: Bool?
         public let thinkingEnabled: Bool?
+        /// Staged fan-out stage ("scout" | "worker" | "reviewer") — spike 4.
+        /// Optional so older Mac builds (which didn't project it) still decode.
+        public let stageRole: String?
         public let isBossman: Bool?
         public init(
             id: String, provider: String, role: String?, enabled: Bool?,
             order: Int?, model: String?, brief: String?,
             permissionPresetId: String? = nil, reasoningEffort: String? = nil,
             fastModeEnabled: Bool? = nil, thinkingEnabled: Bool? = nil,
+            stageRole: String? = nil,
             contextTokens: Int? = nil, isBossman: Bool? = nil
         ) {
             self.id = id
@@ -1073,6 +1077,7 @@ public struct RemoteEnsembleState: Codable, Sendable {
             self.reasoningEffort = reasoningEffort
             self.fastModeEnabled = fastModeEnabled
             self.thinkingEnabled = thinkingEnabled
+            self.stageRole = stageRole
             self.contextTokens = contextTokens
             self.isBossman = isBossman
         }

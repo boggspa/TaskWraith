@@ -3350,12 +3350,17 @@ public final class RemoteSessionModel: ObservableObject {
         public var reasoningEffort: String?
         public var fastModeEnabled: Bool
         public var thinkingEnabled: Bool
+        /// Staged fan-out stage ("scout" | "worker" | "reviewer"); nil = no
+        /// stage (permission-inferred scheduling) — sent as "" so the Mac
+        /// clears an existing stage explicitly.
+        public var stageRole: String?
         public var isBossman: Bool
         public init(
             id: String, provider: String, model: String?, role: String,
             brief: String, enabled: Bool,
             permissionPresetId: String? = nil, reasoningEffort: String? = nil,
             fastModeEnabled: Bool = false, thinkingEnabled: Bool = false,
+            stageRole: String? = nil,
             isBossman: Bool = false
         ) {
             self.id = id
@@ -3368,6 +3373,7 @@ public final class RemoteSessionModel: ObservableObject {
             self.reasoningEffort = reasoningEffort
             self.fastModeEnabled = fastModeEnabled
             self.thinkingEnabled = thinkingEnabled
+            self.stageRole = stageRole
             self.isBossman = isBossman
         }
     }
@@ -3392,6 +3398,9 @@ public final class RemoteSessionModel: ObservableObject {
             // applies them when present; omitting would preserve the old value).
             dict["fastModeEnabled"] = entry.fastModeEnabled
             dict["thinkingEnabled"] = entry.thinkingEnabled
+            // Sent explicitly too: "" clears an existing stage on the Mac,
+            // omitting would preserve it.
+            dict["stageRole"] = entry.stageRole ?? ""
             dict["isBossman"] = entry.isBossman
             return dict
         }
@@ -3416,6 +3425,9 @@ public final class RemoteSessionModel: ObservableObject {
             }
             if let reasoning = entry.reasoningEffort, !reasoning.isEmpty {
                 dict["reasoningEffort"] = reasoning
+            }
+            if let stage = entry.stageRole, !stage.isEmpty {
+                dict["stageRole"] = stage
             }
             dict["fastModeEnabled"] = entry.fastModeEnabled
             dict["thinkingEnabled"] = entry.thinkingEnabled
