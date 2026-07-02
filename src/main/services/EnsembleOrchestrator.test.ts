@@ -1244,7 +1244,7 @@ describe('EnsembleOrchestrator', () => {
     )
   })
 
-  it('rejects second-in-command roster edit while Boss is available', async () => {
+  it('rejects Captain roster edit while Boss is available', async () => {
     const chat = makeChat()
     chat.ensemble!.participants = [
       { ...chat.ensemble!.participants[0], order: 2 },
@@ -1279,7 +1279,7 @@ describe('EnsembleOrchestrator', () => {
     expect(result.error).toBe('second_in_command_standby')
   })
 
-  it('allows second-in-command roster edit when Boss is disabled for the round', async () => {
+  it('allows Captain roster edit when Boss is disabled for the round', async () => {
     const chat = makeChat()
     chat.ensemble!.participants = [
       { ...chat.ensemble!.participants[0], enabled: false },

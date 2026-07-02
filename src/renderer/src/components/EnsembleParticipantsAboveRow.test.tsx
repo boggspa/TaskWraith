@@ -404,7 +404,7 @@ describe('EnsembleParticipantsAboveRow', () => {
     expect(html).not.toContain('Boss')
   })
 
-  it('renders a silver second-in-command crown separately from Boss', () => {
+  it('renders a silver Captain hat separately from Boss', () => {
     const chat = makeChat([
       makeParticipant({ id: 'ensemble-claude', provider: 'claude', role: 'Bossman', order: 1 }),
       makeParticipant({ id: 'ensemble-codex', provider: 'codex', role: 'Deputy', order: 2 })
@@ -419,10 +419,10 @@ describe('EnsembleParticipantsAboveRow', () => {
         onChatChange={() => undefined}
       />
     )
-    const crownHits = html.match(/ensemble-above-chip-crown/g) || []
-    expect(crownHits.length).toBe(2)
-    expect(html).toContain('ensemble-above-chip-crown is-second-in-command')
+    const bossCrownHits = html.match(/ensemble-above-chip-crown/g) || []
+    expect(bossCrownHits.length).toBe(1)
+    expect(html).toContain('ensemble-above-chip-captain-hat')
     expect(html).toContain('aria-label="Boss Bossman"')
-    expect(html).toContain('aria-label="Second-in-command Deputy"')
+    expect(html).toContain('aria-label="Captain Deputy"')
   })
 })

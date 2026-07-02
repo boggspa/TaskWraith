@@ -46,7 +46,7 @@ export function resolveRosterUpdateBossmanAssignment<TAutoApprovals>(
     .filter((index) => index >= 0)
 
   if (markedSecondIndexes.length > 1) {
-    return { ok: false, error: 'Only one participant may be marked as second-in-command.' }
+    return { ok: false, error: 'Only one participant may be marked as Captain.' }
   }
 
   const markedBossmanParticipantId =

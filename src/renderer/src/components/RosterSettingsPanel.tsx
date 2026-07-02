@@ -261,11 +261,11 @@ function RosterParticipantRow({
             type="button"
             className={`settings-roster-bossman${isSecondInCommand ? ' is-active' : ''}`}
             onClick={() => onSetSecondInCommand(isSecondInCommand ? undefined : participant.id)}
-            title={isSecondInCommand ? 'Clear second-in-command' : 'Set as second-in-command'}
+            title={isSecondInCommand ? 'Clear Captain' : 'Set as Captain'}
             aria-pressed={isSecondInCommand}
             disabled={isBossman}
           >
-            2nd
+            Captain
           </button>
           <button
             type="button"

@@ -33,6 +33,11 @@ export interface BossmanAutoApprovalContext {
   hasExternalPathDetection: boolean
   /** The Ensemble's configured Boss participant id (if any). */
   bossmanParticipantId: string | undefined
+  /** The Ensemble's configured Captain participant id (if any). */
+  secondInCommandParticipantId?: string | undefined
+  /** Whether the primary Boss is currently unavailable for this approval. */
+  primaryBossUnavailable?: boolean
+  primaryBossUnavailableReason?: string
   /** The opt-in auto-approval consent recorded on the ensemble config. */
   autoApprovals: { enabled?: boolean; mode?: string; confirmedAt?: string } | undefined
   /** All participant ids currently in the roster. */
@@ -57,8 +62,8 @@ export interface BossmanAutoApprovalContext {
  *  - only the `shellCommands`/`fileChanges` action classes are in scope
  *    (so MCP-tool / sub-thread / canvas grants are NEVER auto-allowed);
  *  - requires explicit, mode-correct user consent;
- *  - requires both Boss and the requesting participant to be live roster
- *    members.
+ *  - requires a live Boss or Captain authority plus a live requesting
+ *    participant.
  * The returned grant is always request-scoped (the caller passes `'request'`).
  */
 export function evaluateBossmanAutoApproval(
@@ -78,13 +83,31 @@ export function evaluateBossmanAutoApproval(
   // MCP auto-allow surface or YOLO.
   if (ctx.service !== 'shellCommands' && ctx.service !== 'fileChanges') return null
 
-  const { bossmanParticipantId, autoApprovals } = ctx
+  const { bossmanParticipantId, secondInCommandParticipantId, autoApprovals } = ctx
   // Explicit, current user consent is mandatory.
-  if (!bossmanParticipantId || autoApprovals?.enabled !== true) return null
+  if (autoApprovals?.enabled !== true) return null
   if (autoApprovals.mode !== 'permission_preset_once') return null
-  // Both the Boss and the acting participant must be live roster members —
-  // a stale id (replaced/removed mid-round) revokes the grant.
-  if (!ctx.participantIds.includes(bossmanParticipantId)) return null
+  // Boss remains primary. Captain only becomes the approval authority when
+  // the primary Boss is unavailable, so the backup cannot silently compete
+  // with an available Boss.
+  const bossIsLive =
+    Boolean(bossmanParticipantId) && ctx.participantIds.includes(bossmanParticipantId as string)
+  const captainIsLive =
+    Boolean(secondInCommandParticipantId) &&
+    secondInCommandParticipantId !== bossmanParticipantId &&
+    ctx.participantIds.includes(secondInCommandParticipantId as string)
+  const authority = bossIsLive && ctx.primaryBossUnavailable !== true
+    ? {
+        role: 'boss' as const,
+        participantId: bossmanParticipantId as string
+      }
+    : captainIsLive && ctx.primaryBossUnavailable === true
+      ? {
+          role: 'captain' as const,
+          participantId: secondInCommandParticipantId as string
+        }
+      : null
+  if (!authority) return null
   if (!ctx.targetParticipantId || !ctx.participantIds.includes(ctx.targetParticipantId)) {
     return null
   }
@@ -94,12 +117,16 @@ export function evaluateBossmanAutoApproval(
     mode: autoApprovals.mode,
     confirmedAt: autoApprovals.confirmedAt,
     bossmanParticipantId,
+    secondInCommandParticipantId,
+    approvalAuthorityRole: authority.role,
+    approvalAuthorityParticipantId: authority.participantId,
+    primaryBossUnavailableReason: ctx.primaryBossUnavailableReason,
     targetParticipantId: ctx.targetParticipantId,
     targetProvider: ctx.targetProvider,
     targetRole: ctx.targetRole,
     roundId: ctx.roundId,
     actionClass: ctx.service,
     rationale:
-      'Boss Auto Approvals enabled by the user; request-scoped approval within participant permission preset and workspace policy.'
+      'Boss/Captain Auto Approvals enabled by the user; request-scoped approval within participant permission preset and workspace policy.'
   }
 }

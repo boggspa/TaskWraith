@@ -32,6 +32,8 @@ describe('evaluateBossmanAutoApproval', () => {
       mode: 'permission_preset_once',
       confirmedAt: '2026-06-24T00:00:00.000Z',
       bossmanParticipantId: 'boss',
+      approvalAuthorityRole: 'boss',
+      approvalAuthorityParticipantId: 'boss',
       targetParticipantId: 'worker',
       targetProvider: 'codex',
       targetRole: 'Worker',
@@ -103,6 +105,53 @@ describe('evaluateBossmanAutoApproval', () => {
 
   it('returns null when no Boss is configured', () => {
     expect(evaluateBossmanAutoApproval(makeContext({ bossmanParticipantId: undefined }))).toBeNull()
+  })
+
+  it('lets Captain use auto-approval consent only when Boss is unavailable', () => {
+    expect(
+      evaluateBossmanAutoApproval(
+        makeContext({
+          secondInCommandParticipantId: 'captain',
+          participantIds: ['boss', 'captain', 'worker']
+        })
+      )
+    ).toMatchObject({
+      approvalAuthorityRole: 'boss',
+      approvalAuthorityParticipantId: 'boss'
+    })
+
+    const result = evaluateBossmanAutoApproval(
+      makeContext({
+        secondInCommandParticipantId: 'captain',
+        primaryBossUnavailable: true,
+        primaryBossUnavailableReason: 'Boss is disabled',
+        participantIds: ['boss', 'captain', 'worker']
+      })
+    )
+    expect(result).toMatchObject({
+      approvalAuthorityRole: 'captain',
+      approvalAuthorityParticipantId: 'captain',
+      secondInCommandParticipantId: 'captain',
+      primaryBossUnavailableReason: 'Boss is disabled'
+    })
+  })
+
+  it('allows Captain consent when no Boss is assigned but Captain is live', () => {
+    const result = evaluateBossmanAutoApproval(
+      makeContext({
+        bossmanParticipantId: undefined,
+        secondInCommandParticipantId: 'captain',
+        primaryBossUnavailable: true,
+        primaryBossUnavailableReason: 'no Boss is assigned',
+        participantIds: ['captain', 'worker']
+      })
+    )
+
+    expect(result).toMatchObject({
+      approvalAuthorityRole: 'captain',
+      approvalAuthorityParticipantId: 'captain',
+      primaryBossUnavailableReason: 'no Boss is assigned'
+    })
   })
 
   it('returns null when the Boss is no longer in the roster (stale id)', () => {

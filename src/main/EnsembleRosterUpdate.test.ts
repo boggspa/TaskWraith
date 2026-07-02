@@ -44,7 +44,7 @@ describe('resolveRosterUpdateBossmanAssignment', () => {
     })
   })
 
-  it('moves second-in-command to the single true marker', () => {
+  it('moves Captain to the single true marker', () => {
     const result = resolveRosterUpdateBossmanAssignment(
       [
         { isBossman: true, isSecondInCommand: false },
@@ -109,7 +109,7 @@ describe('resolveRosterUpdateBossmanAssignment', () => {
     })
   })
 
-  it('rejects multiple second-in-command markers', () => {
+  it('rejects multiple Captain markers', () => {
     const result = resolveRosterUpdateBossmanAssignment(
       [
         { isBossman: false, isSecondInCommand: true },
@@ -122,7 +122,7 @@ describe('resolveRosterUpdateBossmanAssignment', () => {
 
     expect(result).toEqual({
       ok: false,
-      error: 'Only one participant may be marked as second-in-command.'
+      error: 'Only one participant may be marked as Captain.'
     })
   })
 })

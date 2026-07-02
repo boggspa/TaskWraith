@@ -7087,6 +7087,43 @@ function ensembleApprovalContext(
   }
 }
 
+function bossmanAutoApprovalPrimaryState(
+  ensemble: NonNullable<ChatRecord['ensemble']>
+): { unavailable: boolean; reason?: string } {
+  const bossmanParticipantId = ensemble.bossmanParticipantId
+  if (!bossmanParticipantId) {
+    return { unavailable: true, reason: 'no Boss is assigned' }
+  }
+  const boss = ensemble.participants.find((participant) => participant.id === bossmanParticipantId)
+  if (!boss) {
+    return { unavailable: true, reason: 'the assigned Boss is no longer in the roster' }
+  }
+  if (boss.enabled === false) {
+    return { unavailable: true, reason: `${boss.role || boss.provider} is disabled` }
+  }
+  const round = ensemble.activeRound
+  if (round) {
+    const state = round.participants.find(
+      (participant) => participant.participantId === bossmanParticipantId
+    )
+    if (!state) {
+      return { unavailable: true, reason: 'the assigned Boss is not part of this active round' }
+    }
+    if (
+      state.status === 'failed' ||
+      state.status === 'unreachable' ||
+      state.status === 'cancelled' ||
+      state.status === 'skipped'
+    ) {
+      return {
+        unavailable: true,
+        reason: state.lastFailureReason || state.reason || `${boss.role || boss.provider} is ${state.status}`
+      }
+    }
+  }
+  return { unavailable: false }
+}
+
 function bossmanAutoApprovalMetadata(input: {
   session: ReturnType<typeof runManager.get> | undefined
   ensembleRun: EnsembleRunIdentity | undefined
@@ -7111,6 +7148,7 @@ function bossmanAutoApprovalMetadata(input: {
   const chatId = session.state?.appChatId
   const ensemble = (chatId ? AppStore.getChat(chatId) : null)?.ensemble
   if (!ensemble) return null
+  const primary = bossmanAutoApprovalPrimaryState(ensemble)
   // The security-critical guard logic lives in the pure, unit-tested
   // `evaluateBossmanAutoApproval`. This wrapper only resolves the live
   // session/chat and forwards the relevant facts.
@@ -7123,6 +7161,9 @@ function bossmanAutoApprovalMetadata(input: {
     forcePrompt: request.forcePrompt === true,
     hasExternalPathDetection: Boolean(request.externalPathDetection),
     bossmanParticipantId: ensemble.bossmanParticipantId,
+    secondInCommandParticipantId: ensemble.secondInCommandParticipantId,
+    primaryBossUnavailable: primary.unavailable,
+    primaryBossUnavailableReason: primary.reason,
     autoApprovals: ensemble.bossmanAutoApprovals,
     participantIds: ensemble.participants.map((participant) => participant.id),
     targetParticipantId: ensembleRun.participantId,

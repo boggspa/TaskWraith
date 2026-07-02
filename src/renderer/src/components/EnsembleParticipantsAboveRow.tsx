@@ -294,6 +294,48 @@ function BossmanCrownIcon({ className }: { className?: string }): React.JSX.Elem
   )
 }
 
+function CaptainHatIcon({ className }: { className?: string }): React.JSX.Element {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 24 24"
+      width="14"
+      height="14"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <path
+        d="M5.2 15.8c2.3 1.2 11.3 1.2 13.6 0"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.9"
+        strokeLinecap="round"
+      />
+      <path
+        d="M6.8 14.8 8 9.7c.3-1.1 1.2-1.8 2.3-1.8h3.4c1.1 0 2 .7 2.3 1.8l1.2 5.1"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.9"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M9.3 8c.7-1.2 1.6-1.9 2.7-1.9s2 .7 2.7 1.9M10.1 11.4h3.8"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+      />
+      <path
+        d="M4 16.4c1.9 1.3 4.6 2 8 2s6.1-.7 8-2"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.9"
+        strokeLinecap="round"
+      />
+    </svg>
+  )
+}
+
 interface EnsembleParticipantsAboveRowProps {
   chat: ChatRecord
   selectedParticipantId: string | null
@@ -535,17 +577,19 @@ export function EnsembleParticipantsAboveRow({
         ? participantId
         : undefined
     const existingSecondInCommandParticipantId = chat.ensemble?.secondInCommandParticipantId
+    const nextSecondInCommandParticipantId =
+      existingSecondInCommandParticipantId &&
+      existingSecondInCommandParticipantId !== nextBossmanParticipantId
+        ? existingSecondInCommandParticipantId
+        : undefined
     patchEnsemble({
       bossmanParticipantId: nextBossmanParticipantId,
-      secondInCommandParticipantId:
-        existingSecondInCommandParticipantId &&
-        existingSecondInCommandParticipantId !== nextBossmanParticipantId
-          ? existingSecondInCommandParticipantId
-          : undefined,
+      secondInCommandParticipantId: nextSecondInCommandParticipantId,
       bossmanAutoApprovals:
-        nextBossmanParticipantId &&
-        nextBossmanParticipantId === chat.ensemble?.bossmanParticipantId
-          ? chat.ensemble.bossmanAutoApprovals
+        (nextBossmanParticipantId &&
+          nextBossmanParticipantId === chat.ensemble?.bossmanParticipantId) ||
+        (!nextBossmanParticipantId && nextSecondInCommandParticipantId)
+          ? chat.ensemble?.bossmanAutoApprovals
           : undefined
     })
   }
@@ -559,15 +603,24 @@ export function EnsembleParticipantsAboveRow({
         ? participantId
         : undefined
     patchEnsemble({
-      secondInCommandParticipantId: nextSecondInCommandParticipantId
+      secondInCommandParticipantId: nextSecondInCommandParticipantId,
+      bossmanAutoApprovals:
+        chat.ensemble?.bossmanParticipantId || nextSecondInCommandParticipantId
+          ? chat.ensemble?.bossmanAutoApprovals
+          : undefined
     })
   }
 
   const setBossmanAutoApprovals = (enabled: boolean): void => {
-    if (isRoundRunning || !chat.ensemble?.bossmanParticipantId) return
+    if (
+      isRoundRunning ||
+      (!chat.ensemble?.bossmanParticipantId && !chat.ensemble?.secondInCommandParticipantId)
+    ) {
+      return
+    }
     if (enabled) {
       const confirmed = window.confirm(
-        'Allow Boss Auto Approvals for this Ensemble? Boss can only resolve one-shot approvals within the selected participant permission preset and workspace policy. This will not grant session/workspace approval, YOLO, policy changes, external-path escapes, or unclassified requests.'
+        'Allow Boss/Captain Auto Approvals for this Ensemble? Boss remains primary; Captain can only use this consent when Boss is unavailable. Approvals stay one-shot and limited to the selected participant permission preset and workspace policy. This will not grant session/workspace approval, YOLO, policy changes, external-path escapes, or unclassified requests.'
       )
       if (!confirmed) return
     }
@@ -636,7 +689,7 @@ export function EnsembleParticipantsAboveRow({
         participants: nextParticipants.map((p, idx) => ({ ...p, order: idx + 1 })),
         bossmanParticipantId,
         secondInCommandParticipantId,
-        bossmanAutoApprovals: bossmanParticipantId
+        bossmanAutoApprovals: bossmanParticipantId || secondInCommandParticipantId
           ? chat.ensemble?.bossmanAutoApprovals
           : undefined,
         updatedAt: new Date().toISOString()
@@ -925,7 +978,9 @@ export function EnsembleParticipantsAboveRow({
                 chat.ensemble?.bossmanParticipantId !== participant.id
               }
               autoApprovalsEnabled={
-                chat.ensemble?.bossmanParticipantId === participant.id &&
+                (chat.ensemble?.bossmanParticipantId === participant.id ||
+                  (chat.ensemble?.secondInCommandParticipantId === participant.id &&
+                    chat.ensemble?.bossmanParticipantId !== participant.id)) &&
                 chat.ensemble?.bossmanAutoApprovals?.enabled === true
               }
               onSetBossman={setBossmanParticipant}
@@ -1335,17 +1390,17 @@ function ParticipantChip({
   const authorityPrefix = isBossman
     ? 'Boss · '
     : isSecondInCommand
-      ? 'Second-in-command · '
+      ? 'Captain · '
       : ''
   const authorityAriaPrefix = isBossman
     ? 'Boss '
     : isSecondInCommand
-      ? 'Second-in-command '
+      ? 'Captain '
       : ''
   const authorityTitle = isBossman
     ? 'Boss'
     : isSecondInCommand
-      ? 'Second-in-command'
+      ? 'Captain'
       : ''
   const handlePointerDown = useCallback(
     (event: React.PointerEvent) => {
@@ -1484,7 +1539,7 @@ function ParticipantChip({
         >
           {isBossman ? <BossmanCrownIcon className="ensemble-above-chip-crown" /> : null}
           {isSecondInCommand ? (
-            <BossmanCrownIcon className="ensemble-above-chip-crown is-second-in-command" />
+            <CaptainHatIcon className="ensemble-above-chip-captain-hat" />
           ) : null}
           {participant.role || getProviderName(participant.provider)}
         </span>
@@ -1747,7 +1802,7 @@ export function EnsembleParticipantOverflowPopover({
       }}
       role="dialog"
       aria-label={`Edit ${
-        isBossman ? 'Boss ' : isSecondInCommand ? 'second-in-command ' : ''
+        isBossman ? 'Boss ' : isSecondInCommand ? 'Captain ' : ''
       }${getProviderName(participant.provider)} role and enabled state`}
     >
       <label className="ensemble-above-overflow-enable">
@@ -1775,8 +1830,8 @@ export function EnsembleParticipantOverflowPopover({
         className={`ensemble-above-overflow-bossman${isBossman ? ' is-disabled' : ''}`}
         title={
           isBossman
-            ? 'Boss cannot also be second-in-command.'
-            : 'Second-in-command can use Boss controls only when Boss is unavailable.'
+            ? 'Boss cannot also be Captain.'
+            : 'Captain can use Boss controls only when Boss is unavailable.'
         }
       >
         <input
@@ -1788,22 +1843,26 @@ export function EnsembleParticipantOverflowPopover({
           }
         />
         <span className="ensemble-above-overflow-bossman-label">
-          <BossmanCrownIcon className="ensemble-above-overflow-crown is-second-in-command" />
-          2nd in command
+          <CaptainHatIcon className="ensemble-above-overflow-captain-hat" />
+          Captain
         </span>
       </label>
       <label
-        className={`ensemble-above-overflow-auto-approval${!isBossman ? ' is-disabled' : ''}`}
+        className={`ensemble-above-overflow-auto-approval${
+          isBossman || isSecondInCommand ? '' : ' is-disabled'
+        }`}
         title={
           isBossman
             ? 'Allow Boss to resolve preset-limited one-shot approvals.'
-            : 'Assign this participant as Boss before enabling auto approvals.'
+            : isSecondInCommand
+              ? 'Allow Captain to use preset-limited one-shot approval consent only when Boss is unavailable.'
+              : 'Assign this participant as Boss or Captain before enabling auto approvals.'
         }
       >
         <input
           type="checkbox"
           checked={autoApprovalsEnabled}
-          disabled={locked || !isBossman}
+          disabled={locked || (!isBossman && !isSecondInCommand)}
           onChange={(event) => onToggleBossmanAutoApprovals(event.target.checked)}
         />
         <span>Allow Auto Approvals</span>

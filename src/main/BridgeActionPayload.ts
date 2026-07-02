@@ -468,7 +468,7 @@ export interface BridgeRosterParticipant {
   thinkingEnabled?: boolean
   /** Optional per-roster marker. Exactly one true value assigns Boss. */
   isBossman?: boolean
-  /** Optional per-roster marker. Exactly one true value assigns backup Boss. */
+  /** Optional per-roster marker. Exactly one true value assigns Captain. */
   isSecondInCommand?: boolean
 }
 

@@ -4642,7 +4642,7 @@ export class EnsembleOrchestrator {
       return {
         ok: false,
         error: 'second_in_command_standby',
-        message: 'the assigned Boss is still available, so the second-in-command remains standby',
+        message: 'the assigned Boss is still available, so Captain remains standby',
         bossmanParticipantId,
         secondInCommandParticipantId
       }
@@ -4651,7 +4651,7 @@ export class EnsembleOrchestrator {
       ok: false,
       error: 'not_bossman',
       message:
-        'only the assigned Boss, or the second-in-command while the Boss is unavailable, may use this control',
+        'only the assigned Boss, or Captain while the Boss is unavailable, may use this control',
       bossmanParticipantId,
       secondInCommandParticipantId,
       primaryUnavailableReason: primary.unavailable ? primary.reason : undefined
@@ -4686,9 +4686,9 @@ export class EnsembleOrchestrator {
       return 'Locked writer fan-out rejected: no Boss is assigned, so writer lanes require a user write-scope preflight before parallel mutation is allowed.'
     }
     if (authority.error === 'second_in_command_standby') {
-      return `Locked writer fan-out rejected from ${run.participant.role || providerLabel(run.participant.provider)}: the assigned Boss is still available, so second-in-command remains standby.`
+      return `Locked writer fan-out rejected from ${run.participant.role || providerLabel(run.participant.provider)}: the assigned Boss is still available, so Captain remains standby.`
     }
-    return `Locked writer fan-out rejected from ${run.participant.role || providerLabel(run.participant.provider)}: only the assigned Boss, or second-in-command while Boss is unavailable, may authorize parallel writer lanes.`
+    return `Locked writer fan-out rejected from ${run.participant.role || providerLabel(run.participant.provider)}: only the assigned Boss, or Captain while Boss is unavailable, may authorize parallel writer lanes.`
   }
 
   private recordFanoutAuthorizationRejection(
@@ -6390,7 +6390,7 @@ export class EnsembleOrchestrator {
           const authorityLabel =
             priorityAuthorityMatch.participant.id === bossmanParticipantId
               ? 'Boss'
-              : 'active second-in-command'
+              : 'active Captain'
           this.appendRoundStatus(
             runtime.chatId,
             runtime.roundId,

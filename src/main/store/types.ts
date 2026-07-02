@@ -945,7 +945,7 @@ export interface EnsembleConfig {
   /** Optional user-designated Ensemble manager. No Boss is assigned by
    * default; controls are rejected unless the active run belongs to this id. */
   bossmanParticipantId?: string
-  /** Optional user-designated backup Boss. This seat uses Boss-like
+  /** Optional user-designated Captain. This seat uses Boss-like
    * controls only when the primary Boss is missing, disabled, unreachable,
    * or failed for the active round. */
   secondInCommandParticipantId?: string
