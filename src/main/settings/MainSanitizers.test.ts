@@ -212,6 +212,42 @@ describe('MainSanitizers workspace boards', () => {
       sourceTitle: 'Captured'
     })
   })
+
+  it('rejects unknown workspace board card link kinds at the IPC sanitizer boundary', () => {
+    const { sanitizeWorkspaceBoardCardForSave, sanitizeWorkspaceBoardCardPatch } = makeSanitizers(makeSettings())
+
+    expect(() =>
+      sanitizeWorkspaceBoardCardForSave({
+        boardId: 'board-1',
+        workspaceId: 'workspace-1',
+        columnId: 'ready',
+        title: 'Bad link',
+        link: { kind: 'bogus', id: 'target-1' }
+      })
+    ).toThrow('Workspace board card link kind is invalid.')
+
+    expect(() =>
+      sanitizeWorkspaceBoardCardPatch({
+        link: { kind: 'bogus', id: 'target-1' }
+      })
+    ).toThrow('Workspace board card link kind is invalid.')
+  })
+
+  it('preserves precise workspace board card sort orders through IPC sanitization', () => {
+    const { sanitizeWorkspaceBoardCardForSave, sanitizeWorkspaceBoardCardPatch } = makeSanitizers(makeSettings())
+
+    expect(
+      sanitizeWorkspaceBoardCardForSave({
+        boardId: 'board-1',
+        workspaceId: 'workspace-1',
+        columnId: 'ready',
+        title: 'Precise order',
+        sortOrder: 1024.5
+      }).sortOrder
+    ).toBe(1024.5)
+
+    expect(sanitizeWorkspaceBoardCardPatch({ sortOrder: -1014 }).sortOrder).toBe(-1014)
+  })
 })
 
 describe('MainSanitizers settings patches', () => {

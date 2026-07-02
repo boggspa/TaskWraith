@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import fs from 'fs'
+import path from 'path'
 import { AppStore } from './store'
+import type { ChatMessage } from './store/types'
 
 const userDataPath = vi.hoisted(() => `/tmp/taskwraith-workspace-boards-test-${process.pid}`)
 
@@ -113,6 +115,80 @@ describe('AppStore workspace boards', () => {
       title: 'Workspace A card',
       link: { kind: 'chat', id: chatA.appChatId }
     })
+  })
+
+  it('preserves precise workspace board card sort order values', () => {
+    const board = saveBoard('board-a', 'ws-a', '/repo-a')
+    const card = AppStore.saveWorkspaceBoardCard({
+      boardId: board.id,
+      workspaceId: board.workspaceId,
+      columnId: 'ready',
+      title: 'Precise order',
+      sortOrder: 1024.5
+    })
+
+    expect(card.sortOrder).toBe(1024.5)
+    const moved = AppStore.updateWorkspaceBoardCard(card.id, { sortOrder: -1014 })
+    expect(moved?.sortOrder).toBe(-1014)
+  })
+
+  it('rejects unknown workspace board card link kinds instead of unlinking silently', () => {
+    const board = saveBoard('board-a', 'ws-a', '/repo-a')
+
+    expect(() =>
+      AppStore.saveWorkspaceBoardCard({
+        boardId: board.id,
+        workspaceId: board.workspaceId,
+        columnId: 'ready',
+        title: 'Bad link',
+        sortOrder: 1,
+        link: { kind: 'surprise' as any, id: 'target-1' }
+      })
+    ).toThrow('Board card link kind is invalid.')
+  })
+
+  it('surfaces workspace board persistence failures to callers', () => {
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(1234)
+    const tempPath = path.join(userDataPath, `workspace-boards.json.${process.pid}.1234.tmp`)
+    fs.mkdirSync(tempPath, { recursive: true })
+
+    expect(() => saveBoard('board-fail', 'ws-a', '/repo-a')).toThrow()
+    expect(AppStore.getWorkspaceBoard('board-fail')).toBeNull()
+    nowSpy.mockRestore()
+  })
+
+  it('validates pinned-message card links against the owning workspace message', () => {
+    const board = saveBoard('board-a', 'ws-a', '/repo-a')
+    const chat = AppStore.createChat('ws-a', '/repo-a')
+    const message: ChatMessage = {
+      id: 'message-1',
+      role: 'assistant',
+      content: 'Pinned follow-up',
+      timestamp: '2026-06-29T00:00:00.000Z',
+      metadata: { pinnedAt: 1 }
+    }
+    AppStore.saveChat({ ...chat, messages: [message] })
+
+    const card = AppStore.saveWorkspaceBoardCard({
+      boardId: board.id,
+      workspaceId: board.workspaceId,
+      columnId: 'inbox',
+      title: 'Pinned message',
+      sortOrder: 1,
+      link: { kind: 'pinned-message', id: `${chat.appChatId}:message-1` }
+    })
+    expect(card.link).toEqual({ kind: 'pinned-message', id: `${chat.appChatId}:message-1` })
+
+    expect(() =>
+      AppStore.saveWorkspaceBoardCard({
+        boardId: board.id,
+        workspaceId: board.workspaceId,
+        columnId: 'inbox',
+        title: 'Missing pinned message',
+        sortOrder: 2,
+        link: { kind: 'pinned-message', id: `${chat.appChatId}:missing` }
+      })
+    ).toThrow('Board card pinned message link must belong to the board workspace.')
   })
 
   it('records agent activity only when the current write carries agent provenance', () => {

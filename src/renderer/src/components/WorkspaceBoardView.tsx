@@ -1,5 +1,6 @@
-import { useMemo, useState, type DragEvent, type FormEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type DragEvent, type FormEvent } from 'react'
 import type {
+  CapabilityLedgerSnapshot,
   ChatRecord,
   RunQueueJob,
   ScheduledTask,
@@ -81,6 +82,7 @@ interface WorkspaceBoardViewProps {
   pendingApprovalsByChatId?: Record<string, AgentApprovalRequest | null>
   pendingApprovalQueueByChatId?: Record<string, AgentApprovalRequest[]>
   collaboratingChatIds?: Set<string>
+  capabilityLedger?: CapabilityLedgerSnapshot | null
   onAddCard: (
     card: Omit<WorkspaceBoardCard, 'id' | 'createdAt' | 'updatedAt' | 'activity'>
   ) => void | Promise<void>
@@ -88,6 +90,7 @@ interface WorkspaceBoardViewProps {
   onDeleteCard: (id: string) => void | Promise<void>
   onOpenChat: (chat: ChatRecord) => void
   onOpenWorkflow: (workflow: WorkflowDefinition) => void
+  onInspectRun?: (runId: string, chatId?: string) => void
 }
 
 function latestRun(chat: ChatRecord) {
@@ -125,7 +128,8 @@ function parseLink(value: string): WorkspaceBoardCardLink | undefined {
     kind !== 'workflow' &&
     kind !== 'scheduled-task' &&
     kind !== 'run-queue-job' &&
-    kind !== 'local-server'
+    kind !== 'local-server' &&
+    kind !== 'pinned-message'
   ) {
     return undefined
   }
@@ -176,6 +180,22 @@ function formatProvenanceSummary(provenance?: WorkspaceBoardProvenance): string 
   const source = formatProvenanceSource(provenance.sourceKind)
   const actor = provenance.actor === 'agent' ? 'Agent' : provenance.actor === 'system' ? 'System' : 'User'
   return `${actor} · ${source}`
+}
+
+function formatCapabilityStatus(value: string): string {
+  return value
+    .split(/[-_]/)
+    .filter(Boolean)
+    .map((part) => part.slice(0, 1).toUpperCase() + part.slice(1))
+    .join(' ')
+}
+
+function capabilityBadgeTone(status: string): 'muted' | 'warning' | 'danger' | 'success' | 'accent' {
+  if (status === 'verified') return 'success'
+  if (status === 'partial') return 'accent'
+  if (status === 'blocked' || status === 'unsupported') return 'danger'
+  if (status === 'unverified') return 'warning'
+  return 'muted'
 }
 
 function draftFromCard(card: WorkspaceBoardCard): DetailDraft {
@@ -358,17 +378,20 @@ export function WorkspaceBoardView({
   pendingApprovalsByChatId,
   pendingApprovalQueueByChatId,
   collaboratingChatIds,
+  capabilityLedger,
   onAddCard,
   onUpdateCard,
   onDeleteCard,
   onOpenChat,
-  onOpenWorkflow
+  onOpenWorkflow,
+  onInspectRun
 }: WorkspaceBoardViewProps) {
   const [title, setTitle] = useState('')
   const [body, setBody] = useState('')
   const [linkValue, setLinkValue] = useState('')
   const [cardSearch, setCardSearch] = useState('')
   const [showAttentionOnly, setShowAttentionOnly] = useState(false)
+  const [showArchivedCards, setShowArchivedCards] = useState(false)
   const [isAdding, setIsAdding] = useState(false)
   const [isSeeding, setIsSeeding] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -382,7 +405,13 @@ export function WorkspaceBoardView({
     cardId: string
     edge: WorkspaceBoardDropEdge
   } | null>(null)
+  const drawerRef = useRef<HTMLElement | null>(null)
   const { servers: localServers } = useLocalServers()
+
+  useEffect(() => {
+    if (!selectedCardId || !detailDraft) return
+    drawerRef.current?.focus()
+  }, [selectedCardId])
 
   const workspaceChats = useMemo(
     () =>
@@ -501,6 +530,23 @@ export function WorkspaceBoardView({
     () => projectedCards.filter((projected) => !projected.card.archived && projected.columnId !== 'archived'),
     [projectedCards]
   )
+  const archivedProjectedCards = useMemo(
+    () => sortWorkspaceBoardProjectedCards(
+      projectedCards.filter((projected) => projected.card.archived || projected.columnId === 'archived')
+    ),
+    [projectedCards]
+  )
+  const boardCapabilityLedger = useMemo(() => {
+    if (!capabilityLedger || !board || capabilityLedger.workspaceId !== board.workspaceId) return null
+    return capabilityLedger
+  }, [board?.workspaceId, capabilityLedger])
+  const visibleCapabilityCells = useMemo(
+    () => (boardCapabilityLedger?.cells || []).slice(0, 6),
+    [boardCapabilityLedger]
+  )
+  const unsupportedClaimRateLabel = boardCapabilityLedger
+    ? `${Math.round(boardCapabilityLedger.unsupportedCompletionClaimRate * 100)}%`
+    : '0%'
   const filteredProjectedCards = useMemo(
     () =>
       activeProjectedCards.filter((projected) => {
@@ -697,6 +743,13 @@ export function WorkspaceBoardView({
       if (chat) onOpenChat(chat)
       return
     }
+    if (link.kind === 'pinned-message') {
+      const separatorIndex = link.id.indexOf(':')
+      const chatId = separatorIndex >= 0 ? link.id.slice(0, separatorIndex) : ''
+      const chat = chats.find((item) => item.appChatId === chatId)
+      if (chat) onOpenChat(chat)
+      return
+    }
     if (link.kind === 'workflow') {
       const workflow = workflows.find((item) => item.id === link.id)
       if (workflow) onOpenWorkflow(workflow)
@@ -710,6 +763,7 @@ export function WorkspaceBoardView({
     }
     if (link.kind === 'run-queue-job') {
       const job = runQueueJobs.find((item) => item.id === link.id || item.runId === link.id)
+      if (job) onInspectRun?.(job.runId || job.id, job.chatId)
       const chat = job?.chatId ? chats.find((item) => item.appChatId === job.chatId) : null
       if (chat) onOpenChat(chat)
       return
@@ -835,6 +889,23 @@ export function WorkspaceBoardView({
     }
   }
 
+  const restoreArchivedCard = async (projected: WorkspaceBoardProjectedCard) => {
+    setError(null)
+    try {
+      await onUpdateCard(projected.card.id, {
+        archived: false,
+        columnId: 'inbox',
+        sortOrder: Date.now()
+      })
+      if (selectedCardId === projected.card.id) {
+        setSelectedCardId(null)
+        setDetailDraft(null)
+      }
+    } catch (err) {
+      setError(formatError(err))
+    }
+  }
+
   const permanentlyDeleteSelectedCard = async () => {
     if (!selectedProjected) return
     const confirmed = window.confirm(`Permanently delete "${selectedProjected.card.title}"?`)
@@ -917,6 +988,38 @@ export function WorkspaceBoardView({
         </div>
       </header>
 
+      {boardCapabilityLedger && (
+        <section className="workspace-board-intake" aria-label="Capability ledger">
+          <div className="workspace-board-intake-copy">
+            <strong>Capability ledger</strong>
+            <span>
+              {boardCapabilityLedger.cells.length} capabilities · {boardCapabilityLedger.totalCompletionClaims} completion claims · {unsupportedClaimRateLabel} unsupported
+            </span>
+          </div>
+          <div className="workspace-board-badges" aria-label="Capability ledger status">
+            {boardCapabilityLedger.stallSignals.length > 0 && (
+              <span className="workspace-board-badge tone-warning" title={boardCapabilityLedger.stallSignals[0]?.note}>
+                {boardCapabilityLedger.stallSignals.length} stall signal{boardCapabilityLedger.stallSignals.length === 1 ? '' : 's'}
+              </span>
+            )}
+            {boardCapabilityLedger.mapEntries.length > 0 && (
+              <span className="workspace-board-badge tone-muted">
+                {boardCapabilityLedger.mapEntries.length} mapped slices
+              </span>
+            )}
+            {visibleCapabilityCells.map((cell) => (
+              <span
+                key={cell.capabilityKey}
+                className={`workspace-board-badge tone-${capabilityBadgeTone(cell.status)}`}
+                title={`${cell.title}: ${cell.evidenceRefs.length} evidence ref${cell.evidenceRefs.length === 1 ? '' : 's'}`}
+              >
+                {formatCapabilityStatus(cell.status)} · {cell.title}
+              </span>
+            ))}
+          </div>
+        </section>
+      )}
+
       {(seedCandidates.length > 0 || lastArchivedCard || error) && (
         <section className="workspace-board-intake" aria-label="Workspace board intake">
           {seedCandidates.length > 0 && (
@@ -994,6 +1097,16 @@ export function WorkspaceBoardView({
         >
           Needs attention
         </button>
+        {archivedProjectedCards.length > 0 && (
+          <button
+            type="button"
+            className={`workspace-board-filter-toggle ${showArchivedCards ? 'active' : ''}`}
+            aria-pressed={showArchivedCards}
+            onClick={() => setShowArchivedCards((value) => !value)}
+          >
+            Archived {archivedProjectedCards.length}
+          </button>
+        )}
         {isFiltered && (
           <button
             type="button"
@@ -1169,10 +1282,77 @@ export function WorkspaceBoardView({
               </section>
             )
           })}
+        {showArchivedCards && archivedProjectedCards.length > 0 && (
+          <section className="workspace-board-column workspace-board-column-archived">
+            <div className="workspace-board-column-header">
+              <h3>Archived</h3>
+              <span>{archivedProjectedCards.length}</span>
+            </div>
+            <div className="workspace-board-card-stack">
+              {archivedProjectedCards.map((projected) => (
+                <article
+                  key={projected.card.id}
+                  className={`workspace-board-card attention-${projected.attentionState} archived`}
+                  onDoubleClick={() => openDetails(projected)}
+                >
+                  <div className="workspace-board-card-topline">
+                    <span className="workspace-board-status status-done">Archived</span>
+                    {projected.linkedKindLabel && (
+                      <span className="workspace-board-lane-pill">{projected.linkedKindLabel}</span>
+                    )}
+                  </div>
+                  <h4>{projected.card.title}</h4>
+                  {projected.card.body && <p>{projected.card.body}</p>}
+                  {projected.linkedTitle && (
+                    <button
+                      type="button"
+                      className="workspace-board-link"
+                      onClick={() => openDetails(projected)}
+                      aria-label={`Show linked ${projected.linkedKindLabel || 'item'} details for ${projected.card.title}`}
+                    >
+                      <span className="workspace-board-link-title">{projected.linkedTitle}</span>
+                      {projected.linkedSubtitle && <span>{projected.linkedSubtitle}</span>}
+                    </button>
+                  )}
+                  <div className="workspace-board-card-actions">
+                    <button type="button" onClick={() => openDetails(projected)}>
+                      Details
+                    </button>
+                    {projected.card.link && (
+                      <button
+                        type="button"
+                        onClick={() => openLinked(projected)}
+                        disabled={projected.isStale}
+                        aria-label={`Open linked item for ${projected.card.title}`}
+                      >
+                        Open
+                      </button>
+                    )}
+                    <button type="button" className="secondary" onClick={() => void restoreArchivedCard(projected)}>
+                      Restore to Inbox
+                    </button>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </section>
+        )}
       </div>
 
       {selectedProjected && detailDraft && (
-        <aside className="workspace-board-drawer" aria-label={`${selectedProjected.card.title} details`}>
+        <aside
+          ref={drawerRef}
+          className="workspace-board-drawer"
+          role="dialog"
+          aria-modal="true"
+          aria-label={`${selectedProjected.card.title} details`}
+          tabIndex={-1}
+          onKeyDown={(event) => {
+            if (event.key !== 'Escape') return
+            setSelectedCardId(null)
+            setDetailDraft(null)
+          }}
+        >
           <div className="workspace-board-drawer-header">
             <div>
               <p className="workspace-board-kicker">Card Details</p>
@@ -1309,9 +1489,15 @@ export function WorkspaceBoardView({
             <button type="button" onClick={saveDetails} disabled={isSavingDetail || !detailDraft.title.trim()}>
               {isSavingDetail ? 'Saving...' : 'Save'}
             </button>
-            <button type="button" className="secondary" onClick={() => void archiveCard(selectedProjected)}>
-              Archive
-            </button>
+            {selectedProjected.card.archived || selectedProjected.card.columnId === 'archived' ? (
+              <button type="button" className="secondary" onClick={() => void restoreArchivedCard(selectedProjected)}>
+                Restore to Inbox
+              </button>
+            ) : (
+              <button type="button" className="secondary" onClick={() => void archiveCard(selectedProjected)}>
+                Archive
+              </button>
+            )}
             <button type="button" className="danger" onClick={() => void permanentlyDeleteSelectedCard()}>
               Delete permanently
             </button>

@@ -56,6 +56,12 @@ function createDeps() {
     saveWorkspaceBoardCard: vi.fn((card) => ({ ...card, id: card.id || 'card-1' })),
     updateWorkspaceBoardCard: vi.fn((id, partial) => ({ id, ...partial })),
     deleteWorkspaceBoardCard: vi.fn(),
+    getEvidencePacks: vi.fn(() => [{ id: 'pack-1' } as any]),
+    saveEvidencePack: vi.fn((pack) => ({ ...pack, id: pack.id || 'pack-1' })),
+    deleteEvidencePack: vi.fn(),
+    getCapabilityLedgerSnapshot: vi.fn(() => ({ workspaceId: 'ws-1', cells: [] } as any)),
+    getRepoConventionIndexes: vi.fn(() => [{ workspaceId: 'ws-1' } as any]),
+    saveRepoConventionIndex: vi.fn((snapshot) => ({ ...snapshot, workspaceId: snapshot.workspaceId || 'ws-1' })),
     materializeWorkflowNow: vi.fn(() => defaultSanitizedTask),
     setWorkflowUnattendedElevation: vi.fn((_, ack) => ({ ...defaultWorkflow, unattendedElevation: ack })),
     getWorkflowRunSummaries: vi.fn(async () => [{ id: 'summary-1' }]),
@@ -87,6 +93,7 @@ function createDeps() {
     broadcastWorkflowDefinitionsChanged: vi.fn(),
     broadcastScheduledTaskDue: vi.fn(),
     broadcastWorkspaceBoardsChanged: vi.fn(),
+    broadcastEvidencePacksChanged: vi.fn(),
     broadcastRemoteProjectionSnapshot: vi.fn()
   }
 }
@@ -112,6 +119,12 @@ describe('registerScheduledWorkflowHandlers', () => {
     expect(handlerFor('save-workspace-board-card')).toBeTypeOf('function')
     expect(handlerFor('update-workspace-board-card')).toBeTypeOf('function')
     expect(handlerFor('delete-workspace-board-card')).toBeTypeOf('function')
+    expect(handlerFor('get-evidence-packs')).toBeTypeOf('function')
+    expect(handlerFor('save-evidence-pack')).toBeTypeOf('function')
+    expect(handlerFor('delete-evidence-pack')).toBeTypeOf('function')
+    expect(handlerFor('get-capability-ledger-snapshot')).toBeTypeOf('function')
+    expect(handlerFor('get-repo-convention-indexes')).toBeTypeOf('function')
+    expect(handlerFor('save-repo-convention-index')).toBeTypeOf('function')
     expect(handlerFor('run-workflow-now')).toBeTypeOf('function')
     expect(handlerFor('set-workflow-unattended-elevation')).toBeTypeOf('function')
     expect(handlerFor('get-workflow-run-summaries')).toBeTypeOf('function')
@@ -140,6 +153,62 @@ describe('registerScheduledWorkflowHandlers', () => {
       workspaceId: 'ws-1',
       workflowId: 'wf-1'
     })
+  })
+
+  it('saves evidence packs and broadcasts ledger changes', () => {
+    const deps = createDeps()
+    registerScheduledWorkflowHandlers(deps)
+
+    const payload = {
+      workspaceId: 'ws-1',
+      capabilityCells: []
+    }
+
+    const saved = handlerFor('save-evidence-pack')({}, payload)
+
+    expect(deps.saveEvidencePack).toHaveBeenCalledWith(payload)
+    expect(deps.broadcastEvidencePacksChanged).toHaveBeenCalledTimes(1)
+    expect(saved).toMatchObject({
+      id: 'pack-1',
+      workspaceId: 'ws-1'
+    })
+  })
+
+  it('routes workspace board mutations through sanitizers, store calls, and board broadcasts', () => {
+    const deps = createDeps()
+    registerScheduledWorkflowHandlers(deps)
+
+    const boardPayload = { name: 'Board', workspaceId: 'ws-1' }
+    expect(handlerFor('save-workspace-board')({}, boardPayload)).toMatchObject({ id: 'board-1', name: 'Board' })
+    expect(deps.sanitizeWorkspaceBoardForSave).toHaveBeenCalledWith(boardPayload)
+    expect(deps.saveWorkspaceBoard).toHaveBeenCalledWith(boardPayload)
+
+    expect(handlerFor('update-workspace-board')({}, 'board-1', { archived: false })).toMatchObject({
+      id: 'board-1',
+      archived: false
+    })
+    expect(deps.sanitizeWorkspaceBoardPatch).toHaveBeenCalledWith({ archived: false })
+    expect(deps.updateWorkspaceBoard).toHaveBeenCalledWith('board-1', { archived: false })
+
+    const cardPayload = { boardId: 'board-1', title: 'Card' }
+    expect(handlerFor('save-workspace-board-card')({}, cardPayload)).toMatchObject({ id: 'card-1', title: 'Card' })
+    expect(deps.sanitizeWorkspaceBoardCardForSave).toHaveBeenCalledWith(cardPayload)
+    expect(deps.saveWorkspaceBoardCard).toHaveBeenCalledWith(cardPayload)
+
+    expect(handlerFor('update-workspace-board-card')({}, 'card-1', { columnId: 'done' })).toMatchObject({
+      id: 'card-1',
+      columnId: 'done'
+    })
+    expect(deps.sanitizeWorkspaceBoardCardPatch).toHaveBeenCalledWith({ columnId: 'done' })
+    expect(deps.updateWorkspaceBoardCard).toHaveBeenCalledWith('card-1', { columnId: 'done' })
+
+    handlerFor('delete-workspace-board-card')({}, 'card-1')
+    expect(deps.deleteWorkspaceBoardCard).toHaveBeenCalledWith('card-1')
+
+    handlerFor('delete-workspace-board')({}, 'board-1')
+    expect(deps.deleteWorkspaceBoard).toHaveBeenCalledWith('board-1')
+    expect(deps.broadcastWorkspaceBoardsChanged).toHaveBeenCalledTimes(6)
+    expect(deps.broadcastRemoteProjectionSnapshot).toHaveBeenCalledTimes(6)
   })
 
   it('broadcasts schedule changes after workflow updates and schedules timer', () => {

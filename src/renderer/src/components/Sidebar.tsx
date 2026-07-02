@@ -244,6 +244,7 @@ interface SidebarProps {
   onDuplicateWorkspaceBoard?: (board: WorkspaceBoardDefinition) => void
   onTogglePinWorkspaceBoard?: (board: WorkspaceBoardDefinition) => void
   onArchiveWorkspaceBoard?: (boardId: string) => void
+  onRestoreWorkspaceBoard?: (boardId: string) => void
   onDeleteWorkspaceBoard?: (boardId: string) => void
   onAddChatToWorkspaceBoard?: (chat: ChatRecord) => void
   onAddWorkflowToWorkspaceBoard?: (workflow: WorkflowDefinition) => void
@@ -2106,6 +2107,7 @@ export function Sidebar({
   onDuplicateWorkspaceBoard,
   onTogglePinWorkspaceBoard,
   onArchiveWorkspaceBoard,
+  onRestoreWorkspaceBoard,
   onDeleteWorkspaceBoard,
   onAddChatToWorkspaceBoard,
   onAddWorkflowToWorkspaceBoard,
@@ -2444,6 +2446,20 @@ export function Sidebar({
       if (Boolean(left.pinned) !== Boolean(right.pinned)) return left.pinned ? -1 : 1
       return right.updatedAt.localeCompare(left.updatedAt)
     })
+  const archivedWorkspaceBoards = (isSidebarSearchActive
+    ? workspaceBoards.filter((board) =>
+        workspaceBoardMatchesSearch(
+          board,
+          workspaceById.get(board.workspaceId),
+          workspaceBoardCardsByBoardId.get(board.id) || [],
+          sidebarSearchQuery
+        )
+      )
+    : workspaceBoards
+  )
+    .filter((board) => workspaceWorkflowIds.has(board.workspaceId) && board.archived)
+    .slice()
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
   const scheduledTaskById = useMemo(() => {
     const map = new Map<string, ScheduledTask>()
     for (const task of scheduledTasks) map.set(task.id, task)
@@ -3314,7 +3330,14 @@ export function Sidebar({
         onSelect: () => onDuplicateWorkspaceBoard(board)
       })
     }
-    if (onArchiveWorkspaceBoard) {
+    if (board.archived && onRestoreWorkspaceBoard) {
+      items.push({
+        id: 'restore',
+        label: 'Restore',
+        group: 'primary',
+        onSelect: () => onRestoreWorkspaceBoard(board.id)
+      })
+    } else if (onArchiveWorkspaceBoard) {
       items.push({
         id: 'archive',
         label: 'Archive',
@@ -4113,11 +4136,11 @@ export function Sidebar({
               </div>
               {!isSectionCollapsed('workspace-boards') && (
                 <div className="sidebar-workspace-board-list">
-                  {visibleWorkspaceBoards.length === 0 ? (
+                  {visibleWorkspaceBoards.length === 0 && archivedWorkspaceBoards.length === 0 ? (
                     <div className="sidebar-workflow-empty">
                       {isSidebarSearchActive ? 'No matching boards' : 'No workspace boards'}
                     </div>
-                  ) : (
+                  ) : visibleWorkspaceBoards.length > 0 ? (
                     visibleWorkspaceBoards.map((board) => {
                       const workspace = workspaceById.get(board.workspaceId)
                       const boardCards = workspaceBoardCardsByBoardId.get(board.id) || []
@@ -4177,6 +4200,45 @@ export function Sidebar({
                         </div>
                       )
                     })
+                  ) : null}
+                  {archivedWorkspaceBoards.length > 0 && (
+                    <div className="sidebar-workspace-board-archived-group">
+                      <div className="sidebar-workflow-empty">Archived</div>
+                      {archivedWorkspaceBoards.map((board) => {
+                        const workspace = workspaceById.get(board.workspaceId)
+                        const boardCards = workspaceBoardCardsByBoardId.get(board.id) || []
+                        const boardMeta = [
+                          'Archived',
+                          workspace?.displayName || 'Workspace',
+                          `${boardCards.length} active card${boardCards.length === 1 ? '' : 's'}`
+                        ].join(' · ')
+                        return (
+                          <div key={board.id} className="sidebar-workspace-board-block">
+                            <div
+                              className="sidebar-workspace-board-item archived"
+                              title={`${board.name} (archived)`}
+                            >
+                              <span className="sidebar-workspace-board-icon" aria-hidden>
+                                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor">
+                                  <path d="M3 3.5h10M3 8h10M3 12.5h10" />
+                                  <path d="M5.5 2.5v11M10.5 2.5v11" />
+                                </svg>
+                              </span>
+                              <span className="sidebar-workflow-copy">
+                                <span className="sidebar-workflow-name">
+                                  <HighlightMatch text={board.name} query={sidebarSearchQuery} />
+                                </span>
+                                <span className="sidebar-workflow-meta">{boardMeta}</span>
+                              </span>
+                              <SidebarOverflowMenu
+                                triggerLabel="Archived workspace board actions"
+                                items={buildWorkspaceBoardMenuItems(board)}
+                              />
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
                   )}
                 </div>
               )}

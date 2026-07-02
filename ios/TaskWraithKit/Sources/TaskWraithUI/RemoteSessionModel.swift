@@ -153,6 +153,9 @@ public final class RemoteSessionModel: ObservableObject {
     /// "Workflows" section). Read-only on the phone — tapping opens the
     /// workflow's chat. One `workflows` envelope per workflow, like `taskCard`.
     @Published public private(set) var workflows: [RemoteWorkflow] = []
+    /// Workspace Boards projected from the Mac. Read-only on the phone for now;
+    /// the Mac and agent MCP surface remain the write authority.
+    @Published public private(set) var workspaceBoards: [RemoteWorkspaceBoard] = []
     /// Saved ensemble roster presets projected from the Mac (iOS Roster page's
     /// "Load preset"). GLOBAL; one `ensemblePresets` envelope per preset.
     @Published public private(set) var ensemblePresets: [RemoteEnsemblePreset] = []
@@ -1431,6 +1434,7 @@ public final class RemoteSessionModel: ObservableObject {
         ensembleStates = [:]
         diffSummaries = [:]
         workflows = []
+        workspaceBoards = []
         ensemblePresets = []
         threadWorkspaceHints = [:]
         demoFileEdits = [:]
@@ -2454,6 +2458,14 @@ public final class RemoteSessionModel: ObservableObject {
                     workflows[index] = workflow
                 } else {
                     workflows.append(workflow)
+                }
+            }
+        case "workspaceBoards":
+            if let board = envelope.decodePayload(RemoteWorkspaceBoard.self) {
+                if let index = workspaceBoards.firstIndex(where: { $0.id == board.id }) {
+                    workspaceBoards[index] = board
+                } else {
+                    workspaceBoards.append(board)
                 }
             }
         case "ensemblePresets":
@@ -3766,6 +3778,7 @@ public final class RemoteSessionModel: ObservableObject {
         var diffSnapshots: [String: MobileDiffSummary] = [:]
         var incomingGitSnapshots: [String: GitWorkspaceSnapshot] = [:]
         var workflowCards: [RemoteWorkflow] = []
+        var boardCards: [RemoteWorkspaceBoard] = []
         var presetCards: [RemoteEnsemblePreset] = []
         for envelope in snapshot.projections {
             switch envelope.kind {
@@ -3776,6 +3789,10 @@ public final class RemoteSessionModel: ObservableObject {
             case "workflows":
                 if let workflow = envelope.decodePayload(RemoteWorkflow.self) {
                     workflowCards.append(workflow)
+                }
+            case "workspaceBoards":
+                if let board = envelope.decodePayload(RemoteWorkspaceBoard.self) {
+                    boardCards.append(board)
                 }
             case "ensemblePresets":
                 if let preset = envelope.decodePayload(RemoteEnsemblePreset.self) {
@@ -3843,6 +3860,11 @@ public final class RemoteSessionModel: ObservableObject {
         } else {
             workflows = workflowCards
         }
+        if boardCards.isEmpty, !workspaceBoards.isEmpty, tasks.isEmpty {
+            // Settling snapshot — keep cached boards.
+        } else {
+            workspaceBoards = boardCards
+        }
         // Roster presets: keep the cached list only DURING first-connect settling
         // (before the projection has hydrated). Unlike workflows we can't key this
         // on `tasks.isEmpty` — "no presets + no active tasks" is a perfectly normal
@@ -3855,7 +3877,9 @@ public final class RemoteSessionModel: ObservableObject {
         // Real content ends the first-connect "Syncing…" state immediately;
         // an empty settling snapshot does NOT (the grace timer or the Mac's
         // delayed re-seed resolves it instead).
-        if !tasks.isEmpty { projectionHydrated = true }
+        if !tasks.isEmpty || !workflowCards.isEmpty || !boardCards.isEmpty || !presetCards.isEmpty {
+            projectionHydrated = true
+        }
         // Reconcile the optimistic-dismissal sets: keep suppressing only cards
         // the Mac STILL lists as pending (a reply in flight); once it drops a
         // card (resolution confirmed) the id leaves the set, and a card no

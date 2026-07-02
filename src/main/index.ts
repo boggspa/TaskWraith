@@ -229,11 +229,13 @@ import {
   buildRemoteEnsembleState,
   buildRemoteProjectionEnvelope,
   buildRemoteShellAppearance,
+  buildRemoteWorkspaceBoard,
   buildRemoteTaskCard,
   type RemoteProjectionEnvelope,
   type RemoteTaskCard,
   type RemoteTaskCapabilities,
-  type RemoteWorkflow
+  type RemoteWorkflow,
+  type RemoteWorkspaceBoard
 } from './RemoteTaskProjection'
 import {
   projectRemoteThread,
@@ -4540,6 +4542,7 @@ function emitWorkspaceBoardsChanged(): void {
     boards: AppStore.getWorkspaceBoards(),
     cards: AppStore.getWorkspaceBoardCards()
   })
+  bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
 }
 
 function persistRunSessionQueueState(session: ReturnType<typeof runManager.get>): void {
@@ -24769,6 +24772,29 @@ if (isGeminiMcpBridgeProcess) {
           })
         )
       }
+      // Workspace boards — read-only remote projection of the Mac-owned triage
+      // boards. Mutations still happen on the Mac/agent side; paired devices get
+      // the current board/card shape in the same snapshot lane as workflows.
+      for (const board of AppStore.getWorkspaceBoards()) {
+        if (!board.workspaceId || !remoteWorkspaceIsVisible(board.workspaceId)) continue
+        const cards = AppStore.getWorkspaceBoardCards(board.id)
+        const boardPayload: RemoteWorkspaceBoard = buildRemoteWorkspaceBoard(board, cards)
+        envelopes.push(
+          buildRemoteProjectionEnvelope({
+            kind: 'workspaceBoards',
+            payload: boardPayload,
+            generatedAt,
+            workspaceId: board.workspaceId,
+            workspacePath: board.workspacePath,
+            envelopeId: [
+              'remote-workspace-board',
+              board.id,
+              board.updatedAt,
+              boardPayload.latestCardUpdatedAt || 'no-cards'
+            ].join(':')
+          })
+        )
+      }
       // Ensemble roster presets (iOS Roster page) — GLOBAL (not workspace-
       // bound). The renderer (source of truth) syncs them up via
       // 'ensemble-roster-presets:sync'; one envelope per preset, re-broadcast
@@ -27613,6 +27639,12 @@ if (isGeminiMcpBridgeProcess) {
       saveWorkspaceBoardCard: (card) => AppStore.saveWorkspaceBoardCard(card),
       updateWorkspaceBoardCard: (id, partial) => AppStore.updateWorkspaceBoardCard(id, partial),
       deleteWorkspaceBoardCard: (id) => AppStore.deleteWorkspaceBoardCard(id),
+      getEvidencePacks: (workspaceId) => AppStore.getEvidencePacks(workspaceId),
+      saveEvidencePack: (pack) => AppStore.saveEvidencePack(pack),
+      deleteEvidencePack: (id) => AppStore.deleteEvidencePack(id),
+      getCapabilityLedgerSnapshot: (workspaceId) => AppStore.getCapabilityLedgerSnapshot(workspaceId),
+      getRepoConventionIndexes: (workspaceId) => AppStore.getRepoConventionIndexes(workspaceId),
+      saveRepoConventionIndex: (snapshot) => AppStore.saveRepoConventionIndex(snapshot),
       materializeWorkflowNow: (id) => AppStore.materializeWorkflowNow(id),
       setWorkflowUnattendedElevation: (id, ack) => AppStore.setWorkflowUnattendedElevation(id, ack),
       getWorkflowRunSummaries: (workflowId) => AppStore.getWorkflowRunSummaries(workflowId),
@@ -27645,6 +27677,12 @@ if (isGeminiMcpBridgeProcess) {
         mainWindow?.webContents.send('workspace-boards-changed', {
           boards: AppStore.getWorkspaceBoards(),
           cards: AppStore.getWorkspaceBoardCards()
+        })
+      },
+      broadcastEvidencePacksChanged: () => {
+        mainWindow?.webContents.send('evidence-packs-changed', {
+          packs: AppStore.getEvidencePacks(),
+          ledger: AppStore.getCapabilityLedgerSnapshot()
         })
       },
       broadcastRemoteProjectionSnapshot: () => {

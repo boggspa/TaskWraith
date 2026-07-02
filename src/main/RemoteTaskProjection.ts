@@ -17,7 +17,12 @@ import type {
   ThemeAppearance,
   ThemeCornerStyle,
   ToolActivity,
-  VisualEffectStyle
+  VisualEffectStyle,
+  WorkspaceBoardCard,
+  WorkspaceBoardCardLink,
+  WorkspaceBoardColumn,
+  WorkspaceBoardColumnId,
+  WorkspaceBoardDefinition
 } from './store/types'
 import { normalizeThreadTitle } from '../shared/threadTitles'
 import { isEnsembleRoundDispatchLive } from '../shared/ensembleRoundLifecycle'
@@ -39,6 +44,7 @@ export type RemoteProjectionKind =
   | 'ensembleState'
   | 'shellAppearance'
   | 'workflows'
+  | 'workspaceBoards'
   | 'ensemblePresets'
 
 /**
@@ -66,6 +72,55 @@ export interface RemoteWorkflow {
   loopIterationCount?: number
   loopStopReason?: string
   loopTokens?: number
+}
+
+export interface RemoteWorkspaceBoardColumn {
+  id: WorkspaceBoardColumnId
+  name: string
+  sortOrder: number
+  wipLimit?: number
+  activeCardCount: number
+  archivedCardCount: number
+}
+
+export interface RemoteWorkspaceBoardCard {
+  id: string
+  boardId: string
+  workspaceId: string
+  columnId: WorkspaceBoardColumnId
+  title: string
+  body?: string
+  labels?: string[]
+  linkKind?: WorkspaceBoardCardLink['kind']
+  linkId?: string
+  sourceTitle?: string
+  runId?: string
+  archived?: boolean
+  updatedAt: string
+}
+
+/**
+ * Read-only Workspace Board projection for paired devices. The Mac remains the
+ * write authority; iOS can list the boards/cards and open linked threads/runs in
+ * follow-up slices. Cards are bounded so full remote snapshots stay relay-safe.
+ */
+export interface RemoteWorkspaceBoard {
+  id: string
+  workspaceId: string
+  workspacePath?: string
+  name: string
+  description?: string
+  pinned?: boolean
+  archived?: boolean
+  activeCardCount: number
+  archivedCardCount: number
+  columns: RemoteWorkspaceBoardColumn[]
+  cards: RemoteWorkspaceBoardCard[]
+  cardLimit: number
+  cardsTruncated: boolean
+  createdAt: string
+  updatedAt: string
+  latestCardUpdatedAt?: string
 }
 
 export type RemoteTaskStatus =
@@ -612,6 +667,7 @@ export interface BuildMobileQuestionCardInput {
 
 const DEFAULT_PREVIEW_MAX = 240
 const DEFAULT_MAX_TASKS = 100
+const DEFAULT_REMOTE_WORKSPACE_BOARD_CARD_LIMIT = 40
 const DEFAULT_REMOTE_SHELL_COLORS: RemoteShellAppearanceColors = {
   windowBase: { light: '#f4f6f8', dark: '#141414' },
   sidebarBase: { light: '#c2c2c2', dark: '#1e1e22' },
@@ -707,6 +763,104 @@ export function buildRemoteProjectionEnvelope<TPayload>(
   if (input.threadId) envelope.threadId = input.threadId
   if (input.runId) envelope.runId = input.runId
   return envelope
+}
+
+export function buildRemoteWorkspaceBoard(
+  board: WorkspaceBoardDefinition,
+  cards: ReadonlyArray<WorkspaceBoardCard>,
+  options: { cardLimit?: number } = {}
+): RemoteWorkspaceBoard {
+  const cardLimit = clampPositiveInt(
+    options.cardLimit,
+    DEFAULT_REMOTE_WORKSPACE_BOARD_CARD_LIMIT
+  )
+  const boardCards = cards.filter((card) => card.boardId === board.id)
+  const activeCards = boardCards.filter((card) => !card.archived)
+  const archivedCards = boardCards.filter((card) => card.archived)
+  const sortedCardUpdatedAts = boardCards
+    .map((card) => card.updatedAt)
+    .filter((value): value is string => Boolean(value))
+    .sort()
+  const latestCardUpdatedAt = sortedCardUpdatedAts[sortedCardUpdatedAts.length - 1]
+  const activeCountsByColumn = countBoardCardsByColumn(activeCards)
+  const archivedCountsByColumn = countBoardCardsByColumn(archivedCards)
+  const columnOrder = new Map(board.columns.map((column, index) => [column.id, index]))
+  const sortedCards = [...boardCards].sort(
+    (left, right) =>
+      Number(left.archived === true) - Number(right.archived === true) ||
+      (columnOrder.get(left.columnId) ?? Number.MAX_SAFE_INTEGER) -
+        (columnOrder.get(right.columnId) ?? Number.MAX_SAFE_INTEGER) ||
+      left.sortOrder - right.sortOrder ||
+      right.updatedAt.localeCompare(left.updatedAt)
+  )
+  const projectedCards = sortedCards.slice(0, cardLimit).map(projectRemoteWorkspaceBoardCard)
+  return {
+    id: board.id,
+    workspaceId: board.workspaceId,
+    workspacePath: board.workspacePath,
+    name: sanitizeText(board.name, 160).preview,
+    description: sanitizeText(board.description, 500).preview || undefined,
+    pinned: board.pinned,
+    archived: board.archived,
+    activeCardCount: activeCards.length,
+    archivedCardCount: archivedCards.length,
+    columns: board.columns.map((column) =>
+      projectRemoteWorkspaceBoardColumn(column, activeCountsByColumn, archivedCountsByColumn)
+    ),
+    cards: projectedCards,
+    cardLimit,
+    cardsTruncated: sortedCards.length > projectedCards.length,
+    createdAt: board.createdAt,
+    updatedAt: board.updatedAt,
+    latestCardUpdatedAt
+  }
+}
+
+function countBoardCardsByColumn(
+  cards: ReadonlyArray<WorkspaceBoardCard>
+): Map<WorkspaceBoardColumnId, number> {
+  const counts = new Map<WorkspaceBoardColumnId, number>()
+  for (const card of cards) {
+    counts.set(card.columnId, (counts.get(card.columnId) ?? 0) + 1)
+  }
+  return counts
+}
+
+function projectRemoteWorkspaceBoardColumn(
+  column: WorkspaceBoardColumn,
+  activeCounts: ReadonlyMap<WorkspaceBoardColumnId, number>,
+  archivedCounts: ReadonlyMap<WorkspaceBoardColumnId, number>
+): RemoteWorkspaceBoardColumn {
+  return {
+    id: column.id,
+    name: sanitizeText(column.name, 80).preview || column.id,
+    sortOrder: column.sortOrder,
+    ...(typeof column.wipLimit === 'number' && Number.isFinite(column.wipLimit)
+      ? { wipLimit: column.wipLimit }
+      : {}),
+    activeCardCount: activeCounts.get(column.id) ?? 0,
+    archivedCardCount: archivedCounts.get(column.id) ?? 0
+  }
+}
+
+function projectRemoteWorkspaceBoardCard(card: WorkspaceBoardCard): RemoteWorkspaceBoardCard {
+  const body = sanitizeText(card.body, 500).preview
+  return {
+    id: card.id,
+    boardId: card.boardId,
+    workspaceId: card.workspaceId,
+    columnId: card.columnId,
+    title: sanitizeText(card.title, 160).preview,
+    ...(body ? { body } : {}),
+    ...(card.labels?.length ? { labels: card.labels.slice(0, 8) } : {}),
+    ...(card.link ? { linkKind: card.link.kind, linkId: card.link.id } : {}),
+    ...(card.provenance?.sourceTitle
+      ? { sourceTitle: sanitizeText(card.provenance.sourceTitle, 160).preview }
+      : {}),
+    ...(card.provenance?.runId ? { runId: card.provenance.runId } : {}),
+    ...(card.archived ? { archived: true } : {}),
+    updatedAt: card.updatedAt
+  }
 }
 
 export function buildRemoteShellAppearance(

@@ -120,6 +120,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   beginManualSideTranscriptJump,
   canCreateSideChatFromCurrent,
   canOpenWorkspacePopout,
+  capabilityLedgerSnapshot,
   chatByIdRef,
   chatContextNotice,
   chatContextTurns,
@@ -231,6 +232,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   handleDuplicateWorkspaceBoard,
   handleEditQueuedMessage,
   handleEditWorkflowInterval,
+  handleRestoreWorkspaceBoard,
   handleEndCurrentLinkedMainChat,
   handleEndSidePanelChat,
   handleForkCodexThread,
@@ -650,6 +652,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                 onDuplicateWorkspaceBoard={workspaceBoardApiReady ? handleDuplicateWorkspaceBoard : undefined}
                 onTogglePinWorkspaceBoard={workspaceBoardApiReady ? handleTogglePinWorkspaceBoard : undefined}
                 onArchiveWorkspaceBoard={workspaceBoardApiReady ? handleArchiveWorkspaceBoard : undefined}
+                onRestoreWorkspaceBoard={workspaceBoardApiReady ? handleRestoreWorkspaceBoard : undefined}
                 onDeleteWorkspaceBoard={workspaceBoardApiReady ? handleDeleteWorkspaceBoard : undefined}
                 onAddChatToWorkspaceBoard={
                   workspaceBoardApiReady ? handleAddChatToWorkspaceBoard : undefined
@@ -861,7 +864,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
           </div>
         )}
 
-        {!isChatPopoutWindow && !showSettings && workspaceBoardApiReady && activeWorkspaceBoardId && (
+        {!isChatPopoutWindow && !showSettings && workspaceBoardApiReady && activeWorkspaceBoard && (
           <WorkspaceBoardView
             board={activeWorkspaceBoard}
             workspace={activeWorkspaceBoardWorkspace}
@@ -870,6 +873,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
             workflows={workflowDefinitions}
             scheduledTasks={scheduledTasks}
             runQueueJobs={runQueueJobs}
+            capabilityLedger={capabilityLedgerSnapshot}
             runningChatIds={runningChatIds}
             pendingApprovalsByChatId={pendingAgentApprovalByChatId}
             pendingApprovalQueueByChatId={pendingApprovalQueueByChatId}
@@ -881,6 +885,9 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
             onOpenWorkflow={(workflow) => {
               const workflowChat = chats.find((chat) => chat.appChatId === workflow.template.chatId)
               if (workflowChat) void handleSelectChat(workflowChat)
+            }}
+            onInspectRun={(runId) => {
+              setInspectingRunId(runId)
             }}
           />
         )}
@@ -954,7 +961,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
         <div
           ref={chatSplitRegionRef}
           className={`chat-split-region ${sidePanelLayoutClass} ${
-            showSettings || (workspaceBoardApiReady && activeWorkspaceBoardId)
+            showSettings || (workspaceBoardApiReady && Boolean(activeWorkspaceBoard))
               ? 'chat-split-hidden-for-settings'
               : ''
           }`}

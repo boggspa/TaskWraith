@@ -70,6 +70,7 @@ type MainAppLayoutSidebarProps = {
   handleDuplicateWorkspaceBoard: NonNullable<SidebarProps['onDuplicateWorkspaceBoard']>
   handleEditWorkflowInterval: NonNullable<SidebarProps['onEditWorkflowInterval']>
   handleManualUsageRefresh: NonNullable<SidebarModelUsageApiSpend['onRefreshUsage']>
+  handleRestoreWorkspaceBoard: NonNullable<SidebarProps['onRestoreWorkspaceBoard']>
   handleNavigateToWorkspace: SidebarProps['onSelectWorkspace']
   handleNewChat: SidebarProps['onNewChat']
   handleNewEnsemble: SidebarProps['onNewEnsemble']
@@ -143,6 +144,7 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   activeWorkspaceBoardCards: any
   activeWorkspaceBoardId: any
   activeWorkspaceBoardWorkspace: any
+  capabilityLedgerSnapshot: any
   advancedFxIntensity: any
   agentMcpStatusByProvider: any
   agentStatusByProvider: any
@@ -278,6 +280,7 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   handleDuplicateWorkspaceBoard: MainAppLayoutSidebarProps['handleDuplicateWorkspaceBoard']
   handleEditQueuedMessage: any
   handleEditWorkflowInterval: MainAppLayoutSidebarProps['handleEditWorkflowInterval']
+  handleRestoreWorkspaceBoard: MainAppLayoutSidebarProps['handleRestoreWorkspaceBoard']
   handleEndCurrentLinkedMainChat: any
   handleEndSidePanelChat: any
   handleForkCodexThread: any

@@ -165,6 +165,45 @@ describe('workspace board projection', () => {
     expect(projected.badges.some((badge) => badge.label === 'Pinned')).toBe(true)
   })
 
+  it('projects pinned-message links without clobbering them into thread status', () => {
+    const card = makeCard({
+      link: { kind: 'pinned-message', id: 'chat-1:message-1' },
+      columnId: 'inbox'
+    })
+    const projected = buildWorkspaceBoardProjectedCards({
+      cards: [card],
+      chats: [
+        makeChat({
+          runs: [
+            {
+              runId: 'run-1',
+              startedAt: '2026-06-29T00:00:00.000Z',
+              status: 'success'
+            }
+          ],
+          messages: [
+            {
+              id: 'message-1',
+              role: 'assistant',
+              content: 'Pinned note',
+              timestamp: '2026-06-29T00:00:00.000Z',
+              metadata: { pinnedAt: 1 }
+            }
+          ]
+        })
+      ],
+      workflows: [],
+      scheduledTasks: [],
+      runQueueJobs: []
+    })[0]
+
+    expect(projected.derivedStatus).toBe('manual')
+    expect(projected.linkedKindLabel).toBe('Pinned Message')
+    expect(projected.linkedTitle).toBe('Pinned: Workspace thread')
+    expect(projected.badges.some((badge) => badge.label === 'assistant')).toBe(true)
+    expect(projected.badges.some((badge) => badge.label === 'Run review ready')).toBe(false)
+  })
+
   it('projects live local server links as running and stale when missing', () => {
     const card = makeCard({ link: { kind: 'local-server', id: 'server-1' }, columnId: 'ready' })
     const projected = buildWorkspaceBoardProjectedCards({

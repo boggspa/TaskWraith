@@ -91,6 +91,7 @@ import {
   RunQueueJobSource,
   RunQueueJobStatus,
   RunQueueRequestSnapshot,
+  CapabilityLedgerSnapshot,
   RunEventInput,
   RunEventRecord,
   RunRecoveryRecord,
@@ -2078,6 +2079,8 @@ function App(): React.JSX.Element {
   const [workspaceBoards, setWorkspaceBoards] = useState<WorkspaceBoardDefinition[]>([])
   const [workspaceBoardCards, setWorkspaceBoardCards] = useState<WorkspaceBoardCard[]>([])
   const [activeWorkspaceBoardId, setActiveWorkspaceBoardId] = useState<string | null>(null)
+  const [capabilityLedgerSnapshot, setCapabilityLedgerSnapshot] =
+    useState<CapabilityLedgerSnapshot | null>(null)
   const workspaceBoardApiReady =
     typeof window.api.getWorkspaceBoards === 'function' &&
     typeof window.api.getWorkspaceBoardCards === 'function' &&
@@ -2087,6 +2090,9 @@ function App(): React.JSX.Element {
     typeof window.api.saveWorkspaceBoardCard === 'function' &&
     typeof window.api.updateWorkspaceBoardCard === 'function' &&
     typeof window.api.deleteWorkspaceBoardCard === 'function'
+  const evidencePackApiReady =
+    typeof window.api.getCapabilityLedgerSnapshot === 'function' &&
+    typeof window.api.getEvidencePacks === 'function'
   // First-class Workflows compose state. A workflow's chat is an ordinary
   // ChatRecord; while it's being set up (before the WorkflowDefinition is saved
   // on first send) we hold a transient draft keyed to that chat so the welcome
@@ -7522,7 +7528,12 @@ function App(): React.JSX.Element {
       setWorkspaceBoardCards([])
       setActiveWorkspaceBoardId(null)
     }
-  }, [currentWorkspace?.id, workspaceBoardApiReady])
+    if (evidencePackApiReady) {
+      void window.api.getCapabilityLedgerSnapshot(currentWorkspace?.id).then(setCapabilityLedgerSnapshot)
+    } else {
+      setCapabilityLedgerSnapshot(null)
+    }
+  }, [currentWorkspace?.id, evidencePackApiReady, workspaceBoardApiReady])
 
   useEffect(() => {
     scheduledTasksRef.current = scheduledTasks
@@ -8657,6 +8668,22 @@ function App(): React.JSX.Element {
       window.api.onWorkspaceBoardsChanged((payload) => {
         setWorkspaceBoards(payload.boards)
         setWorkspaceBoardCards(payload.cards)
+        setActiveWorkspaceBoardId((activeId) =>
+          activeId && payload.boards.some((board) => board.id === activeId && !board.archived)
+            ? activeId
+            : null
+        )
+      })
+    }
+
+    if (evidencePackApiReady && typeof window.api.onEvidencePacksChanged === 'function') {
+      window.api.onEvidencePacksChanged((payload) => {
+        const workspaceId = currentWorkspaceIdRef.current || currentWorkspace?.id
+        if (!workspaceId || payload.ledger.workspaceId === workspaceId) {
+          setCapabilityLedgerSnapshot(payload.ledger)
+        } else {
+          void window.api.getCapabilityLedgerSnapshot(workspaceId).then(setCapabilityLedgerSnapshot)
+        }
       })
     }
 
@@ -13176,6 +13203,14 @@ function App(): React.JSX.Element {
     if (activeWorkspaceBoardId === boardId) setActiveWorkspaceBoardId(null)
   }
 
+  const handleRestoreWorkspaceBoard = async (boardId: string) => {
+    if (!workspaceBoardApiReady) return
+    const updated = await window.api.updateWorkspaceBoard(boardId, { archived: false })
+    if (updated) {
+      setWorkspaceBoards((prev) => prev.map((item) => (item.id === boardId ? updated : item)))
+    }
+  }
+
   const handleDeleteWorkspaceBoard = async (boardId: string) => {
     if (!workspaceBoardApiReady) return
     const board = workspaceBoards.find((item) => item.id === boardId)
@@ -13428,12 +13463,13 @@ function App(): React.JSX.Element {
       title: `Pinned: ${currentChat.title || 'Thread'}`,
       body: message.content.slice(0, 1200),
       labels: compactBoardLabels('pinned-message', message.role),
-      link: { kind: 'chat', id: currentChat.appChatId },
+      link: { kind: 'pinned-message', id: `${currentChat.appChatId}:${message.id}` },
       columnId: 'inbox',
       provenance: createWorkspaceBoardProvenance('capture', {
-        sourceId: currentChat.appChatId,
+        sourceId: `${currentChat.appChatId}:${message.id}`,
         sourceTitle: currentChat.title,
         provider: currentChat.provider,
+        runId: message.runId,
         note: 'Captured from a pinned message.'
       })
     })
@@ -23562,14 +23598,14 @@ function App(): React.JSX.Element {
 
   const activeWorkspaceBoard =
     activeWorkspaceBoardId != null
-      ? workspaceBoards.find((board) => board.id === activeWorkspaceBoardId) || null
+      ? workspaceBoards.find((board) => board.id === activeWorkspaceBoardId && !board.archived) || null
       : null
   const activeWorkspaceBoardWorkspace =
     activeWorkspaceBoard != null
       ? workspaces.find((workspace) => workspace.id === activeWorkspaceBoard.workspaceId) || null
       : null
   const activeWorkspaceBoardCards = activeWorkspaceBoard
-    ? workspaceBoardCards.filter((card) => card.boardId === activeWorkspaceBoard.id && !card.archived)
+    ? workspaceBoardCards.filter((card) => card.boardId === activeWorkspaceBoard.id)
     : []
 
   const mainAppLayoutProps = {
@@ -23604,6 +23640,7 @@ function App(): React.JSX.Element {
     beginManualSideTranscriptJump,
     canCreateSideChatFromCurrent,
     canOpenWorkspacePopout,
+    capabilityLedgerSnapshot,
     chatByIdRef,
     chatContextNotice,
     chatContextTurns,
@@ -23719,6 +23756,7 @@ function App(): React.JSX.Element {
     handleDuplicateWorkspaceBoard,
     handleEditQueuedMessage,
     handleEditWorkflowInterval,
+    handleRestoreWorkspaceBoard,
     handleEndCurrentLinkedMainChat,
     handleEndSidePanelChat,
     handleForkCodexThread,

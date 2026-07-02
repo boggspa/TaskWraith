@@ -66,6 +66,39 @@ work has finished. Transcript mention chips resolve through the same alias-aware
 shared tokenizer used for routing, so displayed labels match the participant
 role or model alias the user typed.
 
+## Evidence Packs and Capability Ledger
+
+Evidence Packs are the per-run truth layer for task completion. A pack records
+the capability keys a run claims to affect, the evidence refs that support each
+capability cell, completion claims, unsupported claims, touched files, and any
+repo-convention observations gathered during the run.
+
+The Capability Ledger is not a separate source of truth. It is the longitudinal
+projection of accumulated Evidence Packs for a workspace, using the latest
+cell status per capability plus merged evidence refs and completion-claim
+counts. This keeps progress tracking falsifiable: a "done" claim without a
+supporting evidence-backed cell increases the unsupported-completion-claim
+rate, which is the v1 accountability metric.
+
+Scope maps and capability cells deliberately use separate provenance:
+
+- **Map provenance** tracks whether the decomposition itself is inferred,
+  user-confirmed, revised after implementation, or deprecated.
+- **Cell provenance** tracks evidence-backed capability status: verified,
+  partial, blocked, unsupported, or unverified.
+
+Stall detection is deterministic-first. The first-pass signals are derived from
+existing artifacts: repeated packs that touch files without changing the ledger,
+or repeated partial cells without new evidence. LLM judgement should only be an
+escalation layer for classifying whether the observed diff is churn.
+
+Repo-convention indexes are workspace snapshots beside Evidence Packs. They
+index architecture rules, file-ownership patterns, UI/design-system conventions,
+test conventions, and workflow expectations, with evidence refs and freshness
+timestamps. They can be built from scans, curated corrections, and conventions
+observed in Evidence Packs; stale entries are refreshed or deprecated as agents
+mutate the repo.
+
 ## Visual Architecture
 
 ### Appearance System

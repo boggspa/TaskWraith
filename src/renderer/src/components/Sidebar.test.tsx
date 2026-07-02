@@ -166,6 +166,7 @@ function renderSidebar(
     onDuplicateWorkspaceBoard?: (board: WorkspaceBoardDefinition) => void
     onTogglePinWorkspaceBoard?: (board: WorkspaceBoardDefinition) => void
     onArchiveWorkspaceBoard?: (boardId: string) => void
+    onRestoreWorkspaceBoard?: (boardId: string) => void
     onDeleteWorkspaceBoard?: (boardId: string) => void
     onCreateSharedChat?: (variant: SharedChatCreateVariant) => void
     collaboratingChatIds?: Set<string>
@@ -212,6 +213,7 @@ function renderSidebar(
       onDuplicateWorkspaceBoard={options.onDuplicateWorkspaceBoard}
       onTogglePinWorkspaceBoard={options.onTogglePinWorkspaceBoard}
       onArchiveWorkspaceBoard={options.onArchiveWorkspaceBoard}
+      onRestoreWorkspaceBoard={options.onRestoreWorkspaceBoard}
       onDeleteWorkspaceBoard={options.onDeleteWorkspaceBoard}
       onCreateSharedChat={options.onCreateSharedChat}
       onRenameChat={options.onRenameChat}
@@ -483,6 +485,28 @@ describe('Sidebar workspace boards', () => {
 
     expect(html).toContain('Other board')
     expect(html).toContain('Other Repo')
+  })
+
+  it('renders archived boards with a restore action', () => {
+    stubSidebarStorage({
+      [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: collapseSectionsExcept('workspace-boards')
+    })
+
+    const html = renderSidebar([], {
+      workspaceBoards: [
+        makeWorkspaceBoard({
+          id: 'board-archived',
+          name: 'Archived board',
+          archived: true
+        })
+      ],
+      onRestoreWorkspaceBoard: () => {},
+      onDeleteWorkspaceBoard: () => {}
+    })
+
+    expect(html).toContain('Archived board')
+    expect(html).toContain('Archived · Repo')
+    expect(html).toContain('Archived workspace board actions')
   })
 })
 

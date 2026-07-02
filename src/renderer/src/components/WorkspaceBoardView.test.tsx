@@ -109,6 +109,89 @@ describe('WorkspaceBoardView', () => {
     expect(html).not.toContain('&gt;Run&lt;')
   })
 
+  it('renders archived card recovery controls when archived cards exist', () => {
+    const html = renderToStaticMarkup(
+      <WorkspaceBoardView
+        board={board}
+        workspace={workspace}
+        cards={[card, { ...card, id: 'card-archived', title: 'Archived finding', archived: true, columnId: 'archived' }]}
+        chats={[chat]}
+        workflows={[]}
+        scheduledTasks={[]}
+        runQueueJobs={[]}
+        onAddCard={() => {}}
+        onUpdateCard={() => {}}
+        onDeleteCard={() => {}}
+        onOpenChat={() => {}}
+        onOpenWorkflow={() => {}}
+      />
+    )
+
+    expect(html).toContain('Archived 1')
+    expect(html).not.toContain('Archived finding')
+  })
+
+  it('renders the evidence-backed capability ledger strip', () => {
+    const html = renderToStaticMarkup(
+      <WorkspaceBoardView
+        board={board}
+        workspace={workspace}
+        cards={[card]}
+        chats={[chat]}
+        workflows={[]}
+        scheduledTasks={[]}
+        runQueueJobs={[]}
+        capabilityLedger={{
+          workspaceId: 'ws-1',
+          generatedAt: '2026-07-02T12:00:00.000Z',
+          cells: [
+            {
+              capabilityKey: 'import-buttons',
+              title: 'Import buttons',
+              status: 'verified',
+              evidenceRefs: [{ path: 'tests/import-buttons.test.ts', line: 8 }],
+              latestEvidencePackId: 'pack-1',
+              updatedAt: '2026-07-02T12:00:00.000Z'
+            }
+          ],
+          mapEntries: [
+            {
+              key: 'import-buttons',
+              title: 'Import buttons',
+              provenance: {
+                state: 'inferred',
+                source: 'scope_radar',
+                at: '2026-07-02T12:00:00.000Z'
+              }
+            }
+          ],
+          totalCompletionClaims: 2,
+          unsupportedCompletionClaims: 1,
+          unsupportedCompletionClaimRate: 0.5,
+          stallSignals: [
+            {
+              kind: 'diff_without_capability_delta',
+              severity: 'warning',
+              evidencePackIds: ['pack-1', 'pack-2', 'pack-3'],
+              note: 'Three packs touched files without capability movement.'
+            }
+          ]
+        }}
+        onAddCard={() => {}}
+        onUpdateCard={() => {}}
+        onDeleteCard={() => {}}
+        onOpenChat={() => {}}
+        onOpenWorkflow={() => {}}
+      />
+    )
+
+    expect(html).toContain('Capability ledger')
+    expect(html).toContain('1 capabilities')
+    expect(html).toContain('50% unsupported')
+    expect(html).toContain('1 stall signal')
+    expect(html).toContain('Verified · Import buttons')
+  })
+
   it('matches card filters against linked metadata and attention state', () => {
     const projected = buildWorkspaceBoardProjectedCards({
       cards: [

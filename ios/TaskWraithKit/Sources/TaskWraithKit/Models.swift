@@ -502,6 +502,52 @@ public struct RemoteWorkflow: Codable, Sendable, Identifiable, Hashable {
     }
 }
 
+/// A read-only Workspace Board projected from the Mac. The Mac remains the
+/// mutation authority; iOS keeps this as a live list/detail data source.
+public struct RemoteWorkspaceBoard: Codable, Sendable, Identifiable, Hashable {
+    public struct Column: Codable, Sendable, Identifiable, Hashable {
+        public let id: String
+        public let name: String?
+        public let sortOrder: Double?
+        public let wipLimit: Int?
+        public let activeCardCount: Int?
+        public let archivedCardCount: Int?
+    }
+
+    public struct Card: Codable, Sendable, Identifiable, Hashable {
+        public let id: String
+        public let boardId: String?
+        public let workspaceId: String?
+        public let columnId: String?
+        public let title: String?
+        public let body: String?
+        public let labels: [String]?
+        public let linkKind: String?
+        public let linkId: String?
+        public let sourceTitle: String?
+        public let runId: String?
+        public let archived: Bool?
+        public let updatedAt: String?
+    }
+
+    public let id: String
+    public let workspaceId: String?
+    public let workspacePath: String?
+    public let name: String?
+    public let description: String?
+    public let pinned: Bool?
+    public let archived: Bool?
+    public let activeCardCount: Int?
+    public let archivedCardCount: Int?
+    public let columns: [Column]?
+    public let cards: [Card]?
+    public let cardLimit: Int?
+    public let cardsTruncated: Bool?
+    public let createdAt: String?
+    public let updatedAt: String?
+    public let latestCardUpdatedAt: String?
+}
+
 /// The locked envelope shape: `{schemaVersion:1, source:'mac', kind, payload}`.
 /// `payload` is kept as raw JSON and decoded on demand by `kind`.
 public struct RemoteProjectionEnvelope: Codable, Sendable {

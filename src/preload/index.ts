@@ -5,6 +5,9 @@ import type {
   ProviderId,
   RunAnalystRequest,
   RunAnalystSnapshot,
+  CapabilityLedgerSnapshot,
+  EvidencePackRecord,
+  RepoConventionIndexSnapshot,
   WorkspaceBoardCard,
   WorkspaceBoardDefinition,
   WorkspaceActivitySnapshot
@@ -1259,6 +1262,17 @@ const api = {
       partial
     ) as Promise<WorkspaceBoardCard | null>,
   deleteWorkspaceBoardCard: (id: string) => ipcRenderer.invoke('delete-workspace-board-card', id),
+  getEvidencePacks: (workspaceId?: string) =>
+    ipcRenderer.invoke('get-evidence-packs', workspaceId) as Promise<EvidencePackRecord[]>,
+  saveEvidencePack: (pack: Partial<EvidencePackRecord>) =>
+    ipcRenderer.invoke('save-evidence-pack', pack) as Promise<EvidencePackRecord>,
+  deleteEvidencePack: (id: string) => ipcRenderer.invoke('delete-evidence-pack', id),
+  getCapabilityLedgerSnapshot: (workspaceId?: string) =>
+    ipcRenderer.invoke('get-capability-ledger-snapshot', workspaceId) as Promise<CapabilityLedgerSnapshot>,
+  getRepoConventionIndexes: (workspaceId?: string) =>
+    ipcRenderer.invoke('get-repo-convention-indexes', workspaceId) as Promise<RepoConventionIndexSnapshot[]>,
+  saveRepoConventionIndex: (snapshot: Partial<RepoConventionIndexSnapshot>) =>
+    ipcRenderer.invoke('save-repo-convention-index', snapshot) as Promise<RepoConventionIndexSnapshot>,
   runWorkflowNow: (id: string) => ipcRenderer.invoke('run-workflow-now', id),
   setWorkflowUnattendedElevation: (id: string, level: string) =>
     ipcRenderer.invoke('set-workflow-unattended-elevation', id, level),
@@ -1403,6 +1417,11 @@ const api = {
     callback: (payload: { boards: WorkspaceBoardDefinition[]; cards: WorkspaceBoardCard[] }) => void
   ) => {
     ipcRenderer.on('workspace-boards-changed', (_event, payload) => callback(payload))
+  },
+  onEvidencePacksChanged: (
+    callback: (payload: { packs: EvidencePackRecord[]; ledger: CapabilityLedgerSnapshot }) => void
+  ) => {
+    ipcRenderer.on('evidence-packs-changed', (_event, payload) => callback(payload))
   },
   // iOS-triggered roster-preset writes round-tripped back to the renderer (the
   // localStorage source of truth). The renderer persists, which re-syncs the

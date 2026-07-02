@@ -51,6 +51,9 @@ import {
   EffectiveRunPermissions,
   AuditRunRecord,
   ProviderRunReroute,
+  CapabilityLedgerSnapshot,
+  EvidencePackRecord,
+  RepoConventionIndexSnapshot,
   WorkspaceBoardCard,
   WorkspaceBoardDefinition,
   EnsembleFanoutPolicy,
@@ -1585,6 +1588,14 @@ declare global {
         partial: Partial<WorkspaceBoardCard>
       ) => Promise<WorkspaceBoardCard | null>
       deleteWorkspaceBoardCard: (id: string) => Promise<void>
+      getEvidencePacks: (workspaceId?: string) => Promise<EvidencePackRecord[]>
+      saveEvidencePack: (pack: Partial<EvidencePackRecord>) => Promise<EvidencePackRecord>
+      deleteEvidencePack: (id: string) => Promise<void>
+      getCapabilityLedgerSnapshot: (workspaceId?: string) => Promise<CapabilityLedgerSnapshot>
+      getRepoConventionIndexes: (workspaceId?: string) => Promise<RepoConventionIndexSnapshot[]>
+      saveRepoConventionIndex: (
+        snapshot: Partial<RepoConventionIndexSnapshot>
+      ) => Promise<RepoConventionIndexSnapshot>
       runWorkflowNow: (id: string) => Promise<ScheduledTask | null>
       setWorkflowUnattendedElevation: (
         id: string,
@@ -1730,6 +1741,12 @@ declare global {
         callback: (payload: {
           boards: WorkspaceBoardDefinition[]
           cards: WorkspaceBoardCard[]
+        }) => void
+      ) => void
+      onEvidencePacksChanged: (
+        callback: (payload: {
+          packs: EvidencePackRecord[]
+          ledger: CapabilityLedgerSnapshot
         }) => void
       ) => void
       onAuditRunChanged: (callback: (run: AuditRunRecord) => void) => () => void

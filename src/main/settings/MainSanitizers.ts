@@ -26,6 +26,7 @@ import type {
   WorkspaceRecord
 } from '../store/types'
 import type { TaskWraithPluginResourceProvenance } from '../../shared/plugins/PluginTypes'
+import { WORKSPACE_BOARD_CARD_LINK_KINDS } from '../store/types'
 import { sanitizeProviderRunPauses } from '../ProviderRunPause'
 import { coerceLiveProvider, isRetiredProvider } from '../../shared/retiredProviders'
 import { isAppIconVariant, isWwdc26IconAvailable } from '../../shared/iconVariants'
@@ -781,6 +782,9 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
     'done',
     'archived'
   ])
+  const workspaceBoardCardLinkKinds = new Set<WorkspaceBoardCardLinkKind>(
+    WORKSPACE_BOARD_CARD_LINK_KINDS
+  )
   const workspaceBoardProvenanceSourceKinds = new Set<WorkspaceBoardProvenanceSourceKind>([
     'manual',
     'capture',
@@ -909,7 +913,7 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
       title: requireNonEmptyString(input.title, 'Workspace board card title'),
       body: optionalString(input.body),
       sortOrder: Number.isFinite(Number(input.sortOrder))
-        ? Math.max(0, Math.trunc(Number(input.sortOrder)))
+        ? Number(input.sortOrder)
         : Date.now(),
       humanOwner: optionalString(input.humanOwner),
       labels: Array.isArray(input.labels)
@@ -919,12 +923,7 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
             .filter(Boolean)
             .slice(0, 12)
         : undefined,
-      link: isRecord(input.link)
-        ? {
-            kind: input.link.kind as WorkspaceBoardCardLinkKind,
-            id: requireNonEmptyString(input.link.id, 'Workspace board card link')
-          }
-        : undefined,
+      link: sanitizeWorkspaceBoardCardLink(input.link),
       blockedReason: optionalString(input.blockedReason),
       nextStep: optionalString(input.nextStep),
       reminderAt: optionalString(input.reminderAt),
@@ -942,7 +941,7 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
       sanitized.columnId = input.columnId as WorkspaceBoardColumnId
     }
     if ('sortOrder' in input && Number.isFinite(Number(input.sortOrder))) {
-      sanitized.sortOrder = Math.max(0, Math.trunc(Number(input.sortOrder)))
+      sanitized.sortOrder = Number(input.sortOrder)
     }
     if ('humanOwner' in input) sanitized.humanOwner = optionalString(input.humanOwner)
     if ('labels' in input && Array.isArray(input.labels)) {
@@ -953,12 +952,7 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
         .slice(0, 12)
     }
     if ('link' in input) {
-      sanitized.link = isRecord(input.link)
-        ? {
-            kind: input.link.kind as WorkspaceBoardCardLinkKind,
-            id: requireNonEmptyString(input.link.id, 'Workspace board card link')
-          }
-        : undefined
+      sanitized.link = sanitizeWorkspaceBoardCardLink(input.link)
     }
     if ('blockedReason' in input) sanitized.blockedReason = optionalString(input.blockedReason)
     if ('nextStep' in input) sanitized.nextStep = optionalString(input.nextStep)
@@ -966,6 +960,19 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
     if ('provenance' in input) sanitized.provenance = sanitizeWorkspaceBoardProvenance(input.provenance)
     if ('archived' in input) sanitized.archived = input.archived === true
     return sanitized
+  }
+
+  function sanitizeWorkspaceBoardCardLink(link: unknown): WorkspaceBoardCard['link'] {
+    if (link == null) return undefined
+    const input = requireRecord(link, 'Workspace board card link')
+    const kind = input.kind as WorkspaceBoardCardLinkKind
+    if (!workspaceBoardCardLinkKinds.has(kind)) {
+      throw new Error('Workspace board card link kind is invalid.')
+    }
+    return {
+      kind,
+      id: requireNonEmptyString(input.id, 'Workspace board card link')
+    }
   }
 
   function sanitizeRuntimeProfileForSave(

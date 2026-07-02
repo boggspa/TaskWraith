@@ -3261,12 +3261,16 @@ export interface WorkspaceBoardColumn {
   wipLimit?: number
 }
 
-export type WorkspaceBoardCardLinkKind =
-  | 'chat'
-  | 'workflow'
-  | 'scheduled-task'
-  | 'run-queue-job'
-  | 'local-server'
+export const WORKSPACE_BOARD_CARD_LINK_KINDS = [
+  'chat',
+  'workflow',
+  'scheduled-task',
+  'run-queue-job',
+  'local-server',
+  'pinned-message'
+] as const
+
+export type WorkspaceBoardCardLinkKind = (typeof WORKSPACE_BOARD_CARD_LINK_KINDS)[number]
 
 export interface WorkspaceBoardCardLink {
   kind: WorkspaceBoardCardLinkKind
@@ -3522,6 +3526,135 @@ export interface AuditRunRecord {
   updatedAt: string
   startedAt?: string
   endedAt?: string
+}
+
+export type EvidenceCapabilityStatus =
+  | 'verified'
+  | 'partial'
+  | 'blocked'
+  | 'unsupported'
+  | 'unverified'
+
+export type CapabilityMapProvenanceState =
+  | 'inferred'
+  | 'user_confirmed'
+  | 'implementation_revised'
+  | 'deprecated'
+
+export interface CapabilityMapProvenance {
+  state: CapabilityMapProvenanceState
+  source: 'scope_radar' | 'user' | 'agent' | 'evidence_pack' | 'system'
+  at: string
+  note?: string
+  evidenceRefs?: AuditEvidenceRef[]
+}
+
+export interface CapabilityMapEntry {
+  key: string
+  title: string
+  description?: string
+  parentKey?: string
+  provenance: CapabilityMapProvenance
+}
+
+export interface EvidencePackCapabilityCell {
+  capabilityKey: string
+  title?: string
+  status: EvidenceCapabilityStatus
+  evidenceRefs: AuditEvidenceRef[]
+  statusReason?: string
+  validationCommand?: string
+  unsupportedClaims?: string[]
+}
+
+export interface EvidencePackCompletionClaim {
+  claim: string
+  supported: boolean
+  evidenceRefs: AuditEvidenceRef[]
+  note?: string
+}
+
+export interface EvidencePackRecord {
+  schemaVersion: 1
+  id: string
+  workspaceId: string
+  workspacePath?: string
+  chatId?: string
+  runId?: string
+  provider?: ProviderId
+  title?: string
+  mapEntries: CapabilityMapEntry[]
+  capabilityCells: EvidencePackCapabilityCell[]
+  completionClaims: EvidencePackCompletionClaim[]
+  diffTouchedFiles?: string[]
+  createdAt: string
+  updatedAt: string
+}
+
+export interface CapabilityLedgerCell {
+  capabilityKey: string
+  title: string
+  status: EvidenceCapabilityStatus
+  evidenceRefs: AuditEvidenceRef[]
+  statusReason?: string
+  validationCommand?: string
+  unsupportedClaims?: string[]
+  latestEvidencePackId: string
+  latestRunId?: string
+  updatedAt: string
+}
+
+export type CapabilityStallSignalKind =
+  | 'diff_without_capability_delta'
+  | 'partial_without_new_evidence'
+
+export interface CapabilityStallSignal {
+  kind: CapabilityStallSignalKind
+  severity: 'info' | 'warning'
+  capabilityKey?: string
+  evidencePackIds: string[]
+  runIds?: string[]
+  note: string
+}
+
+export interface CapabilityLedgerSnapshot {
+  workspaceId?: string
+  generatedAt: string
+  cells: CapabilityLedgerCell[]
+  mapEntries: CapabilityMapEntry[]
+  totalCompletionClaims: number
+  unsupportedCompletionClaims: number
+  unsupportedCompletionClaimRate: number
+  stallSignals: CapabilityStallSignal[]
+}
+
+export type RepoConventionIndexEntryKind =
+  | 'component_family'
+  | 'utility'
+  | 'architectural_boundary'
+  | 'style_system'
+  | 'generated_path'
+  | 'decision'
+  | 'do_not_repeat'
+
+export interface RepoConventionIndexEntry {
+  id: string
+  kind: RepoConventionIndexEntryKind
+  title: string
+  description?: string
+  paths?: string[]
+  evidenceRefs?: AuditEvidenceRef[]
+  provenance: 'scan' | 'blackboard' | 'evidence_pack' | 'user'
+  updatedAt: string
+}
+
+export interface RepoConventionIndexSnapshot {
+  schemaVersion: 1
+  workspaceId: string
+  workspacePath?: string
+  generatedAt: string
+  entries: RepoConventionIndexEntry[]
+  staleReason?: string
 }
 
 export interface AuditProjectProfile {

@@ -56,7 +56,11 @@ import {
   WorkspaceBoardDefinition,
   WorkspaceBoardProvenance,
   WorkspaceBoardProvenanceSourceKind,
+  WORKSPACE_BOARD_CARD_LINK_KINDS,
   PinnedMessageGroup,
+  EvidencePackRecord,
+  CapabilityLedgerSnapshot,
+  RepoConventionIndexSnapshot,
   AuditRunRecord,
   AuditFinding,
   AuditVerdict,
@@ -114,6 +118,11 @@ import {
   type AgentStatRecord
 } from '../AgentStatsStore'
 import { normalizeWorkflowLoopConfig } from '../WorkflowLoopModel'
+import {
+  normalizeEvidencePackRecord,
+  normalizeRepoConventionIndexSnapshot,
+  projectCapabilityLedgerFromEvidencePacks
+} from '../EvidencePackModel'
 import {
   findStaleAuditRuns,
   AUDIT_RESTART_INTERRUPTION_ERROR,
@@ -189,6 +198,8 @@ const scheduledTasksPath = path.join(userDataPath, 'scheduled-tasks.json')
 const workflowsPath = path.join(userDataPath, 'workflows.json')
 const workspaceBoardsPath = path.join(userDataPath, 'workspace-boards.json')
 const workspaceBoardCardsPath = path.join(userDataPath, 'workspace-board-cards.json')
+const evidencePacksPath = path.join(userDataPath, 'evidence-packs.json')
+const repoConventionIndexesPath = path.join(userDataPath, 'repo-convention-indexes.json')
 const runQueuePath = path.join(userDataPath, 'run-queue.json')
 // Single choke point for run-queue writes: bounds retained terminal history
 // (capRunQueueJobs) so the full synchronous rewrite stays small. In-flight jobs
@@ -434,6 +445,9 @@ const WORKSPACE_BOARD_DEFAULT_COLUMNS: WorkspaceBoardColumn[] = [
 const WORKSPACE_BOARD_COLUMN_IDS = new Set<WorkspaceBoardColumnId>(
   WORKSPACE_BOARD_DEFAULT_COLUMNS.map((column) => column.id)
 )
+const WORKSPACE_BOARD_CARD_LINK_KIND_SET = new Set<WorkspaceBoardCardLink['kind']>(
+  WORKSPACE_BOARD_CARD_LINK_KINDS
+)
 const WORKSPACE_BOARD_PROVENANCE_SOURCE_KINDS = new Set<WorkspaceBoardProvenanceSourceKind>([
   'manual',
   'capture',
@@ -447,6 +461,10 @@ const WORKSPACE_BOARD_PROVENANCE_SOURCE_KINDS = new Set<WorkspaceBoardProvenance
 
 function isWorkspaceBoardColumnId(value: unknown): value is WorkspaceBoardColumnId {
   return typeof value === 'string' && WORKSPACE_BOARD_COLUMN_IDS.has(value as WorkspaceBoardColumnId)
+}
+
+function isWorkspaceBoardCardLinkKind(value: unknown): value is WorkspaceBoardCardLink['kind'] {
+  return typeof value === 'string' && WORKSPACE_BOARD_CARD_LINK_KIND_SET.has(value as WorkspaceBoardCardLink['kind'])
 }
 
 function normalizeWorkspaceBoardActivityEntry(
@@ -526,15 +544,7 @@ function normalizeWorkspaceBoardColumns(value: unknown): WorkspaceBoardColumn[] 
 function normalizeWorkspaceBoardLink(value: unknown): WorkspaceBoardCardLink | undefined {
   if (!value || typeof value !== 'object') return undefined
   const input = value as Partial<WorkspaceBoardCardLink>
-  if (
-    input.kind !== 'chat' &&
-    input.kind !== 'workflow' &&
-    input.kind !== 'scheduled-task' &&
-    input.kind !== 'run-queue-job' &&
-    input.kind !== 'local-server'
-  ) {
-    return undefined
-  }
+  if (!isWorkspaceBoardCardLinkKind(input.kind)) return undefined
   if (typeof input.id !== 'string' || !input.id.trim()) return undefined
   return { kind: input.kind, id: input.id.trim() }
 }
@@ -597,7 +607,7 @@ function normalizeWorkspaceBoardCardRecord(
     body: typeof input.body === 'string' && input.body.trim() ? input.body.trim() : undefined,
     sortOrder:
       typeof input.sortOrder === 'number' && Number.isFinite(input.sortOrder)
-        ? Math.max(0, Math.floor(input.sortOrder))
+        ? input.sortOrder
         : nowMs,
     humanOwner:
       typeof input.humanOwner === 'string' && input.humanOwner.trim()
@@ -1121,6 +1131,7 @@ function writeJson<T>(filePath: string, data: T) {
     } catch {
       // Best effort: stale temp files are safer than masking the original failure.
     }
+    throw e
   }
 }
 
@@ -2667,9 +2678,9 @@ export class AppStore {
     const preStat = fs.existsSync(chatPath) ? fs.statSync(chatPath) : null
     writeJson(chatPath, normalizedChat)
     // Write-through: the next read (bridge broadcast fires right after most
-    // saves) must not re-parse what we just serialized. writeJson swallows
-    // failures, so only trust the cache when the file visibly changed —
-    // otherwise invalidate and let disk be the truth.
+    // saves) must not re-parse what we just serialized. Still only trust the
+    // cache when the file visibly changed; otherwise invalidate and let disk be
+    // the truth.
     try {
       const postStat = fs.statSync(chatPath)
       const wrote =
@@ -3154,10 +3165,24 @@ export class AppStore {
     link?: WorkspaceBoardCardLink
   ): WorkspaceBoardCardLink | undefined {
     if (!link) return undefined
+    if (!isWorkspaceBoardCardLinkKind(link.kind)) {
+      throw new Error('Board card link kind is invalid.')
+    }
     if (link.kind === 'chat') {
       const chat = this.getChat(link.id)
       if (!chat || chat.archived || chat.workspaceId !== board.workspaceId || chat.scope === 'global') {
         throw new Error('Board card chat link must belong to the board workspace.')
+      }
+      return link
+    }
+    if (link.kind === 'pinned-message') {
+      const separatorIndex = link.id.indexOf(':')
+      const chatId = separatorIndex >= 0 ? link.id.slice(0, separatorIndex) : ''
+      const messageId = separatorIndex >= 0 ? link.id.slice(separatorIndex + 1) : ''
+      const chat = chatId ? this.getChat(chatId) : undefined
+      const message = messageId ? chat?.messages?.find((item) => item.id === messageId) : undefined
+      if (!chat || !message || chat.archived || chat.workspaceId !== board.workspaceId || chat.scope === 'global') {
+        throw new Error('Board card pinned message link must belong to the board workspace.')
       }
       return link
     }
@@ -3185,7 +3210,7 @@ export class AppStore {
     if (link.kind === 'local-server') {
       return link
     }
-    return undefined
+    throw new Error('Board card link kind is invalid.')
   }
 
   static saveWorkspaceBoardCard(
@@ -3306,6 +3331,86 @@ export class AppStore {
       workspaceBoardCardsPath,
       this.getWorkspaceBoardCards().filter((card) => card.id !== id)
     )
+  }
+
+  // Evidence packs / capability ledger
+  static getEvidencePacks(workspaceId?: string): EvidencePackRecord[] {
+    return readJson<unknown[]>(evidencePacksPath, [])
+      .map((item) => normalizeEvidencePackRecord(item))
+      .filter((item): item is EvidencePackRecord => Boolean(item))
+      .filter((pack) => !workspaceId || pack.workspaceId === workspaceId)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+  }
+
+  static saveEvidencePack(pack: Partial<EvidencePackRecord>): EvidencePackRecord {
+    const packs = this.getEvidencePacks()
+    const now = new Date()
+    const nowIso = now.toISOString()
+    const normalized = normalizeEvidencePackRecord(
+      {
+        ...pack,
+        id: pack.id || randomUUID(),
+        createdAt: pack.createdAt || nowIso,
+        updatedAt: nowIso
+      },
+      now
+    )
+    if (!normalized) throw new Error('Evidence pack is invalid.')
+    const index = packs.findIndex((item) => item.id === normalized.id)
+    if (index >= 0) {
+      const prior = packs[index]
+      if (prior.workspaceId !== normalized.workspaceId) {
+        throw new Error('Evidence pack cannot move workspaces.')
+      }
+      packs[index] = {
+        ...normalized,
+        createdAt: prior.createdAt,
+        updatedAt: nowIso
+      }
+    } else {
+      packs.push(normalized)
+    }
+    writeJson(evidencePacksPath, packs)
+    return index >= 0 ? packs[index] : normalized
+  }
+
+  static deleteEvidencePack(id: string): void {
+    writeJson(
+      evidencePacksPath,
+      this.getEvidencePacks().filter((pack) => pack.id !== id)
+    )
+  }
+
+  static getCapabilityLedgerSnapshot(workspaceId?: string): CapabilityLedgerSnapshot {
+    return projectCapabilityLedgerFromEvidencePacks(this.getEvidencePacks(workspaceId), {
+      workspaceId
+    })
+  }
+
+  static getRepoConventionIndexes(workspaceId?: string): RepoConventionIndexSnapshot[] {
+    return readJson<unknown[]>(repoConventionIndexesPath, [])
+      .map((item) => normalizeRepoConventionIndexSnapshot(item))
+      .filter((item): item is RepoConventionIndexSnapshot => Boolean(item))
+      .filter((snapshot) => !workspaceId || snapshot.workspaceId === workspaceId)
+      .sort((a, b) => b.generatedAt.localeCompare(a.generatedAt))
+  }
+
+  static saveRepoConventionIndex(
+    snapshot: Partial<RepoConventionIndexSnapshot>
+  ): RepoConventionIndexSnapshot {
+    const snapshots = this.getRepoConventionIndexes()
+    const normalized = normalizeRepoConventionIndexSnapshot(
+      {
+        ...snapshot,
+        generatedAt: snapshot.generatedAt || new Date().toISOString()
+      }
+    )
+    if (!normalized) throw new Error('Repo convention index is invalid.')
+    const index = snapshots.findIndex((item) => item.workspaceId === normalized.workspaceId)
+    if (index >= 0) snapshots[index] = normalized
+    else snapshots.push(normalized)
+    writeJson(repoConventionIndexesPath, snapshots)
+    return normalized
   }
 
   // ── Audit runs ──────────────────────────────────────────────────────────

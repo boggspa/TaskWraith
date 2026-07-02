@@ -1,11 +1,20 @@
 import { describe, expect, it } from 'vitest'
-import type { ChatRecord, ChatRun, DiffFileSummary, ExternalPathGrant, RunQueueJob } from './store/types'
+import type {
+  ChatRecord,
+  ChatRun,
+  DiffFileSummary,
+  ExternalPathGrant,
+  RunQueueJob,
+  WorkspaceBoardCard,
+  WorkspaceBoardDefinition
+} from './store/types'
 import {
   buildMobileDiffSummary,
   buildMobileQuestionCard,
   buildRemoteCanvasPreviews,
   combinedQueuedPrompts,
   buildRemoteEnsembleState,
+  buildRemoteWorkspaceBoard,
   buildRemoteQueuedComposerPrompts,
   buildRemoteProjectionEnvelope,
   buildRemoteShellAppearance,
@@ -80,6 +89,47 @@ function externalGrant(overrides: Partial<ExternalPathGrant> = {}): ExternalPath
   }
 }
 
+it('projects bounded read-only workspace board data for paired devices', () => {
+  const projected = buildRemoteWorkspaceBoard(
+    workspaceBoard(),
+    [
+      workspaceBoardCard({
+        id: 'card-1',
+        title: 'Import buttons',
+        labels: ['verified'],
+        link: { kind: 'pinned-message', id: 'chat-1:message-1' }
+      }),
+      workspaceBoardCard({
+        id: 'card-2',
+        title: 'Archived slice',
+        archived: true,
+        columnId: 'done',
+        sortOrder: 2
+      })
+    ],
+    { cardLimit: 1 }
+  )
+
+  expect(projected).toMatchObject({
+    id: 'board-1',
+    activeCardCount: 1,
+    archivedCardCount: 1,
+    cardLimit: 1,
+    cardsTruncated: true
+  })
+  expect(projected.columns.map((column) => [column.id, column.activeCardCount, column.archivedCardCount])).toEqual([
+    ['inbox', 1, 0],
+    ['done', 0, 1]
+  ])
+  expect(projected.cards).toEqual([
+    expect.objectContaining({
+      id: 'card-1',
+      linkKind: 'pinned-message',
+      linkId: 'chat-1:message-1'
+    })
+  ])
+})
+
 type QueueRequestSnapshot = NonNullable<RunQueueJob['request']>
 
 function queueRequest(overrides: Partial<QueueRequestSnapshot> = {}): QueueRequestSnapshot {
@@ -128,6 +178,47 @@ function queueJob(overrides: Partial<RunQueueJob> = {}): RunQueueJob {
   }
 }
 
+function workspaceBoard(overrides: Partial<WorkspaceBoardDefinition> = {}): WorkspaceBoardDefinition {
+  return {
+    id: 'board-1',
+    workspaceId: 'ws-1',
+    workspacePath: '/repo',
+    name: 'Release Board',
+    description: 'Coordinate the release.',
+    columns: [
+      { id: 'inbox', name: 'Inbox', sortOrder: 0 },
+      { id: 'done', name: 'Done', sortOrder: 6 }
+    ],
+    createdAt: ISO,
+    updatedAt: ISO,
+    activity: [],
+    ...overrides
+  }
+}
+
+function workspaceBoardCard(overrides: Partial<WorkspaceBoardCard> = {}): WorkspaceBoardCard {
+  return {
+    id: 'card-1',
+    boardId: 'board-1',
+    workspaceId: 'ws-1',
+    columnId: 'inbox',
+    title: 'Review the final diff',
+    sortOrder: 10,
+    link: { kind: 'pinned-message', id: 'chat-1:m1' },
+    provenance: {
+      actor: 'user',
+      sourceKind: 'capture',
+      at: ISO,
+      sourceTitle: 'Pinned release note',
+      runId: 'run-1'
+    },
+    createdAt: ISO,
+    updatedAt: ISO,
+    activity: [],
+    ...overrides
+  }
+}
+
 describe('RemoteTaskProjection', () => {
   it('wraps Mac-authored payloads in a stable projection envelope', () => {
     const payload = { promptId: 'q1' }
@@ -150,6 +241,49 @@ describe('RemoteTaskProjection', () => {
       threadId: 'chat-1',
       runId: 'run-1',
       payload
+    })
+  })
+
+  it('projects workspace boards as bounded read-only remote payloads', () => {
+    const projection = buildRemoteWorkspaceBoard(
+      workspaceBoard(),
+      [
+        workspaceBoardCard(),
+        workspaceBoardCard({
+          id: 'card-2',
+          columnId: 'done',
+          title: 'Archived card',
+          archived: true,
+          updatedAt: '2026-05-30T12:01:00.000Z'
+        })
+      ],
+      { cardLimit: 1 }
+    )
+
+    expect(projection).toMatchObject({
+      id: 'board-1',
+      workspaceId: 'ws-1',
+      workspacePath: '/repo',
+      name: 'Release Board',
+      activeCardCount: 1,
+      archivedCardCount: 1,
+      cardLimit: 1,
+      cardsTruncated: true,
+      latestCardUpdatedAt: '2026-05-30T12:01:00.000Z',
+      columns: [
+        { id: 'inbox', activeCardCount: 1, archivedCardCount: 0 },
+        { id: 'done', activeCardCount: 0, archivedCardCount: 1 }
+      ],
+      cards: [
+        {
+          id: 'card-1',
+          title: 'Review the final diff',
+          linkKind: 'pinned-message',
+          linkId: 'chat-1:m1',
+          sourceTitle: 'Pinned release note',
+          runId: 'run-1'
+        }
+      ]
     })
   })
 

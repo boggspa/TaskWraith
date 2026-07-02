@@ -2,6 +2,9 @@ import { ipcMain } from 'electron'
 import type {
   ScheduledTask,
   WorkflowDefinition,
+  CapabilityLedgerSnapshot,
+  EvidencePackRecord,
+  RepoConventionIndexSnapshot,
   WorkspaceBoardCard,
   WorkspaceBoardDefinition
 } from '../store/types'
@@ -56,6 +59,14 @@ export interface ScheduledWorkflowHandlersDeps {
     partial: Partial<WorkspaceBoardCard>
   ) => WorkspaceBoardCard | null
   deleteWorkspaceBoardCard: (id: string) => void
+  getEvidencePacks: (workspaceId?: string) => EvidencePackRecord[]
+  saveEvidencePack: (pack: Partial<EvidencePackRecord>) => EvidencePackRecord
+  deleteEvidencePack: (id: string) => void
+  getCapabilityLedgerSnapshot: (workspaceId?: string) => CapabilityLedgerSnapshot
+  getRepoConventionIndexes: (workspaceId?: string) => RepoConventionIndexSnapshot[]
+  saveRepoConventionIndex: (
+    snapshot: Partial<RepoConventionIndexSnapshot>
+  ) => RepoConventionIndexSnapshot
   materializeWorkflowNow: (id: string) => ScheduledTask | null
   setWorkflowUnattendedElevation: (
     id: string,
@@ -113,6 +124,7 @@ export interface ScheduledWorkflowHandlersDeps {
   broadcastWorkflowDefinitionsChanged: () => void
   broadcastScheduledTaskDue: (task: ScheduledTask) => void
   broadcastWorkspaceBoardsChanged: () => void
+  broadcastEvidencePacksChanged: () => void
   broadcastRemoteProjectionSnapshot: () => void
 }
 
@@ -183,18 +195,21 @@ export function registerScheduledWorkflowHandlers(deps: ScheduledWorkflowHandler
   ipcMain.handle('save-workspace-board', (_, board: WorkspaceBoardSaveInput) => {
     const saved = deps.saveWorkspaceBoard(deps.sanitizeWorkspaceBoardForSave(board))
     deps.broadcastWorkspaceBoardsChanged()
+    deps.broadcastRemoteProjectionSnapshot()
     return saved
   })
 
   ipcMain.handle('update-workspace-board', (_, id: string, partial: Partial<WorkspaceBoardDefinition>) => {
     const updated = deps.updateWorkspaceBoard(id, deps.sanitizeWorkspaceBoardPatch(partial))
     deps.broadcastWorkspaceBoardsChanged()
+    deps.broadcastRemoteProjectionSnapshot()
     return updated
   })
 
   ipcMain.handle('delete-workspace-board', (_, id: string) => {
     deps.deleteWorkspaceBoard(id)
     deps.broadcastWorkspaceBoardsChanged()
+    deps.broadcastRemoteProjectionSnapshot()
   })
 
   ipcMain.handle('get-workspace-board-cards', (_, boardId?: string) =>
@@ -204,18 +219,50 @@ export function registerScheduledWorkflowHandlers(deps: ScheduledWorkflowHandler
   ipcMain.handle('save-workspace-board-card', (_, card: WorkspaceBoardCardSaveInput) => {
     const saved = deps.saveWorkspaceBoardCard(deps.sanitizeWorkspaceBoardCardForSave(card))
     deps.broadcastWorkspaceBoardsChanged()
+    deps.broadcastRemoteProjectionSnapshot()
     return saved
   })
 
   ipcMain.handle('update-workspace-board-card', (_, id: string, partial: Partial<WorkspaceBoardCard>) => {
     const updated = deps.updateWorkspaceBoardCard(id, deps.sanitizeWorkspaceBoardCardPatch(partial))
     deps.broadcastWorkspaceBoardsChanged()
+    deps.broadcastRemoteProjectionSnapshot()
     return updated
   })
 
   ipcMain.handle('delete-workspace-board-card', (_, id: string) => {
     deps.deleteWorkspaceBoardCard(id)
     deps.broadcastWorkspaceBoardsChanged()
+    deps.broadcastRemoteProjectionSnapshot()
+  })
+
+  ipcMain.handle('get-evidence-packs', (_, workspaceId?: string) =>
+    deps.getEvidencePacks(workspaceId)
+  )
+
+  ipcMain.handle('save-evidence-pack', (_, pack: Partial<EvidencePackRecord>) => {
+    const saved = deps.saveEvidencePack(pack)
+    deps.broadcastEvidencePacksChanged()
+    return saved
+  })
+
+  ipcMain.handle('delete-evidence-pack', (_, id: string) => {
+    deps.deleteEvidencePack(id)
+    deps.broadcastEvidencePacksChanged()
+  })
+
+  ipcMain.handle('get-capability-ledger-snapshot', (_, workspaceId?: string) =>
+    deps.getCapabilityLedgerSnapshot(workspaceId)
+  )
+
+  ipcMain.handle('get-repo-convention-indexes', (_, workspaceId?: string) =>
+    deps.getRepoConventionIndexes(workspaceId)
+  )
+
+  ipcMain.handle('save-repo-convention-index', (_, snapshot: Partial<RepoConventionIndexSnapshot>) => {
+    const saved = deps.saveRepoConventionIndex(snapshot)
+    deps.broadcastEvidencePacksChanged()
+    return saved
   })
 
   ipcMain.handle('run-workflow-now', (_, id: string) => {

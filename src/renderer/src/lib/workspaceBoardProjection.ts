@@ -176,6 +176,15 @@ function isCrossWorkspaceLink(card: WorkspaceBoardCard, target?: WorkspaceScoped
   return Boolean(cardWorkspaceId && targetWorkspaceId && cardWorkspaceId !== targetWorkspaceId)
 }
 
+function parsePinnedMessageLinkId(id: string): { chatId: string; messageId: string } | null {
+  const separatorIndex = id.indexOf(':')
+  if (separatorIndex <= 0 || separatorIndex >= id.length - 1) return null
+  return {
+    chatId: id.slice(0, separatorIndex),
+    messageId: id.slice(separatorIndex + 1)
+  }
+}
+
 export function workspaceBoardColumnLabel(columnId: WorkspaceBoardColumnId): string {
   return COLUMN_LABELS[columnId] || columnId
 }
@@ -204,6 +213,13 @@ export function deriveWorkspaceBoardStatus(
     if (isRunningRunStatus(run?.status)) return 'running'
     if (run?.status === 'failed' || run?.status === 'cancelled') return 'needs-input'
     if (isSuccessRunStatus(run?.status)) return 'review-ready'
+    return columnStatus(card.columnId)
+  }
+  if (link.kind === 'pinned-message') {
+    const parsed = parsePinnedMessageLinkId(link.id)
+    const chat = parsed ? input.chats.find((item) => item.appChatId === parsed.chatId) : null
+    const message = parsed ? chat?.messages?.find((item) => item.id === parsed.messageId) : null
+    if (!chat || !message || chat.archived || isCrossWorkspaceLink(card, chat)) return 'stale'
     return columnStatus(card.columnId)
   }
   if (link.kind === 'workflow') {
@@ -258,17 +274,28 @@ export function buildWorkspaceBoardProjectedCards(
     const derivedStatus = deriveWorkspaceBoardStatus(card, input)
     const link = card.link
     const linkedChat = link?.kind === 'chat' ? chatsById.get(link.id) || null : null
+    const pinnedMessageLink = link?.kind === 'pinned-message' ? parsePinnedMessageLinkId(link.id) : null
+    const linkedPinnedMessageChat = pinnedMessageLink ? chatsById.get(pinnedMessageLink.chatId) || null : null
+    const linkedPinnedMessage =
+      pinnedMessageLink && linkedPinnedMessageChat
+        ? linkedPinnedMessageChat.messages?.find((message) => message.id === pinnedMessageLink.messageId) || null
+        : null
     const linkedWorkflow = link?.kind === 'workflow' ? workflowsById.get(link.id) || null : null
     const linkedTask = link?.kind === 'scheduled-task' ? tasksById.get(link.id) || null : null
     const linkedJob = link?.kind === 'run-queue-job' ? jobsById.get(link.id) || null : null
     const linkedLocalServer = link?.kind === 'local-server' ? localServersById.get(link.id) || null : null
     const crossWorkspaceLink =
       isCrossWorkspaceLink(card, linkedChat) ||
+      isCrossWorkspaceLink(card, linkedPinnedMessageChat) ||
       isCrossWorkspaceLink(card, linkedWorkflow) ||
       isCrossWorkspaceLink(card, linkedTask) ||
       isCrossWorkspaceLink(card, linkedJob) ||
       isCrossWorkspaceLink(card, linkedLocalServer)
     const chat = linkedChat && !linkedChat.archived && !crossWorkspaceLink ? linkedChat : null
+    const pinnedMessageChat =
+      linkedPinnedMessageChat && linkedPinnedMessage && !linkedPinnedMessageChat.archived && !crossWorkspaceLink
+        ? linkedPinnedMessageChat
+        : null
     const workflow = linkedWorkflow && !crossWorkspaceLink ? linkedWorkflow : null
     const task = linkedTask && !crossWorkspaceLink ? linkedTask : null
     const job = linkedJob && !crossWorkspaceLink ? linkedJob : null
@@ -331,6 +358,15 @@ export function buildWorkspaceBoardProjectedCards(
       if (run?.warnings?.length) {
         badges.push({ label: `${run.warnings.length} warnings`, tone: 'warning' })
       }
+    } else if (pinnedMessageChat && linkedPinnedMessage) {
+      linkedKindLabel = 'Pinned Message'
+      const provider = formatProvider(pinnedMessageChat.provider)
+      if (provider) badges.push({ label: provider, tone: 'muted', title: 'Thread provider' })
+      badges.push({ label: linkedPinnedMessage.role, tone: 'muted', title: 'Message role' })
+      if (Number.isFinite(linkedPinnedMessage.metadata?.pinnedAt)) {
+        badges.push({ label: 'Pinned', tone: 'muted', title: 'Pinned message' })
+      }
+      liveStatusDetail = `Pinned in ${pinnedMessageChat.title || 'thread'}`
     } else if (workflow) {
       linkedKindLabel = 'Workflow'
       const provider = formatProvider(workflow.template.provider)
@@ -423,6 +459,7 @@ export function buildWorkspaceBoardProjectedCards(
       badges: badges.slice(0, 8),
       linkedTitle:
         chat?.title ||
+        (pinnedMessageChat ? `Pinned: ${pinnedMessageChat.title || 'Thread'}` : undefined) ||
         workflow?.name ||
         task?.displayPrompt ||
         task?.prompt ||
@@ -431,6 +468,7 @@ export function buildWorkspaceBoardProjectedCards(
       linkedSubtitle:
         linkedKindLabel ||
         chat?.provider ||
+        pinnedMessageChat?.provider ||
         workflow?.template.provider ||
         task?.provider ||
         job?.provider ||

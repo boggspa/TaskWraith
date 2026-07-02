@@ -53,7 +53,10 @@ struct HomeView: View {
     private func seedSidebarCollapseIfNeeded() {
         guard explicitSelection, !ipadCollapseSeeded else { return }
         ipadCollapseSeeded = true
-        collapsedSections = ["activeRuns", "pinned", "recents", "ensembles", "workflows", "workspaces", "shared", "globalChats"]
+        collapsedSections = [
+            "activeRuns", "pinned", "recents", "ensembles", "workflows",
+            "workspaceBoards", "workspaces", "shared", "globalChats"
+        ]
     }
 
     private func presentRenameSheet(for card: RemoteTaskCard) {
@@ -145,6 +148,21 @@ struct HomeView: View {
             guard let ws = $0.workspaceId else { return false }
             return known.contains(ws)
         }
+    }
+
+    private var listedWorkspaceBoards: [RemoteWorkspaceBoard] {
+        let known = Set(model.workspaces.map(\.workspaceId))
+        return model.workspaceBoards
+            .filter {
+                guard let ws = $0.workspaceId else { return false }
+                return known.contains(ws)
+            }
+            .sorted {
+                if ($0.pinned ?? false) != ($1.pinned ?? false) {
+                    return ($0.pinned ?? false) && !($1.pinned ?? false)
+                }
+                return ($0.updatedAt ?? "") > ($1.updatedAt ?? "")
+            }
     }
 
     var body: some View {
@@ -470,6 +488,23 @@ struct HomeView: View {
             }
         }
 
+        let boardRows = listedWorkspaceBoards
+        if !boardRows.isEmpty {
+            Section {
+                if !collapsedSections.contains("workspaceBoards") {
+                    ForEach(boardRows, id: \.id) { board in
+                        workspaceBoardRow(board)
+                    }
+                }
+            } header: {
+                GlassPillHeader(
+                    title: "Workspace Boards", systemImage: "rectangle.stack",
+                    count: boardRows.count,
+                    collapsed: collapsedSections.contains("workspaceBoards")
+                ) { toggleSection("workspaceBoards") }
+            }
+        }
+
         // ── Shared — existing People/collaboration chats only. iOS does not
         //    create invites; it simply continues already-visible shared chats
         //    projected by the Mac under the normal workspace allowlist. ─────
@@ -792,6 +827,76 @@ struct HomeView: View {
         .buttonStyle(.plain)
         .disabled(workflow.threadId == nil)
         .accessibilityHint(workflow.threadId == nil ? "No chat started yet" : "")
+        .listRowInsets(rowInsets)
+        .listRowSeparator(.hidden)
+        .listRowBackground(chrome)
+    }
+
+    private func workspaceBoardRow(_ board: RemoteWorkspaceBoard) -> some View {
+        let rowInsets = EdgeInsets(
+            top: appScale.scaled(3),
+            leading: appScale.scaled(16),
+            bottom: appScale.scaled(3),
+            trailing: appScale.scaled(16)
+        )
+        let activeCount = board.activeCardCount ?? board.cards?.filter { !($0.archived ?? false) }.count ?? 0
+        let archivedCount = board.archivedCardCount ?? board.cards?.filter { $0.archived ?? false }.count ?? 0
+        let workspaceName = model.workspaceName(for: board.workspaceId) ?? "Workspace"
+        let subtitle = [
+            workspaceName,
+            "\(activeCount) active",
+            archivedCount > 0 ? "\(archivedCount) archived" : nil,
+            board.cardsTruncated == true ? "More on Mac" : nil
+        ]
+        .compactMap { $0 }
+        .joined(separator: " · ")
+        let chrome = Group {
+            if board.pinned == true {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(TWTheme.chroma2.opacity(0.08))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .strokeBorder(TWTheme.chroma2.opacity(0.25))
+                    )
+                    .padding(.vertical, appScale.scaled(2))
+            } else {
+                Color.clear
+            }
+        }
+        return HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "rectangle.stack")
+                .font(.caption)
+                .foregroundStyle(TWTheme.chroma2)
+                .padding(.top, 2)
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Text(board.name ?? board.id)
+                        .font(.body)
+                        .foregroundStyle(board.archived == true ? TWTheme.textSecondary : TWTheme.textPrimary)
+                        .lineLimit(2)
+                    if board.pinned == true {
+                        Image(systemName: "pin.fill")
+                            .font(.caption2)
+                            .foregroundStyle(TWTheme.textMuted)
+                    }
+                }
+                HStack(spacing: 6) {
+                    Text(subtitle)
+                        .font(.caption2)
+                        .foregroundStyle(TWTheme.textTertiary)
+                        .lineLimit(1)
+                    if board.archived == true {
+                        Text("Archived")
+                            .font(.caption2.weight(.medium))
+                            .padding(.horizontal, 7).padding(.vertical, 2)
+                            .background(TWTheme.surface3, in: Capsule())
+                            .foregroundStyle(TWTheme.textTertiary)
+                    }
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .accessibilityLabel("\(board.name ?? "Workspace board"), \(subtitle)")
         .listRowInsets(rowInsets)
         .listRowSeparator(.hidden)
         .listRowBackground(chrome)

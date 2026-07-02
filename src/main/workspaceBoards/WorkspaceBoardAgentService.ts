@@ -8,6 +8,7 @@ import type {
   WorkspaceBoardProvenance,
   WorkspaceBoardProvenanceSourceKind
 } from '../store/types'
+import { WORKSPACE_BOARD_CARD_LINK_KINDS } from '../store/types'
 
 type BoardSaveInput = Omit<WorkspaceBoardDefinition, 'id' | 'createdAt' | 'updatedAt' | 'activity'> &
   Partial<Pick<WorkspaceBoardDefinition, 'id' | 'createdAt' | 'updatedAt' | 'activity'>>
@@ -106,11 +107,7 @@ const AGENT_SOURCE_KINDS = new Set<WorkspaceBoardProvenanceSourceKind>([
 ])
 
 const LINK_KINDS = new Set<WorkspaceBoardCardLink['kind']>([
-  'chat',
-  'workflow',
-  'scheduled-task',
-  'run-queue-job',
-  'local-server'
+  ...WORKSPACE_BOARD_CARD_LINK_KINDS
 ])
 const COLUMN_IDS = new Set<WorkspaceBoardColumnId>(DEFAULT_COLUMNS.map((column) => column.id))
 
@@ -275,7 +272,7 @@ function createCardInput(
     title: requiredText(proposal.title, 'Workspace board card title', 500),
     body: nullableText(proposal.body, 4000),
     sortOrder: Number.isFinite(Number(proposal.sortOrder))
-      ? Math.max(0, Math.trunc(Number(proposal.sortOrder)))
+      ? Number(proposal.sortOrder)
       : atMs + index,
     humanOwner: nullableText(proposal.humanOwner, 200),
     labels: normalizeLabels(proposal.labels),
@@ -296,7 +293,7 @@ function updateCardInput(
   if (hasOwn(proposal, 'body')) partial.body = nullableText(proposal.body, 4000)
   if (hasOwn(proposal, 'columnId')) partial.columnId = normalizeColumnId(proposal.columnId)
   if (Number.isFinite(Number(proposal.sortOrder))) {
-    partial.sortOrder = Math.max(0, Math.trunc(Number(proposal.sortOrder)))
+    partial.sortOrder = Number(proposal.sortOrder)
   }
   if (hasOwn(proposal, 'humanOwner')) partial.humanOwner = nullableText(proposal.humanOwner, 200)
   if (hasOwn(proposal, 'labels')) partial.labels = normalizeLabels(proposal.labels)
