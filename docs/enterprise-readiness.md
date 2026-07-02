@@ -82,7 +82,7 @@ Shipped in `5c2e34b70`.
 - Assistant messages can now capture thumbs up/down feedback in the message row
   and context menu.
 - The visible state persists on `message.metadata.feedback` through the existing
-  chat-save path.
+  chat-save path, with no dedicated IPC or server-side receipt yet.
 - This is the UI capture layer only. The enterprise-relevant receipt ledger,
   model/role aggregation, reason capture, and recast actions remain B5 work.
 
@@ -350,6 +350,19 @@ Target:
 
 ### B5.9 - Human feedback and casting receipts
 
+Design posture:
+
+- Treat each thumb as a local human casting receipt, not vague product
+  telemetry. The vote is attached to a concrete assistant message and should be
+  resolvable to the provider, model, role, run, chat, and workspace that
+  produced it.
+- Use the receipt to improve future cast decisions and to explain them later.
+  A negative vote should be able to count against the model-in-role for similar
+  work; a positive vote should be able to count as a good example.
+- Do not present thumbs as audit-grade or enterprise-exportable until the
+  durable receipt layer exists. `message.metadata.feedback` is only the pressed
+  state cache for the row UI.
+
 What exists:
 
 - The thumbs UI capture layer is shipped and persists a message-local feedback
@@ -373,9 +386,10 @@ Target:
 
 - Add a bounded, capped `thumbs-ledger.json` receipt store with attribution:
   vote, timestamp, provider, model, role, run id, chat id, workspace id,
-  optional reason category, and optional note.
+  original message id, optional reason category, and optional note.
 - Keep `message.metadata.feedback` as the UI pressed-state cache; make the
-  ledger the source of truth for analytics and export.
+  ledger the source of truth for analytics and export. Toggle, clear, and flip
+  semantics should update both surfaces deterministically.
 - Add optional negative reason chips such as wrong approach, hallucinated/wrong,
   broke something, over-verbose, wrong model for role, and incomplete.
 - Feed local AgentStats and future casting/capability ledgers from the receipt
@@ -463,6 +477,8 @@ Do this before presenting thumbs as more than local UI state.
 - Feed AgentStats and future EvidencePack/casting ledgers from the same receipt
   objects.
 - Add redacted export and iOS parity.
+- Keep free-text feedback notes out of default exports unless the redaction
+  profile explicitly permits them.
 - Add recast actions only after receipts can link original turn, recast run, and
   final outcome.
 
