@@ -1,22 +1,24 @@
 import { type FormEvent, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import type { EnsembleConfig } from '../../../main/store/types'
+import type { ComposerStyle, EnsembleConfig } from '../../../main/store/types'
 import {
+  buildEnsembleRosterPresetFromConfig,
   deleteEnsembleRosterPreset,
   listEnsembleRosterPresets,
   renameEnsembleRosterPreset,
   saveEnsembleRosterPreset,
   subscribeEnsembleRosterPresets,
+  upsertEnsembleRosterPreset,
+  type EnsembleRosterParticipantSnapshot,
   type EnsembleRosterPreset
 } from '../lib/ensembleRosterPresets'
-
-export const ENSEMBLE_ROSTER_PRESET_INLINE_LIMIT = 3
 
 export interface EnsembleRosterPresetPickerProps {
   ensemble: EnsembleConfig | null | undefined
   disabled?: boolean
   onApplyPreset: (preset: EnsembleRosterPreset) => void
   variant?: 'welcome' | 'compact'
+  composerStyle?: ComposerStyle
   /** Optional full-width second row rendered below the preset chips —
    * the composer passes the ensemble orchestration controls here (see
    * EnsembleOrchestrationRow) so mode / fan-out / history-budget /
@@ -38,10 +40,90 @@ type PresetNameDialogState =
       error: string | null
     }
 
-export function rosterPresetApplyConfirmationMessage(preset: EnsembleRosterPreset): string {
+const ROSTER_TRIGGER_FALLBACK_LABEL = 'Roster Presets'
+const ROSTER_TRIGGER_NAME_MAX_CHARS = 15
+
+function currentRosterPresetName(presets: readonly EnsembleRosterPreset[]): string {
+  return presets[0]?.name || 'Ensemble roster'
+}
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`
+  if (value && typeof value === 'object') {
+    const entry = value as Record<string, unknown>
+    return `{${Object.keys(entry)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${stableJson(entry[key])}`)
+      .join(',')}}`
+  }
+  return JSON.stringify(value) ?? 'null'
+}
+
+function rosterParticipantComparable(participant: EnsembleRosterParticipantSnapshot): unknown {
+  return {
+    enabled: participant.enabled,
+    fastModeEnabled:
+      typeof participant.fastModeEnabled === 'boolean' ? participant.fastModeEnabled : null,
+    geminiAuthProfileId: participant.geminiAuthProfileId ?? null,
+    instructions: participant.instructions,
+    isBossman: participant.isBossman === true,
+    isSecondInCommand: participant.isSecondInCommand === true,
+    model: participant.model ?? null,
+    order: participant.order,
+    permissionOverrides: participant.permissionOverrides ?? null,
+    permissionPresetId: participant.permissionPresetId ?? null,
+    pooledAgentId: participant.pooledAgentId ?? null,
+    pooledAgentIdentity: participant.pooledAgentIdentity ?? null,
+    provider: participant.provider,
+    reasoningEffort: participant.reasoningEffort ?? null,
+    role: participant.role,
+    runtimeProfileId: participant.runtimeProfileId ?? null,
+    serviceTier: participant.serviceTier ?? null,
+    thinkingEnabled:
+      typeof participant.thinkingEnabled === 'boolean' ? participant.thinkingEnabled : null
+  }
+}
+
+function rosterPresetComparableKey(preset: EnsembleRosterPreset): string {
+  return stableJson({
+    concurrentModeEnabled:
+      typeof preset.concurrentModeEnabled === 'boolean' ? preset.concurrentModeEnabled : null,
+    ensembleContextChars:
+      typeof preset.ensembleContextChars === 'number' ? preset.ensembleContextChars : null,
+    fanoutPolicy: preset.fanoutPolicy ?? (preset.concurrentModeEnabled ? 'read_only' : 'off'),
+    maxContinuationHops:
+      typeof preset.maxContinuationHops === 'number' ? preset.maxContinuationHops : null,
+    maxParticipants: preset.maxParticipants,
+    orchestrationMode: preset.orchestrationMode,
+    participants: [...preset.participants]
+      .sort((a, b) => a.order - b.order)
+      .map(rosterParticipantComparable)
+  })
+}
+
+export function savedRosterPresetForEnsemble(
+  ensemble: EnsembleConfig | null | undefined,
+  presets: readonly EnsembleRosterPreset[]
+): EnsembleRosterPreset | null {
+  if (!ensemble || presets.length === 0) return null
+  const current = buildEnsembleRosterPresetFromConfig('__current_roster__', ensemble, 0)
+  const currentKey = rosterPresetComparableKey(current)
+  return presets.find((preset) => rosterPresetComparableKey(preset) === currentKey) ?? null
+}
+
+export function rosterPresetTriggerLabel(name: string | null | undefined): string {
+  const trimmed = name?.trim() ?? ''
+  if (!trimmed) return ROSTER_TRIGGER_FALLBACK_LABEL
+  if (trimmed.length <= ROSTER_TRIGGER_NAME_MAX_CHARS) return trimmed
+  return `${trimmed.slice(0, ROSTER_TRIGGER_NAME_MAX_CHARS)}…`
+}
+
+export function rosterPresetMenuMeta(preset: EnsembleRosterPreset): string {
   const count = preset.participants.length
   const participantLabel = count === 1 ? 'participant' : 'participants'
-  return `This replaces the current ensemble roster with "${preset.name}" (${count} ${participantLabel}). Unsaved participant edits in this chat will be lost.`
+  return `${count} ${participantLabel} · ${
+    preset.orchestrationMode === 'continuous' ? 'Continuous' : 'Turn'
+  }`
 }
 
 export function EnsembleRosterPresetPicker({
@@ -49,19 +131,18 @@ export function EnsembleRosterPresetPicker({
   disabled = false,
   onApplyPreset,
   variant = 'welcome',
+  composerStyle = 'default',
   secondRow
 }: EnsembleRosterPresetPickerProps): React.JSX.Element | null {
   const [presets, setPresets] = useState<EnsembleRosterPreset[]>(() => listEnsembleRosterPresets())
   const [popoverOpen, setPopoverOpen] = useState(false)
   const [popoverPosition, setPopoverPosition] = useState<{ left: number; top: number } | null>(null)
   const [presetNameDialog, setPresetNameDialog] = useState<PresetNameDialogState | null>(null)
-  const [applyConfirmPreset, setApplyConfirmPreset] = useState<EnsembleRosterPreset | null>(null)
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const popoverRef = useRef<HTMLDivElement | null>(null)
   const presetNameInputRef = useRef<HTMLInputElement | null>(null)
   const presetNameInputId = useId()
   const presetNameTitleId = useId()
-  const applyConfirmTitleId = useId()
 
   const refreshPresets = (): void => {
     setPresets(listEnsembleRosterPresets())
@@ -109,7 +190,7 @@ export function EnsembleRosterPresetPicker({
       if (!rect) return
       setPopoverPosition({
         left: Math.max(12, rect.left),
-        top: rect.bottom + 8
+        top: rect.top - 8
       })
     }
     updatePosition()
@@ -144,33 +225,38 @@ export function EnsembleRosterPresetPicker({
     }
   }, [presetDialogOpen])
 
-  useEffect(() => {
-    if (!applyConfirmPreset) return
-    const handleKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') setApplyConfirmPreset(null)
-    }
-    document.addEventListener('keydown', handleKeyDown)
-    return () => {
-      document.removeEventListener('keydown', handleKeyDown)
-    }
-  }, [applyConfirmPreset])
+  const canSave = Boolean(ensemble) && !disabled
+  const activePreset = savedRosterPresetForEnsemble(ensemble, presets)
+  const defaultOverwritePreset = activePreset || presets[0]
+  const triggerLabel = rosterPresetTriggerLabel(activePreset?.name)
 
-  const handleSaveCurrent = (): void => {
+  const handleSaveAsCurrent = (): void => {
     if (!ensemble || disabled) return
     setPopoverOpen(false)
-    setPresetNameDialog({ mode: 'save', name: 'Ensemble roster', error: null })
+    setPresetNameDialog({ mode: 'save', name: currentRosterPresetName(presets), error: null })
+  }
+
+  const handleOverwritePreset = (preset?: EnsembleRosterPreset): void => {
+    if (!ensemble || disabled) return
+    const target = preset || activePreset || presets[0]
+    if (!target) {
+      handleSaveAsCurrent()
+      return
+    }
+    const next = {
+      ...buildEnsembleRosterPresetFromConfig(target.name, ensemble, Date.now()),
+      id: target.id,
+      createdAt: target.createdAt,
+      name: target.name
+    }
+    upsertEnsembleRosterPreset(next)
+    refreshPresets()
+    setPopoverOpen(false)
   }
 
   const requestApplyPreset = (preset: EnsembleRosterPreset): void => {
     if (disabled) return
     setPopoverOpen(false)
-    setApplyConfirmPreset(preset)
-  }
-
-  const confirmApplyPreset = (): void => {
-    if (!applyConfirmPreset || disabled) return
-    const preset = applyConfirmPreset
-    setApplyConfirmPreset(null)
     onApplyPreset(preset)
   }
 
@@ -185,10 +271,6 @@ export function EnsembleRosterPresetPicker({
     deleteEnsembleRosterPreset(preset.id)
     refreshPresets()
   }
-
-  const inlinePresets = presets.slice(0, ENSEMBLE_ROSTER_PRESET_INLINE_LIMIT)
-  const overflowPresets = presets.slice(ENSEMBLE_ROSTER_PRESET_INLINE_LIMIT)
-  const canSave = Boolean(ensemble) && !disabled
 
   const handlePresetNameSubmit = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault()
@@ -231,45 +313,24 @@ export function EnsembleRosterPresetPicker({
 
   return (
     <div className={rootClassName}>
-      <span className="ensemble-roster-preset-picker-label">Roster presets</span>
       <div className="ensemble-roster-preset-picker-chips">
         <button
+          ref={triggerRef}
           type="button"
-          className="ensemble-roster-preset-picker-chip ensemble-roster-preset-picker-chip-save"
-          onClick={handleSaveCurrent}
-          disabled={!canSave}
+          className={`ensemble-roster-preset-picker-browse${popoverOpen ? ' is-open' : ''}`}
+          onClick={() => setPopoverOpen((open) => !open)}
+          aria-haspopup="menu"
+          aria-expanded={popoverOpen}
           title={
-            canSave
-              ? 'Save the current participant lineup, order, models, and orchestration settings'
-              : 'Cannot save roster while a round is running'
+            activePreset
+              ? activePreset.name
+              : presets.length
+              ? `${presets.length} saved roster${presets.length === 1 ? '' : 's'}`
+              : 'No saved rosters yet'
           }
         >
-          Save current…
+          <span className="composer-combined-picker-trigger-primary">{triggerLabel}</span>
         </button>
-        {inlinePresets.map((preset) => (
-          <button
-            key={preset.id}
-            type="button"
-            className="ensemble-roster-preset-picker-chip"
-            disabled={disabled}
-            onClick={() => requestApplyPreset(preset)}
-            title={`Recall ${preset.participants.length} participants in saved order`}
-          >
-            <span className="ensemble-roster-preset-picker-chip-name">{preset.name}</span>
-          </button>
-        ))}
-        {(overflowPresets.length > 0 || presets.length > 0) && (
-          <button
-            ref={triggerRef}
-            type="button"
-            className={`ensemble-roster-preset-picker-chip ensemble-roster-preset-picker-browse${popoverOpen ? ' is-open' : ''}`}
-            onClick={() => setPopoverOpen((open) => !open)}
-            aria-haspopup="menu"
-            aria-expanded={popoverOpen}
-          >
-            More…
-          </button>
-        )}
       </div>
       {secondRow ? (
         <div className="ensemble-roster-preset-picker-second-row">{secondRow}</div>
@@ -279,15 +340,43 @@ export function EnsembleRosterPresetPicker({
         createPortal(
           <div
             ref={popoverRef}
-            className="ensemble-roster-preset-popover"
+            className={`ensemble-roster-preset-popover composer-combined-picker-popover composer-plus-picker-popover shell-${composerStyle}`}
             role="menu"
-            style={{ left: popoverPosition.left, top: popoverPosition.top }}
+            style={{
+              left: popoverPosition.left,
+              top: popoverPosition.top,
+              transform: 'translateY(-100%)'
+            }}
           >
             <div className="ensemble-roster-preset-popover-section">
+              <div className="ensemble-roster-preset-popover-actions">
+                <button
+                  type="button"
+                  className="composer-combined-picker-row ensemble-roster-preset-popover-action-row"
+                  disabled={!canSave}
+                  onClick={() => handleOverwritePreset()}
+                  title={
+                    defaultOverwritePreset
+                      ? `Overwrite "${defaultOverwritePreset.name}" with the current roster`
+                      : 'No saved roster yet; use Save As'
+                  }
+                >
+                  <span className="composer-combined-picker-row-label">Save</span>
+                </button>
+                <button
+                  type="button"
+                  className="composer-combined-picker-row ensemble-roster-preset-popover-action-row"
+                  disabled={!canSave}
+                  onClick={handleSaveAsCurrent}
+                  title="Save the current roster as a new named preset"
+                >
+                  <span className="composer-combined-picker-row-label">Save As</span>
+                </button>
+              </div>
               <div className="ensemble-roster-preset-popover-header">Saved rosters</div>
               {presets.length === 0 ? (
                 <div className="ensemble-roster-preset-popover-empty">
-                  No saved rosters yet. Use “Save current…” to store this lineup.
+                  No saved rosters yet. Use Save As to store this lineup.
                 </div>
               ) : (
                 presets.map((preset) => (
@@ -302,10 +391,17 @@ export function EnsembleRosterPresetPicker({
                     >
                       <span className="ensemble-roster-preset-popover-row-name">{preset.name}</span>
                       <span className="ensemble-roster-preset-popover-row-meta">
-                        {preset.participants.length}{' '}
-                        {preset.participants.length === 1 ? 'participant' : 'participants'} ·{' '}
-                        {preset.orchestrationMode === 'continuous' ? 'Continuous' : 'Turn'}
+                        {rosterPresetMenuMeta(preset)}
                       </span>
+                    </button>
+                    <button
+                      type="button"
+                      className="ensemble-roster-preset-popover-row-action"
+                      disabled={!canSave}
+                      onClick={() => handleOverwritePreset(preset)}
+                      title={`Overwrite "${preset.name}" with the current roster`}
+                    >
+                      Save
                     </button>
                     <button
                       type="button"
@@ -391,56 +487,6 @@ export function EnsembleRosterPresetPicker({
                 </button>
               </div>
             </form>
-          </div>,
-          document.body
-        )}
-      {applyConfirmPreset &&
-        typeof document !== 'undefined' &&
-        createPortal(
-          <div
-            className="ensemble-roster-preset-dialog-backdrop"
-            onMouseDown={(event) => {
-              if (event.target === event.currentTarget) setApplyConfirmPreset(null)
-            }}
-          >
-            <div
-              className="ensemble-roster-preset-dialog"
-              role="alertdialog"
-              aria-modal="true"
-              aria-labelledby={applyConfirmTitleId}
-            >
-              <div className="ensemble-roster-preset-dialog-header">
-                <h2 id={applyConfirmTitleId}>Are you sure?</h2>
-                <button
-                  type="button"
-                  className="ensemble-roster-preset-dialog-close"
-                  onClick={() => setApplyConfirmPreset(null)}
-                  aria-label="Close roster preset confirmation"
-                >
-                  ×
-                </button>
-              </div>
-              <p className="ensemble-roster-preset-dialog-copy">
-                {rosterPresetApplyConfirmationMessage(applyConfirmPreset)}
-              </p>
-              <div className="ensemble-roster-preset-dialog-actions">
-                <button
-                  type="button"
-                  className="ensemble-roster-preset-dialog-button"
-                  onClick={() => setApplyConfirmPreset(null)}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  className="ensemble-roster-preset-dialog-button ensemble-roster-preset-dialog-button-primary"
-                  onClick={confirmApplyPreset}
-                  disabled={disabled}
-                >
-                  Apply preset
-                </button>
-              </div>
-            </div>
           </div>,
           document.body
         )}

@@ -1894,6 +1894,13 @@
   background: var(--grok-fg) !important;
   font-weight: 600;
 }
+[data-composer-style="grok"]
+  .composer-ensemble-orchestration-row
+  [data-composer-control="ensemble-mode"]
+  .composer-ensemble-mode-button.is-active {
+  color: var(--grok-fg) !important;
+  background: transparent !important;
+}
 
 /* Send button — inverse-of-surface filled circle (white-on-black
  * flips to black-on-white via the tokens). No coloured shadow. */

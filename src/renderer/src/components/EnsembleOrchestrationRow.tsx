@@ -12,7 +12,7 @@
  *
  *   Mode:          [Turn/Continuous/Work Session picker]
  *   Fan-Out:       [Off | Read | Write]
- *   History:       [slider] 24K chars
+ *   Chars:         [slider] 24K
  *   Turns:         [n/m hop meter]           (continuous mode only)
  *
  * The shared-history slider moved OUT of the EnsembleModePicker
@@ -175,7 +175,7 @@ export function EnsembleOrchestrationRow({
       </span>
       <span className="composer-orchestration-cell composer-orchestration-cell-history">
         <span className="ensemble-roster-preset-picker-label composer-orchestration-cell-label">
-          History
+          Chars
         </span>
         <input
           type="range"
@@ -189,7 +189,7 @@ export function EnsembleOrchestrationRow({
           title={`${formatCharBudget(effectiveContextChars)} chars of recent panel history shared with each participant`}
         />
         <span className="composer-ensemble-context-value">
-          {formatCharBudget(effectiveContextChars)} chars
+          {formatCharBudget(effectiveContextChars)}
         </span>
       </span>
       {activeOrchestrationMode === 'continuous' && (

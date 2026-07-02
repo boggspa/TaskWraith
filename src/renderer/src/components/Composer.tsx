@@ -1620,12 +1620,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                           : null}
                       </>
                     )}
-                    <EnsembleRosterPresetPicker
-                      ensemble={currentChat?.ensemble}
-                      disabled={isCurrentEnsembleRoundRunning}
-                      onApplyPreset={applyEnsembleRosterPreset}
-                      secondRow={renderEnsembleOrchestrationRow()}
-                    />
                     {/* Workspace picker on the ensemble welcome too —
                       same affordance as the solo welcome surface above,
                       because the ensemble path lands here just as
@@ -1638,6 +1632,13 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                       onPickExisting={handleSelectWelcomeWorkspace}
                       onAddNewWorkspace={handleSelectWelcomeWorkspaceDialog}
                       onSelectNoWorkspace={handleNewGlobalChat}
+                    />
+                    <EnsembleRosterPresetPicker
+                      ensemble={currentChat?.ensemble}
+                      disabled={isCurrentEnsembleRoundRunning}
+                      onApplyPreset={applyEnsembleRosterPreset}
+                      composerStyle={appearance.composerStyle}
+                      secondRow={renderEnsembleOrchestrationRow()}
                     />
                   </div>
                 )
@@ -2020,6 +2021,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                     disabled={isCurrentEnsembleRoundRunning}
                     onApplyPreset={applyEnsembleRosterPreset}
                     variant="compact"
+                    composerStyle={appearance.composerStyle}
                     secondRow={renderEnsembleOrchestrationRow()}
                   />
                 )}

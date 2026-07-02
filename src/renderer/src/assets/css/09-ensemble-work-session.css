@@ -7,8 +7,11 @@
   width: 100%;
   max-width: none;
   margin: 0;
-  padding: 8px 14px;
+  padding: 7px 14px;
   gap: 8px;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: center;
   border: none;
   border-radius: 0;
   background: transparent;
@@ -46,6 +49,10 @@
   min-width: 0;
   display: flex;
 }
+.ensemble-roster-preset-picker.is-compact .ensemble-roster-preset-picker-second-row {
+  flex: 0 1 auto;
+  flex-basis: auto;
+}
 .composer-ensemble-orchestration-row {
   display: flex;
   flex: 1;
@@ -56,12 +63,15 @@
   min-width: 0;
 }
 .ensemble-roster-preset-picker.is-compact .composer-ensemble-orchestration-row {
-  justify-content: flex-start;
+  flex: 0 1 auto;
+  justify-content: center;
+  flex-wrap: nowrap;
+  gap: 6px 12px;
 }
 .composer-orchestration-cell {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
+  gap: 6px;
   min-width: 0;
 }
 .composer-orchestration-cell-label {
@@ -74,7 +84,7 @@
   font-weight: 700;
 }
 .composer-ensemble-orchestration-row .composer-ensemble-context-slider {
-  width: clamp(90px, 16vw, 150px);
+  width: clamp(76px, 11vw, 130px);
   margin: 0;
 }
 .composer-ensemble-orchestration-row .composer-ensemble-context-value {
