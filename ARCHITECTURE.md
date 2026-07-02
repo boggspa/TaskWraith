@@ -86,6 +86,14 @@ allowed surfaces, non-goals, open questions, and a slop budget. By default it
 records that map as an Evidence Pack for the active run so the ledger has
 pre-implementation scope before later packs add implementation evidence.
 
+`prompt_task_normalize` is the read-only task-contract projection used before an
+agent starts work. It reuses Scope Radar, folds in the latest Repo Convention
+Index when present, infers the work mode, selects a first slice, and returns the
+current state, desired capability, non-goals, acceptance criteria, evidence
+requirements, allowed repo surfaces, questions, and slop budget. This is the
+Olly-oriented path: vague intent becomes a bounded task contract before any
+agent is asked to implement.
+
 The Capability Ledger is not a separate source of truth. It is the longitudinal
 projection of accumulated Evidence Packs for a workspace, using the latest
 cell status per capability plus merged evidence refs and completion-claim

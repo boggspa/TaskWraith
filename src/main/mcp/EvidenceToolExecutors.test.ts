@@ -108,6 +108,7 @@ function createStore(): EvidenceToolStore & { __addChat(chat: ChatRecord): void 
 
 describe('EvidenceToolExecutors', () => {
   it('recognizes Evidence Pack MCP tools', () => {
+    expect(isEvidenceMcpToolName('prompt_task_normalize')).toBe(true)
     expect(isEvidenceMcpToolName('scope_radar')).toBe(true)
     expect(isEvidenceMcpToolName('repo_convention_scan')).toBe(true)
     expect(isEvidenceMcpToolName('coherence_gate_check')).toBe(true)
@@ -153,6 +154,58 @@ describe('EvidenceToolExecutors', () => {
     })
     expect(store.getEvidencePacks('ws-1')).toHaveLength(1)
     expect(store.getEvidencePacks('ws-1')[0]?.capabilityCells[0]?.status).toBe('unverified')
+  })
+
+  it('normalizes messy prompt intent with repo convention context', async () => {
+    const store = createStore()
+    store.__addChat(workspaceChat('chat-1', 'ws-1', '/repo'))
+    store.saveRepoConventionIndex({
+      workspaceId: 'ws-1',
+      workspacePath: '/repo',
+      generatedAt: '2026-07-02T18:00:00.000Z',
+      entries: [
+        {
+          id: 'component-family-react',
+          kind: 'component_family',
+          title: 'React component files are part of the UI surface',
+          paths: ['src/renderer/src/components/Button.tsx'],
+          provenance: 'scan',
+          updatedAt: '2026-07-02T18:00:00.000Z'
+        }
+      ]
+    })
+
+    const result = await executeEvidenceMcpTool(
+      store,
+      'prompt_task_normalize',
+      {
+        prompt: 'Make my app import UI. It should support arbitrary UI.',
+        currentState: 'The visual editor can place components.'
+      },
+      context('chat-1'),
+      { provider: 'codex', runId: 'run-1' }
+    )
+
+    expect(result.isError).toBe(false)
+    expect(result.result).toMatchObject({
+      ok: true,
+      tool: 'prompt_task_normalize',
+      workspaceId: 'ws-1',
+      contract: {
+        riskLevel: 'high',
+        inferredMode: 'explore',
+        firstSliceKey: 'source-format-contract',
+        conventionIndexGeneratedAt: '2026-07-02T18:00:00.000Z'
+      }
+    })
+    expect((result.result as any).contract.allowedSurfaces).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          label: 'React component files are part of the UI surface',
+          source: 'repo_convention'
+        })
+      ])
+    )
   })
 
   it('can preview Scope Radar without recording evidence', async () => {

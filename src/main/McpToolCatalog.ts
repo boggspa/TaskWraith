@@ -867,6 +867,39 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
       }
     },
     {
+      name: 'prompt_task_normalize',
+      description:
+        'Convert messy user intent into a task contract before implementation: current state, desired capability, inferred work mode, non-goals, acceptance criteria, evidence required, allowed repo surfaces, open questions, first slice, and slop budget. Uses the latest Repo Convention Index when available.',
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          prompt: {
+            type: 'string',
+            description: 'The user task, messy intent, or agent-transcript-derived request to normalize.'
+          },
+          task: { type: 'string', description: 'Alias for prompt.' },
+          userPrompt: { type: 'string', description: 'Alias for prompt.' },
+          currentState: {
+            type: 'string',
+            description:
+              'Optional known baseline: what currently works, fails, or has already been inspected.'
+          },
+          repoConventionIndex: {
+            type: 'object',
+            description:
+              'Optional Repo Convention Index. If omitted, TaskWraith uses the latest stored index for the active workspace.'
+          }
+        },
+        required: ['prompt']
+      }
+    },
+    {
       name: 'scope_radar',
       description:
         'Normalize a messy user prompt into a pre-work capability map: desired capability, slice kinds, evidence required, allowed surfaces, non-goals, open questions, and slop budget. By default records the inferred map as an Evidence Pack for the active run; pass record=false for preview only.',

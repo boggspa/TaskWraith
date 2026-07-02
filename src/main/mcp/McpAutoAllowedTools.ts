@@ -69,6 +69,7 @@ export const MCP_AUTO_ALLOWED_TOOLS = new Set<TaskWraithMcpToolName>([
   // Evidence Packs are run-observability/progress records, not workspace
   // mutation. Read-only agents must still be able to leave auditable evidence
   // and check whether completion language is supported.
+  'prompt_task_normalize',
   'scope_radar',
   'repo_convention_scan',
   'coherence_gate_check',

@@ -3776,6 +3776,37 @@ export interface CoherenceGateResult {
   conventionIndexGeneratedAt?: string
 }
 
+export type PromptTaskMode = 'explore' | 'build' | 'harden' | 'coherence' | 'release'
+
+export interface PromptTaskAllowedSurface {
+  label: string
+  source: 'scope_radar' | 'repo_convention' | 'system'
+  paths?: string[]
+  conventionEntryIds?: string[]
+  note?: string
+}
+
+export interface PromptTaskContract {
+  schemaVersion: 1
+  generatedAt: string
+  prompt: string
+  currentState?: string
+  desiredCapability: string
+  inferredMode: PromptTaskMode
+  riskLevel: ScopeRadarResult['riskLevel']
+  capabilityMap: CapabilityMapEntry[]
+  sliceKinds: Record<string, ScopeRadarSliceKind>
+  nonGoals: string[]
+  evidenceRequired: string[]
+  acceptanceCriteria: string[]
+  allowedSurfaces: PromptTaskAllowedSurface[]
+  questions: ScopeRadarQuestion[]
+  slopBudget: ScopeRadarSlopBudget
+  firstSliceKey?: string
+  firstSliceTitle?: string
+  conventionIndexGeneratedAt?: string
+}
+
 export interface AuditProjectProfile {
   stack?: string[]
   testSurface?: string[]

@@ -7,6 +7,7 @@ import {
   type CoherenceGateFileInput
 } from '../CoherenceGateModel'
 import { assessCompletionClaimSupport } from '../EvidencePackModel'
+import { buildPromptTaskContract } from '../PromptTaskNormalizerModel'
 import {
   buildRepoConventionIndexSnapshot,
   summarizeRepoConventionIndexScan
@@ -24,6 +25,7 @@ import type {
 import type { WorkspaceToolContext } from './WorkspaceToolExecutors'
 
 export const EVIDENCE_MCP_TOOL_NAMES = [
+  'prompt_task_normalize',
   'scope_radar',
   'repo_convention_scan',
   'coherence_gate_check',
@@ -312,6 +314,33 @@ export async function executeEvidenceMcpTool(
 ): Promise<{ result: unknown; isError: boolean }> {
   try {
     const workspace = resolveEvidenceWorkspace(store, args, context)
+
+    if (toolName === 'prompt_task_normalize') {
+      const prompt =
+        optionalString(args.prompt) ||
+        optionalString(args.task) ||
+        optionalString(args.userPrompt) ||
+        optionalString(args.intent)
+      if (!prompt) throw new Error('prompt_task_normalize requires a non-empty prompt.')
+      const suppliedConventionIndex = record(args.repoConventionIndex).schemaVersion
+        ? (record(args.repoConventionIndex) as unknown as RepoConventionIndexSnapshot)
+        : undefined
+      const contract = buildPromptTaskContract({
+        prompt,
+        currentState: optionalString(args.currentState) || optionalString(args.current_state),
+        repoConventionIndex:
+          suppliedConventionIndex || latestRepoConventionIndex(store, workspace.workspaceId)
+      })
+      return {
+        result: {
+          ok: true,
+          tool: toolName,
+          workspaceId: workspace.workspaceId,
+          contract
+        },
+        isError: false
+      }
+    }
 
     if (toolName === 'scope_radar') {
       const prompt =
