@@ -6502,17 +6502,19 @@ function materializeBridgeRunProviderOutput(
         // Chain link 2/3 (see registerBridgeRunTranscript).
         console.log(`[bridge-run] first delta run=${runId} (+${text.length} chars)`)
       }
-      if (isTaggedCumulativeRestatement(payload) && state.content.trim().length > 0) {
-        // Tagged restatement (Claude divergent envelope `cumulative`, Cursor
-        // snapshot `runItemCumulative`): only the tail beyond the assembled
-        // text is new; a divergent or stale restatement is dropped — the
-        // streamed deltas already hold the turn.
+      if (payload.cumulative === true && state.content.trim().length > 0) {
+        // Claude divergent envelope: the streamed deltas already hold the
+        // turn, so only a clean superset contributes its tail; a divergent
+        // or stale restatement is DROPPED. This drop is safe ONLY for
+        // `cumulative` — Cursor's snapshot-tagged frames are the lane's sole
+        // text carrier and must never take this branch (a polluted
+        // state.content would silently lose the whole reply).
         const fold = foldBridgeRunText(state.content, text)
         if (fold.kind === 'skip') return
         if (fold.kind === 'append') return
         state.content = text
         appendBridgeRunTextFragment(state, fold.tail)
-      } else if (options.trustedCompatLane) {
+      } else if (options.trustedCompatLane && !isTaggedCumulativeRestatement(payload)) {
         // Untagged compat delta = verbatim increment (see
         // isTaggedCumulativeRestatement) — append without shape detection so
         // a repeated chunk that byte-matches the assembled text isn't
@@ -6520,6 +6522,10 @@ function materializeBridgeRunProviderOutput(
         state.content += text
         appendBridgeRunTextFragment(state, text)
       } else {
+        // Snapshot-tagged frames (Cursor `runItemCumulative`) and raw/legacy
+        // lanes: shape-detecting fold. Superset → tail; divergent → append
+        // whole — duplication over loss, because for Cursor the snapshots
+        // carry ALL of the turn's text.
         appendBridgeRunText(state, text)
       }
       if (!state.flushedOnce) flushBridgeRunTranscript(runId)
@@ -6608,19 +6614,29 @@ function materializeBackgroundSubThreadProviderOutput(
     // appends. (The tagged-cumulative case is also a superset/divergent and is
     // handled by the same fold — divergent envelopes that aren't a clean
     // superset fall through to append, matching the pre-fold behavior.)
-    if (isTaggedCumulativeRestatement(payload) && state.content.trim().length > 0) {
+    if (payload.cumulative === true && state.content.trim().length > 0) {
       const fold = foldBridgeRunText(state.content, payload.text)
       // A clean superset replaces; otherwise (divergent) skip the restatement
-      // — the streamed deltas already hold the turn.
+      // — the streamed deltas already hold the turn. Safe ONLY for the
+      // Claude `cumulative` envelope; Cursor's snapshot-tagged frames carry
+      // the lane's ONLY text and must never be silently discarded.
       if (fold.kind === 'tail') state.content = payload.text
       // skip / append-divergent → leave the accumulated deltas as-is
-    } else {
+    } else if (!isTaggedCumulativeRestatement(payload)) {
       // This materializer only runs from the sendAgentCompatLine chokepoint,
       // so an untagged delta is a verbatim increment (see
       // isTaggedCumulativeRestatement) — plain append, no shape detection.
       // The fold used here previously swallowed a repeated chunk that
       // byte-matched the accumulated text. Desktop parity: trustedIncremental.
       state.content += payload.text
+    } else {
+      // Snapshot-tagged frames (Cursor `runItemCumulative`): shape fold with
+      // no drop path — superset replaces, stale skips, divergent appends
+      // whole (duplication over loss).
+      const fold = foldBridgeRunText(state.content, payload.text)
+      if (fold.kind !== 'skip') {
+        state.content = fold.kind === 'tail' ? payload.text : state.content + payload.text
+      }
     }
     if (!state.flushedOnce) {
       flushBackgroundSubThreadTranscript(runId)

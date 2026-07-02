@@ -37,6 +37,14 @@ export type BridgeTextFold = { kind: 'append' } | { kind: 'skip' } | { kind: 'ta
  * repeated chunk that byte-matches the assembled text ("test ", "test ")
  * would otherwise be swallowed by `foldBridgeRunText` as a stale snapshot.
  * Raw/legacy lanes (non-compat stdout) carry no tags and keep the fold.
+ *
+ * The two tag classes need DIFFERENT reconciliation and must not share a
+ * branch: `cumulative` (Claude) restates a turn whose streamed deltas were
+ * already applied, so a divergent restatement can be dropped; Cursor's
+ * `runItemCumulative`/`snapshot` frames are the lane's ONLY text carrier
+ * (no incremental deltas exist), so a divergent snapshot must still be
+ * appended by the fold — dropping it silently loses the rest of the turn
+ * once any untagged line (a stdout banner) pollutes the assembled text.
  */
 export function isTaggedCumulativeRestatement(payload: {
   cumulative?: unknown
