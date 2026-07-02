@@ -8489,6 +8489,29 @@
   border-radius: 10px;
 }
 
+/* Claude, Obsidian, and Alabaster place the send/stop affordance inside
+ * the textarea rectangle. Reserve text-flow space on the right edge so
+ * long lines wrap before they pass under the overlaid glyph. Other composer
+ * shells keep their normal full-width textarea. */
+[data-composer-style="claude"] .composer-surface:not(.side-chat-composer) {
+  --composer-inline-send-affordance-inset: 62px;
+}
+
+[data-composer-style="obsidian"] .composer-surface:not(.side-chat-composer),
+[data-composer-style="alabaster"] .composer-surface:not(.side-chat-composer) {
+  --composer-inline-send-affordance-inset: 68px;
+}
+
+:is(
+    [data-composer-style="claude"],
+    [data-composer-style="obsidian"],
+    [data-composer-style="alabaster"]
+  )
+  .composer-surface:not(.side-chat-composer)
+  .composer-textarea {
+  padding-right: var(--composer-inline-send-affordance-inset);
+}
+
 /* 3) Files-changed + diff chips — gray button chrome, linear row order
  *    (workspace → branch → upstream → files → diff → action). Inherits
  *    the shared flex `order` ladder from shard 07; only the visual skin
