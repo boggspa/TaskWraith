@@ -500,6 +500,9 @@ What exists:
 - Ensemble wakeups now carry a schedule-time signed permission posture snapshot,
   and their dispatch receipt hashes that posture alongside the frozen
   participant identity.
+- Ensemble wakeup replay now has higher-level coverage proving a frozen
+  reviewer/worker stage and role are honored when the live roster changes before
+  the wakeup fires or after an app restart.
 - Remote queued dispatch now freezes a queue-time signed permission posture and
   includes that posture hash/signature presence in its dispatch receipt, alongside
   the allowlist decision and policy fingerprint.
@@ -521,7 +524,7 @@ What is missing:
   export review, not the replay authorization gate itself.
 - `EnsembleRunIdentity`, `ChatRun`, run queue metadata, approval previews, and
   run events now persist live dispatch `stageRole`/`laneId`; scheduled-task
-  receipts now have signed posture coverage, but wakeup/scheduled replay still
+  receipts now have signed posture coverage, but scheduled-task replay still
   needs higher-level policy-choice tests that prove when frozen intent is
   honored vs when current policy is re-checked.
 - Remaining native-provider work is a broader provider-by-provider audit beyond
@@ -544,9 +547,9 @@ Target:
   revoke workspace/provider or approval access before the queue pumps, and
   assert the denial audit path end to end. The pure replay authorization helper
   now has coverage for the current-policy deny decision.
-- Add ensemble wakeup tests that schedule as a reviewer, mutate the live roster
-  to worker/default before firing, and verify the resumed run uses the frozen
-  snapshot or records an explicit current-policy-at-resume decision.
+- Add scheduled-task replay tests that mutate live policy between schedule time
+  and dispatch time, then verify the frozen-intent or current-policy-at-resume
+  decision is explicit.
 - Preserve `stageRole` and `laneId` through run normalization, `ChatRun`,
   queue jobs, approval previews, and run events.
 

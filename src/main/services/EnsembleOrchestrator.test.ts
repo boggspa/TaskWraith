@@ -1474,6 +1474,61 @@ describe('EnsembleOrchestrator', () => {
     )
   })
 
+  it('resumes a frozen reviewer wakeup after the live roster clears the stage', async () => {
+    const scheduled: EnsembleWakeupRecord[] = []
+    const chat = makeChat()
+    chat.ensemble!.participants = [
+      {
+        id: 'claude',
+        provider: 'claude',
+        enabled: true,
+        role: 'Frozen Reviewer',
+        instructions: 'Review.',
+        order: 1,
+        permissionPresetId: 'read_only',
+        stageRole: 'reviewer'
+      }
+    ]
+    const harness = makeHarness({
+      initialChat: chat,
+      scheduleWakeupTimer: (wakeup) => scheduled.push(wakeup)
+    })
+
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Review after a pause.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    expect(harness.dispatched[0].ensembleRun?.stageRole).toBe('reviewer')
+
+    const scheduledResult = harness.orchestrator.scheduleWakeupForRun(
+      harness.dispatched[0].appRunId,
+      { delayMs: 60_000, reason: 'Waiting for worker output.' }
+    )
+    expect(scheduledResult.ok).toBe(true)
+    expect(scheduledResult.wakeup?.stageRole).toBe('reviewer')
+    expect(scheduledResult.wakeup?.dispatchReceipt?.ensembleStageRole).toBe('reviewer')
+    await vi.waitFor(() =>
+      expect(harness.chat.ensemble?.activeRound?.pendingWakeupIds).toEqual([
+        scheduled[0].wakeupId
+      ])
+    )
+
+    harness.chat.ensemble!.participants[0].role = 'Live Worker'
+    delete harness.chat.ensemble!.participants[0].stageRole
+    expect(harness.orchestrator.handleWakeupFired(scheduled[0].wakeupId)).toBe(true)
+
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    expect(harness.dispatched[1].ensembleRun).toMatchObject({
+      participantId: 'claude',
+      role: 'Frozen Reviewer',
+      stageRole: 'reviewer'
+    })
+    expect(harness.dispatched[1].prompt).toContain('[Scheduled wakeup]')
+    expect(harness.dispatched[1].prompt).toContain('Waiting for worker output.')
+  })
+
   it('omits the resume warning when the participant has a linked provider session', async () => {
     // 1.0.5-N6 negative case. With a linkedProviderSessionId set,
     // the resume is native (Codex sessionId / Claude resumeId etc.)
