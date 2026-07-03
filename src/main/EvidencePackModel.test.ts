@@ -164,6 +164,68 @@ describe('EvidencePackModel', () => {
     expect(detectCompletionLanguage('I inspected the code and found the blocker.')).toEqual([])
   })
 
+  it('detects completion words only when used assertively', () => {
+    // Sentence/clause-initial predicate.
+    expect(detectCompletionLanguage('Done.')).toEqual(['done'])
+    // Clause-initial + copula predicate.
+    expect(detectCompletionLanguage('Done. UI import is implemented.')).toEqual([
+      'done',
+      'implemented'
+    ])
+    // Explicit "ready for review" marker.
+    expect(detectCompletionLanguage('Implemented and ready for review.')).toEqual([
+      'implemented',
+      'ready'
+    ])
+    // Second conjunct as a clause-final predicate.
+    expect(detectCompletionLanguage('Fixed and complete.')).toEqual(['fixed', 'complete'])
+    expect(detectCompletionLanguage('Implemented and ready.')).toEqual(['implemented', 'ready'])
+    // Copula / subject-run assertions.
+    expect(detectCompletionLanguage("it's fixed")).toEqual(['fixed'])
+    expect(detectCompletionLanguage('everything is complete')).toEqual(['complete'])
+    expect(detectCompletionLanguage('now done')).toEqual(['done'])
+    // First-person perfective assertions (object noun may follow).
+    expect(detectCompletionLanguage("I've implemented the parser")).toEqual(['implemented'])
+    expect(detectCompletionLanguage('we finished the migration')).toEqual(['complete'])
+    expect(detectCompletionLanguage('I fixed the crash')).toEqual(['fixed'])
+    // Explicit markers.
+    expect(detectCompletionLanguage('ready to ship')).toEqual(['ready'])
+    expect(detectCompletionLanguage('implementation is complete')).toEqual([
+      'implemented',
+      'complete'
+    ])
+    expect(detectCompletionLanguage('✅ all tests pass')).toEqual(['done'])
+  })
+
+  it('does not flag attributive, prepositional, or subordinate uses (ensemble-intro false positives)', () => {
+    // Two real ensemble-intro messages that were being falsely flagged: the
+    // completion words there are attributive adjectives / prepositional objects.
+    expect(
+      detectCompletionLanguage(
+        "I don't edit files myself — I route bounded work to the right owner, run typechecks on completed work, run the full test suite for green gates, and give the thumbs-up that lets @Captain commit a round's work in path-scoped slices."
+      )
+    ).toEqual([])
+    expect(
+      detectCompletionLanguage(
+        "When @King gives the green light after typechecks/tests, I'm also the one who commits completed slices by pathspec."
+      )
+    ).toEqual([])
+    // Other intro phrasings that must not trip the detector.
+    expect(detectCompletionLanguage('No work is queued yet, so I\'ll keep my seat warm.')).toEqual(
+      []
+    )
+    expect(
+      detectCompletionLanguage("whoever the user wants to drive can hand me a task and I'll route it.")
+    ).toEqual([])
+    // Attributive adjectives, objects of prepositions, and subordinate clauses.
+    expect(detectCompletionLanguage('the completed work is over there')).toEqual([])
+    expect(detectCompletionLanguage('when done, hand me a task')).toEqual([])
+    expect(detectCompletionLanguage('reviewing the finished slices')).toEqual([])
+    expect(detectCompletionLanguage('tracking progress and goal status')).toEqual([])
+    expect(detectCompletionLanguage('once complete, notify me')).toEqual([])
+    expect(detectCompletionLanguage('the fixed bug is annoying')).toEqual([])
+  })
+
   it('marks completion claims supported only when evidence backs the run', () => {
     const assessment = assessCompletionClaimSupport('Implemented and ready.', [
       pack('pack-1', {

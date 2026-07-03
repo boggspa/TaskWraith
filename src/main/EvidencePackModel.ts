@@ -59,14 +59,86 @@ const MAX_MAP_ENTRIES = 200
 const MAX_CELLS = 200
 const MAX_CLAIMS = 100
 const STALL_WINDOW = 3
-const COMPLETION_LANGUAGE_PATTERNS: Array<{ phrase: string; pattern: RegExp }> = [
-  { phrase: 'done', pattern: /\b(done|all done)\b/i },
-  { phrase: 'implemented', pattern: /\b(implemented|implementation is complete)\b/i },
-  { phrase: 'fixed', pattern: /\b(fixed|resolved)\b/i },
-  { phrase: 'ready', pattern: /\b(ready|ready for review|ready to ship)\b/i },
-  { phrase: 'complete', pattern: /\b(complete|completed|finished)\b/i },
-  { phrase: 'shipped', pattern: /\b(shipped|landed)\b/i }
-]
+// Completion-language detection.
+//
+// A completion word only counts when it is used ASSERTIVELY — as a predicate the
+// author is claiming is true right now — not as an attributive adjective, an
+// object of a preposition, or the verb of a subordinate clause. So we do NOT use
+// naive `/\bcomplete\b/` matches (those flag "completed work", "on completed
+// work", "when done", etc.). Instead each phrase is matched only in the
+// grammatical positions where it reads as an assertion.
+//
+// The surface words that map to each returned phrase label. The set of labels
+// ('done','implemented','fixed','ready','complete','shipped') is part of the
+// contract and must not change.
+const COMPLETION_PHRASE_WORDS: Record<string, string[]> = {
+  done: ['done'],
+  implemented: ['implemented'],
+  fixed: ['fixed', 'resolved'],
+  ready: ['ready'],
+  complete: ['complete', 'completed', 'finished'],
+  shipped: ['shipped', 'landed']
+}
+
+// Nouns that, when they directly FOLLOW a completion word, prove it is being used
+// attributively (adjective + noun: "completed work", "fixed bug", "finished
+// slices") rather than as a predicate. Consulted as a negative lookahead in the
+// positions where an attributive reading would otherwise be ambiguous.
+const ATTRIBUTIVE_FOLLOWERS =
+  'work|works|slice|slices|bug|bugs|task|tasks|item|items|feature|features|' +
+  'file|files|change|changes|state|states|version|versions|code|build|builds|' +
+  'PR|PRs|commit|commits|round|rounds|step|steps|thing|things|column|columns|' +
+  'issue|issues|ticket|tickets|branch|branches|test|tests'
+
+// Clause end: the word is the last meaningful token of its clause (end of
+// string, or a terminating / separating punctuation mark follows).
+const CLAUSE_END = '(?=\\s*(?:[.!?;,)\\]]|$))'
+
+// Build one case-insensitive matcher per phrase label. Each matcher fires only
+// when one of the assertive grammatical patterns is satisfied.
+function buildCompletionLanguagePatterns(): Array<{ phrase: string; pattern: RegExp }> {
+  return Object.entries(COMPLETION_PHRASE_WORDS).map(([phrase, words]) => {
+    const w = words.join('|')
+    // Reject a completion word that directly modifies a following noun.
+    const notAttributive = `(?!\\s+(?:${ATTRIBUTIVE_FOLLOWERS})\\b)`
+    const alts: string[] = []
+
+    // 1) Sentence/clause-initial predicate: at the start of the text, or right
+    //    after a sentence terminator, newline, em-dash, bullet, or colon. The
+    //    attributive guard keeps "Completed work …" out while allowing "Done.".
+    alts.push(`(?:^|[.!?\\n]|—|-\\s|:\\s|\\*\\s)\\s*(?:${w})${notAttributive}\\b`)
+
+    // 2) Copula predicate: "is complete", "it's fixed", "everything is done".
+    //    Guarded so a rare "is completed slices" noun run does not slip through.
+    alts.push(`\\b(?:is|are|was|were|been|be|'s|'re|am)\\s+(?:${w})${notAttributive}\\b`)
+
+    // 3) First-person perfective: a personal subject asserting the action —
+    //    "I fixed", "we finished", "I've implemented", "they have shipped". An
+    //    object noun may legitimately follow ("I fixed the crash"), so no
+    //    attributive guard here: the personal subject is what makes it a claim.
+    alts.push(`\\b(?:i|we|they)(?:\\s+(?:have|had)|'?ve)?\\s+(?:${w})\\b`)
+
+    // 4) Adverb predicate at clause end: "now done.", "already complete;". The
+    //    clause-end anchor excludes attributive "now completed tasks".
+    alts.push(`\\b(?:now|already|fully|all)\\s+(?:${w})${CLAUSE_END}`)
+
+    // 5) Clause-final conjunct/copula predicate: "… and complete.", "… is done."
+    //    Requires the word to close the clause (so "and completed work" is out).
+    alts.push(`\\b(?:and|but|or|is|are|&)\\s+(?:${w})${CLAUSE_END}`)
+
+    // 6) Explicit, unambiguous markers per phrase.
+    if (phrase === 'done') alts.push('\\ball done\\b')
+    if (phrase === 'ready') {
+      alts.push('\\bready\\s+(?:for\\s+review|to\\s+ship|to\\s+merge|to\\s+go)\\b')
+    }
+    if (phrase === 'implemented') alts.push('\\bimplementation\\s+is\\s+complete\\b')
+
+    return { phrase, pattern: new RegExp(`(?:${alts.join('|')})`, 'i') }
+  })
+}
+
+const COMPLETION_LANGUAGE_PATTERNS: Array<{ phrase: string; pattern: RegExp }> =
+  buildCompletionLanguagePatterns()
 
 function text(value: unknown, max = MAX_NOTE_LENGTH): string | undefined {
   if (typeof value !== 'string') return undefined
@@ -273,8 +345,12 @@ export function detectCompletionLanguage(value: unknown): string[] {
   if (!source) return []
   const phrases: string[] = []
   for (const item of COMPLETION_LANGUAGE_PATTERNS) {
+    // Each pattern is a distinct RegExp instance without the /g flag, so there
+    // is no shared `lastIndex` state to reset between `.test()` calls.
     if (item.pattern.test(source)) phrases.push(item.phrase)
   }
+  // An explicit green-check emoji is an unambiguous completion mark.
+  if (/✅/.test(source) && !phrases.includes('done')) phrases.push('done')
   return [...new Set(phrases)]
 }
 
