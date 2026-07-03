@@ -315,7 +315,7 @@ describe('ProviderCapabilities', () => {
     }
   })
 
-  it('advertises Ollama as TaskWraith-local read-only tooling in workspace chats', () => {
+  it('advertises Ollama as a TaskWraith-local full tool surface in workspace chats', () => {
     const contract = buildProviderCapabilityContract({
       provider: 'ollama',
       settings: settings(),
@@ -325,7 +325,7 @@ describe('ProviderCapabilities', () => {
 
     expect(contract.mcp.state).toBe('available')
     expect(contract.mcp.serverName).toBe('TaskWraith-local')
-    expect(contract.mcp.tools).toEqual([
+    for (const tool of [
       'read_file',
       'list_directory',
       'find_files',
@@ -347,169 +347,45 @@ describe('ProviderCapabilities', () => {
       'goal_blocked',
       'tw_recall_find',
       'tw_recall_read',
-      'tw_recall_read_events'
-    ])
+      'tw_recall_read_events',
+      'write_file',
+      'replace',
+      'apply_patch',
+      'run_shell_command',
+      'get_diagnostics',
+      'git_push',
+      'git_create_pr',
+      'delegate_to_subthread'
+    ] as const) {
+      expect(contract.mcp.tools).toContain(tool)
+    }
     expect(contract.tools.mcpTools.state).toBe('gated')
     expect(contract.tools.mcpTools.enforcedByTaskWraith).toBe(true)
     expect(contract.tools.elicit.state).toBe('available')
     expect(contract.tools.elicit.requiresApproval).toBe(false)
-    expect(contract.tools.shellCommands.state).toBe('unavailable')
-    expect(contract.tools.fileChanges.state).toBe('unavailable')
-    expect(contract.approvals.effectiveMode).toBe('read_only')
-    expect(contract.approvals.providerMode).toContain('read-only')
-    expect(contract.approvals.notes.join(' ')).toContain('higher governed tier')
-  })
-
-  it('advertises Ollama approved edit and shell tiers through TaskWraith gates', () => {
-    const approvedEdits = buildProviderCapabilityContract({
-      provider: 'ollama',
-      settings: settings(defaultServices, { ollamaToolControlTier: 'approved_edits' }),
-      workspacePath: '/tmp/project',
-      status: { provider: 'ollama', available: true }
-    })
-    expect(approvedEdits.mcp.tools).toContain('write_file')
-    expect(approvedEdits.mcp.tools).toContain('delete_path')
-    expect(approvedEdits.mcp.tools).toContain('move_path')
-    expect(approvedEdits.mcp.tools).toContain('apply_patch')
-    expect(approvedEdits.mcp.tools).not.toContain('run_shell_command')
-    expect(approvedEdits.tools.fileChanges.state).toBe('gated')
-    expect(approvedEdits.tools.fileChanges.enforcedByTaskWraith).toBe(true)
-    expect(approvedEdits.tools.shellCommands.state).toBe('unavailable')
-    expect(approvedEdits.approvals.effectiveMode).toBe('approved_edits')
-    expect(approvedEdits.approvals.providerMode).toContain('approved file-edit')
-    expect(approvedEdits.approvals.notes.join(' ')).toContain('File edits and shell commands are exposed only by the selected tier')
-    expect(approvedEdits.approvals.notes.join(' ')).not.toContain('shell commands and file mutations are not exposed')
-
-    const approvedShell = buildProviderCapabilityContract({
-      provider: 'ollama',
-      settings: settings(defaultServices, { ollamaToolControlTier: 'approved_shell' }),
-      workspacePath: '/tmp/project',
-      status: { provider: 'ollama', available: true }
-    })
-    expect(approvedShell.mcp.tools).toContain('run_shell_command')
-    expect(approvedShell.mcp.tools).toContain('get_diagnostics')
-    expect(approvedShell.tools.shellCommands.state).toBe('gated')
-    expect(approvedShell.tools.shellCommands.enforcedByTaskWraith).toBe(true)
-    expect(approvedShell.approvals.effectiveMode).toBe('approved_shell')
-    expect(approvedShell.approvals.providerMode).toContain('approved shell')
-  })
-
-  it('warns when Tier 4 is selected but the workspace is not granted parity', () => {
-    const contract = buildProviderCapabilityContract({
-      provider: 'ollama',
-      settings: settings(defaultServices, {
-        ollamaToolControlTier: 'provider_parity',
-        ollamaProviderParityWorkspaceGrants: {}
-      }),
-      workspacePath: '/tmp/project',
-      status: { provider: 'ollama', available: true }
-    })
-    expect(contract.tools.fileChanges.state).toBe('unavailable')
-    const downgrade = contract.warnings.find(
-      (w) => w.id === 'ollama-provider-parity-not-granted'
-    )
-    expect(downgrade).toBeTruthy()
-    expect(downgrade?.severity).toBe('warning')
-    expect(downgrade?.message).toContain('this workspace has not been granted parity')
-  })
-
-  it('does not warn about parity when the workspace IS granted', () => {
-    const contract = buildProviderCapabilityContract({
-      provider: 'ollama',
-      settings: settings(defaultServices, {
-        ollamaToolControlTier: 'provider_parity',
-        ollamaProviderParityWorkspaceGrants: { '/tmp/project': '2026-06-08T12:00:00.000Z' }
-      }),
-      workspacePath: '/tmp/project',
-      status: { provider: 'ollama', available: true }
-    })
-    expect(
-      contract.warnings.some((w) => w.id === 'ollama-provider-parity-not-granted')
-    ).toBe(false)
-  })
-
-  it('does not warn about parity at the default read-only tier', () => {
-    const contract = buildProviderCapabilityContract({
-      provider: 'ollama',
-      settings: settings(),
-      workspacePath: '/tmp/project',
-      status: { provider: 'ollama', available: true }
-    })
-    expect(
-      contract.warnings.some((w) => w.id === 'ollama-provider-parity-not-granted')
-    ).toBe(false)
-  })
-
-  it('warns that global chats never receive parity when Tier 4 is selected without a workspace', () => {
-    const contract = buildProviderCapabilityContract({
-      provider: 'ollama',
-      settings: settings(defaultServices, {
-        ollamaToolControlTier: 'provider_parity',
-        ollamaProviderParityWorkspaceGrants: { '/tmp/project': '2026-06-08T12:00:00.000Z' }
-      }),
-      workspacePath: undefined,
-      status: { provider: 'ollama', available: true }
-    })
-    const downgrade = contract.warnings.find(
-      (w) => w.id === 'ollama-provider-parity-not-granted'
-    )
-    expect(downgrade).toBeTruthy()
-    expect(downgrade?.message).toContain('global chats always run read-only')
-  })
-
-  it('advertises Ollama provider parity after acknowledgement', () => {
-    const contract = buildProviderCapabilityContract({
-      provider: 'ollama',
-      settings: settings(defaultServices, {
-        ollamaToolControlTier: 'provider_parity',
-        ollamaProviderParityWorkspaceGrants: {
-          '/tmp/project': '2026-06-08T12:00:00.000Z'
-        }
-      }),
-      workspacePath: '/tmp/project',
-      status: { provider: 'ollama', available: true }
-    })
-
-    expect(contract.mcp.tools).toContain('delegate_to_subthread')
-    expect(contract.mcp.tools).toContain('run_shell_command')
-    expect(contract.tools.fileChanges.enforcedByTaskWraith).toBe(true)
+    expect(contract.tools.shellCommands.state).toBe('gated')
+    expect(contract.tools.fileChanges.state).toBe('gated')
     expect(contract.tools.shellCommands.enforcedByTaskWraith).toBe(true)
+    expect(contract.tools.fileChanges.enforcedByTaskWraith).toBe(true)
+    expect(contract.approvals.providerMode).toContain('full tool surface')
+    expect(contract.approvals.notes.join(' ')).toContain('run permission role')
   })
 
-  it('keeps Ollama provider parity read-only without the workspace grant', () => {
-    const contract = buildProviderCapabilityContract({
+  it('keeps Ollama file and shell capability governed by standard service policy', () => {
+    const blocked = buildProviderCapabilityContract({
       provider: 'ollama',
-      settings: settings(defaultServices, { ollamaToolControlTier: 'provider_parity' }),
+      settings: settings({
+        ...defaultServices,
+        fileChanges: 'deny',
+        shellCommands: 'deny'
+      }),
       workspacePath: '/tmp/project',
       status: { provider: 'ollama', available: true }
     })
-
-    expect(contract.mcp.tools).toEqual([
-      'read_file',
-      'list_directory',
-      'find_files',
-      'workspace_search',
-      'workspace_symbols',
-      'git_status',
-      'git_diff',
-      'git_log',
-      'git_show',
-      'git_blame',
-      'test_result_summary',
-      'list_active_runs',
-      'web_search',
-      'web_fetch',
-      'ask_user_question',
-      'goal_read',
-      'goal_update',
-      'goal_complete',
-      'goal_blocked',
-      'tw_recall_find',
-      'tw_recall_read',
-      'tw_recall_read_events'
-    ])
-    expect(contract.tools.fileChanges.state).toBe('unavailable')
-    expect(contract.tools.shellCommands.state).toBe('unavailable')
+    expect(blocked.mcp.tools).toContain('write_file')
+    expect(blocked.mcp.tools).toContain('run_shell_command')
+    expect(blocked.tools.fileChanges.state).toBe('blocked')
+    expect(blocked.tools.shellCommands.state).toBe('blocked')
   })
 
   it('does not advertise Ollama read-only tools outside a workspace', () => {

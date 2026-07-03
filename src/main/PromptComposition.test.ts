@@ -686,8 +686,7 @@ describe('composeRunPrompt sub-thread returns', () => {
       codexHandoffsApplied: [],
       isGlobalRun: false,
       approvalMode: 'plan',
-      providerLabel: 'Ollama',
-      ollamaToolControlTier: 'read_only'
+      providerLabel: 'Ollama'
     })
 
     expect(result.uiNoticeMessage).toBeUndefined()
@@ -929,13 +928,12 @@ describe('composeRunPrompt read-only recon steer', () => {
     expect(result.contextualPrompt).not.toContain('TaskWraith read-only recon turn')
   })
 
-  it('excludes ollama (approvalMode is force-plan there; the tier hint carries its posture text)', () => {
+  it('excludes ollama from the generic recon steer because it has local workflow hints', () => {
     const result = composeRunPrompt({
       ...base,
       provider: 'ollama',
       providerLabel: 'Ollama',
-      workflowMode: 'normal',
-      ollamaToolControlTier: 'read_only'
+      workflowMode: 'normal'
     })
     expect(result.contextualPrompt).not.toContain('TaskWraith read-only recon turn')
   })
@@ -950,8 +948,7 @@ describe('composeRunPrompt ollama workflow-hint intent', () => {
     codexHandoffsApplied: [] as string[],
     isGlobalRun: false,
     approvalMode: 'plan',
-    providerLabel: 'Ollama',
-    ollamaToolControlTier: 'read_only' as const
+    providerLabel: 'Ollama'
   }
 
   it('uses the findings-shaped recon hint for normal-workflow read-only runs', () => {

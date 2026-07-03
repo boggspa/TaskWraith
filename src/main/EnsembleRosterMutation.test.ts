@@ -600,7 +600,6 @@ describe('evaluateRosterEdit', () => {
             model: 'gpt-5.5',
             runtimeProfileId: 'approved_patcher',
             geminiAuthProfileId: 'gemini-auth',
-            ollamaToolControlTier: 'approved_edits',
             ollamaRunProfile: 'approved_patcher',
             reasoningEffort: 'high',
             serviceTier: 'fast',
@@ -617,7 +616,6 @@ describe('evaluateRosterEdit', () => {
     expect(worker?.model).toBeUndefined()
     expect(worker?.runtimeProfileId).toBeUndefined()
     expect(worker?.geminiAuthProfileId).toBeUndefined()
-    expect(worker?.ollamaToolControlTier).toBeUndefined()
     expect(worker?.ollamaRunProfile).toBeUndefined()
     expect(worker?.reasoningEffort).toBeUndefined()
     expect(worker?.serviceTier).toBeUndefined()

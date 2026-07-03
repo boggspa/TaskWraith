@@ -5503,7 +5503,6 @@ Next action:
         order: 1,
         model: 'ornith:35b',
         permissionPresetId: 'workspace_write',
-        ollamaToolControlTier: 'approved_shell',
         ollamaRunProfile: 'verify_with_shell'
       }
     ]
@@ -5518,7 +5517,6 @@ Next action:
     expect(harness.dispatched[0]).toMatchObject({
       provider: 'ollama',
       model: 'ornith:35b',
-      ollamaToolControlTier: 'approved_shell',
       ollamaRunProfile: 'verify_with_shell'
     })
   })
@@ -7761,7 +7759,6 @@ Next action:
           order: 1,
           permissionPresetId: 'read_only',
           model: 'qwen3.5:9b',
-          ollamaToolControlTier: 'read_only',
           ollamaRunProfile: 'local_scout'
         },
         {
@@ -7773,7 +7770,6 @@ Next action:
           order: 2,
           permissionPresetId: 'read_only',
           model: 'gemma4:12b',
-          ollamaToolControlTier: 'approved_edits',
           ollamaRunProfile: 'approved_patcher'
         }
       ]
@@ -7787,10 +7783,6 @@ Next action:
 
       await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2), { timeout: 1000 })
       expect(harness.dispatched.map((payload) => payload.provider)).toEqual(['ollama', 'ollama'])
-      expect(harness.dispatched.map((payload) => payload.ollamaToolControlTier)).toEqual([
-        'read_only',
-        'approved_edits'
-      ])
       expect(harness.dispatched.map((payload) => payload.ollamaRunProfile)).toEqual([
         'local_scout',
         'approved_patcher'

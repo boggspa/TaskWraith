@@ -193,29 +193,26 @@ describe('ComposerService', () => {
     expect(payload.composer.contextTurnsApplied).toBe(6)
   })
 
-  it('carries the per-chat Ollama tier/profile from providerMetadata onto the run payload', () => {
+  it('carries the per-chat Ollama run profile from providerMetadata onto the run payload', () => {
     const payload = compose(
       {
         provider: 'ollama',
         providerMetadata: {
-          ollamaToolControlTier: 'approved_shell',
           ollamaRunProfile: 'verify_with_shell'
         }
       },
       { selectedModelType: 'gpt-oss:latest' },
-      { ollamaToolControlTier: 'read_only', ollamaDefaultRunProfile: 'local_scout' }
+      { ollamaDefaultRunProfile: 'local_scout' }
     )
-    expect(payload.ollamaToolControlTier).toBe('approved_shell')
     expect(payload.ollamaRunProfile).toBe('verify_with_shell')
   })
 
-  it('omits the per-chat Ollama tier when the chat has none (gate falls back to global)', () => {
+  it('omits the per-chat Ollama run profile when the chat has none', () => {
     const payload = compose(
       { provider: 'ollama', providerMetadata: {} },
       { selectedModelType: 'gpt-oss:latest' },
-      { ollamaToolControlTier: 'approved_edits' }
+      {}
     )
-    expect(payload.ollamaToolControlTier).toBeUndefined()
     expect(payload.ollamaRunProfile).toBeUndefined()
   })
 

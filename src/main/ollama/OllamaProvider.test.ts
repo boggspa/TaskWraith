@@ -46,9 +46,7 @@ import {
   type OllamaProviderDeps
 } from './OllamaProvider'
 import {
-  effectiveOllamaToolControlTier,
   normalizeOllamaToolControlTier,
-  ollamaProviderParityWorkspaceGranted,
   ollamaToolNamesForTier,
   ollamaToolRequiresIntent
 } from './OllamaToolTiers'
@@ -188,11 +186,9 @@ function makeProviderDeps(
         ({
           ollamaBaseUrl: 'http://127.0.0.1:11434',
           ollamaDefaultModel: 'stream-model:latest',
-          ollamaToolControlTier: 'read_only',
           ollamaDefaultRunProfile: 'local_scout',
           ollamaRunProfiles: {},
           ollamaModelPreflightAt: { 'stream-model:latest@digest-stream': Date.now() },
-          ollamaProviderParityWorkspaceGrants: {},
           agenticServices: { mcpTools: 'allow' },
           geminiMcpBridgeEnabled: true,
           codexSandboxFallback: 'read-only',
@@ -2361,20 +2357,6 @@ describe('Ollama tool surface (tier retired)', () => {
     expect(tools).toContain('write_file')
     expect(tools).toContain('run_shell_command')
     expect(tools).toContain('delegate_to_subthread')
-  })
-
-  it('requires a workspace grant before provider parity becomes effective', () => {
-    const settings = {
-      ollamaToolControlTier: 'provider_parity' as const,
-      ollamaProviderParityWorkspaceGrants: {
-        '/tmp/granted': '2026-06-08T12:00:00.000Z'
-      }
-    }
-
-    expect(ollamaProviderParityWorkspaceGranted(settings, '/tmp/granted')).toBe(true)
-    expect(ollamaProviderParityWorkspaceGranted(settings, '/tmp/other')).toBe(false)
-    expect(effectiveOllamaToolControlTier(settings, '/tmp/granted')).toBe('provider_parity')
-    expect(effectiveOllamaToolControlTier(settings, '/tmp/other')).toBe('read_only')
   })
 })
 
