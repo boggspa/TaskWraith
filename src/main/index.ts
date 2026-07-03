@@ -18880,12 +18880,16 @@ async function verifyProductAuditBundle(
   const recordVerification = (
     result: ProductAuditBundleVerificationResult
   ): ProductAuditBundleVerificationResult => {
-    AppStore.recordAuditBundleVerificationReceipt(
-      createAuditBundleVerificationReceipt(result, {
-        id: `audit-bundle-verification-${Date.now()}-${randomUUID()}`,
-        verifiedAt: new Date().toISOString()
-      })
-    )
+    try {
+      AppStore.recordAuditBundleVerificationReceipt(
+        createAuditBundleVerificationReceipt(result, {
+          id: `audit-bundle-verification-${Date.now()}-${randomUUID()}`,
+          verifiedAt: new Date().toISOString()
+        })
+      )
+    } catch (error) {
+      console.warn('Failed to record audit bundle verification receipt', error)
+    }
     return result
   }
   try {

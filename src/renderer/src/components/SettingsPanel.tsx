@@ -8880,6 +8880,12 @@ export function SettingsPanel({
                     {shortAuditHash(
                       productOperationsStatus.auditReceipts.hashes.messageFeedbackCastingSignals
                     )}
+                    . Audit bundle verification receipts:{' '}
+                    {productOperationsStatus.auditReceipts.counts.auditBundleVerifications} retained;
+                    hash{' '}
+                    {shortAuditHash(
+                      productOperationsStatus.auditReceipts.hashes.auditBundleVerifications
+                    )}
                     . Free-text notes stay redacted in diagnostics and audit bundles.
                   </p>
                 )}

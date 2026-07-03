@@ -618,11 +618,13 @@ describe('SettingsPanel provider cards', () => {
             auditReceipts: {
               counts: {
                 messageFeedback: 4,
-                messageFeedbackCastingSignals: 2
+                messageFeedbackCastingSignals: 2,
+                auditBundleVerifications: 3
               },
               hashes: {
                 messageFeedback: 'a'.repeat(64),
-                messageFeedbackCastingSignals: 'b'.repeat(64)
+                messageFeedbackCastingSignals: 'b'.repeat(64),
+                auditBundleVerifications: 'c'.repeat(64)
               }
             }
           } as any
@@ -634,6 +636,7 @@ describe('SettingsPanel provider cards', () => {
     expect(html).toContain('feedback aaaaaaaaaaaa')
     expect(html).toContain('casting bbbbbbbbbbbb')
     expect(html).toContain('Free-text notes stay redacted')
+    expect(html).toContain('Audit bundle verification receipts: 3 retained; hash cccccccccccc')
   })
 
   it('locks approval timeout controls when organization policy owns them', () => {
