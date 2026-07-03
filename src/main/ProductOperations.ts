@@ -1000,6 +1000,10 @@ export function buildProductOperationsStatus(input: {
   runRecovery: RunRecoveryRecord[]
   approvalLedger: ApprovalLedgerRecord[]
   workspaceChanges: WorkspaceChangeSet[]
+  messageFeedbackReceipts?: MessageFeedbackReceipt[]
+  externalPublishReceipts?: ExternalPublishReceipt[]
+  auditRetentionPurgeReceipts?: AuditRetentionPurgeReceipt[]
+  userMcpBlockedServers?: UserMcpLaunchPolicyDecision[]
   scheduledTasks: ScheduledTask[]
   workflows?: WorkflowDefinition[]
   recentCrashes: ProductCrashRecord[]
@@ -1043,6 +1047,15 @@ export function buildProductOperationsStatus(input: {
         ? 'warning'
         : 'ok'
   ])
+  const auditReceipts = buildDiagnosticsAuditReceipts({
+    generatedAt,
+    approvalLedger: input.approvalLedger,
+    workspaceChanges: input.workspaceChanges,
+    messageFeedbackReceipts: input.messageFeedbackReceipts || [],
+    externalPublishReceipts: input.externalPublishReceipts || [],
+    auditRetentionPurgeReceipts: input.auditRetentionPurgeReceipts || [],
+    userMcpBlockedServers: input.userMcpBlockedServers || []
+  })
 
   return {
     generatedAt,
@@ -1064,6 +1077,14 @@ export function buildProductOperationsStatus(input: {
     installRepair,
     releaseAutomation,
     recentCrashes: input.recentCrashes.slice(0, 20),
+    auditReceipts: {
+      schemaVersion: auditReceipts.schemaVersion,
+      generatedAt: auditReceipts.generatedAt,
+      redactionMode: auditReceipts.redactionMode,
+      counts: auditReceipts.counts,
+      hashes: auditReceipts.hashes,
+      validation: auditReceipts.validation
+    },
     counts: {
       workspaces: input.workspaces.length,
       chats: input.chats.length,

@@ -18574,6 +18574,7 @@ async function getProductOperationsStatus(): Promise<ProductOperationsStatus> {
   const scheduledTasks = AppStore.getScheduledTasks()
   const workflows = AppStore.getWorkflowDefinitions()
   const recentCrashes = AppStore.getProductCrashes({ limit: 20 })
+  const userMcpBlockedServers = collectCurrentUserMcpBlockedServers(settings)
 
   return buildProductOperationsStatus({
     updateChannel: settings.updateChannel || 'stable',
@@ -18591,6 +18592,10 @@ async function getProductOperationsStatus(): Promise<ProductOperationsStatus> {
     runRecovery,
     approvalLedger,
     workspaceChanges,
+    messageFeedbackReceipts: AppStore.getMessageFeedbackReceipts(),
+    externalPublishReceipts: listExternalPublishReceipts(),
+    auditRetentionPurgeReceipts: AppStore.getAuditRetentionPurgeReceipts(),
+    userMcpBlockedServers,
     scheduledTasks,
     workflows,
     recentCrashes,

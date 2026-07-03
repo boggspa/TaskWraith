@@ -146,6 +146,67 @@ describe('ProductOperations', () => {
     expect(filtered[0].message).toBe('new')
   })
 
+  it('includes redacted feedback receipt counts in product operations status', () => {
+    const status = buildProductOperationsStatus({
+      updateChannel: 'debug',
+      appName: 'TaskWraith Debug',
+      appVersion: '1.0.0',
+      isPackaged: false,
+      appPath: '/app',
+      userDataPath: '/tmp/taskwraith',
+      platform: 'darwin',
+      arch: 'arm64',
+      osRelease: '25.0.0',
+      workspaces: [],
+      chats: [],
+      runQueue: [],
+      runRecovery: [],
+      approvalLedger: [],
+      workspaceChanges: [],
+      messageFeedbackReceipts: [
+        {
+          schemaVersion: 1,
+          id: 'feedback-secret',
+          source: 'message_metadata',
+          action: 'set',
+          chatId: 'chat-secret',
+          messageId: 'message-secret',
+          provider: 'codex',
+          model: 'gpt-5.5',
+          role: 'Reviewer',
+          vote: 'down',
+          at: 1,
+          recordedAt: 2,
+          reason: 'wrong-model-for-role',
+          note: 'private feedback note',
+          noteSensitive: true
+        }
+      ],
+      externalPublishReceipts: [],
+      auditRetentionPurgeReceipts: [],
+      userMcpBlockedServers: [],
+      scheduledTasks: [],
+      recentCrashes: [],
+      userDataExists: true,
+      geminiBridgeStatus: null,
+      packageJson: { scripts: {} },
+      builderConfigText: '',
+      env: {}
+    })
+    const serialized = JSON.stringify(status.auditReceipts)
+
+    expect(status.auditReceipts?.counts.messageFeedback).toBe(1)
+    expect(status.auditReceipts?.counts.messageFeedbackCastingSignals).toBe(1)
+    expect(status.auditReceipts?.hashes.messageFeedback).toMatch(/^[a-f0-9]{64}$/)
+    expect(status.auditReceipts).not.toHaveProperty('recent')
+    expect(serialized).not.toContain('feedback-secret')
+    expect(serialized).not.toContain('message-secret')
+    expect(serialized).not.toContain('gpt-5.5')
+    expect(serialized).not.toContain('Reviewer')
+    expect(serialized).not.toContain('wrong-model-for-role')
+    expect(serialized).not.toContain('private feedback note')
+  })
+
   it('summarizes bridge health for enabled but unavailable TaskWraith MCP bridge', () => {
     const health = createBridgeHealthRecord({
       checkedAt: '2026-05-07T10:00:00.000Z',

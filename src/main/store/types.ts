@@ -2162,6 +2162,11 @@ export interface ProductReleaseAutomationStatus {
   releaseSteps: string[]
 }
 
+export type ProductOperationsAuditReceiptsStatus = Pick<
+  ProductDiagnosticsAuditReceipts,
+  'schemaVersion' | 'generatedAt' | 'redactionMode' | 'counts' | 'hashes' | 'validation'
+>
+
 export interface ProductOperationsStatus {
   generatedAt: string
   updateChannel: ProductUpdateChannel
@@ -2182,6 +2187,7 @@ export interface ProductOperationsStatus {
   installRepair: ProductInstallRepairStatus
   releaseAutomation: ProductReleaseAutomationStatus
   recentCrashes: ProductCrashRecord[]
+  auditReceipts?: ProductOperationsAuditReceiptsStatus
   counts: {
     workspaces: number
     chats: number

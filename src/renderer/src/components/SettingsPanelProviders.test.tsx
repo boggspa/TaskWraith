@@ -571,6 +571,43 @@ describe('SettingsPanel provider cards', () => {
     expect(html).toContain('Reason: section hash mismatch')
   })
 
+  it('renders redacted local feedback receipt status in product operations', () => {
+    const html = renderToStaticMarkup(
+      <SettingsPanel
+        {...makeSettingsProps({
+          activeTab: 'behavior',
+          productOperationsStatus: {
+            overallStatus: 'ok',
+            recentCrashes: [],
+            releaseAutomation: {
+              status: 'ok',
+              notarization: { message: 'notarization ready' }
+            },
+            counts: {
+              queuedRuns: 0,
+              activeRuns: 0
+            },
+            auditReceipts: {
+              counts: {
+                messageFeedback: 4,
+                messageFeedbackCastingSignals: 2
+              },
+              hashes: {
+                messageFeedback: 'a'.repeat(64),
+                messageFeedbackCastingSignals: 'b'.repeat(64)
+              }
+            }
+          } as any
+        })}
+      />
+    )
+
+    expect(html).toContain('Local feedback receipts: 4 ratings, 2 casting aggregates.')
+    expect(html).toContain('feedback aaaaaaaaaaaa')
+    expect(html).toContain('casting bbbbbbbbbbbb')
+    expect(html).toContain('Free-text notes stay redacted')
+  })
+
   it('locks approval timeout controls when organization policy owns them', () => {
     const html = renderToStaticMarkup(
       <SettingsPanel

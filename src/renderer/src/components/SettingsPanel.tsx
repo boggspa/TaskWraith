@@ -156,6 +156,10 @@ function auditBundleTamperEvidenceLabel(value: string | undefined): string {
   return 'unknown evidence'
 }
 
+function shortAuditHash(value: string | undefined): string {
+  return value ? value.slice(0, 12) : 'unavailable'
+}
+
 const AUDIT_RETENTION_SURFACES: Array<{ key: AuditRetentionSurface; label: string }> = [
   { key: 'approvalLedger', label: 'Approvals' },
   { key: 'runEvents', label: 'Run events' },
@@ -8859,6 +8863,20 @@ export function SettingsPanel({
                   <p className="settings-hint">
                     Release automation: {productOperationsStatus.releaseAutomation.status};{' '}
                     {productOperationsStatus.releaseAutomation.notarization.message}
+                  </p>
+                )}
+                {productOperationsStatus?.auditReceipts && (
+                  <p className="settings-hint">
+                    Local feedback receipts:{' '}
+                    {productOperationsStatus.auditReceipts.counts.messageFeedback} ratings,{' '}
+                    {productOperationsStatus.auditReceipts.counts.messageFeedbackCastingSignals}{' '}
+                    casting aggregates. Redacted hashes: feedback{' '}
+                    {shortAuditHash(productOperationsStatus.auditReceipts.hashes.messageFeedback)},
+                    casting{' '}
+                    {shortAuditHash(
+                      productOperationsStatus.auditReceipts.hashes.messageFeedbackCastingSignals
+                    )}
+                    . Free-text notes stay redacted in diagnostics and audit bundles.
                   </p>
                 )}
                 <label className="settings-service-row">

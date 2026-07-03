@@ -741,6 +741,11 @@ What exists:
   casting aggregates derived from the latest thumbs-ledger state. These group
   by provider/model/role/stage for local analytics, but exported snapshots hash
   model, role, and reason labels and only expose counts.
+- Product operations status now carries the same redacted feedback/casting
+  receipt summary used by diagnostics, and Settings -> System -> Product
+  operations renders local feedback rating counts, casting aggregate counts, and
+  short redacted hashes without exposing message ids, run ids, models, roles,
+  reasons, or free-text notes.
 - The transcript context menu can attach a closed-set negative reason code
   (wrong approach, hallucinated/wrong, broke something, over-verbose, wrong
   model for role, incomplete) to a poor-rating receipt.
@@ -758,8 +763,6 @@ What is missing:
   mutate other ledgers or task artifacts.
 - No "recast this turn with a different model" follow-through exists.
 - No iOS parity exists for feedback capture.
-- No Settings/UI entry point exists yet; feedback summaries are available
-  through the main-process redacted audit-bundle export route.
 - No append-only hash chain, actor identity, source-device id, or tamper
   evidence exists for thumbs receipts.
 
