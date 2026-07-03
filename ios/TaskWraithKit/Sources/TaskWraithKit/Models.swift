@@ -1864,6 +1864,25 @@ public enum BridgeAction {
         ])
     }
 
+    public static func ensembleSettingsUpdate(
+        workspaceId: String, threadId: String,
+        orchestrationMode: String? = nil,
+        maxContinuationHops: Int? = nil,
+        actionId: String = UUID().uuidString
+    ) -> [String: Any] {
+        var payload: [String: Any] = [
+            "kind": "ensembleSettingsUpdate", "actionId": actionId,
+            "workspaceId": workspaceId, "threadId": threadId,
+        ]
+        if orchestrationMode == "turn_bound" || orchestrationMode == "continuous" {
+            payload["orchestrationMode"] = orchestrationMode
+        }
+        if let maxContinuationHops {
+            payload["maxContinuationHops"] = max(1, min(500, maxContinuationHops))
+        }
+        return encode(payload)
+    }
+
     /// Save the current roster as a named preset (GLOBAL; the host forwards it
     /// to the renderer's localStorage store, which re-syncs to all devices).
     public static func ensemblePresetSave(

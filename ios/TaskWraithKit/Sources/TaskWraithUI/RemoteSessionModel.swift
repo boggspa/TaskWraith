@@ -3443,6 +3443,27 @@ public final class RemoteSessionModel: ObservableObject {
         scheduleThreadRefresh(threadId)
     }
 
+    public func updateEnsembleSettings(
+        workspaceId: String, threadId: String,
+        orchestrationMode: String? = nil,
+        maxContinuationHops: Int? = nil
+    ) {
+        let mode =
+            orchestrationMode == "continuous"
+            ? "continuous"
+            : orchestrationMode == "turn_bound" ? "turn_bound" : nil
+        let hops = maxContinuationHops.map { max(1, min(500, $0)) }
+        guard mode != nil || hops != nil else { return }
+        send(
+            BridgeAction.ensembleSettingsUpdate(
+                workspaceId: workspaceId,
+                threadId: threadId,
+                orchestrationMode: mode,
+                maxContinuationHops: hops),
+            successLabel: "Ensemble settings updated.")
+        scheduleThreadRefresh(threadId)
+    }
+
     /// Save a roster (draft entries) as a named preset. GLOBAL — the host
     /// forwards it to the renderer's preset store, which re-syncs to all
     /// devices (the new preset shows up in `ensemblePresets`).
