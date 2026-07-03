@@ -936,6 +936,11 @@ function ProviderCard({
     (row.id === 'cursor' || row.id === 'grok') && row.variant === 'partial'
       ? 'signed-in'
       : row.variant
+  const showSignInAction =
+    Boolean(onProviderLogin) &&
+    row.variant !== 'signed-in' &&
+    row.variant !== 'out-of-usage' &&
+    (!row.localOnly || row.cloudSignIn)
   return (
     <div className={classes} data-provider={row.id}>
       <div className="first-launch-sheet-provider-card-header">
@@ -963,7 +968,7 @@ function ProviderCard({
       <p className="first-launch-sheet-provider-card-description">{row.description}</p>
       <p className="first-launch-sheet-provider-card-hint">{row.hint}</p>
       <div className="first-launch-sheet-provider-card-actions">
-        {(!row.localOnly || row.cloudSignIn) && onProviderLogin && (
+        {showSignInAction && onProviderLogin && (
           <button
             type="button"
             // cloudSignIn rows (Ollama) are local-FIRST — the cloud sign-in is

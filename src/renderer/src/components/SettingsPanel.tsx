@@ -3346,6 +3346,7 @@ export function SettingsPanel({
   pinnedMessageGroups = [],
   onOpenPinnedMessage
 }: SettingsPanelProps): React.JSX.Element {
+  const [appIconOfferNowMs] = useState(() => Date.now())
   const [claudeKeyInput, setClaudeKeyInput] = useState('')
   const [kimiKeyInput, setKimiKeyInput] = useState('')
   // Uncontrolled fallback state. Used only when the caller doesn't
@@ -4804,7 +4805,7 @@ export function SettingsPanel({
               <div className="settings-group">
                 <label className="settings-label">App icon</label>
                 <div className="settings-option-grid settings-app-icon-grid">
-                  {availableIconVariants(Date.now()).map((variant) => (
+                  {availableIconVariants(appIconOfferNowMs).map((variant) => (
                     <button
                       key={variant.id}
                       type="button"
@@ -7407,7 +7408,7 @@ export function SettingsPanel({
                   <span>
                     TaskWraith MCP bridge
                     <small>
-                      Enables TaskWraith's bundled MCP broker, including image_edit,
+                      Enables TaskWraith&apos;s bundled MCP broker, including image_edit,
                       svg_rasterize, and image_generate. Write-capable Cursor and Grok runs
                       auto-inject a scoped broker when they need TaskWraith-owned tools; no
                       manual Cursor or Grok MCP install is required. image_generate additionally

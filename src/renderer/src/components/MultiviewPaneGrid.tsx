@@ -2,6 +2,7 @@ import {
   useCallback,
   useMemo,
   useRef,
+  type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
   type ReactNode
 } from 'react'
@@ -93,7 +94,7 @@ export function MultiviewPaneGrid(props: MultiviewPaneGridProps) {
     pointerId: number
   } | null>(null)
 
-  const { onResizeTrack } = props
+  const { onResizeTrack, onResetTracks } = props
 
   const segments = useMemo<MultiviewGutterSegment[]>(
     () => (onResizeTrack ? computeGutterSegments(props.layout) : []),
@@ -174,6 +175,43 @@ export function MultiviewPaneGrid(props: MultiviewPaneGridProps) {
     }
   }, [])
 
+  const handleGutterKeyDown = useCallback(
+    (segment: MultiviewGutterSegment, event: ReactKeyboardEvent<HTMLDivElement>) => {
+      if (!onResizeTrack) return
+      const axisTotalPx = measureAxis(segment.orientation)
+      if (event.key === 'Enter') {
+        event.preventDefault()
+        onResetTracks?.()
+        return
+      }
+      if (axisTotalPx <= 0) return
+      const largeStep = event.shiftKey ? 48 : 24
+      const smallStep = event.shiftKey ? 16 : 8
+      let deltaPx = 0
+      if (segment.orientation === 'column') {
+        if (event.key === 'ArrowLeft') deltaPx = -largeStep
+        if (event.key === 'ArrowRight') deltaPx = largeStep
+      } else {
+        if (event.key === 'ArrowUp') deltaPx = -largeStep
+        if (event.key === 'ArrowDown') deltaPx = largeStep
+      }
+      if (event.key === 'PageUp') deltaPx = -largeStep * 2
+      if (event.key === 'PageDown') deltaPx = largeStep * 2
+      if (event.key === 'Home') deltaPx = -smallStep
+      if (event.key === 'End') deltaPx = smallStep
+      if (deltaPx === 0) return
+      event.preventDefault()
+      event.stopPropagation()
+      onResizeTrack({
+        orientation: segment.orientation,
+        trackIndex: segment.trackIndex,
+        deltaPx,
+        axisTotalPx
+      })
+    },
+    [measureAxis, onResizeTrack, onResetTracks]
+  )
+
   // Single layout is today's render — no grid host, no wrapper, zero diff.
   if (props.layout === 'single') {
     return <>{props.renderFocusedCell()}</>
@@ -248,9 +286,10 @@ export function MultiviewPaneGrid(props: MultiviewPaneGridProps) {
           key={segment.key}
           className={`multiview-gutter multiview-gutter-${segment.orientation}`}
           role="separator"
+          tabIndex={0}
           aria-orientation={segment.orientation === 'column' ? 'vertical' : 'horizontal'}
           aria-label="Resize panes"
-          title="Drag to resize panes. Double-click to reset."
+          title="Drag or use arrow keys to resize panes. Enter or double-click to reset."
           data-orientation={segment.orientation}
           data-track-index={segment.trackIndex}
           style={
@@ -263,7 +302,8 @@ export function MultiviewPaneGrid(props: MultiviewPaneGridProps) {
           onPointerMove={handleGutterPointerMove}
           onPointerUp={endGutterDrag}
           onPointerCancel={endGutterDrag}
-          onDoubleClick={() => props.onResetTracks?.()}
+          onKeyDown={(event) => handleGutterKeyDown(segment, event)}
+          onDoubleClick={() => onResetTracks?.()}
         >
           <span className="multiview-gutter-handle" aria-hidden />
         </div>

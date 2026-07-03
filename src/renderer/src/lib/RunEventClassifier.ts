@@ -355,9 +355,9 @@ export function classifyForInspector(event: RunEventRecord): InspectorRow {
     case 'audit_verdict':
     case 'audit_gate_result':
     case 'audit_provider_substituted':
-    // Provider context compaction — a session-maintenance lifecycle marker
-    // (the transcript card is the primary surface; the inspector shows the
-    // durable record with its pre→post summary).
+      // falls through: provider context compaction is also a session-maintenance
+      // lifecycle marker.
+      // eslint-disable-next-line no-fallthrough
     case 'context_compaction':
       return { kind: 'lifecycle', raw: event }
     case 'timeline':

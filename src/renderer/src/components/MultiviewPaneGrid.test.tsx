@@ -299,6 +299,11 @@ describe('MultiviewPaneGrid', () => {
     expect((out.match(/multiview-gutter /g) || []).length).toBe(1)
     expect(out).toContain('multiview-gutter-column')
     expect(out).toContain('role="separator"')
+    expect(out).toContain('tabindex="0"')
+    expect(out).toContain('aria-orientation="vertical"')
+    expect(out).toContain('aria-label="Resize panes"')
+    expect(out).not.toContain('aria-valuenow=')
+    expect(out).toContain('Drag or use arrow keys to resize panes')
     expect(out).toContain('grid-column:2')
   })
 

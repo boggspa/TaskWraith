@@ -100,7 +100,6 @@ import {
   AuditRetentionPurgeResult,
   ProductAuditBundleExportRequest,
   ProductAuditBundleVerificationResult,
-  ChatScope,
   ChatWorkflowMode,
   RuntimeProfile,
   HandoffCard,
@@ -1586,6 +1585,7 @@ function App(): React.JSX.Element {
   const isBootMaskLeaving = isBootReady && bootMaskVisible
   const openInspectorTab = (tab: InspectorRightTab) => {
     setRightTab(tab)
+    closeOtherRightDockPanels('inspector')
     appearance.update({ showInspector: true })
     setRightDockTab('inspector')
   }
@@ -2323,6 +2323,39 @@ function App(): React.JSX.Element {
     },
     [preserveMainTranscriptScrollWhile]
   )
+  // Right-dock exclusivity primitives. Every surface has its own open flag, so
+  // without this a user who opened Side Chat → Notes → Inspect had to dismiss
+  // all three before the dock would collapse. Routing every "open a surface"
+  // gesture through `closeOtherRightDockPanels(keep)` keeps at most one section
+  // open, so selecting a new surface overrides the previous one and clicking the
+  // active surface closes the dock in a single click. `closeRightDockPanel` is
+  // declared later in the render body; both helpers are only ever invoked from
+  // event/effect handlers, so the forward reference resolves at call time.
+  const closeOtherRightDockPanels = (keep?: RightDockTab): void => {
+    for (const panelId of RIGHT_DOCK_PANEL_IDS) {
+      if (panelId !== keep) closeRightDockPanel(panelId)
+    }
+  }
+  const isRightDockPanelOpen = (panelId: RightDockTab): boolean => {
+    switch (panelId) {
+      case 'run':
+        return showCockpit
+      case 'media':
+        return isChatMediaPanelOpen
+      case 'pins':
+        return isPinnedMessagesPanelOpen
+      case 'files':
+        return showFileEditor
+      case 'inspector':
+        return appearance.showInspector
+      case 'terminal':
+        return showGeminiTerminal
+      case 'chat':
+        return isSideChatDockPanelOpen
+      default:
+        return false
+    }
+  }
   const beginManualSideTranscriptJump = useCallback(() => {
     sideAutoFollowRef.current = false
     sideProgrammaticScrollRef.current = true
@@ -2887,20 +2920,28 @@ function App(): React.JSX.Element {
   const geminiTerminalInput = currentComposerChatId
     ? geminiTerminalInputByChatId[currentComposerChatId] || ''
     : ''
+  const runtimeProfilesForProviderAndCurrentScope = (provider: ProviderId): RuntimeProfile[] =>
+    runtimeProfiles.filter(
+      (profile) => profile.provider === provider && profile.scope === currentChatScope
+    )
+
+  const coerceRuntimeProfileIdForCurrentScope = (
+    provider: ProviderId,
+    runtimeProfileId?: string | null
+  ): string => {
+    const scopedProfiles = runtimeProfilesForProviderAndCurrentScope(provider)
+    if (runtimeProfileId && scopedProfiles.some((profile) => profile.id === runtimeProfileId)) {
+      return runtimeProfileId
+    }
+    return scopedProfiles[0]?.id || ''
+  }
+
   // Auto-default picks a built-in profile whose scope matches the current
   // chat — workspace chats get `{provider} local` (worktree mode for gemini),
-  // global chats get `{provider} global`. Falls back to any matching-provider
-  // profile if neither scope variant is registered (e.g. user has wiped the
-  // builtins and only has a custom profile).
+  // global chats get `{provider} global`. This mirrors dispatch resolution:
+  // provider matches from the wrong scope are not launch candidates.
   const defaultRuntimeProfileIdForProvider = (provider: ProviderId): string => {
-    const desiredScope: ChatScope = isCurrentGlobalChat ? 'global' : 'workspace'
-    return (
-      runtimeProfiles.find(
-        (profile) => profile.provider === provider && profile.scope === desiredScope
-      )?.id ||
-      runtimeProfiles.find((profile) => profile.provider === provider)?.id ||
-      ''
-    )
+    return runtimeProfilesForProviderAndCurrentScope(provider)[0]?.id || ''
   }
   const chatLevelSelectedRuntimeProfileId = currentComposerChatId
     ? selectedRuntimeProfileByChatId[currentComposerChatId] ||
@@ -2912,10 +2953,11 @@ function App(): React.JSX.Element {
   // picker can branch between chat-scope and participant-scope.
   // Earlier consumers (if any) should use the chat-level fallback
   // above directly.
-  let selectedRuntimeProfileId: string = chatLevelSelectedRuntimeProfileId
-  let currentProviderRuntimeProfiles = runtimeProfiles.filter(
-    (profile) => profile.provider === currentProvider
+  let selectedRuntimeProfileId: string = coerceRuntimeProfileIdForCurrentScope(
+    currentProvider,
+    chatLevelSelectedRuntimeProfileId
   )
+  let currentProviderRuntimeProfiles = runtimeProfilesForProviderAndCurrentScope(currentProvider)
   const setChatPromptDraft = useCallback(
     (chatId: string | null | undefined, value: string) => {
       setComposerDraftForChat(chatId, value)
@@ -7250,6 +7292,7 @@ function App(): React.JSX.Element {
     }
     if (!targetChat) return
     setShowSettings(false)
+    closeOtherRightDockPanels('pins')
     setIsPinnedMessagesPanelOpen(true)
     setRightDockTab('pins')
     await handleSelectChat(targetChat)
@@ -11981,6 +12024,7 @@ function App(): React.JSX.Element {
       if (presentInline) {
         setSidePanelPresentation(presentation)
         setSideChatId(nextSideChat.appChatId)
+        closeOtherRightDockPanels('chat')
         setIsSideChatDockPanelOpen(true)
         setRightDockTab('chat')
       }
@@ -12026,6 +12070,7 @@ function App(): React.JSX.Element {
     }
     setSidePanelPresentation(presentation)
     setSideChatId(nextChat.appChatId)
+    closeOtherRightDockPanels('chat')
     setIsSideChatDockPanelOpen(true)
     setRightDockTab('chat')
     setSideChatMenuOpen(false)
@@ -13736,6 +13781,7 @@ function App(): React.JSX.Element {
       finalPrompt
     })
     setHandoffCards((prev) => [card, ...prev.filter((item) => item.id !== card.id)])
+    closeOtherRightDockPanels('run')
     setShowCockpit(true)
     setRightDockTab('run')
   }
@@ -15930,6 +15976,7 @@ function App(): React.JSX.Element {
         if (commandId === 'toggle-inspector') {
           if (isChatPopoutWindow) return false
           const nextShowInspector = !appearance.showInspector
+          if (nextShowInspector) closeOtherRightDockPanels('inspector')
           appearance.update({ showInspector: nextShowInspector })
           setRightDockTab('inspector')
           return true
@@ -16141,12 +16188,11 @@ function App(): React.JSX.Element {
     chatLevelProvider: currentProvider,
     selectedParticipant: isCurrentEnsembleChat ? selectedParticipant : null
   })
-  selectedRuntimeProfileId =
-    runtimePickerScope.selectedRuntimeProfileId ||
-    defaultRuntimeProfileIdForProvider(runtimePickerScope.provider)
-  currentProviderRuntimeProfiles = runtimeProfiles.filter(
-    (profile) => profile.provider === runtimePickerScope.provider
+  selectedRuntimeProfileId = coerceRuntimeProfileIdForCurrentScope(
+    runtimePickerScope.provider,
+    runtimePickerScope.selectedRuntimeProfileId
   )
+  currentProviderRuntimeProfiles = runtimeProfilesForProviderAndCurrentScope(runtimePickerScope.provider)
   const currentEnsembleRound = currentChat?.ensemble?.activeRound
   const currentEnsembleOrchestrationMode: EnsembleOrchestrationMode =
     currentChat?.ensemble?.orchestrationMode === 'continuous' ? 'continuous' : 'turn_bound'
@@ -22330,6 +22376,8 @@ function App(): React.JSX.Element {
       handleMultiviewPaneProviderChange(viewerPaneIndex, viewerChatId, provider)
     const paneRememberComposerSelection = (patch: Record<string, unknown>): void =>
       rememberMultiviewPaneComposerSelection(viewerChatId, patch)
+    const focusPaneForGoalControl = (): void =>
+      handleFocusMultiviewPane(viewerPaneIndex, viewerChatId)
     // Model/reasoning/fast/permission setters: <Composer>'s internal wrappers
     // call the chat-level setState setters (which drive the FOCUSED composer's
     // UI) AND `rememberCurrentChatComposerSelection`. For a pane, the focused
@@ -22480,6 +22528,7 @@ function App(): React.JSX.Element {
       currentActiveGoal: viewerChat.activeGoal || null,
       currentGoalStatus: viewerGoalStatus,
       currentGoalButtonTitle: viewerGoalTitle,
+      goalControlDisabledReason: 'Focus this pane to manage its goal.',
       // telemetry (display)
       composerTokenTally: viewerTokenTally,
       threadTokenTallyHasValue: paneThreadTokenTallyHasValue,
@@ -22493,6 +22542,12 @@ function App(): React.JSX.Element {
       handleCancel: paneHandleCancel,
       handleProviderChange: paneHandleProviderChange,
       rememberCurrentChatComposerSelection: paneRememberComposerSelection,
+      openGoalPopover: focusPaneForGoalControl,
+      setGoalPopoverOpen: focusPaneForGoalControl,
+      setGoalFromObjective: focusPaneForGoalControl,
+      updateCurrentGoalStatus: focusPaneForGoalControl,
+      markCurrentGoalBlocked: focusPaneForGoalControl,
+      clearCurrentGoal: focusPaneForGoalControl,
       handlePickImages: () => handleMultiviewPanePickAttachments(viewerPaneIndex, viewerChatId),
       handleRemoveImageAttachment: (id: string) =>
         handleMultiviewPaneRemoveAttachment(viewerPaneIndex, viewerChatId, id),
@@ -22526,9 +22581,8 @@ function App(): React.JSX.Element {
       //    composer or stacking portals. ──
       composerAreaRef: paneComposerAreaDiscardRef,
       // TODO(per-pane): goal popover is portal'd off the focused `goalPopoverOpen`
-      // state; force it closed so a pane never renders a duplicate stacked
-      // popover. The goal BUTTON still renders for parity (clicking focuses the
-      // pane via the chrome action; deep goal editing remains focused-only).
+      // state; force it closed and disable the pane goal control so a resting pane
+      // never appears to accept a goal action that only focused the pane.
       goalPopoverOpen: false,
       // External slash-menu requests target the focused composer; pane-local
       // plus-menu clicks open each pane's slash menu directly.
@@ -22680,7 +22734,6 @@ function App(): React.JSX.Element {
   // are generated by enumerating that object's own keys — so a wrapper can
   // never be missing or mis-keyed relative to the impls.
   const composerHandlerImpls = {
-    addImageAttachments,
     clearCurrentGoal,
     clearExternalPathGrantPrompt,
     clearImagePermissions,
@@ -23341,6 +23394,8 @@ function App(): React.JSX.Element {
         handleMultiviewPaneProviderChange(viewerPaneIndex, viewerChatId, provider)
       const paneRememberComposerSelection = (patch: Record<string, unknown>): void =>
         rememberMultiviewPaneComposerSelection(viewerChatId, patch)
+      const focusPaneForGoalControl = (): void =>
+        handleFocusMultiviewPane(viewerPaneIndex, viewerChatId)
       // Model/reasoning/fast/permission setters: <Composer>'s internal wrappers
       // call the chat-level setState setters (which drive the FOCUSED composer's
       // UI) AND `rememberCurrentChatComposerSelection`. For a pane, the focused
@@ -23598,6 +23653,7 @@ function App(): React.JSX.Element {
         currentActiveGoal: viewerChat.activeGoal || null,
         currentGoalStatus: viewerGoalStatus,
         currentGoalButtonTitle: viewerGoalTitle,
+        goalControlDisabledReason: 'Focus this pane to manage its goal.',
         // telemetry (display)
         composerTokenTally: viewerTokenTally,
         threadTokenTallyHasValue: paneThreadTokenTallyHasValue,
@@ -23614,6 +23670,12 @@ function App(): React.JSX.Element {
         handleCancel: paneHandleCancel,
         handleProviderChange: paneHandleProviderChange,
         rememberCurrentChatComposerSelection: paneRememberComposerSelection,
+        openGoalPopover: focusPaneForGoalControl,
+        setGoalPopoverOpen: focusPaneForGoalControl,
+        setGoalFromObjective: focusPaneForGoalControl,
+        updateCurrentGoalStatus: focusPaneForGoalControl,
+        markCurrentGoalBlocked: focusPaneForGoalControl,
+        clearCurrentGoal: focusPaneForGoalControl,
         handlePickImages: () => handleMultiviewPanePickAttachments(viewerPaneIndex, viewerChatId),
         handleRemoveImageAttachment: (id: string) =>
           handleMultiviewPaneRemoveAttachment(viewerPaneIndex, viewerChatId, id),
@@ -23647,9 +23709,8 @@ function App(): React.JSX.Element {
         //    composer or stacking portals. ──
         composerAreaRef: paneComposerAreaDiscardRef,
         // TODO(per-pane): goal popover is portal'd off the focused `goalPopoverOpen`
-        // state; force it closed so a pane never renders a duplicate stacked
-        // popover. The goal BUTTON still renders for parity (clicking focuses the
-        // pane via the chrome action; deep goal editing remains focused-only).
+        // state; force it closed and disable the pane goal control so a resting pane
+        // never appears to accept a goal action that only focused the pane.
         goalPopoverOpen: false,
         // External slash-menu requests target the focused composer; pane-local
         // plus-menu clicks open each pane's slash menu directly.
@@ -23707,6 +23768,7 @@ function App(): React.JSX.Element {
       composerStableBase,
       buildPaneComposerSlashCommands,
       handleCancelMultiviewPane,
+      handleFocusMultiviewPane,
       handlePanePaletteCommand,
       handleMultiviewPaneAddWorkspace,
       handleMultiviewPaneCopyTranscript,

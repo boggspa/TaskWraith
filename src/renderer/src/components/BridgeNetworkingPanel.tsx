@@ -359,7 +359,7 @@ function IosRemoteBridgeSection({
     }
   }, [refreshSignal])
 
-  const useDetectedTailscaleRelay = async (): Promise<void> => {
+  const enableDetectedTailscaleRelay = async (): Promise<void> => {
     try {
       setTailscaleBusy(true)
       setTailscaleMessage(null)
@@ -581,7 +581,7 @@ function IosRemoteBridgeSection({
               !tailscale.tailscaleAvailable ||
               !tailscale.suggestedUrl
             }
-            onClick={() => void useDetectedTailscaleRelay()}
+            onClick={() => void enableDetectedTailscaleRelay()}
           >
             {tailscaleBusy ? 'Working…' : tailscale?.active ? 'Repair' : 'Use this'}
           </button>

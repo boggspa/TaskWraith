@@ -5,8 +5,9 @@
  * The main module imports `fs` + `path`, so the renderer must NOT import its
  * VALUE exports (that would pull node builtins into the renderer bundle and
  * blank the window — see MEMORY.md). The renderer imports these copies instead.
- * Keep the arrays byte-identical to the main module's; the test in
- * `remoteWorkspaceDefaults.test.ts` is a drift guard.
+ * Keep the capability arrays byte-identical to the main module's; the test in
+ * `remoteWorkspaceDefaults.test.ts` is a drift guard. The provider list below is
+ * the active remote-default set used for new grants.
  */
 
 export type RemoteWorkspaceMode = 'read-only' | 'read-write'
@@ -45,9 +46,10 @@ export interface RemoteWorkspaceEntry {
   updatedAt: number
 }
 
-/** Every first-class provider, so granting a workspace is one tap (the Mac
- * still enforces whatever subset is saved on every action). */
-export const PROVIDER_OPTIONS = ['gemini', 'codex', 'claude', 'kimi', 'grok', 'cursor', 'ollama'] as const
+/** Active providers for new remote-workspace grants. Retired providers such as
+ * Gemini remain readable through historical records, but are not granted for new
+ * phone-origin remote actions by default. */
+export const PROVIDER_OPTIONS = ['codex', 'claude', 'kimi', 'grok', 'cursor', 'ollama'] as const
 
 export const APPROVAL_MODE_OPTIONS = ['default', 'plan'] as const
 

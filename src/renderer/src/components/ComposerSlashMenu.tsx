@@ -537,10 +537,6 @@ export function ComposerSlashMenu({
 
   if (!open || !position) return null
 
-  // Build the row-index → flat-index map so we can highlight + dispatch
-  // by clicking on grouped entries without losing nav coherence.
-  let flatIndex = -1
-
   // Portal into document.body so the popover escapes any transformed
   // ancestor (notably `.welcome-mode .composer-area` which carries a
   // `transform: translateY(-18%)` on the new-chat landing). Without
@@ -578,8 +574,9 @@ export function ComposerSlashMenu({
               <ul className="composer-slash-menu-group-items" role="group">
                 {block.rows.map((row) => {
                   const entry = row.command
-                  flatIndex += 1
-                  const localFlatIndex = flatIndex
+                  const localFlatIndex = flat.findIndex(
+                    (flatRow) => flatRow.command.id === entry.id
+                  )
                   const isHighlighted = localFlatIndex === highlight
                   return (
                     <li

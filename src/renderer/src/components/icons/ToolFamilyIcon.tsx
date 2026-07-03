@@ -237,8 +237,9 @@ export function toolNameToFamily(name: string | undefined | null): ToolFamily | 
       return 'edit'
     case 'mcp_tool':
     case 'dynamic_tool':
-    // A bare `mcp` base — a brokered MCP call whose inner tool name couldn't be
-    // unwrapped (e.g. some Cursor stream shapes) — plus the raw call wrappers.
+      // falls through: a bare `mcp` base means a brokered MCP call whose inner
+      // tool name couldn't be unwrapped, plus the raw call wrappers.
+      // eslint-disable-next-line no-fallthrough
     case 'mcp':
     case 'callmcptool':
     case 'call_mcp_tool':

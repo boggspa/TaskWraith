@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { ReactElement } from 'react'
+import { PROVIDER_OPTIONS } from '../../../shared/remoteWorkspaceDefaults'
 
 /**
  * RemoteWorkspacesPanel — Phase C4 admin UI for the iOS remote allowlist.
@@ -55,16 +56,6 @@ type RemoteWorkspaceCapability =
   | 'pin'
   | 'yolo'
 
-// Include every first-class provider in the remote bridge allowlist toggles.
-const PROVIDER_OPTIONS = [
-  'gemini',
-  'codex',
-  'claude',
-  'kimi',
-  'grok',
-  'cursor',
-  'ollama'
-] as const
 const APPROVAL_MODE_OPTIONS = ['default', 'plan'] as const
 const LEGACY_READ_WRITE_CAPABILITIES: RemoteWorkspaceCapability[] = [
   'monitor',

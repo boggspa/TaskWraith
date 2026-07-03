@@ -11,11 +11,11 @@ import {
   isAdminRemoteWorkspaceCapability
 } from './remoteWorkspaceDefaults'
 
-// Drift guard: these MUST stay byte-identical to src/main/RemoteWorkspaceAllowlist.ts.
-// If the main module's constants change, this test should fail and force an update.
+// Drift guard: capability arrays must stay byte-identical to
+// src/main/RemoteWorkspaceAllowlist.ts. Active provider defaults are pinned here.
 describe('remoteWorkspaceDefaults', () => {
-  it('mirrors the provider + approval-mode option lists', () => {
-    expect([...PROVIDER_OPTIONS]).toEqual(['gemini', 'codex', 'claude', 'kimi', 'grok', 'cursor', 'ollama'])
+  it('pins active providers and mirrors approval-mode options', () => {
+    expect([...PROVIDER_OPTIONS]).toEqual(['codex', 'claude', 'kimi', 'grok', 'cursor', 'ollama'])
     expect([...APPROVAL_MODE_OPTIONS]).toEqual(['default', 'plan'])
   })
 

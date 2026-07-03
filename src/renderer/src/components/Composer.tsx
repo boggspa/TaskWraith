@@ -129,8 +129,10 @@ export interface ComposerProps {
   activeEnsembleConcurrentMode: any
   activeEnsembleFanoutPolicy: EnsembleFanoutPolicy
   activeEnsembleOrchestrationMode: any
-  addImageAttachments: any
-  addImageAttachmentsToChat: any
+  addImageAttachmentsToChat: (
+    chatId: string | null | undefined,
+    paths: string[]
+  ) => void | Promise<void>
   agentModelsByProvider: Partial<Record<ProviderId, CodexModelOption[]>>
   agentStatusByProvider: any
   agenticServices: any
@@ -228,6 +230,7 @@ export interface ComposerProps {
   getDefaultModelForProvider: any
   getProviderModelOptions: any
   goalButtonRef: any
+  goalControlDisabledReason?: string
   goalDraft: any
   goalEditing: any
   goalPopoverOpen: any
@@ -435,7 +438,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     acknowledgedElevationDefaults,
     activeEnsembleFanoutPolicy,
     activeEnsembleOrchestrationMode,
-    addImageAttachments,
     addImageAttachmentsToChat,
     agentModelsByProvider,
     agenticServices,
@@ -528,6 +530,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     getDefaultModelForProvider,
     getProviderModelOptions,
     goalButtonRef,
+    goalControlDisabledReason,
     goalDraft,
     goalEditing,
     goalPopoverOpen,
@@ -725,6 +728,8 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
   const currentWriterFanoutSelected =
     currentEnsembleFanoutPolicy === 'locked_writers_with_boss' ||
     currentEnsembleFanoutPolicy === 'locked_writers_user_preflight'
+  const goalControlDisabled = !currentChat || Boolean(goalControlDisabledReason)
+  const goalControlTitle = goalControlDisabledReason || currentGoalButtonTitle
 
   // Second row of the roster-presets above-row section — Orchestration /
   // Fan-Out / Shared History Budget / Turn Budget. These controls used to
@@ -1040,9 +1045,9 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
       return
     }
 
-    // TODO(per-pane): thread chatId — addImageAttachments targets the
-    // current chat; per-pane chatId threading is a later slice.
-    addImageAttachments(paths)
+    const targetChatId = currentComposerChatId
+    if (!targetChatId) return
+    void addImageAttachmentsToChat(targetChatId, paths)
     if (imageAttachments.length + paths.length > MAX_IMAGE_ATTACHMENTS) {
       setRawLogs((prev) => [
         ...prev,
@@ -1055,6 +1060,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
   }
 
   const handleComposerPaste = async (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const targetChatId = currentComposerChatId
     const pastedText = event.clipboardData?.getData('text/plain') || ''
     if (shouldOfferPlanImport(pastedText)) {
       const target = event.currentTarget
@@ -1079,9 +1085,8 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
       return
     }
     event.preventDefault()
-    // TODO(per-pane): thread chatId — addImageAttachments targets the
-    // current chat; per-pane chatId threading is a later slice.
-    addImageAttachments(paths)
+    if (!targetChatId) return
+    void addImageAttachmentsToChat(targetChatId, paths)
     if (imageAttachments.length + paths.length > MAX_IMAGE_ATTACHMENTS) {
       setRawLogs((prev) => [
         ...prev,
@@ -4276,25 +4281,26 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
 	                    type="button"
 	                    className={`composer-goal-button composer-hint-pill is-${currentGoalStatus}${goalPopoverOpen ? ' is-open' : ''}`}
                     data-hint-label="Goal"
-	                    onClick={() => {
-	                      if (!currentChat) return
-	                      if (goalPopoverOpen) {
-	                        setGoalPopoverOpen(false)
-	                        return
-	                      }
-	                      openGoalPopover(false)
-	                    }}
-	                    title={currentGoalButtonTitle}
-	                    aria-haspopup="dialog"
-	                    aria-expanded={goalPopoverOpen}
-	                    aria-label={
-	                      currentActiveGoal
-	                        ? `Manage active goal: ${currentActiveGoal.objective}`
-	                        : 'Set active goal'
-	                    }
-	                    disabled={!currentChat}
-	                    data-goal-status={currentGoalStatus}
-	                  >
+		                    onClick={() => {
+		                      if (goalControlDisabled) return
+		                      if (goalPopoverOpen) {
+		                        setGoalPopoverOpen(false)
+		                        return
+		                      }
+		                      openGoalPopover(false)
+		                    }}
+		                    title={goalControlTitle}
+		                    aria-haspopup="dialog"
+		                    aria-expanded={goalPopoverOpen}
+		                    aria-label={
+		                      goalControlDisabledReason ||
+		                      (currentActiveGoal
+		                        ? `Manage active goal: ${currentActiveGoal.objective}`
+		                        : 'Set active goal')
+		                    }
+		                    disabled={goalControlDisabled}
+		                    data-goal-status={currentGoalStatus}
+		                  >
 	                    <GoalSymbolIcon />
 	                    {(currentActiveGoal?.status === 'active' ||
 	                      currentActiveGoal?.status === 'paused' ||

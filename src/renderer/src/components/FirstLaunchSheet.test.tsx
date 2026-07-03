@@ -32,9 +32,11 @@ function makeProviderApiKeyStatus(
 
 function providerCardMarkup(html: string, provider: string): string {
   const marker = `data-provider="${provider}"`
-  const start = html.indexOf(marker)
+  const markerIndex = html.indexOf(marker)
+  expect(markerIndex).toBeGreaterThanOrEqual(0)
+  const start = html.lastIndexOf('<div', markerIndex)
   expect(start).toBeGreaterThanOrEqual(0)
-  const next = html.indexOf('data-provider="', start + marker.length)
+  const next = html.indexOf('data-provider="', markerIndex + marker.length)
   return html.slice(start, next === -1 ? undefined : next)
 }
 
@@ -259,7 +261,7 @@ describe('FirstLaunchSheet', () => {
     expect(html).not.toContain('aria-label="Sign out of Ollama"')
   })
 
-  it('exposes the optional ollama.com cloud Sign in when a login handler is wired', () => {
+  it('does not show the optional ollama.com cloud Sign in once local Ollama is ready', () => {
     const html = renderToStaticMarkup(
       <FirstLaunchSheet
         open={true}
@@ -272,11 +274,31 @@ describe('FirstLaunchSheet', () => {
         ollamaProviderAvailable={true}
       />
     )
-    // Local-first Ollama surfaces the optional cloud sign-in as a ghost button...
-    expect(html).toContain('aria-label="Sign in to Ollama Cloud"')
-    expect(html).toContain('Sign in to Cloud')
-    // ...but never a sign-out (local-runtime-ready is not cloud-signed-in).
-    expect(html).not.toContain('aria-label="Sign out of Ollama"')
+    const card = providerCardMarkup(html, 'ollama')
+    expect(card).toContain('Local runtime ready')
+    expect(card).not.toContain('aria-label="Sign in to Ollama Cloud"')
+    expect(card).not.toContain('Sign in to Cloud')
+    expect(card).not.toContain('aria-label="Sign out of Ollama"')
+  })
+
+  it('exposes the optional ollama.com cloud Sign in while local Ollama still needs setup', () => {
+    const html = renderToStaticMarkup(
+      <FirstLaunchSheet
+        open={true}
+        onDismiss={() => {}}
+        onOpenSettings={() => {}}
+        onProviderLogin={() => {}}
+        codexStatus={null}
+        claudeAuthStatus={null}
+        kimiAuthStatus={null}
+        ollamaProviderAvailable={false}
+      />
+    )
+    const card = providerCardMarkup(html, 'ollama')
+    expect(card).toContain('Local setup optional')
+    expect(card).toContain('aria-label="Sign in to Ollama Cloud"')
+    expect(card).toContain('Sign in to Cloud')
+    expect(card).not.toContain('aria-label="Sign out of Ollama"')
   })
 
   it('Codex card surfaces "signed in" when codexStatus.codexUsage.planType is present', () => {
@@ -297,6 +319,22 @@ describe('FirstLaunchSheet', () => {
     // signed-in dot variant class is present at least once.
     expect(html).toContain('Signed in (pro)')
     expect(html).toContain('first-launch-sheet-provider-status-dot-signed-in')
+  })
+
+  it('does not show a Sign in action for signed-in provider cards', () => {
+    const html = renderToStaticMarkup(
+      <FirstLaunchSheet
+        open={true}
+        onDismiss={() => {}}
+        onOpenSettings={() => {}}
+        onProviderLogin={() => {}}
+        codexStatus={{ available: true, codexUsage: { planType: 'pro', userId: 'user-123' } }}
+        claudeAuthStatus={makeProviderApiKeyStatus({ apiKeyConfigured: true })}
+        kimiAuthStatus={null}
+      />
+    )
+    expect(providerCardMarkup(html, 'codex')).not.toContain('Sign in')
+    expect(providerCardMarkup(html, 'claude')).not.toContain('Sign in')
   })
 
   it('Codex card surfaces "Codex CLI not found" when available is false', () => {
@@ -358,6 +396,39 @@ describe('FirstLaunchSheet', () => {
     expect(html).toContain('100% used')
     expect(html).toContain('first-launch-sheet-provider-card-out-of-usage')
     expect(html).toContain('quota-progress-bar')
+  })
+
+  it('does not show a Sign in action for out-of-usage provider cards', () => {
+    const usageSummary = [
+      {
+        provider: 'codex',
+        model: 'usage limits',
+        windows: [
+          {
+            id: 'weekly',
+            label: 'Weekly',
+            limitLabel: 'Weekly limit',
+            usedPercent: 100
+          }
+        ]
+      }
+    ] as unknown as ModelUsageAggregate[]
+    const html = renderToStaticMarkup(
+      <FirstLaunchSheet
+        open={true}
+        onDismiss={() => {}}
+        onOpenSettings={() => {}}
+        onProviderLogin={() => {}}
+        codexStatus={{ available: true, codexUsage: { planType: 'pro', userId: 'u1' } }}
+        claudeAuthStatus={null}
+        kimiAuthStatus={null}
+        usageSummary={usageSummary}
+      />
+    )
+    const card = providerCardMarkup(html, 'codex')
+    expect(card).toContain('first-launch-sheet-provider-card-out-of-usage')
+    expect(card).not.toContain('Sign in')
+    expect(card).toContain('Open Settings')
   })
 
   it('keeps a signed-in provider signed-in when usage is below 100%', () => {
