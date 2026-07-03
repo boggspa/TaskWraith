@@ -104,6 +104,7 @@ import type {
   TaskWraithPluginCatalogSnapshot
 } from '../../../shared/plugins/PluginTypes'
 import type { ExtensionSecretRef } from '../../../main/ExtensionSecretStore'
+import { canPersistPlaintextFieldValue } from '../../../main/PlaintextSecretPolicy'
 import { GrokTelemetryCard } from './GrokTelemetryCard'
 import { ProviderLogoTile } from './ProviderLogoTile'
 import { ProviderInstallCommands } from './ProviderInstallCommands'
@@ -653,6 +654,11 @@ export type UserMcpServerFormState = {
   enabled: boolean
 }
 
+type UserMcpServerSecretValues = {
+  env: Record<string, string>
+  headers: Record<string, string>
+}
+
 const USER_MCP_TRANSPORT_OPTIONS: Array<{ value: UserMcpServerTransport; label: string }> = [
   { value: 'stdio', label: 'stdio' },
   { value: 'http', label: 'HTTP' },
@@ -980,7 +986,7 @@ export function buildUserMcpServerFromForm(
   existing?: UserMcpServerConfig
 ): {
   server?: UserMcpServerConfig
-  secretValues?: { env: Record<string, string>; headers: Record<string, string> }
+  secretValues?: UserMcpServerSecretValues
   error?: string
 } {
   const name = form.name.trim()
@@ -1098,6 +1104,30 @@ function normalizeImportedUserMcpHeaders(value: unknown): Record<string, string>
     headers[key] = rawValue
   }
   return Object.keys(headers).length > 0 ? headers : undefined
+}
+
+function splitImportedUserMcpSecretFields(
+  values: Record<string, string> | undefined,
+  kind: 'env' | 'header'
+): {
+  plaintext?: Record<string, string>
+  secretNames: string[]
+  secretValues: Record<string, string>
+} {
+  const plaintext: Record<string, string> = {}
+  const secretValues: Record<string, string> = {}
+  for (const [key, value] of Object.entries(values ?? {})) {
+    if (canPersistPlaintextFieldValue({ key, value, kind })) {
+      plaintext[key] = value
+    } else {
+      secretValues[key] = value
+    }
+  }
+  return {
+    plaintext: Object.keys(plaintext).length > 0 ? plaintext : undefined,
+    secretNames: Object.keys(secretValues),
+    secretValues
+  }
 }
 
 function normalizeImportedBearerTokenEnvVar(value: unknown): string | undefined {
@@ -1365,7 +1395,7 @@ function buildImportedUserMcpServer(
   name: string,
   value: unknown,
   usedNames: Set<string>
-): UserMcpServerConfig | null {
+): { server: UserMcpServerConfig; secretValues: UserMcpServerSecretValues } | null {
   if (!isPlainRecord(value)) return null
   const transport = normalizeImportedUserMcpTransport(value)
   const command = typeof value.command === 'string' ? value.command.trim() : ''
@@ -1396,24 +1426,42 @@ function buildImportedUserMcpServer(
   const args = normalizeImportedUserMcpArgs(value.args)
   if (args) server.args = args
   const env = normalizeImportedUserMcpEnv(value.env)
-  if (env) server.env = env
+  const envSplit = splitImportedUserMcpSecretFields(env, 'env')
+  if (envSplit.plaintext) server.env = envSplit.plaintext
+  if (envSplit.secretNames.length > 0) {
+    server.secretRefs = { ...(server.secretRefs || {}), env: envSplit.secretNames }
+  }
+  const secretValues: UserMcpServerSecretValues = {
+    env: envSplit.secretValues,
+    headers: {}
+  }
   if (transport !== 'stdio') {
     const headers =
       normalizeImportedUserMcpHeaders(value.headers) ??
       normalizeImportedUserMcpHeaders(value.http_headers)
-    if (headers) server.headers = headers
+    const headerSplit = splitImportedUserMcpSecretFields(headers, 'header')
+    if (headerSplit.plaintext) server.headers = headerSplit.plaintext
+    if (headerSplit.secretNames.length > 0) {
+      server.secretRefs = { ...(server.secretRefs || {}), headers: headerSplit.secretNames }
+      secretValues.headers = headerSplit.secretValues
+    }
     const bearerTokenEnvVar =
       normalizeImportedBearerTokenEnvVar(value.bearerTokenEnvVar) ??
       normalizeImportedBearerTokenEnvVar(value.bearer_token_env_var)
     if (bearerTokenEnvVar) server.bearerTokenEnvVar = bearerTokenEnvVar
   }
-  return server
+  return { server, secretValues }
 }
 
 export function parseUserMcpServersImportJson(
   text: string,
   existingServers: readonly UserMcpServerConfig[] = []
-): { servers: UserMcpServerConfig[]; skipped: number; error?: string } {
+): {
+  servers: UserMcpServerConfig[]
+  skipped: number
+  secretValuesByServerId: Record<string, UserMcpServerSecretValues>
+  error?: string
+} {
   let parsed: unknown
   try {
     parsed = JSON.parse(text)
@@ -1425,30 +1473,47 @@ export function parseUserMcpServersImportJson(
       return {
         servers: [],
         skipped: 0,
+        secretValuesByServerId: {},
         error: 'Paste valid JSON or Codex MCP TOML before importing.'
       }
     }
   }
   if (!isPlainRecord(parsed)) {
-    return { servers: [], skipped: 0, error: 'MCP import config must be an object.' }
+    return {
+      servers: [],
+      skipped: 0,
+      secretValuesByServerId: {},
+      error: 'MCP import config must be an object.'
+    }
   }
   const rawServers = isPlainRecord(parsed.mcpServers) ? parsed.mcpServers : parsed
   const usedNames = new Set(existingServers.map((server) => server.name.trim().toLowerCase()))
   const servers: UserMcpServerConfig[] = []
+  const secretValuesByServerId: Record<string, UserMcpServerSecretValues> = {}
   let skipped = 0
   for (const [name, value] of Object.entries(rawServers)) {
-    const server = buildImportedUserMcpServer(name, value, usedNames)
-    if (server) servers.push(server)
-    else skipped += 1
+    const result = buildImportedUserMcpServer(name, value, usedNames)
+    if (result) {
+      servers.push(result.server)
+      if (
+        Object.keys(result.secretValues.env).length > 0 ||
+        Object.keys(result.secretValues.headers).length > 0
+      ) {
+        secretValuesByServerId[result.server.id] = result.secretValues
+      }
+    } else {
+      skipped += 1
+    }
   }
   if (servers.length === 0) {
     return {
       servers,
       skipped,
+      secretValuesByServerId,
       error: 'No supported MCP servers found. Import entries need either command or url.'
     }
   }
-  return { servers, skipped }
+  return { servers, skipped, secretValuesByServerId }
 }
 
 function userMcpServerAuditKey(server: UserMcpServerConfig): string {
@@ -3396,6 +3461,50 @@ export function SettingsPanel({
     onChange({ userMcpServers: servers })
   }
 
+  const writeUserMcpServerSecretValues = async (
+    serverId: string,
+    secretValues: UserMcpServerSecretValues | undefined
+  ): Promise<string | null> => {
+    const secretWrites: Array<{ ref: ExtensionSecretRef; value: string }> = []
+    for (const [fieldName, value] of Object.entries(secretValues?.env ?? {})) {
+      secretWrites.push({
+        ref: {
+          ownerKind: 'userMcpServer',
+          ownerId: serverId,
+          fieldKind: 'env',
+          fieldName
+        },
+        value
+      })
+    }
+    for (const [fieldName, value] of Object.entries(secretValues?.headers ?? {})) {
+      secretWrites.push({
+        ref: {
+          ownerKind: 'userMcpServer',
+          ownerId: serverId,
+          fieldKind: 'header',
+          fieldName
+        },
+        value
+      })
+    }
+    if (secretWrites.length === 0) return null
+    if (typeof window === 'undefined' || typeof window.api?.setExtensionSecret !== 'function') {
+      return 'Encrypted secret storage is unavailable.'
+    }
+    try {
+      for (const write of secretWrites) {
+        const stored = await window.api.setExtensionSecret(write.ref, write.value)
+        if (!stored.ok) {
+          return stored.error || `Could not store encrypted secret ${write.ref.fieldName}.`
+        }
+      }
+    } catch (error) {
+      return `Could not store encrypted secret: ${String(error)}`
+    }
+    return null
+  }
+
   const saveMcpServerForm = async (): Promise<void> => {
     const existing =
       editingMcpServerId && mcpServerFormMode === 'edit'
@@ -3410,51 +3519,10 @@ export function SettingsPanel({
       setMcpServerFormError('Another MCP server already uses that name.')
       return
     }
-    const secretWrites: Array<{ ref: ExtensionSecretRef; value: string }> = []
-    for (const [fieldName, value] of Object.entries(result.secretValues?.env ?? {})) {
-      secretWrites.push({
-        ref: {
-          ownerKind: 'userMcpServer',
-          ownerId: result.server.id,
-          fieldKind: 'env',
-          fieldName
-        },
-        value
-      })
-    }
-    for (const [fieldName, value] of Object.entries(result.secretValues?.headers ?? {})) {
-      secretWrites.push({
-        ref: {
-          ownerKind: 'userMcpServer',
-          ownerId: result.server.id,
-          fieldKind: 'header',
-          fieldName
-        },
-        value
-      })
-    }
-    if (secretWrites.length > 0) {
-      if (
-        typeof window === 'undefined' ||
-        typeof window.api?.setExtensionSecret !== 'function'
-      ) {
-        setMcpServerFormError('Encrypted secret storage is unavailable.')
-        return
-      }
-      try {
-        for (const write of secretWrites) {
-          const stored = await window.api.setExtensionSecret(write.ref, write.value)
-          if (!stored.ok) {
-            setMcpServerFormError(
-              stored.error || `Could not store encrypted secret ${write.ref.fieldName}.`
-            )
-            return
-          }
-        }
-      } catch (error) {
-        setMcpServerFormError(`Could not store encrypted secret: ${String(error)}`)
-        return
-      }
+    const secretError = await writeUserMcpServerSecretValues(result.server.id, result.secretValues)
+    if (secretError) {
+      setMcpServerFormError(secretError)
+      return
     }
     const next =
       existing && editingMcpServerId
@@ -3466,11 +3534,21 @@ export function SettingsPanel({
     resetMcpServerForm()
   }
 
-  const importMcpServersFromConfig = (): void => {
+  const importMcpServersFromConfig = async (): Promise<void> => {
     const result = parseUserMcpServersImportJson(mcpImportText, userMcpServers)
     if (result.error) {
       setMcpImportError(result.error)
       return
+    }
+    for (const server of result.servers) {
+      const secretError = await writeUserMcpServerSecretValues(
+        server.id,
+        result.secretValuesByServerId[server.id]
+      )
+      if (secretError) {
+        setMcpImportError(secretError)
+        return
+      }
     }
     persistUserMcpServers([...userMcpServers, ...result.servers])
     setMcpImportOpen(false)
@@ -7297,7 +7375,7 @@ export function SettingsPanel({
                     <button
                       type="button"
                       className="btn btn-sm"
-                      onClick={importMcpServersFromConfig}
+                      onClick={() => void importMcpServersFromConfig()}
                     >
                       Import
                     </button>

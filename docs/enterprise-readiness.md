@@ -191,12 +191,17 @@ What exists:
   `userMcpServers` record carries only `secretRefs`. Existing encrypted secrets
   render as blank `NAME=` placeholders and can be preserved without exposing
   cleartext to the renderer.
+- User MCP config import now applies the same plaintext-secret policy used by
+  the main sanitizer/migration path. Obvious inline env/header secrets from
+  pasted Claude, Cursor, or Codex configs are written through encrypted
+  extension-secret refs before imported servers are persisted; safe non-secret
+  values and `$TOKEN`-style references remain in the visible config.
 
 What is missing:
 
-- Imported user MCP configs can still contain non-obvious plaintext values that
-  rely on the main-process sanitizer and migration heuristic rather than an
-  interactive encrypted-field review flow.
+- Imported user MCP configs can still contain non-obvious plaintext values when
+  their key/value shape does not match the conservative secret policy; those
+  require a future review surface rather than automatic migration.
 - Runtime profile settings surfaces are not yet wired to create/manage encrypted
   env refs directly.
 - iOS settings surfaces are not yet wired to create or manage those encrypted

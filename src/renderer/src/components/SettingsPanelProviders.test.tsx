@@ -563,6 +563,57 @@ describe('parseUserMcpServersImportJson', () => {
     expect(result.servers[0].headers).not.toHaveProperty('bad header')
   })
 
+  it('imports obvious env secrets as encrypted refs instead of plaintext fields', () => {
+    const result = parseUserMcpServersImportJson(
+      JSON.stringify({
+        mcpServers: {
+          filesystem: {
+            command: 'npx',
+            env: {
+              API_BASE_URL: 'http://127.0.0.1:3000',
+              API_TOKEN: 'secret-token'
+            }
+          }
+        }
+      })
+    )
+
+    expect(result.error).toBeUndefined()
+    const server = result.servers[0]
+    expect(server.env).toEqual({ API_BASE_URL: 'http://127.0.0.1:3000' })
+    expect(server.secretRefs).toEqual({ env: ['API_TOKEN'] })
+    expect(result.secretValuesByServerId[server.id]).toEqual({
+      env: { API_TOKEN: 'secret-token' },
+      headers: {}
+    })
+  })
+
+  it('imports obvious remote header secrets as encrypted refs instead of plaintext headers', () => {
+    const result = parseUserMcpServersImportJson(
+      JSON.stringify({
+        mcpServers: {
+          docs: {
+            type: 'http',
+            url: 'https://example.test/mcp',
+            headers: {
+              Authorization: 'Bearer secret-token',
+              'X-Region': 'eu'
+            }
+          }
+        }
+      })
+    )
+
+    expect(result.error).toBeUndefined()
+    const server = result.servers[0]
+    expect(server.headers).toEqual({ 'X-Region': 'eu' })
+    expect(server.secretRefs).toEqual({ headers: ['Authorization'] })
+    expect(result.secretValuesByServerId[server.id]).toEqual({
+      env: {},
+      headers: { Authorization: 'Bearer secret-token' }
+    })
+  })
+
   it('skips imported remote MCP servers with non-http URLs', () => {
     const result = parseUserMcpServersImportJson(
       JSON.stringify({
