@@ -21,8 +21,11 @@ import TaskWraithKit
 
 /// Coalesces transcript follow-pin requests (see ThreadDetailView.requestFollowPin).
 /// A reference type so toggling `scheduled` never triggers a View re-render —
-/// during streaming the body already recomputes on every token.
-private final class TranscriptFollowPin {
+/// during streaming the body already recomputes on every token. Internal (not
+/// `private`) so MiniThreadView (TWSharedViews.swift) — the ensemble side-chat
+/// panel, which previously had NO auto-follow machinery at all — can reuse the
+/// same coalescer instead of drifting its own copy out of sync.
+final class TranscriptFollowPin {
     var scheduled = false
     /// Wall-clock of the last pin — throttles the ~24fps reveal-driven pins.
     var lastPinAt: Date = .distantPast
@@ -124,6 +127,23 @@ private struct RefreshingComposerDiffPill: View {
     }
 }
 
+func twTimestampMs(_ value: String?) -> Double? {
+    guard let value, !value.isEmpty else { return nil }
+    let formatter = ISO8601DateFormatter()
+    guard let date = formatter.date(from: value) else { return nil }
+    return date.timeIntervalSince1970 * 1000
+}
+
+func twShouldRenderAfterLiveBlock(
+    _ row: RemoteThreadSnapshot.Row,
+    liveStartedAt: String?
+) -> Bool {
+    guard row.subThreadReturn != nil, row.runId == nil else { return false }
+    guard let liveStartedAtMs = twTimestampMs(liveStartedAt) else { return false }
+    guard let rowTimestampMs = twTimestampMs(row.timestamp) else { return false }
+    return rowTimestampMs >= liveStartedAtMs
+}
+
 struct ThreadDetailView: View {
     @ObservedObject var model: RemoteSessionModel
     let taskId: String
@@ -145,6 +165,14 @@ struct ThreadDetailView: View {
     @State private var autoFollow = true
     /// One-scroll-per-turn coalescer for the follow-pin (kills stacked scrolls).
     @State private var followPin = TranscriptFollowPin()
+    /// Last time a touch was live on the transcript (see `.simultaneousGesture`
+    /// in `listCore`). A forced follow-pin's SETTLE pass checks this so it
+    /// doesn't yank the scroll position back to bottom while the user is
+    /// actively dragging to read older text — the same class of bug `fafe49ef5`
+    /// fixed for the reveal pump's non-forced pins, but that fix only throttled
+    /// pin FREQUENCY; it never checked for a live touch, and forced pins (every
+    /// streamed token batch) were never throttled at all.
+    @State private var lastUserTouchAt: Date = .distantPast
     @State private var keyboardVisible = false
     @State private var activeUserGutterMarker: TranscriptUserGutterMarker?
     /// Secondary workspace granted to subsequent runs (rail picker), keyed by
@@ -204,6 +232,13 @@ struct ThreadDetailView: View {
         if liveProvider == thinkingProvider { return thinkingModel }
         if snapshot?.runSummary?.provider == liveProvider { return snapshot?.runSummary?.model }
         return nil
+    }
+    private var transcriptParticipants: [RemoteEnsembleState.Participant] {
+        model.ensembleStates[taskId]?.displayParticipants ?? []
+    }
+    private var liveAccent: Color {
+        threadAgentIdentity?.accent
+            ?? TWTheme.providerAccent(liveProvider, modelId: liveModel, modelLabel: liveModel)
     }
 
     private var secondaryWorkspaceSelections: [String: String] {
@@ -365,6 +400,23 @@ struct ThreadDetailView: View {
         return (snapshot?.rows ?? []).filter {
             $0.runId == liveRunId && ($0.role == "tool" || $0.kind == "tool")
         }
+    }
+
+    private var liveStartedAt: String? {
+        guard let liveRunId else { return nil }
+        return
+            snapshot?.runSummaries?.last(where: { $0.runId == liveRunId })?.startedAt
+            ?? ((snapshot?.runSummary?.runId == liveRunId) ? snapshot?.runSummary?.startedAt : nil)
+    }
+
+    private var settledRowsBeforeLive: [RemoteThreadSnapshot.Row] {
+        guard let liveStartedAt else { return visibleRows }
+        return visibleRows.filter { !twShouldRenderAfterLiveBlock($0, liveStartedAt: liveStartedAt) }
+    }
+
+    private var settledRowsAfterLive: [RemoteThreadSnapshot.Row] {
+        guard let liveStartedAt else { return [] }
+        return visibleRows.filter { twShouldRenderAfterLiveBlock($0, liveStartedAt: liveStartedAt) }
     }
 
     /// Render-only grouping for finished snapshot rows. The wire projection
@@ -539,8 +591,16 @@ struct ThreadDetailView: View {
         }
     }
 
+    private var settledDisplayItemsBeforeLive: [TranscriptDisplayItem] {
+        groupAdjacentToolRows(settledRowsBeforeLive)
+    }
+
+    private var settledDisplayItemsAfterLive: [TranscriptDisplayItem] {
+        groupAdjacentToolRows(settledRowsAfterLive)
+    }
+
     private var visibleDisplayItems: [TranscriptDisplayItem] {
-        groupAdjacentToolRows(visibleRows)
+        settledDisplayItemsBeforeLive + settledDisplayItemsAfterLive
     }
 
     private var userGutterMarkers: [TranscriptUserGutterMarker] {
@@ -957,7 +1017,7 @@ struct ThreadDetailView: View {
                         .listRowBackground(Color.clear)
                         .listRowSeparator(.hidden)
                 }
-                ForEach(visibleDisplayItems) { item in
+                ForEach(settledDisplayItemsBeforeLive) { item in
                     Group {
                         switch item {
                         case .row(let row):
@@ -967,13 +1027,14 @@ struct ThreadDetailView: View {
                                 threadProvider: card?.provider,
                                 agentIdentity: threadAgentIdentity,
                                 isExpanding: model.expandingRows.contains(row.id),
-                                participants: model.ensembleStates[taskId]?.participants ?? []
+                                participants: transcriptParticipants
                             )
                             .equatable()
                         case .toolBurst(_, let rows, _):
                             ToolBurstRowView(
                                 rows: rows.map { model.resolvedRow($0, threadId: taskId) },
                                 agentIdentity: threadAgentIdentity)
+                            .equatable()
                         }
                     }
                         .listRowInsets(EdgeInsets(top: 2, leading: 12, bottom: 2, trailing: 12))
@@ -1015,10 +1076,7 @@ struct ThreadDetailView: View {
                     // last tool/segment row while the run is live (tool bursts
                     // otherwise read as idle). Thinking-only runs use ThinkingRow.
                     if isRunning {
-                        LiveActivityAnchor(
-                            accent: threadAgentIdentity?.accent
-                                ?? TWTheme.providerAccent(liveProvider)
-                        )
+                        LiveActivityAnchor(accent: liveAccent)
                         // Stable identity so the lazy stack keeps ONE instance
                         // (preserving @State + the repeatForever pulse) as the live
                         // ForEach above it rebuilds each token — otherwise .onAppear
@@ -1027,6 +1085,41 @@ struct ThreadDetailView: View {
                         .listRowInsets(EdgeInsets(top: 2, leading: 12, bottom: 2, trailing: 12))
                         .listRowBackground(Color.clear)
                         .listRowSeparator(.hidden)
+                    }
+                    ForEach(settledDisplayItemsAfterLive) { item in
+                        Group {
+                            switch item {
+                            case .row(let row):
+                                ThreadRowView(
+                                    model: model, threadId: taskId,
+                                    row: model.resolvedRow(row, threadId: taskId),
+                                    threadProvider: card?.provider,
+                                    agentIdentity: threadAgentIdentity,
+                                    isExpanding: model.expandingRows.contains(row.id),
+                                    participants: transcriptParticipants
+                                )
+                                .equatable()
+                            case .toolBurst(_, let rows, _):
+                                ToolBurstRowView(
+                                    rows: rows.map { model.resolvedRow($0, threadId: taskId) },
+                                    agentIdentity: threadAgentIdentity)
+                                .equatable()
+                            }
+                        }
+                            .listRowInsets(EdgeInsets(top: 2, leading: 12, bottom: 2, trailing: 12))
+                            .listRowBackground(Color.clear)
+                            .listRowSeparator(.hidden)
+                        if showsRunCompleteSummary, let runCard = runCardSummary(after: item.lastRow) {
+                            TaskCompleteCard(
+                                run: runCard,
+                                diff: model.diffSummaries[taskId]?.runId == runCard.runId
+                                    ? model.diffSummaries[taskId] : nil
+                            )
+                            .listRowInsets(
+                                EdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12))
+                            .listRowBackground(Color.clear)
+                            .listRowSeparator(.hidden)
+                        }
                     }
                 } else if isRunning {
                     ThinkingRow(
@@ -1088,6 +1181,14 @@ struct ThreadDetailView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .background(TWTheme.appBg)
+        // Observe-only touch tracker (never claims the gesture, so it can't
+        // reproduce the old "tap read as drag" bug): stamps `lastUserTouchAt`
+        // on every touch-down/move anywhere in the transcript so a forced
+        // follow-pin's settle pass can tell a live gesture from stale state.
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { _ in lastUserTouchAt = Date() }
+        )
         .safeAreaInset(edge: .top, spacing: 0) {
             VStack(spacing: 4) {
                 topActionBanner
@@ -1189,6 +1290,7 @@ struct ThreadDetailView: View {
             ToolBurstRowView(
                 rows: rows.map { model.resolvedRow($0, threadId: taskId) },
                 agentIdentity: threadAgentIdentity)
+            .equatable()
         case .toolRow(let row):
             ThreadRowView(
                 model: model, threadId: taskId,
@@ -1196,7 +1298,7 @@ struct ThreadDetailView: View {
                 threadProvider: card?.provider,
                 agentIdentity: threadAgentIdentity,
                 isExpanding: model.expandingRows.contains(row.id),
-                participants: model.ensembleStates[taskId]?.participants ?? []
+                participants: transcriptParticipants
             )
             .equatable()
         case .text(_, let content, let isTail):
@@ -1204,7 +1306,7 @@ struct ThreadDetailView: View {
                 text: content,
                 isTail: isTail,
                 agentIdentity: threadAgentIdentity,
-                participants: model.ensembleStates[taskId]?.participants ?? [],
+                participants: transcriptParticipants,
                 onRevealFrame: {
                     requestFollowPin(proxy)
                 })
@@ -1696,9 +1798,17 @@ struct ThreadDetailView: View {
             scrollSentinelToBottomNow(proxy)
             // Settle pass: a big layout (long message / a new participant's
             // block) can land the first scroll a hair short — re-pin a runloop
-            // later, again after the layout has committed.
+            // later, again after the layout has committed. Unlike the pass
+            // above, this one is a cosmetic correction rather than the pin
+            // that guarantees reaching bottom on a real content change, so —
+            // ONLY here — also back off if the user has a live touch on the
+            // transcript (dragging to read older text), even when `force` is
+            // true. `force` means "don't trust a possibly-stale `autoFollow`",
+            // not "override the user's finger."
             await awaitNextMainRunloop()
-            if force || autoFollow { scrollSentinelToBottomNow(proxy) }
+            guard force || autoFollow else { return }
+            if Date().timeIntervalSince(lastUserTouchAt) < 0.25 { return }
+            scrollSentinelToBottomNow(proxy)
         }
     }
 
@@ -3237,9 +3347,20 @@ struct ThreadRowView: View, Equatable {
     }
 #endif
 
-struct ToolBurstRowView: View {
+struct ToolBurstRowView: View, Equatable {
     let rows: [RemoteThreadSnapshot.Row]
     var agentIdentity: ThreadAgentIdentity? = nil
+
+    // Mirrors ThreadRowView's `.equatable()` gate (both `rows` and
+    // `agentIdentity` are already proven Equatable there): skip body re-eval
+    // — and the ToolActivityCards re-layout it drives — for a burst whose
+    // rows/identity are unchanged, instead of re-rendering on every parent
+    // @ObservedObject publish. `nonisolated` for the same reason as
+    // ThreadRowView's `==`: Equatable is a nonisolated requirement, and every
+    // compared field is a `let`/Sendable value.
+    nonisolated static func == (lhs: ToolBurstRowView, rhs: ToolBurstRowView) -> Bool {
+        lhs.rows == rhs.rows && lhs.agentIdentity == rhs.agentIdentity
+    }
 
     private var firstRow: RemoteThreadSnapshot.Row? { rows.first }
 
@@ -3492,10 +3613,106 @@ struct StreamingSegmentRow: View {
     }
 }
 
-/// "Thinking…" indicator shown while a run is active but no content has
-/// streamed yet — replaces the static status chip during runs (desktop
-/// parity with the transcript's thinking element).
+/// The running indicator: a provider-hued ghost mark (its halo tinted with the
+/// accent), the "Working" label, and streaming dots — all pulsing in cadence.
+/// This is the single busy element shared by the pre-stream `ThinkingRow` and
+/// the streaming tail `LiveActivityAnchor`, so a live run reads identically
+/// whether or not tokens have started flowing — the transcript never flips
+/// between a "Thinking…" and a "Working…" visual mid-run. Desktop parity:
+/// Electron's `ThinkingIndicator` mirrors this exact element (ghost + glow +
+/// "Working" + dots). Holds the mark solid under Reduce Motion.
+struct WorkingGhostIndicator: View {
+    var accent: Color
+    /// The tail anchor stretches full-width so the mark left-aligns under the
+    /// last streamed row; the inline (pre-stream) use hugs its content.
+    var expands: Bool = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var pulsing = false
 
+    var body: some View {
+        HStack(spacing: 8) {
+            GhostMonolineMarkView(size: 18, glow: true, glowTint: accent)
+                .opacity(reduceMotion || pulsing ? 1 : 0.45)
+                .animation(
+                    reduceMotion
+                        ? nil
+                        : .easeInOut(duration: 0.85).repeatForever(autoreverses: true),
+                    value: pulsing)
+            ShimmerWorkingLabel(accent: accent)
+            StreamingDots(color: accent)
+            if expands { Spacer(minLength: 0) }
+        }
+        .onAppear { pulsing = true }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Working")
+        .accessibilityAddTraits(.updatesFrequently)
+    }
+}
+
+/// The "Working" word with a specular shine sweeping left→right: the accent is
+/// the base hue and a lightened-toward-white highlight travels across, matching
+/// Electron's `.message-working-label` accent shimmer (a subtle accent glow sits
+/// behind it too). Solid accent under Reduce Motion. Accessibility is owned by
+/// the parent `WorkingGhostIndicator`, so this stays a11y-silent.
+private struct ShimmerWorkingLabel: View {
+    var accent: Color
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var phase: CGFloat = -1.2
+
+    var body: some View {
+        Group {
+            if reduceMotion {
+                Text("Working").foregroundStyle(accent)
+            } else {
+                Text("Working")
+                    .foregroundStyle(
+                        LinearGradient(
+                            stops: [
+                                .init(color: accent.opacity(0.82), location: 0.0),
+                                .init(color: accent.opacity(0.82), location: 0.38),
+                                .init(color: Self.lightened(accent, by: 0.5), location: 0.5),
+                                .init(color: accent.opacity(0.82), location: 0.62),
+                                .init(color: accent.opacity(0.82), location: 1.0)
+                            ],
+                            startPoint: UnitPoint(x: phase, y: 0.5),
+                            endPoint: UnitPoint(x: phase + 1.0, y: 0.5)
+                        )
+                    )
+                    .onAppear {
+                        phase = -1.2
+                        withAnimation(.linear(duration: 2.4).repeatForever(autoreverses: false)) {
+                            phase = 1.2
+                        }
+                    }
+            }
+        }
+        .font(.caption2.weight(.semibold))
+        .shadow(color: accent.opacity(0.24), radius: 5)
+    }
+
+    /// Mix `color` toward white by `amount` (0…1), preserving hue — the shimmer
+    /// peak, matching Electron's `color-mix(in srgb, white 46%, accent)`.
+    private static func lightened(_ color: Color, by amount: CGFloat) -> Color {
+        #if canImport(UIKit)
+        let ui = UIColor(color)
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        if ui.getRed(&r, green: &g, blue: &b, alpha: &a) {
+            return Color(
+                red: Double(r + (1 - r) * amount),
+                green: Double(g + (1 - g) * amount),
+                blue: Double(b + (1 - b) * amount),
+                opacity: Double(a))
+        }
+        #endif
+        return color
+    }
+}
+
+/// Pre-stream running indicator: shown while a run is active but no content has
+/// streamed yet. Identifies the active agent (leading mark + provider/model)
+/// and pins the unified "[ghost] Working…" indicator beneath it — the very same
+/// element the streaming tail (`LiveActivityAnchor`) uses, so the transcript
+/// never swaps indicators mid-run.
 struct ThinkingRow: View {
     let provider: String?
     var model: String? = nil
@@ -3529,12 +3746,8 @@ struct ThinkingRow: View {
                             .background(TWTheme.surface3, in: Capsule())
                     }
                 }
-                HStack(alignment: .center, spacing: 8) {
-                    ShimmerThinkingText()
-                    StreamingDots(color: TWTheme.textSecondary)
-                }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 9)
+                WorkingGhostIndicator(accent: accent)
+                    .padding(.vertical, 2)
             }            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -3543,76 +3756,18 @@ struct ThinkingRow: View {
 }
 
 /// Bottom-of-transcript activity anchor shown during a live run once content or
-/// tools are flowing. Reasoning has its own anchor (ThinkingRow); but a burst of
-/// tool rows otherwise leaves the transcript looking idle below the last row —
-/// you can't tell if it's still working. This pins a TaskWraith-native "still
-/// working" mark to the tail (the ghost + dots — deliberately our own brand
-/// anchor, not a sparkle) so the eye lands on the most-recent activity. iOS-only
-/// (it lives in the iOS transcript).
+/// tools are flowing. A burst of tool rows otherwise leaves the transcript
+/// looking idle below the last row — you can't tell if it's still working. This
+/// pins the unified "[ghost] Working…" indicator (`WorkingGhostIndicator`) to
+/// the tail so the eye lands on the most-recent activity. iOS-only (it lives in
+/// the iOS transcript).
 struct LiveActivityAnchor: View {
     var accent: Color
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var pulsing = false
 
     var body: some View {
-        HStack(spacing: 8) {
-            GhostMonolineMarkView(size: 18, glow: true)
-                .opacity(reduceMotion || pulsing ? 1 : 0.45)
-                .animation(
-                    reduceMotion
-                        ? nil
-                        : .easeInOut(duration: 0.85).repeatForever(autoreverses: true),
-                    value: pulsing)
-            Text("Working")
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(accent)
-            StreamingDots(color: accent)
-            Spacer(minLength: 0)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.vertical, 4)
-        .onAppear { pulsing = true }
-        .accessibilityLabel("Working")
-    }
-}
-
-/// Desktop-style shimmer sweep for the transcript's in-flight "Thinking" label.
-struct ShimmerThinkingText: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var phase: CGFloat = -1.2
-
-    var body: some View {
-        Group {
-            if reduceMotion {
-                Text("Thinking")
-                    .font(TWFont.transcript(16, weight: .medium))
-                    .foregroundStyle(TWTheme.textPrimary)
-            } else {
-                Text("Thinking")
-                    .font(TWFont.transcript(16, weight: .medium))
-                    .foregroundStyle(
-                        LinearGradient(
-                            stops: [
-                                .init(color: TWTheme.textSecondary.opacity(0.7), location: 0.0),
-                                .init(color: TWTheme.textSecondary.opacity(0.7), location: 0.35),
-                                .init(color: TWTheme.textPrimary, location: 0.5),
-                                .init(color: TWTheme.textSecondary.opacity(0.7), location: 0.65),
-                                .init(color: TWTheme.textSecondary.opacity(0.7), location: 1.0)
-                            ],
-                            startPoint: UnitPoint(x: phase, y: 0.5),
-                            endPoint: UnitPoint(x: phase + 1.0, y: 0.5)
-                        )
-                    )
-                    .onAppear {
-                        phase = -1.2
-                        withAnimation(.linear(duration: 2.4).repeatForever(autoreverses: false)) {
-                            phase = 1.2
-                        }
-                    }
-            }
-        }
-        .accessibilityLabel("Thinking")
-        .accessibilityAddTraits(.updatesFrequently)
+        WorkingGhostIndicator(accent: accent, expands: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.vertical, 4)
     }
 }
 

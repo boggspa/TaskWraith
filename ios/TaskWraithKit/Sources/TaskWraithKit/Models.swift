@@ -1059,6 +1059,9 @@ public struct RemoteEnsembleState: Codable, Sendable {
         public let role: String?
         public let order: Int?
         public let status: String?
+        /// Optional model id. Older Mac builds omit it; iOS backfills it from
+        /// the roster so Ollama transcript mentions can spoof upstream brands.
+        public let model: String?
         public var id: String { participantId }
     }
     public let threadId: String?
@@ -1077,6 +1080,32 @@ public struct RemoteEnsembleState: Codable, Sendable {
     /// Work-session supervisor status (idle | running | paused | …), projected
     /// by the Mac but previously dropped on decode. Optional for old builds.
     public let workSessionStatus: String?
+
+    /// Live participants enriched with any configured roster model ids so UI
+    /// consumers can render brand-aware Ollama accents without rejoining.
+    public var displayParticipants: [Participant] {
+        guard let participants else { return [] }
+        let rosterModels: [String: String] = Dictionary(
+            uniqueKeysWithValues: (roster ?? []).compactMap { entry in
+                guard let model = entry.model?.trimmingCharacters(in: .whitespacesAndNewlines),
+                    !model.isEmpty
+                else { return nil }
+                return (entry.id, model)
+            })
+        return participants.map { participant in
+            let resolvedModel =
+                participant.model?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+                ? participant.model
+                : rosterModels[participant.participantId]
+            return Participant(
+                participantId: participant.participantId,
+                provider: participant.provider,
+                role: participant.role,
+                order: participant.order,
+                status: participant.status,
+                model: resolvedModel)
+        }
+    }
 
     public struct QueuedPrompt: Codable, Sendable, Identifiable {
         public let index: Int

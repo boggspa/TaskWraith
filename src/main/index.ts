@@ -175,6 +175,10 @@ import {
   codexToolUseFromItem,
   summarizeCodexFileChanges
 } from './codex/CodexEventFormatting'
+import {
+  resolveCodexMcpRouteHint,
+  type CodexMcpRouteHint
+} from './codex/CodexMcpRouting'
 import { BridgeDaemonClient } from './BridgeDaemonClient'
 import { bridgeResultDiffStats } from './bridge/BridgeToolDiffStats'
 import { foldBridgeRunText, isTaggedCumulativeRestatement } from './bridge/BridgeTextFold'
@@ -13703,11 +13707,36 @@ function setActiveCodexRunState(state: CodexRunState | null): void {
 // turn/started skips the interrupt and the Codex server turn runs on. Keyed by
 // threadId (the only id stable across that window + the id turn/interrupt needs).
 const pendingCodexInterrupts = new Set<string>()
+const pendingCodexMcpRouteHints = new Map<string, CodexMcpRouteHint>()
+const CODEX_MCP_ROUTE_HINT_MAX_AGE_MS = 15_000
 
 /** Issue a Codex turn/interrupt; best-effort, never throws. */
 async function issueCodexTurnInterrupt(threadId: string, turnId: string): Promise<void> {
   if (!codexClient) return
   await codexClient.request('turn/interrupt', { threadId, turnId }, 10_000).catch(() => {})
+}
+
+function pruneCodexMcpRouteHints(nowMs: number): void {
+  for (const [hintId, hint] of pendingCodexMcpRouteHints) {
+    if (nowMs - hint.startedAtMs > CODEX_MCP_ROUTE_HINT_MAX_AGE_MS) {
+      pendingCodexMcpRouteHints.delete(hintId)
+    }
+  }
+}
+
+function resolveCodexMcpRouteFromHints(
+  toolName: string,
+  rawArgs: unknown
+): AgentRunRoute | null {
+  const nowMs = Date.now()
+  pruneCodexMcpRouteHints(nowMs)
+  return resolveCodexMcpRouteHint({
+    hints: [...pendingCodexMcpRouteHints.values()],
+    nowMs,
+    toolName,
+    args: rawArgs,
+    maxAgeMs: CODEX_MCP_ROUTE_HINT_MAX_AGE_MS
+  })
 }
 
 function findCodexRunStateForMessage(message: any): CodexRunState | null {
@@ -15426,6 +15455,19 @@ function handleCodexNotification(message: any) {
     }
     const toolUse = codexToolUseFromItem(item)
     if (toolUse) {
+      if (item?.type === 'mcpToolCall' && state.appRunId) {
+        pendingCodexMcpRouteHints.set(String(toolUse.tool_id), {
+          itemId: String(toolUse.tool_id),
+          toolName: codexString(toolUse.tool_name || item.tool || ''),
+          args: item.arguments || {},
+          route: {
+            appRunId: state.appRunId,
+            appChatId: state.appChatId
+          },
+          startedAtMs: Date.now()
+        })
+        pruneCodexMcpRouteHints(Date.now())
+      }
       state.timelineStartedItemIds.add(String(toolUse.tool_id))
       sendAgentCompatLine(state.sender, 'codex', toolUse, state)
     }
@@ -15580,6 +15622,9 @@ function handleCodexNotification(message: any) {
     }
     const toolResult = codexToolResultFromItem(item)
     if (toolResult) {
+      if (item?.type === 'mcpToolCall' && toolResult.tool_id) {
+        pendingCodexMcpRouteHints.delete(String(toolResult.tool_id))
+      }
       sendAgentCompatLine(state.sender, 'codex', toolResult, state)
     }
     return
@@ -19372,7 +19417,12 @@ async function executeGeminiMcpTool(
   route?: AgentRunRoute | null,
   parentProvider: ProviderId = 'gemini'
 ): Promise<McpToolExecutionResult> {
-  const context = getAgentToolContext(parentProvider, route)
+  const args = normalizeMcpToolArguments(rawArgs)
+  const effectiveRoute =
+    parentProvider === 'codex' && !route?.appRunId && !route?.appChatId
+      ? resolveCodexMcpRouteFromHints(toolName, args) || route
+      : route
+  const context = getAgentToolContext(parentProvider, effectiveRoute)
   if (!context) {
     const hasExplicitRoute = Boolean(route?.appRunId || route?.appChatId)
     const activeCount = runManager.getActiveByProvider(parentProvider).length
@@ -19392,7 +19442,6 @@ async function executeGeminiMcpTool(
 
   const baseCwd = resolve(context.cwd || context.workspacePath || globalRunCwd())
   const workspacePath = context.workspacePath ? resolve(context.workspacePath) : undefined
-  const args = normalizeMcpToolArguments(rawArgs)
   const cwd = resolveScopedDirectory(
     context.scope,
     baseCwd,

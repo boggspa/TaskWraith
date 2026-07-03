@@ -132,6 +132,84 @@ struct IosParityFixesTests {
             ApprovalActionDescriptor.visibleActions(from: nil).map(\.id) == ["accept", "decline"])
     }
 
+    @MainActor
+    @Test func ensembleDisplayParticipantsBackfillRosterModelsForBrandTinting() throws {
+        let state = try decode(
+            RemoteEnsembleState.self,
+            """
+            {
+              "threadId":"thread-1",
+              "participants":[
+                {"participantId":"p-ollama","provider":"ollama","role":"Reviewer","order":1,"status":"running"}
+              ],
+              "roster":[
+                {"id":"p-ollama","provider":"ollama","role":"Reviewer","enabled":true,"order":1,"model":"qwen3:4b"}
+              ]
+            }
+            """)
+
+        #expect(state.displayParticipants.first?.model == "qwen3:4b")
+    }
+
+    @MainActor
+    @Test func mentionCandidatesUseSpoofBrandLabelsForOllamaParticipantsWithoutRoles() throws {
+        let state = try decode(
+            RemoteEnsembleState.self,
+            """
+            {
+              "threadId":"thread-1",
+              "participants":[
+                {"participantId":"p-ollama","provider":"ollama","order":1,"status":"running"}
+              ],
+              "roster":[
+                {"id":"p-ollama","provider":"ollama","enabled":true,"order":1,"model":"qwen3:4b"}
+              ]
+            }
+            """)
+
+        let candidate = try #require(twMentionCandidates(participants: state.displayParticipants).first)
+        #expect(candidate.display == "Alibaba")
+        #expect(candidate.insertText == "@Alibaba")
+        #expect(candidate.model == "qwen3:4b")
+    }
+
+    @MainActor
+    @Test func subThreadReturnRowsDuringLiveRunRenderAfterLiveBlock() throws {
+        let row = try decode(
+            RemoteThreadSnapshot.Row.self,
+            """
+            {
+              "id":"row-1",
+              "role":"tool",
+              "kind":"tool",
+              "preview":"Returned result",
+              "timestamp":"2026-07-03T18:40:00Z",
+              "subThreadReturn":{"subThreadId":"sub-1","provider":"codex","title":"Sub-thread"}
+            }
+            """)
+
+        #expect(twShouldRenderAfterLiveBlock(row, liveStartedAt: "2026-07-03T18:35:00Z") == true)
+        #expect(twShouldRenderAfterLiveBlock(row, liveStartedAt: "2026-07-03T18:45:00Z") == false)
+    }
+
+    @MainActor
+    @Test func ordinaryToolRowsStayInTheirNormalOrderingDuringLiveRun() throws {
+        let row = try decode(
+            RemoteThreadSnapshot.Row.self,
+            """
+            {
+              "id":"row-2",
+              "runId":"run-1",
+              "role":"tool",
+              "kind":"tool",
+              "preview":"Tool activity",
+              "timestamp":"2026-07-03T18:40:00Z"
+            }
+            """)
+
+        #expect(twShouldRenderAfterLiveBlock(row, liveStartedAt: "2026-07-03T18:35:00Z") == false)
+    }
+
     private func remoteTaskCard(_ json: String) throws -> RemoteTaskCard {
         try decode(RemoteTaskCard.self, json)
     }

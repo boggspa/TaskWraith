@@ -111,7 +111,7 @@ struct Composer: View {
     /// guest chats too; idle ensembles already have empty round participants, so this
     /// is a no-op for them (no regression).
     private var mentionParticipants: [RemoteEnsembleState.Participant] {
-        model.ensembleStates[card.id]?.participants ?? []
+        model.ensembleStates[card.id]?.displayParticipants ?? []
     }
 
     /// Trailing "@token" under the cursor → mention suggestions.
@@ -468,7 +468,7 @@ struct Composer: View {
             MentionTextView(
                 text: $text,
                 focused: $inputFocused,
-                participants: model.ensembleStates[card.id]?.participants ?? [],
+                participants: mentionParticipants,
                 font: twUIComposerFont(shell.fontDesign, scale: appScale),
                 textColor: shell.palette.textPrimary,
                 placeholderColor: shell.palette.placeholder,
@@ -489,7 +489,8 @@ struct Composer: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 6) {
                         ForEach(mentionCandidates) { candidate in
-                            let chipAccent = TWTheme.providerAccent(candidate.provider)
+                            let chipAccent = TWTheme.providerAccent(
+                                candidate.provider, modelId: candidate.model, modelLabel: candidate.model)
                             Button {
                                 insertMention(candidate)
                             } label: {

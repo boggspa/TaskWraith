@@ -54,11 +54,20 @@ public struct GhostMonolineMarkView: View {
     /// callers that want a provider-tinted mark (e.g. a running thread row) pass
     /// an accent here.
     public var tint: Color? = nil
+    /// Optional override for the GLOW/halo colour, independent of the mark.
+    /// Callers that want a provider-hued halo behind an otherwise mono mark —
+    /// the transcript "Working…" indicator — pass the accent here; the mark
+    /// itself stays mono unless `tint` is also set. Defaults to the brand
+    /// chroma when nil.
+    public var glowTint: Color? = nil
 
-    public init(size: CGFloat = 58, glow: Bool = true, tint: Color? = nil) {
+    public init(
+        size: CGFloat = 58, glow: Bool = true, tint: Color? = nil, glowTint: Color? = nil
+    ) {
         self.size = size
         self.glow = glow
         self.tint = tint
+        self.glowTint = glowTint
     }
 
     public var body: some View {
@@ -69,12 +78,12 @@ public struct GhostMonolineMarkView: View {
                         RadialGradient(
                             gradient: Gradient(
                                 stops: [
-                                    .init(color: TWTheme.chroma1Default.opacity(0.34), location: 0),
+                                    .init(color: glowBase.opacity(0.34), location: 0),
                                     .init(
-                                        color: TWTheme.chroma1Default.opacity(0.16),
+                                        color: glowBase.opacity(0.16),
                                         location: 0.46
                                     ),
-                                    .init(color: TWTheme.chroma1Default.opacity(0), location: 0.76)
+                                    .init(color: glowBase.opacity(0), location: 0.76)
                                 ]
                             ),
                             center: .center,
@@ -108,6 +117,10 @@ public struct GhostMonolineMarkView: View {
         TWThemeStore.shared.systemTheme.isLight
             ? Color.black.opacity(0.76) : Color.white.opacity(0.94)
     }
+
+    /// Halo colour — a provider accent when the caller passes `glowTint`
+    /// (transcript "Working…"), else the neutral brand chroma.
+    private var glowBase: Color { glowTint ?? TWTheme.chroma1Default }
 
     private var shadowColor: Color {
         TWThemeStore.shared.systemTheme.isLight
@@ -2134,13 +2147,46 @@ public struct MentionCandidate: Identifiable {
     public let insertText: String
     public let display: String
     public let provider: String?
+    public let model: String?
 
-    public init(id: String, insertText: String, display: String, provider: String?) {
+    public init(
+        id: String, insertText: String, display: String, provider: String?, model: String? = nil
+    ) {
         self.id = id
         self.insertText = insertText
         self.display = display
         self.provider = provider
+        self.model = model
     }
+}
+
+@MainActor private func twMentionAccent(for participant: RemoteEnsembleState.Participant) -> Color {
+    TWTheme.providerAccent(
+        participant.provider, modelId: participant.model, modelLabel: participant.model)
+}
+
+private func twMentionProviderLabel(_ participant: RemoteEnsembleState.Participant) -> String {
+    TWTheme.providerLabel(
+        participant.provider, modelId: participant.model, modelLabel: participant.model)
+}
+
+@MainActor private func twMentionAliasAccents(
+    _ participants: [RemoteEnsembleState.Participant]
+) -> [String: Color] {
+    var aliasAccent: [String: Color] = [:]
+    for participant in participants {
+        let accent = twMentionAccent(for: participant)
+        if let role = participant.role, !role.isEmpty {
+            aliasAccent[role.lowercased()] = accent
+            aliasAccent[role.replacingOccurrences(of: " ", with: "").lowercased()] = accent
+        }
+        if let provider = participant.provider {
+            aliasAccent[provider.lowercased()] = accent
+            aliasAccent[twMentionProviderLabel(participant).lowercased()] = accent
+        }
+    }
+    aliasAccent["user"] = TWTheme.chroma1
+    return aliasAccent
 }
 
 public func twMentionCandidates(
@@ -2150,13 +2196,14 @@ public func twMentionCandidates(
         .sorted { ($0.order ?? 0) < ($1.order ?? 0) }
         .map { participant in
             let role = participant.role?.trimmingCharacters(in: .whitespaces) ?? ""
-            let label = role.isEmpty ? TWTheme.providerLabel(participant.provider) : role
+            let label = role.isEmpty ? twMentionProviderLabel(participant) : role
             let insert = "@" + label.replacingOccurrences(of: " ", with: "")
             return MentionCandidate(
                 id: participant.participantId,
                 insertText: insert,
                 display: label,
-                provider: participant.provider)
+                provider: participant.provider,
+                model: participant.model)
         }
 }
 
@@ -2178,7 +2225,9 @@ func twParticipantsSignature(_ participants: [RemoteEnsembleState.Participant]) 
             .replacingOccurrences(of: ";", with: "\\;")
     }
     return participants
-        .map { "\(esc($0.participantId))|\(esc($0.provider ?? ""))|\(esc($0.role ?? ""))" }
+        .map {
+            "\(esc($0.participantId))|\(esc($0.provider ?? ""))|\(esc($0.role ?? ""))|\(esc($0.model ?? ""))"
+        }
         .sorted()
         .joined(separator: ";")
 }
@@ -2190,19 +2239,7 @@ func twParticipantsSignature(_ participants: [RemoteEnsembleState.Participant]) 
 ) -> AttributedString {
     var attributed = AttributedString(text)
     guard !participants.isEmpty else { return attributed }
-    var aliasAccent: [String: Color] = [:]
-    for participant in participants {
-        let accent = TWTheme.providerAccent(participant.provider)
-        if let role = participant.role, !role.isEmpty {
-            aliasAccent[role.lowercased()] = accent
-            aliasAccent[role.replacingOccurrences(of: " ", with: "").lowercased()] = accent
-        }
-        if let provider = participant.provider {
-            aliasAccent[provider.lowercased()] = accent
-            aliasAccent[TWTheme.providerLabel(provider).lowercased()] = accent
-        }
-    }
-    aliasAccent["user"] = TWTheme.chroma1
+    let aliasAccent = twMentionAliasAccents(participants)
 
     // Find @token runs in the plain string, map back into AttributedString.
     let pattern = #"@([A-Za-z][A-Za-z0-9._-]{1,40})"#
@@ -2779,19 +2816,7 @@ public struct TWMentionRange {
 @MainActor public func twMentionRanges(
     in text: String, participants: [RemoteEnsembleState.Participant]
 ) -> [TWMentionRange] {
-    var aliasAccent: [String: Color] = [:]
-    for participant in participants {
-        let accent = TWTheme.providerAccent(participant.provider)
-        if let role = participant.role, !role.isEmpty {
-            aliasAccent[role.lowercased()] = accent
-            aliasAccent[role.replacingOccurrences(of: " ", with: "").lowercased()] = accent
-        }
-        if let provider = participant.provider {
-            aliasAccent[provider.lowercased()] = accent
-            aliasAccent[TWTheme.providerLabel(provider).lowercased()] = accent
-        }
-    }
-    aliasAccent["user"] = TWTheme.chroma1
+    let aliasAccent = twMentionAliasAccents(participants)
     guard let regex = try? NSRegularExpression(pattern: "@([A-Za-z][A-Za-z0-9._-]{1,40})") else {
         return []
     }
@@ -8127,6 +8152,17 @@ private struct SideChatOpeningView: View {
 /// Mini chat window for a side chat inside the inspector column — the
 /// SAME transcript rows + composer shell conventions/tokens as the main
 /// pane, slimmed naturally by the column width (≈2× the iPhone composer).
+/// See ThreadDetailView.awaitNextMainRunloop — same NOT-`Task.yield()`
+/// rationale (a cooperative suspension can resume before SwiftUI has
+/// materialized the new sentinel row for this update); duplicated as a free
+/// function here since MiniThreadView is a separate type in a separate file.
+@MainActor
+private func twAwaitNextMainRunloop() async {
+    await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+        DispatchQueue.main.async { continuation.resume() }
+    }
+}
+
 struct MiniThreadView: View {
     @ObservedObject var model: RemoteSessionModel
     let card: RemoteTaskCard
@@ -8134,24 +8170,73 @@ struct MiniThreadView: View {
     var onExpand: () -> Void
     @State private var draft = ""
     @State private var composerOverlayHeight: CGFloat = 150
+    /// Follow the tail as content streams in — mirrors the main transcript's
+    /// `autoFollow` (ThreadDetailView), driven by the same bottom-sentinel
+    /// appear/disappear pattern. Previously this panel had NO auto-follow at
+    /// all: a bare ScrollView, so new messages never scrolled into view and
+    /// nothing disengaged on a manual scroll either.
+    @State private var autoFollow = true
+    @State private var followPin = TranscriptFollowPin()
 
     private var threadId: String { card.id }
     private var snapshot: RemoteThreadSnapshot? { model.threadSnapshots[threadId] }
     private var transcriptBottomInset: CGFloat { composerOverlayHeight + 12 }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            header
-            transcriptStage
+        ScrollViewReader { proxy in
+            VStack(alignment: .leading, spacing: 8) {
+                header
+                transcriptStage
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .onPreferenceChange(MiniThreadComposerHeightKey.self) { height in
+                guard height > 0 else { return }
+                guard abs(composerOverlayHeight - height) > 1 else { return }
+                composerOverlayHeight = height
+            }
+            .onChange(of: snapshot?.rows?.count ?? 0) { _, _ in
+                guard autoFollow else { return }
+                requestFollowPin(proxy, force: true)
+            }
+            .onChange(of: model.streamingTexts[threadId] ?? "") { _, _ in
+                guard autoFollow else { return }
+                requestFollowPin(proxy, force: true)
+            }
+            .task(id: threadId) {
+                model.requestThreadSnapshot(threadId)
+                autoFollow = true
+                try? await Task.sleep(nanoseconds: 350_000_000)
+                requestFollowPin(proxy, force: true)
+            }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .onPreferenceChange(MiniThreadComposerHeightKey.self) { height in
-            guard height > 0 else { return }
-            guard abs(composerOverlayHeight - height) > 1 else { return }
-            composerOverlayHeight = height
+    }
+
+    /// Mirrors ThreadDetailView.requestFollowPin (main transcript): coalesced,
+    /// two-runloop-deferred scroll-to-bottom. Kept as a lightweight instance
+    /// twin rather than shared, since the two views' proxies/sentinel ids
+    /// differ and this panel has no reveal-pump onRevealFrame hook to
+    /// throttle (every call here is a real content change, so there's no
+    /// non-forced path to rate-limit).
+    private func requestFollowPin(_ proxy: ScrollViewProxy, force: Bool = false) {
+        guard force || autoFollow else { return }
+        guard !followPin.scheduled else { return }
+        followPin.scheduled = true
+        Task { @MainActor in
+            defer { followPin.scheduled = false }
+            await twAwaitNextMainRunloop()
+            guard force || autoFollow else { return }
+            scrollMiniSentinelToBottomNow(proxy)
+            await twAwaitNextMainRunloop()
+            guard force || autoFollow else { return }
+            scrollMiniSentinelToBottomNow(proxy)
         }
-        .task(id: threadId) {
-            model.requestThreadSnapshot(threadId)
+    }
+
+    private func scrollMiniSentinelToBottomNow(_ proxy: ScrollViewProxy) {
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            proxy.scrollTo("mini-transcript-bottom", anchor: .bottom)
         }
     }
 
@@ -8200,6 +8285,16 @@ struct MiniThreadView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 6) {
                 transcriptContent
+                // Bottom sentinel — same self-correcting appear/disappear
+                // pattern as the main transcript's "transcript-bottom": on
+                // screen ⇒ we're at the latest message (keep following);
+                // off-screen ⇒ the user scrolled up (stop following) until
+                // they scroll back down themselves.
+                Color.clear
+                    .frame(height: 1)
+                    .id("mini-transcript-bottom")
+                    .onAppear { autoFollow = true }
+                    .onDisappear { autoFollow = false }
                 Color.clear
                     .frame(height: transcriptBottomInset)
                     .accessibilityHidden(true)
@@ -8261,7 +8356,7 @@ struct MiniThreadView: View {
                         threadProvider: card.provider,
                         agentIdentity: ThreadAgentIdentity(card: card),
                         isExpanding: model.expandingRows.contains(row.id),
-                        participants: model.ensembleStates[threadId]?.participants ?? []
+                        participants: model.ensembleStates[threadId]?.displayParticipants ?? []
                     )
                     .equatable()
                 }
