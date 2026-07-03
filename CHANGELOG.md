@@ -13,6 +13,25 @@ published. The repository is currently ahead of the latest tagged release, and t
 next semver bump (with curated Unreleased/source-ahead notes) must happen before
 shipping these commits.
 
+## 1.7.2 - 2026-07-03
+
+### Added
+- **iOS ensemble orchestration parity.** The iOS companion can now adjust
+  ensemble controls that were previously desktop-only: designate the
+  **Captain** (second-in-command who steps in when the Boss is unavailable),
+  switch between **Turn** and **Continuous** mode, set the **max handoff
+  turns** (hop limit) for continuous rounds, choose the **Fan-Out** policy
+  (Off / Read / Write, where Write resolves to the Boss-gated or
+  user-preflight writer lane), and set the **shared-transcript character
+  budget**. Each change round-trips to the Mac and takes effect on the next
+  round.
+
+### Changed
+- **Question routing.** The agent runtime preamble now steers agents to the
+  TaskWraith `ask_user_question` tool instead of a provider-native question
+  prompt, which silently auto-resolves without reaching the user in this
+  harness (desktop or the iOS companion).
+
 ## 1.7.1 - 2026-07-03
 
 ### Added
