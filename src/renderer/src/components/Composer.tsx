@@ -3233,12 +3233,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             isCurrentEnsembleChat && selectedParticipant
                               ? selectedParticipant
                               : null
-                          const participantSeatMutation = ensembleBinding
-                            ? resolveEnsembleParticipantSeatMutationState(
-                                currentChat?.ensemble?.activeRound,
-                                ensembleBinding.id
-                              )
-                            : null
                           // Resolve the participant's effective settings via the
                           // centralized helper so the per-provider fallbacks
                           // (`'medium'` reasoning, fast-mode→serviceTier inference,
@@ -3557,11 +3551,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                   onCompactParticipant={onCompactParticipant}
                                   compactableParticipantIds={compactableParticipantIds}
                                 />
-                              )}
-                              {participantSeatMutation?.queueAtTurnEnd && (
-                                <span className="composer-seat-change-note">
-                                  Seat executing — changes apply at turn end.
-                                </span>
                               )}
                               <CombinedModelPicker
                                 provider={effectiveProvider}

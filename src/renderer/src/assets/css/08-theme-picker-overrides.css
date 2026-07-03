@@ -10402,14 +10402,3 @@
     var(--transcript-sky-reveal-solid) 100%
   ) !important;
 }
-
-/* B4 seat-swap queue affordance: active ensemble seats can be edited, but
-   provider/model/runtime changes apply at the participant turn boundary. */
-.composer-seat-change-note {
-  align-self: center;
-  max-width: 18rem;
-  color: var(--muted);
-  font-size: 0.72rem;
-  line-height: 1.2;
-  white-space: nowrap;
-}
