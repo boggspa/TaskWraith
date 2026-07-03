@@ -185,15 +185,22 @@ What exists:
   encrypted write succeeds; if OS encryption is unavailable or a ref write
   fails, the plaintext value remains in place for user review instead of being
   silently lost.
+- The manual Settings -> MCP servers editor now exposes separate encrypted
+  environment/header fields. Values entered there are written through
+  `setExtensionSecret` before the server is persisted, and the saved
+  `userMcpServers` record carries only `secretRefs`. Existing encrypted secrets
+  render as blank `NAME=` placeholders and can be preserved without exposing
+  cleartext to the renderer.
 
 What is missing:
 
-- Renderer settings forms are not yet wired to use the secret status/mutation
-  IPC instead of raw user MCP env/header values.
+- Imported user MCP configs can still contain non-obvious plaintext values that
+  rely on the main-process sanitizer and migration heuristic rather than an
+  interactive encrypted-field review flow.
 - Runtime profile settings surfaces are not yet wired to create/manage encrypted
   env refs directly.
-- Renderer and iOS settings surfaces are not yet wired to create or manage
-  those encrypted refs directly.
+- iOS settings surfaces are not yet wired to create or manage those encrypted
+  refs directly.
 
 Risk:
 
@@ -204,7 +211,8 @@ Risk:
 
 Target:
 
-- Wire the main-process secret store into user MCP and runtime-profile settings.
+- Complete the main-process secret store wiring for imported user MCP configs
+  and runtime-profile settings.
 - Persist only secret references/status in settings/profile records.
 - Resolve cleartext only at provider launch and prefer provider-supported env
   indirection over argv or workspace-local config files.

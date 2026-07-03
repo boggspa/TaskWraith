@@ -11,6 +11,7 @@ import {
   formatUserMcpServersCodexToml,
   formatUserMcpServersCursorJson,
   formatUserMcpServersAuditJson,
+  buildUserMcpServerFromForm,
   hasUserMcpServerNameConflict,
   parseUserMcpServersImportJson,
   userMcpServerReadiness,
@@ -638,6 +639,120 @@ describe('parseUserMcpServersImportJson', () => {
 })
 
 describe('user MCP server name/audit helpers', () => {
+  it('builds user MCP servers with encrypted env refs without storing secret values', () => {
+    const result = buildUserMcpServerFromForm({
+      name: 'filesystem',
+      description: '',
+      transport: 'stdio',
+      command: 'npx',
+      url: '',
+      argsText: '@modelcontextprotocol/server-filesystem\n/repo',
+      envText: 'API_BASE_URL=http://127.0.0.1:3000',
+      envSecretText: 'API_TOKEN=secret-token',
+      headersText: '',
+      headerSecretText: '',
+      bearerTokenEnvVar: '',
+      enabled: true
+    })
+
+    expect(result.error).toBeUndefined()
+    expect(result.server).toMatchObject({
+      name: 'filesystem',
+      transport: 'stdio',
+      command: 'npx',
+      env: { API_BASE_URL: 'http://127.0.0.1:3000' },
+      secretRefs: { env: ['API_TOKEN'] }
+    })
+    expect(result.server?.env).not.toHaveProperty('API_TOKEN')
+    expect(result.secretValues).toEqual({
+      env: { API_TOKEN: 'secret-token' },
+      headers: {}
+    })
+  })
+
+  it('builds remote MCP servers with encrypted header refs without storing header secrets', () => {
+    const result = buildUserMcpServerFromForm({
+      name: 'docs',
+      description: '',
+      transport: 'http',
+      command: '',
+      url: 'https://example.test/mcp',
+      argsText: '',
+      envText: '',
+      envSecretText: '',
+      headersText: 'X-Region=eu',
+      headerSecretText: 'Authorization=Bearer secret-token',
+      bearerTokenEnvVar: '',
+      enabled: true
+    })
+
+    expect(result.error).toBeUndefined()
+    expect(result.server).toMatchObject({
+      name: 'docs',
+      transport: 'http',
+      url: 'https://example.test/mcp',
+      headers: { 'X-Region': 'eu' },
+      secretRefs: { headers: ['Authorization'] }
+    })
+    expect(result.server?.headers).not.toHaveProperty('Authorization')
+    expect(result.secretValues).toEqual({
+      env: {},
+      headers: { Authorization: 'Bearer secret-token' }
+    })
+  })
+
+  it('rejects secret refs that also appear in plaintext MCP fields', () => {
+    const result = buildUserMcpServerFromForm({
+      name: 'filesystem',
+      description: '',
+      transport: 'stdio',
+      command: 'npx',
+      url: '',
+      argsText: '',
+      envText: 'API_TOKEN=plain',
+      envSecretText: 'API_TOKEN=secret',
+      headersText: '',
+      headerSecretText: '',
+      bearerTokenEnvVar: '',
+      enabled: true
+    })
+
+    expect(result.error).toContain('API_TOKEN is listed as both')
+    expect(result.server).toBeUndefined()
+  })
+
+  it('preserves existing encrypted refs when edited with blank secret values', () => {
+    const existing: UserMcpServerConfig = {
+      id: 'docs',
+      name: 'docs',
+      enabled: true,
+      transport: 'http',
+      url: 'https://example.test/mcp',
+      secretRefs: { headers: ['Authorization'] }
+    }
+    const result = buildUserMcpServerFromForm(
+      {
+        name: 'docs',
+        description: '',
+        transport: 'http',
+        command: '',
+        url: 'https://example.test/mcp',
+        argsText: '',
+        envText: '',
+        envSecretText: '',
+        headersText: '',
+        headerSecretText: 'Authorization=',
+        bearerTokenEnvVar: '',
+        enabled: true
+      },
+      existing
+    )
+
+    expect(result.error).toBeUndefined()
+    expect(result.server?.secretRefs).toEqual({ headers: ['Authorization'] })
+    expect(result.secretValues).toEqual({ env: {}, headers: {} })
+  })
+
   it('labels user MCP server launch readiness', () => {
     expect(
       userMcpServerStatusLabel({

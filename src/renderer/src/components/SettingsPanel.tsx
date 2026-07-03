@@ -103,6 +103,7 @@ import type {
   TaskWraithPluginCatalogEntry,
   TaskWraithPluginCatalogSnapshot
 } from '../../../shared/plugins/PluginTypes'
+import type { ExtensionSecretRef } from '../../../main/ExtensionSecretStore'
 import { GrokTelemetryCard } from './GrokTelemetryCard'
 import { ProviderLogoTile } from './ProviderLogoTile'
 import { ProviderInstallCommands } from './ProviderInstallCommands'
@@ -637,7 +638,7 @@ const SETTINGS_PROVIDER_LABELS: Record<ProviderId, string> = {
   ollama: 'Ollama'
 }
 
-type UserMcpServerFormState = {
+export type UserMcpServerFormState = {
   name: string
   description: string
   transport: UserMcpServerTransport
@@ -645,7 +646,9 @@ type UserMcpServerFormState = {
   url: string
   argsText: string
   envText: string
+  envSecretText: string
   headersText: string
+  headerSecretText: string
   bearerTokenEnvVar: string
   enabled: boolean
 }
@@ -677,7 +680,9 @@ function emptyUserMcpServerForm(): UserMcpServerFormState {
     url: '',
     argsText: '',
     envText: '',
+    envSecretText: '',
     headersText: '',
+    headerSecretText: '',
     bearerTokenEnvVar: '',
     enabled: false
   }
@@ -703,6 +708,27 @@ function formatUserMcpServerHeaders(headers?: Record<string, string>): string {
     : ''
 }
 
+function formatUserMcpServerSecretRefs(names?: string[]): string {
+  return Array.isArray(names) && names.length > 0
+    ? names
+        .filter(Boolean)
+        .map((name) => `${name}=`)
+        .join('\n')
+    : ''
+}
+
+function omitSecretBackedFields(
+  values: Record<string, string> | undefined,
+  secretNames: readonly string[] | undefined
+): Record<string, string> | undefined {
+  if (!values) return undefined
+  const secretSet = new Set(secretNames ?? [])
+  const visible = Object.fromEntries(
+    Object.entries(values).filter(([key]) => !secretSet.has(key))
+  ) as Record<string, string>
+  return Object.keys(visible).length > 0 ? visible : undefined
+}
+
 function formFromUserMcpServer(server: UserMcpServerConfig): UserMcpServerFormState {
   return {
     name: server.name,
@@ -711,8 +737,12 @@ function formFromUserMcpServer(server: UserMcpServerConfig): UserMcpServerFormSt
     command: server.command || '',
     url: server.url || '',
     argsText: formatUserMcpServerArgs(server.args),
-    envText: formatUserMcpServerEnv(server.env),
-    headersText: formatUserMcpServerHeaders(server.headers),
+    envText: formatUserMcpServerEnv(omitSecretBackedFields(server.env, server.secretRefs?.env)),
+    envSecretText: formatUserMcpServerSecretRefs(server.secretRefs?.env),
+    headersText: formatUserMcpServerHeaders(
+      omitSecretBackedFields(server.headers, server.secretRefs?.headers)
+    ),
+    headerSecretText: formatUserMcpServerSecretRefs(server.secretRefs?.headers),
     bearerTokenEnvVar: server.bearerTokenEnvVar || '',
     enabled: server.enabled
   }
@@ -761,6 +791,33 @@ function parseUserMcpServerHeaders(value: string): {
     headers[key] = val
   }
   return { headers }
+}
+
+function parseUserMcpServerSecretLines(
+  value: string,
+  kind: 'env' | 'header'
+): { names: string[]; values: Record<string, string>; error?: string } {
+  const names: string[] = []
+  const values: Record<string, string> = {}
+  const seen = new Set<string>()
+  const namePattern = kind === 'env' ? USER_MCP_ENV_NAME_RE : USER_MCP_HEADER_NAME_RE
+  const label = kind === 'env' ? 'environment variable' : 'HTTP header'
+  for (const rawLine of value.split('\n')) {
+    const line = rawLine.trim()
+    if (!line) continue
+    const separatorIndex = line.indexOf('=')
+    if (separatorIndex <= 0) return { names, values, error: `Secret ${label} lines must use Name=value.` }
+    const key = line.slice(0, separatorIndex).trim()
+    const val = line.slice(separatorIndex + 1)
+    if (!namePattern.test(key)) {
+      return { names, values, error: `Invalid secret ${label} name: ${key}` }
+    }
+    if (seen.has(key)) return { names, values, error: `Duplicate secret ${label} name: ${key}` }
+    seen.add(key)
+    names.push(key)
+    if (val.length > 0) values[key] = val
+  }
+  return { names, values }
 }
 
 function isValidUserMcpRemoteUrl(value: string): boolean {
@@ -866,7 +923,9 @@ export function userMcpServerMatchesQuery(
     server.url || '',
     ...(server.args ?? []),
     ...Object.keys(server.env ?? {}),
+    ...(server.secretRefs?.env ?? []),
     ...Object.keys(userMcpServerRemoteHeaders(server, { redactValues: true }) ?? {}),
+    ...(server.secretRefs?.headers ?? []),
     server.bearerTokenEnvVar || '',
     userMcpServerRuntimeLabel(server),
     ...userMcpServerProviderExportLabels(server)
@@ -916,19 +975,55 @@ export function hasUserMcpServerNameConflict(
   )
 }
 
-function buildUserMcpServerFromForm(
+export function buildUserMcpServerFromForm(
   form: UserMcpServerFormState,
   existing?: UserMcpServerConfig
-): { server?: UserMcpServerConfig; error?: string } {
+): {
+  server?: UserMcpServerConfig
+  secretValues?: { env: Record<string, string>; headers: Record<string, string> }
+  error?: string
+} {
   const name = form.name.trim()
   if (!name) return { error: 'Server name is required.' }
   const args = form.transport === 'stdio' ? parseUserMcpServerArgs(form.argsText) : []
   const parsedEnv: { env: Record<string, string>; error?: string } =
     form.transport === 'stdio' ? parseUserMcpServerEnv(form.envText) : { env: {} }
   if (parsedEnv.error) return { error: parsedEnv.error }
+  const parsedEnvSecrets =
+    form.transport === 'stdio'
+      ? parseUserMcpServerSecretLines(form.envSecretText, 'env')
+      : { names: [], values: {} }
+  if (parsedEnvSecrets.error) return { error: parsedEnvSecrets.error }
   const parsedHeaders: { headers: Record<string, string>; error?: string } =
     form.transport === 'stdio' ? { headers: {} } : parseUserMcpServerHeaders(form.headersText)
   if (parsedHeaders.error) return { error: parsedHeaders.error }
+  const parsedHeaderSecrets =
+    form.transport === 'stdio'
+      ? { names: [], values: {} }
+      : parseUserMcpServerSecretLines(form.headerSecretText, 'header')
+  if (parsedHeaderSecrets.error) return { error: parsedHeaderSecrets.error }
+  for (const key of parsedEnvSecrets.names) {
+    if (key in parsedEnv.env) {
+      return { error: `${key} is listed as both a plaintext and encrypted environment value.` }
+    }
+  }
+  for (const key of parsedHeaderSecrets.names) {
+    if (key in parsedHeaders.headers) {
+      return { error: `${key} is listed as both a plaintext and encrypted HTTP header.` }
+    }
+  }
+  const existingEnvSecrets = new Set(existing?.secretRefs?.env ?? [])
+  for (const key of parsedEnvSecrets.names) {
+    if (!(key in parsedEnvSecrets.values) && !existingEnvSecrets.has(key)) {
+      return { error: `Secret environment variable ${key} needs a value before it can be saved.` }
+    }
+  }
+  const existingHeaderSecrets = new Set(existing?.secretRefs?.headers ?? [])
+  for (const key of parsedHeaderSecrets.names) {
+    if (!(key in parsedHeaderSecrets.values) && !existingHeaderSecrets.has(key)) {
+      return { error: `Secret HTTP header ${key} needs a value before it can be saved.` }
+    }
+  }
   const command = form.command.trim()
   const url = form.url.trim()
   const bearerTokenEnvVar = form.bearerTokenEnvVar.trim()
@@ -965,12 +1060,24 @@ function buildUserMcpServerFromForm(
     if (command) server.command = command
     if (args.length > 0) server.args = args
     if (Object.keys(parsedEnv.env).length > 0) server.env = parsedEnv.env
+    if (parsedEnvSecrets.names.length > 0) {
+      server.secretRefs = { env: parsedEnvSecrets.names }
+    }
   } else {
     if (url) server.url = url
     if (Object.keys(parsedHeaders.headers).length > 0) server.headers = parsedHeaders.headers
+    if (parsedHeaderSecrets.names.length > 0) {
+      server.secretRefs = { headers: parsedHeaderSecrets.names }
+    }
     if (bearerTokenEnvVar) server.bearerTokenEnvVar = bearerTokenEnvVar
   }
-  return { server }
+  return {
+    server,
+    secretValues: {
+      env: parsedEnvSecrets.values,
+      headers: parsedHeaderSecrets.values
+    }
+  }
 }
 
 function normalizeImportedUserMcpEnv(value: unknown): Record<string, string> | undefined {
@@ -3289,7 +3396,7 @@ export function SettingsPanel({
     onChange({ userMcpServers: servers })
   }
 
-  const saveMcpServerForm = (): void => {
+  const saveMcpServerForm = async (): Promise<void> => {
     const existing =
       editingMcpServerId && mcpServerFormMode === 'edit'
         ? userMcpServers.find((server) => server.id === editingMcpServerId)
@@ -3302,6 +3409,52 @@ export function SettingsPanel({
     if (hasUserMcpServerNameConflict(userMcpServers, result.server.name, result.server.id)) {
       setMcpServerFormError('Another MCP server already uses that name.')
       return
+    }
+    const secretWrites: Array<{ ref: ExtensionSecretRef; value: string }> = []
+    for (const [fieldName, value] of Object.entries(result.secretValues?.env ?? {})) {
+      secretWrites.push({
+        ref: {
+          ownerKind: 'userMcpServer',
+          ownerId: result.server.id,
+          fieldKind: 'env',
+          fieldName
+        },
+        value
+      })
+    }
+    for (const [fieldName, value] of Object.entries(result.secretValues?.headers ?? {})) {
+      secretWrites.push({
+        ref: {
+          ownerKind: 'userMcpServer',
+          ownerId: result.server.id,
+          fieldKind: 'header',
+          fieldName
+        },
+        value
+      })
+    }
+    if (secretWrites.length > 0) {
+      if (
+        typeof window === 'undefined' ||
+        typeof window.api?.setExtensionSecret !== 'function'
+      ) {
+        setMcpServerFormError('Encrypted secret storage is unavailable.')
+        return
+      }
+      try {
+        for (const write of secretWrites) {
+          const stored = await window.api.setExtensionSecret(write.ref, write.value)
+          if (!stored.ok) {
+            setMcpServerFormError(
+              stored.error || `Could not store encrypted secret ${write.ref.fieldName}.`
+            )
+            return
+          }
+        }
+      } catch (error) {
+        setMcpServerFormError(`Could not store encrypted secret: ${String(error)}`)
+        return
+      }
     }
     const next =
       existing && editingMcpServerId
@@ -7267,8 +7420,14 @@ export function SettingsPanel({
                             {server.env && Object.keys(server.env).length > 0 && (
                               <span>{pluralizeCount(Object.keys(server.env).length, 'env var')}</span>
                             )}
+                            {server.secretRefs?.env && server.secretRefs.env.length > 0 && (
+                              <span>{pluralizeCount(server.secretRefs.env.length, 'encrypted env var')}</span>
+                            )}
                             {server.headers && Object.keys(server.headers).length > 0 && (
                               <span>{pluralizeCount(Object.keys(server.headers).length, 'header')}</span>
+                            )}
+                            {server.secretRefs?.headers && server.secretRefs.headers.length > 0 && (
+                              <span>{pluralizeCount(server.secretRefs.headers.length, 'encrypted header')}</span>
                             )}
                             {server.bearerTokenEnvVar && <span>bearer env</span>}
                             <span>{userMcpServerRuntimeLabel(server)}</span>
@@ -7426,8 +7585,9 @@ export function SettingsPanel({
                     {mcpServerFormMode === 'edit' ? 'Edit MCP server' : 'Add MCP server'}
                   </h4>
                   <p className="settings-hint">
-                    Environment and header values are stored in local app settings. Prefer
-                    shell-level environment for secrets until encrypted MCP secrets land.
+                    Non-secret values stay in app settings. Put tokens and credentials in the
+                    encrypted fields below. Existing encrypted secrets appear as `NAME=` on edit;
+                    leave the value blank to keep the saved secret.
                   </p>
                 </div>
 
@@ -7527,6 +7687,22 @@ export function SettingsPanel({
                       disabled={mcpServerForm.transport !== 'stdio'}
                     />
                   </label>
+                  <label className="settings-field">
+                    <span>Encrypted environment</span>
+                    <textarea
+                      className="settings-user-mcp-textarea"
+                      value={mcpServerForm.envSecretText}
+                      onChange={(event) =>
+                        setMcpServerForm((prev) => ({
+                          ...prev,
+                          envSecretText: event.target.value
+                        }))
+                      }
+                      rows={4}
+                      placeholder="API_TOKEN=secret value"
+                      disabled={mcpServerForm.transport !== 'stdio'}
+                    />
+                  </label>
                   {mcpServerForm.transport !== 'stdio' && (
                     <>
                       <label className="settings-field">
@@ -7541,7 +7717,22 @@ export function SettingsPanel({
                             }))
                           }
                           rows={4}
-                          placeholder="Authorization=Bearer ${TOKEN}&#10;X-Region=eu"
+                          placeholder="X-Region=eu"
+                        />
+                      </label>
+                      <label className="settings-field">
+                        <span>Encrypted headers</span>
+                        <textarea
+                          className="settings-user-mcp-textarea"
+                          value={mcpServerForm.headerSecretText}
+                          onChange={(event) =>
+                            setMcpServerForm((prev) => ({
+                              ...prev,
+                              headerSecretText: event.target.value
+                            }))
+                          }
+                          rows={4}
+                          placeholder="Authorization=Bearer secret token"
                         />
                       </label>
                       <label className="settings-field">
@@ -7587,7 +7778,11 @@ export function SettingsPanel({
                     >
                       Cancel
                     </button>
-                    <button type="button" className="btn btn-sm" onClick={saveMcpServerForm}>
+                    <button
+                      type="button"
+                      className="btn btn-sm"
+                      onClick={() => void saveMcpServerForm()}
+                    >
                       Save server
                     </button>
                   </div>
