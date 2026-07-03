@@ -296,6 +296,15 @@ export type TranscriptPanelProps = {
    */
   autoFollowRef?: React.MutableRefObject<boolean>
   /**
+   * Arm the parent scroll evaluator's programmatic-scroll guard for the
+   * virtual-window anchor-correction write below. Without it the anchor
+   * write reaches the App scroll listener as an un-owned scroll and, when it
+   * lands at the live edge moving down, spuriously re-engages auto-follow.
+   * Called with the ACTUAL post-write `scrollTop` (browser-clamped). Stable
+   * callback, so it never perturbs the memo.
+   */
+  onProgrammaticScrollWrite?: (landedScrollTop: number) => void
+  /**
    * 1.0.7 — display currency + conservative-overestimate bias (Settings →
    * General), threaded in so the ensemble run-complete card's Cost row routes
    * through `formatCost`. Defaults to USD / 0 when omitted.
@@ -526,6 +535,7 @@ function useTranscriptVirtualization(params: {
    */
   contentRef?: React.RefObject<HTMLDivElement | null>
   autoFollowRef?: React.MutableRefObject<boolean>
+  onProgrammaticScrollWrite?: (landedScrollTop: number) => void
   compactDensity: boolean
   forcedRowIndex?: number | null
   activeLiveRowKey?: string | null
@@ -559,6 +569,7 @@ function useTranscriptVirtualization(params: {
     scrollRef,
     contentRef,
     autoFollowRef,
+    onProgrammaticScrollWrite,
     compactDensity,
     forcedRowIndex,
     activeLiveRowKey,
@@ -891,6 +902,13 @@ function useTranscriptVirtualization(params: {
           // re-baseline/bump (Fix 4), keeping the restore one-shot.
           anchorWriteRef.current = true
           scroller.scrollTop = target
+          // Arm the PARENT scroll evaluator too — `anchorWriteRef` is private
+          // to this component, so without this the App-level auto-follow
+          // listener sees an un-owned scroll and can re-engage follow when the
+          // write lands at the live edge. Pass the browser-clamped landed
+          // position (a target that overshoots to the bottom is the exact
+          // re-engage trigger otherwise).
+          onProgrammaticScrollWrite?.(scroller.scrollTop)
         }
         anchor.aboveHeight = aboveHeight
       }
@@ -1058,6 +1076,7 @@ export const TranscriptPanel = memo(
     copy,
     virtualize,
     autoFollowRef,
+    onProgrammaticScrollWrite,
     currency,
     currencyOverestimatePercent,
     showRunCompleteSummary,
@@ -1535,6 +1554,7 @@ export const TranscriptPanel = memo(
       scrollRef,
       contentRef,
       autoFollowRef,
+      onProgrammaticScrollWrite,
       compactDensity,
       forcedRowIndex: pendingFocusRowIndex,
       activeLiveRowKey: liveRevealRowKey,
@@ -3024,6 +3044,7 @@ export const TranscriptPanel = memo(
     previous.copy === next.copy &&
     previous.virtualize === next.virtualize &&
     previous.autoFollowRef === next.autoFollowRef &&
+    previous.onProgrammaticScrollWrite === next.onProgrammaticScrollWrite &&
     previous.collapseOlderRounds === next.collapseOlderRounds &&
     previous.userMessageGutterEnabled === next.userMessageGutterEnabled
 )

@@ -160,6 +160,7 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   approvalTimeouts: any
   auraProviderKey: any
   autoFollowRef: any
+  markMainTranscriptProgrammaticScroll: (landedScrollTop: number) => void
   autoResumeParentOnSubThreadCompletion: any
   autoUpdateEnabled: any
   auditBundleVerificationResult: any

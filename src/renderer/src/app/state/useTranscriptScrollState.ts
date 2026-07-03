@@ -160,6 +160,27 @@ export function useTranscriptScrollState({
     node.scrollTop = node.scrollHeight
   }, [clearProgrammaticScrollTarget, scheduleProgrammaticScrollTargetClear])
 
+  // Arm the programmatic-scroll guard for a scroll write the App did NOT
+  // issue itself — specifically TranscriptPanel's virtual-window anchor
+  // correction (keeps the anchored row fixed while rows above it re-measure).
+  // That write is otherwise invisible to the scroll evaluator, so when it
+  // lands at the live edge while moving DOWN (content above the anchor grew,
+  // pushing scrollTop toward the bottom) the engage-band re-engage path reads
+  // it as the user returning to the bottom and re-locks follow the user never
+  // asked for — the Grok-in-ensemble "pulls to bottom" report (virtualization,
+  // and thus the anchor correction, is active in multi-row ensemble chats).
+  // Callers pass the ACTUAL post-write `scrollTop` (browser-clamped), so a
+  // target that overshoots to the bottom is matched by the guard rather than
+  // slipping through as the very re-engage it would trigger.
+  const markProgrammaticScroll = useCallback(
+    (landedScrollTop: number) => {
+      if (!Number.isFinite(landedScrollTop)) return
+      programmaticScrollTargetRef.current = Math.max(0, landedScrollTop)
+      scheduleProgrammaticScrollTargetClear()
+    },
+    [scheduleProgrammaticScrollTargetClear]
+  )
+
   const beginManualTranscriptJump = useCallback(() => {
     autoFollowRef.current = false
     userScrolledAwayInFrameRef.current = true
@@ -517,6 +538,7 @@ export function useTranscriptScrollState({
     }),
     handleJumpToLatest,
     relockToLatest,
+    markProgrammaticScroll,
     beginManualTranscriptJump,
     prepareMessageJump,
     clearPendingMessageJump,

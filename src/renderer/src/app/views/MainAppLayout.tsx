@@ -115,6 +115,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   approvalTimeouts,
   auraProviderKey,
   autoFollowRef,
+  markMainTranscriptProgrammaticScroll,
   autoResumeParentOnSubThreadCompletion,
   autoUpdateEnabled,
   auditBundleVerificationResult,
@@ -1859,6 +1860,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                 copiedId={copiedId}
                 copy={copy}
                 autoFollowRef={autoFollowRef}
+                onProgrammaticScrollWrite={markMainTranscriptProgrammaticScroll}
                 currency={displayCurrency}
                 currencyOverestimatePercent={overestimatePercent}
                 showRunCompleteSummary={settings?.showRunCompleteSummary}
