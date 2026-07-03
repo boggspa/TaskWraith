@@ -342,17 +342,24 @@ What exists:
   "Managed by organization" notice with policy source, organization label,
   locked setting keys, and error count. The notice gives users an immediate
   explanation for enforced controls without exposing raw policy payload details.
+- Settings -> MCP Servers now consumes that same managed-policy snapshot for
+  the `userMcpServers` key. When organization policy locks or enforces the
+  setting, the page switches to a managed state, disables add/import/edit/
+  enable/delete/save actions, blocks stale mutation handlers, and keeps
+  read-only audit/export copy controls available.
 
 What is missing:
 
 - Per-control locked/disabled affordances in Settings are not complete yet.
-  Enforcement exists, and the top-level managed notice explains why controls are
-  locked, but individual controls do not all render inline lock badges.
+  The top-level managed notice and the user-MCP settings pane are wired, but
+  other settings pages still need the same inline lock badges and disabled
+  controls.
 - Other non-settings live controls still need explicit inventory and managed
   clamps. The current policy source is startup-loaded, so future live policy
   reload support must also revoke or re-materialize affected in-memory state.
-- User MCP policy has launch-time and save-time managed allowlist enforcement.
-  Locked Settings UI and deeper plugin provenance revalidation still land under
+- User MCP policy has launch-time and save-time managed allowlist enforcement,
+  plus a Settings lock state when the `userMcpServers` setting itself is owned
+  by managed policy. Deeper plugin provenance revalidation still lands under
   B5.4.
 
 Target:
@@ -414,11 +421,17 @@ What exists:
   enabled user MCP servers. Server ids/names and raw header/env names are
   hashed; the export carries reason categories, counts, and section hashes.
 - Audit/previews redact values for display.
+- The MCP Servers settings pane now sits on the B5.3 managed-policy plane for
+  the `userMcpServers` setting. When locked/enforced by policy, user mutation
+  controls are disabled, stale mutation handlers refuse to write, plugin MCP
+  preset materialization is blocked, and read-only redacted config/audit export
+  remains available.
 
 What is missing:
 
-- Locked Settings UI and plugin materialization policy still need to sit on the
-  B5.3 managed-policy plane.
+- Plugin MCP preset materialization is blocked when `userMcpServers` is locked,
+  but plugin-level installation/update controls remain separate plugin-policy
+  work and do not yet express a managed plugin materialization policy.
 - Command-root and argument-prefix checks are launch allowlists, not a sandbox.
   They constrain configured process materialization but do not confine a
   process after it starts.

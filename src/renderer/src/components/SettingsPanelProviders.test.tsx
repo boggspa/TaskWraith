@@ -477,6 +477,48 @@ describe('SettingsPanel provider cards', () => {
     expect(html).toContain('Locked controls: agenticServices, approvalTimeouts')
   })
 
+  it('locks user MCP server mutation controls when organization policy owns the setting', () => {
+    const html = renderToStaticMarkup(
+      <SettingsPanel
+        {...makeSettingsProps({
+          activeTab: 'mcp-servers',
+          managedPolicyStatus: {
+            active: true,
+            organizationName: 'Acme Corp',
+            source: 'signed-mdm-preferences',
+            lockedSettings: ['userMcpServers'],
+            enforcedSettings: [],
+            errors: []
+          },
+          userMcpServers: [
+            {
+              id: 'server-docs',
+              name: 'docs',
+              enabled: true,
+              transport: 'http',
+              url: 'https://example.test/mcp'
+            }
+          ]
+        })}
+      />
+    )
+
+    expect(html).toContain('User MCP server editing is managed by organization policy.')
+    expect(html).toContain('<span class="settings-editable-pill">Managed</span>')
+    expect(html).toMatch(
+      /<button type="button" class="btn btn-sm btn-ghost" disabled="">Import config<\/button>/
+    )
+    expect(html).toMatch(
+      /<button type="button" class="btn btn-sm" disabled="">Add server<\/button>/
+    )
+    expect(html).toMatch(/<input type="checkbox" disabled="" checked=""/)
+    expect(html).toMatch(/<button type="button" class="btn btn-sm btn-ghost" disabled="">Edit<\/button>/)
+    expect(html).toMatch(
+      /<button type="button" class="btn btn-sm btn-ghost" disabled="">Delete<\/button>/
+    )
+    expect(html).toContain('Copy audit JSON')
+  })
+
   it('renders the General auto-update checkbox unchecked when disabled', () => {
     const html = renderToStaticMarkup(
       <SettingsPanel

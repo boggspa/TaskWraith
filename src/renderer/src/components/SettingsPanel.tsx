@@ -120,6 +120,23 @@ type ProviderCliUpgradeState = 'idle' | 'opening' | 'opened' | 'error'
 type ManagedPolicyStatus = Record<string, unknown>
 type AuditBundleExportScope = 'all' | 'workspace' | 'chat' | 'run'
 
+function managedPolicySettingList(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.map((entry) => String(entry || '').trim()).filter(Boolean)
+    : []
+}
+
+function isManagedPolicySettingLocked(
+  status: ManagedPolicyStatus | null | undefined,
+  setting: string
+): boolean {
+  if (status?.active !== true) return false
+  return (
+    managedPolicySettingList(status.lockedSettings).includes(setting) ||
+    managedPolicySettingList(status.enforcedSettings).includes(setting)
+  )
+}
+
 const AUDIT_RETENTION_SURFACES: Array<{ key: AuditRetentionSurface; label: string }> = [
   { key: 'approvalLedger', label: 'Approvals' },
   { key: 'runEvents', label: 'Run events' },
@@ -3250,6 +3267,26 @@ export function SettingsPanel({
   const [showDeleteHistoryConfirm, setShowDeleteHistoryConfirm] = useState(false)
   const [deleteHistoryPending, setDeleteHistoryPending] = useState(false)
   const [deleteHistoryError, setDeleteHistoryError] = useState('')
+  const managedPolicyActive = managedPolicyStatus?.active === true
+  const managedPolicyLockedSettings = managedPolicySettingList(managedPolicyStatus?.lockedSettings)
+  const managedPolicyErrorCount = Array.isArray(managedPolicyStatus?.errors)
+    ? managedPolicyStatus.errors.length
+    : 0
+  const managedPolicyOrganization =
+    typeof managedPolicyStatus?.organizationName === 'string' &&
+    managedPolicyStatus.organizationName.trim()
+      ? managedPolicyStatus.organizationName.trim()
+      : ''
+  const managedPolicySource =
+    typeof managedPolicyStatus?.source === 'string' && managedPolicyStatus.source.trim()
+      ? managedPolicyStatus.source.trim()
+      : 'managed policy'
+  const userMcpServersManagedLocked = isManagedPolicySettingLocked(
+    managedPolicyStatus,
+    'userMcpServers'
+  )
+  const userMcpManagedLockMessage =
+    'User MCP server editing is managed by organization policy.'
 
   useEffect(() => {
     if (!showDeleteHistoryConfirm) return
@@ -3384,7 +3421,16 @@ export function SettingsPanel({
     runPluginMutation(pluginId, () => window.api.updatePlugin(pluginId))
   }
 
+  const blockManagedUserMcpMutation = (): boolean => {
+    if (!userMcpServersManagedLocked) return false
+    setMcpServerFormError(userMcpManagedLockMessage)
+    setMcpImportError(userMcpManagedLockMessage)
+    setPluginCatalogError(userMcpManagedLockMessage)
+    return true
+  }
+
   const addPluginMcpPreset = (pluginId: string, presetId: string): void => {
+    if (blockManagedUserMcpMutation()) return
     if (
       typeof window === 'undefined' ||
       typeof window.api?.materializePluginMcpPreset !== 'function'
@@ -3420,6 +3466,7 @@ export function SettingsPanel({
   }
 
   const startCreateMcpServer = (): void => {
+    if (blockManagedUserMcpMutation()) return
     setMcpImportOpen(false)
     setMcpImportError('')
     setMcpServerFormMode('create')
@@ -3429,6 +3476,7 @@ export function SettingsPanel({
   }
 
   const startImportMcpServers = (): void => {
+    if (blockManagedUserMcpMutation()) return
     resetMcpServerForm()
     setMcpImportOpen(true)
     setMcpImportError('')
@@ -3451,6 +3499,7 @@ export function SettingsPanel({
   }
 
   const startEditMcpServer = (server: UserMcpServerConfig): void => {
+    if (blockManagedUserMcpMutation()) return
     setMcpServerFormMode('edit')
     setEditingMcpServerId(server.id)
     setMcpServerForm(formFromUserMcpServer(server))
@@ -3458,6 +3507,7 @@ export function SettingsPanel({
   }
 
   const persistUserMcpServers = (servers: UserMcpServerConfig[]): void => {
+    if (blockManagedUserMcpMutation()) return
     onChange({ userMcpServers: servers })
   }
 
@@ -3506,6 +3556,7 @@ export function SettingsPanel({
   }
 
   const saveMcpServerForm = async (): Promise<void> => {
+    if (blockManagedUserMcpMutation()) return
     const existing =
       editingMcpServerId && mcpServerFormMode === 'edit'
         ? userMcpServers.find((server) => server.id === editingMcpServerId)
@@ -3535,6 +3586,7 @@ export function SettingsPanel({
   }
 
   const importMcpServersFromConfig = async (): Promise<void> => {
+    if (blockManagedUserMcpMutation()) return
     const result = parseUserMcpServersImportJson(mcpImportText, userMcpServers)
     if (result.error) {
       setMcpImportError(result.error)
@@ -3656,6 +3708,7 @@ export function SettingsPanel({
   }
 
   const toggleUserMcpServer = (server: UserMcpServerConfig, enabled: boolean): void => {
+    if (blockManagedUserMcpMutation()) return
     if (enabled && !hasRunnableUserMcpEndpoint(server)) {
       startEditMcpServer(server)
       setMcpServerFormError(
@@ -3677,6 +3730,7 @@ export function SettingsPanel({
   }
 
   const deleteUserMcpServer = (serverId: string): void => {
+    if (blockManagedUserMcpMutation()) return
     persistUserMcpServers(userMcpServers.filter((server) => server.id !== serverId))
     if (editingMcpServerId === serverId) resetMcpServerForm()
   }
@@ -4297,25 +4351,6 @@ export function SettingsPanel({
       setDeleteHistoryPending(false)
     }
   }
-  const managedPolicyActive = managedPolicyStatus?.active === true
-  const managedPolicyLockedSettings = Array.isArray(managedPolicyStatus?.lockedSettings)
-    ? managedPolicyStatus.lockedSettings
-        .map((value) => String(value || '').trim())
-        .filter(Boolean)
-    : []
-  const managedPolicyErrorCount = Array.isArray(managedPolicyStatus?.errors)
-    ? managedPolicyStatus.errors.length
-    : 0
-  const managedPolicyOrganization =
-    typeof managedPolicyStatus?.organizationName === 'string' &&
-    managedPolicyStatus.organizationName.trim()
-      ? managedPolicyStatus.organizationName.trim()
-      : ''
-  const managedPolicySource =
-    typeof managedPolicyStatus?.source === 'string' && managedPolicyStatus.source.trim()
-      ? managedPolicyStatus.source.trim()
-      : 'managed policy'
-
   return (
     <div className={`settings-panel settings-panel-${layout}`}>
       {showDeleteHistoryConfirm &&
@@ -7189,7 +7224,9 @@ export function SettingsPanel({
                     <h4 className="sidebar-section-title" style={{ margin: 0 }}>
                       MCP servers
                     </h4>
-                    <span className="settings-editable-pill">Editable</span>
+                    <span className="settings-editable-pill">
+                      {userMcpServersManagedLocked ? 'Managed' : 'Editable'}
+                    </span>
                   </div>
                   <p className="settings-hint">
                     Manage external MCP server definitions TaskWraith owns. Enabled stdio and HTTP
@@ -7236,14 +7273,27 @@ export function SettingsPanel({
                     type="button"
                     className="btn btn-sm btn-ghost"
                     onClick={startImportMcpServers}
+                    disabled={userMcpServersManagedLocked}
                   >
                     Import config
                   </button>
-                  <button type="button" className="btn btn-sm" onClick={startCreateMcpServer}>
+                  <button
+                    type="button"
+                    className="btn btn-sm"
+                    onClick={startCreateMcpServer}
+                    disabled={userMcpServersManagedLocked}
+                  >
                     Add server
                   </button>
                 </div>
               </div>
+
+              {userMcpServersManagedLocked && (
+                <p className="settings-hint settings-user-mcp-config-note">
+                  {userMcpManagedLockMessage} You can still review and copy redacted config, but
+                  add, import, edit, enable, and delete actions are disabled.
+                </p>
+              )}
 
               <div className="settings-mcp-summary-grid">
                 <article className="settings-mcp-summary-card">
@@ -7363,6 +7413,7 @@ export function SettingsPanel({
                   }}
                   rows={8}
                   placeholder={`{\n  "mcpServers": {\n    "docs": {\n      "type": "http",\n      "url": "https://example.test/mcp",\n      "headers": { "X-Region": "eu" }\n    }\n  }\n}\n\n[mcp_servers.docs]\nurl = "https://example.test/mcp"\nhttp_headers = { "X-Region" = "eu" }`}
+                  disabled={userMcpServersManagedLocked}
                 />
                 <div className="settings-user-mcp-footer">
                   <span className="settings-hint">
@@ -7376,6 +7427,7 @@ export function SettingsPanel({
                       type="button"
                       className="btn btn-sm"
                       onClick={() => void importMcpServersFromConfig()}
+                      disabled={userMcpServersManagedLocked}
                     >
                       Import
                     </button>
@@ -7438,13 +7490,19 @@ export function SettingsPanel({
                     Add a local stdio server, remote HTTP/SSE endpoint, or import existing Claude,
                     Cursor, or Codex config.
                   </p>
-                  <button type="button" className="btn btn-sm" onClick={startCreateMcpServer}>
+                  <button
+                    type="button"
+                    className="btn btn-sm"
+                    onClick={startCreateMcpServer}
+                    disabled={userMcpServersManagedLocked}
+                  >
                     Add server
                   </button>
                   <button
                     type="button"
                     className="btn btn-sm btn-ghost"
                     onClick={startImportMcpServers}
+                    disabled={userMcpServersManagedLocked}
                   >
                     Import config
                   </button>
@@ -7625,6 +7683,7 @@ export function SettingsPanel({
                               onChange={(event) =>
                                 toggleUserMcpServer(server, event.target.checked)
                               }
+                              disabled={userMcpServersManagedLocked}
                             />
                           </label>
                           <button
@@ -7638,6 +7697,7 @@ export function SettingsPanel({
                             type="button"
                             className="btn btn-sm btn-ghost"
                             onClick={() => startEditMcpServer(server)}
+                            disabled={userMcpServersManagedLocked}
                           >
                             Edit
                           </button>
@@ -7645,6 +7705,7 @@ export function SettingsPanel({
                             type="button"
                             className="btn btn-sm btn-ghost"
                             onClick={() => deleteUserMcpServer(server.id)}
+                            disabled={userMcpServersManagedLocked}
                           >
                             Delete
                           </button>
@@ -7839,6 +7900,7 @@ export function SettingsPanel({
                       onChange={(event) =>
                         setMcpServerForm((prev) => ({ ...prev, enabled: event.target.checked }))
                       }
+                      disabled={userMcpServersManagedLocked}
                     />
                     <span>
                       Enabled
@@ -7860,6 +7922,7 @@ export function SettingsPanel({
                       type="button"
                       className="btn btn-sm"
                       onClick={() => void saveMcpServerForm()}
+                      disabled={userMcpServersManagedLocked}
                     >
                       Save server
                     </button>
@@ -8048,9 +8111,16 @@ export function SettingsPanel({
                                     key={preset.id}
                                     type="button"
                                     className="btn btn-sm btn-ghost"
-                                    disabled={presetState?.disabled ?? true}
+                                    disabled={
+                                      userMcpServersManagedLocked ||
+                                      (presetState?.disabled ?? true)
+                                    }
                                     onClick={() => addPluginMcpPreset(pluginId, preset.id)}
-                                    title={`${preset.transport} MCP preset`}
+                                    title={
+                                      userMcpServersManagedLocked
+                                        ? userMcpManagedLockMessage
+                                        : `${preset.transport} MCP preset`
+                                    }
                                   >
                                     {presetState?.materialized
                                       ? `Added ${preset.name}`
