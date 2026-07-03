@@ -63,6 +63,18 @@ describe('isCodexAppServerThreadId', () => {
 })
 
 describe('CodexAppServerClient runtime profile tracking', () => {
+  function makeMcpConfig(
+    overrides: Partial<CodexMcpTaskWraithConfig> = {}
+  ): CodexMcpTaskWraithConfig {
+    return {
+      enabled: true,
+      bridgeBinaryPath: '/Applications/TaskWraith.app/Contents/MacOS/TaskWraith',
+      bridgeArgs: ['--taskwraith-gemini-mcp-bridge'],
+      parentProvider: 'codex',
+      ...overrides
+    }
+  }
+
   it('keys app-server startup by runtime profile id', () => {
     expect(codexRuntimeProfileKey(null)).toBe('default')
     expect(codexRuntimeProfileKey(makeRuntimeProfile({ id: 'custom-codex' }))).toBe(
@@ -81,6 +93,54 @@ describe('CodexAppServerClient runtime profile tracking', () => {
     client.setRuntimeProfile(null)
     expect(client.getRuntimeProfileKey()).toBe('default')
     expect(dispose).toHaveBeenCalledTimes(2)
+  })
+
+  it('marks a running client stale when MCP config changes and clears it on dispose', () => {
+    const client = new CodexAppServerClient()
+    const initialConfig = makeMcpConfig()
+    client.setMcpConfig(initialConfig)
+    const kill = vi.fn()
+    ;(client as any).proc = { killed: false, stdin: { writable: true }, kill }
+    ;(client as any).startedMcpConfigFingerprint = JSON.stringify({
+      args: buildCodexTaskWraithMcpArgs(initialConfig),
+      providerEnv: {}
+    })
+
+    expect(client.hasStaleMcpConfig()).toBe(false)
+    client.setMcpConfig(initialConfig)
+    expect(client.hasStaleMcpConfig()).toBe(false)
+    client.setMcpConfig(
+      makeMcpConfig({
+        userMcpServers: [
+          {
+            serverName: 'user_docs',
+            transport: 'stdio',
+            command: '/usr/local/bin/docs-mcp',
+            args: []
+          }
+        ]
+      })
+    )
+    expect(client.hasStaleMcpConfig()).toBe(true)
+    client.setMcpConfig(initialConfig)
+    expect(client.hasStaleMcpConfig()).toBe(false)
+    client.setMcpConfig(
+      makeMcpConfig({
+        userMcpServers: [
+          {
+            serverName: 'user_docs',
+            transport: 'stdio',
+            command: '/usr/local/bin/docs-mcp',
+            args: []
+          }
+        ]
+      })
+    )
+    expect(client.hasStaleMcpConfig()).toBe(true)
+
+    client.dispose()
+    expect(kill).toHaveBeenCalled()
+    expect(client.hasStaleMcpConfig()).toBe(false)
   })
 })
 

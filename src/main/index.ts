@@ -13435,6 +13435,10 @@ function getCodexClient(runtimeProfile?: RuntimeProfile | null): CodexAppServerC
   } else {
     codexClient.setMcpConfig(null)
   }
+  if (codexClient.hasStaleMcpConfig() && runManager.getActiveByProvider('codex').length === 0) {
+    console.log('[codex] restarting idle app-server to apply MCP configuration changes')
+    codexClient.dispose()
+  }
   return codexClient
 }
 

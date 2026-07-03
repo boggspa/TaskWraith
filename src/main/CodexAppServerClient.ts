@@ -251,6 +251,23 @@ export interface CodexMcpTaskWraithConfig {
   userMcpServers?: UserMcpLaunchServer[]
 }
 
+function disabledCodexMcpConfig(): CodexMcpTaskWraithConfig {
+  return {
+    enabled: false,
+    bridgeBinaryPath: '',
+    bridgeArgs: [],
+    parentProvider: 'codex'
+  }
+}
+
+function codexMcpConfigFingerprint(config: CodexMcpTaskWraithConfig | null): string {
+  const effectiveConfig = config ?? disabledCodexMcpConfig()
+  return JSON.stringify({
+    args: buildCodexTaskWraithMcpArgs(effectiveConfig),
+    providerEnv: collectUserMcpProviderEnv(effectiveConfig.userMcpServers)
+  })
+}
+
 export function codexRuntimeProfileKey(profile: RuntimeProfile | null | undefined): string {
   return profile?.id || 'default'
 }
@@ -361,6 +378,8 @@ export class CodexAppServerClient {
   private requestHandler: ((message: any) => void) | null = null
   private stderrHandler: ((chunk: string) => void) | null = null
   private mcpConfig: CodexMcpTaskWraithConfig | null = null
+  private startedMcpConfigFingerprint: string | null = null
+  private mcpConfigStale = false
   private runtimeProfile: RuntimeProfile | null = null
   private runtimeProfileKey = codexRuntimeProfileKey(null)
   private initializeResult: unknown = null
@@ -407,6 +426,12 @@ export class CodexAppServerClient {
    */
   setMcpConfig(config: CodexMcpTaskWraithConfig | null): void {
     this.mcpConfig = config
+    if (
+      this.isRunning() &&
+      this.startedMcpConfigFingerprint
+    ) {
+      this.mcpConfigStale = this.startedMcpConfigFingerprint !== codexMcpConfigFingerprint(config)
+    }
   }
 
   setRuntimeProfile(profile: RuntimeProfile | null): void {
@@ -419,6 +444,14 @@ export class CodexAppServerClient {
 
   getRuntimeProfileKey(): string {
     return this.runtimeProfileKey
+  }
+
+  isRunning(): boolean {
+    return Boolean(this.proc && !this.proc.killed)
+  }
+
+  hasStaleMcpConfig(): boolean {
+    return this.isRunning() && this.mcpConfigStale
   }
 
   async ensureStarted(appVersion: string): Promise<void> {
@@ -477,6 +510,8 @@ export class CodexAppServerClient {
   dispose() {
     this.startPromise = null
     this.initializeResult = null
+    this.startedMcpConfigFingerprint = null
+    this.mcpConfigStale = false
     this.stdoutReader?.close()
     this.stdoutReader = null
     if (this.proc && !this.proc.killed) {
@@ -497,26 +532,22 @@ export class CodexAppServerClient {
     // from the inline `mcp_servers.TaskWraith.env` override (belt &
     // braces — Codex CLI strips inherited env from MCP subprocesses
     // on some platforms, so we set it both ways).
-    const mcpArgs = buildCodexTaskWraithMcpArgs(
-      this.mcpConfig ?? {
-        enabled: false,
-        bridgeBinaryPath: '',
-        bridgeArgs: [],
-        parentProvider: 'codex'
-      }
-    )
+    const effectiveMcpConfig = this.mcpConfig ?? disabledCodexMcpConfig()
+    this.startedMcpConfigFingerprint = codexMcpConfigFingerprint(this.mcpConfig)
+    this.mcpConfigStale = false
+    const mcpArgs = buildCodexTaskWraithMcpArgs(effectiveMcpConfig)
     const codexArgs = [
       ...(options.forceFastServiceTier ? buildCodexFastServiceTierCompatibilityArgs() : []),
       ...mcpArgs,
       'app-server'
     ]
     const codexEnv: Record<string, string> = {
-      ...collectUserMcpProviderEnv(this.mcpConfig?.userMcpServers),
+      ...collectUserMcpProviderEnv(effectiveMcpConfig.userMcpServers),
       FORCE_COLOR: '0',
       NO_COLOR: '1'
     }
-    if (this.mcpConfig?.enabled) {
-      codexEnv.TASKWRAITH_PARENT_PROVIDER = this.mcpConfig.parentProvider
+    if (effectiveMcpConfig.enabled) {
+      codexEnv.TASKWRAITH_PARENT_PROVIDER = effectiveMcpConfig.parentProvider
     }
     if (this.runtimeProfile?.id) {
       codexEnv.TASKWRAITH_RUNTIME_PROFILE_ID = this.runtimeProfile.id

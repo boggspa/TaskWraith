@@ -353,6 +353,10 @@ What exists:
   than the raw argument value.
 - Remote checks can also block loopback, private, link-local, carrier-grade NAT,
   benchmarking, and localhost remote MCP hosts when the managed policy opts in.
+- Codex app-server tracks whether its running MCP launch config is stale; when
+  there are no active Codex runs, the next Codex accessor disposes the idle
+  app-server so the following start rematerializes the current managed/user-MCP
+  config.
 - Launch-time user-MCP materialization now revalidates saved plugin MCP
   provenance against the current plugin catalog before including the server:
   installed/enabled state, trust/preflight/update status, source identity,
@@ -373,9 +377,9 @@ What is missing:
 - Remote checks cover managed scheme/host/port/path allowlists, reject URL
   userinfo, and can block private/local IP-literal plus localhost hosts, but
   they are still not a full DNS-rebinding or runtime egress policy.
-- Long-lived provider app servers, especially Codex app-server, need an
-  explicit restart or re-materialization path before mid-session policy changes
-  can remove previously attached user MCP servers.
+- Long-lived provider app servers now have an idle rematerialization path, but
+  active in-flight runs still intentionally keep their launch-time MCP surface
+  until a future live revocation/cancellation policy is designed.
 
 Target:
 
