@@ -171,15 +171,19 @@ What exists:
   resolves those refs centrally through `createCliEnv`, blocks runs when a
   referenced encrypted value is missing or undecryptable, and lets the encrypted
   value override any same-name placeholder in the profile JSON.
+- Legacy user MCP env/header values and runtime-profile env values matching the
+  plaintext-secret policy are migrated on main-process load into encrypted
+  `secretRefs`. Plaintext is removed from settings/profile JSON only after the
+  encrypted write succeeds; if OS encryption is unavailable or a ref write
+  fails, the plaintext value remains in place for user review instead of being
+  silently lost.
 
 What is missing:
 
 - Renderer settings forms are not yet wired to use the secret status/mutation
-  IPC instead of raw user MCP env/header values, and existing plaintext records
-  still need migration into the encrypted store.
+  IPC instead of raw user MCP env/header values.
 - Runtime profile settings surfaces are not yet wired to create/manage encrypted
-  env refs directly, and existing plaintext profile env records still need
-  migration into the encrypted store.
+  env refs directly.
 - Plugin `requiredSecrets` are not an end-to-end launch-time secret delivery
   path for MCP materialization.
 - Renderer and iOS settings surfaces are not yet wired to create or manage
@@ -188,8 +192,9 @@ What is missing:
 Risk:
 
 - A token in an MCP `Authorization` header, MCP env var, or runtime profile env
-  can be durable plaintext in user data, copied into generated provider config,
-  or exposed through process/config surfaces.
+  can still be durable plaintext if it does not match the conservative
+  migration heuristic, if encrypted storage is unavailable, or if a renderer
+  settings form writes around the secret status/mutation flow.
 
 Target:
 
@@ -199,8 +204,8 @@ Target:
   indirection over argv or workspace-local config files.
 - Warn or reject raw keys matching obvious secret names unless stored through the
   encrypted path.
-- Keep a migration path for existing plaintext records that lets users review,
-  encrypt, or delete them.
+- Keep the automatic no-loss migration path for obvious legacy plaintext records,
+  and add a review surface for values that are not migrated automatically.
 
 ### B5.2 - Audit export, retention, and tamper evidence
 

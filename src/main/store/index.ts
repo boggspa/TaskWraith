@@ -179,6 +179,10 @@ import {
   type ExtensionSecretSafeStorage,
   type ExtensionSecretStatusSnapshot
 } from '../ExtensionSecretStore'
+import {
+  migrateRuntimeProfilePlaintextSecrets,
+  migrateUserMcpServerPlaintextSecrets
+} from '../ExtensionSecretMigration'
 
 function cloneEnsembleForSideChat(parent: ChatRecord, provider: ProviderId) {
   const source = parent.ensemble || createDefaultEnsembleConfig(provider)
@@ -1652,9 +1656,20 @@ export class AppStore {
   // Settings
   static getSettings(): AppSettings {
     migrateLegacySettingsIfMissing()
-    const stored = stripRetiredSettingsKeys(
+    let stored = stripRetiredSettingsKeys(
       readJson<Partial<AppSettings> & Record<string, unknown>>(settingsPath, {})
     )
+    const userMcpSecretMigration = migrateUserMcpServerPlaintextSecrets(
+      stored.userMcpServers,
+      (ref, value) => extensionSecretStore.setSecret(ref, value)
+    )
+    if (userMcpSecretMigration.changed) {
+      stored = {
+        ...stored,
+        userMcpServers: userMcpSecretMigration.value as UserMcpServerConfig[]
+      }
+      writeJson(settingsPath, stored)
+    }
     const storedDashboardStatPrefs = objectOrUndefined(stored.dashboardStatPrefs)
     const storedWelcomeHeatmapPrefs = objectOrUndefined(stored.welcomeHeatmapPrefs)
     const storedApprovalModeElevationAcks = objectOrUndefined(
@@ -1855,7 +1870,15 @@ export class AppStore {
   }
 
   static getRuntimeProfiles(provider?: ProviderId): RuntimeProfile[] {
-    const customProfiles = readJson<RuntimeProfile[]>(runtimeProfilesPath, [])
+    const rawCustomProfiles = readJson<RuntimeProfile[]>(runtimeProfilesPath, [])
+    const runtimeSecretMigration = migrateRuntimeProfilePlaintextSecrets(
+      rawCustomProfiles,
+      (ref, value) => extensionSecretStore.setSecret(ref, value)
+    )
+    const customProfiles = Array.isArray(runtimeSecretMigration.value)
+      ? (runtimeSecretMigration.value as RuntimeProfile[])
+      : rawCustomProfiles
+    if (runtimeSecretMigration.changed) writeJson(runtimeProfilesPath, customProfiles)
     const profiles = [...this.getDefaultRuntimeProfiles(), ...customProfiles]
     return profiles
       .filter((profile) => !provider || profile.provider === provider)

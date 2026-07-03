@@ -242,6 +242,66 @@ describe('AppStore settings defaults', () => {
     ])
   })
 
+  it('migrates legacy plaintext user MCP secrets into encrypted refs on load', () => {
+    const settingsPath = path.join(userDataPath, 'settings.json')
+    fs.writeFileSync(
+      settingsPath,
+      JSON.stringify({
+        userMcpServers: [
+          {
+            id: 'github',
+            name: 'GitHub',
+            enabled: true,
+            transport: 'http',
+            url: 'https://api.github.test/mcp',
+            env: {
+              GITHUB_TOKEN: 'ghp_legacy_plaintext',
+              LOG_LEVEL: 'debug'
+            },
+            headers: {
+              Authorization: 'Bearer legacy-header-token',
+              'X-Trace': 'keep'
+            }
+          }
+        ]
+      })
+    )
+
+    const settings = AppStore.getSettings()
+
+    expect(settings.userMcpServers?.[0]).toMatchObject({
+      id: 'github',
+      env: { LOG_LEVEL: 'debug' },
+      headers: { 'X-Trace': 'keep' },
+      secretRefs: {
+        env: ['GITHUB_TOKEN'],
+        headers: ['Authorization']
+      }
+    })
+    const envRef = {
+      ownerKind: 'userMcpServer' as const,
+      ownerId: 'github',
+      fieldKind: 'env' as const,
+      fieldName: 'GITHUB_TOKEN'
+    }
+    const headerRef = {
+      ownerKind: 'userMcpServer' as const,
+      ownerId: 'github',
+      fieldKind: 'header' as const,
+      fieldName: 'Authorization'
+    }
+    expect(AppStore.resolveExtensionSecretValues([envRef, headerRef])).toEqual([
+      { ref: envRef, status: 'ok', value: 'ghp_legacy_plaintext' },
+      { ref: headerRef, status: 'ok', value: 'Bearer legacy-header-token' }
+    ])
+    const persistedSettings = fs.readFileSync(settingsPath, 'utf8')
+    expect(persistedSettings).not.toContain('ghp_legacy_plaintext')
+    expect(persistedSettings).not.toContain('legacy-header-token')
+    expect(fs.readFileSync(path.join(userDataPath, 'extension-secrets.json'), 'utf8')).not.toContain(
+      'ghp_legacy_plaintext'
+    )
+  })
+
   it('cleans extension secrets when a user MCP server is removed', () => {
     AppStore.updateSettings({
       userMcpServers: [
@@ -313,5 +373,42 @@ describe('AppStore settings defaults', () => {
     expect(AppStore.getRuntimeProfiles('codex').find((item) => item.id === profile.id)?.secretRefs).toEqual({
       env: ['OPENAI_API_KEY']
     })
+  })
+
+  it('migrates legacy plaintext runtime profile env secrets into encrypted refs on load', () => {
+    const runtimeProfilesPath = path.join(userDataPath, 'runtime-profiles.json')
+    fs.writeFileSync(
+      runtimeProfilesPath,
+      JSON.stringify([
+        {
+          id: 'profile-legacy',
+          name: 'Legacy profile',
+          provider: 'codex',
+          scope: 'workspace',
+          env: {
+            OPENAI_API_KEY: 'sk-legacy-runtime',
+            DEBUG: '1'
+          }
+        }
+      ])
+    )
+
+    const profile = AppStore.getRuntimeProfiles('codex').find((item) => item.id === 'profile-legacy')
+
+    expect(profile).toMatchObject({
+      id: 'profile-legacy',
+      env: { DEBUG: '1' },
+      secretRefs: { env: ['OPENAI_API_KEY'] }
+    })
+    const ref = {
+      ownerKind: 'runtimeProfile' as const,
+      ownerId: 'profile-legacy',
+      fieldKind: 'env' as const,
+      fieldName: 'OPENAI_API_KEY'
+    }
+    expect(AppStore.resolveExtensionSecretValues([ref])).toEqual([
+      { ref, status: 'ok', value: 'sk-legacy-runtime' }
+    ])
+    expect(fs.readFileSync(runtimeProfilesPath, 'utf8')).not.toContain('sk-legacy-runtime')
   })
 })
