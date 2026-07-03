@@ -120,6 +120,7 @@ function createDeps() {
       publishSnapshot:
         vi.fn<NonNullable<GitHandlersDeps['gitSnapshotPublisher']>['publishSnapshot']>()
     },
+    externalPublishReceipts: undefined as GitHandlersDeps['externalPublishReceipts'],
     openExternal: vi.fn<GitHandlersDeps['openExternal']>(async (_url: string) => undefined)
   } satisfies GitHandlersDeps
 
@@ -302,5 +303,131 @@ describe('registerGitHandlers', () => {
       ok: false,
       error: 'failed'
     })
+  })
+
+  it('records an external-publish receipt before desktop git push side effects', async () => {
+    const { deps } = createDeps()
+    const events: string[] = []
+    deps.findRegisteredWorkspace.mockReturnValue({ id: 'ws-1' })
+    deps.gitService.push.mockImplementationOnce(async (input) => {
+      events.push('push')
+      return {
+        ok: true,
+        data: { ...input, commit: 'abc123' } as any
+      }
+    })
+    deps.externalPublishReceipts = {
+      begin: vi.fn(async (input) => {
+        events.push('begin')
+        return {
+          schemaVersion: 1,
+          id: 'receipt-push',
+          requestedAt: '2026-07-03T00:00:00.000Z',
+          ...input
+        } as any
+      }),
+      complete: vi.fn(async (input) => {
+        events.push(`complete:${input.outcome}:${input.commitSha}`)
+        return null
+      })
+    }
+    registerGitHandlers(deps)
+
+    await expect(
+      handlerFor('git:push')({}, { workspacePath: '/repo', remote: 'origin', setUpstream: true })
+    ).resolves.toEqual({
+      ok: true,
+      data: { repoPath: '/repo', remote: 'origin', setUpstream: true, commit: 'abc123' }
+    })
+
+    expect(events).toEqual(['begin', 'push', 'complete:completed:abc123'])
+    expect(deps.externalPublishReceipts.begin).toHaveBeenCalledWith(
+      expect.objectContaining({
+        origin: 'desktop-ui',
+        action: 'gitPush',
+        decision: 'allowed',
+        repoPath: '/repo',
+        remote: 'origin',
+        setUpstream: true
+      })
+    )
+    expect(deps.gitSnapshotPublisher.publishSnapshot).toHaveBeenCalled()
+  })
+
+  it('blocks desktop git push when the external-publish receipt denies it', async () => {
+    const { deps } = createDeps()
+    deps.findRegisteredWorkspace.mockReturnValue({ id: 'ws-1' })
+    deps.externalPublishReceipts = {
+      begin: vi.fn(async (input) => ({
+        schemaVersion: 1,
+        id: 'receipt-deny',
+        requestedAt: '2026-07-03T00:00:00.000Z',
+        ...input,
+        decision: 'denied',
+        reason: 'External publishing is blocked by policy.'
+      }) as any),
+      complete: vi.fn()
+    }
+    registerGitHandlers(deps)
+
+    await expect(handlerFor('git:push')({}, { workspacePath: '/repo' })).resolves.toEqual({
+      ok: false,
+      error: 'External publishing is blocked by policy.'
+    })
+
+    expect(deps.gitService.push).not.toHaveBeenCalled()
+    expect(deps.externalPublishReceipts.complete).not.toHaveBeenCalled()
+    expect(deps.gitSnapshotPublisher.publishSnapshot).not.toHaveBeenCalled()
+  })
+
+  it('records PR receipt completion before opening the browser', async () => {
+    const { deps } = createDeps()
+    const events: string[] = []
+    deps.findRegisteredWorkspace.mockReturnValue({ id: 'ws-1' })
+    deps.gitService.createPullRequest.mockImplementationOnce(async () => {
+      events.push('create-pr')
+      return { ok: true, data: { url: 'https://example.test/pr/1' } }
+    })
+    deps.openExternal.mockImplementationOnce(async () => {
+      events.push('open-external')
+    })
+    deps.externalPublishReceipts = {
+      begin: vi.fn(async (input) => {
+        events.push('begin')
+        return {
+          schemaVersion: 1,
+          id: 'receipt-pr',
+          requestedAt: '2026-07-03T00:00:00.000Z',
+          ...input
+        } as any
+      }),
+      complete: vi.fn(async (input) => {
+        events.push(`complete:${input.outcome}:${input.prUrl}`)
+        return null
+      })
+    }
+    registerGitHandlers(deps)
+
+    await expect(
+      handlerFor('create-github-pr')({}, { workspacePath: '/repo', title: 'Ship it' })
+    ).resolves.toEqual({
+      ok: true,
+      url: 'https://example.test/pr/1'
+    })
+
+    expect(events).toEqual([
+      'begin',
+      'create-pr',
+      'complete:completed:https://example.test/pr/1',
+      'open-external'
+    ])
+    expect(deps.externalPublishReceipts.begin).toHaveBeenCalledWith(
+      expect.objectContaining({
+        origin: 'desktop-ui',
+        action: 'githubCreatePr',
+        decision: 'allowed',
+        title: 'Ship it'
+      })
+    )
   })
 })

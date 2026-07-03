@@ -286,25 +286,26 @@ What exists:
   `externalPublish` remote capability.
 - Remote device audit rows for bridge push/PR actions record
   `capability: externalPublish`.
+- Desktop Git push and PR creation now write an origin-aware
+  `external-publish-receipts.json` record before side effects. The same
+  receipt surface is used by agent-routed `git_push` / `git_create_pr` and
+  paired-device bridge push/PR actions. Completion metadata records commit SHA,
+  PR URL, or failure reason where available.
 
 What is missing:
 
-- Desktop user-initiated Git push and PR creation still need a direct human
-  receipt model. The existing approval ledger is provider/run oriented, so
-  faking an agent provider for manual UI actions would make the audit trail
-  less honest.
 - The remote-access UI and iOS copy need to expose the new external-publish
   capability separately from file editing before paired-device publishing can
   be presented as a polished managed feature.
+- Audit bundle export does not yet include external-publish receipts.
 
 Target:
 
-- Add a direct-action publication receipt with origin
-  `desktop-ui | ios-bridge | agent`, workspace path, action, decision, commit
-  SHA/PR URL where available, and redaction-safe metadata.
-- Wire desktop Git publish/PR buttons through that receipt before side effects.
-- Keep the bridge `externalPublish` capability explicit and admin-only, and
-  include its audit rows in the future audit bundle export.
+- Keep all external publication origins (`desktop-ui`, `ios-bridge`, and
+  `agent`) on the shared receipt ledger so audit/export work has one schema.
+- Keep the bridge `externalPublish` capability explicit and admin-only.
+- Include external-publish receipts and bridge audit rows in the future audit
+  bundle export.
 
 ### B5.5 - Stage-role and queued-dispatch receipts
 

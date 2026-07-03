@@ -1175,6 +1175,81 @@ describe('git history workspace tools', () => {
     })
   })
 
+  it('records an agent external-publish receipt before git push side effects', async () => {
+    const workspace = resolve('/tmp/taskwraith-workspace-tools')
+    const events: string[] = []
+    const deps = makeDeps(async (command) => {
+      const argv = command as string[]
+      events.push(`command:${argv[1]}`)
+      if (argv[1] === 'branch') return commandResult('feature/mcp-publish\n')
+      if (argv[1] === 'rev-parse') return commandResult('', 1)
+      if (argv[1] === 'push') return commandResult('branch pushed\n')
+      if (argv[1] === 'status') return commandResult('## feature/mcp-publish...origin/feature/mcp-publish\n')
+      return commandResult('')
+    })
+    deps.externalPublishReceipts = {
+      begin: async (input) => {
+        events.push(`begin:${input.origin}:${input.action}:${input.remote}`)
+        return {
+          schemaVersion: 1,
+          id: 'agent-push-receipt',
+          requestedAt: '2026-07-03T00:00:00.000Z',
+          ...input
+        } as any
+      },
+      complete: async (input) => {
+        events.push(`complete:${input.outcome}`)
+        return null
+      }
+    }
+
+    const result = await executeGitPush(deps, {}, workspace)
+
+    expect(result.ok).toBe(true)
+    expect(events).toEqual([
+      'command:branch',
+      'command:rev-parse',
+      'begin:agent:gitPush:origin',
+      'command:push',
+      'complete:completed',
+      'command:status',
+      'command:branch'
+    ])
+  })
+
+  it('blocks agent git push when external-publish receipt denies it', async () => {
+    const workspace = resolve('/tmp/taskwraith-workspace-tools')
+    const commands: string[][] = []
+    const deps = makeDeps(async (command) => {
+      const argv = command as string[]
+      commands.push(argv)
+      if (argv[1] === 'branch') return commandResult('feature/mcp-publish\n')
+      if (argv[1] === 'rev-parse') return commandResult('', 1)
+      return commandResult('')
+    })
+    deps.externalPublishReceipts = {
+      begin: async (input) =>
+        ({
+          schemaVersion: 1,
+          id: 'agent-push-denied',
+          requestedAt: '2026-07-03T00:00:00.000Z',
+          ...input,
+          decision: 'denied',
+          reason: 'External publishing is blocked by policy.'
+        }) as any,
+      complete: async () => null
+    }
+
+    const result = await executeGitPush(deps, {}, workspace)
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: 'External publishing is blocked by policy.',
+      exitCode: null
+    })
+    expect(commands.map((command) => command[1])).toEqual(['branch', 'rev-parse'])
+  })
+
   it('runs gh pr create with redacted title/body command metadata', async () => {
     const workspace = resolve('/tmp/taskwraith-workspace-tools')
     const commands: string[][] = []
@@ -1222,5 +1297,43 @@ describe('git history workspace tools', () => {
       ],
       url: 'https://github.com/example/repo/pull/42'
     })
+  })
+
+  it('records an agent external-publish receipt before gh pr create side effects', async () => {
+    const workspace = resolve('/tmp/taskwraith-workspace-tools')
+    const events: string[] = []
+    const deps = makeDeps(async (command) => {
+      const argv = command as string[]
+      events.push(`command:${argv[0]}:${argv[1]}`)
+      return commandResult('https://github.com/example/repo/pull/42\n')
+    })
+    deps.externalPublishReceipts = {
+      begin: async (input) => {
+        events.push(`begin:${input.origin}:${input.action}:${input.title}`)
+        return {
+          schemaVersion: 1,
+          id: 'agent-pr-receipt',
+          requestedAt: '2026-07-03T00:00:00.000Z',
+          ...input
+        } as any
+      },
+      complete: async (input) => {
+        events.push(`complete:${input.outcome}:${input.prUrl}`)
+        return null
+      }
+    }
+
+    const result = await executeGitCreatePr(
+      deps,
+      { title: 'Ship MCP publishing', draft: true },
+      workspace
+    )
+
+    expect(result.ok).toBe(true)
+    expect(events).toEqual([
+      'begin:agent:githubCreatePr:Ship MCP publishing',
+      'command:gh:pr',
+      'complete:completed:https://github.com/example/repo/pull/42'
+    ])
   })
 })

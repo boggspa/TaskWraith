@@ -29,6 +29,11 @@ import {
 } from '../services/TranscriptMediaAssetStore'
 import type { McpToolExecutionResult } from './McpBridgeRuntime'
 import { releaseScriptBlockReason } from '../ReleaseCommandPolicy'
+import type {
+  ExternalPublishReceipt,
+  ExternalPublishReceiptInput,
+  ExternalPublishReceiptWriter
+} from '../ExternalPublishReceiptLedger'
 
 export interface HostCommandResult {
   stdout: string
@@ -116,12 +121,65 @@ export interface WorkspaceToolExecutorDependencies {
   host: WorkspaceToolHostDependencies
   store: WorkspaceToolStoreDependencies
   runs: WorkspaceToolRunDependencies
+  externalPublishReceipts?: Pick<ExternalPublishReceiptWriter, 'begin' | 'complete'>
   media?: {
     readTranscriptMediaAsset: (input: {
       sha256: string
       mimeType: string
       maxBytes?: number
     }) => TranscriptMediaAssetReadResult
+  }
+}
+
+type AgentExternalPublishReceiptInput = Omit<
+  ExternalPublishReceiptInput,
+  'origin' | 'decision' | 'reason'
+>
+
+type BeginAgentExternalPublishReceiptResult =
+  | { ok: true; receipt: ExternalPublishReceipt | null }
+  | { ok: false; error: string }
+
+async function beginAgentExternalPublishReceipt(
+  deps: WorkspaceToolExecutorDependencies,
+  input: AgentExternalPublishReceiptInput
+): Promise<BeginAgentExternalPublishReceiptResult> {
+  if (!deps.externalPublishReceipts) return { ok: true, receipt: null }
+  try {
+    const receipt = await deps.externalPublishReceipts.begin({
+      ...input,
+      origin: 'agent',
+      decision: 'allowed',
+      reason: 'Agent external publishing passed TaskWraith external-publish policy.'
+    })
+    if (receipt.decision === 'denied') {
+      return {
+        ok: false,
+        error: receipt.reason || 'External publishing is blocked by policy.'
+      }
+    }
+    return { ok: true, receipt }
+  } catch (err) {
+    return {
+      ok: false,
+      error: `External publishing receipt could not be recorded: ${
+        err instanceof Error ? err.message : String(err)
+      }`
+    }
+  }
+}
+
+async function completeAgentExternalPublishReceipt(
+  deps: WorkspaceToolExecutorDependencies,
+  receipt: ExternalPublishReceipt | null,
+  input: Omit<Parameters<ExternalPublishReceiptWriter['complete']>[0], 'id'>
+): Promise<void> {
+  if (!deps.externalPublishReceipts || !receipt?.id) return
+  try {
+    await deps.externalPublishReceipts.complete({ id: receipt.id, ...input })
+  } catch {
+    // Best effort after the side effect has already completed. The initial
+    // begin() receipt is fail-closed above.
   }
 }
 
@@ -1142,7 +1200,39 @@ export async function executeGitPush(
   const command = setUpstream
     ? ['git', 'push', '-u', remote || 'origin', safeBranch]
     : ['git', 'push']
+  const receiptResult = await beginAgentExternalPublishReceipt(deps, {
+    action: 'gitPush',
+    workspacePath: cwd,
+    repoPath: cwd,
+    remote: remote || (setUpstream ? 'origin' : undefined),
+    setUpstream,
+    metadata: {
+      branch: safeBranch,
+      upstream: hasUpstream ? upstreamResult.stdout.trim() : ''
+    }
+  })
+  if (!receiptResult.ok) {
+    return {
+      ok: false,
+      command,
+      branch: safeBranch,
+      upstream: hasUpstream ? upstreamResult.stdout.trim() : undefined,
+      setUpstream,
+      exitCode: null,
+      timedOut: false,
+      durationMs: 0,
+      stdout: '',
+      stderr: '',
+      error: receiptResult.error
+    }
+  }
   const result = await runCommandArgs(deps, command, cwd, 120_000)
+  await completeAgentExternalPublishReceipt(deps, receiptResult.receipt, {
+    outcome: result.exitCode === 0 && result.timedOut !== true && !result.error ? 'completed' : 'failed',
+    ...(result.error || result.exitCode !== 0 || result.timedOut === true
+      ? { error: result.error || result.stderr || `git push exited ${result.exitCode}` }
+      : {})
+  })
   const status = await executeGitStatus(deps, cwd)
   return {
     ok: result.exitCode === 0 && result.timedOut !== true && !result.error,
@@ -1177,11 +1267,44 @@ export async function executeGitCreatePr(
   if (base) command.push('--base', sanitizeGitRef(base))
   if (head) command.push('--head', sanitizeGitRef(head))
 
+  const redactedCommand = redactGitCreatePrCommand(command)
+  const receiptResult = await beginAgentExternalPublishReceipt(deps, {
+    action: 'githubCreatePr',
+    workspacePath: cwd,
+    repoPath: cwd,
+    title,
+    draft: args.draft === true,
+    metadata: {
+      base: base ? sanitizeGitRef(base) : '',
+      head: head ? sanitizeGitRef(head) : '',
+      fill: !title && !body && args.fill !== false
+    }
+  })
+  if (!receiptResult.ok) {
+    return {
+      ok: false,
+      command: redactedCommand,
+      url: undefined,
+      exitCode: null,
+      timedOut: false,
+      durationMs: 0,
+      stdout: '',
+      stderr: '',
+      error: receiptResult.error
+    }
+  }
   const result = await runCommandArgs(deps, command, cwd, 120_000)
   const url = result.stdout.match(/https?:\/\/[^\s]+/)?.[0]
+  await completeAgentExternalPublishReceipt(deps, receiptResult.receipt, {
+    outcome: result.exitCode === 0 && result.timedOut !== true && !result.error ? 'completed' : 'failed',
+    ...(url ? { prUrl: url } : {}),
+    ...(result.error || result.exitCode !== 0 || result.timedOut === true
+      ? { error: result.error || result.stderr || `gh pr create exited ${result.exitCode}` }
+      : {})
+  })
   return {
     ok: result.exitCode === 0 && result.timedOut !== true && !result.error,
-    command: redactGitCreatePrCommand(command),
+    command: redactedCommand,
     url,
     exitCode: result.exitCode,
     timedOut: result.timedOut,

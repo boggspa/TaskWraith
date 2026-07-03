@@ -918,6 +918,14 @@ import { registerMediaAssetHandlers } from './ipc/mediaAssetHandlers'
 import { registerSpellcheckHandlers } from './ipc/spellcheckHandlers'
 import { registerExternalPathGrantHandlers } from './ipc/externalPathGrantHandlers'
 import { registerGitHandlers } from './ipc/gitHandlers'
+import {
+  createDefaultExternalPublishReceiptLedger,
+  type ExternalPublishOrigin,
+  type ExternalPublishReceipt,
+  type ExternalPublishReceiptCompletion,
+  type ExternalPublishReceiptInput,
+  type ExternalPublishReceiptWriter
+} from './ExternalPublishReceiptLedger'
 import { registerClaudeAuthHandlers } from './ipc/claudeAuthHandlers'
 import { registerKimiAuthHandlers } from './ipc/kimiAuthHandlers'
 import { registerGeminiAuthHandlers } from './ipc/geminiAuthHandlers'
@@ -2860,6 +2868,109 @@ registerCanvasEmbedIpc(ipcMain, { controller: canvasService, embed: canvasEmbedC
 // Live remote-workspace allowlist (set at main-init below). Recall from a
 // remote/phone-issued run is scoped to the workspaces this device may monitor.
 let recallBridgeAllowlist: RemoteWorkspaceAllowlist | null = null
+let externalPublishReceiptLedger:
+  | ExternalPublishReceiptWriter
+  | null
+  | undefined
+
+function getExternalPublishReceiptLedger(): ExternalPublishReceiptWriter | null {
+  if (externalPublishReceiptLedger !== undefined) return externalPublishReceiptLedger
+  externalPublishReceiptLedger = createDefaultExternalPublishReceiptLedger({
+    log: (line) => console.warn(line)
+  })
+  return externalPublishReceiptLedger
+}
+
+function externalPublishPolicyDecision(origin: ExternalPublishOrigin): {
+  decision: 'allowed' | 'denied'
+  reason: string
+} {
+  const policy = AppStore.getSettings().agenticServices?.externalPublish ?? 'ask'
+  if (policy === 'deny') {
+    return {
+      decision: 'denied',
+      reason: 'External publishing is blocked by policy.'
+    }
+  }
+  if (origin === 'agent') {
+    return {
+      decision: 'allowed',
+      reason: 'Agent external publishing passed TaskWraith external-publish policy.'
+    }
+  }
+  if (origin === 'ios-bridge') {
+    return {
+      decision: 'allowed',
+      reason: 'External publishing was initiated from a paired TaskWraith device.'
+    }
+  }
+  return {
+    decision: 'allowed',
+    reason: 'External publishing was initiated by a human-controlled TaskWraith surface.'
+  }
+}
+
+async function beginExternalPublishReceipt(
+  input: Omit<ExternalPublishReceiptInput, 'decision' | 'reason'>
+): Promise<ExternalPublishReceipt | null> {
+  const ledger = getExternalPublishReceiptLedger()
+  const decision = externalPublishPolicyDecision(input.origin)
+  if (!ledger) {
+    return {
+      schemaVersion: 1,
+      id: '',
+      ...input,
+      decision: 'denied',
+      reason:
+        decision.decision === 'denied'
+          ? decision.reason
+          : 'External publishing receipt ledger is unavailable.',
+      requestedAt: new Date().toISOString()
+    }
+  }
+  try {
+    return ledger.begin({
+      ...input,
+      decision: decision.decision,
+      reason: decision.reason
+    })
+  } catch (err) {
+    return {
+      schemaVersion: 1,
+      id: '',
+      ...input,
+      decision: 'denied',
+      reason: `External publishing receipt could not be recorded: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+      requestedAt: new Date().toISOString()
+    }
+  }
+}
+
+async function completeExternalPublishReceipt(
+  receipt: ExternalPublishReceipt | null,
+  input: Omit<ExternalPublishReceiptCompletion, 'id'>
+): Promise<void> {
+  if (!receipt?.id) return
+  try {
+    await getExternalPublishReceiptLedger()?.complete({ id: receipt.id, ...input })
+  } catch (err) {
+    console.warn(
+      `[ExternalPublishReceiptLedger] completion failed: ${err instanceof Error ? err.message : String(err)}`
+    )
+  }
+}
+
+function externalPublishReceiptsForOrigin(
+  origin: ExternalPublishOrigin
+): Pick<ExternalPublishReceiptWriter, 'begin' | 'complete'> {
+  return {
+    begin: async (input) => beginExternalPublishReceipt({ ...input, origin }),
+    complete: async (input) => getExternalPublishReceiptLedger()?.complete(input) ?? null
+  }
+}
+
 const recallToolExecutors = createRecallToolExecutors({
   listRunQueueJobs: (filter) => AppStore.getRunQueueJobs(filter),
   getWorkspaces: () => AppStore.getWorkspaces(),
@@ -4556,6 +4667,7 @@ const workspaceToolExecutors = createWorkspaceToolExecutors({
     saveAndBroadcastChat,
     getSubThreadResumeSessionId
   },
+  externalPublishReceipts: externalPublishReceiptsForOrigin('agent'),
   media: {
     readTranscriptMediaAsset: (input) => getTranscriptMediaAssetStore().read(input)
   }
@@ -23471,9 +23583,23 @@ if (isGeminiMcpBridgeProcess) {
           if (!path) {
             return { ok: false, reason: `Workspace id "${action.workspaceId}" is not registered` }
           }
+          const receipt = await beginExternalPublishReceipt({
+            origin: 'ios-bridge',
+            action: 'gitPush',
+            workspaceId: action.workspaceId,
+            workspacePath: path,
+            repoPath: path,
+            setUpstream: action.setUpstream,
+            metadata: { bridgeActionKind: 'gitPush' }
+          })
+          if (receipt?.decision === 'denied') return { ok: false, reason: receipt.reason }
           const result = await bridgeGitService.push({
             repoPath: path,
             setUpstream: action.setUpstream
+          })
+          await completeExternalPublishReceipt(receipt, {
+            outcome: result.ok ? 'completed' : 'failed',
+            ...(result.ok ? { commitSha: result.data.commit } : { error: result.error })
           })
           if (!result.ok) return { ok: false, reason: result.error }
           const git = cacheRemoteGitSnapshot(action.workspaceId, path, result.data)
@@ -23509,11 +23635,26 @@ if (isGeminiMcpBridgeProcess) {
           if (!path) {
             return { ok: false, reason: `Workspace id "${action.workspaceId}" is not registered` }
           }
+          const receipt = await beginExternalPublishReceipt({
+            origin: 'ios-bridge',
+            action: 'githubCreatePr',
+            workspaceId: action.workspaceId,
+            workspacePath: path,
+            repoPath: path,
+            title: action.title,
+            draft: action.draft,
+            metadata: { bridgeActionKind: 'githubCreatePr' }
+          })
+          if (receipt?.decision === 'denied') return { ok: false, reason: receipt.reason }
           const result = await bridgeGitService.createPullRequest({
             repoPath: path,
             title: action.title,
             body: action.body,
             draft: action.draft
+          })
+          await completeExternalPublishReceipt(receipt, {
+            outcome: result.ok ? 'completed' : 'failed',
+            ...(result.ok ? { prUrl: result.data.url } : { error: result.error })
           })
           if (!result.ok) return { ok: false, reason: result.error }
           return { ok: true, pr: compactGitPrForBridge(result.data) }
@@ -28180,6 +28321,7 @@ if (isGeminiMcpBridgeProcess) {
       pathSeparator: sep,
       gitService,
       gitSnapshotPublisher,
+      externalPublishReceipts: externalPublishReceiptsForOrigin('desktop-ui'),
       openExternal: (url) => shell.openExternal(url)
     })
 

@@ -16,6 +16,12 @@ import type {
   GitSnapshotInvalidationReason,
   GitSnapshotPublisher
 } from '../services/GitSnapshotPublisher'
+import type {
+  ExternalPublishReceipt,
+  ExternalPublishReceiptCompletion,
+  ExternalPublishReceiptInput,
+  ExternalPublishReceiptWriter
+} from '../ExternalPublishReceiptLedger'
 
 type GitIpcPayload = { workspacePath?: string; repoPath?: string }
 type GitSnapshotSubscribePayload = GitIpcPayload & { subscriptionId?: string }
@@ -54,8 +60,18 @@ export interface GitHandlersDeps {
     GitSnapshotPublisher,
     'subscribe' | 'unsubscribe' | 'unsubscribeWebContents' | 'invalidatePath' | 'publishSnapshot'
   >
+  externalPublishReceipts?: Pick<ExternalPublishReceiptWriter, 'begin' | 'complete'>
   openExternal: (url: string) => Promise<unknown>
 }
+
+type ExternalPublishReceiptStart = Omit<
+  ExternalPublishReceiptInput,
+  'origin' | 'decision' | 'reason'
+>
+
+type ExternalPublishReceiptStartResult =
+  | { ok: true; receiptId?: string }
+  | { ok: false; error: string; receiptId?: string }
 
 function allSignedExternalPathGrants(deps: GitHandlersDeps): ExternalPathGrant[] {
   return deps.normalizeExternalPathGrants(
@@ -119,6 +135,49 @@ function gitSnapshotInvalidationReason(value: unknown): GitSnapshotInvalidationR
     GIT_SNAPSHOT_INVALIDATION_REASONS.has(value as GitSnapshotInvalidationReason)
     ? (value as GitSnapshotInvalidationReason)
     : 'manual'
+}
+
+async function beginDesktopExternalPublishReceipt(
+  deps: GitHandlersDeps,
+  input: ExternalPublishReceiptStart
+): Promise<ExternalPublishReceiptStartResult> {
+  if (!deps.externalPublishReceipts) return { ok: true }
+  try {
+    const receipt = await deps.externalPublishReceipts.begin({
+      ...input,
+      origin: 'desktop-ui',
+      decision: 'allowed',
+      reason: 'Desktop user initiated external publishing.'
+    })
+    if (receipt.decision === 'denied') {
+      return {
+        ok: false,
+        error: receipt.reason || 'External publishing is blocked by policy.',
+        receiptId: receipt.id
+      }
+    }
+    return { ok: true, receiptId: receipt.id }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    return {
+      ok: false,
+      error: `External publishing receipt could not be recorded: ${message}`
+    }
+  }
+}
+
+async function completeExternalPublishReceipt(
+  deps: GitHandlersDeps,
+  receiptId: string | undefined,
+  input: Omit<ExternalPublishReceiptCompletion, 'id'>
+): Promise<void> {
+  if (!receiptId || !deps.externalPublishReceipts) return
+  try {
+    await deps.externalPublishReceipts.complete({ id: receiptId, ...input })
+  } catch {
+    // The publish operation already reached Git/GitHub; completion metadata is
+    // best-effort so a disk-write failure here does not hide the real result.
+  }
 }
 
 export function registerGitHandlers(deps: GitHandlersDeps): void {
@@ -256,10 +315,22 @@ export function registerGitHandlers(deps: GitHandlersDeps): void {
     ): Promise<GitResult<GitRepositorySnapshot> | { ok: false; error: string }> => {
       const repo = gitPayloadPath(deps, payload, 'registered-workspace')
       if (!repo.ok) return repo
+      const receipt = await beginDesktopExternalPublishReceipt(deps, {
+        action: 'gitPush',
+        workspacePath: repo.path,
+        repoPath: repo.path,
+        remote: payload?.remote,
+        setUpstream: payload?.setUpstream
+      })
+      if (!receipt.ok) return { ok: false, error: receipt.error }
       const result = await deps.gitService.push({
         repoPath: repo.path,
         setUpstream: payload?.setUpstream,
         remote: payload?.remote
+      })
+      await completeExternalPublishReceipt(deps, receipt.receiptId, {
+        outcome: result.ok ? 'completed' : 'failed',
+        ...(result.ok ? { commitSha: result.data.commit } : { error: result.error })
       })
       if (result.ok) deps.gitSnapshotPublisher?.publishSnapshot(result.data, 'git-action')
       return result
@@ -294,11 +365,23 @@ export function registerGitHandlers(deps: GitHandlersDeps): void {
     ): Promise<GitResult<GitPrSummary> | ({ ok: true } & GitPrSummary) | { ok: false; error: string }> => {
       const repo = gitPayloadPath(deps, payload, 'registered-workspace')
       if (!repo.ok) return repo
+      const receipt = await beginDesktopExternalPublishReceipt(deps, {
+        action: 'githubCreatePr',
+        workspacePath: repo.path,
+        repoPath: repo.path,
+        title: payload?.title,
+        draft: payload?.draft
+      })
+      if (!receipt.ok) return { ok: false, error: receipt.error }
       const result = await deps.gitService.createPullRequest({
         repoPath: repo.path,
         title: payload?.title,
         body: payload?.body,
         draft: payload?.draft
+      })
+      await completeExternalPublishReceipt(deps, receipt.receiptId, {
+        outcome: result.ok ? 'completed' : 'failed',
+        ...(result.ok ? { prUrl: result.data.url } : { error: result.error })
       })
       if (result.ok) {
         const url = result.data.url
