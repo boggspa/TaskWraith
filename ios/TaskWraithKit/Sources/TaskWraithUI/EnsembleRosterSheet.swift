@@ -69,7 +69,8 @@ public struct EnsembleRosterSheet: View {
                     fastModeEnabled: entry.fastModeEnabled ?? false,
                     thinkingEnabled: entry.thinkingEnabled ?? false,
                     stageRole: entry.stageRole,
-                    isBossman: entry.isBossman ?? false
+                    isBossman: entry.isBossman ?? false,
+                    isSecondInCommand: entry.isSecondInCommand ?? false
                 )
             }
     }
@@ -105,10 +106,18 @@ public struct EnsembleRosterSheet: View {
                     catalogs: catalogs,
                     canRemove: draft.count > 1,
                     onApply: { updated in
+                        var updated = updated
+                        if updated.isBossman { updated.isSecondInCommand = false }
+                        if updated.isSecondInCommand { updated.isBossman = false }
                         if let index = draft.firstIndex(where: { $0.id == updated.id }) {
                             if updated.isBossman {
                                 for i in draft.indices {
                                     draft[i].isBossman = draft[i].id == updated.id
+                                }
+                            }
+                            if updated.isSecondInCommand {
+                                for i in draft.indices {
+                                    draft[i].isSecondInCommand = draft[i].id == updated.id
                                 }
                             }
                             draft[index] = updated
@@ -250,6 +259,12 @@ public struct EnsembleRosterSheet: View {
                     .foregroundStyle(.yellow)
                     .accessibilityHidden(true)
             }
+            if entry.isSecondInCommand {
+                Image(systemName: "shield.fill")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(TWTheme.chroma3)
+                    .accessibilityHidden(true)
+            }
             if !entry.enabled {
                 Text("off")
                     .font(.caption2.weight(.semibold))
@@ -279,6 +294,7 @@ public struct EnsembleRosterSheet: View {
         let title = entry.role.isEmpty ? TWTheme.providerLabel(entry.provider) : entry.role
         var parts = [title, TWTheme.providerLabel(entry.provider)]
         if entry.isBossman { parts.append("boss") }
+        if entry.isSecondInCommand { parts.append("captain") }
         return parts.joined(separator: ", ")
     }
 
@@ -416,7 +432,8 @@ public struct EnsembleRosterSheet: View {
                     fastModeEnabled: participant.fastModeEnabled ?? false,
                     thinkingEnabled: participant.thinkingEnabled ?? false,
                     stageRole: participant.stageRole,
-                    isBossman: participant.isBossman ?? false
+                    isBossman: participant.isBossman ?? false,
+                    isSecondInCommand: participant.isSecondInCommand ?? false
                 )
             }
         guard !entries.isEmpty else { return }
@@ -429,16 +446,24 @@ public struct EnsembleRosterSheet: View {
         // an optimistic update that would only error + leave the UI diverged from
         // the (unchanged) Mac state. A later valid edit re-commits.
         guard !draft.isEmpty, draft.contains(where: { $0.enabled }) else { return }
-        normalizeBossmanMarker()
+        normalizeAuthorityMarkers()
         pendingOrderIds = draft.map(\.id)
         model.updateEnsembleRoster(
             workspaceId: workspaceId, threadId: threadId, entries: draft)
     }
 
-    private func normalizeBossmanMarker() {
-        guard let first = draft.firstIndex(where: { $0.isBossman }) else { return }
-        for index in draft.indices where index != first {
-            draft[index].isBossman = false
+    private func normalizeAuthorityMarkers() {
+        if let bossIndex = draft.firstIndex(where: { $0.isBossman }) {
+            for index in draft.indices where index != bossIndex {
+                draft[index].isBossman = false
+            }
+            draft[bossIndex].isSecondInCommand = false
+        }
+        if let captainIndex = draft.firstIndex(where: { $0.isSecondInCommand }) {
+            for index in draft.indices where index != captainIndex {
+                draft[index].isSecondInCommand = false
+            }
+            draft[captainIndex].isBossman = false
         }
     }
 

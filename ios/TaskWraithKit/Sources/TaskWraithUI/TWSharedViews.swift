@@ -4278,7 +4278,8 @@ public struct EditableRosterStrip: View {
                     fastModeEnabled: entry.fastModeEnabled ?? false,
                     thinkingEnabled: entry.thinkingEnabled ?? false,
                     stageRole: entry.stageRole,
-                    isBossman: entry.isBossman ?? false
+                    isBossman: entry.isBossman ?? false,
+                    isSecondInCommand: entry.isSecondInCommand ?? false
                 )
             }
     }
@@ -4412,6 +4413,12 @@ public struct EditableRosterStrip: View {
                         .foregroundStyle(.yellow)
                         .accessibilityHidden(true)
                 }
+                if entry.isSecondInCommand {
+                    Image(systemName: "shield.fill")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(TWTheme.chroma3)
+                        .accessibilityHidden(true)
+                }
                 if status == "done" {
                     Image(systemName: "checkmark")
                         .font(.system(size: 8, weight: .bold))
@@ -4441,6 +4448,7 @@ public struct EditableRosterStrip: View {
             entry.role.isEmpty ? TWTheme.providerLabel(entry.provider) : entry.role
         var parts = [title]
         if entry.isBossman { parts.append("boss") }
+        if entry.isSecondInCommand { parts.append("captain") }
         if !entry.enabled || TWTheme.isRetiredProvider(entry.provider) {
             parts.append("disabled")
         }
@@ -4506,16 +4514,24 @@ public struct EditableRosterStrip: View {
 
     private func commit() {
         guard !draft.isEmpty else { return }
-        normalizeBossmanMarker()
+        normalizeAuthorityMarkers()
         pendingOrderIds = draft.map(\.id)
         model.updateEnsembleRoster(
             workspaceId: workspaceId, threadId: threadId, entries: draft)
     }
 
-    private func normalizeBossmanMarker() {
-        guard let first = draft.firstIndex(where: { $0.isBossman }) else { return }
-        for index in draft.indices where index != first {
-            draft[index].isBossman = false
+    private func normalizeAuthorityMarkers() {
+        if let bossIndex = draft.firstIndex(where: { $0.isBossman }) {
+            for index in draft.indices where index != bossIndex {
+                draft[index].isBossman = false
+            }
+            draft[bossIndex].isSecondInCommand = false
+        }
+        if let captainIndex = draft.firstIndex(where: { $0.isSecondInCommand }) {
+            for index in draft.indices where index != captainIndex {
+                draft[index].isSecondInCommand = false
+            }
+            draft[captainIndex].isBossman = false
         }
     }
 }
@@ -4587,6 +4603,24 @@ struct RosterChipEditor: View {
             set: { entry.stageRole = $0.isEmpty ? nil : $0 }
         )
     }
+    private var bossmanBinding: Binding<Bool> {
+        Binding(
+            get: { entry.isBossman },
+            set: { enabled in
+                entry.isBossman = enabled
+                if enabled { entry.isSecondInCommand = false }
+            }
+        )
+    }
+    private var secondInCommandBinding: Binding<Bool> {
+        Binding(
+            get: { entry.isSecondInCommand },
+            set: { enabled in
+                entry.isSecondInCommand = enabled
+                if enabled { entry.isBossman = false }
+            }
+        )
+    }
 
     var body: some View {
         NavigationStack {
@@ -4594,10 +4628,16 @@ struct RosterChipEditor: View {
                 Section {
                     Toggle("Enabled in ensemble rounds", isOn: $entry.enabled)
                         .tint(TWTheme.providerAccent(entry.provider))
-                    Toggle(isOn: $entry.isBossman) {
+                    Toggle(isOn: bossmanBinding) {
                         Label("Boss", systemImage: entry.isBossman ? "crown.fill" : "crown")
                     }
                     .tint(.yellow)
+                    Toggle(isOn: secondInCommandBinding) {
+                        Label(
+                            "Captain",
+                            systemImage: entry.isSecondInCommand ? "shield.fill" : "shield")
+                    }
+                    .tint(TWTheme.chroma3)
                 }
                 Section("Role") {
                     TextField("Role name", text: $entry.role)
