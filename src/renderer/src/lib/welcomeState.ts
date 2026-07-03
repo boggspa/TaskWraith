@@ -92,3 +92,38 @@ export function shouldRenderWelcome(input: WelcomeStateInput): boolean {
   if (hasConversationContent(input.messages)) return false
   return true
 }
+
+/**
+ * A chat record (summary or full) plus the fields needed to decide whether it
+ * is a *pristine* chat that can be reused on launch / workspace-open. Deliberately
+ * mirrors `WelcomeChatRecordLike` and adds `messages` so a full record can be
+ * inspected directly.
+ */
+export interface ReusableChatLike {
+  parentChatId?: string
+  summaryOnly?: boolean
+  messageCount?: number
+  runCount?: number
+  messages?: ReadonlyArray<WelcomeMessageLike>
+}
+
+/**
+ * True when selecting `chat` would land on the welcome / new-chat screen — i.e.
+ * it is a top-level, genuinely untouched chat with no messages AND no runs.
+ *
+ * This is the record-only counterpart of `shouldRenderWelcome` (same
+ * disqualifiers, minus the runtime `isCurrentChatRunning` gate) and MUST stay in
+ * lockstep with it. Reuse call sites use this instead of a bare
+ * `messageCount === 0` test: a summary chat with `messageCount: 0` but
+ * `runCount > 0` (a run that started but never persisted a user/assistant/tool
+ * message — an aborted, failed, or empty-result run) is NOT reusable, because
+ * `shouldRenderWelcome` suppresses the hero for it. Selecting such a chat on
+ * launch leaves a blank, non-welcome transcript.
+ */
+export function isReusableWelcomeChat(chat: ReusableChatLike): boolean {
+  if (chat.parentChatId) return false
+  if (chat.summaryOnly) {
+    return (chat.messageCount ?? 0) === 0 && (chat.runCount ?? 0) === 0
+  }
+  return !hasConversationContent(chat.messages ?? [])
+}

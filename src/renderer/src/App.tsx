@@ -507,7 +507,7 @@ import {
 } from './lib/composerScrollClearance'
 import { buildRunDiffByPath } from './lib/RunWorkspaceDiff'
 import { shouldRunUsageRefresh } from './lib/usageRefresh'
-import { shouldRenderWelcome } from './lib/welcomeState'
+import { shouldRenderWelcome, isReusableWelcomeChat } from './lib/welcomeState'
 import {
   isChatSummaryRecord,
   mergeChatRecord,
@@ -4769,12 +4769,14 @@ function App(): React.JSX.Element {
     // booted into a stale, un-hydrated transcript). The app still does not
     // remember which thread was open on close; workspaces + ensembles stay one
     // click away in the sidebar and the + New picker.
+    // isReusableWelcomeChat mirrors shouldRenderWelcome's disqualifiers (no
+    // messages AND no runs AND not a sub-thread). A bare messageCount===0 test is
+    // NOT enough: a chat with runCount>0 but zero messages (an aborted/empty run)
+    // would be reused and then render a BLANK transcript, because the welcome hero
+    // is suppressed for any chat that has had a run.
     const reusableEmptyGeneralChat = allChats
       .filter(
-        (chat) =>
-          isGlobalChat(chat) &&
-          chat.chatKind !== 'ensemble' &&
-          (isChatSummaryRecord(chat) ? chat.messageCount === 0 : chat.messages.length === 0)
+        (chat) => isGlobalChat(chat) && chat.chatKind !== 'ensemble' && isReusableWelcomeChat(chat)
       )
       .sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0))[0]
     if (reusableEmptyGeneralChat) {

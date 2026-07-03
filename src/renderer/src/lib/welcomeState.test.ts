@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest'
 
 import {
   hasConversationContent,
+  isReusableWelcomeChat,
   shouldRenderWelcome,
+  type ReusableChatLike,
   type WelcomeChatLike,
   type WelcomeMessageLike
 } from './welcomeState'
@@ -153,5 +155,60 @@ describe('shouldRenderWelcome', () => {
         isCurrentChatRunning: true
       })
     ).toBe(false)
+  })
+})
+
+describe('isReusableWelcomeChat', () => {
+  it('reuses a pristine summary chat (no messages, no runs)', () => {
+    const summary: ReusableChatLike = { summaryOnly: true, messageCount: 0, runCount: 0 }
+    expect(isReusableWelcomeChat(summary)).toBe(true)
+  })
+
+  it('does NOT reuse a summary chat that has persisted messages', () => {
+    const summary: ReusableChatLike = { summaryOnly: true, messageCount: 3, runCount: 1 }
+    expect(isReusableWelcomeChat(summary)).toBe(false)
+  })
+
+  it('does NOT reuse a summary chat with runCount>0 but zero messages', () => {
+    // The regression: a chat whose run started but never persisted a message
+    // (aborted / failed / empty-result run) has messageCount 0 but runCount>0.
+    // shouldRenderWelcome suppresses the hero for it, so reusing it on launch
+    // would land a blank transcript. It must be excluded from reuse.
+    const ranButEmpty: ReusableChatLike = { summaryOnly: true, messageCount: 0, runCount: 2 }
+    expect(isReusableWelcomeChat(ranButEmpty)).toBe(false)
+    // ...and shouldRenderWelcome agrees — the two must stay in lockstep.
+    expect(
+      shouldRenderWelcome({
+        currentChat: { appChatId: 'ran-but-empty', summaryOnly: true, messageCount: 0, runCount: 2 },
+        messages: [],
+        isCurrentChatRunning: false
+      })
+    ).toBe(false)
+  })
+
+  it('does NOT reuse a sub-thread (parentChatId set) even when empty', () => {
+    const child: ReusableChatLike = {
+      parentChatId: 'parent-1',
+      summaryOnly: true,
+      messageCount: 0,
+      runCount: 0
+    }
+    expect(isReusableWelcomeChat(child)).toBe(false)
+  })
+
+  it('treats missing runCount/messageCount on a summary chat as zero (reusable)', () => {
+    expect(isReusableWelcomeChat({ summaryOnly: true })).toBe(true)
+  })
+
+  it('reuses a full record with no messages', () => {
+    expect(isReusableWelcomeChat({ messages: [] })).toBe(true)
+  })
+
+  it('reuses a full record with only a system message', () => {
+    expect(isReusableWelcomeChat({ messages: [{ role: 'system' }] })).toBe(true)
+  })
+
+  it('does NOT reuse a full record with conversation content', () => {
+    expect(isReusableWelcomeChat({ messages: [{ role: 'assistant' }] })).toBe(false)
   })
 })
