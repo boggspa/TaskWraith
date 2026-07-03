@@ -4120,14 +4120,37 @@ public final class RemoteSessionModel: ObservableObject {
     }
 
     /// Provider that owns a thread (for a composerPrompt continuation): the task
-    /// card is authoritative; fall back to the loaded snapshot, then to claude so
-    /// a Codex/Cursor plan re-dispatches on its OWN provider, never silently dead.
-    private func providerForThread(_ threadId: String) -> String {
-        if let p = taskCards.first(where: { $0.id == threadId })?.provider, !p.isEmpty {
+    /// card is authoritative; fall back to the loaded snapshot. If neither source
+    /// has a provider, do not invent one — a proposed-plan approval must not run
+    /// against the wrong provider.
+    static func proposedPlanProvider(
+        threadId: String,
+        taskCards: [RemoteTaskCard],
+        threadSnapshots: [String: RemoteThreadSnapshot]
+    ) -> String? {
+        if let card = taskCards.first(where: { $0.id == threadId || $0.threadId == threadId }),
+            let p = card.provider?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !p.isEmpty
+        {
             return p
         }
-        if let p = threadSnapshots[threadId]?.provider, !p.isEmpty { return p }
-        return "claude"
+        if let p = threadSnapshots[threadId]?.provider?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !p.isEmpty
+        {
+            return p
+        }
+        return nil
+    }
+
+    private func providerForThread(_ threadId: String) -> String? {
+        Self.proposedPlanProvider(
+            threadId: threadId, taskCards: taskCards, threadSnapshots: threadSnapshots)
+    }
+
+    private func failMissingProposedPlanProvider(_ threadId: String) {
+        lastActionMessage =
+            "Can't act on this plan yet because the Mac has not projected the thread's provider. Refresh the thread, then try again."
+        scheduleThreadRefresh(threadId)
     }
 
     /// True once the user has acted on this plan locally (optimistic) — drives the
@@ -4160,7 +4183,10 @@ public final class RemoteSessionModel: ObservableObject {
         // also gates the button (the Set insert below is synchronous on
         // @MainActor, so the View binding usually flips first).
         guard !repliedProposedPlanIds.contains(messageId) else { return }
-        let provider = providerForThread(threadId)
+        guard let provider = providerForThread(threadId) else {
+            failMissingProposedPlanProvider(threadId)
+            return
+        }
         repliedProposedPlanIds.insert(messageId)
         send(
             BridgeAction.composerPrompt(
@@ -4186,7 +4212,10 @@ public final class RemoteSessionModel: ObservableObject {
         let trimmed = feedback.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, let ws = remoteScopeForThread(threadId) else { return }
         guard !repliedProposedPlanIds.contains(messageId) else { return }
-        let provider = providerForThread(threadId)
+        guard let provider = providerForThread(threadId) else {
+            failMissingProposedPlanProvider(threadId)
+            return
+        }
         repliedProposedPlanIds.insert(messageId)
         send(
             BridgeAction.composerPrompt(

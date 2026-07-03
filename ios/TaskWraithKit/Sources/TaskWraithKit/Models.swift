@@ -1015,9 +1015,8 @@ public struct MobileApprovalCard: Codable, Sendable {
     public let requestedAt: String?
     public let expiresAt: String?
     public let status: String?
-    /// Advertised actions (today always ["accept","decline"]; the reply
-    /// validator additionally accepts acceptForSession/acceptForWorkspace/
-    /// cancel — the executor implements all five).
+    /// Advertised decision actions from the Mac approval card. Render these
+    /// dynamically; action sets vary by approval kind and policy surface.
     public let actions: [String]?
     public let workspaceId: String?
     public let workspacePath: String?

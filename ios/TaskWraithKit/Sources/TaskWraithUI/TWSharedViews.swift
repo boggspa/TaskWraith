@@ -5742,26 +5742,11 @@ public struct AppSettingsSheet: View {
         }
     }
 
-    private static let providerOrder = ["codex", "claude", "kimi", "cursor", "grok", "ollama"]
-
     private var providerSnapshots: [SettingsProviderSnapshot] {
-        let usageByProvider = Dictionary(
-            uniqueKeysWithValues: (model.modelUsage?.providers ?? []).map { ($0.provider, $0) }
-        )
-        return Self.providerOrder.map { provider in
-            let modelCount = model.providerModels[provider]?.count ?? 0
-            return SettingsProviderSnapshot(
-                id: provider,
-                label: TWTheme.providerLabel(provider),
-                optional: ["kimi", "cursor", "grok", "ollama"].contains(provider),
-                statusKind: modelCount > 0 ? "notObservable" : "notLoaded",
-                statusText: modelCount > 0 ? "\(modelCount) model\(modelCount == 1 ? "" : "s") available" : "Not loaded yet",
-                detail: "Waiting for the paired Mac to report provider readiness.",
-                setupHint: "Provider setup and sign-in happen on the Mac.",
-                usageWindows: usageByProvider[provider]?.windows.map(SettingsUsageWindow.init(window:)) ?? []
-            )
-        }
-        .filter { !TWTheme.isRetiredProvider($0.id) }
+        SettingsProviderSnapshot.build(
+            providerCards: model.firstLaunchState?.providerCards ?? [],
+            modelUsageProviders: model.modelUsage?.providers ?? [],
+            providerModels: model.providerModels)
     }
 
     private var connectionStatusLabel: String {
@@ -5772,10 +5757,6 @@ public struct AppSettingsSheet: View {
         case .connected: return "Connected"
         case .error: return "Offline"
         }
-    }
-
-    private func providerSortIndex(_ provider: String) -> Int {
-        Self.providerOrder.firstIndex(of: provider) ?? 99
     }
 
     private func snapshotTimeText(_ value: String?) -> String? {
@@ -6261,7 +6242,9 @@ private struct SettingsSelectionButton: View {
     }
 }
 
-private struct SettingsProviderSnapshot: Identifiable {
+struct SettingsProviderSnapshot: Identifiable, Equatable {
+    static let providerOrder = ["codex", "claude", "kimi", "cursor", "grok", "ollama"]
+
     let id: String
     let label: String
     let optional: Bool
@@ -6291,15 +6274,66 @@ private struct SettingsProviderSnapshot: Identifiable {
         self.usageWindows = usageWindows
     }
 
+    static func build(
+        providerCards: [FirstLaunchProviderCard],
+        modelUsageProviders: [ModelUsageMessage.ProviderUsage],
+        providerModels: [String: [ModelOption]]
+    ) -> [SettingsProviderSnapshot] {
+        let usageByProvider = Dictionary(
+            modelUsageProviders.map { ($0.provider, $0) },
+            uniquingKeysWith: { first, _ in first })
+
+        let activeCards = providerCards.filter { !TWTheme.isRetiredProvider($0.id) }
+        if !activeCards.isEmpty {
+            return activeCards.map { card in
+                let cardWindows = card.usageWindows.map(SettingsUsageWindow.init(window:))
+                return SettingsProviderSnapshot(
+                    id: card.id,
+                    label: card.label.isEmpty ? TWTheme.providerLabel(card.id) : card.label,
+                    optional: card.optional,
+                    statusKind: card.statusKind,
+                    statusText: card.statusText,
+                    detail: card.detail,
+                    setupHint: card.setupHint,
+                    usageWindows: cardWindows.isEmpty
+                        ? usageByProvider[card.id]?.windows.map(SettingsUsageWindow.init(window:)) ?? []
+                        : cardWindows
+                )
+            }
+        }
+
+        return providerOrder.map { provider in
+            let modelCount = providerModels[provider]?.count ?? 0
+            return SettingsProviderSnapshot(
+                id: provider,
+                label: TWTheme.providerLabel(provider),
+                optional: ["kimi", "cursor", "grok", "ollama"].contains(provider),
+                statusKind: modelCount > 0 ? "notObservable" : "notLoaded",
+                statusText: modelCount > 0 ? "\(modelCount) model\(modelCount == 1 ? "" : "s") available" : "Not loaded yet",
+                detail: "Waiting for the paired Mac to report provider readiness.",
+                setupHint: "Provider setup and sign-in happen on the Mac.",
+                usageWindows: usageByProvider[provider]?.windows.map(SettingsUsageWindow.init(window:)) ?? []
+            )
+        }
+        .filter { !TWTheme.isRetiredProvider($0.id) }
+    }
+
 }
 
-private struct SettingsUsageWindow: Identifiable {
+struct SettingsUsageWindow: Identifiable, Equatable {
     let id: String
     let label: String
     let usedPercent: Int?
     let resetAt: String?
 
     init(window: ModelUsageMessage.Window) {
+        id = window.id
+        label = window.label
+        usedPercent = window.usedPercent
+        resetAt = window.resetAt
+    }
+
+    init(window: FirstLaunchUsageWindow) {
         id = window.id
         label = window.label
         usedPercent = window.usedPercent

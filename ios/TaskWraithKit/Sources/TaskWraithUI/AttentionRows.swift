@@ -13,6 +13,18 @@ struct ApprovalRow: View {
     @State private var showDetail = false
 
     private var accent: Color { TWTheme.providerAccent(card.provider) }
+    private var approvalActions: [ApprovalActionDescriptor] {
+        ApprovalActionDescriptor.visibleActions(from: card.actions)
+    }
+    private var primaryAction: ApprovalActionDescriptor? {
+        approvalActions.first { $0.prominent } ?? approvalActions.first
+    }
+    private var menuActions: [ApprovalActionDescriptor] {
+        approvalActions.filter { $0.id != primaryAction?.id && !$0.destructive }
+    }
+    private var destructiveActions: [ApprovalActionDescriptor] {
+        approvalActions.filter { $0.id != primaryAction?.id && $0.destructive }
+    }
 
     private var bodyLooksTechnical: Bool {
         let text = card.body ?? ""
@@ -88,54 +100,51 @@ struct ApprovalRow: View {
             .buttonStyle(.plain)
 
             HStack(spacing: 7) {
-                Button("Allow once") { model.approve(card, decision: "accept") }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
-                    .tint(accent)
-                Menu {
-                    Button {
-                        model.approve(card, decision: "acceptForSession")
-                    } label: {
-                        Label("Allow for session", systemImage: "clock.badge.checkmark")
-                    }
-                    Button {
-                        model.approve(card, decision: "acceptForWorkspace")
-                    } label: {
-                        Label("Allow in workspace", systemImage: "folder.badge.plus")
-                    }
-                } label: {
-                    HStack(spacing: 2) {
-                        Text("Allow…")
-                        Image(systemName: "chevron.down")
-                            .font(.system(size: 8, weight: .semibold))
-                    }
-                    .font(.caption.weight(.semibold))
-                    .padding(.horizontal, 9)
-                    .padding(.vertical, 5)
-                    .background(accent.opacity(0.14), in: Capsule())
-                    .foregroundStyle(accent)
+                if let primaryAction {
+                    primaryDecisionButton(primaryAction)
                 }
-                Button("Deny", role: .destructive) {
-                    model.approve(card, decision: "decline")
+                if !menuActions.isEmpty {
+                    Menu {
+                        ForEach(menuActions) { action in
+                            Button {
+                                model.approve(card, decision: action.id)
+                            } label: {
+                                Label(action.detailLabel, systemImage: action.icon)
+                            }
+                        }
+                    } label: {
+                        HStack(spacing: 2) {
+                            Text("More…")
+                            Image(systemName: "chevron.down")
+                                .font(.system(size: 8, weight: .semibold))
+                        }
+                        .font(.caption.weight(.semibold))
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 5)
+                        .background(accent.opacity(0.14), in: Capsule())
+                        .foregroundStyle(accent)
+                    }
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
                 Spacer(minLength: 0)
-                Menu {
-                    Button(role: .destructive) {
-                        model.approve(card, decision: "cancel")
+                if !destructiveActions.isEmpty {
+                    Menu {
+                        ForEach(destructiveActions) { action in
+                            Button(role: .destructive) {
+                                model.approve(card, decision: action.id)
+                            } label: {
+                                Label(action.detailLabel, systemImage: action.icon)
+                            }
+                        }
                     } label: {
-                        Label("Cancel run", systemImage: "stop.circle")
+                        Image(systemName: "ellipsis")
+                            .font(.caption)
+                            .foregroundStyle(TWTheme.textTertiary)
+                            .frame(width: 22, height: 22)
+                            .contentShape(Rectangle())
                     }
-                } label: {
-                    Image(systemName: "ellipsis")
-                        .font(.caption)
-                        .foregroundStyle(TWTheme.textTertiary)
-                        .frame(width: 22, height: 22)
-                        .contentShape(Rectangle())
+                    .accessibilityLabel("More approval actions")
+                    .accessibilityHint("Includes denial and cancellation actions.")
                 }
-                .accessibilityLabel("More approval actions")
-                .accessibilityHint("Includes cancel run.")
             }
         }
         .padding(.vertical, 2)
@@ -150,6 +159,21 @@ struct ApprovalRow: View {
                 .presentationDragIndicator(.visible)
         }
     }
+
+    @ViewBuilder
+    private func primaryDecisionButton(_ action: ApprovalActionDescriptor) -> some View {
+        if action.prominent {
+            Button(action.rowLabel) { model.approve(card, decision: action.id) }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .tint(action.destructive ? TWTheme.statusFailed : accent)
+        } else {
+            Button(action.rowLabel) { model.approve(card, decision: action.id) }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .tint(action.destructive ? TWTheme.statusFailed : accent)
+        }
+    }
 }
 
 /// Full-screen detail for an approval — the Electron modal's content
@@ -160,6 +184,9 @@ struct ApprovalDetailSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     private var accent: Color { TWTheme.providerAccent(card.provider) }
+    private var approvalActions: [ApprovalActionDescriptor] {
+        ApprovalActionDescriptor.visibleActions(from: card.actions)
+    }
 
     var body: some View {
         NavigationStack {
@@ -193,21 +220,9 @@ struct ApprovalDetailSheet: View {
                                 TWTheme.surface2, in: RoundedRectangle(cornerRadius: 10))
                     }
                     VStack(spacing: 8) {
-                        decisionButton(
-                            "Allow once", icon: "checkmark.circle.fill",
-                            decision: "accept", prominent: true)
-                        decisionButton(
-                            "Allow for session", icon: "clock.badge.checkmark",
-                            decision: "acceptForSession")
-                        decisionButton(
-                            "Allow in workspace", icon: "folder.badge.plus",
-                            decision: "acceptForWorkspace")
-                        decisionButton(
-                            "Deny", icon: "xmark.circle", decision: "decline",
-                            destructive: true)
-                        decisionButton(
-                            "Cancel run", icon: "stop.circle", decision: "cancel",
-                            destructive: true)
+                        ForEach(approvalActions) { action in
+                            decisionButton(action)
+                        }
                     }
                     .padding(.top, 4)
                 }
@@ -228,41 +243,109 @@ struct ApprovalDetailSheet: View {
     }
 
     @ViewBuilder
-    private func decisionButton(
-        _ label: String, icon: String, decision: String,
-        prominent: Bool = false, destructive: Bool = false
-    ) -> some View {
+    private func decisionButton(_ action: ApprovalActionDescriptor) -> some View {
         Button {
-            model.approve(card, decision: decision)
+            model.approve(card, decision: action.id)
             dismiss()
         } label: {
             HStack(spacing: 8) {
-                Image(systemName: icon)
-                Text(label).font(.body.weight(.semibold))
+                Image(systemName: action.icon)
+                Text(action.detailLabel).font(.body.weight(.semibold))
                 Spacer()
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 11)
             .background(
-                prominent
+                action.prominent
                     ? AnyShapeStyle(accent)
-                    : destructive
+                    : action.destructive
                         ? AnyShapeStyle(TWTheme.statusFailed.opacity(0.14))
                         : AnyShapeStyle(TWTheme.surface2),
                 in: RoundedRectangle(cornerRadius: 12)
             )
             .foregroundStyle(
-                prominent
+                action.prominent
                     ? Color.black.opacity(0.85)
-                    : destructive ? TWTheme.statusFailed : TWTheme.textPrimary)
+                    : action.destructive ? TWTheme.statusFailed : TWTheme.textPrimary)
         }
         .buttonStyle(.plain)
     }
 }
 
+struct ApprovalActionDescriptor: Identifiable, Equatable {
+    let id: String
+    let rowLabel: String
+    let detailLabel: String
+    let icon: String
+    let prominent: Bool
+    let destructive: Bool
+
+    static func visibleActions(from rawActions: [String]?) -> [ApprovalActionDescriptor] {
+        let source = rawActions?.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty } ?? [
+            "accept", "decline",
+        ]
+        var seen = Set<String>()
+        return source.compactMap { raw in
+            let id = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !id.isEmpty, !seen.contains(id) else { return nil }
+            seen.insert(id)
+            return descriptor(for: id)
+        }
+    }
+
+    private static func descriptor(for id: String) -> ApprovalActionDescriptor {
+        switch id {
+        case "accept":
+            return ApprovalActionDescriptor(
+                id: id, rowLabel: "Allow once", detailLabel: "Allow once",
+                icon: "checkmark.circle.fill", prominent: true, destructive: false)
+        case "acceptForSession":
+            return ApprovalActionDescriptor(
+                id: id, rowLabel: "Session", detailLabel: "Allow for session",
+                icon: "clock.badge.checkmark", prominent: false, destructive: false)
+        case "acceptForWorkspace":
+            return ApprovalActionDescriptor(
+                id: id, rowLabel: "Workspace", detailLabel: "Allow in workspace",
+                icon: "folder.badge.plus", prominent: false, destructive: false)
+        case "useProviderNative":
+            return ApprovalActionDescriptor(
+                id: id, rowLabel: "Provider", detailLabel: "Use provider native flow",
+                icon: "arrow.triangle.branch", prominent: true, destructive: false)
+        case "useTaskWraithSubthread":
+            return ApprovalActionDescriptor(
+                id: id, rowLabel: "Sub-thread", detailLabel: "Use TaskWraith sub-thread",
+                icon: "arrowshape.turn.up.right", prominent: false, destructive: false)
+        case "decline":
+            return ApprovalActionDescriptor(
+                id: id, rowLabel: "Deny", detailLabel: "Deny",
+                icon: "xmark.circle", prominent: false, destructive: true)
+        case "cancel":
+            return ApprovalActionDescriptor(
+                id: id, rowLabel: "Cancel", detailLabel: "Cancel run",
+                icon: "stop.circle", prominent: false, destructive: true)
+        default:
+            return ApprovalActionDescriptor(
+                id: id, rowLabel: Self.humanize(id), detailLabel: Self.humanize(id),
+                icon: "checkmark.circle", prominent: false, destructive: false)
+        }
+    }
+
+    private static func humanize(_ raw: String) -> String {
+        let spaced = raw.reduce(into: "") { result, char in
+            if char.isUppercase && !result.isEmpty { result.append(" ") }
+            result.append(char)
+        }
+        return spaced
+            .replacingOccurrences(of: "_", with: " ")
+            .replacingOccurrences(of: "-", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .capitalized
+    }
+}
+
 /// Question card row — canonical promptId/question fields, option chips,
-/// always-available free-text answer (Mac answers are free-text), expiry
-/// countdown, and Dismiss (questionReject → parked tool cancelled).
+/// free-text answer when the thread explicitly grants it, expiry countdown,
+/// and Dismiss (questionReject → parked tool cancelled).
 struct QuestionRow: View {
     @ObservedObject var model: RemoteSessionModel
     let card: MobileQuestionCard
@@ -278,9 +361,13 @@ struct QuestionRow: View {
     }
 
     private var canAnswer: Bool {
-        guard let threadId = card.threadId else { return true }
-        let task = model.taskCards.first { $0.id == threadId || $0.threadId == threadId }
-        return task?.capabilities?.answer ?? true
+        Self.canAnswerQuestion(threadId: card.threadId, taskCards: model.taskCards)
+    }
+
+    static func canAnswerQuestion(threadId: String?, taskCards: [RemoteTaskCard]) -> Bool {
+        guard let threadId, !threadId.isEmpty else { return false }
+        let task = taskCards.first { $0.id == threadId || $0.threadId == threadId }
+        return task?.capabilities?.answer == true
     }
 
     var body: some View {
@@ -350,7 +437,7 @@ struct QuestionRow: View {
                 .accessibilityLabel("Dismiss question")
             }
             if !canAnswer {
-                Text("Viewing only on this device.")
+                Text("Waiting for thread permissions from your Mac.")
                     .font(.caption2)
                     .foregroundStyle(TWTheme.textTertiary)
             }
