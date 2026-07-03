@@ -1,0 +1,128 @@
+import {
+  createTaskWraithMcpToolDefinitions,
+  type TaskWraithMcpToolDefinition
+} from '../McpToolCatalog'
+
+/**
+ * Reproducible generator for `resources/Tools.md` — a full, drift-checked
+ * reference for the TaskWraith tool surface that ships with the app for local
+ * Ollama models (and humans) to reference.
+ *
+ * Source of truth is the ONE catalog `createTaskWraithMcpToolDefinitions()`,
+ * which throws on any duplicate / unknown / missing tool vs `TASKWRAITH_MCP_TOOLS`
+ * — so the generated doc, the model's granted surface, and the catalog cannot
+ * drift apart. The output is deterministic (catalog order, insertion-ordered
+ * schema keys) so `OllamaToolsDoc.test.ts` can assert byte-identical
+ * regeneration and fail CI on any drift.
+ *
+ * NB the model cannot `read_file` this doc at runtime yet (read_file is
+ * workspace-scoped; this ships under resources/, outside any workspace). It is a
+ * shipped reference + reproducibility guarantee today; wiring a runtime lookup
+ * (a whitelisted path or a dedicated schema tool) is a separate decision.
+ */
+
+function schemaType(schema: unknown): string | undefined {
+  if (!schema || typeof schema !== 'object') return undefined
+  const type = (schema as Record<string, unknown>).type
+  return Array.isArray(type)
+    ? typeof type[0] === 'string'
+      ? type[0]
+      : undefined
+    : typeof type === 'string'
+      ? type
+      : undefined
+}
+
+function schemaPlaceholder(schema: unknown): unknown {
+  switch (schemaType(schema)) {
+    case 'string':
+      return 'text'
+    case 'number':
+    case 'integer':
+      return 0
+    case 'boolean':
+      return false
+    case 'array':
+      return []
+    case 'object':
+      return {}
+    default:
+      return 'value'
+  }
+}
+
+interface ToolArgSummary {
+  example: string
+  required: string[]
+  optional: string[]
+}
+
+function summarizeToolArgs(def: TaskWraithMcpToolDefinition): ToolArgSummary {
+  const schema = (
+    def.inputSchema && typeof def.inputSchema === 'object' ? def.inputSchema : {}
+  ) as Record<string, unknown>
+  const props =
+    schema.properties && typeof schema.properties === 'object'
+      ? (schema.properties as Record<string, unknown>)
+      : {}
+  const required = Array.isArray(schema.required)
+    ? schema.required.filter((name): name is string => typeof name === 'string')
+    : []
+  const allKeys = Object.keys(props)
+  const optional = allKeys.filter((key) => !required.includes(key))
+  // The example carries the required args (or the first arg when nothing is
+  // required) with type-appropriate placeholders, so a small model has a concrete
+  // shape to copy.
+  const exampleKeys = required.length ? required : allKeys.slice(0, 1)
+  const args: Record<string, unknown> = {}
+  for (const key of exampleKeys) args[key] = schemaPlaceholder(props[key])
+  const example = JSON.stringify({ taskwraith_tool: { name: def.name, arguments: args } })
+  return { example, required, optional }
+}
+
+function accessLabel(def: TaskWraithMcpToolDefinition): string {
+  const annotations = (
+    def.annotations && typeof def.annotations === 'object' ? def.annotations : {}
+  ) as Record<string, unknown>
+  if (annotations.readOnlyHint === true) return 'read-only (no approval needed)'
+  if (annotations.destructiveHint === true) {
+    return 'mutating — governed by your run permission role (denied under Read-Only/Plan; prompts under Default unless granted)'
+  }
+  return 'governed by your run permission role'
+}
+
+export function buildOllamaToolsMarkdown(): string {
+  const defs = createTaskWraithMcpToolDefinitions()
+  const lines: string[] = [
+    '<!-- GENERATED FILE — do not edit by hand.',
+    '     Source of truth: src/main/McpToolCatalog.ts (createTaskWraithMcpToolDefinitions).',
+    '     Regenerate: npm run generate:ollama-tools-md',
+    '     A drift test (OllamaToolsDoc.test.ts) fails CI if this file is stale. -->',
+    '',
+    '# TaskWraith tools reference',
+    '',
+    'Local Ollama models call any tool by emitting exactly one JSON object per turn:',
+    '',
+    '```',
+    '{"taskwraith_tool":{"name":"<tool>","arguments":{ ... }}}',
+    '```',
+    '',
+    `The ${defs.length} tools below are the full TaskWraith surface, generated from the tool catalog so this reference cannot drift from what the app actually grants. Every mutating tool (file edits, shell, publishing) is gated by your run's permission role, and paths must stay inside the active workspace.`,
+    ''
+  ]
+  for (const def of defs) {
+    const { example, required, optional } = summarizeToolArgs(def)
+    lines.push(`## ${def.name}`, '')
+    if (def.description) {
+      lines.push(def.description, '')
+    }
+    lines.push(`- Access: ${accessLabel(def)}`)
+    lines.push(`- Required args: ${required.length ? required.join(', ') : 'none'}`)
+    if (optional.length) {
+      lines.push(`- Optional args: ${optional.join(', ')}`)
+    }
+    lines.push(`- Example: \`${example}\``, '')
+  }
+  // Single trailing newline for a clean POSIX file.
+  return `${lines.join('\n').replace(/\s+$/, '')}\n`
+}

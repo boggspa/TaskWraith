@@ -17,6 +17,7 @@
     "format": "prettier --write .",
     "lint": "eslint --cache .",
     "test": "vitest run",
+    "generate:ollama-tools-md": "UPDATE_TOOLS_MD=1 vitest run src/main/ollama/OllamaToolsDoc.test.ts",
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json --composite false",
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json --composite false",
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
