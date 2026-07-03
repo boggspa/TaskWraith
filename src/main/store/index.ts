@@ -1394,13 +1394,14 @@ function buildScheduledTaskDispatchReceipt(task: ScheduledTask) {
     scope: 'workspace',
     workspaceId: task.workspaceId,
     chatId: task.chatId,
+    permissionPosture: task.permissionPosture,
     request: {
       scope: 'workspace',
       prompt: task.prompt,
       ...(task.displayPrompt ? { displayPrompt: task.displayPrompt } : {}),
       selectedModelType: task.selectedModelType,
       customModel: task.customModel,
-      approvalMode: task.approvalMode,
+      approvalMode: task.permissionPosture?.approvalMode || task.approvalMode,
       workflowMode,
       sessionTrust: task.sessionTrust,
       imageAttachments: task.imageAttachments || [],
@@ -4345,6 +4346,9 @@ export class AppStore {
       return current
     }
     const updated = { ...current, ...partial, id, updatedAt: new Date().toISOString() }
+    if ('permissionPosture' in partial || 'runId' in partial || 'workflowMode' in partial) {
+      updated.dispatchReceipt = buildScheduledTaskDispatchReceipt(updated)
+    }
     // Stamp `runningSince` ONLY on the transition INTO 'running'. Self-contained
     // wall-clock — NOT bound to updatedAt, and NOT reset on benign re-patches of an
     // already-running task, so the stall reconciler can age a wedge out. Honour an

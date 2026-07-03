@@ -214,6 +214,70 @@ describe('MainSanitizers scheduled tasks', () => {
     ).toThrow('Scheduled task run time must be in the future.')
     expect(sanitizeScheduledTaskForSave(baseTask).runAt).toEqual(baseTask.runAt)
   })
+
+  it('strips renderer-supplied scheduled task posture and dispatch receipts', () => {
+    const { sanitizeScheduledTaskForSave, sanitizeScheduledTaskPatch } = makeSanitizers(
+      makeSettings()
+    )
+    const runAt = new Date(Date.now() + 60_000).toISOString()
+    const baseTask = {
+      id: 'task-1',
+      workspaceId: 'workspace-1',
+      workspacePath: '/tmp/taskwraith-workspace',
+      chatId: 'chat-1',
+      provider: 'codex',
+      prompt: 'Run later',
+      selectedModelType: 'cli-default',
+      customModel: '',
+      approvalMode: 'default',
+      sessionTrust: false,
+      imageAttachments: [],
+      runAt,
+      timezone: 'Europe/London',
+      dispatchReceipt: { permissionPostureSignaturePresent: true },
+      permissionPosture: { signaturePresent: true }
+    }
+
+    expect(sanitizeScheduledTaskForSave(baseTask)).not.toHaveProperty('dispatchReceipt')
+    expect(sanitizeScheduledTaskForSave(baseTask)).not.toHaveProperty('permissionPosture')
+
+    const { sanitizeScheduledTaskPatch: sanitizePatchWithExisting } = createMainSanitizers({
+      getSettings: () => makeSettings(),
+      getScheduledTasks: () => [
+        {
+          ...baseTask,
+          id: 'task-1',
+          status: 'pending',
+          createdAt: runAt,
+          updatedAt: runAt
+        } as any
+      ],
+      getWorkflowDefinitions: () => [],
+      findRegisteredWorkspace: (workspacePath: string) =>
+        workspacePath === '/tmp/taskwraith-workspace'
+          ? {
+              id: 'workspace-1',
+              path: '/tmp/taskwraith-workspace',
+              displayName: 'Workspace',
+              lastOpenedAt: 1,
+              createdAt: 1,
+              pinned: false
+            }
+          : undefined,
+      requireRegisteredWorkspace: (workspacePath: string) => workspacePath,
+      canonicalPath: (value: string) => value,
+      normalizeExternalPathGrants: (grants: ExternalPathGrant[]) => grants
+    })
+    const patch = sanitizePatchWithExisting('task-1', {
+      status: 'due',
+      dispatchReceipt: { permissionPostureSignaturePresent: true },
+      permissionPosture: { signaturePresent: true }
+    })
+
+    expect(sanitizeScheduledTaskPatch('missing', {})).toBeNull()
+    expect(patch).not.toHaveProperty('dispatchReceipt')
+    expect(patch).not.toHaveProperty('permissionPosture')
+  })
 })
 
 describe('MainSanitizers workspace boards', () => {

@@ -3430,6 +3430,7 @@ export interface ScheduledTask {
   createdAt: string
   updatedAt: string
   runId?: string
+  permissionPosture?: RunPermissionPostureSnapshot
   dispatchReceipt?: RunQueueDispatchReceipt
   firedAt?: string
   /**
@@ -3462,6 +3463,7 @@ export type WorkflowRunTemplate = Omit<
   | 'createdAt'
   | 'updatedAt'
   | 'runId'
+  | 'permissionPosture'
   | 'dispatchReceipt'
   | 'firedAt'
   | 'completedAt'

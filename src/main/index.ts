@@ -407,6 +407,7 @@ import {
   remoteComposerChatIsBusy as remoteComposerQueueJobIsBusy
 } from './services/RemoteComposerQueueService'
 import { buildRemoteComposerQueuePermissionPosture } from './services/RemoteComposerQueuePosture'
+import { buildScheduledTaskPermissionPosture } from './services/ScheduledTaskPosture'
 import { SettingsService } from './services/SettingsService'
 import { WorkspaceService } from './services/WorkspaceService'
 import { GitService } from './services/GitService'
@@ -4288,6 +4289,80 @@ function resolveUnattendedElevation(
   if (!verified) return null
   if (!isUnattendedElevationAckCurrent(ack, wf.template.approvalMode)) return null
   return { ack, templateApprovalMode: wf.template.approvalMode }
+}
+
+function buildScheduledTaskPostureForRecord(
+  task: Pick<
+    ScheduledTask,
+    | 'id'
+    | 'provider'
+    | 'workspacePath'
+    | 'chatId'
+    | 'prompt'
+    | 'approvalMode'
+    | 'workflowMode'
+    | 'selectedModelType'
+    | 'customModel'
+    | 'runtimeProfileId'
+  >
+) {
+  return buildScheduledTaskPermissionPosture({
+    id: task.id,
+    provider: task.provider,
+    workspacePath: task.workspacePath,
+    chatId: task.chatId,
+    prompt: task.prompt,
+    approvalMode: task.approvalMode,
+    workflowMode: task.workflowMode,
+    selectedModelType: task.selectedModelType,
+    customModel: task.customModel,
+    runtimeProfileId: task.runtimeProfileId,
+    settings: AppStore.getSettings(),
+    unattendedElevationAck: resolveUnattendedElevation(task.id)?.ack ?? null,
+    signRunPermissionPosture: signRunPosture
+  })
+}
+
+function scheduledTaskHasSignedPosture(task: ScheduledTask): boolean {
+  return Boolean(
+    task.permissionPosture?.signaturePresent &&
+      task.permissionPosture.signature &&
+      task.dispatchReceipt?.permissionPostureSignaturePresent
+  )
+}
+
+function ensureScheduledTaskSignedPosture(task: ScheduledTask): ScheduledTask {
+  if (scheduledTaskHasSignedPosture(task)) return task
+  const permissionPosture = buildScheduledTaskPostureForRecord(task)
+  return AppStore.updateScheduledTask(task.id, { permissionPosture }) || {
+    ...task,
+    permissionPosture
+  }
+}
+
+function saveScheduledTaskWithSignedPosture(
+  task: Parameters<typeof AppStore.saveScheduledTask>[0]
+): ScheduledTask {
+  const id = task.id || randomUUID()
+  const draft = {
+    ...task,
+    id
+  }
+  return AppStore.saveScheduledTask({
+    ...draft,
+    permissionPosture: buildScheduledTaskPostureForRecord({
+      id,
+      provider: draft.provider,
+      workspacePath: draft.workspacePath,
+      chatId: draft.chatId,
+      prompt: draft.prompt,
+      approvalMode: draft.approvalMode,
+      workflowMode: draft.workflowMode,
+      selectedModelType: draft.selectedModelType,
+      customModel: draft.customModel,
+      runtimeProfileId: draft.runtimeProfileId
+    })
+  })
 }
 
 function runPostureContextFromPayload(payload: {
@@ -9562,7 +9637,7 @@ async function dispatchDueScheduledTaskHeadless(task: ScheduledTask): Promise<vo
 }
 
 function emitDueScheduledTasks() {
-  const materialized = AppStore.materializeDueWorkflows()
+  const materialized = AppStore.materializeDueWorkflows().map(ensureScheduledTaskSignedPosture)
   mainWindow?.webContents.send('workflow-definitions-changed', AppStore.getWorkflowDefinitions())
   if (materialized.length > 0) {
     mainWindow?.webContents.send('scheduled-tasks-changed', AppStore.getScheduledTasks())
@@ -9579,13 +9654,14 @@ function emitDueScheduledTasks() {
     // the stall reconciler's 'due' basis (firedAt), so a genuinely wedged 'due' task
     // could never reach the backstop. The broadcast/headless retry below still fires
     // each tick regardless, so deferral stays self-healing.
-    const dueTask =
+    const dueTaskRaw =
       task.status === 'due'
         ? task
         : AppStore.updateScheduledTask(task.id, {
             status: 'due',
             firedAt: new Date().toISOString()
           }) || task
+    const dueTask = ensureScheduledTaskSignedPosture(dueTaskRaw)
     // Stage 2 slice 5 — a LOOP-workflow occurrence runs the engine in MAIN regardless
     // of rendererAvailable (the renderer has no loop engine). Solo only; bypasses
     // routeDueScheduledTask. If the composer isn't wired yet (early boot) leave it
@@ -28167,8 +28243,16 @@ if (isGeminiMcpBridgeProcess) {
     })
     registerScheduledWorkflowHandlers({
       getScheduledTasks: (workspaceId) => AppStore.getScheduledTasks(workspaceId),
-      saveScheduledTask: (task) => AppStore.saveScheduledTask(task),
-      updateScheduledTask: (id, partial) => AppStore.updateScheduledTask(id, partial),
+      saveScheduledTask: (task) => saveScheduledTaskWithSignedPosture(task),
+      updateScheduledTask: (id, partial) => {
+        const updated = AppStore.updateScheduledTask(id, partial)
+        if (!updated) return updated
+        return updated.status === 'pending' ||
+          updated.status === 'due' ||
+          updated.status === 'running'
+          ? ensureScheduledTaskSignedPosture(updated)
+          : updated
+      },
       deleteScheduledTask: (id) => AppStore.deleteScheduledTask(id),
       getWorkflowDefinitions: (workspaceId) => AppStore.getWorkflowDefinitions(workspaceId),
       getWorkflowDefinition: (id) => AppStore.getWorkflowDefinition(id),
@@ -28189,7 +28273,10 @@ if (isGeminiMcpBridgeProcess) {
       getCapabilityLedgerSnapshot: (workspaceId) => AppStore.getCapabilityLedgerSnapshot(workspaceId),
       getRepoConventionIndexes: (workspaceId) => AppStore.getRepoConventionIndexes(workspaceId),
       saveRepoConventionIndex: (snapshot) => AppStore.saveRepoConventionIndex(snapshot),
-      materializeWorkflowNow: (id) => AppStore.materializeWorkflowNow(id),
+      materializeWorkflowNow: (id) => {
+        const task = AppStore.materializeWorkflowNow(id)
+        return task ? ensureScheduledTaskSignedPosture(task) : null
+      },
       setWorkflowUnattendedElevation: (id, ack) => AppStore.setWorkflowUnattendedElevation(id, ack),
       getWorkflowRunSummaries: (workflowId) => AppStore.getWorkflowRunSummaries(workflowId),
       getWorkflowRunEventsFiltered: (filter) => AppStore.getWorkflowRunEventsFiltered(filter),

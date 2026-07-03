@@ -566,6 +566,15 @@ export function normalizeAuditRunIdentity(value: unknown): AuditRunIdentity | un
 }
 
 export function createMainSanitizers(deps: MainSanitizerDeps) {
+  function stripScheduledTaskTrustFields<T extends Record<string, unknown>>(
+    input: T
+  ): Omit<T, 'dispatchReceipt' | 'permissionPosture'> {
+    const copy = { ...input }
+    delete copy.dispatchReceipt
+    delete copy.permissionPosture
+    return copy
+  }
+
   function normalizeScheduledTaskExternalGrants(value: unknown): ExternalPathGrant[] | undefined {
     const rawGrants = Array.isArray(value) ? (value as ExternalPathGrant[]) : []
     const grants = deps.normalizeExternalPathGrants(rawGrants)
@@ -612,8 +621,9 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
       requireNonEmptyString(input.workspacePath, 'Scheduled task workspace'),
       input.workspaceId
     )
+    const restInput = stripScheduledTaskTrustFields(input)
     return {
-      ...input,
+      ...restInput,
       runAt: new Date(runAtMs).toISOString(),
       workspaceId: workspace.id,
       workspacePath: deps.canonicalPath(workspace.path),
@@ -650,8 +660,9 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
       throw new Error('Scheduled task workspace id cannot be changed by the renderer.')
     }
 
+    const restInput = stripScheduledTaskTrustFields(input)
     const sanitized: Partial<ScheduledTask> = {
-      ...(input as Partial<ScheduledTask>),
+      ...(restInput as Partial<ScheduledTask>),
       workspaceId: workspace.id,
       workspacePath: deps.canonicalPath(workspace.path)
     }
@@ -719,8 +730,9 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
     )
     const prompt = typeof input.prompt === 'string' ? input.prompt : ''
     if (!prompt.trim()) throw new Error('Workflow prompt is required.')
+    const restInput = stripScheduledTaskTrustFields(input)
     return {
-      ...input,
+      ...restInput,
       workspaceId: workspace.id,
       workspacePath: deps.canonicalPath(workspace.path),
       chatId: requireNonEmptyString(input.chatId, 'Workflow chat'),

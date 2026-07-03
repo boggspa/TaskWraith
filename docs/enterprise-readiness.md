@@ -463,6 +463,11 @@ What exists:
 - Workflow-backed scheduled tasks now preserve `workflowMode` and carry a
   schedule-time `dispatchReceipt` that freezes their scheduled source,
   chat/workspace, provider, approval mode, and workflow mode.
+- Scheduled tasks saved through the main IPC boundary, materialized from
+  workflows, or backfilled as older due tasks now receive a main-signed
+  permission posture snapshot before broadcast/dispatch. Their dispatch receipt
+  hashes the posture and records signature presence; renderer-supplied
+  `permissionPosture` / `dispatchReceipt` fields are stripped by the sanitizer.
 - Redacted diagnostics/audit export now includes queued and scheduled
   `dispatchReceipt` summaries, with chat/thread ids hashed and remote-composer
   text omitted.
@@ -500,16 +505,17 @@ What exists:
 What is missing:
 
 - Stage-role scheduling intent now has a first-class frozen receipt and signed
-  posture proof across queue rows, workflow-backed scheduled tasks, and Ensemble
-  wakeups; the remaining work is policy-choice testing for resume-time
-  revocation vs frozen scheduled intent.
+  posture proof across queue rows, workflow-backed scheduled tasks, direct
+  scheduled tasks, and Ensemble wakeups; the remaining work is policy-choice
+  testing for resume-time revocation vs frozen scheduled intent.
 - Remote queued dispatch now has both an enqueue-time posture/allowlist receipt
   and a dequeue-time allowlist re-check; remaining work is broader lifecycle
   export review, not the replay authorization gate itself.
 - `EnsembleRunIdentity`, `ChatRun`, run queue metadata, approval previews, and
-  run events now persist live dispatch `stageRole`/`laneId`, but scheduled and
-  wakeup replay paths still need explicit tests that they preserve or re-check
-  the frozen intent rather than inheriting mutable roster state silently.
+  run events now persist live dispatch `stageRole`/`laneId`; scheduled-task
+  receipts now have signed posture coverage, but wakeup/scheduled replay still
+  needs higher-level policy-choice tests that prove when frozen intent is
+  honored vs when current policy is re-checked.
 - Remaining native-provider work is a broader provider-by-provider audit beyond
   Codex: verify every future native command/approval seam either routes through
   the central gate or stamps equivalent participant/lane metadata.
@@ -518,6 +524,9 @@ Target:
 
 - Freeze participant id, provider, role, stageRole, permission preset,
   workflowMode, and posture proof on queued/scheduled/wakeup dispatch records.
+  The queue/scheduled/wakeup record-level receipt is in place; keep the next
+  work focused on end-to-end replay policy tests rather than adding parallel
+  receipt schemas.
 - Persist a dispatch receipt when the run starts and include it in audit export.
 - Preserve older-client semantics: absent `stageRole` means preserve; `''` means
   explicit clear.
