@@ -1,7 +1,8 @@
 import { createHash, createPublicKey, verify as verifySignature, type KeyObject } from 'node:crypto'
 import type {
   AgenticServicesSettings,
-  AppSettings
+  AppSettings,
+  ProviderId
 } from './store/types'
 import {
   evaluateUserMcpLaunchPolicy,
@@ -115,6 +116,15 @@ const settingKeySet = new Set<string>(MANAGED_POLICY_SETTING_KEYS)
 const servicePolicies = new Set(['ask', 'workspace', 'allow', 'deny'])
 const networkPolicies = new Set(['allow', 'deny'])
 const managedPolicySignatureAlgorithms = new Set(['ed25519'])
+const approvalTimeoutProviderIds: readonly ProviderId[] = [
+  'gemini',
+  'codex',
+  'claude',
+  'kimi',
+  'grok',
+  'cursor',
+  'ollama'
+]
 const agenticServiceKeys = [
   'shellCommands',
   'fileChanges',
@@ -185,7 +195,7 @@ function sanitizeApprovalTimeouts(value: unknown): ManagedPolicySettings['approv
   if (!isRecord(value)) return undefined
   const perProvider = isRecord(value.perProviderMs) ? value.perProviderMs : {}
   const perProviderMs: Partial<AppSettings['approvalTimeouts']['perProviderMs']> = {}
-  for (const provider of ['gemini', 'codex', 'claude', 'kimi'] as const) {
+  for (const provider of approvalTimeoutProviderIds) {
     const sanitized = sanitizePositiveMs(perProvider[provider])
     if (sanitized !== undefined) perProviderMs[provider] = sanitized
   }

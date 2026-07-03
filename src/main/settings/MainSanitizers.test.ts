@@ -162,7 +162,10 @@ function makeSettings(overrides: Partial<AppSettings> = {}): AppSettings {
         gemini: 120_000,
         codex: 30_000,
         claude: 120_000,
-        kimi: 60_000
+        kimi: 60_000,
+        grok: 120_000,
+        cursor: 120_000,
+        ollama: 120_000
       },
       mainAuthorityMs: 60_000
     },
@@ -392,7 +395,8 @@ describe('MainSanitizers settings patches', () => {
       approvalTimeouts: {
         enabled: false,
         perProviderMs: {
-          gemini: 240_000
+          gemini: 240_000,
+          grok: 75_000
         },
         mainAuthorityMs: 0
       }
@@ -418,7 +422,10 @@ describe('MainSanitizers settings patches', () => {
         gemini: 240_000,
         codex: 30_000,
         claude: 120_000,
-        kimi: 60_000
+        kimi: 60_000,
+        grok: 75_000,
+        cursor: 120_000,
+        ollama: 120_000
       },
       mainAuthorityMs: 60_000
     })

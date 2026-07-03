@@ -1521,14 +1521,18 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
       const prefs = isRecord(sanitized.approvalTimeouts) ? sanitized.approvalTimeouts : {}
       const current = deps.getSettings().approvalTimeouts
       const perProvider = isRecord(prefs.perProviderMs) ? prefs.perProviderMs : {}
+      const perProviderMs: AppSettings['approvalTimeouts']['perProviderMs'] = {
+        ...current.perProviderMs
+      }
+      for (const provider of PROVIDER_IDS) {
+        perProviderMs[provider] = sanitizeApprovalTimeoutMs(
+          perProvider[provider],
+          current.perProviderMs[provider]
+        )
+      }
       sanitized.approvalTimeouts = {
         enabled: typeof prefs.enabled === 'boolean' ? prefs.enabled : current.enabled,
-        perProviderMs: {
-          gemini: sanitizeApprovalTimeoutMs(perProvider.gemini, current.perProviderMs.gemini),
-          codex: sanitizeApprovalTimeoutMs(perProvider.codex, current.perProviderMs.codex),
-          claude: sanitizeApprovalTimeoutMs(perProvider.claude, current.perProviderMs.claude),
-          kimi: sanitizeApprovalTimeoutMs(perProvider.kimi, current.perProviderMs.kimi)
-        },
+        perProviderMs,
         mainAuthorityMs: sanitizeApprovalTimeoutMs(prefs.mainAuthorityMs, current.mainAuthorityMs)
       }
     }

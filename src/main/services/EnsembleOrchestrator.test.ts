@@ -185,7 +185,15 @@ function makeSettings(): AppSettings {
     updateChannel: 'stable',
     approvalTimeouts: {
       enabled: true,
-      perProviderMs: { gemini: 120000, codex: 30000, claude: 120000, kimi: 60000 },
+      perProviderMs: {
+        gemini: 120000,
+        codex: 30000,
+        claude: 120000,
+        kimi: 60000,
+        grok: 120000,
+        cursor: 120000,
+        ollama: 120000
+      },
       mainAuthorityMs: 120000
     }
   }

@@ -84,7 +84,10 @@ function makeSettingsProps(overrides: Partial<SettingsPanelProps> = {}): Setting
         gemini: 120_000,
         codex: 30_000,
         claude: 120_000,
-        kimi: 60_000
+        kimi: 60_000,
+        grok: 120_000,
+        cursor: 120_000,
+        ollama: 120_000
       },
       mainAuthorityMs: 60_000
     },

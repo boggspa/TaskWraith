@@ -5436,6 +5436,45 @@ export function SettingsPanel({
                     }
                   />
                   <ApprovalTimeoutField
+                    label="Grok"
+                    valueMs={approvalTimeouts.perProviderMs.grok}
+                    disabled={!approvalTimeouts.enabled}
+                    onChange={(ms) =>
+                      onChange({
+                        approvalTimeouts: {
+                          ...approvalTimeouts,
+                          perProviderMs: { ...approvalTimeouts.perProviderMs, grok: ms }
+                        }
+                      })
+                    }
+                  />
+                  <ApprovalTimeoutField
+                    label="Cursor"
+                    valueMs={approvalTimeouts.perProviderMs.cursor}
+                    disabled={!approvalTimeouts.enabled}
+                    onChange={(ms) =>
+                      onChange({
+                        approvalTimeouts: {
+                          ...approvalTimeouts,
+                          perProviderMs: { ...approvalTimeouts.perProviderMs, cursor: ms }
+                        }
+                      })
+                    }
+                  />
+                  <ApprovalTimeoutField
+                    label="Ollama"
+                    valueMs={approvalTimeouts.perProviderMs.ollama}
+                    disabled={!approvalTimeouts.enabled}
+                    onChange={(ms) =>
+                      onChange({
+                        approvalTimeouts: {
+                          ...approvalTimeouts,
+                          perProviderMs: { ...approvalTimeouts.perProviderMs, ollama: ms }
+                        }
+                      })
+                    }
+                  />
+                  <ApprovalTimeoutField
                     label="Main authority"
                     valueMs={approvalTimeouts.mainAuthorityMs}
                     disabled={!approvalTimeouts.enabled}
@@ -5446,9 +5485,8 @@ export function SettingsPanel({
                 </div>
                 <p className="settings-hint">
                   Per-provider deadline before an unanswered approval is auto-denied. Defaults
-                  (Codex 30s, Claude/Gemini 120s, Kimi 60s, Main 60s) reflect how tolerant each
-                  runtime is of paused tool calls — Codex sandbox commands hang faster than
-                  long-think Claude prompts.
+                  (Codex 30s, Kimi 60s, Main 60s, other providers 120s) reflect how tolerant each
+                  runtime is of paused tool calls.
                 </p>
               </div>
             </>

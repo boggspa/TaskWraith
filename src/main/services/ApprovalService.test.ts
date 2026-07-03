@@ -7,6 +7,10 @@ import {
   type PendingCodexApproval,
   type PendingHostCommandApproval
 } from './ApprovalService'
+import {
+  ApprovalTimeoutScheduler,
+  DEFAULT_APPROVAL_TIMEOUT_POLICY
+} from '../ApprovalTimeoutScheduler'
 import type { BridgeRemoteAttentionPushPayload } from '../BridgeApnsPusher'
 
 type AttentionPushCall = [string, 'production' | 'sandbox', BridgeRemoteAttentionPushPayload]
@@ -91,7 +95,15 @@ function makeDeps(overrides: Partial<ApprovalServiceDeps> = {}): {
     publishApprovalRunEvent: vi.fn(),
     getApprovalTimeoutSettings: vi.fn(() => ({
       enabled: true,
-      perProviderMs: { gemini: 120_000, codex: 30_000, claude: 120_000, kimi: 60_000 },
+      perProviderMs: {
+        gemini: 120_000,
+        codex: 30_000,
+        claude: 120_000,
+        kimi: 60_000,
+        grok: 75_000,
+        cursor: 80_000,
+        ollama: 85_000
+      },
       mainAuthorityMs: 60_000
     })),
     log: vi.fn()
@@ -313,6 +325,28 @@ describe('ApprovalService — lookupRoute', () => {
     })
     const route = svc.lookupRoute('h-1')
     expect(route).toEqual({ provider: 'codex', appRunId: 'r-77', appChatId: 'c-77' })
+  })
+})
+
+describe('ApprovalService — scheduleTimeout', () => {
+  it('uses configured timeout windows for Grok, Cursor, and Ollama approvals', () => {
+    const { deps } = makeDeps()
+    const svc = new ApprovalService(deps)
+    const scheduledMs: number[] = []
+    const scheduler = new ApprovalTimeoutScheduler(DEFAULT_APPROVAL_TIMEOUT_POLICY, vi.fn(), {
+      setTimeoutFn: ((_cb, ms) => {
+        scheduledMs.push(ms)
+        return { __timeout: scheduledMs.length } as unknown as NodeJS.Timeout
+      }) as typeof setTimeout,
+      clearTimeoutFn: vi.fn()
+    })
+    svc.setScheduler(scheduler)
+
+    svc.scheduleTimeout({ approvalId: 'grok-approval', provider: 'grok' })
+    svc.scheduleTimeout({ approvalId: 'cursor-approval', provider: 'cursor' })
+    svc.scheduleTimeout({ approvalId: 'ollama-approval', provider: 'ollama' })
+
+    expect(scheduledMs).toEqual([75_000, 80_000, 85_000])
   })
 })
 

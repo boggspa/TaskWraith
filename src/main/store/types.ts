@@ -1944,12 +1944,7 @@ export interface AppSettings {
    * `TASKWRAITH_APPROVAL_TIMEOUT_OFF=1`). */
   approvalTimeouts: {
     enabled: boolean
-    perProviderMs: {
-      gemini: number
-      codex: number
-      claude: number
-      kimi: number
-    }
+    perProviderMs: Record<ProviderId, number>
     mainAuthorityMs: number
   }
   /** Phase E1 (iOS bridge gap #1) — APNs production credentials for

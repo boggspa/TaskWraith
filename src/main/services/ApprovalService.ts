@@ -242,7 +242,7 @@ export interface ApprovalServiceDeps {
   /** Settings lookup for the user-tunable timeout policy. */
   getApprovalTimeoutSettings: () => {
     enabled: boolean
-    perProviderMs: { gemini: number; codex: number; claude: number; kimi: number }
+    perProviderMs: Record<ProviderId, number>
     mainAuthorityMs: number
   }
   /** Logger sink. */
@@ -517,14 +517,9 @@ export class ApprovalService {
         codex: userSettings.perProviderMs.codex,
         claude: userSettings.perProviderMs.claude,
         kimi: userSettings.perProviderMs.kimi,
-        // Grok is read-only (G3) with no user-tunable per-provider timeout
-        // yet (G7); pin to the built-in default so the policy stays complete.
-        grok: 120_000,
-        // Cursor (gated, CR) — pin to the built-in default until a per-provider
-        // timeout setting exists.
-        cursor: 120_000,
-        // Ollama Phase 1 is read-only/no-approval, but keep the policy complete.
-        ollama: 120_000
+        grok: userSettings.perProviderMs.grok,
+        cursor: userSettings.perProviderMs.cursor,
+        ollama: userSettings.perProviderMs.ollama
       },
       mainTimeoutMs: userSettings.mainAuthorityMs
     })

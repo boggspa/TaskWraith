@@ -268,6 +268,9 @@ describe('ApprovalTimeoutScheduler', () => {
     expect(DEFAULT_APPROVAL_TIMEOUT_POLICY.defaultTimeoutsMs.claude).toBe(120_000)
     expect(DEFAULT_APPROVAL_TIMEOUT_POLICY.defaultTimeoutsMs.gemini).toBe(120_000)
     expect(DEFAULT_APPROVAL_TIMEOUT_POLICY.defaultTimeoutsMs.kimi).toBe(60_000)
+    expect(DEFAULT_APPROVAL_TIMEOUT_POLICY.defaultTimeoutsMs.grok).toBe(120_000)
+    expect(DEFAULT_APPROVAL_TIMEOUT_POLICY.defaultTimeoutsMs.cursor).toBe(120_000)
+    expect(DEFAULT_APPROVAL_TIMEOUT_POLICY.defaultTimeoutsMs.ollama).toBe(120_000)
     expect(DEFAULT_APPROVAL_TIMEOUT_POLICY.mainTimeoutMs).toBe(60_000)
   })
 

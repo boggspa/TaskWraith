@@ -1469,7 +1469,15 @@ function App(): React.JSX.Element {
   const [updateChannel, setUpdateChannel] = useState<ProductUpdateChannel>('stable')
   const [approvalTimeouts, setApprovalTimeouts] = useState<AppSettings['approvalTimeouts']>({
     enabled: true,
-    perProviderMs: { gemini: 120_000, codex: 30_000, claude: 120_000, kimi: 60_000 },
+    perProviderMs: {
+      gemini: 120_000,
+      codex: 30_000,
+      claude: 120_000,
+      kimi: 60_000,
+      grok: 120_000,
+      cursor: 120_000,
+      ollama: 120_000
+    },
     mainAuthorityMs: 60_000
   })
   const [productOperationsStatus, setProductOperationsStatus] =

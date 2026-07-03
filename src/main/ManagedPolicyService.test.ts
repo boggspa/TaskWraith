@@ -112,7 +112,10 @@ function settings(overrides: Partial<AppSettings> = {}): AppSettings {
         gemini: 120_000,
         codex: 30_000,
         claude: 120_000,
-        kimi: 60_000
+        kimi: 60_000,
+        grok: 120_000,
+        cursor: 120_000,
+        ollama: 120_000
       },
       mainAuthorityMs: 120_000
     },
@@ -152,7 +155,7 @@ describe('ManagedPolicyService', () => {
             },
             approvalTimeouts: {
               enabled: true,
-              perProviderMs: { codex: 45_000 },
+              perProviderMs: { codex: 45_000, grok: 75_000, cursor: 80_000, ollama: 85_000 },
               mainAuthorityMs: 90_000
             },
             userMcpServers: [{ ignored: true }],
@@ -195,7 +198,7 @@ describe('ManagedPolicyService', () => {
     })
     expect(patch.approvalTimeouts).toMatchObject({
       enabled: true,
-      perProviderMs: { codex: 45_000 },
+      perProviderMs: { codex: 45_000, grok: 75_000, cursor: 80_000, ollama: 85_000 },
       mainAuthorityMs: 90_000
     })
   })

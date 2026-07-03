@@ -317,6 +317,10 @@ What exists:
 - Workspace approval grants now persist through `SettingsService`, so
   `acceptForWorkspace` cannot re-add standing grants after managed policy has
   enforced `agenticWorkspaceGrants: []`.
+- Approval-timeout settings and managed-policy clamps now cover every current
+  provider (`gemini`, `codex`, `claude`, `kimi`, `grok`, `cursor`, and
+  `ollama`) instead of silently pinning the newer provider adapters to hidden
+  runtime defaults.
 
 What is missing:
 
