@@ -182,14 +182,20 @@ export function applyCursorWriteModeConfig(
   fs: CursorConfigFs,
   configPath: string,
   dirPath: string,
-  bridge?: CursorMcpBridgeOptions
+  bridge?: CursorMcpBridgeOptions,
+  options?: { fullAccess?: boolean }
 ): () => void {
   const dirExisted = fs.existsSync(dirPath)
 
   // cli.json: deny the native shell (write containment) + optionally allow the
   // bridge's MCP tools — merged into a single write so there's one file state.
+  // Full Workspace Access: a signed full_access run drops the native shell/write
+  // deny-list entirely (parity with Codex danger-full-access + Grok write mode),
+  // so Cursor's native shell/writes run unmediated. The caller gates this strictly
+  // on the post-clamp trusted grant; every other write run keeps the containment.
+  const denyRules = options?.fullAccess ? [] : CURSOR_WRITE_MODE_DENY_RULES
   const cli = captureFile(fs, configPath)
-  let cliMerged = mergeCursorDenyRules(cli.parsed, CURSOR_WRITE_MODE_DENY_RULES)
+  let cliMerged = mergeCursorDenyRules(cli.parsed, denyRules)
   if (bridge) cliMerged = mergeCursorAllowRules(cliMerged, bridge.allowRules)
 
   // mcp.json: register the TaskWraith server — only when the bridge supplies BOTH a

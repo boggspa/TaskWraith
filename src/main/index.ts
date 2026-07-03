@@ -11985,10 +11985,19 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
         ? userServerEntry
         : { ...buildCursorMcpServerEntry(brokerInvocation), ...userServerEntry }
       const hasWorkspaceServers = Object.keys(workspaceServers).length > 0
-      restoreCursorConfig = applyCursorWriteModeConfig(fsSync, cliPath, cursorDir, {
-        allowRules: [...CURSOR_MCP_ALLOW_RULES, ...buildUserMcpCursorAllowRules(userMcpServers)],
-        ...(hasWorkspaceServers ? { mcpConfigPath: mcpPath, serverEntry: workspaceServers } : {})
-      })
+      restoreCursorConfig = applyCursorWriteModeConfig(
+        fsSync,
+        cliPath,
+        cursorDir,
+        {
+          allowRules: [...CURSOR_MCP_ALLOW_RULES, ...buildUserMcpCursorAllowRules(userMcpServers)],
+          ...(hasWorkspaceServers ? { mcpConfigPath: mcpPath, serverEntry: workspaceServers } : {})
+        },
+        // Full Workspace Access → drop the native shell/write deny-list (see
+        // applyCursorWriteModeConfig). Gated on the post-clamp signed full_access
+        // posture; every other write run keeps native shell/writes contained.
+        { fullAccess: isFullShellAccessGranted(payload.effectivePermissions) }
+      )
       await ensureCursorMcpApproved(resolved.binaryPath, payload.workspace)
       if (!useGlobalBroker) {
         await ensureCursorMcpApproved(

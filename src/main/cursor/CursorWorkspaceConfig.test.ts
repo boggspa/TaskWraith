@@ -117,6 +117,23 @@ describe('applyCursorWriteModeConfig', () => {
   it('exposes the canonical write-mode deny rule', () => {
     expect(CURSOR_WRITE_MODE_DENY_RULES).toEqual(['Shell(**)', 'Write(**)'])
   })
+
+  it('drops the native shell/write deny-list under a full-access grant', () => {
+    const { fs, files } = makeFakeFs()
+    const restore = applyCursorWriteModeConfig(fs, CONFIG, DIR, undefined, { fullAccess: true })
+    const written = JSON.parse(files.get(CONFIG)!)
+    expect(written.permissions.deny).toEqual([])
+    restore()
+    expect(files.has(CONFIG)).toBe(false)
+  })
+
+  it('keeps the deny-list for a non-full-access write run', () => {
+    const { fs, files } = makeFakeFs()
+    applyCursorWriteModeConfig(fs, CONFIG, DIR, undefined, { fullAccess: false })
+    const written = JSON.parse(files.get(CONFIG)!)
+    expect(written.permissions.deny).toContain('Shell(**)')
+    expect(written.permissions.deny).toContain('Write(**)')
+  })
 })
 
 describe('applyCursorWriteModeConfig with the TaskWraith MCP bridge', () => {
