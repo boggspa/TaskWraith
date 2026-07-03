@@ -3329,6 +3329,10 @@ export function SettingsPanel({
     managedPolicyStatus,
     'approvalTimeouts'
   )
+  const auditRetentionManagedLocked = isManagedPolicySettingLocked(
+    managedPolicyStatus,
+    'auditRetention'
+  )
   const codexSandboxFallbackManagedLocked = isManagedPolicySettingLocked(
     managedPolicyStatus,
     'codexSandboxFallback'
@@ -8879,19 +8883,27 @@ export function SettingsPanel({
                     . Free-text notes stay redacted in diagnostics and audit bundles.
                   </p>
                 )}
+                {auditRetentionManagedLocked && (
+                  <p className="settings-hint">
+                    Audit retention settings are managed by organization policy. Dry-run and purge
+                    actions remain available against the enforced policy.
+                  </p>
+                )}
                 <label className="settings-service-row">
                   <span>Enable audit retention purge</span>
                   <input
                     type="checkbox"
                     checked={auditRetentionEnabled}
-                    onChange={(e) =>
+                    disabled={auditRetentionManagedLocked}
+                    onChange={(e) => {
+                      if (auditRetentionManagedLocked) return
                       onChange({
                         auditRetention: {
                           ...(auditRetention || {}),
                           enabled: e.target.checked
                         }
                       })
-                    }
+                    }}
                   />
                 </label>
                 <div
@@ -8910,9 +8922,11 @@ export function SettingsPanel({
                         min={1}
                         max={3650}
                         value={auditRetentionMaxAgeDays[surface.key] ?? 365}
-                        onChange={(e) =>
+                        disabled={auditRetentionManagedLocked}
+                        onChange={(e) => {
+                          if (auditRetentionManagedLocked) return
                           updateAuditRetentionSurface(surface.key, Number(e.target.value))
-                        }
+                        }}
                         style={{ width: 84 }}
                       />
                     </label>

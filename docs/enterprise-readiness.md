@@ -328,8 +328,8 @@ What exists:
   configuration, and filter future `SettingsService` writes. The first clamp
   surface covers update channel, auto-update, bridge enablement, Codex sandbox
   fallback, agentic-service policy, approval timeouts, user MCP servers
-  (disable-only), and workspace grants (clear-only). Diagnostics export reports
-  a redacted policy status summary.
+  (disable-only), audit retention windows/enabled state, and workspace grants
+  (clear-only). Diagnostics export reports a redacted policy status summary.
 - The managed-preferences/env/path managed policy source can now be a signed
   Ed25519 envelope. When
   `TASKWRAITH_MANAGED_POLICY_PUBLIC_KEY_DER_BASE64`,
@@ -362,6 +362,10 @@ What exists:
   for `autoUpdateEnabled` and `updateChannel`. The auto-update checkbox and
   update-channel selector disable when managed, while diagnostics, repair, and
   audit-bundle export actions remain available.
+- Settings -> General -> Product operations also consumes managed-policy locks
+  for `auditRetention`. The retention enablement toggle and per-surface windows
+  disable when managed, while dry-run and purge actions remain available against
+  the enforced policy.
 - Settings -> General approval timeout controls and Settings -> Providers
   agentic-service controls now disable when `approvalTimeouts` or
   `agenticServices` are managed. Stale agentic-service mutation events are
@@ -376,9 +380,10 @@ What is missing:
 
 - Per-control locked/disabled affordances in Settings are not complete yet.
   The top-level managed notice, agentic-service controls, approval-timeout
-  controls, product update controls, Codex sandbox fallback, TaskWraith MCP
-  bridge enablement, and the user-MCP settings pane are wired, but other
-  settings pages still need the same inline lock badges and disabled controls.
+  controls, product update controls, audit-retention controls, Codex sandbox
+  fallback, TaskWraith MCP bridge enablement, and the user-MCP settings pane are
+  wired, but other future managed settings pages will need the same inline lock
+  badges and disabled controls.
 - Other non-settings live controls still need explicit inventory and managed
   clamps. The current policy source is startup-loaded, so future live policy
   reload support must also revoke or re-materialize affected in-memory state.
@@ -393,7 +398,7 @@ Target:
   fields need it; keep it on the same effective-settings clamp seam as env/path
   fallback policies.
 - Clamp agentic service policy, workspace grants, approval timeouts, session
-  YOLO, update channel, auto-update, bridge access, and user-managed MCP
+  YOLO, update channel, auto-update, bridge access, audit retention, and user-managed MCP
   according to managed policy, including revocation behavior for any future
   live policy reload path.
 - Add UI "managed by organization" affordances rather than silently ignoring

@@ -505,6 +505,34 @@ describe('SettingsPanel provider cards', () => {
     expect(html).toContain('Export full audit bundle')
   })
 
+  it('locks audit retention controls when organization policy owns them', () => {
+    const html = renderToStaticMarkup(
+      <SettingsPanel
+        {...makeSettingsProps({
+          activeTab: 'behavior',
+          managedPolicyStatus: {
+            active: true,
+            organizationName: 'Acme Corp',
+            source: 'signed-mdm-preferences',
+            lockedSettings: ['auditRetention'],
+            enforcedSettings: ['auditRetention'],
+            errors: []
+          }
+        })}
+      />
+    )
+
+    expect(html).toContain('Audit retention settings are managed by organization policy.')
+    expect(html).toMatch(
+      /<label class="settings-service-row"><span>Enable audit retention purge<\/span><input type="checkbox" disabled=""/
+    )
+    expect(html).toMatch(
+      /<input class="settings-input" type="number" min="1" max="3650" disabled="" style="width:84px" value="365"/
+    )
+    expect(html).toContain('Dry-run retention')
+    expect(html).toContain('Purge expired evidence')
+  })
+
   it('renders the latest signed audit bundle verification result', () => {
     const html = renderToStaticMarkup(
       <SettingsPanel

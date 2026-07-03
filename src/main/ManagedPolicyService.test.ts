@@ -158,6 +158,10 @@ describe('ManagedPolicyService', () => {
               perProviderMs: { codex: 45_000, grok: 75_000, cursor: 80_000, ollama: 85_000 },
               mainAuthorityMs: 90_000
             },
+            auditRetention: {
+              enabled: true,
+              maxAgeDays: { approvalLedger: 180, messageFeedback: 90 }
+            },
             userMcpServers: [{ ignored: true }],
             agenticWorkspaceGrants: [{ ignored: true }]
           }
@@ -176,6 +180,7 @@ describe('ManagedPolicyService', () => {
         'geminiMcpBridgeEnabled',
         'codexSandboxFallback',
         'agenticServices',
+        'auditRetention',
         'userMcpServers',
         'agenticWorkspaceGrants'
       ]),
@@ -200,6 +205,10 @@ describe('ManagedPolicyService', () => {
       enabled: true,
       perProviderMs: { codex: 45_000, grok: 75_000, cursor: 80_000, ollama: 85_000 },
       mainAuthorityMs: 90_000
+    })
+    expect(patch.auditRetention).toEqual({
+      enabled: true,
+      maxAgeDays: { approvalLedger: 180, messageFeedback: 90 }
     })
   })
 

@@ -14,6 +14,7 @@ export const MANAGED_POLICY_SETTING_KEYS = [
   'agenticServices',
   'agenticWorkspaceGrants',
   'approvalTimeouts',
+  'auditRetention',
   'autoUpdateEnabled',
   'codexSandboxFallback',
   'geminiMcpBridgeEnabled',
@@ -27,6 +28,7 @@ type ManagedPolicySettings = Partial<
   Pick<
     AppSettings,
     | 'autoUpdateEnabled'
+    | 'auditRetention'
     | 'codexSandboxFallback'
     | 'geminiMcpBridgeEnabled'
     | 'updateChannel'
@@ -125,6 +127,15 @@ const approvalTimeoutProviderIds: readonly ProviderId[] = [
   'cursor',
   'ollama'
 ]
+const auditRetentionSurfaces = [
+  'approvalLedger',
+  'runEvents',
+  'workspaceChanges',
+  'auditRuns',
+  'messageFeedback',
+  'externalPublish',
+  'productCrashes'
+] as const
 const agenticServiceKeys = [
   'shellCommands',
   'fileChanges',
@@ -208,6 +219,23 @@ function sanitizeApprovalTimeouts(value: unknown): ManagedPolicySettings['approv
   return Object.keys(output).length > 0 ? output : undefined
 }
 
+function sanitizeAuditRetention(value: unknown): ManagedPolicySettings['auditRetention'] {
+  if (!isRecord(value)) return undefined
+  const maxAgeSource = isRecord(value.maxAgeDays) ? value.maxAgeDays : {}
+  const maxAgeDays: NonNullable<AppSettings['auditRetention']>['maxAgeDays'] = {}
+  for (const surface of auditRetentionSurfaces) {
+    const days = Number(maxAgeSource[surface])
+    if (Number.isFinite(days) && days > 0) {
+      maxAgeDays[surface] = Math.min(3650, Math.max(1, Math.floor(days)))
+    }
+  }
+  const output: ManagedPolicySettings['auditRetention'] = {
+    ...(typeof value.enabled === 'boolean' ? { enabled: value.enabled } : {}),
+    ...(Object.keys(maxAgeDays).length > 0 ? { maxAgeDays } : {})
+  }
+  return Object.keys(output).length > 0 ? output : undefined
+}
+
 function sanitizeManagedSettings(value: unknown): ManagedPolicySettings {
   if (!isRecord(value)) return {}
   const settings: ManagedPolicySettings = {}
@@ -231,6 +259,8 @@ function sanitizeManagedSettings(value: unknown): ManagedPolicySettings {
   if (agenticServices) settings.agenticServices = agenticServices
   const approvalTimeouts = sanitizeApprovalTimeouts(value.approvalTimeouts)
   if (approvalTimeouts) settings.approvalTimeouts = approvalTimeouts
+  const auditRetention = sanitizeAuditRetention(value.auditRetention)
+  if (auditRetention) settings.auditRetention = auditRetention
   if (Array.isArray(value.userMcpServers)) {
     // First managed-policy slice only supports disabling local user MCP servers.
     settings.userMcpServers = []
@@ -652,6 +682,21 @@ export class ManagedPolicyService {
           : {})
       }
       if (!jsonEqual(nextTimeouts, settings.approvalTimeouts)) patch.approvalTimeouts = nextTimeouts
+    }
+    if (policy.auditRetention) {
+      const nextRetention = {
+        ...(settings.auditRetention || {}),
+        ...(policy.auditRetention.enabled !== undefined
+          ? { enabled: policy.auditRetention.enabled }
+          : {}),
+        maxAgeDays: {
+          ...(settings.auditRetention?.maxAgeDays || {}),
+          ...(policy.auditRetention.maxAgeDays || {})
+        }
+      }
+      if (!jsonEqual(nextRetention, settings.auditRetention || {})) {
+        patch.auditRetention = nextRetention
+      }
     }
     if (policy.userMcpServers && !jsonEqual(policy.userMcpServers, settings.userMcpServers || [])) {
       patch.userMcpServers = policy.userMcpServers
