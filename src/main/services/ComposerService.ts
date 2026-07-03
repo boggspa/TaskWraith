@@ -309,8 +309,10 @@ export class ComposerService {
       grokNativeAvailable: allowProviderNativeGoal && provider === 'grok',
       allowProviderNative: allowProviderNativeGoal
     })
-    // Per-chat Ollama run profile (stored in providerMetadata like approvalMode).
-    // Absent → undefined → the resolver falls back to the global default.
+    // Legacy per-chat Ollama run profile (stored in providerMetadata like
+    // approvalMode). There is no longer a picker to set it; a value only exists
+    // on older chats. Absent → undefined → the runtime defaults to
+    // provider_parity (the per-ensemble-participant selector is the live knob).
     const rawChatOllamaRunProfile = chat.providerMetadata?.ollamaRunProfile
     const chatOllamaRunProfile = isOllamaRunProfileId(rawChatOllamaRunProfile)
       ? rawChatOllamaRunProfile

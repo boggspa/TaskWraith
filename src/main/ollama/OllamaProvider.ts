@@ -318,7 +318,7 @@ export interface OllamaToolRequest {
   arguments: Record<string, unknown>
 }
 
-function ollamaSessionMemoryKeyForRun(payload: AgentRunPayload): string | undefined {
+export function ollamaSessionMemoryKeyForRun(payload: AgentRunPayload): string | undefined {
   const participantId = payload.ensembleRun?.participantId?.trim()
   if (!participantId) return undefined
   const safeParticipantId = participantId.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 120)

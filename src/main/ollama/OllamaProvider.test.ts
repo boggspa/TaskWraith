@@ -15,6 +15,7 @@ import {
   ollamaToolIntentNudgePrompt,
   ollamaToolArgumentRepairPrompt,
   ollamaCeilingFinalizeContent,
+  ollamaSessionMemoryKeyForRun,
   ollamaToolResultFollowUpPrompt,
   ollamaToolCallKey,
   ollamaToolResultSignature,
@@ -2099,6 +2100,33 @@ describe('runOllamaProvider streaming', () => {
     expect(chatBodies.length).toBeGreaterThanOrEqual(2)
     expect(chatBodies[1]).toContain('search_the_web')
     expect(chatBodies[1]).toContain('tool_help')
+  })
+})
+
+describe('ollamaSessionMemoryKeyForRun', () => {
+  const payload = (participantId?: string): any =>
+    participantId === undefined ? {} : { ensembleRun: { participantId } }
+
+  it('returns undefined for a non-ensemble (solo) run', () => {
+    expect(ollamaSessionMemoryKeyForRun(payload())).toBeUndefined()
+    expect(ollamaSessionMemoryKeyForRun(payload('   '))).toBeUndefined()
+  })
+
+  it('keys by a sanitized participant id', () => {
+    expect(ollamaSessionMemoryKeyForRun(payload('seat-a'))).toBe('ensemble:seat-a')
+    // Non [A-Za-z0-9_-] chars collapse to underscores (path/collision safety).
+    expect(ollamaSessionMemoryKeyForRun(payload('seat a/b#1'))).toBe('ensemble:seat_a_b_1')
+  })
+
+  it('does not collide two distinct dirty ids onto one key', () => {
+    const a = ollamaSessionMemoryKeyForRun(payload('alpha:1'))
+    const b = ollamaSessionMemoryKeyForRun(payload('beta:1'))
+    expect(a).not.toBe(b)
+  })
+
+  it('caps a very long id at 120 chars of sanitized body', () => {
+    const key = ollamaSessionMemoryKeyForRun(payload('x'.repeat(500)))
+    expect(key).toBe(`ensemble:${'x'.repeat(120)}`)
   })
 })
 
