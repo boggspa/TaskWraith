@@ -4,7 +4,10 @@ import type {
   ProductUpdateChannel,
   CodexSandboxFallbackMode
 } from './store/types'
-import type { UserMcpLaunchAllowlistPolicy } from './UserMcpServers'
+import {
+  evaluateUserMcpLaunchPolicy,
+  type UserMcpLaunchAllowlistPolicy
+} from './UserMcpServers'
 
 export const MANAGED_POLICY_SETTING_KEYS = [
   'agenticServices',
@@ -307,10 +310,17 @@ export class ManagedPolicyService {
 
   filterSettingsPatch(patch: Partial<AppSettings>): Partial<AppSettings> {
     const locked = new Set(this.snapshot().lockedSettings)
-    if (locked.size === 0) return patch
     const filtered: Partial<AppSettings> = { ...patch }
     for (const key of locked) {
       delete filtered[key]
+    }
+    const allowlist = this.document.userMcpLaunchAllowlist
+    if (allowlist && Array.isArray(filtered.userMcpServers)) {
+      filtered.userMcpServers = filtered.userMcpServers.map((server) => {
+        if (!server.enabled) return server
+        const decision = evaluateUserMcpLaunchPolicy(server, allowlist)
+        return decision.allowed ? server : { ...server, enabled: false }
+      })
     }
     return filtered
   }

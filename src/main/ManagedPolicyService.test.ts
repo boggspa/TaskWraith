@@ -179,6 +179,42 @@ describe('ManagedPolicyService', () => {
     ).toEqual({ chatContextTurns: 2 })
   })
 
+  it('disables user MCP servers that fail the managed launch allowlist at save time', () => {
+    const service = new ManagedPolicyService(
+      'env-json',
+      parseManagedPolicyDocument({
+        userMcpLaunchAllowlist: {
+          allowedTransports: ['stdio'],
+          allowedCommandRoots: ['/opt/taskwraith/mcp']
+        }
+      })
+    )
+
+    const filtered = service.filterSettingsPatch({
+      userMcpServers: [
+        {
+          id: 'safe',
+          name: 'Safe',
+          enabled: true,
+          transport: 'stdio',
+          command: '/opt/taskwraith/mcp/safe-server'
+        },
+        {
+          id: 'unsafe',
+          name: 'Unsafe',
+          enabled: true,
+          transport: 'stdio',
+          command: '/tmp/unsafe-server'
+        }
+      ]
+    })
+
+    expect(filtered.userMcpServers).toEqual([
+      expect.objectContaining({ id: 'safe', enabled: true }),
+      expect.objectContaining({ id: 'unsafe', enabled: false })
+    ])
+  })
+
   it('reports malformed env policy without throwing during startup', () => {
     const service = loadManagedPolicyFromEnvironment({
       env: { TASKWRAITH_MANAGED_POLICY_JSON: '{' }

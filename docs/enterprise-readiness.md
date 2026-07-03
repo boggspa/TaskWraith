@@ -306,8 +306,9 @@ What is missing:
 - Other non-settings live controls still need explicit inventory and managed
   clamps. The current policy source is startup-loaded, so future live policy
   reload support must also revoke or re-materialize affected in-memory state.
-- User MCP policy is disable-only in this first spine. Managed allowlisting,
-  save-time validation, and plugin provenance checks still land under B5.4.
+- User MCP policy has launch-time and save-time managed allowlist enforcement.
+  Locked Settings UI and deeper plugin provenance revalidation still land under
+  B5.4.
 
 Target:
 
@@ -337,6 +338,9 @@ What exists:
   feeds it into the Claude, Cursor, and Codex user-MCP launch materialization
   paths. Diagnostics report only allowlist shape/counts, not the configured
   roots, hosts, headers, env keys, or plugin ids.
+- Settings writes now apply the same managed user-MCP allowlist before
+  persistence. Servers that fail the allowlist are preserved but saved disabled,
+  so the user does not lose configuration while launch bypasses remain closed.
 - Diagnostics and audit-bundle exports now include redacted
   `userMcpBlockedServers` evidence when the managed launch allowlist blocks
   enabled user MCP servers. Server ids/names and raw header/env names are
@@ -345,9 +349,8 @@ What exists:
 
 What is missing:
 
-- The allowlist is launch-time only. Save-time validation, locked Settings UI,
-  and plugin materialization policy still need to sit on the B5.3
-  managed-policy plane.
+- Locked Settings UI and plugin materialization policy still need to sit on the
+  B5.3 managed-policy plane.
 - Plugin provenance checks are syntactic until a managed policy service
   revalidates installed plugin state, resource kind, object id, and manifest
   hash.
@@ -361,7 +364,7 @@ What is missing:
 
 Target:
 
-- Enforce compatible checks at sanitize/save time and again at launch time.
+- Keep compatible checks at sanitize/save time and again at launch time.
 - Keep command-root, remote-host, env/header, and provenance decisions
   centralized in the user-MCP launch builder so Codex, Claude, Cursor, and
   provider capability previews cannot drift.
