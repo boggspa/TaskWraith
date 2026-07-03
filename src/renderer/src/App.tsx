@@ -10,6 +10,7 @@ import {
 } from './lib/runItemProjection'
 import { reconcileChatRefMap } from './lib/reconcileChatRefMap'
 import { messagesRenderEqual } from './lib/messagesRenderEqual'
+import { anchorPendingAgentQuestionMarkers } from './lib/agentQuestionMarkerAnchor'
 import { mergeWorkflowTelemetryIntoMessages } from './lib/workflowTelemetryMessages'
 import { mergeReviewTelemetryIntoMessages } from './lib/reviewTelemetryMessages'
 import { resolveAssistantDeltaTarget } from './lib/assistantDeltaTarget'
@@ -2134,6 +2135,11 @@ function App(): React.JSX.Element {
   const [pendingAgentQuestionsByChatId, setPendingAgentQuestionsForChat] = usePerChatState<
     readonly AgentQuestionState[]
   >(EMPTY_AGENT_QUESTION_QUEUE)
+  // Mirror of the pending-question queues for the app-wide `onChatUpdated` IPC
+  // callback (registered once with [] deps → can't read live state directly). Used
+  // to keep each pending question's synthetic marker pinned to the live tail.
+  const pendingAgentQuestionsByChatIdRef = useRef(pendingAgentQuestionsByChatId)
+  pendingAgentQuestionsByChatIdRef.current = pendingAgentQuestionsByChatId
   const [slashCommandsOpenRequestByChatId, setSlashCommandsOpenRequestForChat] =
     usePerChatState(0)
   const [scheduledTasks, setScheduledTasks] = useState<ScheduledTask[]>([])
@@ -8925,6 +8931,24 @@ function App(): React.JSX.Element {
           }
         }
         merged = preserveOptimisticEnsembleQueue(merged, liveChat)
+        // Pin every PENDING ask_user_question marker to the live tail. Its
+        // renderer-only synthetic marker is otherwise frozen at a stale array
+        // index while main's flushRun keeps re-tailing the live participant's own
+        // content past it — stranding the question card above the current speaker.
+        // Runs on EVERY broadcast (both merge branches) so the pending card can't
+        // lag or be dropped; answered/historical markers stay put.
+        const pendingQuestionsForChat = pendingAgentQuestionsByChatIdRef.current[merged.appChatId]
+        if (pendingQuestionsForChat && pendingQuestionsForChat.length > 0) {
+          const pendingMarkerIds = new Set(pendingQuestionsForChat.map((q) => q.messageId))
+          const anchoredMessages = anchorPendingAgentQuestionMarkers(
+            merged.messages,
+            liveChat?.messages || [],
+            pendingMarkerIds
+          )
+          if (anchoredMessages !== merged.messages) {
+            merged = { ...merged, messages: anchoredMessages }
+          }
+        }
         setChats((prev) => mergeChatRecord(prev, merged))
         chatByIdRef.current.set(merged.appChatId, merged)
         if (currentChatIdRef.current === merged.appChatId) {
@@ -9051,6 +9075,11 @@ function App(): React.JSX.Element {
           const headerLine = request.options?.length
             ? `${headerProvider} asked you to pick an option:`
             : `${headerProvider} asked you a question:`
+          // Stamp the ACTIVE ensemble round id so the marker groups with the
+          // live round (groupEnsembleMessagesByRound keys on ensembleRoundId)
+          // instead of rendering as a detached, adjacency-breaking "System"
+          // block separated from the current participant's turn.
+          const activeRoundId = prev.ensemble?.activeRound?.roundId
           const next: ChatMessage = {
             id: messageId,
             role: 'system',
@@ -9063,7 +9092,8 @@ function App(): React.JSX.Element {
               ensembleProvider: provider || undefined,
               agentQuestion: request.question,
               agentQuestionOptions: request.options,
-              agentQuestionContext: request.context
+              agentQuestionContext: request.context,
+              ...(activeRoundId ? { ensembleRoundId: activeRoundId } : {})
             }
           }
           return { ...prev, messages: [...(prev.messages || []), next] }
