@@ -74,6 +74,7 @@ import {
   useDiffHoverPreviewDismiss,
   useDiffHoverPreviewState
 } from './DiffHoverPreview'
+import { TranscriptFileTarget } from './TranscriptFileTarget'
 
 interface ActivityStackProps {
   activities: ToolActivity[]
@@ -1374,14 +1375,24 @@ function ActivityCompactGroup({
 function getInlineActivityTitle(
   activity: ToolActivity,
   filePath?: string,
-  participants?: EnsembleParticipant[]
+  participants?: EnsembleParticipant[],
+  workspacePath?: string,
+  showFileHoverCard = true
 ): ReactNode {
   if (isCallMcpToolActivity(activity)) {
     return <CallMcpToolEasterEgg />
   }
 
   if (filePath) {
-    return <ActivityTitle activity={activity} filePath={filePath} participants={participants} />
+    return (
+      <ActivityTitle
+        activity={activity}
+        filePath={filePath}
+        participants={participants}
+        workspacePath={workspacePath}
+        showFileHoverCard={showFileHoverCard}
+      />
+    )
   }
 
   const parameters = activity.parameters || {}
@@ -1442,17 +1453,29 @@ function getInlineActivityTitle(
     )
   }
 
-  return <ActivityTitle activity={activity} filePath={filePath} participants={participants} />
+  return (
+    <ActivityTitle
+      activity={activity}
+      filePath={filePath}
+      participants={participants}
+      workspacePath={workspacePath}
+      showFileHoverCard={showFileHoverCard}
+    />
+  )
 }
 
 function ActivityTitle({
   activity,
   filePath,
-  participants
+  participants,
+  workspacePath,
+  showFileHoverCard = true
 }: {
   activity: ToolActivity
   filePath?: string
   participants?: EnsembleParticipant[]
+  workspacePath?: string
+  showFileHoverCard?: boolean
 }) {
   if (isCallMcpToolActivity(activity)) {
     return <CallMcpToolEasterEgg />
@@ -1482,7 +1505,13 @@ function ActivityTitle({
     return (
       <>
         Attempted to {attemptedWriteVerb(activity)}{' '}
-        <strong className="activity-file-name">{getBaseName(filePath)}</strong>
+        <TranscriptFileTarget
+          filePath={filePath}
+          label={getBaseName(filePath)}
+          workspacePath={workspacePath}
+          className="activity-file-name"
+          showHoverCard={showFileHoverCard}
+        />
       </>
     )
   }
@@ -1490,7 +1519,13 @@ function ActivityTitle({
   return (
     <>
       {getFileActionLabel(activity)}{' '}
-      <strong className="activity-file-name">{getBaseName(filePath)}</strong>
+      <TranscriptFileTarget
+        filePath={filePath}
+        label={getBaseName(filePath)}
+        workspacePath={workspacePath}
+        className="activity-file-name"
+        showHoverCard={showFileHoverCard}
+      />
     </>
   )
 }
@@ -2044,6 +2079,7 @@ export function ActivityStack({
           key={item.activity.id}
           activity={item.activity}
           provider={provider}
+          workspacePath={workspacePath}
           globalScope={isGlobalChat(chat)}
         />
       )
@@ -2711,12 +2747,20 @@ function ActivityRow({
                     )
                   })()}
                 {isInlineActivity ? (
-                  getInlineActivityTitle(activity, activityFilePath, participants)
+                  getInlineActivityTitle(
+                    activity,
+                    activityFilePath,
+                    participants,
+                    workspacePath,
+                    !activityDiffPreviewText
+                  )
                 ) : (
                   <ActivityTitle
                     activity={activity}
                     filePath={activityFilePath}
                     participants={participants}
+                    workspacePath={workspacePath}
+                    showFileHoverCard={!activityDiffPreviewText}
                   />
                 )}
                 {inlineStats.visible && (

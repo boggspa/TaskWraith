@@ -5,21 +5,25 @@ import {
   REDACTION_HINT,
   buildFoldoutSections,
   buildResultPreview,
-  compactToolDisplayName,
   durationLabel,
   extractToolUrlTargets,
   friendlyGlobalToolLabel,
   providerLabel,
   resolveProvider,
+  splitCompactToolLabel,
   statusLabel
 } from './CompactToolTrace.lib'
 import { ToolUrlBadge } from './ToolUrlBadge'
+import { TranscriptFileTarget } from './TranscriptFileTarget'
 
 interface CompactToolTraceProps {
   activity: ToolActivity
   /** Chat-level provider — used when the activity itself doesn't
    * carry a `metadata.provider` / `metadata.ensembleProvider`. */
   provider?: ProviderId
+  /** Workspace root — lets the clickable file path resolve a relative tool
+   * path to an absolute one for open / reveal. */
+  workspacePath?: string
   /** Slice 6a — when true (chat.scope === 'global'), the collapsed one-line
    * trace softens to a friendly summary ("Searched the web…") for web tools.
    * Softens, never hides: the foldout still carries the full raw output. */
@@ -29,6 +33,7 @@ interface CompactToolTraceProps {
 export function CompactToolTrace({
   activity,
   provider,
+  workspacePath,
   globalScope = false
 }: CompactToolTraceProps) {
   const [expanded, setExpanded] = useState(false)
@@ -37,12 +42,17 @@ export function CompactToolTrace({
   const preview = buildResultPreview(activity)
   const duration = durationLabel(activity.durationMs)
   const status = statusLabel(activity.status)
-  const toolName = compactToolDisplayName(activity)
   const provLabel = providerLabel(resolvedProvider)
   const urlTargets = extractToolUrlTargets(activity)
   const softLabel = globalScope ? friendlyGlobalToolLabel(activity) : null
+  const { prefix: labelPrefix, filePath: labelFilePath } = splitCompactToolLabel(
+    activity,
+    softLabel
+  )
 
   const sections = expanded ? buildFoldoutSections(activity) : []
+
+  const toggleExpanded = () => setExpanded((current) => !current)
 
   return (
     <div
@@ -50,11 +60,18 @@ export function CompactToolTrace({
       data-status={activity.status}
       data-provider={resolvedProvider || 'unknown'}
     >
-      <button
-        type="button"
+      <div
         className="compact-tool-trace-line"
+        role="button"
+        tabIndex={0}
         aria-expanded={expanded}
-        onClick={() => setExpanded((current) => !current)}
+        onClick={toggleExpanded}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault()
+            toggleExpanded()
+          }
+        }}
       >
         <span className="compact-tool-trace-icon" aria-hidden>
           {family ? (
@@ -63,7 +80,15 @@ export function CompactToolTrace({
             <span className={`compact-tool-trace-pip category-${activity.category || 'unknown'}`} />
           )}
         </span>
-        <span className="compact-tool-trace-name">{softLabel || toolName}</span>
+        <span className="compact-tool-trace-name">{labelPrefix}</span>
+        {labelFilePath && (
+          <TranscriptFileTarget
+            filePath={labelFilePath}
+            label={labelFilePath}
+            workspacePath={workspacePath}
+            className="compact-tool-trace-path"
+          />
+        )}
         {!softLabel && provLabel && (
           <>
             <span className="compact-tool-trace-sep" aria-hidden>
@@ -128,7 +153,7 @@ export function CompactToolTrace({
             <polyline points="3,4.5 6,7.5 9,4.5" />
           </svg>
         </span>
-      </button>
+      </div>
       {expanded && (sections.length > 0 || urlTargets.length > 0) && (
         <div className="compact-tool-trace-foldout">
           {urlTargets.length > 0 && (

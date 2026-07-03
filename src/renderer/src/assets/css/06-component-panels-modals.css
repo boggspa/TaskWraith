@@ -344,6 +344,117 @@
 .compact-tool-trace-provider.provider-cursor { color: var(--provider-cursor-color, #f5c448); }
 .compact-tool-trace-provider.provider-ollama { color: var(--provider-ollama-color, #77d1be); }
 
+/* Shared clickable file reference (compact trace + activity rows). A link-
+ * styled button that resets native chrome but leaves font-weight/style/color
+ * to its companion class (`.activity-file-name` keeps its bold-italic, the
+ * compact `.compact-tool-trace-path` keeps its mono). Opening a file never
+ * expands the surrounding row — the component stops click/keydown propagation. */
+.transcript-file-target {
+  display: inline;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  letter-spacing: inherit;
+  text-align: inherit;
+  cursor: pointer;
+  border-radius: 4px;
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  text-underline-offset: 2px;
+  transition: color 120ms ease, text-decoration-color 120ms ease;
+}
+.transcript-file-target:hover {
+  color: var(--accent);
+  text-decoration-color: currentColor;
+}
+.transcript-file-target:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  outline-offset: 1px;
+  text-decoration-color: currentColor;
+}
+
+/* Compact-trace path chip: sits where the raw path text used to render, but
+ * now truncates with an ellipsis instead of overflowing the one-line row. */
+.compact-tool-trace-path {
+  display: inline-block;
+  flex-shrink: 1;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+/* Portaled hover popover for a file target: full path + open/reveal/copy.
+ * `position: fixed` so it escapes the transcript's scroll/overflow ancestors
+ * (`.transcript-scroll`, `.live-activity-viewport`) that would otherwise clip
+ * an inline-positioned card. */
+.transcript-file-card {
+  position: fixed;
+  /* Same band as the transcript context menu (10060) / diff hover preview
+   * (10080): a portaled transcript popover must clear app chrome + docks. */
+  z-index: 10060;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 460px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  background: var(--surface-elevated, #1b1d22);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+}
+.transcript-file-card-path {
+  max-height: 120px;
+  overflow-y: auto;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
+  font-size: 0.78rem;
+  line-height: 1.4;
+  color: var(--text-secondary);
+  word-break: break-all;
+  user-select: text;
+}
+.transcript-file-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.transcript-file-card-action {
+  appearance: none;
+  padding: 3px 9px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 0.76rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+.transcript-file-card-action:hover {
+  color: var(--text-primary);
+  border-color: color-mix(in srgb, var(--accent) 50%, var(--border-subtle));
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+.transcript-file-card-action.is-primary {
+  color: var(--text-primary);
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+.transcript-file-card-action.is-primary:hover {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
 .tool-url-badge {
   display: inline-flex;
   align-items: center;
@@ -783,7 +894,6 @@
 .app-sidebar .sidebar-chat-age,
 .app-sidebar .sidebar-workspace-count-badge,
 .app-sidebar .sidebar-workspace-running-dot,
-.app-sidebar .sidebar-chat-busy,
 .app-sidebar .sidebar-item-action,
 .app-sidebar .sidebar-tree-toggle,
 .app-sidebar .sf-symbol-icon {

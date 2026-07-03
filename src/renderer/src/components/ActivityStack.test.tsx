@@ -413,6 +413,20 @@ describe('ActivityStack compactDensity routing', () => {
     expect(html).toContain('activity-row')
   })
 
+  it('renders the file basename as a clickable TranscriptFileTarget in the DEFAULT (non-compact) path', () => {
+    // Guards ActivityStack's own wiring: ActivityTitle/getInlineActivityTitle
+    // must thread the path through to a `transcript-file-target activity-file-name`
+    // button (not the old <strong>) in the default experience most users see.
+    const html = renderToStaticMarkup(
+      <ActivityStack activities={[makeWriteActivity()]} provider="claude" workspacePath="/repo" />
+    )
+
+    expect(html).toContain('transcript-file-target activity-file-name')
+    expect(html).toContain('>foo.ts</button>')
+    // The full resolved path rides along in the title for the hover affordance.
+    expect(html).toContain('title="/repo/src/foo.ts"')
+  })
+
   it('surfaces cross-provider attribution distinctly when activities carry their own metadata.ensembleProvider', () => {
     // Simulates a single ensemble round where Codex called write_file
     // and Claude called Edit — the chat-level provider is "codex" but
@@ -439,10 +453,13 @@ describe('ActivityStack compactDensity routing', () => {
 
     expect(html).toContain('provider-codex')
     expect(html).toContain('provider-claude')
-    // Each actor's tool surfaces under its own human-friendly label —
-    // Codex's write_file as "Wrote …", Claude's Edit as "Edited …".
-    expect(html).toContain('Wrote /repo/src/foo.ts')
-    expect(html).toContain('Edited /repo/src/foo.ts')
+    // Each actor's tool surfaces under its own human-friendly verb — Codex's
+    // write_file as "Wrote", Claude's Edit as "Edited" — with the file path
+    // split out into a distinct clickable, openable target.
+    expect(html).toContain('>Wrote</span>')
+    expect(html).toContain('>Edited</span>')
+    expect(html).toContain('transcript-file-target compact-tool-trace-path')
+    expect(html).toContain('/repo/src/foo.ts')
   })
 
   it('still renders ChildAgentSpawnBlock and falls back to ActivityRow when an activity has a child thread, even in compact mode', () => {

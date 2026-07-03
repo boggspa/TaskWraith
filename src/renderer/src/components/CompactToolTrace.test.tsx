@@ -4,8 +4,10 @@ import { CompactToolTrace } from './CompactToolTrace'
 import {
   buildFoldoutSections,
   buildResultPreview,
+  extractToolFilePath,
   extractToolUrlTargets,
-  friendlyGlobalToolLabel
+  friendlyGlobalToolLabel,
+  splitCompactToolLabel
 } from './CompactToolTrace.lib'
 import type { ToolActivity } from '../../../main/store/types'
 
@@ -29,7 +31,11 @@ describe('CompactToolTrace', () => {
   it('renders a one-line trace with toolName, status, duration, and preview', () => {
     const html = renderToStaticMarkup(<CompactToolTrace activity={makeActivity()} />)
     expect(html).toContain('compact-tool-trace')
-    expect(html).toContain('Wrote /repo/src/foo.ts')
+    // The verb stays in the name span; the file path renders as a distinct
+    // clickable, openable target rather than inline plain text.
+    expect(html).toContain('>Wrote</span>')
+    expect(html).toContain('transcript-file-target compact-tool-trace-path')
+    expect(html).toContain('>/repo/src/foo.ts</button>')
     expect(html).toContain('ok')
     expect(html).toContain('250ms')
     expect(html).toContain('wrote 1 line')
@@ -241,5 +247,66 @@ describe('friendlyGlobalToolLabel (General-chat tool-trace softening)', () => {
     expect(friendlyGlobalToolLabel(makeActivity({ toolName: 'write_file' }))).toBeNull()
     expect(friendlyGlobalToolLabel(makeActivity({ toolName: 'run_command' }))).toBeNull()
     expect(friendlyGlobalToolLabel(makeActivity({ toolName: '' }))).toBeNull()
+  })
+})
+
+describe('extractToolFilePath', () => {
+  it('prefers a path-like parameter (matching the label source) over activity.filePath', () => {
+    expect(
+      extractToolFilePath(makeActivity({ filePath: '/repo/a.ts', parameters: { path: '/other/b.ts' } }))
+    ).toBe('/other/b.ts')
+  })
+
+  it('reads the well-known parameter keys', () => {
+    expect(extractToolFilePath(makeActivity())).toBe('/repo/src/foo.ts')
+    expect(
+      extractToolFilePath(makeActivity({ parameters: { target: '/x/y.ts' } }))
+    ).toBe('/x/y.ts')
+  })
+
+  it('falls back to the first-class activity.filePath when no path parameter is present', () => {
+    expect(
+      extractToolFilePath(makeActivity({ filePath: '/repo/only-first-class.ts', parameters: { query: 'todo' } }))
+    ).toBe('/repo/only-first-class.ts')
+  })
+
+  it('returns undefined when neither a path parameter nor activity.filePath is present', () => {
+    expect(
+      extractToolFilePath(makeActivity({ filePath: undefined, parameters: { query: 'todo' } }))
+    ).toBeUndefined()
+  })
+})
+
+describe('splitCompactToolLabel', () => {
+  it('splits a file verb label into prefix + trailing path', () => {
+    const parts = splitCompactToolLabel(
+      makeActivity({ filePath: undefined, parameters: { file_path: '/repo/src/foo.ts' } }),
+      null
+    )
+    expect(parts.prefix).toBe('Wrote')
+    expect(parts.filePath).toBe('/repo/src/foo.ts')
+  })
+
+  it('returns a softened global label whole with no clickable path', () => {
+    const parts = splitCompactToolLabel(makeActivity(), 'Searched the web')
+    expect(parts.prefix).toBe('Searched the web')
+    expect(parts.filePath).toBeUndefined()
+  })
+
+  it('does not split when the label does not end in its resolved path', () => {
+    // A humanized label that carries a path param but does NOT end in it must
+    // stay whole rather than being torn apart at an arbitrary boundary.
+    const parts = splitCompactToolLabel(
+      makeActivity({
+        toolName: 'mcp_custom_do_thing',
+        displayName: 'Ran a custom action',
+        category: 'unknown',
+        filePath: undefined,
+        parameters: { path: '/x/y.ts' }
+      }),
+      null
+    )
+    expect(parts.filePath).toBeUndefined()
+    expect(parts.prefix).toBe('Ran a custom action')
   })
 })

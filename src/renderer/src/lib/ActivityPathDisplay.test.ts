@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest'
-import { displayPathRelativeToWorkspace, tildifyHomePath } from './ActivityPathDisplay'
+import {
+  displayPathRelativeToWorkspace,
+  isAbsoluteFilePath,
+  resolveWorkspaceAbsolutePath,
+  tildifyHomePath
+} from './ActivityPathDisplay'
 
 describe('displayPathRelativeToWorkspace', () => {
   describe('workspace-relative truncation', () => {
@@ -188,5 +193,76 @@ describe('tildifyHomePath', () => {
     expect(tildifyHomePath(null)).toBe('')
     expect(tildifyHomePath(undefined)).toBe('')
     expect(tildifyHomePath(42 as unknown as string)).toBe('')
+  })
+})
+
+describe('isAbsoluteFilePath', () => {
+  it('recognises POSIX, Windows-drive and UNC absolute paths', () => {
+    expect(isAbsoluteFilePath('/repo/src/foo.ts')).toBe(true)
+    expect(isAbsoluteFilePath('C:\\Users\\a\\foo.ts')).toBe(true)
+    expect(isAbsoluteFilePath('C:/Users/a/foo.ts')).toBe(true)
+    expect(isAbsoluteFilePath('\\\\host\\share\\foo.ts')).toBe(true)
+  })
+
+  it('treats relative paths and `~` as NOT absolute', () => {
+    expect(isAbsoluteFilePath('src/foo.ts')).toBe(false)
+    expect(isAbsoluteFilePath('./foo.ts')).toBe(false)
+    expect(isAbsoluteFilePath('../foo.ts')).toBe(false)
+    expect(isAbsoluteFilePath('~/foo.ts')).toBe(false)
+  })
+
+  it('returns false for empty / nullish / non-string inputs', () => {
+    expect(isAbsoluteFilePath('')).toBe(false)
+    expect(isAbsoluteFilePath('   ')).toBe(false)
+    expect(isAbsoluteFilePath(null)).toBe(false)
+    expect(isAbsoluteFilePath(undefined)).toBe(false)
+  })
+})
+
+describe('resolveWorkspaceAbsolutePath', () => {
+  it('returns an already-absolute path trimmed and unchanged', () => {
+    expect(
+      resolveWorkspaceAbsolutePath('/repo/src/foo.ts', '/repo')
+    ).toBe('/repo/src/foo.ts')
+    expect(
+      resolveWorkspaceAbsolutePath('  /repo/src/foo.ts  ', '/other')
+    ).toBe('/repo/src/foo.ts')
+    // A leading-slash path is absolute POSIX — NOT joined onto the workspace.
+    expect(resolveWorkspaceAbsolutePath('/src/foo.ts', '/repo')).toBe('/src/foo.ts')
+  })
+
+  it('joins a relative path onto the workspace root', () => {
+    expect(resolveWorkspaceAbsolutePath('src/foo.ts', '/repo')).toBe('/repo/src/foo.ts')
+    expect(resolveWorkspaceAbsolutePath('src/foo.ts', '/repo/')).toBe('/repo/src/foo.ts')
+  })
+
+  it('normalises `./` and lexically collapses `../` segments after joining', () => {
+    expect(resolveWorkspaceAbsolutePath('./src/foo.ts', '/repo')).toBe('/repo/src/foo.ts')
+    expect(resolveWorkspaceAbsolutePath('../sibling/foo.ts', '/repo')).toBe('/sibling/foo.ts')
+    // Deep traversal collapses to an honest resolved path (no opaque `..` run).
+    expect(resolveWorkspaceAbsolutePath('src/../../../etc/hosts', '/repo')).toBe('/etc/hosts')
+  })
+
+  it('collapses `.`/`..` in an already-absolute POSIX path', () => {
+    expect(resolveWorkspaceAbsolutePath('/repo/src/../lib/x.ts', '/repo')).toBe('/repo/lib/x.ts')
+  })
+
+  it('returns a `~`-prefixed path untouched rather than joining it onto the workspace', () => {
+    expect(resolveWorkspaceAbsolutePath('~/Desktop/x.ts', '/repo')).toBe('~/Desktop/x.ts')
+  })
+
+  it('uses backslash join for a Windows workspace root', () => {
+    expect(resolveWorkspaceAbsolutePath('src\\foo.ts', 'C:\\repo')).toBe('C:\\repo\\src\\foo.ts')
+  })
+
+  it('returns the relative path unchanged when there is no workspace to anchor it', () => {
+    expect(resolveWorkspaceAbsolutePath('src/foo.ts', undefined)).toBe('src/foo.ts')
+    expect(resolveWorkspaceAbsolutePath('src/foo.ts', '')).toBe('src/foo.ts')
+  })
+
+  it('returns "" for empty / nullish inputs', () => {
+    expect(resolveWorkspaceAbsolutePath('', '/repo')).toBe('')
+    expect(resolveWorkspaceAbsolutePath(null, '/repo')).toBe('')
+    expect(resolveWorkspaceAbsolutePath(undefined, '/repo')).toBe('')
   })
 })

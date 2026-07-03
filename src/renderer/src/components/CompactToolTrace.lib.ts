@@ -78,6 +78,72 @@ export function compactToolDisplayName(activity: ToolActivity): string {
   return displayLooksRaw ? fallback || displayName || rawToolName || 'tool' : displayName
 }
 
+/** Ordered param keys we treat as "the file this tool acted on", mirroring
+ * `getPathFromRecord` in ToolParser + `getFilePathFromActivity` in
+ * ActivityStack so the compact trace resolves the same path those surfaces do. */
+const TOOL_FILE_PATH_KEYS = [
+  'file_path',
+  'filePath',
+  'path',
+  'target',
+  'target_file',
+  'target_file_path',
+  'source',
+  'source_file',
+  'source_file_path',
+  'destination',
+  'destination_file',
+  'destination_file_path'
+]
+
+/** The file path this activity acted on, if any. Checks the well-known
+ * parameter keys FIRST (matching `getFilePathFromActivity` in ActivityStack
+ * and the parameter-derived label from `getToolDisplayName`, so the compact
+ * split's `endsWith` match stays reliable), then the first-class
+ * `activity.filePath` as a last resort. */
+export function extractToolFilePath(activity: ToolActivity): string | undefined {
+  const params = activity.parameters || {}
+  for (const key of TOOL_FILE_PATH_KEYS) {
+    const value = params[key]
+    if (typeof value === 'string' && value.trim()) return value.trim()
+  }
+  const direct = typeof activity.filePath === 'string' ? activity.filePath.trim() : ''
+  return direct || undefined
+}
+
+export interface CompactToolLabelParts {
+  /** The leading verb/label (e.g. "Read", "Edited"), or the whole label when
+   * no file path could be cleanly split out of it. */
+  prefix: string
+  /** The trailing file path, present only when it was cleanly separable from
+   * the label so the caller can render it as a distinct clickable target. */
+  filePath?: string
+}
+
+/**
+ * Split a compact tool-trace label like `Read /repo/src/foo.ts` into its
+ * `{ prefix: 'Read', filePath: '/repo/src/foo.ts' }` parts so the file portion
+ * can be rendered as a clickable {@link TranscriptFileTarget}.
+ *
+ * The split only happens when the resolved path is genuinely the tail of the
+ * label (which is how `getToolDisplayName` composes file verbs). A softened
+ * global web label, or any tool whose label doesn't end in its path, is
+ * returned whole with no `filePath` so it renders exactly as before.
+ */
+export function splitCompactToolLabel(
+  activity: ToolActivity,
+  softLabel: string | null
+): CompactToolLabelParts {
+  if (softLabel) return { prefix: softLabel }
+  const label = compactToolDisplayName(activity)
+  const filePath = extractToolFilePath(activity)
+  if (filePath && label.length > filePath.length && label.endsWith(filePath)) {
+    const prefix = label.slice(0, label.length - filePath.length).trimEnd()
+    if (prefix) return { prefix, filePath }
+  }
+  return { prefix: label }
+}
+
 export function statusLabel(status: ToolActivity['status']): string {
   switch (status) {
     case 'success':
