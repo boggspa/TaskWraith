@@ -37,6 +37,8 @@ public struct EnsembleRosterSheet: View {
     /// "Save current roster as preset" name prompt.
     @State private var showSavePrompt = false
     @State private var presetNameDraft = ""
+    @State private var orchestrationModeDraft: String? = nil
+    @State private var maxContinuationHopsDraft: Int? = nil
 
     public init(model: RemoteSessionModel, threadId: String, workspaceId: String) {
         self.model = model
@@ -75,6 +77,42 @@ public struct EnsembleRosterSheet: View {
             }
     }
 
+    private var remoteOrchestrationMode: String {
+        state?.orchestrationMode == "continuous" ? "continuous" : "turn_bound"
+    }
+
+    private var selectedOrchestrationMode: String {
+        orchestrationModeDraft ?? remoteOrchestrationMode
+    }
+
+    private var remoteMaxContinuationHops: Int {
+        clampContinuationHops(state?.maxContinuationHops ?? 6)
+    }
+
+    private var selectedMaxContinuationHops: Int {
+        maxContinuationHopsDraft ?? remoteMaxContinuationHops
+    }
+
+    private var continuationHops: Int {
+        max(0, state?.continuationHops ?? 0)
+    }
+
+    private func clampContinuationHops(_ value: Int) -> Int {
+        max(1, min(500, value))
+    }
+
+    private func workSessionStatusLabel(_ status: String?) -> String {
+        guard let status, !status.isEmpty, status != "idle" else { return "Idle" }
+        switch status {
+        case "active": return "Active"
+        case "paused": return "Paused"
+        case "completed": return "Completed"
+        case "cancelled": return "Cancelled"
+        case "limit_reached": return "Limit reached"
+        default: return status
+        }
+    }
+
     private func roundStatus(for id: String) -> String? {
         state?.participants?.first { $0.participantId == id }?.status
     }
@@ -83,6 +121,7 @@ public struct EnsembleRosterSheet: View {
         NavigationStack {
             List {
                 presetsSection
+                orchestrationSection
                 participantsSection
                 addSection
             }
@@ -191,6 +230,76 @@ public struct EnsembleRosterSheet: View {
             draft = fresh
             // Retry a pending chip-tap focus once the roster has synced.
             consumeFocusIfNeeded()
+        }
+        .onChange(of: state?.orchestrationMode) { _, fresh in
+            if orchestrationModeDraft == (fresh == "continuous" ? "continuous" : "turn_bound") {
+                orchestrationModeDraft = nil
+            }
+        }
+        .onChange(of: state?.maxContinuationHops) { _, fresh in
+            if maxContinuationHopsDraft == clampContinuationHops(fresh ?? 6) {
+                maxContinuationHopsDraft = nil
+            }
+        }
+    }
+
+    private var orchestrationSection: some View {
+        Section {
+            Picker(
+                "Mode",
+                selection: Binding(
+                    get: { selectedOrchestrationMode },
+                    set: { mode in
+                        let next = mode == "continuous" ? "continuous" : "turn_bound"
+                        orchestrationModeDraft = next
+                        model.updateEnsembleSettings(
+                            workspaceId: workspaceId,
+                            threadId: threadId,
+                            orchestrationMode: next)
+                    })
+            ) {
+                Text("Turn").tag("turn_bound")
+                Text("Continuous").tag("continuous")
+            }
+            .pickerStyle(.segmented)
+
+            if selectedOrchestrationMode == "continuous" {
+                Stepper(
+                    value: Binding(
+                        get: { selectedMaxContinuationHops },
+                        set: { value in
+                            let next = clampContinuationHops(value)
+                            maxContinuationHopsDraft = next
+                            model.updateEnsembleSettings(
+                                workspaceId: workspaceId,
+                                threadId: threadId,
+                                maxContinuationHops: next)
+                        }),
+                    in: 1...500
+                ) {
+                    HStack {
+                        Label("Hops", systemImage: "arrow.triangle.2.circlepath")
+                        Spacer()
+                        Text("\(selectedMaxContinuationHops)")
+                            .foregroundStyle(TWTheme.textSecondary)
+                    }
+                }
+                HStack {
+                    Label("Used", systemImage: "point.3.connected.trianglepath.dotted")
+                    Spacer()
+                    Text("\(continuationHops)/\(selectedMaxContinuationHops)")
+                        .foregroundStyle(TWTheme.textSecondary)
+                }
+            }
+
+            HStack {
+                Label("Work Session", systemImage: "target")
+                Spacer()
+                Text(workSessionStatusLabel(state?.workSessionStatus))
+                    .foregroundStyle(TWTheme.textSecondary)
+            }
+        } header: {
+            Text("Orchestration")
         }
     }
 
