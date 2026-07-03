@@ -59,6 +59,11 @@ step('security:deps', {
   args: ['run', 'security:deps'],
   required: true
 })
+step('lint:errors', {
+  cmd: 'npm',
+  args: ['run', 'lint:errors'],
+  required: true
+})
 step('typecheck:web', {
   cmd: 'npm',
   args: ['run', 'typecheck:web'],
@@ -68,6 +73,12 @@ step('test', {
   cmd: 'npm',
   args: ['run', 'test'],
   required: true
+})
+step('test:swift:bridge', {
+  cmd: 'npm',
+  args: ['run', 'test:swift:bridge'],
+  required: true,
+  skipOn: process.platform !== 'darwin'
 })
 step('lint', {
   cmd: 'npm',

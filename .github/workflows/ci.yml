@@ -83,7 +83,10 @@ jobs:
   notarized-macos-release:
     name: Notarized macOS Release
     runs-on: macos-15
+    needs: [test, ios]
     if: startsWith(github.ref, 'refs/tags/v') && vars.ENABLE_MACOS_NOTARIZED_RELEASE == 'true'
+    permissions:
+      contents: write
     env:
       CSC_LINK: ${{ secrets.MACOS_CSC_LINK }}
       CSC_KEY_PASSWORD: ${{ secrets.MACOS_CSC_KEY_PASSWORD }}
@@ -113,11 +116,27 @@ jobs:
             test -f "$artifact"
             xcrun stapler validate "$artifact"
           done
+      - name: Upload verified macOS release artifacts
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          assets=(dist/*.dmg dist/*.zip dist/*.blockmap dist/latest-mac.yml dist/sbom.cdx.json)
+          if [ "${#assets[@]}" -lt 3 ]; then
+            echo "Expected notarized macOS release artifacts in dist/, found ${#assets[@]}."
+            exit 1
+          fi
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || \
+            gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes "Verified TaskWraith release artifacts for $GITHUB_REF_NAME." || \
+            gh release view "$GITHUB_REF_NAME" >/dev/null
+          gh release upload "$GITHUB_REF_NAME" "${assets[@]}" --clobber
 
   signed-windows-release:
     name: Signed Windows Release
     runs-on: windows-latest
+    needs: [test, ios]
     if: startsWith(github.ref, 'refs/tags/v') && vars.ENABLE_WINDOWS_SIGNED_RELEASE == 'true'
+    permissions:
+      contents: write
     env:
       CSC_LINK: ${{ secrets.WINDOWS_CSC_LINK }}
       CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CSC_KEY_PASSWORD }}
@@ -153,6 +172,29 @@ jobs:
               throw "Missing $feed"
             }
           }
+      - name: Upload verified Windows release artifacts
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $assets = @(
+            Get-ChildItem -Path dist -Filter "TaskWraith-*-win-*-setup.exe"
+            Get-ChildItem -Path dist -Filter "TaskWraith-*-win-*-setup.exe.blockmap"
+            Get-ChildItem -Path dist -Filter "*-win-*.yml"
+          ) | ForEach-Object { $_.FullName }
+          if ($assets.Count -lt 4) {
+            throw "Expected signed Windows installers, blockmaps, and update feeds in dist/, found $($assets.Count)."
+          }
+          gh release view "$env:GITHUB_REF_NAME" *> $null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create "$env:GITHUB_REF_NAME" --title "$env:GITHUB_REF_NAME" --notes "Verified TaskWraith release artifacts for $env:GITHUB_REF_NAME."
+            if ($LASTEXITCODE -ne 0) {
+              gh release view "$env:GITHUB_REF_NAME" *> $null
+              if ($LASTEXITCODE -ne 0) {
+                throw "Could not create or verify GitHub release $env:GITHUB_REF_NAME."
+              }
+            }
+          }
+          gh release upload "$env:GITHUB_REF_NAME" @assets --clobber
 
   unsigned-windows-build:
     name: Unsigned Windows Build (testing)
