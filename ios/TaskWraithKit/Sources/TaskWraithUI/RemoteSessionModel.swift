@@ -3446,20 +3446,30 @@ public final class RemoteSessionModel: ObservableObject {
     public func updateEnsembleSettings(
         workspaceId: String, threadId: String,
         orchestrationMode: String? = nil,
-        maxContinuationHops: Int? = nil
+        maxContinuationHops: Int? = nil,
+        fanoutPolicy: String? = nil,
+        ensembleContextChars: Int? = nil
     ) {
         let mode =
             orchestrationMode == "continuous"
             ? "continuous"
             : orchestrationMode == "turn_bound" ? "turn_bound" : nil
         let hops = maxContinuationHops.map { max(1, min(500, $0)) }
-        guard mode != nil || hops != nil else { return }
+        let fanout =
+            fanoutPolicy == "off" || fanoutPolicy == "read_only"
+            || fanoutPolicy == "locked_writers_with_boss"
+            || fanoutPolicy == "locked_writers_user_preflight"
+            ? fanoutPolicy : nil
+        let chars = ensembleContextChars.map { max(5_000, min(500_000, $0)) }
+        guard mode != nil || hops != nil || fanout != nil || chars != nil else { return }
         send(
             BridgeAction.ensembleSettingsUpdate(
                 workspaceId: workspaceId,
                 threadId: threadId,
                 orchestrationMode: mode,
-                maxContinuationHops: hops),
+                maxContinuationHops: hops,
+                fanoutPolicy: fanout,
+                ensembleContextChars: chars),
             successLabel: "Ensemble settings updated.")
         scheduleThreadRefresh(threadId)
     }

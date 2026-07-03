@@ -1877,6 +1877,8 @@ public enum BridgeAction {
         workspaceId: String, threadId: String,
         orchestrationMode: String? = nil,
         maxContinuationHops: Int? = nil,
+        fanoutPolicy: String? = nil,
+        ensembleContextChars: Int? = nil,
         actionId: String = UUID().uuidString
     ) -> [String: Any] {
         var payload: [String: Any] = [
@@ -1888,6 +1890,15 @@ public enum BridgeAction {
         }
         if let maxContinuationHops {
             payload["maxContinuationHops"] = max(1, min(500, maxContinuationHops))
+        }
+        if fanoutPolicy == "off" || fanoutPolicy == "read_only"
+            || fanoutPolicy == "locked_writers_with_boss"
+            || fanoutPolicy == "locked_writers_user_preflight"
+        {
+            payload["fanoutPolicy"] = fanoutPolicy
+        }
+        if let ensembleContextChars {
+            payload["ensembleContextChars"] = max(5_000, min(500_000, ensembleContextChars))
         }
         return encode(payload)
     }
