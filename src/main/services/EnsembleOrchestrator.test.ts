@@ -1379,6 +1379,19 @@ describe('EnsembleOrchestrator', () => {
     })
     expect(scheduledResult.ok).toBe(true)
     expect(scheduledResult.wakeup?.stageRole).toBe('worker')
+    expect(scheduledResult.wakeup?.dispatchReceipt).toMatchObject({
+      schemaVersion: 1,
+      runId: scheduledResult.wakeup?.wakeupId,
+      provider: 'claude',
+      source: 'scheduled',
+      workspaceId: 'ws-1',
+      chatId: 'ensemble-chat',
+      ensembleParticipantId: 'claude',
+      ensembleRole: 'Reviewer',
+      ensembleStageRole: 'worker',
+      permissionPostureSignaturePresent: false
+    })
+    expect(scheduledResult.wakeup?.dispatchReceipt?.receiptHash).toMatch(/^[a-f0-9]{64}$/)
     expect(scheduled).toHaveLength(1)
     expect(harness.chat.ensemble?.activeRound?.participants[0].status).toBe('sleeping')
     expect(harness.chat.ensemble?.activeRound?.pendingWakeupIds).toEqual([scheduled[0].wakeupId])
@@ -1579,6 +1592,17 @@ describe('EnsembleOrchestrator', () => {
     })
     expect(sleepResult.ok).toBe(true)
     expect(sleepResult.wakeup?.stageRole).toBe('worker')
+    expect(sleepResult.wakeup?.dispatchReceipt).toMatchObject({
+      provider: 'claude',
+      source: 'scheduled',
+      workspaceId: 'ws-1',
+      chatId: 'ensemble-chat',
+      ensembleParticipantId: 'claude',
+      ensembleRole: 'Reviewer',
+      ensembleStageRole: 'worker',
+      permissionPostureSignaturePresent: false
+    })
+    expect(sleepResult.wakeup?.dispatchReceipt?.receiptHash).toMatch(/^[a-f0-9]{64}$/)
     const wakeupId = sleepResult.wakeup!.wakeupId
 
     // Codex runs while claude sleeps; the round stays 'running'

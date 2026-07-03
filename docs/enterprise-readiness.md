@@ -481,17 +481,18 @@ What exists:
   schedule time, including an explicit "unstaged" marker for new records, and
   active/restarted wakeup resume uses that frozen identity instead of inheriting
   later live-roster stage edits.
+- Ensemble wakeups now carry a schedule-time `dispatchReceipt` that hashes the
+  frozen chat/workspace, provider, participant, role, and stage identity used on
+  resume.
 
 What is missing:
 
-- Stage-role scheduling intent is not yet a first-class frozen receipt across
-  every deferred path; repository-saved queue rows and workflow-backed scheduled
-  tasks now have receipts, but wakeup replay receipts still need to prove which
-  frozen intent was used.
-- Ensemble wakeups still need full dispatch-receipt/posture proof that they
-  resume the participant/stage/posture that was scheduled; wakeups now freeze
-  role/stage identity, but they do not yet carry a queue-style receipt hash or
-  signed posture snapshot.
+- Stage-role scheduling intent now has a first-class frozen receipt across
+  queue rows, workflow-backed scheduled tasks, and Ensemble wakeups, but the
+  wakeup path still needs an explicit signed posture snapshot.
+- Ensemble wakeups still need full posture proof that they resume with the
+  permission posture that was scheduled; wakeups now freeze and hash
+  role/stage identity, but they do not yet carry a signed posture snapshot.
 - Remote queued dispatch now has a queued `dispatchReceipt` with an allowlist
   decision and policy fingerprint, but it still lacks an explicitly signed
   queue-time posture for the dispatch permission itself. Dequeue replay rebuilds

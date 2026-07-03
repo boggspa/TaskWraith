@@ -124,6 +124,7 @@ import {
 } from '../EnsembleRosterMutation'
 import { getStaticProviderModels } from '../providers/StaticProviderModels'
 import { selectableProviderIds } from '../settings/MainSanitizers'
+import { buildRunQueueDispatchReceipt } from '../RunQueueDispatchReceipt'
 
 export type EnsembleRunMode = 'normal' | 'queue' | 'steer'
 export type EnsembleQueuedSteerResult = {
@@ -5242,6 +5243,7 @@ export class EnsembleOrchestrator {
       reason: input.reason,
       cancelOnUserInput: input.cancelOnUserInput !== false
     }
+    wakeup.dispatchReceipt = this.buildWakeupDispatchReceipt(chat, wakeup)
     if (!runtime.pendingWakeups) runtime.pendingWakeups = new Map()
     runtime.pendingWakeups.set(wakeup.wakeupId, wakeup)
     this.saveWakeupRecord(chat, wakeup)
@@ -5456,6 +5458,24 @@ export class EnsembleOrchestrator {
       delete resolved.stageRole
     }
     return resolved
+  }
+
+  private buildWakeupDispatchReceipt(
+    chat: ChatRecord | null | undefined,
+    wakeup: EnsembleWakeupRecord
+  ): EnsembleWakeupRecord['dispatchReceipt'] {
+    const scope = chat?.scope === 'global' ? 'global' : 'workspace'
+    return buildRunQueueDispatchReceipt({
+      runId: wakeup.wakeupId,
+      provider: wakeup.provider,
+      source: 'scheduled',
+      scope,
+      ...(chat?.workspaceId ? { workspaceId: chat.workspaceId } : {}),
+      chatId: wakeup.chatId,
+      ensembleParticipantId: wakeup.participantId,
+      ...(wakeup.role ? { ensembleRole: wakeup.role } : {}),
+      ...(wakeup.stageRole ? { ensembleStageRole: wakeup.stageRole } : {})
+    })
   }
 
   private saveWakeupRecord(
