@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { resolve } from 'path'
 import { PermissionService } from './PermissionService'
 import { RunManager } from './RunManager'
 import type { AppSettings } from './store/types'
@@ -180,7 +181,7 @@ describe('PermissionService', () => {
         expect.objectContaining({
           provider: 'codex',
           service: 'shellCommands',
-          workspacePath: '/repo',
+          workspacePath: resolve('/repo'),
           expiresOn: 'workspace_revocation'
         })
       ]

@@ -49,7 +49,10 @@ describe('AppStore settings defaults', () => {
 
     AppStore.updateSettings({ autoUpdateEnabled: false })
 
-    expect(fs.statSync(settingsPath).mode & 0o777).toBe(0o600)
+    // Windows has no POSIX owner-only mode bits; skip the 0o600 assertion there.
+    if (process.platform !== 'win32') {
+      expect(fs.statSync(settingsPath).mode & 0o777).toBe(0o600)
+    }
   })
 
   it('writes runtime profiles with restrictive owner-only permissions', () => {
@@ -63,7 +66,10 @@ describe('AppStore settings defaults', () => {
       env: {}
     })
 
-    expect(fs.statSync(runtimeProfilesPath).mode & 0o777).toBe(0o600)
+    // Windows has no POSIX owner-only mode bits; skip the 0o600 assertion there.
+    if (process.platform !== 'win32') {
+      expect(fs.statSync(runtimeProfilesPath).mode & 0o777).toBe(0o600)
+    }
   })
 
   it('drops retired message bridge settings on read and subsequent writes', () => {

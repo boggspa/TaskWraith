@@ -1,0 +1,14 @@
+# Normalize line endings on checkout/commit so Windows CI does not get CRLF.
+# The tree is developed on macOS and is already all-LF in the index; this only
+# pins future (especially Windows) checkouts to LF and prevents CRLF re-entry.
+* text=auto eol=lf
+
+# Binary assets: never touch (text=auto already detects these; explicit for safety).
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.ico binary
+*.icns binary
+
+# Windows-only helper scripts genuinely need CRLF.
+*.ps1 text eol=crlf
