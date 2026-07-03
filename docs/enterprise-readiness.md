@@ -372,7 +372,9 @@ What exists:
   a managed prefix allowlist. Blocked evidence reports argument position rather
   than the raw argument value.
 - Remote checks can also block loopback, private, link-local, carrier-grade NAT,
-  benchmarking, and localhost remote MCP hosts when the managed policy opts in.
+  benchmarking, localhost, common cloud-metadata DNS labels, and well-known
+  NAT64 encodings of private/local IPv4 remote MCP hosts when the managed policy
+  opts in.
 - Codex app-server tracks whether its running MCP launch config is stale; when
   there are no active Codex runs, the next Codex accessor disposes the idle
   app-server so the following start rematerializes the current managed/user-MCP
@@ -395,8 +397,8 @@ What is missing:
   They constrain configured process materialization but do not confine a
   process after it starts.
 - Remote checks cover managed scheme/host/port/path allowlists, reject URL
-  userinfo, and can block private/local IP-literal plus localhost hosts, but
-  they are still not a full DNS-rebinding or runtime egress policy.
+  userinfo, and can block private/local literal, metadata-name, and NAT64 hosts,
+  but they are still not a full DNS-rebinding or runtime egress policy.
 - Long-lived provider app servers now have an idle rematerialization path, but
   active in-flight runs still intentionally keep their launch-time MCP surface
   until a future live revocation/cancellation policy is designed.

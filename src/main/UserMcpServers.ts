@@ -177,9 +177,33 @@ function isRemoteHostAllowed(url: string, allowedRemoteHosts: readonly string[])
   }
 }
 
+const METADATA_REMOTE_HOSTS = new Set([
+  'metadata',
+  'metadata.google.internal',
+  'instance-data',
+  'instance-data.ec2.internal'
+])
+
+function ipv4FromWellKnownNat64Host(hostname: string): string | null {
+  const normalized = hostname.trim().toLowerCase().replace(/^\[(.*)\]$/, '$1')
+  const compactMatch = normalized.match(/^64:ff9b::([0-9a-f]{1,4}):([0-9a-f]{1,4})$/)
+  const expandedMatch = normalized.match(
+    /^64:ff9b:0{1,4}:0{1,4}:0{1,4}:0{1,4}:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/
+  )
+  const dottedMatch = normalized.match(/^64:ff9b::(\d+\.\d+\.\d+\.\d+)$/)
+  if (dottedMatch && net.isIP(dottedMatch[1]) === 4) return dottedMatch[1]
+  const match = compactMatch || expandedMatch
+  if (!match) return null
+  const high = Number.parseInt(match[1], 16)
+  const low = Number.parseInt(match[2], 16)
+  if (!Number.isFinite(high) || !Number.isFinite(low)) return null
+  return `${(high >> 8) & 255}.${high & 255}.${(low >> 8) & 255}.${low & 255}`
+}
+
 function isPrivateOrLocalRemoteHost(hostname: string): boolean {
   const normalized = hostname.trim().toLowerCase().replace(/^\[(.*)\]$/, '$1')
   if (!normalized) return false
+  if (METADATA_REMOTE_HOSTS.has(normalized)) return true
   if (normalized === 'localhost' || normalized.endsWith('.localhost')) return true
   if (normalized === '::' || normalized === '::1') return true
   const ipVersion = net.isIP(normalized)
@@ -197,6 +221,8 @@ function isPrivateOrLocalRemoteHost(hostname: string): boolean {
     )
   }
   if (ipVersion === 6) {
+    const nat64Ipv4 = ipv4FromWellKnownNat64Host(normalized)
+    if (nat64Ipv4) return isPrivateOrLocalRemoteHost(nat64Ipv4)
     const dottedIpv4Mapped = normalized.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/)
     if (dottedIpv4Mapped) return isPrivateOrLocalRemoteHost(dottedIpv4Mapped[1])
     const hexIpv4Mapped = normalized.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/)

@@ -476,8 +476,14 @@ describe('buildUserMcpStdioLaunchServers', () => {
       'http://172.16.0.5/mcp',
       'http://192.168.1.5/mcp',
       'http://169.254.169.254/mcp',
+      'http://metadata/mcp',
+      'http://metadata.google.internal/mcp',
+      'http://instance-data/mcp',
+      'http://instance-data.ec2.internal/mcp',
       'http://[::1]/mcp',
       'http://[::ffff:127.0.0.1]/mcp',
+      'http://[64:ff9b::a9fe:a9fe]/mcp',
+      'http://[64:ff9b:0:0:0:0:a9fe:a9fe]/mcp',
       'http://[fd00::1]/mcp',
       'http://[fe80::1]/mcp'
     ]) {
@@ -506,6 +512,19 @@ describe('buildUserMcpStdioLaunchServers', () => {
           enabled: true,
           transport: 'http',
           url: 'https://docs.example.test/mcp'
+        },
+        { blockPrivateRemoteHosts: true }
+      ).allowed
+    ).toBe(true)
+
+    expect(
+      evaluateUserMcpLaunchPolicy(
+        {
+          id: 'public-nat64',
+          name: 'Public NAT64',
+          enabled: true,
+          transport: 'http',
+          url: 'https://[64:ff9b::0808:0808]/mcp'
         },
         { blockPrivateRemoteHosts: true }
       ).allowed
