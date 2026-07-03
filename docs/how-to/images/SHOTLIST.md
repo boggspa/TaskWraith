@@ -58,7 +58,7 @@ Once captured (all at once or per section), tell Claude and it will wire the `![
 | Save as | Platform | Capture | Where to find it |
 |---|---|---|---|
 | `ensemble-mode__continuous-hops-meter.png` | Electron | Continuous hops meter chip showing "2/6" | In an ensemble chat's composer, next to the Turn / Continuous / Work Session mode picker, whenever Continuous mode is active for the current round. |
-| `ensemble-mode__create-ensemble-chat.png` | Electron | Sidebar overflow menu showing "New ensemble" option | Sidebar **+ New → New Ensemble**, or the **+** button in the sidebar's **Ensembles** section header. |
+| `ensemble-mode__create-ensemble-chat.png` | Electron | New draft composer with the Ensemble button highlighted in the bottom row | Create a new draft, then use the **Ensemble** button in the composer's bottom row before first send, or use the **+** button in the sidebar's **Ensembles** section header. |
 | `ensemble-mode__fan-out.png` | Electron | Fan-out toggle chip next to the mode picker | In an ensemble chat, it sits as a separate chip group right beside the Turn / Continuous / Work Session orchestration mode picker in the composer's action row. |
 | `ensemble-mode__ios-ensemble-ui.png` | iOS | iOS companion showing ensemble strip and roster sheet | Open any Ensemble chat on the companion app — the chip strip appears automatically in the composer, above the message field. |
 | `ensemble-mode__mention-yield-routing.png` | Electron | Composer showing an @-mention being typed with role autocomplete | Type `@` followed by a participant's role or model name in the composer during an ensemble chat — an autocomplete menu lists matching participants. |

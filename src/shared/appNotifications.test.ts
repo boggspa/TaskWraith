@@ -150,6 +150,23 @@ describe('notification registry', () => {
     expect(models?.body).toContain('tool/thinking')
   })
 
+  it('seeds the Ensemble composer-toggle notice with the green Ensemble signpost', () => {
+    const ensemble = PINNED_APP_NOTIFICATIONS.find(
+      (n) => n.id === 'ensemble-composer-toggle-2026-07-03'
+    )
+    expect(ensemble).toBeDefined()
+    expect(ensemble && appNotificationTone(ensemble.kind)).toBe('default')
+    expect(ensemble && appNotificationAccent(ensemble)).toBe('ensemble')
+    expect(ensemble?.kind).toBe('feature')
+    expect(ensemble?.icon).toBe('ensemble')
+    expect(ensemble?.dismissible).toBe(true)
+    expect(ensemble?.title).toBe('Ensemble starts from new drafts now.')
+    expect(ensemble?.body).toContain('Ensemble glyph')
+    expect(ensemble?.body).toContain('composer bottom row')
+    expect(ensemble?.body).toContain('New Ensemble Chat menu entry')
+    expect(ensemble?.body).toContain('Ensembles +')
+  })
+
   it('seeds the Claude Sonnet 5 addition with the Claude accent', () => {
     const sonnet = PINNED_APP_NOTIFICATIONS.find((n) => n.id === 'claude-sonnet-5-2026-06-30')
     expect(sonnet).toBeDefined()

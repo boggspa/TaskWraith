@@ -12,6 +12,7 @@ struct FirstLaunchStateDecodeTests {
          "notifications":[
           {"id":"gemini-retired","kind":"provider-retired","title":"Gemini retired","body":"Existing chats remain visible.","tone":"danger","dismissible":true},
           {"id":"claude-sonnet-5-2026-06-30","kind":"addition","title":"Claude Sonnet 5 is available.","body":"Adaptive thinking and 1M context are available.","tone":"default","accent":"claude","dismissible":true},
+          {"id":"ensemble-composer-toggle-2026-07-03","kind":"feature","title":"Ensemble starts from new drafts now.","body":"Use the Ensemble glyph in the composer bottom row.","tone":"default","accent":"ensemble","icon":"ensemble","dismissible":true},
           {"id":"antigravity-not-planned-2026-06-26","kind":"info","title":"AntiGravity will not be added.","body":"TaskWraith will not integrate Google AntiGravity as a Gemini replacement because it would require unsupported credential use and would not fit TaskWraith’s provider model.","tone":"default","dismissible":true}
          ],
          "workspace":{"visibleCount":2,"totalCount":4,"runningCount":1,"hasVisibleWorkspaces":true,"capabilities":{"monitor":true,"approve":true,"answer":true,"startTurn":true,"steer":true,"fileRead":true,"fileWrite":false}},
@@ -27,9 +28,13 @@ struct FirstLaunchStateDecodeTests {
         #expect(message.state.schemaVersion == 1)
         #expect(message.state.notifications.first?.tone == "danger")
         #expect(message.state.notifications.first?.accent == nil)
-        #expect(message.state.notifications.count == 3)
+        #expect(message.state.notifications.first?.icon == nil)
+        #expect(message.state.notifications.count == 4)
         #expect(message.state.notifications[1].id == "claude-sonnet-5-2026-06-30")
         #expect(message.state.notifications[1].accent == "claude")
+        #expect(message.state.notifications[2].id == "ensemble-composer-toggle-2026-07-03")
+        #expect(message.state.notifications[2].accent == "ensemble")
+        #expect(message.state.notifications[2].icon == "ensemble")
         #expect(message.state.notifications.last?.id == "antigravity-not-planned-2026-06-26")
         #expect(message.state.notifications.last?.tone == "default")
         #expect(message.state.notifications.last?.accent == nil)

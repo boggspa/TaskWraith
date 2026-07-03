@@ -195,6 +195,9 @@ describe('buildRemoteFirstLaunchState', () => {
     })
 
     expect(state.notifications.map((notice) => notice.id)).toContain(
+      'ensemble-composer-toggle-2026-07-03'
+    )
+    expect(state.notifications.map((notice) => notice.id)).toContain(
       'ollama-local-models-2026-06-30'
     )
     expect(state.notifications.map((notice) => notice.id)).toContain('claude-sonnet-5-2026-06-30')
@@ -223,6 +226,14 @@ describe('buildRemoteFirstLaunchState', () => {
     expect(antigravity?.accent).toBe('default')
     expect(antigravity?.kind).toBe('info')
     expect(antigravity?.title).toBe('AntiGravity will not be added.')
+
+    const ensemble = state.notifications.find(
+      (notice) => notice.id === 'ensemble-composer-toggle-2026-07-03'
+    )
+    expect(ensemble?.tone).toBe('default')
+    expect(ensemble?.accent).toBe('ensemble')
+    expect(ensemble?.icon).toBe('ensemble')
+    expect(ensemble?.title).toBe('Ensemble starts from new drafts now.')
 
     const sonnet = state.notifications.find((notice) => notice.id === 'claude-sonnet-5-2026-06-30')
     expect(sonnet?.tone).toBe('default')

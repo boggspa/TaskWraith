@@ -9,6 +9,7 @@ import {
   type AppNotification,
   type AppNotificationKind
 } from '../../../shared/appNotifications'
+import { ProviderGlyph } from './icons/ProviderGlyph'
 
 /**
  * Reusable notification zone — the app/dev "notification area" on the welcome /
@@ -98,7 +99,11 @@ function NotificationCard({
       role="status"
     >
       <span className="notification-card-icon" aria-hidden>
-        {KIND_ICON[notification.kind]}
+        {notification.icon === 'ensemble' ? (
+          <ProviderGlyph provider="ensemble" />
+        ) : (
+          KIND_ICON[notification.kind]
+        )}
       </span>
       <p className="notification-card-text">
         <strong>{notification.title}</strong> {notification.body}

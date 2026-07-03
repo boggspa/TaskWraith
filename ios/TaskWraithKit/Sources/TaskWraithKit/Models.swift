@@ -134,6 +134,7 @@ public struct FirstLaunchNotice: Codable, Sendable, Identifiable, Hashable {
     public let body: String
     public let tone: String
     public let accent: String?
+    public let icon: String?
     public let dismissible: Bool?
 }
 

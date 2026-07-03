@@ -72,6 +72,7 @@ struct RemoteNoticeCarousel: View {
     private func noticeDotColor(_ notice: FirstLaunchNotice) -> Color {
         if notice.tone == "danger" { return TWTheme.statusFailed }
         if notice.accent?.lowercased() == "claude" { return TWTheme.providerAccent("claude") }
+        if notice.accent?.lowercased() == "ensemble" { return TWTheme.statusSuccess }
         return TWTheme.chroma1
     }
 }
@@ -81,7 +82,7 @@ struct RemoteNoticeCard: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
-            Image(systemName: notice.tone == "danger" ? "exclamationmark.circle" : "info.circle")
+            Image(systemName: iconName)
                 .font(.headline)
                 .foregroundStyle(accentColor)
             VStack(alignment: .leading, spacing: 3) {
@@ -105,7 +106,7 @@ struct RemoteNoticeCard: View {
                 .fill(
                     LinearGradient(
                         colors: [
-                            accentColor.opacity(notice.accent?.lowercased() == "claude" ? 0.13 : 0.05),
+                            accentColor.opacity(usesAccentWash ? 0.13 : 0.05),
                             Color.clear
                         ],
                         startPoint: .topLeading,
@@ -120,25 +121,42 @@ struct RemoteNoticeCard: View {
         )
     }
 
+    private var accentKey: String { notice.accent?.lowercased() ?? "" }
+
+    private var iconKey: String { notice.icon?.lowercased() ?? "" }
+
+    private var usesAccentWash: Bool {
+        accentKey == "claude" || accentKey == "ensemble"
+    }
+
+    private var iconName: String {
+        if notice.tone == "danger" { return "exclamationmark.circle" }
+        if iconKey == "ensemble" || accentKey == "ensemble" { return "person.3.fill" }
+        return "info.circle"
+    }
+
     private var accentColor: Color {
         if notice.tone == "danger" { return TWTheme.statusFailed }
-        if notice.accent?.lowercased() == "claude" { return TWTheme.providerAccent("claude") }
+        if accentKey == "claude" { return TWTheme.providerAccent("claude") }
+        if accentKey == "ensemble" { return TWTheme.statusSuccess }
         return TWTheme.chroma1
     }
 
     private var backgroundColor: Color {
         if notice.tone == "danger" { return TWTheme.statusFailed.opacity(0.12) }
-        if notice.accent?.lowercased() == "claude" {
+        if accentKey == "claude" {
             return TWTheme.providerAccent("claude").opacity(0.10)
         }
+        if accentKey == "ensemble" { return TWTheme.statusSuccess.opacity(0.10) }
         return TWTheme.surface1
     }
 
     private var borderColor: Color {
         if notice.tone == "danger" { return TWTheme.statusFailed.opacity(0.35) }
-        if notice.accent?.lowercased() == "claude" {
+        if accentKey == "claude" {
             return TWTheme.providerAccent("claude").opacity(0.42)
         }
+        if accentKey == "ensemble" { return TWTheme.statusSuccess.opacity(0.42) }
         return TWTheme.border
     }
 }

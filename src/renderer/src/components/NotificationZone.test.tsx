@@ -30,6 +30,14 @@ const claudeAddition: AppNotification = {
   body: 'Adaptive thinking and 1M context are available.',
   accent: 'claude'
 }
+const ensembleFeature: AppNotification = {
+  id: 'ensemble-composer-toggle-2026-07-03',
+  kind: 'feature',
+  title: 'Ensemble starts from new drafts now.',
+  body: 'Use the Ensemble glyph in the composer bottom row.',
+  accent: 'ensemble',
+  icon: 'ensemble'
+}
 
 describe('NotificationZone', () => {
   it('maps horizontal drags to carousel directions', () => {
@@ -64,6 +72,27 @@ describe('NotificationZone', () => {
     expect(html).toContain('notification-card--default')
     expect(html).toContain('notification-card--accent-claude')
     expect(html).not.toContain('notification-card--danger')
+  })
+
+  it('adds the Ensemble accent and glyph for the composer-toggle announcement', () => {
+    const html = renderToStaticMarkup(<NotificationZone notifications={[ensembleFeature]} />)
+    expect(html).toContain('Ensemble starts from new drafts now.')
+    expect(html).toContain('notification-card--default')
+    expect(html).toContain('notification-card--accent-ensemble')
+    expect(html).toContain('provider-glyph-ensemble')
+    expect(html).not.toContain('notification-card--danger')
+  })
+
+  it('keeps danger styling even when a danger notice carries the Ensemble accent', () => {
+    const html = renderToStaticMarkup(
+      <NotificationZone
+        notifications={[
+          { ...ensembleFeature, id: 'ensemble-danger', kind: 'deprecation' }
+        ]}
+      />
+    )
+    expect(html).toContain('notification-card--danger')
+    expect(html).toContain('notification-card--accent-ensemble')
   })
 
   it('rotates when more than one is active: first card shown, one dot per notice', () => {

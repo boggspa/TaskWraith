@@ -11,7 +11,7 @@ The sidebar groups chats into sections: **Pinned**, **Recents**, **Ensembles**, 
 <!-- screenshot-pending: Sidebar showing various chat types (workspace, ensemble, shared, workflow) -->
 
 ## How to use it
-1. Click **+ New** in the sidebar masthead, then pick a type: **New Chat** (workspace or General, depending on context), **New Ensemble**, **New Workflow**, **New Workspace Board**, or one of the **Shared** variants (General, Workspace, or Ensemble).
+1. Click **+ New** in the sidebar masthead, then pick a type: **New Chat** (workspace or General, depending on context), **New Workflow**, **New Workspace Board**, or one of the **Shared** variants (General, Workspace, or Ensemble). To start an Ensemble, create a new draft and turn on the **Ensemble** button in the composer's bottom row before your first send, or use the **+** button in the sidebar's **Ensembles** section.
 2. Workspace chats appear under that workspace in the **Workspaces** section; chats not tied to a workspace appear under **Chats** as General chats.
 3. Ensembles (chats running more than one agent) get their own row in the **Ensembles** section — they don't appear in the workspace or **Chats** (General) lists, but a pinned or recently active ensemble also surfaces in **Pinned** or **Recents**.
 4. To branch off an existing chat without losing context, open a side chat from the message context menu, or let an agent delegate part of its work to a sub-thread — both appear nested under their parent chat and are limited to one level deep.

@@ -11,7 +11,7 @@
  * zone rotates through more than one with the welcome heatmap's swipe effect.
  *
  * Carousel layout:
- *   pinned notices (new local models + Claude Sonnet 5 + AntiGravity policy)
+ *   pinned notices (major UX/provider notices + AntiGravity policy)
  *   up to 2 dynamic highlights rotated daily from CHANGELOG_FEATURE_NOTIFICATION_POOL
  */
 
@@ -21,7 +21,10 @@ export type AppNotificationKind = 'deprecation' | 'addition' | 'feature' | 'info
 export type AppNotificationTone = 'default' | 'danger'
 
 /** Optional provider accent for model/provider-specific announcement cards. */
-export type AppNotificationAccent = 'default' | 'claude'
+export type AppNotificationAccent = 'default' | 'claude' | 'ensemble'
+
+/** Optional semantic icon override for notices that need a product signpost. */
+export type AppNotificationIcon = 'ensemble'
 
 export interface AppNotification {
   /** Stable slug — also the dismiss-key suffix. Never reuse an id for new
@@ -34,6 +37,8 @@ export interface AppNotification {
   body: string
   /** Provider-accented glass/card treatment. Omit for the theme default. */
   accent?: AppNotificationAccent
+  /** Semantic icon override. Omit to use the kind icon. */
+  icon?: AppNotificationIcon
   /** Default true. A non-dismissible notice stays while it is otherwise active. */
   dismissible?: boolean
   /** Epoch ms after which the notice is no longer shown. Omit = never expires. */
@@ -87,8 +92,17 @@ export function activeAppNotifications(args: {
   })
 }
 
-/** Always-on carousel notices — new local models + AntiGravity policy. */
+/** Always-on carousel notices — major UX/provider notices + AntiGravity policy. */
 export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
+  {
+    id: 'ensemble-composer-toggle-2026-07-03',
+    kind: 'feature',
+    title: 'Ensemble starts from new drafts now.',
+    body: 'On a new chat, use the Ensemble glyph in the composer bottom row and choose On before first send. That turns the draft into an Ensemble; the separate New Ensemble Chat menu entry moved into that button, and Ensembles + still works.',
+    accent: 'ensemble',
+    icon: 'ensemble',
+    dismissible: true
+  },
   {
     id: 'ollama-local-models-2026-06-30',
     kind: 'addition',
