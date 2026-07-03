@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ipcMain } from 'electron'
 import { registerSettingsHandlers } from './settingsHandlers'
+import type { ExtensionSecretRef } from '../ExtensionSecretStore'
 import type { AppSettings, HandoffCard, ProviderId, RuntimeProfile } from '../store/types'
 
 vi.mock('electron', () => ({
@@ -73,6 +74,30 @@ function createDeps(overrides: Partial<Parameters<typeof registerSettingsHandler
     getRuntimeProfiles: vi.fn(() => [runtimeProfile()]),
     saveRuntimeProfile: vi.fn((profile) => runtimeProfile(profile)),
     deleteRuntimeProfile: vi.fn(() => true),
+    getExtensionSecretStatusSnapshot: vi.fn(() => ({
+      schemaVersion: 1,
+      generatedAt: '2026-07-03T00:00:00.000Z',
+      encryptionAvailable: true,
+      secrets: []
+    })),
+    setExtensionSecret: vi.fn((ref: ExtensionSecretRef, _value: string) => ({
+      ok: true,
+      snapshot: {
+        schemaVersion: 1,
+        generatedAt: '2026-07-03T00:00:00.000Z',
+        encryptionAvailable: true,
+        secrets: [{ ...ref, configured: true, updatedAt: '2026-07-03T00:00:00.000Z' }]
+      }
+    })),
+    clearExtensionSecret: vi.fn((ref: ExtensionSecretRef) => ({
+      ok: true,
+      snapshot: {
+        schemaVersion: 1,
+        generatedAt: '2026-07-03T00:00:00.000Z',
+        encryptionAvailable: true,
+        secrets: [{ ...ref, configured: false }]
+      }
+    })),
     getHandoffCards: vi.fn(() => [handoffCard()]),
     saveHandoffCard: vi.fn((card) => handoffCard(card)),
     updateHandoffCard: vi.fn((id, partial) => handoffCard({ id, ...partial })),
@@ -126,6 +151,40 @@ describe('registerSettingsHandlers', () => {
     expect(handlerFor('delete-runtime-profile')({} as any, 'runtime-1')).toBe(true)
     expect(deps.requireNonEmptyString).toHaveBeenCalledWith('runtime-1', 'Runtime profile id')
     expect(deps.deleteRuntimeProfile).toHaveBeenCalledWith('runtime-1')
+  })
+
+  it('exposes extension secret status and mutation handlers without plaintext reads', () => {
+    const deps = createDeps()
+    const ref: ExtensionSecretRef = {
+      ownerKind: 'runtimeProfile',
+      ownerId: 'runtime-1',
+      fieldKind: 'env',
+      fieldName: 'SERVICE_TOKEN'
+    }
+    registerSettingsHandlers(deps)
+
+    expect(handlerFor('get-extension-secret-status')({} as any)).toEqual({
+      schemaVersion: 1,
+      generatedAt: '2026-07-03T00:00:00.000Z',
+      encryptionAvailable: true,
+      secrets: []
+    })
+    expect(handlerFor('set-extension-secret')({} as any, ref, 'token-value')).toMatchObject({
+      ok: true,
+      snapshot: {
+        secrets: [{ ...ref, configured: true }]
+      }
+    })
+    expect(deps.requireNonEmptyString).toHaveBeenCalledWith('token-value', 'Secret value')
+    expect(deps.setExtensionSecret).toHaveBeenCalledWith(ref, 'token-value')
+
+    expect(handlerFor('clear-extension-secret')({} as any, ref)).toMatchObject({
+      ok: true,
+      snapshot: {
+        secrets: [{ ...ref, configured: false }]
+      }
+    })
+    expect(deps.clearExtensionSecret).toHaveBeenCalledWith(ref)
   })
 
   it('sanitizes handoff card reads and mutations', () => {

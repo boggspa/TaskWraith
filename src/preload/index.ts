@@ -859,6 +859,10 @@ const api = {
     ipcRenderer.invoke('get-runtime-profiles', provider),
   saveRuntimeProfile: (profile: any) => ipcRenderer.invoke('save-runtime-profile', profile),
   deleteRuntimeProfile: (id: string) => ipcRenderer.invoke('delete-runtime-profile', id),
+  getExtensionSecretStatus: () => ipcRenderer.invoke('get-extension-secret-status'),
+  setExtensionSecret: (ref: any, value: string) =>
+    ipcRenderer.invoke('set-extension-secret', ref, value),
+  clearExtensionSecret: (ref: any) => ipcRenderer.invoke('clear-extension-secret', ref),
   getHandoffCards: (filter: any = {}) => ipcRenderer.invoke('get-handoff-cards', filter),
   saveHandoffCard: (card: any) => ipcRenderer.invoke('save-handoff-card', card),
   updateHandoffCard: (id: string, partial: any) =>

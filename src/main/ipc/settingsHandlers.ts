@@ -1,6 +1,11 @@
 import { ipcMain } from 'electron'
 import type { SettingsService } from '../services/SettingsService'
 import type {
+  ExtensionSecretMutationResult,
+  ExtensionSecretRef,
+  ExtensionSecretStatusSnapshot
+} from '../ExtensionSecretStore'
+import type {
   AppSettings,
   HandoffCard,
   HandoffCardFilter,
@@ -16,6 +21,9 @@ export interface SettingsHandlerDeps {
     profile: Partial<RuntimeProfile> & Pick<RuntimeProfile, 'name' | 'provider'>
   ) => RuntimeProfile
   deleteRuntimeProfile: (id: string) => unknown
+  getExtensionSecretStatusSnapshot: () => ExtensionSecretStatusSnapshot
+  setExtensionSecret: (ref: ExtensionSecretRef, value: string) => ExtensionSecretMutationResult
+  clearExtensionSecret: (ref: ExtensionSecretRef) => ExtensionSecretMutationResult
   getHandoffCards: (filter?: HandoffCardFilter) => HandoffCard[]
   saveHandoffCard: (
     card: Partial<HandoffCard> &
@@ -59,6 +67,13 @@ export function registerSettingsHandlers(deps: SettingsHandlerDeps): void {
   )
   ipcMain.handle('delete-runtime-profile', (_event, id: string) =>
     deps.deleteRuntimeProfile(deps.requireNonEmptyString(id, 'Runtime profile id'))
+  )
+  ipcMain.handle('get-extension-secret-status', () => deps.getExtensionSecretStatusSnapshot())
+  ipcMain.handle('set-extension-secret', (_event, ref: ExtensionSecretRef, value: unknown) =>
+    deps.setExtensionSecret(ref, deps.requireNonEmptyString(typeof value === 'string' ? value : '', 'Secret value'))
+  )
+  ipcMain.handle('clear-extension-secret', (_event, ref: ExtensionSecretRef) =>
+    deps.clearExtensionSecret(ref)
   )
 
   ipcMain.handle('get-handoff-cards', (_event, filter?: HandoffCardFilter) =>

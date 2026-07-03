@@ -160,6 +160,8 @@ What exists:
   profile is deleted.
 - AppStore JSON writes now create and rewrite settings/profile-store files with
   owner-only `0600` permissions where the filesystem supports POSIX modes.
+- Main/preload settings IPC exposes encrypted extension-secret status, set, and
+  clear operations without exposing any plaintext resolution API to the renderer.
 - User-managed MCP server configs can carry env/header `secretRefs`. Launch
   assembly resolves those refs from the encrypted store, applies enterprise
   allowlists to the ref names before decryption, blocks servers with missing or
@@ -172,9 +174,9 @@ What exists:
 
 What is missing:
 
-- Renderer settings forms are not yet wired to save secret refs/status instead
-  of raw user MCP env/header values, and existing plaintext records still need
-  migration into the encrypted store.
+- Renderer settings forms are not yet wired to use the secret status/mutation
+  IPC instead of raw user MCP env/header values, and existing plaintext records
+  still need migration into the encrypted store.
 - Runtime profile settings surfaces are not yet wired to create/manage encrypted
   env refs directly, and existing plaintext profile env records still need
   migration into the encrypted store.

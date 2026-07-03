@@ -86,6 +86,11 @@ import type {
   LaunchStopInput,
   LaunchStopResult
 } from '../main/launch/types'
+import type {
+  ExtensionSecretMutationResult,
+  ExtensionSecretRef,
+  ExtensionSecretStatusSnapshot
+} from '../main/ExtensionSecretStore'
 import type { NativeCapabilitySnapshot } from '../main/NativeCapabilities'
 import type { GrokUsageSnapshot } from '../main/grok/GrokUsage'
 import type { AppShellStatsSnapshot } from '../main/services/AppShellStatsService'
@@ -1158,6 +1163,12 @@ declare global {
         profile: Partial<RuntimeProfile> & Pick<RuntimeProfile, 'name' | 'provider'>
       ) => Promise<RuntimeProfile>
       deleteRuntimeProfile: (id: string) => Promise<void>
+      getExtensionSecretStatus: () => Promise<ExtensionSecretStatusSnapshot>
+      setExtensionSecret: (
+        ref: ExtensionSecretRef,
+        value: string
+      ) => Promise<ExtensionSecretMutationResult>
+      clearExtensionSecret: (ref: ExtensionSecretRef) => Promise<ExtensionSecretMutationResult>
       getHandoffCards: (filter?: HandoffCardFilter) => Promise<HandoffCard[]>
       saveHandoffCard: (
         card: Partial<HandoffCard> &
