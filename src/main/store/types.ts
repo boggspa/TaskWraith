@@ -2210,6 +2210,7 @@ export interface ProductDiagnosticsAuditReceipts {
     approvalLedger: number
     workspaceChanges: number
     messageFeedback: number
+    messageFeedbackCastingSignals: number
     externalPublish: number
     auditRetentionPurges: number
     userMcpBlockedServers: number
@@ -2218,12 +2219,14 @@ export interface ProductDiagnosticsAuditReceipts {
     approvalLedger: string
     workspaceChanges: string
     messageFeedback: string
+    messageFeedbackCastingSignals: string
     externalPublish: string
     auditRetentionPurges: string
     userMcpBlockedServers: string
   }
   recent: {
     messageFeedback: Array<Record<string, unknown>>
+    messageFeedbackCastingSignals: Array<Record<string, unknown>>
     externalPublish: Array<Record<string, unknown>>
     auditRetentionPurges: Array<Record<string, unknown>>
     userMcpBlockedServers: Array<Record<string, unknown>>
@@ -2303,6 +2306,7 @@ export interface ProductAuditBundleManifest {
     evidencePacks: number
     capabilityLedgerEntries: number
     messageFeedback: number
+    messageFeedbackCastingSignals: number
     externalPublish: number
     auditRetentionPurges: number
     userMcpBlockedServers: number
@@ -2315,6 +2319,7 @@ export interface ProductAuditBundleManifest {
     evidencePacks: string
     capabilityLedger: string
     messageFeedback: string
+    messageFeedbackCastingSignals: string
     externalPublish: string
     auditRetentionPurges: string
     userMcpBlockedServers: string
@@ -2356,6 +2361,7 @@ export interface ProductAuditBundleSnapshot {
     evidencePacks: Array<Record<string, unknown>>
     capabilityLedger: Array<Record<string, unknown>>
     messageFeedback: Array<Record<string, unknown>>
+    messageFeedbackCastingSignals: Array<Record<string, unknown>>
     externalPublish: Array<Record<string, unknown>>
     auditRetentionPurges: Array<Record<string, unknown>>
     userMcpBlockedServers: Array<Record<string, unknown>>

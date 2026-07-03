@@ -723,6 +723,7 @@ describe('ProductOperations', () => {
     expect(serialized).not.toContain('PRIVATE_DOCS_TOKEN')
     expect(serialized).toContain('externalPathGrantCount')
     expect(snapshot.auditReceipts.counts.messageFeedback).toBe(1)
+    expect(snapshot.auditReceipts.counts.messageFeedbackCastingSignals).toBe(1)
     expect(snapshot.auditReceipts.counts.externalPublish).toBe(1)
     expect(snapshot.auditReceipts.counts.auditRetentionPurges).toBe(1)
     expect(snapshot.auditReceipts.counts.userMcpBlockedServers).toBe(1)
@@ -809,6 +810,22 @@ describe('ProductOperations', () => {
       hasSensitiveNote: true
     })
     expect(snapshot.auditReceipts.recent.messageFeedback[0].receiptHash).toMatch(/^[a-f0-9]{64}$/)
+    expect(snapshot.auditReceipts.recent.messageFeedbackCastingSignals[0]).toMatchObject({
+      provider: 'codex',
+      hasModel: true,
+      hasRole: true,
+      samples: 1,
+      up: 0,
+      down: 1,
+      net: -1,
+      attributionComplete: 0
+    })
+    expect(
+      (snapshot.auditReceipts.recent.messageFeedbackCastingSignals[0] as any).modelHash
+    ).toMatch(/^[a-f0-9]{64}$/)
+    expect(
+      (snapshot.auditReceipts.recent.messageFeedbackCastingSignals[0] as any).roleHash
+    ).toMatch(/^[a-f0-9]{64}$/)
     expect(snapshot.auditReceipts.recent.externalPublish[0]).toMatchObject({
       id: 'publish-1',
       origin: 'agent',
@@ -1092,6 +1109,7 @@ describe('ProductOperations', () => {
       evidencePacks: 1,
       capabilityLedgerEntries: 1,
       messageFeedback: 1,
+      messageFeedbackCastingSignals: 1,
       externalPublish: 1,
       auditRetentionPurges: 1,
       userMcpBlockedServers: 1
@@ -1114,6 +1132,9 @@ describe('ProductOperations', () => {
     expect(serialized).not.toContain('private audit report')
     expect(serialized).not.toContain('private evidence note')
     expect(serialized).not.toContain('private feedback note')
+    expect(serialized).not.toContain('private-model')
+    expect(serialized).not.toContain('Reviewer')
+    expect(serialized).not.toContain('wrong-model-for-role')
     expect(serialized).not.toContain('https://github.com/private/repo')
     expect(serialized).not.toContain('Private PR title')
     expect(serialized).not.toContain('/secret/repo')
@@ -1125,7 +1146,16 @@ describe('ProductOperations', () => {
     expect(serialized).not.toContain('do-not-export-signature')
     expect(serialized).not.toContain('approval-sibling')
     expect(bundle.manifest.hashes.runEventReplays).toMatch(/^[a-f0-9]{64}$/)
+    expect(bundle.manifest.hashes.messageFeedbackCastingSignals).toMatch(/^[a-f0-9]{64}$/)
     expect(bundle.manifest.hashes.userMcpBlockedServers).toMatch(/^[a-f0-9]{64}$/)
+    expect(bundle.sections.messageFeedbackCastingSignals[0]).toMatchObject({
+      provider: 'codex',
+      hasModel: true,
+      hasRole: true,
+      samples: 1,
+      down: 1,
+      net: -1
+    })
     expect(bundle.sections.userMcpBlockedServers[0]).toMatchObject({
       transport: 'http',
       allowed: false,

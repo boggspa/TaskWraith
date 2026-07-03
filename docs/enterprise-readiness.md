@@ -658,6 +658,10 @@ What exists:
   timestamps, and free-text notes are not exported by default.
 - The redacted audit-bundle snapshot builder includes message-feedback receipt
   summaries in the same privacy posture as diagnostics.
+- Diagnostics and audit bundles now also include privacy-preserving local
+  casting aggregates derived from the latest thumbs-ledger state. These group
+  by provider/model/role/stage for local analytics, but exported snapshots hash
+  model, role, and reason labels and only expose counts.
 - The transcript context menu can attach a closed-set negative reason code
   (wrong approach, hallucinated/wrong, broke something, over-verbose, wrong
   model for role, incomplete) to a poor-rating receipt.
@@ -670,8 +674,9 @@ What exists:
 
 What is missing:
 
-- Thumbs are not yet harvested into AgentStats, EvidencePacks, or casting
-  records.
+- Thumbs are not yet consumed by AgentStats, EvidencePacks, or runtime casting
+  decisions. The current bridge is derived analytics only; it does not silently
+  mutate other ledgers or task artifacts.
 - No "recast this turn with a different model" follow-through exists.
 - No iOS parity exists for feedback capture.
 - No Settings/UI entry point exists yet; feedback summaries are available

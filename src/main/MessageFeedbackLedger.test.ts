@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  buildMessageFeedbackCastingSignals,
   capMessageFeedbackReceipts,
   filterMessageFeedbackReceipts,
   updateMessageFeedbackLedgerForChatSave
@@ -173,5 +174,65 @@ describe('MessageFeedbackLedger', () => {
         (record) => record.id
       )
     ).toEqual(['b'])
+  })
+
+  it('derives casting signals from only the latest feedback receipt state', () => {
+    const records: MessageFeedbackReceipt[] = [
+      {
+        ...receipt('old-a', 'chat-a', 'message-a', 'up'),
+        provider: 'claude',
+        model: 'sonnet-old',
+        role: 'Reviewer',
+        attributionComplete: true
+      },
+      {
+        ...receipt('new-a', 'chat-a', 'message-a', 'down'),
+        action: 'flip',
+        provider: 'claude',
+        model: 'sonnet-new',
+        role: 'Reviewer',
+        ensembleStageRole: 'reviewer',
+        attributionComplete: true,
+        reason: 'wrong-model-for-role',
+        recordedAt: 30
+      },
+      {
+        ...receipt('b', 'chat-b', 'message-b', 'up'),
+        provider: 'codex',
+        model: 'gpt-5.5',
+        role: 'Worker',
+        ensembleStageRole: 'worker',
+        recordedAt: 20
+      }
+    ]
+
+    expect(buildMessageFeedbackCastingSignals(records)).toEqual([
+      {
+        provider: 'claude',
+        model: 'sonnet-new',
+        role: 'Reviewer',
+        ensembleStageRole: 'reviewer',
+        samples: 1,
+        up: 0,
+        down: 1,
+        net: -1,
+        attributionComplete: 1,
+        reasonCounts: { 'wrong-model-for-role': 1 },
+        latestAt: 30
+      },
+      {
+        provider: 'codex',
+        model: 'gpt-5.5',
+        role: 'Worker',
+        ensembleStageRole: 'worker',
+        samples: 1,
+        up: 1,
+        down: 0,
+        net: 1,
+        attributionComplete: 0,
+        reasonCounts: {},
+        latestAt: 20
+      }
+    ])
   })
 })

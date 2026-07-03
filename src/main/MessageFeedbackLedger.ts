@@ -39,6 +39,20 @@ export interface MessageFeedbackLedgerUpdate {
   changed: boolean
 }
 
+export interface MessageFeedbackCastingSignal {
+  provider?: MessageFeedbackReceipt['provider']
+  model?: string
+  role?: string
+  ensembleStageRole?: MessageFeedbackReceipt['ensembleStageRole']
+  samples: number
+  up: number
+  down: number
+  net: number
+  attributionComplete: number
+  reasonCounts: Record<string, number>
+  latestAt: number
+}
+
 function text(value: unknown, max = 500): string | undefined {
   if (typeof value !== 'string') return undefined
   const trimmed = value.trim()
@@ -404,4 +418,64 @@ export function filterMessageFeedbackReceipts(
       ? Math.max(0, Math.floor(filter.limit))
       : 0
   return limit > 0 ? out.slice(Math.max(0, out.length - limit)) : out
+}
+
+function castingSignalKey(record: MessageFeedbackReceipt): string {
+  return JSON.stringify([
+    record.provider || '',
+    record.model || '',
+    record.role || '',
+    record.ensembleStageRole || ''
+  ])
+}
+
+export function buildMessageFeedbackCastingSignals(
+  records: MessageFeedbackReceipt[]
+): MessageFeedbackCastingSignal[] {
+  const normalized = Array.isArray(records)
+    ? records
+        .map(normalizeMessageFeedbackReceipt)
+        .filter((record): record is MessageFeedbackReceipt => Boolean(record))
+    : []
+  const latest = latestLedgerReceiptByKey(normalized)
+  const signals = new Map<string, MessageFeedbackCastingSignal>()
+
+  for (const record of latest.values()) {
+    if (record.action === 'clear' || (record.vote !== 'up' && record.vote !== 'down')) continue
+    const key = castingSignalKey(record)
+    const signal =
+      signals.get(key) ||
+      ({
+        ...(record.provider ? { provider: record.provider } : {}),
+        ...(record.model ? { model: record.model } : {}),
+        ...(record.role ? { role: record.role } : {}),
+        ...(record.ensembleStageRole ? { ensembleStageRole: record.ensembleStageRole } : {}),
+        samples: 0,
+        up: 0,
+        down: 0,
+        net: 0,
+        attributionComplete: 0,
+        reasonCounts: {},
+        latestAt: 0
+      } satisfies MessageFeedbackCastingSignal)
+
+    signal.samples += 1
+    if (record.vote === 'up') signal.up += 1
+    if (record.vote === 'down') signal.down += 1
+    signal.net = signal.up - signal.down
+    if (record.attributionComplete === true) signal.attributionComplete += 1
+    if (record.reason) signal.reasonCounts[record.reason] = (signal.reasonCounts[record.reason] || 0) + 1
+    signal.latestAt = Math.max(signal.latestAt, record.recordedAt || record.at || 0)
+    signals.set(key, signal)
+  }
+
+  return [...signals.values()].sort((a, b) => {
+    const provider = (a.provider || '').localeCompare(b.provider || '')
+    if (provider) return provider
+    const model = (a.model || '').localeCompare(b.model || '')
+    if (model) return model
+    const role = (a.role || '').localeCompare(b.role || '')
+    if (role) return role
+    return (a.ensembleStageRole || '').localeCompare(b.ensembleStageRole || '')
+  })
 }

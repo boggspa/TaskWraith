@@ -38,6 +38,10 @@ import type { UpdateArchitectureCompatibility } from './UpdateArchitecture'
 import type { ExternalPublishReceipt } from './ExternalPublishReceiptLedger'
 import type { UserMcpLaunchPolicyDecision } from './UserMcpServers'
 import { createRunEventReplay } from './RunEventStore'
+import {
+  buildMessageFeedbackCastingSignals,
+  type MessageFeedbackCastingSignal
+} from './MessageFeedbackLedger'
 
 const MAX_CRASH_TEXT_CHARS = 12_000
 const MAX_DIAGNOSTIC_RECORDS = 250
@@ -126,6 +130,7 @@ function expectedAuditBundleCounts(
     evidencePacks: snapshot.sections.evidencePacks.length,
     capabilityLedgerEntries: snapshot.sections.capabilityLedger.length,
     messageFeedback: snapshot.sections.messageFeedback.length,
+    messageFeedbackCastingSignals: snapshot.sections.messageFeedbackCastingSignals.length,
     externalPublish: snapshot.sections.externalPublish.length,
     auditRetentionPurges: snapshot.sections.auditRetentionPurges.length,
     userMcpBlockedServers: snapshot.sections.userMcpBlockedServers.length
@@ -143,6 +148,7 @@ function expectedAuditBundleHashes(
     evidencePacks: diagnosticsSha256(snapshot.sections.evidencePacks),
     capabilityLedger: diagnosticsSha256(snapshot.sections.capabilityLedger),
     messageFeedback: diagnosticsSha256(snapshot.sections.messageFeedback),
+    messageFeedbackCastingSignals: diagnosticsSha256(snapshot.sections.messageFeedbackCastingSignals),
     externalPublish: diagnosticsSha256(snapshot.sections.externalPublish),
     auditRetentionPurges: diagnosticsSha256(snapshot.sections.auditRetentionPurges),
     userMcpBlockedServers: diagnosticsSha256(snapshot.sections.userMcpBlockedServers)
@@ -189,6 +195,30 @@ function summarizeMessageFeedbackReceiptForDiagnostics(
     previousVote: receipt.previousVote,
     hasReason: Boolean(receipt.reason),
     hasSensitiveNote: Boolean(receipt.note)
+  }
+}
+
+function summarizeMessageFeedbackCastingSignalForDiagnostics(
+  signal: MessageFeedbackCastingSignal
+): Record<string, unknown> {
+  return {
+    provider: signal.provider,
+    hasModel: Boolean(signal.model),
+    modelHash: hashId(signal.model),
+    hasRole: Boolean(signal.role),
+    roleHash: hashId(signal.role),
+    ensembleStageRole: signal.ensembleStageRole,
+    samples: signal.samples,
+    up: signal.up,
+    down: signal.down,
+    net: signal.net,
+    attributionComplete: signal.attributionComplete,
+    reasonHashCounts: Object.fromEntries(
+      Object.entries(signal.reasonCounts)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([reason, count]) => [hashId(reason), count])
+    ),
+    latestAt: signal.latestAt
   }
 }
 
@@ -285,6 +315,9 @@ function buildDiagnosticsAuditReceipts(input: {
   const messageFeedback = input.messageFeedbackReceipts.map(
     summarizeMessageFeedbackReceiptForDiagnostics
   )
+  const messageFeedbackCastingSignals = buildMessageFeedbackCastingSignals(
+    input.messageFeedbackReceipts
+  ).map(summarizeMessageFeedbackCastingSignalForDiagnostics)
   const externalPublish = input.externalPublishReceipts.map(
     summarizeExternalPublishReceiptForDiagnostics
   )
@@ -302,6 +335,7 @@ function buildDiagnosticsAuditReceipts(input: {
       approvalLedger: input.approvalLedger.length,
       workspaceChanges: input.workspaceChanges.length,
       messageFeedback: input.messageFeedbackReceipts.length,
+      messageFeedbackCastingSignals: messageFeedbackCastingSignals.length,
       externalPublish: input.externalPublishReceipts.length,
       auditRetentionPurges: input.auditRetentionPurgeReceipts.length,
       userMcpBlockedServers: input.userMcpBlockedServers.length
@@ -310,12 +344,14 @@ function buildDiagnosticsAuditReceipts(input: {
       approvalLedger: diagnosticsSha256(input.approvalLedger),
       workspaceChanges: diagnosticsSha256(input.workspaceChanges),
       messageFeedback: diagnosticsSha256(messageFeedback),
+      messageFeedbackCastingSignals: diagnosticsSha256(messageFeedbackCastingSignals),
       externalPublish: diagnosticsSha256(externalPublish),
       auditRetentionPurges: diagnosticsSha256(auditRetentionPurges),
       userMcpBlockedServers: diagnosticsSha256(userMcpBlockedServers)
     },
     recent: {
       messageFeedback: messageFeedback.slice(-MAX_DIAGNOSTIC_RECORDS),
+      messageFeedbackCastingSignals: messageFeedbackCastingSignals.slice(-MAX_DIAGNOSTIC_RECORDS),
       externalPublish: externalPublish.slice(-MAX_DIAGNOSTIC_RECORDS),
       auditRetentionPurges: auditRetentionPurges.slice(-MAX_DIAGNOSTIC_RECORDS),
       userMcpBlockedServers: userMcpBlockedServers.slice(-MAX_DIAGNOSTIC_RECORDS)
@@ -1429,6 +1465,9 @@ export function buildAuditBundleSnapshot(input: {
     summarizeRunEventReplayForAuditBundle(runId, runEvents)
   )
   const capabilityLedger = summarizeCapabilityLedgerForAuditBundle(input.capabilityLedger)
+  const messageFeedbackCastingSignals = buildMessageFeedbackCastingSignals(messageFeedback).map(
+    summarizeMessageFeedbackCastingSignalForDiagnostics
+  )
   const sections = {
     approvalLedger: approvalLedger.map(summarizeApprovalLedgerRecordForAuditBundle),
     runEventReplays,
@@ -1437,6 +1476,7 @@ export function buildAuditBundleSnapshot(input: {
     evidencePacks: evidencePacks.map(summarizeEvidencePackForAuditBundle),
     capabilityLedger,
     messageFeedback: messageFeedback.map(summarizeMessageFeedbackReceiptForAuditBundle),
+    messageFeedbackCastingSignals,
     externalPublish: externalPublish.map(summarizeExternalPublishReceiptForAuditBundle),
     auditRetentionPurges: auditRetentionPurges.map(
       summarizeAuditRetentionPurgeReceiptForDiagnostics
@@ -1468,6 +1508,7 @@ export function buildAuditBundleSnapshot(input: {
         evidencePacks: evidencePacks.length,
         capabilityLedgerEntries: capabilityLedger.length,
         messageFeedback: messageFeedback.length,
+        messageFeedbackCastingSignals: messageFeedbackCastingSignals.length,
         externalPublish: externalPublish.length,
         auditRetentionPurges: auditRetentionPurges.length,
         userMcpBlockedServers: userMcpBlockedServers.length
@@ -1480,6 +1521,7 @@ export function buildAuditBundleSnapshot(input: {
         evidencePacks: diagnosticsSha256(sections.evidencePacks),
         capabilityLedger: diagnosticsSha256(sections.capabilityLedger),
         messageFeedback: diagnosticsSha256(sections.messageFeedback),
+        messageFeedbackCastingSignals: diagnosticsSha256(sections.messageFeedbackCastingSignals),
         externalPublish: diagnosticsSha256(sections.externalPublish),
         auditRetentionPurges: diagnosticsSha256(sections.auditRetentionPurges),
         userMcpBlockedServers: diagnosticsSha256(sections.userMcpBlockedServers)
