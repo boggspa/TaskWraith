@@ -13,6 +13,139 @@ published. The repository is currently ahead of the latest tagged release, and t
 next semver bump (with curated Unreleased/source-ahead notes) must happen before
 shipping these commits.
 
+## 1.7.1 - 2026-07-03
+
+### Added
+- **Context compaction, made visible.** Solo Claude and Codex chats now show a
+  glass compaction card when a context reset completes or fails, and the
+  composer context donut grows a pressure state (amber at 80%, red at 95%) with
+  a **Compact context now** button once a linked session is under pressure.
+  `/compact` stops being a cosmetic prompt template and dispatches a real
+  provider-native compaction, falling back to the template only for busy or
+  session-less chats. Overflow errors get a named remedy hint instead of a raw
+  wall of provider text.
+- **Ensemble seat compaction.** Long-running Ensemble seats no longer stall at
+  their context ceiling. Each participant carries a rolling summary, the
+  orchestrator materializes per-seat compaction cards and boss-facing pressure
+  cues, and a post-round auto-trigger keeps Claude, Codex, Cursor, Kimi, and
+  Grok seats healthy across a long session with a cooldown so it never thrashes.
+- **Ensemble stage roles.** Participants can now be assigned a **scout**,
+  **worker**, or **reviewer** stage. Reviewers wait for the writers instead of
+  running against work that does not exist yet, then run together in a closing
+  **Review wave** once only reviewers remain. Stage roles round-trip through
+  roster presets, Boss roster edits, and the iOS Roster page picker.
+- **Message feedback.** Assistant messages now take a thumbs-up / thumbs-down
+  from the action row or right-click menu, with optional reason chips on a poor
+  rating. Votes persist with the message and roll up into per-model casting
+  summaries in Settings, laying the groundwork for recasting a weak answer with
+  a different model.
+- **Redesigned right dock.** The two-tier glyph strip is replaced with a clean
+  surface switcher: a slim header whose active-surface button opens a grouped
+  Session / Work / Inspect popover, the Inspector's sub-views regain text
+  labels, and a ⌘K command palette searches across every dock surface. The
+  active surface is now remembered per chat, and the iOS companion mirrors the
+  per-thread inspector memory.
+- **Agent Pool gets its own page.** The reusable Agent Pool moves out of the
+  foot of the Ensemble Roster tab into a dedicated **AI & Providers -> Agent
+  pool** settings page, so it has room to grow and is no longer squashed under a
+  large roster. The roster tab keeps its per-participant *Save to pool* action.
+- **Projects sidebar, finished.** The Projects tab added in 1.7.0 gets a full
+  polish pass: archived member chats stay visible with an **Archived** chip,
+  expand state persists, chat rows drag straight onto a project, search is truly
+  scoped per tab, and the whole tablist is keyboard- and screen-reader-navigable.
+  A `migrateProjects()` step means schema drift no longer drops project data.
+- **Collaboration contribution rules.** Shared chats can now carry a contribution
+  preset (read-only, comments, request host action, or auto-draft). Collaborators
+  on an enabled share can submit a structured **action request** that goes to the
+  host for review and is never dispatched to a provider, optionally pre-filling
+  the host's composer as an external-untrusted draft. A bounded, redacted
+  collaboration audit log records share, invite, and contribution events.
+- **Collaborator reconnect.** A dropped collaborator can rejoin their last shared
+  chat with a pinned, encrypted identity — no fresh invite token and no repeated
+  safety-number compare — while still signing fresh session keys every reconnect.
+  Reconnection survives host restarts; revoked participants stay locked out.
+- **Clickable tool-call file paths.** File paths in tool-call rows are now
+  clickable and open directly in your editor, with a hover preview. The
+  user-message transcript rail also gains a scroll-spy highlight, a progress
+  track, and a hover bulge for moving between prompts in a long conversation.
+
+### Changed
+- **Local models follow the standard permission role.** Ollama's bespoke
+  tool-control tier ladder is retired. Local models now get the full tool
+  surface and obey the same Plan / Read-Only / Default / Full Workspace Access
+  role as every other provider, governed at the shared approval gate. Read-only
+  web search and fetch are now permitted under Read-Only and Plan for all
+  providers, so a local model can finally search the web in a General chat.
+- **Managed-enterprise readiness.** The B5 items previously tracked as pending
+  have now landed: scoped and redacted audit-bundle export with signed
+  verification receipts, managed-policy loading and clamps (settings, update,
+  safety, bridge, MCP, and user-MCP allowlisting), encrypted storage for MCP and
+  runtime-profile secrets, and dispatch receipts stamped through the queue and
+  scheduled-run lifecycle. The claim stays deliberately bounded to local safety
+  plus partial managed policy and redacted audit export — no SSO/SCIM, SIEM
+  integration, WORM or append-only export, or organization-wide retention is
+  implied.
+- **Claude/Codex-parity scroll follow.** Lock-to-bottom now behaves like the
+  Claude and Codex apps: a **Jump to latest** pill appears while a single answer
+  streams into view, the jump reliably re-locks even as content grows mid-flight,
+  sending a prompt while scrolled up re-arms follow, and any upward gesture always
+  wins.
+- **Sidebar running vs. selection.** A running thread now shows a slow-pulsing
+  monoline "ghost" mark, and the accent rim is reserved strictly for the selected
+  thread — the two were nearly indistinguishable before. Each sidebar section
+  previews its first few threads with a *show more* affordance, and on macOS the
+  corner-controls pill clears the window traffic lights when the sidebar is
+  closed.
+- **Ensemble roster controls.** Orchestration controls move onto a labeled
+  roster-presets second row, the participant chip strip reflows into balanced
+  rows of five, and the roster cap is raised from 18 to 20. The composer's
+  Ensemble toggle moves to the footer.
+- **Persistent Grok seats and slimmer resumes.** Per-seat Grok ACP sessions and
+  slimmed resumed-seat turn prompts are now enabled by default, trimming repeated
+  context on long multi-turn Ensemble rounds.
+- **Composer polish.** Diff counters animate as they change, cost estimates line
+  up with the remote projection shown on the companion, and working-text glow is
+  softened.
+
+### Fixed
+- **Ensemble reliability.** A cluster of round-lifecycle fixes: the composer and
+  queued-row **Steer** now act on the first click, queued-row Steer and Delete
+  recover after an app restart, seat changes hand over cleanly and preserve their
+  stage role, duplicate yield-activity rows are removed, and a clean exit with
+  streamed content finalizes as *answered* instead of hanging.
+- **Startup opens a fresh chat.** Launch no longer restores the most recent
+  global chat into a stale, un-hydrated transcript. The app now opens a fresh
+  single General chat on your default provider every time; workspaces and
+  ensembles remain one click away in the sidebar.
+- **Right-dock resizing.** The inspector divider resizes reliably again, and the
+  dock's surfaces are now mutually exclusive so opening one no longer leaves
+  another stranded behind it.
+- **Local tool-call repair.** The Ollama tool-call repair loop is hardened: the
+  decode grammar allows the full tool catalog rather than only advertised names,
+  harness-gate blocks count toward the retry ceiling, argument validation matches
+  the executor gate, and each Ensemble seat keeps isolated tool memory.
+- **Duplicated assistant text.** The legacy delta lane now defers to the run-item
+  sidecar, so streamed assistant answers no longer render twice.
+- **Permission honesty.** Network-deny is honored for web tools, evidence-pack
+  and observability tools are classified as orchestration, and Plan-workflow
+  posture is now visibly distinct from Read-Only in labels and over the iOS
+  bridge.
+- **Usage meters.** The Claude Fable weekly quota meter reads the current
+  session-group payload shape, the Grok `/usage` probe works against the new
+  CLI's terminal queries, and all four Claude quota windows survive on the iOS
+  first-launch card.
+- **iOS companion parity.** New task starts preserve their permissions,
+  Plan-workflow posture carries correctly over the bridge, and Agent Pool
+  transcript identity is de-boxed to match the desktop.
+
+### Removed
+- **Ollama tier machinery.** With local models now on the standard permission
+  role, the dead tier resolvers, tier tables, mid-run tier-bump path, the
+  now-inert tier and run-profile picker UI, and the unused global run-profile
+  settings surface are all deleted.
+- **Retired messaging gateway.** The old messaging gateway and its cleanup
+  residue are removed.
+
 ## 1.7.0 - 2026-07-01
 
 ### Added
