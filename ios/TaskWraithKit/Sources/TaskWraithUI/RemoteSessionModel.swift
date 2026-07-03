@@ -301,6 +301,13 @@ public final class RemoteSessionModel: ObservableObject {
     /// `.inspector` at NavigationStack level (true side-by-side column on
     /// iPad instead of an overlay; sheet on iPhone).
     @Published public var inspectorPresented = false
+    /// Per-thread memory of the selected ThreadInspector segment (0=Changes …
+    /// 4=Usage). Parity with the desktop right-dock's per-chat surface memory:
+    /// each thread reopens its inspector on the segment it was last viewing.
+    /// Lives on the model (not @State in the view) so it survives both the
+    /// per-thread `.id()` remount AND the theme-revision teardown that wipes
+    /// view-local @State — see the iOS theme-revision-teardown note.
+    @Published public var inspectorTabByThread: [String: Int] = [:]
     /// Dedicated ensemble Roster page (transcript icon + chip-tap entry).
     /// Ensemble chats only. Replaces the cramped per-chip editor sheet.
     @Published public var rosterPresented = false
@@ -1433,6 +1440,10 @@ public final class RemoteSessionModel: ObservableObject {
         gitSnapshots = [:]
         ensembleStates = [:]
         diffSummaries = [:]
+        // Per-thread inspector-segment memory is host-scoped like the caches it
+        // sits beside — drop it so one host's thread ids can't carry a segment
+        // choice into another host, and so it never grows unbounded.
+        inspectorTabByThread = [:]
         workflows = []
         workspaceBoards = []
         ensemblePresets = []

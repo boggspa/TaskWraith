@@ -3117,7 +3117,6 @@ public struct ThreadInspector: View {
     @ObservedObject var model: RemoteSessionModel
     let threadId: String
     var onOpenThread: ((String) -> Void)? = nil
-    @State private var tab = 0
 
     public init(
         model: RemoteSessionModel, threadId: String,
@@ -3140,10 +3139,20 @@ public struct ThreadInspector: View {
         }
         return model.taskCards.first { $0.id == threadId }?.status == "running"
     }
+    /// Per-thread inspector segment (0=Changes … 4=Usage), read from the model
+    /// so it persists across the thread's `.id()` remount and theme teardown
+    /// instead of resetting to Changes each time (desktop per-chat-surface parity).
+    private var tab: Int { model.inspectorTabByThread[threadId] ?? 0 }
+    private var tabBinding: Binding<Int> {
+        Binding(
+            get: { model.inspectorTabByThread[threadId] ?? 0 },
+            set: { model.inspectorTabByThread[threadId] = $0 }
+        )
+    }
 
     public var body: some View {
         VStack(spacing: 0) {
-            Picker("Inspector", selection: $tab) {
+            Picker("Inspector", selection: tabBinding) {
                 Text("Changes").tag(0)
                 Text("Agents").tag(1)
                 Text("Side chats").tag(2)
@@ -3209,7 +3218,7 @@ public struct ThreadInspector: View {
                     && $0.parentChatRelation == "sideChat"
             })
         else { return }
-        tab = 2
+        model.inspectorTabByThread[threadId] = 2
     }
 }
 
