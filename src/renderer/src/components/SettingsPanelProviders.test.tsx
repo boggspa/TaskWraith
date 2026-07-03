@@ -477,6 +477,34 @@ describe('SettingsPanel provider cards', () => {
     expect(html).toContain('Locked controls: agenticServices, approvalTimeouts')
   })
 
+  it('locks product update controls when organization policy owns them', () => {
+    const html = renderToStaticMarkup(
+      <SettingsPanel
+        {...makeSettingsProps({
+          activeTab: 'behavior',
+          managedPolicyStatus: {
+            active: true,
+            organizationName: 'Acme Corp',
+            source: 'signed-mdm-preferences',
+            lockedSettings: ['autoUpdateEnabled', 'updateChannel'],
+            enforcedSettings: ['autoUpdateEnabled'],
+            errors: []
+          }
+        })}
+      />
+    )
+
+    expect(html).toContain('Product update settings are managed by organization policy.')
+    expect(html).toMatch(
+      /<label class="settings-service-row"><span>Enable Auto-Update<\/span><input type="checkbox" disabled="" checked=""/
+    )
+    expect(html).toMatch(
+      /<select class="settings-select" disabled=""><option value="debug">Debug<\/option><option value="stable" selected="">Stable<\/option><option value="nightly">Nightly<\/option><\/select>/
+    )
+    expect(html).toContain('Export diagnostics')
+    expect(html).toContain('Export full audit bundle')
+  })
+
   it('locks user MCP server mutation controls when organization policy owns the setting', () => {
     const html = renderToStaticMarkup(
       <SettingsPanel

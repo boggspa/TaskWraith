@@ -3287,6 +3287,15 @@ export function SettingsPanel({
   )
   const userMcpManagedLockMessage =
     'User MCP server editing is managed by organization policy.'
+  const autoUpdateManagedLocked = isManagedPolicySettingLocked(
+    managedPolicyStatus,
+    'autoUpdateEnabled'
+  )
+  const updateChannelManagedLocked = isManagedPolicySettingLocked(
+    managedPolicyStatus,
+    'updateChannel'
+  )
+  const productUpdateManagedLocked = autoUpdateManagedLocked || updateChannelManagedLocked
 
   useEffect(() => {
     if (!showDeleteHistoryConfirm) return
@@ -8605,12 +8614,22 @@ export function SettingsPanel({
                 <h4 className="sidebar-section-title" style={{ margin: 0 }}>
                   Product operations
                 </h4>
+                {productUpdateManagedLocked && (
+                  <p className="settings-hint">
+                    Product update settings are managed by organization policy. Health checks,
+                    diagnostics, repair, and audit-bundle exports remain available.
+                  </p>
+                )}
                 <label className="settings-service-row">
                   <span>Enable Auto-Update</span>
                   <input
                     type="checkbox"
                     checked={autoUpdateEnabled}
-                    onChange={(e) => onChange({ autoUpdateEnabled: e.target.checked })}
+                    disabled={autoUpdateManagedLocked}
+                    onChange={(e) => {
+                      if (autoUpdateManagedLocked) return
+                      onChange({ autoUpdateEnabled: e.target.checked })
+                    }}
                   />
                 </label>
                 <label className="settings-service-row">
@@ -8618,9 +8637,11 @@ export function SettingsPanel({
                   <select
                     className="settings-select"
                     value={updateChannel}
-                    onChange={(e) =>
+                    disabled={updateChannelManagedLocked}
+                    onChange={(e) => {
+                      if (updateChannelManagedLocked) return
                       onChange({ updateChannel: e.target.value as ProductUpdateChannel })
-                    }
+                    }}
                   >
                     {PRODUCT_UPDATE_CHANNEL_OPTIONS.map((option) => (
                       <option key={option.value} value={option.value}>

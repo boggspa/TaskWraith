@@ -347,13 +347,17 @@ What exists:
   setting, the page switches to a managed state, disables add/import/edit/
   enable/delete/save actions, blocks stale mutation handlers, and keeps
   read-only audit/export copy controls available.
+- Settings -> General -> Product operations now consumes managed-policy locks
+  for `autoUpdateEnabled` and `updateChannel`. The auto-update checkbox and
+  update-channel selector disable when managed, while diagnostics, repair, and
+  audit-bundle export actions remain available.
 
 What is missing:
 
 - Per-control locked/disabled affordances in Settings are not complete yet.
-  The top-level managed notice and the user-MCP settings pane are wired, but
-  other settings pages still need the same inline lock badges and disabled
-  controls.
+  The top-level managed notice, product update controls, and the user-MCP
+  settings pane are wired, but other settings pages still need the same inline
+  lock badges and disabled controls.
 - Other non-settings live controls still need explicit inventory and managed
   clamps. The current policy source is startup-loaded, so future live policy
   reload support must also revoke or re-materialize affected in-memory state.
