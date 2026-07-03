@@ -253,6 +253,58 @@ describe('PluginHost', () => {
     })
   })
 
+  it('materializes plugin requiredSecrets as encrypted user-MCP launch refs', () => {
+    const manifest: TaskWraithPluginManifest = {
+      ...BASE_MANIFEST,
+      secrets: [
+        {
+          id: 'docs-token',
+          label: 'Docs token',
+          envVar: 'DOCS_TOKEN',
+          required: true
+        }
+      ],
+      mcpServers: [
+        {
+          id: 'docs-stdio',
+          name: 'Docs',
+          transport: 'stdio',
+          command: 'node',
+          args: ['server.js'],
+          env: {
+            DOCS_AUTH_TOKEN: '${DOCS_TOKEN}',
+            DOCS_REGION: 'eu'
+          },
+          headers: {
+            'X-Docs-Token': '$DOCS_TOKEN',
+            'X-Docs-Region': 'eu'
+          },
+          requiredSecrets: ['docs-token'],
+          enabledByDefault: false
+        }
+      ]
+    }
+    const host = makeHost([manifest])
+    host.installPlugin('demo-bundle')
+
+    const result = host.materializeMcpServerPreset('demo-bundle', 'docs-stdio')
+
+    expect(result.userMcpServerConfig).toMatchObject({
+      env: {
+        DOCS_REGION: 'eu'
+      },
+      headers: {
+        'X-Docs-Region': 'eu'
+      },
+      secretRefs: {
+        env: ['DOCS_AUTH_TOKEN'],
+        headers: ['X-Docs-Token']
+      }
+    })
+    expect(result.userMcpServerConfig.env).not.toHaveProperty('DOCS_AUTH_TOKEN')
+    expect(result.userMcpServerConfig.headers).not.toHaveProperty('X-Docs-Token')
+  })
+
   it('validates materialized MCP provenance against the current installed plugin', () => {
     const host = makeHost()
     host.installPlugin('demo-bundle')
@@ -635,5 +687,43 @@ describe('PluginPreflightService', () => {
     expect(errors).toContain('Manifest signature key id "bad key" is invalid.')
     expect(errors).toContain('Manifest signature key id "bad key" is duplicated.')
     expect(errors).toContain('Manifest signature "bad key" must include base64 signature material.')
+  })
+
+  it('rejects plugin requiredSecrets that are not declared in the manifest', () => {
+    const manifest: TaskWraithPluginManifest = {
+      ...BASE_MANIFEST,
+      secrets: [
+        {
+          id: 'docs-token',
+          label: 'Docs token',
+          envVar: 'DOCS_TOKEN'
+        }
+      ],
+      mcpServers: [
+        {
+          id: 'docs-stdio',
+          name: 'Docs',
+          transport: 'stdio',
+          command: 'node',
+          args: ['server.js'],
+          requiredSecrets: ['missing-token']
+        }
+      ],
+      connectors: [
+        {
+          id: 'docs-api',
+          label: 'Docs API',
+          kind: 'api-key',
+          requiredSecrets: ['also-missing']
+        }
+      ]
+    }
+
+    expect(validateTaskWraithPluginManifest(manifest)).toEqual(
+      expect.arrayContaining([
+        'MCP server preset "docs-stdio" required secrets references unknown secret "missing-token".',
+        'Connector "docs-api" required secrets references unknown secret "also-missing".'
+      ])
+    )
   })
 })

@@ -27,7 +27,8 @@ import {
   type TaskWraithPluginManifestSignature,
   type TaskWraithPluginTrustResult,
   type TaskWraithPluginUninstallTombstone,
-  type TaskWraithPluginUserMcpServerConfig
+  type TaskWraithPluginUserMcpServerConfig,
+  type TaskWraithPluginSecret
 } from './PluginManifest'
 
 export interface PluginTrustedPublisherKey {
@@ -201,12 +202,77 @@ function pluginObjectId(pluginId: string, kind: string, objectId: string): strin
   return `plugin:${pluginId}:${kind}:${objectId}`
 }
 
+function isSecretPlaceholder(value: string, envVar: string): boolean {
+  return value.trim() === `$${envVar}` || value.trim() === '${' + envVar + '}'
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return Array.from(new Set(values))
+}
+
+function pluginMcpSecretRefs(
+  secrets: readonly TaskWraithPluginSecret[] | undefined,
+  preset: TaskWraithPluginMcpServerPreset
+): TaskWraithPluginUserMcpServerConfig['secretRefs'] | undefined {
+  if (!Array.isArray(preset.requiredSecrets) || preset.requiredSecrets.length === 0) {
+    return undefined
+  }
+  const secretsById = new Map((secrets ?? []).map((secret) => [secret.id, secret]))
+  const envRefs: string[] = []
+  const headerRefs: string[] = []
+  for (const secretId of preset.requiredSecrets) {
+    const secret = secretsById.get(secretId)
+    const envVar = secret?.envVar?.trim()
+    if (!envVar) continue
+    let mapped = false
+    for (const [key, value] of Object.entries(preset.env ?? {})) {
+      if (isSecretPlaceholder(value, envVar)) {
+        envRefs.push(key)
+        mapped = true
+      }
+    }
+    for (const [key, value] of Object.entries(preset.headers ?? {})) {
+      if (isSecretPlaceholder(value, envVar)) {
+        headerRefs.push(key)
+        mapped = true
+      }
+    }
+    if (!mapped) envRefs.push(envVar)
+  }
+  const refs = {
+    ...(envRefs.length > 0 ? { env: uniqueStrings(envRefs) } : {}),
+    ...(headerRefs.length > 0 ? { headers: uniqueStrings(headerRefs) } : {})
+  }
+  return Object.keys(refs).length > 0 ? refs : undefined
+}
+
+function literalPresetFieldsWithoutSecretPlaceholders(
+  fields: Record<string, string> | undefined,
+  secrets: readonly TaskWraithPluginSecret[] | undefined,
+  preset: TaskWraithPluginMcpServerPreset
+): Record<string, string> | undefined {
+  if (!fields || Object.keys(fields).length === 0) return undefined
+  const requiredEnvVars = new Set(
+    (preset.requiredSecrets ?? [])
+      .map((secretId) => (secrets ?? []).find((secret) => secret.id === secretId)?.envVar?.trim())
+      .filter((value): value is string => Boolean(value))
+  )
+  const entries = Object.entries(fields).filter(
+    ([, value]) => !Array.from(requiredEnvVars).some((envVar) => isSecretPlaceholder(value, envVar))
+  )
+  return entries.length > 0 ? Object.fromEntries(entries) : undefined
+}
+
 function toDisabledUserMcpServerConfig(
   pluginId: string,
   pluginName: string,
   preset: TaskWraithPluginMcpServerPreset,
+  secrets?: readonly TaskWraithPluginSecret[],
   provenance?: TaskWraithPluginUserMcpServerConfig['pluginProvenance']
 ): TaskWraithPluginUserMcpServerConfig {
+  const env = literalPresetFieldsWithoutSecretPlaceholders(preset.env, secrets, preset)
+  const headers = literalPresetFieldsWithoutSecretPlaceholders(preset.headers, secrets, preset)
+  const secretRefs = pluginMcpSecretRefs(secrets, preset)
   return {
     id: pluginObjectId(pluginId, 'mcp', preset.id),
     name: `${pluginName}: ${preset.name}`,
@@ -215,8 +281,9 @@ function toDisabledUserMcpServerConfig(
     ...(preset.command ? { command: preset.command } : {}),
     ...(preset.args ? { args: [...preset.args] } : {}),
     ...(preset.url ? { url: preset.url } : {}),
-    ...(preset.env ? { env: { ...preset.env } } : {}),
-    ...(preset.headers ? { headers: { ...preset.headers } } : {}),
+    ...(env ? { env } : {}),
+    ...(headers ? { headers } : {}),
+    ...(secretRefs ? { secretRefs } : {}),
     ...(preset.bearerTokenEnvVar ? { bearerTokenEnvVar: preset.bearerTokenEnvVar } : {}),
     ...(preset.description ? { description: preset.description } : {}),
     ...(provenance ? { pluginProvenance: provenance } : {})
@@ -724,7 +791,8 @@ export class PluginHost {
           userMcpServerConfig: toDisabledUserMcpServerConfig(
             entry.manifest.id,
             entry.manifest.name,
-            preset
+            preset,
+            entry.manifest.secrets
           )
         })
       }
@@ -858,6 +926,7 @@ export class PluginHost {
       entry.manifest.id,
       entry.manifest.name,
       preset,
+      entry.manifest.secrets,
       {
         ...plugin,
         kind: 'mcpServer',

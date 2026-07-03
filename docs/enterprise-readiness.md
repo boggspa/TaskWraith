@@ -169,6 +169,12 @@ What exists:
   allowlists to the ref names before decryption, blocks servers with missing or
   undecryptable refs, and passes remote bearer-token values through provider
   process env where the provider supports env indirection.
+- Plugin MCP presets now validate `requiredSecrets` against declared plugin
+  secrets and materialize `$ENV_VAR` / `${ENV_VAR}` preset env/header
+  placeholders into user-MCP `secretRefs`. Placeholder literals are stripped
+  from the saved server config, so plugin-backed MCP servers use the same
+  encrypted launch-time resolution path and block if a required secret is
+  missing or undecryptable.
 - Runtime profile records can carry env `secretRefs`. Launch env assembly
   resolves those refs centrally through `createCliEnv`, blocks runs when a
   referenced encrypted value is missing or undecryptable, and lets the encrypted
@@ -186,8 +192,6 @@ What is missing:
   IPC instead of raw user MCP env/header values.
 - Runtime profile settings surfaces are not yet wired to create/manage encrypted
   env refs directly.
-- Plugin `requiredSecrets` are not an end-to-end launch-time secret delivery
-  path for MCP materialization.
 - Renderer and iOS settings surfaces are not yet wired to create or manage
   those encrypted refs directly.
 

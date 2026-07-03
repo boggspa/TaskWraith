@@ -181,6 +181,25 @@ function validateRecordKeys(
   }
 }
 
+function validateRequiredSecrets(
+  errors: string[],
+  label: string,
+  value: unknown,
+  knownSecretIds: ReadonlySet<string>
+): void {
+  validateArrayCap(errors, label, value)
+  if (!Array.isArray(value)) return
+  for (const item of value) {
+    if (typeof item !== 'string' || !TASKWRAITH_PLUGIN_COMPONENT_ID_PATTERN.test(item)) {
+      errors.push(`${label} contains invalid secret id "${String(item)}".`)
+      continue
+    }
+    if (!knownSecretIds.has(item)) {
+      errors.push(`${label} references unknown secret "${item}".`)
+    }
+  }
+}
+
 function validateHttpUrl(errors: string[], label: string, value: unknown): void {
   if (typeof value !== 'string' || !value.trim()) return
   validateStringLength(errors, label, value)
@@ -286,8 +305,12 @@ export function validateTaskWraithPluginManifest(manifest: TaskWraithPluginManif
   validateEnumArray(errors, 'Plugin permission network scopes', manifest.permissions?.networkScopes, NETWORK_SCOPES)
   validateEnumArray(errors, 'Plugin permission remote capabilities', manifest.permissions?.remoteCapabilities, REMOTE_CAPABILITIES)
   validateArrayCap(errors, 'Secrets', manifest.secrets)
+  const knownSecretIds = new Set<string>()
   for (const secret of manifest.secrets ?? []) {
     trackDuplicateObjectId(errors, objectIds, 'secret', secret.id, 'Secret')
+    if (typeof secret.id === 'string' && TASKWRAITH_PLUGIN_COMPONENT_ID_PATTERN.test(secret.id)) {
+      knownSecretIds.add(secret.id)
+    }
     if (secret.envVar && !/^[A-Za-z_][A-Za-z0-9_]*$/.test(secret.envVar)) {
       errors.push(`Secret "${secret.id}" has invalid env var "${secret.envVar}".`)
     }
@@ -307,6 +330,12 @@ export function validateTaskWraithPluginManifest(manifest: TaskWraithPluginManif
     if (server.bearerTokenEnvVar && !/^[A-Za-z_][A-Za-z0-9_]*$/.test(server.bearerTokenEnvVar)) {
       errors.push(`MCP server preset "${server.id}" bearer token env var is invalid.`)
     }
+    validateRequiredSecrets(
+      errors,
+      `MCP server preset "${server.id}" required secrets`,
+      server.requiredSecrets,
+      knownSecretIds
+    )
   }
   validateArrayCap(errors, 'TaskWraith tool bundles', manifest.taskwraithToolBundles)
   for (const bundle of manifest.taskwraithToolBundles ?? []) {
@@ -345,6 +374,12 @@ export function validateTaskWraithPluginManifest(manifest: TaskWraithPluginManif
       errors.push(`Connector "${connector.id}" has unsupported kind "${String(connector.kind)}".`)
     }
     validateEnumArray(errors, `Connector "${connector.id}" network scopes`, connector.networkScopes, NETWORK_SCOPES)
+    validateRequiredSecrets(
+      errors,
+      `Connector "${connector.id}" required secrets`,
+      connector.requiredSecrets,
+      knownSecretIds
+    )
   }
   validateArrayCap(errors, 'Local services', manifest.localServices)
   for (const service of manifest.localServices ?? []) {

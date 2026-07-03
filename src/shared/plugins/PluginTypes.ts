@@ -437,6 +437,10 @@ export interface TaskWraithPluginUserMcpServerConfig {
   url?: string
   env?: Record<string, string>
   headers?: Record<string, string>
+  secretRefs?: {
+    env?: string[]
+    headers?: string[]
+  }
   bearerTokenEnvVar?: string
   description?: string
   pluginProvenance?: TaskWraithPluginResourceProvenance
