@@ -177,6 +177,7 @@ function renderSidebar(
     onToggleArchiveChat?: (chatId: string, nextArchived: boolean) => void
     onDeleteChat?: (chatId: string) => void
     onOpenInMultiview?: (chat: ChatRecord) => void
+    runningChatIds?: string[]
   } = {}
 ) {
   const workspace = makeWorkspace()
@@ -190,7 +191,7 @@ function renderSidebar(
       currentChat={chats[0] ?? null}
       activeChatId={options.activeChatId}
       usageSummary={[]}
-      runningChatIds={[]}
+      runningChatIds={options.runningChatIds ?? []}
       workflows={options.workflows}
       workspaceBoards={options.workspaceBoards}
       activeWorkspaceBoardId={options.activeWorkspaceBoardId}
@@ -949,6 +950,80 @@ describe('Sidebar Chats section', () => {
     expect(html).toContain('Expand Chats')
     expect(html).toContain('New general chat')
     expect(html).not.toContain('Global thread')
+  })
+})
+
+describe('Sidebar list truncation', () => {
+  function globalChat(n: number): ChatRecord {
+    return makeChat({
+      appChatId: `global-${n}`,
+      scope: 'global',
+      title: `Global thread ${n}`,
+      workspaceId: undefined,
+      workspacePath: undefined,
+      updatedAt: n
+    })
+  }
+
+  it('caps a long section at the preview limit and offers a "Show more" toggle', () => {
+    stubSidebarStorage({
+      [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: collapseSectionsExcept('chats')
+    })
+
+    const html = renderSidebar(Array.from({ length: 7 }, (_, i) => globalChat(i + 1)))
+
+    // Only the first 5 rows render; the other 2 hide behind the toggle.
+    expect(html.match(/sidebar-global-chat-item/g) ?? []).toHaveLength(5)
+    expect(html).toContain('sidebar-show-more')
+    expect(html).toContain('Show 2 more')
+  })
+
+  it('renders no "Show more" when a section fits within the preview limit', () => {
+    stubSidebarStorage({
+      [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: collapseSectionsExcept('chats')
+    })
+
+    const html = renderSidebar(Array.from({ length: 5 }, (_, i) => globalChat(i + 1)))
+
+    expect(html.match(/sidebar-global-chat-item/g) ?? []).toHaveLength(5)
+    expect(html).not.toContain('sidebar-show-more')
+  })
+})
+
+describe('Sidebar running indicator', () => {
+  function globalChat(): ChatRecord {
+    return makeChat({
+      appChatId: 'global-1',
+      scope: 'global',
+      title: 'Busy thread',
+      workspaceId: undefined,
+      workspacePath: undefined
+    })
+  }
+
+  it('marks a running chat with the pulsing ghost, never the retired busy dot', () => {
+    stubSidebarStorage({
+      [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: collapseSectionsExcept('chats')
+    })
+
+    const running = renderSidebar([globalChat()], { runningChatIds: ['global-1'] })
+    expect(running).toContain('sidebar-chat-running')
+    expect(running).not.toContain('sidebar-chat-busy')
+
+    const idle = renderSidebar([globalChat()], { runningChatIds: [] })
+    expect(idle).not.toContain('sidebar-chat-running')
+  })
+
+  it('shows the ghost + aria-busy in Pinned, which previously had no running cue', () => {
+    stubSidebarStorage({
+      [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: collapseSectionsExcept('pinned')
+    })
+
+    const html = renderSidebar([makeChat({ appChatId: 'p1', pinned: true, title: 'Pinned run' })], {
+      runningChatIds: ['p1']
+    })
+    expect(html).toContain('sidebar-chat-running')
+    expect(html).toContain('aria-busy')
   })
 })
 

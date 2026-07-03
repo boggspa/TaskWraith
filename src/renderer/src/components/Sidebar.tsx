@@ -13,7 +13,7 @@ import {
   type ReactNode
 } from 'react'
 import { createPortal } from 'react-dom'
-import { MascotGhost, WorkflowGlyphIcon } from './AppChromeSymbols'
+import { MascotGhost, SidebarRunningGhost, WorkflowGlyphIcon } from './AppChromeSymbols'
 import taskwraithGhostMonolineSvg from '../assets/taskwraith-ghost-monoline.svg?raw'
 import { isUpdatePillVisible, UpdatePill } from './UpdatePill'
 import type { UpdateStateSnapshot } from '../../../main/UpdateService'
@@ -427,6 +427,16 @@ const SIDEBAR_SECTION_IDS: readonly SidebarSectionId[] = [
 function defaultCollapsedSidebarSections(): Set<SidebarSectionId> {
   return new Set(SIDEBAR_SECTION_IDS)
 }
+
+/** Per-list preview cap. Each thread list (a workspace's chats, Ensembles,
+ *  Recents, Chats, Shared) renders at most this many rows before a
+ *  "Show N more…" toggle reveals the rest — so expanding one section header
+ *  can't balloon the sidebar into a single endless scroll. */
+const SIDEBAR_SECTION_PREVIEW_LIMIT = 5
+/** Recents is a bounded shortlist: even fully expanded it never grows past
+ *  this. Keeps "Show more" on Recents from re-listing the entire chat history
+ *  the Workspaces / Chats sections already surface. */
+const SIDEBAR_RECENTS_MAX = 20
 
 type SidebarSettingsMenuPane = 'root' | 'themes' | 'composer' | 'accent' | 'system' | 'tool'
 
@@ -2275,6 +2285,11 @@ export function Sidebar({
       }
     }
   )
+  // Per-list "show more" expansion, keyed by a stable list id
+  // ('recents' | 'chats' | 'ensembles' | 'shared' | `ws:${workspaceId}`).
+  // Deliberately in-memory (not persisted): a reload returns every list to its
+  // compact preview so no section silently reopens huge on next launch.
+  const [expandedSidebarLists, setExpandedSidebarLists] = useState<Set<string>>(() => new Set())
   // Section-level collapse state for the top-level sidebar lists.
   // Default all collapsed. `isSectionCollapsed` below applies a
   // search-active override so a filter pass forces every section open
@@ -2400,7 +2415,7 @@ export function Sidebar({
   const recentSourceChats = ensembleModeEnabled
     ? topLevelChats.filter((chat) => chat.chatKind !== 'ensemble' || !chat.archived)
     : regularChats
-  const recentChats = selectRecentChats(recentSourceChats, { limit: 5 })
+  const recentChats = selectRecentChats(recentSourceChats, { limit: SIDEBAR_RECENTS_MAX })
   const visibleEnsembleChats = isSidebarSearchActive
     ? ensembleChats.filter((chat) => !chat.pinned && chatMatchesSearch(chat, sidebarSearchQuery))
     : ensembleChats.filter((chat) => !chat.pinned)
@@ -3016,6 +3031,47 @@ export function Sidebar({
       next.delete(sectionId)
       return next
     })
+  }
+
+  const toggleSidebarListExpanded = (listId: string): void => {
+    setExpandedSidebarLists((prev) => {
+      const next = new Set(prev)
+      if (next.has(listId)) next.delete(listId)
+      else next.add(listId)
+      return next
+    })
+  }
+
+  // Trim a section's list to the preview cap unless the user expanded it — or a
+  // search is active, when every match stays visible so results aren't hidden.
+  const previewSidebarList = (listId: string, items: ChatRecord[]): ChatRecord[] => {
+    if (
+      isSidebarSearchActive ||
+      expandedSidebarLists.has(listId) ||
+      items.length <= SIDEBAR_SECTION_PREVIEW_LIMIT
+    ) {
+      return items
+    }
+    return items.slice(0, SIDEBAR_SECTION_PREVIEW_LIMIT)
+  }
+
+  // Trailing "Show N more… / Show less" toggle for a truncated list. Renders
+  // nothing when the list already fits the preview cap, or while searching
+  // (search shows every match, so there is nothing hidden to reveal).
+  const renderSidebarShowMore = (listId: string, totalCount: number): ReactNode => {
+    if (isSidebarSearchActive || totalCount <= SIDEBAR_SECTION_PREVIEW_LIMIT) return null
+    const expanded = expandedSidebarLists.has(listId)
+    const hiddenCount = totalCount - SIDEBAR_SECTION_PREVIEW_LIMIT
+    return (
+      <button
+        type="button"
+        className="sidebar-show-more"
+        onClick={() => toggleSidebarListExpanded(listId)}
+        aria-expanded={expanded}
+      >
+        {expanded ? 'Show less' : `Show ${hiddenCount} more…`}
+      </button>
+    )
   }
 
   const { servers: localServers } = useLocalServers()
@@ -4296,6 +4352,7 @@ export function Sidebar({
                   ))}
                   {visiblePinnedChats.map((chat) => {
                     const renameSurfaceId = `pinned-${chat.appChatId}`
+                    const isChatRunning = runningChatIdSet.has(chat.appChatId)
                     return (
                       <div
                         key={`pinned-chat-${chat.appChatId}`}
@@ -4311,6 +4368,7 @@ export function Sidebar({
                           }
                         }}
                         title={chat.title}
+                        aria-busy={isChatRunning || undefined}
                       >
                         {renderChatProviderBadge(chat)}
                         <SidebarChatTitleEditable
@@ -4322,6 +4380,7 @@ export function Sidebar({
                           onSubmit={(next) => commitChatRename(chat, next)}
                           onCancel={() => setEditingChatTarget(null)}
                         />
+                        {isChatRunning && <SidebarRunningGhost />}
                         <SidebarOverflowMenu
                           triggerLabel="Chat actions"
                           items={buildChatMenuItems(chat, renameSurfaceId)}
@@ -4378,9 +4437,10 @@ export function Sidebar({
               </div>
               {!isSectionCollapsed('recents') && (
                 <div className="sidebar-recents-list">
-                  {visibleRecentChats.map((chat) => {
+                  {previewSidebarList('recents', visibleRecentChats).map((chat) => {
                     const chatAgeTimestamp = chat.updatedAt || chat.createdAt
                     const renameSurfaceId = `recent-${chat.appChatId}`
+                    const isChatRunning = runningChatIdSet.has(chat.appChatId)
                     return (
                       <div
                         key={`recent-${chat.appChatId}`}
@@ -4396,6 +4456,7 @@ export function Sidebar({
                           }
                         }}
                         title={chat.title}
+                        aria-busy={isChatRunning || undefined}
                         {...getChatTileDragProps(chat)}
                       >
                         {renderChatProviderBadge(chat)}
@@ -4408,7 +4469,11 @@ export function Sidebar({
                           onSubmit={(next) => commitChatRename(chat, next)}
                           onCancel={() => setEditingChatTarget(null)}
                         />
-                        <ChatAgeLabel timestamp={chatAgeTimestamp} />
+                        {isChatRunning ? (
+                          <SidebarRunningGhost />
+                        ) : (
+                          <ChatAgeLabel timestamp={chatAgeTimestamp} />
+                        )}
                         <SidebarOverflowMenu
                           triggerLabel="Chat actions"
                           items={buildChatMenuItems(chat, renameSurfaceId)}
@@ -4416,6 +4481,7 @@ export function Sidebar({
                       </div>
                     )
                   })}
+                  {renderSidebarShowMore('recents', visibleRecentChats.length)}
                 </div>
               )}
             </div>
@@ -4477,7 +4543,7 @@ export function Sidebar({
                   </div>
                 ) : (
                   <div className="sidebar-chat-list sidebar-ensemble-list">
-                    {visibleEnsembleChats.map((chat) => {
+                    {previewSidebarList('ensembles', visibleEnsembleChats).map((chat) => {
                       const activeRound = chat.ensemble?.activeRound
                       const activeParticipant = chat.ensemble?.participants.find(
                         (participant) => participant.id === activeRound?.activeParticipantId
@@ -4588,13 +4654,7 @@ export function Sidebar({
                                 )}
                               </span>
                             </span>
-                            {isRunning && (
-                              <span
-                                className="sidebar-chat-busy"
-                                title="Ensemble round running"
-                                aria-label="Ensemble round running"
-                              />
-                            )}
+                            {isRunning && <SidebarRunningGhost />}
                             {!isRunning && (
                               <ChatAgeLabel timestamp={chat.updatedAt || chat.createdAt} />
                             )}
@@ -4611,6 +4671,7 @@ export function Sidebar({
                         </div>
                       )
                     })}
+                    {renderSidebarShowMore('ensembles', visibleEnsembleChats.length)}
                   </div>
                 ))}
             </div>
@@ -4713,6 +4774,12 @@ export function Sidebar({
                   const workspaceHasRunning = workspaceChats.some((chat) =>
                     runningChatIdSet.has(chat.appChatId)
                   )
+                  // Linked child chats render nested under their parent below, so
+                  // the preview cap + "show more" count only the top-level rows.
+                  const workspaceListId = `ws:${ws.id}`
+                  const workspaceTopLevelChats = visibleChats.filter(
+                    (chat) => !isLinkedChildChat(chat)
+                  )
                   return (
                     <div key={ws.id} className="sidebar-workspace-group">
                       <div
@@ -4791,9 +4858,7 @@ export function Sidebar({
                       </div>
                       {visibleChats.length > 0 && expanded ? (
                         <div className="sidebar-chat-list">
-                          {visibleChats
-                            // Linked child chats render nested under their parent below.
-                            .filter((chat) => !isLinkedChildChat(chat))
+                          {previewSidebarList(workspaceListId, workspaceTopLevelChats)
                             .map((chat) => {
                               const chatAgeTimestamp = chat.updatedAt || chat.createdAt
                               const isChatRunning = runningChatIdSet.has(chat.appChatId)
@@ -4916,13 +4981,7 @@ export function Sidebar({
                                         </span>
                                       )}
                                     </span>
-                                    {isChatRunning && (
-                                      <span
-                                        className="sidebar-chat-busy"
-                                        title="Task running"
-                                        aria-label="Task running"
-                                      />
-                                    )}
+                                    {isChatRunning && <SidebarRunningGhost />}
                                     {!isChatRunning && (
                                       <ChatAgeLabel timestamp={chatAgeTimestamp} />
                                     )}
@@ -4939,6 +4998,7 @@ export function Sidebar({
                                 </div>
                               )
                             })}
+                          {renderSidebarShowMore(workspaceListId, workspaceTopLevelChats.length)}
                         </div>
                       ) : null}
                     </div>
@@ -4982,7 +5042,7 @@ export function Sidebar({
               </div>
               {!isSectionCollapsed('chats') && (
                 <div className="sidebar-chat-list sidebar-global-chat-list">
-                  {visibleGlobalChats.map((chat) => {
+                  {previewSidebarList('chats', visibleGlobalChats).map((chat) => {
                     const chatAgeTimestamp = chat.updatedAt || chat.createdAt
                     const isChatRunning = runningChatIdSet.has(chat.appChatId)
                     const lastRunStatus = getLastRunStatus(chat)
@@ -5040,13 +5100,7 @@ export function Sidebar({
                             </span>
                           )}
                         </span>
-                        {isChatRunning && (
-                          <span
-                            className="sidebar-chat-busy"
-                            title="Task running"
-                            aria-label="Task running"
-                          />
-                        )}
+                        {isChatRunning && <SidebarRunningGhost />}
                         {!isChatRunning && <ChatAgeLabel timestamp={chatAgeTimestamp} />}
                         <SidebarOverflowMenu
                           triggerLabel="Chat actions"
@@ -5055,6 +5109,7 @@ export function Sidebar({
                       </div>
                     )
                   })}
+                  {renderSidebarShowMore('chats', visibleGlobalChats.length)}
                   {visibleGlobalChats.length === 0 && !isSidebarSearchActive && (
                     <div className="sidebar-empty-state sidebar-empty-state--ghost">
                       <MascotGhost size={28} />
@@ -5124,7 +5179,7 @@ export function Sidebar({
               </div>
               {!isSectionCollapsed('shared') && (
                 <div className="sidebar-chat-list sidebar-shared-chat-list">
-                  {visibleSharedChats.map((chat) => {
+                  {previewSidebarList('shared', visibleSharedChats).map((chat) => {
                     const chatAgeTimestamp = chat.updatedAt || chat.createdAt
                     const isChatRunning = runningChatIdSet.has(chat.appChatId)
                     const lastRunStatus = getLastRunStatus(chat)
@@ -5193,13 +5248,7 @@ export function Sidebar({
                         >
                           People
                         </span>
-                        {isChatRunning && (
-                          <span
-                            className="sidebar-chat-busy"
-                            title="Task running"
-                            aria-label="Task running"
-                          />
-                        )}
+                        {isChatRunning && <SidebarRunningGhost />}
                         {!isChatRunning && <ChatAgeLabel timestamp={chatAgeTimestamp} />}
                         <SidebarOverflowMenu
                           triggerLabel="Shared chat actions"
@@ -5208,6 +5257,7 @@ export function Sidebar({
                       </div>
                     )
                   })}
+                  {renderSidebarShowMore('shared', visibleSharedChats.length)}
                   {visibleSharedChats.length === 0 && !isSidebarSearchActive && (
                     <div className="sidebar-empty-state sidebar-empty-state--ghost">
                       <PeopleSymbolIcon />

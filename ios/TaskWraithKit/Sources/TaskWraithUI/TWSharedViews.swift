@@ -50,10 +50,15 @@ public struct GhostMarkView: View {
 public struct GhostMonolineMarkView: View {
     public var size: CGFloat = 58
     public var glow: Bool = true
+    /// Optional override for the mark colour. Defaults to the theme mono tone;
+    /// callers that want a provider-tinted mark (e.g. a running thread row) pass
+    /// an accent here.
+    public var tint: Color? = nil
 
-    public init(size: CGFloat = 58, glow: Bool = true) {
+    public init(size: CGFloat = 58, glow: Bool = true, tint: Color? = nil) {
         self.size = size
         self.glow = glow
+        self.tint = tint
     }
 
     public var body: some View {
@@ -92,7 +97,7 @@ public struct GhostMonolineMarkView: View {
                         .font(.system(size: size * 0.55, weight: .semibold))
                 }
             }
-            .foregroundStyle(markColor)
+            .foregroundStyle(tint ?? markColor)
             .shadow(color: shadowColor, radius: 1, y: 1)
         }
         .frame(width: size, height: size)

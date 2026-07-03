@@ -1,3 +1,5 @@
+import taskwraithGhostMonolineSvg from '../assets/taskwraith-ghost-monoline.svg?raw'
+
 export function SidebarCornerIcon({
   direction,
   isOpen
@@ -333,6 +335,22 @@ export function MascotGhost({ size = 32 }: { size?: number }) {
       <path d="M5.8 6.4h.1M10.1 6.4h.1" />
       <path d="M6.5 9.2c.8.5 2.2.5 3 0" />
     </svg>
+  )
+}
+
+// A running thread's indicator: the monoline "ghost guy" (the same mark as the
+// masthead and the transcript "Working…" bubble) pulsing slowly. It is the sole
+// running cue on a sidebar row — the accent rim is reserved for selection — so a
+// live run is never confused with the open thread. Decorative; the row's own
+// aria-label / aria-busy carries the running state to assistive tech.
+export function SidebarRunningGhost() {
+  return (
+    <span
+      className="sidebar-chat-running"
+      title="Running"
+      aria-hidden
+      dangerouslySetInnerHTML={{ __html: taskwraithGhostMonolineSvg }}
+    />
   )
 }
 

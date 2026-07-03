@@ -27,6 +27,7 @@ import {
   type Project
 } from '../lib/projectsStore'
 import { getProviderLabel } from '../lib/providerLabels'
+import { SidebarRunningGhost } from './AppChromeSymbols'
 import { PooledAgentIcon } from './icons/PooledAgentIcon'
 import { ProviderGlyph } from './icons/ProviderGlyph'
 import { IdentityIconPicker } from './IdentityIconPicker'
@@ -447,6 +448,7 @@ export function ProjectsSidebarView({
         <button
           type="button"
           className="sidebar-project-member-main"
+          aria-busy={isRunning || undefined}
           onClick={() => {
             if (!isArchived) onSelectChat(chat)
           }}
@@ -474,7 +476,7 @@ export function ProjectsSidebarView({
             {workspaceLabel(chat)}
             {isArchived && <span className="sidebar-project-archived-chip">Archived</span>}
           </span>
-          {isRunning && <span className="sidebar-chat-busy" title="Task running" />}
+          {isRunning && <SidebarRunningGhost />}
         </button>
         <button
           type="button"

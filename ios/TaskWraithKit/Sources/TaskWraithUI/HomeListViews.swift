@@ -686,21 +686,16 @@ struct HomeView: View {
             bottom: appScale.scaled(2),
             trailing: appScale.scaled(16)
         )
-        // Satellite rows (desktop-sidebar parity): no container chrome unless
-        // the thread is ACTIVE — running or waiting on the user — which gets
-        // a faint accent wash so live work pops out of the list.
-        let pendingAttentionCount = model.pendingAttentionCount(for: card)
-        let isActive =
-            card.status == "running"
-            || pendingAttentionCount > 0
+        // Satellite rows (desktop-sidebar parity): a running thread is marked by
+        // the inline pulsing ghost in TaskRow, and the accent RIM is reserved for
+        // selection — so a live run is never confused with the open thread. A
+        // thread still waiting on the user keeps a faint fill wash (no rim) so
+        // "needs you" work stays easy to spot.
+        let needsAttention = model.pendingAttentionCount(for: card) > 0
         let rowChrome = Group {
-            if isActive {
+            if needsAttention {
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .fill(accent.opacity(0.10))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .strokeBorder(accent.opacity(0.35))
-                    )
                     .padding(.vertical, appScale.scaled(2))
             } else {
                 Color.clear
@@ -776,8 +771,9 @@ struct HomeView: View {
 
     /// A scheduled-workflow row (read-only). Tapping opens the workflow's chat
     /// via the same `selection` binding the thread rows use; a workflow with no
-    /// threadId is inert (nothing to open). Mirrors the satellite-row chrome:
-    /// faint accent wash only when running or (on iPad) selected.
+    /// threadId is inert (nothing to open). Row chrome mirrors the satellite
+    /// rows: the accent RIM marks selection only; a running workflow gets a
+    /// rimless fill wash plus its inline "Running" badge.
     @ViewBuilder
     private func workflowRow(_ workflow: RemoteWorkflow) -> some View {
         let accent = TWTheme.providerAccent(workflow.provider)
@@ -798,12 +794,10 @@ struct HomeView: View {
                     )
                     .padding(.vertical, appScale.scaled(2))
             } else if workflow.isRunning {
+                // Running workflows keep a faint fill wash + their inline "Running"
+                // badge; the rim stays reserved for selection.
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .fill(accent.opacity(0.10))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .strokeBorder(accent.opacity(0.35))
-                    )
                     .padding(.vertical, appScale.scaled(2))
             } else {
                 Color.clear
@@ -970,6 +964,30 @@ struct WorkflowRowContent: View {
     }
 }
 
+/// A running thread's indicator: the monoline ghost mark pulsing slowly, the
+/// same mark and cadence as the transcript's LiveActivityAnchor ("Working…").
+/// The accent rim now means selection only, so this is what tells a live run
+/// apart from the open thread. Holds the mark solid under Reduce Motion.
+private struct ThreadRunningGhost: View {
+    let accent: Color
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.appScale) private var appScale
+    @State private var pulsing = false
+
+    var body: some View {
+        GhostMonolineMarkView(size: appScale.scaled(15), glow: false, tint: accent)
+            .opacity(reduceMotion || pulsing ? 1 : 0.45)
+            .animation(
+                reduceMotion
+                    ? nil
+                    : .easeInOut(duration: 0.85).repeatForever(autoreverses: true),
+                value: pulsing)
+            .onAppear { pulsing = true }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Running")
+    }
+}
+
 struct TaskRow: View {
     @ObservedObject var model: RemoteSessionModel
     let card: RemoteTaskCard
@@ -985,6 +1003,10 @@ struct TaskRow: View {
 
     private var pendingAttentionCount: Int {
         model.pendingAttentionCount(for: card)
+    }
+
+    private var accent: Color {
+        card.isEnsemble ? TWTheme.chroma2 : TWTheme.providerAccent(card.provider)
     }
 
     var body: some View {
@@ -1043,6 +1065,13 @@ struct TaskRow: View {
                             .font(.caption2)
                             .foregroundStyle(TWTheme.chroma2)
                             .accessibilityLabel("Shared")
+                    }
+                    // Running is the ghost mark pulsing slowly — the sole running
+                    // cue on a row, now that the accent rim means selection only.
+                    // Kept last so VoiceOver reads "Running" after the actionable
+                    // "needs you" cue instead of wedged mid-phrase.
+                    if card.status == "running" {
+                        ThreadRunningGhost(accent: accent)
                     }
                     Spacer(minLength: 0)
                 }

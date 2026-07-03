@@ -304,8 +304,33 @@
   -webkit-app-region: no-drag;
 }
 
+/* Workspace sidebar hidden → the left corner-controls pill now sits at the
+ * transcript's own left edge. On macOS the window uses a `hiddenInset` titlebar,
+ * so the traffic-light buttons float over exactly that spot and the pill would
+ * overlap them. Shove the pill right to clear the window controls. Only macOS
+ * puts the controls on the left; Windows/Linux keep them on the right, so their
+ * pill stays at the default inset (this class is a no-op off darwin). */
 .chat-corner-controls-workspace-hidden {
   left: calc(var(--space-sm) * 2);
+}
+
+:root[data-platform='darwin'] .chat-corner-controls-workspace-hidden {
+  /* Clears the standard macOS traffic-light cluster (~70px wide) with a small
+   * gap. Fixed px, not density-scaled — the OS controls are a fixed size. */
+  left: 80px;
+}
+
+/* Glide `left` in step with the 260ms sidebar collapse (see 13-panel-
+ * transitions.css) so the pill slides in sync with the pane reclaiming the
+ * space instead of snapping across the traffic lights. */
+.chat-corner-controls-left {
+  transition: left 260ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-corner-controls-left {
+    transition: none;
+  }
 }
 
 .chat-corner-controls-right {
