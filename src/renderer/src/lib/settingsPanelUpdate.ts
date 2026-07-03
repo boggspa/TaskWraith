@@ -64,11 +64,8 @@ export type SettingsPanelUpdate = {
   kimiBinaryPath?: string
   ollamaBaseUrl?: string
   ollamaDefaultModel?: string
-  ollamaToolControlTier?: AppSettings['ollamaToolControlTier']
   ollamaDefaultRunProfile?: AppSettings['ollamaDefaultRunProfile']
   ollamaRunProfiles?: AppSettings['ollamaRunProfiles']
-  ollamaProviderParityAcknowledgedAt?: string
-  ollamaProviderParityWorkspaceGrants?: AppSettings['ollamaProviderParityWorkspaceGrants']
   auditOrchestration?: AppSettings['auditOrchestration']
   agenticServices?: AgenticServicesSettings
   nativeSubAgentRequests?: NativeSubAgentRequestPolicy

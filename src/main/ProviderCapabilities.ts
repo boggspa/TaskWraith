@@ -16,12 +16,7 @@ import type {
 import { TASKWRAITH_MCP_TOOLS } from './TaskWraithMcpTools'
 import { providerLabel } from './ProviderAdapters'
 import { CURSOR_MCP_SERVER_NAME } from './cursor/CursorMcpBridge'
-import {
-  effectiveOllamaToolControlTier,
-  normalizeOllamaToolControlTier,
-  ollamaTierLabel,
-  ollamaToolNamesForTier
-} from './ollama/OllamaToolTiers'
+import { ollamaToolNamesForTier } from './ollama/OllamaToolTiers'
 import { buildUserMcpLaunchServers } from './UserMcpServers'
 
 export const TASKWRAITH_GEMINI_MCP_TOOLS = TASKWRAITH_MCP_TOOLS
@@ -71,12 +66,7 @@ interface BuildProviderCapabilityContractInput {
   provider: ProviderId
   settings: Pick<
     AppSettings,
-    | 'agenticServices'
-    | 'geminiMcpBridgeEnabled'
-    | 'codexSandboxFallback'
-    | 'ollamaToolControlTier'
-    | 'ollamaProviderParityWorkspaceGrants'
-    | 'userMcpServers'
+    'agenticServices' | 'geminiMcpBridgeEnabled' | 'codexSandboxFallback' | 'userMcpServers'
   >
   workspacePath?: string
   approvalMode?: string
@@ -540,24 +530,19 @@ function cliTaskWraithMcpCapability(
 function approvalContract(
   provider: ProviderId,
   requestedMode: string,
-  effectiveMode: string,
-  options?: {
-    ollamaTier?: ReturnType<typeof effectiveOllamaToolControlTier>
-  }
+  effectiveMode: string
 ): ProviderApprovalCapability {
   if (provider === 'ollama') {
-    const tier = options?.ollamaTier || 'read_only'
-    const mutatingTier = tier === 'approved_edits' || tier === 'approved_shell' || tier === 'provider_parity'
+    // Tier retirement (2026-07): Ollama gets the full tool surface, governed by
+    // the standard permission role like every provider (no tier ladder).
     return {
       requestedMode,
-      effectiveMode: tier,
-      providerMode: `local TaskWraith-controlled ${ollamaTierLabel(tier)} tools`,
+      effectiveMode,
+      providerMode: 'local TaskWraith-controlled full tool surface',
       inAppApprovals: true,
-      supportsWorkspaceGrants: tier === 'provider_parity',
+      supportsWorkspaceGrants: true,
       notes: [
-        mutatingTier
-          ? 'Ollama runs through TaskWraith local HTTP. File edits and shell commands are exposed only by the selected tier and route through TaskWraith intent checks, approval policy, and audit events.'
-          : 'Ollama runs through TaskWraith local HTTP. Workspace list/read/search tools are mediated by TaskWraith; edit and shell tools require a higher governed tier.'
+        'Ollama runs through TaskWraith local HTTP with the full tool surface. File edits and shell commands route through TaskWraith intent checks, the run permission role, approval policy, and audit events.'
       ]
     }
   }
@@ -816,8 +801,9 @@ export function buildProviderCapabilityContract({
       )
     }
   } else if (provider === 'ollama') {
-    const ollamaTier = effectiveOllamaToolControlTier(settings, workspacePath)
-    const ollamaTierTools = ollamaToolNamesForTier(ollamaTier)
+    // Tier retirement (2026-07): Ollama advertises the full tool surface (the tier
+    // no longer narrows it); approval is governed by the run's permission role.
+    const ollamaTierTools = ollamaToolNamesForTier('provider_parity')
     const ollamaFileTools = ollamaTierTools.filter((tool) =>
       [
         'write_file',
@@ -837,7 +823,7 @@ export function buildProviderCapabilityContract({
       blocked: services.mcpTools === 'deny',
       hasWorkspace: Boolean(workspacePath),
       tools: ollamaTierTools,
-      tierLabel: ollamaTierLabel(ollamaTier)
+      tierLabel: 'full tool surface'
     })
     shellCommands =
       mcp.available && ollamaShellTools.length > 0
@@ -846,9 +832,7 @@ export function buildProviderCapabilityContract({
             services.shellCommands,
             'taskwraith',
             ollamaShellTools,
-            ollamaTier === 'provider_parity'
-              ? 'Ollama shell commands are routed through TaskWraith approval policy.'
-              : 'Ollama shell commands require a modal approval for every command.'
+            'Ollama shell commands are routed through TaskWraith approval policy (by the run permission role).'
           )
         : unavailableCapability(
             'shellCommands',
@@ -862,9 +846,7 @@ export function buildProviderCapabilityContract({
             services.fileChanges,
             'taskwraith',
             ollamaFileTools,
-            ollamaTier === 'provider_parity'
-              ? 'Ollama file edits are routed through TaskWraith approval policy.'
-              : 'Ollama file edits require an intent plus modal approval before applying.'
+            'Ollama file edits are routed through TaskWraith approval policy (by the run permission role).'
           )
         : unavailableCapability(
             'fileChanges',
@@ -1062,22 +1044,9 @@ export function buildProviderCapabilityContract({
   // (only `blocked` ones do, above), so the user previously got NO feedback —
   // they picked the top tier and the model just silently never edited. Emit an
   // explicit, actionable warning instead.
-  if (provider === 'ollama') {
-    const selectedOllamaTier = normalizeOllamaToolControlTier(settings.ollamaToolControlTier)
-    const effectiveOllamaTier = effectiveOllamaToolControlTier(settings, workspacePath)
-    if (selectedOllamaTier === 'provider_parity' && effectiveOllamaTier !== 'provider_parity') {
-      warnings.push(
-        warning(
-          'ollama-provider-parity-not-granted',
-          'warning',
-          'Tier 4 not active for this workspace',
-          workspacePath
-            ? 'Tier 4 (provider parity) is selected, but this workspace has not been granted parity — the local model is running read-only and cannot edit files or run shell commands. Re-acknowledge Tier 4 for this workspace in Settings → Behavior → Ollama to enable edits.'
-            : 'Tier 4 (provider parity) is selected, but global chats always run read-only — the local model cannot edit files here. Open a workspace chat to use Tier 4 edits.'
-        )
-      )
-    }
-  }
+  // Tier retirement (2026-07): the Ollama Tier-4 "parity not granted" downgrade
+  // warning is gone — there is no tier to downgrade; the full surface is always
+  // advertised and governed by the run permission role.
 
   return {
     provider,
@@ -1095,10 +1064,7 @@ export function buildProviderCapabilityContract({
       elicit,
       delegate
     },
-    approvals: approvalContract(provider, requestedMode, effectiveMode, {
-      ollamaTier:
-        provider === 'ollama' ? effectiveOllamaToolControlTier(settings, workspacePath) : undefined
-    }),
+    approvals: approvalContract(provider, requestedMode, effectiveMode),
     mcp,
     warnings
   }

@@ -1493,8 +1493,6 @@ function App(): React.JSX.Element {
   const [kimiBinaryPath, setKimiBinaryPath] = useState('')
   const [ollamaBaseUrl, setOllamaBaseUrl] = useState('http://127.0.0.1:11434')
   const [ollamaDefaultModel, setOllamaDefaultModel] = useState('')
-  const [ollamaToolControlTier, setOllamaToolControlTier] =
-    useState<AppSettings['ollamaToolControlTier']>('read_only')
   const [ollamaDefaultRunProfile, setOllamaDefaultRunProfile] =
     useState<AppSettings['ollamaDefaultRunProfile']>('local_scout')
   const [ollamaRunProfiles, setOllamaRunProfiles] =
@@ -4026,10 +4024,6 @@ function App(): React.JSX.Element {
       // providerMetadata like approvalMode) coalescing to the GLOBAL default
       // when this chat has never set one — so existing chats inherit the global
       // value with no migration.
-      ollamaToolControlTier:
-        typeof metadata.ollamaToolControlTier === 'string'
-          ? metadata.ollamaToolControlTier
-          : ollamaToolControlTier,
       ollamaRunProfile:
         typeof metadata.ollamaRunProfile === 'string'
           ? metadata.ollamaRunProfile
@@ -4559,13 +4553,6 @@ function App(): React.JSX.Element {
     setKimiBinaryPath(s.kimiBinaryPath || '')
     setOllamaBaseUrl(s.ollamaBaseUrl || 'http://127.0.0.1:11434')
     setOllamaDefaultModel(s.ollamaDefaultModel || '')
-    setOllamaToolControlTier(
-      s.ollamaToolControlTier === 'approved_edits' ||
-        s.ollamaToolControlTier === 'approved_shell' ||
-        s.ollamaToolControlTier === 'provider_parity'
-        ? s.ollamaToolControlTier
-        : 'read_only'
-    )
     setOllamaDefaultRunProfile(
       s.ollamaDefaultRunProfile === 'approved_patcher' ||
         s.ollamaDefaultRunProfile === 'verify_with_shell' ||
@@ -5021,11 +5008,6 @@ function App(): React.JSX.Element {
       settingsPatch.ollamaDefaultModel = next.ollamaDefaultModel
       providersToRefresh.push('ollama')
     }
-    if (next.ollamaToolControlTier !== undefined) {
-      setOllamaToolControlTier(next.ollamaToolControlTier)
-      settingsPatch.ollamaToolControlTier = next.ollamaToolControlTier
-      providersToRefresh.push('ollama')
-    }
     if (next.ollamaDefaultRunProfile !== undefined) {
       setOllamaDefaultRunProfile(next.ollamaDefaultRunProfile)
       settingsPatch.ollamaDefaultRunProfile = next.ollamaDefaultRunProfile
@@ -5034,13 +5016,6 @@ function App(): React.JSX.Element {
     if (next.ollamaRunProfiles !== undefined) {
       setOllamaRunProfiles(next.ollamaRunProfiles)
       settingsPatch.ollamaRunProfiles = next.ollamaRunProfiles
-      providersToRefresh.push('ollama')
-    }
-    if (next.ollamaProviderParityAcknowledgedAt !== undefined) {
-      settingsPatch.ollamaProviderParityAcknowledgedAt = next.ollamaProviderParityAcknowledgedAt
-    }
-    if (next.ollamaProviderParityWorkspaceGrants !== undefined) {
-      settingsPatch.ollamaProviderParityWorkspaceGrants = next.ollamaProviderParityWorkspaceGrants
       providersToRefresh.push('ollama')
     }
     if (next.auditOrchestration !== undefined) {
@@ -16247,7 +16222,6 @@ function App(): React.JSX.Element {
         'runtimeProfileId',
         'geminiAuthProfileId',
         'linkedProviderSessionId',
-        'ollamaToolControlTier',
         'ollamaRunProfile'
       ] as const,
     []
@@ -24174,7 +24148,6 @@ function App(): React.JSX.Element {
     ollamaDefaultModel,
     ollamaDefaultRunProfile,
     ollamaRunProfiles,
-    ollamaToolControlTier,
     openChatPopoutWindow,
     openCurrentSideChatPresentation,
     openFileChangeInWorkbench,

@@ -63,11 +63,8 @@ const SETTINGS_PATCH_KEYS = new Set<keyof AppSettings>([
   'kimiBinaryPath',
   'ollamaBaseUrl',
   'ollamaDefaultModel',
-  'ollamaToolControlTier',
   'ollamaDefaultRunProfile',
   'ollamaRunProfiles',
-  'ollamaProviderParityAcknowledgedAt',
-  'ollamaProviderParityWorkspaceGrants',
   'codexUsageCredential',
   'storeLocalChatHistory',
   'storeRawEvents',
@@ -1305,17 +1302,6 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
         delete sanitized.autoUpdateEnabled
       }
     }
-    if ('ollamaToolControlTier' in sanitized) {
-      const tier = sanitized.ollamaToolControlTier
-      if (
-        tier !== 'read_only' &&
-        tier !== 'approved_edits' &&
-        tier !== 'approved_shell' &&
-        tier !== 'provider_parity'
-      ) {
-        delete sanitized.ollamaToolControlTier
-      }
-    }
     if ('ollamaDefaultRunProfile' in sanitized) {
       const profile = sanitized.ollamaDefaultRunProfile
       if (
@@ -1333,38 +1319,6 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
     }
     if ('userMcpServers' in sanitized) {
       sanitized.userMcpServers = sanitizeUserMcpServers(sanitized.userMcpServers)
-    }
-    if ('ollamaProviderParityAcknowledgedAt' in sanitized) {
-      const acknowledgedAt = sanitized.ollamaProviderParityAcknowledgedAt
-      if (typeof acknowledgedAt === 'string' && acknowledgedAt.trim()) {
-        sanitized.ollamaProviderParityAcknowledgedAt = acknowledgedAt.trim()
-      } else {
-        delete sanitized.ollamaProviderParityAcknowledgedAt
-      }
-    }
-    if ('ollamaProviderParityWorkspaceGrants' in sanitized) {
-      const grants = isRecord(sanitized.ollamaProviderParityWorkspaceGrants)
-        ? sanitized.ollamaProviderParityWorkspaceGrants
-        : {}
-      sanitized.ollamaProviderParityWorkspaceGrants = Object.fromEntries(
-        Object.entries(grants)
-          .map(([workspacePath, grantedAt]) => [
-            workspacePath.trim(),
-            String(grantedAt || '').trim()
-          ])
-          .filter(([workspacePath, grantedAt]) => workspacePath.length > 0 && grantedAt.length > 0)
-      )
-    }
-    if (
-      sanitized.ollamaToolControlTier === 'provider_parity' &&
-      !('ollamaProviderParityAcknowledgedAt' in sanitized)
-    ) {
-      const currentAck = deps.getSettings().ollamaProviderParityAcknowledgedAt
-      if (typeof currentAck === 'string' && currentAck.trim()) {
-        sanitized.ollamaProviderParityAcknowledgedAt = currentAck.trim()
-      } else {
-        delete sanitized.ollamaToolControlTier
-      }
     }
     if ('agenticServices' in sanitized) {
       const services = requireRecord(sanitized.agenticServices, 'Agentic services')

@@ -399,7 +399,6 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   ollamaDefaultModel: any
   ollamaDefaultRunProfile: any
   ollamaRunProfiles: any
-  ollamaToolControlTier: any
   openChatPopoutWindow: any
   openCurrentSideChatPresentation: any
   openFileChangeInWorkbench: any

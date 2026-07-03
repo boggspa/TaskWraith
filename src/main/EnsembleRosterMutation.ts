@@ -42,7 +42,6 @@ export interface RosterEditParticipantInput {
   model?: string | null
   runtimeProfileId?: string | null
   geminiAuthProfileId?: string | null
-  ollamaToolControlTier?: EnsembleParticipant['ollamaToolControlTier'] | null
   ollamaRunProfile?: EnsembleParticipant['ollamaRunProfile'] | null
   role?: string
   instructions?: string
@@ -96,7 +95,6 @@ const PATCH_FIELDS = [
   'model',
   'runtimeProfileId',
   'geminiAuthProfileId',
-  'ollamaToolControlTier',
   'ollamaRunProfile',
   'role',
   'instructions',
@@ -342,7 +340,6 @@ function applyParticipantPatch(
     if (providerChanged) {
       delete next.runtimeProfileId
       delete next.geminiAuthProfileId
-      delete next.ollamaToolControlTier
       delete next.ollamaRunProfile
       delete next.model
       delete next.reasoningEffort
@@ -364,10 +361,6 @@ function applyParticipantPatch(
     } else {
       delete next.geminiAuthProfileId
     }
-  }
-  if (hasOwn.call(patch, 'ollamaToolControlTier')) {
-    if (patch.ollamaToolControlTier) next.ollamaToolControlTier = patch.ollamaToolControlTier
-    else delete next.ollamaToolControlTier
   }
   if (hasOwn.call(patch, 'ollamaRunProfile')) {
     if (patch.ollamaRunProfile) next.ollamaRunProfile = patch.ollamaRunProfile

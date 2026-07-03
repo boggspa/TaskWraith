@@ -876,11 +876,7 @@ import {
   type OllamaToolExecutionResult
 } from './ollama/OllamaProvider'
 import { buildOllamaToolDocSection } from './ollama/OllamaToolsDoc'
-import {
-  chatOllamaToolControlTier,
-  effectiveOllamaToolControlTier,
-  ollamaToolNamesForTier
-} from './ollama/OllamaToolTiers'
+import { ollamaToolNamesForTier } from './ollama/OllamaToolTiers'
 import {
   normalizeOllamaSessionMemory,
   normalizeOllamaSessionMemoryMap,
@@ -24710,14 +24706,9 @@ if (isGeminiMcpBridgeProcess) {
             workflowMode: effectiveWorkflowMode,
             providerLabel: providerLabel(provider),
             // Ollama continuity is NOT a session id — it's the persisted
-            // tool-trajectory memory + tier the desktop composer injects.
+            // tool-trajectory memory the desktop composer injects.
             ...(provider === 'ollama'
               ? {
-                  ollamaToolControlTier: effectiveOllamaToolControlTier(
-                    AppStore.getSettings(),
-                    workspaceRecord?.path ?? globalRunCwd(),
-                    chatOllamaToolControlTier(chat.providerMetadata)
-                  ),
                   ollamaSessionMemory: normalizeOllamaSessionMemory(chat.ollamaSessionMemory)
                 }
               : {})
@@ -30217,17 +30208,6 @@ if (isGeminiMcpBridgeProcess) {
             typeof rawParticipant.geminiAuthProfileId === 'string' ||
             rawParticipant.geminiAuthProfileId === null
               ? rawParticipant.geminiAuthProfileId
-              : undefined
-        }
-        if (
-          typeof rawParticipant.ollamaToolControlTier === 'string' ||
-          rawParticipant.ollamaToolControlTier === null ||
-          Object.prototype.hasOwnProperty.call(rawParticipant, 'ollamaToolControlTier')
-        ) {
-          participant.ollamaToolControlTier =
-            typeof rawParticipant.ollamaToolControlTier === 'string' ||
-            rawParticipant.ollamaToolControlTier === null
-              ? (rawParticipant.ollamaToolControlTier as RosterEditParticipantInput['ollamaToolControlTier'])
               : undefined
         }
         if (

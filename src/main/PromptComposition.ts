@@ -12,7 +12,6 @@ import type {
   ChatMessage,
   GuestParticipantConfig,
   NativeSubAgentRequestPolicy,
-  OllamaToolControlTier,
   ProviderId
 } from './store/types'
 import { truncateOpaqueMarkdown, wrapOpaqueMarkdownBlock } from './MarkdownFenceSerializer'
@@ -517,8 +516,6 @@ export interface ComposeRunPromptInput {
   lastCompletedCodexModel?: string | null
   /** The model selected for the upcoming run. */
   nextModel?: string
-  /** Ollama tool tier — used for pre-run tier suggestions. */
-  ollamaToolControlTier?: OllamaToolControlTier
   /** Pruned Ollama session memory persisted on the chat (tool trajectory summaries). */
   ollamaSessionMemory?: OllamaSessionMemory | null
   /** The set of handoff-keys already applied to this chat (so we only inject
@@ -615,7 +612,6 @@ export function composeRunPrompt(input: ComposeRunPromptInput): ComposeRunPrompt
     runtimePreambleProvider,
     providerLabel,
     nativeSubAgentRequests,
-    ollamaToolControlTier,
     ollamaSessionMemory
   } = input
   if (input.verbatimPrompt) {
@@ -884,11 +880,10 @@ export function composeRunPrompt(input: ComposeRunPromptInput): ComposeRunPrompt
       const sessionMemoryBlock = formatOllamaSessionMemoryForPrompt(ollamaSessionMemory)
       const scoutHint = ollamaTierAwareWorkflowHint(
         nextModel,
-        ollamaToolControlTier,
-        // Read-only tier + Plan workflow keeps the plan-drafting scout hint;
-        // everything else (incl. absent workflowMode) gets the recon variant
-        // so a read-only local seat reports findings instead of being told
-        // to "draft a short implementation plan".
+        // Tier retirement (2026-07): the scout hint is no longer tier-derived;
+        // 'read_only' selects the recon/scout variant. Plan workflow keeps the
+        // plan-drafting hint; everything else reports findings instead.
+        'read_only',
         input.workflowMode === 'plan' ? 'plan' : 'recon'
       )
       contextualPrompt = [sessionMemoryBlock, scoutHint, contextualPrompt]

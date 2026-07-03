@@ -1,5 +1,5 @@
 import { TASKWRAITH_MCP_TOOLS, type TaskWraithMcpToolName } from '../TaskWraithMcpTools'
-import type { AppSettings, OllamaToolControlTier } from '../store/types'
+import type { OllamaToolControlTier } from '../store/types'
 
 export type OllamaToolName = TaskWraithMcpToolName
 
@@ -104,22 +104,6 @@ export function isOllamaToolControlTier(value: unknown): value is OllamaToolCont
   )
 }
 
-/**
- * Read a chat's per-chat Ollama tool-control tier out of its (untyped)
- * `providerMetadata`, validated. Returns `undefined` when the field is absent or
- * not one of the four tier ids, so callers fall back to the GLOBAL tier via
- * `effectiveOllamaToolControlTier` (never a silent read_only). Mirrors the
- * renderer coalesce in App.tsx `getChatComposerSelection` and the desktop
- * `ComposerService` read — the single source of truth for "what tier did this
- * chat pick" used by the mid-run tool gates.
- */
-export function chatOllamaToolControlTier(
-  providerMetadata: Record<string, unknown> | null | undefined
-): OllamaToolControlTier | undefined {
-  const raw = providerMetadata?.ollamaToolControlTier
-  return isOllamaToolControlTier(raw) ? raw : undefined
-}
-
 export function ollamaToolNamesForTier(
   _tier: OllamaToolControlTier | string | undefined | null,
   options: { networkAccess?: string | null } = {}
@@ -146,77 +130,6 @@ export function ollamaToolNamesForTier(
     ? names.filter((toolName) => !OLLAMA_NETWORK_TOOL_NAMES.has(toolName))
     : names
 }
-
-/**
- * Canonicalize a workspace path for provider-parity grant comparison so a grant
- * recorded from the renderer's raw `currentWorkspace.path` still matches the
- * (often node-canonicalized) lookup path used on the run/execution side — a
- * trailing slash or a `.`/`..`/`//` segment must not silently fail the lookup
- * and collapse Tier 4 to read-only.
- *
- * MUST stay PURE (no `os`/`path` node builtins): this module is pulled into the
- * RENDERER bundle transitively via ProviderCapabilities, and node builtins are
- * externalized in the browser build (a node import here blanks the renderer).
- * `~` is intentionally NOT expanded — workspace paths from the folder picker are
- * absolute, and the node execution gate still expands `~` on its own lookup arg.
- */
-export function canonicalizeOllamaWorkspacePath(value?: string | null): string {
-  const raw = String(value || '').trim()
-  if (!raw) return ''
-  const isAbsolute = raw.startsWith('/')
-  const segments: string[] = []
-  for (const segment of raw.split('/')) {
-    if (segment === '' || segment === '.') continue
-    if (segment === '..') {
-      if (segments.length > 0 && segments[segments.length - 1] !== '..') {
-        segments.pop()
-      } else if (!isAbsolute) {
-        segments.push('..')
-      }
-      continue
-    }
-    segments.push(segment)
-  }
-  const joined = segments.join('/')
-  return isAbsolute ? `/${joined}` : joined
-}
-
-export function ollamaProviderParityWorkspaceGranted(
-  settings: Pick<AppSettings, 'ollamaProviderParityWorkspaceGrants'>,
-  workspacePath?: string | null
-): boolean {
-  const target = canonicalizeOllamaWorkspacePath(workspacePath)
-  if (!target) return false
-  const grants = settings.ollamaProviderParityWorkspaceGrants || {}
-  // Compare canonical forms on BOTH sides. Grants were historically keyed by the
-  // renderer's raw workspace path, while callers (e.g. the execution gate) now look
-  // up with a canonicalized path — an exact-string match silently misses on any
-  // path-form difference, which is the dominant "I granted parity but it still
-  // won't edit" failure.
-  for (const [key, grantedAt] of Object.entries(grants)) {
-    if (typeof grantedAt !== 'string' || grantedAt.trim().length === 0) continue
-    if (canonicalizeOllamaWorkspacePath(key) === target) return true
-  }
-  return false
-}
-
-export function effectiveOllamaToolControlTier(
-  settings: Pick<AppSettings, 'ollamaToolControlTier' | 'ollamaProviderParityWorkspaceGrants'>,
-  workspacePath?: string | null,
-  chatTier?: OllamaToolControlTier | string | null
-): OllamaToolControlTier {
-  // A per-chat tier (the composer tier picker) takes precedence over the global
-  // setting; an absent OR unrecognised chat tier falls back to the global
-  // default — NOT a silent read_only downgrade. Tier 4 (provider_parity) is
-  // still gated by the per-workspace parity grant wherever the tier was chosen.
-  const selected = isOllamaToolControlTier(chatTier) ? chatTier : settings.ollamaToolControlTier
-  const tier = normalizeOllamaToolControlTier(selected)
-  if (tier !== 'provider_parity') return tier
-  return ollamaProviderParityWorkspaceGranted(settings, workspacePath)
-    ? 'provider_parity'
-    : 'read_only'
-}
-
 
 export function ollamaToolRequiresIntent(toolName: string): boolean {
   return (

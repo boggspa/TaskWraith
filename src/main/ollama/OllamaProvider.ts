@@ -130,11 +130,9 @@ export interface OllamaProviderDeps {
     AppSettings,
     | 'ollamaBaseUrl'
     | 'ollamaDefaultModel'
-    | 'ollamaToolControlTier'
     | 'ollamaDefaultRunProfile'
     | 'ollamaRunProfiles'
     | 'ollamaModelPreflightAt'
-    | 'ollamaProviderParityWorkspaceGrants'
     | 'agenticServices'
     | 'geminiMcpBridgeEnabled'
     | 'codexSandboxFallback'

@@ -939,7 +939,6 @@ const defaultSettings: AppSettings = {
   kimiBinaryPath: '',
   ollamaBaseUrl: 'http://127.0.0.1:11434',
   ollamaDefaultModel: '',
-  ollamaToolControlTier: 'read_only',
   ollamaDefaultRunProfile: 'local_scout',
   ollamaRunProfiles: {},
   defaultGeminiAuthProfileId: null,
@@ -1852,9 +1851,6 @@ export class AppStore {
     const storedApprovalModeElevationAcks = objectOrUndefined(
       stored.approvalModeElevationAcknowledgements
     )
-    const storedOllamaProviderParityWorkspaceGrants = objectOrUndefined(
-      stored.ollamaProviderParityWorkspaceGrants
-    )
     const storedApprovalTimeouts = objectOrUndefined(stored.approvalTimeouts)
     const storedApprovalTimeoutProviderMs = objectOrUndefined(storedApprovalTimeouts?.perProviderMs)
     const pendingUpdateChangelog = normalizeUpdateChangelog(stored.pendingUpdateChangelog)
@@ -1892,12 +1888,6 @@ export class AppStore {
         stored.geminiApiRuntime === 'never'
           ? stored.geminiApiRuntime
           : defaultSettings.geminiApiRuntime,
-      ollamaToolControlTier:
-        stored.ollamaToolControlTier === 'approved_edits' ||
-        stored.ollamaToolControlTier === 'approved_shell' ||
-        stored.ollamaToolControlTier === 'provider_parity'
-          ? stored.ollamaToolControlTier
-          : defaultSettings.ollamaToolControlTier,
       ollamaDefaultRunProfile:
         stored.ollamaDefaultRunProfile === 'local_scout' ||
         stored.ollamaDefaultRunProfile === 'approved_patcher' ||
@@ -1907,20 +1897,6 @@ export class AppStore {
           ? stored.ollamaDefaultRunProfile
           : defaultSettings.ollamaDefaultRunProfile,
       ollamaRunProfiles: objectOrUndefined(stored.ollamaRunProfiles) || {},
-      ollamaProviderParityAcknowledgedAt:
-        typeof stored.ollamaProviderParityAcknowledgedAt === 'string' &&
-        stored.ollamaProviderParityAcknowledgedAt.trim()
-          ? stored.ollamaProviderParityAcknowledgedAt.trim()
-          : undefined,
-      ollamaProviderParityWorkspaceGrants: Object.fromEntries(
-        Object.entries(storedOllamaProviderParityWorkspaceGrants || {}).filter(
-          (entry): entry is [string, string] =>
-            typeof entry[0] === 'string' &&
-            entry[0].trim().length > 0 &&
-            typeof entry[1] === 'string' &&
-            entry[1].trim().length > 0
-        )
-      ),
       agenticServices: {
         ...defaultSettings.agenticServices,
         ...(stored.agenticServices || {})

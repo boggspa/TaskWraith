@@ -1289,7 +1289,6 @@ function hasSeatChangePatch(patch: RosterEditParticipantInput | undefined | null
     Object.prototype.hasOwnProperty.call(patch, 'model') ||
     Object.prototype.hasOwnProperty.call(patch, 'runtimeProfileId') ||
     Object.prototype.hasOwnProperty.call(patch, 'geminiAuthProfileId') ||
-    Object.prototype.hasOwnProperty.call(patch, 'ollamaToolControlTier') ||
     Object.prototype.hasOwnProperty.call(patch, 'ollamaRunProfile') ||
     Object.prototype.hasOwnProperty.call(patch, 'role') ||
     Object.prototype.hasOwnProperty.call(patch, 'instructions') ||
@@ -1331,10 +1330,6 @@ function applySeatChangePatch(
     } else {
       delete next.geminiAuthProfileId
     }
-  }
-  if (Object.prototype.hasOwnProperty.call(patch, 'ollamaToolControlTier')) {
-    if (patch.ollamaToolControlTier) next.ollamaToolControlTier = patch.ollamaToolControlTier
-    else delete next.ollamaToolControlTier
   }
   if (Object.prototype.hasOwnProperty.call(patch, 'ollamaRunProfile')) {
     if (patch.ollamaRunProfile) next.ollamaRunProfile = patch.ollamaRunProfile
@@ -8731,9 +8726,6 @@ function pooledAgentTranscriptMetadata(participant: EnsembleParticipant): Record
 function ensembleOllamaRunControls(participant: EnsembleParticipant): Partial<AgentRunPayload> {
   if (participant.provider !== 'ollama') return {}
   return {
-    ...(participant.ollamaToolControlTier
-      ? { ollamaToolControlTier: participant.ollamaToolControlTier }
-      : {}),
     ...(participant.ollamaRunProfile ? { ollamaRunProfile: participant.ollamaRunProfile } : {})
   }
 }

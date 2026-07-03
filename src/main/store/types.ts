@@ -532,8 +532,6 @@ export interface EnsembleParticipant {
   model?: string
   runtimeProfileId?: string
   geminiAuthProfileId?: string | null
-  /** Ollama-only per-participant tool tier; falls back to chat/global defaults when absent. */
-  ollamaToolControlTier?: OllamaToolControlTier
   /** Ollama-only per-participant runtime profile; falls back to chat/global defaults when absent. */
   ollamaRunProfile?: OllamaRunProfileId
   permissionPresetId?: PermissionPresetId
@@ -1671,13 +1669,10 @@ export interface AppSettings {
   kimiApiKey?: string
   ollamaBaseUrl?: string
   ollamaDefaultModel?: string
-  ollamaToolControlTier?: OllamaToolControlTier
   ollamaDefaultRunProfile?: OllamaRunProfileId
   ollamaRunProfiles?: Record<string, OllamaRunProfile>
   /** Per-model timestamps (ms) for the one-shot honest capability preflight. */
   ollamaModelPreflightAt?: Record<string, number>
-  ollamaProviderParityAcknowledgedAt?: string
-  ollamaProviderParityWorkspaceGrants?: Record<string, string>
   defaultGeminiAuthProfileId?: string | null
   geminiAuthProfiles?: GeminiAuthProfile[]
   /** Phase M1 — Gemini API runtime selection. See {@link GeminiApiRuntimeMode}
