@@ -31,6 +31,7 @@ import { sanitizeProviderRunPauses } from '../ProviderRunPause'
 import { coerceLiveProvider, isRetiredProvider } from '../../shared/retiredProviders'
 import { isAppIconVariant, isWwdc26IconAvailable } from '../../shared/iconVariants'
 import { canPersistPlaintextFieldValue } from '../PlaintextSecretPolicy'
+import { normalizeFullWorkspaceAccessPaths } from '../WorkspaceFullAccess'
 
 // Grok + Cursor are first-class providers; no eligibility gate (see ProviderId).
 const PROVIDER_IDS = new Set<ProviderId>([
@@ -118,6 +119,7 @@ const SETTINGS_PATCH_KEYS = new Set<keyof AppSettings>([
   'localServersDetachSpawns',
   'localServersStopOnQuit',
   'codexSandboxFallback',
+  'fullWorkspaceAccessPaths',
   'autoUpdateEnabled',
   'updateChannel',
   'lastSeenChangelogVersion',
@@ -1302,6 +1304,14 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
     }
     if ('userMcpServers' in sanitized) {
       sanitized.userMcpServers = sanitizeUserMcpServers(sanitized.userMcpServers)
+    }
+    if ('fullWorkspaceAccessPaths' in sanitized) {
+      // Full Workspace Access is a powerful standing grant — normalize to a set
+      // of absolute, de-duplicated paths so a malformed patch can't inject junk
+      // (the compose path still re-derives + signs the resulting posture).
+      sanitized.fullWorkspaceAccessPaths = normalizeFullWorkspaceAccessPaths(
+        sanitized.fullWorkspaceAccessPaths
+      )
     }
     if ('agenticServices' in sanitized) {
       const services = requireRecord(sanitized.agenticServices, 'Agentic services')

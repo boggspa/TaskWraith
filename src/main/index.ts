@@ -610,6 +610,7 @@ import {
   isPlanInstrumentGrantHold,
   isFullShellAccessGranted
 } from './EffectiveRunPermissions'
+import { isWorkspaceFullAccessEnabled } from './WorkspaceFullAccess'
 import { isReconRunPosture } from './ReconPosture'
 import {
   buildRunPermissionPostureSnapshot,
@@ -24853,12 +24854,29 @@ if (isGeminiMcpBridgeProcess) {
               `[bridge-run] composed ${composed.contextTurnsApplied} context turns for run=${runId}`
             )
           }
+          // Per-workspace Full Workspace Access opt-in for phone-origin runs: a
+          // workspace flagged (Mac Settings or an allow-listed iOS device) elevates
+          // its non-plan bridge runs to the signed full_access posture (Codex
+          // danger-full-access, shell/file auto-allow). The phone is already running
+          // inside an allow-listed workspace and main signs the posture below, so
+          // this is a main-authorized grant, not an unsigned remote escalation. The
+          // global shellCommands kill-switch still vetoes the resolved posture.
+          const bridgeWorkspaceFullAccess =
+            !isGlobalScope &&
+            effectiveWorkflowMode !== 'plan' &&
+            effectiveApprovalMode !== 'plan' &&
+            isWorkspaceFullAccessEnabled(AppStore.getSettings(), workspaceRecord?.path)
           const bridgePermissionPresetId =
             effectiveWorkflowMode === 'plan'
               ? 'plan'
               : effectiveApprovalMode === 'plan'
                 ? 'read_only'
-                : undefined
+                : bridgeWorkspaceFullAccess
+                  ? 'full_access'
+                  : undefined
+          const bridgeApprovalMode = bridgeWorkspaceFullAccess
+            ? 'auto_edit'
+            : effectiveApprovalMode
           const bridgeEffectivePermissions =
             bridgePermissionPresetId
               ? resolveEffectiveRunPermissions({
@@ -24881,7 +24899,7 @@ if (isGeminiMcpBridgeProcess) {
             ...(resumeSessionId ? { providerSessionId: resumeSessionId } : {}),
             appChatId: chat.appChatId,
             appRunId: runId,
-            approvalMode: effectiveApprovalMode,
+            approvalMode: bridgeApprovalMode,
             workflowMode: effectiveWorkflowMode,
             ...(bridgeEffectivePermissions
               ? { effectivePermissions: bridgeEffectivePermissions }

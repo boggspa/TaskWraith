@@ -1879,6 +1879,18 @@ export interface AppSettings {
   mainPaneOpacityOverride?: boolean
   agenticServices: AgenticServicesSettings
   agenticWorkspaceGrants: AgenticWorkspaceGrant[]
+  /**
+   * Per-workspace "Full Workspace Access" opt-in: absolute workspace paths whose
+   * non-plan runs resolve to the signed `full_access` posture (shell/file
+   * auto-allow, and Codex `danger-full-access` so an agent can reach the login
+   * keychain / ~/Library / paths outside the repo to archive, notarize and
+   * upload). Default-empty; written only from Mac Settings or an allow-listed
+   * iOS device via a signed bridge action. The compose path re-derives + signs
+   * the posture, so this flag is never an unsigned escalation, and the global
+   * `shellCommands: 'deny'` kill-switch still overrides it. See
+   * `WorkspaceFullAccess.ts` + `isFullShellAccessGranted`.
+   */
+  fullWorkspaceAccessPaths?: string[]
   /** User preference for provider-native sub-agent tools (`Task`,
    * `invoke_agent`, etc.) versus TaskWraith durable sub-threads. When
    * unset, the runtime asks on the first observable native request. */
