@@ -331,8 +331,9 @@ What exists:
 - Transport-specific readiness checks exist.
 - The launch builder now has an optional allowlist policy decision point before
   enabled user MCP servers materialize into provider launch config. It can gate
-  transports, stdio command roots, remote URL scheme/host/port/path, header
-  names, env keys, and plugin provenance / plugin ids, and can report
+  transports, stdio command roots and argument prefixes, remote URL
+  scheme/host/port/path, header names, env keys, and plugin provenance /
+  plugin ids, and can report
   blocked-server reasons to callers.
 - The managed-policy spine now accepts a `userMcpLaunchAllowlist` block and
   feeds it into the Claude, Cursor, and Codex user-MCP launch materialization
@@ -344,6 +345,9 @@ What exists:
 - Stdio command-root checks canonicalize existing commands and roots through
   realpath before allowlist comparison, blocking symlinks that point outside the
   managed root.
+- Stdio argument checks can require every configured command argument to match
+  a managed prefix allowlist. Blocked evidence reports argument position rather
+  than the raw argument value.
 - Launch-time user-MCP materialization now revalidates saved plugin MCP
   provenance against the current plugin catalog before including the server:
   installed/enabled state, trust/preflight/update status, source identity,
@@ -360,8 +364,9 @@ What is missing:
   B5.3 managed-policy plane.
 - Save-time plugin provenance checks are still syntactic until Settings writes
   can call the plugin catalog verifier; launch-time revalidation is in place.
-- Command-root checks are a launch allowlist, not a sandbox; argument policy
-  still needs to come with managed policy enforcement.
+- Command-root and argument-prefix checks are launch allowlists, not a sandbox.
+  They constrain configured process materialization but do not confine a
+  process after it starts.
 - Remote checks cover managed scheme/host/port/path allowlists and reject URL
   userinfo, but they are still not a full DNS-rebinding or runtime egress
   policy.

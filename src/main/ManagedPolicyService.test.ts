@@ -234,6 +234,7 @@ describe('ManagedPolicyService', () => {
           userMcpLaunchAllowlist: {
             allowedTransports: ['stdio', 'http', 'bogus'],
             allowedCommandRoots: ['/opt/taskwraith/mcp'],
+            allowedCommandArgPrefixes: ['--config=', '/opt/taskwraith/config/'],
             allowedRemoteSchemes: ['https', 'ftp'],
             allowedRemoteHosts: ['mcp.example.com'],
             allowedRemotePorts: [443, '8443', 70_000, 0],
@@ -250,6 +251,7 @@ describe('ManagedPolicyService', () => {
     expect(service.userMcpLaunchAllowlistPolicy()).toEqual({
       allowedTransports: ['stdio', 'http'],
       allowedCommandRoots: ['/opt/taskwraith/mcp'],
+      allowedCommandArgPrefixes: ['--config=', '/opt/taskwraith/config/'],
       allowedRemoteSchemes: ['https'],
       allowedRemoteHosts: ['mcp.example.com'],
       allowedRemotePorts: [443, 8443],
@@ -265,6 +267,7 @@ describe('ManagedPolicyService', () => {
         active: true,
         allowedTransportCount: 2,
         allowedCommandRootCount: 1,
+        allowedCommandArgPrefixCount: 2,
         allowedRemoteSchemeCount: 1,
         allowedRemoteHostCount: 1,
         allowedRemotePortCount: 2,

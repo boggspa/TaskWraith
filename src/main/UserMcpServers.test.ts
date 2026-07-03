@@ -598,6 +598,45 @@ describe('buildUserMcpStdioLaunchServers', () => {
     })
   })
 
+  it('can restrict stdio command arguments through managed prefix allowlists', () => {
+    expect(
+      evaluateUserMcpLaunchPolicy(
+        {
+          id: 'trusted-args',
+          name: 'Trusted Args',
+          enabled: true,
+          transport: 'stdio',
+          command: '/opt/taskwraith/mcp/server',
+          args: ['--config=/opt/taskwraith/config/docs.json', '/opt/taskwraith/config/workspace']
+        },
+        {
+          allowedCommandRoots: ['/opt/taskwraith/mcp'],
+          allowedCommandArgPrefixes: ['--config=/opt/taskwraith/config/', '/opt/taskwraith/config/']
+        }
+      ).allowed
+    ).toBe(true)
+
+    expect(
+      evaluateUserMcpLaunchPolicy(
+        {
+          id: 'unsafe-arg',
+          name: 'Unsafe Arg',
+          enabled: true,
+          transport: 'stdio',
+          command: '/opt/taskwraith/mcp/server',
+          args: ['--config=/tmp/exfil.json']
+        },
+        {
+          allowedCommandRoots: ['/opt/taskwraith/mcp'],
+          allowedCommandArgPrefixes: ['--config=/opt/taskwraith/config/']
+        }
+      )
+    ).toMatchObject({
+      allowed: false,
+      reason: 'command argument 1 is not allowlisted'
+    })
+  })
+
   it('resolves symlinked stdio commands before applying command-root allowlists', () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'taskwraith-user-mcp-'))
     try {

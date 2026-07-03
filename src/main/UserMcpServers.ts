@@ -30,6 +30,7 @@ export type UserMcpLaunchServer = UserMcpStdioLaunchServer | UserMcpRemoteLaunch
 export interface UserMcpLaunchAllowlistPolicy {
   allowedTransports?: readonly UserMcpServerTransport[]
   allowedCommandRoots?: readonly string[]
+  allowedCommandArgPrefixes?: readonly string[]
   allowedRemoteSchemes?: readonly ('http' | 'https')[]
   allowedRemoteHosts?: readonly string[]
   allowedRemotePorts?: readonly number[]
@@ -147,6 +148,13 @@ function isCommandAllowed(command: string, allowedCommandRoots: readonly string[
   })
 }
 
+function isCommandArgAllowed(arg: string, allowedPrefixes: readonly string[]): boolean {
+  return allowedPrefixes.some((prefix) => {
+    const normalized = prefix.trim()
+    return Boolean(normalized && arg.startsWith(normalized))
+  })
+}
+
 function hostMatchesPattern(hostname: string, pattern: string): boolean {
   const normalizedHost = hostname.trim().toLowerCase()
   const normalizedPattern = pattern.trim().toLowerCase()
@@ -260,6 +268,14 @@ export function evaluateUserMcpLaunchPolicy(
       const command = server.command?.trim()
       if (!command || !isCommandAllowed(command, policy.allowedCommandRoots)) {
         return blockedDecision(server, 'command path is not allowlisted')
+      }
+    }
+    if (policy.allowedCommandArgPrefixes) {
+      const args = Array.isArray(server.args) ? server.args : []
+      const allowedPrefixes = policy.allowedCommandArgPrefixes
+      const blockedIndex = args.findIndex((arg) => !isCommandArgAllowed(arg, allowedPrefixes))
+      if (blockedIndex >= 0) {
+        return blockedDecision(server, `command argument ${blockedIndex + 1} is not allowlisted`)
       }
     }
     return {

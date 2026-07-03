@@ -60,6 +60,7 @@ export interface ManagedPolicySnapshot {
     active: boolean
     allowedTransportCount: number
     allowedCommandRootCount: number
+    allowedCommandArgPrefixCount: number
     allowedRemoteSchemeCount: number
     allowedRemoteHostCount: number
     allowedRemotePortCount: number
@@ -218,6 +219,8 @@ function sanitizeUserMcpLaunchAllowlist(value: unknown): UserMcpLaunchAllowlistP
   if (transports && transports.length > 0) policy.allowedTransports = transports
   const commandRoots = uniqueStrings(value.allowedCommandRoots)
   if (commandRoots) policy.allowedCommandRoots = commandRoots
+  const commandArgPrefixes = uniqueStrings(value.allowedCommandArgPrefixes)
+  if (commandArgPrefixes) policy.allowedCommandArgPrefixes = commandArgPrefixes
   const schemes = uniqueStrings(value.allowedRemoteSchemes)?.filter(
     (scheme): scheme is 'http' | 'https' => scheme === 'http' || scheme === 'https'
   )
@@ -304,6 +307,8 @@ export class ManagedPolicyService {
               active: true,
               allowedTransportCount: userMcpLaunchAllowlist.allowedTransports?.length || 0,
               allowedCommandRootCount: userMcpLaunchAllowlist.allowedCommandRoots?.length || 0,
+              allowedCommandArgPrefixCount:
+                userMcpLaunchAllowlist.allowedCommandArgPrefixes?.length || 0,
               allowedRemoteSchemeCount: userMcpLaunchAllowlist.allowedRemoteSchemes?.length || 0,
               allowedRemoteHostCount: userMcpLaunchAllowlist.allowedRemoteHosts?.length || 0,
               allowedRemotePortCount: userMcpLaunchAllowlist.allowedRemotePorts?.length || 0,
@@ -329,6 +334,13 @@ export class ManagedPolicyService {
             : {}),
           ...(this.document.userMcpLaunchAllowlist.allowedCommandRoots
             ? { allowedCommandRoots: [...this.document.userMcpLaunchAllowlist.allowedCommandRoots] }
+            : {}),
+          ...(this.document.userMcpLaunchAllowlist.allowedCommandArgPrefixes
+            ? {
+                allowedCommandArgPrefixes: [
+                  ...this.document.userMcpLaunchAllowlist.allowedCommandArgPrefixes
+                ]
+              }
             : {}),
           ...(this.document.userMcpLaunchAllowlist.allowedRemoteSchemes
             ? { allowedRemoteSchemes: [...this.document.userMcpLaunchAllowlist.allowedRemoteSchemes] }
