@@ -6,18 +6,16 @@ import type {
 } from '../store/types'
 import { resolveContextWindow } from '../../shared/contextWindows'
 import { resolveOllamaModelFamily } from './OllamaModelPreflight'
-import { normalizeOllamaToolControlTier } from './OllamaToolTiers'
 
 const OLLAMA_RUN_PROFILE_CONTEXT_CAP_MAX = 262_144
 
 export const OLLAMA_RUN_PROFILE_PRESETS: Record<
   Exclude<OllamaRunProfileId, 'custom'>,
-  Required<Pick<OllamaRunProfile, 'id' | 'label' | 'tier' | 'reasoningLevel' | 'contextCapTokens' | 'protocolMode' | 'compactToolSchemas' | 'oneToolAtATime' | 'numPredictTool' | 'numPredictFinal' | 'keepAlive'>>
+  Required<Pick<OllamaRunProfile, 'id' | 'label' | 'reasoningLevel' | 'contextCapTokens' | 'protocolMode' | 'compactToolSchemas' | 'oneToolAtATime' | 'numPredictTool' | 'numPredictFinal' | 'keepAlive'>>
 > = {
   local_scout: {
     id: 'local_scout',
     label: 'Local Scout',
-    tier: 'read_only',
     reasoningLevel: 'medium',
     contextCapTokens: 32_768,
     protocolMode: 'native_first',
@@ -30,7 +28,6 @@ export const OLLAMA_RUN_PROFILE_PRESETS: Record<
   approved_patcher: {
     id: 'approved_patcher',
     label: 'Approved Patcher',
-    tier: 'approved_edits',
     reasoningLevel: 'high',
     contextCapTokens: 65_536,
     protocolMode: 'native_first',
@@ -43,7 +40,6 @@ export const OLLAMA_RUN_PROFILE_PRESETS: Record<
   verify_with_shell: {
     id: 'verify_with_shell',
     label: 'Verify With Shell',
-    tier: 'approved_shell',
     reasoningLevel: 'high',
     contextCapTokens: 65_536,
     protocolMode: 'native_first',
@@ -56,7 +52,6 @@ export const OLLAMA_RUN_PROFILE_PRESETS: Record<
   provider_parity: {
     id: 'provider_parity',
     label: 'Provider Parity',
-    tier: 'provider_parity',
     reasoningLevel: 'high',
     contextCapTokens: 65_536,
     protocolMode: 'native_first',
@@ -136,7 +131,6 @@ export function resolveOllamaRunProfile(
     (modelId && settings.ollamaRunProfiles?.[modelId]) ||
     settings.ollamaRunProfiles?.default ||
     {}
-  const tier = normalizeOllamaToolControlTier(custom.tier || base.tier)
   const fallbackContextCapTokens = defaultContextCapTokens(
     baseId,
     modelId,
@@ -147,7 +141,6 @@ export function resolveOllamaRunProfile(
     ...custom,
     id: selectedId,
     label: custom.label || base.label,
-    tier,
     reasoningLevel: sanitizeReasoningLevel(custom.reasoningLevel, base.reasoningLevel),
     contextCapTokens: sanitizePositiveInt(
       custom.contextCapTokens,
