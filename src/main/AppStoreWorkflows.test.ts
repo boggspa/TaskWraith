@@ -150,6 +150,58 @@ describe('AppStore workflows', () => {
     })
   })
 
+  it('keeps the signed scheduled posture authoritative when mutable approval mode changes before dispatch', () => {
+    const chatId = AppStore.createChat('ws-1', '/repo').appChatId
+    const task = AppStore.saveScheduledTask({
+      workspaceId: 'ws-1',
+      workspacePath: '/repo',
+      chatId,
+      provider: 'codex',
+      prompt: 'Run later.',
+      selectedModelType: 'cli-default',
+      customModel: '',
+      approvalMode: 'default',
+      workflowMode: 'normal',
+      sessionTrust: false,
+      imageAttachments: [],
+      runAt: plannedFor,
+      timezone: 'Europe/London',
+      permissionPosture: {
+        schemaVersion: 1,
+        approvalMode: 'plan',
+        workflowMode: 'normal',
+        presetId: 'read_only',
+        readOnly: true,
+        externalPathGrantCount: 0,
+        postureHash: 'c'.repeat(64),
+        signature: 'd'.repeat(64),
+        signaturePresent: true
+      }
+    })
+
+    const edited = AppStore.updateScheduledTask(task.id, { approvalMode: 'auto_edit' })
+    expect(edited?.approvalMode).toBe('auto_edit')
+    expect(edited?.permissionPosture?.approvalMode).toBe('plan')
+
+    const running = AppStore.updateScheduledTask(task.id, {
+      status: 'running',
+      runId: 'run-after-policy-edit',
+      firedAt: '2026-06-07T20:00:01.000Z'
+    })
+
+    expect(running?.dispatchReceipt).toMatchObject({
+      runId: 'run-after-policy-edit',
+      provider: 'codex',
+      source: 'scheduled',
+      approvalMode: 'plan',
+      workflowMode: 'normal',
+      permissionPresetId: 'read_only',
+      readOnly: true,
+      permissionPostureHash: 'c'.repeat(64),
+      permissionPostureSignaturePresent: true
+    })
+  })
+
   it('slice 7b — persists the cached loop summary through normalize (for the iOS projection)', () => {
     const saved = AppStore.saveWorkflowDefinition(workflowInput())
     const updated = AppStore.updateWorkflowDefinition(saved.id, {

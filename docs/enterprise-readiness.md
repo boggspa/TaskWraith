@@ -473,6 +473,9 @@ What exists:
   permission posture snapshot before broadcast/dispatch. Their dispatch receipt
   hashes the posture and records signature presence; renderer-supplied
   `permissionPosture` / `dispatchReceipt` fields are stripped by the sanitizer.
+- Scheduled task dispatch receipts now have regression coverage proving the
+  signed schedule-time posture remains authoritative when mutable approval-mode
+  fields change before the task is marked running.
 - Redacted diagnostics/audit export now includes queued and scheduled
   `dispatchReceipt` summaries, with chat/thread ids hashed and remote-composer
   text omitted.
@@ -524,9 +527,8 @@ What is missing:
   export review, not the replay authorization gate itself.
 - `EnsembleRunIdentity`, `ChatRun`, run queue metadata, approval previews, and
   run events now persist live dispatch `stageRole`/`laneId`; scheduled-task
-  receipts now have signed posture coverage, but scheduled-task replay still
-  needs higher-level policy-choice tests that prove when frozen intent is
-  honored vs when current policy is re-checked.
+  receipts now have signed posture coverage, but dispatch-time live-policy
+  recheck/revocation choices still need higher-level tests.
 - Remaining native-provider work is a broader provider-by-provider audit beyond
   Codex: verify every future native command/approval seam either routes through
   the central gate or stamps equivalent participant/lane metadata.
@@ -547,9 +549,9 @@ Target:
   revoke workspace/provider or approval access before the queue pumps, and
   assert the denial audit path end to end. The pure replay authorization helper
   now has coverage for the current-policy deny decision.
-- Add scheduled-task replay tests that mutate live policy between schedule time
-  and dispatch time, then verify the frozen-intent or current-policy-at-resume
-  decision is explicit.
+- Add scheduled-task dispatch tests that revoke managed or remote policy between
+  schedule time and dispatch time, then verify the frozen-intent or current
+  live-policy denial decision is explicit.
 - Preserve `stageRole` and `laneId` through run normalization, `ChatRun`,
   queue jobs, approval previews, and run events.
 
