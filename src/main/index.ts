@@ -518,6 +518,7 @@ import {
   ProductAuditBundleExportRequest,
   ProductAuditBundleExportResult,
   ProductAuditBundleFilter,
+  ProductAuditBundleSnapshot,
   AuditRetentionPurgeRequest,
   AuditRetentionSurfacePurgeCounts,
   ProductCrashInput,
@@ -879,8 +880,10 @@ import {
   buildDiagnosticsSnapshot,
   buildProductOperationsStatus,
   serializeAuditBundleSnapshot,
-  serializeDiagnosticsSnapshot
+  serializeDiagnosticsSnapshot,
+  signAuditBundleSnapshot
 } from './ProductOperations'
+import { AuditBundleSigningKeyStore } from './AuditBundleSigningKeyStore'
 import { installIpcValidation } from './IpcValidation'
 import { registerPtyHandlers } from './ipc/ptyHandlers'
 import { registerLaunchHandlers } from './ipc/launchHandlers'
@@ -18489,9 +18492,23 @@ function purgeProductAuditRetention(request: AuditRetentionPurgeRequest = {}) {
   return AppStore.purgeAuditRetentionEvidence(request, { externalPublish })
 }
 
+function signProductAuditBundleSnapshot(snapshot: ProductAuditBundleSnapshot): ProductAuditBundleSnapshot {
+  const signer = new AuditBundleSigningKeyStore(
+    join(app.getPath('userData'), 'audit-bundle-signing-key.json'),
+    safeStorage,
+    (line) => console.warn(line)
+  ).loadOrCreate()
+  if (!signer) return snapshot
+  return signAuditBundleSnapshot(snapshot, {
+    keyId: signer.keyId,
+    publicKeyDerBase64: signer.publicKeyDerBase64,
+    signPayload: signer.signPayload
+  })
+}
+
 async function buildCurrentAuditBundleSnapshot(request: ProductAuditBundleExportRequest = {}) {
   const filter = completeProductAuditBundleFilter(normalizeProductAuditBundleFilter(request.filter))
-  return buildAuditBundleSnapshot({
+  const snapshot = buildAuditBundleSnapshot({
     filter,
     approvalLedger: AppStore.getApprovalLedger({
       workspaceId: filter.workspaceId,
@@ -18507,6 +18524,7 @@ async function buildCurrentAuditBundleSnapshot(request: ProductAuditBundleExport
     externalPublishReceipts: listExternalPublishReceipts(),
     auditRetentionPurgeReceipts: AppStore.getAuditRetentionPurgeReceipts()
   })
+  return signProductAuditBundleSnapshot(snapshot)
 }
 
 async function exportProductDiagnostics(

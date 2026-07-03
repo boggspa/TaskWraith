@@ -2267,6 +2267,18 @@ export interface ProductAuditBundleFilter {
   runId?: string
 }
 
+export type ProductAuditBundleTamperEvidence = 'local_hashes_unsigned' | 'local_hashes_signed'
+
+export interface ProductAuditBundleSignature {
+  schemaVersion: 1
+  algorithm: 'ed25519'
+  keyId: string
+  publicKeyDerBase64: string
+  signedAt: string
+  payloadHash: string
+  signatureBase64: string
+}
+
 export interface ProductAuditBundleManifest {
   schemaVersion: 1
   generatedAt: string
@@ -2297,7 +2309,7 @@ export interface ProductAuditBundleManifest {
   }
   validation: {
     sensitiveFields: 'redacted'
-    tamperEvidence: 'local_hashes_unsigned'
+    tamperEvidence: ProductAuditBundleTamperEvidence
     retention: {
       approvalLedger: 'retained_capped'
       runEvents: 'retained_per_run_files'
@@ -2317,6 +2329,7 @@ export interface ProductAuditBundleManifest {
       auditRuns: number
     }
   }
+  signature?: ProductAuditBundleSignature
 }
 
 export interface ProductAuditBundleSnapshot {

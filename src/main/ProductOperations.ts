@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto'
+import { createHash, createPublicKey, verify as verifySignature } from 'node:crypto'
 
 import type {
   AppSettings,
@@ -10,7 +10,9 @@ import type {
   MessageFeedbackReceipt,
   GeminiMcpBridgeStatus,
   ProductAuditBundleFilter,
+  ProductAuditBundleManifest,
   ProductAuditBundleSnapshot,
+  ProductAuditBundleSignature,
   ProductBridgeHealthRecord,
   ProductCrashFilter,
   ProductCrashInput,
@@ -64,6 +66,88 @@ function diagnosticsSha256(value: unknown): string {
   return createHash('sha256')
     .update(JSON.stringify(sanitizeDiagnosticsValue(value)))
     .digest('hex')
+}
+
+function sha256Utf8(value: string): string {
+  return createHash('sha256').update(value, 'utf8').digest('hex')
+}
+
+function stableJson(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value)
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => (item === undefined ? 'null' : stableJson(item))).join(',')}]`
+  }
+  const entries = Object.entries(value as Record<string, unknown>)
+    .filter(([, entryValue]) => entryValue !== undefined)
+    .sort(([left], [right]) => left.localeCompare(right))
+  return `{${entries
+    .map(([key, entryValue]) => `${JSON.stringify(key)}:${stableJson(entryValue)}`)
+    .join(',')}}`
+}
+
+function unsignedAuditBundleSnapshotForSignature(
+  snapshot: ProductAuditBundleSnapshot
+): ProductAuditBundleSnapshot {
+  const { signature: _signature, ...manifest } = snapshot.manifest
+  return {
+    ...snapshot,
+    manifest: {
+      ...manifest,
+      validation: {
+        ...manifest.validation,
+        tamperEvidence: 'local_hashes_signed'
+      }
+    }
+  }
+}
+
+function auditBundleSignaturePayload(snapshot: ProductAuditBundleSnapshot): string {
+  return stableJson(unsignedAuditBundleSnapshotForSignature(snapshot))
+}
+
+function expectedAuditBundleCounts(
+  snapshot: ProductAuditBundleSnapshot
+): ProductAuditBundleManifest['counts'] {
+  const runEventCount = snapshot.sections.runEventReplays.reduce((total, replay) => {
+    const count = typeof replay.count === 'number' && Number.isFinite(replay.count) ? replay.count : 0
+    return total + count
+  }, 0)
+  return {
+    approvalLedger: snapshot.sections.approvalLedger.length,
+    runEventReplays: snapshot.sections.runEventReplays.length,
+    runEvents: runEventCount,
+    workspaceChanges: snapshot.sections.workspaceChanges.length,
+    auditRuns: snapshot.sections.auditRuns.length,
+    evidencePacks: snapshot.sections.evidencePacks.length,
+    capabilityLedgerEntries: snapshot.sections.capabilityLedger.length,
+    messageFeedback: snapshot.sections.messageFeedback.length,
+    externalPublish: snapshot.sections.externalPublish.length,
+    auditRetentionPurges: snapshot.sections.auditRetentionPurges.length
+  }
+}
+
+function expectedAuditBundleHashes(
+  snapshot: ProductAuditBundleSnapshot
+): ProductAuditBundleManifest['hashes'] {
+  return {
+    approvalLedger: diagnosticsSha256(snapshot.sections.approvalLedger),
+    runEventReplays: diagnosticsSha256(snapshot.sections.runEventReplays),
+    workspaceChanges: diagnosticsSha256(snapshot.sections.workspaceChanges),
+    auditRuns: diagnosticsSha256(snapshot.sections.auditRuns),
+    evidencePacks: diagnosticsSha256(snapshot.sections.evidencePacks),
+    capabilityLedger: diagnosticsSha256(snapshot.sections.capabilityLedger),
+    messageFeedback: diagnosticsSha256(snapshot.sections.messageFeedback),
+    externalPublish: diagnosticsSha256(snapshot.sections.externalPublish),
+    auditRetentionPurges: diagnosticsSha256(snapshot.sections.auditRetentionPurges)
+  }
+}
+
+function objectValuesMatch(left: Record<string, unknown>, right: Record<string, unknown>): boolean {
+  const keys = new Set([...Object.keys(left), ...Object.keys(right)])
+  for (const key of keys) {
+    if (left[key] !== right[key]) return false
+  }
+  return true
 }
 
 function summarizeMessageFeedbackReceiptForDiagnostics(
@@ -1294,6 +1378,112 @@ export function buildAuditBundleSnapshot(input: {
     },
     sections
   }) as ProductAuditBundleSnapshot
+}
+
+export interface AuditBundleSnapshotSigner {
+  keyId: string
+  publicKeyDerBase64: string
+  signedAt?: string
+  signPayload: (payload: Buffer) => Buffer
+}
+
+export interface ProductAuditBundleSignatureVerification {
+  ok: boolean
+  signaturePresent: boolean
+  payloadHashValid: boolean
+  signatureValid: boolean
+  sectionHashesValid: boolean
+  countsValid: boolean
+  keyId?: string
+  reason?: string
+}
+
+export function signAuditBundleSnapshot(
+  snapshot: ProductAuditBundleSnapshot,
+  signer: AuditBundleSnapshotSigner
+): ProductAuditBundleSnapshot {
+  const signedSnapshot = unsignedAuditBundleSnapshotForSignature(snapshot)
+  const payload = auditBundleSignaturePayload(signedSnapshot)
+  const signature: ProductAuditBundleSignature = {
+    schemaVersion: 1,
+    algorithm: 'ed25519',
+    keyId: signer.keyId,
+    publicKeyDerBase64: signer.publicKeyDerBase64,
+    signedAt: signer.signedAt || new Date().toISOString(),
+    payloadHash: sha256Utf8(payload),
+    signatureBase64: signer.signPayload(Buffer.from(payload, 'utf8')).toString('base64')
+  }
+  return sanitizeDiagnosticsValue({
+    ...signedSnapshot,
+    manifest: {
+      ...signedSnapshot.manifest,
+      signature
+    }
+  }) as ProductAuditBundleSnapshot
+}
+
+export function verifyAuditBundleSnapshotSignature(
+  snapshot: ProductAuditBundleSnapshot
+): ProductAuditBundleSignatureVerification {
+  const signature = snapshot.manifest.signature
+  const countsValid = objectValuesMatch(snapshot.manifest.counts, expectedAuditBundleCounts(snapshot))
+  const sectionHashesValid = objectValuesMatch(
+    snapshot.manifest.hashes,
+    expectedAuditBundleHashes(snapshot)
+  )
+  if (!signature) {
+    return {
+      ok: false,
+      signaturePresent: false,
+      payloadHashValid: false,
+      signatureValid: false,
+      sectionHashesValid,
+      countsValid,
+      reason: 'missing_signature'
+    }
+  }
+  if (signature.algorithm !== 'ed25519') {
+    return {
+      ok: false,
+      signaturePresent: true,
+      payloadHashValid: false,
+      signatureValid: false,
+      sectionHashesValid,
+      countsValid,
+      keyId: signature.keyId,
+      reason: 'unsupported_algorithm'
+    }
+  }
+  const payload = auditBundleSignaturePayload(snapshot)
+  const payloadHash = sha256Utf8(payload)
+  const payloadHashValid = signature.payloadHash === payloadHash
+  let signatureValid = false
+  try {
+    const publicKey = createPublicKey({
+      key: Buffer.from(signature.publicKeyDerBase64, 'base64'),
+      format: 'der',
+      type: 'spki'
+    })
+    signatureValid = verifySignature(
+      null,
+      Buffer.from(payload, 'utf8'),
+      publicKey,
+      Buffer.from(signature.signatureBase64, 'base64')
+    )
+  } catch {
+    signatureValid = false
+  }
+  const ok = payloadHashValid && signatureValid && sectionHashesValid && countsValid
+  return {
+    ok,
+    signaturePresent: true,
+    payloadHashValid,
+    signatureValid,
+    sectionHashesValid,
+    countsValid,
+    keyId: signature.keyId,
+    ...(ok ? {} : { reason: 'signature_verification_failed' })
+  }
 }
 
 export function serializeAuditBundleSnapshot(snapshot: ProductAuditBundleSnapshot): string {

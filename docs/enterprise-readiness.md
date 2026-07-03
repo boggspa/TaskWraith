@@ -245,6 +245,13 @@ What exists:
 - Each purge writes a capped `audit-retention-purges.json` receipt with
   counts-only, path-redacted evidence of what was scanned, retained, and
   deleted. Diagnostics and audit-bundle export include those purge summaries.
+- Audit-bundle exports are now signed when Electron `safeStorage` is available:
+  a long-lived Ed25519 key is generated once under `userData`,
+  safeStorage-encrypted at rest, and reused so each exported bundle carries a
+  `local_hashes_signed` manifest signature. Verification recomputes section
+  hashes/counts and validates the signature over the final sanitized snapshot.
+  If no protected key can be created, the export remains explicitly marked
+  `local_hashes_unsigned`.
 
 What is missing:
 
@@ -253,9 +260,9 @@ What is missing:
 - A Settings/UI entry point for configuring `auditRetention` and invoking
   retention dry-run / purge. The main/preload route exists, but the control
   surface is not polished.
-- Signed export-time tamper evidence across approval ledger, run-event chains,
-  posture proofs, evidence packs, and workspace-change summaries. Current
-  hashes are local and unsigned.
+- A polished verification/export UI around the signed bundle evidence. The
+  signer and verifier exist in main code and tests, but the user-facing control
+  surface is still only the preload route.
 - A clear separation between redacted-by-default export and explicit
   sensitive-field export.
 
@@ -266,8 +273,8 @@ Target:
 - Add Settings/UI controls for audit retention windows and purge dry-runs.
 - Add an explicit sensitive export mode only behind a separate user/admin
   decision; keep the default bundle redacted.
-- Hash-chain or snapshot-hash the approval ledger and sign/verify the exported
-  manifest with a local key when available.
+- Expose verification results for signed audit bundles in the Settings/UI flow
+  and keep unsigned exports clearly labeled when safeStorage is unavailable.
 
 ### B5.3 - Managed policy plane
 

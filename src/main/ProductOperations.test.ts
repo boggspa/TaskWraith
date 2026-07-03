@@ -1,3 +1,4 @@
+import { createPublicKey } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
 import {
   buildAuditBundleSnapshot,
@@ -8,10 +9,13 @@ import {
   createProductCrashRecord,
   filterProductCrashRecords,
   serializeAuditBundleSnapshot,
-  serializeDiagnosticsSnapshot
+  signAuditBundleSnapshot,
+  serializeDiagnosticsSnapshot,
+  verifyAuditBundleSnapshotSignature
 } from './ProductOperations'
-import type { AppSettings, ProductCrashRecord } from './store/types'
+import type { AppSettings, ProductAuditBundleSnapshot, ProductCrashRecord } from './store/types'
 import { createRunEventRecord } from './RunEventStore'
+import { generateIdentityKeyPair, signEd25519 } from '../shared/e2ee/keys'
 
 const baseSettings: AppSettings = {
   activeProvider: 'gemini',
@@ -980,5 +984,76 @@ describe('ProductOperations', () => {
     expect(serialized).not.toContain('do-not-export-signature')
     expect(serialized).not.toContain('approval-sibling')
     expect(bundle.manifest.hashes.runEventReplays).toMatch(/^[a-f0-9]{64}$/)
+  })
+
+  it('signs audit bundles and rejects tampered manifests or sections', () => {
+    const keyPair = generateIdentityKeyPair()
+    const publicKeyDerBase64 = (
+      createPublicKey(keyPair.privateKey).export({ type: 'spki', format: 'der' }) as Buffer
+    ).toString('base64')
+    const unsigned = buildAuditBundleSnapshot({
+      approvalLedger: [],
+      runEvents: [],
+      workspaceChanges: [],
+      auditRuns: [],
+      evidencePacks: [],
+      messageFeedbackReceipts: [],
+      externalPublishReceipts: [],
+      now: '2026-07-03T00:00:02.000Z'
+    })
+    const signed = signAuditBundleSnapshot(unsigned, {
+      keyId: 'test-audit-key',
+      publicKeyDerBase64,
+      signedAt: '2026-07-03T00:00:03.000Z',
+      signPayload: (payload) => signEd25519(keyPair.privateKey, payload)
+    })
+
+    expect(signed.manifest.validation.tamperEvidence).toBe('local_hashes_signed')
+    expect(signed.manifest.signature).toMatchObject({
+      schemaVersion: 1,
+      algorithm: 'ed25519',
+      keyId: 'test-audit-key',
+      publicKeyDerBase64,
+      signedAt: '2026-07-03T00:00:03.000Z'
+    })
+    expect(verifyAuditBundleSnapshotSignature(signed)).toMatchObject({
+      ok: true,
+      signaturePresent: true,
+      payloadHashValid: true,
+      signatureValid: true,
+      sectionHashesValid: true,
+      countsValid: true
+    })
+
+    const tamperedSections: ProductAuditBundleSnapshot = {
+      ...signed,
+      sections: {
+        ...signed.sections,
+        approvalLedger: [{ tampered: true }]
+      }
+    }
+    expect(verifyAuditBundleSnapshotSignature(tamperedSections)).toMatchObject({
+      ok: false,
+      payloadHashValid: false,
+      signatureValid: false,
+      sectionHashesValid: false,
+      countsValid: false
+    })
+
+    const tamperedSignature: ProductAuditBundleSnapshot = {
+      ...signed,
+      manifest: {
+        ...signed.manifest,
+        signature: {
+          ...signed.manifest.signature!,
+          payloadHash: '0'.repeat(64)
+        }
+      }
+    }
+    expect(verifyAuditBundleSnapshotSignature(tamperedSignature)).toMatchObject({
+      ok: false,
+      payloadHashValid: false,
+      signatureValid: true
+    })
   })
 })
