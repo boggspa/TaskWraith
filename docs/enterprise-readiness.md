@@ -196,6 +196,11 @@ What exists:
   `userMcpServers` record carries only `secretRefs`. Existing encrypted secrets
   render as blank `NAME=` placeholders and can be preserved without exposing
   cleartext to the renderer.
+- Settings -> Runtime profiles now exposes custom runtime-profile editing with
+  separate plaintext and encrypted environment fields. Saves call the
+  `save-runtime-profile` encrypted-secret path, persisted profiles retain only
+  `secretRefs`, built-in profiles remain read-only, and removed encrypted env
+  refs are cleared after a successful profile save.
 - User MCP config import now applies the same plaintext-secret policy used by
   the main sanitizer/migration path. Obvious inline env/header secrets from
   pasted Claude, Cursor, or Codex configs are written through encrypted
@@ -207,9 +212,6 @@ What is missing:
 - Imported user MCP configs can still contain non-obvious plaintext values when
   their key/value shape does not match the conservative secret policy; those
   require a future review surface rather than automatic migration.
-- Runtime profile settings UI is not yet wired to expose encrypted env fields
-  directly; the IPC/preload/store path is ready for that surface, but the
-  visible editor still needs to be built.
 - iOS settings surfaces are not yet wired to create or manage those encrypted
   refs directly.
 

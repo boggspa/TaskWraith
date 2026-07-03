@@ -1,9 +1,10 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { ComponentProps } from 'react'
 import { describe, expect, it } from 'vitest'
-import type { UserMcpServerConfig } from '../../../main/store/types'
+import type { RuntimeProfile, UserMcpServerConfig } from '../../../main/store/types'
 import {
   SettingsPanel,
+  buildRuntimeProfileFromForm,
   formatUserMcpServerClaudeJsonSnippet,
   formatUserMcpServerCodexTomlSnippet,
   formatUserMcpServerCursorJsonSnippet,
@@ -125,6 +126,22 @@ function makeSettingsProps(overrides: Partial<SettingsPanelProps> = {}): Setting
     onClose: () => {},
     activeTab: 'providers',
     layout: 'takeover',
+    ...overrides
+  }
+}
+
+function makeRuntimeProfile(overrides: Partial<RuntimeProfile> = {}): RuntimeProfile {
+  return {
+    id: 'runtime-custom',
+    name: 'Codex staging',
+    provider: 'codex',
+    scope: 'workspace',
+    workspaceMode: 'local',
+    env: {},
+    networkPolicy: 'inherit',
+    persistence: 'reusable',
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
     ...overrides
   }
 }
@@ -986,6 +1003,84 @@ describe('parseUserMcpServersImportJson', () => {
     expect(result.servers).toEqual([])
     expect(result.skipped).toBe(1)
     expect(result.error).toContain('No supported MCP servers found')
+  })
+})
+
+describe('runtime profile secret helpers', () => {
+  it('builds runtime profiles with encrypted env refs without storing secret values', () => {
+    const result = buildRuntimeProfileFromForm({
+      id: '',
+      name: 'Codex staging',
+      provider: 'codex',
+      scope: 'workspace',
+      workspaceMode: 'local',
+      binaryPath: '/opt/homebrew/bin/codex',
+      envText: 'API_BASE_URL=https://staging.example.test',
+      envSecretText: 'API_TOKEN=secret-token',
+      approvalMode: 'default',
+      networkPolicy: 'inherit',
+      persistence: 'reusable'
+    })
+
+    expect(result.error).toBeUndefined()
+    expect(result.profile).toMatchObject({
+      name: 'Codex staging',
+      provider: 'codex',
+      binaryPath: '/opt/homebrew/bin/codex',
+      env: { API_BASE_URL: 'https://staging.example.test' },
+      secretRefs: { env: ['API_TOKEN'] }
+    })
+    expect(result.profile?.env).not.toHaveProperty('API_TOKEN')
+    expect(result.secretValues).toEqual({ env: { API_TOKEN: 'secret-token' } })
+  })
+
+  it('preserves blank existing encrypted env refs and reports removed refs', () => {
+    const existing = makeRuntimeProfile({
+      secretRefs: { env: ['API_TOKEN', 'OLD_TOKEN'] }
+    })
+    const result = buildRuntimeProfileFromForm(
+      {
+        id: existing.id,
+        name: existing.name,
+        provider: existing.provider,
+        scope: existing.scope,
+        workspaceMode: existing.workspaceMode,
+        binaryPath: '',
+        envText: '',
+        envSecretText: 'API_TOKEN=',
+        approvalMode: 'default',
+        networkPolicy: 'inherit',
+        persistence: 'reusable'
+      },
+      existing
+    )
+
+    expect(result.error).toBeUndefined()
+    expect(result.profile?.secretRefs).toEqual({ env: ['API_TOKEN'] })
+    expect(result.secretValues).toEqual({ env: {} })
+    expect(result.removedSecretRefs).toEqual(['OLD_TOKEN'])
+  })
+
+  it('renders runtime profile encrypted env refs without exposing values', () => {
+    const html = renderToStaticMarkup(
+      <SettingsPanel
+        {...makeSettingsProps({
+          activeTab: 'runtime-profiles',
+          runtimeProfiles: [
+            makeRuntimeProfile({
+              env: { API_BASE_URL: 'https://staging.example.test' },
+              secretRefs: { env: ['API_TOKEN'] }
+            })
+          ]
+        })}
+      />
+    )
+
+    expect(html).toContain('Runtime profiles')
+    expect(html).toContain('Codex staging')
+    expect(html).toContain('1 encrypted env var')
+    expect(html).toContain('Encrypted env')
+    expect(html).not.toContain('secret-token')
   })
 })
 
