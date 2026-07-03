@@ -145,7 +145,7 @@ describe('buildRunCompleteSummaryRows', () => {
       buildRunCompleteSummaryRows(
         run({ provider: 'codex', approvalMode: 'plan', workflowMode: 'normal' })
       )
-    ).toContainEqual({ label: 'Mode', value: 'Read-only' })
+    ).toContainEqual({ label: 'Mode', value: 'Read-Only/Recon' })
   })
 
   it('renders Ollama model and RAM as local hardware telemetry', () => {

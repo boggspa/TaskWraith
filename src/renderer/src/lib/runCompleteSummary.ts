@@ -180,7 +180,7 @@ const formatApprovalModeLabel = (
 ): string => {
   const mode = run?.approvalMode
   if (!mode) return 'Unknown'
-  if (mode === 'plan') return run?.workflowMode === 'plan' ? 'Plan' : 'Read-only'
+  if (mode === 'plan') return run?.workflowMode === 'plan' ? 'Plan' : 'Read-Only/Recon'
   if (mode === 'auto_edit') return 'Auto edit'
   return formatRunStatusLabel(mode)
 }

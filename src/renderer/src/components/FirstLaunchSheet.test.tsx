@@ -89,6 +89,8 @@ describe('FirstLaunchSheet', () => {
     expect(html).toContain('5. Track your usage')
     expect(html).toContain('6. Try Ensemble chats')
     expect(html).toContain('7. Power-user shortcuts')
+    expect(html).toContain('Read-Only/Recon')
+    expect(html).toContain('approval-gated instruments')
   })
 
   it('intro prose advertises live providers but not the retired Gemini', () => {

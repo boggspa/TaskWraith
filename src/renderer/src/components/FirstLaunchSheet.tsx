@@ -706,7 +706,7 @@ export function FirstLaunchSheet({
               <span className="first-launch-sheet-safety-label">Start cautious, dial up</span>
               <div className="first-launch-sheet-safety-chips">
                 <span className="first-launch-sheet-safety-chip">Plan workflow</span>
-                <span className="first-launch-sheet-safety-chip">Read-only recon</span>
+                <span className="first-launch-sheet-safety-chip">Read-Only/Recon</span>
                 <span className="first-launch-sheet-safety-chip">Default approval</span>
                 <span className="first-launch-sheet-safety-chip">Full workspace access</span>
               </div>
@@ -715,7 +715,9 @@ export function FirstLaunchSheet({
           <p className="first-launch-sheet-prose">
             Runs are sandboxed to the workspace you grant — files outside the project are off-limits
             unless you allow a path. Set the workflow and permission for each run from the
-            composer controls before you hit Enter.
+            composer controls before you hit Enter. Plan workflow can still use approval-gated
+            instruments like canvas, media, and sub-thread delegation when you allow them; it does
+            not grant file mutation by itself.
           </p>
         </section>
 
@@ -844,9 +846,9 @@ export function FirstLaunchSheet({
             </li>
             <li>
               <strong>Permission picker colour-codes the authority.</strong> Plan workflow is
-              separate from Read-only recon: Plan drafts for approval, Default stays neutral, and
-              Full Workspace Access / Auto-edit can edit files. Check both the workflow and the
-              permission before you hit Enter.
+              separate from Read-Only/Recon: Plan drafts for approval, Default stays neutral, and
+              Full Workspace Access / Auto-edit can edit files. Approval-gated instruments remain
+              explicit. Check both the workflow and the permission before you hit Enter.
             </li>
             <li>
               <strong>Fast Mode toggle.</strong> Inside the model picker, capable models (Codex
