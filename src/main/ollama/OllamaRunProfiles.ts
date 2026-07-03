@@ -1,5 +1,4 @@
 import type {
-  AppSettings,
   OllamaReasoningLevel,
   OllamaRunProfile,
   OllamaRunProfileId
@@ -80,16 +79,6 @@ export function isOllamaRunProfileId(value: unknown): value is OllamaRunProfileI
   )
 }
 
-function sanitizeReasoningLevel(value: unknown, fallback: OllamaReasoningLevel): OllamaReasoningLevel {
-  return value === 'low' || value === 'medium' || value === 'high' ? value : fallback
-}
-
-function sanitizePositiveInt(value: unknown, fallback: number, min: number, max: number): number {
-  const numeric = Number(value)
-  if (!Number.isFinite(numeric)) return fallback
-  return Math.max(min, Math.min(max, Math.trunc(numeric)))
-}
-
 function knownModelContextWindow(modelId?: string | null): number | null {
   const trimmed = String(modelId || '').trim()
   if (!trimmed || resolveOllamaModelFamily(trimmed) === 'unknown') return null
@@ -111,58 +100,28 @@ function defaultContextCapTokens(
 }
 
 export function resolveOllamaRunProfile(
-  settings: Pick<AppSettings, 'ollamaDefaultRunProfile' | 'ollamaRunProfiles'>,
   modelId?: string | null,
   chatProfile?: string | null
 ): OllamaRunProfile {
-  // Tier retirement (2026-07): the run profile no longer falls back to a
-  // tier-derived id (the tool-control tier is gone). A per-chat run profile wins
-  // over the global default; both absent → 'local_scout', the profile fresh
-  // chats resolved to under the old read_only default, so runtime tuning
-  // (context caps, num_predict, thinking, protocol mode) is preserved.
-  const selectedId = isOllamaRunProfileId(chatProfile)
-    ? chatProfile
-    : isOllamaRunProfileId(settings.ollamaDefaultRunProfile)
-      ? settings.ollamaDefaultRunProfile
-      : 'local_scout'
-  const baseId = selectedId === 'custom' ? 'local_scout' : selectedId
-  const base = OLLAMA_RUN_PROFILE_PRESETS[baseId]
-  const custom =
-    (modelId && settings.ollamaRunProfiles?.[modelId]) ||
-    settings.ollamaRunProfiles?.default ||
-    {}
-  const fallbackContextCapTokens = defaultContextCapTokens(
-    baseId,
-    modelId,
-    base.contextCapTokens
-  )
+  // The global run-profile settings surface (ollamaDefaultRunProfile /
+  // ollamaRunProfiles) was removed — it had no UI and only added a confusing,
+  // own-goal-prone layer. The per-ensemble-participant selection (chatProfile,
+  // set from the participant runtime popover) is now the ONLY user-configurable
+  // runtime knob. Absent a selection, default to provider_parity: the
+  // least-restrictive, fully model-adaptive preset — so a capable local model is
+  // NEVER pinned to the restrictive local_scout. Knobs still auto-tune per model:
+  // context scales to the model's window (defaultContextCapTokens), while
+  // tool-schema compaction / one-tool-at-a-time / thinking are gated by model
+  // family in OllamaProvider.
+  const requested = isOllamaRunProfileId(chatProfile) ? chatProfile : 'provider_parity'
+  // 'custom' no longer carries per-model overrides (that surface is gone) → fall
+  // back to the default full-capability preset.
+  const selectedId = requested === 'custom' ? 'provider_parity' : requested
+  const base = OLLAMA_RUN_PROFILE_PRESETS[selectedId]
   return {
     ...base,
-    ...custom,
     id: selectedId,
-    label: custom.label || base.label,
-    reasoningLevel: sanitizeReasoningLevel(custom.reasoningLevel, base.reasoningLevel),
-    contextCapTokens: sanitizePositiveInt(
-      custom.contextCapTokens,
-      fallbackContextCapTokens,
-      4096,
-      OLLAMA_RUN_PROFILE_CONTEXT_CAP_MAX
-    ),
-    protocolMode:
-      custom.protocolMode === 'json_fallback' || custom.protocolMode === 'json_only'
-        ? custom.protocolMode
-        : base.protocolMode,
-    compactToolSchemas:
-      typeof custom.compactToolSchemas === 'boolean'
-        ? custom.compactToolSchemas
-        : base.compactToolSchemas,
-    oneToolAtATime:
-      typeof custom.oneToolAtATime === 'boolean' ? custom.oneToolAtATime : base.oneToolAtATime,
-    numPredictTool: sanitizePositiveInt(custom.numPredictTool, base.numPredictTool, 256, 8192),
-    numPredictFinal: sanitizePositiveInt(custom.numPredictFinal, base.numPredictFinal, 512, 16_384),
-    keepAlive: typeof custom.keepAlive === 'string' && custom.keepAlive.trim()
-      ? custom.keepAlive.trim()
-      : base.keepAlive
+    contextCapTokens: defaultContextCapTokens(selectedId, modelId, base.contextCapTokens)
   }
 }
 

@@ -2487,7 +2487,7 @@ export async function runOllamaProvider(
     // below. The run profile carries the per-model runtime tuning, decoupled from
     // any tier.
     const toolControlTier: OllamaToolControlTier = 'provider_parity'
-    const runProfile = resolveOllamaRunProfile(settings, model, payload.ollamaRunProfile)
+    const runProfile = resolveOllamaRunProfile(model, payload.ollamaRunProfile)
     const nativeToolsSupported = ollamaModelSupportsNativeTools(modelInfo)
     const compactToolSchemas =
       ensembleRun ||

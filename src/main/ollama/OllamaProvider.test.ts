@@ -1858,7 +1858,8 @@ describe('runOllamaProvider streaming', () => {
     // Regression: the constrained-decoding grammar must allow every EXECUTABLE
     // tool (so a model can name a tail tool discovered via tool_help), even
     // though only the curated ~22 are ADVERTISED. If the grammar enum were the
-    // advertised set, a json_only model could never emit e.g. git_blame.
+    // advertised set, a json-path model could never emit e.g. git_blame.
+    // A model without native 'tools' support is pinned to the json-fallback path.
     const chatBodies: string[] = []
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
       if (String(url).endsWith('/api/tags')) {
@@ -1868,13 +1869,13 @@ describe('runOllamaProvider streaming', () => {
               name: 'stream-model:latest',
               digest: 'digest-stream',
               details: { family: 'qwen' },
-              capabilities: ['tools']
+              capabilities: ['completion']
             }
           ]
         })
       }
       if (String(url).endsWith('/api/show')) {
-        return jsonResponse({ details: { family: 'qwen' }, capabilities: ['tools'] })
+        return jsonResponse({ details: { family: 'qwen' }, capabilities: ['completion'] })
       }
       if (String(url).endsWith('/api/chat')) {
         chatBodies.push(String(init?.body || ''))
@@ -1887,7 +1888,6 @@ describe('runOllamaProvider streaming', () => {
     })
     const { deps } = makeProviderDeps({
       fetchMock,
-      settings: { ollamaRunProfiles: { 'stream-model:latest': { protocolMode: 'json_only' } } },
       executeTool: async () => ({ ok: true, output: '' })
     })
 
