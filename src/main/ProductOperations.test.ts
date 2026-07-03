@@ -357,6 +357,7 @@ describe('ProductOperations', () => {
           id: 'queued-secret',
           runId: 'run-queued-secret',
           provider: 'codex',
+          chatId: 'queue-chat-secret',
           workspacePath: '/secret/repo',
           status: 'queued',
           source: 'manual',
@@ -378,6 +379,34 @@ describe('ProductOperations', () => {
               threadId: 'remote-thread-secret',
               provider: 'codex',
               text: 'remote composer secret text'
+            }
+          },
+          dispatchReceipt: {
+            schemaVersion: 1,
+            generatedAt: '2026-05-07T10:00:00.000Z',
+            receiptHash: 'd'.repeat(64),
+            runId: 'run-queued-secret',
+            provider: 'codex',
+            source: 'manual',
+            scope: 'workspace',
+            workspaceId: 'ws-1',
+            chatId: 'queue-chat-secret',
+            ensembleParticipantId: 'participant-codex',
+            ensembleLaneId: 'lane-round-1-participant-codex-1',
+            ensembleRole: 'Worker',
+            ensembleStageRole: 'worker',
+            approvalMode: 'plan',
+            workflowMode: 'plan',
+            permissionPresetId: 'plan',
+            readOnly: true,
+            permissionPostureHash: 'a'.repeat(64),
+            permissionPostureSignaturePresent: true,
+            remoteComposer: {
+              workspaceId: 'receipt-remote-ws-secret',
+              threadId: 'receipt-remote-thread-secret',
+              provider: 'codex',
+              approvalMode: 'plan',
+              workflowMode: 'plan'
             }
           }
         }
@@ -642,6 +671,9 @@ describe('ProductOperations', () => {
     expect(serialized).not.toContain('queued private roadmap display')
     expect(serialized).not.toContain('queued private roadmap preview')
     expect(serialized).not.toContain('remote composer secret text')
+    expect(serialized).not.toContain('queue-chat-secret')
+    expect(serialized).not.toContain('receipt-remote-ws-secret')
+    expect(serialized).not.toContain('receipt-remote-thread-secret')
     expect(serialized).not.toContain('recovery private roadmap preview')
     expect(serialized).not.toContain('private recovery hint')
     expect(serialized).not.toContain('diagnostics approval private body')
@@ -674,8 +706,31 @@ describe('ProductOperations', () => {
         hasPrompt: true,
         hasDisplayPrompt: true,
         remoteComposer: { hasText: true }
+      },
+      dispatchReceipt: {
+        receiptHash: 'd'.repeat(64),
+        provider: 'codex',
+        source: 'manual',
+        ensembleLaneId: 'lane-round-1-participant-codex-1',
+        ensembleStageRole: 'worker',
+        workflowMode: 'plan',
+        permissionPresetId: 'plan',
+        permissionPostureHash: 'a'.repeat(64),
+        permissionPostureSignaturePresent: true,
+        remoteComposer: {
+          provider: 'codex',
+          approvalMode: 'plan',
+          workflowMode: 'plan'
+        }
       }
     })
+    expect((snapshot.runQueue[0].dispatchReceipt as any).chatIdHash).toMatch(/^[a-f0-9]{64}$/)
+    expect((snapshot.runQueue[0].dispatchReceipt as any).remoteComposer.workspaceIdHash).toMatch(
+      /^[a-f0-9]{64}$/
+    )
+    expect((snapshot.runQueue[0].dispatchReceipt as any).remoteComposer.threadIdHash).toMatch(
+      /^[a-f0-9]{64}$/
+    )
     expect(snapshot.runRecovery[0]).toMatchObject({
       hasResumeHint: true,
       jobSnapshot: { hasPromptPreview: true, hasProcessCommand: true }

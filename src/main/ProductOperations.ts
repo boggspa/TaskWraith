@@ -1154,6 +1154,42 @@ function summarizeRunQueueRequestForDiagnostics(
   }
 }
 
+function summarizeRunQueueDispatchReceiptForDiagnostics(
+  receipt: RunQueueJob['dispatchReceipt'] | undefined
+): Record<string, unknown> | undefined {
+  if (!receipt) return undefined
+  return {
+    schemaVersion: receipt.schemaVersion,
+    generatedAt: receipt.generatedAt,
+    receiptHash: receipt.receiptHash,
+    runId: receipt.runId,
+    provider: receipt.provider,
+    source: receipt.source,
+    scope: receipt.scope,
+    workspaceId: receipt.workspaceId,
+    chatIdHash: hashId(receipt.chatId),
+    ensembleParticipantId: receipt.ensembleParticipantId,
+    ensembleLaneId: receipt.ensembleLaneId,
+    ensembleRole: receipt.ensembleRole,
+    ensembleStageRole: receipt.ensembleStageRole,
+    approvalMode: receipt.approvalMode,
+    workflowMode: receipt.workflowMode,
+    permissionPresetId: receipt.permissionPresetId,
+    readOnly: receipt.readOnly,
+    permissionPostureHash: receipt.permissionPostureHash,
+    permissionPostureSignaturePresent: receipt.permissionPostureSignaturePresent,
+    remoteComposer: receipt.remoteComposer
+      ? {
+          workspaceIdHash: hashId(receipt.remoteComposer.workspaceId),
+          threadIdHash: hashId(receipt.remoteComposer.threadId),
+          provider: receipt.remoteComposer.provider,
+          approvalMode: receipt.remoteComposer.approvalMode,
+          workflowMode: receipt.remoteComposer.workflowMode
+        }
+      : undefined
+  }
+}
+
 function summarizeRunQueueJobForDiagnostics(job: RunQueueJob): Record<string, unknown> {
   return {
     id: job.id,
@@ -1176,6 +1212,7 @@ function summarizeRunQueueJobForDiagnostics(job: RunQueueJob): Record<string, un
     permissionPosture: summarizePermissionPostureForAuditBundle(
       job.permissionPosture as unknown as Record<string, unknown> | undefined
     ),
+    dispatchReceipt: summarizeRunQueueDispatchReceiptForDiagnostics(job.dispatchReceipt),
     hasProviderSessionId: Boolean(job.providerSessionId),
     hasProviderRunId: Boolean(job.providerRunId),
     hasProcessCommand: Boolean(job.processCommand),
