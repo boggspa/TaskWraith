@@ -896,6 +896,7 @@ import {
   buildAuditBundleSnapshot,
   buildDiagnosticsSnapshot,
   buildProductOperationsStatus,
+  createAuditBundleVerificationReceipt,
   serializeAuditBundleSnapshot,
   serializeDiagnosticsSnapshot,
   signAuditBundleSnapshot,
@@ -18628,6 +18629,7 @@ async function getProductOperationsStatus(): Promise<ProductOperationsStatus> {
     workspaceChanges,
     messageFeedbackReceipts: AppStore.getMessageFeedbackReceipts(),
     externalPublishReceipts: listExternalPublishReceipts(),
+    auditBundleVerificationReceipts: AppStore.getAuditBundleVerificationReceipts(),
     auditRetentionPurgeReceipts: AppStore.getAuditRetentionPurgeReceipts(),
     userMcpBlockedServers,
     scheduledTasks,
@@ -18661,6 +18663,7 @@ async function buildCurrentDiagnosticsSnapshot() {
     workspaceChanges: AppStore.getWorkspaceChangeSets(),
     messageFeedbackReceipts: AppStore.getMessageFeedbackReceipts(),
     externalPublishReceipts: listExternalPublishReceipts(),
+    auditBundleVerificationReceipts: AppStore.getAuditBundleVerificationReceipts(),
     auditRetentionPurgeReceipts: AppStore.getAuditRetentionPurgeReceipts(),
     userMcpBlockedServers,
     managedPolicy: managedPolicySnapshotForDiagnostics?.(),
@@ -18795,6 +18798,7 @@ async function buildCurrentAuditBundleSnapshot(request: ProductAuditBundleExport
     capabilityLedger: AppStore.getCapabilityLedgerSnapshot(filter.workspaceId),
     messageFeedbackReceipts: AppStore.getMessageFeedbackReceipts(filter),
     externalPublishReceipts: listExternalPublishReceipts(),
+    auditBundleVerificationReceipts: AppStore.getAuditBundleVerificationReceipts(),
     auditRetentionPurgeReceipts: AppStore.getAuditRetentionPurgeReceipts(),
     userMcpBlockedServers
   })
@@ -18872,8 +18876,19 @@ async function exportProductAuditBundle(
 async function verifyProductAuditBundle(
   request: ProductAuditBundleVerificationRequest = {}
 ): Promise<ProductAuditBundleVerificationResult> {
+  let targetPath = request.path
+  const recordVerification = (
+    result: ProductAuditBundleVerificationResult
+  ): ProductAuditBundleVerificationResult => {
+    AppStore.recordAuditBundleVerificationReceipt(
+      createAuditBundleVerificationReceipt(result, {
+        id: `audit-bundle-verification-${Date.now()}-${randomUUID()}`,
+        verifiedAt: new Date().toISOString()
+      })
+    )
+    return result
+  }
   try {
-    let targetPath = request.path
     if (!targetPath) {
       if (!mainWindow) {
         throw new Error('No application window is available for audit bundle verification.')
@@ -18891,7 +18906,7 @@ async function verifyProductAuditBundle(
     const raw = await fs.readFile(targetPath, 'utf8')
     const snapshot = JSON.parse(raw) as ProductAuditBundleSnapshot
     const verification = verifyAuditBundleSnapshotSignature(snapshot)
-    return {
+    return recordVerification({
       ok: verification.ok,
       path: targetPath,
       verification,
@@ -18901,7 +18916,7 @@ async function verifyProductAuditBundle(
         filters: snapshot.manifest.filters,
         tamperEvidence: snapshot.manifest.validation.tamperEvidence
       }
-    }
+    })
   } catch (error) {
     recordProductCrash({
       source: 'main',
@@ -18910,7 +18925,11 @@ async function verifyProductAuditBundle(
       message: error instanceof Error ? error.message : String(error),
       stack: error instanceof Error ? error.stack : undefined
     })
-    return { ok: false, error: error instanceof Error ? error.message : String(error) }
+    return recordVerification({
+      ok: false,
+      ...(targetPath ? { path: targetPath } : {}),
+      error: error instanceof Error ? error.message : String(error)
+    })
   }
 }
 

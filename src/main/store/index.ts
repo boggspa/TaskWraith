@@ -69,6 +69,7 @@ import {
   AuditVerdict,
   AuditGateResult,
   AuditParticipant,
+  ProductAuditBundleVerificationReceipt,
   AuditRetentionPurgeReceipt,
   AuditRetentionPurgeRequest,
   AuditRetentionPurgeResult,
@@ -242,6 +243,10 @@ const runRecoveryPath = path.join(userDataPath, 'run-recovery.json')
 const workspaceChangesPath = path.join(userDataPath, 'workspace-changes.json')
 const approvalLedgerPath = path.join(userDataPath, 'approval-ledger.json')
 const messageFeedbackLedgerPath = path.join(userDataPath, 'thumbs-ledger.json')
+const auditBundleVerificationReceiptsPath = path.join(
+  userDataPath,
+  'audit-bundle-verifications.json'
+)
 const auditRetentionPurgesPath = path.join(userDataPath, 'audit-retention-purges.json')
 // Single choke point for approval-ledger writes: cap retained non-live history
 // (capApprovalLedgerRecords) so the full synchronous rewrite on every approval
@@ -251,6 +256,9 @@ const writeApprovalLedger = (records: ApprovalLedgerRecord[]): void =>
   writeJson(approvalLedgerPath, capApprovalLedgerRecords(records))
 const writeMessageFeedbackLedger = (records: MessageFeedbackReceipt[]): void =>
   writeJson(messageFeedbackLedgerPath, capMessageFeedbackReceipts(records))
+const writeAuditBundleVerificationReceipts = (
+  records: ProductAuditBundleVerificationReceipt[]
+): void => writeJson(auditBundleVerificationReceiptsPath, capAuditBundleVerificationReceipts(records))
 const writeAuditRetentionPurgeReceipts = (records: AuditRetentionPurgeReceipt[]): void =>
   writeJson(auditRetentionPurgesPath, capAuditRetentionPurgeReceipts(records))
 const productCrashesPath = path.join(userDataPath, 'product-crashes.json')
@@ -833,6 +841,7 @@ const DEFAULT_AUDIT_RETENTION: AuditRetentionSettings = {
 }
 
 const AUDIT_RETENTION_PURGE_RECEIPT_CAP = 250
+const AUDIT_BUNDLE_VERIFICATION_RECEIPT_CAP = 250
 
 function normalizeAuditRetentionSettings(value: unknown): AuditRetentionSettings {
   const input = value && typeof value === 'object' ? (value as Partial<AuditRetentionSettings>) : {}
@@ -890,6 +899,33 @@ function capAuditRetentionPurgeReceipts(
     (receipt): receipt is AuditRetentionPurgeReceipt =>
       Boolean(receipt?.id && receipt.schemaVersion === 1 && receipt.generatedAt)
   )
+  return normalized.length <= cap ? normalized : normalized.slice(normalized.length - cap)
+}
+
+function normalizeAuditBundleVerificationReceipt(
+  receipt: unknown
+): ProductAuditBundleVerificationReceipt | null {
+  if (!receipt || typeof receipt !== 'object') return null
+  const candidate = receipt as ProductAuditBundleVerificationReceipt
+  if (
+    candidate.schemaVersion !== 1 ||
+    typeof candidate.id !== 'string' ||
+    !candidate.id ||
+    typeof candidate.verifiedAt !== 'string' ||
+    typeof candidate.ok !== 'boolean'
+  ) {
+    return null
+  }
+  return candidate
+}
+
+function capAuditBundleVerificationReceipts(
+  receipts: unknown[],
+  cap = AUDIT_BUNDLE_VERIFICATION_RECEIPT_CAP
+): ProductAuditBundleVerificationReceipt[] {
+  const normalized = receipts
+    .map(normalizeAuditBundleVerificationReceipt)
+    .filter((receipt): receipt is ProductAuditBundleVerificationReceipt => Boolean(receipt))
   return normalized.length <= cap ? normalized : normalized.slice(normalized.length - cap)
 }
 
@@ -3915,6 +3951,18 @@ export class AppStore {
           )
       )
     )
+  }
+
+  static getAuditBundleVerificationReceipts(): ProductAuditBundleVerificationReceipt[] {
+    return capAuditBundleVerificationReceipts(readJson<unknown[]>(auditBundleVerificationReceiptsPath, []))
+  }
+
+  static recordAuditBundleVerificationReceipt(
+    receipt: ProductAuditBundleVerificationReceipt
+  ): ProductAuditBundleVerificationReceipt {
+    const records = [...this.getAuditBundleVerificationReceipts(), receipt]
+    writeAuditBundleVerificationReceipts(records)
+    return receipt
   }
 
   static purgeAuditRetentionEvidence(
