@@ -2971,6 +2971,12 @@ function externalPublishReceiptsForOrigin(
   }
 }
 
+function listExternalPublishReceipts(): ExternalPublishReceipt[] {
+  const ledger = getExternalPublishReceiptLedger()
+  if (!ledger || typeof (ledger as { list?: unknown }).list !== 'function') return []
+  return (ledger as { list: () => ExternalPublishReceipt[] }).list()
+}
+
 const recallToolExecutors = createRecallToolExecutors({
   listRunQueueJobs: (filter) => AppStore.getRunQueueJobs(filter),
   getWorkspaces: () => AppStore.getWorkspaces(),
@@ -18377,6 +18383,8 @@ async function buildCurrentDiagnosticsSnapshot() {
     workflows: AppStore.getWorkflowDefinitions(),
     approvalLedger: AppStore.getApprovalLedger(),
     workspaceChanges: AppStore.getWorkspaceChangeSets(),
+    messageFeedbackReceipts: AppStore.getMessageFeedbackReceipts(),
+    externalPublishReceipts: listExternalPublishReceipts(),
     recentCrashes: AppStore.getProductCrashes({ limit: 100 })
   })
 }

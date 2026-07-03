@@ -386,6 +386,47 @@ describe('ProductOperations', () => {
       ],
       approvalLedger: [],
       workspaceChanges: [],
+      messageFeedbackReceipts: [
+        {
+          schemaVersion: 1,
+          id: 'feedback-1',
+          source: 'message_metadata',
+          action: 'set',
+          chatId: 'chat-secret',
+          workspaceId: 'ws-1',
+          workspacePath: '/secret/repo',
+          messageId: 'msg-1',
+          runId: 'run-1',
+          provider: 'codex',
+          model: 'gpt-5.5',
+          role: 'Reviewer',
+          vote: 'down',
+          at: 1,
+          recordedAt: 2,
+          reason: 'wrong-model-for-role',
+          note: 'private note with sk-1234567890abcdefghijklmnop',
+          noteSensitive: true
+        }
+      ],
+      externalPublishReceipts: [
+        {
+          schemaVersion: 1,
+          id: 'publish-1',
+          origin: 'agent',
+          action: 'githubCreatePr',
+          decision: 'allowed',
+          reason: 'Agent external publishing passed TaskWraith external-publish policy.',
+          requestedAt: '2026-07-03T00:00:00.000Z',
+          completedAt: '2026-07-03T00:00:01.000Z',
+          outcome: 'completed',
+          workspaceId: 'ws-1',
+          workspacePath: '/secret/repo',
+          repoPath: '/secret/repo',
+          title: 'Private roadmap PR',
+          prUrl: 'https://github.com/private/repo/pull/1',
+          metadata: { token: 'sk-1234567890abcdefghijklmnop', branch: 'feature/audit' }
+        }
+      ],
       recentCrashes: []
     })
     const serialized = serializeDiagnosticsSnapshot(snapshot)
@@ -409,6 +450,26 @@ describe('ProductOperations', () => {
     expect(serialized).not.toContain('runtime-secret')
     expect(serialized).not.toContain('workflow-runtime-secret')
     expect(serialized).not.toContain('auth-secret')
+    expect(serialized).not.toContain('private note')
+    expect(serialized).not.toContain('Private roadmap PR')
+    expect(serialized).not.toContain('https://github.com/private/repo')
+    expect(serialized).not.toContain('sk-1234567890')
     expect(serialized).toContain('externalPathGrantCount')
+    expect(snapshot.auditReceipts.counts.messageFeedback).toBe(1)
+    expect(snapshot.auditReceipts.counts.externalPublish).toBe(1)
+    expect(snapshot.auditReceipts.hashes.messageFeedback).toMatch(/^[a-f0-9]{64}$/)
+    expect(snapshot.auditReceipts.hashes.externalPublish).toMatch(/^[a-f0-9]{64}$/)
+    expect(snapshot.auditReceipts.recent.messageFeedback[0]).toMatchObject({
+      id: 'feedback-1',
+      vote: 'down',
+      hasSensitiveNote: true
+    })
+    expect(snapshot.auditReceipts.recent.externalPublish[0]).toMatchObject({
+      id: 'publish-1',
+      origin: 'agent',
+      action: 'githubCreatePr',
+      hasTitle: true,
+      hasPrUrl: true
+    })
   })
 })

@@ -179,6 +179,10 @@ What exists:
 - Run events are persisted, sequenced, and hash-chained.
 - Diagnostics export exists but is capped and operationally oriented.
 - Chat deletion cleans up known run-event artifacts for that chat.
+- Diagnostics export now includes a redacted `auditReceipts` section with
+  counts and SHA-256 hashes for approval ledger rows, workspace-change sets,
+  thumbs/casting receipts, and external-publish receipts, plus bounded redacted
+  summaries for the newer receipt ledgers.
 
 What is missing:
 
@@ -196,7 +200,8 @@ Target:
   mode, counts, hashes, and validation summary.
 - Include approval ledger rows, run-event replay summaries, run-event hashes,
   permission posture proofs, audit runs, evidence/capability ledgers, workspace
-  changes, and diagnostics summary.
+  changes, external-publish receipts, thumbs/casting receipts, and diagnostics
+  summary.
 - Add retention settings and purge receipts.
 - Hash-chain or snapshot-hash the approval ledger and sign/verify the exported
   manifest with a local key when available.

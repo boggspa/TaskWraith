@@ -1,6 +1,9 @@
+import { createHash } from 'node:crypto'
+
 import type {
   AppSettings,
   ApprovalLedgerRecord,
+  MessageFeedbackReceipt,
   GeminiMcpBridgeStatus,
   ProductBridgeHealthRecord,
   ProductCrashFilter,
@@ -23,6 +26,7 @@ import type {
   ChatRecord
 } from './store/types'
 import type { UpdateArchitectureCompatibility } from './UpdateArchitecture'
+import type { ExternalPublishReceipt } from './ExternalPublishReceiptLedger'
 
 const MAX_CRASH_TEXT_CHARS = 12_000
 const MAX_DIAGNOSTIC_RECORDS = 250
@@ -46,6 +50,108 @@ function normalizeStatus(statuses: ProductOperationStatus[]): ProductOperationSt
   if (statuses.includes('warning')) return 'warning'
   if (statuses.includes('unknown')) return 'unknown'
   return 'ok'
+}
+
+function diagnosticsSha256(value: unknown): string {
+  return createHash('sha256')
+    .update(JSON.stringify(sanitizeDiagnosticsValue(value)))
+    .digest('hex')
+}
+
+function summarizeMessageFeedbackReceiptForDiagnostics(
+  receipt: MessageFeedbackReceipt
+): Record<string, unknown> {
+  return {
+    schemaVersion: receipt.schemaVersion,
+    id: receipt.id,
+    source: receipt.source,
+    action: receipt.action,
+    chatIdHash: diagnosticsSha256(receipt.chatId),
+    workspaceId: receipt.workspaceId,
+    hasWorkspacePath: Boolean(receipt.workspacePath),
+    messageId: receipt.messageId,
+    runId: receipt.runId,
+    provider: receipt.provider,
+    model: receipt.model,
+    role: receipt.role,
+    ensembleParticipantId: receipt.ensembleParticipantId,
+    ensembleLaneId: receipt.ensembleLaneId,
+    ensembleRole: receipt.ensembleRole,
+    ensembleStageRole: receipt.ensembleStageRole,
+    vote: receipt.vote,
+    previousVote: receipt.previousVote,
+    at: receipt.at,
+    recordedAt: receipt.recordedAt,
+    reason: receipt.reason,
+    hasSensitiveNote: Boolean(receipt.note)
+  }
+}
+
+function summarizeExternalPublishReceiptForDiagnostics(
+  receipt: ExternalPublishReceipt
+): Record<string, unknown> {
+  return {
+    schemaVersion: receipt.schemaVersion,
+    id: receipt.id,
+    origin: receipt.origin,
+    action: receipt.action,
+    decision: receipt.decision,
+    reason: receipt.reason,
+    requestedAt: receipt.requestedAt,
+    completedAt: receipt.completedAt,
+    outcome: receipt.outcome,
+    workspaceId: receipt.workspaceId,
+    hasWorkspacePath: Boolean(receipt.workspacePath),
+    hasRepoPath: Boolean(receipt.repoPath),
+    remote: receipt.remote,
+    setUpstream: receipt.setUpstream,
+    hasTitle: Boolean(receipt.title),
+    draft: receipt.draft,
+    commitSha: receipt.commitSha,
+    hasPrUrl: Boolean(receipt.prUrl),
+    hasError: Boolean(receipt.error),
+    metadata: receipt.metadata
+  }
+}
+
+function buildDiagnosticsAuditReceipts(input: {
+  generatedAt: string
+  approvalLedger: ApprovalLedgerRecord[]
+  workspaceChanges: WorkspaceChangeSet[]
+  messageFeedbackReceipts: MessageFeedbackReceipt[]
+  externalPublishReceipts: ExternalPublishReceipt[]
+}) {
+  const messageFeedback = input.messageFeedbackReceipts.map(
+    summarizeMessageFeedbackReceiptForDiagnostics
+  )
+  const externalPublish = input.externalPublishReceipts.map(
+    summarizeExternalPublishReceiptForDiagnostics
+  )
+  return {
+    schemaVersion: 1,
+    generatedAt: input.generatedAt,
+    redactionMode: 'default',
+    counts: {
+      approvalLedger: input.approvalLedger.length,
+      workspaceChanges: input.workspaceChanges.length,
+      messageFeedback: input.messageFeedbackReceipts.length,
+      externalPublish: input.externalPublishReceipts.length
+    },
+    hashes: {
+      approvalLedger: diagnosticsSha256(input.approvalLedger),
+      workspaceChanges: diagnosticsSha256(input.workspaceChanges),
+      messageFeedback: diagnosticsSha256(messageFeedback),
+      externalPublish: diagnosticsSha256(externalPublish)
+    },
+    recent: {
+      messageFeedback: messageFeedback.slice(0, MAX_DIAGNOSTIC_RECORDS),
+      externalPublish: externalPublish.slice(0, MAX_DIAGNOSTIC_RECORDS)
+    },
+    validation: {
+      sensitiveFeedbackNotes: 'redacted',
+      runEventHashChains: 'not_included_in_diagnostics_export'
+    }
+  } as const
 }
 
 function parseBuilderValue(text: string, key: string): string | undefined {
@@ -607,12 +713,15 @@ export function buildDiagnosticsSnapshot(input: {
   workflows: WorkflowDefinition[]
   approvalLedger: ApprovalLedgerRecord[]
   workspaceChanges: WorkspaceChangeSet[]
+  messageFeedbackReceipts?: MessageFeedbackReceipt[]
+  externalPublishReceipts?: ExternalPublishReceipt[]
   recentCrashes: ProductCrashRecord[]
   now?: string
 }): ProductDiagnosticsSnapshot {
+  const generatedAt = input.now || new Date().toISOString()
   return sanitizeDiagnosticsValue({
     schemaVersion: 1,
-    generatedAt: input.now || new Date().toISOString(),
+    generatedAt,
     status: input.status,
     settings: {
       activeProvider: input.settings.activeProvider,
@@ -640,6 +749,13 @@ export function buildDiagnosticsSnapshot(input: {
       .map(summarizeWorkflowForDiagnostics),
     approvalLedger: input.approvalLedger.slice(0, MAX_DIAGNOSTIC_RECORDS),
     workspaceChanges: input.workspaceChanges.slice(0, MAX_DIAGNOSTIC_RECORDS),
+    auditReceipts: buildDiagnosticsAuditReceipts({
+      generatedAt,
+      approvalLedger: input.approvalLedger,
+      workspaceChanges: input.workspaceChanges,
+      messageFeedbackReceipts: input.messageFeedbackReceipts || [],
+      externalPublishReceipts: input.externalPublishReceipts || []
+    }),
     recentCrashes: input.recentCrashes.slice(0, MAX_DIAGNOSTIC_RECORDS)
   }) as ProductDiagnosticsSnapshot
 }

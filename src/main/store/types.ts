@@ -2184,6 +2184,32 @@ export interface ProductOperationsStatus {
   }
 }
 
+export interface ProductDiagnosticsAuditReceipts {
+  schemaVersion: 1
+  generatedAt: string
+  redactionMode: 'default'
+  counts: {
+    approvalLedger: number
+    workspaceChanges: number
+    messageFeedback: number
+    externalPublish: number
+  }
+  hashes: {
+    approvalLedger: string
+    workspaceChanges: string
+    messageFeedback: string
+    externalPublish: string
+  }
+  recent: {
+    messageFeedback: Array<Record<string, unknown>>
+    externalPublish: Array<Record<string, unknown>>
+  }
+  validation: {
+    sensitiveFeedbackNotes: 'redacted'
+    runEventHashChains: 'not_included_in_diagnostics_export'
+  }
+}
+
 export interface ProductDiagnosticsSnapshot {
   schemaVersion: 1
   generatedAt: string
@@ -2206,6 +2232,7 @@ export interface ProductDiagnosticsSnapshot {
   workflows: WorkflowDefinition[]
   approvalLedger: ApprovalLedgerRecord[]
   workspaceChanges: WorkspaceChangeSet[]
+  auditReceipts: ProductDiagnosticsAuditReceipts
   recentCrashes: ProductCrashRecord[]
 }
 
