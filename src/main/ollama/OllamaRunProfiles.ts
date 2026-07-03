@@ -2,8 +2,7 @@ import type {
   AppSettings,
   OllamaReasoningLevel,
   OllamaRunProfile,
-  OllamaRunProfileId,
-  OllamaToolControlTier
+  OllamaRunProfileId
 } from '../store/types'
 import { resolveContextWindow } from '../../shared/contextWindows'
 import { resolveOllamaModelFamily } from './OllamaModelPreflight'
@@ -86,13 +85,6 @@ export function isOllamaRunProfileId(value: unknown): value is OllamaRunProfileI
   )
 }
 
-function profileIdForTier(tier: OllamaToolControlTier): Exclude<OllamaRunProfileId, 'custom'> {
-  if (tier === 'approved_edits') return 'approved_patcher'
-  if (tier === 'approved_shell') return 'verify_with_shell'
-  if (tier === 'provider_parity') return 'provider_parity'
-  return 'local_scout'
-}
-
 function sanitizeReasoningLevel(value: unknown, fallback: OllamaReasoningLevel): OllamaReasoningLevel {
   return value === 'low' || value === 'medium' || value === 'high' ? value : fallback
 }
@@ -124,24 +116,21 @@ function defaultContextCapTokens(
 }
 
 export function resolveOllamaRunProfile(
-  settings: Pick<
-    AppSettings,
-    'ollamaDefaultRunProfile' | 'ollamaRunProfiles' | 'ollamaToolControlTier'
-  >,
-  effectiveTier: OllamaToolControlTier,
+  settings: Pick<AppSettings, 'ollamaDefaultRunProfile' | 'ollamaRunProfiles'>,
   modelId?: string | null,
   chatProfile?: string | null
 ): OllamaRunProfile {
-  // A per-chat run-profile (composer picker) wins over the global default; an
-  // absent/invalid value falls back to the global setting, then to the
-  // tier-derived profile.
+  // Tier retirement (2026-07): the run profile no longer falls back to a
+  // tier-derived id (the tool-control tier is gone). A per-chat run profile wins
+  // over the global default; both absent → 'local_scout', the profile fresh
+  // chats resolved to under the old read_only default, so runtime tuning
+  // (context caps, num_predict, thinking, protocol mode) is preserved.
   const selectedId = isOllamaRunProfileId(chatProfile)
     ? chatProfile
     : isOllamaRunProfileId(settings.ollamaDefaultRunProfile)
       ? settings.ollamaDefaultRunProfile
-      : profileIdForTier(effectiveTier)
-  const baseId =
-    selectedId === 'custom' ? profileIdForTier(effectiveTier) : selectedId
+      : 'local_scout'
+  const baseId = selectedId === 'custom' ? 'local_scout' : selectedId
   const base = OLLAMA_RUN_PROFILE_PRESETS[baseId]
   const custom =
     (modelId && settings.ollamaRunProfiles?.[modelId]) ||

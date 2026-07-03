@@ -58,8 +58,6 @@ import {
 export { ollamaLocalToolSystemPrompt } from './OllamaModelProfiles'
 import {
   OLLAMA_KNOWN_TOOL_NAMES,
-  effectiveOllamaToolControlTier,
-  ollamaTierLabel,
   ollamaToolNamesForTier,
   type OllamaToolName
 } from './OllamaToolTiers'
@@ -985,10 +983,11 @@ export async function getOllamaCapabilityContract(
   request: { workspacePath?: string; approvalMode?: string; networkAccess?: string | null } = {}
 ): Promise<ProviderCapabilityContract> {
   const settings = deps.getSettings()
-  const tier = effectiveOllamaToolControlTier(settings, request.workspacePath)
   const approvalMode = request.approvalMode || 'plan'
   const networkAccess = request.networkAccess || settings.agenticServices?.networkAccess
-  const toolNames = ollamaToolNamesForTier(tier, { networkAccess })
+  // Tier retirement (2026-07): the surface is always full; 'provider_parity' is a
+  // fixed placeholder for the (tier-agnostic) name resolver.
+  const toolNames = ollamaToolNamesForTier('provider_parity', { networkAccess })
   const status = await getOllamaStatusSnapshot(settings)
   return buildProviderCapabilityContract({
     provider: 'ollama',
@@ -1008,7 +1007,7 @@ export async function getOllamaCapabilityContract(
           : [],
       message:
         Boolean(request.workspacePath) && settings.agenticServices?.mcpTools !== 'deny'
-          ? `Ollama local mode uses TaskWraith-controlled ${ollamaTierLabel(tier)} tools.`
+          ? 'Ollama local mode uses the full TaskWraith tool surface, governed by the run permission role.'
           : 'Ollama tools require a workspace thread and enabled TaskWraith MCP/tool policy.'
     }
   })
@@ -2176,21 +2175,13 @@ export async function runOllamaProvider(
       Boolean(deps.executeTool && payload.workspace && payload.scope !== 'global') &&
       settings.agenticServices?.mcpTools !== 'deny'
     const ensembleRun = Boolean(payload.ensembleRun)
-    // Per-chat tier/profile (composer picker, via providerMetadata) override the
-    // global settings; absent → global default. Tier-4 parity still gated by the
-    // per-workspace grant inside effectiveOllamaToolControlTier.
-    const baseToolControlTier = effectiveOllamaToolControlTier(
-      settings,
-      payload.workspace,
-      payload.ollamaToolControlTier
-    )
-    const runProfile = resolveOllamaRunProfile(
-      settings,
-      baseToolControlTier,
-      model,
-      payload.ollamaRunProfile
-    )
-    const toolControlTier = baseToolControlTier
+    // Tier retirement (2026-07): the tool-control tier is gone — the surface is
+    // always full and approval is role-governed. A fixed 'provider_parity' value
+    // still feeds the family/harness prose and the (tier-agnostic) surface calls
+    // below. The run profile carries the per-model runtime tuning, decoupled from
+    // any tier.
+    const toolControlTier: OllamaToolControlTier = 'provider_parity'
+    const runProfile = resolveOllamaRunProfile(settings, model, payload.ollamaRunProfile)
     const nativeToolsSupported = ollamaModelSupportsNativeTools(modelInfo)
     const compactToolSchemas =
       ensembleRun ||
