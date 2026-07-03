@@ -351,13 +351,19 @@ What exists:
   for `autoUpdateEnabled` and `updateChannel`. The auto-update checkbox and
   update-channel selector disable when managed, while diagnostics, repair, and
   audit-bundle export actions remain available.
+- Settings -> General approval timeout controls and Settings -> Providers
+  agentic-service controls now disable when `approvalTimeouts` or
+  `agenticServices` are managed. Stale agentic-service mutation events are
+  ignored at the shared update seam, and disabled timeout fields refuse stale
+  commits.
 
 What is missing:
 
 - Per-control locked/disabled affordances in Settings are not complete yet.
-  The top-level managed notice, product update controls, and the user-MCP
-  settings pane are wired, but other settings pages still need the same inline
-  lock badges and disabled controls.
+  The top-level managed notice, agentic-service controls, approval-timeout
+  controls, product update controls, and the user-MCP settings pane are wired,
+  but other settings pages still need the same inline lock badges and disabled
+  controls.
 - Other non-settings live controls still need explicit inventory and managed
   clamps. The current policy source is startup-loaded, so future live policy
   reload support must also revoke or re-materialize affected in-memory state.

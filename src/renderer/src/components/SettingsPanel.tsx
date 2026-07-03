@@ -3296,6 +3296,14 @@ export function SettingsPanel({
     'updateChannel'
   )
   const productUpdateManagedLocked = autoUpdateManagedLocked || updateChannelManagedLocked
+  const agenticServicesManagedLocked = isManagedPolicySettingLocked(
+    managedPolicyStatus,
+    'agenticServices'
+  )
+  const approvalTimeoutsManagedLocked = isManagedPolicySettingLocked(
+    managedPolicyStatus,
+    'approvalTimeouts'
+  )
 
   useEffect(() => {
     if (!showDeleteHistoryConfirm) return
@@ -3784,6 +3792,7 @@ export function SettingsPanel({
     key: K,
     value: AgenticServicesSettings[K]
   ): void => {
+    if (agenticServicesManagedLocked) return
     onChange({ agenticServices: { ...agenticServices, [key]: value } })
   }
   const auditProviderAllowlist = auditOrchestration?.providerAllowlist ?? []
@@ -5721,14 +5730,21 @@ export function SettingsPanel({
                   <input
                     type="checkbox"
                     checked={approvalTimeouts.enabled}
-                    onChange={(e) =>
+                    disabled={approvalTimeoutsManagedLocked}
+                    onChange={(e) => {
+                      if (approvalTimeoutsManagedLocked) return
                       onChange({
                         approvalTimeouts: { ...approvalTimeouts, enabled: e.target.checked }
                       })
-                    }
+                    }}
                   />
                   Auto-deny approvals after a timeout
                 </label>
+                {approvalTimeoutsManagedLocked && (
+                  <p className="settings-hint">
+                    Approval timeout settings are managed by organization policy.
+                  </p>
+                )}
                 <p className="settings-hint">
                   When enabled, approvals sitting unanswered (in the desktop modal or on a paired
                   iPhone) are automatically declined after the per-provider window below. Disable
@@ -5742,7 +5758,7 @@ export function SettingsPanel({
                   <ApprovalTimeoutField
                     label="Gemini"
                     valueMs={approvalTimeouts.perProviderMs.gemini}
-                    disabled={!approvalTimeouts.enabled}
+                    disabled={!approvalTimeouts.enabled || approvalTimeoutsManagedLocked}
                     onChange={(ms) =>
                       onChange({
                         approvalTimeouts: {
@@ -5755,7 +5771,7 @@ export function SettingsPanel({
                   <ApprovalTimeoutField
                     label="Codex"
                     valueMs={approvalTimeouts.perProviderMs.codex}
-                    disabled={!approvalTimeouts.enabled}
+                    disabled={!approvalTimeouts.enabled || approvalTimeoutsManagedLocked}
                     onChange={(ms) =>
                       onChange({
                         approvalTimeouts: {
@@ -5768,7 +5784,7 @@ export function SettingsPanel({
                   <ApprovalTimeoutField
                     label="Claude"
                     valueMs={approvalTimeouts.perProviderMs.claude}
-                    disabled={!approvalTimeouts.enabled}
+                    disabled={!approvalTimeouts.enabled || approvalTimeoutsManagedLocked}
                     onChange={(ms) =>
                       onChange({
                         approvalTimeouts: {
@@ -5781,7 +5797,7 @@ export function SettingsPanel({
                   <ApprovalTimeoutField
                     label="Kimi"
                     valueMs={approvalTimeouts.perProviderMs.kimi}
-                    disabled={!approvalTimeouts.enabled}
+                    disabled={!approvalTimeouts.enabled || approvalTimeoutsManagedLocked}
                     onChange={(ms) =>
                       onChange({
                         approvalTimeouts: {
@@ -5794,7 +5810,7 @@ export function SettingsPanel({
                   <ApprovalTimeoutField
                     label="Grok"
                     valueMs={approvalTimeouts.perProviderMs.grok}
-                    disabled={!approvalTimeouts.enabled}
+                    disabled={!approvalTimeouts.enabled || approvalTimeoutsManagedLocked}
                     onChange={(ms) =>
                       onChange({
                         approvalTimeouts: {
@@ -5807,7 +5823,7 @@ export function SettingsPanel({
                   <ApprovalTimeoutField
                     label="Cursor"
                     valueMs={approvalTimeouts.perProviderMs.cursor}
-                    disabled={!approvalTimeouts.enabled}
+                    disabled={!approvalTimeouts.enabled || approvalTimeoutsManagedLocked}
                     onChange={(ms) =>
                       onChange({
                         approvalTimeouts: {
@@ -5820,7 +5836,7 @@ export function SettingsPanel({
                   <ApprovalTimeoutField
                     label="Ollama"
                     valueMs={approvalTimeouts.perProviderMs.ollama}
-                    disabled={!approvalTimeouts.enabled}
+                    disabled={!approvalTimeouts.enabled || approvalTimeoutsManagedLocked}
                     onChange={(ms) =>
                       onChange({
                         approvalTimeouts: {
@@ -5833,7 +5849,7 @@ export function SettingsPanel({
                   <ApprovalTimeoutField
                     label="Main authority"
                     valueMs={approvalTimeouts.mainAuthorityMs}
-                    disabled={!approvalTimeouts.enabled}
+                    disabled={!approvalTimeouts.enabled || approvalTimeoutsManagedLocked}
                     onChange={(ms) =>
                       onChange({ approvalTimeouts: { ...approvalTimeouts, mainAuthorityMs: ms } })
                     }
@@ -6139,12 +6155,18 @@ export function SettingsPanel({
                 <h4 className="sidebar-section-title" style={{ margin: 0 }}>
                   Agentic services
                 </h4>
+                {agenticServicesManagedLocked && (
+                  <p className="settings-hint">
+                    Agentic service policy is managed by organization policy.
+                  </p>
+                )}
                 <div className="settings-service-list">
                   <label className="settings-service-row">
                     <span>Shell commands</span>
                     <select
                       className="settings-select"
                       value={agenticServices.shellCommands}
+                      disabled={agenticServicesManagedLocked}
                       onChange={(e) =>
                         updateAgenticService(
                           'shellCommands',
@@ -6165,6 +6187,7 @@ export function SettingsPanel({
                     <select
                       className="settings-select"
                       value={agenticServices.fileChanges}
+                      disabled={agenticServicesManagedLocked}
                       onChange={(e) =>
                         updateAgenticService('fileChanges', e.target.value as AgenticServicePolicy)
                       }
@@ -6188,6 +6211,7 @@ export function SettingsPanel({
                     <select
                       className="settings-select"
                       value={agenticServices.externalPublish ?? 'ask'}
+                      disabled={agenticServicesManagedLocked}
                       onChange={(e) =>
                         updateAgenticService(
                           'externalPublish',
@@ -6208,6 +6232,7 @@ export function SettingsPanel({
                     <select
                       className="settings-select"
                       value={agenticServices.mcpTools}
+                      disabled={agenticServicesManagedLocked}
                       onChange={(e) =>
                         updateAgenticService('mcpTools', e.target.value as AgenticServicePolicy)
                       }
@@ -6233,6 +6258,7 @@ export function SettingsPanel({
                     <select
                       className="settings-select"
                       value={agenticServices.subThreadDelegation}
+                      disabled={agenticServicesManagedLocked}
                       onChange={(e) =>
                         updateAgenticService(
                           'subThreadDelegation',
@@ -6260,6 +6286,7 @@ export function SettingsPanel({
                     <select
                       className="settings-select"
                       value={agenticServices.canvasInteraction ?? 'ask'}
+                      disabled={agenticServicesManagedLocked}
                       onChange={(e) =>
                         updateAgenticService(
                           'canvasInteraction',
@@ -6288,6 +6315,7 @@ export function SettingsPanel({
                     <select
                       className="settings-select"
                       value={agenticServices.mediaEditing ?? 'ask'}
+                      disabled={agenticServicesManagedLocked}
                       onChange={(e) =>
                         updateAgenticService('mediaEditing', e.target.value as AgenticServicePolicy)
                       }
@@ -6335,6 +6363,7 @@ export function SettingsPanel({
                     <select
                       className="settings-select"
                       value={agenticServices.networkAccess}
+                      disabled={agenticServicesManagedLocked}
                       onChange={(e) =>
                         updateAgenticService(
                           'networkAccess',
@@ -9326,6 +9355,10 @@ function ApprovalTimeoutField({
   }, [valueMs])
 
   const commit = (raw: string): void => {
+    if (disabled) {
+      setDraftSec(String(Math.round(valueMs / 1000)))
+      return
+    }
     const parsed = Math.round(Number(raw))
     if (!Number.isFinite(parsed) || parsed <= 0) {
       // Reset to last valid value rather than persisting a bad number.

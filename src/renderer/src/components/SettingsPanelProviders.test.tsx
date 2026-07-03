@@ -505,6 +505,55 @@ describe('SettingsPanel provider cards', () => {
     expect(html).toContain('Export full audit bundle')
   })
 
+  it('locks approval timeout controls when organization policy owns them', () => {
+    const html = renderToStaticMarkup(
+      <SettingsPanel
+        {...makeSettingsProps({
+          activeTab: 'behavior',
+          managedPolicyStatus: {
+            active: true,
+            organizationName: 'Acme Corp',
+            source: 'signed-mdm-preferences',
+            lockedSettings: ['approvalTimeouts'],
+            enforcedSettings: ['approvalTimeouts'],
+            errors: []
+          }
+        })}
+      />
+    )
+
+    expect(html).toContain('Approval timeout settings are managed by organization policy.')
+    expect(html).toMatch(/Auto-deny approvals after a timeout/)
+    expect(html).toMatch(/<input type="checkbox" disabled="" checked=""/)
+    expect(html).toMatch(/class="approval-timeout-field-input" disabled="" value="120"/)
+  })
+
+  it('locks agentic service controls when organization policy owns them', () => {
+    const html = renderToStaticMarkup(
+      <SettingsPanel
+        {...makeSettingsProps({
+          activeTab: 'providers',
+          managedPolicyStatus: {
+            active: true,
+            organizationName: 'Acme Corp',
+            source: 'signed-mdm-preferences',
+            lockedSettings: ['agenticServices'],
+            enforcedSettings: ['agenticServices'],
+            errors: []
+          }
+        })}
+      />
+    )
+
+    expect(html).toContain('Agentic service policy is managed by organization policy.')
+    expect(html).toMatch(
+      /<label class="settings-service-row"><span>Shell commands<\/span><select class="settings-select" disabled="">/
+    )
+    expect(html).toMatch(
+      /<label class="settings-service-row"><span>Network access<\/span><select class="settings-select" disabled="">/
+    )
+  })
+
   it('locks user MCP server mutation controls when organization policy owns the setting', () => {
     const html = renderToStaticMarkup(
       <SettingsPanel
