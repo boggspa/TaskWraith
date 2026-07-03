@@ -177,6 +177,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   effectiveIsThinking,
   ensembleEnabledParticipantsForCurrent,
   exportProductDiagnostics,
+  exportProductAuditBundle,
   externalPathGrants,
   fileChangeDisplayAdds,
   fileChangeDisplayDels,
@@ -378,11 +379,13 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   refreshGeminiMcpBridgeStatus,
   refreshProductOperationsStatus,
   refreshProviderMetadata,
+  dryRunAuditRetention,
   rememberSideChatComposerSelection,
   renderMultiviewPaneCell,
   renderPreviewLaunchError,
   renderPreviewTargetMenu,
   repairProductInstall,
+  purgeAuditRetention,
   rightDockStyle,
   rightDockVisible,
   rightTab,
@@ -791,6 +794,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
               autoUpdateEnabled={autoUpdateEnabled}
               updateChannel={updateChannel}
               approvalTimeouts={approvalTimeouts}
+              auditRetention={settings?.auditRetention}
               managedPolicyStatus={managedPolicyStatus}
               productOperationsStatus={productOperationsStatus}
               codexStatus={codexStatus}
@@ -827,6 +831,9 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
               onRefreshProviderMcpStatus={(provider) => void refreshProviderMetadata(provider)}
               onRefreshProductOperationsStatus={() => void refreshProductOperationsStatus()}
               onExportProductDiagnostics={() => void exportProductDiagnostics()}
+              onExportProductAuditBundle={() => void exportProductAuditBundle()}
+              onDryRunAuditRetention={() => void dryRunAuditRetention()}
+              onPurgeAuditRetention={() => void purgeAuditRetention()}
               onRepairProductInstall={() => void repairProductInstall()}
               onDeleteAllChatHistory={() => handleDeleteAllChatHistory()}
               onChange={handleSettingsChange}

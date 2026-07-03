@@ -253,6 +253,10 @@ What exists:
 - Each purge writes a capped `audit-retention-purges.json` receipt with
   counts-only, path-redacted evidence of what was scanned, retained, and
   deleted. Diagnostics and audit-bundle export include those purge summaries.
+- Settings -> System -> Product operations now exposes the default signed audit
+  bundle export, the opt-in audit-retention enabled flag, per-surface retention
+  windows, a dry-run control, and a confirmation-gated purge control. Both
+  dry-runs and purges flow through the main/preload receipt-writing route.
 - Audit-bundle exports are now signed when Electron `safeStorage` is available:
   a long-lived Ed25519 key is generated once under `userData`,
   safeStorage-encrypted at rest, and reused so each exported bundle carries a
@@ -263,23 +267,21 @@ What exists:
 
 What is missing:
 
-- A Settings/UI entry point for `exportProductAuditBundle`; the export route is
-  callable through preload but not yet exposed as a polished control.
-- A Settings/UI entry point for configuring `auditRetention` and invoking
-  retention dry-run / purge. The main/preload route exists, but the control
-  surface is not polished.
 - A polished verification/export UI around the signed bundle evidence. The
   signer and verifier exist in main code and tests, but the user-facing control
-  surface is still only the preload route.
+  surface currently exposes export and retention actions without a verifier
+  status pane.
+- Workspace/thread/run filter controls for audit bundle export. The main route
+  supports scoped filters, but the first Settings entry point exports the full
+  redacted local bundle.
 - An explicit sensitive-field export flow. The current route is redacted-only
   and rejects unsupported sensitive modes, but there is not yet a separate
   user/admin decision path for exporting sensitive fields.
 
 Target:
 
-- Add a Settings/UI entry point around the existing `exportProductAuditBundle`
-  route, with explicit workspace/thread/run filter controls.
-- Add Settings/UI controls for audit retention windows and purge dry-runs.
+- Extend the Settings audit-bundle entry point with explicit workspace/thread/run
+  filter controls.
 - Add an explicit sensitive export mode only behind a separate user/admin
   decision; keep the default bundle redacted.
 - Expose verification results for signed audit bundles in the Settings/UI flow
@@ -761,7 +763,8 @@ Do this before broadening user-managed extension claims.
 Do this before claiming audit/compliance readiness.
 
 - Add one export surface that validates and packages the local evidence.
-- Add Settings/UI around the main-process retention settings and purge receipts.
+- Extend the Settings/UI retention surface with purge receipt browsing and signed
+  bundle verification status.
 - Add manifest hashing/signing and verification tooling.
 - Update docs to show exactly what is stored, capped, exported, redacted, and
   deleted.

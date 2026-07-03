@@ -97,6 +97,7 @@ import {
   RunRecoveryRecord,
   ProductOperationsStatus,
   ProductUpdateChannel,
+  AuditRetentionPurgeResult,
   ChatScope,
   ChatWorkflowMode,
   RuntimeProfile,
@@ -649,6 +650,24 @@ function streamFlushItemKey(runId: string, itemId?: string): string {
 function runIdFromStreamFlushItemKey(key: string): string {
   const separatorIndex = key.indexOf(STREAM_FLUSH_ITEM_KEY_SEPARATOR)
   return separatorIndex >= 0 ? key.slice(0, separatorIndex) : key
+}
+
+function summarizeAuditRetentionPurge(result: AuditRetentionPurgeResult): string {
+  if (!result.ok) return `failed: ${result.error || 'unknown error'}`
+  const receipt = result.receipt
+  if (!receipt) return 'completed without a receipt'
+  const totals = Object.values(receipt.counts).reduce(
+    (acc, counts) => ({
+      scanned: acc.scanned + counts.scanned,
+      retained: acc.retained + counts.retained,
+      deleted: acc.deleted + counts.deleted
+    }),
+    { scanned: 0, retained: 0, deleted: 0 }
+  )
+  const verb = receipt.dryRun ? 'would delete' : 'deleted'
+  const mode = receipt.dryRun ? 'dry-run' : 'purge'
+  const disabledNote = receipt.enabled ? '' : ' (retention disabled; forced dry-run)'
+  return `${mode}${disabledNote}: scanned ${totals.scanned}, retained ${totals.retained}, ${verb} ${totals.deleted}`
 }
 
 const FX_BURST_DURATION_MS = 1150
@@ -4990,6 +5009,9 @@ function App(): React.JSX.Element {
     }
     if (next.auditOrchestration !== undefined) {
       settingsPatch.auditOrchestration = next.auditOrchestration
+    }
+    if (next.auditRetention !== undefined) {
+      settingsPatch.auditRetention = next.auditRetention
     }
     if (next.agenticServices !== undefined) {
       const normalizedServices = { ...DEFAULT_AGENTIC_SERVICES, ...next.agenticServices }
@@ -15187,6 +15209,76 @@ function App(): React.JSX.Element {
     }
   }
 
+  const exportProductAuditBundle = async () => {
+    if (typeof window.api.exportProductAuditBundle !== 'function') return
+    try {
+      const result = await window.api.exportProductAuditBundle({ redactionMode: 'default' })
+      if (result.ok) {
+        setRawLogs((prev) => [
+          ...prev,
+          { type: 'info', content: `Audit bundle exported to ${result.path}` }
+        ])
+      } else if (result.error && result.error !== 'Audit bundle export cancelled.') {
+        setRawLogs((prev) => [
+          ...prev,
+          {
+            type: 'stderr',
+            content: `Audit bundle export failed: ${redactLog(String(result.error))}`
+          }
+        ])
+      }
+    } catch (error) {
+      setRawLogs((prev) => [
+        ...prev,
+        { type: 'stderr', content: `Audit bundle export failed: ${redactLog(String(error))}` }
+      ])
+    }
+  }
+
+  const dryRunAuditRetention = async () => {
+    if (typeof window.api.purgeProductAuditRetention !== 'function') return
+    try {
+      const result = await window.api.purgeProductAuditRetention({ dryRun: true })
+      const summary = summarizeAuditRetentionPurge(result)
+      setRawLogs((prev) => [
+        ...prev,
+        {
+          type: result.ok ? 'info' : 'stderr',
+          content: `Audit retention ${summary}`
+        }
+      ])
+    } catch (error) {
+      setRawLogs((prev) => [
+        ...prev,
+        { type: 'stderr', content: `Audit retention dry-run failed: ${redactLog(String(error))}` }
+      ])
+    }
+  }
+
+  const purgeAuditRetention = async () => {
+    if (typeof window.api.purgeProductAuditRetention !== 'function') return
+    const confirmed = window.confirm(
+      'Purge expired audit evidence using the configured retention windows? This writes a purge receipt.'
+    )
+    if (!confirmed) return
+    try {
+      const result = await window.api.purgeProductAuditRetention({ dryRun: false })
+      const summary = summarizeAuditRetentionPurge(result)
+      setRawLogs((prev) => [
+        ...prev,
+        {
+          type: result.ok ? 'info' : 'stderr',
+          content: `Audit retention ${summary}`
+        }
+      ])
+    } catch (error) {
+      setRawLogs((prev) => [
+        ...prev,
+        { type: 'stderr', content: `Audit retention purge failed: ${redactLog(String(error))}` }
+      ])
+    }
+  }
+
   const repairProductInstall = async () => {
     if (typeof window.api.repairProductInstall !== 'function') return
     try {
@@ -23787,6 +23879,7 @@ function App(): React.JSX.Element {
     effectiveIsThinking,
     ensembleEnabledParticipantsForCurrent,
     exportProductDiagnostics,
+    exportProductAuditBundle,
     externalPathGrants,
     fileChangeDisplayAdds,
     fileChangeDisplayDels,
@@ -23995,11 +24088,13 @@ function App(): React.JSX.Element {
     refreshGeminiMcpBridgeStatus,
     refreshProductOperationsStatus,
     refreshProviderMetadata,
+    dryRunAuditRetention,
     rememberSideChatComposerSelection,
     renderMultiviewPaneCell,
     renderPreviewLaunchError,
     renderPreviewTargetMenu,
     repairProductInstall,
+    purgeAuditRetention,
     rightDockStyle,
     rightDockVisible,
     rightTab,

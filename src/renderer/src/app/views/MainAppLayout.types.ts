@@ -225,6 +225,7 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   effectiveIsThinking: any
   ensembleEnabledParticipantsForCurrent: any
   exportProductDiagnostics: any
+  exportProductAuditBundle: any
   externalPathGrants: any
   fileChangeDisplayAdds: any
   fileChangeDisplayDels: any
@@ -433,11 +434,13 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   refreshGeminiMcpBridgeStatus: any
   refreshProductOperationsStatus: any
   refreshProviderMetadata: any
+  dryRunAuditRetention: any
   rememberSideChatComposerSelection: any
   renderMultiviewPaneCell: any
   renderPreviewLaunchError: any
   renderPreviewTargetMenu: any
   repairProductInstall: any
+  purgeAuditRetention: any
   rightDockStyle: any
   rightDockVisible: any
   rightTab: any

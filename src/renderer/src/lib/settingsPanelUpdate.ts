@@ -79,4 +79,5 @@ export type SettingsPanelUpdate = {
   autoUpdateEnabled?: boolean
   updateChannel?: ProductUpdateChannel
   approvalTimeouts?: AppSettings['approvalTimeouts']
+  auditRetention?: AppSettings['auditRetention']
 }

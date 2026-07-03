@@ -92,6 +92,18 @@ function makeSettingsProps(overrides: Partial<SettingsPanelProps> = {}): Setting
       mainAuthorityMs: 60_000
     },
     productOperationsStatus: null,
+    auditRetention: {
+      enabled: false,
+      maxAgeDays: {
+        approvalLedger: 365,
+        runEvents: 180,
+        workspaceChanges: 180,
+        auditRuns: 365,
+        messageFeedback: 365,
+        externalPublish: 365,
+        productCrashes: 90
+      }
+    },
     codexStatus: null,
     claudeAuthStatus: null,
     kimiAuthStatus: null,
@@ -103,6 +115,9 @@ function makeSettingsProps(overrides: Partial<SettingsPanelProps> = {}): Setting
     onRefreshGeminiMcpBridgeStatus: () => {},
     onRefreshProductOperationsStatus: () => {},
     onExportProductDiagnostics: () => {},
+    onExportProductAuditBundle: () => {},
+    onDryRunAuditRetention: () => {},
+    onPurgeAuditRetention: () => {},
     onRepairProductInstall: () => {},
     onChange: () => {},
     onClose: () => {},

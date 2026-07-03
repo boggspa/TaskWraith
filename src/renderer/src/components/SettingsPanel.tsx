@@ -19,6 +19,7 @@ import type {
   ProviderRunPauseState,
   ProductOperationsStatus,
   ProductUpdateChannel,
+  AuditRetentionSurface,
   PromptSurfaceStyle,
   ComposerStyle,
   ThemeAccentStyle,
@@ -116,6 +117,16 @@ import {
 type ProviderCliUpgradeState = 'idle' | 'opening' | 'opened' | 'error'
 type ManagedPolicyStatus = Record<string, unknown>
 
+const AUDIT_RETENTION_SURFACES: Array<{ key: AuditRetentionSurface; label: string }> = [
+  { key: 'approvalLedger', label: 'Approvals' },
+  { key: 'runEvents', label: 'Run events' },
+  { key: 'workspaceChanges', label: 'Workspace changes' },
+  { key: 'auditRuns', label: 'Audit runs' },
+  { key: 'messageFeedback', label: 'Feedback receipts' },
+  { key: 'externalPublish', label: 'Publish receipts' },
+  { key: 'productCrashes', label: 'Crash diagnostics' }
+]
+
 interface SettingsPanelProps {
   mode: AppearanceMode
   visualEffectStyle: VisualEffectStyle
@@ -194,6 +205,7 @@ interface SettingsPanelProps {
   autoUpdateEnabled: boolean
   updateChannel: ProductUpdateChannel
   approvalTimeouts: AppSettings['approvalTimeouts']
+  auditRetention?: AppSettings['auditRetention']
   managedPolicyStatus?: ManagedPolicyStatus | null
   productOperationsStatus: ProductOperationsStatus | null
   codexStatus?: any
@@ -229,6 +241,9 @@ interface SettingsPanelProps {
   onRefreshProviderMcpStatus?: (provider: ProviderId) => void
   onRefreshProductOperationsStatus: () => void
   onExportProductDiagnostics: () => void
+  onExportProductAuditBundle: () => void
+  onDryRunAuditRetention: () => void
+  onPurgeAuditRetention: () => void
   onRepairProductInstall: () => void
   onDeleteAllChatHistory?: () => Promise<void> | void
   onChange: (partial: {
@@ -296,6 +311,7 @@ interface SettingsPanelProps {
     autoUpdateEnabled?: boolean
     updateChannel?: ProductUpdateChannel
     approvalTimeouts?: AppSettings['approvalTimeouts']
+    auditRetention?: AppSettings['auditRetention']
   }) => void
   onClose: () => void
   /**
@@ -2927,6 +2943,7 @@ export function SettingsPanel({
   autoUpdateEnabled,
   updateChannel,
   approvalTimeouts,
+  auditRetention,
   managedPolicyStatus,
   productOperationsStatus,
   codexStatus,
@@ -2953,6 +2970,9 @@ export function SettingsPanel({
   onRefreshProviderMcpStatus,
   onRefreshProductOperationsStatus,
   onExportProductDiagnostics,
+  onExportProductAuditBundle,
+  onDryRunAuditRetention,
+  onPurgeAuditRetention,
   onRepairProductInstall,
   onDeleteAllChatHistory,
   onChange,
@@ -2997,6 +3017,20 @@ export function SettingsPanel({
   const requestedActiveTab = activeTabProp ?? internalActiveTab
   const activeTab = resolveVisibleSettingsTab(requestedActiveTab)
   const visibleSettingsTabs = getVisibleSettingsTabs()
+  const auditRetentionEnabled = auditRetention?.enabled === true
+  const auditRetentionMaxAgeDays = auditRetention?.maxAgeDays || {}
+  const updateAuditRetentionSurface = (surface: AuditRetentionSurface, rawDays: number): void => {
+    const days = Number.isFinite(rawDays) ? Math.max(1, Math.floor(rawDays)) : 1
+    onChange({
+      auditRetention: {
+        ...(auditRetention || {}),
+        maxAgeDays: {
+          ...(auditRetention?.maxAgeDays || {}),
+          [surface]: days
+        }
+      }
+    })
+  }
   const setActiveTab = (next: SettingsTab): void => {
     if (!isSettingsTabVisible(next)) return
     if (onTabChange) onTabChange(next)
@@ -8265,6 +8299,13 @@ export function SettingsPanel({
                   <button
                     className="btn btn-sm btn-ghost"
                     type="button"
+                    onClick={onExportProductAuditBundle}
+                  >
+                    Export audit bundle
+                  </button>
+                  <button
+                    className="btn btn-sm btn-ghost"
+                    type="button"
                     onClick={onRepairProductInstall}
                   >
                     Repair install
@@ -8287,6 +8328,65 @@ export function SettingsPanel({
                     {productOperationsStatus.releaseAutomation.notarization.message}
                   </p>
                 )}
+                <label className="settings-service-row">
+                  <span>Enable audit retention purge</span>
+                  <input
+                    type="checkbox"
+                    checked={auditRetentionEnabled}
+                    onChange={(e) =>
+                      onChange({
+                        auditRetention: {
+                          ...(auditRetention || {}),
+                          enabled: e.target.checked
+                        }
+                      })
+                    }
+                  />
+                </label>
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+                    gap: 8
+                  }}
+                >
+                  {AUDIT_RETENTION_SURFACES.map((surface) => (
+                    <label key={surface.key} className="settings-service-row">
+                      <span>{surface.label}</span>
+                      <input
+                        className="settings-input"
+                        type="number"
+                        min={1}
+                        max={3650}
+                        value={auditRetentionMaxAgeDays[surface.key] ?? 365}
+                        onChange={(e) =>
+                          updateAuditRetentionSurface(surface.key, Number(e.target.value))
+                        }
+                        style={{ width: 84 }}
+                      />
+                    </label>
+                  ))}
+                </div>
+                <div className="settings-option-list settings-option-list-inline">
+                  <button
+                    className="btn btn-sm btn-ghost"
+                    type="button"
+                    onClick={onDryRunAuditRetention}
+                  >
+                    Dry-run retention
+                  </button>
+                  <button
+                    className="btn btn-sm btn-ghost"
+                    type="button"
+                    onClick={onPurgeAuditRetention}
+                  >
+                    Purge expired evidence
+                  </button>
+                </div>
+                <p className="settings-hint">
+                  Retention purges are opt-in. Dry-runs and purges write capped purge receipts that
+                  are included in diagnostics and audit bundles.
+                </p>
               </div>
             </>
           ) /* end system */
