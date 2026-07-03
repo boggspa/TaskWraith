@@ -1,5 +1,5 @@
 import { createHash } from 'crypto'
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'fs'
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'fs'
 import { dirname } from 'path'
 
 /**
@@ -470,8 +470,9 @@ export class RemoteWorkspaceAllowlist {
       }
       const serialized = JSON.stringify(data, null, 2)
       const tmpPath = `${this.storagePath}.tmp`
-      writeFileSync(tmpPath, serialized, 'utf-8')
+      writeFileSync(tmpPath, serialized, { encoding: 'utf-8', mode: 0o600 })
       renameSync(tmpPath, this.storagePath)
+      chmodSync(this.storagePath, 0o600)
     } catch (err) {
       this.log(
         `[RemoteWorkspaceAllowlist] persist failed: ${err instanceof Error ? err.message : String(err)}`

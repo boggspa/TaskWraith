@@ -384,7 +384,8 @@ export class ApprovalService {
           workspacePath: info.workspacePath,
           runId: info.runId,
           title: 'Approval requested',
-          body: 'Main-process approval is waiting for a decision.'
+          body: 'Main-process approval is waiting for a decision.',
+          allowedActions: info.allowedActions
         })
       )
     }
@@ -394,7 +395,8 @@ export class ApprovalService {
           workspacePath: info.workspacePath,
           runId: info.runId,
           title: `${info.service} approval requested`,
-          body: 'Gemini requested a gated tool or workspace action.'
+          body: 'Gemini requested a gated tool or workspace action.',
+          allowedActions: info.allowedActions
         })
       )
     }
@@ -404,16 +406,19 @@ export class ApprovalService {
           workspacePath: info.workspacePath,
           runId: info.runId,
           title: String(info.method || info.service || 'Codex approval requested'),
-          body: compactJSON(info.params)
+          body: compactJSON(info.params),
+          allowedActions: info.allowedActions
         })
       )
     }
     for (const [approvalId, info] of this.pendingKimi.entries()) {
       cards.push(
         this.projectApprovalCard(approvalId, 'kimi', {
+          workspacePath: info.workspacePath,
           runId: info.runId,
           title: 'Kimi approval requested',
-          body: compactJSON(info.params)
+          body: compactJSON(info.params),
+          allowedActions: info.allowedActions
         })
       )
     }
@@ -424,7 +429,8 @@ export class ApprovalService {
           runId: info.appRunId,
           threadId: info.appChatId || info.threadId,
           title: 'Run host command',
-          body: `${info.commandText}\n${info.cwd}`
+          body: `${info.commandText}\n${info.cwd}`,
+          allowedActions: info.allowedActions
         })
       )
     }
@@ -472,9 +478,11 @@ export class ApprovalService {
       threadId?: string
       title: string
       body?: string
+      allowedActions?: AgentApprovalAction[]
     }
   ): MobileApprovalCard {
     const session = input.runId ? this.deps.runManager.get(input.runId) : undefined
+    const workspacePath = input.workspacePath ?? session?.workspacePath
     // Stamp the REAL armed auto-deny deadline (per-provider user setting,
     // per-kind overrides included) so remote clients can show a countdown
     // that matches what the desktop will actually do. Absent when timeouts
@@ -483,15 +491,13 @@ export class ApprovalService {
     return buildMobileApprovalCard({
       toolCallId: approvalId,
       threadId: input.threadId || session?.appChatId || input.runId,
-      workspaceId: input.workspacePath
-        ? this.deps.workspaceIdForPath(input.workspacePath)
-        : undefined,
-      workspacePath: input.workspacePath,
+      workspaceId: workspacePath ? this.deps.workspaceIdForPath(workspacePath) : undefined,
+      workspacePath,
       runId: input.runId,
       provider,
       title: input.title,
       body: input.body,
-      actions: ['accept', 'decline'],
+      actions: input.allowedActions,
       expiresAt: deadline ? new Date(deadline).toISOString() : undefined
     })
   }

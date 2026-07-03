@@ -235,6 +235,83 @@ describe('ApprovalService — registries', () => {
     ])
   })
 
+  it('listProjectionCards projects non-default allowed actions', () => {
+    const { deps } = makeDeps()
+    const svc = new ApprovalService(deps)
+    svc.registerMain('m-1', {
+      provider: 'claude',
+      workspacePath: '/ws',
+      runId: 'r-1',
+      allowedActions: ['useProviderNative', 'useTaskWraithSubthread'],
+      resolve: vi.fn()
+    })
+    svc.registerGeminiTool('g-1', {
+      provider: 'ollama',
+      service: 'shellCommands',
+      workspacePath: '/ws',
+      runId: 'r-1',
+      allowedActions: ['accept', 'decline', 'cancel'],
+      resolve: vi.fn()
+    })
+
+    expect(svc.listProjectionCards()).toEqual([
+      expect.objectContaining({
+        toolCallId: 'm-1',
+        actions: ['useProviderNative', 'useTaskWraithSubthread']
+      }),
+      expect.objectContaining({
+        toolCallId: 'g-1',
+        actions: ['accept', 'decline', 'cancel']
+      })
+    ])
+  })
+
+  it('listProjectionCards projects Kimi workspace from the pending record', () => {
+    const { deps } = makeDeps()
+    const svc = new ApprovalService(deps)
+    svc.registerKimi('k-1', {
+      child: { kill: vi.fn() } as never,
+      rpcId: 1,
+      params: {},
+      workspacePath: '/kimi-ws',
+      runId: 'r-1'
+    })
+
+    expect(svc.listProjectionCards()[0]).toEqual(
+      expect.objectContaining({
+        toolCallId: 'k-1',
+        provider: 'kimi',
+        workspaceId: '/kimi-ws',
+        workspacePath: '/kimi-ws'
+      })
+    )
+  })
+
+  it('listProjectionCards falls back to the run session workspace path', () => {
+    const { deps, spies } = makeDeps()
+    spies.runManager.get.mockReturnValue({
+      runId: 'r-1',
+      appChatId: 'c-1',
+      providerSessionId: 's-1',
+      workspacePath: '/session-ws'
+    })
+    const svc = new ApprovalService(deps)
+    svc.registerKimi('k-1', {
+      child: { kill: vi.fn() } as never,
+      rpcId: 1,
+      params: {},
+      runId: 'r-1'
+    })
+
+    expect(svc.listProjectionCards()[0]).toEqual(
+      expect.objectContaining({
+        toolCallId: 'k-1',
+        workspaceId: '/session-ws',
+        workspacePath: '/session-ws'
+      })
+    )
+  })
+
   it('getHostCommand returns the registered approval; deleteHostCommand removes it', () => {
     const { deps } = makeDeps()
     const svc = new ApprovalService(deps)

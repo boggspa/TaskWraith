@@ -27303,7 +27303,6 @@ if (isGeminiMcpBridgeProcess) {
         // refuse outright — so a broken tailnet degrades to home-Wi-Fi
         // pairing instead of a bare NSURLError -1004 on the phone.
         let pairingWarning: string | null = null
-        let advertiseRelayUrls: string[] | undefined
         const runtimeRelayUrls = iosRemoteRuntime.describeHost().relayUrls
         const relayCandidates =
           selfHostedWssLane?.candidates.length ? selfHostedWssLane.candidates : runtimeRelayUrls
@@ -27344,7 +27343,7 @@ if (isGeminiMcpBridgeProcess) {
               'Settings → Devices → iOS remote bridge off/on.'
           }
         }
-        advertiseRelayUrls = selection.advertisable
+        const advertiseRelayUrls = selection.advertisable
         if (selection.warnings.length > 0) {
           const detected = await resolveTailscaleWssLane(configuredSettingsRelayUrl() || null)
           const setupHint = detected

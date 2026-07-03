@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
+import { chmodSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import {
@@ -550,6 +550,26 @@ describe('RemoteWorkspaceAllowlist', () => {
         tmpExists = false
       }
       expect(tmpExists).toBe(false)
+    })
+
+    it('writes the temp-renamed policy file with owner-only permissions', () => {
+      writeFileSync(storagePath, JSON.stringify({ version: 1, entries: [] }), {
+        encoding: 'utf-8',
+        mode: 0o666
+      })
+      chmodSync(storagePath, 0o666)
+
+      const a = new RemoteWorkspaceAllowlist({ storagePath })
+      a.upsert({
+        workspaceId: 'ws-1',
+        path: '/a',
+        mode: 'read-write',
+        allowedProviders: ['gemini'],
+        allowedApprovalModes: ['default']
+      })
+
+      expect(statSync(storagePath).mode & 0o777).toBe(0o600)
+      expect(() => statSync(`${storagePath}.tmp`)).toThrow()
     })
 
     it('is in-memory only when no storagePath is provided', () => {

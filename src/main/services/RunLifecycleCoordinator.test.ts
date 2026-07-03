@@ -64,7 +64,7 @@ function makeJob(overrides: Partial<RunQueueJob> = {}): RunQueueJob {
 
 describe('RunLifecycleCoordinator', () => {
   it('claims the next queued job and returns a sanitized legacy dispatch ticket', async () => {
-    let job = makeJob({
+    const job = makeJob({
       dispatchReceipt: makeDispatchReceipt(),
       request: makeRequest({
         prompt: 'Clean this up.',

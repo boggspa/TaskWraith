@@ -266,6 +266,14 @@ export class BridgeActionRouter {
       case 'bridge.requestPrepareStartTurnAck':
         return this.handlePrepareStartTurnAck(params)
       default:
+        await this.auditRawBridgeDecision({
+          pairID: pairIdFromParams(params),
+          action: method || 'unknownMethod',
+          decision: 'denied',
+          reasonCode: 'unknownAction',
+          reason: `BridgeActionRouter: no handler for method "${method}"`,
+          metadata: { method: method || 'unknown' }
+        })
         throw new Error(`BridgeActionRouter: no handler for method "${method}"`)
     }
   }
@@ -277,6 +285,14 @@ export class BridgeActionRouter {
     const payloadBase64 = typeof dict.payloadBase64 === 'string' ? dict.payloadBase64 : ''
 
     if (this.permissiveDev) {
+      await this.auditRawBridgeDecision({
+        pairID,
+        action: 'actionAck',
+        decision: 'allowed',
+        reasonCode: 'permissiveDev',
+        reason: 'permissive-dev: accepted without payload inspection',
+        metadata: { payloadBytes: bytes }
+      })
       this.log(
         `[BridgeActionRouter] permissive-dev ACCEPT actionAck pairID=${pairID} bytes=${bytes}`
       )
@@ -305,6 +321,14 @@ export class BridgeActionRouter {
         this.log(
           `[BridgeActionRouter] DENY actionAck pairID=${pairID} malformed payload (stage=${err.stage}): ${err.message}`
         )
+        await this.auditRawBridgeDecision({
+          pairID,
+          action: 'actionAck',
+          decision: 'denied',
+          reasonCode: 'malformedPayload',
+          reason: `Malformed action payload (${err.stage}): ${err.message}`,
+          metadata: { decodeStage: err.stage, payloadBytes: bytes }
+        })
         return this.buildActionAck({
           pairID,
           accepted: false,
@@ -316,6 +340,14 @@ export class BridgeActionRouter {
       this.log(
         `[BridgeActionRouter] DENY actionAck pairID=${pairID} payload decode threw unexpectedly: ${err instanceof Error ? err.message : String(err)}`
       )
+      await this.auditRawBridgeDecision({
+        pairID,
+        action: 'actionAck',
+        decision: 'denied',
+        reasonCode: 'payloadDecodeFailed',
+        reason: 'Action payload decode failed',
+        metadata: { payloadBytes: bytes }
+      })
       return this.buildActionAck({
         pairID,
         accepted: false,
@@ -326,16 +358,26 @@ export class BridgeActionRouter {
     }
 
     if (payload.kind === 'unknown') {
+      const message = `Unrecognized action kind "${payload.rawKind}" — Electron may be older than the iOS client`
       this.log(
         `[BridgeActionRouter] DENY actionAck pairID=${pairID} unknown kind="${payload.rawKind}"`
       )
+      await this.auditActionDecision({
+        pairID,
+        payload,
+        capability: null,
+        decision: 'denied',
+        reasonCode: 'unknownAction',
+        reason: message,
+        metadata: { rawKind: payload.rawKind }
+      })
       return this.buildActionAck({
         pairID,
         accepted: false,
         reasonCode: 'unknownAction',
         actionKind: 'unknown',
         scope: 'once',
-        message: `Unrecognized action kind "${payload.rawKind}" — Electron may be older than the iOS client`
+        message
       })
     }
 
@@ -353,6 +395,18 @@ export class BridgeActionRouter {
         this.log(
           `[BridgeActionRouter] DENY actionAck pairID=${pairID} kind=${payload.kind} reason="${message}"`
         )
+        await this.auditActionDecision({
+          pairID,
+          payload,
+          capability: capabilityForPayload(payload),
+          decision: 'denied',
+          reasonCode: 'actionExpired',
+          reason: message,
+          metadata: {
+            missingActionId: !actionId,
+            missingExpiresAt: expiresAt === null
+          }
+        })
         return this.buildActionAck({
           pairID,
           accepted: false,
@@ -364,7 +418,7 @@ export class BridgeActionRouter {
       }
     }
 
-    const replayGuard = this.reserveActionId(pairID, payload)
+    const replayGuard = await this.reserveActionId(pairID, payload)
     if (replayGuard) return replayGuard
 
     if (payloadRequiresWorkspaceGating(payload)) {
@@ -379,6 +433,7 @@ export class BridgeActionRouter {
           payload,
           capability,
           decision: 'denied',
+          reasonCode: 'missingWorkspaceId',
           reason: 'Action payload is missing workspaceId'
         })
         return this.buildActionAck({
@@ -410,6 +465,7 @@ export class BridgeActionRouter {
             payload,
             capability,
             decision: 'denied',
+            reasonCode,
             reason: decision.reason
           })
           return this.buildActionAck({
@@ -432,6 +488,7 @@ export class BridgeActionRouter {
             payload,
             capability,
             decision: 'denied',
+            reasonCode: ownershipDecision.reasonCode ?? 'ownershipDenied',
             reason: ownershipDecision.reason
           })
           return this.buildActionAck({
@@ -452,6 +509,7 @@ export class BridgeActionRouter {
           payload,
           capability,
           decision: 'denied',
+          reasonCode: 'allowlistUnavailable',
           reason: 'iOS action routing not yet enabled — no workspace allowlist configured'
         })
         return this.buildActionAck({
@@ -479,6 +537,7 @@ export class BridgeActionRouter {
       payload,
       capability: capabilityForPayload(payload),
       decision: 'allowed',
+      reasonCode: dispatch.reasonCode ?? 'accepted',
       reason: dispatch.message || 'accepted'
     })
     return this.buildActionAck({
@@ -613,6 +672,14 @@ export class BridgeActionRouter {
     const approvalMode = typeof dict.approvalMode === 'string' ? dict.approvalMode : undefined
 
     if (this.permissiveDev) {
+      await this.auditPrepareStartTurnDecision({
+        pairID,
+        workspaceId: workspaceID,
+        threadId: threadID,
+        decision: 'allowed',
+        reasonCode: 'permissiveDev',
+        reason: 'permissive-dev: accepted without allowlist check'
+      })
       this.log(
         `[BridgeActionRouter] permissive-dev ACCEPT prepareStartTurn pairID=${pairID} ws=${workspaceID}`
       )
@@ -638,6 +705,7 @@ export class BridgeActionRouter {
         workspaceId: workspaceID,
         threadId: threadID,
         decision: 'denied',
+        reasonCode: 'allowlistUnavailable',
         reason: 'iOS-initiated turns not yet enabled — no workspace allowlist configured'
       })
       return {
@@ -685,6 +753,7 @@ export class BridgeActionRouter {
           workspaceId: workspaceID,
           threadId: threadID,
           decision: 'denied',
+          reasonCode: ownershipDecision.reasonCode ?? 'ownershipDenied',
           reason: ownershipDecision.reason
         })
         return {
@@ -707,6 +776,7 @@ export class BridgeActionRouter {
         workspaceId: workspaceID,
         threadId: threadID,
         decision: 'allowed',
+        reasonCode: 'accepted',
         reason: `Workspace "${workspaceID}" allowed (${decision.entry.mode})`
       })
       return {
@@ -724,20 +794,22 @@ export class BridgeActionRouter {
     this.log(
       `[BridgeActionRouter] DENY prepareStartTurn pairID=${pairID} ws=${workspaceID} reason="${decision.reason}"`
     )
+    const reasonCode = decision.reason.includes('Capability "startTurn"')
+      ? 'capabilityDenied'
+      : 'workspaceDenied'
     await this.auditPrepareStartTurnDecision({
       pairID,
       workspaceId: workspaceID,
       threadId: threadID,
       decision: 'denied',
+      reasonCode,
       reason: decision.reason
     })
     return {
       v: 1,
       schemaVersion: 1,
       accepted: false,
-      reasonCode: decision.reason.includes('Capability "startTurn"')
-        ? 'capabilityDenied'
-        : 'workspaceDenied',
+      reasonCode,
       actionKind: 'prepareStartTurn',
       workspaceId: workspaceID,
       threadId: threadID,
@@ -791,23 +863,33 @@ export class BridgeActionRouter {
     payload: BridgeActionPayload
     capability: RemoteWorkspaceCapability | null
     decision: RemoteDeviceAuditDecision
+    reasonCode: BridgeActionAckReasonCode
     reason: string
+    metadata?: Record<string, string | number | boolean>
   }): Promise<void> {
-    if (!this.auditLedger || !input.capability) return
+    if (!this.auditLedger) return
     const descriptor = actionAckDescriptorFromPayload(input.payload)
     const actionId = actionIdFromPayload(input.payload)
+    const capability = input.capability ?? 'system'
     const deterministicId = actionId
-      ? `remote-action:${input.pairID}:${actionId}:${input.capability}:${input.decision}`
+      ? `remote-action:${input.pairID}:${actionId}:${capability}:${input.decision}`
       : undefined
     try {
       await this.auditLedger.append({
         ...(deterministicId ? { id: deterministicId } : {}),
         deviceId: input.pairID,
-        capability: input.capability,
+        capability,
         action: input.payload.kind,
         chatId: chatIdFromPayload(input.payload) ?? descriptor.threadId,
         decision: input.decision,
+        reasonCode: input.reasonCode,
         reason: input.reason,
+        metadata: {
+          actionKind: input.payload.kind,
+          ...(descriptor.actionId ? { actionId: descriptor.actionId } : {}),
+          ...(descriptor.workspaceId ? { workspaceId: descriptor.workspaceId } : {}),
+          ...(input.metadata ?? {})
+        },
         timestamp: formatTimestamp(this.now())
       })
     } catch (err) {
@@ -822,6 +904,7 @@ export class BridgeActionRouter {
     workspaceId: string
     threadId?: string
     decision: RemoteDeviceAuditDecision
+    reasonCode: BridgeActionAckReasonCode
     reason: string
   }): Promise<void> {
     if (!this.auditLedger) return
@@ -832,7 +915,9 @@ export class BridgeActionRouter {
         action: 'prepareStartTurn',
         chatId: input.threadId,
         decision: input.decision,
+        reasonCode: input.reasonCode,
         reason: input.reason,
+        metadata: { workspaceId: input.workspaceId },
         timestamp: formatTimestamp(this.now())
       })
     } catch (err) {
@@ -842,10 +927,37 @@ export class BridgeActionRouter {
     }
   }
 
-  private reserveActionId(
+  private async auditRawBridgeDecision(input: {
+    pairID: string
+    action: string
+    decision: RemoteDeviceAuditDecision
+    reasonCode: BridgeActionAckReasonCode
+    reason: string
+    metadata?: Record<string, string | number | boolean>
+  }): Promise<void> {
+    if (!this.auditLedger) return
+    try {
+      await this.auditLedger.append({
+        deviceId: input.pairID,
+        capability: 'system',
+        action: input.action,
+        decision: input.decision,
+        reasonCode: input.reasonCode,
+        reason: input.reason,
+        metadata: input.metadata,
+        timestamp: formatTimestamp(this.now())
+      })
+    } catch (err) {
+      this.log(
+        `[BridgeActionRouter] remote device audit write failed: ${err instanceof Error ? err.message : String(err)}`
+      )
+    }
+  }
+
+  private async reserveActionId(
     pairID: string,
     payload: BridgeActionPayload
-  ): BridgeActionAckResult | null {
+  ): Promise<BridgeActionAckResult | null> {
     const actionId = actionIdFromPayload(payload)
     if (!actionId) return null
 
@@ -861,6 +973,14 @@ export class BridgeActionRouter {
       this.log(
         `[BridgeActionRouter] DENY actionAck pairID=${pairID} kind=${payload.kind} actionId=${actionId} reason="${message}"`
       )
+      await this.auditActionDecision({
+        pairID,
+        payload,
+        capability: capabilityForPayload(payload),
+        decision: 'denied',
+        reasonCode: 'actionExpired',
+        reason: message
+      })
       return this.buildActionAck({
         pairID,
         accepted: false,
@@ -875,6 +995,14 @@ export class BridgeActionRouter {
       this.log(
         `[BridgeActionRouter] DENY actionAck pairID=${pairID} kind=${payload.kind} actionId=${actionId} reason="${message}"`
       )
+      await this.auditActionDecision({
+        pairID,
+        payload,
+        capability: capabilityForPayload(payload),
+        decision: 'denied',
+        reasonCode: 'actionExpired',
+        reason: message
+      })
       return this.buildActionAck({
         pairID,
         accepted: false,
@@ -892,6 +1020,14 @@ export class BridgeActionRouter {
       this.log(
         `[BridgeActionRouter] DENY actionAck pairID=${pairID} kind=${payload.kind} actionId=${actionId} reason="${message}"`
       )
+      await this.auditActionDecision({
+        pairID,
+        payload,
+        capability: capabilityForPayload(payload),
+        decision: 'denied',
+        reasonCode: 'actionReplayed',
+        reason: message
+      })
       return this.buildActionAck({
         pairID,
         accepted: false,
@@ -950,6 +1086,11 @@ export class BridgeActionRouter {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+}
+
+function pairIdFromParams(params: unknown): string {
+  if (!isRecord(params)) return '?'
+  return String(params.pairID ?? '?')
 }
 
 function providerFromPayload(payload: BridgeActionPayload): string | undefined {

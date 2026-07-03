@@ -221,7 +221,11 @@ function makeAuditLedger(): {
         action: input.action,
         ...(input.chatId ? { chatId: input.chatId } : {}),
         decision: input.decision,
+        ...(input.reasonCode ? { reasonCode: input.reasonCode } : {}),
         reason: input.reason,
+        ...(input.metadata
+          ? { metadata: input.metadata as RemoteDeviceAuditRecord['metadata'] }
+          : {}),
         timestamp: input.timestamp || '2026-05-31T21:00:00.000Z'
       }
       const existing = records.find((row) => row.id === record.id)
@@ -675,6 +679,30 @@ describe('BridgeActionRouter', () => {
       expect(result.message).toMatch(/malformed action payload/i)
     })
 
+    it('audits malformed actionAck payloads as system denials with reason codes', async () => {
+      const { ledger, records } = makeAuditLedger()
+      const router = new BridgeActionRouter({ allowlist: seedAllowlist(), auditLedger: ledger })
+
+      const result = (await router.route('bridge.requestActionAck', {
+        pairID: 'iphone-malformed',
+        payloadBytes: 999,
+        payloadBase64: '!!!not-base64!!!'
+      })) as { accepted: boolean; reasonCode?: string }
+
+      expect(result.accepted).toBe(false)
+      expect(result.reasonCode).toBe('malformedPayload')
+      expect(records).toEqual([
+        expect.objectContaining({
+          deviceId: 'iphone-malformed',
+          capability: 'system',
+          action: 'actionAck',
+          decision: 'denied',
+          reasonCode: 'malformedPayload',
+          metadata: expect.objectContaining({ decodeStage: 'base64', payloadBytes: 999 })
+        })
+      ])
+    })
+
     it('actionAck denies malformed JSON inside valid base64', async () => {
       const router = new BridgeActionRouter({ allowlist: seedAllowlist() })
       const wire = Buffer.from('not json {', 'utf-8').toString('base64')
@@ -700,6 +728,37 @@ describe('BridgeActionRouter', () => {
       })) as { accepted: boolean; message?: string }
       expect(result.accepted).toBe(false)
       expect(result.message).toMatch(/unrecognized action kind "futureKind"/i)
+    })
+
+    it('audits unknown action kinds even though no capability can be derived', async () => {
+      const { ledger, records } = makeAuditLedger()
+      const router = new BridgeActionRouter({ allowlist: seedAllowlist(), auditLedger: ledger })
+      const wire = Buffer.from(
+        JSON.stringify(withReplayMeta({
+          kind: 'futureKind',
+          workspaceId: 'ws-allowed',
+          stuff: true
+        })),
+        'utf-8'
+      ).toString('base64')
+
+      const result = (await router.route('bridge.requestActionAck', {
+        pairID: 'iphone-unknown',
+        payloadBase64: wire
+      })) as { accepted: boolean; reasonCode?: string }
+
+      expect(result.accepted).toBe(false)
+      expect(result.reasonCode).toBe('unknownAction')
+      expect(records).toEqual([
+        expect.objectContaining({
+          deviceId: 'iphone-unknown',
+          capability: 'system',
+          action: 'unknown',
+          decision: 'denied',
+          reasonCode: 'unknownAction',
+          metadata: expect.objectContaining({ actionKind: 'unknown', rawKind: 'futureKind' })
+        })
+      ])
     })
 
     it('actionAck accepts approvalReply variant for an allowlisted workspace', async () => {
@@ -781,10 +840,12 @@ describe('BridgeActionRouter', () => {
 
     it('denies replayed actionIds for the same pairID', async () => {
       const { executor, calls } = makeStubExecutor()
+      const { ledger, records } = makeAuditLedger()
       const router = new BridgeActionRouter({
         allowlist: seedAllowlist(),
         executor,
-        now: () => 10_000
+        now: () => 10_000,
+        auditLedger: ledger
       })
       const params = {
         pairID: 'pair-1',
@@ -807,6 +868,18 @@ describe('BridgeActionRouter', () => {
       expect(second.reasonCode).toBe('actionReplayed')
       expect(second.actionId).toBe('a-1')
       expect(calls).toHaveLength(1)
+      expect(records).toEqual([
+        expect.objectContaining({
+          id: 'remote-action:pair-1:a-1:startTurn:allowed',
+          decision: 'allowed',
+          reasonCode: 'accepted'
+        }),
+        expect.objectContaining({
+          id: 'remote-action:pair-1:a-1:startTurn:denied',
+          decision: 'denied',
+          reasonCode: 'actionReplayed'
+        })
+      ])
     })
 
     it('scopes replay protection by pairID', async () => {
@@ -1131,9 +1204,10 @@ describe('BridgeActionRouter', () => {
 
     it('registerApnsToken bypasses workspace allowlist (system action)', async () => {
       const { executor, calls } = makeStubExecutor()
+      const { ledger, records } = makeAuditLedger()
       // No allowlist provided at all — workspace-gated actions would deny,
       // but registerApnsToken is a system action and accepts.
-      const router = new BridgeActionRouter({ executor })
+      const router = new BridgeActionRouter({ executor, auditLedger: ledger })
       const wire = Buffer.from(
         JSON.stringify(withReplayMeta({
           kind: 'registerApnsToken',
@@ -1151,6 +1225,16 @@ describe('BridgeActionRouter', () => {
       expect(result.message).toBe('registerApnsToken done')
       expect(calls).toHaveLength(1)
       expect(calls[0].method).toBe('executeRegisterApnsToken')
+      expect(records).toEqual([
+        expect.objectContaining({
+          deviceId: 'pair-1',
+          capability: 'system',
+          action: 'registerApnsToken',
+          decision: 'allowed',
+          reasonCode: 'accepted',
+          metadata: expect.objectContaining({ actionKind: 'registerApnsToken' })
+        })
+      ])
     })
 
     it('registerApnsToken still bypasses gating even with an allowlist present', async () => {
@@ -2119,6 +2203,26 @@ describe('BridgeActionRouter', () => {
     it('throws for an unrecognized method', async () => {
       const router = new BridgeActionRouter()
       await expect(router.route('bridge.somethingElse', {})).rejects.toThrow(/no handler/i)
+    })
+
+    it('audits unrecognized bridge methods before throwing', async () => {
+      const { ledger, records } = makeAuditLedger()
+      const router = new BridgeActionRouter({ auditLedger: ledger })
+
+      await expect(
+        router.route('bridge.somethingElse', { pairID: 'iphone-method' })
+      ).rejects.toThrow(/no handler/i)
+
+      expect(records).toEqual([
+        expect.objectContaining({
+          deviceId: 'iphone-method',
+          capability: 'system',
+          action: 'bridge.somethingElse',
+          decision: 'denied',
+          reasonCode: 'unknownAction',
+          metadata: expect.objectContaining({ method: 'bridge.somethingElse' })
+        })
+      ])
     })
   })
 

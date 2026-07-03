@@ -436,7 +436,7 @@ function classifyIPv4(host: string): CanvasHostClass {
  * loading and before each request.
  */
 export function classifyCanvasHost(rawHost: string): CanvasHostClass {
-  let host = rawHost
+  const host = rawHost
     .toLowerCase()
     .replace(/^\[/, '')
     .replace(/\]$/, '')

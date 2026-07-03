@@ -26,7 +26,7 @@ function makeDriver(opts: { booted?: string[]; platform?: NodeJS.Platform } = {}
     }
     return { stdout: '', stderr: '' }
   }
-  let removed: string[] = []
+  const removed: string[] = []
   const driver = new CanvasDeviceDriver('sess', {
     runSimctl,
     readScreenshot: async () => fakePng(750, 1334),

@@ -4120,8 +4120,7 @@ Next action:
   it('rejects a replacement that would grow the round beyond its baseline (baseline_exceeded)', async () => {
     const initialChat = makeChat()
     initialChat.ensemble!.bossmanParticipantId = 'claude'
-    let harness: ReturnType<typeof makeHarness>
-    harness = makeHarness({
+    const harness: ReturnType<typeof makeHarness> = makeHarness({
       initialChat,
       probeParticipant: async (participant) => {
         // Simulate a concurrent roster add (2 -> 3) landing WHILE the

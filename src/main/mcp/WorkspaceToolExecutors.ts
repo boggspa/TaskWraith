@@ -2640,6 +2640,7 @@ function redactDiagnosticCommand(command: string[], context: WorkspaceToolContex
 }
 
 function stripAnsi(value: string): string {
+  // eslint-disable-next-line no-control-regex -- ANSI escape bytes are exactly what this strips.
   return value.replace(/\u001b\[[0-9;]*m/g, '')
 }
 

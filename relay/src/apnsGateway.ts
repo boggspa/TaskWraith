@@ -46,6 +46,8 @@ export function createApnsGateway(config: ApnsGatewayConfig = {}): ApnsGateway {
       res.end(JSON.stringify({ ok: false, error: 'not implemented' }))
       return true
     },
-    close(): void {}
+    close(): void {
+      log('[apns-gateway] close scaffold')
+    }
   }
 }

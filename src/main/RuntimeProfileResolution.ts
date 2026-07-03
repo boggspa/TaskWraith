@@ -1,4 +1,4 @@
-import type { ChatRecord, ProviderId, RuntimeProfile } from './store/types'
+import type { ChatRecord, ChatScope, ProviderId, RuntimeProfile } from './store/types'
 
 /**
  * Runtime-profile resolution (Phase B3.4 extraction).
@@ -10,7 +10,7 @@ import type { ChatRecord, ProviderId, RuntimeProfile } from './store/types'
  *      `selectedRuntimeProfileByChatId`, would be a remote-side state in the
  *      iOS bridge).
  *   2. Persisted choice on `chat.providerMetadata.runtimeProfileId`.
- *   3. The default — first profile matching the provider.
+ *   3. The default — first profile matching the provider and chat scope.
  *
  * Extracted from `App.tsx:getRuntimeProfileIdForChat` so the future iOS
  * bridge can answer "what runtime profile should this request use?" without
@@ -22,7 +22,7 @@ export function resolveRuntimeProfileIdForChat(input: {
   /** Renderer-side per-chat override (chat appChatId → profile id). May be
    * an empty map for callers that don't carry session-scoped overrides. */
   selectionByChatId?: Record<string, string>
-  /** All available profiles. The default (provider match) is picked from this list. */
+  /** All available profiles. The default (provider + chat-scope match) is picked from this list. */
   profiles: RuntimeProfile[]
 }): string | undefined {
   const { chat, provider, selectionByChatId, profiles } = input
@@ -32,7 +32,18 @@ export function resolveRuntimeProfileIdForChat(input: {
     typeof chat?.providerMetadata?.runtimeProfileId === 'string'
       ? chat.providerMetadata.runtimeProfileId
       : undefined
-  const providerDefault = profiles.find((profile) => profile.provider === provider)?.id
+  const chatScope: ChatScope = chat?.scope === 'global' ? 'global' : 'workspace'
+  const candidates = profiles.filter(
+    (profile) => profile.provider === provider && profile.scope === chatScope
+  )
+  const candidateIds = new Set(candidates.map((profile) => profile.id))
+  const matchingCandidateId = (profileId?: string): string | undefined =>
+    profileId && candidateIds.has(profileId) ? profileId : undefined
+  const providerDefault = candidates[0]?.id
 
-  return sessionOverride || metadataRuntimeProfileId || providerDefault
+  return (
+    matchingCandidateId(sessionOverride) ||
+    matchingCandidateId(metadataRuntimeProfileId) ||
+    providerDefault
+  )
 }

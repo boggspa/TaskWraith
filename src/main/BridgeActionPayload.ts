@@ -890,12 +890,13 @@ export function payloadRequiresWorkspaceGating(payload: BridgeActionPayload): bo
     case 'togglePinWorkspace':
       return true
     case 'registerApnsToken':
-    // ensemblePresetMutate is pair-gated only (no workspace allowlist), like
-    // registerApnsToken: roster presets are the user's OWN global data and the
-    // QUIC pair binding authenticates the device as theirs. APPLYING a preset is
-    // separately workspace-gated (ensembleRosterUpdate → 'steer'), and any
-    // elevated per-participant permission is re-clamped at run dispatch — so a
-    // preset write can't escalate privilege, only edit the shared preset list.
+      // falls through: ensemblePresetMutate is pair-gated only (no workspace
+      // allowlist), like registerApnsToken. Roster presets are the user's OWN
+      // global data and the QUIC pair binding authenticates the device as theirs.
+      // APPLYING a preset is separately workspace-gated (ensembleRosterUpdate →
+      // 'steer'), and any elevated per-participant permission is re-clamped at run
+      // dispatch, so a preset write can't escalate privilege.
+      // eslint-disable-next-line no-fallthrough
     case 'ensemblePresetMutate':
     case 'discoverTailnetHosts':
       return false

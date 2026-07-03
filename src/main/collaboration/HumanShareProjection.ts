@@ -160,7 +160,8 @@ function preview(
   // external_untrusted collaborator. Paths are collapsed second so neither the
   // filesystem layout nor any secret survives into the projection.
   const sanitized = redactSensitivePaths(redactSecrets(content || ''), opts.workspacePath)
-    .replace(/\u0000/g, '')
+    .split('\u0000')
+    .join('')
     .trim()
   const truncated = sanitized.length > opts.maxPreviewChars
   return {

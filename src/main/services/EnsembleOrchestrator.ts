@@ -6720,7 +6720,7 @@ export class EnsembleOrchestrator {
         const mentionedParticipants: EnsembleParticipant[] = []
         const ambiguityWarnings: string[] = []
         for (const tagMatch of routeableTagMatches) {
-          let tagged = tagMatch.participant
+          const tagged = tagMatch.participant
           if (tagMatch.ambiguousAmong && tagMatch.ambiguousAmong.length > 0) {
             const candidates = [tagMatch.participant, ...tagMatch.ambiguousAmong]
             const candidateLabels = candidates.map((p) => participantDisplayName(p)).join(', ')
