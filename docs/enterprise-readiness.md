@@ -270,6 +270,42 @@ Target:
   provider capability previews cannot drift.
 - Export blocked-server reasons in diagnostics and audit bundles.
 
+### B5.4b - External publishing receipts and remote capability split
+
+What exists:
+
+- Agent-routed `git_push` and `git_create_pr` are classified under the
+  non-grantable `externalPublish` service. Session/workspace grants and YOLO do
+  not pre-authorize them.
+- Release-style shell commands are blocked by a launch-time classifier before
+  host shell/background/run-task execution.
+- CLI and Git subprocess environments scrub common publishing/signing tokens.
+- Paired-device bridge actions now split local Git mutation from external
+  publishing: staging/unstaging/committing require `fileWrite`, while
+  `gitPush` and `githubCreatePr` require the explicit admin-only
+  `externalPublish` remote capability.
+- Remote device audit rows for bridge push/PR actions record
+  `capability: externalPublish`.
+
+What is missing:
+
+- Desktop user-initiated Git push and PR creation still need a direct human
+  receipt model. The existing approval ledger is provider/run oriented, so
+  faking an agent provider for manual UI actions would make the audit trail
+  less honest.
+- The remote-access UI and iOS copy need to expose the new external-publish
+  capability separately from file editing before paired-device publishing can
+  be presented as a polished managed feature.
+
+Target:
+
+- Add a direct-action publication receipt with origin
+  `desktop-ui | ios-bridge | agent`, workspace path, action, decision, commit
+  SHA/PR URL where available, and redaction-safe metadata.
+- Wire desktop Git publish/PR buttons through that receipt before side effects.
+- Keep the bridge `externalPublish` capability explicit and admin-only, and
+  include its audit rows in the future audit bundle export.
+
 ### B5.5 - Stage-role and queued-dispatch receipts
 
 What exists:

@@ -575,6 +575,7 @@ export class BridgeBroadcaster {
       fileBrowse: capabilities.has('fileBrowse'),
       fileRead: capabilities.has('fileRead'),
       fileWrite: capabilities.has('fileWrite'),
+      externalPublish: capabilities.has('externalPublish'),
       pin: capabilities.has('pin'),
       yolo: capabilities.has('yolo')
     }

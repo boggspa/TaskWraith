@@ -243,14 +243,23 @@ describe('RemoteWorkspaceAllowlist', () => {
       expect(allowlist.evaluate({ workspaceId: 'ws-1', capability: 'fileWrite' }).allowed).toBe(
         false
       )
+      expect(
+        allowlist.evaluate({ workspaceId: 'ws-1', capability: 'externalPublish' }).allowed
+      ).toBe(false)
       expect(allowlist.evaluate({ workspaceId: 'ws-1', capability: 'yolo' }).allowed).toBe(false)
     })
 
-    it('keeps pin and yolo as explicit admin-only capabilities outside defaults', () => {
+    it('keeps external publishing, pin, and yolo as explicit admin-only capabilities outside defaults', () => {
+      expect(capabilitiesForRemoteWorkspaceMode('read-write')).not.toContain('externalPublish')
       expect(capabilitiesForRemoteWorkspaceMode('read-write')).not.toContain('pin')
       expect(capabilitiesForRemoteWorkspaceMode('read-write')).not.toContain('yolo')
+      expect(isAdminRemoteWorkspaceCapability('externalPublish')).toBe(true)
       expect(isAdminRemoteWorkspaceCapability('pin')).toBe(true)
       expect(isAdminRemoteWorkspaceCapability('yolo')).toBe(true)
+      expect(describeRemoteWorkspaceCapability('externalPublish')).toMatchObject({
+        label: 'Publish externally (admin)',
+        adminOnly: true
+      })
       expect(describeRemoteWorkspaceCapability('pin')).toMatchObject({
         label: 'Pin items (admin)',
         adminOnly: true
@@ -258,17 +267,20 @@ describe('RemoteWorkspaceAllowlist', () => {
       expect(REMOTE_WORKSPACE_CAPABILITY_DESCRIPTIONS.yolo.description).toMatch(/approval bypass/i)
     })
 
-    it('allows pin and yolo only when an allowlist entry explicitly grants them', () => {
+    it('allows admin capabilities only when an allowlist entry explicitly grants them', () => {
       const allowlist = new RemoteWorkspaceAllowlist()
       allowlist.upsert({
         workspaceId: 'ws-admin',
         path: '/a',
         mode: 'read-write',
-        capabilities: ['monitor', 'approve', 'pin', 'yolo'],
+        capabilities: ['monitor', 'approve', 'externalPublish', 'pin', 'yolo'],
         allowedProviders: ['gemini'],
         allowedApprovalModes: ['default']
       })
 
+      expect(
+        allowlist.evaluate({ workspaceId: 'ws-admin', capability: 'externalPublish' }).allowed
+      ).toBe(true)
       expect(allowlist.evaluate({ workspaceId: 'ws-admin', capability: 'pin' }).allowed).toBe(true)
       expect(allowlist.evaluate({ workspaceId: 'ws-admin', capability: 'yolo' }).allowed).toBe(
         true
@@ -496,6 +508,7 @@ describe('RemoteWorkspaceAllowlist', () => {
         'fileBrowse',
         'fileRead',
         'fileWrite',
+        'externalPublish',
         'pin',
         'yolo'
       ] as const) {

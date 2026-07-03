@@ -45,6 +45,12 @@ export type RemoteWorkspaceCapability =
   | 'fileRead'
   | 'fileWrite'
   /**
+   * External publication from a paired device: git push and PR creation.
+   * Deliberately separate from fileWrite so a phone that can edit/commit files
+   * does not automatically gain publish authority.
+   */
+  | 'externalPublish'
+  /**
    * Admin-only remote capability. Not part of read-write task-console
    * defaults; it must be explicitly present on an allowlist entry before a
    * paired device can pin/unpin chats or workspaces.
@@ -84,6 +90,7 @@ export const LEGACY_READ_WRITE_REMOTE_WORKSPACE_CAPABILITIES: readonly RemoteWor
   ['monitor', 'approve', 'answer', 'cancel', 'startTurn', 'diffReview', 'steer']
 
 export const ADMIN_REMOTE_WORKSPACE_CAPABILITIES: readonly RemoteWorkspaceCapability[] = [
+  'externalPublish',
   'pin',
   'yolo'
 ]
@@ -197,6 +204,12 @@ export const REMOTE_WORKSPACE_CAPABILITY_DESCRIPTIONS: Record<
     label: 'Write files',
     description: 'Save UTF-8 text files in the allowlisted workspace from a paired device.',
     adminOnly: false
+  },
+  externalPublish: {
+    capability: 'externalPublish',
+    label: 'Publish externally (admin)',
+    description: 'Push branches or create pull requests from a paired device.',
+    adminOnly: true
   },
   pin: {
     capability: 'pin',
@@ -518,6 +531,7 @@ export function isRemoteWorkspaceCapability(value: unknown): value is RemoteWork
     value === 'fileBrowse' ||
     value === 'fileRead' ||
     value === 'fileWrite' ||
+    value === 'externalPublish' ||
     value === 'pin' ||
     value === 'yolo'
   )

@@ -334,6 +334,7 @@ export interface RemoteTaskCapabilities {
   fileBrowse?: boolean
   fileRead?: boolean
   fileWrite?: boolean
+  externalPublish?: boolean
   pin?: boolean
   yolo?: boolean
   cancelRound?: boolean

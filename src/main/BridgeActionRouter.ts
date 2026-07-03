@@ -1000,16 +1000,17 @@ function capabilityForPayload(payload: BridgeActionPayload): RemoteWorkspaceCapa
     case 'githubPrStatus':
     case 'githubPrReadiness':
       return 'diffReview'
-    // Git mutations (stage/commit/push/PR-create) rewrite repo state — the
-    // strongest existing write capability covers them without a schema
-    // migration. A workspace must grant fileWrite to commit from the phone.
+    // Git local mutations rewrite repo state and are covered by fileWrite.
+    // Publishing crosses the workspace boundary, so push/PR-create require the
+    // separate externalPublish capability.
     case 'gitStageAll':
     case 'gitStagePaths':
     case 'gitUnstagePaths':
     case 'gitCommit':
+      return 'fileWrite'
     case 'gitPush':
     case 'githubCreatePr':
-      return 'fileWrite'
+      return 'externalPublish'
     case 'cancelRun':
     case 'ensembleCancelRound':
     case 'ensembleCancelWakeup':

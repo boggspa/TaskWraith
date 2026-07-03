@@ -1968,7 +1968,14 @@ describe('BridgeActionRouter', () => {
 
     it('dispatches every git action kind to its executor method', async () => {
       const allowlist = new RemoteWorkspaceAllowlist()
-      upsertGitWorkspace(allowlist)
+      upsertGitWorkspace(allowlist, [
+        'monitor',
+        'diffReview',
+        'fileBrowse',
+        'fileRead',
+        'fileWrite',
+        'externalPublish'
+      ])
       const { executor, calls } = makeStubExecutor()
       const router = new BridgeActionRouter({ allowlist, executor })
 
@@ -2006,9 +2013,7 @@ describe('BridgeActionRouter', () => {
         { kind: 'gitStageAll' },
         { kind: 'gitStagePaths', paths: ['README.md'] },
         { kind: 'gitUnstagePaths', paths: ['README.md'] },
-        { kind: 'gitCommit', message: 'phone commit' },
-        { kind: 'gitPush' },
-        { kind: 'githubCreatePr' }
+        { kind: 'gitCommit', message: 'phone commit' }
       ]
       for (const payload of mutations) {
         const result = (await router.route('bridge.requestActionAck', {
@@ -2020,6 +2025,62 @@ describe('BridgeActionRouter', () => {
         expect(result.message).toMatch(/capability "fileWrite"/i)
       }
       expect(calls).toHaveLength(0)
+    })
+
+    it('denies external git publishing when externalPublish is absent', async () => {
+      const allowlist = new RemoteWorkspaceAllowlist()
+      upsertGitWorkspace(allowlist, [
+        'monitor',
+        'diffReview',
+        'fileBrowse',
+        'fileRead',
+        'fileWrite'
+      ])
+      const { executor, calls } = makeStubExecutor()
+      const router = new BridgeActionRouter({ allowlist, executor })
+
+      for (const payload of [{ kind: 'gitPush' }, { kind: 'githubCreatePr' }]) {
+        const result = (await router.route('bridge.requestActionAck', {
+          pairID: `pair-git-publish-deny-${payload.kind}`,
+          payloadBase64: encodeGitAction(payload)
+        })) as { accepted: boolean; reasonCode?: string; message?: string }
+        expect(result.accepted).toBe(false)
+        expect(result.reasonCode).toBe('capabilityDenied')
+        expect(result.message).toMatch(/capability "externalPublish"/i)
+      }
+      expect(calls).toHaveLength(0)
+    })
+
+    it('audits external git publishing under the externalPublish capability', async () => {
+      const allowlist = new RemoteWorkspaceAllowlist()
+      upsertGitWorkspace(allowlist, [
+        'monitor',
+        'diffReview',
+        'fileBrowse',
+        'fileRead',
+        'fileWrite',
+        'externalPublish'
+      ])
+      const { executor } = makeStubExecutor()
+      const { ledger, records } = makeAuditLedger()
+      const router = new BridgeActionRouter({ allowlist, executor, auditLedger: ledger })
+
+      const result = (await router.route('bridge.requestActionAck', {
+        pairID: 'iphone-git',
+        payloadBase64: encodeGitAction({ kind: 'gitPush', actionId: 'push-1' })
+      })) as { accepted: boolean; reasonCode?: string }
+
+      expect(result.accepted).toBe(true)
+      expect(result.reasonCode).toBe('accepted')
+      expect(records).toEqual([
+        expect.objectContaining({
+          id: 'remote-action:iphone-git:push-1:externalPublish:allowed',
+          deviceId: 'iphone-git',
+          capability: 'externalPublish',
+          action: 'gitPush',
+          decision: 'allowed'
+        })
+      ])
     })
 
     it('denies git reads when the diffReview capability is absent', async () => {

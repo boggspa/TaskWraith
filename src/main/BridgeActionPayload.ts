@@ -288,7 +288,7 @@ export interface BridgeGitCommitAction extends BridgeActionMetadata {
 }
 
 /** Push the current branch; `setUpstream` publishes a branch with no
- * upstream yet. Mutating — gated by `fileWrite`. */
+ * upstream yet. External mutation — gated by `externalPublish`. */
 export interface BridgeGitPushAction extends BridgeActionMetadata {
   kind: 'gitPush'
   workspaceId: string
@@ -309,7 +309,8 @@ export interface BridgeGithubPrReadinessAction extends BridgeActionMetadata {
   workspaceId: string
 }
 
-/** Create a GitHub PR via `gh pr create`. Mutating — gated by `fileWrite`. */
+/** Create a GitHub PR via `gh pr create`. External mutation — gated by
+ * `externalPublish`. */
 export interface BridgeGithubCreatePrAction extends BridgeActionMetadata {
   kind: 'githubCreatePr'
   workspaceId: string
