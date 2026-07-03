@@ -13,6 +13,26 @@ published. The repository is currently ahead of the latest tagged release, and t
 next semver bump (with curated Unreleased/source-ahead notes) must happen before
 shipping these commits.
 
+## 1.7.3 - 2026-07-03
+
+### Fixed
+- **Full Access agents can build, sign and ship.** A Codex agent running under
+  the **Full access** permission preset now launches without the workspace
+  sandbox (`danger-full-access`) instead of being confined to the repository.
+  Under the previous `workspace-write` confinement it could not reach the login
+  keychain (code-signing identities), `~/Library` caches (SwiftPM / DerivedData),
+  or paths outside the workspace — so an approved release task (iOS
+  archive / notarize / TestFlight upload) failed at signing even after the user
+  approved it. The sandbox now drops **only** for a genuine, signed Full access
+  grant; every other run stays workspace-confined, and a global "deny shell
+  commands" setting still overrides it.
+
+### Added
+- **iOS: grant Full access from your phone.** The iOS participant permission
+  picker now offers **Full access**, matching the desktop permission picker, so
+  a phone-driven ensemble participant can be given the full-access posture that
+  lets it build, sign, and ship.
+
 ## 1.7.2 - 2026-07-03
 
 ### Added
