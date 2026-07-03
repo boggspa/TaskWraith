@@ -199,6 +199,7 @@ jobs:
   unsigned-windows-build:
     name: Unsigned Windows Build (testing)
     runs-on: windows-latest
+    needs: [test, ios]
     if: github.event_name == 'workflow_dispatch' && inputs.windows_release_tag != ''
     permissions:
       contents: write
@@ -211,6 +212,7 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - run: npm run security:deps
       # `build:win:nopublish` shares build:win's recipe (compile + electron-builder
       # + packaged-app smoke + update-feed write/validate) but forces
       # `--publish never`: electron-builder's implicit CI publish would otherwise
@@ -228,7 +230,7 @@ jobs:
           $assets = @(
             Get-ChildItem -Path dist -Filter "TaskWraith-*-win-*-setup.exe"
             Get-ChildItem -Path dist -Filter "TaskWraith-*-win-*-setup.exe.blockmap"
-            Get-ChildItem -Path dist -Filter "latest-win-*.yml"
+            Get-ChildItem -Path dist -Filter "*-win-*.yml"
           ) | ForEach-Object { $_.FullName }
           if ($assets.Count -lt 2) {
             throw "Expected Windows installers in dist/, found $($assets.Count)."
@@ -239,6 +241,7 @@ jobs:
   unsigned-linux-build:
     name: Unsigned Linux Build (testing)
     runs-on: ubuntu-latest
+    needs: [test, ios]
     if: github.event_name == 'workflow_dispatch' && inputs.linux_release_tag != ''
     permissions:
       contents: write
@@ -251,6 +254,7 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - run: npm run security:deps
       # AppImage + deb only — snap needs snapcraft (absent on the default
       # runner). `--publish never` stops electron-builder's implicit CI publish
       # from trying to attach to a release created >2h ago; the gh step below

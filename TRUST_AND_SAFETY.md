@@ -192,7 +192,9 @@ bridge tests on macOS, packaged-app smoke tests, update-feed validation, secret
 bundle guards, signing, notarization, stapling, and SBOM generation where the
 required credentials are available.
 
-For downloaded macOS artifacts, compare the GitHub release checksum with:
+For downloaded macOS artifacts, compare against the published SHA-256 checksum source
+when provided (release notes or a checksums file), or otherwise verify local hashes
+against the published release metadata.
 
 ```sh
 shasum -a 256 TaskWraith-<version>-universal-mac.dmg

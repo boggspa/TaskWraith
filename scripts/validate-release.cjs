@@ -5,8 +5,8 @@
  *
  * Runs the broad local pre-release check pipeline and reports a structured
  * summary. It intentionally stays below the full artifact-publication gate:
- * credentialed notarized builds, update-feed validation, SBOM generation, and
- * final platform signing still run through the dedicated release scripts.
+ * platform-specific packaging validation only, while notarized and signed
+ * publication still runs through dedicated release scripts.
  *
  * This wrapper expands the usual local typecheck / security / test / smoke
  * loop with:
@@ -20,7 +20,7 @@
  *
  *   node scripts/validate-release.cjs
  *
- *   # Skip the build-unpack step (much faster — useful for iterating
+ *   # Skip platform package validation (much faster — useful for iterating
  *   # on the validation script itself):
  *   TASKWRAITH_VALIDATE_SKIP_BUILD=1 node scripts/validate-release.cjs
  *
@@ -93,34 +93,28 @@ step('smoke:node-pty', {
   required: true
 })
 if (!SKIP_BUILD) {
-  step('prebuild:bridge-daemon', {
+  step('clean:dist', {
     cmd: 'npm',
-    args: ['run', 'prebuild:bridge-daemon'],
-    required: true,
-    skipOn: process.platform !== 'darwin'
-  })
-  step('build', {
-    cmd: 'npm',
-    args: ['run', 'build'],
+    args: ['run', 'clean:dist'],
     required: true
   })
-  step('build-unpack', {
-    cmd: 'npx',
-    args: ['electron-builder', '--dir'],
+  step('build:unpack', {
+    cmd: 'npm',
+    args: ['run', 'build:unpack'],
     required: true,
     skipOn: process.platform !== 'darwin'
   })
-  step('build-win-unpack', {
+  step('build:win:nopublish', {
     cmd: 'npm',
-    args: ['run', 'build:win:unpack'],
+    args: ['run', 'build:win:nopublish'],
     required: true,
     skipOn: process.platform !== 'win32'
   })
-  step('smoke:package', {
-    cmd: 'node',
-    args: ['scripts/smoke-packaged-electron.cjs', 'dist'],
+  step('build:linux:nopublish', {
+    cmd: 'npm',
+    args: ['run', 'build:linux:nopublish'],
     required: true,
-    skipOn: process.platform !== 'darwin' && process.platform !== 'win32'
+    skipOn: process.platform !== 'linux'
   })
 }
 if (DO_NOTARIZE) {
@@ -216,12 +210,13 @@ if (advisoryFailures.length > 0) {
 }
 
 const buildArtifactExists = existsSync(join(REPO_ROOT, 'dist'))
-if (!SKIP_BUILD && process.platform === 'darwin' && buildArtifactExists) {
+const buildCompleted = !SKIP_BUILD && hardFailures.length === 0
+if (buildCompleted && process.platform === 'darwin' && buildArtifactExists) {
   console.log('[validate-release] build artifacts present in dist/. Next step:')
   console.log(
     `  CSC_NAME=$CSC_NAME APPLE_KEYCHAIN_PROFILE=$APPLE_KEYCHAIN_PROFILE npm run build:mac:notarized`
   )
-} else if (!SKIP_BUILD && process.platform === 'win32' && buildArtifactExists) {
+} else if (buildCompleted && process.platform === 'win32' && buildArtifactExists) {
   console.log('[validate-release] build artifacts present in dist/. Next step:')
   console.log('  CSC_LINK=$CSC_LINK CSC_KEY_PASSWORD=$CSC_KEY_PASSWORD npm run build:win:signed')
 }

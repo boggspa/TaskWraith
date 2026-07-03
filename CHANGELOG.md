@@ -9,7 +9,9 @@ history, and workspace state stay on your machine throughout.
 This section is reserved for changes committed after the latest tagged release.
 Entries here are source-ahead only: do not treat them as shipped until a
 matching GitHub tag, release notes, checksums, and platform artifacts are
-published.
+published. The repository is currently ahead of the latest tagged release, and the
+next semver bump (with curated Unreleased/source-ahead notes) must happen before
+shipping these commits.
 
 ## 1.7.0 - 2026-07-01
 

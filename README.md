@@ -173,12 +173,11 @@ baseline.
 - **Release Tooling**: Security, dependency, packaging, and signing hooks for
   reproducible local release work.
 
-Current source version: **v1.7.0**. See [CHANGELOG.md](CHANGELOG.md) for release
-notes. The changelog's **Unreleased - source-ahead** section, when populated,
-describes repository changes only. Release artifacts are published from matching
-GitHub tags; if the GitHub Releases page shows an older version, treat newer
-source changes as release-candidate work until a matching tag and release
-artifacts are published.
+Latest tagged public release: **v1.7.0**. See [CHANGELOG.md](CHANGELOG.md) for
+release notes. The changelog's **Unreleased - source-ahead** section, when
+populated, describes repository changes only. The checkout may be ahead of that
+tag; newer commits should not be treated as shipped until those source-ahead notes
+are curated and matching artifacts are published.
 
 ## Managed Enterprise Boundary
 
@@ -251,9 +250,10 @@ Swift toolchain and is not part of the cross-platform `npm run ci`.
 
 `npm run validate:release` is the broad local release-readiness wrapper. It runs
 the TypeScript gates, dependency/security checks, tests, package smoke checks,
-and the bundled-secret guard, and can include a local unpacked build. It is not
-a substitute for a credentialed notarized release build, update-feed validation,
-SBOM generation, or platform-specific artifact signing.
+platform-specific packaging validation (`build:unpack` on macOS, `build:win:nopublish`
+on Windows, `build:linux:nopublish` on Linux), and the bundled-secret guard. It is
+not a substitute for a credentialed notarized release build, update-feed
+validation, SBOM generation, or platform-specific artifact signing.
 
 ## Project Layout
 
