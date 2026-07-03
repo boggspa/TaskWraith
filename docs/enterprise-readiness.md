@@ -333,6 +333,10 @@ What exists:
   feeds it into the Claude, Cursor, and Codex user-MCP launch materialization
   paths. Diagnostics report only allowlist shape/counts, not the configured
   roots, hosts, headers, env keys, or plugin ids.
+- Diagnostics and audit-bundle exports now include redacted
+  `userMcpBlockedServers` evidence when the managed launch allowlist blocks
+  enabled user MCP servers. Server ids/names and raw header/env names are
+  hashed; the export carries reason categories, counts, and section hashes.
 - Audit/previews redact values for display.
 
 What is missing:
@@ -350,8 +354,6 @@ What is missing:
 - Long-lived provider app servers, especially Codex app-server, need an
   explicit restart or re-materialization path before mid-session policy changes
   can remove previously attached user MCP servers.
-- Blocked-server reasons are callback-ready but are not yet written into
-  diagnostics or audit bundles.
 
 Target:
 

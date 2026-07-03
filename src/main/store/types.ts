@@ -2206,6 +2206,7 @@ export interface ProductDiagnosticsAuditReceipts {
     messageFeedback: number
     externalPublish: number
     auditRetentionPurges: number
+    userMcpBlockedServers: number
   }
   hashes: {
     approvalLedger: string
@@ -2213,11 +2214,13 @@ export interface ProductDiagnosticsAuditReceipts {
     messageFeedback: string
     externalPublish: string
     auditRetentionPurges: string
+    userMcpBlockedServers: string
   }
   recent: {
     messageFeedback: Array<Record<string, unknown>>
     externalPublish: Array<Record<string, unknown>>
     auditRetentionPurges: Array<Record<string, unknown>>
+    userMcpBlockedServers: Array<Record<string, unknown>>
   }
   validation: {
     sensitiveFeedbackNotes: 'redacted'
@@ -2296,6 +2299,7 @@ export interface ProductAuditBundleManifest {
     messageFeedback: number
     externalPublish: number
     auditRetentionPurges: number
+    userMcpBlockedServers: number
   }
   hashes: {
     approvalLedger: string
@@ -2307,6 +2311,7 @@ export interface ProductAuditBundleManifest {
     messageFeedback: string
     externalPublish: string
     auditRetentionPurges: string
+    userMcpBlockedServers: string
   }
   validation: {
     sensitiveFields: 'redacted'
@@ -2347,6 +2352,7 @@ export interface ProductAuditBundleSnapshot {
     messageFeedback: Array<Record<string, unknown>>
     externalPublish: Array<Record<string, unknown>>
     auditRetentionPurges: Array<Record<string, unknown>>
+    userMcpBlockedServers: Array<Record<string, unknown>>
   }
 }
 

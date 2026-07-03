@@ -36,6 +36,7 @@ import type {
 } from './store/types'
 import type { UpdateArchitectureCompatibility } from './UpdateArchitecture'
 import type { ExternalPublishReceipt } from './ExternalPublishReceiptLedger'
+import type { UserMcpLaunchPolicyDecision } from './UserMcpServers'
 import { createRunEventReplay } from './RunEventStore'
 
 const MAX_CRASH_TEXT_CHARS = 12_000
@@ -126,7 +127,8 @@ function expectedAuditBundleCounts(
     capabilityLedgerEntries: snapshot.sections.capabilityLedger.length,
     messageFeedback: snapshot.sections.messageFeedback.length,
     externalPublish: snapshot.sections.externalPublish.length,
-    auditRetentionPurges: snapshot.sections.auditRetentionPurges.length
+    auditRetentionPurges: snapshot.sections.auditRetentionPurges.length,
+    userMcpBlockedServers: snapshot.sections.userMcpBlockedServers.length
   }
 }
 
@@ -142,7 +144,8 @@ function expectedAuditBundleHashes(
     capabilityLedger: diagnosticsSha256(snapshot.sections.capabilityLedger),
     messageFeedback: diagnosticsSha256(snapshot.sections.messageFeedback),
     externalPublish: diagnosticsSha256(snapshot.sections.externalPublish),
-    auditRetentionPurges: diagnosticsSha256(snapshot.sections.auditRetentionPurges)
+    auditRetentionPurges: diagnosticsSha256(snapshot.sections.auditRetentionPurges),
+    userMcpBlockedServers: diagnosticsSha256(snapshot.sections.userMcpBlockedServers)
   }
 }
 
@@ -238,6 +241,38 @@ function summarizeAuditRetentionPurgeReceiptForDiagnostics(
   }
 }
 
+function userMcpBlockedReasonCategory(reason: unknown): string {
+  const text = typeof reason === 'string' ? reason : ''
+  if (/^transport .* is not allowlisted$/i.test(text)) return 'transport_not_allowlisted'
+  if (/^env key .* is not allowlisted$/i.test(text)) return 'env_key_not_allowlisted'
+  if (/^header .* is not allowlisted$/i.test(text)) return 'header_not_allowlisted'
+  if (/^command path is not allowlisted$/i.test(text)) return 'command_path_not_allowlisted'
+  if (/^remote host is not allowlisted$/i.test(text)) return 'remote_host_not_allowlisted'
+  if (/plugin id is not allowlisted$/i.test(text)) return 'plugin_id_not_allowlisted'
+  if (/plugin provenance is required$/i.test(text)) return 'plugin_provenance_required'
+  if (/^secret .* is /i.test(text)) return 'secret_resolution_failed'
+  return text ? 'other' : 'unknown'
+}
+
+function summarizeUserMcpBlockedServerForDiagnostics(
+  decision: UserMcpLaunchPolicyDecision
+): Record<string, unknown> {
+  return {
+    decisionHash: diagnosticsSha256({
+      serverId: decision.serverId,
+      serverName: decision.serverName,
+      transport: decision.transport,
+      reason: decision.reason
+    }),
+    serverIdHash: hashId(decision.serverId),
+    serverNameHash: hashId(decision.serverName),
+    transport: decision.transport,
+    allowed: false,
+    reasonCategory: userMcpBlockedReasonCategory(decision.reason),
+    reasonHash: hashId(decision.reason)
+  }
+}
+
 function buildDiagnosticsAuditReceipts(input: {
   generatedAt: string
   approvalLedger: ApprovalLedgerRecord[]
@@ -245,6 +280,7 @@ function buildDiagnosticsAuditReceipts(input: {
   messageFeedbackReceipts: MessageFeedbackReceipt[]
   externalPublishReceipts: ExternalPublishReceipt[]
   auditRetentionPurgeReceipts: AuditRetentionPurgeReceipt[]
+  userMcpBlockedServers: UserMcpLaunchPolicyDecision[]
 }) {
   const messageFeedback = input.messageFeedbackReceipts.map(
     summarizeMessageFeedbackReceiptForDiagnostics
@@ -255,6 +291,9 @@ function buildDiagnosticsAuditReceipts(input: {
   const auditRetentionPurges = input.auditRetentionPurgeReceipts.map(
     summarizeAuditRetentionPurgeReceiptForDiagnostics
   )
+  const userMcpBlockedServers = input.userMcpBlockedServers.map(
+    summarizeUserMcpBlockedServerForDiagnostics
+  )
   return {
     schemaVersion: 1,
     generatedAt: input.generatedAt,
@@ -264,19 +303,22 @@ function buildDiagnosticsAuditReceipts(input: {
       workspaceChanges: input.workspaceChanges.length,
       messageFeedback: input.messageFeedbackReceipts.length,
       externalPublish: input.externalPublishReceipts.length,
-      auditRetentionPurges: input.auditRetentionPurgeReceipts.length
+      auditRetentionPurges: input.auditRetentionPurgeReceipts.length,
+      userMcpBlockedServers: input.userMcpBlockedServers.length
     },
     hashes: {
       approvalLedger: diagnosticsSha256(input.approvalLedger),
       workspaceChanges: diagnosticsSha256(input.workspaceChanges),
       messageFeedback: diagnosticsSha256(messageFeedback),
       externalPublish: diagnosticsSha256(externalPublish),
-      auditRetentionPurges: diagnosticsSha256(auditRetentionPurges)
+      auditRetentionPurges: diagnosticsSha256(auditRetentionPurges),
+      userMcpBlockedServers: diagnosticsSha256(userMcpBlockedServers)
     },
     recent: {
       messageFeedback: messageFeedback.slice(-MAX_DIAGNOSTIC_RECORDS),
       externalPublish: externalPublish.slice(-MAX_DIAGNOSTIC_RECORDS),
-      auditRetentionPurges: auditRetentionPurges.slice(-MAX_DIAGNOSTIC_RECORDS)
+      auditRetentionPurges: auditRetentionPurges.slice(-MAX_DIAGNOSTIC_RECORDS),
+      userMcpBlockedServers: userMcpBlockedServers.slice(-MAX_DIAGNOSTIC_RECORDS)
     },
     validation: {
       sensitiveFeedbackNotes: 'redacted',
@@ -1204,6 +1246,7 @@ export function buildDiagnosticsSnapshot(input: {
   messageFeedbackReceipts?: MessageFeedbackReceipt[]
   externalPublishReceipts?: ExternalPublishReceipt[]
   auditRetentionPurgeReceipts?: AuditRetentionPurgeReceipt[]
+  userMcpBlockedServers?: UserMcpLaunchPolicyDecision[]
   managedPolicy?: Record<string, unknown>
   recentCrashes: ProductCrashRecord[]
   now?: string
@@ -1275,7 +1318,8 @@ export function buildDiagnosticsSnapshot(input: {
       workspaceChanges: input.workspaceChanges,
       messageFeedbackReceipts: input.messageFeedbackReceipts || [],
       externalPublishReceipts: input.externalPublishReceipts || [],
-      auditRetentionPurgeReceipts: input.auditRetentionPurgeReceipts || []
+      auditRetentionPurgeReceipts: input.auditRetentionPurgeReceipts || [],
+      userMcpBlockedServers: input.userMcpBlockedServers || []
     }),
     recentCrashes: input.recentCrashes.slice(0, MAX_DIAGNOSTIC_RECORDS)
   }) as ProductDiagnosticsSnapshot
@@ -1311,6 +1355,7 @@ export function buildAuditBundleSnapshot(input: {
   messageFeedbackReceipts: MessageFeedbackReceipt[]
   externalPublishReceipts: ExternalPublishReceipt[]
   auditRetentionPurgeReceipts?: AuditRetentionPurgeReceipt[]
+  userMcpBlockedServers?: UserMcpLaunchPolicyDecision[]
   filter?: ProductAuditBundleFilter
   now?: string
 }): ProductAuditBundleSnapshot {
@@ -1330,6 +1375,7 @@ export function buildAuditBundleSnapshot(input: {
     matchesAuditBundleFilter(receipt, filter)
   )
   const auditRetentionPurges = input.auditRetentionPurgeReceipts || []
+  const userMcpBlockedServers = input.userMcpBlockedServers || []
   const runEventReplays = uniqueRunIds(runEvents).map((runId) =>
     summarizeRunEventReplayForAuditBundle(runId, runEvents)
   )
@@ -1345,6 +1391,9 @@ export function buildAuditBundleSnapshot(input: {
     externalPublish: externalPublish.map(summarizeExternalPublishReceiptForAuditBundle),
     auditRetentionPurges: auditRetentionPurges.map(
       summarizeAuditRetentionPurgeReceiptForDiagnostics
+    ),
+    userMcpBlockedServers: userMcpBlockedServers.map(
+      summarizeUserMcpBlockedServerForDiagnostics
     )
   }
   const runEventChains = runEventReplays.map((replay) => replay.hashChainValid === true)
@@ -1371,7 +1420,8 @@ export function buildAuditBundleSnapshot(input: {
         capabilityLedgerEntries: capabilityLedger.length,
         messageFeedback: messageFeedback.length,
         externalPublish: externalPublish.length,
-        auditRetentionPurges: auditRetentionPurges.length
+        auditRetentionPurges: auditRetentionPurges.length,
+        userMcpBlockedServers: userMcpBlockedServers.length
       },
       hashes: {
         approvalLedger: diagnosticsSha256(sections.approvalLedger),
@@ -1382,7 +1432,8 @@ export function buildAuditBundleSnapshot(input: {
         capabilityLedger: diagnosticsSha256(sections.capabilityLedger),
         messageFeedback: diagnosticsSha256(sections.messageFeedback),
         externalPublish: diagnosticsSha256(sections.externalPublish),
-        auditRetentionPurges: diagnosticsSha256(sections.auditRetentionPurges)
+        auditRetentionPurges: diagnosticsSha256(sections.auditRetentionPurges),
+        userMcpBlockedServers: diagnosticsSha256(sections.userMcpBlockedServers)
       },
       validation: {
         sensitiveFields: 'redacted',

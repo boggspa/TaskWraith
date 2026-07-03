@@ -161,7 +161,8 @@ import {
   buildUserMcpCursorAllowRules,
   buildUserMcpCursorServerEntry,
   buildUserMcpLaunchServers,
-  type UserMcpLaunchAllowlistPolicy
+  type UserMcpLaunchAllowlistPolicy,
+  type UserMcpLaunchPolicyDecision
 } from './UserMcpServers'
 import {
   codexCommandFileEditMetadata,
@@ -18411,6 +18412,7 @@ async function getProductOperationsStatus(): Promise<ProductOperationsStatus> {
 async function buildCurrentDiagnosticsSnapshot() {
   const settings = AppStore.getSettings()
   const status = await getProductOperationsStatus()
+  const userMcpBlockedServers = collectCurrentUserMcpBlockedServers(settings)
   return buildDiagnosticsSnapshot({
     status,
     settings,
@@ -18424,9 +18426,32 @@ async function buildCurrentDiagnosticsSnapshot() {
     messageFeedbackReceipts: AppStore.getMessageFeedbackReceipts(),
     externalPublishReceipts: listExternalPublishReceipts(),
     auditRetentionPurgeReceipts: AppStore.getAuditRetentionPurgeReceipts(),
+    userMcpBlockedServers,
     managedPolicy: managedPolicySnapshotForDiagnostics?.(),
     recentCrashes: AppStore.getProductCrashes({ limit: 100 })
   })
+}
+
+function collectCurrentUserMcpBlockedServers(
+  settings: AppSettings = AppStore.getSettings()
+): UserMcpLaunchPolicyDecision[] {
+  const allowlistPolicy = managedUserMcpLaunchAllowlistPolicy?.()
+  if (!allowlistPolicy) return []
+  const blocked: UserMcpLaunchPolicyDecision[] = []
+  buildUserMcpLaunchServers(settings.userMcpServers, {
+    supportedTransports: ['stdio', 'http', 'sse'],
+    allowlistPolicy,
+    // Do not decrypt extension secrets for diagnostics/audit snapshots; the
+    // allowlist has already evaluated secret ref names before resolution.
+    resolveSecretValues: (refs) =>
+      refs.map((ref) => ({
+        ref,
+        status: 'ok',
+        value: '[redacted]'
+      })),
+    onBlocked: (decision) => blocked.push(decision)
+  })
+  return blocked
 }
 
 function normalizeProductAuditBundleFilter(
@@ -18517,6 +18542,8 @@ function signProductAuditBundleSnapshot(snapshot: ProductAuditBundleSnapshot): P
 
 async function buildCurrentAuditBundleSnapshot(request: ProductAuditBundleExportRequest = {}) {
   const filter = completeProductAuditBundleFilter(normalizeProductAuditBundleFilter(request.filter))
+  const settings = AppStore.getSettings()
+  const userMcpBlockedServers = collectCurrentUserMcpBlockedServers(settings)
   const snapshot = buildAuditBundleSnapshot({
     filter,
     approvalLedger: AppStore.getApprovalLedger({
@@ -18531,7 +18558,8 @@ async function buildCurrentAuditBundleSnapshot(request: ProductAuditBundleExport
     capabilityLedger: AppStore.getCapabilityLedgerSnapshot(filter.workspaceId),
     messageFeedbackReceipts: AppStore.getMessageFeedbackReceipts(filter),
     externalPublishReceipts: listExternalPublishReceipts(),
-    auditRetentionPurgeReceipts: AppStore.getAuditRetentionPurgeReceipts()
+    auditRetentionPurgeReceipts: AppStore.getAuditRetentionPurgeReceipts(),
+    userMcpBlockedServers
   })
   return signProductAuditBundleSnapshot(snapshot)
 }
