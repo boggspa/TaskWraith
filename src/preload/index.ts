@@ -857,7 +857,8 @@ const api = {
     ipcRenderer.invoke('remove-agentic-workspace-grant', provider, workspacePath, service),
   getRuntimeProfiles: (provider?: ProviderId) =>
     ipcRenderer.invoke('get-runtime-profiles', provider),
-  saveRuntimeProfile: (profile: any) => ipcRenderer.invoke('save-runtime-profile', profile),
+  saveRuntimeProfile: (profile: any, secretValues?: any) =>
+    ipcRenderer.invoke('save-runtime-profile', profile, secretValues),
   deleteRuntimeProfile: (id: string) => ipcRenderer.invoke('delete-runtime-profile', id),
   getExtensionSecretStatus: () => ipcRenderer.invoke('get-extension-secret-status'),
   setExtensionSecret: (ref: any, value: string) =>

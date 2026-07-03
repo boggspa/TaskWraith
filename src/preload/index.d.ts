@@ -1166,7 +1166,10 @@ declare global {
       ) => Promise<AppSettings>
       getRuntimeProfiles: (provider?: ProviderId) => Promise<RuntimeProfile[]>
       saveRuntimeProfile: (
-        profile: Partial<RuntimeProfile> & Pick<RuntimeProfile, 'name' | 'provider'>
+        profile: Partial<RuntimeProfile> & Pick<RuntimeProfile, 'name' | 'provider'>,
+        secretValues?: {
+          env?: Record<string, string>
+        }
       ) => Promise<RuntimeProfile>
       deleteRuntimeProfile: (id: string) => Promise<void>
       getExtensionSecretStatus: () => Promise<ExtensionSecretStatusSnapshot>

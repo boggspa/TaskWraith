@@ -13,6 +13,12 @@ import type {
   RuntimeProfile
 } from '../store/types'
 
+export interface RuntimeProfileSecretValues {
+  env?: Record<string, string>
+}
+
+const runtimeProfileEnvNamePattern = /^[A-Za-z_][A-Za-z0-9_]*$/
+
 export interface SettingsHandlerDeps {
   settingsService: Pick<SettingsService, 'getSettings' | 'updateSettings'>
   setBridgeDaemonEnabled: (enabled: boolean) => Promise<unknown>
@@ -45,6 +51,83 @@ export interface SettingsHandlerDeps {
   sanitizeHandoffCardFilter: (filter: unknown) => HandoffCardFilter
 }
 
+function normalizeRuntimeProfileSecretValues(input: unknown): Record<string, string> {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return {}
+  const env = (input as RuntimeProfileSecretValues).env
+  if (!env || typeof env !== 'object' || Array.isArray(env)) return {}
+  const output: Record<string, string> = {}
+  for (const [key, value] of Object.entries(env)) {
+    if (!runtimeProfileEnvNamePattern.test(key) || typeof value !== 'string' || !value.trim()) {
+      continue
+    }
+    output[key] = value
+  }
+  return output
+}
+
+function runtimeProfileSecretRef(profileId: string, fieldName: string): ExtensionSecretRef {
+  return {
+    ownerKind: 'runtimeProfile',
+    ownerId: profileId,
+    fieldKind: 'env',
+    fieldName
+  }
+}
+
+function withRuntimeProfileSecretRefs(
+  profile: Partial<RuntimeProfile> & Pick<RuntimeProfile, 'name' | 'provider'>,
+  envNames: string[]
+): Partial<RuntimeProfile> & Pick<RuntimeProfile, 'name' | 'provider'> {
+  if (envNames.length === 0) return profile
+  const env = Array.from(new Set([...(profile.secretRefs?.env ?? []), ...envNames])).filter(
+    (name) => runtimeProfileEnvNamePattern.test(name)
+  )
+  return {
+    ...profile,
+    secretRefs: {
+      ...(profile.secretRefs || {}),
+      env
+    }
+  }
+}
+
+function saveRuntimeProfileWithSecrets(
+  deps: SettingsHandlerDeps,
+  profile: unknown,
+  secretValues: unknown
+): RuntimeProfile {
+  const sanitized = deps.sanitizeRuntimeProfileForSave(profile)
+  const envSecrets = normalizeRuntimeProfileSecretValues(secretValues)
+  const envNames = Object.keys(envSecrets)
+  if (envNames.length === 0) {
+    return deps.saveRuntimeProfile(sanitized)
+  }
+
+  const existing =
+    sanitized.id && !sanitized.id.startsWith('builtin:')
+      ? deps.getRuntimeProfiles(sanitized.provider).find((item) => item.id === sanitized.id)
+      : undefined
+  const saved = deps.saveRuntimeProfile(withRuntimeProfileSecretRefs(sanitized, envNames))
+  const writtenRefs: ExtensionSecretRef[] = []
+  try {
+    for (const [fieldName, rawValue] of Object.entries(envSecrets)) {
+      const ref = runtimeProfileSecretRef(saved.id, fieldName)
+      const value = deps.requireNonEmptyString(rawValue, `Runtime profile secret ${fieldName}`)
+      const stored = deps.setExtensionSecret(ref, value)
+      if (!stored.ok) {
+        throw new Error(stored.error || `Could not store runtime profile secret ${fieldName}.`)
+      }
+      writtenRefs.push(ref)
+    }
+  } catch (error) {
+    for (const ref of writtenRefs) deps.clearExtensionSecret(ref)
+    if (existing) deps.saveRuntimeProfile(existing)
+    else deps.deleteRuntimeProfile(saved.id)
+    throw error
+  }
+  return saved
+}
+
 export function registerSettingsHandlers(deps: SettingsHandlerDeps): void {
   ipcMain.handle('get-settings', () => deps.settingsService.getSettings())
   ipcMain.handle('update-settings', (_event, partial: Partial<AppSettings>) =>
@@ -61,9 +144,10 @@ export function registerSettingsHandlers(deps: SettingsHandlerDeps): void {
     'save-runtime-profile',
     (
       _event,
-      profile: Partial<RuntimeProfile> & Pick<RuntimeProfile, 'name' | 'provider'>
+      profile: Partial<RuntimeProfile> & Pick<RuntimeProfile, 'name' | 'provider'>,
+      secretValues?: RuntimeProfileSecretValues
     ) => {
-      return deps.saveRuntimeProfile(deps.sanitizeRuntimeProfileForSave(profile))
+      return saveRuntimeProfileWithSecrets(deps, profile, secretValues)
     }
   )
   ipcMain.handle('delete-runtime-profile', (_event, id: string) =>

@@ -179,6 +179,11 @@ What exists:
   resolves those refs centrally through `createCliEnv`, blocks runs when a
   referenced encrypted value is missing or undecryptable, and lets the encrypted
   value override any same-name placeholder in the profile JSON.
+- The `save-runtime-profile` IPC/preload route can now accept a separate
+  encrypted env secret-value payload. It persists only `secretRefs` on the
+  runtime profile, writes values through `ExtensionSecretStore` after the saved
+  profile id is known, and rolls back the profile plus any written refs if
+  encrypted storage fails.
 - Legacy user MCP env/header values and runtime-profile env values matching the
   plaintext-secret policy are migrated on main-process load into encrypted
   `secretRefs`. Plaintext is removed from settings/profile JSON only after the
@@ -202,8 +207,9 @@ What is missing:
 - Imported user MCP configs can still contain non-obvious plaintext values when
   their key/value shape does not match the conservative secret policy; those
   require a future review surface rather than automatic migration.
-- Runtime profile settings surfaces are not yet wired to create/manage encrypted
-  env refs directly.
+- Runtime profile settings UI is not yet wired to expose encrypted env fields
+  directly; the IPC/preload/store path is ready for that surface, but the
+  visible editor still needs to be built.
 - iOS settings surfaces are not yet wired to create or manage those encrypted
   refs directly.
 

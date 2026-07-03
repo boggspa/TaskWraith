@@ -160,6 +160,76 @@ describe('registerSettingsHandlers', () => {
     expect(deps.deleteRuntimeProfile).toHaveBeenCalledWith('runtime-1')
   })
 
+  it('stores runtime profile env secrets as encrypted refs during save', () => {
+    const deps = createDeps()
+    const profileInput = {
+      name: 'Runtime',
+      provider: 'codex' as ProviderId,
+      env: { SAFE_FLAG: 'kept' }
+    }
+    registerSettingsHandlers(deps)
+
+    expect(
+      handlerFor('save-runtime-profile')({} as any, profileInput, {
+        env: {
+          SERVICE_TOKEN: 'secret-token',
+          'bad-name': 'ignored',
+          EMPTY_SECRET: ''
+        }
+      })
+    ).toMatchObject({
+      id: 'runtime-1',
+      env: { SAFE_FLAG: 'kept' },
+      secretRefs: { env: ['SERVICE_TOKEN'] }
+    })
+    expect(deps.saveRuntimeProfile).toHaveBeenCalledWith({
+      ...profileInput,
+      secretRefs: { env: ['SERVICE_TOKEN'] }
+    })
+    expect(deps.setExtensionSecret).toHaveBeenCalledWith(
+      {
+        ownerKind: 'runtimeProfile',
+        ownerId: 'runtime-1',
+        fieldKind: 'env',
+        fieldName: 'SERVICE_TOKEN'
+      },
+      'secret-token'
+    )
+    expect(vi.mocked(deps.saveRuntimeProfile).mock.calls[0]?.[0].env).not.toHaveProperty(
+      'SERVICE_TOKEN'
+    )
+  })
+
+  it('rolls back a new runtime profile when encrypted env secret storage fails', () => {
+    const deps = createDeps({
+      setExtensionSecret: vi.fn(() => ({
+        ok: false,
+        error: 'Encryption unavailable.',
+        snapshot: {
+          schemaVersion: 1 as const,
+          generatedAt: '2026-07-03T00:00:00.000Z',
+          encryptionAvailable: false,
+          secrets: []
+        }
+      }))
+    })
+    registerSettingsHandlers(deps)
+
+    expect(() =>
+      handlerFor('save-runtime-profile')(
+        {} as any,
+        { name: 'Runtime', provider: 'codex' as ProviderId },
+        { env: { SERVICE_TOKEN: 'secret-token' } }
+      )
+    ).toThrow('Encryption unavailable.')
+    expect(deps.saveRuntimeProfile).toHaveBeenCalledWith({
+      name: 'Runtime',
+      provider: 'codex',
+      secretRefs: { env: ['SERVICE_TOKEN'] }
+    })
+    expect(deps.deleteRuntimeProfile).toHaveBeenCalledWith('runtime-1')
+  })
+
   it('exposes extension secret status and mutation handlers without plaintext reads', () => {
     const deps = createDeps()
     const ref: ExtensionSecretRef = {
