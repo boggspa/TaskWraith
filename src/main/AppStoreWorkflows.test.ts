@@ -72,7 +72,9 @@ describe('AppStore workflows', () => {
   })
 
   it('materializes a due workflow into a scheduled task and advances the next run', () => {
-    const saved = AppStore.saveWorkflowDefinition(workflowInput())
+    const saved = AppStore.saveWorkflowDefinition(
+      workflowInput({ template: { workflowMode: 'plan' } })
+    )
     const tasks = AppStore.materializeDueWorkflows(Date.parse(plannedFor))
 
     expect(tasks).toHaveLength(1)
@@ -80,9 +82,22 @@ describe('AppStore workflows', () => {
       workspaceId: 'ws-1',
       provider: 'codex',
       status: 'due',
+      workflowMode: 'plan',
       workflowId: saved.id,
       workflowOccurrenceAt: plannedFor
     })
+    expect(tasks[0].dispatchReceipt).toMatchObject({
+      schemaVersion: 1,
+      runId: tasks[0].id,
+      provider: 'codex',
+      source: 'scheduled',
+      workspaceId: 'ws-1',
+      chatId: tasks[0].chatId,
+      approvalMode: 'default',
+      workflowMode: 'plan',
+      permissionPostureSignaturePresent: false
+    })
+    expect(tasks[0].dispatchReceipt?.receiptHash).toMatch(/^[a-f0-9]{64}$/)
 
     const workflow = AppStore.getWorkflowDefinition(saved.id)
     expect(workflow?.lastStatus).toBe('queued')

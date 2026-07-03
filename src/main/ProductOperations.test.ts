@@ -451,6 +451,7 @@ describe('ProductOperations', () => {
           selectedModelType: 'cli-default',
           customModel: '',
           approvalMode: 'default',
+          workflowMode: 'plan',
           sessionTrust: false,
           imageAttachments: [{ id: 'img-1', path: '/secret/image.png', name: 'image.png' }],
           externalPathGrants: [
@@ -471,7 +472,21 @@ describe('ProductOperations', () => {
           status: 'pending',
           lastError: 'failed while reading /secret/task-error',
           createdAt: '2026-05-07T10:00:00.000Z',
-          updatedAt: '2026-05-07T10:00:00.000Z'
+          updatedAt: '2026-05-07T10:00:00.000Z',
+          dispatchReceipt: {
+            schemaVersion: 1,
+            generatedAt: '2026-05-07T10:00:00.000Z',
+            receiptHash: 'e'.repeat(64),
+            runId: 'task-1',
+            provider: 'codex',
+            source: 'scheduled',
+            scope: 'workspace',
+            workspaceId: 'ws-1',
+            chatId: 'chat-secret',
+            approvalMode: 'default',
+            workflowMode: 'plan',
+            permissionPostureSignaturePresent: false
+          }
         }
       ],
       workflows: [
@@ -745,6 +760,19 @@ describe('ProductOperations', () => {
       /^[a-f0-9]{64}$/
     )
     expect((snapshot.runQueue[0].dispatchReceipt as any).remoteComposer.threadIdHash).toMatch(
+      /^[a-f0-9]{64}$/
+    )
+    expect(snapshot.scheduledTasks[0]).toMatchObject({
+      workflowMode: 'plan',
+      dispatchReceipt: {
+        receiptHash: 'e'.repeat(64),
+        provider: 'codex',
+        source: 'scheduled',
+        workflowMode: 'plan',
+        permissionPostureSignaturePresent: false
+      }
+    })
+    expect((snapshot.scheduledTasks[0].dispatchReceipt as any).chatIdHash).toMatch(
       /^[a-f0-9]{64}$/
     )
     expect(snapshot.runRecovery[0]).toMatchObject({

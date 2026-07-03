@@ -460,8 +460,12 @@ What exists:
 - Remote queued composer receipts now include the enqueue-time remote allowlist
   decision and a stable allowlist policy fingerprint for the effective
   workspace/provider/approval/capability gate.
-- Redacted diagnostics/audit export now includes the queued `dispatchReceipt`
-  summary, with chat/thread ids hashed and remote-composer text omitted.
+- Workflow-backed scheduled tasks now preserve `workflowMode` and carry a
+  schedule-time `dispatchReceipt` that freezes their scheduled source,
+  chat/workspace, provider, approval mode, and workflow mode.
+- Redacted diagnostics/audit export now includes queued and scheduled
+  `dispatchReceipt` summaries, with chat/thread ids hashed and remote-composer
+  text omitted.
 - Lifecycle dequeue tickets and steer-promotion handoffs now carry the queued
   `dispatchReceipt`, so renderer-dispatched deferred runs keep the enqueue-time
   proof attached through claim/lease.
@@ -481,13 +485,13 @@ What exists:
 What is missing:
 
 - Stage-role scheduling intent is not yet a first-class frozen receipt across
-  every deferred path; repository-saved queue rows now have receipts, but
-  dedicated scheduled/wakeup replay receipts still need to prove which frozen
-  intent was used.
-- Ensemble wakeups and scheduled ensemble occurrences still need full
-  dispatch-receipt/posture proof that they resume the participant/stage/posture
-  that was scheduled; wakeups now freeze role/stage identity, but they do not
-  yet carry a queue-style receipt hash or signed posture snapshot.
+  every deferred path; repository-saved queue rows and workflow-backed scheduled
+  tasks now have receipts, but wakeup replay receipts still need to prove which
+  frozen intent was used.
+- Ensemble wakeups still need full dispatch-receipt/posture proof that they
+  resume the participant/stage/posture that was scheduled; wakeups now freeze
+  role/stage identity, but they do not yet carry a queue-style receipt hash or
+  signed posture snapshot.
 - Remote queued dispatch now has a queued `dispatchReceipt` with an allowlist
   decision and policy fingerprint, but it still lacks an explicitly signed
   queue-time posture for the dispatch permission itself. Dequeue replay rebuilds

@@ -1050,6 +1050,7 @@ function summarizeScheduledTaskForDiagnostics(task: ScheduledTask): Record<strin
     kind: task.kind || 'single',
     selectedModelType: task.selectedModelType,
     approvalMode: task.approvalMode,
+    workflowMode: task.workflowMode,
     runAt: task.runAt,
     timezone: task.timezone,
     createdAt: task.createdAt,
@@ -1065,7 +1066,8 @@ function summarizeScheduledTaskForDiagnostics(task: ScheduledTask): Record<strin
     externalPathGrantCount: task.externalPathGrants?.length || 0,
     hasRuntimeProfile: Boolean(task.runtimeProfileId),
     hasGeminiAuthProfile: Boolean(task.geminiAuthProfileId),
-    hasLastError: Boolean(task.lastError)
+    hasLastError: Boolean(task.lastError),
+    dispatchReceipt: summarizeRunQueueDispatchReceiptForDiagnostics(task.dispatchReceipt)
   }
 }
 

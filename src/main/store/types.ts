@@ -3405,6 +3405,7 @@ export interface ScheduledTask {
   selectedModelType: string
   customModel: string
   approvalMode: string
+  workflowMode?: ChatWorkflowMode
   sessionTrust: boolean
   imageAttachments: Array<{
     id: string
@@ -3427,6 +3428,7 @@ export interface ScheduledTask {
   createdAt: string
   updatedAt: string
   runId?: string
+  dispatchReceipt?: RunQueueDispatchReceipt
   firedAt?: string
   /**
    * ISO timestamp stamped ONLY on the transition INTO 'running' in
@@ -3458,6 +3460,7 @@ export type WorkflowRunTemplate = Omit<
   | 'createdAt'
   | 'updatedAt'
   | 'runId'
+  | 'dispatchReceipt'
   | 'firedAt'
   | 'completedAt'
   | 'lastError'

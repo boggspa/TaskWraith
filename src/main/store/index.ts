@@ -79,6 +79,7 @@ import {
 import { canonicalizeExternalPathGrantMetadata } from './ExternalPathGrants'
 import { createDefaultEnsembleConfig } from '../EnsembleDefaults'
 import { createHash, randomUUID } from 'crypto'
+import { buildRunQueueDispatchReceipt } from '../RunQueueDispatchReceipt'
 import {
   capRunQueueJobs,
   createRunQueueJob,
@@ -1382,6 +1383,47 @@ function previewText(value: unknown, maxLength: number): string {
 
 function normalizeChatWorkflowMode(value: unknown): ChatWorkflowMode {
   return value === 'plan' ? 'plan' : 'normal'
+}
+
+function buildScheduledTaskDispatchReceipt(task: ScheduledTask) {
+  const workflowMode = normalizeChatWorkflowMode(task.workflowMode)
+  return buildRunQueueDispatchReceipt({
+    runId: task.runId || task.id,
+    provider: task.provider,
+    source: 'scheduled',
+    scope: 'workspace',
+    workspaceId: task.workspaceId,
+    chatId: task.chatId,
+    request: {
+      scope: 'workspace',
+      prompt: task.prompt,
+      ...(task.displayPrompt ? { displayPrompt: task.displayPrompt } : {}),
+      selectedModelType: task.selectedModelType,
+      customModel: task.customModel,
+      approvalMode: task.approvalMode,
+      workflowMode,
+      sessionTrust: task.sessionTrust,
+      imageAttachments: task.imageAttachments || [],
+      ...(task.externalPathGrants?.length ? { externalPathGrants: task.externalPathGrants } : {}),
+      ...(task.geminiWorktree ? { geminiWorktree: task.geminiWorktree } : {}),
+      ...(task.codexReasoningEffort !== undefined
+        ? { codexReasoningEffort: task.codexReasoningEffort }
+        : {}),
+      ...(task.codexServiceTier !== undefined ? { codexServiceTier: task.codexServiceTier } : {}),
+      ...(task.claudeReasoningEffort !== undefined
+        ? { claudeReasoningEffort: task.claudeReasoningEffort }
+        : {}),
+      ...(task.claudeFastMode !== undefined ? { claudeFastMode: task.claudeFastMode } : {}),
+      ...(task.kimiThinkingEnabled !== undefined
+        ? { kimiThinkingEnabled: task.kimiThinkingEnabled }
+        : {}),
+      scheduledTaskId: task.id,
+      scheduledRunAt: task.runAt,
+      ...(task.runtimeProfileId ? { runtimeProfileId: task.runtimeProfileId } : {}),
+      ...(task.geminiAuthProfileId ? { geminiAuthProfileId: task.geminiAuthProfileId } : {}),
+      ...(task.handoffSourceRunId ? { handoffSourceRunId: task.handoffSourceRunId } : {})
+    }
+  })
 }
 
 function summarizeLastRun(
@@ -4282,6 +4324,8 @@ export class AppStore {
       createdAt: task.createdAt || now,
       updatedAt: now
     }
+    record.workflowMode = normalizeChatWorkflowMode(record.workflowMode)
+    record.dispatchReceipt = task.dispatchReceipt || buildScheduledTaskDispatchReceipt(record)
     const index = tasks.findIndex((item) => item.id === record.id)
     if (index >= 0) {
       tasks[index] = { ...tasks[index], ...record, updatedAt: now }

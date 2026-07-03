@@ -12837,6 +12837,7 @@ function App(): React.JSX.Element {
       selectedModelType: request.selectedModelType,
       customModel: request.customModel,
       approvalMode: request.approvalMode,
+      workflowMode: request.workflowMode || 'normal',
       sessionTrust: request.sessionTrust,
       imageAttachments: request.imageAttachments,
       externalPathGrants: request.externalPathGrants?.filter(
@@ -13836,6 +13837,7 @@ function App(): React.JSX.Element {
         selectedModelType: taskSelectedModel,
         customModel: dispatchTask.customModel,
         approvalMode: dispatchTask.approvalMode,
+        workflowMode: dispatchTask.workflowMode || 'normal',
         sessionTrust: dispatchTask.sessionTrust,
         imageAttachments: dispatchTask.imageAttachments,
         externalPathGrants: dispatchTask.externalPathGrants,
