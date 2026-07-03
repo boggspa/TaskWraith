@@ -1,7 +1,8 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { RunQueueJob } from '../store/types'
 import {
   REMOTE_COMPOSER_ACTIVE_QUEUE_STATUSES,
+  authorizeRemoteComposerQueueDispatch,
   buildRemoteComposerQueueDispatchAction,
   classifyRemoteComposerQueueDispatchFailure,
   classifyRemoteComposerQueueDispatchResult,
@@ -144,6 +145,55 @@ describe('buildRemoteComposerQueueDispatchAction', () => {
 
   it('returns null for non-remote jobs', () => {
     expect(buildRemoteComposerQueueDispatchAction(makeJob({ source: 'manual' }))).toBeNull()
+  })
+})
+
+describe('authorizeRemoteComposerQueueDispatch', () => {
+  it('revalidates queued remote dispatch against the current startTurn allowlist', () => {
+    const evaluateAllowlist = vi.fn(() => ({
+      allowed: true,
+      entry: {
+        workspaceId: 'workspace-1',
+        path: '/repo',
+        mode: 'read-write',
+        allowedProviders: ['gemini'],
+        allowedApprovalModes: ['plan'],
+        createdAt: 1,
+        updatedAt: 1
+      }
+    }))
+
+    expect(
+      authorizeRemoteComposerQueueDispatch(makeJob(), { evaluateAllowlist })
+    ).toEqual({ allowed: true })
+    expect(evaluateAllowlist).toHaveBeenCalledWith({
+      workspaceId: 'workspace-1',
+      provider: 'gemini',
+      approvalMode: 'plan',
+      capability: 'startTurn'
+    })
+  })
+
+  it('denies queued remote dispatch when the allowlist has been revoked', () => {
+    const decision = authorizeRemoteComposerQueueDispatch(makeJob(), {
+      evaluateAllowlist: () => ({ allowed: false, reason: 'Workspace no longer allowlisted' })
+    })
+    expect(decision).toEqual({
+      allowed: false,
+      reason: 'Workspace no longer allowlisted'
+    })
+  })
+
+  it('denies malformed or non-remote queue jobs before allowlist evaluation', () => {
+    const evaluateAllowlist = vi.fn()
+    const decision = authorizeRemoteComposerQueueDispatch(makeJob({ source: 'manual' }), {
+      evaluateAllowlist
+    })
+    expect(decision).toEqual({
+      allowed: false,
+      reason: 'Remote composer queue job is not dispatchable.'
+    })
+    expect(evaluateAllowlist).not.toHaveBeenCalled()
   })
 })
 

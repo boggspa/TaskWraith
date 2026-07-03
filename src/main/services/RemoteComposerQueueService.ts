@@ -1,4 +1,5 @@
 import type { BridgeComposerPromptAction } from '../BridgeActionPayload'
+import type { AllowlistDecision, PrepareStartTurnEvaluation } from '../RemoteWorkspaceAllowlist'
 import type { RunQueueJob, RunQueueJobStatus } from '../store/types'
 
 export const REMOTE_COMPOSER_ACTIVE_QUEUE_STATUSES: readonly RunQueueJobStatus[] = [
@@ -43,6 +44,14 @@ export interface RemoteComposerQueueDispatchInput {
   executed: boolean
   message?: string
 }
+
+export interface RemoteComposerQueueDispatchAuthorizationDeps {
+  evaluateAllowlist: (check: PrepareStartTurnEvaluation) => AllowlistDecision
+}
+
+export type RemoteComposerQueueDispatchAuthorization =
+  | { allowed: true }
+  | { allowed: false; reason: string }
 
 /**
  * Returns true when the given chat has any non-terminal queue job
@@ -90,6 +99,24 @@ export function buildRemoteComposerQueueDispatchAction(
       ...(remote.extraWorkspaceIds?.length ? { extraWorkspaceIds: remote.extraWorkspaceIds } : {})
     }
   }
+}
+
+export function authorizeRemoteComposerQueueDispatch(
+  job: RunQueueJob,
+  deps: RemoteComposerQueueDispatchAuthorizationDeps
+): RemoteComposerQueueDispatchAuthorization {
+  const dispatch = buildRemoteComposerQueueDispatchAction(job)
+  if (!dispatch) {
+    return { allowed: false, reason: 'Remote composer queue job is not dispatchable.' }
+  }
+  const decision = deps.evaluateAllowlist({
+    workspaceId: dispatch.action.workspaceId,
+    provider: dispatch.action.provider,
+    approvalMode: dispatch.action.approvalMode,
+    capability: 'startTurn'
+  })
+  if (decision.allowed) return { allowed: true }
+  return { allowed: false, reason: decision.reason }
 }
 
 /**

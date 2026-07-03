@@ -490,6 +490,9 @@ What exists:
 - Remote queued dispatch now freezes a queue-time signed permission posture and
   includes that posture hash/signature presence in its dispatch receipt, alongside
   the allowlist decision and policy fingerprint.
+- Remote queued dispatch also revalidates the current bridge allowlist when a
+  queued item is dequeued, failing the queue job if the workspace/provider
+  `startTurn` grant was revoked after enqueue.
 
 What is missing:
 
@@ -497,10 +500,9 @@ What is missing:
   posture proof across queue rows, workflow-backed scheduled tasks, and Ensemble
   wakeups; the remaining work is policy-choice testing for resume-time
   revocation vs frozen scheduled intent.
-- Remote queued dispatch has an explicitly frozen queue-time posture and
-  allowlist proof; dequeue replay still dispatches from the queued job, so the
-  next audit should prove whether replay intentionally trusts that frozen
-  receipt or must re-run current bridge allowlist for revocation-at-dispatch.
+- Remote queued dispatch now has both an enqueue-time posture/allowlist receipt
+  and a dequeue-time allowlist re-check; remaining work is broader lifecycle
+  export review, not the replay authorization gate itself.
 - `EnsembleRunIdentity`, `ChatRun`, run queue metadata, approval previews, and
   run events now persist live dispatch `stageRole`/`laneId`, but scheduled and
   wakeup replay paths still need explicit tests that they preserve or re-check
@@ -515,10 +517,10 @@ Target:
 - Persist a dispatch receipt when the run starts and include it in audit export.
 - Preserve older-client semantics: absent `stageRole` means preserve; `''` means
   explicit clear.
-- Add dequeue tests that enqueue a remote prompt, revoke workspace/provider or
-  approval access before the queue pumps, and assert the product-chosen policy:
-  either deny with audit at dispatch time or continue under the frozen
-  queue-time posture/allowlist receipt.
+- Add higher-level dequeue integration tests that enqueue a remote prompt,
+  revoke workspace/provider or approval access before the queue pumps, and
+  assert the denial audit path end to end. The pure replay authorization helper
+  now has coverage for the current-policy deny decision.
 - Add ensemble wakeup tests that schedule as a reviewer, mutate the live roster
   to worker/default before firing, and verify the resumed run uses the frozen
   snapshot or records an explicit current-policy-at-resume decision.

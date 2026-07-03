@@ -400,6 +400,7 @@ import { RunCoordinator } from './services/RunCoordinator'
 import { RunLifecycleCoordinator } from './services/RunLifecycleCoordinator'
 import { RunQueueService } from './services/RunQueueService'
 import {
+  authorizeRemoteComposerQueueDispatch,
   buildRemoteComposerQueueDispatchAction,
   classifyRemoteComposerQueueDispatchFailure,
   classifyRemoteComposerQueueDispatchResult,
@@ -22272,6 +22273,16 @@ if (isGeminiMcpBridgeProcess) {
               statusReason: reason
             })
         if (!leased) return false
+        const authorization = authorizeRemoteComposerQueueDispatch(leased, {
+          evaluateAllowlist: (check) => bridgeAllowlist.evaluate(check)
+        })
+        if (!authorization.allowed) {
+          getRunRepository().transitionRunQueueJob(leased.runId, 'failed', {
+            statusReason: authorization.reason,
+            lastError: authorization.reason
+          })
+          return false
+        }
         const dispatch = buildRemoteComposerQueueDispatchAction(leased)
         if (!dispatch) return false
         const action: BridgeComposerPromptAction = {
