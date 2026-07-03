@@ -1406,21 +1406,70 @@ const sessionYoloState: {
   enabledAt: null
 }
 
-function setSessionYoloMode(enabled: boolean): void {
-  if (sessionYoloState.enabled === enabled) return
-  sessionYoloState.enabled = enabled
-  sessionYoloState.enabledAt = enabled ? new Date().toISOString() : null
-  // Broadcast so every renderer window sees the indicator change.
+function managedPolicyBlocksSessionYolo(): boolean {
+  const snapshot = managedPolicySnapshotForDiagnostics?.()
+  if (!snapshot || snapshot.active !== true) return false
+  const locked = Array.isArray(snapshot.lockedSettings) ? snapshot.lockedSettings : []
+  const enforced = Array.isArray(snapshot.enforcedSettings) ? snapshot.enforcedSettings : []
+  return [...locked, ...enforced].some(
+    (key) =>
+      key === 'agenticServices' ||
+      key === 'agenticWorkspaceGrants' ||
+      key === 'approvalTimeouts'
+  )
+}
+
+function sessionYoloManagedReason(): string | undefined {
+  return managedPolicyBlocksSessionYolo()
+    ? 'Managed policy controls approval/service behavior, so session YOLO cannot be enabled.'
+    : undefined
+}
+
+function isSessionYoloEffective(): boolean {
+  return sessionYoloState.enabled && !sessionYoloManagedReason()
+}
+
+function broadcastSessionYoloState(): void {
   if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
-    mainWindow.webContents.send('agentic-yolo-state', {
-      enabled: sessionYoloState.enabled,
-      enabledAt: sessionYoloState.enabledAt
-    })
+    mainWindow.webContents.send('agentic-yolo-state', getSessionYoloMode())
   }
 }
 
-function getSessionYoloMode(): { enabled: boolean; enabledAt: string | null } {
-  return { enabled: sessionYoloState.enabled, enabledAt: sessionYoloState.enabledAt }
+function setSessionYoloMode(enabled: boolean): {
+  enabled: boolean
+  enabledAt: string | null
+  managedBlocked?: boolean
+  managedReason?: string
+} {
+  const managedReason = enabled ? sessionYoloManagedReason() : undefined
+  if (managedReason) {
+    if (sessionYoloState.enabled) {
+      sessionYoloState.enabled = false
+      sessionYoloState.enabledAt = null
+      broadcastSessionYoloState()
+    }
+    return { ...getSessionYoloMode(), managedBlocked: true, managedReason }
+  }
+  if (sessionYoloState.enabled === enabled) return getSessionYoloMode()
+  sessionYoloState.enabled = enabled
+  sessionYoloState.enabledAt = enabled ? new Date().toISOString() : null
+  // Broadcast so every renderer window sees the indicator change.
+  broadcastSessionYoloState()
+  return getSessionYoloMode()
+}
+
+function getSessionYoloMode(): {
+  enabled: boolean
+  enabledAt: string | null
+  managedBlocked?: boolean
+  managedReason?: string
+} {
+  const managedReason = sessionYoloManagedReason()
+  return {
+    enabled: sessionYoloState.enabled && !managedReason,
+    enabledAt: managedReason ? null : sessionYoloState.enabledAt,
+    ...(managedReason ? { managedBlocked: true, managedReason } : {})
+  }
 }
 
 const NATIVE_GLASS_VIBRANCY: BrowserWindowConstructorOptions['vibrancy'] = 'sidebar'
@@ -7390,7 +7439,7 @@ function resolveNativeApprovalPreflight(args: {
   return resolveNativeApprovalPreflightDecision({
     resolution,
     externalPathDetected: Boolean(args.externalPathDetection),
-    sessionYoloEnabled: sessionYoloState.enabled,
+    sessionYoloEnabled: isSessionYoloEffective(),
     readOnly: Boolean(effectivePermissions?.readOnly),
     // canvasEval (RCE) is signed-elevated: clamp to a prompt even under session
     // YOLO or a (non-existent, but defence-in-depth) grant on the Codex path.
@@ -7781,7 +7830,7 @@ async function requestAgenticServiceApproval(
     service === 'externalPublish' ||
     isPlanInstrumentGrantHold(effectivePermissions?.presetId, service)
   if (
-    sessionYoloState.enabled &&
+    isSessionYoloEffective() &&
     !effectivePermissions?.readOnly &&
     !request.forcePrompt &&
     !neverAutoAllow
@@ -22581,8 +22630,12 @@ if (isGeminiMcpBridgeProcess) {
           }
         },
         setYoloModeFn: async (enabled) => {
-          setSessionYoloMode(enabled)
-          return { enabled: getSessionYoloMode().enabled }
+          const state = setSessionYoloMode(enabled)
+          return {
+            enabled: state.enabled,
+            ...(state.managedBlocked ? { managedBlocked: true } : {}),
+            ...(state.managedReason ? { reason: state.managedReason } : {})
+          }
         },
         togglePinWorkspaceFn: async (action) => {
           const workspaceRecord = AppStore.getWorkspaces().find(
@@ -30072,7 +30125,7 @@ if (isGeminiMcpBridgeProcess) {
         // 60s during unattended overnight runs — disabling timeouts
         // while YOLO is on means those runs survive). Audit trail
         // still records every auto-allow via 'session_yolo'.
-        if (sessionYoloState.enabled) {
+        if (isSessionYoloEffective()) {
           return { ...AppStore.getSettings().approvalTimeouts, enabled: false }
         }
         return AppStore.getSettings().approvalTimeouts

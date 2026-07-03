@@ -292,6 +292,10 @@ What exists:
   policy, approval timeouts, user MCP servers (disable-only), and workspace
   grants (clear-only). Diagnostics export reports a redacted policy status
   summary.
+- Session YOLO enablement is clamped when managed policy controls agentic
+  service policy, workspace grants, or approval timeouts. The local IPC setter
+  and paired-device bridge toggle return a managed-blocked state instead of
+  enabling the in-memory session override.
 
 What is missing:
 
@@ -299,10 +303,9 @@ What is missing:
   local env/path JSON for managed test deployments.
 - No locked-control affordances in Settings for enterprise-managed installs.
   Enforcement exists, but the UI does not yet explain why a control is locked.
-- Session YOLO and other non-settings live controls still need explicit managed
-  clamps. The current slice covers stored settings and clears persisted
-  workspace grants, but does not yet block an already-running process' in-memory
-  session state.
+- Other non-settings live controls still need explicit inventory and managed
+  clamps. The current policy source is startup-loaded, so future live policy
+  reload support must also revoke or re-materialize affected in-memory state.
 - User MCP policy is disable-only in this first spine. Managed allowlisting,
   save-time validation, and plugin provenance checks still land under B5.4.
 
@@ -310,9 +313,10 @@ Target:
 
 - Promote the env/path policy format to a signed or MDM-delivered policy source,
   retaining the same effective-settings clamp seam.
-- Clamp agentic service policy, workspace grants, approval timeouts, YOLO,
-  update channel, auto-update, bridge access, and user-managed MCP according to
-  managed policy.
+- Clamp agentic service policy, workspace grants, approval timeouts, session
+  YOLO, update channel, auto-update, bridge access, and user-managed MCP
+  according to managed policy, including revocation behavior for any future
+  live policy reload path.
 - Add UI "managed by organization" affordances rather than silently ignoring
   user input.
 - Add tests at `SettingsService`, `PermissionService`, update service, remote

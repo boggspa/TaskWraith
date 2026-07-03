@@ -733,6 +733,21 @@ describe('MainProcessActionExecutor session and pin controls', () => {
     })
   })
 
+  it('reports managed-policy YOLO blocks in the acknowledgement', async () => {
+    const setYoloModeFn = vi.fn().mockResolvedValue({
+      enabled: false,
+      managedBlocked: true,
+      reason: 'Managed policy controls approval/service behavior.'
+    })
+    const executor = new MainProcessActionExecutor({ cancelRunFn, setYoloModeFn })
+    const result = await executor.executeSetYoloMode(sample.setYoloMode)
+    expect(result).toMatchObject({
+      executed: true,
+      message: 'Managed policy controls approval/service behavior.',
+      data: { enabled: false, managedBlocked: true }
+    })
+  })
+
   it('reports setYoloModeFn failures without throwing', async () => {
     const setYoloModeFn = vi.fn().mockRejectedValue(new Error('session store unavailable'))
     const executor = new MainProcessActionExecutor({ cancelRunFn, setYoloModeFn })

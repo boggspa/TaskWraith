@@ -636,7 +636,11 @@ export interface MainProcessActionExecutorDependencies {
     hosts?: Array<Record<string, unknown>>
     reason?: string
   }>
-  setYoloModeFn?: (enabled: boolean) => Promise<{ enabled: boolean }>
+  setYoloModeFn?: (enabled: boolean) => Promise<{
+    enabled: boolean
+    managedBlocked?: boolean
+    reason?: string
+  }>
   togglePinChatFn?: (action: BridgeTogglePinChatAction) => Promise<{
     pinned: boolean
     reason?: string
@@ -1684,8 +1688,11 @@ export class MainProcessActionExecutor implements BridgeActionExecutor {
       const result = await this.deps.setYoloModeFn(action.enabled)
       return {
         executed: true,
-        message: `YOLO mode ${result.enabled ? 'enabled' : 'disabled'}`,
-        data: { enabled: result.enabled }
+        message: result.reason ?? `YOLO mode ${result.enabled ? 'enabled' : 'disabled'}`,
+        data: {
+          enabled: result.enabled,
+          ...(result.managedBlocked ? { managedBlocked: true } : {})
+        }
       }
     } catch (err) {
       const errMessage = err instanceof Error ? err.message : String(err)

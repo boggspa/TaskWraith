@@ -99,4 +99,25 @@ describe('registerTrustHandlers', () => {
     expect(deps.setSessionYoloMode).toHaveBeenCalledWith(true)
     expect(deps.getSessionYoloMode).toHaveBeenCalledTimes(1)
   })
+
+  it('returns a managed-policy blocked state from the setter without rereading', async () => {
+    const deps = createDeps({
+      setSessionYoloMode: vi.fn(() => ({
+        enabled: false,
+        enabledAt: null,
+        managedBlocked: true,
+        managedReason: 'Managed policy disables session YOLO.'
+      }))
+    })
+    registerTrustHandlers(deps)
+
+    expect(handlerFor('agentic-yolo-set')({} as any, true)).toEqual({
+      enabled: false,
+      enabledAt: null,
+      managedBlocked: true,
+      managedReason: 'Managed policy disables session YOLO.'
+    })
+    expect(deps.setSessionYoloMode).toHaveBeenCalledWith(true)
+    expect(deps.getSessionYoloMode).not.toHaveBeenCalled()
+  })
 })

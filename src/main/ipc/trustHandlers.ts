@@ -4,13 +4,15 @@ import type { TrustStatusResult, TrustWriteResult } from '../store/types'
 export interface SessionYoloModeState {
   enabled: boolean
   enabledAt: string | null
+  managedBlocked?: boolean
+  managedReason?: string
 }
 
 export interface TrustHandlerDeps {
   checkTrust: (workspacePath: string) => TrustStatusResult
   trustWorkspace: (workspacePath: string) => TrustWriteResult
   getSessionYoloMode: () => SessionYoloModeState
-  setSessionYoloMode: (enabled: boolean) => void
+  setSessionYoloMode: (enabled: boolean) => SessionYoloModeState | void
 }
 
 export function registerTrustHandlers(deps: TrustHandlerDeps): void {
@@ -28,7 +30,6 @@ export function registerTrustHandlers(deps: TrustHandlerDeps): void {
   // renderer broadcast side effect so this registrar remains a thin IPC layer.
   ipcMain.handle('agentic-yolo-get', () => deps.getSessionYoloMode())
   ipcMain.handle('agentic-yolo-set', (_event, enabled: boolean) => {
-    deps.setSessionYoloMode(Boolean(enabled))
-    return deps.getSessionYoloMode()
+    return deps.setSessionYoloMode(Boolean(enabled)) || deps.getSessionYoloMode()
   })
 }
