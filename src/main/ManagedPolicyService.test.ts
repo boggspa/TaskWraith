@@ -268,6 +268,87 @@ describe('ManagedPolicyService', () => {
     })
   })
 
+  it('loads MDM managed preferences before user-controlled env policy', () => {
+    const service = loadManagedPolicyFromEnvironment({
+      env: {
+        TASKWRAITH_MANAGED_POLICY_JSON: JSON.stringify({
+          schemaVersion: 1,
+          settings: { updateChannel: 'nightly' }
+        })
+      },
+      readManagedPreference: (key, type) => {
+        expect(key).toBe('TaskWraithManagedPolicy')
+        return type === 'dictionary'
+          ? {
+              schemaVersion: 1,
+              organizationName: 'Managed Corp',
+              settings: { updateChannel: 'stable', autoUpdateEnabled: true }
+            }
+          : undefined
+      }
+    })
+
+    expect(service.snapshot()).toMatchObject({
+      active: true,
+      source: 'mdm-preferences',
+      organizationName: 'Managed Corp',
+      errors: []
+    })
+    expect(service.enforcedSettingsPatch(settings())).toMatchObject({
+      updateChannel: 'stable',
+      autoUpdateEnabled: true
+    })
+  })
+
+  it('loads MDM managed preferences from a JSON string value', () => {
+    const service = loadManagedPolicyFromEnvironment({
+      readManagedPreference: (_key, type) => {
+        if (type === 'dictionary') throw new Error('not a dictionary')
+        return JSON.stringify({
+          schemaVersion: 1,
+          settings: { geminiMcpBridgeEnabled: false }
+        })
+      }
+    })
+
+    expect(service.snapshot()).toMatchObject({
+      active: true,
+      source: 'mdm-preferences',
+      errors: []
+    })
+    expect(service.enforcedSettingsPatch(settings())).toEqual({
+      geminiMcpBridgeEnabled: false
+    })
+  })
+
+  it('loads signed MDM managed preferences when a public key verifies', () => {
+    const signed = signedPolicyEnvelope({
+      schemaVersion: 1,
+      settings: { codexSandboxFallback: 'off' }
+    })
+    const service = loadManagedPolicyFromEnvironment({
+      env: {
+        TASKWRAITH_MANAGED_POLICY_PUBLIC_KEY_DER_BASE64: signed.publicKeyDerBase64
+      },
+      readManagedPreference: (_key, type) =>
+        type === 'dictionary' ? (signed.envelope as Record<string, unknown>) : undefined
+    })
+
+    expect(service.snapshot()).toMatchObject({
+      active: true,
+      source: 'signed-mdm-preferences',
+      errors: [],
+      signature: {
+        required: true,
+        present: true,
+        valid: true
+      }
+    })
+    expect(service.enforcedSettingsPatch(settings())).toEqual({
+      codexSandboxFallback: 'off'
+    })
+  })
+
   it('requires signed managed policy envelopes when a public key is configured', () => {
     const signed = signedPolicyEnvelope({ schemaVersion: 1 })
     const service = loadManagedPolicyFromEnvironment({

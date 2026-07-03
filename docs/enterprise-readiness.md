@@ -288,15 +288,17 @@ What exists:
 - Remote/iOS workspace allowlists are per-action and explicit.
 - `canvasEval` and future `mediaRecording` are intentionally non-grantable.
 - A first managed-policy spine exists in main: `ManagedPolicyService` can load
-  JSON from `TASKWRAITH_MANAGED_POLICY_JSON` or
-  `TASKWRAITH_MANAGED_POLICY_PATH`, compute locked/enforced setting keys, apply
-  a startup clamp before update-service configuration, and filter future
-  `SettingsService` writes. The first clamp surface covers update channel,
-  auto-update, bridge enablement, Codex sandbox fallback, agentic-service
-  policy, approval timeouts, user MCP servers (disable-only), and workspace
-  grants (clear-only). Diagnostics export reports a redacted policy status
-  summary.
-- The env/path managed policy source can now be a signed Ed25519 envelope. When
+  JSON from macOS managed preferences (`TaskWraithManagedPolicy` /
+  `TaskWraithManagedPolicyJSON`) before falling back to
+  `TASKWRAITH_MANAGED_POLICY_JSON` or `TASKWRAITH_MANAGED_POLICY_PATH`, compute
+  locked/enforced setting keys, apply a startup clamp before update-service
+  configuration, and filter future `SettingsService` writes. The first clamp
+  surface covers update channel, auto-update, bridge enablement, Codex sandbox
+  fallback, agentic-service policy, approval timeouts, user MCP servers
+  (disable-only), and workspace grants (clear-only). Diagnostics export reports
+  a redacted policy status summary.
+- The managed-preferences/env/path managed policy source can now be a signed
+  Ed25519 envelope. When
   `TASKWRAITH_MANAGED_POLICY_PUBLIC_KEY_DER_BASE64`,
   `TASKWRAITH_MANAGED_POLICY_PUBLIC_KEY`, or
   `TASKWRAITH_MANAGED_POLICY_PUBLIC_KEY_PATH` is configured, unsigned policies
@@ -310,8 +312,6 @@ What exists:
 
 What is missing:
 
-- No MDM-delivered managed policy source yet; the current source remains env or
-  env-path JSON, with optional signature enforcement for managed deployments.
 - No locked-control affordances in Settings for enterprise-managed installs.
   Enforcement exists, but the UI does not yet explain why a control is locked.
 - Other non-settings live controls still need explicit inventory and managed
@@ -323,8 +323,9 @@ What is missing:
 
 Target:
 
-- Promote the signed env/path policy format to an MDM-delivered policy source,
-  retaining the same effective-settings clamp seam.
+- Expand the MDM-delivered managed-preferences format only when new policy
+  fields need it; keep it on the same effective-settings clamp seam as env/path
+  fallback policies.
 - Clamp agentic service policy, workspace grants, approval timeouts, session
   YOLO, update channel, auto-update, bridge access, and user-managed MCP
   according to managed policy, including revocation behavior for any future

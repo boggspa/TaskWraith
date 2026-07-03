@@ -51,7 +51,14 @@ export interface ManagedPolicyDocument {
 
 export interface ManagedPolicySnapshot {
   active: boolean
-  source: 'none' | 'env-json' | 'env-path' | 'signed-env-json' | 'signed-env-path'
+  source:
+    | 'none'
+    | 'env-json'
+    | 'env-path'
+    | 'mdm-preferences'
+    | 'signed-env-json'
+    | 'signed-env-path'
+    | 'signed-mdm-preferences'
   organizationName?: string
   lockedSettings: ManagedPolicySettingKey[]
   enforcedSettings: ManagedPolicySettingKey[]
@@ -84,6 +91,10 @@ export interface ManagedPolicySnapshot {
 export interface ManagedPolicyLoadDeps {
   env?: NodeJS.ProcessEnv
   readFileSync?: (path: string, encoding: 'utf8') => string
+  readManagedPreference?: (
+    key: string,
+    type: 'string' | 'dictionary'
+  ) => string | Record<string, unknown> | undefined | null
   validateUserMcpPluginProvenance?: BuildUserMcpLaunchServersOptions['validatePluginProvenance']
 }
 
@@ -116,6 +127,10 @@ const agenticServiceKeys = [
   'mediaEditing',
   'mediaRecording',
   'networkAccess'
+] as const
+const managedPolicyPreferenceKeys = [
+  'TaskWraithManagedPolicy',
+  'TaskWraithManagedPolicyJSON'
 ] as const
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -646,6 +661,51 @@ export class ManagedPolicyService {
   }
 }
 
+function loadManagedPolicyPreferenceRaw(
+  deps: ManagedPolicyLoadDeps
+): { raw?: unknown; errors: string[] } {
+  if (!deps.readManagedPreference) return { errors: [] }
+  for (const key of managedPolicyPreferenceKeys) {
+    const readErrors: string[] = []
+    try {
+      const dictionary = deps.readManagedPreference(key, 'dictionary')
+      if (isRecord(dictionary) && Object.keys(dictionary).length > 0) {
+        return { raw: dictionary, errors: [] }
+      }
+    } catch (error) {
+      readErrors.push(
+        `Managed policy preference "${key}" could not be read as dictionary: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      )
+    }
+    try {
+      const rawString = deps.readManagedPreference(key, 'string')
+      if (typeof rawString === 'string' && rawString.trim()) {
+        try {
+          return { raw: JSON.parse(rawString), errors: [] }
+        } catch (error) {
+          return {
+            errors: [
+              `Managed policy preference "${key}" contains invalid JSON: ${
+                error instanceof Error ? error.message : String(error)
+              }`
+            ]
+          }
+        }
+      }
+    } catch (error) {
+      readErrors.push(
+        `Managed policy preference "${key}" could not be read as string: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      )
+    }
+    if (readErrors.length > 0) return { errors: readErrors }
+  }
+  return { errors: [] }
+}
+
 export function loadManagedPolicyFromEnvironment(
   deps: ManagedPolicyLoadDeps = {}
 ): ManagedPolicyService {
@@ -658,7 +718,7 @@ export function loadManagedPolicyFromEnvironment(
   }
   const publicKey = loadManagedPolicyPublicKey(deps)
   const serviceFromRaw = (
-    source: 'env-json' | 'env-path',
+    source: 'env-json' | 'env-path' | 'mdm-preferences',
     raw: unknown,
     preErrors: string[] = []
   ): ManagedPolicyService => {
@@ -666,7 +726,9 @@ export function loadManagedPolicyFromEnvironment(
     const signedSource: ManagedPolicySnapshot['source'] = verified.signature.present
       ? source === 'env-json'
         ? 'signed-env-json'
-        : 'signed-env-path'
+        : source === 'env-path'
+          ? 'signed-env-path'
+          : 'signed-mdm-preferences'
       : source
     if (publicKey.errors.length > 0 || verified.errors.length > 0 || verified.payload === undefined) {
       return new ManagedPolicyService(
@@ -684,6 +746,10 @@ export function loadManagedPolicyFromEnvironment(
       runtimeDeps,
       verified.signature.present || verified.signature.required ? verified.signature : undefined
     )
+  }
+  const managedPreference = loadManagedPolicyPreferenceRaw(deps)
+  if (managedPreference.raw !== undefined || managedPreference.errors.length > 0) {
+    return serviceFromRaw('mdm-preferences', managedPreference.raw ?? {}, managedPreference.errors)
   }
   if (rawJson && rawJson.trim()) {
     try {

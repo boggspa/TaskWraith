@@ -15,7 +15,8 @@ import {
   nativeImage,
   clipboard,
   protocol,
-  Tray
+  Tray,
+  systemPreferences
 } from 'electron'
 import type {
   BrowserWindowConstructorOptions,
@@ -26439,6 +26440,16 @@ if (isGeminiMcpBridgeProcess) {
     const managedPolicyService = loadManagedPolicyFromEnvironment({
       env: process.env,
       readFileSync: (filePath, encoding) => fsSync.readFileSync(filePath, encoding),
+      readManagedPreference: (key, type) => {
+        if (process.platform !== 'darwin') return undefined
+        const value = systemPreferences.getUserDefault(key, type)
+        if (type === 'dictionary') {
+          return value && typeof value === 'object' && !Array.isArray(value)
+            ? (value as Record<string, unknown>)
+            : undefined
+        }
+        return typeof value === 'string' ? value : undefined
+      },
       validateUserMcpPluginProvenance
     })
     managedPolicySnapshotForDiagnostics = () =>
