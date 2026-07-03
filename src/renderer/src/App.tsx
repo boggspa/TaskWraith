@@ -98,6 +98,7 @@ import {
   ProductOperationsStatus,
   ProductUpdateChannel,
   AuditRetentionPurgeResult,
+  ProductAuditBundleExportRequest,
   ChatScope,
   ChatWorkflowMode,
   RuntimeProfile,
@@ -642,6 +643,7 @@ interface WorkspaceBoardCaptureInput {
 }
 
 const STREAM_FLUSH_ITEM_KEY_SEPARATOR = '\u0000'
+type AuditBundleExportScope = 'all' | 'workspace' | 'chat' | 'run'
 
 function streamFlushItemKey(runId: string, itemId?: string): string {
   return `${runId}${STREAM_FLUSH_ITEM_KEY_SEPARATOR}${itemId || ''}`
@@ -668,6 +670,19 @@ function summarizeAuditRetentionPurge(result: AuditRetentionPurgeResult): string
   const mode = receipt.dryRun ? 'dry-run' : 'purge'
   const disabledNote = receipt.enabled ? '' : ' (retention disabled; forced dry-run)'
   return `${mode}${disabledNote}: scanned ${totals.scanned}, retained ${totals.retained}, ${verb} ${totals.deleted}`
+}
+
+function auditBundleExportScopeLabel(scope: AuditBundleExportScope): string {
+  switch (scope) {
+    case 'workspace':
+      return 'current workspace'
+    case 'chat':
+      return 'current thread'
+    case 'run':
+      return 'current run'
+    default:
+      return 'full local'
+  }
 }
 
 const FX_BURST_DURATION_MS = 1150
@@ -15209,14 +15224,54 @@ function App(): React.JSX.Element {
     }
   }
 
-  const exportProductAuditBundle = async () => {
+  const exportProductAuditBundle = async (scope: AuditBundleExportScope = 'all') => {
     if (typeof window.api.exportProductAuditBundle !== 'function') return
+    const request: ProductAuditBundleExportRequest = { redactionMode: 'default' }
+    if (scope === 'workspace') {
+      if (!currentWorkspace?.id && !currentWorkspace?.path) {
+        setRawLogs((prev) => [
+          ...prev,
+          { type: 'stderr', content: 'Audit bundle export failed: no current workspace.' }
+        ])
+        return
+      }
+      request.filter = {
+        ...(currentWorkspace?.id ? { workspaceId: currentWorkspace.id } : {}),
+        ...(currentWorkspace?.path ? { workspacePath: currentWorkspace.path } : {})
+      }
+    } else if (scope === 'chat' || scope === 'run') {
+      if (!currentChat?.appChatId) {
+        setRawLogs((prev) => [
+          ...prev,
+          { type: 'stderr', content: 'Audit bundle export failed: no current thread.' }
+        ])
+        return
+      }
+      request.filter = {
+        chatId: currentChat.appChatId,
+        ...(currentChat.workspaceId ? { workspaceId: currentChat.workspaceId } : {}),
+        ...(currentChat.workspacePath ? { workspacePath: currentChat.workspacePath } : {})
+      }
+      if (scope === 'run') {
+        if (!currentRun?.runId) {
+          setRawLogs((prev) => [
+            ...prev,
+            { type: 'stderr', content: 'Audit bundle export failed: no current run.' }
+          ])
+          return
+        }
+        request.filter.runId = currentRun.runId
+      }
+    }
     try {
-      const result = await window.api.exportProductAuditBundle({ redactionMode: 'default' })
+      const result = await window.api.exportProductAuditBundle(request)
       if (result.ok) {
         setRawLogs((prev) => [
           ...prev,
-          { type: 'info', content: `Audit bundle exported to ${result.path}` }
+          {
+            type: 'info',
+            content: `Audit bundle (${auditBundleExportScopeLabel(scope)}) exported to ${result.path}`
+          }
         ])
       } else if (result.error && result.error !== 'Audit bundle export cancelled.') {
         setRawLogs((prev) => [

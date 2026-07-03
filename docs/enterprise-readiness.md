@@ -257,6 +257,10 @@ What exists:
   bundle export, the opt-in audit-retention enabled flag, per-surface retention
   windows, a dry-run control, and a confirmation-gated purge control. Both
   dry-runs and purges flow through the main/preload receipt-writing route.
+- The Settings audit-bundle export surface now includes scoped controls for the
+  full local bundle, current workspace, current thread, and current run. Disabled
+  buttons make unavailable scopes explicit instead of silently exporting a
+  broader bundle.
 - Audit-bundle exports are now signed when Electron `safeStorage` is available:
   a long-lived Ed25519 key is generated once under `userData`,
   safeStorage-encrypted at rest, and reused so each exported bundle carries a
@@ -271,17 +275,12 @@ What is missing:
   signer and verifier exist in main code and tests, but the user-facing control
   surface currently exposes export and retention actions without a verifier
   status pane.
-- Workspace/thread/run filter controls for audit bundle export. The main route
-  supports scoped filters, but the first Settings entry point exports the full
-  redacted local bundle.
 - An explicit sensitive-field export flow. The current route is redacted-only
   and rejects unsupported sensitive modes, but there is not yet a separate
   user/admin decision path for exporting sensitive fields.
 
 Target:
 
-- Extend the Settings audit-bundle entry point with explicit workspace/thread/run
-  filter controls.
 - Add an explicit sensitive export mode only behind a separate user/admin
   decision; keep the default bundle redacted.
 - Expose verification results for signed audit bundles in the Settings/UI flow

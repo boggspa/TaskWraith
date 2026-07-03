@@ -795,6 +795,11 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
               updateChannel={updateChannel}
               approvalTimeouts={approvalTimeouts}
               auditRetention={settings?.auditRetention}
+              auditBundleExportAvailability={{
+                workspace: Boolean(currentWorkspace?.id || currentWorkspace?.path),
+                chat: Boolean(currentChat?.appChatId),
+                run: Boolean(currentRun?.runId)
+              }}
               managedPolicyStatus={managedPolicyStatus}
               productOperationsStatus={productOperationsStatus}
               codexStatus={codexStatus}
@@ -831,7 +836,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
               onRefreshProviderMcpStatus={(provider) => void refreshProviderMetadata(provider)}
               onRefreshProductOperationsStatus={() => void refreshProductOperationsStatus()}
               onExportProductDiagnostics={() => void exportProductDiagnostics()}
-              onExportProductAuditBundle={() => void exportProductAuditBundle()}
+              onExportProductAuditBundle={(scope) => void exportProductAuditBundle(scope)}
               onDryRunAuditRetention={() => void dryRunAuditRetention()}
               onPurgeAuditRetention={() => void purgeAuditRetention()}
               onRepairProductInstall={() => void repairProductInstall()}

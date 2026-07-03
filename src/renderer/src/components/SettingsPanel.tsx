@@ -116,6 +116,7 @@ import {
 
 type ProviderCliUpgradeState = 'idle' | 'opening' | 'opened' | 'error'
 type ManagedPolicyStatus = Record<string, unknown>
+type AuditBundleExportScope = 'all' | 'workspace' | 'chat' | 'run'
 
 const AUDIT_RETENTION_SURFACES: Array<{ key: AuditRetentionSurface; label: string }> = [
   { key: 'approvalLedger', label: 'Approvals' },
@@ -206,6 +207,7 @@ interface SettingsPanelProps {
   updateChannel: ProductUpdateChannel
   approvalTimeouts: AppSettings['approvalTimeouts']
   auditRetention?: AppSettings['auditRetention']
+  auditBundleExportAvailability?: Partial<Record<Exclude<AuditBundleExportScope, 'all'>, boolean>>
   managedPolicyStatus?: ManagedPolicyStatus | null
   productOperationsStatus: ProductOperationsStatus | null
   codexStatus?: any
@@ -241,7 +243,7 @@ interface SettingsPanelProps {
   onRefreshProviderMcpStatus?: (provider: ProviderId) => void
   onRefreshProductOperationsStatus: () => void
   onExportProductDiagnostics: () => void
-  onExportProductAuditBundle: () => void
+  onExportProductAuditBundle: (scope?: AuditBundleExportScope) => void
   onDryRunAuditRetention: () => void
   onPurgeAuditRetention: () => void
   onRepairProductInstall: () => void
@@ -2944,6 +2946,7 @@ export function SettingsPanel({
   updateChannel,
   approvalTimeouts,
   auditRetention,
+  auditBundleExportAvailability,
   managedPolicyStatus,
   productOperationsStatus,
   codexStatus,
@@ -8299,9 +8302,9 @@ export function SettingsPanel({
                   <button
                     className="btn btn-sm btn-ghost"
                     type="button"
-                    onClick={onExportProductAuditBundle}
+                    onClick={() => onExportProductAuditBundle('all')}
                   >
-                    Export audit bundle
+                    Export full audit bundle
                   </button>
                   <button
                     className="btn btn-sm btn-ghost"
@@ -8309,6 +8312,32 @@ export function SettingsPanel({
                     onClick={onRepairProductInstall}
                   >
                     Repair install
+                  </button>
+                </div>
+                <div className="settings-option-list settings-option-list-inline">
+                  <button
+                    className="btn btn-sm btn-ghost"
+                    type="button"
+                    onClick={() => onExportProductAuditBundle('workspace')}
+                    disabled={!auditBundleExportAvailability?.workspace}
+                  >
+                    Export workspace bundle
+                  </button>
+                  <button
+                    className="btn btn-sm btn-ghost"
+                    type="button"
+                    onClick={() => onExportProductAuditBundle('chat')}
+                    disabled={!auditBundleExportAvailability?.chat}
+                  >
+                    Export thread bundle
+                  </button>
+                  <button
+                    className="btn btn-sm btn-ghost"
+                    type="button"
+                    onClick={() => onExportProductAuditBundle('run')}
+                    disabled={!auditBundleExportAvailability?.run}
+                  >
+                    Export run bundle
                   </button>
                 </div>
                 {/* Phase G2: auto-update status pane. Self-contained so the
