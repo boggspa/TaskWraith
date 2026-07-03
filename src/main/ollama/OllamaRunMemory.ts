@@ -33,6 +33,8 @@ export interface OllamaSessionMemory {
   trajectory?: OllamaToolTrajectoryEntry[]
 }
 
+export type OllamaSessionMemoryMap = Record<string, OllamaSessionMemory>
+
 export function normalizeOllamaSessionMemory(
   memory: OllamaSessionMemory | null | undefined
 ): OllamaSessionMemory | null {
@@ -41,6 +43,41 @@ export function normalizeOllamaSessionMemory(
     ...memory,
     trajectory: memory.trajectory ?? []
   }
+}
+
+function isSafeOllamaSessionMemoryKey(key: string): boolean {
+  return /^[a-zA-Z0-9:_-]{1,160}$/.test(key)
+}
+
+export function normalizeOllamaSessionMemoryMap(
+  memories: OllamaSessionMemoryMap | null | undefined
+): OllamaSessionMemoryMap {
+  const normalized: OllamaSessionMemoryMap = {}
+  if (!memories || typeof memories !== 'object') return normalized
+  for (const [key, memory] of Object.entries(memories)) {
+    if (!isSafeOllamaSessionMemoryKey(key)) continue
+    const next = normalizeOllamaSessionMemory(memory)
+    if (next) normalized[key] = next
+  }
+  return normalized
+}
+
+export function upsertOllamaSessionMemory(
+  memories: OllamaSessionMemoryMap | null | undefined,
+  key: string,
+  memory: OllamaSessionMemory,
+  maxEntries = 32
+): OllamaSessionMemoryMap {
+  if (!isSafeOllamaSessionMemoryKey(key)) return normalizeOllamaSessionMemoryMap(memories)
+  const next = {
+    ...normalizeOllamaSessionMemoryMap(memories),
+    [key]: memory
+  }
+  return Object.fromEntries(
+    Object.entries(next)
+      .sort(([, a], [, b]) => (b.updatedAt || 0) - (a.updatedAt || 0))
+      .slice(0, maxEntries)
+  )
 }
 
 export function createEmptyOllamaSessionMemory(modelId: string): OllamaSessionMemory {

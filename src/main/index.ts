@@ -881,7 +881,11 @@ import {
   effectiveOllamaToolControlTier,
   ollamaToolNamesForTier
 } from './ollama/OllamaToolTiers'
-import { normalizeOllamaSessionMemory } from './ollama/OllamaRunMemory'
+import {
+  normalizeOllamaSessionMemory,
+  normalizeOllamaSessionMemoryMap,
+  upsertOllamaSessionMemory
+} from './ollama/OllamaRunMemory'
 import {
   assertOllamaMutationIntent,
   assertOllamaProtectedWritePaths,
@@ -17315,11 +17319,30 @@ async function runOllamaProviderAdapter(
       runManager,
       emitProviderCapabilityWarnings,
       executeTool: executeOllamaLocalTool,
-      getOllamaSessionMemory: (chatId) =>
-        normalizeOllamaSessionMemory(AppStore.getChat(chatId)?.ollamaSessionMemory),
-      saveOllamaSessionMemory: (chatId, memory) => {
+      getOllamaSessionMemory: (chatId, memoryKey) => {
+        const chat = AppStore.getChat(chatId)
+        if (!chat) return null
+        if (memoryKey) {
+          return normalizeOllamaSessionMemory(
+            normalizeOllamaSessionMemoryMap(chat.ollamaSessionMemories)[memoryKey]
+          )
+        }
+        return normalizeOllamaSessionMemory(chat.ollamaSessionMemory)
+      },
+      saveOllamaSessionMemory: (chatId, memory, memoryKey) => {
         const chat = AppStore.getChat(chatId)
         if (!chat) return
+        if (memoryKey) {
+          AppStore.saveChat({
+            ...chat,
+            ollamaSessionMemories: upsertOllamaSessionMemory(
+              chat.ollamaSessionMemories,
+              memoryKey,
+              memory
+            )
+          })
+          return
+        }
         AppStore.saveChat({ ...chat, ollamaSessionMemory: memory })
       }
     },

@@ -486,6 +486,90 @@ describe('runOllamaProvider streaming', () => {
     expect(chatBodies[1]).toContain('Boss/Bossman/Lead routing')
   })
 
+  it('loads and saves Ollama ensemble memory by participant seat key', async () => {
+    let chatCalls = 0
+    const executeTool = vi.fn(async () => ({
+      ok: true,
+      output: 'src/main/EnsemblePrompt.ts:1: identity fix'
+    }))
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (String(url).endsWith('/api/tags')) {
+        return jsonResponse({
+          models: [
+            {
+              name: 'stream-model:latest',
+              digest: 'digest-stream',
+              details: { family: 'qwen' },
+              capabilities: ['tools']
+            }
+          ]
+        })
+      }
+      if (String(url).endsWith('/api/show')) {
+        return jsonResponse({ details: { family: 'qwen' }, capabilities: ['tools'] })
+      }
+      if (String(url).endsWith('/api/chat')) {
+        chatCalls += 1
+        if (chatCalls === 1) {
+          expect(String(init?.body || '')).toContain('TaskWraith Ensemble Mode')
+          return ollamaStreamResponse([
+            JSON.stringify({
+              message: {
+                role: 'assistant',
+                content:
+                  '{"taskwraith_tool":{"name":"workspace_search","arguments":{"query":"identity fix","path":".","maxResults":5}}}'
+              }
+            }),
+            JSON.stringify({ done: true, prompt_eval_count: 8, eval_count: 4 })
+          ])
+        }
+        return ollamaStreamResponse([
+          JSON.stringify({
+            message: {
+              role: 'assistant',
+              content: 'LFM stayed in its own seat memory.'
+            }
+          }),
+          JSON.stringify({ done: true, prompt_eval_count: 8, eval_count: 12 })
+        ])
+      }
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const { deps } = makeProviderDeps({ fetchMock, executeTool })
+
+    await runOllamaProvider(
+      deps,
+      stubEvent,
+      {
+        ...basePayload,
+        prompt: 'TaskWraith Ensemble Mode\n\nCurrent user request:\nCheck identity isolation.',
+        ensembleRun: {
+          roundId: 'round-identity',
+          participantId: 'lfm-seat',
+          provider: 'ollama',
+          role: 'LFM',
+          order: 3,
+          ensembleContextChars: 24000,
+          ensembleContextTurns: 8
+        }
+      },
+      baseRoute
+    )
+
+    expect(deps.getOllamaSessionMemory).toHaveBeenCalledWith(
+      'chat-ollama-1',
+      'ensemble:lfm-seat'
+    )
+    expect(deps.saveOllamaSessionMemory).toHaveBeenCalledWith(
+      'chat-ollama-1',
+      expect.objectContaining({
+        modelId: 'stream-model:latest',
+        toolTurnCount: 1
+      }),
+      'ensemble:lfm-seat'
+    )
+  })
+
   it('keeps ensemble authority salient after empty Ollama turns', async () => {
     let chatCalls = 0
     const chatBodies: string[] = []
@@ -1986,6 +2070,13 @@ describe('parseOllamaToolRequest', () => {
     expect(resolveOllamaVisibleText({ content: '   ', thinking: 'the weather is sunny' })).toBe(
       'the weather is sunny'
     )
+    expect(
+      resolveOllamaVisibleText({
+        content: '',
+        thinking:
+          'We need to produce a response as Ollama / Qwen36 (qwen3.6:35b). The prior participants already spoke.'
+      })
+    ).toBe('')
     expect(resolveOllamaVisibleText({ content: '', thinking: '' })).toBe('')
   })
 
@@ -2057,6 +2148,11 @@ describe('parseOllamaToolRequest', () => {
     expect(
       looksLikeOllamaPromptRestatement(
         'We need to respond as Ollama / GPT-OSS #1. The user asked for weather.'
+      )
+    ).toBe(true)
+    expect(
+      looksLikeOllamaPromptRestatement(
+        'We need to produce a response as Ollama / Qwen36 (qwen3.6:35b). The system says Qwen36 already spoke in this turn-bound round.'
       )
     ).toBe(true)
     expect(looksLikeOllamaPromptRestatement('I found the matching file and can now patch it.')).toBe(

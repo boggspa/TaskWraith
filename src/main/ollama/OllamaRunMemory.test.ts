@@ -3,9 +3,11 @@ import {
   appendOllamaTrajectoryEntry,
   compressOllamaMessagesWithWorkingMemory,
   createEmptyOllamaSessionMemory,
+  normalizeOllamaSessionMemoryMap,
   pruneOllamaSessionMemoryForPersist,
   resolveOllamaWorkingMemoryLimits,
-  shouldRollOllamaRunSummary
+  shouldRollOllamaRunSummary,
+  upsertOllamaSessionMemory
 } from './OllamaRunMemory'
 
 describe('OllamaRunMemory', () => {
@@ -70,5 +72,31 @@ describe('OllamaRunMemory', () => {
     const pruned = pruneOllamaSessionMemoryForPersist(memory)
 
     expect(pruned.workingMemory).toHaveLength(6000)
+  })
+
+  it('keeps ensemble Ollama memory buckets isolated by safe seat key', () => {
+    const qwenMemory = {
+      ...createEmptyOllamaSessionMemory('qwen3.6:35b'),
+      workingMemory: 'Qwen prior trajectory',
+      toolTurnCount: 1
+    }
+    const lfmMemory = {
+      ...createEmptyOllamaSessionMemory('lfm2.5:8b'),
+      workingMemory: 'LFM prior trajectory',
+      toolTurnCount: 1
+    }
+
+    const memories = upsertOllamaSessionMemory(
+      upsertOllamaSessionMemory(null, 'ensemble:qwen36', qwenMemory),
+      'ensemble:lfm',
+      lfmMemory
+    )
+
+    expect(memories['ensemble:qwen36']?.workingMemory).toBe('Qwen prior trajectory')
+    expect(memories['ensemble:lfm']?.workingMemory).toBe('LFM prior trajectory')
+    expect(normalizeOllamaSessionMemoryMap({
+      'ensemble:lfm': lfmMemory,
+      '../../bad': qwenMemory
+    })['../../bad']).toBeUndefined()
   })
 })

@@ -2812,6 +2812,19 @@ export interface GuestParticipantConfig {
   persistent: true
 }
 
+export interface StoredOllamaSessionMemory {
+  modelId: string
+  updatedAt: number
+  workingMemory: string
+  toolTurnCount: number
+  trajectory?: Array<{
+    toolName: string
+    argsSummary: string
+    ok: boolean
+    resultSummary: string
+  }>
+}
+
 export interface ChatRecord {
   appChatId: string
   scope?: ChatScope
@@ -2922,18 +2935,13 @@ export interface ChatRecord {
    * 1.4.4 — Pruned Ollama transcript memory for session continuity across runs.
    * Stores compressed tool trajectory (calls + summaries), not full file bodies.
    */
-  ollamaSessionMemory?: {
-    modelId: string
-    updatedAt: number
-    workingMemory: string
-    toolTurnCount: number
-    trajectory?: Array<{
-      toolName: string
-      argsSummary: string
-      ok: boolean
-      resultSummary: string
-    }>
-  }
+  ollamaSessionMemory?: StoredOllamaSessionMemory
+  /**
+   * Ensemble-safe Ollama memory buckets, keyed by stable local seat scope
+   * (`ensemble:<participantId>`). Keeps multiple Ollama participants in one
+   * panel from reading or overwriting each other's compressed tool trajectory.
+   */
+  ollamaSessionMemories?: Record<string, StoredOllamaSessionMemory>
   delegationContext?: {
     /** When the delegation was created (ms since epoch). */
     createdAt: number
