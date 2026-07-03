@@ -144,6 +144,24 @@ export function isOllamaAdvertisedTool(toolName: string): boolean {
   return OLLAMA_ADVERTISED_TOOL_NAME_SET.has(toolName as OllamaToolName)
 }
 
+/**
+ * Every tool name the run loop's parser/executor will ACCEPT — the full catalog
+ * (OLLAMA_KNOWN_TOOL_NAMES == the 143 TASKWRAITH_MCP_TOOLS), network-aware. This
+ * is the EXECUTABLE surface, deliberately WIDER than the advertised ~22: the
+ * constrained-decoding grammar must allow all of it, or a model that discovers a
+ * tail tool via tool_help could never emit its name (the GBNF enum would reject
+ * it). Curation lives in the ADVERTISEMENT (preamble prose + native tool defs),
+ * never in the grammar.
+ */
+export function ollamaCallableToolNames(
+  options: { networkAccess?: string | null } = {}
+): OllamaToolName[] {
+  const names = [...OLLAMA_KNOWN_TOOL_NAMES]
+  return options.networkAccess === 'deny'
+    ? names.filter((toolName) => !OLLAMA_NETWORK_TOOL_NAMES.has(toolName))
+    : names
+}
+
 export function normalizeOllamaToolControlTier(value?: string | null): OllamaToolControlTier {
   if (value === 'approved_edits' || value === 'approved_shell' || value === 'provider_parity') {
     return value

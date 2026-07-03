@@ -1852,6 +1852,58 @@ describe('runOllamaProvider streaming', () => {
     expect(contentTexts).toHaveLength(1)
     expect(contentTexts[0]).toContain('stopping instead of looping')
   }, 10000)
+
+  it('constrains json-fallback decoding to the FULL catalog, not just advertised tools', async () => {
+    // Regression: the constrained-decoding grammar must allow every EXECUTABLE
+    // tool (so a model can name a tail tool discovered via tool_help), even
+    // though only the curated ~22 are ADVERTISED. If the grammar enum were the
+    // advertised set, a json_only model could never emit e.g. git_blame.
+    const chatBodies: string[] = []
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (String(url).endsWith('/api/tags')) {
+        return jsonResponse({
+          models: [
+            {
+              name: 'stream-model:latest',
+              digest: 'digest-stream',
+              details: { family: 'qwen' },
+              capabilities: ['tools']
+            }
+          ]
+        })
+      }
+      if (String(url).endsWith('/api/show')) {
+        return jsonResponse({ details: { family: 'qwen' }, capabilities: ['tools'] })
+      }
+      if (String(url).endsWith('/api/chat')) {
+        chatBodies.push(String(init?.body || ''))
+        return ollamaStreamResponse([
+          JSON.stringify({ message: { role: 'assistant', content: 'Done.' } }),
+          JSON.stringify({ done: true, prompt_eval_count: 4, eval_count: 2 })
+        ])
+      }
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const { deps } = makeProviderDeps({
+      fetchMock,
+      settings: { ollamaRunProfiles: { 'stream-model:latest': { protocolMode: 'json_only' } } },
+      executeTool: async () => ({ ok: true, output: '' })
+    })
+
+    await runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
+
+    expect(chatBodies).toHaveLength(1)
+    const format = JSON.parse(chatBodies[0]).format
+    const enumNames: string[] = format?.properties?.taskwraith_tool?.properties?.name?.enum
+    expect(Array.isArray(enumNames)).toBe(true)
+    // Advertised tools are present...
+    expect(enumNames).toContain('read_file')
+    // ...but so are non-advertised tail tools + tool_help (the whole point).
+    expect(enumNames).toContain('git_blame')
+    expect(enumNames).toContain('tool_help')
+    // The advertised set is ~22; the executable catalog is far larger.
+    expect(enumNames.length).toBeGreaterThan(40)
+  })
 })
 
 describe('normalizeOllamaBaseUrl', () => {

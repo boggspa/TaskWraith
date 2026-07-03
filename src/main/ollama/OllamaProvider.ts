@@ -58,6 +58,7 @@ export { ollamaLocalToolSystemPrompt } from './OllamaModelProfiles'
 import {
   OLLAMA_KNOWN_TOOL_NAMES,
   ollamaAdvertisedToolNames,
+  ollamaCallableToolNames,
   ollamaToolIntent,
   ollamaToolNamesForTier,
   type OllamaToolName
@@ -2142,6 +2143,11 @@ async function runOllamaChatTurn(input: {
   keepAlive?: string
   toolProtocolEnabled?: boolean
   availableToolNames?: string[]
+  // The full network-aware callable catalog (+ tool_help) used ONLY to build the
+  // constrained-decoding grammar — wider than availableToolNames (which is the
+  // curated advertised set used for prose/heuristics) so the grammar never locks
+  // out a tail tool the model discovered via tool_help.
+  formatToolNames?: string[]
   onRetry?: (input: OllamaChatRetryCallbackInput) => void
   onContentDelta?: (input: OllamaChatTurnStreamCallbackInput) => void
   onThinkingUpdate?: (input: OllamaChatTurnThinkingCallbackInput) => void
@@ -2169,9 +2175,16 @@ async function runOllamaChatTurn(input: {
       // model then cannot emit a wrong wrapper key or an invalid tool name.
       ...(input.jsonToolFallback
         ? {
-            format: input.availableToolNames?.length
-              ? ollamaToolCallFormatSchema(input.availableToolNames)
-              : 'json'
+            // Grammar allows the full EXECUTABLE catalog (formatToolNames), not
+            // the curated advertised set — otherwise a model can never emit a
+            // tail tool it discovered via tool_help. Falls back to
+            // availableToolNames only if the caller didn't supply the wider set.
+            format:
+              input.formatToolNames?.length
+                ? ollamaToolCallFormatSchema(input.formatToolNames)
+                : input.availableToolNames?.length
+                  ? ollamaToolCallFormatSchema(input.availableToolNames)
+                  : 'json'
           }
         : {}),
       ...(input.think ? { think: input.think } : {}),
@@ -2380,6 +2393,12 @@ export async function runOllamaProvider(
         : toolProtocolEnabled
           ? [...ollamaAdvertisedToolNames({ networkAccess: runtimeNetworkAccess }), OLLAMA_TOOL_HELP_NAME]
           : []
+    // The constrained-decoding grammar must permit the FULL executable catalog
+    // (+ tool_help), not just the advertised set above — otherwise a json-path
+    // model can never emit a tail tool it discovered via tool_help.
+    const formatToolNames = toolProtocolEnabled
+      ? [...ollamaCallableToolNames({ networkAccess: runtimeNetworkAccess }), OLLAMA_TOOL_HELP_NAME]
+      : []
     const modelTemperature = ollamaModelFamilyTemperature(model)
     const thinkingLevel = resolveOllamaThinkingLevel(model, runProfile)
     const chatId = route.appChatId || payload.appChatId
@@ -2545,6 +2564,7 @@ export async function runOllamaProvider(
         ...(runProfile.keepAlive ? { keepAlive: runProfile.keepAlive } : {}),
         toolProtocolEnabled,
         availableToolNames,
+        formatToolNames,
         onRetry: ({ attempt, maxAttempts, delayMs, error }) => {
           deps.sendAgentCompatLine(
             event.sender,
