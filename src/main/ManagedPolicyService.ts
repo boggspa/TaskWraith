@@ -6,6 +6,7 @@ import type {
 } from './store/types'
 import {
   evaluateUserMcpLaunchPolicy,
+  type BuildUserMcpLaunchServersOptions,
   type UserMcpLaunchAllowlistPolicy
 } from './UserMcpServers'
 
@@ -75,6 +76,11 @@ export interface ManagedPolicySnapshot {
 export interface ManagedPolicyLoadDeps {
   env?: NodeJS.ProcessEnv
   readFileSync?: (path: string, encoding: 'utf8') => string
+  validateUserMcpPluginProvenance?: BuildUserMcpLaunchServersOptions['validatePluginProvenance']
+}
+
+interface ManagedPolicyRuntimeDeps {
+  validateUserMcpPluginProvenance?: BuildUserMcpLaunchServersOptions['validatePluginProvenance']
 }
 
 const settingKeySet = new Set<string>(MANAGED_POLICY_SETTING_KEYS)
@@ -277,7 +283,8 @@ export class ManagedPolicyService {
   constructor(
     private readonly source: ManagedPolicySnapshot['source'] = 'none',
     private readonly document: ManagedPolicyDocument = {},
-    private readonly errors: string[] = []
+    private readonly errors: string[] = [],
+    private readonly runtimeDeps: ManagedPolicyRuntimeDeps = {}
   ) {}
 
   static none(): ManagedPolicyService {
@@ -382,7 +389,10 @@ export class ManagedPolicyService {
       filtered.userMcpServers = filtered.userMcpServers.map((server) => {
         if (!server.enabled) return server
         const decision = evaluateUserMcpLaunchPolicy(server, allowlist)
-        return decision.allowed ? server : { ...server, enabled: false }
+        if (!decision.allowed) return { ...server, enabled: false }
+        const pluginProvenanceError =
+          this.runtimeDeps.validateUserMcpPluginProvenance?.(server)
+        return pluginProvenanceError ? { ...server, enabled: false } : server
       })
     }
     return filtered
@@ -460,23 +470,44 @@ export function loadManagedPolicyFromEnvironment(
   const policyPath = env.TASKWRAITH_MANAGED_POLICY_PATH
   if (rawJson && rawJson.trim()) {
     try {
-      return new ManagedPolicyService('env-json', parseManagedPolicyDocument(JSON.parse(rawJson)))
+      return new ManagedPolicyService(
+        'env-json',
+        parseManagedPolicyDocument(JSON.parse(rawJson)),
+        [],
+        {
+          validateUserMcpPluginProvenance: deps.validateUserMcpPluginProvenance
+        }
+      )
     } catch (error) {
-      return new ManagedPolicyService('env-json', {}, [
-        error instanceof Error ? error.message : String(error)
-      ])
+      return new ManagedPolicyService(
+        'env-json',
+        {},
+        [error instanceof Error ? error.message : String(error)],
+        {
+          validateUserMcpPluginProvenance: deps.validateUserMcpPluginProvenance
+        }
+      )
     }
   }
   if (policyPath && policyPath.trim() && readFileSync) {
     try {
       return new ManagedPolicyService(
         'env-path',
-        parseManagedPolicyDocument(JSON.parse(readFileSync(policyPath.trim(), 'utf8')))
+        parseManagedPolicyDocument(JSON.parse(readFileSync(policyPath.trim(), 'utf8'))),
+        [],
+        {
+          validateUserMcpPluginProvenance: deps.validateUserMcpPluginProvenance
+        }
       )
     } catch (error) {
-      return new ManagedPolicyService('env-path', {}, [
-        error instanceof Error ? error.message : String(error)
-      ])
+      return new ManagedPolicyService(
+        'env-path',
+        {},
+        [error instanceof Error ? error.message : String(error)],
+        {
+          validateUserMcpPluginProvenance: deps.validateUserMcpPluginProvenance
+        }
+      )
     }
   }
   return ManagedPolicyService.none()

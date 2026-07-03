@@ -26264,7 +26264,8 @@ if (isGeminiMcpBridgeProcess) {
     const autoUpdateForce = process.env.TASKWRAITH_AUTO_UPDATE
     const managedPolicyService = loadManagedPolicyFromEnvironment({
       env: process.env,
-      readFileSync: (filePath, encoding) => fsSync.readFileSync(filePath, encoding)
+      readFileSync: (filePath, encoding) => fsSync.readFileSync(filePath, encoding),
+      validateUserMcpPluginProvenance
     })
     managedPolicySnapshotForDiagnostics = () => managedPolicyService.snapshot()
     managedUserMcpLaunchAllowlistPolicy = () =>

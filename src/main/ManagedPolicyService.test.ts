@@ -215,6 +215,71 @@ describe('ManagedPolicyService', () => {
     ])
   })
 
+  it('disables user MCP servers with stale plugin provenance at save time', () => {
+    const service = new ManagedPolicyService(
+      'env-json',
+      parseManagedPolicyDocument({
+        userMcpLaunchAllowlist: {
+          allowedTransports: ['stdio'],
+          requirePluginProvenance: true
+        }
+      }),
+      [],
+      {
+        validateUserMcpPluginProvenance: (server) =>
+          server.id === 'stale'
+            ? 'plugin provenance does not match the installed manifest'
+            : undefined
+      }
+    )
+
+    const filtered = service.filterSettingsPatch({
+      userMcpServers: [
+        {
+          id: 'fresh',
+          name: 'Fresh',
+          enabled: true,
+          transport: 'stdio',
+          command: '/opt/taskwraith/mcp/fresh-server',
+          pluginProvenance: {
+            pluginId: 'docs',
+            publisher: 'taskwraith',
+            version: '1.0.0',
+            source: 'builtin',
+            namespace: 'plugin.taskwraith.docs',
+            manifestHash: 'sha256:fresh',
+            kind: 'mcpServer',
+            objectId: 'docs-stdio',
+            materializedAt: '2026-07-03T12:00:00.000Z'
+          }
+        },
+        {
+          id: 'stale',
+          name: 'Stale',
+          enabled: true,
+          transport: 'stdio',
+          command: '/opt/taskwraith/mcp/stale-server',
+          pluginProvenance: {
+            pluginId: 'docs',
+            publisher: 'taskwraith',
+            version: '1.0.0',
+            source: 'builtin',
+            namespace: 'plugin.taskwraith.docs',
+            manifestHash: 'sha256:stale',
+            kind: 'mcpServer',
+            objectId: 'docs-stdio',
+            materializedAt: '2026-07-03T12:00:00.000Z'
+          }
+        }
+      ]
+    })
+
+    expect(filtered.userMcpServers).toEqual([
+      expect.objectContaining({ id: 'fresh', enabled: true }),
+      expect.objectContaining({ id: 'stale', enabled: false })
+    ])
+  })
+
   it('reports malformed env policy without throwing during startup', () => {
     const service = loadManagedPolicyFromEnvironment({
       env: { TASKWRAITH_MANAGED_POLICY_JSON: '{' }

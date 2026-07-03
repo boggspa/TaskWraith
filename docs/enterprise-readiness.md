@@ -342,6 +342,9 @@ What exists:
 - Settings writes now apply the same managed user-MCP allowlist before
   persistence. Servers that fail the allowlist are preserved but saved disabled,
   so the user does not lose configuration while launch bypasses remain closed.
+- Settings writes also revalidate plugin MCP provenance through the same plugin
+  catalog verifier used at launch time before preserving a plugin-backed server
+  as enabled.
 - Stdio command-root checks canonicalize existing commands and roots through
   realpath before allowlist comparison, blocking symlinks that point outside the
   managed root.
@@ -362,8 +365,6 @@ What is missing:
 
 - Locked Settings UI and plugin materialization policy still need to sit on the
   B5.3 managed-policy plane.
-- Save-time plugin provenance checks are still syntactic until Settings writes
-  can call the plugin catalog verifier; launch-time revalidation is in place.
 - Command-root and argument-prefix checks are launch allowlists, not a sandbox.
   They constrain configured process materialization but do not confine a
   process after it starts.
