@@ -1074,6 +1074,17 @@ public struct RemoteEnsembleState: Codable, Sendable {
     /// `secondInCommandParticipantId` — MUST match the Mac projection exactly.
     /// Captain uses Boss-like controls only when the Boss is unavailable.
     public let secondInCommandParticipantId: String?
+    /// Ensemble orchestration mode. Wire key `orchestrationMode`; values are
+    /// `"turn_bound"` | `"continuous"` (UNDERSCORE — not "turn-bound"). Absent
+    /// on older Mac builds ⇒ treat as turn_bound. NOTE: "Work Session" is a
+    /// SEPARATE concept (see `workSessionStatus`), NOT a value of this field.
+    public let orchestrationMode: String?
+    /// Current inter-participant handoff count in the active round (continuous
+    /// mode only). Wire key `continuationHops`.
+    public let continuationHops: Int?
+    /// Max handoff turns (hops) per round; only meaningful in continuous mode.
+    /// Wire key `maxContinuationHops`. Mac clamps to [1, 500], default 6.
+    public let maxContinuationHops: Int?
     public let participants: [Participant]?
     /// The CONFIGURED (editable) roster — present even when idle.
     public let roster: [RosterEntry]?
