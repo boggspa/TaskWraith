@@ -2370,6 +2370,7 @@ export interface ProductAuditBundleSnapshot {
 
 export interface ProductAuditBundleExportRequest {
   path?: string
+  redactionMode?: ProductAuditBundleRedactionMode
   filter?: ProductAuditBundleFilter
 }
 

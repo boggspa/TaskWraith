@@ -205,6 +205,9 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'plugins:set-enabled': ['nonEmptyString', 'boolean'],
   'plugins:update': ['nonEmptyString'],
   'plugins:uninstall': ['nonEmptyString'],
+  'get-extension-secret-status': [],
+  'set-extension-secret': ['object', 'string'],
+  'clear-extension-secret': ['object'],
   // 1.0.6-CRUX42 — open a Terminal running a provider's interactive CLI login.
   'provider:open-login-terminal': ['provider'],
   'provider:open-logout-terminal': ['provider'],

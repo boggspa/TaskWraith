@@ -114,10 +114,12 @@ describe('registerDiagnosticsHandlers', () => {
 
     await handlerFor('export-product-audit-bundle')({}, {
       path: '/tmp/audit.json',
+      redactionMode: 'default',
       filter: { chatId: 'chat-1' }
     })
     expect(deps.exportProductAuditBundle).toHaveBeenCalledWith({
       path: '/tmp/audit.json',
+      redactionMode: 'default',
       filter: { chatId: 'chat-1' }
     })
 
@@ -132,6 +134,19 @@ describe('registerDiagnosticsHandlers', () => {
 
     await handlerFor('repair-product-install')({})
     expect(deps.repairProductInstall).toHaveBeenCalledOnce()
+  })
+
+  it('rejects unsupported audit-bundle sensitive export modes before export', async () => {
+    const deps = createDeps()
+    registerDiagnosticsHandlers(deps)
+
+    await expect(
+      handlerFor('export-product-audit-bundle')({}, {
+        path: '/tmp/audit-sensitive.json',
+        redactionMode: 'sensitive'
+      })
+    ).rejects.toThrow('Sensitive audit-bundle export modes are not available.')
+    expect(deps.exportProductAuditBundle).not.toHaveBeenCalled()
   })
 
   it('defaults record-product-crash source when missing', () => {

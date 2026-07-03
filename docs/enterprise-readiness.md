@@ -240,6 +240,10 @@ What exists:
   bundle JSON with optional workspace/thread/run filters. Chat-scoped exports
   read each persisted run event file directly rather than using the
   UI-optimized chat event cap.
+- The audit-bundle IPC route now accepts only the default redacted export mode.
+  Unsupported sensitive-export modes fail before export, so future sensitive
+  bundles require an explicit separate user/admin flow rather than appearing as
+  a tolerated option.
 - Main/preload expose `purgeProductAuditRetention`, backed by opt-in
   `auditRetention` settings. It can dry-run or purge expired approval history,
   run-event files and artifacts, workspace-change records, audit runs,
@@ -267,8 +271,9 @@ What is missing:
 - A polished verification/export UI around the signed bundle evidence. The
   signer and verifier exist in main code and tests, but the user-facing control
   surface is still only the preload route.
-- A clear separation between redacted-by-default export and explicit
-  sensitive-field export.
+- An explicit sensitive-field export flow. The current route is redacted-only
+  and rejects unsupported sensitive modes, but there is not yet a separate
+  user/admin decision path for exporting sensitive fields.
 
 Target:
 

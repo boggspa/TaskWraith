@@ -29,6 +29,19 @@ export interface DiagnosticsHandlersDeps {
   }>
 }
 
+function normalizeAuditBundleExportRequest(
+  request?: ProductAuditBundleExportRequest
+): ProductAuditBundleExportRequest {
+  if (!request) return {}
+  if (request.redactionMode && request.redactionMode !== 'default') {
+    throw new Error('Sensitive audit-bundle export modes are not available.')
+  }
+  return {
+    ...request,
+    redactionMode: request.redactionMode || 'default'
+  }
+}
+
 export function registerDiagnosticsHandlers(deps: DiagnosticsHandlersDeps): void {
   ipcMain.handle('get-product-operations-status', async () => deps.getProductOperationsStatus())
 
@@ -48,7 +61,7 @@ export function registerDiagnosticsHandlers(deps: DiagnosticsHandlersDeps): void
   )
 
   ipcMain.handle('export-product-audit-bundle', async (_, request?: ProductAuditBundleExportRequest) =>
-    deps.exportProductAuditBundle(request || {})
+    deps.exportProductAuditBundle(normalizeAuditBundleExportRequest(request))
   )
 
   ipcMain.handle('purge-product-audit-retention', async (_, request?: AuditRetentionPurgeRequest) =>
