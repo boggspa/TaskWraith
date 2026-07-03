@@ -18699,6 +18699,14 @@ function App(): React.JSX.Element {
         const chat = targetChat || currentChat
         const round = chat?.ensemble?.activeRound
         if (!chat || !round) return
+        const ensembleChatId = chat.appChatId
+        // Single-flight parity with the composer Steer (see `handleSteer`). A
+        // steered round dispatches asynchronously main-side — the interrupted
+        // turn is cancelled first — and the queued-row Steer button is not
+        // disabled while that IPC round-trip is in flight, so a fast second
+        // click would fire a competing steer that supersedes the first. Ignore
+        // re-entrant clicks for this chat until the in-flight steer settles.
+        if (ensembleSteerInFlightChatIdsRef.current.has(ensembleChatId)) return
         const currentQueue =
           Array.isArray(round.queuedPrompts) && round.queuedPrompts.length > 0
           ? round.queuedPrompts
@@ -18711,18 +18719,39 @@ function App(): React.JSX.Element {
           chat.ensemble?.fanoutPolicy,
           chat.ensemble?.concurrentModeEnabled
         )
-        const result = await window.api.steerQueuedEnsemblePrompt({
-          chatId: chat.appChatId,
-          index: idx,
-          textPrefix: prompt,
-          concurrentMode: ensembleFanoutPolicyEnabled(fanoutPolicy),
-          fanoutPolicy
-        })
-        if (result?.status !== 'steered') {
-          appendFailure(
-            'Queued ensemble steer failed',
-            result?.error || 'the queued item could not be promoted safely'
-          )
+        ensembleSteerInFlightChatIdsRef.current.add(ensembleChatId)
+        try {
+          const result = await window.api.steerQueuedEnsemblePrompt({
+            chatId: ensembleChatId,
+            index: idx,
+            textPrefix: prompt,
+            concurrentMode: ensembleFanoutPolicyEnabled(fanoutPolicy),
+            fanoutPolicy
+          })
+          if (result?.status !== 'steered') {
+            appendFailure(
+              'Queued ensemble steer failed',
+              result?.error || 'the queued item could not be promoted safely'
+            )
+          } else {
+            // Optimistic feedback parity with the composer Steer: reflect the
+            // interruption immediately instead of waiting for the main→renderer
+            // broadcast, so the first click visibly does something. Without this
+            // the user perceives a no-op and clicks Steer again.
+            //
+            // `isThinking` is a single GLOBAL flag read by the main transcript's
+            // badge; only flip it when this steer targets the visible main chat.
+            // A side-chat queued steer must not spuriously show "Thinking…" on
+            // the (unrelated) main chat — the side chat derives its own indicator
+            // from its round. `refreshSingleChat` is chat-scoped so it's safe for
+            // either target.
+            if (ensembleChatId === (currentChatIdRef.current || currentChat?.appChatId)) {
+              setIsThinking(true)
+            }
+            void refreshSingleChat(ensembleChatId)
+          }
+        } finally {
+          ensembleSteerInFlightChatIdsRef.current.delete(ensembleChatId)
         }
         return
       }
