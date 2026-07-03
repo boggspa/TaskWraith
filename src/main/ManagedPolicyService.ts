@@ -1,3 +1,4 @@
+import { createHash, createPublicKey, verify as verifySignature, type KeyObject } from 'node:crypto'
 import type {
   AgenticServicesSettings,
   AppSettings,
@@ -52,11 +53,19 @@ export interface ManagedPolicyDocument {
 
 export interface ManagedPolicySnapshot {
   active: boolean
-  source: 'none' | 'env-json' | 'env-path'
+  source: 'none' | 'env-json' | 'env-path' | 'signed-env-json' | 'signed-env-path'
   organizationName?: string
   lockedSettings: ManagedPolicySettingKey[]
   enforcedSettings: ManagedPolicySettingKey[]
   errors: string[]
+  signature?: {
+    required: boolean
+    present: boolean
+    valid: boolean
+    keyId?: string
+    payloadHash?: string
+    reason?: string
+  }
   userMcpLaunchAllowlist?: {
     active: boolean
     allowedTransportCount: number
@@ -84,11 +93,21 @@ interface ManagedPolicyRuntimeDeps {
   validateUserMcpPluginProvenance?: BuildUserMcpLaunchServersOptions['validatePluginProvenance']
 }
 
+interface ManagedPolicySignatureSnapshot {
+  required: boolean
+  present: boolean
+  valid: boolean
+  keyId?: string
+  payloadHash?: string
+  reason?: string
+}
+
 const settingKeySet = new Set<string>(MANAGED_POLICY_SETTING_KEYS)
 const updateChannels = new Set<ProductUpdateChannel>(['debug', 'stable', 'nightly'])
 const sandboxFallbacks = new Set<CodexSandboxFallbackMode>(['ask_rerun', 'off'])
 const servicePolicies = new Set(['ask', 'workspace', 'allow', 'deny'])
 const networkPolicies = new Set(['allow', 'deny'])
+const managedPolicySignatureAlgorithms = new Set(['ed25519'])
 const agenticServiceKeys = [
   'shellCommands',
   'fileChanges',
@@ -105,6 +124,24 @@ const agenticServiceKeys = [
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value))
+}
+
+function stableJson(value: unknown): string {
+  if (value === undefined) return 'null'
+  if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null'
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => (item === undefined ? 'null' : stableJson(item))).join(',')}]`
+  }
+  const entries = Object.entries(value as Record<string, unknown>)
+    .filter(([, entryValue]) => entryValue !== undefined)
+    .sort(([left], [right]) => left.localeCompare(right))
+  return `{${entries
+    .map(([key, entryValue]) => `${JSON.stringify(key)}:${stableJson(entryValue)}`)
+    .join(',')}}`
+}
+
+function sha256Utf8(value: string): string {
+  return createHash('sha256').update(value, 'utf8').digest('hex')
 }
 
 function jsonEqual(left: unknown, right: unknown): boolean {
@@ -276,6 +313,147 @@ export function parseManagedPolicyDocument(raw: unknown): ManagedPolicyDocument 
   return document
 }
 
+function isSignedManagedPolicyEnvelope(value: unknown): value is {
+  payload: unknown
+  signature: Record<string, unknown>
+} {
+  return (
+    isRecord(value) &&
+    Object.prototype.hasOwnProperty.call(value, 'payload') &&
+    isRecord(value.signature)
+  )
+}
+
+function loadManagedPolicyPublicKey(
+  deps: ManagedPolicyLoadDeps
+): { configured: boolean; key?: KeyObject; errors: string[] } {
+  const env = deps.env || process.env
+  const readFileSync = deps.readFileSync
+  const inlineMaterial =
+    env.TASKWRAITH_MANAGED_POLICY_PUBLIC_KEY ||
+    env.TASKWRAITH_MANAGED_POLICY_PUBLIC_KEY_DER_BASE64
+  const keyPath = env.TASKWRAITH_MANAGED_POLICY_PUBLIC_KEY_PATH
+  const configured = Boolean(inlineMaterial?.trim() || keyPath?.trim())
+  if (!configured) return { configured: false, errors: [] }
+  try {
+    const material = inlineMaterial?.trim()
+      ? inlineMaterial.trim()
+      : readFileSync
+        ? readFileSync(keyPath!.trim(), 'utf8').trim()
+        : ''
+    if (!material) {
+      return {
+        configured: true,
+        errors: ['Managed policy public key is configured but unavailable.']
+      }
+    }
+    const key = material.includes('BEGIN PUBLIC KEY')
+      ? createPublicKey(material)
+      : createPublicKey({
+          key: Buffer.from(material, 'base64'),
+          format: 'der',
+          type: 'spki'
+        })
+    return { configured: true, key, errors: [] }
+  } catch (error) {
+    return {
+      configured: true,
+      errors: [
+        `Managed policy public key could not be loaded: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      ]
+    }
+  }
+}
+
+function verifyManagedPolicyEnvelope(
+  raw: unknown,
+  publicKey: KeyObject | undefined,
+  required: boolean
+): { payload?: unknown; signature: ManagedPolicySignatureSnapshot; errors: string[] } {
+  if (!isSignedManagedPolicyEnvelope(raw)) {
+    return {
+      payload: required ? undefined : raw,
+      signature: {
+        required,
+        present: false,
+        valid: !required,
+        ...(required ? { reason: 'missing_signature' } : {})
+      },
+      errors: required ? ['Managed policy signature is required.'] : []
+    }
+  }
+
+  const signature = raw.signature
+  const algorithm = String(signature.algorithm || '')
+  const keyId =
+    typeof signature.keyId === 'string' && signature.keyId.trim()
+      ? signature.keyId.trim().slice(0, 120)
+      : undefined
+  const signatureBase64 =
+    typeof signature.signatureBase64 === 'string' ? signature.signatureBase64.trim() : ''
+  const payload = stableJson(raw.payload)
+  const payloadHash = sha256Utf8(payload)
+  const declaredPayloadHash =
+    typeof signature.payloadHash === 'string' ? signature.payloadHash.trim() : ''
+  const base: ManagedPolicySignatureSnapshot = {
+    required: true,
+    present: true,
+    valid: false,
+    ...(keyId ? { keyId } : {}),
+    payloadHash
+  }
+  if (!managedPolicySignatureAlgorithms.has(algorithm)) {
+    return {
+      signature: { ...base, reason: 'unsupported_algorithm' },
+      errors: ['Managed policy signature algorithm is unsupported.']
+    }
+  }
+  if (!publicKey) {
+    return {
+      signature: { ...base, reason: 'missing_public_key' },
+      errors: ['Signed managed policy requires a configured public key.']
+    }
+  }
+  if (!declaredPayloadHash || declaredPayloadHash !== payloadHash) {
+    return {
+      signature: { ...base, reason: 'payload_hash_mismatch' },
+      errors: ['Managed policy payload hash does not match its signature envelope.']
+    }
+  }
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(signatureBase64)) {
+    return {
+      signature: { ...base, reason: 'malformed_signature' },
+      errors: ['Managed policy signature material is malformed.']
+    }
+  }
+  try {
+    const valid = verifySignature(
+      null,
+      Buffer.from(payload, 'utf8'),
+      publicKey,
+      Buffer.from(signatureBase64, 'base64')
+    )
+    if (!valid) {
+      return {
+        signature: { ...base, reason: 'signature_verification_failed' },
+        errors: ['Managed policy signature verification failed.']
+      }
+    }
+    return {
+      payload: raw.payload,
+      signature: { ...base, valid: true },
+      errors: []
+    }
+  } catch {
+    return {
+      signature: { ...base, reason: 'signature_verification_failed' },
+      errors: ['Managed policy signature verification failed.']
+    }
+  }
+}
+
 function settingKeysFromSettings(settings: ManagedPolicySettings | undefined): ManagedPolicySettingKey[] {
   if (!settings) return []
   return Object.keys(settings).filter((key): key is ManagedPolicySettingKey =>
@@ -288,7 +466,8 @@ export class ManagedPolicyService {
     private readonly source: ManagedPolicySnapshot['source'] = 'none',
     private readonly document: ManagedPolicyDocument = {},
     private readonly errors: string[] = [],
-    private readonly runtimeDeps: ManagedPolicyRuntimeDeps = {}
+    private readonly runtimeDeps: ManagedPolicyRuntimeDeps = {},
+    private readonly signature?: ManagedPolicySignatureSnapshot
   ) {}
 
   static none(): ManagedPolicyService {
@@ -312,6 +491,7 @@ export class ManagedPolicyService {
       lockedSettings,
       enforcedSettings,
       errors: [...this.errors],
+      ...(this.signature ? { signature: { ...this.signature } } : {}),
       ...(userMcpLaunchAllowlist
         ? {
             userMcpLaunchAllowlist: {
@@ -473,45 +653,59 @@ export function loadManagedPolicyFromEnvironment(
   const readFileSync = deps.readFileSync
   const rawJson = env.TASKWRAITH_MANAGED_POLICY_JSON
   const policyPath = env.TASKWRAITH_MANAGED_POLICY_PATH
+  const runtimeDeps: ManagedPolicyRuntimeDeps = {
+    validateUserMcpPluginProvenance: deps.validateUserMcpPluginProvenance
+  }
+  const publicKey = loadManagedPolicyPublicKey(deps)
+  const serviceFromRaw = (
+    source: 'env-json' | 'env-path',
+    raw: unknown,
+    preErrors: string[] = []
+  ): ManagedPolicyService => {
+    const verified = verifyManagedPolicyEnvelope(raw, publicKey.key, publicKey.configured)
+    const signedSource: ManagedPolicySnapshot['source'] = verified.signature.present
+      ? source === 'env-json'
+        ? 'signed-env-json'
+        : 'signed-env-path'
+      : source
+    if (publicKey.errors.length > 0 || verified.errors.length > 0 || verified.payload === undefined) {
+      return new ManagedPolicyService(
+        signedSource,
+        {},
+        [...preErrors, ...publicKey.errors, ...verified.errors],
+        runtimeDeps,
+        verified.signature
+      )
+    }
+    return new ManagedPolicyService(
+      signedSource,
+      parseManagedPolicyDocument(verified.payload),
+      preErrors,
+      runtimeDeps,
+      verified.signature.present || verified.signature.required ? verified.signature : undefined
+    )
+  }
   if (rawJson && rawJson.trim()) {
     try {
-      return new ManagedPolicyService(
-        'env-json',
-        parseManagedPolicyDocument(JSON.parse(rawJson)),
-        [],
-        {
-          validateUserMcpPluginProvenance: deps.validateUserMcpPluginProvenance
-        }
-      )
+      return serviceFromRaw('env-json', JSON.parse(rawJson))
     } catch (error) {
       return new ManagedPolicyService(
         'env-json',
         {},
         [error instanceof Error ? error.message : String(error)],
-        {
-          validateUserMcpPluginProvenance: deps.validateUserMcpPluginProvenance
-        }
+        runtimeDeps
       )
     }
   }
   if (policyPath && policyPath.trim() && readFileSync) {
     try {
-      return new ManagedPolicyService(
-        'env-path',
-        parseManagedPolicyDocument(JSON.parse(readFileSync(policyPath.trim(), 'utf8'))),
-        [],
-        {
-          validateUserMcpPluginProvenance: deps.validateUserMcpPluginProvenance
-        }
-      )
+      return serviceFromRaw('env-path', JSON.parse(readFileSync(policyPath.trim(), 'utf8')))
     } catch (error) {
       return new ManagedPolicyService(
         'env-path',
         {},
         [error instanceof Error ? error.message : String(error)],
-        {
-          validateUserMcpPluginProvenance: deps.validateUserMcpPluginProvenance
-        }
+        runtimeDeps
       )
     }
   }

@@ -292,6 +292,13 @@ What exists:
   policy, approval timeouts, user MCP servers (disable-only), and workspace
   grants (clear-only). Diagnostics export reports a redacted policy status
   summary.
+- The env/path managed policy source can now be a signed Ed25519 envelope. When
+  `TASKWRAITH_MANAGED_POLICY_PUBLIC_KEY_DER_BASE64`,
+  `TASKWRAITH_MANAGED_POLICY_PUBLIC_KEY`, or
+  `TASKWRAITH_MANAGED_POLICY_PUBLIC_KEY_PATH` is configured, unsigned policies
+  fail closed and only a verified envelope payload is applied. Diagnostics
+  report signature presence/validity, key id, and payload hash but not key
+  material.
 - Session YOLO enablement is clamped when managed policy controls agentic
   service policy, workspace grants, or approval timeouts. The local IPC setter
   and paired-device bridge toggle return a managed-blocked state instead of
@@ -299,8 +306,8 @@ What exists:
 
 What is missing:
 
-- No signed or MDM-delivered managed policy source yet; the current source is
-  local env/path JSON for managed test deployments.
+- No MDM-delivered managed policy source yet; the current source remains env or
+  env-path JSON, with optional signature enforcement for managed deployments.
 - No locked-control affordances in Settings for enterprise-managed installs.
   Enforcement exists, but the UI does not yet explain why a control is locked.
 - Other non-settings live controls still need explicit inventory and managed
@@ -312,7 +319,7 @@ What is missing:
 
 Target:
 
-- Promote the env/path policy format to a signed or MDM-delivered policy source,
+- Promote the signed env/path policy format to an MDM-delivered policy source,
   retaining the same effective-settings clamp seam.
 - Clamp agentic service policy, workspace grants, approval timeouts, session
   YOLO, update channel, auto-update, bridge access, and user-managed MCP

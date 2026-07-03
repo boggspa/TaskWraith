@@ -1,3 +1,4 @@
+import { createHash, generateKeyPairSync, sign as signPayload } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
 import {
   loadManagedPolicyFromEnvironment,
@@ -5,6 +6,43 @@ import {
   parseManagedPolicyDocument
 } from './ManagedPolicyService'
 import type { AppSettings } from './store/types'
+
+function stableJson(value: unknown): string {
+  if (value === undefined) return 'null'
+  if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null'
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => (item === undefined ? 'null' : stableJson(item))).join(',')}]`
+  }
+  const entries = Object.entries(value as Record<string, unknown>)
+    .filter(([, entryValue]) => entryValue !== undefined)
+    .sort(([left], [right]) => left.localeCompare(right))
+  return `{${entries
+    .map(([key, entryValue]) => `${JSON.stringify(key)}:${stableJson(entryValue)}`)
+    .join(',')}}`
+}
+
+function signedPolicyEnvelope(payload: unknown): {
+  envelope: unknown
+  publicKeyDerBase64: string
+} {
+  const { publicKey, privateKey } = generateKeyPairSync('ed25519')
+  const serializedPayload = stableJson(payload)
+  return {
+    publicKeyDerBase64: publicKey.export({ format: 'der', type: 'spki' }).toString('base64'),
+    envelope: {
+      schemaVersion: 1,
+      payload,
+      signature: {
+        algorithm: 'ed25519',
+        keyId: 'managed-test-key',
+        payloadHash: createHash('sha256').update(serializedPayload, 'utf8').digest('hex'),
+        signatureBase64: signPayload(null, Buffer.from(serializedPayload, 'utf8'), privateKey).toString(
+          'base64'
+        )
+      }
+    }
+  }
+}
 
 function settings(overrides: Partial<AppSettings> = {}): AppSettings {
   return {
@@ -160,6 +198,135 @@ describe('ManagedPolicyService', () => {
       perProviderMs: { codex: 45_000 },
       mainAuthorityMs: 90_000
     })
+  })
+
+  it('loads a signed managed policy envelope when its public key verifies', () => {
+    const payload = {
+      schemaVersion: 1,
+      organizationName: 'Signed Corp',
+      lockedSettings: ['updateChannel'],
+      settings: {
+        updateChannel: 'stable',
+        autoUpdateEnabled: true
+      }
+    }
+    const signed = signedPolicyEnvelope(payload)
+    const service = loadManagedPolicyFromEnvironment({
+      env: {
+        TASKWRAITH_MANAGED_POLICY_JSON: JSON.stringify(signed.envelope),
+        TASKWRAITH_MANAGED_POLICY_PUBLIC_KEY_DER_BASE64: signed.publicKeyDerBase64
+      }
+    })
+
+    expect(service.snapshot()).toMatchObject({
+      active: true,
+      source: 'signed-env-json',
+      organizationName: 'Signed Corp',
+      lockedSettings: expect.arrayContaining(['updateChannel', 'autoUpdateEnabled']),
+      errors: [],
+      signature: {
+        required: true,
+        present: true,
+        valid: true,
+        keyId: 'managed-test-key',
+        payloadHash: expect.any(String)
+      }
+    })
+    expect(service.enforcedSettingsPatch(settings())).toMatchObject({
+      updateChannel: 'stable',
+      autoUpdateEnabled: true
+    })
+  })
+
+  it('loads a signed managed policy envelope from a configured path', () => {
+    const signed = signedPolicyEnvelope({
+      schemaVersion: 1,
+      settings: { geminiMcpBridgeEnabled: false }
+    })
+    const service = loadManagedPolicyFromEnvironment({
+      env: {
+        TASKWRAITH_MANAGED_POLICY_PATH: '/managed/taskwraith-policy.json',
+        TASKWRAITH_MANAGED_POLICY_PUBLIC_KEY_DER_BASE64: signed.publicKeyDerBase64
+      },
+      readFileSync: (filePath) => {
+        expect(filePath).toBe('/managed/taskwraith-policy.json')
+        return JSON.stringify(signed.envelope)
+      }
+    })
+
+    expect(service.snapshot()).toMatchObject({
+      active: true,
+      source: 'signed-env-path',
+      errors: [],
+      signature: {
+        present: true,
+        valid: true
+      }
+    })
+    expect(service.enforcedSettingsPatch(settings())).toEqual({
+      geminiMcpBridgeEnabled: false
+    })
+  })
+
+  it('requires signed managed policy envelopes when a public key is configured', () => {
+    const signed = signedPolicyEnvelope({ schemaVersion: 1 })
+    const service = loadManagedPolicyFromEnvironment({
+      env: {
+        TASKWRAITH_MANAGED_POLICY_JSON: JSON.stringify({
+          schemaVersion: 1,
+          settings: { updateChannel: 'stable' }
+        }),
+        TASKWRAITH_MANAGED_POLICY_PUBLIC_KEY_DER_BASE64: signed.publicKeyDerBase64
+      }
+    })
+
+    expect(service.snapshot()).toMatchObject({
+      active: true,
+      source: 'env-json',
+      errors: ['Managed policy signature is required.'],
+      signature: {
+        required: true,
+        present: false,
+        valid: false,
+        reason: 'missing_signature'
+      }
+    })
+    expect(service.enforcedSettingsPatch(settings())).toEqual({})
+  })
+
+  it('rejects signed managed policy envelopes whose payload was tampered', () => {
+    const signed = signedPolicyEnvelope({
+      schemaVersion: 1,
+      settings: { updateChannel: 'stable' }
+    })
+    const envelope = signed.envelope as {
+      payload: { settings: { updateChannel: string } }
+      signature: { payloadHash: string }
+    }
+    envelope.payload.settings.updateChannel = 'nightly'
+    envelope.signature.payloadHash = createHash('sha256')
+      .update(stableJson(envelope.payload), 'utf8')
+      .digest('hex')
+
+    const service = loadManagedPolicyFromEnvironment({
+      env: {
+        TASKWRAITH_MANAGED_POLICY_JSON: JSON.stringify(envelope),
+        TASKWRAITH_MANAGED_POLICY_PUBLIC_KEY_DER_BASE64: signed.publicKeyDerBase64
+      }
+    })
+
+    expect(service.snapshot()).toMatchObject({
+      active: true,
+      source: 'signed-env-json',
+      errors: ['Managed policy signature verification failed.'],
+      signature: {
+        required: true,
+        present: true,
+        valid: false,
+        reason: 'signature_verification_failed'
+      }
+    })
+    expect(service.enforcedSettingsPatch(settings())).toEqual({})
   })
 
   it('filters locked settings from user patches while keeping unrelated changes', () => {
