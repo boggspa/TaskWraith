@@ -1,4 +1,5 @@
 import fs from 'node:fs'
+import net from 'node:net'
 import path from 'node:path'
 import {
   extensionSecretKey,
@@ -35,6 +36,7 @@ export interface UserMcpLaunchAllowlistPolicy {
   allowedRemoteHosts?: readonly string[]
   allowedRemotePorts?: readonly number[]
   allowedRemotePathPrefixes?: readonly string[]
+  blockPrivateRemoteHosts?: boolean
   allowedHeaderNames?: readonly string[]
   allowedEnvKeys?: readonly string[]
   requirePluginProvenance?: boolean
@@ -175,6 +177,45 @@ function isRemoteHostAllowed(url: string, allowedRemoteHosts: readonly string[])
   }
 }
 
+function isPrivateOrLocalRemoteHost(hostname: string): boolean {
+  const normalized = hostname.trim().toLowerCase().replace(/^\[(.*)\]$/, '$1')
+  if (!normalized) return false
+  if (normalized === 'localhost' || normalized.endsWith('.localhost')) return true
+  if (normalized === '::' || normalized === '::1') return true
+  const ipVersion = net.isIP(normalized)
+  if (ipVersion === 4) {
+    const [a, b] = normalized.split('.').map((part) => Number(part))
+    return (
+      a === 0 ||
+      a === 10 ||
+      a === 127 ||
+      (a === 100 && b >= 64 && b <= 127) ||
+      (a === 169 && b === 254) ||
+      (a === 172 && b >= 16 && b <= 31) ||
+      (a === 192 && b === 168) ||
+      (a === 198 && (b === 18 || b === 19))
+    )
+  }
+  if (ipVersion === 6) {
+    const dottedIpv4Mapped = normalized.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/)
+    if (dottedIpv4Mapped) return isPrivateOrLocalRemoteHost(dottedIpv4Mapped[1])
+    const hexIpv4Mapped = normalized.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/)
+    if (hexIpv4Mapped) {
+      const high = Number.parseInt(hexIpv4Mapped[1], 16)
+      const low = Number.parseInt(hexIpv4Mapped[2], 16)
+      return isPrivateOrLocalRemoteHost(
+        `${(high >> 8) & 255}.${high & 255}.${(low >> 8) & 255}.${low & 255}`
+      )
+    }
+    return (
+      normalized.startsWith('fc') ||
+      normalized.startsWith('fd') ||
+      normalized.startsWith('fe80:')
+    )
+  }
+  return false
+}
+
 function parseRemoteUrl(url: string | undefined): URL | undefined {
   if (!url) return undefined
   try {
@@ -292,6 +333,7 @@ export function evaluateUserMcpLaunchPolicy(
     policy.allowedRemoteHosts ||
     policy.allowedRemotePorts ||
     policy.allowedRemotePathPrefixes ||
+    policy.blockPrivateRemoteHosts ||
     server.url?.includes('@')
   ) {
     if (!parsedRemoteUrl) return blockedDecision(server, 'remote URL is invalid')
@@ -311,6 +353,12 @@ export function evaluateUserMcpLaunchPolicy(
     const url = server.url?.trim()
     if (!url || !isRemoteHostAllowed(url, policy.allowedRemoteHosts)) {
       return blockedDecision(server, 'remote host is not allowlisted')
+    }
+  }
+
+  if (policy.blockPrivateRemoteHosts && parsedRemoteUrl) {
+    if (isPrivateOrLocalRemoteHost(parsedRemoteUrl.hostname)) {
+      return blockedDecision(server, 'remote host is private or local')
     }
   }
 

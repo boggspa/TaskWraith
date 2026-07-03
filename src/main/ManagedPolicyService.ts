@@ -66,6 +66,7 @@ export interface ManagedPolicySnapshot {
     allowedRemoteHostCount: number
     allowedRemotePortCount: number
     allowedRemotePathPrefixCount: number
+    blockPrivateRemoteHosts: boolean
     allowedHeaderNameCount: number
     allowedEnvKeyCount: number
     requirePluginProvenance: boolean
@@ -244,6 +245,9 @@ function sanitizeUserMcpLaunchAllowlist(value: unknown): UserMcpLaunchAllowlistP
       )
     : undefined
   if (remotePathPrefixes) policy.allowedRemotePathPrefixes = remotePathPrefixes
+  if (typeof value.blockPrivateRemoteHosts === 'boolean') {
+    policy.blockPrivateRemoteHosts = value.blockPrivateRemoteHosts
+  }
   const headerNames = uniqueStrings(value.allowedHeaderNames)
   if (headerNames) policy.allowedHeaderNames = headerNames
   const envKeys = uniqueStrings(value.allowedEnvKeys)
@@ -321,6 +325,7 @@ export class ManagedPolicyService {
               allowedRemotePortCount: userMcpLaunchAllowlist.allowedRemotePorts?.length || 0,
               allowedRemotePathPrefixCount:
                 userMcpLaunchAllowlist.allowedRemotePathPrefixes?.length || 0,
+              blockPrivateRemoteHosts: userMcpLaunchAllowlist.blockPrivateRemoteHosts === true,
               allowedHeaderNameCount: userMcpLaunchAllowlist.allowedHeaderNames?.length || 0,
               allowedEnvKeyCount: userMcpLaunchAllowlist.allowedEnvKeys?.length || 0,
               requirePluginProvenance:

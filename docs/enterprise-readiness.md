@@ -351,6 +351,8 @@ What exists:
 - Stdio argument checks can require every configured command argument to match
   a managed prefix allowlist. Blocked evidence reports argument position rather
   than the raw argument value.
+- Remote checks can also block loopback, private, link-local, carrier-grade NAT,
+  benchmarking, and localhost remote MCP hosts when the managed policy opts in.
 - Launch-time user-MCP materialization now revalidates saved plugin MCP
   provenance against the current plugin catalog before including the server:
   installed/enabled state, trust/preflight/update status, source identity,
@@ -368,9 +370,9 @@ What is missing:
 - Command-root and argument-prefix checks are launch allowlists, not a sandbox.
   They constrain configured process materialization but do not confine a
   process after it starts.
-- Remote checks cover managed scheme/host/port/path allowlists and reject URL
-  userinfo, but they are still not a full DNS-rebinding or runtime egress
-  policy.
+- Remote checks cover managed scheme/host/port/path allowlists, reject URL
+  userinfo, and can block private/local IP-literal plus localhost hosts, but
+  they are still not a full DNS-rebinding or runtime egress policy.
 - Long-lived provider app servers, especially Codex app-server, need an
   explicit restart or re-materialization path before mid-session policy changes
   can remove previously attached user MCP servers.

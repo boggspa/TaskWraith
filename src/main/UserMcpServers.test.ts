@@ -468,6 +468,50 @@ describe('buildUserMcpStdioLaunchServers', () => {
     })
   })
 
+  it('can block private and local remote MCP hosts under managed policy', () => {
+    for (const url of [
+      'http://localhost/mcp',
+      'http://127.0.0.1/mcp',
+      'http://10.0.0.5/mcp',
+      'http://172.16.0.5/mcp',
+      'http://192.168.1.5/mcp',
+      'http://169.254.169.254/mcp',
+      'http://[::1]/mcp',
+      'http://[::ffff:127.0.0.1]/mcp',
+      'http://[fd00::1]/mcp',
+      'http://[fe80::1]/mcp'
+    ]) {
+      expect(
+        evaluateUserMcpLaunchPolicy(
+          {
+            id: 'private',
+            name: 'Private',
+            enabled: true,
+            transport: 'http',
+            url
+          },
+          { blockPrivateRemoteHosts: true }
+        )
+      ).toMatchObject({
+        allowed: false,
+        reason: 'remote host is private or local'
+      })
+    }
+
+    expect(
+      evaluateUserMcpLaunchPolicy(
+        {
+          id: 'docs',
+          name: 'Docs',
+          enabled: true,
+          transport: 'http',
+          url: 'https://docs.example.test/mcp'
+        },
+        { blockPrivateRemoteHosts: true }
+      ).allowed
+    ).toBe(true)
+  })
+
   it('treats bearer token env vars as synthesized Authorization headers for policy', () => {
     expect(
       evaluateUserMcpLaunchPolicy(
