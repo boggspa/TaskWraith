@@ -160,7 +160,8 @@ import {
 import {
   buildUserMcpCursorAllowRules,
   buildUserMcpCursorServerEntry,
-  buildUserMcpLaunchServers
+  buildUserMcpLaunchServers,
+  type UserMcpLaunchAllowlistPolicy
 } from './UserMcpServers'
 import {
   codexCommandFileEditMetadata,
@@ -1862,6 +1863,8 @@ let wakeupTimerServiceRef: WakeupTimerService | null = null
 let sessionCheckpointStoreRef: SessionCheckpointStore | null = null
 let updateServiceRef: UpdateService | null = null
 let managedPolicySnapshotForDiagnostics: (() => Record<string, unknown> | undefined) | null = null
+let managedUserMcpLaunchAllowlistPolicy: (() => UserMcpLaunchAllowlistPolicy | undefined) | null =
+  null
 let localServersServiceRef: LocalServersService | null = null
 /** Processes TaskWraith spawns for agent tool calls — tracked so the Local
  * Servers panel can attribute them and group-kill them cleanly. */
@@ -10927,6 +10930,7 @@ function claudeTaskWraithMcpInput(route?: AgentRunRoute | null): ClaudeTaskWrait
     bridgeBinaryPath: bridgeCommandStatus.command,
     bridgeArgs: taskwraithMcpBridgeArgs(),
     userMcpServers: buildUserMcpLaunchServers(settings.userMcpServers, {
+      allowlistPolicy: managedUserMcpLaunchAllowlistPolicy?.(),
       resolveSecretValues: (refs) => AppStore.resolveExtensionSecretValues(refs)
     }),
     ...(route?.appRunId ? { appRunId: route.appRunId } : {}),
@@ -11774,6 +11778,7 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
       const settings = AppStore.getSettings()
       const userMcpServers = buildUserMcpLaunchServers(settings.userMcpServers, {
         supportedTransports: ['stdio', 'http'],
+        allowlistPolicy: managedUserMcpLaunchAllowlistPolicy?.(),
         resolveSecretValues: (refs) => AppStore.resolveExtensionSecretValues(refs)
       })
       const cursorDir = join(payload.workspace, '.cursor')
@@ -13351,6 +13356,7 @@ function getCodexClient(runtimeProfile?: RuntimeProfile | null): CodexAppServerC
   const bridgeCommandStatus = taskwraithMcpBridgeCommandStatus()
   const userMcpServers = buildUserMcpLaunchServers(settings.userMcpServers, {
     supportedTransports: ['stdio', 'http'],
+    allowlistPolicy: managedUserMcpLaunchAllowlistPolicy?.(),
     resolveSecretValues: (refs) => AppStore.resolveExtensionSecretValues(refs)
   })
   const taskWraithBridgeEnabled = Boolean(
@@ -26167,6 +26173,8 @@ if (isGeminiMcpBridgeProcess) {
       readFileSync: (filePath, encoding) => fsSync.readFileSync(filePath, encoding)
     })
     managedPolicySnapshotForDiagnostics = () => managedPolicyService.snapshot()
+    managedUserMcpLaunchAllowlistPolicy = () =>
+      managedPolicyService.userMcpLaunchAllowlistPolicy()
     const startupManagedPatch = managedPolicyService.enforcedSettingsPatch(AppStore.getSettings())
     if (Object.keys(startupManagedPatch).length > 0) {
       AppStore.updateSettings(startupManagedPatch)

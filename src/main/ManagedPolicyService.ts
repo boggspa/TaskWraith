@@ -4,6 +4,7 @@ import type {
   ProductUpdateChannel,
   CodexSandboxFallbackMode
 } from './store/types'
+import type { UserMcpLaunchAllowlistPolicy } from './UserMcpServers'
 
 export const MANAGED_POLICY_SETTING_KEYS = [
   'agenticServices',
@@ -42,6 +43,7 @@ export interface ManagedPolicyDocument {
   organizationName?: string
   lockedSettings?: ManagedPolicySettingKey[]
   settings?: ManagedPolicySettings
+  userMcpLaunchAllowlist?: UserMcpLaunchAllowlistPolicy
 }
 
 export interface ManagedPolicySnapshot {
@@ -51,6 +53,16 @@ export interface ManagedPolicySnapshot {
   lockedSettings: ManagedPolicySettingKey[]
   enforcedSettings: ManagedPolicySettingKey[]
   errors: string[]
+  userMcpLaunchAllowlist?: {
+    active: boolean
+    allowedTransportCount: number
+    allowedCommandRootCount: number
+    allowedRemoteHostCount: number
+    allowedHeaderNameCount: number
+    allowedEnvKeyCount: number
+    requirePluginProvenance: boolean
+    allowedPluginIdCount: number
+  }
 }
 
 export interface ManagedPolicyLoadDeps {
@@ -166,16 +178,50 @@ function sanitizeLockedSettings(value: unknown): ManagedPolicySettingKey[] {
   )
 }
 
+function uniqueStrings(value: unknown, max = 128): string[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const strings = Array.from(
+    new Set(value.map((entry) => String(entry || '').trim()).filter(Boolean))
+  ).slice(0, max)
+  return strings.length > 0 ? strings : undefined
+}
+
+function sanitizeUserMcpLaunchAllowlist(value: unknown): UserMcpLaunchAllowlistPolicy | undefined {
+  if (!isRecord(value)) return undefined
+  const policy: UserMcpLaunchAllowlistPolicy = {}
+  const transports = uniqueStrings(value.allowedTransports)?.filter(
+    (transport): transport is 'stdio' | 'http' | 'sse' =>
+      transport === 'stdio' || transport === 'http' || transport === 'sse'
+  )
+  if (transports && transports.length > 0) policy.allowedTransports = transports
+  const commandRoots = uniqueStrings(value.allowedCommandRoots)
+  if (commandRoots) policy.allowedCommandRoots = commandRoots
+  const remoteHosts = uniqueStrings(value.allowedRemoteHosts)
+  if (remoteHosts) policy.allowedRemoteHosts = remoteHosts
+  const headerNames = uniqueStrings(value.allowedHeaderNames)
+  if (headerNames) policy.allowedHeaderNames = headerNames
+  const envKeys = uniqueStrings(value.allowedEnvKeys)
+  if (envKeys) policy.allowedEnvKeys = envKeys
+  if (typeof value.requirePluginProvenance === 'boolean') {
+    policy.requirePluginProvenance = value.requirePluginProvenance
+  }
+  const pluginIds = uniqueStrings(value.allowedPluginIds)
+  if (pluginIds) policy.allowedPluginIds = pluginIds
+  return Object.keys(policy).length > 0 ? policy : undefined
+}
+
 export function parseManagedPolicyDocument(raw: unknown): ManagedPolicyDocument {
   if (!isRecord(raw)) return {}
   const settings = sanitizeManagedSettings(raw.settings)
+  const userMcpLaunchAllowlist = sanitizeUserMcpLaunchAllowlist(raw.userMcpLaunchAllowlist)
   const document: ManagedPolicyDocument = {
     ...(raw.schemaVersion === 1 ? { schemaVersion: 1 } : {}),
     ...(typeof raw.organizationName === 'string' && raw.organizationName.trim()
       ? { organizationName: raw.organizationName.trim().slice(0, 120) }
       : {}),
     lockedSettings: sanitizeLockedSettings(raw.lockedSettings),
-    ...(Object.keys(settings).length > 0 ? { settings } : {})
+    ...(Object.keys(settings).length > 0 ? { settings } : {}),
+    ...(userMcpLaunchAllowlist ? { userMcpLaunchAllowlist } : {})
   }
   return document
 }
@@ -203,14 +249,60 @@ export class ManagedPolicyService {
     const lockedSettings = Array.from(
       new Set([...(this.document.lockedSettings || []), ...enforcedSettings])
     )
+    const userMcpLaunchAllowlist = this.document.userMcpLaunchAllowlist
     return {
-      active: this.source !== 'none' && (lockedSettings.length > 0 || this.errors.length > 0),
+      active:
+        this.source !== 'none' &&
+        (lockedSettings.length > 0 ||
+          this.errors.length > 0 ||
+          Boolean(userMcpLaunchAllowlist)),
       source: this.source,
       ...(this.document.organizationName ? { organizationName: this.document.organizationName } : {}),
       lockedSettings,
       enforcedSettings,
-      errors: [...this.errors]
+      errors: [...this.errors],
+      ...(userMcpLaunchAllowlist
+        ? {
+            userMcpLaunchAllowlist: {
+              active: true,
+              allowedTransportCount: userMcpLaunchAllowlist.allowedTransports?.length || 0,
+              allowedCommandRootCount: userMcpLaunchAllowlist.allowedCommandRoots?.length || 0,
+              allowedRemoteHostCount: userMcpLaunchAllowlist.allowedRemoteHosts?.length || 0,
+              allowedHeaderNameCount: userMcpLaunchAllowlist.allowedHeaderNames?.length || 0,
+              allowedEnvKeyCount: userMcpLaunchAllowlist.allowedEnvKeys?.length || 0,
+              requirePluginProvenance:
+                userMcpLaunchAllowlist.requirePluginProvenance === true,
+              allowedPluginIdCount: userMcpLaunchAllowlist.allowedPluginIds?.length || 0
+            }
+          }
+        : {})
     }
+  }
+
+  userMcpLaunchAllowlistPolicy(): UserMcpLaunchAllowlistPolicy | undefined {
+    return this.document.userMcpLaunchAllowlist
+      ? {
+          ...this.document.userMcpLaunchAllowlist,
+          ...(this.document.userMcpLaunchAllowlist.allowedTransports
+            ? { allowedTransports: [...this.document.userMcpLaunchAllowlist.allowedTransports] }
+            : {}),
+          ...(this.document.userMcpLaunchAllowlist.allowedCommandRoots
+            ? { allowedCommandRoots: [...this.document.userMcpLaunchAllowlist.allowedCommandRoots] }
+            : {}),
+          ...(this.document.userMcpLaunchAllowlist.allowedRemoteHosts
+            ? { allowedRemoteHosts: [...this.document.userMcpLaunchAllowlist.allowedRemoteHosts] }
+            : {}),
+          ...(this.document.userMcpLaunchAllowlist.allowedHeaderNames
+            ? { allowedHeaderNames: [...this.document.userMcpLaunchAllowlist.allowedHeaderNames] }
+            : {}),
+          ...(this.document.userMcpLaunchAllowlist.allowedEnvKeys
+            ? { allowedEnvKeys: [...this.document.userMcpLaunchAllowlist.allowedEnvKeys] }
+            : {}),
+          ...(this.document.userMcpLaunchAllowlist.allowedPluginIds
+            ? { allowedPluginIds: [...this.document.userMcpLaunchAllowlist.allowedPluginIds] }
+            : {})
+        }
+      : undefined
   }
 
   filterSettingsPatch(patch: Partial<AppSettings>): Partial<AppSettings> {

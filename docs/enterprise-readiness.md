@@ -329,14 +329,17 @@ What exists:
   transports, stdio command roots, remote URL hosts, header names, env keys,
   and plugin provenance / plugin ids, and can report blocked-server reasons to
   callers.
+- The managed-policy spine now accepts a `userMcpLaunchAllowlist` block and
+  feeds it into the Claude, Cursor, and Codex user-MCP launch materialization
+  paths. Diagnostics report only allowlist shape/counts, not the configured
+  roots, hosts, headers, env keys, or plugin ids.
 - Audit/previews redact values for display.
 
 What is missing:
 
-- No managed policy source feeds the allowlist yet, so default behavior remains
-  permissive for existing user settings and provider launches.
 - The allowlist is launch-time only. Save-time validation, locked Settings UI,
-  and plugin materialization policy still need the B5.3 managed-policy plane.
+  and plugin materialization policy still need to sit on the B5.3
+  managed-policy plane.
 - Plugin provenance checks are syntactic until a managed policy service
   revalidates installed plugin state, resource kind, object id, and manifest
   hash.
@@ -352,8 +355,7 @@ What is missing:
 
 Target:
 
-- Feed the launch allowlist from managed policy, then enforce compatible checks
-  at sanitize/save time and again at launch time.
+- Enforce compatible checks at sanitize/save time and again at launch time.
 - Keep command-root, remote-host, env/header, and provenance decisions
   centralized in the user-MCP launch builder so Codex, Claude, Cursor, and
   provider capability previews cannot drift.

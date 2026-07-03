@@ -190,4 +190,45 @@ describe('ManagedPolicyService', () => {
     })
     expect(service.enforcedSettingsPatch(settings())).toEqual({})
   })
+
+  it('surfaces a redacted user MCP launch allowlist policy', () => {
+    const service = loadManagedPolicyFromEnvironment({
+      env: {
+        TASKWRAITH_MANAGED_POLICY_JSON: JSON.stringify({
+          userMcpLaunchAllowlist: {
+            allowedTransports: ['stdio', 'http', 'bogus'],
+            allowedCommandRoots: ['/opt/taskwraith/mcp'],
+            allowedRemoteHosts: ['mcp.example.com'],
+            allowedHeaderNames: ['X-TaskWraith'],
+            allowedEnvKeys: ['SAFE_TOKEN'],
+            requirePluginProvenance: true,
+            allowedPluginIds: ['managed-tools']
+          }
+        })
+      }
+    })
+
+    expect(service.userMcpLaunchAllowlistPolicy()).toEqual({
+      allowedTransports: ['stdio', 'http'],
+      allowedCommandRoots: ['/opt/taskwraith/mcp'],
+      allowedRemoteHosts: ['mcp.example.com'],
+      allowedHeaderNames: ['X-TaskWraith'],
+      allowedEnvKeys: ['SAFE_TOKEN'],
+      requirePluginProvenance: true,
+      allowedPluginIds: ['managed-tools']
+    })
+    expect(service.snapshot()).toMatchObject({
+      active: true,
+      userMcpLaunchAllowlist: {
+        active: true,
+        allowedTransportCount: 2,
+        allowedCommandRootCount: 1,
+        allowedRemoteHostCount: 1,
+        allowedHeaderNameCount: 1,
+        allowedEnvKeyCount: 1,
+        requirePluginProvenance: true,
+        allowedPluginIdCount: 1
+      }
+    })
+  })
 })

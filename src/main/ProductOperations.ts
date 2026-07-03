@@ -85,6 +85,10 @@ function stableJson(value: unknown): string {
     .join(',')}}`
 }
 
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value))
+}
+
 function unsignedAuditBundleSnapshotForSignature(
   snapshot: ProductAuditBundleSnapshot
 ): ProductAuditBundleSnapshot {
@@ -1230,6 +1234,10 @@ export function buildDiagnosticsSnapshot(input: {
             enforcedSettings: Array.isArray(input.managedPolicy.enforcedSettings)
               ? input.managedPolicy.enforcedSettings
               : [],
+            hasUserMcpLaunchAllowlist: isPlainRecord(input.managedPolicy.userMcpLaunchAllowlist),
+            userMcpLaunchAllowlist: isPlainRecord(input.managedPolicy.userMcpLaunchAllowlist)
+              ? input.managedPolicy.userMcpLaunchAllowlist
+              : undefined,
             errorCount: Array.isArray(input.managedPolicy.errors)
               ? input.managedPolicy.errors.length
               : 0
