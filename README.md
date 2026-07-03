@@ -145,9 +145,10 @@ baseline.
   shared under one auditable workspace policy.
 - **Audit Runs**: `/audit` can coordinate provider-backed review passes with
   live progress, structured findings, verdicts, and dismissible run banners.
-- **Local Ollama**: Tiered workspace tools (read-only through provider parity),
-  optional live web search/fetch, per-model context engineering, and session memory
-  across runs — all policy-gated like cloud providers.
+- **Local Ollama**: Full TaskWraith tool-surface parity where local capability is
+  available, optional live web search/fetch, per-model context engineering, and
+  session memory across runs — all governed by the same permission roles and
+  policy gates as cloud providers.
 - **Custom MCP Servers**: User-defined MCP servers can be managed, validated,
   imported, exported, and attached to compatible provider runtimes with
   provider-specific JSON/TOML snippets and readiness checks.

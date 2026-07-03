@@ -1269,7 +1269,6 @@ declare global {
           runtimeProfileId?: string | null
           geminiAuthProfileId?: string | null
           linkedProviderSessionId?: string | null
-          ollamaToolControlTier?: string | null
           ollamaRunProfile?: string | null
         }
         reason?: string

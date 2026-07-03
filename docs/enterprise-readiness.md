@@ -653,25 +653,31 @@ Target:
 - Preserve `stageRole` and `laneId` through run normalization, `ChatRun`,
   queue jobs, approval previews, and run events.
 
-### B5.6 - Run-time provider tier receipts
+### B5.6 - Local provider capability receipts
 
 What exists:
 
-- Ollama computes a run-start tool-control tier and advertises tools from that
-  tier.
-- The local tool request carries a `toolControlTier` field.
-- The local execution gate now prefers that request-carried run-start tier and
-  falls back to live settings/chat metadata only for callers that do not carry a
-  tier.
+- Ollama's bespoke tool-control tier ladder has been retired. Local models now
+  receive the full TaskWraith tool surface where capability exists, and the
+  standard run permission posture governs whether reads, edits, shell, network,
+  publishing, and delegation execute.
+- The local tool request still carries a compatibility `toolControlTier`
+  identity, fixed to the full-surface posture, so existing telemetry and helper
+  code can distinguish the current local-provider surface without treating it as
+  the safety boundary.
+- Network-denied runs still strip Ollama web tools from the advertised local
+  surface, matching the central `web_search` / `web_fetch` execution gate.
 
 What is missing:
 
-- If product policy wants mid-run revocation instead of frozen run receipts,
-  revocation still needs to be explicit and audited.
+- If product policy wants mid-run revocation of an active local model's tool
+  surface, revocation still needs to be explicit and audited. The default model
+  is run-start capability plus per-call permission enforcement.
 
 Target:
 
-- Keep the run-start tier as the default execution receipt.
+- Keep local-model capability receipts aligned with the same permission posture
+  proof used by cloud providers.
 - Add explicit revocation events later only if managed policy requires live
   cancellation of an active Ollama tool surface.
 
@@ -867,12 +873,14 @@ primitive.
 - Preserve `stageRole` and `laneId` through run identity normalization and
   write-lock context.
 
-### Phase 4b - Provider tier and capability receipts
+### Phase 4b - Provider capability receipts
 
 Do this before claiming provider parity is fully auditable across local and
 brokered providers.
 
-- Freeze or explicitly revoke Ollama tool-control tiers during an active run.
+- Keep Ollama's full local tool surface bound to the signed run permission
+  posture, and add explicit active-run revocation only if managed policy later
+  requires it.
 - Keep Cursor/Grok static provider caveats pinned to their dynamic capability
   descriptors.
 

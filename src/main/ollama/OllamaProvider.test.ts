@@ -2352,11 +2352,12 @@ describe('Ollama tool surface (tier retired)', () => {
     expect(ollamaToolRequiresIntent('cancel_active_run')).toBe(true)
   })
 
-  it('advertises the full TaskWraith tool surface for acknowledged parity mode', () => {
+  it('advertises the full TaskWraith tool surface for every legacy tier value', () => {
     const tools = ollamaToolNamesForTier('provider_parity')
     expect(tools).toContain('write_file')
     expect(tools).toContain('run_shell_command')
     expect(tools).toContain('delegate_to_subthread')
+    expect(ollamaToolNamesForTier('read_only')).toEqual(tools)
   })
 })
 
