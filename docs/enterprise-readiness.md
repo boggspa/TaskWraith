@@ -145,11 +145,16 @@ What exists:
   `safeStorage` patterns.
 - Plugin secret status is exposed without cleartext, and plugin secret files use
   restrictive permissions.
+- Settings sanitization now rejects obvious inline plaintext secrets for
+  user-managed MCP env/header fields and runtime-profile env fields unless the
+  value is an environment-variable reference such as `$TOKEN` or `${TOKEN}`.
 
 What is missing:
 
-- User-managed MCP server `env` and `headers` are persisted as ordinary settings.
-- Runtime profile environment variables are persisted as ordinary profile JSON.
+- Non-secret user-managed MCP server `env` and `headers` are still persisted as
+  ordinary settings, and existing plaintext records still need migration.
+- Runtime profile environment variables are still persisted as ordinary profile
+  JSON when they are non-secret or reference-based.
 - Plugin `requiredSecrets` are not an end-to-end launch-time secret delivery
   path for MCP materialization.
 

@@ -30,6 +30,7 @@ import { WORKSPACE_BOARD_CARD_LINK_KINDS } from '../store/types'
 import { sanitizeProviderRunPauses } from '../ProviderRunPause'
 import { coerceLiveProvider, isRetiredProvider } from '../../shared/retiredProviders'
 import { isAppIconVariant, isWwdc26IconAvailable } from '../../shared/iconVariants'
+import { canPersistPlaintextFieldValue } from '../PlaintextSecretPolicy'
 
 // Grok + Cursor are first-class providers; no eligibility gate (see ProviderId).
 const PROVIDER_IDS = new Set<ProviderId>([
@@ -247,7 +248,11 @@ function sanitizeUserMcpServers(value: unknown): UserMcpServerConfig[] {
     const env: Record<string, string> = {}
     if (isRecord(record.env)) {
       for (const [key, rawValue] of Object.entries(record.env).slice(0, 64)) {
-        if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(key) && typeof rawValue === 'string') {
+        if (
+          /^[A-Za-z_][A-Za-z0-9_]*$/.test(key) &&
+          typeof rawValue === 'string' &&
+          canPersistPlaintextFieldValue({ key, value: rawValue, kind: 'env' })
+        ) {
           env[key] = rawValue
         }
       }
@@ -255,7 +260,11 @@ function sanitizeUserMcpServers(value: unknown): UserMcpServerConfig[] {
     const headers: Record<string, string> = {}
     if (isRecord(record.headers)) {
       for (const [key, rawValue] of Object.entries(record.headers).slice(0, 64)) {
-        if (/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(key) && typeof rawValue === 'string') {
+        if (
+          /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(key) &&
+          typeof rawValue === 'string' &&
+          canPersistPlaintextFieldValue({ key, value: rawValue, kind: 'header' })
+        ) {
           headers[key] = rawValue
         }
       }
@@ -987,7 +996,12 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
     const env: Record<string, string> = {}
     if (isRecord(input.env)) {
       for (const [key, value] of Object.entries(input.env)) {
-        if (typeof key === 'string' && key.trim() && typeof value === 'string') {
+        if (
+          typeof key === 'string' &&
+          key.trim() &&
+          typeof value === 'string' &&
+          canPersistPlaintextFieldValue({ key, value, kind: 'env' })
+        ) {
           env[key] = value
         }
       }

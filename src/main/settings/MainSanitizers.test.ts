@@ -467,6 +467,8 @@ describe('MainSanitizers settings patches', () => {
           args: [' @modelcontextprotocol/server-filesystem ', '', 5],
           env: {
             PROJECT_ROOT: '/repo',
+            OPENAI_API_KEY: 'sk-1234567890abcdefghijklmnop',
+            SAFE_TOKEN_REF: '${SAFE_TOKEN_REF}',
             'bad-key': 'drop'
           },
           description: ' Local files ',
@@ -494,6 +496,9 @@ describe('MainSanitizers settings patches', () => {
           url: ' https://example.test/mcp ',
           headers: {
             Authorization: 'Bearer ${DOCS_TOKEN}',
+            'X-API-Key': 'inline-secret-key',
+            'X-Auth-Token': '$AUTH_TOKEN',
+            'X-Figma-Region': 'eu',
             'bad header': 'drop'
           },
           bearerTokenEnvVar: ' DOCS_TOKEN '
@@ -521,7 +526,8 @@ describe('MainSanitizers settings patches', () => {
         command: 'npx',
         args: ['@modelcontextprotocol/server-filesystem'],
         env: {
-          PROJECT_ROOT: '/repo'
+          PROJECT_ROOT: '/repo',
+          SAFE_TOKEN_REF: '${SAFE_TOKEN_REF}'
         },
         description: 'Local files',
         pluginProvenance: {
@@ -543,7 +549,9 @@ describe('MainSanitizers settings patches', () => {
         transport: 'http',
         url: 'https://example.test/mcp',
         headers: {
-          Authorization: 'Bearer ${DOCS_TOKEN}'
+          Authorization: 'Bearer ${DOCS_TOKEN}',
+          'X-Auth-Token': '$AUTH_TOKEN',
+          'X-Figma-Region': 'eu'
         },
         bearerTokenEnvVar: 'DOCS_TOKEN'
       },
@@ -554,6 +562,28 @@ describe('MainSanitizers settings patches', () => {
         transport: 'http'
       }
     ])
+  })
+
+  it('drops inline plaintext secrets from runtime profile env while preserving references', () => {
+    const settings = makeSettings()
+    const { sanitizeRuntimeProfileForSave } = makeSanitizers(settings)
+
+    const sanitized = sanitizeRuntimeProfileForSave({
+      name: 'Codex secure profile',
+      provider: 'codex',
+      env: {
+        PROJECT_ROOT: '/repo',
+        OPENAI_API_KEY: 'sk-1234567890abcdefghijklmnop',
+        OPENAI_API_KEY_REF: '${OPENAI_API_KEY}',
+        CLIENT_SECRET: '$CLIENT_SECRET'
+      }
+    })
+
+    expect(sanitized.env).toEqual({
+      PROJECT_ROOT: '/repo',
+      OPENAI_API_KEY_REF: '${OPENAI_API_KEY}',
+      CLIENT_SECRET: '$CLIENT_SECRET'
+    })
   })
 
   it('sanitizes changelog persistence settings', () => {
