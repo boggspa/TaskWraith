@@ -17789,11 +17789,6 @@ async function runGeminiProvider(
       FORCE_COLOR: '0',
       NO_COLOR: '1',
       ...resolveGeminiAuthProfileEnv(payload.geminiAuthProfileId),
-      // Gemini's sandbox prevents the TaskWraith MCP bridge subprocess from
-      // connecting back to the broker. When write-capable TaskWraith MCP tools are
-      // enabled, keep both the CLI --sandbox flag and GEMINI_SANDBOX env disabled.
-      // The flagged read-only-advertise path drops it too (safe subset only).
-      ...(requiresGeminiWriteTools || geminiReadOnlyAdvertise ? {} : { GEMINI_SANDBOX: 'true' }),
       TASKWRAITH_RUN_ID: route.appRunId || '',
       TASKWRAITH_CHAT_ID: route.appChatId || '',
       TASKWRAITH_RUNTIME_PROFILE_ID: payload.runtimeProfileId || '',
@@ -21228,42 +21223,11 @@ function appendGeminiCliSessionArgs(
   // matches Codex / Claude / Kimi enforcement.
   args.push(...externalPathGrantsToGeminiIncludeDirArgs(externalPathGrants))
 
-  // Sandbox vs. TaskWraith MCP bridge: Gemini CLI's `--sandbox` flag wraps
-  // the agent in macOS `sandbox-exec` with a seatbelt profile that
-  // restricts subprocess spawning. That blocks the TaskWraith MCP
-  // bridge from launching at session init, leaving Gemini-CLI with a
-  // dead transport and every `TaskWraith__*` tool call returning
-  // "Not connected" to the agent (the user reproduced this with
-  // delegate_to_subthread on 2026-05-16). Skip sandboxing when the MCP
-  // bridge is enabled — TaskWraith's broker-level approval gates already
-  // mediate every tool call (file edits, shell commands, sub-thread
-  // delegation), giving us equivalent isolation through a different
-  // mechanism. For read-only Gemini runs (where MCP isn't registered)
-  // we still want the seatbelt sandbox, so keep `--sandbox` on that
-  // path.
-  //
-  // KNOWN LIMITATION (1.0.72) — because the seatbelt blocks the bridge
-  // subprocess, Gemini in plan/read-only mode has NO TaskWraith MCP tools,
-  // including the non-mutating `ask_user_question` / `ensemble_yield` that
-  // Codex, Claude and Kimi keep available in plan mode. The deferred fix is to
-  // swap this seatbelt for a strict read-only `--allowed-tools` allowlist
-  // (advertise only the non-mutating subset; keep write/shell unadvertised AND
-  // host-gated) and verify read-only Gemini still cannot write natively — a
-  // deliberate, write-verified follow-up. As of 1.0.72 a FLAGGED opt-in path
-  // (readOnlyMcpAdvertise, gated on TASKWRAITH_GEMINI_READONLY_MCP, default OFF)
-  // does exactly this — advertises the safe subset + drops the seatbelt —
-  // pending the runtime write-verification.
-  // (Grok and Cursor share this plan-mode gap structurally: their CLIs expose
-  // no per-run MCP in plan mode at all, so it can't be closed TaskWraith-side.)
-  //
-  // SECURITY: dropping --sandbox removes the ONLY containment for Gemini's NATIVE
-  // write/shell, so the read-only-advertise path stays behind the default-OFF
-  // flag until verified. Default OFF ⇒ unchanged (seatbelt on, no read-only
-  // bridge). The advertised set is the non-mutating safe subset only.
+  // Gemini is retired (RETIRED_PROVIDER_IDS) and this spawn path is unreachable
+  // via assertLiveProviderId. The dead `--sandbox` seatbelt branch (and its
+  // GEMINI_SANDBOX env) were removed; `advertiseBridge` now only gates the
+  // MCP-advertise args below.
   const advertiseBridge = allowTaskWraithMcp || readOnlyMcpAdvertise
-  if (!advertiseBridge) {
-    args.push('--sandbox')
-  }
 
   if (advertiseBridge) {
     args.push('--allowed-mcp-server-names', GEMINI_MCP_SERVER_NAME)
@@ -30892,13 +30856,6 @@ if (isGeminiMcpBridgeProcess) {
           {
             FORCE_COLOR: '1',
             ...resolveGeminiAuthProfileEnv(getDefaultGeminiAuthProfileId()),
-            // Gemini's sandbox prevents the TaskWraith MCP bridge subprocess from
-            // connecting back to the broker. Keep it disabled whenever this session
-            // exposes write-capable TaskWraith MCP tools. The flagged read-only-
-            // advertise path drops it too (safe subset only).
-            ...(requiresGeminiWriteTools || geminiReadOnlyAdvertise
-              ? {}
-              : { GEMINI_SANDBOX: 'true' }),
             TASKWRAITH_RUN_ID: routedSession.appRunId || '',
             TASKWRAITH_CHAT_ID: routedSession.appChatId || '',
             // Phase I2: tag the Gemini interactive session so the bridge
