@@ -2179,6 +2179,19 @@ describe('parseOllamaToolRequest', () => {
     const emptyPattern = validateOllamaToolArguments('find_files', { globs: [] })
     expect(emptyPattern.ok).toBe(false)
     if (!emptyPattern.ok) expect(emptyPattern.message).toContain('pattern')
+
+    // `intent` is validated through the executor's own intent gate, so any of
+    // intent/summary/reason/description satisfies it — matching the runtime
+    // assertOllamaMutationIntent check exactly (no false-positive rejection).
+    expect(
+      validateOllamaToolArguments('write_file', { path: 'a.ts', content: 'x', reason: 'add file' })
+    ).toEqual({ ok: true })
+    expect(
+      validateOllamaToolArguments('run_shell_command', { command: 'ls', summary: 'list files' })
+    ).toEqual({ ok: true })
+    const missingIntent = validateOllamaToolArguments('write_file', { path: 'a.ts', content: 'x' })
+    expect(missingIntent.ok).toBe(false)
+    if (!missingIntent.ok) expect(missingIntent.message).toContain('intent')
   })
 
   it('keeps empty-response retry nudges anchored to ensemble assignments', () => {

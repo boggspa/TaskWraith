@@ -58,6 +58,7 @@ export { ollamaLocalToolSystemPrompt } from './OllamaModelProfiles'
 import {
   OLLAMA_KNOWN_TOOL_NAMES,
   ollamaAdvertisedToolNames,
+  ollamaToolIntent,
   ollamaToolNamesForTier,
   type OllamaToolName
 } from './OllamaToolTiers'
@@ -2069,22 +2070,20 @@ function ollamaArgPresent(
   return false
 }
 
-// Approval-metadata fields declared `required` in the advertised schema purely
-// to nudge the model into narrating its rationale — the executors treat them as
-// OPTIONAL (`intent` falls back to summary/reason/description). Enforcing them
-// pre-execution would false-positive-reject legitimate write/edit/shell calls,
-// so validation skips them: it only guards fields the executor genuinely needs.
-const OLLAMA_NON_FUNCTIONAL_REQUIRED_FIELDS = new Set<string>(['intent'])
-
 /**
  * Validate a tool call's arguments against the tool's declared schema BEFORE
- * execution — specifically the functionally-required fields (the tools declare
- * no enums). Conservative by design: only catalog tools with a known schema are
- * checked, required fields are synonym-tolerant, approval-metadata fields the
- * executor treats as optional are skipped, and a genuinely-missing field yields
- * a SPECIFIC, repairable message ("missing required argument: path"). This turns
- * a malformed call into a narrow repair prompt (see the run loop) instead of a
+ * execution — specifically the required fields (the tools declare no enums).
+ * Conservative by design: only catalog tools with a known schema are checked,
+ * required fields are synonym-tolerant, and a genuinely-missing field yields a
+ * SPECIFIC, repairable message ("missing required argument: path"). This turns a
+ * malformed call into a narrow repair prompt (see the run loop) instead of a
  * deep, unhelpful executor error the model can't distinguish from a real failure.
+ *
+ * The `intent` field is checked through the executor's own `ollamaToolIntent`
+ * (intent/summary/reason/description) so the validator and the runtime
+ * `assertOllamaMutationIntent` gate agree exactly — a mutation call that supplies
+ * `reason:"…"` instead of `intent:"…"` must NOT be flagged, or we'd reject a call
+ * the executor would happily run.
  */
 export function validateOllamaToolArguments(
   toolName: string,
@@ -2094,9 +2093,8 @@ export function validateOllamaToolArguments(
   if (!OLLAMA_KNOWN_TOOL_NAMES.has(toolName as OllamaToolName)) return { ok: true }
   const typedToolName = toolName as OllamaToolName
   const { required } = ollamaNativeToolParameters(typedToolName)
-  const missing = required.filter(
-    (field) =>
-      !OLLAMA_NON_FUNCTIONAL_REQUIRED_FIELDS.has(field) && !ollamaArgPresent(typedToolName, args, field)
+  const missing = required.filter((field) =>
+    field === 'intent' ? !ollamaToolIntent(args) : !ollamaArgPresent(typedToolName, args, field)
   )
   if (missing.length > 0) {
     const fields = missing.join(', ')
