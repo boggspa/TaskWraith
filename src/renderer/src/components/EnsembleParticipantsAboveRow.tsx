@@ -59,6 +59,10 @@ import {
   ComposerProviderPickerRows,
   resolveProviderRows
 } from './ComposerProviderPicker'
+import {
+  ComposerTextareaContextMenu,
+  useComposerTextareaContextMenu
+} from './ComposerTextareaContextMenu'
 import { getProviderName } from './Sidebar'
 
 // 1.0.4-AR2 — global ceiling raised from 6 → 8 so the panel can host
@@ -1749,6 +1753,8 @@ export function EnsembleParticipantOverflowPopover({
   wakeAt
 }: OverflowPopoverProps): React.JSX.Element | null {
   const popoverRef = useRef<HTMLDivElement | null>(null)
+  const instructionsTextareaRef = useRef<HTMLTextAreaElement | null>(null)
+  const instructionsContextMenu = useComposerTextareaContextMenu()
   const [position, setPosition] = useState<{ left: number; top: number } | null>(null)
   const [rolePresetId, setRolePresetId] = useState(() => resolveRolePresetId(participant.role))
 
@@ -1820,14 +1826,21 @@ export function EnsembleParticipantOverflowPopover({
 
   useEffect(() => {
     const handleClick = (event: MouseEvent): void => {
-      if (popoverRef.current?.contains(event.target as Node)) return
+      const target = event.target as Node
+      if (popoverRef.current?.contains(target)) return
+      if (
+        target instanceof Element &&
+        target.closest('.composer-textarea-context-menu')
+      ) {
+        return
+      }
       // 1.0.5-EW22 — Clicks on the chip the popover is anchored to
       // are handled by the chip's own onClick (toggle the popover).
       // Without this early-return, the mousedown closes the popover
       // before the pointerup re-opens it — net result of a click-
       // to-close gesture was visible flicker then re-open. Anchor-
       // chip clicks fall through; everything else closes.
-      if (anchor && anchor.contains(event.target as Node)) return
+      if (anchor && anchor.contains(target)) return
       onClose()
     }
     const handleKey = (event: KeyboardEvent): void => {
@@ -1981,15 +1994,26 @@ export function EnsembleParticipantOverflowPopover({
       <label className="ensemble-above-overflow-instructions">
         <span className="ensemble-above-overflow-label">Goal / brief</span>
         <textarea
+          ref={instructionsTextareaRef}
           className="ensemble-above-overflow-instructions-field"
           rows={3}
           value={instructionsDraft}
           disabled={locked}
+          spellCheck
           onChange={(event) => setInstructionsDraft(event.target.value)}
+          onContextMenu={instructionsContextMenu.handleContextMenu}
           onBlur={commitDrafts}
           placeholder="Optional focus for this participant's turns…"
         />
       </label>
+      <ComposerTextareaContextMenu
+        anchor={instructionsContextMenu.anchor}
+        spellcheckContext={instructionsContextMenu.spellcheckContext}
+        textareaRef={instructionsTextareaRef}
+        onValueChange={setInstructionsDraft}
+        onOpenFromElectron={instructionsContextMenu.openContextMenu}
+        onClose={() => instructionsContextMenu.setAnchor(null)}
+      />
       {onRetry && (
         // 1.0.4-AT7 — Retry the participant's last turn. The strip
         // gates visibility on `status === 'failed' || 'unreachable'`

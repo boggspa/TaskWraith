@@ -186,7 +186,7 @@ describe('RunEventStore', () => {
         runId: 'run-pr',
         kind: 'tool',
         phase: 'control',
-        source: 'mcp',
+        source: 'provider',
         payload: { toolName: 'git_create_pr', result: { url: 'https://example.test/pr/2' } }
       },
       1
