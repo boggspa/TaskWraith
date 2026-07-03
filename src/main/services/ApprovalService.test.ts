@@ -554,11 +554,15 @@ describe('ApprovalService — resolve dispatch', () => {
     expect(resolveFn).toHaveBeenCalledWith(true)
   })
 
-  it('rejects renderer-submitted actions that were not offered for the approval', async () => {
+  it('down-clamps an un-offered accept tier to the strongest offered accept tier (honors, no escalation)', async () => {
+    // A remote (iOS) client can tap "Accept for workspace" on a card that only
+    // offered accept/acceptForSession/decline (the projection carries no
+    // allowedActions). The approval must be HONORED as the offered 'accept' —
+    // NOT dropped, and NOT escalated to a persistent workspace grant.
     const { deps, spies } = makeDeps()
     const svc = new ApprovalService(deps)
     const resolveFn = vi.fn()
-    svc.registerGeminiTool('g-request-only', {
+    svc.registerGeminiTool('g-clamp', {
       provider: 'codex',
       service: 'shellCommands',
       workspacePath: '/ws',
@@ -568,13 +572,40 @@ describe('ApprovalService — resolve dispatch', () => {
       resolve: resolveFn
     })
 
-    const ok = await svc.resolve('g-request-only', 'acceptForWorkspace')
+    const ok = await svc.resolve('g-clamp', 'acceptForWorkspace')
+
+    expect(ok).toBe(true)
+    expect(resolveFn).toHaveBeenCalled()
+    // Applied as one-time 'accept' — never the un-offered acceptForWorkspace grant.
+    expect(spies.permissionService.applyApprovalDecision).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'accept' })
+    )
+    expect(spies.log).toHaveBeenCalledWith(
+      expect.stringContaining('down-clamped un-offered approval action')
+    )
+  })
+
+  it('still rejects a non-accept action that was not offered for the approval', async () => {
+    const { deps, spies } = makeDeps()
+    const svc = new ApprovalService(deps)
+    const resolveFn = vi.fn()
+    svc.registerGeminiTool('g-reject', {
+      provider: 'codex',
+      service: 'shellCommands',
+      workspacePath: '/ws',
+      runId: 'r-1',
+      requestOnly: true,
+      allowedActions: ['accept', 'decline', 'cancel'],
+      resolve: resolveFn
+    })
+
+    const ok = await svc.resolve('g-reject', 'useProviderNative')
 
     expect(ok).toBe(false)
     expect(resolveFn).not.toHaveBeenCalled()
     expect(spies.permissionService.applyApprovalDecision).not.toHaveBeenCalled()
     expect(spies.resolveApprovalLedger).not.toHaveBeenCalled()
-    expect(svc.has('g-request-only')).toBe(true)
+    expect(svc.has('g-reject')).toBe(true)
     expect(spies.log).toHaveBeenCalledWith(expect.stringContaining('rejected invalid approval action'))
   })
 

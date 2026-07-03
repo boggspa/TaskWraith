@@ -601,7 +601,13 @@ export class ApprovalService {
     // ── Main authority approval ─────────────────────────────────
     const pendingMain = this.pendingMain.get(requestId)
     if (pendingMain) {
-      if (!this.actionAllowed(requestId, action, pendingMain.allowedActions)) return false
+      const effectiveMainAction = this.resolveEffectiveApprovalAction(
+        requestId,
+        action,
+        pendingMain.allowedActions
+      )
+      if (!effectiveMainAction) return false
+      action = effectiveMainAction
       // Cancel the auto-deny timer the moment a valid decision lands.
       this.scheduler?.cancel(requestId)
       const session =
@@ -639,7 +645,13 @@ export class ApprovalService {
     // ── Gemini tool approval ────────────────────────────────────
     const pendingGeminiTool = this.pendingGeminiTool.get(requestId)
     if (pendingGeminiTool) {
-      if (!this.actionAllowed(requestId, action, pendingGeminiTool.allowedActions)) return false
+      const effectiveToolAction = this.resolveEffectiveApprovalAction(
+        requestId,
+        action,
+        pendingGeminiTool.allowedActions
+      )
+      if (!effectiveToolAction) return false
+      action = effectiveToolAction
       this.scheduler?.cancel(requestId)
       const resolvedAction =
         pendingGeminiTool.requestOnly &&
@@ -691,7 +703,13 @@ export class ApprovalService {
     // ── Host command rerun approval ─────────────────────────────
     const pendingHostCommand = this.pendingHostCommand.get(requestId)
     if (pendingHostCommand) {
-      if (!this.actionAllowed(requestId, action, pendingHostCommand.allowedActions)) return false
+      const effectiveHostAction = this.resolveEffectiveApprovalAction(
+        requestId,
+        action,
+        pendingHostCommand.allowedActions
+      )
+      if (!effectiveHostAction) return false
+      action = effectiveHostAction
       this.scheduler?.cancel(requestId)
       this.deps.appendDurableRunEventForRoute(
         pendingHostCommand.provider,
@@ -739,7 +757,13 @@ export class ApprovalService {
     // ── Kimi wire approval ──────────────────────────────────────
     const pendingKimi = this.pendingKimi.get(requestId)
     if (pendingKimi) {
-      if (!this.actionAllowed(requestId, action, pendingKimi.allowedActions)) return false
+      const effectiveKimiAction = this.resolveEffectiveApprovalAction(
+        requestId,
+        action,
+        pendingKimi.allowedActions
+      )
+      if (!effectiveKimiAction) return false
+      action = effectiveKimiAction
       this.scheduler?.cancel(requestId)
       const session =
         this.deps.runManager.resolveApproval(requestId) ||
@@ -801,7 +825,13 @@ export class ApprovalService {
     if (!pending || !codexClient) {
       return false
     }
-    if (!this.actionAllowed(requestId, action, pending.allowedActions)) return false
+    const effectiveCodexAction = this.resolveEffectiveApprovalAction(
+      requestId,
+      action,
+      pending.allowedActions
+    )
+    if (!effectiveCodexAction) return false
+    action = effectiveCodexAction
     this.scheduler?.cancel(requestId)
     const session =
       this.deps.runManager.resolveApproval(requestId) || this.deps.runManager.get(pending.runId)
@@ -945,17 +975,49 @@ export class ApprovalService {
     }
   }
 
-  private actionAllowed(
+  /**
+   * Resolve a requested approval action to the effective action the card
+   * actually offered, or `null` if it must be rejected.
+   *
+   * A remote (iOS) client can render a broader accept-tier button than a given
+   * card offered — the approval projection does not carry `allowedActions`, so
+   * e.g. "Accept for workspace" is tappable on a prompt-on-action (policy
+   * 'ask') shell card whose offered set is only accept / acceptForSession /
+   * decline. That un-offered `acceptForWorkspace` used to be rejected and the
+   * remote approval was silently dropped (the command never ran, even though
+   * the user approved). We now DOWN-CLAMP an un-offered accept-tier action to
+   * the STRONGEST OFFERED accept tier that is no broader than requested, so the
+   * approval is HONORED (the command runs) without ESCALATING the grant scope
+   * past what the card offered — a persistent workspace grant is never created
+   * from an un-offered `acceptForWorkspace`. Non-accept actions, and accept
+   * tiers with no offered fallback, stay rejected.
+   */
+  private resolveEffectiveApprovalAction(
     approvalId: string,
     action: AgentApprovalAction,
     allowedActions: AgentApprovalAction[] | undefined
-  ): boolean {
-    if (!allowedActions || allowedActions.length === 0) return true
-    if (allowedActions.includes(action)) return true
+  ): AgentApprovalAction | null {
+    if (!allowedActions || allowedActions.length === 0) return action
+    if (allowedActions.includes(action)) return action
+    // Accept tiers, strongest→weakest by grant scope. Clamp down to the
+    // strongest offered tier that is no broader than the requested one.
+    const ACCEPT_TIERS: AgentApprovalAction[] = ['acceptForWorkspace', 'acceptForSession', 'accept']
+    const requestedRank = ACCEPT_TIERS.indexOf(action)
+    if (requestedRank >= 0) {
+      for (let rank = requestedRank; rank < ACCEPT_TIERS.length; rank++) {
+        const tier = ACCEPT_TIERS[rank]
+        if (allowedActions.includes(tier)) {
+          this.deps.log(
+            `[ApprovalService] down-clamped un-offered approval action "${action}" to "${tier}" for ${approvalId}; allowed=${allowedActions.join(',')}`
+          )
+          return tier
+        }
+      }
+    }
     this.deps.log(
       `[ApprovalService] rejected invalid approval action "${action}" for ${approvalId}; allowed=${allowedActions.join(',')}`
     )
-    return false
+    return null
   }
 }
 
