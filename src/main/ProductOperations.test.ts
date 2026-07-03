@@ -483,9 +483,12 @@ describe('ProductOperations', () => {
             scope: 'workspace',
             workspaceId: 'ws-1',
             chatId: 'chat-secret',
-            approvalMode: 'default',
+            approvalMode: 'plan',
             workflowMode: 'plan',
-            permissionPostureSignaturePresent: false
+            permissionPresetId: 'plan',
+            readOnly: true,
+            permissionPostureHash: 'b'.repeat(64),
+            permissionPostureSignaturePresent: true
           }
         }
       ],
@@ -768,8 +771,12 @@ describe('ProductOperations', () => {
         receiptHash: 'e'.repeat(64),
         provider: 'codex',
         source: 'scheduled',
+        approvalMode: 'plan',
         workflowMode: 'plan',
-        permissionPostureSignaturePresent: false
+        permissionPresetId: 'plan',
+        readOnly: true,
+        permissionPostureHash: 'b'.repeat(64),
+        permissionPostureSignaturePresent: true
       }
     })
     expect((snapshot.scheduledTasks[0].dispatchReceipt as any).chatIdHash).toMatch(
