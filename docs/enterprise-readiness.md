@@ -296,12 +296,19 @@ What exists:
   hashes/counts and validates the signature over the final sanitized snapshot.
   If no protected key can be created, the export remains explicitly marked
   `local_hashes_unsigned`.
+- Audit-bundle verification attempts now write a bounded local verification
+  receipt ledger. Receipts retain pass/fail status, signed/unsigned mode,
+  redaction mode, check booleans, key id/reason, and hashed bundle path
+  metadata without storing raw local paths. Product Operations shows the
+  retained count/hash, and diagnostics/audit bundles export redacted recent
+  verification receipt summaries.
 
 What is missing:
 
-- A retained verification receipt browser. The latest manual verification is
-  visible in Settings, but verification receipts are not yet durable,
-  searchable, or exportable as their own audit surface.
+- A richer retained verification receipt browser/filter UI. The retained
+  count/hash is visible in Settings and the redacted receipt summaries export
+  through diagnostics/audit bundles, but there is not yet a dedicated searchable
+  table for verification receipts.
 - An explicit sensitive-field export flow. The current route is redacted-only
   and rejects unsupported sensitive modes, but there is not yet a separate
   user/admin decision path for exporting sensitive fields.
