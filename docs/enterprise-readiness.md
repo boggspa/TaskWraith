@@ -148,15 +148,26 @@ What exists:
 - Settings sanitization now rejects obvious inline plaintext secrets for
   user-managed MCP env/header fields and runtime-profile env fields unless the
   value is an environment-variable reference such as `$TOKEN` or `${TOKEN}`.
+- A main-process `ExtensionSecretStore` now provides the encrypted-at-rest
+  foundation for user-managed MCP server env/header fields and runtime-profile
+  env fields. It is backed by Electron `safeStorage`, stores only encrypted
+  ref-bound payloads on disk, exposes status snapshots without cleartext,
+  returns typed main-process resolution statuses for launch-time callers,
+  supports owner-wide cleanup, and writes the store file with restrictive
+  permissions.
 
 What is missing:
 
-- Non-secret user-managed MCP server `env` and `headers` are still persisted as
-  ordinary settings, and existing plaintext records still need migration.
-- Runtime profile environment variables are still persisted as ordinary profile
-  JSON when they are non-secret or reference-based.
+- User-managed MCP server `env` and `headers` are not yet wired to secret
+  references/status in settings, and existing plaintext records still need
+  migration into the encrypted store.
+- Runtime profile environment variables are not yet wired to secret
+  references/status in profile records; reference-based values still remain
+  ordinary profile JSON.
 - Plugin `requiredSecrets` are not an end-to-end launch-time secret delivery
   path for MCP materialization.
+- Provider/runtime launch paths do not yet resolve `ExtensionSecretStore`
+  references into process env or request headers at the final boundary.
 
 Risk:
 
@@ -166,8 +177,7 @@ Risk:
 
 Target:
 
-- Add a main-process secret store for user MCP and runtime-profile secret
-  values, backed by `safeStorage`.
+- Wire the main-process secret store into user MCP and runtime-profile settings.
 - Persist only secret references/status in settings/profile records.
 - Resolve cleartext only at provider launch and prefer provider-supported env
   indirection over argv or workspace-local config files.
