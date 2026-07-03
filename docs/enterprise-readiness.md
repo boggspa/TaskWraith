@@ -473,6 +473,10 @@ What exists:
   dispatched lane instead of losing identity outside Gemini.
 - Approval previews for ensemble services now include lane and stage role when
   present.
+- Ensemble wakeup records now freeze the participant role and stage role at
+  schedule time, including an explicit "unstaged" marker for new records, and
+  active/restarted wakeup resume uses that frozen identity instead of inheriting
+  later live-roster stage edits.
 
 What is missing:
 
@@ -480,9 +484,10 @@ What is missing:
   every deferred path; repository-saved queue rows now have receipts, but
   dedicated scheduled/wakeup replay receipts still need to prove which frozen
   intent was used.
-- Ensemble wakeups and scheduled ensemble occurrences still need explicit
-  proof that they resume the participant/stage/posture that was scheduled, not
-  whatever a mutable live roster happens to contain later.
+- Ensemble wakeups and scheduled ensemble occurrences still need full
+  dispatch-receipt/posture proof that they resume the participant/stage/posture
+  that was scheduled; wakeups now freeze role/stage identity, but they do not
+  yet carry a queue-style receipt hash or signed posture snapshot.
 - Remote queued dispatch now has a queued `dispatchReceipt` with an allowlist
   decision and policy fingerprint, but it still lacks an explicitly signed
   queue-time posture for the dispatch permission itself. Dequeue replay rebuilds

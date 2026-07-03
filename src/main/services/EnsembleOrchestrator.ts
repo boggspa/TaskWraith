@@ -5234,6 +5234,7 @@ export class EnsembleOrchestrator {
       participantId: run.participant.id,
       provider: run.participant.provider,
       role: run.participant.role,
+      stageRole: run.participant.stageRole ?? null,
       runId: run.runId,
       scheduledAt: nowIso,
       wakeAt: new Date(wakeAtMs).toISOString(),
@@ -5349,9 +5350,7 @@ export class EnsembleOrchestrator {
     ) {
       return false
     }
-    const participant = chat.ensemble.participants.find(
-      (entry) => entry.id === wakeup.participantId && entry.enabled
-    )
+    const participant = this.participantForWakeup(chat, wakeup)
     if (!participant) return false
     const recoveredFanoutPolicy =
       round.fanoutPolicy !== undefined || round.concurrentMode !== undefined
@@ -5434,6 +5433,29 @@ export class EnsembleOrchestrator {
           wakeup.participantId === participantId
       ) || null
     )
+  }
+
+  private participantForWakeup(
+    chat: ChatRecord | null | undefined,
+    wakeup: EnsembleWakeupRecord
+  ): EnsembleParticipant | null {
+    const participant = chat?.ensemble?.participants.find(
+      (entry) => entry.id === wakeup.participantId && entry.enabled
+    )
+    if (!participant) return null
+    const hasFrozenStageRole = Object.prototype.hasOwnProperty.call(wakeup, 'stageRole')
+    const stageRole = hasFrozenStageRole ? wakeup.stageRole : participant.stageRole
+    const resolved: EnsembleParticipant = {
+      ...participant,
+      provider: wakeup.provider,
+      role: wakeup.role ?? participant.role
+    }
+    if (stageRole) {
+      resolved.stageRole = stageRole
+    } else {
+      delete resolved.stageRole
+    }
+    return resolved
   }
 
   private saveWakeupRecord(
@@ -6757,9 +6779,7 @@ export class EnsembleOrchestrator {
       const wakeup = await this.waitForNextWakeup(runtime)
       if (wakeup && !runtime.cancelled) {
         const chatForWake = this.deps.getChat(runtime.chatId)
-        const participant = chatForWake?.ensemble?.participants.find(
-          (entry) => entry.id === wakeup.participantId && entry.enabled
-        )
+        const participant = this.participantForWakeup(chatForWake, wakeup)
         if (participant) {
           runtime.resumeWakeup = wakeup
           this.appendRoundStatus(

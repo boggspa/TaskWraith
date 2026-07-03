@@ -883,6 +883,10 @@ export interface EnsembleWakeupRecord {
   participantId: string
   provider: ProviderId
   role?: string
+  /** Frozen participant stage at wakeup schedule time. `null` means explicitly
+   * unstaged; absent means an older record that should preserve legacy live
+   * roster behavior on resume. */
+  stageRole?: EnsembleStageRole | null
   runId?: string
   scheduledAt: string
   wakeAt: string

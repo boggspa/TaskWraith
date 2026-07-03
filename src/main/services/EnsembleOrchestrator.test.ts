@@ -1364,6 +1364,7 @@ describe('EnsembleOrchestrator', () => {
     const harness = makeHarness({
       scheduleWakeupTimer: (wakeup) => scheduled.push(wakeup)
     })
+    harness.chat.ensemble!.participants[0].stageRole = 'worker'
     harness.orchestrator.startRound({
       chatId: 'ensemble-chat',
       prompt: 'Start and sleep if blocked.',
@@ -1377,6 +1378,7 @@ describe('EnsembleOrchestrator', () => {
       reason: 'Waiting for logs.'
     })
     expect(scheduledResult.ok).toBe(true)
+    expect(scheduledResult.wakeup?.stageRole).toBe('worker')
     expect(scheduled).toHaveLength(1)
     expect(harness.chat.ensemble?.activeRound?.participants[0].status).toBe('sleeping')
     expect(harness.chat.ensemble?.activeRound?.pendingWakeupIds).toEqual([scheduled[0].wakeupId])
@@ -1393,9 +1395,13 @@ describe('EnsembleOrchestrator', () => {
       expect(harness.chat.ensemble?.activeRound?.status).toBe('running')
       expect(harness.chat.ensemble?.activeRound?.pendingWakeupIds).toEqual([scheduled[0].wakeupId])
     })
+    harness.chat.ensemble!.participants[0].role = 'Mutated Reviewer'
+    harness.chat.ensemble!.participants[0].stageRole = 'reviewer'
     expect(harness.orchestrator.handleWakeupFired(scheduled[0].wakeupId)).toBe(true)
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
     expect(harness.dispatched[2].ensembleRun?.participantId).toBe('claude')
+    expect(harness.dispatched[2].ensembleRun?.role).toBe('Reviewer')
+    expect(harness.dispatched[2].ensembleRun?.stageRole).toBe('worker')
     expect(harness.dispatched[2].prompt).toContain('[Scheduled wakeup]')
     expect(harness.dispatched[2].prompt).toContain('Waiting for logs.')
     expect(
@@ -1559,6 +1565,7 @@ describe('EnsembleOrchestrator', () => {
     //      re-dispatches the participant with the resume prompt,
     //      and appends the "woke after app restart" status row.
     const harness1 = makeHarness({ scheduleWakeupTimer: () => {} })
+    harness1.chat.ensemble!.participants[0].stageRole = 'worker'
     harness1.orchestrator.startRound({
       chatId: 'ensemble-chat',
       prompt: 'Start and survive a restart.',
@@ -1571,6 +1578,7 @@ describe('EnsembleOrchestrator', () => {
       reason: 'Waiting on background job.'
     })
     expect(sleepResult.ok).toBe(true)
+    expect(sleepResult.wakeup?.stageRole).toBe('worker')
     const wakeupId = sleepResult.wakeup!.wakeupId
 
     // Codex runs while claude sleeps; the round stays 'running'
@@ -1585,6 +1593,8 @@ describe('EnsembleOrchestrator', () => {
       expect(harness1.chat.ensemble?.activeRound?.status).toBe('running')
       expect(harness1.chat.ensemble?.activeRound?.pendingWakeupIds).toEqual([wakeupId])
     })
+    harness1.chat.ensemble!.participants[0].role = 'Mutated Reviewer'
+    harness1.chat.ensemble!.participants[0].stageRole = 'reviewer'
 
     // Simulated restart. The orchestrator below has no in-memory
     // runtime for this chat — only the persisted pending wakeup.
@@ -1604,6 +1614,8 @@ describe('EnsembleOrchestrator', () => {
     // Claude was re-dispatched, with the resume prompt threaded in.
     await vi.waitFor(() => expect(restarted.dispatched).toHaveLength(1))
     expect(restarted.dispatched[0].ensembleRun?.participantId).toBe('claude')
+    expect(restarted.dispatched[0].ensembleRun?.role).toBe('Reviewer')
+    expect(restarted.dispatched[0].ensembleRun?.stageRole).toBe('worker')
     expect(restarted.dispatched[0].prompt).toContain('[Scheduled wakeup]')
     expect(restarted.dispatched[0].prompt).toContain('Waiting on background job.')
 
