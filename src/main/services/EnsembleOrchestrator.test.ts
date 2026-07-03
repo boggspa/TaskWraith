@@ -414,6 +414,44 @@ describe('EnsembleOrchestrator', () => {
     expect(harness.dispatched[1].provider).toBe('codex')
   })
 
+  it('markRunExited finalizes a clean exit as answered when content streamed, else skipped', async () => {
+    // A seat that streamed its answer and then exited 0 (e.g. after the Ollama
+    // retry-ceiling finalize, where the exit can beat the result event) must NOT
+    // be mislabeled 'skipped' — the turn would vanish from the panel.
+    const withContent = makeHarness()
+    withContent.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Do the work.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(withContent.dispatched).toHaveLength(1))
+    const runId = withContent.dispatched[0].appRunId!
+    withContent.orchestrator.handleProviderOutput(
+      'claude',
+      { appRunId: runId, appChatId: 'ensemble-chat' },
+      { type: 'content', text: 'Here is my finished answer.' }
+    )
+    expect(withContent.orchestrator.markRunExited(runId, 0)).toBe(true)
+    const answered = (withContent.chat.ensemble?.activeRound?.participants || []).find(
+      (p) => p.participantId === 'claude'
+    )
+    expect(answered?.status).toBe('answered')
+
+    // A clean exit with NO streamed content still resolves 'skipped' (unchanged).
+    const noContent = makeHarness()
+    noContent.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Do the work.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(noContent.dispatched).toHaveLength(1))
+    expect(noContent.orchestrator.markRunExited(noContent.dispatched[0].appRunId!, 0)).toBe(true)
+    const skipped = (noContent.chat.ensemble?.activeRound?.participants || []).find(
+      (p) => p.participantId === 'claude'
+    )
+    expect(skipped?.status).toBe('skipped')
+  })
+
   it('freezes participant stage role on dispatch payloads and chat runs', async () => {
     const initialChat = makeChat()
     initialChat.ensemble!.participants[0].stageRole = 'worker'
