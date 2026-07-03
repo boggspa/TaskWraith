@@ -1037,13 +1037,6 @@ export function buildProviderCapabilityContract({
     }
   }
 
-  // Surface the silent Tier-4 downgrade. `effectiveOllamaToolControlTier` quietly
-  // collapses `provider_parity` to `read_only` when the workspace lacks a parity
-  // grant (or there is no workspace, e.g. a global chat). The capability detail
-  // becomes `unavailable`, but `unavailable` capabilities never enter `warnings`
-  // (only `blocked` ones do, above), so the user previously got NO feedback —
-  // they picked the top tier and the model just silently never edited. Emit an
-  // explicit, actionable warning instead.
   // Tier retirement (2026-07): the Ollama Tier-4 "parity not granted" downgrade
   // warning is gone — there is no tier to downgrade; the full surface is always
   // advertised and governed by the run permission role.
