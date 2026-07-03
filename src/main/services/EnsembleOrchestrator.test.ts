@@ -251,6 +251,7 @@ function makeHarness(
      * stay byte-identical.
      */
     probeParticipant?: (participant: EnsembleParticipant) => Promise<ParticipantProbeResult>
+    awaitPendingSeatCompaction?: (participantId: string) => Promise<unknown> | undefined
     scheduleWakeupTimer?: (wakeup: EnsembleWakeupRecord) => void
     cancelWakeupTimer?: (wakeupId: string) => void
     signRunPermissionPosture?: (
@@ -306,6 +307,9 @@ function makeHarness(
     getSettings: makeSettings,
     dispatch,
     cancelRun,
+    ...(options.awaitPendingSeatCompaction
+      ? { awaitPendingSeatCompaction: options.awaitPendingSeatCompaction }
+      : {}),
     createRunId: (provider) => `${provider}-run-${++counter}`,
     now: () => counter,
     nowIso: options.nowIso ?? (() => `2026-05-24T00:00:0${counter}.000Z`),
@@ -2411,13 +2415,15 @@ Next action:
     )
   })
 
-  it('coalesces a second queued steer that lands while the first is still cancelling (no double-click)', async () => {
-    // Reproduces the "click Steer twice" bug. The interrupted provider's
-    // cancellation is slow (resolveCancel pending), so the first steer's
-    // replacement round is parked in runRound before it dispatches. A second
-    // steer arriving in that window must NOT supersede the first: doing so
-    // orphaned the truly-interrupted run into "Failed exit 130" and aborted the
-    // first steer's dispatch, so the user had to click a second time.
+  it('honors a genuine steer during a parked round instead of swallowing it (no double-click)', async () => {
+    // Regression for the residual "click Steer twice" bug. When a prior steer's
+    // replacement round is still PARKED (its interrupted provider's cancel is a
+    // slow Claude/Codex round-trip, resolveCancel pending), a genuine steer of a
+    // newly-queued message must DISPATCH on the first click — not be swallowed by
+    // a coalesce no-op that left the message stuck in the FIFO until round-end.
+    // Cancelling the parked round is safe: it never dispatched (empty activeRuns)
+    // and the truly-interrupted run was already finalised 'cancelled' by the
+    // FIRST steer, so nothing is orphaned into a red "Failed exit 130".
     let resolveCancel: (() => void) | undefined
     const harness = makeHarness({
       cancelRun: async () => {
@@ -2453,11 +2459,14 @@ Next action:
       event: { sender: {} as Electron.WebContents }
     })
     expect(steer1.status).toBe('steered')
-    // Not dispatched yet — the replacement round is parked.
-    expect(harness.dispatched).toHaveLength(1)
+    expect(harness.dispatched).toHaveLength(1) // parked — not dispatched yet
+    // The parked round carried the remaining queue ['Queued B'] forward.
+    expect(harness.chat.ensemble?.activeRound?.queuedPrompts).toEqual(['Queued B'])
 
-    // Second steer during the parked window — must coalesce onto the in-flight
-    // steer (same round id), NOT start a competing cancel+dispatch.
+    // A genuine steer of 'Queued B' lands during the parked window. It must NOT
+    // be swallowed — it dispatches on THIS click, without waiting for the prior
+    // interrupted run's slow cancel (that parked round never dispatched, so
+    // cancelling it resolves immediately).
     const steer2 = harness.orchestrator.steerQueuedPrompt({
       chatId: 'ensemble-chat',
       index: 0,
@@ -2465,19 +2474,15 @@ Next action:
       event: { sender: {} as Electron.WebContents }
     })
     expect(steer2.status).toBe('steered')
-    expect(steer2.roundId).toBe(steer1.roundId)
-    expect(harness.dispatched).toHaveLength(1)
-
-    // Let the interrupted cancellation land: the first steer now dispatches.
-    resolveCancel?.()
+    expect(steer2.roundId).not.toBe(steer1.roundId) // a fresh round, not a coalesce
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
-    expect(harness.dispatched[1].prompt).toContain('Queued A')
-    expect(harness.chat.ensemble?.activeRound?.roundId).toBe(steer1.roundId)
-    // 'Queued B' is never lost — it stays in the FIFO for a later steer.
-    expect(harness.chat.ensemble?.activeRound?.queuedPrompts).toEqual(['Queued B'])
+    expect(harness.dispatched[1].prompt).toContain('Queued B')
+    expect(harness.chat.ensemble?.activeRound?.roundId).toBe(steer2.roundId)
+    expect(harness.chat.ensemble?.activeRound?.prompt).toBe('Queued B')
 
-    // The interrupted participant was finalised as 'cancelled' before its
-    // SIGINT, so a late code-130 exit is a no-op — it never surfaces 'failed'.
+    // The originally-interrupted run stays 'cancelled' even after its slow SIGINT
+    // finally lands — never orphaned into 'failed'/130.
+    resolveCancel?.()
     expect(harness.orchestrator.markRunExited(oldRun.appRunId, 130)).toBe(false)
   })
 
@@ -2617,6 +2622,115 @@ Next action:
     expect(result.status).toBe('ignored')
     expect(result.error).toBe('Queue changed underneath — refresh and retry')
     expect(restarted.dispatched).toHaveLength(0)
+  })
+
+  it('does not dispatch a participant onto a round cancelled during seat compaction (no zombie / stuck round)', async () => {
+    // Deep-work chats compact seat context between turns; that await can block
+    // for seconds. A Stop/Steer landing in that window cancels the round while
+    // `activeRunId` is undefined (nothing to interrupt). Without a post-await
+    // cancellation re-check the loop resumes and dispatches the next participant
+    // onto the already-cancelled round — a zombie run the runtime no longer owns
+    // (keeps speaking, Stop can't reach it, round reads stuck 'running').
+    let resolveCompaction: (() => void) | undefined
+    const harness = makeHarness({
+      awaitPendingSeatCompaction: (participantId) =>
+        participantId === 'codex'
+          ? new Promise<void>((resolve) => {
+              resolveCompaction = resolve
+            })
+          : undefined
+    })
+
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Original prompt',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1)) // p1 (claude) speaking
+
+    // Finish p1 → the round advances to p2 (codex) and parks in seat compaction.
+    harness.orchestrator.handleProviderOutput(
+      'claude',
+      { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'result', status: 'success' }
+    )
+    await vi.waitFor(() => expect(resolveCompaction).toBeDefined())
+    expect(harness.dispatched).toHaveLength(1) // p2 not dispatched — parked in compaction
+
+    // Stop lands during the compaction window (activeRunId undefined).
+    await harness.orchestrator.cancelRound('ensemble-chat', 'cancelled')
+
+    // Unblock compaction — the loop must NOT dispatch the zombie p2.
+    resolveCompaction?.()
+    await new Promise((r) => setTimeout(r, 20))
+    expect(harness.dispatched).toHaveLength(1) // still only p1 — no zombie codex run
+    expect(harness.chat.ensemble?.activeRound?.status).toBe('cancelled') // not stuck 'running'
+  })
+
+  it('does not dispatch fan-out lanes onto a round cancelled during seat compaction', async () => {
+    // Same zombie-dispatch class as the serial path, but in the parallel
+    // read-only fan-out pass: the seat-compaction barrier (Promise.all over every
+    // lane) can block for seconds, and a Stop landing there cancels the round
+    // while activeScoutRunIds is still empty — so cancelRound interrupts nothing
+    // and, without a re-check, the pass seeds + dispatches zombie lanes.
+    const previous = process.env.TASKWRAITH_CONCURRENT_LANES
+    process.env.TASKWRAITH_CONCURRENT_LANES = '1'
+    try {
+      let resolveCompaction: (() => void) | undefined
+      const harness = makeHarness({
+        awaitPendingSeatCompaction: (participantId) =>
+          participantId === 'ollama-a'
+            ? new Promise<void>((resolve) => {
+                resolveCompaction = resolve
+              })
+            : undefined
+      })
+      harness.chat.ensemble!.participants = [
+        {
+          id: 'ollama-a',
+          provider: 'ollama',
+          enabled: true,
+          role: 'Scout A',
+          instructions: 'Scout.',
+          order: 1,
+          permissionPresetId: 'read_only',
+          model: 'qwen3.5:9b',
+          ollamaRunProfile: 'local_scout'
+        },
+        {
+          id: 'ollama-b',
+          provider: 'ollama',
+          enabled: true,
+          role: 'Scout B',
+          instructions: 'Scout.',
+          order: 2,
+          permissionPresetId: 'read_only',
+          model: 'gemma4:12b',
+          ollamaRunProfile: 'local_scout'
+        }
+      ]
+
+      harness.orchestrator.startRound({
+        chatId: 'ensemble-chat',
+        prompt: 'Fan out locally.',
+        event: { sender: {} as Electron.WebContents },
+        concurrentMode: true
+      })
+
+      // Fan-out pass parks in the Promise.all seat-compaction barrier (ollama-a).
+      await vi.waitFor(() => expect(resolveCompaction).toBeDefined())
+      expect(harness.dispatched).toHaveLength(0) // lanes not seeded yet
+
+      await harness.orchestrator.cancelRound('ensemble-chat', 'cancelled')
+
+      // Unblock — the pass must NOT seed/dispatch zombie lanes.
+      resolveCompaction?.()
+      await new Promise((r) => setTimeout(r, 20))
+      expect(harness.dispatched).toHaveLength(0)
+    } finally {
+      if (previous === undefined) delete process.env.TASKWRAITH_CONCURRENT_LANES
+      else process.env.TASKWRAITH_CONCURRENT_LANES = previous
+    }
   })
 
   it('preserves queued prompt external grants when the queued ensemble round dispatches', async () => {

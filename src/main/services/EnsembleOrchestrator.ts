@@ -2411,20 +2411,20 @@ export class EnsembleOrchestrator {
     if (runtime.cancelled) {
       return { status: 'ignored', error: 'No active Ensemble round' }
     }
-    // Single-flight for the parked-steer window. A steered round dispatches
-    // asynchronously: `beginRound` returns immediately while `runRound` awaits
-    // the interrupted round's `cancelRound` before it dispatches (see the
-    // `startAfterCancellation` guard above). If a second queued steer lands in
-    // that window, cancelling this still-parked round would find NO active run
-    // to finalise (it never dispatched) — so the truly-interrupted process is
-    // left to exit on its own SIGINT and surface as a red "Failed exit 130",
-    // and the first steer's pending dispatch is aborted. That is exactly what
-    // forced the user to click Steer twice. Coalesce onto the in-flight steer:
-    // the newly-targeted prompt stays in the FIFO queue and remains steerable
-    // once the pending round dispatches.
-    if (runtime.startAfterCancellation) {
-      return { status: 'steered', roundId: runtime.roundId }
-    }
+    // NOTE: a steer that lands while `runtime.startAfterCancellation` is still
+    // set (the replacement round of a PRIOR steer is parked in `runRound`,
+    // awaiting a slow Claude/Codex interrupt before it dispatches) falls through
+    // to the real steer below. That is correct and safe: `cancelRound` on the
+    // parked round finds an empty active-run set (it never dispatched → nothing
+    // to orphan), and the truly-interrupted run from the prior steer was already
+    // finalised 'cancelled' before its SIGINT — so nothing surfaces as a red
+    // "Failed exit 130". An earlier coalesce guard here returned 'steered'
+    // WITHOUT dispatching, which silently swallowed the user's genuine
+    // first-click steer of a newly-queued message (it drained only at round-end)
+    // and is exactly what forced the second click. The renderer single-flight
+    // guard + `resolveQueuedPrompt`'s textPrefix check still absorb a true rapid
+    // double-click of the SAME item (its index/prefix no longer matches ⇒
+    // 'ignored'), so removing the coalesce does not reintroduce a double-fire.
     const resolved = this.resolveQueuedPrompt(runtime, input)
     if ('error' in resolved) {
       return { status: 'ignored', error: resolved.error }
@@ -6517,6 +6517,18 @@ export class EnsembleOrchestrator {
       // Await it (bounded by the lane's own 240s timeout) and refresh the
       // session/summary fields the compaction may have rewritten.
       await this.awaitSeatCompactionBeforeDispatch(runtime.chatId, participant)
+      // Re-check cancellation AFTER the await. The loop-top `runtime.cancelled`
+      // check (and the `await completion` between participants) guard every other
+      // suspension point, but seat compaction can block here for seconds while a
+      // deep-work chat's context is rewritten — and a Steer/Stop landing in that
+      // window sets `runtime.cancelled` (with `activeRunId` still undefined, so
+      // `cancelRound` finds nothing to interrupt). Without this guard the loop
+      // would resume and dispatch a participant onto an already-cancelled,
+      // already-superseded round — a "zombie" run the current round's runtime no
+      // longer owns, so it keeps speaking, Stop can't reach it, and the round
+      // reads stuck 'running'. Bail cleanly; `finishRound` below no-ops against
+      // the replacement round, leaving the live round untouched.
+      if (runtime.cancelled) break
 
       const run = this.seedParticipantRun(chat, runtime, participant, { sleepResumeWarning })
       runtime.activeRunId = run.runId
@@ -7363,6 +7375,14 @@ export class EnsembleOrchestrator {
         this.awaitSeatCompactionBeforeDispatch(runtime.chatId, participant)
       )
     )
+    // Same cancellation re-check as the serial loop: the seat-compaction barrier
+    // above can block for seconds, and a Stop/steer landing in that window sets
+    // `runtime.cancelled` while `activeScoutRunIds` is still empty (lanes not yet
+    // seeded), so `cancelRound` interrupts nothing. Without this guard the pass
+    // would seed + dispatch zombie fan-out lanes that speak to completion after
+    // the cancel. The post-`Promise.all(completionPromises)` check further down
+    // fires only AFTER the lanes have already run — too late.
+    if (runtime.cancelled) return []
     const laneRuns: ActiveParticipantRun[] = participants.map((participant) => {
       const freshChat = this.deps.getChat(runtime.chatId) || chat
       const dispatchMode = options.forceReadOnlyDispatch ? 'read_only' : mode
