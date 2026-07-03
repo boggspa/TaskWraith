@@ -184,6 +184,7 @@ function buildTaskWraithRuntimePreamble(args: {
   const patchTool = taskWraithToolNameForProvider(args.provider, 'apply_patch')
   const statusTool = taskWraithToolNameForProvider(args.provider, 'git_status')
   const taskTool = taskWraithToolNameForProvider(args.provider, 'run_task')
+  const questionTool = taskWraithToolNameForProvider(args.provider, 'ask_user_question')
   const followupProvider = exampleDelegationProvider(args.provider)
   const lines = [
     `TaskWraith runtime note (${TASKWRAITH_RUNTIME_PREAMBLE_VERSION}): this ${args.providerLabel} workspace run has access to the TaskWraith MCP server.`,
@@ -192,6 +193,7 @@ function buildTaskWraithRuntimePreamble(args: {
     'Image tools are also available over MCP: image_edit (blur/redact/crop/resize), svg_rasterize (preview an SVG you produced as a PNG — the transcript does not render SVG inline), and image_generate (text-to-image, only when the user has enabled it with a key in Settings). Prefer them over shelling out or pasting data URLs.',
     CLOUD_EDIT_DISCIPLINE_NOTE,
     `For CROSS-PROVIDER delegation, call ${delegateTool}({ provider, prompt, returnResult }) through TaskWraith; do not use provider-native Task/invoke_agent/subagent paths for cross-provider work because they cannot reach other TaskWraith providers.`,
+    `For asking the user a question, ALWAYS call ${questionTool} instead of a provider-native question/elicitation tool (e.g. Claude Code's built-in AskUserQuestion). The native tool has no attached interactive terminal in this harness — it silently auto-resolves with an empty answer and is never shown to the user, on desktop OR the iOS companion app. ${questionTool} is the only path wired end-to-end (Electron picker UI + the iOS remote question card), so it is the one that actually reaches the user, including on a paired phone.`,
     ...(args.provider === 'codex'
       ? [
           'Codex may also surface the same MCP entrypoints as bare tool names, such as delegate_to_subthread.'
