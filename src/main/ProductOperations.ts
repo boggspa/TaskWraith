@@ -1186,6 +1186,16 @@ function summarizeRunQueueDispatchReceiptForDiagnostics(
           approvalMode: receipt.remoteComposer.approvalMode,
           workflowMode: receipt.remoteComposer.workflowMode
         }
+      : undefined,
+    remoteAllowlist: receipt.remoteAllowlist
+      ? {
+          decision: receipt.remoteAllowlist.decision,
+          capability: receipt.remoteAllowlist.capability,
+          provider: receipt.remoteAllowlist.provider,
+          approvalMode: receipt.remoteAllowlist.approvalMode,
+          policyFingerprint: receipt.remoteAllowlist.policyFingerprint,
+          evaluatedAt: receipt.remoteAllowlist.evaluatedAt
+        }
       : undefined
   }
 }

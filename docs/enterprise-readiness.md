@@ -457,6 +457,9 @@ What exists:
   permission-posture proof fields available at enqueue time. Direct remote
   composer enqueues that bypass the generic IPC normalizer are stamped at the
   repository boundary.
+- Remote queued composer receipts now include the enqueue-time remote allowlist
+  decision and a stable allowlist policy fingerprint for the effective
+  workspace/provider/approval/capability gate.
 - Redacted diagnostics/audit export now includes the queued `dispatchReceipt`
   summary, with chat/thread ids hashed and remote-composer text omitted.
 - Lifecycle dequeue tickets and steer-promotion handoffs now carry the queued
@@ -480,11 +483,11 @@ What is missing:
 - Ensemble wakeups and scheduled ensemble occurrences still need explicit
   proof that they resume the participant/stage/posture that was scheduled, not
   whatever a mutable live roster happens to contain later.
-- Remote queued dispatch now has a queued `dispatchReceipt`, but still lacks an
-  enqueue-time signed posture, allowlist decision, or allowlist fingerprint.
-  Dequeue replay rebuilds a wire action and dispatches directly, so it must
-  either re-run the bridge router's allowlist decision or use an explicitly
-  frozen signed posture.
+- Remote queued dispatch now has a queued `dispatchReceipt` with an allowlist
+  decision and policy fingerprint, but it still lacks an explicitly signed
+  queue-time posture for the dispatch permission itself. Dequeue replay rebuilds
+  a wire action and dispatches directly, so it must either re-run the bridge
+  router's allowlist decision or use an explicitly frozen signed posture.
 - `EnsembleRunIdentity`, `ChatRun`, run queue metadata, approval previews, and
   run events now persist live dispatch `stageRole`/`laneId`, but scheduled and
   wakeup replay paths still need explicit tests that they preserve or re-check

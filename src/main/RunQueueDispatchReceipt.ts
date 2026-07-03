@@ -1,8 +1,13 @@
 import { createHash } from 'crypto'
 import type { RunQueueDispatchReceipt, RunQueueJob } from './store/types'
 
+export type RunQueueDispatchReceiptInput = Partial<RunQueueJob> &
+  Pick<RunQueueJob, 'runId' | 'provider'> & {
+    remoteAllowlist?: RunQueueDispatchReceipt['remoteAllowlist']
+  }
+
 export function buildRunQueueDispatchReceipt(
-  job: Partial<RunQueueJob> & Pick<RunQueueJob, 'runId' | 'provider'>,
+  job: RunQueueDispatchReceiptInput,
   generatedAt = new Date().toISOString()
 ): RunQueueDispatchReceipt {
   const source = job.source || 'manual'
@@ -18,6 +23,16 @@ export function buildRunQueueDispatchReceipt(
         provider: optionalString(remoteComposer.provider),
         approvalMode: optionalString(remoteComposer.approvalMode),
         workflowMode: remoteComposer.workflowMode
+      }
+    : undefined
+  const remoteAllowlistReceipt = job.remoteAllowlist
+    ? {
+        decision: job.remoteAllowlist.decision,
+        capability: optionalString(job.remoteAllowlist.capability),
+        provider: optionalString(job.remoteAllowlist.provider),
+        approvalMode: optionalString(job.remoteAllowlist.approvalMode),
+        policyFingerprint: optionalString(job.remoteAllowlist.policyFingerprint),
+        evaluatedAt: optionalString(job.remoteAllowlist.evaluatedAt)
       }
     : undefined
   const body: Omit<RunQueueDispatchReceipt, 'receiptHash'> = {
@@ -50,7 +65,8 @@ export function buildRunQueueDispatchReceipt(
     permissionPostureSignaturePresent: Boolean(permissionPosture?.signaturePresent),
     ...(remoteComposerReceipt && Object.values(remoteComposerReceipt).some(Boolean)
       ? { remoteComposer: remoteComposerReceipt }
-      : {})
+      : {}),
+    ...(remoteAllowlistReceipt ? { remoteAllowlist: remoteAllowlistReceipt } : {})
   }
   return {
     ...body,

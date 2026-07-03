@@ -407,6 +407,14 @@ describe('ProductOperations', () => {
               provider: 'codex',
               approvalMode: 'plan',
               workflowMode: 'plan'
+            },
+            remoteAllowlist: {
+              decision: 'allowed',
+              capability: 'startTurn',
+              provider: 'codex',
+              approvalMode: 'plan',
+              policyFingerprint: 'f'.repeat(64),
+              evaluatedAt: '2026-05-07T10:00:00.000Z'
             }
           }
         }
@@ -721,6 +729,14 @@ describe('ProductOperations', () => {
           provider: 'codex',
           approvalMode: 'plan',
           workflowMode: 'plan'
+        },
+        remoteAllowlist: {
+          decision: 'allowed',
+          capability: 'startTurn',
+          provider: 'codex',
+          approvalMode: 'plan',
+          policyFingerprint: 'f'.repeat(64),
+          evaluatedAt: '2026-05-07T10:00:00.000Z'
         }
       }
     })

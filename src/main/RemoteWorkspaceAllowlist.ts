@@ -1,3 +1,4 @@
+import { createHash } from 'crypto'
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'fs'
 import { dirname } from 'path'
 
@@ -344,6 +345,30 @@ export class RemoteWorkspaceAllowlist {
     return Array.from(this.entries.values())
   }
 
+  /** Stable fingerprint of the effective remote allowlist policy. */
+  fingerprint(): string {
+    const effectivePolicy = {
+      schemaVersion: SCHEMA_VERSION,
+      globalScope: {
+        enabled: this.entries.size > 0,
+        capabilities: [...GLOBAL_REMOTE_SCOPE_CAPABILITIES].sort(),
+        allowedApprovalModes: ['plan']
+      },
+      entries: Array.from(this.entries.values())
+        .map((entry) => ({
+          workspaceId: entry.workspaceId,
+          path: entry.path,
+          mode: entry.mode,
+          capabilities: [...capabilitiesForRemoteWorkspaceEntry(entry)].sort(),
+          allowedProviders: [...entry.allowedProviders].sort(),
+          allowedApprovalModes: [...entry.allowedApprovalModes].sort(),
+          ...(entry.expiresAt !== undefined ? { expiresAt: entry.expiresAt } : {})
+        }))
+        .sort((a, b) => a.workspaceId.localeCompare(b.workspaceId))
+    }
+    return createHash('sha256').update(stableJson(effectivePolicy)).digest('hex')
+  }
+
   get(workspaceId: string): RemoteWorkspaceEntry | null {
     return this.entries.get(workspaceId) ?? null
   }
@@ -561,4 +586,19 @@ function isValidEntry(value: unknown): value is RemoteWorkspaceEntry {
     typeof v.updatedAt === 'number' &&
     (v.expiresAt === undefined || typeof v.expiresAt === 'number')
   )
+}
+
+function stableJson(value: unknown): string {
+  if (value === null || typeof value !== 'object') {
+    return JSON.stringify(value)
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableJson(item)).join(',')}]`
+  }
+  const record = value as Record<string, unknown>
+  return `{${Object.keys(record)
+    .filter((key) => record[key] !== undefined)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${stableJson(record[key])}`)
+    .join(',')}}`
 }

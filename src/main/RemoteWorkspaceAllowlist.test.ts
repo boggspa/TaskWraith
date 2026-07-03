@@ -334,6 +334,109 @@ describe('RemoteWorkspaceAllowlist', () => {
     })
   })
 
+  describe('fingerprint', () => {
+    const seedPolicy = () => {
+      const allowlist = new RemoteWorkspaceAllowlist({ now: () => 1000 })
+      allowlist.upsert({
+        workspaceId: 'ws-b',
+        path: '/b',
+        mode: 'read-only',
+        capabilities: ['approve', 'monitor'],
+        allowedProviders: ['claude', 'codex'],
+        allowedApprovalModes: ['plan'],
+        expiresAt: 5000
+      })
+      allowlist.upsert({
+        workspaceId: 'ws-a',
+        path: '/a',
+        mode: 'read-write',
+        capabilities: ['startTurn', 'approve', 'monitor'],
+        allowedProviders: ['codex'],
+        allowedApprovalModes: ['default', 'plan']
+      })
+      return allowlist
+    }
+
+    it('returns a stable sha-256 policy fingerprint', () => {
+      const fingerprint = seedPolicy().fingerprint()
+      expect(fingerprint).toMatch(/^[a-f0-9]{64}$/)
+    })
+
+    it('is stable when effective policy order differs', () => {
+      const left = seedPolicy()
+      const right = new RemoteWorkspaceAllowlist({ now: () => 9999 })
+      right.upsert({
+        workspaceId: 'ws-a',
+        path: '/a',
+        mode: 'read-write',
+        capabilities: ['monitor', 'startTurn', 'approve'],
+        allowedProviders: ['codex'],
+        allowedApprovalModes: ['plan', 'default']
+      })
+      right.upsert({
+        workspaceId: 'ws-b',
+        path: '/b',
+        mode: 'read-only',
+        capabilities: ['monitor', 'approve'],
+        allowedProviders: ['codex', 'claude'],
+        allowedApprovalModes: ['plan'],
+        expiresAt: 5000
+      })
+
+      expect(right.fingerprint()).toBe(left.fingerprint())
+    })
+
+    it('changes when effective allowlist powers change', () => {
+      const base = seedPolicy().fingerprint()
+
+      const providerChanged = seedPolicy()
+      providerChanged.upsert({
+        workspaceId: 'ws-a',
+        path: '/a',
+        mode: 'read-write',
+        capabilities: ['startTurn', 'approve', 'monitor'],
+        allowedProviders: ['codex', 'claude'],
+        allowedApprovalModes: ['default', 'plan']
+      })
+      expect(providerChanged.fingerprint()).not.toBe(base)
+
+      const capabilityChanged = seedPolicy()
+      capabilityChanged.upsert({
+        workspaceId: 'ws-a',
+        path: '/a',
+        mode: 'read-write',
+        capabilities: ['approve', 'monitor'],
+        allowedProviders: ['codex'],
+        allowedApprovalModes: ['default', 'plan']
+      })
+      expect(capabilityChanged.fingerprint()).not.toBe(base)
+
+      const expiryChanged = seedPolicy()
+      expiryChanged.upsert({
+        workspaceId: 'ws-b',
+        path: '/b',
+        mode: 'read-only',
+        capabilities: ['approve', 'monitor'],
+        allowedProviders: ['claude', 'codex'],
+        allowedApprovalModes: ['plan'],
+        expiresAt: 6000
+      })
+      expect(expiryChanged.fingerprint()).not.toBe(base)
+
+      const modeChanged = seedPolicy()
+      modeChanged.upsert({
+        workspaceId: 'ws-b',
+        path: '/b',
+        mode: 'read-write',
+        capabilities: ['approve', 'monitor'],
+        allowedProviders: ['claude', 'codex'],
+        allowedApprovalModes: ['plan'],
+        expiresAt: 5000
+      })
+      expect(modeChanged.fingerprint()).not.toBe(base)
+    })
+  })
+
   describe('persistence', () => {
     let tmpDir: string
     let storagePath: string

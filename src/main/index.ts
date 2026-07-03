@@ -250,6 +250,7 @@ import { extractThreadId } from './BridgeRunEventSink'
 import { resolveCanonicalWorkspaceId } from './WorkspaceIdentity'
 import { resolveDaemonShouldRun } from './BridgeDaemonSettings'
 import { BridgeActionRouter } from './BridgeActionRouter'
+import { buildRunQueueDispatchReceipt } from './RunQueueDispatchReceipt'
 import type {
   BridgeActionOwnershipCheck,
   BridgeActionOwnershipValidator,
@@ -22436,8 +22437,25 @@ if (isGeminiMcpBridgeProcess) {
         if (scope !== 'global' && !workspace) {
           return { ok: false, reason: `Workspace id "${action.workspaceId}" is not registered` }
         }
+        const allowlistDecision = bridgeAllowlist.evaluate({
+          workspaceId: action.workspaceId,
+          provider,
+          approvalMode: action.approvalMode,
+          capability: 'startTurn'
+        })
+        if (!allowlistDecision.allowed) {
+          return { ok: false, reason: allowlistDecision.reason }
+        }
+        const remoteAllowlistProof = {
+          decision: 'allowed' as const,
+          capability: 'startTurn',
+          provider,
+          ...(action.approvalMode ? { approvalMode: action.approvalMode } : {}),
+          policyFingerprint: bridgeAllowlist.fingerprint(),
+          evaluatedAt: new Date().toISOString()
+        }
         const queueId = `remote-queue-${randomUUID()}`
-        getRunRepository().saveRunQueueJob({
+        const queueJob = {
           id: queueId,
           runId: queueId,
           provider,
@@ -22445,8 +22463,8 @@ if (isGeminiMcpBridgeProcess) {
           workspaceId: action.workspaceId,
           workspacePath: workspace?.path,
           chatId: chat.appChatId,
-          source: 'remote',
-          status: 'queued',
+          source: 'remote' as const,
+          status: 'queued' as const,
           promptPreview: text,
           request: {
             scope,
@@ -22484,6 +22502,13 @@ if (isGeminiMcpBridgeProcess) {
                 : {})
             }
           }
+        }
+        getRunRepository().saveRunQueueJob({
+          ...queueJob,
+          dispatchReceipt: buildRunQueueDispatchReceipt({
+            ...queueJob,
+            remoteAllowlist: remoteAllowlistProof
+          })
         })
         broadcastRemoteComposerQueueChange(chat, action.workspaceId)
         scheduleRemoteComposerQueuePump()

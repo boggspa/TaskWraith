@@ -4228,6 +4228,14 @@ export interface RunQueueDispatchReceipt {
     approvalMode?: string
     workflowMode?: ChatWorkflowMode
   }
+  remoteAllowlist?: {
+    decision: 'allowed' | 'denied'
+    capability?: string
+    provider?: string
+    approvalMode?: string
+    policyFingerprint?: string
+    evaluatedAt?: string
+  }
 }
 
 export type RunRecoveryProcessAction = 'left_running' | 'not_found' | 'inaccessible' | 'unknown'
