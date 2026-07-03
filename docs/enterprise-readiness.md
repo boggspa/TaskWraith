@@ -341,6 +341,9 @@ What exists:
 - Settings writes now apply the same managed user-MCP allowlist before
   persistence. Servers that fail the allowlist are preserved but saved disabled,
   so the user does not lose configuration while launch bypasses remain closed.
+- Stdio command-root checks canonicalize existing commands and roots through
+  realpath before allowlist comparison, blocking symlinks that point outside the
+  managed root.
 - Diagnostics and audit-bundle exports now include redacted
   `userMcpBlockedServers` evidence when the managed launch allowlist blocks
   enabled user MCP servers. Server ids/names and raw header/env names are
@@ -354,8 +357,8 @@ What is missing:
 - Plugin provenance checks are syntactic until a managed policy service
   revalidates installed plugin state, resource kind, object id, and manifest
   hash.
-- Command-root checks are a launch allowlist, not a sandbox; symlink/realpath
-  validation and argument policy need to come with managed policy enforcement.
+- Command-root checks are a launch allowlist, not a sandbox; argument policy
+  still needs to come with managed policy enforcement.
 - Remote checks currently gate host patterns, not full URL egress policy for
   scheme, port, path, userinfo, or DNS-rebinding behavior.
 - Long-lived provider app servers, especially Codex app-server, need an

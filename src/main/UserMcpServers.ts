@@ -1,3 +1,4 @@
+import fs from 'node:fs'
 import path from 'node:path'
 import {
   extensionSecretKey,
@@ -119,11 +120,19 @@ function normalizeCaseSet(values: readonly string[]): Set<string> {
 }
 
 function isAbsolutePathInside(command: string, root: string): boolean {
-  const normalizedCommand = path.resolve(command)
-  const normalizedRoot = path.resolve(root)
+  const normalizedCommand = realpathOrResolved(command)
+  const normalizedRoot = realpathOrResolved(root)
   if (normalizedCommand === normalizedRoot) return true
   const relative = path.relative(normalizedRoot, normalizedCommand)
   return Boolean(relative) && !relative.startsWith('..') && !path.isAbsolute(relative)
+}
+
+function realpathOrResolved(value: string): string {
+  try {
+    return fs.realpathSync.native(value)
+  } catch {
+    return path.resolve(value)
+  }
 }
 
 function isCommandAllowed(command: string, allowedCommandRoots: readonly string[]): boolean {

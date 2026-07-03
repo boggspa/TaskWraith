@@ -1,3 +1,6 @@
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
   buildUserMcpCursorAllowRules,
@@ -518,6 +521,38 @@ describe('buildUserMcpStdioLaunchServers', () => {
       allowed: false,
       reason: 'command path is not allowlisted'
     })
+  })
+
+  it('resolves symlinked stdio commands before applying command-root allowlists', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'taskwraith-user-mcp-'))
+    try {
+      const allowedRoot = path.join(tempDir, 'allowed')
+      const outsideRoot = path.join(tempDir, 'outside')
+      fs.mkdirSync(allowedRoot)
+      fs.mkdirSync(outsideRoot)
+      const outsideCommand = path.join(outsideRoot, 'server')
+      fs.writeFileSync(outsideCommand, '#!/bin/sh\n')
+      const symlinkedCommand = path.join(allowedRoot, 'server')
+      fs.symlinkSync(outsideCommand, symlinkedCommand)
+
+      expect(
+        evaluateUserMcpLaunchPolicy(
+          {
+            id: 'symlink',
+            name: 'Symlink',
+            enabled: true,
+            transport: 'stdio',
+            command: symlinkedCommand
+          },
+          { allowedCommandRoots: [allowedRoot] }
+        )
+      ).toMatchObject({
+        allowed: false,
+        reason: 'command path is not allowlisted'
+      })
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true })
+    }
   })
 
   it('can require plugin provenance and restrict materialized plugin ids', () => {
