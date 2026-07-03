@@ -484,6 +484,9 @@ What exists:
 - Ensemble wakeups now carry a schedule-time `dispatchReceipt` that hashes the
   frozen chat/workspace, provider, participant, role, and stage identity used on
   resume.
+- Remote queued dispatch now freezes a queue-time signed permission posture and
+  includes that posture hash/signature presence in its dispatch receipt, alongside
+  the allowlist decision and policy fingerprint.
 
 What is missing:
 
@@ -493,11 +496,10 @@ What is missing:
 - Ensemble wakeups still need full posture proof that they resume with the
   permission posture that was scheduled; wakeups now freeze and hash
   role/stage identity, but they do not yet carry a signed posture snapshot.
-- Remote queued dispatch now has a queued `dispatchReceipt` with an allowlist
-  decision and policy fingerprint, but it still lacks an explicitly signed
-  queue-time posture for the dispatch permission itself. Dequeue replay rebuilds
-  a wire action and dispatches directly, so it must either re-run the bridge
-  router's allowlist decision or use an explicitly frozen signed posture.
+- Remote queued dispatch has an explicitly frozen queue-time posture and
+  allowlist proof; dequeue replay still dispatches from the queued job, so the
+  next audit should prove whether replay intentionally trusts that frozen
+  receipt or must re-run current bridge allowlist for revocation-at-dispatch.
 - `EnsembleRunIdentity`, `ChatRun`, run queue metadata, approval previews, and
   run events now persist live dispatch `stageRole`/`laneId`, but scheduled and
   wakeup replay paths still need explicit tests that they preserve or re-check
@@ -513,8 +515,9 @@ Target:
 - Preserve older-client semantics: absent `stageRole` means preserve; `''` means
   explicit clear.
 - Add dequeue tests that enqueue a remote prompt, revoke workspace/provider or
-  approval access before the queue pumps, and assert either a deny with audit or
-  the intended frozen posture is used.
+  approval access before the queue pumps, and assert the product-chosen policy:
+  either deny with audit at dispatch time or continue under the frozen
+  queue-time posture/allowlist receipt.
 - Add ensemble wakeup tests that schedule as a reviewer, mutate the live roster
   to worker/default before firing, and verify the resumed run uses the frozen
   snapshot or records an explicit current-policy-at-resume decision.

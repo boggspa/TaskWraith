@@ -405,6 +405,7 @@ import {
   classifyRemoteComposerQueueDispatchResult,
   remoteComposerChatIsBusy as remoteComposerQueueJobIsBusy
 } from './services/RemoteComposerQueueService'
+import { buildRemoteComposerQueuePermissionPosture } from './services/RemoteComposerQueuePosture'
 import { SettingsService } from './services/SettingsService'
 import { WorkspaceService } from './services/WorkspaceService'
 import { GitService } from './services/GitService'
@@ -22455,6 +22456,20 @@ if (isGeminiMcpBridgeProcess) {
           evaluatedAt: new Date().toISOString()
         }
         const queueId = `remote-queue-${randomUUID()}`
+        const workflowMode = action.workflowMode === 'plan' ? 'plan' : 'normal'
+        const approvalMode = action.approvalMode || 'default'
+        const permissionPosture = buildRemoteComposerQueuePermissionPosture({
+          provider,
+          scope,
+          workspacePath: workspace?.path,
+          chatId: chat.appChatId,
+          runId: queueId,
+          text,
+          approvalMode,
+          workflowMode,
+          settings: AppStore.getSettings(),
+          signRunPermissionPosture: signRunPosture
+        })
         const queueJob = {
           id: queueId,
           runId: queueId,
@@ -22466,14 +22481,15 @@ if (isGeminiMcpBridgeProcess) {
           source: 'remote' as const,
           status: 'queued' as const,
           promptPreview: text,
+          permissionPosture,
           request: {
             scope,
             prompt: text,
             displayPrompt: text,
             selectedModelType: action.model || 'default',
             customModel: '',
-            approvalMode: action.approvalMode || 'default',
-            workflowMode: action.workflowMode === 'plan' ? 'plan' : 'normal',
+            approvalMode,
+            workflowMode,
             sessionTrust: false,
             imageAttachments: [],
             ...(action.reasoningEffort !== undefined
