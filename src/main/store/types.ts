@@ -1691,6 +1691,7 @@ export interface AppSettings {
   storeLocalChatHistory: boolean
   storeRawEvents: boolean
   storePromptResponseInUsage: boolean
+  auditRetention?: AuditRetentionSettings
   ensembleModeEnabled: boolean
   geminiCheckpointingEnabled: boolean
   chatContextTurns: number
@@ -2204,16 +2205,19 @@ export interface ProductDiagnosticsAuditReceipts {
     workspaceChanges: number
     messageFeedback: number
     externalPublish: number
+    auditRetentionPurges: number
   }
   hashes: {
     approvalLedger: string
     workspaceChanges: string
     messageFeedback: string
     externalPublish: string
+    auditRetentionPurges: string
   }
   recent: {
     messageFeedback: Array<Record<string, unknown>>
     externalPublish: Array<Record<string, unknown>>
+    auditRetentionPurges: Array<Record<string, unknown>>
   }
   validation: {
     sensitiveFeedbackNotes: 'redacted'
@@ -2278,6 +2282,7 @@ export interface ProductAuditBundleManifest {
     capabilityLedgerEntries: number
     messageFeedback: number
     externalPublish: number
+    auditRetentionPurges: number
   }
   hashes: {
     approvalLedger: string
@@ -2288,6 +2293,7 @@ export interface ProductAuditBundleManifest {
     capabilityLedger: string
     messageFeedback: string
     externalPublish: string
+    auditRetentionPurges: string
   }
   validation: {
     sensitiveFields: 'redacted'
@@ -2326,6 +2332,7 @@ export interface ProductAuditBundleSnapshot {
     capabilityLedger: Array<Record<string, unknown>>
     messageFeedback: Array<Record<string, unknown>>
     externalPublish: Array<Record<string, unknown>>
+    auditRetentionPurges: Array<Record<string, unknown>>
   }
 }
 
@@ -2338,6 +2345,47 @@ export interface ProductAuditBundleExportResult {
   ok: boolean
   path?: string
   snapshot?: ProductAuditBundleSnapshot
+  error?: string
+}
+
+export type AuditRetentionSurface =
+  | 'approvalLedger'
+  | 'runEvents'
+  | 'workspaceChanges'
+  | 'auditRuns'
+  | 'messageFeedback'
+  | 'productCrashes'
+
+export interface AuditRetentionSettings {
+  enabled?: boolean
+  maxAgeDays?: Partial<Record<AuditRetentionSurface, number>>
+}
+
+export interface AuditRetentionSurfacePurgeCounts {
+  scanned: number
+  retained: number
+  deleted: number
+}
+
+export interface AuditRetentionPurgeReceipt {
+  schemaVersion: 1
+  id: string
+  generatedAt: string
+  dryRun: boolean
+  enabled: boolean
+  policy: AuditRetentionSettings
+  counts: Record<AuditRetentionSurface, AuditRetentionSurfacePurgeCounts>
+}
+
+export interface AuditRetentionPurgeRequest {
+  dryRun?: boolean
+  now?: string
+  policy?: AuditRetentionSettings
+}
+
+export interface AuditRetentionPurgeResult {
+  ok: boolean
+  receipt?: AuditRetentionPurgeReceipt
   error?: string
 }
 

@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto'
 import type {
   AppSettings,
   ApprovalLedgerRecord,
+  AuditRetentionPurgeReceipt,
   AuditRunRecord,
   CapabilityLedgerSnapshot,
   EvidencePackRecord,
@@ -127,18 +128,44 @@ function summarizeExternalPublishReceiptForDiagnostics(
   }
 }
 
+function summarizeAuditRetentionPurgeReceiptForDiagnostics(
+  receipt: AuditRetentionPurgeReceipt
+): Record<string, unknown> {
+  return {
+    schemaVersion: receipt.schemaVersion,
+    idHash: hashId(receipt.id),
+    generatedAt: receipt.generatedAt,
+    dryRun: receipt.dryRun,
+    enabled: receipt.enabled,
+    surfaces: Object.fromEntries(
+      Object.entries(receipt.counts || {}).map(([surface, counts]) => [
+        surface,
+        {
+          scanned: counts.scanned,
+          retained: counts.retained,
+          deleted: counts.deleted
+        }
+      ])
+    )
+  }
+}
+
 function buildDiagnosticsAuditReceipts(input: {
   generatedAt: string
   approvalLedger: ApprovalLedgerRecord[]
   workspaceChanges: WorkspaceChangeSet[]
   messageFeedbackReceipts: MessageFeedbackReceipt[]
   externalPublishReceipts: ExternalPublishReceipt[]
+  auditRetentionPurgeReceipts: AuditRetentionPurgeReceipt[]
 }) {
   const messageFeedback = input.messageFeedbackReceipts.map(
     summarizeMessageFeedbackReceiptForDiagnostics
   )
   const externalPublish = input.externalPublishReceipts.map(
     summarizeExternalPublishReceiptForDiagnostics
+  )
+  const auditRetentionPurges = input.auditRetentionPurgeReceipts.map(
+    summarizeAuditRetentionPurgeReceiptForDiagnostics
   )
   return {
     schemaVersion: 1,
@@ -148,17 +175,20 @@ function buildDiagnosticsAuditReceipts(input: {
       approvalLedger: input.approvalLedger.length,
       workspaceChanges: input.workspaceChanges.length,
       messageFeedback: input.messageFeedbackReceipts.length,
-      externalPublish: input.externalPublishReceipts.length
+      externalPublish: input.externalPublishReceipts.length,
+      auditRetentionPurges: input.auditRetentionPurgeReceipts.length
     },
     hashes: {
       approvalLedger: diagnosticsSha256(input.approvalLedger),
       workspaceChanges: diagnosticsSha256(input.workspaceChanges),
       messageFeedback: diagnosticsSha256(messageFeedback),
-      externalPublish: diagnosticsSha256(externalPublish)
+      externalPublish: diagnosticsSha256(externalPublish),
+      auditRetentionPurges: diagnosticsSha256(auditRetentionPurges)
     },
     recent: {
       messageFeedback: messageFeedback.slice(-MAX_DIAGNOSTIC_RECORDS),
-      externalPublish: externalPublish.slice(-MAX_DIAGNOSTIC_RECORDS)
+      externalPublish: externalPublish.slice(-MAX_DIAGNOSTIC_RECORDS),
+      auditRetentionPurges: auditRetentionPurges.slice(-MAX_DIAGNOSTIC_RECORDS)
     },
     validation: {
       sensitiveFeedbackNotes: 'redacted',
@@ -1085,6 +1115,7 @@ export function buildDiagnosticsSnapshot(input: {
   workspaceChanges: WorkspaceChangeSet[]
   messageFeedbackReceipts?: MessageFeedbackReceipt[]
   externalPublishReceipts?: ExternalPublishReceipt[]
+  auditRetentionPurgeReceipts?: AuditRetentionPurgeReceipt[]
   recentCrashes: ProductCrashRecord[]
   now?: string
 }): ProductDiagnosticsSnapshot {
@@ -1132,7 +1163,8 @@ export function buildDiagnosticsSnapshot(input: {
       approvalLedger: input.approvalLedger,
       workspaceChanges: input.workspaceChanges,
       messageFeedbackReceipts: input.messageFeedbackReceipts || [],
-      externalPublishReceipts: input.externalPublishReceipts || []
+      externalPublishReceipts: input.externalPublishReceipts || [],
+      auditRetentionPurgeReceipts: input.auditRetentionPurgeReceipts || []
     }),
     recentCrashes: input.recentCrashes.slice(0, MAX_DIAGNOSTIC_RECORDS)
   }) as ProductDiagnosticsSnapshot
@@ -1167,6 +1199,7 @@ export function buildAuditBundleSnapshot(input: {
   capabilityLedger?: CapabilityLedgerSnapshot
   messageFeedbackReceipts: MessageFeedbackReceipt[]
   externalPublishReceipts: ExternalPublishReceipt[]
+  auditRetentionPurgeReceipts?: AuditRetentionPurgeReceipt[]
   filter?: ProductAuditBundleFilter
   now?: string
 }): ProductAuditBundleSnapshot {
@@ -1185,6 +1218,7 @@ export function buildAuditBundleSnapshot(input: {
   const externalPublish = input.externalPublishReceipts.filter((receipt) =>
     matchesAuditBundleFilter(receipt, filter)
   )
+  const auditRetentionPurges = input.auditRetentionPurgeReceipts || []
   const runEventReplays = uniqueRunIds(runEvents).map((runId) =>
     summarizeRunEventReplayForAuditBundle(runId, runEvents)
   )
@@ -1197,7 +1231,10 @@ export function buildAuditBundleSnapshot(input: {
     evidencePacks: evidencePacks.map(summarizeEvidencePackForAuditBundle),
     capabilityLedger,
     messageFeedback: messageFeedback.map(summarizeMessageFeedbackReceiptForAuditBundle),
-    externalPublish: externalPublish.map(summarizeExternalPublishReceiptForAuditBundle)
+    externalPublish: externalPublish.map(summarizeExternalPublishReceiptForAuditBundle),
+    auditRetentionPurges: auditRetentionPurges.map(
+      summarizeAuditRetentionPurgeReceiptForDiagnostics
+    )
   }
   const runEventChains = runEventReplays.map((replay) => replay.hashChainValid === true)
   const permissionPostureProofs = {
@@ -1222,7 +1259,8 @@ export function buildAuditBundleSnapshot(input: {
         evidencePacks: evidencePacks.length,
         capabilityLedgerEntries: capabilityLedger.length,
         messageFeedback: messageFeedback.length,
-        externalPublish: externalPublish.length
+        externalPublish: externalPublish.length,
+        auditRetentionPurges: auditRetentionPurges.length
       },
       hashes: {
         approvalLedger: diagnosticsSha256(sections.approvalLedger),
@@ -1232,7 +1270,8 @@ export function buildAuditBundleSnapshot(input: {
         evidencePacks: diagnosticsSha256(sections.evidencePacks),
         capabilityLedger: diagnosticsSha256(sections.capabilityLedger),
         messageFeedback: diagnosticsSha256(sections.messageFeedback),
-        externalPublish: diagnosticsSha256(sections.externalPublish)
+        externalPublish: diagnosticsSha256(sections.externalPublish),
+        auditRetentionPurges: diagnosticsSha256(sections.auditRetentionPurges)
       },
       validation: {
         sensitiveFields: 'redacted',

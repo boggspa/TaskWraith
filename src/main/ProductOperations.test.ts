@@ -582,6 +582,24 @@ describe('ProductOperations', () => {
           metadata: { token: 'sk-1234567890abcdefghijklmnop', branch: 'feature/audit' }
         }
       ],
+      auditRetentionPurgeReceipts: [
+        {
+          schemaVersion: 1,
+          id: 'purge-secret',
+          generatedAt: '2026-07-03T00:00:02.000Z',
+          dryRun: false,
+          enabled: true,
+          policy: { enabled: true, maxAgeDays: { runEvents: 30 } },
+          counts: {
+            approvalLedger: { scanned: 2, retained: 1, deleted: 1 },
+            runEvents: { scanned: 3, retained: 2, deleted: 1 },
+            workspaceChanges: { scanned: 0, retained: 0, deleted: 0 },
+            auditRuns: { scanned: 0, retained: 0, deleted: 0 },
+            messageFeedback: { scanned: 0, retained: 0, deleted: 0 },
+            productCrashes: { scanned: 0, retained: 0, deleted: 0 }
+          }
+        }
+      ],
       recentCrashes: []
     })
     const serialized = serializeDiagnosticsSnapshot(snapshot)
@@ -627,9 +645,11 @@ describe('ProductOperations', () => {
     expect(serialized).not.toContain('Private roadmap PR')
     expect(serialized).not.toContain('https://github.com/private/repo')
     expect(serialized).not.toContain('sk-1234567890')
+    expect(serialized).not.toContain('purge-secret')
     expect(serialized).toContain('externalPathGrantCount')
     expect(snapshot.auditReceipts.counts.messageFeedback).toBe(1)
     expect(snapshot.auditReceipts.counts.externalPublish).toBe(1)
+    expect(snapshot.auditReceipts.counts.auditRetentionPurges).toBe(1)
     expect(snapshot.runQueue[0]).toMatchObject({
       hasPromptPreview: true,
       request: {
@@ -670,6 +690,11 @@ describe('ProductOperations', () => {
       action: 'githubCreatePr',
       hasTitle: true,
       hasPrUrl: true
+    })
+    expect(snapshot.auditReceipts.recent.auditRetentionPurges[0]).toMatchObject({
+      dryRun: false,
+      enabled: true,
+      surfaces: { runEvents: { scanned: 3, retained: 2, deleted: 1 } }
     })
   })
 
@@ -893,6 +918,24 @@ describe('ProductOperations', () => {
           metadata: { token: 'sk-1234567890abcdefghijklmnop' }
         }
       ],
+      auditRetentionPurgeReceipts: [
+        {
+          schemaVersion: 1,
+          id: 'purge-secret',
+          generatedAt: '2026-07-03T00:00:02.000Z',
+          dryRun: false,
+          enabled: true,
+          policy: { enabled: true, maxAgeDays: { runEvents: 30 } },
+          counts: {
+            approvalLedger: { scanned: 2, retained: 1, deleted: 1 },
+            runEvents: { scanned: 3, retained: 2, deleted: 1 },
+            workspaceChanges: { scanned: 0, retained: 0, deleted: 0 },
+            auditRuns: { scanned: 0, retained: 0, deleted: 0 },
+            messageFeedback: { scanned: 0, retained: 0, deleted: 0 },
+            productCrashes: { scanned: 0, retained: 0, deleted: 0 }
+          }
+        }
+      ],
       now: '2026-07-03T00:00:02.000Z'
     })
     const serialized = serializeAuditBundleSnapshot(bundle)
@@ -906,7 +949,8 @@ describe('ProductOperations', () => {
       evidencePacks: 1,
       capabilityLedgerEntries: 1,
       messageFeedback: 1,
-      externalPublish: 1
+      externalPublish: 1,
+      auditRetentionPurges: 1
     })
     expect(bundle.manifest.validation.runEventHashChains).toEqual({
       checked: 1,
@@ -930,6 +974,7 @@ describe('ProductOperations', () => {
     expect(serialized).not.toContain('Private PR title')
     expect(serialized).not.toContain('/secret/repo')
     expect(serialized).not.toContain('src/private-secret.ts')
+    expect(serialized).not.toContain('purge-secret')
     expect(serialized).not.toContain('do-not-export-signature')
     expect(serialized).not.toContain('approval-sibling')
     expect(bundle.manifest.hashes.runEventReplays).toMatch(/^[a-f0-9]{64}$/)

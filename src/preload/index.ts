@@ -1276,6 +1276,8 @@ const api = {
     ipcRenderer.invoke('export-product-diagnostics', path),
   exportProductAuditBundle: (request?: any) =>
     ipcRenderer.invoke('export-product-audit-bundle', request),
+  purgeProductAuditRetention: (request?: any) =>
+    ipcRenderer.invoke('purge-product-audit-retention', request),
   repairProductInstall: () => ipcRenderer.invoke('repair-product-install'),
   getAppShellStats: () =>
     ipcRenderer.invoke('app-shell-stats:snapshot') as Promise<AppShellStatsSnapshot>,

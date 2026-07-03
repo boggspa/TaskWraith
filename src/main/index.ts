@@ -18410,6 +18410,7 @@ async function buildCurrentDiagnosticsSnapshot() {
     workspaceChanges: AppStore.getWorkspaceChangeSets(),
     messageFeedbackReceipts: AppStore.getMessageFeedbackReceipts(),
     externalPublishReceipts: listExternalPublishReceipts(),
+    auditRetentionPurgeReceipts: AppStore.getAuditRetentionPurgeReceipts(),
     recentCrashes: AppStore.getProductCrashes({ limit: 100 })
   })
 }
@@ -18478,7 +18479,8 @@ async function buildCurrentAuditBundleSnapshot(request: ProductAuditBundleExport
     evidencePacks: AppStore.getEvidencePacks(filter.workspaceId),
     capabilityLedger: AppStore.getCapabilityLedgerSnapshot(filter.workspaceId),
     messageFeedbackReceipts: AppStore.getMessageFeedbackReceipts(filter),
-    externalPublishReceipts: listExternalPublishReceipts()
+    externalPublishReceipts: listExternalPublishReceipts(),
+    auditRetentionPurgeReceipts: AppStore.getAuditRetentionPurgeReceipts()
   })
 }
 
@@ -28005,9 +28007,10 @@ if (isGeminiMcpBridgeProcess) {
         AppStore.recordProductCrash({
           ...input,
           source: input?.source || 'renderer'
-        }),
+      }),
       exportProductDiagnostics: (requestedPath) => exportProductDiagnostics(requestedPath),
       exportProductAuditBundle: (request) => exportProductAuditBundle(request),
+      purgeProductAuditRetention: (request) => AppStore.purgeAuditRetentionEvidence(request),
       repairProductInstall: () => repairProductInstall(),
       getAppShellStatsSnapshot: () => appShellStatsService.getSnapshot(),
       getAppVersion: () => app.getVersion(),

@@ -68,7 +68,13 @@ import {
   AuditFinding,
   AuditVerdict,
   AuditGateResult,
-  AuditParticipant
+  AuditParticipant,
+  AuditRetentionPurgeReceipt,
+  AuditRetentionPurgeRequest,
+  AuditRetentionPurgeResult,
+  AuditRetentionSettings,
+  AuditRetentionSurface,
+  AuditRetentionSurfacePurgeCounts
 } from './types'
 import { canonicalizeExternalPathGrantMetadata } from './ExternalPathGrants'
 import { createDefaultEnsembleConfig } from '../EnsembleDefaults'
@@ -144,6 +150,7 @@ import {
   createApprovalLedgerRecord,
   expireScopedApprovalLedgerRecords,
   filterApprovalLedgerRecords,
+  isLiveApprovalLedgerRecord,
   recoverExpiredApprovalLedgerRecords,
   resolveApprovalLedgerRecord
 } from '../ApprovalLedger'
@@ -234,6 +241,7 @@ const runRecoveryPath = path.join(userDataPath, 'run-recovery.json')
 const workspaceChangesPath = path.join(userDataPath, 'workspace-changes.json')
 const approvalLedgerPath = path.join(userDataPath, 'approval-ledger.json')
 const messageFeedbackLedgerPath = path.join(userDataPath, 'thumbs-ledger.json')
+const auditRetentionPurgesPath = path.join(userDataPath, 'audit-retention-purges.json')
 // Single choke point for approval-ledger writes: cap retained non-live history
 // (capApprovalLedgerRecords) so the full synchronous rewrite on every approval
 // event stays bounded. Live records (pending + active session/workspace grants)
@@ -242,6 +250,8 @@ const writeApprovalLedger = (records: ApprovalLedgerRecord[]): void =>
   writeJson(approvalLedgerPath, capApprovalLedgerRecords(records))
 const writeMessageFeedbackLedger = (records: MessageFeedbackReceipt[]): void =>
   writeJson(messageFeedbackLedgerPath, capMessageFeedbackReceipts(records))
+const writeAuditRetentionPurgeReceipts = (records: AuditRetentionPurgeReceipt[]): void =>
+  writeJson(auditRetentionPurgesPath, capAuditRetentionPurgeReceipts(records))
 const productCrashesPath = path.join(userDataPath, 'product-crashes.json')
 const runtimeProfilesPath = path.join(userDataPath, 'runtime-profiles.json')
 const handoffCardsPath = path.join(userDataPath, 'handoff-cards.json')
@@ -798,6 +808,88 @@ function normalizeAuditRunRecord(value: unknown): AuditRunRecord | null {
   }
 }
 
+const AUDIT_RETENTION_SURFACES: AuditRetentionSurface[] = [
+  'approvalLedger',
+  'runEvents',
+  'workspaceChanges',
+  'auditRuns',
+  'messageFeedback',
+  'productCrashes'
+]
+
+const DEFAULT_AUDIT_RETENTION: AuditRetentionSettings = {
+  enabled: false,
+  maxAgeDays: {
+    approvalLedger: 365,
+    runEvents: 180,
+    workspaceChanges: 180,
+    auditRuns: 365,
+    messageFeedback: 365,
+    productCrashes: 90
+  }
+}
+
+const AUDIT_RETENTION_PURGE_RECEIPT_CAP = 250
+
+function normalizeAuditRetentionSettings(value: unknown): AuditRetentionSettings {
+  const input = value && typeof value === 'object' ? (value as Partial<AuditRetentionSettings>) : {}
+  const rawMaxAge = input.maxAgeDays && typeof input.maxAgeDays === 'object' ? input.maxAgeDays : {}
+  const maxAgeDays: Partial<Record<AuditRetentionSurface, number>> = {}
+  for (const surface of AUDIT_RETENTION_SURFACES) {
+    const value = Number((rawMaxAge as Partial<Record<AuditRetentionSurface, number>>)[surface])
+    if (Number.isFinite(value) && value > 0) {
+      maxAgeDays[surface] = Math.min(3650, Math.max(1, Math.floor(value)))
+    }
+  }
+  return {
+    enabled: input.enabled === true,
+    maxAgeDays: {
+      ...DEFAULT_AUDIT_RETENTION.maxAgeDays,
+      ...maxAgeDays
+    }
+  }
+}
+
+function emptyAuditRetentionCounts(): Record<
+  AuditRetentionSurface,
+  AuditRetentionSurfacePurgeCounts
+> {
+  return AUDIT_RETENTION_SURFACES.reduce(
+    (counts, surface) => {
+      counts[surface] = { scanned: 0, retained: 0, deleted: 0 }
+      return counts
+    },
+    {} as Record<AuditRetentionSurface, AuditRetentionSurfacePurgeCounts>
+  )
+}
+
+function auditRetentionCutoffMs(
+  policy: AuditRetentionSettings,
+  surface: AuditRetentionSurface,
+  nowMs: number
+): number | null {
+  const days = policy.maxAgeDays?.[surface]
+  if (!Number.isFinite(days) || Number(days) <= 0) return null
+  return nowMs - Math.floor(Number(days)) * 24 * 60 * 60 * 1000
+}
+
+function isBeforeAuditRetentionCutoff(value: unknown, cutoffMs: number | null): boolean {
+  if (cutoffMs === null) return false
+  const ms = typeof value === 'number' ? value : Date.parse(String(value || ''))
+  return Number.isFinite(ms) && ms < cutoffMs
+}
+
+function capAuditRetentionPurgeReceipts(
+  receipts: AuditRetentionPurgeReceipt[],
+  cap = AUDIT_RETENTION_PURGE_RECEIPT_CAP
+): AuditRetentionPurgeReceipt[] {
+  const normalized = receipts.filter(
+    (receipt): receipt is AuditRetentionPurgeReceipt =>
+      Boolean(receipt?.id && receipt.schemaVersion === 1 && receipt.generatedAt)
+  )
+  return normalized.length <= cap ? normalized : normalized.slice(normalized.length - cap)
+}
+
 const defaultSettings: AppSettings = {
   activeProvider: DEFAULT_PROVIDER,
   providerRunPauses: {},
@@ -818,6 +910,7 @@ const defaultSettings: AppSettings = {
   storeLocalChatHistory: true,
   storeRawEvents: false,
   storePromptResponseInUsage: false,
+  auditRetention: DEFAULT_AUDIT_RETENTION,
   ensembleModeEnabled: true,
   geminiCheckpointingEnabled: false,
   chatContextTurns: 6,
@@ -1748,6 +1841,7 @@ export class AppStore {
         ...defaultSettings.agenticServices,
         ...(stored.agenticServices || {})
       },
+      auditRetention: normalizeAuditRetentionSettings(stored.auditRetention),
       dashboardStatPrefs: {
         ...(defaultSettings.dashboardStatPrefs || {}),
         ...(storedDashboardStatPrefs || {})
@@ -3759,6 +3853,133 @@ export class AppStore {
       })
     }
     return stale
+  }
+
+  static getAuditRetentionPurgeReceipts(): AuditRetentionPurgeReceipt[] {
+    return capAuditRetentionPurgeReceipts(
+      readJson<unknown[]>(auditRetentionPurgesPath, []).filter(
+        (receipt): receipt is AuditRetentionPurgeReceipt =>
+          Boolean(
+            receipt &&
+              typeof receipt === 'object' &&
+              (receipt as AuditRetentionPurgeReceipt).schemaVersion === 1 &&
+              typeof (receipt as AuditRetentionPurgeReceipt).id === 'string'
+          )
+      )
+    )
+  }
+
+  static purgeAuditRetentionEvidence(
+    request: AuditRetentionPurgeRequest = {}
+  ): AuditRetentionPurgeResult {
+    try {
+      const generatedAt =
+        typeof request.now === 'string' && Number.isFinite(Date.parse(request.now))
+          ? new Date(Date.parse(request.now)).toISOString()
+          : new Date().toISOString()
+      const nowMs = Date.parse(generatedAt)
+      const storedPolicy = this.getSettings().auditRetention
+      const policy = normalizeAuditRetentionSettings(request.policy || storedPolicy)
+      const enabled = policy.enabled === true
+      const dryRun = request.dryRun !== false || !enabled
+      const counts = emptyAuditRetentionCounts()
+      const isExpired = (surface: AuditRetentionSurface, timestamp: unknown): boolean =>
+        enabled &&
+        isBeforeAuditRetentionCutoff(timestamp, auditRetentionCutoffMs(policy, surface, nowMs))
+      const shouldDelete = (surface: AuditRetentionSurface, timestamp: unknown): boolean =>
+        !dryRun && isExpired(surface, timestamp)
+      const recordScan = (
+        surface: AuditRetentionSurface,
+        scanned: number,
+        retained: number
+      ): void => {
+        counts[surface] = {
+          scanned,
+          retained,
+          deleted: Math.max(0, scanned - retained)
+        }
+      }
+
+      const approvalRecords = this.recoverExpiredApprovalLedger()
+      const retainedApprovals = approvalRecords.filter((record) => {
+        if (isLiveApprovalLedgerRecord(record)) return true
+        return !isExpired('approvalLedger', record.respondedAt || record.requestedAt)
+      })
+      recordScan('approvalLedger', approvalRecords.length, retainedApprovals.length)
+      if (!dryRun && retainedApprovals.length !== approvalRecords.length) {
+        writeApprovalLedger(retainedApprovals)
+      }
+
+      const workspaceChanges = this.readWorkspaceChangeSetsCached()
+      const retainedWorkspaceChanges = workspaceChanges.filter(
+        (record) => !isExpired('workspaceChanges', record.updatedAt)
+      )
+      recordScan('workspaceChanges', workspaceChanges.length, retainedWorkspaceChanges.length)
+      if (!dryRun && retainedWorkspaceChanges.length !== workspaceChanges.length) {
+        writeJson(workspaceChangesPath, retainedWorkspaceChanges)
+        this.workspaceChangeCache = null
+      }
+
+      const auditRuns = this.getAuditRuns()
+      const retainedAuditRuns = auditRuns.filter(
+        (run) => !isExpired('auditRuns', run.endedAt || run.updatedAt || run.createdAt)
+      )
+      recordScan('auditRuns', auditRuns.length, retainedAuditRuns.length)
+      if (!dryRun && retainedAuditRuns.length !== auditRuns.length) {
+        writeJson(auditRunsPath, retainedAuditRuns)
+      }
+
+      const feedbackReceipts = this.readMessageFeedbackLedger()
+      const retainedFeedbackReceipts = feedbackReceipts.filter(
+        (receipt) => !isExpired('messageFeedback', receipt.recordedAt || receipt.at)
+      )
+      recordScan('messageFeedback', feedbackReceipts.length, retainedFeedbackReceipts.length)
+      if (!dryRun && retainedFeedbackReceipts.length !== feedbackReceipts.length) {
+        writeMessageFeedbackLedger(retainedFeedbackReceipts)
+      }
+
+      const crashes = readJson<ProductCrashRecord[] | unknown>(productCrashesPath, [])
+      const crashRecords = Array.isArray(crashes) ? crashes : []
+      const retainedCrashes = crashRecords.filter(
+        (record) => !isExpired('productCrashes', record.occurredAt)
+      )
+      recordScan('productCrashes', crashRecords.length, retainedCrashes.length)
+      if (!dryRun && retainedCrashes.length !== crashRecords.length) {
+        writeJson(productCrashesPath, retainedCrashes)
+      }
+
+      let runEventScanned = 0
+      let runEventRetained = 0
+      if (fs.existsSync(runEventsDir)) {
+        for (const entry of fs.readdirSync(runEventsDir, { withFileTypes: true })) {
+          if (!entry.isFile() || !entry.name.endsWith('.jsonl')) continue
+          runEventScanned += 1
+          const eventPath = path.join(runEventsDir, entry.name)
+          const stat = fs.statSync(eventPath)
+          if (isExpired('runEvents', stat.mtimeMs)) {
+            const safeRunId = entry.name.replace(/\.jsonl$/, '')
+            if (!dryRun) deleteRunForensicFiles(safeRunId)
+          } else {
+            runEventRetained += 1
+          }
+        }
+      }
+      recordScan('runEvents', runEventScanned, runEventRetained)
+
+      const receipt: AuditRetentionPurgeReceipt = {
+        schemaVersion: 1,
+        id: `audit-retention-${Date.now()}-${randomUUID()}`,
+        generatedAt,
+        dryRun,
+        enabled,
+        policy,
+        counts
+      }
+      writeAuditRetentionPurgeReceipts([...this.getAuditRetentionPurgeReceipts(), receipt])
+      return { ok: true, receipt }
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) }
+    }
   }
 
   static getNextWorkflowRunAtMs(): number | null {

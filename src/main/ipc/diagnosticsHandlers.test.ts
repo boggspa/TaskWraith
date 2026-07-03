@@ -54,6 +54,10 @@ function createDeps() {
       path: request?.path || '/tmp/audit-bundle.json',
       kind: 'audit-bundle-exported'
     })),
+    purgeProductAuditRetention: vi.fn((request?: { dryRun?: boolean }) => ({
+      ok: true,
+      dryRun: request?.dryRun !== false
+    })),
     repairProductInstall: vi.fn(async () => status),
     getAppShellStatsSnapshot: vi.fn(() => ({ isActive: false, polls: 1 })),
     getAppVersion: vi.fn(() => '1.2.3'),
@@ -88,6 +92,7 @@ describe('registerDiagnosticsHandlers', () => {
     expect(handlerFor('record-product-crash')).toBeTypeOf('function')
     expect(handlerFor('export-product-diagnostics')).toBeTypeOf('function')
     expect(handlerFor('export-product-audit-bundle')).toBeTypeOf('function')
+    expect(handlerFor('purge-product-audit-retention')).toBeTypeOf('function')
     expect(handlerFor('repair-product-install')).toBeTypeOf('function')
     expect(handlerFor('app-shell-stats:snapshot')).toBeTypeOf('function')
     expect(handlerFor('get-app-version')).toBeTypeOf('function')
@@ -114,6 +119,15 @@ describe('registerDiagnosticsHandlers', () => {
     expect(deps.exportProductAuditBundle).toHaveBeenCalledWith({
       path: '/tmp/audit.json',
       filter: { chatId: 'chat-1' }
+    })
+
+    await handlerFor('purge-product-audit-retention')({}, {
+      dryRun: false,
+      policy: { enabled: true }
+    })
+    expect(deps.purgeProductAuditRetention).toHaveBeenCalledWith({
+      dryRun: false,
+      policy: { enabled: true }
     })
 
     await handlerFor('repair-product-install')({})

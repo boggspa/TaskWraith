@@ -236,13 +236,25 @@ What exists:
   bundle JSON with optional workspace/thread/run filters. Chat-scoped exports
   read each persisted run event file directly rather than using the
   UI-optimized chat event cap.
+- Main/preload expose `purgeProductAuditRetention`, backed by opt-in
+  `auditRetention` settings. It can dry-run or purge expired approval history,
+  run-event files and artifacts, workspace-change records, audit runs,
+  message-feedback receipts, and product-crash diagnostics. Live approval
+  grants are preserved even when older than the retention cutoff.
+- Each purge writes a capped `audit-retention-purges.json` receipt with
+  counts-only, path-redacted evidence of what was scanned, retained, and
+  deleted. Diagnostics and audit-bundle export include those purge summaries.
 
 What is missing:
 
 - A Settings/UI entry point for `exportProductAuditBundle`; the export route is
   callable through preload but not yet exposed as a polished control.
-- Configurable retention windows for run events, artifacts, approval history,
-  audit runs, and diagnostics.
+- A Settings/UI entry point for configuring `auditRetention` and invoking
+  retention dry-run / purge. The main/preload route exists, but the control
+  surface is not polished.
+- External-publish receipts are capped but not yet age-purged by
+  `purgeProductAuditRetention` because that ledger is owned by a separate
+  writer object.
 - Signed export-time tamper evidence across approval ledger, run-event chains,
   posture proofs, evidence packs, and workspace-change summaries. Current
   hashes are local and unsigned.
@@ -253,9 +265,10 @@ Target:
 
 - Add a Settings/UI entry point around the existing `exportProductAuditBundle`
   route, with explicit workspace/thread/run filter controls.
+- Add Settings/UI controls for audit retention windows and purge dry-runs.
+- Extend retention purge support to the external-publish receipt ledger.
 - Add an explicit sensitive export mode only behind a separate user/admin
   decision; keep the default bundle redacted.
-- Add retention settings and purge receipts.
 - Hash-chain or snapshot-hash the approval ledger and sign/verify the exported
   manifest with a local key when available.
 
@@ -357,6 +370,8 @@ What is missing:
   be presented as a polished managed feature.
 - The redacted audit-bundle export route includes external-publish receipts, but
   there is not yet a Settings/UI entry point for those summaries.
+- External-publish receipts are capped by count but are not yet included in the
+  opt-in age-based audit-retention purge route.
 
 Target:
 
@@ -365,6 +380,8 @@ Target:
 - Keep the bridge `externalPublish` capability explicit and admin-only.
 - Add Settings/UI affordances for exporting external-publish receipt summaries
   and bridge audit rows through the redacted audit-bundle route.
+- Add age-based purge support for the external-publish receipt ledger and
+  include it in purge receipts.
 
 ### B5.5 - Stage-role and queued-dispatch receipts
 
@@ -595,7 +612,7 @@ Do this before broadening user-managed extension claims.
 Do this before claiming audit/compliance readiness.
 
 - Add one export surface that validates and packages the local evidence.
-- Add retention settings and purge receipts.
+- Add Settings/UI around the main-process retention settings and purge receipts.
 - Add manifest hashing/signing and verification tooling.
 - Update docs to show exactly what is stored, capped, exported, redacted, and
   deleted.

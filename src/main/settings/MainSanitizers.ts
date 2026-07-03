@@ -72,6 +72,7 @@ const SETTINGS_PATCH_KEYS = new Set<keyof AppSettings>([
   'storeLocalChatHistory',
   'storeRawEvents',
   'storePromptResponseInUsage',
+  'auditRetention',
   'ensembleModeEnabled',
   'geminiCheckpointingEnabled',
   'chatContextTurns',
@@ -1235,6 +1236,35 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
     }
   }
 
+  function sanitizeAuditRetentionSettings(
+    value: unknown,
+    current: AppSettings['auditRetention']
+  ): AppSettings['auditRetention'] {
+    const source = isRecord(value) ? value : {}
+    const currentMaxAge = isRecord(current?.maxAgeDays) ? current?.maxAgeDays : {}
+    const sourceMaxAge = isRecord(source.maxAgeDays) ? source.maxAgeDays : {}
+    const surfaces = [
+      'approvalLedger',
+      'runEvents',
+      'workspaceChanges',
+      'auditRuns',
+      'messageFeedback',
+      'productCrashes'
+    ] as const
+    const maxAgeDays: NonNullable<AppSettings['auditRetention']>['maxAgeDays'] = {}
+    for (const surface of surfaces) {
+      const raw = surface in sourceMaxAge ? sourceMaxAge[surface] : currentMaxAge?.[surface]
+      const days = Number(raw)
+      if (Number.isFinite(days) && days > 0) {
+        maxAgeDays[surface] = Math.min(3650, Math.max(1, Math.floor(days)))
+      }
+    }
+    return {
+      enabled: 'enabled' in source ? source.enabled === true : current?.enabled === true,
+      maxAgeDays
+    }
+  }
+
   function sanitizeSettingsPatch(partial: unknown): Partial<AppSettings> {
     const input = requireRecord(partial, 'Settings patch')
     const sanitized: Record<string, unknown> = {}
@@ -1250,6 +1280,12 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
     }
     if ('providerRunPauses' in sanitized) {
       sanitized.providerRunPauses = sanitizeProviderRunPauses(sanitized.providerRunPauses)
+    }
+    if ('auditRetention' in sanitized) {
+      sanitized.auditRetention = sanitizeAuditRetentionSettings(
+        sanitized.auditRetention,
+        deps.getSettings().auditRetention
+      )
     }
     if ('autoUpdateEnabled' in sanitized) {
       if (typeof sanitized.autoUpdateEnabled !== 'boolean') {
