@@ -77,6 +77,23 @@ describe('TranscriptMessageContextMenu', () => {
     expect(onDeleteMessage).toHaveBeenCalledWith('message-1')
   })
 
+  it('offers closed-set poor-rating reasons and passes the selected code', () => {
+    const onMessageFeedback = vi.fn()
+    const items = buildTranscriptMessageContextMenuItems({
+      selection: selection(),
+      onCopyMessage: () => {},
+      onMessageFeedback
+    })
+
+    expect(items.map((item) => item.id)).toContain('thumbs-down:wrong-model-for-role')
+
+    items.find((item) => item.id === 'thumbs-down:wrong-model-for-role')?.onSelect()
+
+    expect(onMessageFeedback).toHaveBeenCalledWith('message-1', 'down', {
+      reason: 'wrong-model-for-role'
+    })
+  })
+
   it('omits side-chat actions for retired external-channel inbound rows', () => {
     const items = buildTranscriptMessageContextMenuItems({
       selection: selection({

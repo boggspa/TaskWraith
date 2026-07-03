@@ -497,6 +497,9 @@ What exists:
 - Default diagnostics export redacted feedback summaries and hashes; raw
   receipt ids, message ids, run ids, model labels, role labels, reason codes,
   timestamps, and free-text notes are not exported by default.
+- The transcript context menu can attach a closed-set negative reason code
+  (wrong approach, hallucinated/wrong, broke something, over-verbose, wrong
+  model for role, incomplete) to a poor-rating receipt.
 - EvidencePack/capability-ledger substrate exists for cited positive and
   negative evidence, but it is workspace/capability-key oriented and currently
   agent-authored.
@@ -505,7 +508,6 @@ What is missing:
 
 - Thumbs are not yet harvested into AgentStats, EvidencePacks, or casting
   records.
-- No optional reason taxonomy UI exists for negative feedback.
 - No "recast this turn with a different model" follow-through exists.
 - No iOS parity exists for feedback capture.
 - No append-only hash chain, actor identity, source-device id, or tamper
@@ -521,8 +523,9 @@ Target:
   ledger the source of truth for analytics. Toggle and flip semantics should
   update both surfaces deterministically; clear/delete semantics should erase
   the local receipt state.
-- Add optional negative reason chips such as wrong approach, hallucinated/wrong,
-  broke something, over-verbose, wrong model for role, and incomplete.
+- Keep optional negative reason chips such as wrong approach,
+  hallucinated/wrong, broke something, over-verbose, wrong model for role, and
+  incomplete flowing into the same local receipt store.
 - Feed local AgentStats and future casting/capability ledgers from the receipt
   store rather than treating thumbs as external telemetry.
 - Keep feedback local-first. Export only through the redaction/audit-bundle
@@ -602,7 +605,7 @@ brokered providers.
 Do this before presenting thumbs as more than local UI state.
 
 - Keep the durable thumbs receipt ledger covered by save-hook tests.
-- Add reason capture and model/role aggregation.
+- Add model/role aggregation from the reason-capable receipt store.
 - Feed AgentStats and future EvidencePack/casting ledgers from the same receipt
   objects.
 - Maintain redacted export and add iOS parity.

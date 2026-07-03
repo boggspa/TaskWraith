@@ -1,6 +1,10 @@
 import { useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import type { ChatMessage } from '../../../main/store/types'
+import {
+  MESSAGE_FEEDBACK_REASON_OPTIONS,
+  type MessageFeedbackDetails
+} from '../lib/messageFeedback'
 
 export interface TranscriptMessageContextMenuSelection {
   anchor: { x: number; y: number }
@@ -13,9 +17,17 @@ export interface TranscriptMessageContextMenuSelection {
 }
 
 export interface TranscriptMessageContextMenuItem {
-  id: 'copy' | 'pin' | 'thumbs-up' | 'thumbs-down' | 'side-chat' | 'delete'
+  id:
+    | 'copy'
+    | 'pin'
+    | 'thumbs-up'
+    | 'thumbs-down'
+    | `thumbs-down:${string}`
+    | 'side-chat'
+    | 'delete'
   label: string
   intent?: 'danger'
+  inset?: boolean
   disabled?: boolean
   onSelect: () => void
 }
@@ -25,7 +37,7 @@ interface TranscriptMessageContextMenuProps {
   onCopyMessage: (messageId: string, content: string) => void
   onDeleteMessage?: (messageId: string) => void
   onTogglePinMessage?: (messageId: string) => void
-  onMessageFeedback?: (messageId: string, vote: 'up' | 'down') => void
+  onMessageFeedback?: (messageId: string, vote: 'up' | 'down', details?: MessageFeedbackDetails) => void
   onOpenSideChatFromMessage?: (message: ChatMessage) => void
   onClose: () => void
 }
@@ -99,6 +111,14 @@ export function buildTranscriptMessageContextMenuItems({
       label: feedbackVote === 'down' ? 'Remove poor rating' : 'Poor response',
       onSelect: () => onMessageFeedback(message.id, 'down')
     })
+    for (const reason of MESSAGE_FEEDBACK_REASON_OPTIONS) {
+      items.push({
+        id: `thumbs-down:${reason.code}`,
+        label: reason.label,
+        inset: true,
+        onSelect: () => onMessageFeedback(message.id, 'down', { reason: reason.code })
+      })
+    }
   }
   if (!selection.copyOnly && onOpenSideChatFromMessage && canOpenSideChatFromMessage(message)) {
     items.push({
@@ -204,7 +224,7 @@ export function TranscriptMessageContextMenu({
           role="menuitem"
           className={`transcript-message-context-menu-item${
             item.intent === 'danger' ? ' is-danger' : ''
-          }`}
+          }${item.inset ? ' is-inset' : ''}`}
           disabled={item.disabled}
           onMouseDown={(event) => event.preventDefault()}
           onClick={() => {

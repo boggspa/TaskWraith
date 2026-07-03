@@ -1826,8 +1826,8 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                 onCopyMessage={handleCopyMessage}
                 onDeleteMessage={handleDeleteMessage}
                 onTogglePinMessage={(messageId) => togglePinMessageInChat(currentChat, messageId)}
-                onMessageFeedback={(messageId, vote) =>
-                  toggleFeedbackMessageInChat(currentChat, messageId, vote)
+                onMessageFeedback={(messageId, vote, details) =>
+                  toggleFeedbackMessageInChat(currentChat, messageId, vote, details)
                 }
                 onPromoteCollaboratorComment={(messageId) =>
                   handlePromoteCollaboratorComment(currentChat?.appChatId, messageId)
@@ -2153,8 +2153,8 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
               onCopyMessage={handleCopyMessage}
               onDeleteMessage={(messageId) => deleteMessageFromChat(sideChat, messageId)}
               onTogglePinMessage={(messageId) => togglePinMessageInChat(sideChat, messageId)}
-              onMessageFeedback={(messageId, vote) =>
-                toggleFeedbackMessageInChat(sideChat, messageId, vote)
+              onMessageFeedback={(messageId, vote, details) =>
+                toggleFeedbackMessageInChat(sideChat, messageId, vote, details)
               }
               onPromoteCollaboratorComment={(messageId) =>
                 handlePromoteCollaboratorComment(sideChat.appChatId, messageId)

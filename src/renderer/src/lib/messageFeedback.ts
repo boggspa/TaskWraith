@@ -2,6 +2,22 @@ import type { ChatMessage } from '../../../main/store/types'
 
 export type MessageFeedbackVote = 'up' | 'down'
 
+export const MESSAGE_FEEDBACK_REASON_OPTIONS = [
+  { code: 'wrong-approach', label: 'Wrong approach' },
+  { code: 'hallucinated-or-wrong', label: 'Hallucinated / wrong' },
+  { code: 'broke-something', label: 'Broke something' },
+  { code: 'over-verbose', label: 'Over-verbose' },
+  { code: 'wrong-model-for-role', label: 'Wrong model for role' },
+  { code: 'incomplete', label: 'Incomplete' }
+] as const
+
+export type MessageFeedbackReasonCode = (typeof MESSAGE_FEEDBACK_REASON_OPTIONS)[number]['code']
+
+export interface MessageFeedbackDetails {
+  reason?: MessageFeedbackReasonCode | string
+  note?: string
+}
+
 /**
  * Thumbs feedback lives on `message.metadata.feedback` (mirrors the
  * `pinnedAt` render-state pattern). This module is the pure toggle/read
@@ -26,7 +42,7 @@ export function applyChatMessageFeedback(
   message: ChatMessage,
   vote: MessageFeedbackVote,
   at: number,
-  extra?: { reason?: string; note?: string }
+  extra?: MessageFeedbackDetails
 ): ChatMessage {
   const metadata = { ...(message.metadata || {}) }
   const current = metadata.feedback?.vote

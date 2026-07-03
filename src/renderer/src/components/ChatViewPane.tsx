@@ -4,6 +4,7 @@ import type { ComposerStyle } from '../../../main/store/types'
 import { TranscriptPanel } from './TranscriptPanel'
 import { Composer, type ComposerProps } from './Composer'
 import { buildChatViewProps, type BuildChatViewPropsInput } from '../lib/buildChatViewProps'
+import type { MessageFeedbackDetails } from '../lib/messageFeedback'
 import { FileMenuSelectionIcon } from './AppChromeSymbols'
 import { WelcomeUsageDashboard } from './WelcomeUsageDashboard'
 import type { WelcomeUsageDashboardData, WelcomeUsageTab } from '../lib/welcomeUsageDashboard'
@@ -99,7 +100,8 @@ export interface ChatViewPaneProps extends Omit<
     paneIndex: number,
     chatId: string,
     messageId: string,
-    vote: 'up' | 'down'
+    vote: 'up' | 'down',
+    details?: MessageFeedbackDetails
   ) => void
   /** Optional visual-focus callback for pane selection affordances. */
   onFocusPane?: (paneIndex: number, chatId: string) => void
@@ -416,8 +418,9 @@ function ChatViewPaneInner(props: ChatViewPaneProps) {
                     chatId && props.onTogglePinMessage?.(props.paneIndex, chatId, messageId)
                 : undefined,
               onMessageFeedback: props.onMessageFeedback
-                ? (messageId, vote) =>
-                    chatId && props.onMessageFeedback?.(props.paneIndex, chatId, messageId, vote)
+                ? (messageId, vote, details) =>
+                    chatId &&
+                    props.onMessageFeedback?.(props.paneIndex, chatId, messageId, vote, details)
                 : undefined
             })}
           />

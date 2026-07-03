@@ -11,7 +11,7 @@ import { ensembleRoundStatusClass } from '../lib/ensembleRoundStatusClass'
 import { getChatProvider } from '../lib/chatScope'
 import { getProviderLabel } from '../lib/providerLabels'
 import { formatAssistantMessageLabel } from '../lib/assistantMessageLabel'
-import { readMessageFeedbackVote } from '../lib/messageFeedback'
+import { readMessageFeedbackVote, type MessageFeedbackDetails } from '../lib/messageFeedback'
 import { shortModelName } from '../lib/composerChipFormat'
 import { shouldSurfaceProposedPlanCard } from '../lib/ensemblePlanPolicy'
 import { deriveParticipantRenameContinuity } from '../lib/sessionActivityLedger'
@@ -257,7 +257,7 @@ export type TranscriptPanelProps = {
   onDeleteMessage: (messageId: string) => void
   onTogglePinMessage?: (messageId: string) => void
   /** Thumbs feedback on an assistant message (up/down; host writes the receipt). */
-  onMessageFeedback?: (messageId: string, vote: 'up' | 'down') => void
+  onMessageFeedback?: (messageId: string, vote: 'up' | 'down', details?: MessageFeedbackDetails) => void
   onPromoteCollaboratorComment?: (messageId: string) => void
   onMessageSelectionCandidate?: (message: ChatMessage) => void
   onOpenSideChatFromMessage?: (message: ChatMessage) => void
@@ -417,7 +417,7 @@ function TranscriptMessageFooter({
   align: 'start' | 'end'
   onCopyMessage: (messageId: string, content: string) => void
   onTogglePinMessage?: (messageId: string) => void
-  onMessageFeedback?: (messageId: string, vote: 'up' | 'down') => void
+  onMessageFeedback?: (messageId: string, vote: 'up' | 'down', details?: MessageFeedbackDetails) => void
   onDeleteMessage?: (messageId: string) => void
   onOpenSideChatFromMessage?: (message: ChatMessage) => void
   pinned: boolean

@@ -503,6 +503,12 @@
   color: var(--danger, #ff6363);
 }
 
+.transcript-message-context-menu-item.is-inset {
+  padding-left: 22px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
 .transcript-message-context-menu-item:disabled {
   opacity: 0.42;
   cursor: default;

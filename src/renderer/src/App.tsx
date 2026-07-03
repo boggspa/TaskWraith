@@ -515,7 +515,7 @@ import {
   countMessagesWithPinnedMetadata,
   toggleChatMessagePin
 } from './lib/pinnedMessages'
-import { applyChatMessageFeedback } from './lib/messageFeedback'
+import { applyChatMessageFeedback, type MessageFeedbackDetails } from './lib/messageFeedback'
 import {
   buildRightDockTabs,
   resolveActiveRightDockTab,
@@ -14660,7 +14660,12 @@ function App(): React.JSX.Element {
   )
 
   const toggleFeedbackMessageInChat = useCallback(
-    (chat: ChatRecord | null | undefined, messageId: string, vote: 'up' | 'down') => {
+    (
+      chat: ChatRecord | null | undefined,
+      messageId: string,
+      vote: 'up' | 'down',
+      details?: MessageFeedbackDetails
+    ) => {
       if (!chat || !messageId) return
       const at = Date.now()
       updateChatById(chat.appChatId, (source) => {
@@ -14668,7 +14673,7 @@ function App(): React.JSX.Element {
         const messages = source.messages.map((message) => {
           if (message.id !== messageId) return message
           changed = true
-          return applyChatMessageFeedback(message, vote, at)
+          return applyChatMessageFeedback(message, vote, at, details)
         })
         return changed ? { ...source, messages, updatedAt: Date.now() } : source
       })
@@ -21354,9 +21359,15 @@ function App(): React.JSX.Element {
     [togglePinMessageInChat]
   )
   const handleMultiviewPaneMessageFeedback = useCallback(
-    (_paneIndex: number, chatId: string, messageId: string, vote: 'up' | 'down') => {
+    (
+      _paneIndex: number,
+      chatId: string,
+      messageId: string,
+      vote: 'up' | 'down',
+      details?: MessageFeedbackDetails
+    ) => {
       const paneChat = chatByIdRef.current.get(chatId)
-      toggleFeedbackMessageInChat(paneChat, messageId, vote)
+      toggleFeedbackMessageInChat(paneChat, messageId, vote, details)
     },
     [toggleFeedbackMessageInChat]
   )
