@@ -1249,6 +1249,7 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
       'workspaceChanges',
       'auditRuns',
       'messageFeedback',
+      'externalPublish',
       'productCrashes'
     ] as const
     const maxAgeDays: NonNullable<AppSettings['auditRetention']>['maxAgeDays'] = {}

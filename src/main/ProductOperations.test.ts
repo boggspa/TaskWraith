@@ -596,6 +596,7 @@ describe('ProductOperations', () => {
             workspaceChanges: { scanned: 0, retained: 0, deleted: 0 },
             auditRuns: { scanned: 0, retained: 0, deleted: 0 },
             messageFeedback: { scanned: 0, retained: 0, deleted: 0 },
+            externalPublish: { scanned: 0, retained: 0, deleted: 0 },
             productCrashes: { scanned: 0, retained: 0, deleted: 0 }
           }
         }
@@ -932,6 +933,7 @@ describe('ProductOperations', () => {
             workspaceChanges: { scanned: 0, retained: 0, deleted: 0 },
             auditRuns: { scanned: 0, retained: 0, deleted: 0 },
             messageFeedback: { scanned: 0, retained: 0, deleted: 0 },
+            externalPublish: { scanned: 0, retained: 0, deleted: 0 },
             productCrashes: { scanned: 0, retained: 0, deleted: 0 }
           }
         }

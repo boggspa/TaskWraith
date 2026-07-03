@@ -122,4 +122,39 @@ describe('ExternalPublishReceiptLedger', () => {
     expect(rows[0].id).toBe('receipt-1')
     expect(rows[rows.length - 1].id).toBe(`receipt-${MAX_EXTERNAL_PUBLISH_RECEIPTS}`)
   })
+
+  it('purges old receipts by age while supporting dry-run', () => {
+    const ledger = new ExternalPublishReceiptLedger({ storagePath })
+    ledger.begin({
+      id: 'old',
+      origin: 'agent',
+      action: 'gitPush',
+      decision: 'allowed',
+      reason: 'old',
+      requestedAt: '2026-06-01T00:00:00.000Z'
+    })
+    ledger.begin({
+      id: 'fresh',
+      origin: 'agent',
+      action: 'gitPush',
+      decision: 'allowed',
+      reason: 'fresh',
+      requestedAt: '2026-07-02T00:00:00.000Z'
+    })
+
+    const cutoff = Date.parse('2026-07-01T00:00:00.000Z')
+    expect(ledger.purgeOlderThan(cutoff, { dryRun: true })).toEqual({
+      scanned: 2,
+      retained: 1,
+      deleted: 1
+    })
+    expect(ledger.list().map((receipt) => receipt.id)).toEqual(['old', 'fresh'])
+
+    expect(ledger.purgeOlderThan(cutoff)).toEqual({
+      scanned: 2,
+      retained: 1,
+      deleted: 1
+    })
+    expect(ledger.list().map((receipt) => receipt.id)).toEqual(['fresh'])
+  })
 })

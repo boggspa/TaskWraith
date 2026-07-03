@@ -518,6 +518,8 @@ import {
   ProductAuditBundleExportRequest,
   ProductAuditBundleExportResult,
   ProductAuditBundleFilter,
+  AuditRetentionPurgeRequest,
+  AuditRetentionSurfacePurgeCounts,
   ProductCrashInput,
   ProductDiagnosticsExportResult,
   ProductOperationsStatus,
@@ -18464,6 +18466,29 @@ function listAuditBundleRunEvents(filter: ProductAuditBundleFilter) {
   return AppStore.getRunEvents(filter.workspaceId ? { workspaceId: filter.workspaceId } : {})
 }
 
+function purgeExternalPublishAuditRetention(
+  request: AuditRetentionPurgeRequest = {}
+): AuditRetentionSurfacePurgeCounts {
+  const ledger = getExternalPublishReceiptLedger()
+  if (!ledger) return { scanned: 0, retained: 0, deleted: 0 }
+  const policy = request.policy || AppStore.getSettings().auditRetention || {}
+  const enabled = policy.enabled === true
+  const dryRun = request.dryRun !== false || !enabled
+  const days = Number(policy.maxAgeDays?.externalPublish)
+  const clampedDays = Number.isFinite(days) && days > 0 ? Math.min(3650, Math.floor(days)) : 365
+  const nowMs =
+    typeof request.now === 'string' && Number.isFinite(Date.parse(request.now))
+      ? Date.parse(request.now)
+      : Date.now()
+  const cutoffMs = enabled ? nowMs - clampedDays * 24 * 60 * 60 * 1000 : null
+  return ledger.purgeOlderThan(cutoffMs, { dryRun })
+}
+
+function purgeProductAuditRetention(request: AuditRetentionPurgeRequest = {}) {
+  const externalPublish = purgeExternalPublishAuditRetention(request)
+  return AppStore.purgeAuditRetentionEvidence(request, { externalPublish })
+}
+
 async function buildCurrentAuditBundleSnapshot(request: ProductAuditBundleExportRequest = {}) {
   const filter = completeProductAuditBundleFilter(normalizeProductAuditBundleFilter(request.filter))
   return buildAuditBundleSnapshot({
@@ -28010,7 +28035,7 @@ if (isGeminiMcpBridgeProcess) {
       }),
       exportProductDiagnostics: (requestedPath) => exportProductDiagnostics(requestedPath),
       exportProductAuditBundle: (request) => exportProductAuditBundle(request),
-      purgeProductAuditRetention: (request) => AppStore.purgeAuditRetentionEvidence(request),
+      purgeProductAuditRetention: (request) => purgeProductAuditRetention(request),
       repairProductInstall: () => repairProductInstall(),
       getAppShellStatsSnapshot: () => appShellStatsService.getSnapshot(),
       getAppVersion: () => app.getVersion(),

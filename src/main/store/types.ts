@@ -2354,6 +2354,7 @@ export type AuditRetentionSurface =
   | 'workspaceChanges'
   | 'auditRuns'
   | 'messageFeedback'
+  | 'externalPublish'
   | 'productCrashes'
 
 export interface AuditRetentionSettings {

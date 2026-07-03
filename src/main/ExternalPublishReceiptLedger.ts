@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from '
 import { dirname, join } from 'node:path'
 import { app } from 'electron'
 import { redactSecrets } from '../shared/secretRedaction'
+import type { AuditRetentionSurfacePurgeCounts } from './store/types'
 
 export const EXTERNAL_PUBLISH_RECEIPT_SCHEMA_VERSION = 1
 export const EXTERNAL_PUBLISH_RECEIPT_LEDGER_FILENAME = 'external-publish-receipts.json'
@@ -99,6 +100,29 @@ export class ExternalPublishReceiptLedger implements ExternalPublishReceiptWrite
 
   list(): ExternalPublishReceipt[] {
     return [...this.records]
+  }
+
+  purgeOlderThan(
+    cutoffMs: number | null,
+    options: { dryRun?: boolean } = {}
+  ): AuditRetentionSurfacePurgeCounts {
+    const scanned = this.records.length
+    if (cutoffMs === null) {
+      return { scanned, retained: scanned, deleted: 0 }
+    }
+    const retained = this.records.filter((record) => {
+      const ms = Date.parse(record.completedAt || record.requestedAt || '')
+      return !Number.isFinite(ms) || ms >= cutoffMs
+    })
+    if (options.dryRun !== true && retained.length !== this.records.length) {
+      this.records = retained
+      this.persist()
+    }
+    return {
+      scanned,
+      retained: retained.length,
+      deleted: Math.max(0, scanned - retained.length)
+    }
   }
 
   begin(input: ExternalPublishReceiptInput): ExternalPublishReceipt {

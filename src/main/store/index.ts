@@ -814,6 +814,7 @@ const AUDIT_RETENTION_SURFACES: AuditRetentionSurface[] = [
   'workspaceChanges',
   'auditRuns',
   'messageFeedback',
+  'externalPublish',
   'productCrashes'
 ]
 
@@ -825,6 +826,7 @@ const DEFAULT_AUDIT_RETENTION: AuditRetentionSettings = {
     workspaceChanges: 180,
     auditRuns: 365,
     messageFeedback: 365,
+    externalPublish: 365,
     productCrashes: 90
   }
 }
@@ -3870,7 +3872,8 @@ export class AppStore {
   }
 
   static purgeAuditRetentionEvidence(
-    request: AuditRetentionPurgeRequest = {}
+    request: AuditRetentionPurgeRequest = {},
+    externalCounts: Partial<Record<AuditRetentionSurface, AuditRetentionSurfacePurgeCounts>> = {}
   ): AuditRetentionPurgeResult {
     try {
       const generatedAt =
@@ -3946,6 +3949,10 @@ export class AppStore {
       recordScan('productCrashes', crashRecords.length, retainedCrashes.length)
       if (!dryRun && retainedCrashes.length !== crashRecords.length) {
         writeJson(productCrashesPath, retainedCrashes)
+      }
+
+      if (externalCounts.externalPublish) {
+        counts.externalPublish = externalCounts.externalPublish
       }
 
       let runEventScanned = 0
