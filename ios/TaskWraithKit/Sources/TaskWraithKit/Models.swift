@@ -1070,6 +1070,10 @@ public struct RemoteEnsembleState: Codable, Sendable {
     public let status: String?
     public let activeParticipantId: String?
     public let bossmanParticipantId: String?
+    /// The user-designated Captain (second-in-command). Wire key
+    /// `secondInCommandParticipantId` — MUST match the Mac projection exactly.
+    /// Captain uses Boss-like controls only when the Boss is unavailable.
+    public let secondInCommandParticipantId: String?
     public let participants: [Participant]?
     /// The CONFIGURED (editable) roster — present even when idle.
     public let roster: [RosterEntry]?
@@ -1135,13 +1139,17 @@ public struct RemoteEnsembleState: Codable, Sendable {
         /// Optional so older Mac builds (which didn't project it) still decode.
         public let stageRole: String?
         public let isBossman: Bool?
+        /// Per-participant Captain flag. Wire key `isSecondInCommand` — MUST
+        /// match the Mac projection exactly (do NOT rename to `isCaptain`).
+        public let isSecondInCommand: Bool?
         public init(
             id: String, provider: String, role: String?, enabled: Bool?,
             order: Int?, model: String?, brief: String?,
             permissionPresetId: String? = nil, reasoningEffort: String? = nil,
             fastModeEnabled: Bool? = nil, thinkingEnabled: Bool? = nil,
             stageRole: String? = nil,
-            contextTokens: Int? = nil, isBossman: Bool? = nil
+            contextTokens: Int? = nil, isBossman: Bool? = nil,
+            isSecondInCommand: Bool? = nil
         ) {
             self.id = id
             self.provider = provider
@@ -1157,6 +1165,7 @@ public struct RemoteEnsembleState: Codable, Sendable {
             self.stageRole = stageRole
             self.contextTokens = contextTokens
             self.isBossman = isBossman
+            self.isSecondInCommand = isSecondInCommand
         }
     }
 }
