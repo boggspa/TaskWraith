@@ -8,7 +8,7 @@ The workflow creator turns a normal chat into a repeatable run template. It open
 ## Where to find it
 In the sidebar's **Workflows** section, click the **+** ("New workflow") button. It's disabled until you have at least one workspace, since workflows always run inside a workspace.
 
-<!-- TODO(screenshot): Workflow creator modal with name, prompt, and cadence fields -->
+<!-- screenshot-pending: Workflow creator modal with name, prompt, and cadence fields -->
 
 ## How to use it
 1. Click **+** next to **Workflows** in the sidebar. This opens a new chat in compose mode with the workflow controls under the composer.

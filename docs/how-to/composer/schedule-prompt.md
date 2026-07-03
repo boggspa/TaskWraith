@@ -8,7 +8,7 @@ The schedule control lets you queue a composer prompt to run automatically at a 
 ## Where to find it
 In the **composer's control row** (the icon row beneath the prompt box), next to the Goal button. Click the **clock icon** to open the schedule popover.
 
-<!-- TODO(screenshot): Composer schedule button with quick offset options -->
+<!-- screenshot-pending: Composer schedule button with quick offset options -->
 
 ## How to use it
 1. Type your prompt in the composer as normal.

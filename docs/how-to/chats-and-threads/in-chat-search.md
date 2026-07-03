@@ -8,7 +8,7 @@ In-chat search finds text within the currently open chat's transcript — messag
 ## Where to find it
 In any chat, press **⌘F** to open the search bar above the transcript. This is separate from **⌘⇧F**, which searches workspaces and threads in the sidebar instead.
 
-<!-- TODO(screenshot): In-chat search bar with highlighted results in the transcript -->
+<!-- screenshot-pending: In-chat search bar with highlighted results in the transcript -->
 
 ## How to use it
 1. Press **⌘F** to open the search bar for the current chat.

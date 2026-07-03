@@ -24,7 +24,7 @@ review, Diff Studio, or TaskWraith-owned tool parity.
 | Screen Watch | Grant macOS window/screen capture permission when attaching a window. | Optional advanced surface |
 | Discord Context | Bot token and guild IDs for read-only composer context. | Supported optional context attachment |
 | Creative app automation | Install Final Cut Pro, Logic Pro, or Blender and approve macOS Automation prompts. | Super experimental / WIP |
-| Custom external MCP servers | Configure them in the provider's own config files. | Provider-owned/manual |
+| Custom external MCP servers | Add, import, validate, and export definitions in Settings -> Integrations -> MCP Servers. | Supported advanced surface |
 
 ## Ollama Local Models
 
@@ -64,9 +64,11 @@ ollama run nemotron3:33b
 For a first test, start with a smaller model such as `qwen3:4b-instruct` or
 `granite4.1:3b`. Larger models need more disk, RAM, and patience.
 
-TaskWraith's Ollama tool access is tiered. Read-only local-model use is the
-safest starting point; shell commands and file edits require higher tool tiers
-and approval policy.
+Ollama uses the same permission presets as cloud providers. Start in
+Read-only/Recon or Plan workflow; file edits, shell commands, network tools,
+delegation, and publishing follow the selected permission posture and approval
+policy. The Ollama run profile controls local-model prompting/runtime behavior,
+not a separate safety-tier ladder.
 
 ## API Keys
 
@@ -192,10 +194,17 @@ servers manually. Supported provider runtimes receive the TaskWraith-owned tool
 surface through the app's brokered integration, and write-capable Cursor/Grok
 runs auto-inject a scoped broker when needed.
 
-Custom external MCP servers are different: they are provider-owned/manual today.
-Configure them in the provider's own MCP config files and provider UI. The
-TaskWraith Settings surface can audit known tool surfaces, but custom server
-editing is not wired yet.
+Custom external MCP servers are managed in the app at **Settings -> Integrations
+-> MCP Servers**. You can add stdio, HTTP, or SSE servers; import Claude/Cursor
+JSON or Codex TOML snippets; validate readiness; enable or disable servers; and
+copy redacted audit or provider config snippets. Provider-owned config files are
+still useful when you want to use the same server outside TaskWraith.
+
+Obvious token-like environment variables and headers are stored as encrypted
+secret references where platform secure storage is available. Conservative
+redaction cannot prove every custom value is harmless, so review imported MCP
+configs before enabling them and avoid pasting broad credentials directly into
+visible config fields.
 
 Treat third-party MCP servers like command-line tools with network and file
 access:
@@ -211,7 +220,7 @@ access:
 For cautious users, enable optional surfaces in this order:
 
 1. Core provider CLI/API setup in a scratch workspace.
-2. Local Ollama read-only model testing.
+2. Local Ollama testing in Read-only/Recon or Plan workflow.
 3. Optional API-key tools such as Kimi or image generation.
 4. iOS Remote on the same LAN.
 5. Tailscale for off-LAN iOS Remote.

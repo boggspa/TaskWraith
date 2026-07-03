@@ -8,7 +8,7 @@ The Welcome Screen is the view you see when no chat is selected. It shows a gree
 ## Where to find it
 Appears automatically in the **center stage** when no chat is selected (e.g. on first launch or after closing all chats).
 
-<!-- TODO(screenshot): Welcome screen with greeting, starter prompts, and usage dashboard -->
+<!-- screenshot-pending: Welcome screen with greeting, starter prompts, and usage dashboard -->
 
 ## How to use it
 1. Pick a starter prompt to begin a new chat.

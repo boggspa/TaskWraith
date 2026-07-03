@@ -8,7 +8,7 @@ The iOS canvas preview is a companion card in a chat's transcript that tells you
 ## Where to find it
 Open a chat in the companion app that has an open Canvas on the desktop. The card appears at the top of the transcript, above the message list, labeled "Canvas" (or "Canvases" if more than one is open).
 
-<!-- TODO(screenshot): iOS canvas preview card in the companion app -->
+<!-- screenshot-pending: iOS canvas preview card in the companion app -->
 
 ## How to use it
 1. On your Mac, open a Canvas for a chat (e.g. via the composer's canvas button or a multiview canvas pane).

@@ -8,7 +8,7 @@ The Devices tab is where you pair iPhones and iPads with this Mac, manage paired
 ## Where to find it
 **Settings → Integrations → Devices**.
 
-<!-- TODO(screenshot): Devices tab showing QR code, paired devices list, and networking options -->
+<!-- screenshot-pending: Devices tab showing QR code, paired devices list, and networking options -->
 
 ## How to use it
 1. Set a **Device label** (e.g. "iPad") and scan the QR code from TaskWraith on your iPhone or iPad, or use **Copy setup payload** to paste the manual setup JSON instead.

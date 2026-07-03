@@ -8,7 +8,7 @@ Audio and video attachments in an iOS transcript play back by streaming directly
 ## Where to find it
 Open any chat that has audio or video attachments. Each transcript row with media shows a horizontal strip of tiles below the message; video and audio tiles carry a play button. Tapping one opens a player sheet over the thread.
 
-<!-- TODO(screenshot): iOS media playback in the companion app -->
+<!-- screenshot-pending: iOS media playback in the companion app -->
 
 ## How to use it
 1. In a thread, find a message with a media strip and locate a video (film icon) or audio (waveform icon) tile.

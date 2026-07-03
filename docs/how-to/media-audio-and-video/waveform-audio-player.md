@@ -8,7 +8,7 @@ The waveform audio player is the inline control TaskWraith uses for every audio 
 ## Where to find it
 It appears wherever an audio attachment is rendered: inline in the transcript under a message, in the chat media dock (the right-side panel listing uploads and paths), and in a detached Multiview media pane when you pop a clip out of the transcript flow.
 
-<!-- TODO(screenshot): Waveform audio player in the transcript or media pane -->
+<!-- screenshot-pending: Waveform audio player in the transcript or media pane -->
 
 ## How to use it
 1. Click the play button on the waveform strip to start playback; click again (or press Enter while the strip is focused) to pause.

@@ -8,7 +8,7 @@ An Ensemble chat is a single thread where multiple provider agents (Claude, Code
 ## Where to find it
 Sidebar **+ New → New Ensemble**, or the **+** button in the sidebar's **Ensembles** section header.
 
-<!-- TODO(screenshot): Sidebar overflow menu showing "New ensemble" option -->
+<!-- screenshot-pending: Sidebar overflow menu showing "New ensemble" option -->
 
 ## How to use it
 1. Click **+ New** in the sidebar masthead and choose **New Ensemble** (or click the **+** on the **Ensembles** section header). The chat is created immediately — there's no setup modal.

@@ -1,6 +1,6 @@
 # How-To Manual — Screenshot Shot List
 
-84 screenshots, one per page. Save each PNG to `docs/how-to/images/` with the exact **Save as** filename below.
+83 screenshots, one per guide page. Save each PNG to `docs/how-to/images/` with the exact **Save as** filename below.
 Once captured (all at once or per section), tell Claude and it will wire the `![]()` image tags into the pages in one pass.
 
 ## Capture settings

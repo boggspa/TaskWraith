@@ -8,7 +8,7 @@ The queued messages row shows the prompts waiting to run for the current chat â€
 ## Where to find it
 Above the composer input, in the same stack that holds the ensemble participant chips and the Create-PR row. It only appears when the chat has pending queued work; up to 5 entries show at once, with the rest reachable by scrolling the list.
 
-<!-- TODO(screenshot): Queued messages row above the composer input -->
+<!-- screenshot-pending: Queued messages row above the composer input -->
 
 ## How to use it
 1. Send a prompt while a run is already in progress (or schedule one for later) â€” it appears as a row in the queue instead of dispatching immediately.

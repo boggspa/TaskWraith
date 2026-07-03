@@ -8,7 +8,7 @@ The Ensemble Mode picker is the composer control that sets how participants take
 ## Where to find it
 In an **ensemble chat**, look at the **second row of the Roster Presets section** above the composer input (below the preset chips). The row groups four labeled controls: **Orchestration** (this picker, showing the current mode — "Turn", "Continuous", or "Work Session"), **Fan-Out** (Off/Read/Write), **Shared History Budget** (a slider), and — in Continuous mode — **Turn Budget**. It appears on both the new-ensemble welcome screen and in-thread, once a chat is in ensemble mode.
 
-<!-- TODO(screenshot): Roster presets second row with Orchestration picker, Fan-Out toggle, Shared History Budget slider, and Turn Budget meter -->
+<!-- screenshot-pending: Roster presets second row with Orchestration picker, Fan-Out toggle, Shared History Budget slider, and Turn Budget meter -->
 
 ## How to use it
 1. Click the mode button (labeled with the current mode) to open the picker popover.

@@ -8,7 +8,7 @@ The First Launch Sheet appears automatically on your first run of TaskWraith. It
 ## Where to find it
 It appears automatically the first time you launch TaskWraith. You can reopen it later by clicking the **?** button in the chat-corner rim.
 
-<!-- TODO(screenshot): First Launch Sheet showing welcome, theme preview, and provider auth cards -->
+<!-- screenshot-pending: First Launch Sheet showing welcome, theme preview, and provider auth cards -->
 
 ## How to use it
 1. Read through the welcome sections and pick a theme preview.

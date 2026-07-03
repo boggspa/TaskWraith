@@ -8,7 +8,7 @@ The Providers tab is where you sign in to each AI provider, manage per-provider 
 ## Where to find it
 Open **Settings → AI & Providers → Providers**.
 
-<!-- TODO(screenshot): Providers tab showing provider sign-in cards and agentic policy matrix -->
+<!-- screenshot-pending: Providers tab showing provider sign-in cards and agentic policy matrix -->
 
 ## How to use it
 1. Open **Settings → AI & Providers → Providers** to see the **Provider sign-in** checklist — one card each for Codex, Claude, Kimi, Cursor, Grok, and Ollama. Expand **Need to install a CLI?** for the official install command per provider.

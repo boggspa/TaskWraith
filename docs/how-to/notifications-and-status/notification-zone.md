@@ -8,7 +8,7 @@ The notification zone is a rotating card that surfaces significant, app-authored
 ## Where to find it
 It appears on the welcome / new-thread screen (the center stage shown when no chat is selected) and on the First Launch Sheet shown on your first run.
 
-<!-- TODO(screenshot): Notification zone showing a sample toast/alert banner -->
+<!-- screenshot-pending: Notification zone showing a sample toast/alert banner -->
 
 ## How to use it
 1. Read the current card; deprecation/sunset notices are shown in red, everything else uses the theme-default card style.

@@ -8,7 +8,7 @@ Provider health chips are small status pills in the composer that report whether
 ## Where to find it
 Warning chips appear in the **composer chips row**, just above the prompt input, alongside the queued-run-count chip — the row only renders when there's something to show. For Ollama specifically, status appears with the standard permission role and run-profile controls rather than a separate tool-tier picker.
 
-<!-- TODO(screenshot): OllamaHealthChip showing green/connected state next to provider picker -->
+<!-- screenshot-pending: OllamaHealthChip showing green/connected state next to provider picker -->
 
 ## How to use it
 1. Glance at the composer chips row before sending a message — a warning chip means the active provider has a problem (unavailable, blocked tool category, or blocked network access).

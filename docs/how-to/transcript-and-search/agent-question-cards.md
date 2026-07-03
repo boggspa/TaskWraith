@@ -8,7 +8,7 @@ An agent question card is an inline prompt that appears in the transcript when a
 ## Where to find it
 The card appears automatically in the transcript, anchored next to the system message marking the question, whenever a participant asks one. You don't navigate to it — it surfaces inline in the chat you're already viewing, on both Electron and iOS.
 
-<!-- TODO(screenshot): Agent question card inline in the transcript -->
+<!-- screenshot-pending: Agent question card inline in the transcript -->
 
 ## How to use it
 1. When a card appears, read the question (and any extra context shown below it).

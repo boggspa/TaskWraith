@@ -3,16 +3,16 @@
 **Platform:** Electron
 
 ## What it is
-The MCP Servers tab is where you add, edit, and manage your own MCP (Model Context Protocol) server definitions — stdio commands, HTTP endpoints, or SSE endpoints. Enabled stdio and HTTP servers attach to Codex and Claude launches and to contained Cursor write-mode runs; SSE servers attach to Claude only. These are separate from TaskWraith's own built-in MCP bridge and tool catalog, which live on the Provider Tools tab.
+The MCP Servers tab is where you add, edit, import, validate, and manage your own MCP (Model Context Protocol) server definitions — stdio commands, HTTP endpoints, or SSE endpoints. Enabled stdio and HTTP servers attach to Codex and Claude launches and to contained Cursor write-mode runs; SSE servers attach to Claude only. These are separate from TaskWraith's own built-in MCP bridge and tool catalog, which live on the Provider Tools tab.
 
 ## Where to find it
 **Settings → Integrations → MCP Servers**
 
-<!-- TODO(screenshot): MCP servers tab showing server list with add/edit/import controls -->
+<!-- screenshot-pending: MCP servers tab showing server list with add/edit/import controls -->
 
 ## How to use it
 1. Click **Add server**, give it a name, choose a transport (stdio, HTTP, or SSE), and fill in the command (stdio) or URL (HTTP/SSE).
-2. For stdio servers, add arguments and environment variables; for HTTP/SSE servers, add headers and an optional bearer token environment variable.
+2. For stdio servers, add arguments and environment variables; for HTTP/SSE servers, add headers and an optional bearer token environment variable. Put tokens in the encrypted environment/header fields when available; visible previews and exports redact stored secret refs, but you should still review imported configs before enabling them.
 3. Toggle **Enabled** so the server is offered to provider runs, then click **Save server**.
 4. Use **Import config** to paste a Claude or Cursor JSON `mcpServers` block, or a Codex TOML `mcp_servers` snippet, and add those servers in bulk.
 5. Check each server's readiness badge (ready, disabled, or needs attention) to see if it's missing a command, URL, or other required field.

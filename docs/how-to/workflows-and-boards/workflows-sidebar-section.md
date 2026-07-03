@@ -8,7 +8,7 @@ The Workflows section lists your automated workflows — chats that run on a sch
 ## Where to find it
 In the sidebar's hierarchy list, below Active Runs and Local Servers, and above Workspace Boards. Click the header to collapse or expand the section, or click a workflow to open its chat and expand its detail panel.
 
-<!-- TODO(screenshot): Sidebar showing Workflows section with workflow list -->
+<!-- screenshot-pending: Sidebar showing Workflows section with workflow list -->
 
 ## How to use it
 1. Click the **+** button beside the **Workflows** header to start a new workflow (requires at least one workspace — workflows run inside a workspace).

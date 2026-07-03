@@ -8,7 +8,7 @@ The Fan-Out toggle is the **Off / Read / Write** button group (labeled **Fan-Out
 ## Where to find it
 In an ensemble chat, it sits in the labeled **Fan-Out** cell on the second row of the Roster Presets section above the composer input, right beside the Turn / Continuous / Work Session orchestration mode picker.
 
-<!-- TODO(screenshot): Fan-out toggle in the roster presets second row next to the mode picker -->
+<!-- screenshot-pending: Fan-out toggle in the roster presets second row next to the mode picker -->
 
 ## How to use it
 1. In an active ensemble chat, find the **Fan-Out: Off / Read / Write** buttons next to the mode picker.

@@ -8,7 +8,7 @@ A Goal is a thread-level objective and stopping condition attached to a single c
 ## Where to find it
 In the **composer's control row**, click the target-shaped **Goal** button to open the Goal popover. The button is disabled until a chat is open.
 
-<!-- TODO(screenshot): Goal popover showing objective text and lifecycle status dropdown -->
+<!-- screenshot-pending: Goal popover showing objective text and lifecycle status dropdown -->
 
 ## How to use it
 1. Click the **Goal** button and type the objective and stopping condition, then click **Set goal**.

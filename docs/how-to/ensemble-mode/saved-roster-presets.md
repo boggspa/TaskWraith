@@ -8,7 +8,7 @@ A roster preset is a saved ensemble line-up — provider, model, reasoning, perm
 ## Where to find it
 Settings → **AI & Providers → Ensemble roster** for the full editor (create, duplicate, rename, delete, and edit every participant). A compact picker for applying a saved preset is also available from the composer's ensemble controls when starting or editing a chat.
 
-<!-- TODO(screenshot): Ensemble roster settings panel with saved presets -->
+<!-- screenshot-pending: Ensemble roster settings panel with saved presets -->
 
 ## How to use it
 1. Open **Settings → AI & Providers → Ensemble roster**. The left pane lists your saved presets; click **+ New** to create one (seeded with two default participants) or select an existing preset to edit it.

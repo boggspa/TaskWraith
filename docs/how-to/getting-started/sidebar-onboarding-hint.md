@@ -8,7 +8,7 @@ A faint onboarding card that appears under the **+** button in the sidebar when 
 ## Where to find it
 In the **Sidebar**, directly under the **+** (Add workspace) button, when no workspaces are loaded.
 
-<!-- TODO(screenshot): Sidebar onboarding hint card under the + button -->
+<!-- screenshot-pending: Sidebar onboarding hint card under the + button -->
 
 ## How to use it
 1. Click the **+** button above the card to add a workspace. The card itself is informational only — it isn't clickable.

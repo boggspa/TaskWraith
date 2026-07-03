@@ -8,7 +8,7 @@ A canvas multiview pane is a multiview cell that hosts a live, embedded preview 
 ## Where to find it
 Switch to a split multiview layout (2/3/4 panes) from the composer's Plus Tools menu. Any pane that isn't showing a chat appears as an empty cell labeled "Select a chat for this pane," with a URL field and an **Open web canvas** button — submitting a URL there turns that cell into a canvas pane.
 
-<!-- TODO(screenshot): Canvas multiview pane showing an embedded preview -->
+<!-- screenshot-pending: Canvas multiview pane showing an embedded preview -->
 
 ## How to use it
 1. Open a multiview layout with at least one empty pane (or close a pane's chat/canvas to free it up).

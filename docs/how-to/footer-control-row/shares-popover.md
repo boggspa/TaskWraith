@@ -8,7 +8,7 @@ The Shares popover shows your active human-collaboration shares — shared chats
 ## Where to find it
 In the **Sidebar footer control row** — click the **yellow shares** icon.
 
-<!-- TODO(screenshot): Sidebar footer yellow shares icon and expanded Shares popover -->
+<!-- screenshot-pending: Sidebar footer yellow shares icon and expanded Shares popover -->
 
 ## How to use it
 1. Click the yellow shares icon to open the popover.

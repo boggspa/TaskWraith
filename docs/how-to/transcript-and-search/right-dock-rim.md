@@ -8,7 +8,7 @@ The right dock rim is the icon strip at the top of the right dock — the resiza
 ## Where to find it
 It appears at the top of the right dock whenever the dock is open. The dock opens automatically when you open one of its panels (for example, clicking "Inspect" or opening the Run cockpit), and tabs for panels you haven't opened yet stay disabled until they have something to show.
 
-<!-- TODO(screenshot): Right dock rim tabs in the chat corner -->
+<!-- screenshot-pending: Right dock rim tabs in the chat corner -->
 
 ## How to use it
 1. Click a rim icon to switch the dock to that panel: **Chat** (an open side chat), **Run** (the run cockpit), **Media** (this chat's media), **Notes** (pinned messages), **Files** (the file editor), or **Inspect** (the inspector panel).

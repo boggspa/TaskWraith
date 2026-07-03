@@ -8,7 +8,7 @@ In an Ensemble chat, `@Role` mentions and the `ensemble_yield` tool control whic
 ## Where to find it
 Type `@` followed by a participant's role or model name in the composer during an ensemble chat — an autocomplete menu lists matching participants. Routing from a participant's own reply happens automatically whenever their response text contains an `@Role` mention or they call the `ensemble_yield` tool; there's no separate control to find for that half.
 
-<!-- TODO(screenshot): Composer showing an @-mention being typed with role autocomplete -->
+<!-- screenshot-pending: Composer showing an @-mention being typed with role autocomplete -->
 
 ## How to use it
 1. In the composer, type `@` and a few letters of a participant's role, provider, or model name (e.g. `@Researcher` or `@GPT 5.5`) and pick them from the autocomplete menu, or just keep typing the plain `@Role` token yourself.

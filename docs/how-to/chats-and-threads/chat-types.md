@@ -8,7 +8,7 @@ TaskWraith organizes work into several chat types: workspace chats and General c
 ## Where to find it
 The sidebar groups chats into sections: **Pinned**, **Recents**, **Ensembles**, **Workspaces** (each with its own chat list and Workflows/Workspace Boards), **Chats** (General chats not tied to a workspace), and **Shared**. Use the **+ New** button in the sidebar masthead to create a chat of a specific type.
 
-<!-- TODO(screenshot): Sidebar showing various chat types (workspace, ensemble, shared, workflow) -->
+<!-- screenshot-pending: Sidebar showing various chat types (workspace, ensemble, shared, workflow) -->
 
 ## How to use it
 1. Click **+ New** in the sidebar masthead, then pick a type: **New Chat** (workspace or General, depending on context), **New Ensemble**, **New Workflow**, **New Workspace Board**, or one of the **Shared** variants (General, Workspace, or Ensemble).

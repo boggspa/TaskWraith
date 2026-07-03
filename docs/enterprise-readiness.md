@@ -31,6 +31,10 @@ TaskWraith is ready to describe its agent safety posture in precise terms:
 
 This is not yet a complete enterprise-managed deployment story. The sections
 below separate the remaining managed-enterprise blockers from release hygiene.
+Do not describe the current product as having SSO, SCIM, SIEM integration, WORM
+or append-only audit export, organization-wide retention, or a complete
+MDM/enterprise control plane. The current claim is local safety plus partial
+managed-policy and redacted audit-export work.
 
 ## Recent landed work
 

@@ -8,7 +8,7 @@ A multiview media pane is a multiview cell that hosts an audio or video player d
 ## Where to find it
 Click **Detach to pane** (or the pop-out icon) on an audio/video attachment — available on the inline transcript media card, in the chat media dock, and on the image/media preview overlay. The clip opens in an empty multiview pane; if no split layout is active, the view upgrades to a split layout automatically so a pane is available.
 
-<!-- TODO(screenshot): Multiview media pane showing a detached video player -->
+<!-- screenshot-pending: Multiview media pane showing a detached video player -->
 
 ## How to use it
 1. Find an audio or video attachment in the transcript or the chat media dock and click its **Detach to pane** action.

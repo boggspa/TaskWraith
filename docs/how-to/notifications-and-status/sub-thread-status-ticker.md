@@ -8,7 +8,7 @@ The sub-thread status ticker is a slim status strip that lists which of the curr
 ## Where to find it
 It renders inline above the transcript of the parent chat, and only appears while at least one of that chat's sub-threads is running — it disappears again once all sub-threads finish or stop.
 
-<!-- TODO(screenshot): SubThreadStatusTicker showing running/completed sub-thread states -->
+<!-- screenshot-pending: SubThreadStatusTicker showing running/completed sub-thread states -->
 
 ## How to use it
 1. Delegate work to a sub-thread (see Sub-Thread Delegation) from a chat — once it starts running, the ticker appears above the transcript.

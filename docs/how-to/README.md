@@ -1,6 +1,6 @@
 # TaskWraith How-To Guides
 
-This section contains public "How To…" guides for each UX feature in TaskWraith. Each guide focuses on **where to find the feature** and a **brief explanation of what it does**, with screenshot placeholders you can fill in later.
+This section contains public "How To…" guides for each UX feature in TaskWraith. Each guide focuses on **where to find the feature** and a **brief explanation of what it does**, with `screenshot-pending` placeholders where captured images have not been wired in yet.
 
 ## Areas
 

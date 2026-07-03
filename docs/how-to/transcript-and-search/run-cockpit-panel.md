@@ -8,7 +8,7 @@ The run cockpit (Run rail) is a right-dock panel that gives you a cross-chat vie
 ## Where to find it
 Click the **Run** tab on the right-dock rim (or use the "Open Run rail" toggle) to open it for the current pane. It shows provider counts across all runs, a list of tracked launch processes, a list of run lanes you can click to select, and the selected run's analysis, timeline, and handoffs.
 
-<!-- TODO(screenshot): Run cockpit panel in the right dock -->
+<!-- screenshot-pending: Run cockpit panel in the right dock -->
 
 ## How to use it
 1. Open the **Run** tab in the right dock to see live counts of active, waiting, and failed runs, plus per-provider run counts along the top strip.

@@ -8,7 +8,7 @@ A right-click menu on a transcript message that lets you copy its text, pin or u
 ## Where to find it
 Right-click any message bubble in the main transcript: user messages, assistant/system/guest-participant replies, tool messages, provider-failure cards, and sub-thread result cards. The menu opens at the cursor position; "Pin", "Open side chat", and "Delete" are omitted for read-only items like provider-failure cards.
 
-<!-- TODO(screenshot): Right-click context menu on a transcript message -->
+<!-- screenshot-pending: Right-click context menu on a transcript message -->
 
 ## How to use it
 1. Right-click a message bubble to open the menu.

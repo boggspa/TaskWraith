@@ -69,10 +69,14 @@ automation. The default expectation is explicit user control: select a workspace
 choose a run posture, review approvals, inspect activity, and check diffs before
 committing generated work.
 
-New users should start with a scratch repository in read-only or planning mode.
-Do not enable remote pairing, Screen Watch, Canvas/browser automation, creative
-app bridges, unattended workflow grants, or full-workspace/yolo permissions until
-the app has earned trust through several low-risk sessions.
+New users should start with a scratch repository in Read-only/Recon or Plan
+workflow. Plan workflow is not general write access: it can save a narrow
+markdown plan artifact under a validated workspace path for the proposed-plan
+handoff, but ordinary file edits, shell commands, and tool writes still require a
+higher permission posture or explicit approval. Do not enable remote pairing,
+Screen Watch, Canvas/browser automation, creative app bridges, unattended
+workflow grants, or full-workspace/yolo permissions until the app has earned
+trust through several low-risk sessions.
 
 Read [TRUST_AND_SAFETY.md](TRUST_AND_SAFETY.md) for the safe-first-run guide,
 capability matrix, storage locations, provider data boundaries, release
@@ -139,6 +143,10 @@ baseline.
 - **Composer Shells**: Provider-aware and task-oriented composer variants give
   each working mode its own affordances without changing the safety model. See
   [COMPOSER_VARIANTS.md](COMPOSER_VARIANTS.md) for the Electron shell gallery.
+- **Plan Workflow**: Plan runs keep the provider in a read-only execution
+  posture while allowing a product-managed markdown plan file to be written under
+  validated workspace paths. Read-only/Recon runs do not get that artifact-write
+  carve-out.
 - **Ensemble Threads**: Multi-agent shared work sessions with named provider
   participants, role/order control, turn-bound or continuous orchestration,
   optional parallel fan-out, cross-provider handoffs, and TaskWraith MCP tools
@@ -166,9 +174,20 @@ baseline.
   reproducible local release work.
 
 Current source version: **v1.7.0**. See [CHANGELOG.md](CHANGELOG.md) for release
-notes. Release artifacts are published from matching GitHub tags; if the GitHub
-Releases page shows an older version, treat newer source changes as
-release-candidate work until a matching tag and release artifacts are published.
+notes. The changelog's **Unreleased - source-ahead** section, when populated,
+describes repository changes only. Release artifacts are published from matching
+GitHub tags; if the GitHub Releases page shows an older version, treat newer
+source changes as release-candidate work until a matching tag and release
+artifacts are published.
+
+## Managed Enterprise Boundary
+
+TaskWraith has local safety controls, local audit evidence, redacted export
+surfaces, and partial managed-policy support. It does not currently claim SSO,
+SCIM, SIEM integration, WORM or append-only audit export, organization-wide
+retention, or a complete MDM/enterprise control plane. Treat enterprise-readiness
+notes as claim boundaries and implementation tracking, not a compliance
+attestation.
 
 ## Public Source Boundary
 

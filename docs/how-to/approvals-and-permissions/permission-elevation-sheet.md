@@ -8,7 +8,7 @@ The permission elevation sheet is a confirmation dialog shown when you raise an 
 ## Where to find it
 Appears automatically over the current chat when you raise the **permissions chip** in the composer (or the side-chat composer) to Default Approval or Full Workspace Access. Raising to **Default Approval** shows a smaller notice once per workspace+provider combination; raising to **Full Workspace Access** shows a larger warning every time, with an explicit risk acknowledgement. Lowering the permission level (e.g. back to Plan or Read-only) never triggers this sheet.
 
-<!-- TODO(screenshot): Permission elevation sheet showing posture options -->
+<!-- screenshot-pending: Permission elevation sheet showing posture options -->
 
 ## How to use it
 1. Open the **permissions chip** in the composer and pick **Default Approval** or **Full Workspace Access**.

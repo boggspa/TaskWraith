@@ -10,7 +10,7 @@ It attaches to two places in the transcript:
 - Rows in the **File changes** card above the composer (each changed-file row and its "Diff" bubble).
 - Individual tool-call rows in the **activity stack** that represent a write/edit action (e.g. a file edit), shown when that row has captured diff text.
 
-<!-- TODO(screenshot): Hovering over a diff in the transcript to show the preview -->
+<!-- screenshot-pending: Hovering over a diff in the transcript to show the preview -->
 
 ## How to use it
 1. Hover your mouse over a changed-file row or an edit-type activity row; the preview opens above or below the row depending on available space.

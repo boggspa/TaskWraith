@@ -8,7 +8,7 @@ A quick-search bar that filters workspaces and threads across your sidebar. Pres
 ## Where to find it
 In the **Sidebar** — press **⌘⇧F** to focus the search field, or click the search icon.
 
-<!-- TODO(screenshot): Sidebar search bar focused with results -->
+<!-- screenshot-pending: Sidebar search bar focused with results -->
 
 ## How to use it
 1. Press **⌘⇧F** (or click the search icon).

@@ -8,7 +8,7 @@ The Chat media dock is a right-dock panel listing every image, audio clip, video
 ## Where to find it
 Click the media icon among the corner controls above the transcript (it shows a count badge when the chat has media) to open the **Media** tab in the right dock. The dock lists all items for the current chat; selecting one shows its preview, badges (duration/size/codec), and an actions menu (Open in Finder, Copy path, Save as, and Detach to pane for audio/video).
 
-<!-- TODO(screenshot): Chat media dock in the right panel -->
+<!-- screenshot-pending: Chat media dock in the right panel -->
 
 ## How to use it
 1. Click the media corner button above the transcript to open the dock.

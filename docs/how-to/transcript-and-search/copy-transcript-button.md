@@ -8,7 +8,7 @@ The copy transcript button exports the current chat as handoff-ready Markdown to
 ## Where to find it
 It's a small icon button in the composer's bottom telemetry row, next to the run timecode, Goal button, and Multiview layout picker, just below the message input. It's disabled when no chat is selected, the chat is archived, or the chat has no messages yet.
 
-<!-- TODO(screenshot): Composer telemetry row showing the copy transcript button -->
+<!-- screenshot-pending: Composer telemetry row showing the copy transcript button -->
 
 ## How to use it
 1. Click the copy transcript icon to open the confirmation popover.

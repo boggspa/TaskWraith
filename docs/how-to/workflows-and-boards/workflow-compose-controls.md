@@ -8,7 +8,7 @@ The Workflow Compose Controls are the settings row under the composer when you'r
 ## Where to find it
 Open the **Workflows** section in the sidebar and click the **+** (New workflow) button. This opens a fresh chat in workflow-compose mode, and the controls appear under the composer in place of the usual starter-prompt suggestions.
 
-<!-- TODO(screenshot): Workflow compose controls showing cadence and interval pickers -->
+<!-- screenshot-pending: Workflow compose controls showing cadence and interval pickers -->
 
 ## How to use it
 1. Choose a **cadence**: **Manual** (the workflow only runs when you trigger it) or **Every** (runs on a fixed interval).

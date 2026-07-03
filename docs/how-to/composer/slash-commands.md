@@ -11,7 +11,7 @@ Open it from the **chat composer** in three ways:
 - Press **⌘K** (Ctrl+K on Windows/Linux) while the composer is focused.
 - Click the **+ (plus) menu** in the composer toolbar and choose **Commands → Slash commands**.
 
-<!-- TODO(screenshot): Composer slash command menu open with available commands -->
+<!-- screenshot-pending: Composer slash command menu open with available commands -->
 
 ## How to use it
 1. Open the menu with `/`, ⌘K, or the **+** menu's **Slash commands** entry.

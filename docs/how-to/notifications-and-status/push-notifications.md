@@ -8,7 +8,7 @@ Push notifications wake a paired iPhone or iPad when it's backgrounded or locked
 ## Where to find it
 Push notifications arrive as system notifications on the paired iPhone/iPad — there's no in-app notification list to open. They only fire while the device isn't already connected and active in the app, and never while you're at the Mac (an "at desktop" check suppresses them so you don't get redundant alerts). The credentials that enable them live in **Settings → Integrations → Devices**, under **Bridge networking → Apple Push Notifications (APNs)**.
 
-<!-- TODO(screenshot): iOS push notification from TaskWraith on the lock screen -->
+<!-- screenshot-pending: iOS push notification from TaskWraith on the lock screen -->
 
 ## How to use it
 1. Pair your iPhone or iPad with the Mac first (see the Devices tab) — push notifications only reach paired devices.

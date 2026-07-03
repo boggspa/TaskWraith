@@ -8,7 +8,7 @@ Pinned Messages lets you mark important messages in a thread so they stay easy t
 ## Where to find it
 Pin a message from its hover action chip or right-click context menu in any transcript. View pins for the current thread by clicking the **Notes** tab in the right dock rim (toolbar icon shows a pin count badge). View pins across every chat via **Settings → Pinned messages**.
 
-<!-- TODO(screenshot): Pinned messages panel in the right dock -->
+<!-- screenshot-pending: Pinned messages panel in the right dock -->
 
 ## How to use it
 1. Hover over a message (or right-click it) and choose **Pin message** to add it to the thread's pinned list; choose **Unpin message** to remove it.

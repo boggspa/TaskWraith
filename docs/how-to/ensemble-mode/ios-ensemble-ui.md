@@ -8,7 +8,7 @@ In an Ensemble chat on the iOS companion app, a horizontal strip of participant 
 ## Where to find it
 Open any Ensemble chat on the companion app — the chip strip appears automatically in the composer, above the message field. Tap a chip, or tap the **Roster** icon in the thread's toolbar, to open the Roster page.
 
-<!-- TODO(screenshot): iOS companion showing ensemble strip and roster sheet -->
+<!-- screenshot-pending: iOS companion showing ensemble strip and roster sheet -->
 
 ## How to use it
 1. In an Ensemble chat, view the participant chips above the composer; each shows the provider's glyph, role/provider label, and a status mark (checkmark when done, bold label while speaking, a lock for a retired provider).

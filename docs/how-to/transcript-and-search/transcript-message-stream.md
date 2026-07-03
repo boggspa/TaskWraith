@@ -8,7 +8,7 @@ The transcript message stream is the main scrolling conversation view in the cen
 ## Where to find it
 It fills the center stage whenever a chat is open. Long-running chats render efficiently because rows outside the visible band are windowed (virtualized) rather than all mounted at once.
 
-<!-- TODO(screenshot): Main chat transcript showing a multi-message conversation thread -->
+<!-- screenshot-pending: Main chat transcript showing a multi-message conversation thread -->
 
 ## How to use it
 1. Scroll up to read history; the view auto-follows new messages at the bottom while you stay scrolled to the bottom, and stops auto-following the moment you scroll away so it doesn't yank you back mid-read.

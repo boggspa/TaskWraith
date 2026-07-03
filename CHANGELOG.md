@@ -4,6 +4,13 @@ Notable changes to TaskWraith, the local-first macOS desktop workbench for runni
 and reviewing AI coding agents. Entries are user-facing highlights; execution,
 history, and workspace state stay on your machine throughout.
 
+## Unreleased - source-ahead
+
+This section is reserved for changes committed after the latest tagged release.
+Entries here are source-ahead only: do not treat them as shipped until a
+matching GitHub tag, release notes, checksums, and platform artifacts are
+published.
+
 ## 1.7.0 - 2026-07-01
 
 ### Added
@@ -66,7 +73,8 @@ history, and workspace state stay on your machine throughout.
   workflow parity, and label/copy honesty. B5 managed-enterprise work remains
   explicit: secrets, audit export/retention, managed policy, user-managed MCP
   allowlisting, dispatch receipts, and feedback receipts are tracked without
-  implying a complete organization control plane.
+  implying SSO/SCIM, SIEM integration, WORM or append-only audit export,
+  organization-wide retention, or a complete managed organization control plane.
 
 ### Fixed
 - **Plan Mode security.** Workflow mode is signed into run permission posture,

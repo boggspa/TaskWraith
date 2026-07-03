@@ -8,7 +8,7 @@ Sub-thread delegation spawns a new, context-isolated chat under a parent chat an
 ## Where to find it
 Open a chat's overflow menu in the sidebar and choose **Delegate to a sub-thread**. An agent running in the chat can also call delegation as a tool during its turn, which prompts you for approval before anything is created.
 
-<!-- TODO(screenshot): Sub-thread delegation card and return card in a chat transcript -->
+<!-- screenshot-pending: Sub-thread delegation card and return card in a chat transcript -->
 
 ## How to use it
 1. In the sidebar, open the overflow menu on a chat and select **Delegate to a sub-thread**.

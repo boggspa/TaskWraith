@@ -8,7 +8,7 @@ The Appearance tab is where you customize TaskWraith's look: app icon, system th
 ## Where to find it
 Open **Settings → App → Appearance**.
 
-<!-- TODO(screenshot): Appearance tab showing theme selector, accent color picker, and FX Labs section -->
+<!-- screenshot-pending: Appearance tab showing theme selector, accent color picker, and FX Labs section -->
 
 ## How to use it
 1. Pick an **App icon** variant to swap the Dock/taskbar icon while TaskWraith is running.

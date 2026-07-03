@@ -8,7 +8,7 @@ In Ensemble chats, completed rounds can fold into collapsible "round cards" inst
 ## Where to find it
 Round cards appear automatically in the transcript of any Ensemble chat. The feature is controlled by **Settings → General → "Collapse older Ensemble rounds"**.
 
-<!-- TODO(screenshot): Ensemble transcript showing collapsed round cards -->
+<!-- screenshot-pending: Ensemble transcript showing collapsed round cards -->
 
 ## How to use it
 1. Open an Ensemble chat and run a few rounds — once a round completes, it collapses into a round card automatically (the most recent round, and any round currently in progress, always stay expanded).

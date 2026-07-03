@@ -8,7 +8,7 @@ The inline media strip is the row of attachment cards that appears under a chat 
 ## Where to find it
 It renders automatically beneath any transcript message (user or assistant) that has attachments, directly in the chat view — no separate panel to open. Images you already see inline in the message text are not duplicated in the strip; only the remaining attachments show as cards.
 
-<!-- TODO(screenshot): Inline media strip within a transcript message -->
+<!-- screenshot-pending: Inline media strip within a transcript message -->
 
 ## How to use it
 1. Click an image card to open it full-size in the preview overlay; click again outside the image, press Escape, or use the close button to dismiss it.

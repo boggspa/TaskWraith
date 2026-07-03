@@ -8,7 +8,7 @@ The Shares tab lists chats you've shared with human collaborators. Each entry sh
 ## Where to find it
 **Settings → Integrations → Shares**
 
-<!-- TODO(screenshot): Shares tab showing collaborator list and access controls -->
+<!-- screenshot-pending: Shares tab showing collaborator list and access controls -->
 
 ## How to use it
 1. Open **Settings → Integrations → Shares** to see every chat you currently have shared.

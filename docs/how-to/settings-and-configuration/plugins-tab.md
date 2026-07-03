@@ -8,7 +8,7 @@ The Plugins tab is a catalog of declarative capability bundles — manifests tha
 ## Where to find it
 **Settings → Integrations → Plugins**
 
-<!-- TODO(screenshot): Plugins tab showing marketplace and installed plugin list -->
+<!-- screenshot-pending: Plugins tab showing marketplace and installed plugin list -->
 
 ## How to use it
 1. Use the search box to filter plugins by name, publisher, capability, or category.

@@ -8,7 +8,7 @@ The Keyboard shortcuts tab lists every app command TaskWraith currently dispatch
 ## Where to find it
 Open the sidebar footer **Settings** entry, then choose **Keyboard shortcuts** under the App group in the Settings sidebar rail.
 
-<!-- TODO(screenshot): Keyboard shortcuts tab showing editable keybinding list -->
+<!-- screenshot-pending: Keyboard shortcuts tab showing editable keybinding list -->
 
 ## How to use it
 1. Browse the summary cards at the top for active binding counts, command groups, and how many shortcuts are visible or customized.

@@ -24,10 +24,21 @@ make "many people use it" a substitute for your own evaluation.
 Recommended posture:
 
 1. Try a scratch repository first.
-2. Run in read-only or planning mode first.
+2. Run in Read-only/Recon or Plan workflow first.
 3. Review the activity log, approval ledger, and generated diffs.
 4. Move to meaningful workspaces only after several low-risk sessions behave as
    expected.
+
+Plan workflow is distinct from Read-only/Recon. It still uses a read-only
+execution posture for ordinary provider tools, but it can save a narrow markdown
+plan artifact under a validated workspace path so you can approve or edit that
+plan later. It does not allow arbitrary file edits, shell commands, or other
+mutating tool calls.
+
+TaskWraith is not yet a complete managed-enterprise product. Current managed
+policy and audit-export work does not include SSO, SCIM, SIEM integration, WORM
+or append-only audit export, organization-wide retention, or a full MDM/org
+control plane.
 
 ## Trust Model
 
@@ -55,8 +66,8 @@ Use this path when evaluating TaskWraith for the first time:
 1. Create or clone a disposable repository.
 2. Open that repository as the selected workspace.
 3. Use a provider you already trust and understand.
-4. Pick a read-only or planning posture. Avoid full-workspace, yolo, auto-edit,
-   or broad session grants.
+4. Pick Read-only/Recon or Plan workflow. Avoid full-workspace, yolo,
+   auto-edit, or broad session grants.
 5. Ask for a non-mutating task, such as "summarize the project layout" or "find
    likely test entry points."
 6. Inspect the Activity view and Raw Events. Confirm the provider only read what
@@ -87,9 +98,10 @@ apps, and custom MCP servers.
 | --- | --- | --- | --- | --- |
 | Provider runs | User starts a run in a selected chat/workspace. | Prompt text, selected workspace context, and provider-visible tool results. | Anything sent to the chosen provider CLI/API according to that provider's behavior. | Provider/tool approval cards and run events are stored locally. |
 | Workspace reads/search | Scoped to the selected workspace where the adapter can enforce it. | File names and file contents in the selected workspace. | File snippets may be sent to the active provider as context. | Activity rows and raw provider events are retained. |
+| Plan workflow | User-selected Plan preset. | Workspace context needed to draft a plan, plus a validated markdown plan artifact path when the proposed-plan flow saves one. | Plan content may be sent to the active provider and stored locally as the plan artifact. | The markdown-plan write is product-managed; other mutating tools remain blocked until approval or a higher permission posture. |
 | File edits and Diff Studio | Mutating edits require an edit-capable mode or explicit approval. | Files in the selected workspace, plus user-approved external paths where supported. | Diffs/content may be visible to the active provider. | Diffs are reviewable before commit; approvals are ledgered. |
 | Shell and git | Approval-gated unless the selected provider mode grants more authority. | Commands run in the workspace context; git status/diff/commit surfaces. | Command output can be sent to the provider and stored in local history. | Command approvals, auto-denies, and run events are auditable. |
-| Local Ollama tools | Tiered from read-only to provider parity. | Depends on the selected local-model tool tier. | Local model prompts stay local unless you use Ollama-hosted/cloud models or other network tools. | Tool tier and mutating operations are policy-gated. |
+| Local Ollama tools | Same permission presets as other providers; run profiles tune local prompting/runtime behavior. | The TaskWraith tool surface where local capability exists, limited by permission posture and network policy. | Local model prompts stay local unless you use Ollama-hosted/cloud models or other network tools. | Standard run permission posture and approvals apply; there is no separate safety-tier ladder. |
 | Ensembles, sub-threads, audits | User-created or explicitly delegated. | The transcript and workspace context available to each participant/provider. | Each cloud participant may receive transcript/context needed for its turn. | Participant runs, audit findings, and delegation events are recorded locally. |
 | Workflows and scheduled runs | User-defined. Unattended elevation requires explicit acknowledgement. | The workspace and tools allowed by the workflow template. | Same provider exposure as a normal run, repeated by schedule. | Workflow history, approvals, and run state are persisted. |
 | iOS remote bridge | Disabled until paired. | Read-only projections by default; selected actions only through Mac policy. | Relay/APNs should see routing metadata, not plaintext prompts, commands, diffs, or model output. | Pairing, allowlists, approvals, expiry, and replay checks are enforced on the Mac. |
@@ -148,6 +160,9 @@ feature that necessarily talks to another system:
   are designed so relay/APNs payloads do not carry plaintext prompts, commands,
   diffs, or model output.
 - Diagnostics exports are local files until you share them.
+- Approval-ledger, audit-bundle, and diagnostics exports are local files until
+  you share them. Approval exports can include request bodies, command previews,
+  file paths, prompts, metadata, and decision notes, so treat them as sensitive.
 
 If a workspace contains secrets, customer data, unreleased product code, or
 regulated data, assume any provider-visible prompt or tool result may become

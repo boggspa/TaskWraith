@@ -11,10 +11,11 @@ checklist for changes that add or widen app authority.
 
 ## Default User Posture
 
-- Prefer read-only or planning mode for first-run and unfamiliar workspaces.
+- Prefer Read-only/Recon or Plan workflow for first-run and unfamiliar
+  workspaces.
 - Make broad grants explicit and visible: full-workspace, yolo, unattended
-  workflow, remote allowlist, and provider-parity local-model modes should never
-  be implied by a UI shortcut.
+  workflow, remote allowlist, and local-model run profiles or full-surface
+  permission choices should never be implied by a UI shortcut.
 - Treat optional surfaces such as iOS remote access, human collaboration, Screen
   Watch, Canvas/browser tooling, creative-app AppleScript, and Discord context
   as advanced features. They should stay off until the user intentionally
@@ -30,7 +31,10 @@ checklist for changes that add or widen app authority.
   boundary.
 - **Approval Modes**: Read-only planning, default approval, and provider-specific
   edit modes are surfaced explicitly. Broad allow-all/session trust states must
-  be user-selected and remain visible/auditable.
+  be user-selected and remain visible/auditable. Plan workflow's markdown-plan
+  artifact save is a narrow product-managed carve-out under validated workspace
+  paths; it is not a grant for ordinary read-only/recon tool calls to write
+  files.
 - **Trust Visibility**: Trust and workspace status are shown in-app so users can
   inspect what a provider is allowed to do before starting a run.
 - **Diff Review**: Diff Studio keeps generated changes reviewable before commit.

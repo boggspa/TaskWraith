@@ -8,7 +8,7 @@ The pending approval card blocks the active chat turn when an agent requests a g
 ## Where to find it
 Appears automatically above the composer for the chat that triggered the request, whenever an agent's action needs your approval.
 
-<!-- TODO(screenshot): Pending approval modal showing Accept / Decline options with countdown -->
+<!-- screenshot-pending: Pending approval modal showing Accept / Decline options with countdown -->
 
 ## How to use it
 1. Read the request title, message, and any preview details (target path, command, or payload) shown on the card.

@@ -8,7 +8,7 @@ The workspace tree shows your loaded workspaces, their chats, and sub-threads (i
 ## Where to find it
 In the **Sidebar**, under the **Workspaces** and **Chats** sections.
 
-<!-- TODO(screenshot): Sidebar workspace tree with expanded chats and sub-thread indents -->
+<!-- screenshot-pending: Sidebar workspace tree with expanded chats and sub-thread indents -->
 
 ## How to use it
 1. Expand a workspace to see its chats.

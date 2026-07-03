@@ -8,7 +8,7 @@ The Approvals popover shows all pending agent approvals across your chats, lets 
 ## Where to find it
 In the **Sidebar footer control row** — click the **red shield** icon.
 
-<!-- TODO(screenshot): Sidebar footer red shield and expanded Approvals popover -->
+<!-- screenshot-pending: Sidebar footer red shield and expanded Approvals popover -->
 
 ## How to use it
 1. Click the red shield to open the popover.

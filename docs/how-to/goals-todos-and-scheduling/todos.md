@@ -8,7 +8,7 @@ A To-do is a checklist of plan steps that an agent publishes as it works (via a 
 ## Where to find it
 A checklist appears inline in the transcript on the tool-activity row where the agent published it, and a **Plan** button (checklist icon) in the composer's telemetry row opens a popover with every lane's full checklist.
 
-<!-- TODO(screenshot): TodoChecklistCard showing multiple items with status badges -->
+<!-- screenshot-pending: TodoChecklistCard showing multiple items with status badges -->
 
 ## How to use it
 1. Watch for a checklist card to appear under an agent's tool activity in the transcript — it shows up to 5 items collapsed, with a count of how many more are hidden.

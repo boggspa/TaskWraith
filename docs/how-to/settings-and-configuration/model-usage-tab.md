@@ -8,7 +8,7 @@ The Model usage tab is TaskWraith's cross-provider usage dashboard: headline tok
 ## Where to find it
 Open **Settings → Data → Model usage**.
 
-<!-- TODO(screenshot): Model usage tab showing usage dashboard, API rates table, and context lengths table -->
+<!-- screenshot-pending: Model usage tab showing usage dashboard, API rates table, and context lengths table -->
 
 ## How to use it
 1. Check the headline tiles at the top for total tokens, total runs, and how many providers/models have tracked activity.

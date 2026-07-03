@@ -8,7 +8,7 @@ The chip strip shows every participant in an ensemble chat as a row of chips. Cl
 ## Where to find it
 In an ensemble chat, the strip sits in the composer's above-row stack: below the branch / files-changed / Create PR row (and any external-path rows), and above the message textarea. It also renders on the welcome state for a new ensemble chat so you can configure participants before sending the first prompt.
 
-<!-- TODO(screenshot): Participant chip strip above composer with multiple provider chips -->
+<!-- screenshot-pending: Participant chip strip above composer with multiple provider chips -->
 
 ## How to use it
 1. Click a chip to select it. The selected chip gets a highlighted border, and the composer's model and permissions pickers below now read/write that participant's settings.

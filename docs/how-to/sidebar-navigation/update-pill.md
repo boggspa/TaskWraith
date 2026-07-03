@@ -8,7 +8,7 @@ A one-click update pill that appears above the sidebar masthead whenever there's
 ## Where to find it
 In the **Sidebar**, directly above the masthead (workspace name / + button area), for as long as an update is available, downloading, downloaded, or has hit an error.
 
-<!-- TODO(screenshot): Sidebar update pill above the masthead -->
+<!-- screenshot-pending: Sidebar update pill above the masthead -->
 
 ## How to use it
 1. Look for the pill above the masthead. Its label reflects the current state: "Update" to start, a download percentage while downloading, "Restart" once downloaded, or "Update issue" on error.
