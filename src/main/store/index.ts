@@ -1137,12 +1137,17 @@ function writeJson<T>(filePath: string, data: T) {
   let fd: number | null = null
   try {
     fs.mkdirSync(path.dirname(filePath), { recursive: true })
-    fd = fs.openSync(tempPath, 'w')
+    fd = fs.openSync(tempPath, 'w', 0o600)
     fs.writeFileSync(fd, JSON.stringify(data, null, 2), 'utf-8')
     fs.fsyncSync(fd)
     fs.closeSync(fd)
     fd = null
     fs.renameSync(tempPath, filePath)
+    try {
+      fs.chmodSync(filePath, 0o600)
+    } catch {
+      // Best effort on filesystems that do not support POSIX modes.
+    }
     try {
       const dirFd = fs.openSync(path.dirname(filePath), 'r')
       fs.fsyncSync(dirFd)

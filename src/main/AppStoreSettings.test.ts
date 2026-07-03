@@ -42,6 +42,30 @@ describe('AppStore settings defaults', () => {
     expect(AppStore.getSettings().autoUpdateEnabled).toBe(false)
   })
 
+  it('writes settings with restrictive owner-only permissions', () => {
+    const settingsPath = `${userDataPath}/settings.json`
+    fs.writeFileSync(settingsPath, JSON.stringify({ autoUpdateEnabled: true }), { mode: 0o666 })
+    fs.chmodSync(settingsPath, 0o666)
+
+    AppStore.updateSettings({ autoUpdateEnabled: false })
+
+    expect(fs.statSync(settingsPath).mode & 0o777).toBe(0o600)
+  })
+
+  it('writes runtime profiles with restrictive owner-only permissions', () => {
+    const runtimeProfilesPath = `${userDataPath}/runtime-profiles.json`
+    fs.writeFileSync(runtimeProfilesPath, JSON.stringify([]), { mode: 0o666 })
+    fs.chmodSync(runtimeProfilesPath, 0o666)
+
+    AppStore.saveRuntimeProfile({
+      name: 'Codex locked profile',
+      provider: 'codex',
+      env: {}
+    })
+
+    expect(fs.statSync(runtimeProfilesPath).mode & 0o777).toBe(0o600)
+  })
+
   it('drops retired message bridge settings on read and subsequent writes', () => {
     const settingsPath = `${userDataPath}/settings.json`
     fs.writeFileSync(

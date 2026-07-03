@@ -158,6 +158,8 @@ What exists:
 - `AppStore` exposes the extension-secret status/mutation/resolution surface and
   clears owner-scoped encrypted secrets when a user MCP server or runtime
   profile is deleted.
+- AppStore JSON writes now create and rewrite settings/profile-store files with
+  owner-only `0600` permissions where the filesystem supports POSIX modes.
 
 What is missing:
 
@@ -524,8 +526,7 @@ Use this phase for the near-term public/internal release.
 Do this before broadening user-managed extension claims.
 
 - Add the encrypted user MCP/runtime secret store.
-- Enforce restrictive file permissions on settings/profile files where
-  practical.
+- Keep restrictive file permissions on settings/profile files where practical.
 - Wire plugin secrets into MCP materialization and launch-time resolution.
 - Add migration + redaction tests.
 
