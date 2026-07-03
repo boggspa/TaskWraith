@@ -99,6 +99,7 @@ import {
   ProductUpdateChannel,
   AuditRetentionPurgeResult,
   ProductAuditBundleExportRequest,
+  ProductAuditBundleVerificationResult,
   ChatScope,
   ChatWorkflowMode,
   RuntimeProfile,
@@ -683,6 +684,16 @@ function auditBundleExportScopeLabel(scope: AuditBundleExportScope): string {
     default:
       return 'full local'
   }
+}
+
+function summarizeAuditBundleVerification(result: ProductAuditBundleVerificationResult): string {
+  if (!result.ok) {
+    const reason = result.verification?.reason || result.error || 'verification failed'
+    return `failed: ${reason}`
+  }
+  const evidence = result.manifest?.tamperEvidence || 'unknown evidence'
+  const keyId = result.verification?.keyId ? `, key ${result.verification.keyId}` : ''
+  return `verified (${evidence}${keyId})`
 }
 
 const FX_BURST_DURATION_MS = 1150
@@ -15310,6 +15321,30 @@ function App(): React.JSX.Element {
     }
   }
 
+  const verifyProductAuditBundle = async () => {
+    if (typeof window.api.verifyProductAuditBundle !== 'function') return
+    try {
+      const result = await window.api.verifyProductAuditBundle()
+      if (!result.ok && result.error === 'Audit bundle verification cancelled.') return
+      const summary = summarizeAuditBundleVerification(result)
+      setRawLogs((prev) => [
+        ...prev,
+        {
+          type: result.ok ? 'info' : 'stderr',
+          content: `Audit bundle ${summary}`
+        }
+      ])
+    } catch (error) {
+      setRawLogs((prev) => [
+        ...prev,
+        {
+          type: 'stderr',
+          content: `Audit bundle verification failed: ${redactLog(String(error))}`
+        }
+      ])
+    }
+  }
+
   const purgeAuditRetention = async () => {
     if (typeof window.api.purgeProductAuditRetention !== 'function') return
     const confirmed = window.confirm(
@@ -23935,6 +23970,7 @@ function App(): React.JSX.Element {
     ensembleEnabledParticipantsForCurrent,
     exportProductDiagnostics,
     exportProductAuditBundle,
+    verifyProductAuditBundle,
     externalPathGrants,
     fileChangeDisplayAdds,
     fileChangeDisplayDels,

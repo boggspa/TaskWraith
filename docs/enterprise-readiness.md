@@ -261,6 +261,10 @@ What exists:
   full local bundle, current workspace, current thread, and current run. Disabled
   buttons make unavailable scopes explicit instead of silently exporting a
   broader bundle.
+- Main/preload expose `verifyProductAuditBundle`, and Settings -> System ->
+  Product operations now has a verifier action that lets the user pick an
+  exported JSON bundle and records whether its payload hash, signature, section
+  hashes, and counts verify.
 - Audit-bundle exports are now signed when Electron `safeStorage` is available:
   a long-lived Ed25519 key is generated once under `userData`,
   safeStorage-encrypted at rest, and reused so each exported bundle carries a
@@ -272,9 +276,8 @@ What exists:
 What is missing:
 
 - A polished verification/export UI around the signed bundle evidence. The
-  signer and verifier exist in main code and tests, but the user-facing control
-  surface currently exposes export and retention actions without a verifier
-  status pane.
+  Settings action reports pass/fail into the app log, but there is not yet a
+  detailed verifier status pane or retained verification receipt browser.
 - An explicit sensitive-field export flow. The current route is redacted-only
   and rejects unsupported sensitive modes, but there is not yet a separate
   user/admin decision path for exporting sensitive fields.

@@ -54,6 +54,10 @@ function createDeps() {
       path: request?.path || '/tmp/audit-bundle.json',
       kind: 'audit-bundle-exported'
     })),
+    verifyProductAuditBundle: vi.fn(async (request?: { path?: string }) => ({
+      path: request?.path || '/tmp/audit-bundle.json',
+      kind: 'audit-bundle-verified'
+    })),
     purgeProductAuditRetention: vi.fn((request?: { dryRun?: boolean }) => ({
       ok: true,
       dryRun: request?.dryRun !== false
@@ -92,6 +96,7 @@ describe('registerDiagnosticsHandlers', () => {
     expect(handlerFor('record-product-crash')).toBeTypeOf('function')
     expect(handlerFor('export-product-diagnostics')).toBeTypeOf('function')
     expect(handlerFor('export-product-audit-bundle')).toBeTypeOf('function')
+    expect(handlerFor('verify-product-audit-bundle')).toBeTypeOf('function')
     expect(handlerFor('purge-product-audit-retention')).toBeTypeOf('function')
     expect(handlerFor('repair-product-install')).toBeTypeOf('function')
     expect(handlerFor('app-shell-stats:snapshot')).toBeTypeOf('function')
@@ -122,6 +127,9 @@ describe('registerDiagnosticsHandlers', () => {
       redactionMode: 'default',
       filter: { chatId: 'chat-1' }
     })
+
+    await handlerFor('verify-product-audit-bundle')({}, { path: '/tmp/audit.json' })
+    expect(deps.verifyProductAuditBundle).toHaveBeenCalledWith({ path: '/tmp/audit.json' })
 
     await handlerFor('purge-product-audit-retention')({}, {
       dryRun: false,

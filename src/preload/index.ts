@@ -1277,6 +1277,8 @@ const api = {
     ipcRenderer.invoke('export-product-diagnostics', path),
   exportProductAuditBundle: (request?: any) =>
     ipcRenderer.invoke('export-product-audit-bundle', request),
+  verifyProductAuditBundle: (request?: any) =>
+    ipcRenderer.invoke('verify-product-audit-bundle', request),
   purgeProductAuditRetention: (request?: any) =>
     ipcRenderer.invoke('purge-product-audit-retention', request),
   repairProductInstall: () => ipcRenderer.invoke('repair-product-install'),

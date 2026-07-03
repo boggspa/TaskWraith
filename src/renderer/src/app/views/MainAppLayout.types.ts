@@ -226,6 +226,7 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   ensembleEnabledParticipantsForCurrent: any
   exportProductDiagnostics: any
   exportProductAuditBundle: any
+  verifyProductAuditBundle: any
   externalPathGrants: any
   fileChangeDisplayAdds: any
   fileChangeDisplayDels: any

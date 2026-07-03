@@ -178,6 +178,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   ensembleEnabledParticipantsForCurrent,
   exportProductDiagnostics,
   exportProductAuditBundle,
+  verifyProductAuditBundle,
   externalPathGrants,
   fileChangeDisplayAdds,
   fileChangeDisplayDels,
@@ -837,6 +838,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
               onRefreshProductOperationsStatus={() => void refreshProductOperationsStatus()}
               onExportProductDiagnostics={() => void exportProductDiagnostics()}
               onExportProductAuditBundle={(scope) => void exportProductAuditBundle(scope)}
+              onVerifyProductAuditBundle={() => void verifyProductAuditBundle()}
               onDryRunAuditRetention={() => void dryRunAuditRetention()}
               onPurgeAuditRetention={() => void purgeAuditRetention()}
               onRepairProductInstall={() => void repairProductInstall()}

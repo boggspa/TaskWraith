@@ -116,6 +116,7 @@ function makeSettingsProps(overrides: Partial<SettingsPanelProps> = {}): Setting
     onRefreshProductOperationsStatus: () => {},
     onExportProductDiagnostics: () => {},
     onExportProductAuditBundle: () => {},
+    onVerifyProductAuditBundle: () => {},
     onDryRunAuditRetention: () => {},
     onPurgeAuditRetention: () => {},
     onRepairProductInstall: () => {},

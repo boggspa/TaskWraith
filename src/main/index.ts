@@ -525,6 +525,8 @@ import {
   WorkspaceRunChangeInput,
   ProductAuditBundleExportRequest,
   ProductAuditBundleExportResult,
+  ProductAuditBundleVerificationRequest,
+  ProductAuditBundleVerificationResult,
   ProductAuditBundleFilter,
   ProductAuditBundleSnapshot,
   AuditRetentionPurgeRequest,
@@ -890,7 +892,8 @@ import {
   buildProductOperationsStatus,
   serializeAuditBundleSnapshot,
   serializeDiagnosticsSnapshot,
-  signAuditBundleSnapshot
+  signAuditBundleSnapshot,
+  verifyAuditBundleSnapshotSignature
 } from './ProductOperations'
 import { AuditBundleSigningKeyStore } from './AuditBundleSigningKeyStore'
 import { loadManagedPolicyFromEnvironment } from './ManagedPolicyService'
@@ -18827,6 +18830,51 @@ async function exportProductAuditBundle(
   }
 }
 
+async function verifyProductAuditBundle(
+  request: ProductAuditBundleVerificationRequest = {}
+): Promise<ProductAuditBundleVerificationResult> {
+  try {
+    let targetPath = request.path
+    if (!targetPath) {
+      if (!mainWindow) {
+        throw new Error('No application window is available for audit bundle verification.')
+      }
+      const result = await dialog.showOpenDialog(mainWindow, {
+        title: 'Verify TaskWraith Audit Bundle',
+        properties: ['openFile'],
+        filters: [{ name: 'JSON audit bundle', extensions: ['json'] }]
+      })
+      if (result.canceled || !result.filePaths?.[0]) {
+        return { ok: false, error: 'Audit bundle verification cancelled.' }
+      }
+      targetPath = result.filePaths[0]
+    }
+    const raw = await fs.readFile(targetPath, 'utf8')
+    const snapshot = JSON.parse(raw) as ProductAuditBundleSnapshot
+    const verification = verifyAuditBundleSnapshotSignature(snapshot)
+    return {
+      ok: verification.ok,
+      path: targetPath,
+      verification,
+      manifest: {
+        generatedAt: snapshot.manifest.generatedAt,
+        redactionMode: snapshot.manifest.redactionMode,
+        filters: snapshot.manifest.filters,
+        tamperEvidence: snapshot.manifest.validation.tamperEvidence
+      }
+    }
+  } catch (error) {
+    recordProductCrash({
+      source: 'main',
+      severity: 'warning',
+      name: error instanceof Error ? error.name : 'AuditBundleVerificationError',
+      message: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined
+    })
+    return { ok: false, error: error instanceof Error ? error.message : String(error) }
+  }
+}
+
 async function repairProductInstall(): Promise<ProductOperationsStatus> {
   await fs.mkdir(app.getPath('userData'), { recursive: true })
   const settings = AppStore.getSettings()
@@ -28377,6 +28425,7 @@ if (isGeminiMcpBridgeProcess) {
       }),
       exportProductDiagnostics: (requestedPath) => exportProductDiagnostics(requestedPath),
       exportProductAuditBundle: (request) => exportProductAuditBundle(request),
+      verifyProductAuditBundle: (request) => verifyProductAuditBundle(request),
       purgeProductAuditRetention: (request) => purgeProductAuditRetention(request),
       repairProductInstall: () => repairProductInstall(),
       getAppShellStatsSnapshot: () => appShellStatsService.getSnapshot(),

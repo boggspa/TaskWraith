@@ -43,6 +43,8 @@ import {
   AuditRetentionPurgeResult,
   ProductAuditBundleExportRequest,
   ProductAuditBundleExportResult,
+  ProductAuditBundleVerificationRequest,
+  ProductAuditBundleVerificationResult,
   ProductDiagnosticsExportResult,
   ProductOperationsStatus,
   ProductChangelogSnapshot,
@@ -1599,6 +1601,9 @@ declare global {
       exportProductAuditBundle: (
         request?: ProductAuditBundleExportRequest
       ) => Promise<ProductAuditBundleExportResult>
+      verifyProductAuditBundle: (
+        request?: ProductAuditBundleVerificationRequest
+      ) => Promise<ProductAuditBundleVerificationResult>
       purgeProductAuditRetention: (
         request?: AuditRetentionPurgeRequest
       ) => Promise<AuditRetentionPurgeResult>

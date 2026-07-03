@@ -2376,6 +2376,34 @@ export interface ProductAuditBundleExportResult {
   error?: string
 }
 
+export interface ProductAuditBundleVerificationRequest {
+  path?: string
+}
+
+export interface ProductAuditBundleSignatureVerificationResult {
+  ok: boolean
+  signaturePresent: boolean
+  payloadHashValid: boolean
+  signatureValid: boolean
+  sectionHashesValid: boolean
+  countsValid: boolean
+  keyId?: string
+  reason?: string
+}
+
+export interface ProductAuditBundleVerificationResult {
+  ok: boolean
+  path?: string
+  verification?: ProductAuditBundleSignatureVerificationResult
+  manifest?: {
+    generatedAt: string
+    redactionMode: ProductAuditBundleRedactionMode
+    filters: ProductAuditBundleFilter
+    tamperEvidence: ProductAuditBundleTamperEvidence
+  }
+  error?: string
+}
+
 export type AuditRetentionSurface =
   | 'approvalLedger'
   | 'runEvents'

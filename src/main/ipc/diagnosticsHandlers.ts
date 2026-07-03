@@ -2,6 +2,7 @@ import { ipcMain } from 'electron'
 import type {
   AuditRetentionPurgeRequest,
   ProductAuditBundleExportRequest,
+  ProductAuditBundleVerificationRequest,
   ProductCrashFilter,
   ProductCrashInput,
   ProductOperationsStatus
@@ -14,6 +15,7 @@ export interface DiagnosticsHandlersDeps {
   recordProductCrash: (input: ProductCrashInput) => unknown
   exportProductDiagnostics: (requestedPath?: string) => Promise<unknown>
   exportProductAuditBundle: (request?: ProductAuditBundleExportRequest) => Promise<unknown>
+  verifyProductAuditBundle: (request?: ProductAuditBundleVerificationRequest) => Promise<unknown>
   purgeProductAuditRetention: (request?: AuditRetentionPurgeRequest) => Promise<unknown> | unknown
   repairProductInstall: () => Promise<ProductOperationsStatus>
   getAppShellStatsSnapshot: () => unknown
@@ -62,6 +64,12 @@ export function registerDiagnosticsHandlers(deps: DiagnosticsHandlersDeps): void
 
   ipcMain.handle('export-product-audit-bundle', async (_, request?: ProductAuditBundleExportRequest) =>
     deps.exportProductAuditBundle(normalizeAuditBundleExportRequest(request))
+  )
+
+  ipcMain.handle(
+    'verify-product-audit-bundle',
+    async (_, request?: ProductAuditBundleVerificationRequest) =>
+      deps.verifyProductAuditBundle(request || {})
   )
 
   ipcMain.handle('purge-product-audit-retention', async (_, request?: AuditRetentionPurgeRequest) =>

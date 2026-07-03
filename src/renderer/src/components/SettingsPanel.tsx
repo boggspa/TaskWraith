@@ -244,6 +244,7 @@ interface SettingsPanelProps {
   onRefreshProductOperationsStatus: () => void
   onExportProductDiagnostics: () => void
   onExportProductAuditBundle: (scope?: AuditBundleExportScope) => void
+  onVerifyProductAuditBundle: () => void
   onDryRunAuditRetention: () => void
   onPurgeAuditRetention: () => void
   onRepairProductInstall: () => void
@@ -2974,6 +2975,7 @@ export function SettingsPanel({
   onRefreshProductOperationsStatus,
   onExportProductDiagnostics,
   onExportProductAuditBundle,
+  onVerifyProductAuditBundle,
   onDryRunAuditRetention,
   onPurgeAuditRetention,
   onRepairProductInstall,
@@ -8305,6 +8307,13 @@ export function SettingsPanel({
                     onClick={() => onExportProductAuditBundle('all')}
                   >
                     Export full audit bundle
+                  </button>
+                  <button
+                    className="btn btn-sm btn-ghost"
+                    type="button"
+                    onClick={onVerifyProductAuditBundle}
+                  >
+                    Verify audit bundle
                   </button>
                   <button
                     className="btn btn-sm btn-ghost"
