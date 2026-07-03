@@ -4691,6 +4691,7 @@ struct RosterChipEditor: View {
                         Text("Plan workflow").tag("plan")
                         Text("Default approval").tag("default")
                         Text("Full workspace").tag("workspace_write")
+                        Text("Full access").tag("full_access")
                     }
                     .pickerStyle(.menu)
                 }
