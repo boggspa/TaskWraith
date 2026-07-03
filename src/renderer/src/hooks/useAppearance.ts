@@ -20,6 +20,7 @@ import {
   resolveComposerFontFamily
 } from '../lib/typefaceOptions'
 import { getLegacyFunFxSettingsFromLocalStorage, isFunFxMode } from '../lib/funFxSettings'
+import { MIN_RIGHT_PANEL_WIDTH, MAX_RIGHT_PANEL_WIDTH } from '../lib/panelWidths'
 
 const DEFAULT_ADVANCED_FX: AppSettings['advancedFx'] = {
   agentAura: true,
@@ -61,8 +62,13 @@ export interface AppearanceState {
 const DEFAULT_INSPECTOR_WIDTH = 380
 const DEFAULT_SIDEBAR_WIDTH = 260
 const DEFAULT_PANE_OPACITY = 100
-const MIN_INSPECTOR_WIDTH = 300
-const MAX_INSPECTOR_WIDTH = 720
+// Single-source the inspector/right-dock width bounds from panelWidths so this
+// normalize clamp can't silently drift below the resize handlers' ceiling. A
+// stale local MAX of 720 previously re-clamped every dragged/keyboard width on
+// each appearance.update(), so the dock could never grow past 720px on wide
+// windows even though startRightPanelResize allows up to min(1120, 58vw).
+const MIN_INSPECTOR_WIDTH = MIN_RIGHT_PANEL_WIDTH
+const MAX_INSPECTOR_WIDTH = MAX_RIGHT_PANEL_WIDTH
 const MIN_SIDEBAR_WIDTH = 220
 const MAX_SIDEBAR_WIDTH = 440
 const MIN_PANE_OPACITY = 0

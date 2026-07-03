@@ -14,7 +14,15 @@
 }
 
 .chat-split-main {
-  flex: 1 1 auto;
+  /* flex-basis 0 (NOT auto): the main pane must grow from a content-independent
+   * base, otherwise its flex-basis:auto resolves to the transcript's max-content
+   * width. Wide transcript content (tables, code blocks, long lines) then
+   * inflates that base, overflows the flex row, and — because .right-dock has
+   * flex-shrink:1 — the dock is squeezed back toward its 280px min-width
+   * regardless of the dragged --right-dock-width, so the divider appears frozen.
+   * With basis 0 the dock's basis is always honored on wide windows while the
+   * dock still compresses on genuinely narrow ones. */
+  flex: 1 1 0;
   min-width: min(680px, 100%);
   min-height: 0;
   display: flex;
