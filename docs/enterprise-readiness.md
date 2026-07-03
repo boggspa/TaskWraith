@@ -485,26 +485,25 @@ What exists:
   receipt surface is used by agent-routed `git_push` / `git_create_pr` and
   paired-device bridge push/PR actions. Completion metadata records commit SHA,
   PR URL, or failure reason where available.
+- Redacted diagnostics and audit-bundle exports include external-publish
+  receipt summaries and hashes.
+- Settings -> General -> Product operations exposes scoped audit-bundle export
+  actions and a "Publish receipts" retention window for the external-publish
+  receipt ledger.
 
 What is missing:
 
 - The remote-access UI and iOS copy need to expose the new external-publish
   capability separately from file editing before paired-device publishing can
   be presented as a polished managed feature.
-- The redacted audit-bundle export route includes external-publish receipts, but
-  there is not yet a Settings/UI entry point for those summaries.
-- External-publish receipts are included in the opt-in age-based
-  audit-retention purge route, but there is not yet a Settings/UI entry point
-  for configuring that retention window.
 
 Target:
 
 - Keep all external publication origins (`desktop-ui`, `ios-bridge`, and
   `agent`) on the shared receipt ledger so audit/export work has one schema.
 - Keep the bridge `externalPublish` capability explicit and admin-only.
-- Add Settings/UI affordances for exporting external-publish receipt summaries
-  and bridge audit rows through the redacted audit-bundle route.
-- Add Settings/UI retention controls for external-publish receipt age windows.
+- Keep Settings export and retention affordances wired to the shared redacted
+  audit-bundle and retention surfaces.
 
 ### B5.5 - Stage-role and queued-dispatch receipts
 
