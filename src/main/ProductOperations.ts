@@ -256,7 +256,7 @@ function summarizeExternalPublishReceiptForDiagnostics(
 
 export function createAuditBundleVerificationReceipt(
   result: ProductAuditBundleVerificationResult,
-  options: { id: string; verifiedAt?: string } = { id: '' }
+  options: { id?: string; verifiedAt?: string } = {}
 ): ProductAuditBundleVerificationReceipt {
   const verification = result.verification
   return {

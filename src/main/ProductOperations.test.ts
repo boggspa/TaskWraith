@@ -6,6 +6,7 @@ import {
   buildProductOperationsStatus,
   buildReleaseAutomationStatus,
   createBridgeHealthRecord,
+  createAuditBundleVerificationReceipt,
   createProductCrashRecord,
   filterProductCrashRecords,
   serializeAuditBundleSnapshot,
@@ -205,6 +206,68 @@ describe('ProductOperations', () => {
     expect(serialized).not.toContain('Reviewer')
     expect(serialized).not.toContain('wrong-model-for-role')
     expect(serialized).not.toContain('private feedback note')
+  })
+
+  it('builds redacted audit bundle verification receipt status', () => {
+    const verificationReceipt = createAuditBundleVerificationReceipt(
+      {
+        ok: true,
+        path: '/Users/alice/private/TaskWraith-Audit-Bundle-secret.json',
+        manifest: {
+          generatedAt: '2026-07-03T00:00:00.000Z',
+          redactionMode: 'default',
+          filters: { workspaceId: 'ws-secret', chatId: 'chat-secret' },
+          tamperEvidence: 'local_hashes_signed'
+        },
+        verification: {
+          ok: true,
+          signaturePresent: true,
+          payloadHashValid: true,
+          signatureValid: true,
+          sectionHashesValid: true,
+          countsValid: true,
+          keyId: 'audit-key-1'
+        }
+      },
+      { id: 'verification-secret', verifiedAt: '2026-07-03T00:00:01.000Z' }
+    )
+    const status = buildProductOperationsStatus({
+      updateChannel: 'debug',
+      appName: 'TaskWraith Debug',
+      appVersion: '1.0.0',
+      isPackaged: false,
+      appPath: '/app',
+      userDataPath: '/tmp/taskwraith',
+      platform: 'darwin',
+      arch: 'arm64',
+      osRelease: '25.0.0',
+      workspaces: [],
+      chats: [],
+      runQueue: [],
+      runRecovery: [],
+      approvalLedger: [],
+      workspaceChanges: [],
+      messageFeedbackReceipts: [],
+      externalPublishReceipts: [],
+      auditBundleVerificationReceipts: [verificationReceipt],
+      auditRetentionPurgeReceipts: [],
+      userMcpBlockedServers: [],
+      scheduledTasks: [],
+      recentCrashes: [],
+      userDataExists: true,
+      geminiBridgeStatus: null,
+      packageJson: { scripts: {} },
+      builderConfigText: '',
+      env: {}
+    })
+    const serialized = JSON.stringify(status.auditReceipts)
+
+    expect(status.auditReceipts?.counts.auditBundleVerifications).toBe(1)
+    expect(status.auditReceipts?.hashes.auditBundleVerifications).toMatch(/^[a-f0-9]{64}$/)
+    expect(serialized).not.toContain('/Users/alice/private')
+    expect(serialized).not.toContain('ws-secret')
+    expect(serialized).not.toContain('chat-secret')
+    expect(serialized).not.toContain('verification-secret')
   })
 
   it('summarizes bridge health for enabled but unavailable TaskWraith MCP bridge', () => {
@@ -1230,6 +1293,38 @@ describe('ProductOperations', () => {
       allowed: false,
       reasonCategory: 'header_not_allowlisted'
     })
+  })
+
+  it('includes redacted audit bundle verification receipts in audit bundles', () => {
+    const receipt = createAuditBundleVerificationReceipt(
+      {
+        ok: false,
+        path: '/private/bundles/failed-secret-bundle.json',
+        error: 'Signature check failed for /private/bundles/failed-secret-bundle.json'
+      },
+      { id: 'verification-secret', verifiedAt: '2026-07-03T00:00:03.000Z' }
+    )
+    const bundle = buildAuditBundleSnapshot({
+      approvalLedger: [],
+      runEvents: [],
+      workspaceChanges: [],
+      auditRuns: [],
+      evidencePacks: [],
+      messageFeedbackReceipts: [],
+      externalPublishReceipts: [],
+      auditBundleVerificationReceipts: [receipt],
+      now: '2026-07-03T00:00:04.000Z'
+    })
+    const serialized = serializeAuditBundleSnapshot(bundle)
+
+    expect(bundle.manifest.counts.auditBundleVerifications).toBe(1)
+    expect(bundle.manifest.hashes.auditBundleVerifications).toMatch(/^[a-f0-9]{64}$/)
+    expect(bundle.sections.auditBundleVerifications[0]).toMatchObject({
+      ok: false,
+      hasError: true
+    })
+    expect(serialized).not.toContain('/private/bundles')
+    expect(serialized).not.toContain('verification-secret')
   })
 
   it('signs audit bundles and rejects tampered manifests or sections', () => {
