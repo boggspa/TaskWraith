@@ -2799,9 +2799,12 @@ export async function runOllamaProvider(
             toolControlTier
           })
         }
-        // An arg-invalid call is rejected before execution and returns
-        // validationError — treat it as a non-productive nudge, not progress.
-        if (!toolResult.validationError) {
+        // Progress = a tool that ACTUALLY executed. A harness-gate block and an
+        // arg-invalid (validationError) result are both pre-execution redirects
+        // with their own repair message — no tool ran, so they count as
+        // non-productive and feed the retry ceiling. Otherwise a model that
+        // re-hits the harness gate every turn would reset the counter forever.
+        if (!harnessGate.blocked && !toolResult.validationError) {
           productiveToolRanThisTurn = true
         }
         if (harnessEnabled) {

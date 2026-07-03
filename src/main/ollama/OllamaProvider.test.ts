@@ -1801,6 +1801,57 @@ describe('runOllamaProvider streaming', () => {
     expect(contentTexts.join('\n')).not.toContain('Workspace coding task')
     expect(lines.some((line) => line.payload.type === 'provider_warning')).toBe(false)
   })
+
+  it('stops a model that re-hits the harness gate every turn (block is not progress)', async () => {
+    let chatCalls = 0
+    // The model insists on read_file before any explore, so the harness gate
+    // blocks it every turn (no tool ever executes). A harness block is a
+    // pre-execution redirect, not progress, so it must feed the retry ceiling —
+    // otherwise this loops forever. executeTool must never be reached.
+    const executeTool = vi.fn(async () => ({ ok: true, output: 'should never run' }))
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).endsWith('/api/tags')) {
+        return jsonResponse({
+          models: [
+            {
+              name: 'stream-model:latest',
+              digest: 'digest-stream',
+              details: { family: 'qwen' },
+              capabilities: ['tools']
+            }
+          ]
+        })
+      }
+      if (String(url).endsWith('/api/show')) {
+        return jsonResponse({ details: { family: 'qwen' }, capabilities: ['tools'] })
+      }
+      if (String(url).endsWith('/api/chat')) {
+        chatCalls += 1
+        return ollamaStreamResponse([
+          JSON.stringify({
+            message: {
+              role: 'assistant',
+              content:
+                '{"taskwraith_tool":{"name":"read_file","arguments":{"path":"src/deep/module.ts"}}}'
+            }
+          }),
+          JSON.stringify({ done: true, prompt_eval_count: 8, eval_count: 6 })
+        ])
+      }
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const { deps, lines } = makeProviderDeps({ fetchMock, executeTool })
+
+    await runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
+
+    expect(executeTool).not.toHaveBeenCalled()
+    expect(chatCalls).toBe(4)
+    const contentTexts = lines
+      .filter((line) => line.payload.type === 'content')
+      .map((line) => line.payload.text)
+    expect(contentTexts).toHaveLength(1)
+    expect(contentTexts[0]).toContain('stopping instead of looping')
+  }, 10000)
 })
 
 describe('normalizeOllamaBaseUrl', () => {
