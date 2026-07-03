@@ -3,6 +3,8 @@ import type { ChatMessage } from '../../../main/store/types'
 import { projectRows } from './TranscriptVirtualWindow'
 import {
   buildTranscriptUserGutterMarkers,
+  findActiveGutterMarkerKey,
+  gutterBulgeRadiusPx,
   layoutTranscriptUserGutterMarkers,
   userGutterPreview,
   userGutterTitle
@@ -110,5 +112,83 @@ describe('TranscriptUserMessageGutter model', () => {
 
     expect(layout[1].topPx).toBeCloseTo(892, 1)
     expect(layout[1].topPx - layout[0].topPx).toBeCloseTo(10, 1)
+  })
+
+  it('carries each marker rowIndex in the virtual-row index space', () => {
+    const messages = [
+      message('u0', 'user', 'First prompt'),
+      message('a1', 'assistant', 'Answer'),
+      message('u2', 'user', 'Second prompt')
+    ]
+    const markers = buildTranscriptUserGutterMarkers(messages, projectRows(messages))
+
+    expect(markers.map((marker) => marker.rowIndex)).toEqual([0, 2])
+  })
+
+  it('keeps rowIndex POSITIONAL (findScrollAnchor space) when projectRows skips a malformed row', () => {
+    // A message with a non-string id is dropped by projectRows, so the emitted
+    // rows array is shorter than `messages` and row.index (source position) no
+    // longer equals the row's array position. marker.rowIndex must track the
+    // ARRAY position (what findScrollAnchor returns), not row.index.
+    const messages = [
+      message('u0', 'user', 'Turn zero'),
+      { ...message('bad', 'assistant', 'malformed'), id: undefined as unknown as string },
+      message('u1', 'user', 'Turn one')
+    ]
+    const rows = projectRows(messages)
+    expect(rows).toHaveLength(2)
+
+    const markers = buildTranscriptUserGutterMarkers(messages, rows)
+    // Positional: 0 and 1 — NOT 0 and 2 (the source-message positions).
+    expect(markers.map((marker) => marker.rowIndex)).toEqual([0, 1])
+    expect(markers[1].messageId).toBe('u1')
+    // The scroll-spy join resolves the 2nd marker at positional anchor 1.
+    expect(findActiveGutterMarkerKey(markers, 1)).toBe(markers[1].key)
+  })
+})
+
+describe('findActiveGutterMarkerKey (scroll-spy join)', () => {
+  const messages = [
+    message('u0', 'user', 'Turn zero'),
+    message('a1', 'assistant', 'Answer one'),
+    message('u2', 'user', 'Turn two'),
+    message('a3', 'assistant', 'Answer three'),
+    message('u4', 'user', 'Turn four')
+  ]
+  const markers = buildTranscriptUserGutterMarkers(messages, projectRows(messages))
+
+  it('maps an anchor row to the nearest user marker at or above it', () => {
+    expect(findActiveGutterMarkerKey(markers, 0)).toBe('u0#0')
+    // Anchored on the assistant row between turns 0 and 2 → still inside turn 0.
+    expect(findActiveGutterMarkerKey(markers, 1)).toBe('u0#0')
+    expect(findActiveGutterMarkerKey(markers, 2)).toBe('u2#2')
+    expect(findActiveGutterMarkerKey(markers, 3)).toBe('u2#2')
+    expect(findActiveGutterMarkerKey(markers, 4)).toBe('u4#4')
+  })
+
+  it('clamps below the first and beyond the last marker', () => {
+    expect(findActiveGutterMarkerKey(markers, -1)).toBeNull()
+    expect(findActiveGutterMarkerKey(markers, 999)).toBe('u4#4')
+  })
+
+  it('is defensive against empty markers and non-finite anchors', () => {
+    expect(findActiveGutterMarkerKey([], 3)).toBeNull()
+    expect(findActiveGutterMarkerKey(markers, Number.NaN)).toBeNull()
+  })
+})
+
+describe('gutterBulgeRadiusPx (dock influence radius)', () => {
+  it('shrinks the influence radius as markers compact, clamped legible', () => {
+    // Sparse rails reach further; dense rails (5px steps at 36+) tighten so the
+    // whole cluster doesn't bulge as one blob. Monotonic non-increasing in count.
+    expect(gutterBulgeRadiusPx(3)).toBe(40)
+    expect(gutterBulgeRadiusPx(18)).toBe(32)
+    expect(gutterBulgeRadiusPx(28)).toBe(24)
+    expect(gutterBulgeRadiusPx(48)).toBe(20)
+    for (const n of [1, 5, 12, 20, 40, 200]) {
+      const r = gutterBulgeRadiusPx(n)
+      expect(r).toBeGreaterThanOrEqual(20)
+      expect(r).toBeLessThanOrEqual(44)
+    }
   })
 })
