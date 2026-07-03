@@ -15984,11 +15984,12 @@ function App(): React.JSX.Element {
         if (commandId === 'toggle-file-editor') {
           if (isChatPopoutWindow) return false
           if (!hasWorkspaceContext) return false
-          setShowFileEditor((current) => {
-            const nextShowFileEditor = !current
-            if (nextShowFileEditor) setRightDockTab('files')
-            return nextShowFileEditor
-          })
+          const nextShowFileEditor = !showFileEditor
+          if (nextShowFileEditor) {
+            closeOtherRightDockPanels('files')
+            setRightDockTab('files')
+          }
+          setShowFileEditor(nextShowFileEditor)
           return true
         }
         if (commandId === 'open-diff-studio-window') {
@@ -19866,9 +19867,7 @@ function App(): React.JSX.Element {
   const activateRightDockTab = (id: RightDockTab) => {
     // Exclusive dock lifecycle: opening/switching to a tab closes every
     // other panel's open flag so rim-highlight actives don't stack up.
-    for (const panelId of RIGHT_DOCK_PANEL_IDS) {
-      if (panelId !== id) closeRightDockPanel(panelId)
-    }
+    closeOtherRightDockPanels(id)
     openRightDockPanel(id)
     setRightDockTab(id)
   }
@@ -22078,27 +22077,35 @@ function App(): React.JSX.Element {
       panelId: Exclude<RightDockTab, 'chat'>
     ): void => {
       focusPaneForChromeAction(paneIndex, chatId)
+      // Files needs a workspace-backed pane; bail before touching dock state.
+      if (panelId === 'files' && (!viewerWorkspace || viewerIsGlobalChat)) return
+      // Clicking the pill for the surface that's already open closes the dock
+      // outright, instead of leaving it stacked behind other open panels.
+      if (isRightDockPanelOpen(panelId)) {
+        closeRightDockPanel(panelId)
+        return
+      }
+      // Opening a surface is exclusive: collapse every sibling first so the dock
+      // shows exactly one section and the next click on it dismisses the dock.
+      closeOtherRightDockPanels(panelId)
       switch (panelId) {
         case 'run':
-          setShowCockpit((open) => !open)
+          setShowCockpit(true)
           break
         case 'media':
-          setChatMediaPanelOpenPreservingTranscript((open) => !open)
+          setChatMediaPanelOpenPreservingTranscript(true)
           break
         case 'pins':
-          setIsPinnedMessagesPanelOpen((open) => !open)
+          setIsPinnedMessagesPanelOpen(true)
           break
         case 'files':
-          if (!viewerWorkspace || viewerIsGlobalChat) return
-          setShowFileEditor((open) => !open)
+          setShowFileEditor(true)
           break
-        case 'inspector': {
-          const nextShowInspector = !appearance.showInspector
-          appearance.update({ showInspector: nextShowInspector })
+        case 'inspector':
+          appearance.update({ showInspector: true })
           break
-        }
         case 'terminal':
-          setShowGeminiTerminal((open) => !open)
+          setShowGeminiTerminal(true)
           break
       }
       setRightDockTab(panelId)
