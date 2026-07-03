@@ -35,7 +35,6 @@ import {
   ollamaHarnessEnforced,
   ollamaHarnessKickoffPrompt,
   ollamaHarnessToolFollowUpPrompt,
-  ollamaHarnessWorkflowSystemLine,
   recordOllamaHarnessToolResult,
   type OllamaHarnessRunState
 } from './OllamaHarnessGates'
@@ -347,9 +346,10 @@ export function buildOllamaOpeningMessages(input: OllamaOpeningMessagesInput): O
           networkAccess: input.networkAccess
         })
       : '',
-    input.harnessEnabled && workspaceIntent
-      ? ollamaHarnessWorkflowSystemLine(input.toolControlTier)
-      : '',
+    // Prompt economy (2026-07): the explore→read→edit workflow line used to live
+    // here AND in the harness kickoff message below — triplicated with the family
+    // lines. The anchored kickoff (which references the user's actual request) is
+    // the single source now, so the standalone system line is dropped.
     workspaceIntent ? input.workspaceIndexBlock : ''
   ].filter(Boolean)
   return [

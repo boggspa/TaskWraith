@@ -1796,6 +1796,10 @@ describe('Ollama ensemble prompt budgeting', () => {
       chatContextTurns: 10
     })
     expect(prompt).toContain('Local Ollama participant notes:')
+    // Identity anchor: the Ollama seat is told it is a local model and is NOT a
+    // cloud provider, so it doesn't mirror a peer's stronger-sounding label.
+    expect(prompt).toContain('You are a LOCAL model running through Ollama')
+    expect(prompt).toContain('You are NOT Claude, Codex, Gemini, Kimi, Grok, or Cursor')
     // Tier retirement (2026-07): the ensemble note no longer hard-codes the old
     // "write with approval, shell with approval" tier semantics — approval is set
     // by the run's permission role, same tools as every participant.

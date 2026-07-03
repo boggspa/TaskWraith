@@ -2396,11 +2396,14 @@ describe('buildOllamaOpeningMessages', () => {
 
     expect(messages).toHaveLength(3)
     expect(messages[0].role).toBe('system')
-    expect(messages[0].content).toContain('Harness workflow')
+    // Prompt economy (2026-07): the standalone "Harness workflow" system line was
+    // dropped — the workflow guidance now lives ONLY in the anchored kickoff below.
+    expect(messages[0].content).not.toContain('Harness workflow')
     expect(messages[0].content).toContain('Workspace index')
     expect(messages[1]).toEqual({ role: 'user', content: 'fix the bug in src/main.ts' })
     expect(messages[2].role).toBe('user')
     expect(messages[2].content).toContain('todo_write')
+    expect(messages[2].content).toContain('grounding in the repo')
     expect(messages[2].content).toContain('previous message')
   })
 

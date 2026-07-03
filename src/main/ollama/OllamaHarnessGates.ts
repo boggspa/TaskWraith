@@ -55,23 +55,6 @@ export function ollamaHarnessTodoWriteArguments(): Record<string, unknown> {
   }
 }
 
-export function ollamaHarnessWorkflowSystemLine(
-  tier: OllamaToolControlTier | string | undefined | null
-): string {
-  const tools = ollamaToolNamesForTier(tier)
-  const hasTodos = tools.includes('todo_write')
-  const hasEdits = OLLAMA_FILE_EDIT_TOOL_NAMES.some((tool) => tools.includes(tool))
-  if (!hasEdits) {
-    return 'Harness workflow: explore the workspace with workspace_search or list_directory before read_file on unfamiliar paths.'
-  }
-  return [
-    'Harness workflow: explore (workspace_search or list_directory) → read one target file → localized edit.',
-    hasTodos
-      ? 'Use todo_write for complex multi-step work, then advance steps as you go.'
-      : 'Do not edit files you have not read in this run.'
-  ].join(' ')
-}
-
 export function ollamaHarnessKickoffPrompt(
   tier: OllamaToolControlTier | string | undefined | null
 ): string {

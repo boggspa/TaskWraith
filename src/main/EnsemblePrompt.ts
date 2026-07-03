@@ -790,6 +790,16 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
     activeConcurrentMode
       ? `You are ${participantLabel} in an Ensemble round with parallel fan-out lanes. Multiple participants may run at the same time.`
       : `You are ${participantLabel} in a moderated Ensemble panel. Participants normally speak one at a time unless fan-out is requested.`,
+    // Hard identity anchor for local Ollama seats: the roster + tagged transcript
+    // below name Claude/Codex/Gemini/etc., and small local models tend to mirror a
+    // stronger-sounding label. Anchor the seat to its own provider/model and
+    // negate the cloud labels explicitly. Scoped to Ollama so first-party seats
+    // (which don't have this failure mode) get no extra prompt.
+    ...(isOllamaParticipant
+      ? [
+          `You are a LOCAL model running through Ollama${selfModelLabel ? ` (${selfModelLabel})` : ''}. You are NOT Claude, Codex, Gemini, Kimi, Grok, or Cursor — those are OTHER participants in the roster below. Never sign, tag, or speak as them, and never claim to be a cloud model; respond only as ${selfToken ? `#${selfToken}` : 'yourself'}.`
+        ]
+      : []),
     `Round id: ${input.roundId}`,
     `Round policy: ${
       orchestrationMode === 'continuous'
