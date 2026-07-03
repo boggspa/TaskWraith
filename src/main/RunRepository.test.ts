@@ -235,6 +235,71 @@ describe('RunRepository', () => {
     }
   })
 
+  it('attaches scheduled task dispatch receipts to lifecycle events for non-queued runs', () => {
+    const dispatchReceipt = {
+      schemaVersion: 1,
+      generatedAt: '2026-05-08T00:00:00.000Z',
+      receiptHash: 'e'.repeat(64),
+      runId: 'run-1',
+      provider: 'codex',
+      source: 'scheduled',
+      scope: 'workspace',
+      workspaceId: 'workspace-1',
+      chatId: 'chat-1',
+      approvalMode: 'plan',
+      workflowMode: 'normal',
+      permissionPresetId: 'read_only',
+      readOnly: true,
+      permissionPostureHash: 'a'.repeat(64),
+      permissionPostureSignaturePresent: true
+    } as const
+    const repository = new RunRepository({
+      providerLabel: (provider) => provider,
+      emitRunQueueChanged: vi.fn(),
+      emitRunEventsChanged: vi.fn()
+    })
+    const getQueueJob = vi.spyOn(AppStore, 'getRunQueueJob').mockReturnValue(null)
+    const getScheduledTasks = vi.spyOn(AppStore, 'getScheduledTasks').mockReturnValue([
+      {
+        id: 'task-1',
+        runId: 'run-1',
+        dispatchReceipt
+      } as any
+    ])
+    const append = vi.spyOn(AppStore, 'appendRunEvent').mockImplementation((input: any) => ({
+      schemaVersion: 1,
+      id: 'event-1',
+      sequence: 1,
+      timestamp: '2026-05-08T00:00:00.000Z',
+      ...input
+    }))
+
+    try {
+      repository.appendLifecycleEvent('created', {
+        runId: 'run-1',
+        provider: 'codex',
+        appChatId: 'chat-1',
+        workspacePath: '/repo',
+        status: 'running',
+        startedAt: Date.parse('2026-05-08T00:00:00.000Z'),
+        updatedAt: Date.parse('2026-05-08T00:00:01.000Z'),
+        approvalIds: new Set(),
+        sessionGrants: new Set()
+      } as any)
+
+      expect(getQueueJob).toHaveBeenCalledWith('run-1')
+      expect(getScheduledTasks).toHaveBeenCalled()
+      expect(append.mock.results[0]?.value?.payload).toMatchObject({
+        eventType: 'created',
+        dispatchReceipt
+      })
+    } finally {
+      getQueueJob.mockRestore()
+      getScheduledTasks.mockRestore()
+      append.mockRestore()
+    }
+  })
+
   it('reads run events after the last seen sequence', () => {
     const repository = new RunRepository({
       providerLabel: (provider) => provider,

@@ -477,6 +477,9 @@ What exists:
 - Runtime session lifecycle events now attach the queued `dispatchReceipt` when
   a matching run queue row exists, so durable run-start/update/remove events
   retain the enqueue-time proof.
+- Runtime session lifecycle events also fall back to a matching scheduled task
+  `dispatchReceipt`, so non-queued scheduled runs carry their signed scheduled
+  posture proof into run-start/update/remove durable events.
 - MCP tool context for brokered Codex/Claude/Kimi runs carries `ensembleRun`,
   so lane-aware write-lock previews and acquisitions can enforce against the
   dispatched lane instead of losing identity outside Gemini.
@@ -528,6 +531,8 @@ Target:
   work focused on end-to-end replay policy tests rather than adding parallel
   receipt schemas.
 - Persist a dispatch receipt when the run starts and include it in audit export.
+  Queued and scheduled runtime lifecycle events now retain that receipt; keep
+  future work focused on exported summaries and replay-policy tests.
 - Preserve older-client semantics: absent `stageRole` means preserve; `''` means
   explicit clear.
 - Add higher-level dequeue integration tests that enqueue a remote prompt,

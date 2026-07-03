@@ -574,7 +574,9 @@ export class RunRepository {
     session: RunSession
   ): RunEventRecord | null {
     const permissionPosture = this.options.permissionPostureForSession?.(session)
-    const dispatchReceipt = AppStore.getRunQueueJob(session.runId)?.dispatchReceipt
+    const dispatchReceipt =
+      AppStore.getRunQueueJob(session.runId)?.dispatchReceipt ||
+      AppStore.getScheduledTasks().find((task) => task.runId === session.runId)?.dispatchReceipt
     const ensembleMetadata = lookupEnsembleQueueMetadata(session)
     return this.appendRunEvent({
       runId: session.runId,
