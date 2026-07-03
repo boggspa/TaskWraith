@@ -314,6 +314,9 @@ What exists:
   service policy, workspace grants, or approval timeouts. The local IPC setter
   and paired-device bridge toggle return a managed-blocked state instead of
   enabling the in-memory session override.
+- Workspace approval grants now persist through `SettingsService`, so
+  `acceptForWorkspace` cannot re-add standing grants after managed policy has
+  enforced `agenticWorkspaceGrants: []`.
 
 What is missing:
 

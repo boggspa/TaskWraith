@@ -137,6 +137,53 @@ describe('PermissionService', () => {
     expect(service.hasWorkspaceGrant(settings, 'codex', undefined, 'shellCommands')).toBe(false)
   })
 
+  it('routes workspace grant writes through the managed settings updater', () => {
+    let persistedSettings: AppSettings = {
+      ...settings,
+      agenticServices: { ...settings.agenticServices, shellCommands: 'workspace' },
+      agenticWorkspaceGrants: []
+    }
+    const updateSettings = vi.fn((partial: Partial<AppSettings>) => {
+      // Mirrors SettingsService + ManagedPolicyService filtering when
+      // agenticWorkspaceGrants is managed/cleared by organization policy.
+      persistedSettings = {
+        ...persistedSettings,
+        ...partial,
+        agenticWorkspaceGrants: []
+      }
+    })
+    const service = new PermissionService({
+      runManager: new RunManager(),
+      sessionGrants: new Set(),
+      getSettings: () => persistedSettings,
+      updateSettings
+    })
+
+    expect(
+      service.applyApprovalDecision({
+        provider: 'codex',
+        workspacePath: '/repo',
+        service: 'shellCommands',
+        action: 'acceptForWorkspace'
+      })
+    ).toBe(true)
+    expect(updateSettings).toHaveBeenCalledWith({
+      agenticWorkspaceGrants: [
+        expect.objectContaining({
+          provider: 'codex',
+          service: 'shellCommands',
+          workspacePath: '/repo',
+          expiresOn: 'workspace_revocation'
+        })
+      ]
+    })
+    expect(persistedSettings.agenticWorkspaceGrants).toEqual([])
+    expect(
+      service.resolvePermission('codex', 'shellCommands', '/repo', undefined, persistedSettings)
+        .decision
+    ).toBe('ask')
+  })
+
   it('treats canvasEval (RCE) as non-grantable — no session/workspace grant auto-allows it', () => {
     const runManager = new RunManager()
     runManager.create({ runId: 'run-eval', provider: 'gemini', workspacePath: '/repo' })

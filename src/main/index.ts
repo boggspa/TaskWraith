@@ -4702,7 +4702,14 @@ function normalizeCodexDefaultModelRows<T extends { id?: string; isDefault?: boo
 
 
 const runManager = new RunManager<any>()
-const permissionService = new PermissionService({ runManager, sessionGrants: agenticSessionGrants })
+let settingsServiceRef: SettingsService | null = null
+const permissionService = new PermissionService({
+  runManager,
+  sessionGrants: agenticSessionGrants,
+  getSettings: () => settingsServiceRef?.getSettings() ?? AppStore.getSettings(),
+  updateSettings: (partial) =>
+    settingsServiceRef ? settingsServiceRef.updateSettings(partial) : AppStore.updateSettings(partial)
+})
 const providerPreflightService = new ProviderPreflightService()
 let runRepository: RunRepository | null = null
 let runQueueServiceRef: RunQueueService | null = null
@@ -26640,6 +26647,7 @@ if (isGeminiMcpBridgeProcess) {
         }
       ]
     })
+    settingsServiceRef = settingsService
     startAppIconManager({
       getVariant: () => AppStore.getSettings().appIconVariant,
       getThemeAppearance: () => AppStore.getSettings().themeAppearance,

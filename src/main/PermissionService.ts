@@ -15,6 +15,8 @@ import { AppStore } from './store'
 export interface PermissionServiceOptions {
   runManager: RunManager<any>
   sessionGrants: Set<string>
+  getSettings?: () => AppSettings
+  updateSettings?: (partial: Partial<AppSettings>) => void
 }
 
 export interface AgenticPermissionResolution {
@@ -42,6 +44,18 @@ function isNonGrantableService(service: AgenticServiceId | undefined): boolean {
 
 export class PermissionService {
   constructor(private readonly options: PermissionServiceOptions) {}
+
+  private getSettings(): AppSettings {
+    return this.options.getSettings?.() ?? AppStore.getSettings()
+  }
+
+  private updateSettings(partial: Partial<AppSettings>): void {
+    if (this.options.updateSettings) {
+      this.options.updateSettings(partial)
+      return
+    }
+    AppStore.updateSettings(partial)
+  }
 
   getServicePolicy(
     service: AgenticServiceId,
@@ -76,7 +90,7 @@ export class PermissionService {
     service: AgenticServiceId
   ): void {
     if (!workspacePath) return
-    const settings = AppStore.getSettings()
+    const settings = this.getSettings()
     const normalizedWorkspace = resolve(workspacePath)
     const now = new Date().toISOString()
     const grants = (settings.agenticWorkspaceGrants || []).filter((grant) => {
@@ -98,7 +112,7 @@ export class PermissionService {
       updatedAt: now,
       expiresOn: 'workspace_revocation'
     })
-    AppStore.updateSettings({ agenticWorkspaceGrants: grants })
+    this.updateSettings({ agenticWorkspaceGrants: grants })
   }
 
   removeWorkspaceGrant(
@@ -107,7 +121,7 @@ export class PermissionService {
     service: AgenticServiceId
   ): void {
     if (!workspacePath) return
-    const settings = AppStore.getSettings()
+    const settings = this.getSettings()
     const normalizedWorkspace = resolve(workspacePath)
     const grants = (settings.agenticWorkspaceGrants || []).filter((grant) => {
       if (
@@ -119,7 +133,7 @@ export class PermissionService {
         return true
       return resolve(grant.workspacePath) !== normalizedWorkspace
     })
-    AppStore.updateSettings({ agenticWorkspaceGrants: grants })
+    this.updateSettings({ agenticWorkspaceGrants: grants })
   }
 
   hasSessionGrant(
