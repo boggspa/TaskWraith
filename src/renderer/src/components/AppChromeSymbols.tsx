@@ -997,7 +997,8 @@ export function ContextWheel({
           strokeWidth={strokeWidth}
           strokeLinecap="round"
           strokeDasharray={`${dash} ${remainingDash}`}
-          strokeDashoffset={circumference / 4}
+          // Circle strokes begin at 3 o'clock by default; rotate the ring once
+          // so the progress arc starts from 12 o'clock across every composer.
           transform="rotate(-90 7 7)"
         />
       </svg>
