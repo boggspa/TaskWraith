@@ -3384,13 +3384,14 @@ public final class RemoteSessionModel: ObservableObject {
         /// clears an existing stage explicitly.
         public var stageRole: String?
         public var isBossman: Bool
+        public var isSecondInCommand: Bool
         public init(
             id: String, provider: String, model: String?, role: String,
             brief: String, enabled: Bool,
             permissionPresetId: String? = nil, reasoningEffort: String? = nil,
             fastModeEnabled: Bool = false, thinkingEnabled: Bool = false,
             stageRole: String? = nil,
-            isBossman: Bool = false
+            isBossman: Bool = false, isSecondInCommand: Bool = false
         ) {
             self.id = id
             self.provider = provider
@@ -3404,6 +3405,7 @@ public final class RemoteSessionModel: ObservableObject {
             self.thinkingEnabled = thinkingEnabled
             self.stageRole = stageRole
             self.isBossman = isBossman
+            self.isSecondInCommand = isSecondInCommand
         }
     }
 
@@ -3431,6 +3433,7 @@ public final class RemoteSessionModel: ObservableObject {
             // omitting would preserve it.
             dict["stageRole"] = entry.stageRole ?? ""
             dict["isBossman"] = entry.isBossman
+            dict["isSecondInCommand"] = entry.isSecondInCommand
             return dict
         }
         send(
@@ -3461,6 +3464,7 @@ public final class RemoteSessionModel: ObservableObject {
             dict["fastModeEnabled"] = entry.fastModeEnabled
             dict["thinkingEnabled"] = entry.thinkingEnabled
             dict["isBossman"] = entry.isBossman
+            dict["isSecondInCommand"] = entry.isSecondInCommand
             return dict
         }
         send(
