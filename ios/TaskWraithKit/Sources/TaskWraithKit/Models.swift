@@ -1085,6 +1085,15 @@ public struct RemoteEnsembleState: Codable, Sendable {
     /// Max handoff turns (hops) per round; only meaningful in continuous mode.
     /// Wire key `maxContinuationHops`. Mac clamps to [1, 500], default 6.
     public let maxContinuationHops: Int?
+    /// Fan-out policy. Wire key `fanoutPolicy`; values are the EXACT four-value
+    /// enum `"off"` | `"read_only"` | `"locked_writers_with_boss"` |
+    /// `"locked_writers_user_preflight"` (NOT a boolean, NOT a bare "write").
+    /// Absent on older Mac builds ⇒ treat as off. The two locked_writers_*
+    /// values are WRITER fan-out and stay Boss-gated on the Mac.
+    public let fanoutPolicy: String?
+    /// Shared-transcript character budget. Wire key `ensembleContextChars`.
+    /// Mac clamps to [5000, 500000]; desktop default is 24000.
+    public let ensembleContextChars: Int?
     public let participants: [Participant]?
     /// The CONFIGURED (editable) roster — present even when idle.
     public let roster: [RosterEntry]?
