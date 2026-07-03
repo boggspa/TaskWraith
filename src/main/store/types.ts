@@ -887,6 +887,7 @@ export interface EnsembleWakeupRecord {
    * unstaged; absent means an older record that should preserve legacy live
    * roster behavior on resume. */
   stageRole?: EnsembleStageRole | null
+  permissionPosture?: RunPermissionPostureSnapshot
   dispatchReceipt?: RunQueueDispatchReceipt
   runId?: string
   scheduledAt: string

@@ -5,7 +5,10 @@ import {
   unattendedElevationPresetId,
   type UnattendedElevationLevel
 } from '../UnattendedPostureGate'
-import type { RunPermissionPostureContext } from '../RunPermissionPosture'
+import {
+  buildRunPermissionPostureSnapshot,
+  type RunPermissionPostureContext
+} from '../RunPermissionPosture'
 import {
   buildEnsembleParticipantPrompt,
   computeEnsemblePromptShellStamp,
@@ -5243,6 +5246,7 @@ export class EnsembleOrchestrator {
       reason: input.reason,
       cancelOnUserInput: input.cancelOnUserInput !== false
     }
+    wakeup.permissionPosture = this.buildWakeupPermissionPosture(chat, run, runtime, wakeup)
     wakeup.dispatchReceipt = this.buildWakeupDispatchReceipt(chat, wakeup)
     if (!runtime.pendingWakeups) runtime.pendingWakeups = new Map()
     runtime.pendingWakeups.set(wakeup.wakeupId, wakeup)
@@ -5474,7 +5478,43 @@ export class EnsembleOrchestrator {
       chatId: wakeup.chatId,
       ensembleParticipantId: wakeup.participantId,
       ...(wakeup.role ? { ensembleRole: wakeup.role } : {}),
-      ...(wakeup.stageRole ? { ensembleStageRole: wakeup.stageRole } : {})
+      ...(wakeup.stageRole ? { ensembleStageRole: wakeup.stageRole } : {}),
+      ...(wakeup.permissionPosture ? { permissionPosture: wakeup.permissionPosture } : {})
+    })
+  }
+
+  private buildWakeupPermissionPosture(
+    chat: ChatRecord,
+    run: ActiveParticipantRun,
+    runtime: ActiveRoundRuntime,
+    wakeup: EnsembleWakeupRecord
+  ): EnsembleWakeupRecord['permissionPosture'] {
+    if (!this.deps.signRunPermissionPosture) return undefined
+    const permissions = this.resolveParticipantPermissions(
+      chat,
+      run.participant,
+      runtime.externalPathGrants
+    )
+    const workflowMode = chat.workflowMode === 'plan' ? 'plan' : 'normal'
+    const context: RunPermissionPostureContext = {
+      provider: run.participant.provider,
+      scope: chat.scope === 'global' ? 'global' : 'workspace',
+      appRunId: wakeup.wakeupId,
+      appChatId: wakeup.chatId,
+      prompt: runtime.prompt,
+      workflowMode,
+      runtimeProfileId: run.participant.runtimeProfileId
+    }
+    return buildRunPermissionPostureSnapshot({
+      approvalMode: permissions.approvalMode,
+      workflowMode,
+      effectivePermissions: permissions,
+      signature: this.deps.signRunPermissionPosture(
+        permissions.approvalMode,
+        permissions,
+        context
+      ),
+      context
     })
   }
 

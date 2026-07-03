@@ -24,6 +24,7 @@ import type {
   UsageRecord,
   WorkSessionConfig
 } from '../store/types'
+import type { RunPermissionPostureContext } from '../RunPermissionPosture'
 import { MAX_ENSEMBLE_PARTICIPANTS } from '../EnsembleRosterMutation'
 import { computeEnsemblePromptShellStamp } from '../EnsemblePrompt'
 import { CONTEXT_AUTO_COMPACT_COOLDOWN_MS } from '../../shared/contextCompaction'
@@ -243,6 +244,11 @@ function makeHarness(
     probeParticipant?: (participant: EnsembleParticipant) => Promise<ParticipantProbeResult>
     scheduleWakeupTimer?: (wakeup: EnsembleWakeupRecord) => void
     cancelWakeupTimer?: (wakeupId: string) => void
+    signRunPermissionPosture?: (
+      approvalMode: string | null | undefined,
+      effectivePermissions: EffectiveRunPermissions | null | undefined,
+      context?: RunPermissionPostureContext | null
+    ) => string
     persistSessionCheckpoint?: (chat: ChatRecord, reason: string) => void
     completeSessionCheckpoint?: (chatId: string, roundId: string, status: string) => void
     transitionRunQueueJob?: (
@@ -294,6 +300,9 @@ function makeHarness(
     createRunId: (provider) => `${provider}-run-${++counter}`,
     now: () => counter,
     nowIso: options.nowIso ?? (() => `2026-05-24T00:00:0${counter}.000Z`),
+    ...(options.signRunPermissionPosture
+      ? { signRunPermissionPosture: options.signRunPermissionPosture }
+      : {}),
     ...(options.getProviderUsageSnapshot
       ? { getProviderUsageSnapshot: options.getProviderUsageSnapshot }
       : {}),
@@ -1361,8 +1370,10 @@ describe('EnsembleOrchestrator', () => {
 
   it('schedules a wakeup and resumes the same participant in the active round', async () => {
     const scheduled: EnsembleWakeupRecord[] = []
+    const signRunPermissionPosture = vi.fn(() => 'd'.repeat(64))
     const harness = makeHarness({
-      scheduleWakeupTimer: (wakeup) => scheduled.push(wakeup)
+      scheduleWakeupTimer: (wakeup) => scheduled.push(wakeup),
+      signRunPermissionPosture
     })
     harness.chat.ensemble!.participants[0].stageRole = 'worker'
     harness.orchestrator.startRound({
@@ -1378,10 +1389,27 @@ describe('EnsembleOrchestrator', () => {
       reason: 'Waiting for logs.'
     })
     expect(scheduledResult.ok).toBe(true)
-    expect(scheduledResult.wakeup?.stageRole).toBe('worker')
-    expect(scheduledResult.wakeup?.dispatchReceipt).toMatchObject({
+    const wakeup = scheduledResult.wakeup!
+    expect(wakeup.stageRole).toBe('worker')
+    expect(wakeup.permissionPosture).toMatchObject({
+      approvalMode: 'plan',
+      workflowMode: 'normal',
+      presetId: 'read_only',
+      readOnly: true,
+      signature: 'd'.repeat(64),
+      signaturePresent: true,
+      context: {
+        provider: 'claude',
+        scope: 'workspace',
+        appRunId: wakeup.wakeupId,
+        appChatId: 'ensemble-chat',
+        workflowMode: 'normal',
+        promptHash: expect.stringMatching(/^[a-f0-9]{64}$/)
+      }
+    })
+    expect(wakeup.dispatchReceipt).toMatchObject({
       schemaVersion: 1,
-      runId: scheduledResult.wakeup?.wakeupId,
+      runId: wakeup.wakeupId,
       provider: 'claude',
       source: 'scheduled',
       workspaceId: 'ws-1',
@@ -1389,9 +1417,21 @@ describe('EnsembleOrchestrator', () => {
       ensembleParticipantId: 'claude',
       ensembleRole: 'Reviewer',
       ensembleStageRole: 'worker',
-      permissionPostureSignaturePresent: false
+      permissionPresetId: 'read_only',
+      readOnly: true,
+      permissionPostureHash: wakeup.permissionPosture!.postureHash,
+      permissionPostureSignaturePresent: true
     })
-    expect(scheduledResult.wakeup?.dispatchReceipt?.receiptHash).toMatch(/^[a-f0-9]{64}$/)
+    expect(wakeup.dispatchReceipt?.receiptHash).toMatch(/^[a-f0-9]{64}$/)
+    expect(signRunPermissionPosture).toHaveBeenCalledWith(
+      'plan',
+      expect.objectContaining({ presetId: 'read_only', readOnly: true }),
+      expect.objectContaining({
+        appRunId: wakeup.wakeupId,
+        appChatId: 'ensemble-chat',
+        prompt: 'Start and sleep if blocked.'
+      })
+    )
     expect(scheduled).toHaveLength(1)
     expect(harness.chat.ensemble?.activeRound?.participants[0].status).toBe('sleeping')
     expect(harness.chat.ensemble?.activeRound?.pendingWakeupIds).toEqual([scheduled[0].wakeupId])
@@ -1577,7 +1617,11 @@ describe('EnsembleOrchestrator', () => {
     //      flips the wakeup to fired with the recovery message,
     //      re-dispatches the participant with the resume prompt,
     //      and appends the "woke after app restart" status row.
-    const harness1 = makeHarness({ scheduleWakeupTimer: () => {} })
+    const signRunPermissionPosture = vi.fn(() => 'e'.repeat(64))
+    const harness1 = makeHarness({
+      scheduleWakeupTimer: () => {},
+      signRunPermissionPosture
+    })
     harness1.chat.ensemble!.participants[0].stageRole = 'worker'
     harness1.orchestrator.startRound({
       chatId: 'ensemble-chat',
@@ -1591,8 +1635,25 @@ describe('EnsembleOrchestrator', () => {
       reason: 'Waiting on background job.'
     })
     expect(sleepResult.ok).toBe(true)
-    expect(sleepResult.wakeup?.stageRole).toBe('worker')
-    expect(sleepResult.wakeup?.dispatchReceipt).toMatchObject({
+    const sleepWakeup = sleepResult.wakeup!
+    expect(sleepWakeup.stageRole).toBe('worker')
+    expect(sleepWakeup.permissionPosture).toMatchObject({
+      approvalMode: 'plan',
+      workflowMode: 'normal',
+      presetId: 'read_only',
+      readOnly: true,
+      signature: 'e'.repeat(64),
+      signaturePresent: true,
+      context: {
+        provider: 'claude',
+        scope: 'workspace',
+        appRunId: sleepWakeup.wakeupId,
+        appChatId: 'ensemble-chat',
+        workflowMode: 'normal',
+        promptHash: expect.stringMatching(/^[a-f0-9]{64}$/)
+      }
+    })
+    expect(sleepWakeup.dispatchReceipt).toMatchObject({
       provider: 'claude',
       source: 'scheduled',
       workspaceId: 'ws-1',
@@ -1600,10 +1661,22 @@ describe('EnsembleOrchestrator', () => {
       ensembleParticipantId: 'claude',
       ensembleRole: 'Reviewer',
       ensembleStageRole: 'worker',
-      permissionPostureSignaturePresent: false
+      permissionPresetId: 'read_only',
+      readOnly: true,
+      permissionPostureHash: sleepWakeup.permissionPosture!.postureHash,
+      permissionPostureSignaturePresent: true
     })
-    expect(sleepResult.wakeup?.dispatchReceipt?.receiptHash).toMatch(/^[a-f0-9]{64}$/)
-    const wakeupId = sleepResult.wakeup!.wakeupId
+    expect(sleepWakeup.dispatchReceipt?.receiptHash).toMatch(/^[a-f0-9]{64}$/)
+    expect(signRunPermissionPosture).toHaveBeenCalledWith(
+      'plan',
+      expect.objectContaining({ presetId: 'read_only', readOnly: true }),
+      expect.objectContaining({
+        appRunId: sleepWakeup.wakeupId,
+        appChatId: 'ensemble-chat',
+        prompt: 'Start and survive a restart.'
+      })
+    )
+    const wakeupId = sleepWakeup.wakeupId
 
     // Codex runs while claude sleeps; the round stays 'running'
     // because the wakeup is still pending.

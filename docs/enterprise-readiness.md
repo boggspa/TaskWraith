@@ -484,18 +484,19 @@ What exists:
 - Ensemble wakeups now carry a schedule-time `dispatchReceipt` that hashes the
   frozen chat/workspace, provider, participant, role, and stage identity used on
   resume.
+- Ensemble wakeups now carry a schedule-time signed permission posture snapshot,
+  and their dispatch receipt hashes that posture alongside the frozen
+  participant identity.
 - Remote queued dispatch now freezes a queue-time signed permission posture and
   includes that posture hash/signature presence in its dispatch receipt, alongside
   the allowlist decision and policy fingerprint.
 
 What is missing:
 
-- Stage-role scheduling intent now has a first-class frozen receipt across
-  queue rows, workflow-backed scheduled tasks, and Ensemble wakeups, but the
-  wakeup path still needs an explicit signed posture snapshot.
-- Ensemble wakeups still need full posture proof that they resume with the
-  permission posture that was scheduled; wakeups now freeze and hash
-  role/stage identity, but they do not yet carry a signed posture snapshot.
+- Stage-role scheduling intent now has a first-class frozen receipt and signed
+  posture proof across queue rows, workflow-backed scheduled tasks, and Ensemble
+  wakeups; the remaining work is policy-choice testing for resume-time
+  revocation vs frozen scheduled intent.
 - Remote queued dispatch has an explicitly frozen queue-time posture and
   allowlist proof; dequeue replay still dispatches from the queued job, so the
   next audit should prove whether replay intentionally trusts that frozen
