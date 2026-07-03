@@ -102,7 +102,6 @@ describe('ExternalPublishReceiptLedger', () => {
 
   it('caps the ledger to the newest records', () => {
     const ledger = new ExternalPublishReceiptLedger({
-      storagePath,
       now: () => '2026-07-03T00:00:00.000Z'
     })
 
