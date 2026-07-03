@@ -67,6 +67,11 @@
   -webkit-backdrop-filter: blur(16px);
 }
 
+/* DEPRECATED (1.5 corporate-clean redesign): the two-tier glyph rail was
+   replaced by .right-dock-header / .right-dock-switcher (see below). These
+   .right-dock-tabs / .right-dock-tab* rules no longer match any DOM — kept
+   only because .right-dock-close shares the base rule below. Safe to delete
+   once .right-dock-close is given standalone declarations. */
 .right-dock-tabs {
   flex: 0 0 auto;
   min-height: 38px;
@@ -137,9 +142,12 @@
 }
 
 .right-dock-tab.active {
-  color: var(--text-primary);
-  border-color: color-mix(in srgb, var(--accent) 36%, transparent);
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--rightdock-text);
+  border-color: transparent;
+  background: var(--rightdock-active-bg);
+  box-shadow:
+    inset 0 0 0 1px var(--rightdock-active-ring),
+    0 1px 0 color-mix(in srgb, var(--text-primary) 4%, transparent);
 }
 
 .right-dock-tab-count {
@@ -153,12 +161,357 @@
   align-items: center;
   justify-content: center;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--accent) 30%, var(--surface-1, #1c1c22));
-  border: 1px solid color-mix(in srgb, var(--panel-border) 70%, transparent);
-  color: var(--text-primary);
+  background: var(--rightdock-badge-bg);
+  border: 1px solid var(--rightdock-border);
+  color: var(--rightdock-text-muted);
   font-size: 9.5px;
   line-height: 1;
   font-variant-numeric: tabular-nums;
+}
+
+/* ── Right-dock surface switcher (1.5 corporate-clean redesign) ─────────────
+   Replaces the two-tier glyph rail with one slim header row whose active-
+   surface button opens a grouped, card-style popover selector. Neutral
+   --rightdock-* tokens only; accent is rationed to the focus ring. */
+.right-dock-header {
+  position: relative;
+  flex: 0 0 auto;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 8px 7px 9px;
+  border-bottom: 1px solid color-mix(in srgb, var(--panel-border) 76%, transparent);
+}
+
+.right-dock-switcher {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: var(--rightdock-radius-row);
+  background: transparent;
+  color: var(--rightdock-text);
+  font: inherit;
+  font-size: var(--font-size-sm, 13px);
+  font-weight: 560;
+  letter-spacing: -0.005em;
+  cursor: pointer;
+  transition:
+    background 0.13s ease,
+    box-shadow 0.13s ease;
+}
+
+.right-dock-switcher:hover {
+  background: var(--rightdock-hover-bg);
+}
+
+.right-dock-switcher.open {
+  background: var(--rightdock-active-bg);
+  box-shadow: inset 0 0 0 1px var(--rightdock-active-ring);
+}
+
+.right-dock-switcher-icon {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 17px;
+  height: 17px;
+  color: var(--rightdock-text-muted);
+}
+
+.right-dock-switcher-icon svg {
+  width: 17px;
+  height: 17px;
+}
+
+.right-dock-switcher-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+
+.right-dock-switcher-caret {
+  flex: 0 0 auto;
+  width: 15px;
+  height: 15px;
+  color: var(--rightdock-text-faint);
+  transition: transform 0.16s ease;
+}
+
+.right-dock-switcher.open .right-dock-switcher-caret {
+  transform: rotate(180deg);
+}
+
+.right-dock-surface-menu {
+  position: absolute;
+  top: calc(100% - 2px);
+  left: 8px;
+  right: 8px;
+  z-index: 40;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: var(--rightdock-surface);
+  border: 1px solid color-mix(in srgb, var(--panel-border) 90%, transparent);
+  border-radius: var(--rightdock-radius-card);
+  box-shadow: var(--shadow-md);
+  max-height: min(70vh, 520px);
+  overflow-y: auto;
+}
+
+.right-dock-surface-group-label {
+  padding: 9px 8px 4px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--rightdock-text-faint);
+}
+
+.right-dock-surface-group:first-child .right-dock-surface-group-label {
+  padding-top: 3px;
+}
+
+.right-dock-surface-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  width: 100%;
+  padding: 9px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--rightdock-radius-row);
+  background: transparent;
+  color: var(--rightdock-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background 0.13s ease,
+    box-shadow 0.13s ease;
+}
+
+.right-dock-surface-card:hover:not(.disabled) {
+  background: var(--rightdock-hover-bg);
+}
+
+.right-dock-surface-card.active {
+  background: var(--rightdock-active-bg);
+  box-shadow: inset 0 0 0 1px var(--rightdock-active-ring);
+}
+
+.right-dock-surface-card.disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.right-dock-surface-card-icon {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  background: var(--rightdock-surface-raised);
+  border: 1px solid var(--rightdock-border);
+  color: var(--rightdock-text-muted);
+}
+
+.right-dock-surface-card-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.right-dock-surface-card-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.right-dock-surface-card-title {
+  font-size: var(--font-size-sm, 13px);
+  font-weight: 560;
+  color: var(--rightdock-text);
+}
+
+.right-dock-surface-card-hint {
+  font-size: var(--font-size-xs, 11.5px);
+  color: var(--rightdock-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.right-dock-surface-card-badge {
+  flex: 0 0 auto;
+  align-self: center;
+  min-width: 20px;
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: var(--rightdock-badge-bg);
+  border: 1px solid var(--rightdock-border);
+  color: var(--rightdock-text-muted);
+  font-size: 11px;
+  line-height: 1.5;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.right-dock-cmdk-hint {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
+  padding: 0 7px;
+  border: 1px solid var(--rightdock-border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--rightdock-text-faint);
+  font-family: var(--font-mono, ui-monospace, 'SF Mono', Menlo, monospace);
+  font-size: 10.5px;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition:
+    color 0.12s ease,
+    border-color 0.12s ease,
+    background 0.12s ease;
+}
+
+.right-dock-cmdk-hint:hover {
+  color: var(--rightdock-text);
+  background: var(--rightdock-hover-bg);
+}
+
+/* Command palette (⌘K) */
+.right-dock-command {
+  padding: 0;
+  overflow: hidden;
+}
+
+.right-dock-command-search {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 11px 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--panel-border) 80%, transparent);
+}
+
+.right-dock-command-search svg {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  color: var(--rightdock-text-faint);
+}
+
+.right-dock-command-search input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--rightdock-text);
+  font: inherit;
+  font-size: var(--font-size-sm, 13px);
+  outline: none;
+}
+
+.right-dock-command-search input::placeholder {
+  color: var(--rightdock-text-faint);
+}
+
+.right-dock-command-esc {
+  flex: 0 0 auto;
+  font-family: var(--font-mono, ui-monospace, 'SF Mono', Menlo, monospace);
+  font-size: 10px;
+  color: var(--rightdock-text-faint);
+  border: 1px solid var(--rightdock-border);
+  border-radius: 5px;
+  padding: 1px 5px;
+}
+
+.right-dock-command-list {
+  padding: 6px;
+  max-height: min(60vh, 440px);
+  overflow-y: auto;
+}
+
+.right-dock-command-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--rightdock-radius-row);
+  background: transparent;
+  color: var(--rightdock-text);
+  font: inherit;
+  font-size: var(--font-size-sm, 13px);
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+
+.right-dock-command-item:hover {
+  background: var(--rightdock-hover-bg);
+}
+
+.right-dock-command-item.active {
+  background: var(--rightdock-active-bg);
+  box-shadow: inset 0 0 0 1px var(--rightdock-active-ring);
+}
+
+.right-dock-command-item-icon {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 17px;
+  height: 17px;
+  color: var(--rightdock-text-muted);
+}
+
+.right-dock-command-item-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.right-dock-command-item-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.right-dock-command-empty {
+  padding: 18px 12px;
+  text-align: center;
+  color: var(--rightdock-text-faint);
+  font-size: var(--font-size-xs, 12px);
+}
+
+/* Keyboard focus — the ONE place accent is allowed. */
+.right-dock-switcher:focus-visible,
+.right-dock-surface-card:focus-visible,
+.right-dock-cmdk-hint:focus-visible,
+.right-dock-command-item:focus-visible,
+.right-dock-command-search input:focus-visible,
+.right-dock-close:focus-visible {
+  outline: none;
+  box-shadow:
+    0 0 0 2px var(--rightdock-surface),
+    0 0 0 3.5px color-mix(in srgb, var(--accent) 60%, transparent);
 }
 
 .right-dock-body {

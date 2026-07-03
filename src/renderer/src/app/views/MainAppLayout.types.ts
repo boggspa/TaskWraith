@@ -3,6 +3,7 @@ import type { AppSettings } from '../../../../main/store/types'
 import type { AppearanceState } from '../../hooks/useAppearance'
 import type { PanelPresence } from '../../hooks/usePanelPresence'
 import type { SettingsPanelUpdate } from '../../lib/settingsPanelUpdate'
+import type { RightDockSurfaceDef } from '../../components/RightDockSurfaceSwitcher'
 
 type SidebarProps = ComponentProps<typeof import('../../components/Sidebar').Sidebar>
 type SettingsSidebarProps = ComponentProps<
@@ -219,7 +220,7 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   displayFileChangeSummaries: any
   dockChatPopoutWindow: any
   dockPresence: any
-  dockTabDefs: any
+  dockTabDefs: RightDockSurfaceDef[]
   effectiveInspectorWidth: any
   effectiveIsThinking: any
   ensembleEnabledParticipantsForCurrent: any

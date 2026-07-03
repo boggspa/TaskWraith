@@ -52,6 +52,25 @@
   --surface: var(--surface-1);
   --surface-elevated: var(--surface-2);
 
+  /* Right dock — its own coherent "corporate-clean" skin that maps onto the
+   * main-pane tokens (mirrors shadcn's separate --sidebar-* precedent). The
+   * dock is permanently neutral: accent is rationed to the focus ring only,
+   * active states use a neutral text-primary wash + inset rim (never an accent
+   * bubble). Consumed by .right-dock*, the grouped rail, card home and ⌘K. */
+  --rightdock-surface: var(--surface-1);
+  --rightdock-surface-raised: var(--surface-2);
+  --rightdock-border: var(--surface-border);
+  --rightdock-text: var(--text-primary);
+  --rightdock-text-muted: var(--text-secondary);
+  --rightdock-text-faint: var(--text-tertiary);
+  --rightdock-accent: var(--accent);
+  --rightdock-active-bg: color-mix(in srgb, var(--text-primary) 9%, transparent);
+  --rightdock-active-ring: color-mix(in srgb, var(--text-primary) 7%, transparent);
+  --rightdock-hover-bg: color-mix(in srgb, var(--text-primary) 5%, transparent);
+  --rightdock-badge-bg: var(--surface-2);
+  --rightdock-radius-row: 6px;
+  --rightdock-radius-card: 10px;
+
   /* Content / Transcript */
   --main-pane-opacity-100: 100%;
   --main-pane-opacity-60: 60%;

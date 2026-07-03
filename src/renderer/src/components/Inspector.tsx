@@ -327,6 +327,12 @@ const INSPECTOR_TABS = [
   }
 ] as const
 
+/** Flattened id/label pairs for the 7 inspector sub-views, consumed by the
+ * right-dock ⌘K palette so power users can jump straight to Diff / Safety / … */
+export const INSPECTOR_TAB_META: { id: InspectorTab; label: string }[] = INSPECTOR_TABS.map(
+  (tab) => ({ id: tab.id, label: tab.label })
+)
+
 /**
  * Per-tab error boundary (1.0.3 hotfix).
  *
@@ -416,6 +422,7 @@ export function Inspector(props: InspectorProps) {
             <span className="inspector-tab-icon" aria-hidden>
               {tab.icon}
             </span>
+            <span className="inspector-tab-label">{tab.label}</span>
           </button>
         ))}
       </div>

@@ -15,7 +15,8 @@ import { RunRailPanel } from '../../components/RunRailPanel'
 import { decideApprovalElevation } from '../../lib/approvalElevation'
 import { Sidebar } from '../../components/Sidebar'
 import { WorkspaceBoardView } from '../../components/WorkspaceBoardView'
-import { Inspector } from '../../components/Inspector'
+import { Inspector, INSPECTOR_TAB_META } from '../../components/Inspector'
+import { RightDockSurfaceSwitcher } from '../../components/RightDockSurfaceSwitcher'
 import { SettingsPanel } from '../../components/SettingsPanel'
 import { SettingsSidebar } from '../../components/SettingsSidebar'
 import {
@@ -1046,7 +1047,11 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
             </div>
           )}
           {!isChatPopoutWindow && (
-            <div className="chat-corner-controls chat-corner-controls-left">
+            <div
+              className={`chat-corner-controls chat-corner-controls-left${
+                showWorkspaceSidebar ? '' : ' chat-corner-controls-workspace-hidden'
+              }`}
+            >
               <button
                 className="chat-corner-btn"
                 type="button"
@@ -1937,55 +1942,21 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
               style={rightDockStyle}
               aria-label="Right dock"
             >
-              <div className="right-dock-tabs" role="tablist" aria-label="Right dock tabs">
-                {dockTabDefs.map((tab) => {
-                  const isActive = activeRightDockTab === tab.id
-                  return (
-                    <button
-                      key={tab.id}
-                      type="button"
-                      role="tab"
-                      className={`right-dock-tab right-dock-tab--icon ${isActive ? 'active' : ''}`}
-                      aria-selected={isActive}
-                      aria-label={tab.label}
-                      title={
-                        tab.enabled
-                          ? tab.label
-                          : tab.id === 'chat'
-                            ? 'Open a side chat from a message first'
-                            : tab.id === 'files'
-                              ? 'Files need a bound workspace'
-                              : tab.id === 'pins'
-                                ? 'Open a chat first'
-                                : tab.label
-                      }
-                      disabled={!tab.enabled}
-                      onClick={() => activateRightDockTab(tab.id)}
-                    >
-                      <span className="right-dock-tab-icon" aria-hidden>
-                        {tab.icon}
-                      </span>
-                      {typeof tab.badge === 'number' && tab.badge > 0 && (
-                        <span className="right-dock-tab-count">
-                          {tab.badge > 99 ? '99+' : tab.badge}
-                        </span>
-                      )}
-                    </button>
-                  )
-                })}
-                <button
-                  type="button"
-                  className="right-dock-close"
-                  onClick={() => {
-                    if (activeRightDockTab === 'chat') hideSideChatPane()
-                    else closeRightDockPanel(activeRightDockTab)
-                  }}
-                  title="Close active dock tab"
-                  aria-label="Close active dock tab"
-                >
-                  <XSymbolIcon />
-                </button>
-              </div>
+              <RightDockSurfaceSwitcher
+                tabs={dockTabDefs}
+                activeTab={activeRightDockTab}
+                onActivate={activateRightDockTab}
+                inspectorTabs={INSPECTOR_TAB_META}
+                activeInspectorTab={rightTab}
+                onSelectInspectorTab={(id) => {
+                  setRightTab(id as Parameters<typeof setRightTab>[0])
+                  activateRightDockTab('inspector')
+                }}
+                onClose={() => {
+                  if (activeRightDockTab === 'chat') hideSideChatPane()
+                  else closeRightDockPanel(activeRightDockTab)
+                }}
+              />
               <div className="right-dock-body">
                 {activeRightDockTab === 'chat' && sideChat && (
                   <div className="right-dock-side-chat">

@@ -523,6 +523,7 @@ import {
   shouldShowRightDock,
   type RightDockTab
 } from './lib/rightDockState'
+import { readDockSurface, writeDockSurface } from './lib/rightDockPersistence'
 import {
   shouldRebindCurrentChatOnWorkspaceSelect,
   type WorkspaceSelectIntent
@@ -19532,33 +19533,69 @@ function App(): React.JSX.Element {
     icon: ReactNode
     enabled: boolean
     badge?: number
+    group: 'session' | 'work' | 'inspect'
+    hint?: string
   }> = [
-    { id: 'chat', label: 'Chat', icon: <SplitChatIcon />, enabled: Boolean(sideChat) },
-    { id: 'run', label: 'Run', icon: <RunRailSymbolIcon />, enabled: true },
+    {
+      id: 'chat',
+      label: 'Chat',
+      icon: <SplitChatIcon />,
+      enabled: Boolean(sideChat),
+      group: 'session',
+      hint: 'Branch a side conversation'
+    },
+    {
+      id: 'run',
+      label: 'Run',
+      icon: <RunRailSymbolIcon />,
+      enabled: true,
+      group: 'session',
+      hint: 'Live lanes + analyst'
+    },
     {
       id: 'media',
       label: 'Media',
       icon: <ChatMediaIcon />,
       enabled: true,
-      badge: currentChatMediaRefs.length
+      badge: currentChatMediaRefs.length,
+      group: 'work',
+      hint: 'Images, audio & video'
     },
     {
       id: 'pins',
       label: 'Notes',
       icon: <PinnedMessagesIcon />,
       enabled: Boolean(currentChat),
-      badge: currentPinnedMessages.length
+      badge: currentPinnedMessages.length,
+      group: 'session',
+      hint: 'Pinned messages & board'
     },
     {
       id: 'files',
       label: 'Files',
       icon: <FileMenuSelectionIcon />,
-      enabled: hasWorkspaceContext
+      enabled: hasWorkspaceContext,
+      group: 'work',
+      hint: 'Workspace file editor'
     },
-    { id: 'inspector', label: 'Inspect', icon: <ReviewSymbolIcon />, enabled: true }
+    {
+      id: 'inspector',
+      label: 'Inspect',
+      icon: <ReviewSymbolIcon />,
+      enabled: true,
+      group: 'inspect',
+      hint: 'Diffs, invocations & safety'
+    }
   ]
   if (isTerminalDockAvailable) {
-    dockTabDefs.push({ id: 'terminal', label: 'Term', icon: <AppleTerminalIcon />, enabled: true })
+    dockTabDefs.push({
+      id: 'terminal',
+      label: 'Term',
+      icon: <AppleTerminalIcon />,
+      enabled: true,
+      group: 'work',
+      hint: 'Workspace shell'
+    })
   }
   const closeRightDockPanel = (panelId: RightDockTab) => {
     switch (panelId) {
@@ -19619,6 +19656,37 @@ function App(): React.JSX.Element {
     openRightDockPanel(id)
     setRightDockTab(id)
   }
+  // Per-chat memory of the active dock surface. RESTORE is declared before
+  // PERSIST on purpose: on mount the saved value must be read into memory before
+  // the persist effect can write the initial 'run' over it.
+  //
+  // Restore: when the focused chat changes (and on first mount), reopen that
+  // thread's last-used surface. Validated against the DEFINED + ENABLED surfaces
+  // (dockTabDefs), NOT the currently-open set, so it fires even when arriving at
+  // a chat before the saved panel is open. No-op if none saved / unavailable.
+  useEffect(() => {
+    const chatId = currentChat?.appChatId
+    if (!chatId) return
+    const saved = readDockSurface(chatId)
+    if (
+      saved &&
+      saved !== rightDockTab &&
+      dockTabDefs.some((tab) => tab.id === saved && tab.enabled)
+    ) {
+      activateRightDockTab(saved)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentChat?.appChatId])
+  // Persist EVERY surface change — the switcher, ⌘K, and the imperative
+  // feature-jumps that call setRightDockTab directly (openInspectorTab, run
+  // finish, etc.) — so switching away and back restores the TRUE last surface
+  // rather than a stale manual pick. Keyed on rightDockTab only: a chat switch
+  // alone doesn't change rightDockTab, so it never writes the old chat's surface
+  // to the new chat's key.
+  useEffect(() => {
+    writeDockSurface(currentChat?.appChatId, rightDockTab)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rightDockTab])
   // The stored `inspectorWidth` is an absolute px preference. Applied
   // verbatim it mis-scales on a window narrower than the one it was saved
   // on (the inspector opens too wide and squeezes the transcript until the

@@ -127,13 +127,6 @@
     inset 0 0 12px color-mix(in srgb, var(--chat-provider-accent) 10%, transparent);
 }
 
-.app-sidebar .sidebar-workspace-group .sidebar-chat-item.running .sidebar-chat-busy {
-  background: var(--chat-provider-accent);
-  box-shadow:
-    0 0 0 3px color-mix(in srgb, var(--chat-provider-accent) 20%, transparent),
-    0 0 10px color-mix(in srgb, var(--chat-provider-accent) 40%, transparent);
-}
-
 .app-sidebar .sidebar-workspace-group .sidebar-chat-item .sidebar-chat-age {
   border-radius: 0;
   padding: 0;
@@ -411,21 +404,41 @@
 
 /* --- Tabs: segmented control with smoother active pill --------------- */
 .app-inspector .inspector-tabs {
-  padding: 8px 12px;
-  gap: 3px;
+  padding: 8px 10px;
+  gap: 4px;
+  /* 1.5: labels restored — the 7 sub-tabs wrap instead of collapsing to
+     cryptic icon-only glyphs. Neutral segmented control on --rightdock tokens. */
+  flex-wrap: wrap;
   background: color-mix(in srgb, var(--panel-elevated-bg) 55%, transparent);
   border-bottom: 1px solid color-mix(in srgb, var(--panel-border) 70%, transparent);
   /* GPU: dropped on tab-bar chrome. */
 }
 
 .app-inspector .inspector-tab {
-  padding: 5px 12px;
-  border-radius: 6px;
+  /* Override the bare icon-only 28x28 square (03-…:9388) so icon + label fit. */
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: auto;
+  height: auto;
+  min-height: 28px;
+  padding: 5px 10px;
+  border-radius: var(--rightdock-radius-row, 6px);
   font-size: var(--font-size-xs);
   font-weight: 550;
   letter-spacing: 0.005em;
   color: color-mix(in srgb, var(--text-secondary) 92%, transparent);
   transition: color 0.14s ease, background 0.14s ease, box-shadow 0.14s ease;
+}
+
+.app-inspector .inspector-tab-icon {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+}
+
+.app-inspector .inspector-tab-label {
+  white-space: nowrap;
 }
 
 .app-inspector .inspector-tab:hover {
@@ -3500,7 +3513,6 @@ button.sidebar-footer-approval-row.is-clickable:focus-visible {
   .app-sidebar .sidebar-item,
   .app-sidebar .sidebar-item-action,
   .sidebar-tree-chevron,
-  .sidebar-chat-busy,
   .app-sidebar .sidebar-workspace-running-dot {
     transition: none;
     animation: none;
@@ -3511,7 +3523,6 @@ button.sidebar-footer-approval-row.is-clickable:focus-visible {
 :root[data-reduce-motion="true"] .app-sidebar .sidebar-item,
 :root[data-reduce-motion="true"] .app-sidebar .sidebar-item-action,
 :root[data-reduce-motion="true"] .sidebar-tree-chevron,
-:root[data-reduce-motion="true"] .sidebar-chat-busy,
 :root[data-reduce-motion="true"] .app-sidebar .sidebar-workspace-running-dot {
   transition: none;
   animation: none;
