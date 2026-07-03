@@ -125,18 +125,36 @@ export const OLLAMA_ADVERTISED_TOOL_NAMES = [
 
 const OLLAMA_ADVERTISED_TOOL_NAME_SET = new Set<OllamaToolName>(OLLAMA_ADVERTISED_TOOL_NAMES)
 
+// File-edit + shell tools are HARD-denied under a read-only/plan posture (the
+// gate denies fileChanges + shellCommands, and deny wins even over a standing
+// grant — see OllamaRoleGovernance.test.ts). Advertising them to such a seat
+// just hands a weak local model tools it can only ever get denied, wasting its
+// tool-selection budget — the opposite of what curation is for. So they are
+// stripped from the ADVERTISEMENT (not the executable grammar) for read-only runs.
+const OLLAMA_MUTATION_TOOL_NAME_SET = new Set<OllamaToolName>([
+  ...OLLAMA_FILE_EDIT_TOOL_NAMES,
+  ...OLLAMA_SHELL_TOOL_NAMES
+])
+
 /**
  * The tool NAMES advertised to a local model, honoring the run's networkAccess
- * (web tools stripped when networkAccess is 'deny', matching the gate). This is
- * the curated ~22-tool surface, NOT the full catalog — see
- * OLLAMA_ADVERTISED_TOOL_NAMES.
+ * (web tools stripped when networkAccess is 'deny') AND its permission posture
+ * (file-edit + shell tools stripped when the run is read-only/plan, matching the
+ * gate). This is the curated ~22-tool surface, NOT the full catalog — see
+ * OLLAMA_ADVERTISED_TOOL_NAMES. Curation lives here, in the advertisement; the
+ * full catalog stays executable at the gate and decodable by the grammar.
  */
 export function ollamaAdvertisedToolNames(
-  options: { networkAccess?: string | null } = {}
+  options: { networkAccess?: string | null; readOnly?: boolean } = {}
 ): OllamaToolName[] {
-  return options.networkAccess === 'deny'
-    ? OLLAMA_ADVERTISED_TOOL_NAMES.filter((toolName) => !OLLAMA_NETWORK_TOOL_NAMES.has(toolName))
-    : [...OLLAMA_ADVERTISED_TOOL_NAMES]
+  let names: OllamaToolName[] = [...OLLAMA_ADVERTISED_TOOL_NAMES]
+  if (options.networkAccess === 'deny') {
+    names = names.filter((toolName) => !OLLAMA_NETWORK_TOOL_NAMES.has(toolName))
+  }
+  if (options.readOnly) {
+    names = names.filter((toolName) => !OLLAMA_MUTATION_TOOL_NAME_SET.has(toolName))
+  }
+  return names
 }
 
 /** Is this tool part of the curated advertised default set (vs the tool_help tail)? */

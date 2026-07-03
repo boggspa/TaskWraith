@@ -236,14 +236,19 @@ function describeTool(toolName: OllamaToolName): string | null {
 export function ollamaLocalToolSystemPrompt(
   tier: OllamaToolControlTier | string | undefined | null = 'read_only',
   modelId?: string | null,
-  options: { intent?: OllamaPromptIntent; networkAccess?: string | null } = {}
+  options: { intent?: OllamaPromptIntent; networkAccess?: string | null; readOnly?: boolean } = {}
 ): string {
   const intent = options.intent ?? 'workspace'
   const normalizedTier = normalizeOllamaToolControlTier(tier)
-  // Advertise only the CURATED working set (~22), not the full ~134-tool catalog
-  // — small local models degrade badly when shown too many tool names. The tail
-  // stays executable at the gate and reachable via tool_help.
-  const tools = ollamaAdvertisedToolNames({ networkAccess: options.networkAccess })
+  // Advertise only the CURATED working set (~22), not the full catalog — small
+  // local models degrade badly when shown too many tool names. The tail stays
+  // executable at the gate and reachable via tool_help. Under a read-only/plan
+  // posture, edit + shell tools are also dropped from the advertisement (they'd
+  // only be denied), so the seat isn't handed tools it can't run.
+  const tools = ollamaAdvertisedToolNames({
+    networkAccess: options.networkAccess,
+    readOnly: options.readOnly
+  })
   const hasWebTools = tools.includes('web_search') || tools.includes('web_fetch')
   const familyLines = modelId?.trim()
     ? ollamaModelFamilyPromptLines(modelId, intent, normalizedTier)
@@ -291,7 +296,9 @@ export function ollamaLocalToolSystemPrompt(
   lines.push(
     'More TaskWraith tools exist beyond these. For any tool\'s exact arguments — or to list them all — call tool_help: {"taskwraith_tool":{"name":"tool_help","arguments":{"name":"<tool or empty to list>"}}}.',
     'Paths must stay inside the active workspace.',
-    'File edits, shell, and publishing are governed by the run\'s permission role: TaskWraith either shows the user an approval modal or blocks the tool. If a tool is blocked, say so and continue with what you can do.',
+    options.readOnly
+      ? 'This run is READ-ONLY: file edits, shell, and publishing are unavailable and not listed above. Do not attempt them — read, search, and answer, and say plainly if the task would require a write you cannot make.'
+      : 'File edits, shell, and publishing are governed by the run\'s permission role: TaskWraith either shows the user an approval modal or blocks the tool. If a tool is blocked, say so and continue with what you can do.',
     'Use ask_user_question when the request is too ambiguous to continue safely or when a mid-task choice belongs to the user.',
     'After a tool result returns, answer normally or request one more tool with the same JSON shape. Do not invent file contents or workspace facts when a tool result is needed.'
   )

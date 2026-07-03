@@ -1904,6 +1904,55 @@ describe('runOllamaProvider streaming', () => {
     // The advertised set is ~22; the executable catalog is far larger.
     expect(enumNames.length).toBeGreaterThan(40)
   })
+
+  it('does not advertise edit/shell native tools to a read-only seat', async () => {
+    const chatBodies: string[] = []
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (String(url).endsWith('/api/tags')) {
+        return jsonResponse({
+          models: [
+            {
+              name: 'stream-model:latest',
+              digest: 'digest-stream',
+              details: { family: 'qwen' },
+              capabilities: ['tools']
+            }
+          ]
+        })
+      }
+      if (String(url).endsWith('/api/show')) {
+        return jsonResponse({ details: { family: 'qwen' }, capabilities: ['tools'] })
+      }
+      if (String(url).endsWith('/api/chat')) {
+        chatBodies.push(String(init?.body || ''))
+        return ollamaStreamResponse([
+          JSON.stringify({ message: { role: 'assistant', content: 'Reading only.' } }),
+          JSON.stringify({ done: true, prompt_eval_count: 4, eval_count: 2 })
+        ])
+      }
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const { deps } = makeProviderDeps({ fetchMock, executeTool: async () => ({ ok: true, output: '' }) })
+
+    await runOllamaProvider(
+      deps,
+      stubEvent,
+      { ...basePayload, effectivePermissions: { readOnly: true } as any },
+      baseRoute
+    )
+
+    expect(chatBodies).toHaveLength(1)
+    const toolNames: string[] = (JSON.parse(chatBodies[0]).tools || []).map(
+      (t: any) => t.function?.name
+    )
+    // Reads stay; edits + shell are gone (they'd only be denied for this seat).
+    expect(toolNames).toContain('read_file')
+    expect(toolNames).toContain('tool_help')
+    expect(toolNames).not.toContain('write_file')
+    expect(toolNames).not.toContain('replace')
+    expect(toolNames).not.toContain('run_shell_command')
+    expect(toolNames).not.toContain('run_task')
+  })
 })
 
 describe('normalizeOllamaBaseUrl', () => {

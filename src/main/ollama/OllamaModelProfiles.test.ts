@@ -135,6 +135,25 @@ describe('ollamaLocalToolSystemPrompt', () => {
     // git_blame is not in the curated advertised set — it lives in the tool_help tail.
     expect(prompt).not.toContain('git_blame')
   })
+
+  it('drops file-edit + shell tools from the advertisement under a read-only posture', () => {
+    // The `readOnly` OPTION (a real posture) is distinct from the inert `tier`
+    // first-arg: a read-only/plan seat hard-denies edits+shell, so advertising
+    // them just wastes a weak model's tool budget.
+    const readOnly = ollamaLocalToolSystemPrompt('read_only', 'qwen3.5:9b', { readOnly: true })
+    expect(readOnly).not.toContain('write_file')
+    expect(readOnly).not.toContain('run_shell_command')
+    expect(readOnly).not.toContain('run_task')
+    // Reads/search/web stay available and the seat is told writes are unavailable.
+    expect(readOnly).toContain('read_file')
+    expect(readOnly).toContain('workspace_search')
+    expect(readOnly).toContain('This run is READ-ONLY')
+    // Default (writable) posture still advertises the edit + shell tools.
+    const writable = ollamaLocalToolSystemPrompt('read_only', 'qwen3.5:9b')
+    expect(writable).toContain('write_file')
+    expect(writable).toContain('run_shell_command')
+    expect(writable).not.toContain('This run is READ-ONLY')
+  })
 })
 
 describe('workflow hints', () => {

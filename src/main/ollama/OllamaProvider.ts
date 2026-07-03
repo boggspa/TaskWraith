@@ -337,6 +337,7 @@ export interface OllamaOpeningMessagesInput {
   promptIntent: OllamaPromptIntent
   toolControlTier: OllamaToolControlTier | string | undefined | null
   networkAccess?: string | null
+  readOnly?: boolean
   model: string
   workspaceIndexBlock: string
   userPrompt: string
@@ -353,7 +354,8 @@ export function buildOllamaOpeningMessages(input: OllamaOpeningMessagesInput): O
     input.toolProtocolEnabled
       ? ollamaLocalToolSystemPrompt(input.toolControlTier, input.model, {
           intent: input.promptIntent,
-          networkAccess: input.networkAccess
+          networkAccess: input.networkAccess,
+          readOnly: input.readOnly
         })
       : '',
     // Prompt economy (2026-07): the explore→read→edit workflow line used to live
@@ -1484,14 +1486,17 @@ function ollamaNativeToolParameters(
  * support (gpt-oss, qwen, etc.) emit structured `tool_calls` against these. */
 export function ollamaNativeToolDefinitions(
   _tier: OllamaToolControlTier | string | undefined | null,
-  options?: { compact?: boolean; networkAccess?: string | null }
+  options?: { compact?: boolean; networkAccess?: string | null; readOnly?: boolean }
 ): OllamaNativeToolDefinition[] {
   const compact = Boolean(options?.compact)
   // Advertise only the curated working set as native function defs (not the full
-  // ~134-tool catalog) — a small model degrades when handed too many tools. The
-  // tail is still executable at the gate; the model discovers it via tool_help.
+  // catalog) — a small model degrades when handed too many tools. The tail is
+  // still executable at the gate; the model discovers it via tool_help. Under a
+  // read-only/plan posture, edit + shell tools are also dropped (they'd only be
+  // denied), so the native surface matches what the seat can actually run.
   const defs: OllamaNativeToolDefinition[] = ollamaAdvertisedToolNames({
-    networkAccess: options?.networkAccess
+    networkAccess: options?.networkAccess,
+    readOnly: options?.readOnly
   }).map((toolName) => {
     const { description, properties, required } = ollamaNativeToolParameters(toolName, compact)
     return {
@@ -2381,17 +2386,25 @@ export async function runOllamaProvider(
       settings.agenticServices?.networkAccess === 'deny'
         ? 'deny'
         : payload.effectivePermissions?.networkAccess || settings.agenticServices?.networkAccess
+    // Read-only/plan seats hard-deny file-edit + shell tools (deny wins even over
+    // a grant), so drop them from the ADVERTISED surface — the model shouldn't be
+    // handed tools it can only get denied. The grammar/gate keep the full catalog.
+    const runtimeReadOnly = payload.effectivePermissions?.readOnly === true
     const nativeToolDefs = toolProtocolEnabled && nativeToolsSupported && runProfile.protocolMode !== 'json_only'
       ? ollamaNativeToolDefinitions(toolControlTier, {
           compact: compactToolSchemas,
-          networkAccess: runtimeNetworkAccess
+          networkAccess: runtimeNetworkAccess,
+          readOnly: runtimeReadOnly
         })
       : []
     const availableToolNames =
       nativeToolDefs.length > 0
         ? nativeToolDefs.map((def) => def.function.name)
         : toolProtocolEnabled
-          ? [...ollamaAdvertisedToolNames({ networkAccess: runtimeNetworkAccess }), OLLAMA_TOOL_HELP_NAME]
+          ? [
+              ...ollamaAdvertisedToolNames({ networkAccess: runtimeNetworkAccess, readOnly: runtimeReadOnly }),
+              OLLAMA_TOOL_HELP_NAME
+            ]
           : []
     // The constrained-decoding grammar must permit the FULL executable catalog
     // (+ tool_help), not just the advertised set above — otherwise a json-path
@@ -2444,6 +2457,7 @@ export async function runOllamaProvider(
       promptIntent,
       toolControlTier,
       networkAccess: runtimeNetworkAccess,
+      readOnly: runtimeReadOnly,
       model,
       workspaceIndexBlock,
       userPrompt,
