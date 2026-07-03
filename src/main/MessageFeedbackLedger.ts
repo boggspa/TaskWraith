@@ -31,6 +31,12 @@ export interface MessageFeedbackReceiptFilter {
   limit?: number
 }
 
+export interface MessageFeedbackLedgerUpdate {
+  records: MessageFeedbackReceipt[]
+  appended: MessageFeedbackReceipt[]
+  changed: boolean
+}
+
 function text(value: unknown, max = 500): string | undefined {
   if (typeof value !== 'string') return undefined
   const trimmed = value.trim()
@@ -59,11 +65,19 @@ function sameState(a: FeedbackState | ReceiptState | null, b: FeedbackState | Re
   return a.vote === b.vote && (a.reason || '') === (b.reason || '') && (a.note || '') === (b.note || '')
 }
 
+function receiptKey(chatId: string, messageId: string): string {
+  return `${chatId}:${messageId}`
+}
+
+function receiptRecordKey(record: Pick<MessageFeedbackReceipt, 'chatId' | 'messageId'>): string {
+  return receiptKey(record.chatId, record.messageId)
+}
+
 function latestLedgerState(records: MessageFeedbackReceipt[]): Map<string, ReceiptState | null> {
   const states = new Map<string, ReceiptState | null>()
   for (const record of records) {
     if (!record.chatId || !record.messageId) continue
-    const key = `${record.chatId}:${record.messageId}`
+    const key = receiptRecordKey(record)
     if (record.action === 'clear') {
       states.set(key, null)
     } else if (record.vote === 'up' || record.vote === 'down') {
@@ -119,6 +133,12 @@ function receiptForTransition(
     run?.ensembleRole ||
     (ensembleParticipantId ? participantRoles.get(ensembleParticipantId) : undefined) ||
     (typeof message.metadata?.guestRole === 'string' ? message.metadata.guestRole : undefined)
+  const attributionSource = run
+    ? 'run'
+    : provider || model || role
+      ? 'message_metadata'
+      : 'unresolved'
+  const attributionComplete = attributionSource === 'run' && Boolean(provider && model)
   const now = options.now()
   const action = current
     ? previous
@@ -144,6 +164,8 @@ function receiptForTransition(
     ...(run?.ensembleLaneId ? { ensembleLaneId: run.ensembleLaneId } : {}),
     ...(run?.ensembleRole ? { ensembleRole: run.ensembleRole } : {}),
     ...(run?.ensembleStageRole ? { ensembleStageRole: run.ensembleStageRole } : {}),
+    attributionSource,
+    attributionComplete,
     ...(current ? { vote: current.vote } : {}),
     ...(previous ? { previousVote: previous.vote } : {}),
     at: current?.at || now,
@@ -178,8 +200,9 @@ export function buildMessageFeedbackReceipts(
     if (message.role !== 'assistant' || !message.id) continue
     const current = feedbackState(message)
     const previous = feedbackState(previousMessages.get(message.id))
-    const key = `${nextChat.appChatId}:${message.id}`
+    const key = receiptKey(nextChat.appChatId, message.id)
     const ledgerState = ledgerStates.has(key) ? ledgerStates.get(key) || null : undefined
+    if (!current) continue
     const baseline =
       ledgerState !== undefined
         ? ledgerState
@@ -201,6 +224,63 @@ export function buildMessageFeedbackReceipts(
   return receipts
 }
 
+/**
+ * Apply feedback transitions for one chat save.
+ *
+ * Rating clears and message removals are treated as privacy erasure from this
+ * local receipt store, not as new durable "clear" evidence. The renderer label
+ * says "Remove rating"; this keeps the local evidence semantics aligned with
+ * that user action.
+ */
+export function updateMessageFeedbackLedgerForChatSave(
+  previousChat: ChatRecord | null | undefined,
+  nextChat: ChatRecord,
+  existingLedger: MessageFeedbackReceipt[],
+  options: BuildMessageFeedbackReceiptOptions
+): MessageFeedbackLedgerUpdate {
+  const nextAssistantMessageIds = new Set<string>()
+  const ledgerStates = latestLedgerState(existingLedger)
+  const purgeKeys = new Set<string>()
+
+  for (const message of nextChat.messages || []) {
+    if (message.role !== 'assistant' || !message.id) continue
+    nextAssistantMessageIds.add(message.id)
+    const current = feedbackState(message)
+    const key = receiptKey(nextChat.appChatId, message.id)
+    if (!current && ledgerStates.has(key)) purgeKeys.add(key)
+  }
+
+  for (const key of ledgerStates.keys()) {
+    if (!key.startsWith(`${nextChat.appChatId}:`)) continue
+    const messageId = key.slice(nextChat.appChatId.length + 1)
+    if (!nextAssistantMessageIds.has(messageId)) purgeKeys.add(key)
+  }
+
+  const prunedLedger =
+    purgeKeys.size === 0
+      ? existingLedger
+      : existingLedger.filter((record) => !purgeKeys.has(receiptRecordKey(record)))
+  const appended = buildMessageFeedbackReceipts(previousChat, nextChat, prunedLedger, options)
+  const records = appended.length > 0 ? [...prunedLedger, ...appended] : prunedLedger
+  return {
+    records,
+    appended,
+    changed: purgeKeys.size > 0 || appended.length > 0
+  }
+}
+
+export function removeMessageFeedbackReceipts(
+  records: MessageFeedbackReceipt[],
+  filter: { chatIds?: Iterable<string>; workspaceId?: string } = {}
+): MessageFeedbackReceipt[] {
+  const chatIds = filter.chatIds ? new Set(filter.chatIds) : null
+  return records.filter((record) => {
+    if (chatIds?.has(record.chatId)) return false
+    if (filter.workspaceId && record.workspaceId === filter.workspaceId) return false
+    return true
+  })
+}
+
 export function capMessageFeedbackReceipts(
   records: MessageFeedbackReceipt[],
   cap = MESSAGE_FEEDBACK_LEDGER_CAP
@@ -208,7 +288,16 @@ export function capMessageFeedbackReceipts(
   if (!Array.isArray(records)) return []
   const normalized = records.filter(normalizeMessageFeedbackReceipt)
   if (normalized.length <= cap) return normalized
-  return normalized.slice(normalized.length - cap)
+  const latestByKey = new Map<string, MessageFeedbackReceipt>()
+  for (const record of normalized) latestByKey.set(receiptRecordKey(record), record)
+  const latestIds = new Set([...latestByKey.values()].map((record) => record.id))
+  const recentHistoryIds = new Set<string>()
+  for (let i = normalized.length - 1; i >= 0 && recentHistoryIds.size < cap; i -= 1) {
+    const record = normalized[i]
+    if (!record || latestIds.has(record.id)) continue
+    recentHistoryIds.add(record.id)
+  }
+  return normalized.filter((record) => latestIds.has(record.id) || recentHistoryIds.has(record.id))
 }
 
 export function normalizeMessageFeedbackReceipt(
@@ -229,6 +318,12 @@ export function normalizeMessageFeedbackReceipt(
   const at = Number(input.at)
   const recordedAt = Number(input.recordedAt)
   const ensembleStageRole = stageRole(input.ensembleStageRole)
+  const attributionSource =
+    input.attributionSource === 'run' ||
+    input.attributionSource === 'message_metadata' ||
+    input.attributionSource === 'unresolved'
+      ? input.attributionSource
+      : undefined
   return {
     schemaVersion: MESSAGE_FEEDBACK_LEDGER_SCHEMA_VERSION,
     id: input.id,
@@ -248,6 +343,10 @@ export function normalizeMessageFeedbackReceipt(
     ...(text(input.ensembleLaneId, 160) ? { ensembleLaneId: text(input.ensembleLaneId, 160) } : {}),
     ...(text(input.ensembleRole, 160) ? { ensembleRole: text(input.ensembleRole, 160) } : {}),
     ...(ensembleStageRole ? { ensembleStageRole } : {}),
+    ...(attributionSource ? { attributionSource } : {}),
+    ...(typeof input.attributionComplete === 'boolean'
+      ? { attributionComplete: input.attributionComplete }
+      : {}),
     ...(vote ? { vote } : {}),
     ...(previousVote ? { previousVote } : {}),
     at: Number.isFinite(at) && at > 0 ? Math.floor(at) : Date.now(),

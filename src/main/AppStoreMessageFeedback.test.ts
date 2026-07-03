@@ -82,7 +82,7 @@ describe('AppStore message feedback receipts', () => {
     })
   })
 
-  it('records flip and clear transitions without duplicating repeated saves', () => {
+  it('records flip transitions without duplicating repeated saves', () => {
     const chatId = 'feedback-chat-transitions'
     AppStore.saveChat(makeChat(chatId, { vote: 'up', at: 1000 }))
     AppStore.saveChat(
@@ -93,11 +93,17 @@ describe('AppStore message feedback receipts', () => {
         note: 'Missed the review brief.'
       })
     )
-    AppStore.saveChat(makeChat(chatId))
-    AppStore.saveChat(makeChat(chatId))
+    AppStore.saveChat(
+      makeChat(chatId, {
+        vote: 'down',
+        at: 2000,
+        reason: 'wrong-model-for-role',
+        note: 'Missed the review brief.'
+      })
+    )
 
     const receipts = AppStore.getMessageFeedbackReceipts({ chatId })
-    expect(receipts.map((receipt) => receipt.action)).toEqual(['set', 'flip', 'clear'])
+    expect(receipts.map((receipt) => receipt.action)).toEqual(['set', 'flip'])
     expect(receipts[1]).toMatchObject({
       action: 'flip',
       vote: 'down',
@@ -106,11 +112,26 @@ describe('AppStore message feedback receipts', () => {
       note: 'Missed the review brief.',
       noteSensitive: true
     })
-    expect(receipts[2]).toMatchObject({
-      action: 'clear',
-      previousVote: 'down'
-    })
-    expect(receipts[2].vote).toBeUndefined()
+  })
+
+  it('treats removing a rating as erasure from the feedback ledger', () => {
+    const chatId = 'feedback-chat-clear-erases'
+    AppStore.saveChat(makeChat(chatId, { vote: 'down', at: 1000 }))
+    expect(AppStore.getMessageFeedbackReceipts({ chatId })).toHaveLength(1)
+
+    AppStore.saveChat(makeChat(chatId))
+
+    expect(AppStore.getMessageFeedbackReceipts({ chatId })).toHaveLength(0)
+  })
+
+  it('purges feedback receipts when a rated message is removed from a chat', () => {
+    const chat = makeChat('feedback-chat-message-delete', { vote: 'up', at: 1000 })
+    AppStore.saveChat(chat)
+    expect(AppStore.getMessageFeedbackReceipts({ chatId: chat.appChatId })).toHaveLength(1)
+
+    AppStore.saveChat({ ...chat, messages: [], runs: [] })
+
+    expect(AppStore.getMessageFeedbackReceipts({ chatId: chat.appChatId })).toHaveLength(0)
   })
 
   it('preserves ensemble lane and stage role attribution from the producing run', () => {
@@ -133,8 +154,60 @@ describe('AppStore message feedback receipts', () => {
       ensembleLaneId: 'round-1:participant-reviewer:0',
       ensembleRole: 'Reviewer',
       ensembleStageRole: 'reviewer',
+      attributionSource: 'run',
+      attributionComplete: true,
       vote: 'down',
       reason: 'wrong-model-for-role'
     })
+  })
+
+  it('marks metadata-only guest attribution as incomplete', () => {
+    const chat = makeChat('feedback-chat-guest-fallback', { vote: 'up', at: 1000 })
+    const guestChat: ChatRecord = {
+      ...chat,
+      messages: [
+        {
+          ...chat.messages[0],
+          runId: undefined,
+          metadata: {
+            feedback: { vote: 'up', at: 1000 },
+            guestRunId: 'guest-run-1',
+            guestProvider: 'claude',
+            guestModel: 'claude-sonnet-5',
+            guestRole: 'Reviewer'
+          }
+        }
+      ],
+      runs: []
+    }
+
+    AppStore.saveChat(guestChat)
+
+    const receipts = AppStore.getMessageFeedbackReceipts({ chatId: guestChat.appChatId })
+    expect(receipts[0]).toMatchObject({
+      runId: 'guest-run-1',
+      provider: 'claude',
+      model: 'claude-sonnet-5',
+      role: 'Reviewer',
+      attributionSource: 'message_metadata',
+      attributionComplete: false
+    })
+  })
+
+  it('purges feedback receipts when deleting chats or clearing history', () => {
+    const workspaceChat = makeChat('feedback-chat-delete', { vote: 'up', at: 1000 })
+    const otherChat = makeChat('feedback-chat-clear-all', { vote: 'down', at: 2000 })
+    AppStore.saveChat(workspaceChat)
+    AppStore.saveChat(otherChat)
+    expect(AppStore.getMessageFeedbackReceipts()).toHaveLength(2)
+
+    AppStore.deleteChat(workspaceChat.appChatId)
+
+    expect(AppStore.getMessageFeedbackReceipts({ chatId: workspaceChat.appChatId })).toHaveLength(0)
+    expect(AppStore.getMessageFeedbackReceipts({ chatId: otherChat.appChatId })).toHaveLength(1)
+
+    AppStore.clearChats()
+
+    expect(AppStore.getMessageFeedbackReceipts()).toHaveLength(0)
   })
 })

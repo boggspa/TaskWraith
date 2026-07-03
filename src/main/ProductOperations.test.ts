@@ -451,6 +451,12 @@ describe('ProductOperations', () => {
     expect(serialized).not.toContain('workflow-runtime-secret')
     expect(serialized).not.toContain('auth-secret')
     expect(serialized).not.toContain('private note')
+    expect(serialized).not.toContain('feedback-1')
+    expect(serialized).not.toContain('msg-1')
+    expect(serialized).not.toContain('run-1')
+    expect(serialized).not.toContain('gpt-5.5')
+    expect(serialized).not.toContain('Reviewer')
+    expect(serialized).not.toContain('wrong-model-for-role')
     expect(serialized).not.toContain('Private roadmap PR')
     expect(serialized).not.toContain('https://github.com/private/repo')
     expect(serialized).not.toContain('sk-1234567890')
@@ -460,10 +466,14 @@ describe('ProductOperations', () => {
     expect(snapshot.auditReceipts.hashes.messageFeedback).toMatch(/^[a-f0-9]{64}$/)
     expect(snapshot.auditReceipts.hashes.externalPublish).toMatch(/^[a-f0-9]{64}$/)
     expect(snapshot.auditReceipts.recent.messageFeedback[0]).toMatchObject({
-      id: 'feedback-1',
       vote: 'down',
+      hasRunId: true,
+      hasModel: true,
+      hasRole: true,
+      hasReason: true,
       hasSensitiveNote: true
     })
+    expect(snapshot.auditReceipts.recent.messageFeedback[0].receiptHash).toMatch(/^[a-f0-9]{64}$/)
     expect(snapshot.auditReceipts.recent.externalPublish[0]).toMatchObject({
       id: 'publish-1',
       origin: 'agent',

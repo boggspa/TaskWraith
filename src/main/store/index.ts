@@ -121,10 +121,11 @@ import {
   type AgentStatRecord
 } from '../AgentStatsStore'
 import {
-  buildMessageFeedbackReceipts,
   capMessageFeedbackReceipts,
   filterMessageFeedbackReceipts,
   normalizeMessageFeedbackReceipt,
+  removeMessageFeedbackReceipts,
+  updateMessageFeedbackLedgerForChatSave,
   type MessageFeedbackReceiptFilter
 } from '../MessageFeedbackLedger'
 import { normalizeWorkflowLoopConfig } from '../WorkflowLoopModel'
@@ -1791,7 +1792,14 @@ export class AppStore {
   static updateSettings(partial: Partial<AppSettings>) {
     const current = this.getSettings()
     const next = stripRetiredSettingsKeys({ ...current, ...partial } as Record<string, unknown>)
+    const localHistoryDisabled =
+      Object.prototype.hasOwnProperty.call(partial, 'storeLocalChatHistory') &&
+      current.storeLocalChatHistory !== false &&
+      next.storeLocalChatHistory === false
     writeJson(settingsPath, next)
+    if (localHistoryDisabled) {
+      deletePathBestEffort(messageFeedbackLedgerPath, 'message feedback receipt ledger')
+    }
     if (Object.prototype.hasOwnProperty.call(partial, 'userMcpServers')) {
       const previousIds = new Set((current.userMcpServers || []).map((server) => server.id))
       const nextIds = new Set(normalizeUserMcpServers(next.userMcpServers).map((server) => server.id))
@@ -2337,6 +2345,15 @@ export class AppStore {
     filter: MessageFeedbackReceiptFilter = {}
   ): MessageFeedbackReceipt[] {
     return filterMessageFeedbackReceipts(this.readMessageFeedbackLedger(), filter)
+  }
+
+  private static removeMessageFeedbackReceipts(
+    filter: { chatIds?: Iterable<string>; workspaceId?: string }
+  ): void {
+    const existing = this.readMessageFeedbackLedger()
+    if (existing.length === 0) return
+    const next = removeMessageFeedbackReceipts(existing, filter)
+    if (next.length !== existing.length) writeMessageFeedbackLedger(next)
   }
 
   static createChat(workspaceId: string, workspacePath: string): ChatRecord {
@@ -2911,6 +2928,7 @@ export class AppStore {
       delete index[chatId]
       writeJson(chatListIndexPath, index)
     }
+    this.removeMessageFeedbackReceipts({ chatIds: [chatId] })
   }
 
   static clearChats(workspaceId?: string) {
@@ -2938,6 +2956,7 @@ export class AppStore {
       deletePathBestEffort(runArtifactsDir, 'run artifact history directory')
       deletePathBestEffort(runQueuePath, 'run queue history')
       deletePathBestEffort(runRecoveryPath, 'run recovery history')
+      deletePathBestEffort(messageFeedbackLedgerPath, 'message feedback receipt ledger')
       this.chatRecordCache.clear()
       this.orphanSubThreadsReaped = false
       runEventSequenceCache.clear()
@@ -4344,12 +4363,12 @@ export class AppStore {
     nextChat: ChatRecord
   ): void {
     const existingLedger = this.readMessageFeedbackLedger()
-    const receipts = buildMessageFeedbackReceipts(previousChat, nextChat, existingLedger, {
+    const update = updateMessageFeedbackLedgerForChatSave(previousChat, nextChat, existingLedger, {
       now: () => Date.now(),
       idFactory: () => randomUUID()
     })
-    if (receipts.length === 0) return
-    writeMessageFeedbackLedger([...existingLedger, ...receipts])
+    if (!update.changed) return
+    writeMessageFeedbackLedger(update.records)
   }
 
   /**

@@ -2548,6 +2548,8 @@ export interface MessageFeedbackReceipt {
   ensembleLaneId?: string
   ensembleRole?: string
   ensembleStageRole?: EnsembleStageRole
+  attributionSource?: 'run' | 'message_metadata' | 'unresolved'
+  attributionComplete?: boolean
   vote?: MessageFeedbackVote
   previousVote?: MessageFeedbackVote
   at: number

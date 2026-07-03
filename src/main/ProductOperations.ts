@@ -63,26 +63,32 @@ function summarizeMessageFeedbackReceiptForDiagnostics(
 ): Record<string, unknown> {
   return {
     schemaVersion: receipt.schemaVersion,
-    id: receipt.id,
+    receiptHash: diagnosticsSha256({
+      id: receipt.id,
+      chatId: receipt.chatId,
+      messageId: receipt.messageId
+    }),
     source: receipt.source,
     action: receipt.action,
     chatIdHash: diagnosticsSha256(receipt.chatId),
-    workspaceId: receipt.workspaceId,
+    ...(receipt.workspaceId ? { workspaceIdHash: diagnosticsSha256(receipt.workspaceId) } : {}),
     hasWorkspacePath: Boolean(receipt.workspacePath),
-    messageId: receipt.messageId,
-    runId: receipt.runId,
+    messageIdHash: diagnosticsSha256(receipt.messageId),
+    hasRunId: Boolean(receipt.runId),
     provider: receipt.provider,
-    model: receipt.model,
-    role: receipt.role,
-    ensembleParticipantId: receipt.ensembleParticipantId,
-    ensembleLaneId: receipt.ensembleLaneId,
-    ensembleRole: receipt.ensembleRole,
-    ensembleStageRole: receipt.ensembleStageRole,
+    hasModel: Boolean(receipt.model),
+    hasRole: Boolean(receipt.role),
+    hasEnsembleAttribution: Boolean(
+      receipt.ensembleParticipantId ||
+        receipt.ensembleLaneId ||
+        receipt.ensembleRole ||
+        receipt.ensembleStageRole
+    ),
+    attributionSource: receipt.attributionSource,
+    attributionComplete: receipt.attributionComplete,
     vote: receipt.vote,
     previousVote: receipt.previousVote,
-    at: receipt.at,
-    recordedAt: receipt.recordedAt,
-    reason: receipt.reason,
+    hasReason: Boolean(receipt.reason),
     hasSensitiveNote: Boolean(receipt.note)
   }
 }
