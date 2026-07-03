@@ -25,6 +25,8 @@ export interface BuildMessageFeedbackReceiptOptions {
 
 export interface MessageFeedbackReceiptFilter {
   chatId?: string
+  workspaceId?: string
+  workspacePath?: string
   messageId?: string
   runId?: string
   provider?: string
@@ -66,7 +68,7 @@ function sameState(a: FeedbackState | ReceiptState | null, b: FeedbackState | Re
 }
 
 function receiptKey(chatId: string, messageId: string): string {
-  return `${chatId}:${messageId}`
+  return JSON.stringify([chatId, messageId])
 }
 
 function receiptRecordKey(record: Pick<MessageFeedbackReceipt, 'chatId' | 'messageId'>): string {
@@ -89,6 +91,15 @@ function latestLedgerState(records: MessageFeedbackReceipt[]): Map<string, Recei
     }
   }
   return states
+}
+
+function latestLedgerReceiptByKey(records: MessageFeedbackReceipt[]): Map<string, MessageFeedbackReceipt> {
+  const receipts = new Map<string, MessageFeedbackReceipt>()
+  for (const record of records) {
+    if (!record.chatId || !record.messageId) continue
+    receipts.set(receiptRecordKey(record), record)
+  }
+  return receipts
 }
 
 function runById(chat: ChatRecord): Map<string, ChatRun> {
@@ -193,6 +204,7 @@ export function buildMessageFeedbackReceipts(
   const previousMessages = new Map<string, ChatMessage>()
   for (const message of previousChat?.messages || []) previousMessages.set(message.id, message)
   const ledgerStates = latestLedgerState(existingLedger)
+  const ledgerReceipts = latestLedgerReceiptByKey(existingLedger)
   const runs = runById(nextChat)
   const participantRoles = participantRoleById(nextChat)
   const receipts: MessageFeedbackReceipt[] = []
@@ -202,6 +214,7 @@ export function buildMessageFeedbackReceipts(
     const previous = feedbackState(previousMessages.get(message.id))
     const key = receiptKey(nextChat.appChatId, message.id)
     const ledgerState = ledgerStates.has(key) ? ledgerStates.get(key) || null : undefined
+    const ledgerReceipt = ledgerReceipts.get(key)
     if (!current) continue
     const baseline =
       ledgerState !== undefined
@@ -209,7 +222,21 @@ export function buildMessageFeedbackReceipts(
         : previous && (!current || !sameState(previous, current))
           ? previous
           : null
-    if (sameState(baseline, current)) continue
+    if (sameState(baseline, current)) {
+      if (ledgerReceipt && ledgerReceipt.attributionComplete !== true) {
+        const refresh = receiptForTransition(
+          nextChat,
+          message,
+          baseline,
+          current,
+          runs,
+          participantRoles,
+          options
+        )
+        if (refresh?.attributionComplete === true) receipts.push(refresh)
+      }
+      continue
+    }
     const receipt = receiptForTransition(
       nextChat,
       message,
@@ -250,10 +277,9 @@ export function updateMessageFeedbackLedgerForChatSave(
     if (!current && ledgerStates.has(key)) purgeKeys.add(key)
   }
 
-  for (const key of ledgerStates.keys()) {
-    if (!key.startsWith(`${nextChat.appChatId}:`)) continue
-    const messageId = key.slice(nextChat.appChatId.length + 1)
-    if (!nextAssistantMessageIds.has(messageId)) purgeKeys.add(key)
+  for (const record of existingLedger) {
+    if (record.chatId !== nextChat.appChatId) continue
+    if (!nextAssistantMessageIds.has(record.messageId)) purgeKeys.add(receiptRecordKey(record))
   }
 
   const prunedLedger =
@@ -286,18 +312,24 @@ export function capMessageFeedbackReceipts(
   cap = MESSAGE_FEEDBACK_LEDGER_CAP
 ): MessageFeedbackReceipt[] {
   if (!Array.isArray(records)) return []
-  const normalized = records.filter(normalizeMessageFeedbackReceipt)
-  if (normalized.length <= cap) return normalized
-  const latestByKey = new Map<string, MessageFeedbackReceipt>()
-  for (const record of normalized) latestByKey.set(receiptRecordKey(record), record)
-  const latestIds = new Set([...latestByKey.values()].map((record) => record.id))
-  const recentHistoryIds = new Set<string>()
-  for (let i = normalized.length - 1; i >= 0 && recentHistoryIds.size < cap; i -= 1) {
+  const normalized = records
+    .map(normalizeMessageFeedbackReceipt)
+    .filter((record): record is MessageFeedbackReceipt => Boolean(record))
+  const limit = Number.isFinite(cap) ? Math.max(0, Math.floor(cap)) : MESSAGE_FEEDBACK_LEDGER_CAP
+  if (limit <= 0) return []
+  if (normalized.length <= limit) return normalized
+  const latestByKey = latestLedgerReceiptByKey(normalized)
+  const keepIds = new Set<string>()
+  for (let i = normalized.length - 1; i >= 0 && keepIds.size < limit; i -= 1) {
     const record = normalized[i]
-    if (!record || latestIds.has(record.id)) continue
-    recentHistoryIds.add(record.id)
+    if (!record) continue
+    if (latestByKey.get(receiptRecordKey(record)) === record) keepIds.add(record.id)
   }
-  return normalized.filter((record) => latestIds.has(record.id) || recentHistoryIds.has(record.id))
+  for (let i = normalized.length - 1; i >= 0 && keepIds.size < limit; i -= 1) {
+    const record = normalized[i]
+    if (record) keepIds.add(record.id)
+  }
+  return normalized.filter((record) => keepIds.has(record.id))
 }
 
 export function normalizeMessageFeedbackReceipt(
@@ -362,6 +394,8 @@ export function filterMessageFeedbackReceipts(
 ): MessageFeedbackReceipt[] {
   let out = records
   if (filter.chatId) out = out.filter((record) => record.chatId === filter.chatId)
+  if (filter.workspaceId) out = out.filter((record) => record.workspaceId === filter.workspaceId)
+  if (filter.workspacePath) out = out.filter((record) => record.workspacePath === filter.workspacePath)
   if (filter.messageId) out = out.filter((record) => record.messageId === filter.messageId)
   if (filter.runId) out = out.filter((record) => record.runId === filter.runId)
   if (filter.provider) out = out.filter((record) => record.provider === filter.provider)

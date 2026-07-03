@@ -18,6 +18,15 @@ export interface MessageFeedbackDetails {
   note?: string
 }
 
+const MAX_FEEDBACK_REASON_CHARS = 80
+const MAX_FEEDBACK_NOTE_CHARS = 1000
+
+function boundedText(value: unknown, max: number): string | undefined {
+  if (typeof value !== 'string') return undefined
+  const trimmed = value.trim()
+  return trimmed ? trimmed.slice(0, max) : undefined
+}
+
 /**
  * Thumbs feedback lives on `message.metadata.feedback` (mirrors the
  * `pinnedAt` render-state pattern). This module is the pure toggle/read
@@ -50,11 +59,13 @@ export function applyChatMessageFeedback(
     // Same vote clicked again with no new detail → clear it.
     delete metadata.feedback
   } else {
+    const reason = boundedText(extra?.reason, MAX_FEEDBACK_REASON_CHARS)
+    const note = boundedText(extra?.note, MAX_FEEDBACK_NOTE_CHARS)
     metadata.feedback = {
       vote,
       at,
-      ...(extra?.reason ? { reason: extra.reason } : {}),
-      ...(extra?.note ? { note: extra.note } : {})
+      ...(reason ? { reason } : {}),
+      ...(note ? { note } : {})
     }
   }
   const nextMessage: ChatMessage = { ...message }

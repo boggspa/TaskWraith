@@ -45,6 +45,15 @@ describe('messageFeedback', () => {
     expect(updated.metadata?.feedback).toMatchObject({ vote: 'down', reason: 'broke-something' })
   })
 
+  it('bounds free-text feedback details before storing them on the chat message', () => {
+    const note = `${'x'.repeat(1200)}   `
+    const reason = `${'r'.repeat(100)}   `
+    const next = applyChatMessageFeedback(msg(), 'down', 111, { reason, note })
+
+    expect(next.metadata?.feedback?.reason).toHaveLength(80)
+    expect(next.metadata?.feedback?.note).toHaveLength(1000)
+  })
+
   it('preserves other metadata (e.g. pinnedAt) and drops metadata entirely when empty', () => {
     const pinned = msg({ metadata: { pinnedAt: 5 } })
     const voted = applyChatMessageFeedback(pinned, 'up', 111)

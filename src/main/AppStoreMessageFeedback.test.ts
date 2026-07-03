@@ -210,4 +210,14 @@ describe('AppStore message feedback receipts', () => {
 
     expect(AppStore.getMessageFeedbackReceipts()).toHaveLength(0)
   })
+
+  it('purges feedback receipts when local chat history is disabled', () => {
+    const chat = makeChat('feedback-chat-local-history-off', { vote: 'up', at: 1000 })
+    AppStore.saveChat(chat)
+    expect(AppStore.getMessageFeedbackReceipts()).toHaveLength(1)
+
+    AppStore.updateSettings({ storeLocalChatHistory: false })
+
+    expect(AppStore.getMessageFeedbackReceipts()).toHaveLength(0)
+  })
 })

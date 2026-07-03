@@ -1846,6 +1846,7 @@ export function executeReadSubthreadResult(
 ) {
   const chat = assertOwnedSubThread(deps, context, String(args.subThreadId || args.id || ''))
   const assistant = latestAssistantMessage(chat)
+  const safeAssistant = assistant ? sanitizeSubthreadMessageForAgent(assistant) : undefined
   const messageLimit = clampInteger(args.messageLimit ?? args.maxMessages, 20, 1, 200)
   const requestedDepth = optionalString(args.depth) || 'final-only'
   const depth = ['summary', 'final-only', 'full', 'events-only'].includes(requestedDepth)
@@ -1887,16 +1888,16 @@ export function executeReadSubthreadResult(
       : undefined,
     latestRun: summarizeChatRun(latestChatRun(chat)),
     latestAssistantMessage:
-      includeResult && assistant
-        ? assistant
-        : assistant
+      includeResult && safeAssistant
+        ? safeAssistant
+        : safeAssistant
           ? {
-              id: assistant.id,
-              role: assistant.role,
-              timestamp: assistant.timestamp,
-              runId: assistant.runId,
-              metadata: assistant.metadata,
-              contentPreview: assistant.content.slice(0, 500)
+              id: safeAssistant.id,
+              role: safeAssistant.role,
+              timestamp: safeAssistant.timestamp,
+              runId: safeAssistant.runId,
+              metadata: safeAssistant.metadata,
+              contentPreview: safeAssistant.content.slice(0, 500)
             }
           : null,
     result: includeResult ? assistant?.content || null : undefined,
@@ -1908,14 +1909,17 @@ export function executeReadSubthreadResult(
       ? (chat.messages || [])
           .filter((message) => !isRetiredExternalChannelInboundMessage(message))
           .slice(-messageLimit)
-          .map((message) => ({
-            id: message.id,
-            role: message.role,
-            timestamp: message.timestamp,
-            runId: message.runId,
-            metadata: message.metadata,
-            content: message.content
-          }))
+          .map((message) => {
+            const safeMessage = sanitizeSubthreadMessageForAgent(message)
+            return {
+              id: safeMessage.id,
+              role: safeMessage.role,
+              timestamp: safeMessage.timestamp,
+              runId: safeMessage.runId,
+              metadata: safeMessage.metadata,
+              content: safeMessage.content
+            }
+          })
       : undefined,
     runEvents
   }
@@ -2804,6 +2808,26 @@ function commandResultExitCode(value: unknown): number | null {
 
 function latestAssistantMessage(chat: ChatRecord): ChatMessage | undefined {
   return [...(chat.messages || [])].reverse().find((message) => message.role === 'assistant')
+}
+
+function sanitizeSubthreadMessageMetadataForAgent(
+  metadata: ChatMessage['metadata']
+): ChatMessage['metadata'] | undefined {
+  if (!metadata || typeof metadata !== 'object' || !('feedback' in metadata)) return metadata
+  const next = { ...metadata }
+  delete next.feedback
+  return Object.keys(next).length > 0 ? next : undefined
+}
+
+function sanitizeSubthreadMessageForAgent(message: ChatMessage): ChatMessage {
+  const metadata = sanitizeSubthreadMessageMetadataForAgent(message.metadata)
+  const next = { ...message }
+  if (metadata) {
+    next.metadata = metadata
+  } else {
+    delete next.metadata
+  }
+  return next
 }
 
 function requireActiveChatForAttachmentTool(

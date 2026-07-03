@@ -2361,7 +2361,11 @@ export class AppStore {
 
   private static readMessageFeedbackLedger(): MessageFeedbackReceipt[] {
     const records = readJson<unknown[]>(messageFeedbackLedgerPath, [])
-    return capMessageFeedbackReceipts(records.map(normalizeMessageFeedbackReceipt).filter(Boolean))
+    return capMessageFeedbackReceipts(
+      records
+        .map(normalizeMessageFeedbackReceipt)
+        .filter((record): record is MessageFeedbackReceipt => Boolean(record))
+    )
   }
 
   static getMessageFeedbackReceipts(

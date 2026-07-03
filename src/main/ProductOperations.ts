@@ -150,8 +150,8 @@ function buildDiagnosticsAuditReceipts(input: {
       externalPublish: diagnosticsSha256(externalPublish)
     },
     recent: {
-      messageFeedback: messageFeedback.slice(0, MAX_DIAGNOSTIC_RECORDS),
-      externalPublish: externalPublish.slice(0, MAX_DIAGNOSTIC_RECORDS)
+      messageFeedback: messageFeedback.slice(-MAX_DIAGNOSTIC_RECORDS),
+      externalPublish: externalPublish.slice(-MAX_DIAGNOSTIC_RECORDS)
     },
     validation: {
       sensitiveFeedbackNotes: 'redacted',

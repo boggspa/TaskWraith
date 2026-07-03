@@ -84,8 +84,9 @@ Shipped in `5c2e34b70`.
 - The visible state persists on `message.metadata.feedback` through the existing
   chat-save path.
 - The durable, local `thumbs-ledger.json` receipt layer now harvests those
-  message states on save. Model/role aggregation, reason capture, recast
-  actions, export bundling, and iOS parity remain B5 work.
+  message states on save. Closed-set poor-rating reasons and redacted
+  diagnostics summaries are shipped; model/role aggregation, recast actions,
+  audit-bundle export, and iOS parity remain B5 work.
 
 ### Adjacent stage-role bridge work
 
@@ -483,7 +484,7 @@ What exists:
 
 - The thumbs UI capture layer is shipped and persists a message-local feedback
   state.
-- `saveChat` now harvests assistant-message feedback into a bounded
+- `saveChat` now harvests assistant-message feedback into a hard-capped
   `thumbs-ledger.json` receipt store. Receipts include set/flip/update
   semantics and attribution to chat, workspace, message, run, provider, model,
   and ensemble role/lane/stage role when available. Clearing a rating, deleting
@@ -491,20 +492,23 @@ What exists:
   chat history removes the corresponding feedback receipts.
 - Existing UI-only feedback state is backfilled into the receipt store on the
   next chat save, and repeated saves are idempotent against the latest ledger
-  state. The retention cap preserves latest per-message state separately from
-  bounded event history so unchanged rated messages do not duplicate receipts
-  after old history is trimmed.
+  state. The retention cap preserves the newest latest states first and fills
+  remaining room with recent history, but never exceeds the configured cap; very
+  old feedback state can age out.
 - Message attribution can resolve to `(provider, model, role, run)` through
   `message.runId -> ChatRun` for solo and ensemble messages.
-- Metadata-only attribution is marked as incomplete so diagnostics and future
-  analytics can distinguish confident run-backed attribution from fallback
-  display metadata.
+- Metadata-only attribution is marked as incomplete, and unchanged ratings can
+  refresh into a new update receipt when later saves gain run-backed provider /
+  model / role attribution.
 - Default diagnostics export redacted feedback summaries and hashes; raw
   receipt ids, message ids, run ids, model labels, role labels, reason codes,
   timestamps, and free-text notes are not exported by default.
 - The transcript context menu can attach a closed-set negative reason code
   (wrong approach, hallucinated/wrong, broke something, over-verbose, wrong
   model for role, incomplete) to a poor-rating receipt.
+- Sub-thread result reads strip local `metadata.feedback` before returning
+  assistant messages to agents, so private human feedback notes are not fed back
+  into provider context.
 - EvidencePack/capability-ledger substrate exists for cited positive and
   negative evidence, but it is workspace/capability-key oriented and currently
   agent-authored.
@@ -520,7 +524,7 @@ What is missing:
 
 Target:
 
-- Keep the bounded, capped `thumbs-ledger.json` receipt store authoritative for
+- Keep the hard-capped `thumbs-ledger.json` receipt store authoritative for
   local analytics. Receipt fields cover vote, timestamp, provider, model, role,
   stage role, run id, chat id, workspace id, original message id, optional
   reason category, and optional note, but default exports must stay redacted.
@@ -537,6 +541,9 @@ Target:
   pipeline; counts are shareable, free-text notes are sensitive by default.
 - Add a recast action that can rerun a disliked turn with a different model or
   seat, with the recast linked back to the original feedback receipt.
+- Do not silently mutate AgentStats, EvidencePacks, or Workspace Boards from a
+  thumb click. Those systems have different lifecycle and erasure semantics; any
+  promotion from feedback into task/evidence artifacts must be explicit.
 
 ## Phase order
 
