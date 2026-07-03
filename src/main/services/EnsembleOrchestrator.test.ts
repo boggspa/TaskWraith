@@ -2443,6 +2443,144 @@ Next action:
     expect(harness.orchestrator.markRunExited(oldRun.appRunId, 130)).toBe(false)
   })
 
+  it('recovers a restart-orphaned queued steer (no in-memory runtime) by starting a fresh round', async () => {
+    // Build a persisted `running` round with a FIFO queue on one orchestrator,
+    // then hand its chat to a FRESH orchestrator whose `roundsByChatId` is empty
+    // — exactly the post-app-restart state (persisted round is dispatch-live and
+    // renders queued rows + a live Steer button, but no runtime was rehydrated).
+    const seed = makeHarness()
+    seed.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Original prompt',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(seed.dispatched).toHaveLength(1))
+    for (const prompt of ['Queued A', 'Queued B']) {
+      seed.orchestrator.startRound({
+        chatId: 'ensemble-chat',
+        prompt,
+        event: { sender: {} as Electron.WebContents },
+        mode: 'queue'
+      })
+    }
+    expect(seed.chat.ensemble?.activeRound?.status).toBe('running')
+    expect(seed.chat.ensemble?.activeRound?.queuedPrompts).toEqual(['Queued A', 'Queued B'])
+
+    const restarted = makeHarness({ initialChat: seed.chat })
+    // Sanity: the fresh orchestrator has no in-memory runtime for this chat.
+    expect(getRuntimeQueuedPrompts(restarted.orchestrator, 'ensemble-chat')).toEqual([])
+
+    const steered = restarted.orchestrator.steerQueuedPrompt({
+      chatId: 'ensemble-chat',
+      index: 1,
+      textPrefix: 'Queued B',
+      event: { sender: {} as Electron.WebContents }
+    })
+    expect(steered.status).toBe('steered')
+    await vi.waitFor(() => expect(restarted.dispatched).toHaveLength(1))
+    expect(restarted.dispatched[0].prompt).toContain('Queued B')
+    expect(restarted.chat.ensemble?.activeRound?.roundId).toBe(steered.roundId)
+    expect(restarted.chat.ensemble?.activeRound?.prompt).toBe('Queued B')
+    // The un-steered sibling prompt is carried into the recovered round's queue.
+    expect(restarted.chat.ensemble?.activeRound?.queuedPrompts).toEqual(['Queued A'])
+  })
+
+  it('does not recover a queued steer when there is neither a runtime nor a live persisted round', () => {
+    // No runtime and no persisted round → the original dead-state guard still returns 'ignored'.
+    const harness = makeHarness()
+    const result = harness.orchestrator.steerQueuedPrompt({
+      chatId: 'ensemble-chat',
+      index: 0,
+      textPrefix: 'nope',
+      event: { sender: {} as Electron.WebContents }
+    })
+    expect(result.status).toBe('ignored')
+  })
+
+  it('recovers a restart-orphaned queued delete (no in-memory runtime)', async () => {
+    const seed = makeHarness()
+    seed.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Original prompt',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(seed.dispatched).toHaveLength(1))
+    for (const prompt of ['Queued A', 'Queued B']) {
+      seed.orchestrator.startRound({
+        chatId: 'ensemble-chat',
+        prompt,
+        event: { sender: {} as Electron.WebContents },
+        mode: 'queue'
+      })
+    }
+
+    const restarted = makeHarness({ initialChat: seed.chat })
+    const removed = restarted.orchestrator.removeQueuedPrompt({
+      chatId: 'ensemble-chat',
+      index: 0,
+      textPrefix: 'Queued A'
+    })
+    expect(removed.ok).toBe(true)
+    expect(removed.prompt).toBe('Queued A')
+    expect(restarted.chat.ensemble?.activeRound?.queuedPrompts).toEqual(['Queued B'])
+    // Recovery must NOT spuriously dispatch a round — delete only mutates the queue.
+    expect(restarted.dispatched).toHaveLength(0)
+  })
+
+  it('returns ignored for a restart-orphaned steer with an out-of-range index (no dispatch)', async () => {
+    const seed = makeHarness()
+    seed.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Original prompt',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(seed.dispatched).toHaveLength(1))
+    seed.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Queued A',
+      event: { sender: {} as Electron.WebContents },
+      mode: 'queue'
+    })
+
+    const restarted = makeHarness({ initialChat: seed.chat })
+    const result = restarted.orchestrator.steerQueuedPrompt({
+      chatId: 'ensemble-chat',
+      index: 5,
+      textPrefix: 'Queued A',
+      event: { sender: {} as Electron.WebContents }
+    })
+    expect(result.status).toBe('ignored')
+    expect(result.error).toBe('Queued item no longer exists')
+    expect(restarted.dispatched).toHaveLength(0)
+  })
+
+  it('returns ignored for a restart-orphaned steer whose textPrefix no longer matches (no dispatch)', async () => {
+    const seed = makeHarness()
+    seed.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Original prompt',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(seed.dispatched).toHaveLength(1))
+    seed.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Queued A',
+      event: { sender: {} as Electron.WebContents },
+      mode: 'queue'
+    })
+
+    const restarted = makeHarness({ initialChat: seed.chat })
+    const result = restarted.orchestrator.steerQueuedPrompt({
+      chatId: 'ensemble-chat',
+      index: 0,
+      textPrefix: 'A different prompt',
+      event: { sender: {} as Electron.WebContents }
+    })
+    expect(result.status).toBe('ignored')
+    expect(result.error).toBe('Queue changed underneath — refresh and retry')
+    expect(restarted.dispatched).toHaveLength(0)
+  })
+
   it('preserves queued prompt external grants when the queued ensemble round dispatches', async () => {
     const harness = makeHarness()
     const queuedGrant = externalGrant('claude', '/tmp/queued-spec.pdf')

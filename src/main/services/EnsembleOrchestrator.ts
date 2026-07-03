@@ -2312,6 +2312,52 @@ export class EnsembleOrchestrator {
     return { status: 'started', roundId }
   }
 
+  /**
+   * Restart-orphan recovery resolver. After an app restart the in-memory
+   * `roundsByChatId` runtime is gone (nothing rehydrates it), but a persisted
+   * dispatch-live round still renders queued rows + a live Steer/Delete button
+   * because the renderer gates on `isEnsembleRoundDispatchLive`. The persisted
+   * round only carries the back-compat `queuedPrompts: string[]` shape (the
+   * structured `QueuedRoundEntry[]` lived on the runtime, which no longer
+   * exists), so resolve the clicked queued item against that.
+   *
+   * Returns the persisted round + selected prompt + remaining queue when a
+   * recoverable item matches, `{ error }` for a stale index/prefix, or `null`
+   * when there is nothing to recover (caller keeps its existing no-runtime
+   * behaviour).
+   */
+  private resolvePersistedQueuedPromptForRecovery(
+    chatId: string,
+    input: { index: number; textPrefix?: string }
+  ):
+    | { round: EnsembleRoundState; selectedIndex: number; selected: string; remaining: string[] }
+    | { error: string }
+    | null {
+    const round = this.deps.getChat(chatId)?.ensemble?.activeRound
+    if (!round || !isEnsembleRoundDispatchLive(round)) return null
+    const prompts =
+      Array.isArray(round.queuedPrompts) && round.queuedPrompts.length > 0
+        ? round.queuedPrompts
+        : round.queuedPrompt
+          ? [round.queuedPrompt]
+          : []
+    if (prompts.length === 0) return null
+    const index = Number.isFinite(input.index) ? Math.floor(input.index) : -1
+    if (index < 0 || index >= prompts.length) {
+      return { error: 'Queued item no longer exists' }
+    }
+    const selected = prompts[index]
+    if (input.textPrefix && !selected.startsWith(input.textPrefix)) {
+      return { error: 'Queue changed underneath — refresh and retry' }
+    }
+    return {
+      round,
+      selectedIndex: index,
+      selected,
+      remaining: prompts.filter((_, queuedIndex) => queuedIndex !== index)
+    }
+  }
+
   steerQueuedPrompt(input: {
     chatId: string
     index: number
@@ -2322,7 +2368,47 @@ export class EnsembleOrchestrator {
     fanoutPolicy?: EnsembleFanoutPolicy
   }): EnsembleQueuedSteerResult {
     const runtime = this.roundsByChatId.get(input.chatId)
-    if (!runtime || runtime.cancelled) {
+    if (!runtime) {
+      // Restart-orphan recovery. After an app restart the in-memory runtime is
+      // gone, but a persisted dispatch-live round still renders queued rows + a
+      // live Steer button — so clicking it hit `!runtime` and returned a dead
+      // 'ignored' on every click. There is no live process to cancel (the
+      // previous app instance's provider processes died with it), so begin a
+      // FRESH round for the clicked queued prompt, mirroring how `startRound`
+      // recovers a stale snapshot by falling through to `beginRound`.
+      const recovered = this.resolvePersistedQueuedPromptForRecovery(input.chatId, input)
+      if (!recovered) return { status: 'ignored', error: 'No active Ensemble round' }
+      if ('error' in recovered) return { status: 'ignored', error: recovered.error }
+      this.cancelPersistedWakeupsOnUserInput(input.chatId)
+      const carryOverQueue: QueuedRoundEntry[] = recovered.remaining.map((queuedPrompt) => ({
+        id: this.nextQueuedPromptId(input.chatId),
+        prompt: queuedPrompt,
+        imageAttachments: []
+      }))
+      const roundId = this.beginRound(
+        input.chatId,
+        recovered.selected,
+        input.event.sender,
+        undefined,
+        [],
+        [],
+        carryOverQueue,
+        false,
+        [],
+        input.concurrentMode,
+        input.fanoutPolicy,
+        undefined,
+        undefined,
+        undefined
+      )
+      this.appendRoundStatus(
+        input.chatId,
+        roundId,
+        'Ensemble steered: recovered the round after restart and started the queued prompt.'
+      )
+      return { status: 'steered', roundId }
+    }
+    if (runtime.cancelled) {
       return { status: 'ignored', error: 'No active Ensemble round' }
     }
     // Single-flight for the parked-steer window. A steered round dispatches
@@ -2379,7 +2465,26 @@ export class EnsembleOrchestrator {
     queuedPromptId?: string
   }): EnsembleQueuedPromptMutationResult {
     const runtime = this.roundsByChatId.get(input.chatId)
-    if (!runtime || runtime.cancelled) {
+    if (!runtime) {
+      // Restart-orphan recovery (same class as `steerQueuedPrompt`): with no
+      // in-memory runtime, mutate the persisted round's `queuedPrompts` string
+      // list directly so the queued-row Delete (✗) button isn't a dead no-op
+      // after an app restart.
+      const recovered = this.resolvePersistedQueuedPromptForRecovery(input.chatId, input)
+      if (!recovered) return { ok: false, error: 'No active Ensemble round' }
+      if ('error' in recovered) return { ok: false, error: recovered.error }
+      this.updateChatRound(input.chatId, (round) =>
+        round?.roundId === recovered.round.roundId
+          ? {
+              ...round,
+              queuedPrompt: recovered.remaining[0],
+              queuedPrompts: recovered.remaining
+            }
+          : round
+      )
+      return { ok: true, prompt: recovered.selected, queuedPrompts: recovered.remaining }
+    }
+    if (runtime.cancelled) {
       return { ok: false, error: 'No active Ensemble round' }
     }
     const resolved = this.resolveQueuedPrompt(runtime, input)
