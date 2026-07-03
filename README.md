@@ -28,7 +28,7 @@ workspace state on the user's machine.
 
 TaskWraith's most experimental surface is **Ensemble Threads**: shared work
 sessions where multiple AI agents participate in the same conversation instead
-of living in separate tabs. A thread can include up to twelve named participants
+of living in separate tabs. A thread can include up to twenty named participants
 across Codex, Claude, Kimi, Grok, Cursor, and local Ollama, each with its own
 model, role, order, and permission posture.
 
@@ -218,6 +218,7 @@ npm run security:deps
 npm run typecheck
 npm run test
 npm run test:swift:bridge   # macOS only — see note below
+npm run validate:release    # release-readiness wrapper; see note below
 npm run build
 ```
 
@@ -228,6 +229,12 @@ automatically in two places: the macOS legs of CI, and the `build:mac` /
 `build:mac:notarized` release recipes (as a pre-flight gate, so a release
 build fails fast on a bridge regression). It requires macOS with the Xcode
 Swift toolchain and is not part of the cross-platform `npm run ci`.
+
+`npm run validate:release` is the broad local release-readiness wrapper. It runs
+the TypeScript gates, dependency/security checks, tests, package smoke checks,
+and the bundled-secret guard, and can include a local unpacked build. It is not
+a substitute for a credentialed notarized release build, update-feed validation,
+SBOM generation, or platform-specific artifact signing.
 
 ## Project Layout
 

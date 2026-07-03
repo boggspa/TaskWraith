@@ -3,9 +3,13 @@
 /**
  * validate-release.cjs — Phase G1 release-readiness gate.
  *
- * Runs the full pre-release check pipeline and reports a structured
- * summary. Wraps the existing `npm run ci && npm run build:unpack`
- * with:
+ * Runs the broad local pre-release check pipeline and reports a structured
+ * summary. It intentionally stays below the full artifact-publication gate:
+ * credentialed notarized builds, update-feed validation, SBOM generation, and
+ * final platform signing still run through the dedicated release scripts.
+ *
+ * This wrapper expands the usual local typecheck / security / test / smoke
+ * loop with:
  *   - Step-by-step progress (so it's obvious where it stalls).
  *   - Optional notarization preflight (skipped unless
  *     TASKWRAITH_VALIDATE_NOTARIZE=1).

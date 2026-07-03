@@ -118,6 +118,8 @@ materials from larger competitors consistently emphasize:
 
 Reference points used for this plan:
 
+Last checked: 2026-07-03.
+
 - OpenAI business data and retention controls:
   <https://openai.com/business-data/>
 - OpenAI enterprise privacy and admin-managed retention:
@@ -318,8 +320,8 @@ Target:
 
 - Add an explicit sensitive export mode only behind a separate user/admin
   decision; keep the default bundle redacted.
-- Expose verification results for signed audit bundles in the Settings/UI flow
-  and keep unsigned exports clearly labeled when safeStorage is unavailable.
+- Keep Settings/UI verification results for signed audit bundles visible and
+  keep unsigned exports clearly labeled when safeStorage is unavailable.
 
 ### B5.3 - Managed policy plane
 
@@ -915,9 +917,16 @@ For the current release:
 - TypeScript typecheck passes.
 - Swift package tests pass when iOS bridge code changes.
 - Approval/network/plan/iOS bridge tests pass.
+- `npm run validate:release` passes for local release-readiness, and any
+  skipped platform/artifact steps are tracked explicitly.
+- Credentialed release-only gates remain separate: notarized macOS build,
+  update-feed validation, packaged smoke checks for published artifacts, SBOM
+  generation, and platform signing.
 - Release notes mention B1-B4 and call B5 managed-enterprise work remaining.
-- No docs claim org-managed retention, SSO/SCIM, MDM policy, or SIEM/WORM audit
-  export until those slices land.
+- No docs claim org-managed retention, SSO/SCIM, a complete MDM/enterprise
+  control plane, or SIEM/WORM audit export until those slices land. The current
+  managed-preferences policy spine can be described only as partial managed
+  policy support.
 
 For managed enterprise:
 
@@ -930,4 +939,6 @@ For managed enterprise:
   descriptors.
 - Human feedback is stored as local receipts, not vague telemetry, and exports
   through the same redaction path as other evidence.
+- A sensitive-field export path exists only behind an explicit user/admin
+  decision flow; default audit and diagnostics exports remain redacted.
 - Docs state unsupported areas plainly.

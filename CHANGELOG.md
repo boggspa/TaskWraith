@@ -61,6 +61,12 @@ history, and workspace state stay on your machine throughout.
   work.
 - **Ollama Ensemble context.** Local lanes preserve their assigned participant
   role and Lead/Boss routing across tool loops, retries, and compaction.
+- **Enterprise-readiness boundary.** B1-B4 readiness work is documented as
+  shipped for network-policy honesty, durable permission-posture proof, iOS Plan
+  workflow parity, and label/copy honesty. B5 managed-enterprise work remains
+  explicit: secrets, audit export/retention, managed policy, user-managed MCP
+  allowlisting, dispatch receipts, and feedback receipts are tracked without
+  implying a complete organization control plane.
 
 ### Fixed
 - **Plan Mode security.** Workflow mode is signed into run permission posture,
@@ -97,8 +103,10 @@ history, and workspace state stay on your machine throughout.
 - **Ollama literal write-artifact probe.** The Ollama retention/probe item stays
   accepted-open until a controlled artifact-backed repro says otherwise.
 
-The macOS build is notarized + stapled (universal). Windows (unsigned) and Linux
-artifacts are attached by CI after the release is published.
+For matching release-tagged artifacts, the macOS build should be notarized +
+stapled (universal) and verified against the published checksums/update feed.
+Windows (unsigned) and Linux artifacts are attached by CI after the release is
+published.
 
 ## 1.6.9 - 2026-06-28
 

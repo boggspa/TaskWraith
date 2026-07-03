@@ -150,10 +150,10 @@ broader-scope audit log.
 
 ---
 
-## Ensemble mode (1.6.0) — multi-provider in a single thread
+## Ensemble mode (1.7.0) — multi-provider in a single thread
 
 Ensemble chats put multiple providers in the **same** thread (vs
-sub-threads which are isolated). Each chat can have up to 18 named
+sub-threads which are isolated). Each chat can have up to 20 named
 participants with their own provider + model + permission preset +
 role. Participants take turns speaking in `order` ascending; each
 participant sees the full transcript so far (their own messages +
@@ -396,9 +396,10 @@ demands):**
     - Codex, Claude, and Kimi register the full TaskWraith MCP surface with
       their native runtimes where available. Cursor and Grok receive a brokered
       `taskwraith` MCP surface alongside their native shell/file tooling.
-      Ollama runs through TaskWraith's local tool loop with tier-gated tool
-      subsets. Gemini is retained for historical decoding but is retired for new
-      runs.
+      Ollama runs through TaskWraith's local tool loop with full tool-surface
+      parity where local capability exists; the standard signed run permission
+      posture and per-call approval gate decide what executes. Gemini is
+      retained for historical decoding but is retired for new runs.
     - Bridge subprocesses stamp `TASKWRAITH_PARENT_PROVIDER` on their env so
       approval modals name the requesting provider and workspace grants apply
       per-provider.
@@ -471,7 +472,7 @@ demands):**
 ## Versioning
 
 This document is updated as features ship. Sections currently documented (as of
-**1.6.0**):
+**1.7.0**):
 
 - Sub-threads (Phase F1 + F2 back-propagation + F3 agent-driven
   delegation + J2 recall mode) — landed
@@ -484,8 +485,10 @@ This document is updated as features ship. Sections currently documented (as of
   `src/main/TaskWraithMcpTools.ts`; key tools documented above.
 - Codex / Claude / Kimi share the full brokered MCP tool surface. Cursor and
   Grok get a brokered `taskwraith` MCP server but keep their native shell/file
-  tools. Ollama runs a TaskWraith-controlled local tool loop with tier-gated tool
-  subsets rather than provider-native MCP registration. Gemini is retained for
-  historical chats and decode paths only. See `ProviderCapabilities.ts`.
+  tools. Ollama runs a TaskWraith-controlled local tool loop with full
+  tool-surface parity where local capability exists, governed by the same signed
+  permission posture and approval gates rather than a safety-tier subset. Gemini
+  is retained for historical chats and decode paths only. See
+  `ProviderCapabilities.ts`.
 
 Internal roadmap notes are intentionally kept outside the public source tree.
