@@ -564,6 +564,7 @@ export class RunRepository {
     session: RunSession
   ): RunEventRecord | null {
     const permissionPosture = this.options.permissionPostureForSession?.(session)
+    const dispatchReceipt = AppStore.getRunQueueJob(session.runId)?.dispatchReceipt
     const ensembleMetadata = lookupEnsembleQueueMetadata(session)
     return this.appendRunEvent({
       runId: session.runId,
@@ -585,6 +586,7 @@ export class RunRepository {
         hasProcess: Boolean(session.process),
         hasAbortController: Boolean(session.abortController),
         approvalIds: [...session.approvalIds],
+        ...(dispatchReceipt ? { dispatchReceipt } : {}),
         ...(permissionPosture ? { permissionPosture } : {})
       }
     })

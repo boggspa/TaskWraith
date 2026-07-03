@@ -93,13 +93,33 @@ describe('RunRepository', () => {
       signature: 'signed-posture',
       signaturePresent: true
     } as const
+    const dispatchReceipt = {
+      schemaVersion: 1,
+      generatedAt: '2026-05-08T00:00:00.000Z',
+      receiptHash: 'd'.repeat(64),
+      runId: 'run-1',
+      provider: 'codex',
+      source: 'scheduled',
+      scope: 'workspace',
+      workspaceId: 'workspace-1',
+      chatId: 'chat-1',
+      approvalMode: 'plan',
+      workflowMode: 'plan',
+      permissionPresetId: 'plan',
+      readOnly: true,
+      permissionPostureHash: 'posture-hash',
+      permissionPostureSignaturePresent: true
+    } as const
     const repository = new RunRepository({
       providerLabel: (provider) => provider,
       permissionPostureForSession: vi.fn(() => permissionPosture),
       emitRunQueueChanged: vi.fn(),
       emitRunEventsChanged: vi.fn()
     })
-    const getExisting = vi.spyOn(AppStore, 'getRunQueueJob').mockReturnValue(null)
+    const getExisting = vi
+      .spyOn(AppStore, 'getRunQueueJob')
+      .mockReturnValueOnce(null)
+      .mockReturnValueOnce({ dispatchReceipt } as RunQueueJob)
     const saveQueue = vi
       .spyOn(AppStore, 'saveRunQueueJob')
       .mockImplementation((input: any) => input)
@@ -134,6 +154,7 @@ describe('RunRepository', () => {
       )
       expect(append.mock.results[0]?.value?.payload).toMatchObject({
         eventType: 'created',
+        dispatchReceipt,
         permissionPosture
       })
     } finally {

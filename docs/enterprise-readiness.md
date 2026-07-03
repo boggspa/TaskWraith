@@ -460,6 +460,9 @@ What exists:
 - Lifecycle dequeue tickets and steer-promotion handoffs now carry the queued
   `dispatchReceipt`, so renderer-dispatched deferred runs keep the enqueue-time
   proof attached through claim/lease.
+- Runtime session lifecycle events now attach the queued `dispatchReceipt` when
+  a matching run queue row exists, so durable run-start/update/remove events
+  retain the enqueue-time proof.
 - MCP tool context for brokered Codex/Claude/Kimi runs carries `ensembleRun`,
   so lane-aware write-lock previews and acquisitions can enforce against the
   dispatched lane instead of losing identity outside Gemini.
@@ -470,8 +473,8 @@ What is missing:
 
 - Stage-role scheduling intent is not yet a first-class frozen receipt across
   every deferred path; generic queue rows now have receipts, but dedicated
-  scheduled/wakeup replay receipts and durable run-start events still need to
-  prove which frozen intent was used.
+  scheduled/wakeup replay receipts still need to prove which frozen intent was
+  used.
 - Ensemble wakeups and scheduled ensemble occurrences still need explicit
   proof that they resume the participant/stage/posture that was scheduled, not
   whatever a mutable live roster happens to contain later.
@@ -480,9 +483,9 @@ What is missing:
   rebuilds a wire action and dispatches directly, so it must either re-run the
   bridge router's allowlist decision or use an explicitly frozen signed posture.
 - `EnsembleRunIdentity`, `ChatRun`, run queue metadata, approval previews, and
-  run events now persist live dispatch `stageRole`/`laneId`, but durable
-  run-start events still need to include the queued `dispatchReceipt` instead
-  of relying on each consumer to reassemble the same evidence.
+  run events now persist live dispatch `stageRole`/`laneId`, but scheduled and
+  wakeup replay paths still need explicit tests that they preserve or re-check
+  the frozen intent rather than inheriting mutable roster state silently.
 - Native provider approval paths still need a separate lane-aware bypass audit
   for host reruns / native command approvals outside brokered MCP tools.
 
