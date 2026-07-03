@@ -10914,7 +10914,9 @@ function claudeTaskWraithMcpInput(route?: AgentRunRoute | null): ClaudeTaskWrait
     enabled,
     bridgeBinaryPath: bridgeCommandStatus.command,
     bridgeArgs: taskwraithMcpBridgeArgs(),
-    userMcpServers: buildUserMcpLaunchServers(settings.userMcpServers),
+    userMcpServers: buildUserMcpLaunchServers(settings.userMcpServers, {
+      resolveSecretValues: (refs) => AppStore.resolveExtensionSecretValues(refs)
+    }),
     ...(route?.appRunId ? { appRunId: route.appRunId } : {}),
     ...(route?.appChatId ? { appChatId: route.appChatId } : {})
   }
@@ -11758,7 +11760,10 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
   if (writeCapable && payload.workspace) {
     try {
       const settings = AppStore.getSettings()
-      const userMcpServers = buildUserMcpLaunchServers(settings.userMcpServers, ['stdio', 'http'])
+      const userMcpServers = buildUserMcpLaunchServers(settings.userMcpServers, {
+        supportedTransports: ['stdio', 'http'],
+        resolveSecretValues: (refs) => AppStore.resolveExtensionSecretValues(refs)
+      })
       const cursorDir = join(payload.workspace, '.cursor')
       const cliPath = join(cursorDir, 'cli.json')
       const mcpPath = join(cursorDir, 'mcp.json')
@@ -13332,7 +13337,10 @@ function getCodexClient(runtimeProfile?: RuntimeProfile | null): CodexAppServerC
   // attach independently through the MCP Servers settings page.
   const settings = AppStore.getSettings()
   const bridgeCommandStatus = taskwraithMcpBridgeCommandStatus()
-  const userMcpServers = buildUserMcpLaunchServers(settings.userMcpServers, ['stdio', 'http'])
+  const userMcpServers = buildUserMcpLaunchServers(settings.userMcpServers, {
+    supportedTransports: ['stdio', 'http'],
+    resolveSecretValues: (refs) => AppStore.resolveExtensionSecretValues(refs)
+  })
   const taskWraithBridgeEnabled = Boolean(
     settings.geminiMcpBridgeEnabled && bridgeCommandStatus.available
   )

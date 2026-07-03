@@ -1,4 +1,9 @@
 import path from 'node:path'
+import {
+  extensionSecretKey,
+  type ExtensionSecretRef,
+  type ExtensionSecretResolution
+} from './ExtensionSecretStore'
 import type { UserMcpServerConfig, UserMcpServerTransport } from './store/types'
 
 export interface UserMcpStdioLaunchServer {
@@ -7,6 +12,7 @@ export interface UserMcpStdioLaunchServer {
   command: string
   args: string[]
   env?: Record<string, string>
+  providerEnv?: Record<string, string>
 }
 
 export interface UserMcpRemoteLaunchServer {
@@ -15,6 +21,7 @@ export interface UserMcpRemoteLaunchServer {
   url: string
   headers?: Record<string, string>
   bearerTokenEnvVar?: string
+  providerEnv?: Record<string, string>
 }
 
 export type UserMcpLaunchServer = UserMcpStdioLaunchServer | UserMcpRemoteLaunchServer
@@ -40,6 +47,7 @@ export interface UserMcpLaunchPolicyDecision {
 export interface BuildUserMcpLaunchServersOptions {
   supportedTransports?: readonly UserMcpServerTransport[]
   allowlistPolicy?: UserMcpLaunchAllowlistPolicy
+  resolveSecretValues?: (refs: ExtensionSecretRef[]) => ExtensionSecretResolution[]
   onBlocked?: (decision: UserMcpLaunchPolicyDecision) => void
 }
 
@@ -50,6 +58,28 @@ type BuildUserMcpLaunchServersInput =
 
 function hasAuthorizationHeader(headers: Record<string, string> | undefined): boolean {
   return Object.keys(headers ?? {}).some((key) => key.toLowerCase() === 'authorization')
+}
+
+function uniqueValidEnvKeys(values: readonly unknown[] | undefined): string[] {
+  if (!Array.isArray(values)) return []
+  return Array.from(
+    new Set(
+      values.filter(
+        (value): value is string => typeof value === 'string' && /^[A-Za-z_][A-Za-z0-9_]*$/.test(value)
+      )
+    )
+  ).slice(0, 64)
+}
+
+function uniqueValidHeaderNames(values: readonly unknown[] | undefined): string[] {
+  if (!Array.isArray(values)) return []
+  return Array.from(
+    new Set(
+      values.filter(
+        (value): value is string => typeof value === 'string' && /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(value)
+      )
+    )
+  ).slice(0, 64)
 }
 
 function slugForMcpServer(value: string): string {
@@ -176,6 +206,7 @@ export function evaluateUserMcpLaunchPolicy(
   if (policy.allowedEnvKeys) {
     const allowedEnvKeys = normalizeCaseSet(policy.allowedEnvKeys)
     const envKeys = Object.keys(server.env ?? {})
+    envKeys.push(...uniqueValidEnvKeys(server.secretRefs?.env))
     const rawBearerTokenEnvVar = server.bearerTokenEnvVar?.trim()
     if (rawBearerTokenEnvVar) envKeys.push(rawBearerTokenEnvVar)
     const blockedKey = envKeys.find((key) => !allowedEnvKeys.has(key.toLowerCase()))
@@ -209,6 +240,7 @@ export function evaluateUserMcpLaunchPolicy(
   if (policy.allowedHeaderNames) {
     const allowedHeaderNames = normalizeCaseSet(policy.allowedHeaderNames)
     const headerNames = Object.keys(server.headers ?? {})
+    headerNames.push(...uniqueValidHeaderNames(server.secretRefs?.headers))
     const rawBearerTokenEnvVar = server.bearerTokenEnvVar?.trim()
     if (rawBearerTokenEnvVar && !hasAuthorizationHeader(server.headers)) {
       headerNames.push('Authorization')
@@ -227,6 +259,48 @@ export function evaluateUserMcpLaunchPolicy(
     transport: server.transport,
     allowed: true
   }
+}
+
+function secretRefsForServer(
+  server: UserMcpServerConfig,
+  fieldKind: 'env' | 'header'
+): ExtensionSecretRef[] {
+  const names =
+    fieldKind === 'env'
+      ? uniqueValidEnvKeys(server.secretRefs?.env)
+      : uniqueValidHeaderNames(server.secretRefs?.headers)
+  return names.map((fieldName) => ({
+    ownerKind: 'userMcpServer' as const,
+    ownerId: server.id,
+    fieldKind,
+    fieldName
+  }))
+}
+
+function resolveSecretMap(
+  server: UserMcpServerConfig,
+  refs: ExtensionSecretRef[],
+  resolver: BuildUserMcpLaunchServersOptions['resolveSecretValues']
+): { values: Record<string, string>; error?: string } {
+  if (refs.length === 0) return { values: {} }
+  if (!resolver) return { values: {}, error: 'secret resolver is unavailable' }
+  const resolutions = resolver(refs)
+  const byKey = new Map<string, ExtensionSecretResolution>()
+  for (const resolution of resolutions) {
+    if (resolution.ref) byKey.set(extensionSecretKey(resolution.ref), resolution)
+  }
+  const values: Record<string, string> = {}
+  for (const ref of refs) {
+    const resolution = byKey.get(extensionSecretKey(ref))
+    if (!resolution || resolution.status !== 'ok' || typeof resolution.value !== 'string') {
+      return {
+        values: {},
+        error: `secret ${ref.fieldKind} ${ref.fieldName} for ${server.id} is ${resolution?.status ?? 'missing'}`
+      }
+    }
+    values[ref.fieldName] = resolution.value
+  }
+  return { values }
 }
 
 export function buildUserMcpServerName(
@@ -264,6 +338,21 @@ export function buildUserMcpLaunchServers(
         options.onBlocked?.({ ...policyDecision, serverName })
         continue
       }
+      const secretEnv = resolveSecretMap(
+        server,
+        secretRefsForServer(server, 'env'),
+        options.resolveSecretValues
+      )
+      if (secretEnv.error) {
+        options.onBlocked?.({
+          serverId: server.id,
+          serverName,
+          transport: server.transport,
+          allowed: false,
+          reason: secretEnv.error
+        })
+        continue
+      }
       const args = Array.isArray(server.args)
         ? server.args.map((arg) => arg.trim()).filter(Boolean)
         : []
@@ -276,12 +365,16 @@ export function buildUserMcpLaunchServers(
               )
             )
           : undefined
+      const mergedEnv = {
+        ...(env ?? {}),
+        ...secretEnv.values
+      }
       launchServers.push({
         serverName,
         transport: 'stdio',
         command,
         args,
-        ...(env && Object.keys(env).length > 0 ? { env } : {})
+        ...(Object.keys(mergedEnv).length > 0 ? { env: mergedEnv } : {})
       })
       continue
     }
@@ -291,6 +384,36 @@ export function buildUserMcpLaunchServers(
     const policyDecision = evaluateUserMcpLaunchPolicy(server, options.allowlistPolicy)
     if (!policyDecision.allowed) {
       options.onBlocked?.({ ...policyDecision, serverName })
+      continue
+    }
+    const secretHeaders = resolveSecretMap(
+      server,
+      secretRefsForServer(server, 'header'),
+      options.resolveSecretValues
+    )
+    if (secretHeaders.error) {
+      options.onBlocked?.({
+        serverId: server.id,
+        serverName,
+        transport: server.transport,
+        allowed: false,
+        reason: secretHeaders.error
+      })
+      continue
+    }
+    const secretProviderEnv = resolveSecretMap(
+      server,
+      secretRefsForServer(server, 'env'),
+      options.resolveSecretValues
+    )
+    if (secretProviderEnv.error) {
+      options.onBlocked?.({
+        serverId: server.id,
+        serverName,
+        transport: server.transport,
+        allowed: false,
+        reason: secretProviderEnv.error
+      })
       continue
     }
     const headers =
@@ -303,6 +426,10 @@ export function buildUserMcpLaunchServers(
             )
           )
         : undefined
+    const mergedHeaders = {
+      ...(headers ?? {}),
+      ...secretHeaders.values
+    }
     const rawBearerTokenEnvVar = server.bearerTokenEnvVar?.trim()
     const bearerTokenEnvVar =
       rawBearerTokenEnvVar && /^[A-Za-z_][A-Za-z0-9_]*$/.test(rawBearerTokenEnvVar)
@@ -312,11 +439,24 @@ export function buildUserMcpLaunchServers(
       serverName,
       transport: server.transport,
       url,
-      ...(headers && Object.keys(headers).length > 0 ? { headers } : {}),
-      ...(bearerTokenEnvVar ? { bearerTokenEnvVar } : {})
+      ...(Object.keys(mergedHeaders).length > 0 ? { headers: mergedHeaders } : {}),
+      ...(bearerTokenEnvVar ? { bearerTokenEnvVar } : {}),
+      ...(Object.keys(secretProviderEnv.values).length > 0
+        ? { providerEnv: secretProviderEnv.values }
+        : {})
     })
   }
   return launchServers
+}
+
+export function collectUserMcpProviderEnv(
+  servers: readonly UserMcpLaunchServer[] | undefined
+): Record<string, string> {
+  const env: Record<string, string> = {}
+  for (const server of servers ?? []) {
+    Object.assign(env, server.providerEnv ?? {})
+  }
+  return env
 }
 
 export function buildUserMcpRemoteHeaders(

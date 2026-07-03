@@ -471,6 +471,10 @@ describe('MainSanitizers settings patches', () => {
             SAFE_TOKEN_REF: '${SAFE_TOKEN_REF}',
             'bad-key': 'drop'
           },
+          secretRefs: {
+            env: ['FILESYSTEM_TOKEN', 'bad-env-name', 'FILESYSTEM_TOKEN'],
+            headers: ['unused-header']
+          },
           description: ' Local files ',
           pluginProvenance: {
             pluginId: 'demo-bundle',
@@ -501,6 +505,10 @@ describe('MainSanitizers settings patches', () => {
             'X-Figma-Region': 'eu',
             'bad header': 'drop'
           },
+          secretRefs: {
+            env: ['DOCS_TOKEN'],
+            headers: ['X-API-Key', 'bad header', 'X-API-Key']
+          },
           bearerTokenEnvVar: ' DOCS_TOKEN '
         },
         {
@@ -529,6 +537,10 @@ describe('MainSanitizers settings patches', () => {
           PROJECT_ROOT: '/repo',
           SAFE_TOKEN_REF: '${SAFE_TOKEN_REF}'
         },
+        secretRefs: {
+          env: ['FILESYSTEM_TOKEN'],
+          headers: ['unused-header']
+        },
         description: 'Local files',
         pluginProvenance: {
           pluginId: 'demo-bundle',
@@ -552,6 +564,10 @@ describe('MainSanitizers settings patches', () => {
           Authorization: 'Bearer ${DOCS_TOKEN}',
           'X-Auth-Token': '$AUTH_TOKEN',
           'X-Figma-Region': 'eu'
+        },
+        secretRefs: {
+          env: ['DOCS_TOKEN'],
+          headers: ['X-API-Key']
         },
         bearerTokenEnvVar: 'DOCS_TOKEN'
       },

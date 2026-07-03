@@ -33,7 +33,7 @@ export interface InvalidExtensionSecretRef {
   fieldName: string
 }
 
-export interface ExtensionSecretStatus extends ExtensionSecretRef {
+export type ExtensionSecretStatus = ExtensionSecretRef & {
   configured: boolean
   updatedAt?: string
 }
@@ -72,7 +72,7 @@ export interface ExtensionSecretStoreOptions {
   log?: (line: string) => void
 }
 
-interface PersistedExtensionSecret extends ExtensionSecretRef {
+type PersistedExtensionSecret = ExtensionSecretRef & {
   encryptedValue: string
   createdAt: string
   updatedAt: string
@@ -248,14 +248,16 @@ export class ExtensionSecretStore {
       encryptionAvailable: this.safeStorage.isEncryptionAvailable(),
       secrets: Object.entries(state.secrets)
         .sort(([a], [b]) => a.localeCompare(b))
-        .map(([, secret]) => ({
-          ownerKind: secret.ownerKind,
-          ownerId: secret.ownerId,
-          fieldKind: secret.fieldKind,
-          fieldName: secret.fieldName,
-          configured: Boolean(secret.encryptedValue),
-          updatedAt: secret.updatedAt
-        }))
+        .map(([, secret]): ExtensionSecretStatus => {
+          return {
+            ownerKind: secret.ownerKind,
+            ownerId: secret.ownerId,
+            fieldKind: secret.fieldKind,
+            fieldName: secret.fieldName,
+            configured: Boolean(secret.encryptedValue),
+            updatedAt: secret.updatedAt
+          } as ExtensionSecretStatus
+        })
     }
   }
 

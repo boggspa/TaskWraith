@@ -1501,6 +1501,11 @@ export interface RuntimeProfile {
 
 export type UserMcpServerTransport = 'stdio' | 'http' | 'sse'
 
+export interface UserMcpServerSecretRefs {
+  env?: string[]
+  headers?: string[]
+}
+
 export interface UserMcpServerConfig {
   id: string
   name: string
@@ -1511,6 +1516,7 @@ export interface UserMcpServerConfig {
   url?: string
   env?: Record<string, string>
   headers?: Record<string, string>
+  secretRefs?: UserMcpServerSecretRefs
   bearerTokenEnvVar?: string
   description?: string
   pluginProvenance?: TaskWraithPluginResourceProvenance

@@ -5,8 +5,10 @@ import {
   buildUserMcpLaunchServers,
   buildUserMcpServerName,
   buildUserMcpStdioLaunchServers,
+  collectUserMcpProviderEnv,
   evaluateUserMcpLaunchPolicy
 } from './UserMcpServers'
+import type { ExtensionSecretRef, ExtensionSecretResolution } from './ExtensionSecretStore'
 import type { UserMcpServerConfig } from './store/types'
 
 describe('buildUserMcpStdioLaunchServers', () => {
@@ -222,6 +224,140 @@ describe('buildUserMcpStdioLaunchServers', () => {
       'evil:env key EVIL_TOKEN is not allowlisted',
       'legacy:transport sse is not allowlisted'
     ])
+  })
+
+  it('resolves encrypted secret refs into launch env and remote headers at the launch boundary', () => {
+    const resolveSecretValues = (refs: ExtensionSecretRef[]): ExtensionSecretResolution[] =>
+      refs.map((ref) => ({
+        ref,
+        status: 'ok',
+        value: `${ref.fieldName}-secret`
+      }))
+
+    const launchServers = buildUserMcpLaunchServers(
+      [
+        {
+          id: 'filesystem',
+          name: 'Filesystem',
+          enabled: true,
+          transport: 'stdio',
+          command: 'npx',
+          args: ['@modelcontextprotocol/server-filesystem', '/repo'],
+          env: { PROJECT_ROOT: '/repo' },
+          secretRefs: { env: ['FILESYSTEM_TOKEN'] }
+        },
+        {
+          id: 'docs',
+          name: 'Docs',
+          enabled: true,
+          transport: 'http',
+          url: 'https://example.test/mcp',
+          headers: { 'X-Region': 'eu' },
+          bearerTokenEnvVar: 'DOCS_TOKEN',
+          secretRefs: {
+            env: ['DOCS_TOKEN'],
+            headers: ['X-API-Key']
+          }
+        }
+      ],
+      {
+        supportedTransports: ['stdio', 'http'],
+        resolveSecretValues
+      }
+    )
+
+    expect(launchServers).toEqual([
+      {
+        serverName: 'user_filesystem',
+        transport: 'stdio',
+        command: 'npx',
+        args: ['@modelcontextprotocol/server-filesystem', '/repo'],
+        env: {
+          PROJECT_ROOT: '/repo',
+          FILESYSTEM_TOKEN: 'FILESYSTEM_TOKEN-secret'
+        }
+      },
+      {
+        serverName: 'user_docs',
+        transport: 'http',
+        url: 'https://example.test/mcp',
+        headers: {
+          'X-Region': 'eu',
+          'X-API-Key': 'X-API-Key-secret'
+        },
+        bearerTokenEnvVar: 'DOCS_TOKEN',
+        providerEnv: {
+          DOCS_TOKEN: 'DOCS_TOKEN-secret'
+        }
+      }
+    ])
+    expect(collectUserMcpProviderEnv(launchServers)).toEqual({
+      DOCS_TOKEN: 'DOCS_TOKEN-secret'
+    })
+  })
+
+  it('blocks launch when a configured secret ref cannot be resolved', () => {
+    const blocked: string[] = []
+
+    expect(
+      buildUserMcpLaunchServers(
+        [
+          {
+            id: 'docs',
+            name: 'Docs',
+            enabled: true,
+            transport: 'http',
+            url: 'https://example.test/mcp',
+            secretRefs: { headers: ['Authorization'] }
+          }
+        ],
+        {
+          supportedTransports: ['http'],
+          resolveSecretValues: (refs) =>
+            refs.map((ref) => ({
+              ref,
+              status: 'missing'
+            })),
+          onBlocked: (decision) => blocked.push(`${decision.serverName}:${decision.reason}`)
+        }
+      )
+    ).toEqual([])
+    expect(blocked).toEqual(['user_docs:secret header Authorization for docs is missing'])
+  })
+
+  it('applies enterprise allowlists to secret-ref env and header names before resolution', () => {
+    const blocked: string[] = []
+
+    expect(
+      buildUserMcpLaunchServers(
+        [
+          {
+            id: 'docs',
+            name: 'Docs',
+            enabled: true,
+            transport: 'http',
+            url: 'https://docs.example.test/mcp',
+            secretRefs: {
+              env: ['DOCS_TOKEN'],
+              headers: ['X-API-Key']
+            }
+          }
+        ],
+        {
+          supportedTransports: ['http'],
+          allowlistPolicy: {
+            allowedRemoteHosts: ['docs.example.test'],
+            allowedHeaderNames: ['Authorization'],
+            allowedEnvKeys: ['OTHER_TOKEN']
+          },
+          resolveSecretValues: () => {
+            throw new Error('allowlist must run before secret resolution')
+          },
+          onBlocked: (decision) => blocked.push(`${decision.serverName}:${decision.reason}`)
+        }
+      )
+    ).toEqual([])
+    expect(blocked).toEqual(['user_docs:env key DOCS_TOKEN is not allowlisted'])
   })
 
   it('supports exact and wildcard remote host allowlists', () => {

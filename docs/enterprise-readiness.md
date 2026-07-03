@@ -160,6 +160,11 @@ What exists:
   profile is deleted.
 - AppStore JSON writes now create and rewrite settings/profile-store files with
   owner-only `0600` permissions where the filesystem supports POSIX modes.
+- User-managed MCP server configs can carry env/header `secretRefs`. Launch
+  assembly resolves those refs from the encrypted store, applies enterprise
+  allowlists to the ref names before decryption, blocks servers with missing or
+  undecryptable refs, and passes remote bearer-token values through provider
+  process env where the provider supports env indirection.
 
 What is missing:
 
@@ -171,8 +176,8 @@ What is missing:
   profile JSON.
 - Plugin `requiredSecrets` are not an end-to-end launch-time secret delivery
   path for MCP materialization.
-- Provider/runtime launch paths do not yet resolve `ExtensionSecretStore`
-  references into process env or request headers at the final boundary.
+- Renderer and iOS settings surfaces are not yet wired to create or manage
+  those encrypted refs directly.
 
 Risk:
 

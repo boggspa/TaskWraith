@@ -1,4 +1,4 @@
-import { app, safeStorage } from 'electron'
+import * as electron from 'electron'
 import * as fs from 'fs'
 import * as path from 'path'
 import { coerceLiveProvider, DEFAULT_PROVIDER } from '../../shared/retiredProviders'
@@ -174,6 +174,7 @@ import {
   type ExtensionSecretOwnerKind,
   type ExtensionSecretRef,
   type ExtensionSecretResolution,
+  type ExtensionSecretSafeStorage,
   type ExtensionSecretStatusSnapshot
 } from '../ExtensionSecretStore'
 
@@ -206,7 +207,7 @@ function normalizeSideChatLifecycleState(
   return fallback
 }
 
-const userDataPath = app.getPath('userData')
+const userDataPath = electron.app.getPath('userData')
 const settingsPath = path.join(userDataPath, 'settings.json')
 const workspacesPath = path.join(userDataPath, 'workspaces.json')
 const usagePath = path.join(userDataPath, 'usage.json')
@@ -278,9 +279,34 @@ const TASKWRAITH_DEFAULT_FONT_STACK =
   '"Avenir Next", Avenir, system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif'
 const RETIRED_SETTINGS_KEYS = ['messageBridgeEnabled', 'messageBridgePollIntervalMs'] as const
 
+function electronSafeStorageOrUnavailable(): ExtensionSecretSafeStorage {
+  try {
+    const storage = (electron as unknown as { safeStorage?: unknown }).safeStorage
+    if (
+      storage &&
+      typeof (storage as { isEncryptionAvailable?: unknown }).isEncryptionAvailable === 'function' &&
+      typeof (storage as { encryptString?: unknown }).encryptString === 'function' &&
+      typeof (storage as { decryptString?: unknown }).decryptString === 'function'
+    ) {
+      return storage as ExtensionSecretSafeStorage
+    }
+  } catch {
+    // Older unit-test Electron mocks do not expose safeStorage.
+  }
+  return {
+    isEncryptionAvailable: () => false,
+    encryptString: () => {
+      throw new Error('Electron safeStorage is unavailable.')
+    },
+    decryptString: () => {
+      throw new Error('Electron safeStorage is unavailable.')
+    }
+  }
+}
+
 const extensionSecretStore = new ExtensionSecretStore({
   userDataPath,
-  safeStorage
+  safeStorage: electronSafeStorageOrUnavailable()
 })
 
 function stripRetiredSettingsKeys<T extends Record<string, unknown>>(input: T): T {
@@ -1051,6 +1077,28 @@ function normalizeUserMcpServers(value: unknown): UserMcpServerConfig[] {
             .slice(0, 64)
         )
       : {}
+    const secretRefsRecord = objectOrUndefined(
+      record.secretRefs as Record<string, unknown> | null | undefined
+    )
+    const secretEnvRefs = Array.isArray(secretRefsRecord?.env)
+      ? Array.from(
+          new Set(
+            secretRefsRecord.env.filter(
+              (key): key is string => typeof key === 'string' && /^[A-Za-z_][A-Za-z0-9_]*$/.test(key)
+            )
+          )
+        ).slice(0, 64)
+      : []
+    const secretHeaderRefs = Array.isArray(secretRefsRecord?.headers)
+      ? Array.from(
+          new Set(
+            secretRefsRecord.headers.filter(
+              (key): key is string =>
+                typeof key === 'string' && /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(key)
+            )
+          )
+        ).slice(0, 64)
+      : []
     const command = typeof record.command === 'string' ? record.command.trim() : ''
     const rawUrl = typeof record.url === 'string' ? record.url.trim() : ''
     const url = rawUrl && isValidUserMcpRemoteUrl(rawUrl) ? rawUrl : ''
@@ -1072,6 +1120,12 @@ function normalizeUserMcpServers(value: unknown): UserMcpServerConfig[] {
     if (url) normalized.url = url
     if (Object.keys(env).length > 0) normalized.env = env
     if (Object.keys(headers).length > 0) normalized.headers = headers
+    if (secretEnvRefs.length > 0 || secretHeaderRefs.length > 0) {
+      normalized.secretRefs = {
+        ...(secretEnvRefs.length > 0 ? { env: secretEnvRefs } : {}),
+        ...(secretHeaderRefs.length > 0 ? { headers: secretHeaderRefs } : {})
+      }
+    }
     if (bearerTokenEnvVar) normalized.bearerTokenEnvVar = bearerTokenEnvVar
     if (typeof record.description === 'string' && record.description.trim()) {
       normalized.description = record.description.trim()

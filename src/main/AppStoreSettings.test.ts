@@ -184,6 +184,10 @@ describe('AppStore settings defaults', () => {
           enabled: true,
           transport: 'http',
           url: ' https://example.test/mcp ',
+          secretRefs: {
+            env: ['DOCS_TOKEN', 'bad-token-name', 'DOCS_TOKEN'],
+            headers: ['Authorization', 'bad header', 'Authorization']
+          },
           pluginProvenance: {
             pluginId: 'demo-bundle',
             publisher: 'acme',
@@ -213,6 +217,10 @@ describe('AppStore settings defaults', () => {
         enabled: true,
         transport: 'http',
         url: 'https://example.test/mcp',
+        secretRefs: {
+          env: ['DOCS_TOKEN'],
+          headers: ['Authorization']
+        },
         pluginProvenance: {
           pluginId: 'demo-bundle',
           publisher: 'acme',

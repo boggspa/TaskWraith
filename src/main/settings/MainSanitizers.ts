@@ -269,6 +269,26 @@ function sanitizeUserMcpServers(value: unknown): UserMcpServerConfig[] {
         }
       }
     }
+    const secretRefsInput = isRecord(record.secretRefs) ? record.secretRefs : {}
+    const secretEnvRefs = Array.isArray(secretRefsInput.env)
+      ? Array.from(
+          new Set(
+            secretRefsInput.env.filter(
+              (key): key is string => typeof key === 'string' && /^[A-Za-z_][A-Za-z0-9_]*$/.test(key)
+            )
+          )
+        ).slice(0, 64)
+      : []
+    const secretHeaderRefs = Array.isArray(secretRefsInput.headers)
+      ? Array.from(
+          new Set(
+            secretRefsInput.headers.filter(
+              (key): key is string =>
+                typeof key === 'string' && /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(key)
+            )
+          )
+        ).slice(0, 64)
+      : []
     const command = optionalString(record.command)?.trim()
     const rawUrl = optionalString(record.url)?.trim()
     const url = rawUrl && isValidUserMcpRemoteUrl(rawUrl) ? rawUrl : undefined
@@ -289,6 +309,12 @@ function sanitizeUserMcpServers(value: unknown): UserMcpServerConfig[] {
     if (url) sanitized.url = url
     if (Object.keys(env).length > 0) sanitized.env = env
     if (Object.keys(headers).length > 0) sanitized.headers = headers
+    if (secretEnvRefs.length > 0 || secretHeaderRefs.length > 0) {
+      sanitized.secretRefs = {
+        ...(secretEnvRefs.length > 0 ? { env: secretEnvRefs } : {}),
+        ...(secretHeaderRefs.length > 0 ? { headers: secretHeaderRefs } : {})
+      }
+    }
     if (bearerTokenEnvVar && /^[A-Za-z_][A-Za-z0-9_]*$/.test(bearerTokenEnvVar)) {
       sanitized.bearerTokenEnvVar = bearerTokenEnvVar
     }

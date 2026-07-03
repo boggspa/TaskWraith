@@ -6,7 +6,7 @@ import {
   resolveCliProviderBinary
 } from './providers/CliProviderRuntime'
 import type { RuntimeProfile } from './store/types'
-import type { UserMcpLaunchServer } from './UserMcpServers'
+import { collectUserMcpProviderEnv, type UserMcpLaunchServer } from './UserMcpServers'
 
 /**
  * Codex's app-server only accepts UUID thread ids (optionally `urn:uuid:`-
@@ -512,6 +512,7 @@ export class CodexAppServerClient {
     ]
     const codexEnv: Record<string, string> = {
       ...(this.runtimeProfile?.env || {}),
+      ...collectUserMcpProviderEnv(this.mcpConfig?.userMcpServers),
       FORCE_COLOR: '0',
       NO_COLOR: '1'
     }
