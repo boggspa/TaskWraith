@@ -699,6 +699,41 @@ describe('buildUserMcpStdioLaunchServers', () => {
     ).toBe(true)
   })
 
+  it('blocks launch when a plugin provenance validator rejects the saved server', () => {
+    const blocked: string[] = []
+    expect(
+      buildUserMcpLaunchServers(
+        [
+          {
+            id: 'plugin-docs',
+            name: 'Plugin Docs',
+            enabled: true,
+            transport: 'stdio',
+            command: '/opt/taskwraith/mcp/docs',
+            pluginProvenance: {
+              pluginId: 'docs',
+              publisher: 'acme',
+              version: '1.0.0',
+              source: 'builtin',
+              namespace: 'plugin.acme.docs',
+              manifestHash: 'sha256:abc123',
+              kind: 'mcpServer',
+              objectId: 'docs-stdio',
+              materializedAt: '2026-07-03T12:00:00.000Z'
+            }
+          }
+        ],
+        {
+          validatePluginProvenance: () => 'plugin provenance does not match the installed manifest',
+          onBlocked: (decision) => blocked.push(`${decision.serverName}:${decision.reason}`)
+        }
+      )
+    ).toEqual([])
+    expect(blocked).toEqual([
+      'user_plugin_docs:plugin provenance does not match the installed manifest'
+    ])
+  })
+
   it('builds Cursor mcp.json entries and allow rules from sanitized launch servers', () => {
     const launchServers = buildUserMcpLaunchServers(
       [

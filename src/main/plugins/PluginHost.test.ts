@@ -253,6 +253,30 @@ describe('PluginHost', () => {
     })
   })
 
+  it('validates materialized MCP provenance against the current installed plugin', () => {
+    const host = makeHost()
+    host.installPlugin('demo-bundle')
+    host.setPluginEnabled('demo-bundle', true)
+    const result = host.materializeMcpServerPreset('demo-bundle', 'docs-stdio')
+    const provenance = result.userMcpServerConfig.pluginProvenance
+
+    expect(host.validateMcpServerProvenance(provenance)).toEqual({ ok: true })
+    expect(
+      host.validateMcpServerProvenance(
+        provenance ? { ...provenance, manifestHash: 'sha256:stale' } : undefined
+      )
+    ).toEqual({
+      ok: false,
+      reason: 'plugin provenance does not match the installed manifest'
+    })
+
+    host.setPluginEnabled('demo-bundle', false)
+    expect(host.validateMcpServerProvenance(provenance)).toEqual({
+      ok: false,
+      reason: 'plugin is not enabled'
+    })
+  })
+
   it('refuses to materialize MCP presets before plugin install', () => {
     const host = makeHost()
     expect(() => host.materializeMcpServerPreset('demo-bundle', 'docs-stdio')).toThrow(

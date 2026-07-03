@@ -540,7 +540,8 @@ import {
   TranscriptMediaRef,
   TranscriptMediaThumbnail,
   PooledAgentIdentitySnapshot,
-  RunPermissionPostureSnapshot
+  RunPermissionPostureSnapshot,
+  UserMcpServerConfig
 } from './store/types'
 import type { AgentRunPayload, AgentRunRoute } from './run/AgentRunTypes'
 import {
@@ -1915,10 +1916,18 @@ let updateServiceRef: UpdateService | null = null
 let managedPolicySnapshotForDiagnostics: (() => Record<string, unknown> | undefined) | null = null
 let managedUserMcpLaunchAllowlistPolicy: (() => UserMcpLaunchAllowlistPolicy | undefined) | null =
   null
+let pluginHostRef: PluginHost | null = null
 let localServersServiceRef: LocalServersService | null = null
 /** Processes TaskWraith spawns for agent tool calls — tracked so the Local
  * Servers panel can attribute them and group-kill them cleanly. */
 const spawnRegistry = new SpawnRegistry()
+
+function validateUserMcpPluginProvenance(server: UserMcpServerConfig): string | undefined {
+  if (!server.pluginProvenance) return undefined
+  const result = pluginHostRef?.validateMcpServerProvenance(server.pluginProvenance)
+  if (!result) return 'plugin provenance validator is unavailable'
+  return result.ok ? undefined : result.reason || 'plugin provenance is not current'
+}
 
 const BACKGROUND_PROCESS_LOG_LIMIT = 500_000
 const BACKGROUND_PROCESS_ENTRY_LIMIT = 80
@@ -10981,7 +10990,8 @@ function claudeTaskWraithMcpInput(route?: AgentRunRoute | null): ClaudeTaskWrait
     bridgeArgs: taskwraithMcpBridgeArgs(),
     userMcpServers: buildUserMcpLaunchServers(settings.userMcpServers, {
       allowlistPolicy: managedUserMcpLaunchAllowlistPolicy?.(),
-      resolveSecretValues: (refs) => AppStore.resolveExtensionSecretValues(refs)
+      resolveSecretValues: (refs) => AppStore.resolveExtensionSecretValues(refs),
+      validatePluginProvenance: validateUserMcpPluginProvenance
     }),
     ...(route?.appRunId ? { appRunId: route.appRunId } : {}),
     ...(route?.appChatId ? { appChatId: route.appChatId } : {})
@@ -11829,7 +11839,8 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
       const userMcpServers = buildUserMcpLaunchServers(settings.userMcpServers, {
         supportedTransports: ['stdio', 'http'],
         allowlistPolicy: managedUserMcpLaunchAllowlistPolicy?.(),
-        resolveSecretValues: (refs) => AppStore.resolveExtensionSecretValues(refs)
+        resolveSecretValues: (refs) => AppStore.resolveExtensionSecretValues(refs),
+        validatePluginProvenance: validateUserMcpPluginProvenance
       })
       const cursorDir = join(payload.workspace, '.cursor')
       const cliPath = join(cursorDir, 'cli.json')
@@ -13407,7 +13418,8 @@ function getCodexClient(runtimeProfile?: RuntimeProfile | null): CodexAppServerC
   const userMcpServers = buildUserMcpLaunchServers(settings.userMcpServers, {
     supportedTransports: ['stdio', 'http'],
     allowlistPolicy: managedUserMcpLaunchAllowlistPolicy?.(),
-    resolveSecretValues: (refs) => AppStore.resolveExtensionSecretValues(refs)
+    resolveSecretValues: (refs) => AppStore.resolveExtensionSecretValues(refs),
+    validatePluginProvenance: validateUserMcpPluginProvenance
   })
   const taskWraithBridgeEnabled = Boolean(
     settings.geminiMcpBridgeEnabled && bridgeCommandStatus.available
@@ -18490,6 +18502,7 @@ function collectCurrentUserMcpBlockedServers(
   buildUserMcpLaunchServers(settings.userMcpServers, {
     supportedTransports: ['stdio', 'http', 'sse'],
     allowlistPolicy,
+    validatePluginProvenance: validateUserMcpPluginProvenance,
     // Do not decrypt extension secrets for diagnostics/audit snapshots; the
     // allowlist has already evaluated secret ref names before resolution.
     resolveSecretValues: (refs) =>
@@ -26301,6 +26314,7 @@ if (isGeminiMcpBridgeProcess) {
       userDataPath: app.getPath('userData'),
       log: (line) => console.log(line)
     })
+    pluginHostRef = pluginHost
     const pluginSecretStore = new PluginSecretStore({
       userDataPath: app.getPath('userData'),
       safeStorage,

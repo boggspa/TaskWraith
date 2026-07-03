@@ -344,6 +344,10 @@ What exists:
 - Stdio command-root checks canonicalize existing commands and roots through
   realpath before allowlist comparison, blocking symlinks that point outside the
   managed root.
+- Launch-time user-MCP materialization now revalidates saved plugin MCP
+  provenance against the current plugin catalog before including the server:
+  installed/enabled state, trust/preflight/update status, source identity,
+  manifest hash, and MCP preset object id must still match.
 - Diagnostics and audit-bundle exports now include redacted
   `userMcpBlockedServers` evidence when the managed launch allowlist blocks
   enabled user MCP servers. Server ids/names and raw header/env names are
@@ -354,9 +358,8 @@ What is missing:
 
 - Locked Settings UI and plugin materialization policy still need to sit on the
   B5.3 managed-policy plane.
-- Plugin provenance checks are syntactic until a managed policy service
-  revalidates installed plugin state, resource kind, object id, and manifest
-  hash.
+- Save-time plugin provenance checks are still syntactic until Settings writes
+  can call the plugin catalog verifier; launch-time revalidation is in place.
 - Command-root checks are a launch allowlist, not a sandbox; argument policy
   still needs to come with managed policy enforcement.
 - Remote checks cover managed scheme/host/port/path allowlists and reject URL

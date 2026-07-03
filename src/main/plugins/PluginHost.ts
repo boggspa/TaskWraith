@@ -18,6 +18,7 @@ import {
   type TaskWraithPluginMcpPresetMaterializationResult,
   type TaskWraithPluginPreflightIssue,
   type TaskWraithPluginPreflightResult,
+  type TaskWraithPluginResourceProvenance,
   type TaskWraithPluginSource,
   type TaskWraithPluginStateFile,
   type TaskWraithPluginCapabilityDiff,
@@ -785,6 +786,43 @@ export class PluginHost {
         mobileRemoteProjection: mobileRemoteProjection.length
       }
     }
+  }
+
+  validateMcpServerProvenance(provenance: TaskWraithPluginResourceProvenance | undefined): {
+    ok: boolean
+    reason?: string
+  } {
+    if (!provenance || provenance.kind !== 'mcpServer') {
+      return { ok: false, reason: 'mcpServer plugin provenance is required' }
+    }
+    const entry = this.getCatalogSnapshot().plugins.find(
+      (candidate) => candidate.manifest.id === provenance.pluginId
+    )
+    if (!entry) return { ok: false, reason: 'plugin provenance is not available' }
+    if (!entry.installed) return { ok: false, reason: 'plugin is not installed' }
+    if (!entry.enabled) return { ok: false, reason: 'plugin is not enabled' }
+    if (entry.preflight.status === 'blocked') {
+      return { ok: false, reason: 'plugin preflight is blocked' }
+    }
+    if (entry.trust.status !== 'trusted') {
+      return { ok: false, reason: 'plugin source trust is not verified' }
+    }
+    if (entry.update?.status === 'available') {
+      return { ok: false, reason: 'plugin update must be reviewed' }
+    }
+    if (
+      provenance.publisher !== entry.manifest.publisher ||
+      provenance.version !== entry.manifest.version ||
+      provenance.source !== entry.source ||
+      provenance.namespace !== entry.namespace ||
+      provenance.manifestHash !== entry.manifestHash
+    ) {
+      return { ok: false, reason: 'plugin provenance does not match the installed manifest' }
+    }
+    if (!entry.manifest.mcpServers?.some((preset) => preset.id === provenance.objectId)) {
+      return { ok: false, reason: 'mcpServer preset is not available for this plugin' }
+    }
+    return { ok: true }
   }
 
   materializeMcpServerPreset(

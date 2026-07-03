@@ -52,6 +52,7 @@ export interface BuildUserMcpLaunchServersOptions {
   supportedTransports?: readonly UserMcpServerTransport[]
   allowlistPolicy?: UserMcpLaunchAllowlistPolicy
   resolveSecretValues?: (refs: ExtensionSecretRef[]) => ExtensionSecretResolution[]
+  validatePluginProvenance?: (server: UserMcpServerConfig) => string | undefined
   onBlocked?: (decision: UserMcpLaunchPolicyDecision) => void
 }
 
@@ -413,6 +414,17 @@ export function buildUserMcpLaunchServers(
         options.onBlocked?.({ ...policyDecision, serverName })
         continue
       }
+      const pluginProvenanceError = options.validatePluginProvenance?.(server)
+      if (pluginProvenanceError) {
+        options.onBlocked?.({
+          serverId: server.id,
+          serverName,
+          transport: server.transport,
+          allowed: false,
+          reason: pluginProvenanceError
+        })
+        continue
+      }
       const secretEnv = resolveSecretMap(
         server,
         secretRefsForServer(server, 'env'),
@@ -459,6 +471,17 @@ export function buildUserMcpLaunchServers(
     const policyDecision = evaluateUserMcpLaunchPolicy(server, options.allowlistPolicy)
     if (!policyDecision.allowed) {
       options.onBlocked?.({ ...policyDecision, serverName })
+      continue
+    }
+    const pluginProvenanceError = options.validatePluginProvenance?.(server)
+    if (pluginProvenanceError) {
+      options.onBlocked?.({
+        serverId: server.id,
+        serverName,
+        transport: server.transport,
+        allowed: false,
+        reason: pluginProvenanceError
+      })
       continue
     }
     const secretHeaders = resolveSecretMap(
