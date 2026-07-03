@@ -16528,57 +16528,9 @@ function App(): React.JSX.Element {
     chatId: currentChat?.appChatId || null
   })
   const currentProviderLabel = getProviderLabel(currentProvider)
-  const ollamaProviderParityActiveForCurrentWorkspace =
-    currentProvider === 'ollama' &&
-    ollamaToolControlTier === 'provider_parity' &&
-    Boolean(
-      currentWorkspacePath && settings?.ollamaProviderParityWorkspaceGrants?.[currentWorkspacePath]
-    )
-  // Composer-side Tier-4 (provider parity) acknowledgement. Picking Tier 4 from a
-  // chat's composer needs the same per-workspace risk ack as Settings → Behavior →
-  // Ollama — without a grant the runtime silently downgrades parity to read_only.
-  // The picker routes an ungranted Tier-4 pick here; we capture the TARGET chat +
-  // workspace, then on confirm grant the WORKSPACE (global setting, per-workspace
-  // keyed) AND set the tier for THAT CHAT only (never the global default).
-  const [ollamaComposerParityAck, setOllamaComposerParityAck] = useState<{
-    chatId: string | null
-    workspacePath: string | null
-  } | null>(null)
-  const requestOllamaComposerTier4Ack = useCallback(
-    (chatId?: string | null, workspacePath?: string | null) => {
-      setOllamaComposerParityAck({ chatId: chatId || null, workspacePath: workspacePath || null })
-    },
-    []
-  )
-  const confirmOllamaComposerTier4 = () => {
-    const target = ollamaComposerParityAck
-    if (!target?.chatId || !target.workspacePath) return
-    const grantedAt = new Date().toISOString()
-    handleSettingsChange({
-      ollamaProviderParityAcknowledgedAt:
-        settings?.ollamaProviderParityAcknowledgedAt || grantedAt,
-      ollamaProviderParityWorkspaceGrants: {
-        ...(settings?.ollamaProviderParityWorkspaceGrants || {}),
-        [target.workspacePath]: grantedAt
-      }
-    })
-    rememberChatComposerSelectionById(target.chatId, {
-      ollamaToolControlTier: 'provider_parity',
-      ollamaRunProfile: 'provider_parity'
-    })
-    setOllamaComposerParityAck(null)
-  }
-  useEffect(() => {
-    if (!ollamaComposerParityAck) return
-    const handleKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') {
-        event.preventDefault()
-        setOllamaComposerParityAck(null)
-      }
-    }
-    document.addEventListener('keydown', handleKeyDown, true)
-    return () => document.removeEventListener('keydown', handleKeyDown, true)
-  }, [ollamaComposerParityAck])
+  // Tier retirement (2026-07): the composer-side Ollama Tier-4 provider-parity
+  // acknowledgement flow is gone — Ollama is governed by the standard permission
+  // role, not a tier grant, so there is no parity to acknowledge from the composer.
   // P2b — unattended-elevation confirm (modeled on the Ollama Tier-4 ack above).
   // The ack is minted ONLY by setWorkflowUnattendedElevation; choosing a non-safe
   // level opens this "are you sure?" gate, and on confirm we call the IPC + refresh.
@@ -22729,8 +22681,6 @@ function App(): React.JSX.Element {
       isPreparingDiffReview,
       isSteerBusyForCurrentChat,
       multiview,
-      ollamaProviderParityActiveForCurrentWorkspace,
-      ollamaToolControlTier,
       onOllamaModelSelected: checkOllamaModelAvailability,
       overestimatePercent,
       patchEnsembleParticipantById,
@@ -22783,8 +22733,6 @@ function App(): React.JSX.Element {
       workflowIntervalMinutes,
       workspaceDiffStats,
       workspaces,
-      // Composer Ollama Tier-4 ack trigger (stable useCallback → no memo churn).
-      onRequestOllamaTier4Ack: requestOllamaComposerTier4Ack,
     }),
     [
       composerHandlers,
@@ -22870,8 +22818,6 @@ function App(): React.JSX.Element {
       isPreparingDiffReview,
       isSteerBusyForCurrentChat,
       multiview,
-      ollamaProviderParityActiveForCurrentWorkspace,
-      ollamaToolControlTier,
       overestimatePercent,
       patchEnsembleParticipantById,
       pendingApprovalQueueByChatId,
@@ -22921,7 +22867,6 @@ function App(): React.JSX.Element {
       workflowIntervalMinutes,
       workspaceDiffStats,
       workspaces,
-      requestOllamaComposerTier4Ack,
     ]
   )
 
@@ -24493,69 +24438,6 @@ function App(): React.JSX.Element {
                     : 'Copy command'}
                 </button>
               )}
-            </footer>
-          </div>
-        </div>
-      )}
-      {ollamaComposerParityAck && (
-        <div
-          className="creative-approval-backdrop"
-          role="presentation"
-          onMouseDown={() => setOllamaComposerParityAck(null)}
-        >
-          <div
-            className="creative-approval-modal approval-elevation-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="ollama-composer-parity-ack-title"
-            data-elevation-tier="2"
-            onMouseDown={(event) => event.stopPropagation()}
-          >
-            <header className="creative-approval-modal-header">
-              <span className="creative-approval-modal-eyebrow" aria-hidden>
-                Ollama provider parity
-              </span>
-              <h2
-                id="ollama-composer-parity-ack-title"
-                className="creative-approval-modal-title"
-              >
-                Enable full TaskWraith tools for Ollama?
-              </h2>
-            </header>
-            <p className="creative-approval-modal-description">
-              Tier 4 lets local Ollama models request the full TaskWraith tool surface
-              (edits + shell) for this chat. TaskWraith still enforces workspace
-              boundaries, path checks, approval policy, and audit events, but local
-              models can make poor or prompt-injected tool requests.
-            </p>
-            <p className="creative-approval-modal-description approval-elevation-caution">
-              Use at your own risk. The acknowledgement is recorded per workspace; this
-              chat runs at Tier 4 once enabled. Revoke it per workspace in
-              Settings → Behavior → Ollama.
-            </p>
-            {!ollamaComposerParityAck.workspacePath && (
-              <p className="creative-approval-modal-description approval-elevation-caution">
-                Open a workspace chat before enabling provider parity for Ollama.
-              </p>
-            )}
-            <footer className="creative-approval-modal-actions">
-              <button
-                type="button"
-                className="creative-approval-modal-reject"
-                title="Leave Ollama on its current governed tool tier."
-                onClick={() => setOllamaComposerParityAck(null)}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                className="creative-approval-modal-approve-once"
-                title="Enable full TaskWraith tools for Ollama in this workspace; workspace boundaries, approval policy, and audit events still apply."
-                onClick={confirmOllamaComposerTier4}
-                disabled={!ollamaComposerParityAck.workspacePath}
-              >
-                I understand, enable for this workspace
-              </button>
             </footer>
           </div>
         </div>

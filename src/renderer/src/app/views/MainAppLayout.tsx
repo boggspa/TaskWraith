@@ -342,9 +342,6 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   multiview,
   ollamaBaseUrl,
   ollamaDefaultModel,
-  ollamaDefaultRunProfile,
-  ollamaRunProfiles,
-  ollamaToolControlTier,
   openChatPopoutWindow,
   openCurrentSideChatPresentation,
   openFileChangeInWorkbench,
@@ -768,13 +765,6 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
               kimiBinaryPath={kimiBinaryPath}
               ollamaBaseUrl={ollamaBaseUrl}
               ollamaDefaultModel={ollamaDefaultModel}
-              ollamaToolControlTier={ollamaToolControlTier}
-              ollamaDefaultRunProfile={ollamaDefaultRunProfile}
-              ollamaRunProfiles={ollamaRunProfiles}
-              ollamaProviderParityAcknowledgedAt={settings?.ollamaProviderParityAcknowledgedAt}
-              ollamaProviderParityWorkspaceGrants={
-                settings?.ollamaProviderParityWorkspaceGrants
-              }
               auditOrchestration={settings?.auditOrchestration}
               agenticServices={agenticServices}
               nativeSubAgentRequests={settings?.nativeSubAgentRequests ?? 'ask'}

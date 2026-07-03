@@ -17,10 +17,6 @@ import type {
   HumanCollaborationInviteCopyResult,
   HumanCollaborationInviteHealth
 } from '../lib/humanCollaborationInviteHealth'
-import {
-  OLLAMA_RUN_PROFILE_OPTIONS,
-  OLLAMA_TOOL_CONTROL_TIERS
-} from '../../../shared/ollamaTierTables'
 import { AgentMentionMenu } from '../components/AgentMentionMenu'
 import { ArrowUpSendIcon, ChatMediaIcon, ClaudeReturnSymbolIcon, ClockSymbolIcon, CommandSymbolIcon, FileMenuSelectionIcon, GoalSymbolIcon, ModelSymbolIcon, PermissionSymbolIcon, PlusSymbolIcon, QueueSymbolIcon, ReviewSymbolIcon, RunSymbolIcon, ScreenWatchSymbolIcon, SteerSymbolIcon, StopSymbolIcon, TrustSymbolIcon, WorkflowGlyphIcon, XSymbolIcon } from '../components/AppChromeSymbols'
 import { ContextMeterPopover } from './ContextMeterPopover'
@@ -56,8 +52,6 @@ import { GitCiChip, GitMergeBadge, GitSyncChip, branchTone } from '../components
 import { LiveThreadTokenTally } from '../components/LiveThreadTokenTally'
 import { MultiviewLayoutPicker } from '../components/MultiviewLayoutPicker'
 import { CanvasComposerButton } from '../components/CanvasComposerButton'
-import { OllamaPermissionRuntimePicker } from '../components/OllamaPermissionRuntimePicker'
-import { ollamaProviderParityWorkspaceGranted } from '../../../main/ollama/OllamaToolTiers'
 import { QueuedMessagesAboveRow } from '../components/QueuedMessagesAboveRow'
 import { ProviderBadgeIcon } from '../components/Sidebar'
 import { WelcomeHeatmaps } from '../components/WelcomeHeatmaps'
@@ -320,10 +314,7 @@ export interface ComposerProps {
   markCurrentGoalBlocked: any
   markPersistentSessionRestartNeeded: any
   multiview: any
-  ollamaProviderParityActiveForCurrentWorkspace: any
-  ollamaToolControlTier: any
   onOllamaModelSelected?: (modelId: string, modelLabel?: string) => void
-  onRequestOllamaTier4Ack: (chatId?: string | null, workspacePath?: string | null) => void
   onCopyHumanCollaborationInvite?: (options?: { allowLanOnly?: boolean }) =>
     | Promise<HumanCollaborationInviteCopyResult>
     | HumanCollaborationInviteCopyResult
@@ -622,9 +613,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     markCurrentGoalBlocked,
     markPersistentSessionRestartNeeded,
     multiview,
-    ollamaToolControlTier,
     onOllamaModelSelected,
-    onRequestOllamaTier4Ack,
     onCopyHumanCollaborationInvite,
     onCopyHumanCollaborationInviteText,
     onStopHumanCollaborationSharing,
@@ -822,33 +811,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     const interval = window.setInterval(tick, 1_000)
     return () => window.clearInterval(interval)
   }, [agentApprovalTimeoutMs, pendingAgentApproval?.id])
-
-  // Per-chat Ollama tool-control tier + run profile for the composer picker.
-  // Read this chat's choice out of providerMetadata (validated against the shared
-  // tables) and coalesce to the GLOBAL defaults when the chat has never set one —
-  // matching App.tsx getChatComposerSelection, so old chats inherit the global
-  // value with no migration. `currentChat` / `settings` / `currentWorkspacePath`
-  // are already pane-correct (each ctx site sets them), so this is right for both
-  // the focused composer and every multiview pane with no extra prop threading.
-  const chatOllamaRawTier = currentChat?.providerMetadata?.ollamaToolControlTier
-  const chatOllamaTier = OLLAMA_TOOL_CONTROL_TIERS.some((tier) => tier.value === chatOllamaRawTier)
-    ? (chatOllamaRawTier as (typeof OLLAMA_TOOL_CONTROL_TIERS)[number]['value'])
-    : ollamaToolControlTier
-  const chatOllamaRawRunProfile = currentChat?.providerMetadata?.ollamaRunProfile
-  const chatOllamaRunProfile = OLLAMA_RUN_PROFILE_OPTIONS.some(
-    (profile) => profile.value === chatOllamaRawRunProfile
-  )
-    ? (chatOllamaRawRunProfile as (typeof OLLAMA_RUN_PROFILE_OPTIONS)[number]['value'])
-    : settings?.ollamaDefaultRunProfile || 'local_scout'
-  // Tier 4 is only live once THIS workspace has been granted parity (else the
-  // runtime silently downgrades to read_only — see MEMORY.md ollama-edit-tiers).
-  // Use the SAME canonicalization-tolerant check as the runtime gate so a grant
-  // stored under a differently-normalized path form (trailing slash, `.`/`..`)
-  // can't make the chip falsely warn "read-only" while the model runs parity.
-  const ollamaTier4GrantedForWorkspace = ollamaProviderParityWorkspaceGranted(
-    settings || {},
-    currentWorkspacePath
-  )
 
   // ---------------------------------------------------------------------------
   // Composer-local editor state (Slices B + C of the multiview composer-parity
@@ -3919,68 +3881,9 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                           const pickerDisabled =
                             isCurrentComposerLocked ||
                             (effectiveProvider === 'gemini' && !geminiWorkspaceTrustReady)
-                          if (effectiveProvider === 'ollama') {
-                            const effectiveOllamaTier =
-                              ensembleBinding?.provider === 'ollama' &&
-                              ensembleBinding.ollamaToolControlTier
-                                ? ensembleBinding.ollamaToolControlTier
-                                : chatOllamaTier
-                            const effectiveOllamaRunProfile =
-                              ensembleBinding?.provider === 'ollama' &&
-                              ensembleBinding.ollamaRunProfile
-                                ? ensembleBinding.ollamaRunProfile
-                                : chatOllamaRunProfile
-                            const handleOllamaTierSelection = (
-                              tier: typeof chatOllamaTier
-                            ): void => {
-                              if (ensembleBinding) {
-                                updateSelectedParticipant({ ollamaToolControlTier: tier })
-                                return
-                              }
-                              rememberCurrentChatComposerSelection({
-                                ollamaToolControlTier: tier
-                              })
-                            }
-                            const handleOllamaRunProfileSelection = (
-                              profile: typeof chatOllamaRunProfile
-                            ): void => {
-                              if (ensembleBinding) {
-                                updateSelectedParticipant({ ollamaRunProfile: profile })
-                                return
-                              }
-                              rememberCurrentChatComposerSelection({
-                                ollamaRunProfile: profile
-                              })
-                            }
-                            return (
-                              <OllamaPermissionRuntimePicker
-                                provider={effectiveProvider}
-                                composerStyle={appearance.composerStyle}
-                                permissionOptions={permissionPickerOptions}
-                                selectedPermission={effectiveSelectedPermission}
-                                onSelectPermission={handlePermissionSelection}
-                                grantServices={grantServicesForPicker}
-                                enabledGrantIds={enabledGrantIds}
-                                agenticServices={agenticServices}
-                                onToggleGrant={handleToggleGrantForPicker}
-                                grantScopeLabel={ensembleBinding ? 'participant' : 'workspace'}
-                                onApplyToAllParticipants={applyAllParticipants}
-                                selectedTier={effectiveOllamaTier}
-                                onSelectTier={handleOllamaTierSelection}
-                                selectedRunProfile={effectiveOllamaRunProfile}
-                                onSelectRunProfile={handleOllamaRunProfileSelection}
-                                tier4Granted={ollamaTier4GrantedForWorkspace}
-                                tier4Unavailable={isCurrentGlobalChat || !currentWorkspacePath}
-                                onRequestTier4Ack={() =>
-                                  onRequestOllamaTier4Ack(
-                                    currentChat?.appChatId,
-                                    currentWorkspacePath
-                                  )
-                                }
-                                disabled={pickerDisabled}
-                              />
-                            )
-                          }
+                          // Tier retirement (2026-07): Ollama uses the SAME standard
+                          // permission-role picker as every provider — no more
+                          // Ollama-only tier/run-profile picker (the tier ladder is gone).
                           return (
                             <CombinedPermissionsPicker
                               provider={effectiveProvider}

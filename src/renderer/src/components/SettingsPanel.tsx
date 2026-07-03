@@ -43,10 +43,6 @@ import {
 } from '../lib/providerAuthSummary'
 import { isRetiredProvider } from '../../../shared/retiredProviders'
 import { availableIconVariants, type AppIconVariant } from '../../../shared/iconVariants'
-import {
-  OLLAMA_RUN_PROFILE_OPTIONS,
-  OLLAMA_TOOL_CONTROL_TIERS
-} from '../../../shared/ollamaTierTables'
 import appIconRegularThumb from '../assets/app-icons/regular.png'
 import appIconWwdc26Thumb from '../assets/app-icons/wwdc26.png'
 import appIconMonolineThumb from '../assets/app-icons/monoline.png'
@@ -175,11 +171,6 @@ interface SettingsPanelProps {
   kimiBinaryPath: string
   ollamaBaseUrl: string
   ollamaDefaultModel: string
-  ollamaToolControlTier?: AppSettings['ollamaToolControlTier']
-  ollamaDefaultRunProfile?: AppSettings['ollamaDefaultRunProfile']
-  ollamaRunProfiles?: AppSettings['ollamaRunProfiles']
-  ollamaProviderParityAcknowledgedAt?: string
-  ollamaProviderParityWorkspaceGrants?: AppSettings['ollamaProviderParityWorkspaceGrants']
   auditOrchestration?: AppSettings['auditOrchestration']
   agenticServices: AgenticServicesSettings
   nativeSubAgentRequests?: NativeSubAgentRequestPolicy
@@ -290,11 +281,6 @@ interface SettingsPanelProps {
     kimiBinaryPath?: string
     ollamaBaseUrl?: string
     ollamaDefaultModel?: string
-    ollamaToolControlTier?: AppSettings['ollamaToolControlTier']
-    ollamaDefaultRunProfile?: AppSettings['ollamaDefaultRunProfile']
-    ollamaRunProfiles?: AppSettings['ollamaRunProfiles']
-    ollamaProviderParityAcknowledgedAt?: string
-    ollamaProviderParityWorkspaceGrants?: AppSettings['ollamaProviderParityWorkspaceGrants']
     auditOrchestration?: AppSettings['auditOrchestration']
     agenticServices?: AgenticServicesSettings
     nativeSubAgentRequests?: NativeSubAgentRequestPolicy
@@ -608,9 +594,6 @@ const FUN_FX_MODES: Array<{ value: AppSettings['funFxMode']; label: string; help
   { value: 'epic', label: 'Epic', helper: 'Adds additional ambient scene accents.' }
 ]
 
-// OLLAMA_TOOL_CONTROL_TIERS + OLLAMA_RUN_PROFILE_OPTIONS now live in the shared
-// table module (src/shared/ollamaTierTables.ts) so the composer's per-chat tier
-// picker reuses the exact same labels/helpers. Imported at the top of the file.
 
 // 1.0.6-CRUX41 — cursor + grok are first-class; surface them in the MCP tab's
 // connected-surfaces grid (and the refresh-all loop) alongside the core four.
@@ -2923,11 +2906,6 @@ export function SettingsPanel({
   kimiBinaryPath,
   ollamaBaseUrl,
   ollamaDefaultModel,
-  ollamaToolControlTier = 'read_only',
-  ollamaDefaultRunProfile = 'local_scout',
-  ollamaRunProfiles,
-  ollamaProviderParityAcknowledgedAt,
-  ollamaProviderParityWorkspaceGrants,
   auditOrchestration,
   agenticServices,
   nativeSubAgentRequests = 'ask',
@@ -3055,22 +3033,9 @@ export function SettingsPanel({
   const [fxSnapshot, setFxSnapshot] = useState<FxRateSnapshot | null>(null)
   const [fxRefreshing, setFxRefreshing] = useState(false)
   const [fxError, setFxError] = useState<string | null>(null)
-  const [showOllamaParityAck, setShowOllamaParityAck] = useState(false)
   const [showDeleteHistoryConfirm, setShowDeleteHistoryConfirm] = useState(false)
   const [deleteHistoryPending, setDeleteHistoryPending] = useState(false)
   const [deleteHistoryError, setDeleteHistoryError] = useState('')
-
-  useEffect(() => {
-    if (!showOllamaParityAck) return
-    const handleKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') {
-        event.preventDefault()
-        setShowOllamaParityAck(false)
-      }
-    }
-    window.addEventListener('keydown', handleKeyDown, true)
-    return () => window.removeEventListener('keydown', handleKeyDown, true)
-  }, [showOllamaParityAck])
 
   useEffect(() => {
     if (!showDeleteHistoryConfirm) return
@@ -4042,72 +4007,9 @@ export function SettingsPanel({
   const updateAdvancedFx = (partial: Partial<AppSettings['advancedFx']>): void => {
     onChange({ advancedFx: { ...advancedFx, ...partial } })
   }
-  const resolvedOllamaToolControlTier =
-    ollamaToolControlTier === 'approved_edits' ||
-    ollamaToolControlTier === 'approved_shell' ||
-    ollamaToolControlTier === 'provider_parity'
-      ? ollamaToolControlTier
-      : 'read_only'
-  const currentWorkspacePath = currentWorkspace?.path || ''
-  const ollamaParityWorkspaceGrants = ollamaProviderParityWorkspaceGrants || {}
-  const currentWorkspaceParityGranted = Boolean(
-    currentWorkspacePath && ollamaParityWorkspaceGrants[currentWorkspacePath]
-  )
-  const currentWorkspaceLabel = currentWorkspace?.displayName || currentWorkspacePath || 'workspace'
-  const ollamaCustomProfileCount = Object.keys(ollamaRunProfiles || {}).length
-  const selectOllamaToolControlTier = (
-    tier: NonNullable<AppSettings['ollamaToolControlTier']>
-  ): void => {
-    if (tier === 'provider_parity' && !currentWorkspaceParityGranted) {
-      setShowOllamaParityAck(true)
-      return
-    }
-    if (tier === resolvedOllamaToolControlTier) return
-    onChange({ ollamaToolControlTier: tier })
-  }
-  const resolvedOllamaRunProfile =
-    ollamaDefaultRunProfile === 'approved_patcher' ||
-    ollamaDefaultRunProfile === 'verify_with_shell' ||
-    ollamaDefaultRunProfile === 'provider_parity' ||
-    ollamaDefaultRunProfile === 'custom'
-      ? ollamaDefaultRunProfile
-      : 'local_scout'
-  const selectOllamaRunProfile = (
-    profile: (typeof OLLAMA_RUN_PROFILE_OPTIONS)[number]
-  ): void => {
-    if (profile.tier === 'provider_parity' && !currentWorkspaceParityGranted) {
-      setShowOllamaParityAck(true)
-      return
-    }
-    onChange({
-      ollamaDefaultRunProfile: profile.value,
-      ollamaToolControlTier: profile.tier
-    })
-  }
-  const confirmOllamaProviderParity = (): void => {
-    if (!currentWorkspacePath) return
-    const grantedAt = new Date().toISOString()
-    setShowOllamaParityAck(false)
-    onChange({
-      ollamaDefaultRunProfile: 'provider_parity',
-      ollamaToolControlTier: 'provider_parity',
-      ollamaProviderParityAcknowledgedAt: ollamaProviderParityAcknowledgedAt || grantedAt,
-      ollamaProviderParityWorkspaceGrants: {
-        ...ollamaParityWorkspaceGrants,
-        [currentWorkspacePath]: grantedAt
-      }
-    })
-  }
-  const revokeOllamaProviderParityForCurrentWorkspace = (): void => {
-    if (!currentWorkspacePath) return
-    const nextGrants = { ...ollamaParityWorkspaceGrants }
-    delete nextGrants[currentWorkspacePath]
-    onChange({
-      ollamaToolControlTier:
-        resolvedOllamaToolControlTier === 'provider_parity' ? 'read_only' : resolvedOllamaToolControlTier,
-      ollamaProviderParityWorkspaceGrants: nextGrants
-    })
-  }
+  // Tier retirement (2026-07): the Ollama tool-control tier + coding-profile +
+  // provider-parity grant handlers were removed with their UI — local models are
+  // governed by the standard permission role, not an Ollama-only tier ladder.
   const confirmDeleteAllChatHistory = async (): Promise<void> => {
     if (!onDeleteAllChatHistory || deleteHistoryPending) return
     setDeleteHistoryPending(true)
@@ -4125,65 +4027,6 @@ export function SettingsPanel({
 
   return (
     <div className={`settings-panel settings-panel-${layout}`}>
-      {showOllamaParityAck &&
-        createPortal(
-          <div
-            className="creative-approval-backdrop"
-            role="presentation"
-            onMouseDown={() => setShowOllamaParityAck(false)}
-          >
-            <div
-              className="creative-approval-modal approval-elevation-modal"
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby="ollama-parity-ack-title"
-              data-elevation-tier="2"
-              onMouseDown={(event) => event.stopPropagation()}
-            >
-              <header className="creative-approval-modal-header">
-                <span className="creative-approval-modal-eyebrow" aria-hidden>
-                  Ollama provider parity
-                </span>
-                <h2 id="ollama-parity-ack-title" className="creative-approval-modal-title">
-                  Enable full TaskWraith tools for Ollama?
-                </h2>
-              </header>
-              <p className="creative-approval-modal-description">
-                Tier 4 lets local Ollama models request the full TaskWraith tool surface for{' '}
-                <strong>{currentWorkspaceLabel}</strong>. TaskWraith still enforces workspace
-                boundaries, path checks, approval policy, and audit events, but local models can
-                make poor or prompt-injected tool requests.
-              </p>
-              <p className="creative-approval-modal-description approval-elevation-caution">
-                Use at your own risk. Keep this to test workspaces you can recover, and revoke it
-                here per workspace.
-              </p>
-              {!currentWorkspacePath && (
-                <p className="creative-approval-modal-description approval-elevation-caution">
-                  Open a workspace before enabling provider parity for Ollama.
-                </p>
-              )}
-              <footer className="creative-approval-modal-actions">
-                <button
-                  type="button"
-                  className="creative-approval-modal-reject"
-                  onClick={() => setShowOllamaParityAck(false)}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  className="creative-approval-modal-approve-once"
-                  onClick={confirmOllamaProviderParity}
-                  disabled={!currentWorkspacePath}
-                >
-                  I understand, enable for this workspace
-                </button>
-              </footer>
-            </div>
-          </div>,
-          document.body
-        )}
       {showDeleteHistoryConfirm &&
         createPortal(
           <div
@@ -6619,92 +6462,10 @@ export function SettingsPanel({
                   Select an exact installed tag. Leave blank only when no installed model list is
                   available.
                 </p>
-
-                <label className="settings-label">Ollama coding profile</label>
-                <div className="settings-option-list">
-                  {OLLAMA_RUN_PROFILE_OPTIONS.map((option) => {
-                    const checked = resolvedOllamaRunProfile === option.value
-                    return (
-                      <button
-                        key={option.value}
-                        type="button"
-                        className={`settings-radio-option ${checked ? 'active' : ''}`}
-                        onClick={() => selectOllamaRunProfile(option)}
-                        aria-pressed={checked}
-                      >
-                        <span className="settings-radio-dot" />
-                        <span>
-                          <strong>{option.label}</strong>
-                          <span>{option.helper}</span>
-                        </span>
-                      </button>
-                    )
-                  })}
-                </div>
-                {ollamaCustomProfileCount > 0 && (
-                  <p className="settings-hint">
-                    {ollamaCustomProfileCount} custom Ollama profile override
-                    {ollamaCustomProfileCount === 1 ? '' : 's'} configured.
-                  </p>
-                )}
-
-                <label className="settings-label">Local model tool control</label>
-                <div className="settings-option-list">
-                  {OLLAMA_TOOL_CONTROL_TIERS.map((option) => {
-                    const checked = resolvedOllamaToolControlTier === option.value
-                    return (
-                      <button
-                        key={option.value}
-                        type="button"
-                        className={`settings-radio-option ${checked ? 'active' : ''}`}
-                        onClick={() => selectOllamaToolControlTier(option.value)}
-                        aria-pressed={checked}
-                      >
-                        <span className="settings-radio-dot" />
-                        <span>
-                          <strong>{option.label}</strong>
-                          <span>{option.helper}</span>
-                        </span>
-                      </button>
-                    )
-                  })}
-                </div>
-                <p className="settings-hint">
-                  Ollama never receives raw filesystem access. Every tier is still mediated by
-                  TaskWraith workspace checks; Tier 2 and Tier 3 force a modal approval before each
-                  mutation.
-                </p>
-                {resolvedOllamaToolControlTier === 'provider_parity' && (
-                  <div
-                    className="settings-hint"
-                    style={{
-                      color: currentWorkspaceParityGranted
-                        ? 'var(--color-success, #3fb950)'
-                        : 'var(--color-warning, #d29922)',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 'var(--space-xs)',
-                      flexWrap: 'wrap'
-                    }}
-                  >
-                    <span>
-                      {currentWorkspaceParityGranted
-                        ? `Provider parity is enabled for ${currentWorkspaceLabel}.`
-                        : currentWorkspacePath
-                          ? `Tier 4 is selected, but ${currentWorkspaceLabel} has no parity grant yet; Ollama is read-only here.`
-                          : 'Tier 4 is selected, but Ollama stays read-only until a workspace is open and granted.'}
-                    </span>
-                    {currentWorkspaceParityGranted && (
-                      <button
-                        type="button"
-                        className="btn btn-sm btn-ghost"
-                        onClick={revokeOllamaProviderParityForCurrentWorkspace}
-                      >
-                        Revoke this workspace
-                      </button>
-                    )}
-                  </div>
-                )}
+                {/* Tier retirement (2026-07): the Ollama coding-profile picker + tool-control
+                    tier radios + provider-parity grant were removed. Local models are governed
+                    by the standard permission role (set per chat from the composer), identical
+                    to every other provider — no Ollama-only tiering to configure here. */}
                 {ollamaStatus?.error && (
                   <p className="settings-hint" style={{ color: 'var(--color-warning, #d29922)' }}>
                     {String(ollamaStatus.error)}
