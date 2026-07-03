@@ -1,4 +1,5 @@
 import { createHash, createPublicKey, verify as verifySignature } from 'node:crypto'
+import { basename } from 'node:path'
 
 import type {
   AppSettings,
@@ -13,6 +14,8 @@ import type {
   ProductAuditBundleManifest,
   ProductAuditBundleSnapshot,
   ProductAuditBundleSignature,
+  ProductAuditBundleVerificationReceipt,
+  ProductAuditBundleVerificationResult,
   ProductBridgeHealthRecord,
   ProductCrashFilter,
   ProductCrashInput,
@@ -132,6 +135,7 @@ function expectedAuditBundleCounts(
     messageFeedback: snapshot.sections.messageFeedback.length,
     messageFeedbackCastingSignals: snapshot.sections.messageFeedbackCastingSignals.length,
     externalPublish: snapshot.sections.externalPublish.length,
+    auditBundleVerifications: snapshot.sections.auditBundleVerifications.length,
     auditRetentionPurges: snapshot.sections.auditRetentionPurges.length,
     userMcpBlockedServers: snapshot.sections.userMcpBlockedServers.length
   }
@@ -150,6 +154,7 @@ function expectedAuditBundleHashes(
     messageFeedback: diagnosticsSha256(snapshot.sections.messageFeedback),
     messageFeedbackCastingSignals: diagnosticsSha256(snapshot.sections.messageFeedbackCastingSignals),
     externalPublish: diagnosticsSha256(snapshot.sections.externalPublish),
+    auditBundleVerifications: diagnosticsSha256(snapshot.sections.auditBundleVerifications),
     auditRetentionPurges: diagnosticsSha256(snapshot.sections.auditRetentionPurges),
     userMcpBlockedServers: diagnosticsSha256(snapshot.sections.userMcpBlockedServers)
   }
@@ -249,6 +254,72 @@ function summarizeExternalPublishReceiptForDiagnostics(
   }
 }
 
+export function createAuditBundleVerificationReceipt(
+  result: ProductAuditBundleVerificationResult,
+  options: { id: string; verifiedAt?: string } = { id: '' }
+): ProductAuditBundleVerificationReceipt {
+  const verification = result.verification
+  return {
+    schemaVersion: 1,
+    id: options.id || `audit-bundle-verification-${Date.now()}`,
+    verifiedAt: options.verifiedAt || new Date().toISOString(),
+    ok: result.ok,
+    ...(result.path
+      ? {
+          bundlePathHash: hashId(result.path),
+          bundlePathBasename: basename(result.path)
+        }
+      : {}),
+    ...(result.manifest
+      ? {
+          bundleGeneratedAt: result.manifest.generatedAt,
+          redactionMode: result.manifest.redactionMode,
+          filtersHash: diagnosticsSha256(result.manifest.filters),
+          tamperEvidence: result.manifest.tamperEvidence
+        }
+      : {}),
+    ...(verification
+      ? {
+          signaturePresent: verification.signaturePresent,
+          payloadHashValid: verification.payloadHashValid,
+          signatureValid: verification.signatureValid,
+          sectionHashesValid: verification.sectionHashesValid,
+          countsValid: verification.countsValid,
+          ...(verification.keyId ? { keyId: verification.keyId } : {}),
+          ...(verification.reason ? { reason: verification.reason } : {})
+        }
+      : {}),
+    ...(result.error ? { error: redactProductOperationsText(result.error) } : {})
+  }
+}
+
+function summarizeAuditBundleVerificationReceiptForDiagnostics(
+  receipt: ProductAuditBundleVerificationReceipt
+): Record<string, unknown> {
+  return {
+    schemaVersion: receipt.schemaVersion,
+    idHash: hashId(receipt.id),
+    verifiedAt: receipt.verifiedAt,
+    ok: receipt.ok,
+    bundlePathHash: receipt.bundlePathHash,
+    hasBundlePathBasename: Boolean(receipt.bundlePathBasename),
+    bundlePathBasenameHash: hashId(receipt.bundlePathBasename),
+    bundleGeneratedAt: receipt.bundleGeneratedAt,
+    redactionMode: receipt.redactionMode,
+    filtersHash: receipt.filtersHash,
+    tamperEvidence: receipt.tamperEvidence,
+    signaturePresent: receipt.signaturePresent,
+    payloadHashValid: receipt.payloadHashValid,
+    signatureValid: receipt.signatureValid,
+    sectionHashesValid: receipt.sectionHashesValid,
+    countsValid: receipt.countsValid,
+    keyId: receipt.keyId,
+    reason: receipt.reason,
+    hasError: Boolean(receipt.error),
+    errorHash: hashId(receipt.error)
+  }
+}
+
 function summarizeAuditRetentionPurgeReceiptForDiagnostics(
   receipt: AuditRetentionPurgeReceipt
 ): Record<string, unknown> {
@@ -309,6 +380,7 @@ function buildDiagnosticsAuditReceipts(input: {
   workspaceChanges: WorkspaceChangeSet[]
   messageFeedbackReceipts: MessageFeedbackReceipt[]
   externalPublishReceipts: ExternalPublishReceipt[]
+  auditBundleVerificationReceipts: ProductAuditBundleVerificationReceipt[]
   auditRetentionPurgeReceipts: AuditRetentionPurgeReceipt[]
   userMcpBlockedServers: UserMcpLaunchPolicyDecision[]
 }) {
@@ -320,6 +392,9 @@ function buildDiagnosticsAuditReceipts(input: {
   ).map(summarizeMessageFeedbackCastingSignalForDiagnostics)
   const externalPublish = input.externalPublishReceipts.map(
     summarizeExternalPublishReceiptForDiagnostics
+  )
+  const auditBundleVerifications = input.auditBundleVerificationReceipts.map(
+    summarizeAuditBundleVerificationReceiptForDiagnostics
   )
   const auditRetentionPurges = input.auditRetentionPurgeReceipts.map(
     summarizeAuditRetentionPurgeReceiptForDiagnostics
@@ -337,6 +412,7 @@ function buildDiagnosticsAuditReceipts(input: {
       messageFeedback: input.messageFeedbackReceipts.length,
       messageFeedbackCastingSignals: messageFeedbackCastingSignals.length,
       externalPublish: input.externalPublishReceipts.length,
+      auditBundleVerifications: input.auditBundleVerificationReceipts.length,
       auditRetentionPurges: input.auditRetentionPurgeReceipts.length,
       userMcpBlockedServers: input.userMcpBlockedServers.length
     },
@@ -346,6 +422,7 @@ function buildDiagnosticsAuditReceipts(input: {
       messageFeedback: diagnosticsSha256(messageFeedback),
       messageFeedbackCastingSignals: diagnosticsSha256(messageFeedbackCastingSignals),
       externalPublish: diagnosticsSha256(externalPublish),
+      auditBundleVerifications: diagnosticsSha256(auditBundleVerifications),
       auditRetentionPurges: diagnosticsSha256(auditRetentionPurges),
       userMcpBlockedServers: diagnosticsSha256(userMcpBlockedServers)
     },
@@ -353,6 +430,7 @@ function buildDiagnosticsAuditReceipts(input: {
       messageFeedback: messageFeedback.slice(-MAX_DIAGNOSTIC_RECORDS),
       messageFeedbackCastingSignals: messageFeedbackCastingSignals.slice(-MAX_DIAGNOSTIC_RECORDS),
       externalPublish: externalPublish.slice(-MAX_DIAGNOSTIC_RECORDS),
+      auditBundleVerifications: auditBundleVerifications.slice(-MAX_DIAGNOSTIC_RECORDS),
       auditRetentionPurges: auditRetentionPurges.slice(-MAX_DIAGNOSTIC_RECORDS),
       userMcpBlockedServers: userMcpBlockedServers.slice(-MAX_DIAGNOSTIC_RECORDS)
     },
@@ -1002,6 +1080,7 @@ export function buildProductOperationsStatus(input: {
   workspaceChanges: WorkspaceChangeSet[]
   messageFeedbackReceipts?: MessageFeedbackReceipt[]
   externalPublishReceipts?: ExternalPublishReceipt[]
+  auditBundleVerificationReceipts?: ProductAuditBundleVerificationReceipt[]
   auditRetentionPurgeReceipts?: AuditRetentionPurgeReceipt[]
   userMcpBlockedServers?: UserMcpLaunchPolicyDecision[]
   scheduledTasks: ScheduledTask[]
@@ -1053,6 +1132,7 @@ export function buildProductOperationsStatus(input: {
     workspaceChanges: input.workspaceChanges,
     messageFeedbackReceipts: input.messageFeedbackReceipts || [],
     externalPublishReceipts: input.externalPublishReceipts || [],
+    auditBundleVerificationReceipts: input.auditBundleVerificationReceipts || [],
     auditRetentionPurgeReceipts: input.auditRetentionPurgeReceipts || [],
     userMcpBlockedServers: input.userMcpBlockedServers || []
   })
@@ -1351,6 +1431,7 @@ export function buildDiagnosticsSnapshot(input: {
   workspaceChanges: WorkspaceChangeSet[]
   messageFeedbackReceipts?: MessageFeedbackReceipt[]
   externalPublishReceipts?: ExternalPublishReceipt[]
+  auditBundleVerificationReceipts?: ProductAuditBundleVerificationReceipt[]
   auditRetentionPurgeReceipts?: AuditRetentionPurgeReceipt[]
   userMcpBlockedServers?: UserMcpLaunchPolicyDecision[]
   managedPolicy?: Record<string, unknown>
@@ -1424,6 +1505,7 @@ export function buildDiagnosticsSnapshot(input: {
       workspaceChanges: input.workspaceChanges,
       messageFeedbackReceipts: input.messageFeedbackReceipts || [],
       externalPublishReceipts: input.externalPublishReceipts || [],
+      auditBundleVerificationReceipts: input.auditBundleVerificationReceipts || [],
       auditRetentionPurgeReceipts: input.auditRetentionPurgeReceipts || [],
       userMcpBlockedServers: input.userMcpBlockedServers || []
     }),
@@ -1460,6 +1542,7 @@ export function buildAuditBundleSnapshot(input: {
   capabilityLedger?: CapabilityLedgerSnapshot
   messageFeedbackReceipts: MessageFeedbackReceipt[]
   externalPublishReceipts: ExternalPublishReceipt[]
+  auditBundleVerificationReceipts?: ProductAuditBundleVerificationReceipt[]
   auditRetentionPurgeReceipts?: AuditRetentionPurgeReceipt[]
   userMcpBlockedServers?: UserMcpLaunchPolicyDecision[]
   filter?: ProductAuditBundleFilter
@@ -1480,6 +1563,7 @@ export function buildAuditBundleSnapshot(input: {
   const externalPublish = input.externalPublishReceipts.filter((receipt) =>
     matchesAuditBundleFilter(receipt, filter)
   )
+  const auditBundleVerifications = input.auditBundleVerificationReceipts || []
   const auditRetentionPurges = input.auditRetentionPurgeReceipts || []
   const userMcpBlockedServers = input.userMcpBlockedServers || []
   const runEventReplays = uniqueRunIds(runEvents).map((runId) =>
@@ -1499,6 +1583,9 @@ export function buildAuditBundleSnapshot(input: {
     messageFeedback: messageFeedback.map(summarizeMessageFeedbackReceiptForAuditBundle),
     messageFeedbackCastingSignals,
     externalPublish: externalPublish.map(summarizeExternalPublishReceiptForAuditBundle),
+    auditBundleVerifications: auditBundleVerifications.map(
+      summarizeAuditBundleVerificationReceiptForDiagnostics
+    ),
     auditRetentionPurges: auditRetentionPurges.map(
       summarizeAuditRetentionPurgeReceiptForDiagnostics
     ),
@@ -1531,6 +1618,7 @@ export function buildAuditBundleSnapshot(input: {
         messageFeedback: messageFeedback.length,
         messageFeedbackCastingSignals: messageFeedbackCastingSignals.length,
         externalPublish: externalPublish.length,
+        auditBundleVerifications: auditBundleVerifications.length,
         auditRetentionPurges: auditRetentionPurges.length,
         userMcpBlockedServers: userMcpBlockedServers.length
       },
@@ -1544,6 +1632,7 @@ export function buildAuditBundleSnapshot(input: {
         messageFeedback: diagnosticsSha256(sections.messageFeedback),
         messageFeedbackCastingSignals: diagnosticsSha256(sections.messageFeedbackCastingSignals),
         externalPublish: diagnosticsSha256(sections.externalPublish),
+        auditBundleVerifications: diagnosticsSha256(sections.auditBundleVerifications),
         auditRetentionPurges: diagnosticsSha256(sections.auditRetentionPurges),
         userMcpBlockedServers: diagnosticsSha256(sections.userMcpBlockedServers)
       },
@@ -1556,7 +1645,8 @@ export function buildAuditBundleSnapshot(input: {
           workspaceChanges: 'retained_capped_and_pruned',
           auditRuns: 'retained_capped',
           messageFeedback: 'retained_hard_capped_local',
-          externalPublish: 'retained_capped'
+          externalPublish: 'retained_capped',
+          auditBundleVerifications: 'retained_capped_local'
         },
         runEventHashChains: {
           checked: runEventChains.length,
