@@ -870,10 +870,12 @@ import {
   getOllamaCapabilityContract,
   getOllamaStatusSnapshot,
   humanizeOllamaModelId,
+  OLLAMA_TOOL_HELP_NAME,
   runOllamaProvider,
   type OllamaToolExecutionRequest,
   type OllamaToolExecutionResult
 } from './ollama/OllamaProvider'
+import { buildOllamaToolDocSection } from './ollama/OllamaToolsDoc'
 import {
   chatOllamaToolControlTier,
   effectiveOllamaToolControlTier,
@@ -16977,6 +16979,15 @@ async function executeOllamaLocalTool(
     appChatId: request.appChatId
   }
   try {
+    // Virtual `tool_help` (Ollama-only, read-only): return one catalog tool's arg
+    // schema so a text-protocol model can look up a long-tail tool on demand. No
+    // filesystem / approval — it's static doc text derived from the tool catalog.
+    if (request.toolName === OLLAMA_TOOL_HELP_NAME) {
+      const output = buildOllamaToolDocSection(
+        String(request.arguments.name ?? request.arguments.tool ?? '')
+      )
+      return { ok: true, output }
+    }
     assertOllamaMutationIntent(request.toolName, request.arguments)
     assertOllamaProtectedWritePaths(request.toolName, request.arguments, context, workspacePath)
 

@@ -176,8 +176,15 @@ export interface OllamaProviderDeps {
     options?: { excludeIds?: string[] }
   ) => Promise<void>
   executeTool?: (request: OllamaToolExecutionRequest) => Promise<OllamaToolExecutionResult>
-  getOllamaSessionMemory?: (chatId: string) => OllamaSessionMemory | null | undefined
-  saveOllamaSessionMemory?: (chatId: string, memory: OllamaSessionMemory) => void
+  getOllamaSessionMemory?: (
+    chatId: string,
+    memoryKey?: string
+  ) => OllamaSessionMemory | null | undefined
+  saveOllamaSessionMemory?: (
+    chatId: string,
+    memory: OllamaSessionMemory,
+    memoryKey?: string
+  ) => void
 }
 
 interface OllamaTagsResponse {
@@ -278,8 +285,16 @@ interface OllamaChatRetryCallbackInput {
   error: string
 }
 
+// `tool_help` is a virtual, Ollama-only meta tool (NOT in the shared catalog):
+// it returns one catalog tool's arg schema on demand so a text-protocol local
+// model can look up a long-tail tool's exact arguments without the full doc.
+// Native-calling models already receive full schemas inline, so this is a
+// text-protocol aid only. Callable names are the catalog tools plus this one.
+export const OLLAMA_TOOL_HELP_NAME = 'tool_help'
+export type OllamaCallableToolName = OllamaToolName | typeof OLLAMA_TOOL_HELP_NAME
+
 export interface OllamaToolExecutionRequest {
-  toolName: OllamaToolName
+  toolName: OllamaCallableToolName
   arguments: Record<string, unknown>
   workspacePath: string
   appChatId?: string
@@ -295,8 +310,15 @@ export interface OllamaToolExecutionResult {
 }
 
 export interface OllamaToolRequest {
-  toolName: OllamaToolName
+  toolName: OllamaCallableToolName
   arguments: Record<string, unknown>
+}
+
+function ollamaSessionMemoryKeyForRun(payload: AgentRunPayload): string | undefined {
+  const participantId = payload.ensembleRun?.participantId?.trim()
+  if (!participantId) return undefined
+  const safeParticipantId = participantId.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 120)
+  return safeParticipantId ? `ensemble:${safeParticipantId}` : undefined
 }
 
 const OLLAMA_TOOL_RESULT_MAX_CHARS = 8000
@@ -1131,10 +1153,12 @@ export function parseOllamaToolRequest(text: string): OllamaToolRequest | null {
     const wrapper = recordFromUnknown(parsed.taskwraith_tool) || recordFromUnknown(parsed.tool)
     if (!wrapper) continue
     const name = typeof wrapper.name === 'string' ? wrapper.name.trim() : ''
-    if (!OLLAMA_KNOWN_TOOL_NAMES.has(name as OllamaToolName)) continue
+    if (!OLLAMA_KNOWN_TOOL_NAMES.has(name as OllamaToolName) && name !== OLLAMA_TOOL_HELP_NAME) {
+      continue
+    }
     const args = recordFromUnknown(wrapper.arguments) || recordFromUnknown(wrapper.args) || {}
     return {
-      toolName: name as OllamaToolName,
+      toolName: name as OllamaCallableToolName,
       arguments: args
     }
   }
@@ -1484,7 +1508,7 @@ export function normalizeOllamaNativeToolCall(call: OllamaNativeToolCall): Ollam
 }
 
 export function ollamaToolResultFollowUpPrompt(input: {
-  toolName: OllamaToolName
+  toolName: OllamaCallableToolName
   output: string
   ok: boolean
 }): string {
@@ -1700,14 +1724,20 @@ export function unwrapOllamaStructuredResponseText(text: string): string {
 export function resolveOllamaVisibleText(turn: { content: string; thinking?: string }): string {
   const content = unwrapOllamaStructuredResponseText(turn.content)
   if (content.trim()) return content
-  return unwrapOllamaStructuredResponseText(turn.thinking || '')
+  const thinking = unwrapOllamaStructuredResponseText(turn.thinking || '')
+  return looksLikeOllamaPromptRestatement(thinking) ? '' : thinking
 }
 
 export function looksLikeOllamaPromptRestatement(text: string): boolean {
   const value = (text || '').trim().toLowerCase()
   if (!value) return false
   return (
-    /\bwe need to respond as ollama\b/.test(value) ||
+    /\bwe need to (?:respond|reply|answer|produce (?:a )?response|provide (?:a )?response) as ollama\b/.test(value) ||
+    /\bwe are #p\d+\b/.test(value) ||
+    /\bprior participants?\b/.test(value) ||
+    /\bturn-bound round\b/.test(value) ||
+    /\bthe system (?:says|said|message|prompt)\b/.test(value) ||
+    /\bparticipant health\b/.test(value) ||
     /\bthe user (says|said|asked|asks|wants|requested|request is)\b/.test(value) ||
     /\bworkspace coding task\b/.test(value) ||
     /\byour task is the user request in the previous message\b/.test(value) ||
@@ -2185,9 +2215,10 @@ export async function runOllamaProvider(
     const modelTemperature = ollamaModelFamilyTemperature(model)
     const thinkingLevel = resolveOllamaThinkingLevel(model, runProfile)
     const chatId = route.appChatId || payload.appChatId
+    const memoryKey = ollamaSessionMemoryKeyForRun(payload)
     const persistedMemory =
       chatId && deps.getOllamaSessionMemory
-        ? deps.getOllamaSessionMemory(chatId)
+        ? deps.getOllamaSessionMemory(chatId, memoryKey)
         : null
     let sessionMemory =
       persistedMemory && persistedMemory.modelId === model
@@ -2704,7 +2735,7 @@ export async function runOllamaProvider(
     }
 
     if (chatId && deps.saveOllamaSessionMemory && sessionMemory.toolTurnCount > 0) {
-      deps.saveOllamaSessionMemory(chatId, pruneOllamaSessionMemoryForPersist(sessionMemory))
+      deps.saveOllamaSessionMemory(chatId, pruneOllamaSessionMemoryForPersist(sessionMemory), memoryKey)
     }
 
     const hardwareStats = memoryMonitor ? await memoryMonitor.stop() : {}

@@ -297,6 +297,7 @@ export function ollamaLocalToolSystemPrompt(
     )
   }
   lines.push(
+    'Need a tool\'s exact arguments? Call tool_help: {"taskwraith_tool":{"name":"tool_help","arguments":{"name":"<tool>"}}} — it returns that tool\'s schema and a call example.',
     'Paths must stay inside the active workspace.',
     'File edits, shell, and publishing are governed by the run\'s permission role: TaskWraith either shows the user an approval modal or blocks the tool. If a tool is blocked, say so and continue with what you can do.',
     'Use ask_user_question when the request is too ambiguous to continue safely or when a mid-task choice belongs to the user.',

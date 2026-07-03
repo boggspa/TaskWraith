@@ -91,6 +91,24 @@ function accessLabel(def: TaskWraithMcpToolDefinition): string {
   return 'governed by your run permission role'
 }
 
+// One tool's markdown section (the `## name` heading through its blank line).
+// Shared by the full-doc generator and the per-tool `tool_help` runtime lookup so
+// both render identically.
+function renderToolSectionLines(def: TaskWraithMcpToolDefinition): string[] {
+  const { example, required, optional } = summarizeToolArgs(def)
+  const lines: string[] = [`## ${def.name}`, '']
+  if (def.description) {
+    lines.push(def.description, '')
+  }
+  lines.push(`- Access: ${accessLabel(def)}`)
+  lines.push(`- Required args: ${required.length ? required.join(', ') : 'none'}`)
+  if (optional.length) {
+    lines.push(`- Optional args: ${optional.join(', ')}`)
+  }
+  lines.push(`- Example: \`${example}\``, '')
+  return lines
+}
+
 export function buildOllamaToolsMarkdown(): string {
   const defs = createTaskWraithMcpToolDefinitions()
   const lines: string[] = [
@@ -111,18 +129,25 @@ export function buildOllamaToolsMarkdown(): string {
     ''
   ]
   for (const def of defs) {
-    const { example, required, optional } = summarizeToolArgs(def)
-    lines.push(`## ${def.name}`, '')
-    if (def.description) {
-      lines.push(def.description, '')
-    }
-    lines.push(`- Access: ${accessLabel(def)}`)
-    lines.push(`- Required args: ${required.length ? required.join(', ') : 'none'}`)
-    if (optional.length) {
-      lines.push(`- Optional args: ${optional.join(', ')}`)
-    }
-    lines.push(`- Example: \`${example}\``, '')
+    lines.push(...renderToolSectionLines(def))
   }
   // Single trailing newline for a clean POSIX file.
   return `${lines.join('\n').replace(/\s+$/, '')}\n`
+}
+
+/**
+ * Runtime `tool_help` lookup: the markdown section for ONE tool (description,
+ * access class, required/optional args, call example), or a short valid-names
+ * message when the name is unknown. Lets a text-protocol local model fetch a
+ * long-tail tool's exact arguments on demand instead of guessing — without
+ * reading the whole 143-tool doc (which read_file can't reach anyway).
+ */
+export function buildOllamaToolDocSection(name: string): string {
+  const wanted = String(name || '').trim()
+  const defs = createTaskWraithMcpToolDefinitions()
+  const def = defs.find((entry) => entry.name === wanted)
+  if (!def) {
+    return `Unknown tool "${wanted}". Call tool_help with one of: ${defs.map((entry) => entry.name).join(', ')}.`
+  }
+  return renderToolSectionLines(def).join('\n').trimEnd()
 }

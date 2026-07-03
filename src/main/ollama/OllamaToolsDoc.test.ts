@@ -9,7 +9,7 @@ vi.mock('electron', () => ({
   }
 }))
 
-import { buildOllamaToolsMarkdown } from './OllamaToolsDoc'
+import { buildOllamaToolDocSection, buildOllamaToolsMarkdown } from './OllamaToolsDoc'
 import { TASKWRAITH_MCP_TOOLS } from '../TaskWraithMcpTools'
 
 const TOOLS_MD = resolve(__dirname, '../../../resources/Tools.md')
@@ -40,5 +40,24 @@ describe('resources/Tools.md', () => {
     for (const name of TASKWRAITH_MCP_TOOLS) {
       expect(generated).toContain(`{"taskwraith_tool":{"name":"${name}"`)
     }
+  })
+})
+
+describe('buildOllamaToolDocSection (tool_help runtime lookup)', () => {
+  it('returns just the requested tool section, matching the full doc', () => {
+    const section = buildOllamaToolDocSection('write_file')
+    expect(section.startsWith('## write_file')).toBe(true)
+    expect(section).toContain('- Required args: path, content')
+    expect(section).toContain('{"taskwraith_tool":{"name":"write_file"')
+    // The single-tool section is a substring of the full generated doc.
+    expect(buildOllamaToolsMarkdown()).toContain(section)
+    // It is targeted, not the whole 143-tool dump.
+    expect(section).not.toContain('## read_file')
+  })
+
+  it('lists valid names for an unknown tool', () => {
+    const section = buildOllamaToolDocSection('not_a_real_tool')
+    expect(section).toContain('Unknown tool "not_a_real_tool"')
+    expect(section).toContain('write_file')
   })
 })

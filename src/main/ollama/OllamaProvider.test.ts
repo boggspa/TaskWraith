@@ -1857,6 +1857,15 @@ describe('parseOllamaToolRequest', () => {
     })
   })
 
+  it('accepts the virtual tool_help lookup (not in the catalog)', () => {
+    expect(
+      parseOllamaToolRequest('{"taskwraith_tool":{"name":"tool_help","arguments":{"name":"git_push"}}}')
+    ).toEqual({
+      toolName: 'tool_help',
+      arguments: { name: 'git_push' }
+    })
+  })
+
   it('recovers a tool request whose string args contain invalid JSON escapes', () => {
     // The exact Qwen 3.5 failure: a write_file whose Swift `content` embeds
     // string interpolation `\(date)` — invalid JSON, so strict parse throws and
@@ -1962,6 +1971,12 @@ describe('parseOllamaToolRequest', () => {
     const prompt = ollamaLocalToolSystemPrompt('read_only')
     expect(prompt).toContain('Do NOT announce or describe a tool call in prose')
     expect(prompt).toContain('describing a tool without calling it does nothing')
+  })
+
+  it('advertises the tool_help lookup for on-demand tool arguments', () => {
+    const prompt = ollamaLocalToolSystemPrompt('read_only')
+    expect(prompt).toContain('tool_help')
+    expect(prompt).toContain('{"taskwraith_tool":{"name":"tool_help","arguments":{"name":"<tool>"}}}')
   })
 
   it('falls back to the thinking channel when content is empty (gpt-oss)', () => {
