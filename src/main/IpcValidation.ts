@@ -184,6 +184,7 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'get-product-crashes': ['optionalObject'],
   'record-product-crash': ['object'],
   'export-product-diagnostics': ['optionalString'],
+  'export-product-audit-bundle': ['optionalObject'],
   'repair-product-install': [],
   'app-shell-stats:snapshot': [],
   'set-appearance-mode': ['any'],

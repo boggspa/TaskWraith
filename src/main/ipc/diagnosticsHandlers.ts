@@ -1,5 +1,10 @@
 import { ipcMain } from 'electron'
-import type { ProductCrashFilter, ProductCrashInput, ProductOperationsStatus } from '../store/types'
+import type {
+  ProductAuditBundleExportRequest,
+  ProductCrashFilter,
+  ProductCrashInput,
+  ProductOperationsStatus
+} from '../store/types'
 import type { BugReportSubmission as BugReportSubmissionInput } from '../services/BugReportService'
 
 export interface DiagnosticsHandlersDeps {
@@ -7,6 +12,7 @@ export interface DiagnosticsHandlersDeps {
   getProductCrashes: (filter?: ProductCrashFilter) => unknown
   recordProductCrash: (input: ProductCrashInput) => unknown
   exportProductDiagnostics: (requestedPath?: string) => Promise<unknown>
+  exportProductAuditBundle: (request?: ProductAuditBundleExportRequest) => Promise<unknown>
   repairProductInstall: () => Promise<ProductOperationsStatus>
   getAppShellStatsSnapshot: () => unknown
   getAppVersion: () => string | undefined
@@ -37,6 +43,10 @@ export function registerDiagnosticsHandlers(deps: DiagnosticsHandlersDeps): void
 
   ipcMain.handle('export-product-diagnostics', async (_, requestedPath?: string) =>
     deps.exportProductDiagnostics(requestedPath)
+  )
+
+  ipcMain.handle('export-product-audit-bundle', async (_, request?: ProductAuditBundleExportRequest) =>
+    deps.exportProductAuditBundle(request || {})
   )
 
   ipcMain.handle('repair-product-install', async () => deps.repairProductInstall())

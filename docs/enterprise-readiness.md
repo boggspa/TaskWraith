@@ -232,11 +232,15 @@ What exists:
   rows, run-event replays, workspace changes, audit runs, evidence packs,
   capability ledger cells, message-feedback receipts, and external-publish
   receipts.
+- Main/preload expose `exportProductAuditBundle`, which writes the redacted
+  bundle JSON with optional workspace/thread/run filters. Chat-scoped exports
+  read each persisted run event file directly rather than using the
+  UI-optimized chat event cap.
 
 What is missing:
 
-- A user-facing `exportAuditBundle` IPC/UI flow that gathers the complete
-  store-backed bundle for a workspace/thread/run and writes it to disk.
+- A Settings/UI entry point for `exportProductAuditBundle`; the export route is
+  callable through preload but not yet exposed as a polished control.
 - Configurable retention windows for run events, artifacts, approval history,
   audit runs, and diagnostics.
 - Signed export-time tamper evidence across approval ledger, run-event chains,
@@ -247,8 +251,8 @@ What is missing:
 
 Target:
 
-- Add `exportAuditBundle` IPC/UI around the existing redacted snapshot builder,
-  with explicit workspace/thread/run filters and save-dialog support.
+- Add a Settings/UI entry point around the existing `exportProductAuditBundle`
+  route, with explicit workspace/thread/run filter controls.
 - Add an explicit sensitive export mode only behind a separate user/admin
   decision; keep the default bundle redacted.
 - Add retention settings and purge receipts.
@@ -351,16 +355,16 @@ What is missing:
 - The remote-access UI and iOS copy need to expose the new external-publish
   capability separately from file editing before paired-device publishing can
   be presented as a polished managed feature.
-- The redacted audit-bundle builder includes external-publish receipts, but
-  there is not yet a user-facing export flow for those summaries.
+- The redacted audit-bundle export route includes external-publish receipts, but
+  there is not yet a Settings/UI entry point for those summaries.
 
 Target:
 
 - Keep all external publication origins (`desktop-ui`, `ios-bridge`, and
   `agent`) on the shared receipt ledger so audit/export work has one schema.
 - Keep the bridge `externalPublish` capability explicit and admin-only.
-- Wire the redacted audit-bundle export flow to include external-publish
-  receipt summaries and bridge audit rows.
+- Add Settings/UI affordances for exporting external-publish receipt summaries
+  and bridge audit rows through the redacted audit-bundle route.
 
 ### B5.5 - Stage-role and queued-dispatch receipts
 
@@ -534,8 +538,8 @@ What is missing:
   records.
 - No "recast this turn with a different model" follow-through exists.
 - No iOS parity exists for feedback capture.
-- No user-facing audit-bundle export flow exists yet; feedback summaries are
-  currently available only through the main-process redacted snapshot builder.
+- No Settings/UI entry point exists yet; feedback summaries are available
+  through the main-process redacted audit-bundle export route.
 - No append-only hash chain, actor identity, source-device id, or tamper
   evidence exists for thumbs receipts.
 

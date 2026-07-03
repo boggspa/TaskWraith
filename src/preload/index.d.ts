@@ -39,6 +39,8 @@ import {
   ProductCrashFilter,
   ProductCrashInput,
   ProductCrashRecord,
+  ProductAuditBundleExportRequest,
+  ProductAuditBundleExportResult,
   ProductDiagnosticsExportResult,
   ProductOperationsStatus,
   ProductChangelogSnapshot,
@@ -1591,6 +1593,9 @@ declare global {
       getProductCrashes: (filter?: ProductCrashFilter) => Promise<ProductCrashRecord[]>
       recordProductCrash: (input: ProductCrashInput) => Promise<ProductCrashRecord>
       exportProductDiagnostics: (path?: string) => Promise<ProductDiagnosticsExportResult>
+      exportProductAuditBundle: (
+        request?: ProductAuditBundleExportRequest
+      ) => Promise<ProductAuditBundleExportResult>
       repairProductInstall: () => Promise<ProductOperationsStatus>
       getAppShellStats: () => Promise<AppShellStatsSnapshot>
       getAppVersion: () => Promise<string>

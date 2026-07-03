@@ -515,6 +515,9 @@ import {
   RunRecoveryRecord,
   WorkspaceChangeFilter,
   WorkspaceRunChangeInput,
+  ProductAuditBundleExportRequest,
+  ProductAuditBundleExportResult,
+  ProductAuditBundleFilter,
   ProductCrashInput,
   ProductDiagnosticsExportResult,
   ProductOperationsStatus,
@@ -870,8 +873,10 @@ import {
   ollamaTextDiffPreview
 } from './ollama/OllamaToolPolicy'
 import {
+  buildAuditBundleSnapshot,
   buildDiagnosticsSnapshot,
   buildProductOperationsStatus,
+  serializeAuditBundleSnapshot,
   serializeDiagnosticsSnapshot
 } from './ProductOperations'
 import { installIpcValidation } from './IpcValidation'
@@ -18409,6 +18414,74 @@ async function buildCurrentDiagnosticsSnapshot() {
   })
 }
 
+function normalizeProductAuditBundleFilter(
+  filter?: ProductAuditBundleFilter
+): ProductAuditBundleFilter {
+  const normalized: ProductAuditBundleFilter = {}
+  if (typeof filter?.workspaceId === 'string' && filter.workspaceId.trim()) {
+    normalized.workspaceId = filter.workspaceId.trim()
+  }
+  if (typeof filter?.workspacePath === 'string' && filter.workspacePath.trim()) {
+    normalized.workspacePath = filter.workspacePath.trim()
+  }
+  if (typeof filter?.chatId === 'string' && filter.chatId.trim()) {
+    normalized.chatId = filter.chatId.trim()
+  }
+  if (typeof filter?.runId === 'string' && filter.runId.trim()) {
+    normalized.runId = filter.runId.trim()
+  }
+  return normalized
+}
+
+function completeProductAuditBundleFilter(filter: ProductAuditBundleFilter): ProductAuditBundleFilter {
+  const completed = { ...filter }
+  if (completed.chatId) {
+    const chat = AppStore.getChat(completed.chatId)
+    if (chat?.workspaceId && !completed.workspaceId) completed.workspaceId = chat.workspaceId
+    if (chat?.workspacePath && !completed.workspacePath) completed.workspacePath = chat.workspacePath
+  }
+  if (!completed.workspaceId && completed.workspacePath) {
+    const workspace = AppStore.getWorkspaces().find(
+      (candidate) => candidate.path === completed.workspacePath
+    )
+    if (workspace?.id) completed.workspaceId = workspace.id
+  }
+  return completed
+}
+
+function listAuditBundleRunEvents(filter: ProductAuditBundleFilter) {
+  if (filter.runId) {
+    return AppStore.getRunEvents({ runId: filter.runId })
+  }
+  if (filter.chatId) {
+    const chat = AppStore.getChat(filter.chatId)
+    const runIds = Array.from(
+      new Set((chat?.runs ?? []).map((run) => run.runId).filter((id): id is string => Boolean(id)))
+    )
+    return runIds.flatMap((runId) => AppStore.getRunEvents({ runId }))
+  }
+  return AppStore.getRunEvents(filter.workspaceId ? { workspaceId: filter.workspaceId } : {})
+}
+
+async function buildCurrentAuditBundleSnapshot(request: ProductAuditBundleExportRequest = {}) {
+  const filter = completeProductAuditBundleFilter(normalizeProductAuditBundleFilter(request.filter))
+  return buildAuditBundleSnapshot({
+    filter,
+    approvalLedger: AppStore.getApprovalLedger({
+      workspaceId: filter.workspaceId,
+      chatId: filter.chatId,
+      runId: filter.runId
+    }),
+    runEvents: listAuditBundleRunEvents(filter),
+    workspaceChanges: AppStore.getWorkspaceChangeSets(filter),
+    auditRuns: AppStore.getAuditRuns(filter.workspaceId),
+    evidencePacks: AppStore.getEvidencePacks(filter.workspaceId),
+    capabilityLedger: AppStore.getCapabilityLedgerSnapshot(filter.workspaceId),
+    messageFeedbackReceipts: AppStore.getMessageFeedbackReceipts(filter),
+    externalPublishReceipts: listExternalPublishReceipts()
+  })
+}
+
 async function exportProductDiagnostics(
   requestedPath?: string
 ): Promise<ProductDiagnosticsExportResult> {
@@ -18436,6 +18509,40 @@ async function exportProductDiagnostics(
       source: 'main',
       severity: 'warning',
       name: error instanceof Error ? error.name : 'DiagnosticsExportError',
+      message: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined
+    })
+    return { ok: false, error: error instanceof Error ? error.message : String(error) }
+  }
+}
+
+async function exportProductAuditBundle(
+  request: ProductAuditBundleExportRequest = {}
+): Promise<ProductAuditBundleExportResult> {
+  try {
+    const snapshot = await buildCurrentAuditBundleSnapshot(request)
+    let targetPath = request.path
+    if (!targetPath) {
+      if (!mainWindow) {
+        throw new Error('No application window is available for audit bundle export.')
+      }
+      const result = await dialog.showSaveDialog(mainWindow, {
+        title: 'Export TaskWraith Audit Bundle',
+        defaultPath: `TaskWraith-Audit-Bundle-${new Date().toISOString().replace(/[:.]/g, '-')}.json`,
+        filters: [{ name: 'JSON audit bundle', extensions: ['json'] }]
+      })
+      if (result.canceled || !result.filePath) {
+        return { ok: false, error: 'Audit bundle export cancelled.' }
+      }
+      targetPath = result.filePath
+    }
+    await fs.writeFile(targetPath, serializeAuditBundleSnapshot(snapshot), 'utf8')
+    return { ok: true, path: targetPath, snapshot }
+  } catch (error) {
+    recordProductCrash({
+      source: 'main',
+      severity: 'warning',
+      name: error instanceof Error ? error.name : 'AuditBundleExportError',
       message: error instanceof Error ? error.message : String(error),
       stack: error instanceof Error ? error.stack : undefined
     })
@@ -27900,6 +28007,7 @@ if (isGeminiMcpBridgeProcess) {
           source: input?.source || 'renderer'
         }),
       exportProductDiagnostics: (requestedPath) => exportProductDiagnostics(requestedPath),
+      exportProductAuditBundle: (request) => exportProductAuditBundle(request),
       repairProductInstall: () => repairProductInstall(),
       getAppShellStatsSnapshot: () => appShellStatsService.getSnapshot(),
       getAppVersion: () => app.getVersion(),

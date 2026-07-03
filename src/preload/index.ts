@@ -1274,6 +1274,8 @@ const api = {
   recordProductCrash: (input: any) => ipcRenderer.invoke('record-product-crash', input),
   exportProductDiagnostics: (path?: string) =>
     ipcRenderer.invoke('export-product-diagnostics', path),
+  exportProductAuditBundle: (request?: any) =>
+    ipcRenderer.invoke('export-product-audit-bundle', request),
   repairProductInstall: () => ipcRenderer.invoke('repair-product-install'),
   getAppShellStats: () =>
     ipcRenderer.invoke('app-shell-stats:snapshot') as Promise<AppShellStatsSnapshot>,

@@ -50,6 +50,10 @@ function createDeps() {
       path: requestedPath || '/tmp/diagnostics.json',
       kind: 'diagnostics-exported'
     })),
+    exportProductAuditBundle: vi.fn(async (request?: { path?: string }) => ({
+      path: request?.path || '/tmp/audit-bundle.json',
+      kind: 'audit-bundle-exported'
+    })),
     repairProductInstall: vi.fn(async () => status),
     getAppShellStatsSnapshot: vi.fn(() => ({ isActive: false, polls: 1 })),
     getAppVersion: vi.fn(() => '1.2.3'),
@@ -83,6 +87,7 @@ describe('registerDiagnosticsHandlers', () => {
     expect(handlerFor('get-product-crashes')).toBeTypeOf('function')
     expect(handlerFor('record-product-crash')).toBeTypeOf('function')
     expect(handlerFor('export-product-diagnostics')).toBeTypeOf('function')
+    expect(handlerFor('export-product-audit-bundle')).toBeTypeOf('function')
     expect(handlerFor('repair-product-install')).toBeTypeOf('function')
     expect(handlerFor('app-shell-stats:snapshot')).toBeTypeOf('function')
     expect(handlerFor('get-app-version')).toBeTypeOf('function')
@@ -101,6 +106,15 @@ describe('registerDiagnosticsHandlers', () => {
 
     await handlerFor('export-product-diagnostics')({}, '/tmp/custom.json')
     expect(deps.exportProductDiagnostics).toHaveBeenCalledWith('/tmp/custom.json')
+
+    await handlerFor('export-product-audit-bundle')({}, {
+      path: '/tmp/audit.json',
+      filter: { chatId: 'chat-1' }
+    })
+    expect(deps.exportProductAuditBundle).toHaveBeenCalledWith({
+      path: '/tmp/audit.json',
+      filter: { chatId: 'chat-1' }
+    })
 
     await handlerFor('repair-product-install')({})
     expect(deps.repairProductInstall).toHaveBeenCalledOnce()

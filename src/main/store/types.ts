@@ -2329,6 +2329,18 @@ export interface ProductAuditBundleSnapshot {
   }
 }
 
+export interface ProductAuditBundleExportRequest {
+  path?: string
+  filter?: ProductAuditBundleFilter
+}
+
+export interface ProductAuditBundleExportResult {
+  ok: boolean
+  path?: string
+  snapshot?: ProductAuditBundleSnapshot
+  error?: string
+}
+
 export interface GeminiWorktreeConfig {
   enabled: boolean
   name?: string
