@@ -4667,17 +4667,31 @@ function App(): React.JSX.Element {
       }
       console.warn('[chat-popout] requested chat was not found:', chatPopoutChatIdRef.current)
     }
-    // Every launch opens a FRESH single General chat on the user's default
-    // provider (Claude) — never the last-used thread. Previously this restored
-    // the most-recently-updated global chat (added 2026-07-02), which booted the
-    // app into a stale, un-hydrated transcript that only loaded after a manual
-    // thread switch. The app deliberately does not remember which thread was open
-    // on close; workspaces + ensembles remain one click away in the sidebar and
-    // the + New picker.
-    try {
-      await handleNewSingleGlobalChat()
-    } catch (error) {
-      console.warn('[TaskWraith] Failed to create initial general chat on launch:', error)
+    // Launch lands on a single General chat (Claude), never the last-used
+    // thread. Prefer reusing an existing EMPTY General chat — no messages means
+    // the welcome screen renders with nothing to hydrate, so there's no stale
+    // transcript AND no churn of a fresh record on every launch. Only mint a new
+    // one when none is reusable. Never land on a chat that already has messages:
+    // that was the 2026-07-02 regression (restoring the most-recent global chat
+    // booted into a stale, un-hydrated transcript). The app still does not
+    // remember which thread was open on close; workspaces + ensembles stay one
+    // click away in the sidebar and the + New picker.
+    const reusableEmptyGeneralChat = allChats
+      .filter(
+        (chat) =>
+          isGlobalChat(chat) &&
+          chat.chatKind !== 'ensemble' &&
+          (isChatSummaryRecord(chat) ? chat.messageCount === 0 : chat.messages.length === 0)
+      )
+      .sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0))[0]
+    if (reusableEmptyGeneralChat) {
+      await selectGlobalChat(reusableEmptyGeneralChat)
+    } else {
+      try {
+        await handleNewSingleGlobalChat()
+      } catch (error) {
+        console.warn('[TaskWraith] Failed to create initial general chat on launch:', error)
+      }
     }
     setInitialRouteReady(true)
   }
