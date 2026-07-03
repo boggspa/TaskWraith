@@ -4667,24 +4667,17 @@ function App(): React.JSX.Element {
       }
       console.warn('[chat-popout] requested chat was not found:', chatPopoutChatIdRef.current)
     }
-    // Default open lands on General Chat, matching the masthead "New Chat"
-    // contract instead of inheriting whichever workspace/chat kind was used
-    // last. Workspaces remain one click away in the sidebar and the + New
-    // picker has an explicit "New Workspace Chat" route.
-    const existingGlobalChats = allChats
-      .filter((chat) => isGlobalChat(chat))
-      .sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0))
-    if (existingGlobalChats.length > 0) {
-      await selectGlobalChat(existingGlobalChats[0])
-    } else {
-      try {
-        await handleNewDefaultGlobalChat()
-      } catch (error) {
-        console.warn(
-          '[TaskWraith] Failed to create initial general chat on launch:',
-          error
-        )
-      }
+    // Every launch opens a FRESH single General chat on the user's default
+    // provider (Claude) — never the last-used thread. Previously this restored
+    // the most-recently-updated global chat (added 2026-07-02), which booted the
+    // app into a stale, un-hydrated transcript that only loaded after a manual
+    // thread switch. The app deliberately does not remember which thread was open
+    // on close; workspaces + ensembles remain one click away in the sidebar and
+    // the + New picker.
+    try {
+      await handleNewSingleGlobalChat()
+    } catch (error) {
+      console.warn('[TaskWraith] Failed to create initial general chat on launch:', error)
     }
     setInitialRouteReady(true)
   }
