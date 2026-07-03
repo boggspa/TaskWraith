@@ -3304,6 +3304,14 @@ export function SettingsPanel({
     managedPolicyStatus,
     'approvalTimeouts'
   )
+  const codexSandboxFallbackManagedLocked = isManagedPolicySettingLocked(
+    managedPolicyStatus,
+    'codexSandboxFallback'
+  )
+  const geminiMcpBridgeManagedLocked = isManagedPolicySettingLocked(
+    managedPolicyStatus,
+    'geminiMcpBridgeEnabled'
+  )
 
   useEffect(() => {
     if (!showDeleteHistoryConfirm) return
@@ -6415,9 +6423,11 @@ export function SettingsPanel({
                   <select
                     className="settings-select"
                     value={codexSandboxFallback}
-                    onChange={(e) =>
+                    disabled={codexSandboxFallbackManagedLocked}
+                    onChange={(e) => {
+                      if (codexSandboxFallbackManagedLocked) return
                       onChange({ codexSandboxFallback: e.target.value as CodexSandboxFallbackMode })
-                    }
+                    }}
                   >
                     {CODEX_SANDBOX_FALLBACK_OPTIONS.map((option) => (
                       <option key={option.value} value={option.value}>
@@ -6430,6 +6440,11 @@ export function SettingsPanel({
                   When Codex hits a Swift/Xcode sandbox/tooling collision, TaskWraith can ask to rerun
                   that exact command once from the host process.
                 </p>
+                {codexSandboxFallbackManagedLocked && (
+                  <p className="settings-hint">
+                    Codex sandbox fallback is managed by organization policy.
+                  </p>
+                )}
 
                 <div className="settings-service-row" style={{ alignItems: 'flex-start' }}>
                   <span>
@@ -7076,7 +7091,11 @@ export function SettingsPanel({
                   <input
                     type="checkbox"
                     checked={geminiMcpBridgeEnabled}
-                    onChange={(e) => onChange({ geminiMcpBridgeEnabled: e.target.checked })}
+                    disabled={geminiMcpBridgeManagedLocked}
+                    onChange={(e) => {
+                      if (geminiMcpBridgeManagedLocked) return
+                      onChange({ geminiMcpBridgeEnabled: e.target.checked })
+                    }}
                   />
                   <span>
                     TaskWraith MCP bridge
@@ -7089,6 +7108,11 @@ export function SettingsPanel({
                     </small>
                   </span>
                 </label>
+                {geminiMcpBridgeManagedLocked && (
+                  <p className="settings-hint">
+                    TaskWraith MCP bridge enablement is managed by organization policy.
+                  </p>
+                )}
                 <div className="settings-mcp-bridge-actions">
                   <button type="button" className="btn btn-sm" onClick={onInstallGeminiMcpBridge}>
                     Install / repair

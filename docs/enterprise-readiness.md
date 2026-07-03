@@ -356,14 +356,18 @@ What exists:
   `agenticServices` are managed. Stale agentic-service mutation events are
   ignored at the shared update seam, and disabled timeout fields refuse stale
   commits.
+- Settings -> Providers Codex sandbox fallback and Settings -> MCP TaskWraith
+  MCP bridge enablement now disable when `codexSandboxFallback` or
+  `geminiMcpBridgeEnabled` are managed; bridge install/test health actions stay
+  available because they do not mutate the enablement setting.
 
 What is missing:
 
 - Per-control locked/disabled affordances in Settings are not complete yet.
   The top-level managed notice, agentic-service controls, approval-timeout
-  controls, product update controls, and the user-MCP settings pane are wired,
-  but other settings pages still need the same inline lock badges and disabled
-  controls.
+  controls, product update controls, Codex sandbox fallback, TaskWraith MCP
+  bridge enablement, and the user-MCP settings pane are wired, but other
+  settings pages still need the same inline lock badges and disabled controls.
 - Other non-settings live controls still need explicit inventory and managed
   clamps. The current policy source is startup-loaded, so future live policy
   reload support must also revoke or re-materialize affected in-memory state.

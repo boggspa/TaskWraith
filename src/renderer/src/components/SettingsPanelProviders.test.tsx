@@ -554,6 +554,53 @@ describe('SettingsPanel provider cards', () => {
     )
   })
 
+  it('locks Codex sandbox fallback when organization policy owns it', () => {
+    const html = renderToStaticMarkup(
+      <SettingsPanel
+        {...makeSettingsProps({
+          activeTab: 'providers',
+          managedPolicyStatus: {
+            active: true,
+            organizationName: 'Acme Corp',
+            source: 'signed-mdm-preferences',
+            lockedSettings: ['codexSandboxFallback'],
+            enforcedSettings: ['codexSandboxFallback'],
+            errors: []
+          }
+        })}
+      />
+    )
+
+    expect(html).toContain('Codex sandbox fallback is managed by organization policy.')
+    expect(html).toMatch(
+      /<label class="settings-service-row"><span>Codex sandbox fallback<\/span><select class="settings-select" disabled="">/
+    )
+  })
+
+  it('locks TaskWraith MCP bridge enablement when organization policy owns it', () => {
+    const html = renderToStaticMarkup(
+      <SettingsPanel
+        {...makeSettingsProps({
+          activeTab: 'mcp',
+          geminiMcpBridgeEnabled: true,
+          managedPolicyStatus: {
+            active: true,
+            organizationName: 'Acme Corp',
+            source: 'signed-mdm-preferences',
+            lockedSettings: ['geminiMcpBridgeEnabled'],
+            enforcedSettings: ['geminiMcpBridgeEnabled'],
+            errors: []
+          }
+        })}
+      />
+    )
+
+    expect(html).toContain('TaskWraith MCP bridge enablement is managed by organization policy.')
+    expect(html).toMatch(/<input type="checkbox" disabled="" checked=""/)
+    expect(html).toContain('Install / repair')
+    expect(html).toContain('Test')
+  })
+
   it('locks user MCP server mutation controls when organization policy owns the setting', () => {
     const html = renderToStaticMarkup(
       <SettingsPanel
