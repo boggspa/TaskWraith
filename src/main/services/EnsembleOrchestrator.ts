@@ -5785,6 +5785,16 @@ export class EnsembleOrchestrator {
     if (!runId) return false
     const run = this.runsByRunId.get(runId)
     if (!run || run.status === 'answered' || run.status === 'yielded') return false
+    // A clean exit (code 0) that already streamed content is a FINISHED turn,
+    // not a skip — mirror the result-event path (which finalizes 'answered' when
+    // run.content.trim() is non-empty). Without this, a seat that emitted its
+    // answer and then exited 0 (e.g. after the Ollama retry-ceiling finalize,
+    // where the exit can be processed before the result event) is mislabeled
+    // 'skipped', losing the turn from the panel.
+    if (exitCode === 0 && run.content.trim().length > 0) {
+      this.finalizeRun(run, 'answered')
+      return true
+    }
     const status: EnsembleParticipantStatus = exitCode === 0 ? 'skipped' : 'failed'
     this.finalizeRun(
       run,
