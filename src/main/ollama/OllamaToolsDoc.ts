@@ -15,10 +15,14 @@ import {
  * schema keys) so `OllamaToolsDoc.test.ts` can assert byte-identical
  * regeneration and fail CI on any drift.
  *
- * NB the model cannot `read_file` this doc at runtime yet (read_file is
- * workspace-scoped; this ships under resources/, outside any workspace). It is a
- * shipped reference + reproducibility guarantee today; wiring a runtime lookup
- * (a whitelisted path or a dedicated schema tool) is a separate decision.
+ * The model cannot `read_file` this doc at runtime (read_file is workspace-scoped;
+ * this ships under resources/, outside any workspace) — so the ON-DEMAND runtime
+ * lookup is the `tool_help` tool (buildOllamaToolDocSection below), NOT a
+ * whitelisted file path. tool_help serves any single tool's section by name, or —
+ * on an empty name — the full tool list, from this same catalog. That is the
+ * complete answer to "tool docs fetched on demand" for local models: the shipped
+ * Tools.md is the human/drift-check reference, and tool_help is the model's live
+ * accessor over the identical content. There is no separate lookup to build.
  */
 
 function schemaType(schema: unknown): string | undefined {
