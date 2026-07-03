@@ -303,6 +303,10 @@ export interface OllamaToolExecutionResult {
   output: string
   structuredContent?: unknown
   tierBumpRequired?: boolean
+  /** Set when the call failed pre-execution arg validation (missing required
+   * field) — the run loop routes this to a narrow schema-repair nudge, distinct
+   * from a genuine tool failure. */
+  validationError?: boolean
 }
 
 export interface OllamaToolRequest {
@@ -318,6 +322,10 @@ function ollamaSessionMemoryKeyForRun(payload: AgentRunPayload): string | undefi
 }
 
 const OLLAMA_TOOL_RESULT_MAX_CHARS = 8000
+// Finalize gracefully after this many CONSECUTIVE non-productive turns (empty,
+// reasoning-only, malformed tool JSON, tool-intent stub, arg-invalid, degenerate)
+// instead of nudging the model forever.
+const OLLAMA_MAX_CONSECUTIVE_NON_PRODUCTIVE_TURNS = 4
 const OLLAMA_CHAT_TRANSPORT_RETRY_DELAYS_MS = [250, 750]
 const OLLAMA_LOCAL_TOOL_SERVER = 'TaskWraith-local'
 
@@ -1554,6 +1562,23 @@ export function ollamaToolResultFollowUpPrompt(input: {
   ].join('\n')
 }
 
+export function ollamaToolArgumentRepairPrompt(
+  input: {
+    toolName: OllamaCallableToolName
+    output: string
+  } & OllamaRetryPromptOptions
+): string {
+  return [
+    `TaskWraith rejected ${input.toolName} before execution because its arguments did not match the required schema.`,
+    'Validation error:',
+    input.output,
+    '',
+    `Re-issue the same ${input.toolName} tool call with the missing required argument set.`,
+    'Do not describe the tool call in prose, and do not answer as if the tool already ran.',
+    ...ollamaEnsembleRetryReminder(input)
+  ].join('\n')
+}
+
 export function ollamaGoalLifecycleStopContent(toolName: string): string | null {
   if (toolName === 'goal_complete') {
     return 'Goal marked complete. I will stop here so the active objective stays closed.'
@@ -1994,6 +2019,99 @@ function ollamaModelSupportsNativeTools(modelInfo?: OllamaModelInfo | null): boo
  * per-tool arg schemas can't be applied until `name` decodes, and required-field
  * / enum checks are enforced separately by validateOllamaToolArguments.
  */
+// Per-tool aliases the current local/shared executors already tolerate. Keep
+// this narrow: a broad "directory means path everywhere" table would accept
+// calls that the eventual executor still rejects.
+const OLLAMA_ARG_SYNONYMS_BY_TOOL: Partial<Record<OllamaToolName, Record<string, string[]>>> = {
+  read_file: { path: ['file_path'] },
+  list_directory: { path: ['directory'] },
+  find_files: { pattern: ['patterns', 'glob', 'globs'] },
+  workspace_search: { query: ['pattern'] },
+  git_blame: { path: ['file'] },
+  write_file: { path: ['file_path'] },
+  replace: {
+    path: ['file_path'],
+    old_string: ['oldString'],
+    new_string: ['newString']
+  },
+  create_directory: { path: ['directory'] },
+  delete_path: { path: ['file', 'directory'] },
+  move_path: {
+    from: ['source', 'sourcePath', 'path'],
+    to: ['destination', 'destinationPath', 'target']
+  },
+  rename_path: {
+    path: ['from', 'source'],
+    newName: ['name']
+  },
+  apply_patch: { patch: ['diff'] }
+}
+
+function ollamaArgPresent(
+  toolName: OllamaToolName,
+  args: Record<string, unknown>,
+  field: string
+): boolean {
+  for (const key of [field, ...(OLLAMA_ARG_SYNONYMS_BY_TOOL[toolName]?.[field] || [])]) {
+    const value = args[key]
+    if (value === undefined || value === null) continue
+    if (typeof value === 'string' && value.trim().length === 0) continue
+    if (
+      Array.isArray(value) &&
+      value.every(
+        (item) => item === undefined || item === null || (typeof item === 'string' && item.trim().length === 0)
+      )
+    ) {
+      continue
+    }
+    return true
+  }
+  return false
+}
+
+// Approval-metadata fields declared `required` in the advertised schema purely
+// to nudge the model into narrating its rationale — the executors treat them as
+// OPTIONAL (`intent` falls back to summary/reason/description). Enforcing them
+// pre-execution would false-positive-reject legitimate write/edit/shell calls,
+// so validation skips them: it only guards fields the executor genuinely needs.
+const OLLAMA_NON_FUNCTIONAL_REQUIRED_FIELDS = new Set<string>(['intent'])
+
+/**
+ * Validate a tool call's arguments against the tool's declared schema BEFORE
+ * execution — specifically the functionally-required fields (the tools declare
+ * no enums). Conservative by design: only catalog tools with a known schema are
+ * checked, required fields are synonym-tolerant, approval-metadata fields the
+ * executor treats as optional are skipped, and a genuinely-missing field yields
+ * a SPECIFIC, repairable message ("missing required argument: path"). This turns
+ * a malformed call into a narrow repair prompt (see the run loop) instead of a
+ * deep, unhelpful executor error the model can't distinguish from a real failure.
+ */
+export function validateOllamaToolArguments(
+  toolName: string,
+  args: Record<string, unknown>
+): { ok: true } | { ok: false; message: string } {
+  if (toolName === OLLAMA_TOOL_HELP_NAME) return { ok: true }
+  if (!OLLAMA_KNOWN_TOOL_NAMES.has(toolName as OllamaToolName)) return { ok: true }
+  const typedToolName = toolName as OllamaToolName
+  const { required } = ollamaNativeToolParameters(typedToolName)
+  const missing = required.filter(
+    (field) =>
+      !OLLAMA_NON_FUNCTIONAL_REQUIRED_FIELDS.has(field) && !ollamaArgPresent(typedToolName, args, field)
+  )
+  if (missing.length > 0) {
+    const fields = missing.join(', ')
+    return {
+      ok: false,
+      message: `Your ${toolName} call is missing required argument${
+        missing.length > 1 ? 's' : ''
+      }: ${fields}. Re-issue the ${toolName} tool call with ${missing
+        .map((field) => `"${field}"`)
+        .join(', ')} set.`
+    }
+  }
+  return { ok: true }
+}
+
 export function ollamaToolCallFormatSchema(toolNames: readonly string[]): Record<string, unknown> {
   const names = toolNames.filter((name) => typeof name === 'string' && name.length > 0)
   return {
@@ -2317,6 +2435,13 @@ export async function runOllamaProvider(
     let lastDone: OllamaChatChunk | null = null
     let runUsageStats: Record<string, unknown> | undefined
     let toolCallCount = 0
+    // Retry ceiling: a local model can get stuck emitting empty / malformed /
+    // reasoning-only / arg-invalid turns and receive nudge after nudge forever
+    // (the loop below has no natural cap). Count CONSECUTIVE non-productive turns
+    // and finalize gracefully after this many, instead of looping until the user
+    // cancels. Reset to 0 whenever the model does something productive (a tool
+    // executes, or it answers).
+    let consecutiveNonProductiveTurns = 0
     let forceJsonToolFallback =
       toolProtocolEnabled && (!nativeToolsSupported || runProfile.protocolMode === 'json_only')
     // Per-run (toolName+args) → result-signature store for the
@@ -2351,6 +2476,12 @@ export async function runOllamaProvider(
       return text
     }
     for (let turnIndex = 0; ; turnIndex += 1) {
+      if (consecutiveNonProductiveTurns >= OLLAMA_MAX_CONSECUTIVE_NON_PRODUCTIVE_TURNS) {
+        emitOllamaContent(
+          'I could not produce a valid tool call or a usable answer after several attempts, so I am stopping instead of looping. Please rephrase or narrow the request.'
+        )
+        break
+      }
       const jsonToolFallback =
         forceJsonToolFallback ||
         runProfile.protocolMode === 'json_fallback' ||
@@ -2537,6 +2668,10 @@ export async function runOllamaProvider(
         }
       }
       if (toolRequests.length === 0) {
+        // No structured tool call this turn. Every branch below either nudges
+        // and `continue`s (non-productive — count it toward the ceiling) or
+        // emits a final answer and `break`s (loop ends, counter irrelevant).
+        consecutiveNonProductiveTurns += 1
         const hasContent = turn.content.trim().length > 0
         // Reasoning-only (or empty) turn while tools are available: nudge the
         // model to either call a tool or answer in prose rather than surfacing
@@ -2622,6 +2757,9 @@ export async function runOllamaProvider(
           }))
         })
       }
+      // Reset the ceiling only when a tool actually executes (not when the
+      // model just re-emits an arg-invalid call that fails pre-execution).
+      let productiveToolRanThisTurn = false
       for (const toolRequest of toolRequests) {
         toolCallCount += 1
         const toolId = `ollama-tool-${route.appRunId || Date.now()}-${toolCallCount}`
@@ -2663,6 +2801,11 @@ export async function runOllamaProvider(
             toolControlTier
           })
         }
+        // An arg-invalid call is rejected before execution and returns
+        // validationError — treat it as a non-productive nudge, not progress.
+        if (!toolResult.validationError) {
+          productiveToolRanThisTurn = true
+        }
         if (harnessEnabled) {
           harnessState = recordOllamaHarnessToolResult(
             harnessState,
@@ -2701,7 +2844,13 @@ export async function runOllamaProvider(
         )
         let modelFacingOutput = noActiveGoalToolResult
           ? ollamaNoActiveGoalToolNudge(toolRequest.toolName, { ensembleRun })
-          : truncatedOutput
+          : toolResult.validationError
+            ? ollamaToolArgumentRepairPrompt({
+                toolName: toolRequest.toolName,
+                output: truncatedOutput,
+                ensembleRun
+              })
+            : truncatedOutput
         if (toolResult.ok || noActiveGoalToolResult) {
           const repeat = evaluateOllamaRepeatedToolCall(
             toolCallSignatures,
@@ -2764,22 +2913,29 @@ export async function runOllamaProvider(
           })
           messages.push({
             role: 'user',
-            content: harnessEnabled
-              ? ollamaHarnessToolFollowUpPrompt({
-                  toolName: toolRequest.toolName,
-                  output: modelFacingOutput,
-                  ok: toolResult.ok,
-                  state: harnessState,
-                  tier: toolControlTier,
-                  ensembleRun
-                })
-              : ollamaToolResultFollowUpPrompt({
-                  toolName: toolRequest.toolName,
-                  output: modelFacingOutput,
-                  ok: toolResult.ok
-                })
+            content: toolResult.validationError
+              ? modelFacingOutput
+              : harnessEnabled
+                ? ollamaHarnessToolFollowUpPrompt({
+                    toolName: toolRequest.toolName,
+                    output: modelFacingOutput,
+                    ok: toolResult.ok,
+                    state: harnessState,
+                    tier: toolControlTier,
+                    ensembleRun
+                  })
+                : ollamaToolResultFollowUpPrompt({
+                    toolName: toolRequest.toolName,
+                    output: modelFacingOutput,
+                    ok: toolResult.ok
+                  })
           })
         }
+      }
+      if (productiveToolRanThisTurn) {
+        consecutiveNonProductiveTurns = 0
+      } else {
+        consecutiveNonProductiveTurns += 1
       }
       if (goalLifecycleStopContent) {
         break

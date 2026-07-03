@@ -13,6 +13,7 @@ import {
   ollamaMalformedToolJsonNudgePrompt,
   ollamaReasoningOnlyNudgePrompt,
   ollamaToolIntentNudgePrompt,
+  ollamaToolArgumentRepairPrompt,
   ollamaToolResultFollowUpPrompt,
   ollamaToolCallKey,
   ollamaToolResultSignature,
@@ -44,6 +45,7 @@ import {
   extractOllamaShowContextLength,
   getOllamaStatusSnapshot,
   ollamaUsageStats,
+  validateOllamaToolArguments,
   type OllamaProviderDeps
 } from './OllamaProvider'
 import {
@@ -1122,6 +1124,141 @@ describe('runOllamaProvider streaming', () => {
     expect(lines.some((line) => line.payload.type === 'tool_use')).toBe(true)
   })
 
+  it('uses a narrow repair prompt for arg-invalid JSON fallback tool calls', async () => {
+    let chatCalls = 0
+    const chatBodies: any[] = []
+    const executeTool = vi.fn(async () => ({
+      ok: false,
+      output:
+        'Your read_file call is missing required argument: path. Re-issue the read_file tool call with "path" set.',
+      validationError: true
+    }))
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (String(url).endsWith('/api/tags')) {
+        return jsonResponse({
+          models: [
+            {
+              name: 'stream-model:latest',
+              digest: 'digest-stream',
+              details: { family: 'qwen' },
+              capabilities: ['tools']
+            }
+          ]
+        })
+      }
+      if (String(url).endsWith('/api/show')) {
+        return jsonResponse({ details: { family: 'qwen' }, capabilities: ['tools'] })
+      }
+      if (String(url).endsWith('/api/chat')) {
+        chatCalls += 1
+        chatBodies.push(JSON.parse(String(init?.body || '{}')))
+        if (chatCalls === 1) {
+          return ollamaStreamResponse([
+            JSON.stringify({
+              message: {
+                role: 'assistant',
+                content: '{"taskwraith_tool":{"name":"read_file","arguments":{}}}'
+              }
+            }),
+            JSON.stringify({ done: true, prompt_eval_count: 6, eval_count: 12 })
+          ])
+        }
+        return ollamaStreamResponse([
+          JSON.stringify({
+            message: {
+              role: 'assistant',
+              content: 'I can repair the missing path argument before continuing.'
+            }
+          }),
+          JSON.stringify({ done: true, prompt_eval_count: 6, eval_count: 12 })
+        ])
+      }
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const { deps, lines } = makeProviderDeps({
+      fetchMock,
+      settings: {
+        ollamaRunProfiles: {
+          'stream-model:latest': { protocolMode: 'json_only' }
+        }
+      },
+      executeTool
+    })
+
+    await runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
+
+    expect(executeTool).toHaveBeenCalledTimes(1)
+    expect(chatBodies).toHaveLength(2)
+    const repairTurn = JSON.stringify(chatBodies[1].messages)
+    expect(repairTurn).toContain('TaskWraith rejected read_file before execution')
+    expect(repairTurn).toContain('Re-issue the same read_file tool call')
+    expect(repairTurn).not.toContain('The tool failed.')
+    expect(
+      lines.filter((line) => line.payload.type === 'content').map((line) => line.payload.text)
+    ).toEqual(['I can repair the missing path argument before continuing.'])
+  })
+
+  it('stops repeated arg-invalid tool calls instead of looping forever', async () => {
+    let chatCalls = 0
+    const executeTool = vi.fn(async () => ({
+      ok: false,
+      output:
+        'Your read_file call is missing required argument: path. Re-issue the read_file tool call with "path" set.',
+      validationError: true
+    }))
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).endsWith('/api/tags')) {
+        return jsonResponse({
+          models: [
+            {
+              name: 'stream-model:latest',
+              digest: 'digest-stream',
+              details: { family: 'qwen' },
+              capabilities: ['tools']
+            }
+          ]
+        })
+      }
+      if (String(url).endsWith('/api/show')) {
+        return jsonResponse({ details: { family: 'qwen' }, capabilities: ['tools'] })
+      }
+      if (String(url).endsWith('/api/chat')) {
+        chatCalls += 1
+        return ollamaStreamResponse([
+          JSON.stringify({
+            message: {
+              role: 'assistant',
+              content: '{"taskwraith_tool":{"name":"read_file","arguments":{}}}'
+            }
+          }),
+          JSON.stringify({ done: true, prompt_eval_count: 6, eval_count: 12 })
+        ])
+      }
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const { deps, lines, exits, finishes } = makeProviderDeps({
+      fetchMock,
+      settings: {
+        ollamaRunProfiles: {
+          'stream-model:latest': { protocolMode: 'json_only' }
+        }
+      },
+      executeTool
+    })
+
+    await runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
+
+    const contentTexts = lines
+      .filter((line) => line.payload.type === 'content')
+      .map((line) => line.payload.text)
+    expect(chatCalls).toBe(4)
+    expect(executeTool).toHaveBeenCalledTimes(4)
+    expect(contentTexts).toHaveLength(1)
+    expect(contentTexts[0]).toContain('stopping instead of looping')
+    expect(exits).toEqual([{ provider: 'ollama', code: 0, route: baseRoute }])
+    expect(finishes).toContainEqual({ runId: 'run-ollama-1', status: 'completed' })
+  })
+
   it('does not stream raw structured response envelopes before unwrapping', async () => {
     const fetchMock = vi.fn(async (url: string) => {
       if (String(url).endsWith('/api/tags')) {
@@ -1619,7 +1756,7 @@ describe('runOllamaProvider streaming', () => {
     expect(lines.some((line) => line.payload.tool_name === 'ollama_thinking')).toBe(false)
   })
 
-  it('keeps nudging tool-enabled thinking-only loops past the old local cap until final content', async () => {
+  it('stops tool-enabled thinking-only loops after repeated non-productive turns', async () => {
     let chatCalls = 0
     const fetchMock = vi.fn(async (url: string) => {
       if (String(url).endsWith('/api/tags')) {
@@ -1639,17 +1776,6 @@ describe('runOllamaProvider streaming', () => {
       }
       if (String(url).endsWith('/api/chat')) {
         chatCalls += 1
-        if (chatCalls >= 10) {
-          return ollamaStreamResponse([
-            JSON.stringify({
-              message: {
-                role: 'assistant',
-                content: 'I inspected enough context and can now answer without cancelling.'
-              }
-            }),
-            JSON.stringify({ done: true, prompt_eval_count: 18, eval_count: 12 })
-          ])
-        }
         return ollamaStreamResponse([
           JSON.stringify({
             message: {
@@ -1669,8 +1795,9 @@ describe('runOllamaProvider streaming', () => {
     const contentTexts = lines
       .filter((line) => line.payload.type === 'content')
       .map((line) => line.payload.text)
-    expect(chatCalls).toBe(10)
-    expect(contentTexts).toEqual(['I inspected enough context and can now answer without cancelling.'])
+    expect(chatCalls).toBe(4)
+    expect(contentTexts).toHaveLength(1)
+    expect(contentTexts[0]).toContain('stopping instead of looping')
     expect(contentTexts.join('\n')).not.toContain('Workspace coding task')
     expect(lines.some((line) => line.payload.type === 'provider_warning')).toBe(false)
   })
@@ -2016,6 +2143,42 @@ describe('parseOllamaToolRequest', () => {
     expect(followUp).toContain('Do not repeat an identical tool call')
     expect(ollamaEmptyToolResponseRetryPrompt()).toContain('Answer the original user now')
     expect(ollamaEmptyResponseRetryPrompt()).toContain('Answer the original user request now')
+  })
+
+  it('builds a narrow repair prompt for missing tool arguments', () => {
+    const prompt = ollamaToolArgumentRepairPrompt({
+      toolName: 'read_file',
+      output: 'Your read_file call is missing required argument: path.'
+    })
+    expect(prompt).toContain('rejected read_file before execution')
+    expect(prompt).toContain('Validation error:')
+    expect(prompt).toContain('Re-issue the same read_file tool call')
+    expect(prompt).not.toContain('The tool failed.')
+  })
+
+  it('validates required tool arguments with executor-supported aliases only', () => {
+    expect(validateOllamaToolArguments('read_file', { file_path: 'README.md' })).toEqual({
+      ok: true
+    })
+    expect(validateOllamaToolArguments('find_files', { globs: ['*.ts'] })).toEqual({ ok: true })
+    expect(validateOllamaToolArguments('workspace_search', { pattern: 'TaskWraith' })).toEqual({
+      ok: true
+    })
+    expect(
+      validateOllamaToolArguments('rename_path', {
+        from: 'old.txt',
+        name: 'new.txt',
+        intent: 'rename file'
+      })
+    ).toEqual({ ok: true })
+
+    const crossToolAlias = validateOllamaToolArguments('read_file', { directory: 'src' })
+    expect(crossToolAlias.ok).toBe(false)
+    if (!crossToolAlias.ok) expect(crossToolAlias.message).toContain('path')
+
+    const emptyPattern = validateOllamaToolArguments('find_files', { globs: [] })
+    expect(emptyPattern.ok).toBe(false)
+    if (!emptyPattern.ok) expect(emptyPattern.message).toContain('pattern')
   })
 
   it('keeps empty-response retry nudges anchored to ensemble assignments', () => {

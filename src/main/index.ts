@@ -872,6 +872,7 @@ import {
   humanizeOllamaModelId,
   OLLAMA_TOOL_HELP_NAME,
   runOllamaProvider,
+  validateOllamaToolArguments,
   type OllamaToolExecutionRequest,
   type OllamaToolExecutionResult
 } from './ollama/OllamaProvider'
@@ -16989,6 +16990,14 @@ async function executeOllamaLocalTool(
       )
       return { ok: true, output }
     }
+    // Pre-execution argument validation: catch a missing required field HERE with
+    // a specific, repairable message before policy/path checks or executors throw
+    // an opaque error the model can't tell apart from a real tool failure.
+    const argCheck = validateOllamaToolArguments(request.toolName, request.arguments)
+    if (!argCheck.ok) {
+      return { ok: false, output: argCheck.message, validationError: true }
+    }
+
     assertOllamaMutationIntent(request.toolName, request.arguments)
     assertOllamaProtectedWritePaths(request.toolName, request.arguments, context, workspacePath)
 
