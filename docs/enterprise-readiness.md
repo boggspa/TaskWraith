@@ -525,10 +525,15 @@ What is missing:
 - Remote queued dispatch now has both an enqueue-time posture/allowlist receipt
   and a dequeue-time allowlist re-check; remaining work is broader lifecycle
   export review, not the replay authorization gate itself.
+- Verified elevated scheduled dispatch now has coverage that distinguishes
+  frozen scheduled intent from current managed policy: the scheduled run can
+  keep its verified elevation, but the effective service posture is still
+  resolved against the current policy and signed with any revocations applied.
 - `EnsembleRunIdentity`, `ChatRun`, run queue metadata, approval previews, and
   run events now persist live dispatch `stageRole`/`laneId`; scheduled-task
-  receipts now have signed posture coverage, but dispatch-time live-policy
-  recheck/revocation choices still need higher-level tests.
+  receipts now have signed posture coverage, and elevated scheduled composer
+  dispatch now proves current managed-service revocation is reflected in the
+  signed effective posture.
 - Remaining native-provider work is a broader provider-by-provider audit beyond
   Codex: verify every future native command/approval seam either routes through
   the central gate or stamps equivalent participant/lane metadata.
@@ -549,9 +554,10 @@ Target:
   revoke workspace/provider or approval access before the queue pumps, and
   assert the denial audit path end to end. The pure replay authorization helper
   now has coverage for the current-policy deny decision.
-- Add scheduled-task dispatch tests that revoke managed or remote policy between
-  schedule time and dispatch time, then verify the frozen-intent or current
-  live-policy denial decision is explicit.
+- Keep scheduled-task dispatch tests explicit about the split between frozen
+  scheduled intent and current live policy. Managed service revocation is pinned
+  for elevated scheduled composer dispatch; remaining remote-policy coverage
+  should focus on any future scheduled entry point that is actually remote-gated.
 - Preserve `stageRole` and `laneId` through run normalization, `ChatRun`,
   queue jobs, approval previews, and run events.
 

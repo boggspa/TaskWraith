@@ -1214,10 +1214,11 @@ describe('composeRun unattended ELEVATION (P2 verified ack honoring)', () => {
       provider: 'codex',
       providerMetadata: { approvalMode: 'auto_edit' }
     },
-    inputOverrides: Record<string, unknown> = {}
+    inputOverrides: Record<string, unknown> = {},
+    settingsOverrides: Partial<AppSettings> = {}
   ): ComposerRunPayload {
     const chat = makeChat(chatOverrides)
-    const { deps } = makeDeps(chat)
+    const { deps } = makeDeps(chat, settingsOverrides)
     const service = new ComposerService({
       ...deps,
       signRunPermissionPosture: (mode, perms, context) =>
@@ -1296,6 +1297,42 @@ describe('composeRun unattended ELEVATION (P2 verified ack honoring)', () => {
     expect(payload.effectivePermissions?.readOnly).toBe(true)
     expect(payload.effectivePermissions?.agenticServices.shellCommands).toBe('deny')
     expect(payload.effectivePermissions?.agenticServices.fileChanges).toBe('deny')
+  })
+
+  it('rechecks current service policy for a verified elevated scheduled run', () => {
+    const revokedServices = {
+      ...makeSettings().agenticServices,
+      shellCommands: 'deny' as const
+    }
+    const payload = composeUnattended(
+      { level: 'full_access', mode: 'auto_edit' },
+      undefined,
+      {},
+      { agenticServices: revokedServices }
+    )
+
+    expect(payload.approvalMode).toBe('auto_edit')
+    expect(payload.effectivePermissions?.presetId).toBe('workspace_write')
+    expect(payload.effectivePermissions?.readOnly).toBe(false)
+    expect(payload.effectivePermissions?.agenticServices.shellCommands).toBe('deny')
+    expect(payload.effectivePermissions?.networkAccess).toBe('deny')
+    expect(
+      verifyRunPermissionPosture(
+        SECRET,
+        payload.approvalMode,
+        payload.effectivePermissions,
+        payload.effectivePermissionsSignature,
+        {
+          provider: payload.provider,
+          scope: payload.scope,
+          appRunId: payload.appRunId,
+          appChatId: payload.appChatId,
+          prompt: payload.prompt,
+          workflowMode: payload.workflowMode,
+          runtimeProfileId: payload.runtimeProfileId
+        }
+      )
+    ).toBe(true)
   })
 
   it('verified default → default preset', () => {
