@@ -70,6 +70,7 @@ export interface RemoteFirstLaunchWorkspaceSummary {
     steer: boolean
     fileRead: boolean
     fileWrite: boolean
+    externalPublish: boolean
   }
 }
 

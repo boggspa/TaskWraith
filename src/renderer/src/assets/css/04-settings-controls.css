@@ -4004,6 +4004,16 @@ input:disabled, select:disabled, textarea:disabled {
   color: color-mix(in srgb, var(--text-secondary) 66%, transparent);
 }
 
+.remote-workspaces-publish-chip.is-enabled {
+  border-color: color-mix(in srgb, var(--warning) 38%, transparent);
+  background: color-mix(in srgb, var(--warning) 12%, transparent);
+  color: color-mix(in srgb, var(--text-primary) 92%, transparent);
+}
+
+.remote-workspaces-publish-chip.is-off {
+  color: color-mix(in srgb, var(--text-secondary) 66%, transparent);
+}
+
 .remote-workspaces-chip.is-empty {
   color: color-mix(in srgb, var(--text-secondary) 58%, transparent);
 }
@@ -4019,6 +4029,27 @@ input:disabled, select:disabled, textarea:disabled {
 .remote-workspaces-enable-files {
   border-color: color-mix(in srgb, var(--accent) 32%, transparent);
   background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.remote-workspaces-toggle-publish {
+  border-color: color-mix(in srgb, var(--warning) 32%, transparent);
+  background: color-mix(in srgb, var(--warning) 7%, transparent);
+}
+
+.remote-workspaces-toggle-publish.is-enabled {
+  color: var(--warning);
+}
+
+.remote-workspaces-publish-toggle {
+  display: inline-flex;
+}
+
+.remote-workspaces-field-hint {
+  display: block;
+  margin-top: 6px;
+  color: color-mix(in srgb, var(--text-secondary) 72%, transparent);
+  font-size: var(--font-size-xs);
+  line-height: 1.35;
 }
 
 .remote-workspaces-remove {

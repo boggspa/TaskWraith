@@ -22,6 +22,12 @@ export type RemoteWorkspaceCapability =
   | 'fileBrowse'
   | 'fileRead'
   | 'fileWrite'
+  /**
+   * External publication from a paired device: git push and PR creation.
+   * Deliberately separate from fileWrite so a phone that can edit/commit files
+   * does not automatically gain publish authority.
+   */
+  | 'externalPublish'
   | 'pin'
   | 'yolo'
 
@@ -51,7 +57,8 @@ export const READ_ONLY_REMOTE_WORKSPACE_CAPABILITIES: readonly RemoteWorkspaceCa
 ]
 
 /** The file-editing trio — the powers a "Read/Write" grant adds on top of the
- * legacy read-write set, and that legacy entries deliberately exclude. */
+ * legacy read-write set, and that legacy entries deliberately exclude. Git
+ * stage/commit ride this tier; push/PR-create use `externalPublish`. */
 export const FILE_REMOTE_WORKSPACE_CAPABILITIES: readonly RemoteWorkspaceCapability[] = [
   'fileBrowse',
   'fileRead',
@@ -72,15 +79,19 @@ export const LEGACY_READ_WRITE_REMOTE_WORKSPACE_CAPABILITIES: readonly RemoteWor
 ]
 
 /** The full read-write default a NEW Read/Write grant writes — includes the
- * file trio (git commit/push is gated on `fileWrite`). */
+ * file trio, but not external publishing. */
 export const READ_WRITE_REMOTE_WORKSPACE_CAPABILITIES: readonly RemoteWorkspaceCapability[] = [
   ...LEGACY_READ_WRITE_REMOTE_WORKSPACE_CAPABILITIES,
   ...FILE_REMOTE_WORKSPACE_CAPABILITIES
 ]
 
-/** Admin-only powers (pin/yolo). Never part of the mode defaults; preserved
- * verbatim when present on an existing entry. */
-export const ADMIN_REMOTE_WORKSPACE_CAPABILITIES: readonly RemoteWorkspaceCapability[] = ['pin', 'yolo']
+/** Admin-only powers. Never part of the mode defaults; preserved verbatim when
+ * present on an existing entry. */
+export const ADMIN_REMOTE_WORKSPACE_CAPABILITIES: readonly RemoteWorkspaceCapability[] = [
+  'externalPublish',
+  'pin',
+  'yolo'
+]
 
 /** The default capability set materialized for a brand-new grant of `mode`. */
 export function capabilitiesForRemoteWorkspaceMode(

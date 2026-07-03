@@ -14,8 +14,9 @@ import {
  * to the App.tsx god-component. Sits left of Pin/Remove.
  *
  * Off → remove the allowlist entry. Read → read-only grant. Read/Write →
- * read-write grant WITH file editing (gated behind a confirm, since fileWrite
- * also authorizes git commit/push over the network). Flipping is read-modify-
+ * read-write grant WITH file editing (gated behind a confirm). External
+ * publishing (git push / PR creation) is an explicit admin capability managed
+ * separately in the Devices remote-workspace panel. Flipping is read-modify-
  * write (buildAllowlistUpsertForSegment) so it never widens providers/approval/
  * expiry a user narrowed in the Devices tab.
  *
@@ -45,7 +46,7 @@ const SEGMENTS: ReadonlyArray<{
     value: 'read-write',
     label: 'Read/Write',
     aria: 'Remote read and write',
-    title: 'Phone can read and edit files (and git commit/push)'
+    title: 'Phone can read/edit files and commit locally; publishing is granted separately'
   }
 ]
 
@@ -122,7 +123,7 @@ export function WorkspaceRemoteAccessToggle({
         if (target === 'read-write') {
           warnings.push(
             `Allow your paired iPhone to read AND write files in "${workspace.displayName}"? ` +
-              'It can also commit and push over the network. Change this anytime in Settings → Devices.'
+              'It can also stage and commit local git changes. Git push and PR creation are granted separately in Settings → Devices.'
           )
         }
         if (isFirstGrant) {

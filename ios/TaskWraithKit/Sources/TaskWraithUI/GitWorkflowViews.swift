@@ -39,6 +39,7 @@ public struct GitWorkflowPanel: View {
     }
 
     private var canMutate: Bool { model.workspaceCanRunGitMutations(workspaceId) }
+    private var canPublish: Bool { model.workspaceCanPublishExternally(workspaceId) }
     private var existingPr: GitPullRequestSummary? { readiness?.pr }
 
     public var body: some View {
@@ -60,9 +61,15 @@ public struct GitWorkflowPanel: View {
                 statusSection(snapshot)
                 if canMutate {
                     commitSection(snapshot)
+                } else {
+                    Text("This device can review but not stage or commit this repo — the workspace hasn't granted file-write access.")
+                        .font(.caption)
+                        .foregroundStyle(TWTheme.textSecondary)
+                }
+                if canPublish {
                     pushSection(snapshot)
                 } else {
-                    Text("This device can review but not modify this repo — the workspace hasn't granted file-write access.")
+                    Text("Push and pull request creation are disabled — this workspace hasn't granted external publishing access.")
                         .font(.caption)
                         .foregroundStyle(TWTheme.textSecondary)
                 }
@@ -322,7 +329,7 @@ public struct GitWorkflowPanel: View {
                 }
                 checksSummary(pr)
             }
-        } else if canMutate {
+        } else if canPublish {
             VStack(alignment: .leading, spacing: 6) {
                 TextField("PR title (optional — defaults to the commit)", text: $prTitle)
                     .font(.footnote)

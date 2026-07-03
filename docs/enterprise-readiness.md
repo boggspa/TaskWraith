@@ -506,12 +506,19 @@ What exists:
 - Settings -> General -> Product operations exposes scoped audit-bundle export
   actions and a "Publish receipts" retention window for the external-publish
   receipt ledger.
+- The remote workspace Settings UI now exposes `externalPublish` separately
+  from Read/Write file editing: new allowlist entries opt into publish
+  explicitly, existing entries show a Publish chip, and publish can be enabled
+  or disabled without changing file access.
+- iOS capability projections and Git workflow copy now distinguish local Git
+  mutation (`fileWrite`) from external publication (`externalPublish`), so
+  stage/commit, push, and PR creation affordances no longer share one
+  capability label.
 
 What is missing:
 
-- The remote-access UI and iOS copy need to expose the new external-publish
-  capability separately from file editing before paired-device publishing can
-  be presented as a polished managed feature.
+- Continue polishing managed remote-access onboarding copy as admins exercise
+  the split in real paired-device deployments.
 
 Target:
 

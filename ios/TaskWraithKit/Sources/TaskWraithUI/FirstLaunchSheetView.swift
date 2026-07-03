@@ -530,7 +530,8 @@ private struct CapabilityStrip: View {
             CapabilityDisplay(label: "Start", enabled: caps?.startTurn ?? false),
             CapabilityDisplay(label: "Steer", enabled: caps?.steer ?? false),
             CapabilityDisplay(label: "Read", enabled: caps?.fileRead ?? false),
-            CapabilityDisplay(label: "Write", enabled: caps?.fileWrite ?? false)
+            CapabilityDisplay(label: "Write", enabled: caps?.fileWrite ?? false),
+            CapabilityDisplay(label: "Publish", enabled: caps?.externalPublish ?? false)
         ]
     }
 

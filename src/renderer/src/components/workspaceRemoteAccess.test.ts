@@ -3,6 +3,7 @@ import type { RemoteWorkspaceEntry } from '../../../shared/remoteWorkspaceDefaul
 import {
   buildAllowlistUpsertForSegment,
   deriveWorkspaceRemoteSegment,
+  entryCanPublishExternally,
   entryHasFileCapabilities,
   resolveEntryCapabilities
 } from './workspaceRemoteAccess'
@@ -54,6 +55,30 @@ describe('entryHasFileCapabilities', () => {
     expect(deriveWorkspaceRemoteSegment(legacy)).toBe('read-write')
     expect(entryHasFileCapabilities(legacy)).toBe(false)
     expect(resolveEntryCapabilities(legacy)).not.toContain('fileWrite')
+  })
+})
+
+describe('entryCanPublishExternally', () => {
+  it('requires the explicit externalPublish admin capability', () => {
+    expect(
+      entryCanPublishExternally(
+        entry({
+          mode: 'read-write',
+          capabilities: ['monitor', 'fileBrowse', 'fileRead', 'fileWrite']
+        })
+      )
+    ).toBe(false)
+    expect(
+      entryCanPublishExternally(
+        entry({
+          mode: 'read-write',
+          capabilities: ['monitor', 'fileWrite', 'externalPublish']
+        })
+      )
+    ).toBe(true)
+    expect(entryCanPublishExternally(entry({ mode: 'read-write', capabilities: undefined }))).toBe(
+      false
+    )
   })
 })
 
@@ -124,13 +149,14 @@ describe('buildAllowlistUpsertForSegment', () => {
     expect(out.mode).toBe('read-only')
   })
 
-  it('preserves admin caps (pin/yolo) across a mode flip', () => {
+  it('preserves admin caps (externalPublish/pin/yolo) across a mode flip', () => {
     const existing = entry({
       mode: 'read-write',
-      capabilities: ['monitor', 'approve', 'answer', 'steer', 'pin', 'yolo']
+      capabilities: ['monitor', 'approve', 'answer', 'steer', 'externalPublish', 'pin', 'yolo']
     })
     const out = buildAllowlistUpsertForSegment(ws, 'read', existing)
     expect(out.mode).toBe('read-only')
+    expect(out.capabilities).toContain('externalPublish')
     expect(out.capabilities).toContain('pin')
     expect(out.capabilities).toContain('yolo')
     // Read-only base is still present.

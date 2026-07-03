@@ -152,6 +152,7 @@ public struct FirstLaunchWorkspaceSummary: Codable, Sendable, Hashable {
         public let steer: Bool
         public let fileRead: Bool
         public let fileWrite: Bool
+        public let externalPublish: Bool?
     }
 }
 
@@ -768,6 +769,7 @@ public struct RemoteTaskCapabilities: Codable, Sendable, Hashable {
     public let fileBrowse: Bool?
     public let fileRead: Bool?
     public let fileWrite: Bool?
+    public let externalPublish: Bool?
 }
 
 /// Nested `result` inside a successful `bridge.ack` for action requests.

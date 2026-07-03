@@ -61,6 +61,12 @@ export function entryHasFileCapabilities(entry: RemoteWorkspaceEntry): boolean {
   return FILE_REMOTE_WORKSPACE_CAPABILITIES.every((capability) => caps.has(capability))
 }
 
+/** External publishing is an explicit admin capability, never implied by
+ * read-write or fileWrite. */
+export function entryCanPublishExternally(entry: RemoteWorkspaceEntry): boolean {
+  return resolveEntryCapabilities(entry).includes('externalPublish')
+}
+
 /**
  * The toggle segment to display for a workspace given its allowlist entry (or
  * undefined). Missing OR expired entries read as 'off' — list() returns expired

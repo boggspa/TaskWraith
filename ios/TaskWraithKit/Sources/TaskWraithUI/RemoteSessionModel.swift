@@ -1206,7 +1206,7 @@ public final class RemoteSessionModel: ObservableObject {
         disconnect()
         clearCachedProjectionState()
         let workspacesJSON = """
-        [{"workspaceId":"demo-ws","displayName":"Demo Project","path":"~/Developer/taskwraith-demo","chatCount":3,"capabilities":{"diffReview":true,"fileBrowse":true,"fileRead":true,"fileWrite":true}}]
+        [{"workspaceId":"demo-ws","displayName":"Demo Project","path":"~/Developer/taskwraith-demo","chatCount":3,"capabilities":{"diffReview":true,"fileBrowse":true,"fileRead":true,"fileWrite":true,"externalPublish":true}}]
         """
         let cardsJSON = """
         [
@@ -1361,7 +1361,7 @@ public final class RemoteSessionModel: ObservableObject {
           {"id":"claude-sonnet-5-2026-06-30","kind":"addition","title":"Claude Sonnet 5 is available.","body":"Claude now includes Sonnet 5, Anthropic’s fast model for coding and professional work: adaptive thinking, 1M context, 128K max output, 85.2% SWE-bench Verified, and introductory $2/$10 per MTok pricing through Aug. 31, 2026.","tone":"default","accent":"claude","dismissible":true},
           {"id":"antigravity-not-planned-2026-06-26","kind":"info","title":"AntiGravity will not be added.","body":"TaskWraith will not integrate Google AntiGravity as a Gemini replacement because it would require unsupported credential use and would not fit TaskWraith’s provider model.","tone":"default","accent":"default","dismissible":true}
          ],
-         "workspace":{"visibleCount":1,"totalCount":1,"runningCount":0,"hasVisibleWorkspaces":true,"capabilities":{"monitor":true,"approve":true,"answer":true,"startTurn":true,"steer":true,"fileRead":true,"fileWrite":false}},
+         "workspace":{"visibleCount":1,"totalCount":1,"runningCount":0,"hasVisibleWorkspaces":true,"capabilities":{"monitor":true,"approve":true,"answer":true,"startTurn":true,"steer":true,"fileRead":true,"fileWrite":false,"externalPublish":false}},
          "providerCards":[
           {"id":"codex","label":"Codex","optional":false,"statusKind":"ready","statusText":"Ready on Mac","detail":"OpenAI Codex CLI is available for fast agentic coding runs from the Mac.","setupHint":"Sign-in happens on the Mac through the Codex CLI.","setupCommands":[{"id":"codex","label":"Codex","command":"npm i -g @openai/codex","source":"OpenAI"}],"usageWindows":[{"id":"codex-5h","label":"Current session (5h)","usedPercent":28,"resetAt":"2026-06-19T14:00:00Z"}],"usageGeneratedAt":"2026-06-19T10:45:00Z"},
           {"id":"claude","label":"Claude","optional":false,"statusKind":"ready","statusText":"Ready on Mac","detail":"Claude Code is signed in on the paired Mac for careful reasoning and edits.","setupHint":"Manage Claude sign-in on the Mac.","setupCommands":[{"id":"claude","label":"Claude","command":"curl -fsSL https://claude.ai/install.sh | bash","source":"Anthropic"}],"usageWindows":[{"id":"claude-5h","label":"Current session (5h)","usedPercent":42,"resetAt":"2026-06-19T13:00:00Z"}],"usageGeneratedAt":"2026-06-19T10:45:00Z"},
@@ -3109,14 +3109,20 @@ public final class RemoteSessionModel: ObservableObject {
         return capabilities.diffReview == true
     }
 
-    /// Git mutations (stage/commit/push/create-PR) ride the fileWrite
-    /// capability — the strongest existing write tier (mirrors the Mac
-    /// router's gating; git reads ride diffReview).
+    /// Local Git mutations (stage/commit) ride the fileWrite capability.
+    /// External publication (push/create-PR) is deliberately separate.
     public func workspaceCanRunGitMutations(_ workspaceId: String?) -> Bool {
         guard let workspaceId,
             let capabilities = workspaces.first(where: { $0.id == workspaceId })?.capabilities
         else { return false }
         return capabilities.fileWrite == true
+    }
+
+    public func workspaceCanPublishExternally(_ workspaceId: String?) -> Bool {
+        guard let workspaceId,
+            let capabilities = workspaces.first(where: { $0.id == workspaceId })?.capabilities
+        else { return false }
+        return capabilities.externalPublish == true
     }
 
     public func requestDiffMode(workspaceId: String? = nil, targetPath: String? = nil) {

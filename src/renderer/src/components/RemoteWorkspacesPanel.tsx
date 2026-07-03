@@ -51,6 +51,7 @@ type RemoteWorkspaceCapability =
   | 'fileBrowse'
   | 'fileRead'
   | 'fileWrite'
+  | 'externalPublish'
   | 'pin'
   | 'yolo'
 
@@ -80,6 +81,7 @@ const READ_WRITE_CAPABILITIES: RemoteWorkspaceCapability[] = [
   ...LEGACY_READ_WRITE_CAPABILITIES,
   ...FILE_CAPABILITIES
 ]
+const EXTERNAL_PUBLISH_CAPABILITY: RemoteWorkspaceCapability = 'externalPublish'
 
 export function RemoteWorkspacesPanel(): ReactElement {
   const [entries, setEntries] = useState<RemoteWorkspaceEntry[]>([])
@@ -157,6 +159,20 @@ export function RemoteWorkspacesPanel(): ReactElement {
                   })
                   await refresh()
                 }}
+                onTogglePublish={async () => {
+                  await window.api.bridgeAllowlistUpsert({
+                    workspaceId: entry.workspaceId,
+                    path: entry.path,
+                    mode: entry.mode,
+                    capabilities: entryCanPublishExternally(entry)
+                      ? withoutExternalPublishCapability(entry)
+                      : withExternalPublishCapability(entry),
+                    allowedProviders: entry.allowedProviders,
+                    allowedApprovalModes: entry.allowedApprovalModes,
+                    expiresAt: entry.expiresAt
+                  })
+                  await refresh()
+                }}
                 onRemove={async () => {
                   await window.api.bridgeAllowlistRemove(entry.workspaceId)
                   await refresh()
@@ -189,15 +205,18 @@ export function RemoteWorkspacesPanel(): ReactElement {
 function EntryRow({
   entry,
   onEnableFiles,
+  onTogglePublish,
   onRemove
 }: {
   entry: RemoteWorkspaceEntry
   onEnableFiles: () => void | Promise<void>
+  onTogglePublish: () => void | Promise<void>
   onRemove: () => void | Promise<void>
 }): ReactElement {
   const expiresLabel =
     entry.expiresAt !== undefined ? new Date(entry.expiresAt).toLocaleString() : '—'
   const filesEnabled = workspaceEntryCanEditFiles(entry)
+  const publishEnabled = entryCanPublishExternally(entry)
   const canEnableFiles = entry.mode === 'read-write' && !filesEnabled
   return (
     <li className="remote-workspaces-entry-card">
@@ -214,6 +233,11 @@ function EntryRow({
               className={`remote-workspaces-chip remote-workspaces-files-chip ${filesEnabled ? 'is-enabled' : 'is-off'}`}
             >
               {filesEnabled ? 'Files enabled' : 'Files off'}
+            </span>
+            <span
+              className={`remote-workspaces-chip remote-workspaces-publish-chip ${publishEnabled ? 'is-enabled' : 'is-off'}`}
+            >
+              {publishEnabled ? 'Publish enabled' : 'Publish off'}
             </span>
           </div>
           <div className="remote-workspaces-path">{entry.path}</div>
@@ -245,6 +269,18 @@ function EntryRow({
           ) : null}
           <button
             type="button"
+            className={`btn btn-sm btn-ghost remote-workspaces-toggle-publish ${publishEnabled ? 'is-enabled' : ''}`}
+            onClick={() => void onTogglePublish()}
+            title={
+              publishEnabled
+                ? 'Remove paired-device permission for git push and GitHub PR creation.'
+                : 'Grant paired-device permission for git push and GitHub PR creation.'
+            }
+          >
+            {publishEnabled ? 'Disable publish' : 'Enable publish'}
+          </button>
+          <button
+            type="button"
             className="btn btn-sm btn-ghost remote-workspaces-remove"
             onClick={() => void onRemove()}
           >
@@ -261,8 +297,12 @@ function capabilitiesForEntry(entry: RemoteWorkspaceEntry): RemoteWorkspaceCapab
   return entry.mode === 'read-only' ? READ_ONLY_CAPABILITIES : LEGACY_READ_WRITE_CAPABILITIES
 }
 
-function capabilitiesForMode(mode: RemoteWorkspaceEntry['mode']): RemoteWorkspaceCapability[] {
-  return mode === 'read-only' ? READ_ONLY_CAPABILITIES : READ_WRITE_CAPABILITIES
+function capabilitiesForMode(
+  mode: RemoteWorkspaceEntry['mode'],
+  publishExternally = false
+): RemoteWorkspaceCapability[] {
+  const base = mode === 'read-only' ? READ_ONLY_CAPABILITIES : READ_WRITE_CAPABILITIES
+  return publishExternally ? [...base, EXTERNAL_PUBLISH_CAPABILITY] : base
 }
 
 function workspaceEntryCanEditFiles(entry: RemoteWorkspaceEntry): boolean {
@@ -270,8 +310,22 @@ function workspaceEntryCanEditFiles(entry: RemoteWorkspaceEntry): boolean {
   return FILE_CAPABILITIES.every((capability) => capabilities.has(capability))
 }
 
+function entryCanPublishExternally(entry: RemoteWorkspaceEntry): boolean {
+  return capabilitiesForEntry(entry).includes(EXTERNAL_PUBLISH_CAPABILITY)
+}
+
 function withFileEditingCapabilities(entry: RemoteWorkspaceEntry): RemoteWorkspaceCapability[] {
   return Array.from(new Set([...capabilitiesForEntry(entry), ...FILE_CAPABILITIES]))
+}
+
+function withExternalPublishCapability(entry: RemoteWorkspaceEntry): RemoteWorkspaceCapability[] {
+  return Array.from(new Set([...capabilitiesForEntry(entry), EXTERNAL_PUBLISH_CAPABILITY]))
+}
+
+function withoutExternalPublishCapability(entry: RemoteWorkspaceEntry): RemoteWorkspaceCapability[] {
+  return capabilitiesForEntry(entry).filter(
+    (capability) => capability !== EXTERNAL_PUBLISH_CAPABILITY
+  )
 }
 
 function ChipList({ values, emptyLabel }: { values: string[]; emptyLabel: string }): ReactElement {
@@ -301,6 +355,7 @@ function AddEntryForm({ onAdded }: { onAdded: () => void | Promise<void> }): Rea
   const [workspaceId, setWorkspaceId] = useState('')
   const [path, setPath] = useState('')
   const [mode, setMode] = useState<'read-only' | 'read-write'>('read-only')
+  const [publishExternally, setPublishExternally] = useState(false)
   // Default-select EVERY provider + both approval modes so granting a
   // workspace is one tap — the per-provider gate stays available (untick
   // chips) but is no longer the default friction. The phone's compose
@@ -353,13 +408,14 @@ function AddEntryForm({ onAdded }: { onAdded: () => void | Promise<void> }): Rea
         workspaceId: workspaceId.trim(),
         path: path.trim(),
         mode,
-        capabilities: capabilitiesForMode(mode),
+        capabilities: capabilitiesForMode(mode, publishExternally),
         allowedProviders: Array.from(providers),
         allowedApprovalModes: Array.from(approvalModes)
       })
       setWorkspaceId('')
       setPath('')
       setMode('read-only')
+      setPublishExternally(false)
       setProviders(new Set(PROVIDER_OPTIONS))
       setApprovalModes(new Set(APPROVAL_MODE_OPTIONS))
       await onAdded()
@@ -431,6 +487,27 @@ function AddEntryForm({ onAdded }: { onAdded: () => void | Promise<void> }): Rea
             <span>Read-write</span>
           </label>
         </div>
+      </fieldset>
+
+      <fieldset className="remote-workspaces-fieldset">
+        <legend>External publishing</legend>
+        <label
+          className={`remote-workspaces-toggle-chip remote-workspaces-publish-toggle ${
+            publishExternally ? 'active' : ''
+          }`}
+        >
+          <input
+            type="checkbox"
+            checked={publishExternally}
+            onChange={() => setPublishExternally((value) => !value)}
+            disabled={submitting}
+          />
+          <span>Allow Git push + PR creation</span>
+        </label>
+        <small className="remote-workspaces-field-hint">
+          Separate from file editing. Leave off unless this paired device should publish outside
+          the workspace.
+        </small>
       </fieldset>
 
       <fieldset className="remote-workspaces-fieldset">

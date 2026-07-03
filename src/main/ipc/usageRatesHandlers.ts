@@ -85,7 +85,16 @@ const FIRST_LAUNCH_REMOTE_PROVIDERS: ProviderId[] = [
 
 const FIRST_LAUNCH_WORKSPACE_CAPABILITIES: Array<
   keyof RemoteFirstLaunchWorkspaceSummary['capabilities']
-> = ['monitor', 'approve', 'answer', 'startTurn', 'steer', 'fileRead', 'fileWrite']
+> = [
+  'monitor',
+  'approve',
+  'answer',
+  'startTurn',
+  'steer',
+  'fileRead',
+  'fileWrite',
+  'externalPublish'
+]
 
 export function registerUsageRatesHandlers(deps: UsageRatesHandlerDeps): void {
   ipcMain.handle('record-usage', (_event, usage: Omit<UsageRecord, 'id' | 'timestamp'>) => {

@@ -52,7 +52,8 @@ const workspace = {
     startTurn: true,
     steer: true,
     fileRead: true,
-    fileWrite: false
+    fileWrite: false,
+    externalPublish: false
   }
 }
 
@@ -249,7 +250,8 @@ describe('buildRemoteFirstLaunchState', () => {
         startTurn: false,
         steer: false,
         fileRead: false,
-        fileWrite: false
+        fileWrite: false,
+        externalPublish: false
       }
     }
     const state = buildRemoteFirstLaunchState({

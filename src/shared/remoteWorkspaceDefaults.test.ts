@@ -43,7 +43,7 @@ describe('remoteWorkspaceDefaults', () => {
       'fileRead',
       'fileWrite'
     ])
-    expect([...ADMIN_REMOTE_WORKSPACE_CAPABILITIES]).toEqual(['pin', 'yolo'])
+    expect([...ADMIN_REMOTE_WORKSPACE_CAPABILITIES]).toEqual(['externalPublish', 'pin', 'yolo'])
   })
 
   it('Read/Write includes the file trio; Read and legacy read-write do NOT', () => {
@@ -66,7 +66,9 @@ describe('remoteWorkspaceDefaults', () => {
   it('flags admin caps and excludes them from every mode default', () => {
     expect(isAdminRemoteWorkspaceCapability('pin')).toBe(true)
     expect(isAdminRemoteWorkspaceCapability('yolo')).toBe(true)
+    expect(isAdminRemoteWorkspaceCapability('externalPublish')).toBe(true)
     expect(isAdminRemoteWorkspaceCapability('fileWrite')).toBe(false)
+    expect(capabilitiesForRemoteWorkspaceMode('read-write')).not.toContain('externalPublish')
     expect(capabilitiesForRemoteWorkspaceMode('read-write')).not.toContain('pin')
     expect(capabilitiesForRemoteWorkspaceMode('read-write')).not.toContain('yolo')
   })
