@@ -1101,14 +1101,52 @@ function providerFromPayload(payload: BridgeActionPayload): string | undefined {
     : undefined
 }
 
+// Permission presets that resolve to the `auto_edit` approval tier — auto-applied
+// file/shell changes with no per-action approval. Kept in lockstep with the
+// canonical DEFAULT_PERMISSION_PRESETS in EffectiveRunPermissions.ts; the parity
+// test in BridgeActionRouter.test.ts fails if a new auto_edit preset is added
+// without being listed here, so a future preset can't silently slip the roster
+// gate below. `full_access` additionally drops the OS sandbox; `workspace_write`
+// stays contained — but both auto-edit, so both must clear an auto_edit-gated
+// workspace allowlist.
+export const AUTO_EDIT_TIER_PRESET_IDS: ReadonlySet<string> = new Set([
+  'workspace_write',
+  'full_access'
+])
+
 export function approvalModeFromPayload(payload: BridgeActionPayload): string | undefined {
   // A composer "Full access" run carries permissionPresetId:'full_access' and
   // resolves to auto_edit on the Mac. Gate it as auto_edit here so it can't slip
   // past the workspace allowlist (allowedApprovalModes) by riding a lower
-  // approvalMode such as 'default'. Every other payload uses its raw approvalMode.
+  // approvalMode such as 'default'. (The composer only honors full_access — a
+  // top-level workspace_write falls through to its raw approvalMode, so it is
+  // deliberately NOT included in this top-level check.)
   if (
     'permissionPresetId' in payload &&
     (payload as { permissionPresetId?: unknown }).permissionPresetId === 'full_access'
+  ) {
+    return 'auto_edit'
+  }
+  // An ensemble roster update carries the preset PER PARTICIPANT (participants[].
+  // permissionPresetId) and has NO top-level approvalMode, so the check above
+  // misses it and this payload would otherwise gate as the 'default' fallback. A
+  // participant set to an auto-edit-tier preset auto-applies changes when that seat
+  // runs (full_access also drops the sandbox) — the same escalation class as a
+  // composer Full-access turn. Gate it identically, so a phone holding only the
+  // `steer` capability on a `default`-tier workspace cannot assign an auto-edit
+  // participant without the workspace explicitly permitting auto_edit. Unlike the
+  // composer, the roster HONORS workspace_write too, so both auto-edit presets gate
+  // here. Generic over any payload that nests participant presets — createThread
+  // participants carry no preset, so they are unaffected.
+  if (
+    'participants' in payload &&
+    Array.isArray((payload as { participants?: unknown }).participants) &&
+    (payload as { participants: ReadonlyArray<{ permissionPresetId?: unknown }> }).participants.some(
+      (entry) =>
+        entry != null &&
+        typeof entry.permissionPresetId === 'string' &&
+        AUTO_EDIT_TIER_PRESET_IDS.has(entry.permissionPresetId)
+    )
   ) {
     return 'auto_edit'
   }

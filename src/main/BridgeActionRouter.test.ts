@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
-import { BridgeActionRouter, approvalModeFromPayload } from './BridgeActionRouter'
+import {
+  BridgeActionRouter,
+  approvalModeFromPayload,
+  AUTO_EDIT_TIER_PRESET_IDS
+} from './BridgeActionRouter'
+import { DEFAULT_PERMISSION_PRESETS } from './EffectiveRunPermissions'
 import { RemoteWorkspaceAllowlist } from './RemoteWorkspaceAllowlist'
 import type { BridgeActionExecutionResult, BridgeActionExecutor } from './BridgeActionExecutor'
 import type {
@@ -37,6 +42,67 @@ describe('approvalModeFromPayload — Full-access allowlist gating', () => {
     ).toBe('default')
     expect(approvalModeFromPayload(payload({ approvalMode: 'plan' }))).toBe('plan')
     expect(approvalModeFromPayload(payload({}))).toBeUndefined()
+  })
+
+  // ---- Ensemble roster path: the preset is nested per-participant with NO
+  // top-level approvalMode, so without the roster branch it would gate as the
+  // 'default' fallback and slip an auto-edit seat past a workspace that grants
+  // `steer` + `default` but not `auto_edit`. ----
+  const roster = (participants: Array<Record<string, unknown>>): BridgeActionPayload =>
+    ({
+      kind: 'ensembleRosterUpdate',
+      workspaceId: 'ws',
+      threadId: 't',
+      participants
+    }) as unknown as BridgeActionPayload
+
+  it('normalizes a roster update to auto_edit when any participant is full_access', () => {
+    expect(
+      approvalModeFromPayload(roster([{ provider: 'codex', permissionPresetId: 'full_access' }]))
+    ).toBe('auto_edit')
+    // full_access anywhere in the roster (not just the first seat) trips the gate.
+    expect(
+      approvalModeFromPayload(
+        roster([
+          { provider: 'claude', permissionPresetId: 'default' },
+          { provider: 'codex', permissionPresetId: 'full_access' }
+        ])
+      )
+    ).toBe('auto_edit')
+  })
+
+  it('also gates workspace_write roster seats as auto_edit (the roster honors it)', () => {
+    // The composer drops a top-level workspace_write to its raw approvalMode
+    // (only full_access is honored there), but the roster HONORS workspace_write —
+    // it auto-edits (sandbox-contained), so it must clear the same auto_edit gate.
+    expect(
+      approvalModeFromPayload(roster([{ provider: 'codex', permissionPresetId: 'workspace_write' }]))
+    ).toBe('auto_edit')
+  })
+
+  it('leaves a roster update with no auto-edit participant on its normal gate', () => {
+    // read_only/plan/default seats carry no escalation, so no synthetic auto_edit;
+    // the payload has no top-level approvalMode and falls through to undefined
+    // (the capability gate still applies downstream).
+    expect(
+      approvalModeFromPayload(
+        roster([
+          { provider: 'claude', permissionPresetId: 'plan' },
+          { provider: 'codex', permissionPresetId: 'default' }
+        ])
+      )
+    ).toBeUndefined()
+  })
+
+  it('keeps AUTO_EDIT_TIER_PRESET_IDS in lockstep with the canonical presets', () => {
+    // Cross-seam parity: if a new preset resolving to approvalMode:'auto_edit' is
+    // added to DEFAULT_PERMISSION_PRESETS without being listed in the router set,
+    // this fails — forcing the roster gate to keep covering every auto-edit preset.
+    const canonicalAutoEdit = Object.values(DEFAULT_PERMISSION_PRESETS)
+      .filter((preset) => preset.approvalMode === 'auto_edit')
+      .map((preset) => preset.id)
+      .sort()
+    expect([...AUTO_EDIT_TIER_PRESET_IDS].sort()).toEqual(canonicalAutoEdit)
   })
 })
 
