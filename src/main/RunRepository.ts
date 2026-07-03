@@ -12,6 +12,7 @@ import type {
 } from './store/types'
 import type { RunQueueJobInput } from './RunQueue'
 import type { RunSession } from './RunManager'
+import { buildRunQueueDispatchReceipt } from './RunQueueDispatchReceipt'
 import { AppStore } from './store'
 
 type SteerQueueMetadata = {
@@ -204,7 +205,16 @@ export class RunRepository {
   }
 
   saveRunQueueJob(input: RunQueueJobInput): RunQueueJob {
-    const saved = AppStore.saveRunQueueJob(input)
+    const existing = AppStore.getRunQueueJob(input.runId || input.id || '')
+    const dispatchReceipt =
+      input.dispatchReceipt ||
+      existing?.dispatchReceipt ||
+      buildRunQueueDispatchReceipt({
+        ...(existing ?? {}),
+        ...input,
+        source: input.source || existing?.source || 'manual'
+      })
+    const saved = AppStore.saveRunQueueJob({ ...input, dispatchReceipt })
     this.options.emitRunQueueChanged()
     return saved
   }

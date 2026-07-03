@@ -80,6 +80,77 @@ describe('RunRepository', () => {
     }
   })
 
+  it('stamps missing dispatch receipts on direct queue repository saves', () => {
+    const repository = new RunRepository({
+      providerLabel: (provider) => provider,
+      emitRunQueueChanged: vi.fn(),
+      emitRunEventsChanged: vi.fn()
+    })
+    const getExisting = vi.spyOn(AppStore, 'getRunQueueJob').mockReturnValue(null)
+    const saveQueue = vi
+      .spyOn(AppStore, 'saveRunQueueJob')
+      .mockImplementation((input: any) => input)
+
+    try {
+      repository.saveRunQueueJob({
+        id: 'remote-queue-1',
+        runId: 'remote-queue-1',
+        provider: 'codex',
+        scope: 'workspace',
+        workspaceId: 'workspace-1',
+        chatId: 'chat-1',
+        workspacePath: '/repo',
+        source: 'remote',
+        status: 'queued',
+        request: {
+          scope: 'workspace',
+          prompt: 'From phone',
+          selectedModelType: 'cli-default',
+          customModel: '',
+          approvalMode: 'plan',
+          workflowMode: 'plan',
+          sessionTrust: false,
+          imageAttachments: [],
+          remoteComposer: {
+            workspaceId: 'workspace-1',
+            threadId: 'chat-1',
+            provider: 'codex',
+            text: 'From phone',
+            approvalMode: 'plan',
+            workflowMode: 'plan'
+          }
+        }
+      })
+
+      expect(saveQueue).toHaveBeenCalledWith(
+        expect.objectContaining({
+          dispatchReceipt: expect.objectContaining({
+            schemaVersion: 1,
+            runId: 'remote-queue-1',
+            provider: 'codex',
+            source: 'remote',
+            workspaceId: 'workspace-1',
+            chatId: 'chat-1',
+            approvalMode: 'plan',
+            workflowMode: 'plan',
+            permissionPostureSignaturePresent: false,
+            receiptHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+            remoteComposer: expect.objectContaining({
+              workspaceId: 'workspace-1',
+              threadId: 'chat-1',
+              provider: 'codex',
+              approvalMode: 'plan',
+              workflowMode: 'plan'
+            })
+          })
+        })
+      )
+    } finally {
+      getExisting.mockRestore()
+      saveQueue.mockRestore()
+    }
+  })
+
   it('persists permission posture snapshots on queue jobs and lifecycle events', () => {
     const permissionPosture = {
       schemaVersion: 1,
