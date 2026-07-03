@@ -3,8 +3,13 @@ import { createHash } from 'node:crypto'
 import type {
   AppSettings,
   ApprovalLedgerRecord,
+  AuditRunRecord,
+  CapabilityLedgerSnapshot,
+  EvidencePackRecord,
   MessageFeedbackReceipt,
   GeminiMcpBridgeStatus,
+  ProductAuditBundleFilter,
+  ProductAuditBundleSnapshot,
   ProductBridgeHealthRecord,
   ProductCrashFilter,
   ProductCrashInput,
@@ -19,6 +24,7 @@ import type {
   ProductUpdateChannel,
   RunQueueJob,
   RunRecoveryRecord,
+  RunEventRecord,
   ScheduledTask,
   WorkflowDefinition,
   WorkspaceChangeSet,
@@ -27,6 +33,7 @@ import type {
 } from './store/types'
 import type { UpdateArchitectureCompatibility } from './UpdateArchitecture'
 import type { ExternalPublishReceipt } from './ExternalPublishReceiptLedger'
+import { createRunEventReplay } from './RunEventStore'
 
 const MAX_CRASH_TEXT_CHARS = 12_000
 const MAX_DIAGNOSTIC_RECORDS = 250
@@ -158,6 +165,244 @@ function buildDiagnosticsAuditReceipts(input: {
       runEventHashChains: 'not_included_in_diagnostics_export'
     }
   } as const
+}
+
+function hashId(value: unknown): string | undefined {
+  return typeof value === 'string' && value ? diagnosticsSha256(value) : undefined
+}
+
+function objectValue(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined
+}
+
+function permissionPosture(value: unknown): Record<string, unknown> | undefined {
+  const record = objectValue(value)
+  const postureHash = record?.postureHash
+  return typeof postureHash === 'string' && postureHash ? record : undefined
+}
+
+function permissionPostureFromApproval(record: ApprovalLedgerRecord): Record<string, unknown> | undefined {
+  return permissionPosture(record.metadata?.permissionPosture)
+}
+
+function permissionPostureFromRunEvent(record: RunEventRecord): Record<string, unknown> | undefined {
+  const payload = objectValue(record.payload)
+  return permissionPosture(payload?.permissionPosture)
+}
+
+function summarizePermissionPostureForAuditBundle(
+  posture: Record<string, unknown> | undefined
+): Record<string, unknown> | undefined {
+  if (!posture) return undefined
+  return {
+    postureHash: posture.postureHash,
+    signaturePresent: posture.signaturePresent === true,
+    approvalMode: typeof posture.approvalMode === 'string' ? posture.approvalMode : undefined,
+    workflowMode: typeof posture.workflowMode === 'string' ? posture.workflowMode : undefined,
+    presetId: typeof posture.presetId === 'string' ? posture.presetId : undefined,
+    readOnly: typeof posture.readOnly === 'boolean' ? posture.readOnly : undefined,
+    networkAccess: typeof posture.networkAccess === 'string' ? posture.networkAccess : undefined,
+    externalPathGrantCount:
+      typeof posture.externalPathGrantCount === 'number' ? posture.externalPathGrantCount : 0,
+    workspaceGrantServiceCount: Array.isArray(posture.workspaceGrantServiceIds)
+      ? posture.workspaceGrantServiceIds.length
+      : 0,
+    promptHash: objectValue(posture.context)?.promptHash
+  }
+}
+
+function summarizeApprovalLedgerRecordForAuditBundle(
+  record: ApprovalLedgerRecord
+): Record<string, unknown> {
+  return {
+    schemaVersion: record.schemaVersion,
+    idHash: hashId(record.id),
+    approvalIdHash: hashId(record.approvalId),
+    provider: record.provider,
+    service: record.service,
+    method: record.method,
+    status: record.status,
+    decision: record.decision,
+    decisionSource: record.decisionSource,
+    grantedScope: record.grantedScope,
+    requestedAt: record.requestedAt,
+    respondedAt: record.respondedAt,
+    expirationMode: record.expiration?.mode,
+    runIdHash: hashId(record.runId),
+    chatIdHash: hashId(record.chatId),
+    workspaceIdHash: hashId(record.workspaceId),
+    hasWorkspacePath: Boolean(record.workspacePath),
+    hasBody: Boolean(record.body),
+    hasPreview: record.preview !== undefined,
+    hasParams: record.params !== undefined,
+    permissionPosture: summarizePermissionPostureForAuditBundle(permissionPostureFromApproval(record))
+  }
+}
+
+function summarizeRunEventReplayForAuditBundle(
+  runId: string,
+  events: RunEventRecord[]
+): Record<string, unknown> {
+  const replay = createRunEventReplay(runId, events)
+  return {
+    runIdHash: hashId(runId),
+    count: replay.count,
+    lastSequence: replay.lastSequence,
+    hashHead: replay.hashHead,
+    hashChainValid: replay.hashChainValid,
+    countsByKind: replay.countsByKind,
+    approvalIdHashes: replay.approvalIds.map((id) => hashId(id)),
+    startedAt: replay.startedAt,
+    endedAt: replay.endedAt,
+    timeline: replay.timeline.map((event) => ({
+      sequence: event.sequence,
+      timestamp: event.timestamp,
+      kind: event.kind,
+      phase: event.phase,
+      source: event.source,
+      hasSummary: Boolean(event.summary),
+      summaryHash: hashId(event.summary),
+      spanIdHash: hashId(event.spanId),
+      parentSpanIdHash: hashId(event.parentSpanId),
+      toolCallIdHash: hashId(event.toolCallId),
+      approvalIdHash: hashId(event.approvalId),
+      hasCommitSha: Boolean(event.commitSha),
+      hasExternalUrl: Boolean(event.externalUrl),
+      artifactCount: event.artifactIds?.length || 0,
+      hash: event.hash
+    }))
+  }
+}
+
+function summarizeWorkspaceChangeForAuditBundle(change: WorkspaceChangeSet): Record<string, unknown> {
+  return {
+    schemaVersion: change.schemaVersion,
+    idHash: hashId(change.id),
+    source: change.source,
+    status: change.status,
+    titleHash: hashId(change.title),
+    hasSummary: Boolean(change.summary),
+    summaryHash: hashId(change.summary),
+    workspaceIdHash: hashId(change.workspaceId),
+    hasWorkspacePath: Boolean(change.workspacePath),
+    chatIdHash: hashId(change.chatId),
+    runIdHash: hashId(change.runId),
+    provider: change.provider,
+    createdAt: change.createdAt,
+    updatedAt: change.updatedAt,
+    fileCount: change.files.length,
+    artifactCount: change.artifacts.length,
+    stats: change.stats,
+    files: change.files.map((file) => ({
+      pathHash: hashId(file.path),
+      origin: file.origin,
+      status: file.status,
+      additions: file.additions,
+      deletions: file.deletions,
+      binary: file.isBinary
+    }))
+  }
+}
+
+function summarizeAuditRunForAuditBundle(run: AuditRunRecord): Record<string, unknown> {
+  return {
+    schemaVersion: run.schemaVersion,
+    idHash: hashId(run.id),
+    mode: run.mode,
+    status: run.status,
+    chatIdHash: hashId(run.chatId),
+    workspaceIdHash: hashId(run.workspaceId),
+    hasWorkspacePath: Boolean(run.workspacePath),
+    phaseCount: run.phases.length,
+    dimensionsCount: run.dimensions.length,
+    participantCount: run.participants.length,
+    findingCount: run.findings.length,
+    verdictCount: run.verdicts.length,
+    gateCount: run.gates.length,
+    gateStatuses: run.gates.reduce<Record<string, number>>((counts, gate) => {
+      counts[gate.status] = (counts[gate.status] || 0) + 1
+      return counts
+    }, {}),
+    budget: run.budget,
+    coverage: run.coverage,
+    hasReport: Boolean(run.report),
+    reportHash: hashId(run.report),
+    hasError: Boolean(run.error),
+    createdAt: run.createdAt,
+    updatedAt: run.updatedAt,
+    startedAt: run.startedAt,
+    endedAt: run.endedAt
+  }
+}
+
+function summarizeEvidencePackForAuditBundle(pack: EvidencePackRecord): Record<string, unknown> {
+  return {
+    schemaVersion: pack.schemaVersion,
+    idHash: hashId(pack.id),
+    workspaceIdHash: hashId(pack.workspaceId),
+    hasWorkspacePath: Boolean(pack.workspacePath),
+    runIdHash: hashId(pack.runId),
+    chatIdHash: hashId(pack.chatId),
+    provider: pack.provider,
+    capabilityCellCount: pack.capabilityCells.length,
+    completionClaimCount: pack.completionClaims.length,
+    diffTouchedFileCount: pack.diffTouchedFiles?.length || 0,
+    createdAt: pack.createdAt,
+    updatedAt: pack.updatedAt
+  }
+}
+
+function summarizeCapabilityLedgerForAuditBundle(
+  snapshot: CapabilityLedgerSnapshot | undefined
+): Array<Record<string, unknown>> {
+  if (!snapshot) return []
+  return snapshot.cells.map((cell) => ({
+    capabilityKeyHash: hashId(cell.capabilityKey),
+    titleHash: hashId(cell.title),
+    status: cell.status,
+    evidenceRefCount: cell.evidenceRefs.length,
+    hasValidationCommand: Boolean(cell.validationCommand),
+    unsupportedClaimCount: cell.unsupportedClaims?.length || 0,
+    latestEvidencePackIdHash: hashId(cell.latestEvidencePackId),
+    latestRunIdHash: hashId(cell.latestRunId),
+    updatedAt: cell.updatedAt
+  }))
+}
+
+function summarizeMessageFeedbackReceiptForAuditBundle(
+  receipt: MessageFeedbackReceipt
+): Record<string, unknown> {
+  return summarizeMessageFeedbackReceiptForDiagnostics(receipt)
+}
+
+function summarizeExternalPublishReceiptForAuditBundle(
+  receipt: ExternalPublishReceipt
+): Record<string, unknown> {
+  return {
+    schemaVersion: receipt.schemaVersion,
+    idHash: hashId(receipt.id),
+    origin: receipt.origin,
+    action: receipt.action,
+    decision: receipt.decision,
+    requestedAt: receipt.requestedAt,
+    completedAt: receipt.completedAt,
+    outcome: receipt.outcome,
+    workspaceIdHash: hashId(receipt.workspaceId),
+    hasWorkspacePath: Boolean(receipt.workspacePath),
+    hasRepoPath: Boolean(receipt.repoPath),
+    remoteHash: hashId(receipt.remote),
+    setUpstream: receipt.setUpstream,
+    hasTitle: Boolean(receipt.title),
+    titleHash: hashId(receipt.title),
+    draft: receipt.draft,
+    hasCommitSha: Boolean(receipt.commitSha),
+    hasPrUrl: Boolean(receipt.prUrl),
+    prUrlHash: hashId(receipt.prUrl),
+    hasError: Boolean(receipt.error),
+    hasMetadata: Boolean(receipt.metadata && Object.keys(receipt.metadata).length > 0)
+  }
 }
 
 function parseBuilderValue(text: string, key: string): string | undefined {
@@ -709,6 +954,125 @@ function summarizeWorkflowForDiagnostics(workflow: WorkflowDefinition): Record<s
   }
 }
 
+function summarizeRunQueueRequestForDiagnostics(
+  request: RunQueueJob['request'] | undefined
+): Record<string, unknown> | undefined {
+  if (!request) return undefined
+  return {
+    scope: request.scope,
+    selectedModelType: request.selectedModelType,
+    hasCustomModel: Boolean(request.customModel),
+    approvalMode: request.approvalMode,
+    workflowMode: request.workflowMode,
+    sessionTrust: request.sessionTrust,
+    imageAttachmentCount: request.imageAttachments?.length || 0,
+    externalPathGrantCount: request.externalPathGrants?.length || 0,
+    hasPrompt: Boolean(request.prompt),
+    promptHash: hashId(request.prompt),
+    hasDisplayPrompt: Boolean(request.displayPrompt),
+    displayPromptHash: hashId(request.displayPrompt),
+    hasDiscordContextSelection: Boolean(request.discordContextSelection),
+    hasRuntimeProfile: Boolean(request.runtimeProfileId),
+    hasGeminiAuthProfile: Boolean(request.geminiAuthProfileId),
+    hasRemoteComposer: Boolean(request.remoteComposer),
+    remoteComposer: request.remoteComposer
+      ? {
+          workspaceIdHash: hashId(request.remoteComposer.workspaceId),
+          threadIdHash: hashId(request.remoteComposer.threadId),
+          provider: request.remoteComposer.provider,
+          approvalMode: request.remoteComposer.approvalMode,
+          workflowMode: request.remoteComposer.workflowMode,
+          hasModel: Boolean(request.remoteComposer.model),
+          reasoningEffort: request.remoteComposer.reasoningEffort,
+          claudeReasoningEffort: request.remoteComposer.claudeReasoningEffort,
+          contextTurns: request.remoteComposer.contextTurns,
+          extraWorkspaceCount: request.remoteComposer.extraWorkspaceIds?.length || 0,
+          hasText: Boolean(request.remoteComposer.text),
+          textHash: hashId(request.remoteComposer.text)
+        }
+      : undefined
+  }
+}
+
+function summarizeRunQueueJobForDiagnostics(job: RunQueueJob): Record<string, unknown> {
+  return {
+    id: job.id,
+    runId: job.runId,
+    provider: job.provider,
+    ensembleParticipantId: job.ensembleParticipantId,
+    ensembleRole: job.ensembleRole,
+    ensembleStageRole: job.ensembleStageRole,
+    scope: job.scope,
+    workspaceId: job.workspaceId,
+    hasWorkspacePath: Boolean(job.workspacePath),
+    chatIdHash: hashId(job.chatId),
+    source: job.source,
+    status: job.status,
+    priority: job.priority,
+    attempt: job.attempt,
+    hasPromptPreview: Boolean(job.promptPreview),
+    promptPreviewHash: hashId(job.promptPreview),
+    request: summarizeRunQueueRequestForDiagnostics(job.request),
+    permissionPosture: summarizePermissionPostureForAuditBundle(
+      job.permissionPosture as unknown as Record<string, unknown> | undefined
+    ),
+    hasProviderSessionId: Boolean(job.providerSessionId),
+    hasProviderRunId: Boolean(job.providerRunId),
+    hasProcessCommand: Boolean(job.processCommand),
+    hasRuntimeProfile: Boolean(job.runtimeProfileId),
+    hasOrphanProcess: Boolean(job.orphanProcess),
+    createdAt: job.createdAt,
+    updatedAt: job.updatedAt,
+    startedAt: job.startedAt,
+    endedAt: job.endedAt,
+    statusReason: job.statusReason,
+    hasLastError: Boolean(job.lastError),
+    recoveryReason: job.recoveryReason,
+    resumeAvailable: job.resumeAvailable
+  }
+}
+
+function summarizeRunRecoveryRecordForDiagnostics(record: RunRecoveryRecord): Record<string, unknown> {
+  return {
+    schemaVersion: record.schemaVersion,
+    id: record.id,
+    runId: record.runId,
+    jobId: record.jobId,
+    provider: record.provider,
+    ensembleParticipantId: record.ensembleParticipantId,
+    ensembleRole: record.ensembleRole,
+    chatIdHash: hashId(record.chatId),
+    workspaceId: record.workspaceId,
+    hasWorkspacePath: Boolean(record.workspacePath),
+    previousStatus: record.previousStatus,
+    recoveredStatus: record.recoveredStatus,
+    action: record.action,
+    reason: record.reason,
+    recoveredAt: record.recoveredAt,
+    resumeAvailable: record.resumeAvailable,
+    hasResumeHint: Boolean(record.resumeHint),
+    process: record.process
+      ? {
+          checkedAt: record.process.checkedAt,
+          alive: record.process.alive,
+          detection: record.process.detection,
+          action: record.process.action,
+          hasCommand: Boolean(record.process.command),
+          hasError: Boolean(record.process.errorCode || record.process.errorMessage)
+        }
+      : undefined,
+    jobSnapshot: {
+      hasProviderSessionId: Boolean(record.jobSnapshot.providerSessionId),
+      hasProviderRunId: Boolean(record.jobSnapshot.providerRunId),
+      hasPromptPreview: Boolean(record.jobSnapshot.promptPreview),
+      promptPreviewHash: hashId(record.jobSnapshot.promptPreview),
+      startedAt: record.jobSnapshot.startedAt,
+      updatedAt: record.jobSnapshot.updatedAt,
+      hasProcessCommand: Boolean(record.jobSnapshot.processCommand)
+    }
+  }
+}
+
 export function buildDiagnosticsSnapshot(input: {
   status: ProductOperationsStatus
   settings: AppSettings
@@ -745,16 +1109,24 @@ export function buildDiagnosticsSnapshot(input: {
       lastOpenedAt: workspace.lastOpenedAt,
       pinned: workspace.pinned
     })),
-    runQueue: input.runQueue.slice(0, MAX_DIAGNOSTIC_RECORDS),
-    runRecovery: input.runRecovery.slice(0, MAX_DIAGNOSTIC_RECORDS),
+    runQueue: input.runQueue
+      .slice(0, MAX_DIAGNOSTIC_RECORDS)
+      .map(summarizeRunQueueJobForDiagnostics),
+    runRecovery: input.runRecovery
+      .slice(0, MAX_DIAGNOSTIC_RECORDS)
+      .map(summarizeRunRecoveryRecordForDiagnostics),
     scheduledTasks: input.scheduledTasks
       .slice(0, MAX_DIAGNOSTIC_RECORDS)
       .map(summarizeScheduledTaskForDiagnostics),
     workflows: input.workflows
       .slice(0, MAX_DIAGNOSTIC_RECORDS)
       .map(summarizeWorkflowForDiagnostics),
-    approvalLedger: input.approvalLedger.slice(0, MAX_DIAGNOSTIC_RECORDS),
-    workspaceChanges: input.workspaceChanges.slice(0, MAX_DIAGNOSTIC_RECORDS),
+    approvalLedger: input.approvalLedger
+      .slice(0, MAX_DIAGNOSTIC_RECORDS)
+      .map(summarizeApprovalLedgerRecordForAuditBundle),
+    workspaceChanges: input.workspaceChanges
+      .slice(0, MAX_DIAGNOSTIC_RECORDS)
+      .map(summarizeWorkspaceChangeForAuditBundle),
     auditReceipts: buildDiagnosticsAuditReceipts({
       generatedAt,
       approvalLedger: input.approvalLedger,
@@ -764,6 +1136,129 @@ export function buildDiagnosticsSnapshot(input: {
     }),
     recentCrashes: input.recentCrashes.slice(0, MAX_DIAGNOSTIC_RECORDS)
   }) as ProductDiagnosticsSnapshot
+}
+
+function matchesAuditBundleFilter(
+  record: {
+    workspaceId?: string
+    workspacePath?: string
+    chatId?: string
+    runId?: string
+  },
+  filter: ProductAuditBundleFilter = {}
+): boolean {
+  if (filter.workspaceId && record.workspaceId !== filter.workspaceId) return false
+  if (filter.workspacePath && record.workspacePath !== filter.workspacePath) return false
+  if (filter.chatId && record.chatId !== filter.chatId) return false
+  if (filter.runId && record.runId !== filter.runId) return false
+  return true
+}
+
+function uniqueRunIds(events: RunEventRecord[]): string[] {
+  return Array.from(new Set(events.map((event) => event.runId).filter(Boolean)))
+}
+
+export function buildAuditBundleSnapshot(input: {
+  approvalLedger: ApprovalLedgerRecord[]
+  runEvents: RunEventRecord[]
+  workspaceChanges: WorkspaceChangeSet[]
+  auditRuns: AuditRunRecord[]
+  evidencePacks: EvidencePackRecord[]
+  capabilityLedger?: CapabilityLedgerSnapshot
+  messageFeedbackReceipts: MessageFeedbackReceipt[]
+  externalPublishReceipts: ExternalPublishReceipt[]
+  filter?: ProductAuditBundleFilter
+  now?: string
+}): ProductAuditBundleSnapshot {
+  const generatedAt = input.now || new Date().toISOString()
+  const filter = input.filter || {}
+  const approvalLedger = input.approvalLedger.filter((record) => matchesAuditBundleFilter(record, filter))
+  const runEvents = input.runEvents.filter((event) => matchesAuditBundleFilter(event, filter))
+  const workspaceChanges = input.workspaceChanges.filter((change) =>
+    matchesAuditBundleFilter(change, filter)
+  )
+  const auditRuns = input.auditRuns.filter((run) => matchesAuditBundleFilter(run, filter))
+  const evidencePacks = input.evidencePacks.filter((pack) => matchesAuditBundleFilter(pack, filter))
+  const messageFeedback = input.messageFeedbackReceipts.filter((receipt) =>
+    matchesAuditBundleFilter(receipt, filter)
+  )
+  const externalPublish = input.externalPublishReceipts.filter((receipt) =>
+    matchesAuditBundleFilter(receipt, filter)
+  )
+  const runEventReplays = uniqueRunIds(runEvents).map((runId) =>
+    summarizeRunEventReplayForAuditBundle(runId, runEvents)
+  )
+  const capabilityLedger = summarizeCapabilityLedgerForAuditBundle(input.capabilityLedger)
+  const sections = {
+    approvalLedger: approvalLedger.map(summarizeApprovalLedgerRecordForAuditBundle),
+    runEventReplays,
+    workspaceChanges: workspaceChanges.map(summarizeWorkspaceChangeForAuditBundle),
+    auditRuns: auditRuns.map(summarizeAuditRunForAuditBundle),
+    evidencePacks: evidencePacks.map(summarizeEvidencePackForAuditBundle),
+    capabilityLedger,
+    messageFeedback: messageFeedback.map(summarizeMessageFeedbackReceiptForAuditBundle),
+    externalPublish: externalPublish.map(summarizeExternalPublishReceiptForAuditBundle)
+  }
+  const runEventChains = runEventReplays.map((replay) => replay.hashChainValid === true)
+  const permissionPostureProofs = {
+    approvalLedger: approvalLedger.filter((record) => permissionPostureFromApproval(record)).length,
+    runEvents: runEvents.filter((event) => permissionPostureFromRunEvent(event)).length,
+    auditRuns: 0
+  }
+  return sanitizeDiagnosticsValue({
+    schemaVersion: 1,
+    generatedAt,
+    manifest: {
+      schemaVersion: 1,
+      generatedAt,
+      redactionMode: 'default',
+      filters: filter,
+      counts: {
+        approvalLedger: approvalLedger.length,
+        runEventReplays: runEventReplays.length,
+        runEvents: runEvents.length,
+        workspaceChanges: workspaceChanges.length,
+        auditRuns: auditRuns.length,
+        evidencePacks: evidencePacks.length,
+        capabilityLedgerEntries: capabilityLedger.length,
+        messageFeedback: messageFeedback.length,
+        externalPublish: externalPublish.length
+      },
+      hashes: {
+        approvalLedger: diagnosticsSha256(sections.approvalLedger),
+        runEventReplays: diagnosticsSha256(sections.runEventReplays),
+        workspaceChanges: diagnosticsSha256(sections.workspaceChanges),
+        auditRuns: diagnosticsSha256(sections.auditRuns),
+        evidencePacks: diagnosticsSha256(sections.evidencePacks),
+        capabilityLedger: diagnosticsSha256(sections.capabilityLedger),
+        messageFeedback: diagnosticsSha256(sections.messageFeedback),
+        externalPublish: diagnosticsSha256(sections.externalPublish)
+      },
+      validation: {
+        sensitiveFields: 'redacted',
+        tamperEvidence: 'local_hashes_unsigned',
+        retention: {
+          approvalLedger: 'retained_capped',
+          runEvents: 'retained_per_run_files',
+          workspaceChanges: 'retained_capped_and_pruned',
+          auditRuns: 'retained_capped',
+          messageFeedback: 'retained_hard_capped_local',
+          externalPublish: 'retained_capped'
+        },
+        runEventHashChains: {
+          checked: runEventChains.length,
+          valid: runEventChains.filter(Boolean).length,
+          invalid: runEventChains.filter((valid) => !valid).length
+        },
+        permissionPostureProofs
+      }
+    },
+    sections
+  }) as ProductAuditBundleSnapshot
+}
+
+export function serializeAuditBundleSnapshot(snapshot: ProductAuditBundleSnapshot): string {
+  return `${JSON.stringify(sanitizeDiagnosticsValue(snapshot), null, 2)}\n`
 }
 
 export function serializeDiagnosticsSnapshot(snapshot: ProductDiagnosticsSnapshot): string {

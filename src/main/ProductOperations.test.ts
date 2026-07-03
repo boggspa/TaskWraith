@@ -1,14 +1,17 @@
 import { describe, expect, it } from 'vitest'
 import {
+  buildAuditBundleSnapshot,
   buildDiagnosticsSnapshot,
   buildProductOperationsStatus,
   buildReleaseAutomationStatus,
   createBridgeHealthRecord,
   createProductCrashRecord,
   filterProductCrashRecords,
+  serializeAuditBundleSnapshot,
   serializeDiagnosticsSnapshot
 } from './ProductOperations'
 import type { AppSettings, ProductCrashRecord } from './store/types'
+import { createRunEventRecord } from './RunEventStore'
 
 const baseSettings: AppSettings = {
   activeProvider: 'gemini',
@@ -267,8 +270,60 @@ describe('ProductOperations', () => {
         }
       ],
       runRecovery: [],
-      approvalLedger: [],
-      workspaceChanges: [],
+      approvalLedger: [
+        {
+          schemaVersion: 1,
+          id: 'diag-approval-secret',
+          approvalId: 'diag-approval-secret',
+          provider: 'codex',
+          service: 'shellCommands',
+          method: 'codex-mcp/run_shell_command',
+          title: 'Run diagnostics private command',
+          body: 'diagnostics approval private body',
+          preview: { command: 'echo diagnostics-private-token' },
+          params: { prompt: 'diagnostics approval private params' },
+          actions: ['accept', 'decline'],
+          status: 'approved',
+          requestedAt: '2026-05-07T10:00:00.000Z',
+          respondedAt: '2026-05-07T10:00:01.000Z',
+          decision: 'accept',
+          decisionSource: 'user',
+          expiration: { mode: 'run_end', description: 'Run end.' },
+          workspaceId: 'ws-1',
+          workspacePath: '/secret/repo',
+          chatId: 'chat-secret',
+          runId: 'run-secret'
+        }
+      ],
+      workspaceChanges: [
+        {
+          schemaVersion: 1,
+          id: 'diag-change-secret',
+          source: 'provider_run',
+          status: 'captured',
+          title: 'Diagnostics private change title',
+          summary: 'Diagnostics private change summary',
+          workspaceId: 'ws-1',
+          workspacePath: '/secret/repo',
+          chatId: 'chat-secret',
+          runId: 'run-secret',
+          provider: 'codex',
+          createdAt: '2026-05-07T10:00:00.000Z',
+          updatedAt: '2026-05-07T10:00:01.000Z',
+          files: [
+            {
+              path: 'src/diagnostics-private-secret.ts',
+              status: 'modified',
+              origin: 'run_diff',
+              additions: 3,
+              deletions: 1,
+              diffText: 'diagnostics private diff body'
+            }
+          ],
+          artifacts: [],
+          stats: { filesChanged: 1, additions: 3, deletions: 1 }
+        } as any
+      ],
       scheduledTasks: [],
       recentCrashes: [],
       userDataExists: true,
@@ -293,8 +348,56 @@ describe('ProductOperations', () => {
         }
       },
       workspaces: [],
-      runQueue: [],
-      runRecovery: [],
+      runQueue: [
+        {
+          id: 'queued-secret',
+          runId: 'run-queued-secret',
+          provider: 'codex',
+          workspacePath: '/secret/repo',
+          status: 'queued',
+          source: 'manual',
+          priority: 0,
+          attempt: 0,
+          promptPreview: 'queued private roadmap preview',
+          createdAt: '2026-05-07T10:00:00.000Z',
+          updatedAt: '2026-05-07T10:00:00.000Z',
+          request: {
+            prompt: 'queued private roadmap prompt',
+            displayPrompt: 'queued private roadmap display',
+            selectedModelType: 'cli-default',
+            customModel: '',
+            approvalMode: 'default',
+            sessionTrust: false,
+            imageAttachments: [],
+            remoteComposer: {
+              workspaceId: 'remote-ws-secret',
+              threadId: 'remote-thread-secret',
+              provider: 'codex',
+              text: 'remote composer secret text'
+            }
+          }
+        }
+      ],
+      runRecovery: [
+        {
+          schemaVersion: 1,
+          id: 'recovery-secret',
+          runId: 'run-recovery-secret',
+          jobId: 'job-recovery-secret',
+          provider: 'codex',
+          previousStatus: 'active',
+          recoveredStatus: 'failed',
+          action: 'marked_failed',
+          reason: 'Recovered after crash',
+          recoveredAt: '2026-05-07T10:00:00.000Z',
+          resumeAvailable: false,
+          resumeHint: 'private recovery hint',
+          jobSnapshot: {
+            promptPreview: 'recovery private roadmap preview',
+            processCommand: 'node --token sk-1234567890abcdefghijklmnop'
+          }
+        }
+      ],
       scheduledTasks: [
         {
           id: 'task-1',
@@ -384,8 +487,60 @@ describe('ProductOperations', () => {
           updatedAt: '2026-05-07T10:00:00.000Z'
         }
       ],
-      approvalLedger: [],
-      workspaceChanges: [],
+      approvalLedger: [
+        {
+          schemaVersion: 1,
+          id: 'diag-approval-secret',
+          approvalId: 'diag-approval-secret',
+          provider: 'codex',
+          service: 'shellCommands',
+          method: 'codex-mcp/run_shell_command',
+          title: 'Run diagnostics private command',
+          body: 'diagnostics approval private body',
+          preview: { command: 'echo diagnostics-private-token' },
+          params: { prompt: 'diagnostics approval private params' },
+          actions: ['accept', 'decline'],
+          status: 'approved',
+          requestedAt: '2026-05-07T10:00:00.000Z',
+          respondedAt: '2026-05-07T10:00:01.000Z',
+          decision: 'accept',
+          decisionSource: 'user',
+          expiration: { mode: 'run_end', description: 'Run end.' },
+          workspaceId: 'ws-1',
+          workspacePath: '/secret/repo',
+          chatId: 'chat-secret',
+          runId: 'run-secret'
+        }
+      ],
+      workspaceChanges: [
+        {
+          schemaVersion: 1,
+          id: 'diag-change-secret',
+          source: 'provider_run',
+          status: 'captured',
+          title: 'Diagnostics private change title',
+          summary: 'Diagnostics private change summary',
+          workspaceId: 'ws-1',
+          workspacePath: '/secret/repo',
+          chatId: 'chat-secret',
+          runId: 'run-secret',
+          provider: 'codex',
+          createdAt: '2026-05-07T10:00:00.000Z',
+          updatedAt: '2026-05-07T10:00:01.000Z',
+          files: [
+            {
+              path: 'src/diagnostics-private-secret.ts',
+              status: 'modified',
+              origin: 'run_diff',
+              additions: 3,
+              deletions: 1,
+              diffText: 'diagnostics private diff body'
+            }
+          ],
+          artifacts: [],
+          stats: { filesChanged: 1, additions: 3, deletions: 1 }
+        } as any
+      ],
       messageFeedbackReceipts: [
         {
           schemaVersion: 1,
@@ -451,6 +606,18 @@ describe('ProductOperations', () => {
     expect(serialized).not.toContain('workflow-runtime-secret')
     expect(serialized).not.toContain('auth-secret')
     expect(serialized).not.toContain('private note')
+    expect(serialized).not.toContain('queued private roadmap prompt')
+    expect(serialized).not.toContain('queued private roadmap display')
+    expect(serialized).not.toContain('queued private roadmap preview')
+    expect(serialized).not.toContain('remote composer secret text')
+    expect(serialized).not.toContain('recovery private roadmap preview')
+    expect(serialized).not.toContain('private recovery hint')
+    expect(serialized).not.toContain('diagnostics approval private body')
+    expect(serialized).not.toContain('diagnostics approval private params')
+    expect(serialized).not.toContain('diagnostics-private-token')
+    expect(serialized).not.toContain('Diagnostics private change title')
+    expect(serialized).not.toContain('diagnostics private diff body')
+    expect(serialized).not.toContain('src/diagnostics-private-secret.ts')
     expect(serialized).not.toContain('feedback-1')
     expect(serialized).not.toContain('msg-1')
     expect(serialized).not.toContain('run-1')
@@ -463,6 +630,29 @@ describe('ProductOperations', () => {
     expect(serialized).toContain('externalPathGrantCount')
     expect(snapshot.auditReceipts.counts.messageFeedback).toBe(1)
     expect(snapshot.auditReceipts.counts.externalPublish).toBe(1)
+    expect(snapshot.runQueue[0]).toMatchObject({
+      hasPromptPreview: true,
+      request: {
+        hasPrompt: true,
+        hasDisplayPrompt: true,
+        remoteComposer: { hasText: true }
+      }
+    })
+    expect(snapshot.runRecovery[0]).toMatchObject({
+      hasResumeHint: true,
+      jobSnapshot: { hasPromptPreview: true, hasProcessCommand: true }
+    })
+    expect(snapshot.approvalLedger[0]).toMatchObject({
+      method: 'codex-mcp/run_shell_command',
+      hasBody: true,
+      hasPreview: true,
+      hasParams: true
+    })
+    expect(snapshot.workspaceChanges[0]).toMatchObject({
+      fileCount: 1,
+      stats: { filesChanged: 1, additions: 3, deletions: 1 },
+      files: [{ additions: 3, deletions: 1 }]
+    })
     expect(snapshot.auditReceipts.hashes.messageFeedback).toMatch(/^[a-f0-9]{64}$/)
     expect(snapshot.auditReceipts.hashes.externalPublish).toMatch(/^[a-f0-9]{64}$/)
     expect(snapshot.auditReceipts.recent.messageFeedback[0]).toMatchObject({
@@ -481,5 +671,267 @@ describe('ProductOperations', () => {
       hasTitle: true,
       hasPrUrl: true
     })
+  })
+
+  it('builds a redacted audit bundle with hashes, filters, and run-event validation', () => {
+    const permissionPosture = {
+      schemaVersion: 1,
+      approvalMode: 'plan',
+      workflowMode: 'plan',
+      presetId: 'plan',
+      readOnly: true,
+      agenticServices: { shellCommands: 'deny' },
+      networkAccess: 'deny',
+      externalPathGrantCount: 0,
+      workspaceGrantServiceIds: [],
+      postureHash: 'p'.repeat(64),
+      signature: 'do-not-export-signature',
+      signaturePresent: true,
+      context: { promptHash: 'h'.repeat(64) }
+    }
+    const firstEvent = createRunEventRecord(
+      {
+        runId: 'run-secret',
+        chatId: 'chat-secret',
+        workspaceId: 'ws-1',
+        workspacePath: '/secret/repo',
+        provider: 'codex',
+        kind: 'lifecycle',
+        phase: 'control',
+        source: 'main',
+        summary: 'private lifecycle summary',
+        payload: { status: 'started', prompt: 'private run prompt', permissionPosture }
+      },
+      1,
+      { now: '2026-07-03T00:00:00.000Z' }
+    )
+    const secondEvent = createRunEventRecord(
+      {
+        runId: 'run-secret',
+        chatId: 'chat-secret',
+        workspaceId: 'ws-1',
+        workspacePath: '/secret/repo',
+        provider: 'codex',
+        kind: 'final_message',
+        phase: 'normalized',
+        source: 'main',
+        summary: 'private final summary',
+        payload: { content: 'private final answer with sk-1234567890abcdefghijklmnop' }
+      },
+      2,
+      { now: '2026-07-03T00:00:01.000Z', previousHash: firstEvent.hash }
+    )
+    const bundle = buildAuditBundleSnapshot({
+      filter: { workspaceId: 'ws-1' },
+      approvalLedger: [
+        {
+          schemaVersion: 1,
+          id: 'approval-secret',
+          approvalId: 'approval-secret',
+          provider: 'codex',
+          service: 'shellCommands',
+          method: 'codex-mcp/run_shell_command',
+          title: 'Run private command',
+          body: 'approval private body',
+          preview: { command: 'echo sk-1234567890abcdefghijklmnop' },
+          params: { prompt: 'approval private params' },
+          actions: ['accept', 'decline'],
+          status: 'approved',
+          requestedAt: '2026-07-03T00:00:00.000Z',
+          respondedAt: '2026-07-03T00:00:01.000Z',
+          decision: 'accept',
+          decisionSource: 'user',
+          grantedScope: 'run',
+          expiration: { mode: 'run_end', description: 'Run end.' },
+          runId: 'run-secret',
+          chatId: 'chat-secret',
+          workspaceId: 'ws-1',
+          workspacePath: '/secret/repo',
+          metadata: { permissionPosture }
+        },
+        {
+          schemaVersion: 1,
+          id: 'approval-sibling',
+          approvalId: 'approval-sibling',
+          provider: 'codex',
+          method: 'codex-mcp/read_file',
+          title: 'Sibling',
+          actions: [],
+          status: 'denied',
+          requestedAt: '2026-07-03T00:00:00.000Z',
+          expiration: { mode: 'on_decision', description: 'Denied.' },
+          workspaceId: 'ws-2'
+        }
+      ],
+      runEvents: [firstEvent, secondEvent],
+      workspaceChanges: [
+        {
+          schemaVersion: 1,
+          id: 'change-secret',
+          source: 'provider_run',
+          status: 'captured',
+          title: 'Private change title',
+          summary: 'Private change summary',
+          workspaceId: 'ws-1',
+          workspacePath: '/secret/repo',
+          chatId: 'chat-secret',
+          runId: 'run-secret',
+          provider: 'codex',
+          createdAt: '2026-07-03T00:00:00.000Z',
+          updatedAt: '2026-07-03T00:00:01.000Z',
+          files: [
+            {
+              path: 'src/private-secret.ts',
+              status: 'modified',
+              origin: 'run_diff',
+              additions: 1,
+              deletions: 0,
+              diffText: 'private diff body'
+            }
+          ],
+          artifacts: [],
+          stats: { filesChanged: 1, additions: 1, deletions: 0 }
+        } as any
+      ],
+      auditRuns: [
+        {
+          schemaVersion: 1,
+          id: 'audit-secret',
+          mode: 'deep',
+          chatId: 'chat-secret',
+          workspaceId: 'ws-1',
+          workspacePath: '/secret/repo',
+          status: 'completed',
+          phases: [],
+          dimensions: ['private dimension'],
+          participants: [],
+          findings: [],
+          verdicts: [],
+          gates: [],
+          budget: { maxAgents: 1, spentAgents: 1, spentTokens: 0, truncated: false },
+          report: 'private audit report',
+          createdAt: '2026-07-03T00:00:00.000Z',
+          updatedAt: '2026-07-03T00:00:01.000Z'
+        } as any
+      ],
+      evidencePacks: [
+        {
+          schemaVersion: 1,
+          id: 'pack-secret',
+          workspaceId: 'ws-1',
+          workspacePath: '/secret/repo',
+          chatId: 'chat-secret',
+          runId: 'run-secret',
+          provider: 'codex',
+          title: 'Private evidence title',
+          mapEntries: [],
+          capabilityCells: [],
+          completionClaims: [],
+          diffTouchedFiles: ['src/private-secret.ts'],
+          createdAt: '2026-07-03T00:00:00.000Z',
+          updatedAt: '2026-07-03T00:00:01.000Z'
+        } as any
+      ],
+      capabilityLedger: {
+        workspaceId: 'ws-1',
+        generatedAt: '2026-07-03T00:00:00.000Z',
+        cells: [
+          {
+            capabilityKey: 'private-capability',
+            title: 'Private capability title',
+            status: 'verified',
+            evidenceRefs: [{ path: 'src/private-secret.ts', note: 'private evidence note' }],
+            latestEvidencePackId: 'pack-secret',
+            latestRunId: 'run-secret',
+            updatedAt: '2026-07-03T00:00:00.000Z'
+          }
+        ],
+        mapEntries: [],
+        totalCompletionClaims: 0,
+        unsupportedCompletionClaims: 0,
+        unsupportedCompletionClaimRate: 0,
+        stallSignals: []
+      } as any,
+      messageFeedbackReceipts: [
+        {
+          schemaVersion: 1,
+          id: 'feedback-secret',
+          source: 'message_metadata',
+          action: 'set',
+          chatId: 'chat-secret',
+          workspaceId: 'ws-1',
+          workspacePath: '/secret/repo',
+          messageId: 'message-secret',
+          runId: 'run-secret',
+          provider: 'codex',
+          model: 'private-model',
+          role: 'Reviewer',
+          vote: 'down',
+          at: 1,
+          recordedAt: 2,
+          reason: 'wrong-model-for-role',
+          note: 'private feedback note',
+          noteSensitive: true
+        }
+      ],
+      externalPublishReceipts: [
+        {
+          schemaVersion: 1,
+          id: 'publish-secret',
+          origin: 'agent',
+          action: 'githubCreatePr',
+          decision: 'allowed',
+          reason: 'Allowed.',
+          requestedAt: '2026-07-03T00:00:00.000Z',
+          completedAt: '2026-07-03T00:00:01.000Z',
+          outcome: 'completed',
+          workspaceId: 'ws-1',
+          workspacePath: '/secret/repo',
+          repoPath: '/secret/repo',
+          title: 'Private PR title',
+          prUrl: 'https://github.com/private/repo/pull/1',
+          metadata: { token: 'sk-1234567890abcdefghijklmnop' }
+        }
+      ],
+      now: '2026-07-03T00:00:02.000Z'
+    })
+    const serialized = serializeAuditBundleSnapshot(bundle)
+
+    expect(bundle.manifest.counts).toMatchObject({
+      approvalLedger: 1,
+      runEventReplays: 1,
+      runEvents: 2,
+      workspaceChanges: 1,
+      auditRuns: 1,
+      evidencePacks: 1,
+      capabilityLedgerEntries: 1,
+      messageFeedback: 1,
+      externalPublish: 1
+    })
+    expect(bundle.manifest.validation.runEventHashChains).toEqual({
+      checked: 1,
+      valid: 1,
+      invalid: 0
+    })
+    expect(bundle.manifest.validation.permissionPostureProofs).toMatchObject({
+      approvalLedger: 1,
+      runEvents: 1,
+      auditRuns: 0
+    })
+    expect(serialized).not.toContain('approval private body')
+    expect(serialized).not.toContain('approval private params')
+    expect(serialized).not.toContain('private run prompt')
+    expect(serialized).not.toContain('private final answer')
+    expect(serialized).not.toContain('private diff body')
+    expect(serialized).not.toContain('private audit report')
+    expect(serialized).not.toContain('private evidence note')
+    expect(serialized).not.toContain('private feedback note')
+    expect(serialized).not.toContain('https://github.com/private/repo')
+    expect(serialized).not.toContain('Private PR title')
+    expect(serialized).not.toContain('/secret/repo')
+    expect(serialized).not.toContain('src/private-secret.ts')
+    expect(serialized).not.toContain('do-not-export-signature')
+    expect(serialized).not.toContain('approval-sibling')
+    expect(bundle.manifest.hashes.runEventReplays).toMatch(/^[a-f0-9]{64}$/)
   })
 })

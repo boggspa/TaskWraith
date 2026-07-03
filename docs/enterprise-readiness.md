@@ -85,8 +85,9 @@ Shipped in `5c2e34b70`.
   chat-save path.
 - The durable, local `thumbs-ledger.json` receipt layer now harvests those
   message states on save. Closed-set poor-rating reasons and redacted
-  diagnostics summaries are shipped; model/role aggregation, recast actions,
-  audit-bundle export, and iOS parity remain B5 work.
+  diagnostics summaries are shipped; the redacted audit-bundle builder includes
+  feedback receipt summaries. Model/role aggregation, recast actions, a
+  user-facing export flow, and iOS parity remain B5 work.
 
 ### Adjacent stage-role bridge work
 
@@ -220,25 +221,36 @@ What exists:
   counts and SHA-256 hashes for approval ledger rows, workspace-change sets,
   thumbs/casting receipts, and external-publish receipts, plus bounded redacted
   summaries for the newer receipt ledgers.
+- Default diagnostics export now summarizes queued-run, recovery, approval, and
+  workspace-change records instead of exporting raw queued prompts, approval
+  bodies/params/previews, process commands, or diff bodies.
+- A redacted audit-bundle snapshot builder exists for workspace/thread/run
+  scopes. It emits a manifest with schema version, filters, redaction mode,
+  section counts, section hashes, retention labels, run-event hash-chain
+  validation, and permission-posture proof counts.
+- The audit-bundle snapshot includes redacted summaries for approval ledger
+  rows, run-event replays, workspace changes, audit runs, evidence packs,
+  capability ledger cells, message-feedback receipts, and external-publish
+  receipts.
 
 What is missing:
 
-- One complete audit bundle for a workspace/thread/run.
+- A user-facing `exportAuditBundle` IPC/UI flow that gathers the complete
+  store-backed bundle for a workspace/thread/run and writes it to disk.
 - Configurable retention windows for run events, artifacts, approval history,
   audit runs, and diagnostics.
-- Export-time tamper evidence across approval ledger, run-event chains, posture
-  proofs, evidence packs, and workspace-change summaries.
+- Signed export-time tamper evidence across approval ledger, run-event chains,
+  posture proofs, evidence packs, and workspace-change summaries. Current
+  hashes are local and unsigned.
 - A clear separation between redacted-by-default export and explicit
   sensitive-field export.
 
 Target:
 
-- Add `exportAuditBundle` with a manifest, schema version, filters, redaction
-  mode, counts, hashes, and validation summary.
-- Include approval ledger rows, run-event replay summaries, run-event hashes,
-  permission posture proofs, audit runs, evidence/capability ledgers, workspace
-  changes, external-publish receipts, thumbs/casting receipts, and diagnostics
-  summary.
+- Add `exportAuditBundle` IPC/UI around the existing redacted snapshot builder,
+  with explicit workspace/thread/run filters and save-dialog support.
+- Add an explicit sensitive export mode only behind a separate user/admin
+  decision; keep the default bundle redacted.
 - Add retention settings and purge receipts.
 - Hash-chain or snapshot-hash the approval ledger and sign/verify the exported
   manifest with a local key when available.
@@ -339,15 +351,16 @@ What is missing:
 - The remote-access UI and iOS copy need to expose the new external-publish
   capability separately from file editing before paired-device publishing can
   be presented as a polished managed feature.
-- Audit bundle export does not yet include external-publish receipts.
+- The redacted audit-bundle builder includes external-publish receipts, but
+  there is not yet a user-facing export flow for those summaries.
 
 Target:
 
 - Keep all external publication origins (`desktop-ui`, `ios-bridge`, and
   `agent`) on the shared receipt ledger so audit/export work has one schema.
 - Keep the bridge `externalPublish` capability explicit and admin-only.
-- Include external-publish receipts and bridge audit rows in the future audit
-  bundle export.
+- Wire the redacted audit-bundle export flow to include external-publish
+  receipt summaries and bridge audit rows.
 
 ### B5.5 - Stage-role and queued-dispatch receipts
 
@@ -503,6 +516,8 @@ What exists:
 - Default diagnostics export redacted feedback summaries and hashes; raw
   receipt ids, message ids, run ids, model labels, role labels, reason codes,
   timestamps, and free-text notes are not exported by default.
+- The redacted audit-bundle snapshot builder includes message-feedback receipt
+  summaries in the same privacy posture as diagnostics.
 - The transcript context menu can attach a closed-set negative reason code
   (wrong approach, hallucinated/wrong, broke something, over-verbose, wrong
   model for role, incomplete) to a poor-rating receipt.
@@ -519,6 +534,8 @@ What is missing:
   records.
 - No "recast this turn with a different model" follow-through exists.
 - No iOS parity exists for feedback capture.
+- No user-facing audit-bundle export flow exists yet; feedback summaries are
+  currently available only through the main-process redacted snapshot builder.
 - No append-only hash chain, actor identity, source-device id, or tamper
   evidence exists for thumbs receipts.
 

@@ -2237,12 +2237,12 @@ export interface ProductDiagnosticsSnapshot {
   workspaces: Array<
     Pick<WorkspaceRecord, 'id' | 'path' | 'displayName' | 'lastOpenedAt' | 'pinned'>
   >
-  runQueue: RunQueueJob[]
-  runRecovery: RunRecoveryRecord[]
+  runQueue: Array<Record<string, unknown>>
+  runRecovery: Array<Record<string, unknown>>
   scheduledTasks: ScheduledTask[]
   workflows: WorkflowDefinition[]
-  approvalLedger: ApprovalLedgerRecord[]
-  workspaceChanges: WorkspaceChangeSet[]
+  approvalLedger: Array<Record<string, unknown>>
+  workspaceChanges: Array<Record<string, unknown>>
   auditReceipts: ProductDiagnosticsAuditReceipts
   recentCrashes: ProductCrashRecord[]
 }
@@ -2252,6 +2252,81 @@ export interface ProductDiagnosticsExportResult {
   path?: string
   snapshot?: ProductDiagnosticsSnapshot
   error?: string
+}
+
+export type ProductAuditBundleRedactionMode = 'default'
+
+export interface ProductAuditBundleFilter {
+  workspaceId?: string
+  workspacePath?: string
+  chatId?: string
+  runId?: string
+}
+
+export interface ProductAuditBundleManifest {
+  schemaVersion: 1
+  generatedAt: string
+  redactionMode: ProductAuditBundleRedactionMode
+  filters: ProductAuditBundleFilter
+  counts: {
+    approvalLedger: number
+    runEventReplays: number
+    runEvents: number
+    workspaceChanges: number
+    auditRuns: number
+    evidencePacks: number
+    capabilityLedgerEntries: number
+    messageFeedback: number
+    externalPublish: number
+  }
+  hashes: {
+    approvalLedger: string
+    runEventReplays: string
+    workspaceChanges: string
+    auditRuns: string
+    evidencePacks: string
+    capabilityLedger: string
+    messageFeedback: string
+    externalPublish: string
+  }
+  validation: {
+    sensitiveFields: 'redacted'
+    tamperEvidence: 'local_hashes_unsigned'
+    retention: {
+      approvalLedger: 'retained_capped'
+      runEvents: 'retained_per_run_files'
+      workspaceChanges: 'retained_capped_and_pruned'
+      auditRuns: 'retained_capped'
+      messageFeedback: 'retained_hard_capped_local'
+      externalPublish: 'retained_capped'
+    }
+    runEventHashChains: {
+      checked: number
+      valid: number
+      invalid: number
+    }
+    permissionPostureProofs: {
+      approvalLedger: number
+      runEvents: number
+      auditRuns: number
+    }
+  }
+}
+
+export interface ProductAuditBundleSnapshot {
+  schemaVersion: 1
+  generatedAt: string
+  manifest: ProductAuditBundleManifest
+  sections: {
+    approvalLedger: Array<Record<string, unknown>>
+    runEventReplays: Array<Record<string, unknown>>
+    workspaceChanges: Array<Record<string, unknown>>
+    auditRuns: Array<Record<string, unknown>>
+    evidencePacks: Array<Record<string, unknown>>
+    capabilityLedger: Array<Record<string, unknown>>
+    messageFeedback: Array<Record<string, unknown>>
+    externalPublish: Array<Record<string, unknown>>
+  }
 }
 
 export interface GeminiWorktreeConfig {
