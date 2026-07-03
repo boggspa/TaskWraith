@@ -2225,13 +2225,48 @@
 
 .transcript-user-gutter {
   position: fixed;
-  width: 36px;
+  /* 34px (not 36) so that with frame.left = contentRect.left − 34 the rail's right
+   * edge lands AT the content boundary, not 2px into it — important now that the
+   * rail is pointer-events:auto (below) and would otherwise capture a 2px sliver of
+   * the content column. Markers (≤29px) and the bulged line (≤~25px) still fit. */
+  width: 34px;
   z-index: 10030;
-  pointer-events: none;
+  /* The rail captures pointer events across the whole strip so the dock bulge
+   * tracks the cursor in the GAPS between markers (a per-marker listener would
+   * only fire over markers, breaking neighbour magnification). The rail sits in
+   * the transcript's left margin (frame.left ≈ contentLeft − 34, width 34 → right
+   * edge at the content boundary), so it doesn't steal pointer events from message
+   * text. */
+  pointer-events: auto;
 }
 
 .transcript-user-gutter.is-unmeasured {
   display: none;
+}
+
+/* Read-position spine behind the markers: a faint vertical track the marker
+ * ticks branch off, filled top→current position. Sits at the marker lines' left
+ * edge (x≈7px) so it reads as a timeline. JS-driven `scaleY` (the rail is
+ * body-portaled, so a CSS scroll() timeline can't bind to the scroller); the
+ * fill is updated every scroll frame, so NO transform transition (that would lag
+ * the scroll). Compositor-only (transform), pointer-transparent, below markers. */
+.transcript-user-gutter-progress {
+  position: absolute;
+  left: 7px;
+  width: 2px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--text-primary) 14%, transparent);
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.transcript-user-gutter-progress-fill {
+  position: absolute;
+  inset: 0;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--accent) 52%, transparent);
+  transform-origin: top center;
+  transform: scaleY(0);
 }
 
 /* The gutter portals to <body>, so the transcript region's `display:none` (when
@@ -2279,13 +2314,40 @@ html:has(.chat-split-region.chat-split-hidden-for-settings) .transcript-user-gut
     box-shadow 120ms ease;
 }
 
+/* Scroll-spy reading position — a PERSISTENT, subtler-than-hover, accent-tinted
+ * "you are here" marker. Kept on its own class (fed by `aria-current`) so it
+ * never collides with the transient hover/focus `.is-active` state. Declared
+ * BEFORE the hover/active block so that a marker which is both in-view AND
+ * hovered takes the brighter hover treatment (equal specificity → source order
+ * wins). The base line's width/background transition makes it glide 8→14px as
+ * the reader scrolls into a new turn (stripped under reduced-motion below). */
+.transcript-user-gutter-marker.is-in-view .transcript-user-gutter-line {
+  background: color-mix(in srgb, var(--text-primary) 56%, var(--accent) 44%);
+  opacity: 0.9;
+}
+
 .transcript-user-gutter-marker:hover .transcript-user-gutter-line,
 .transcript-user-gutter-marker:focus-visible .transcript-user-gutter-line,
 .transcript-user-gutter-marker.is-active .transcript-user-gutter-line {
-  width: 20px;
   background: color-mix(in srgb, var(--text-primary) 84%, var(--accent) 16%);
   opacity: 0.96;
   box-shadow: 0 0 12px color-mix(in srgb, var(--accent) 34%, transparent);
+}
+
+/* Width-grow states are the NON-bulge feedback: they own size only while the
+ * pointer isn't magnifying the rail. While `.is-bulging`, the JS dock owns size
+ * via `scaleX` (width stays at the 8px base) so the two never compound into a
+ * huge marker; the accent/hover COLOUR above still applies during the bulge. A
+ * marker is at most one of hover/in-view under the pointer, so this also covers
+ * keyboard focus-visible / roving `.is-active` when there's no pointer at all. */
+.transcript-user-gutter:not(.is-bulging) .transcript-user-gutter-marker.is-in-view .transcript-user-gutter-line {
+  width: 14px;
+}
+
+.transcript-user-gutter:not(.is-bulging) .transcript-user-gutter-marker:hover .transcript-user-gutter-line,
+.transcript-user-gutter:not(.is-bulging) .transcript-user-gutter-marker:focus-visible .transcript-user-gutter-line,
+.transcript-user-gutter:not(.is-bulging) .transcript-user-gutter-marker.is-active .transcript-user-gutter-line {
+  width: 20px;
 }
 
 .transcript-user-gutter-marker:focus-visible {
@@ -2466,11 +2528,11 @@ html:has(.chat-split-region.chat-split-hidden-for-settings) .transcript-user-gut
   -webkit-backdrop-filter: none;
 }
 
-@media (max-width: 900px) {
-  .transcript-user-gutter {
-    display: none;
-  }
-}
+/* Width gating lives in JS (updateFrame bails when the measured SCROLLER width is
+ * too narrow) — the geometrically correct metric once split/multiview panes
+ * subdivide the window. A viewport `@media (max-width)` hide disagreed with that
+ * in split panes (narrow pane inside a wide window, or vice versa), so it's gone;
+ * the scroller-width gate is the single source of truth. */
 
 .model-usage-window-list {
   display: flex;

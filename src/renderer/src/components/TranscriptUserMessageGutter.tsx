@@ -2,6 +2,8 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { createPortal } from 'react-dom'
 import type { ChatRecord } from '../../../main/store/types'
 import {
+  GUTTER_BULGE_MAX_SCALE,
+  gutterBulgeRadiusPx,
   layoutTranscriptUserGutterMarkers,
   type TranscriptUserGutterMarker
 } from '../lib/TranscriptUserMessageGutter'
@@ -28,6 +30,20 @@ const GUTTER_VERTICAL_OFFSET_PX = 35
 
 interface TranscriptUserMessageGutterProps {
   markers: readonly TranscriptUserGutterMarker[]
+  /**
+   * Scroll-spy: the `key` of the user-message marker the reader is currently
+   * inside (derived from the virtualiser's anchor row in TranscriptPanel).
+   * Drives the persistent `.is-in-view` / `aria-current` reading-position
+   * highlight, kept DISTINCT from the transient hover/focus `activeMarker` so
+   * the two never fight for the same hook.
+   */
+  activeScrollRowKey?: string | null
+  /**
+   * Overall scroll-progress fraction (0..1) for the read-position fill behind
+   * the markers. Driven from TranscriptPanel because the body-portaled rail is
+   * not a descendant of the scroller (so a CSS `scroll()` timeline can't bind).
+   */
+  scrollProgress?: number
   scrollRef: React.RefObject<HTMLDivElement | null>
   contentRef: React.RefObject<HTMLDivElement | null>
   currentChat?: ChatRecord | null
@@ -55,7 +71,8 @@ function TranscriptUserGutterPreview({
   currentChat,
   onJumpToMessage,
   onKeepOpen,
-  onDismiss
+  onDismiss,
+  onEscape
 }: {
   marker: TranscriptUserGutterMarker
   anchor: ActiveMarkerState
@@ -64,6 +81,7 @@ function TranscriptUserGutterPreview({
   onJumpToMessage: (messageId: string, rowKey: string) => void
   onKeepOpen: () => void
   onDismiss: () => void
+  onEscape: () => void
 }): React.JSX.Element {
   const mediaRefs = collectMessageMediaRefs(marker.message)
   const visibleMediaRefs = mediaRefs.slice(0, 3)
@@ -99,7 +117,9 @@ function TranscriptUserGutterPreview({
       onKeyDown={(event) => {
         if (event.key === 'Escape') {
           event.preventDefault()
-          onDismiss()
+          // Return focus to the originating marker (never drop to <body>) before
+          // the preview unmounts, so keyboard tab-order context survives.
+          onEscape()
           return
         }
         if (event.key === 'Enter' || event.key === ' ') {
@@ -139,6 +159,8 @@ function TranscriptUserGutterPreview({
 
 export function TranscriptUserMessageGutter({
   markers,
+  activeScrollRowKey,
+  scrollProgress,
   scrollRef,
   contentRef,
   currentChat,
@@ -150,6 +172,26 @@ export function TranscriptUserMessageGutter({
   const [activeMarker, setActiveMarker] = useState<ActiveMarkerState | null>(null)
   const markerRefs = useRef<Map<string, HTMLButtonElement>>(new Map())
   const dismissTimerRef = useRef<number | null>(null)
+  // Preview open-delay (pointer only): a short dwell before the popover commits,
+  // so dragging the cursor down a dense compact rail doesn't strobe a preview per
+  // marker passed over. Keyboard focus opens immediately (no dwell).
+  const openTimerRef = useRef<number | null>(null)
+  // Dock/fisheye bulge plumbing. All per-frame work is direct-DOM (transform
+  // writes via markerRefs), never React state — a pointermove must not re-render.
+  const railRef = useRef<HTMLDivElement | null>(null)
+  const pointerYRef = useRef<number | null>(null)
+  const railTopRef = useRef(0)
+  const bulgeRafRef = useRef<number | null>(null)
+  // Cached per-marker centre Y within the rail (markerTrackTop + layout topPx),
+  // refreshed each render so the bulge never reads getBoundingClientRect per frame.
+  const markerCentersRef = useRef<Map<string, number>>(new Map())
+  const bulgeConfigRef = useRef<{ radius: number; maxScale: number }>({
+    radius: gutterBulgeRadiusPx(markers.length),
+    maxScale: GUTTER_BULGE_MAX_SCALE
+  })
+  // Reduced-motion / coarse-pointer gate: when off, the bulge is skipped entirely
+  // and the CSS width-grow fallback (see .is-bulging gate) drives hover instead.
+  const bulgeEnabledRef = useRef(true)
 
   const updateFrame = useCallback(() => {
     const scroller = scrollRef.current
@@ -257,10 +299,150 @@ export function TranscriptUserMessageGutter({
     }
   }, [frame, markerLayout, markerTrackTop])
 
+  // Cache each marker's centre Y (rail-relative) so the bulge rAF is pure
+  // arithmetic — zero getBoundingClientRect per frame. Refreshed every render.
+  const markerCenters = useMemo(() => {
+    const centers = new Map<string, number>()
+    if (markerLayout) {
+      for (const layout of markerLayout) centers.set(layout.key, markerTrackTop + layout.topPx)
+    }
+    return centers
+  }, [markerLayout, markerTrackTop])
+
+  // Publish the bulge's geometry to refs AFTER render (not during) — the rAF only
+  // reads them on pointer events, so a layout-effect update is correctly timed and
+  // avoids updating refs mid-render.
+  useLayoutEffect(() => {
+    markerCentersRef.current = markerCenters
+    bulgeConfigRef.current = {
+      radius: gutterBulgeRadiusPx(markers.length),
+      maxScale: GUTTER_BULGE_MAX_SCALE
+    }
+  }, [markerCenters, markers.length])
+
+  // React keys: prefer the stable `messageId` so a mid-transcript delete/insert
+  // (which reindexes every later `rowKey = id#index`) reconciles in place —
+  // preserving hover state, dismiss/open timers, and in-flight bulge transforms
+  // instead of remounting. Fall back to the collision-proof `rowKey` ONLY for the
+  // rare duplicate message id (historical/imported data), so keys stay unique.
+  const duplicateMessageIds = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const marker of markers) {
+      counts.set(marker.messageId, (counts.get(marker.messageId) || 0) + 1)
+    }
+    const dupes = new Set<string>()
+    for (const [id, count] of counts) if (count > 1) dupes.add(id)
+    return dupes
+  }, [markers])
+  const markerReactKey = useCallback(
+    (marker: TranscriptUserGutterMarker): string =>
+      duplicateMessageIds.has(marker.messageId) ? marker.rowKey : marker.messageId,
+    [duplicateMessageIds]
+  )
+
+  // One rAF-coalesced pass: write each marker line's scaleX from its distance to
+  // the cursor via a raised-cosine falloff (continuous derivative → no "pop" as
+  // markers cross the influence edge, which matters at 5px compact spacing).
+  // pointerY === null (pointer left) resets every line to its CSS transform.
+  const applyBulge = useCallback(() => {
+    bulgeRafRef.current = null
+    const pointerY = pointerYRef.current
+    const centers = markerCentersRef.current
+    const { radius, maxScale } = bulgeConfigRef.current
+    for (const [key, button] of markerRefs.current) {
+      const line = button.firstElementChild as HTMLElement | null
+      if (!line) continue
+      const center = centers.get(key)
+      if (pointerY === null || center === undefined) {
+        line.style.transform = ''
+        continue
+      }
+      const t = clamp((pointerY - center) / radius, -1, 1)
+      const falloff = (1 + Math.cos(t * Math.PI)) / 2
+      const scale = 1 + (maxScale - 1) * falloff
+      line.style.transform = `translateY(-50%) scaleX(${scale.toFixed(3)})`
+    }
+  }, [])
+
+  const scheduleBulge = useCallback(() => {
+    if (bulgeRafRef.current !== null) return
+    bulgeRafRef.current = window.requestAnimationFrame(applyBulge)
+  }, [applyBulge])
+
+  const handleRailPointerMove = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      // `bulgeEnabledRef` covers OS reduced-motion + coarse pointer (media-driven);
+      // also honour the app's own `data-reduce-motion` toggle live here so flipping
+      // it mid-session disables the bulge without waiting for a media change.
+      if (
+        !bulgeEnabledRef.current ||
+        (typeof document !== 'undefined' &&
+          document.documentElement.getAttribute('data-reduce-motion') === 'true')
+      ) {
+        return
+      }
+      const rail = railRef.current
+      if (!rail) return
+      if (!rail.classList.contains('is-bulging')) rail.classList.add('is-bulging')
+      // Re-read the rail's viewport top on every real pointermove (input-rate, not
+      // per-rAF-frame, so it doesn't reintroduce a per-frame layout read). This keeps
+      // the bulge aligned if the rail's fixed `top` shifts mid-hover — a window
+      // resize / sidebar collapse moves frame.top while the pointer stays on the
+      // strip, and the cached marker centres stay frame.top-independent, so a stale
+      // rail top would otherwise offset the bulge peak for the rest of the hover.
+      railTopRef.current = rail.getBoundingClientRect().top
+      pointerYRef.current = event.clientY - railTopRef.current
+      scheduleBulge()
+    },
+    [scheduleBulge]
+  )
+
+  const handleRailPointerLeave = useCallback(() => {
+    pointerYRef.current = null
+    railRef.current?.classList.remove('is-bulging')
+    scheduleBulge()
+  }, [scheduleBulge])
+
+  // Resolve the reduced-motion / coarse-pointer gate on mount + on OS changes.
+  // The app's own `data-reduce-motion` attribute is also honoured live in the
+  // move handler path via this ref (recomputed here on the media signals).
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return
+    const reduceQuery = window.matchMedia('(prefers-reduced-motion: reduce)')
+    const coarseQuery = window.matchMedia('(pointer: coarse)')
+    const compute = (): void => {
+      const attrReduce =
+        typeof document !== 'undefined' &&
+        document.documentElement.getAttribute('data-reduce-motion') === 'true'
+      bulgeEnabledRef.current = !reduceQuery.matches && !attrReduce && !coarseQuery.matches
+    }
+    compute()
+    reduceQuery.addEventListener('change', compute)
+    coarseQuery.addEventListener('change', compute)
+    return () => {
+      reduceQuery.removeEventListener('change', compute)
+      coarseQuery.removeEventListener('change', compute)
+    }
+  }, [])
+
+  // Cancel any in-flight bulge frame on unmount.
+  useEffect(() => {
+    return () => {
+      if (bulgeRafRef.current !== null) window.cancelAnimationFrame(bulgeRafRef.current)
+    }
+  }, [])
+
   const cancelDismiss = useCallback(() => {
     if (dismissTimerRef.current !== null) {
       window.clearTimeout(dismissTimerRef.current)
       dismissTimerRef.current = null
+    }
+  }, [])
+
+  const cancelOpen = useCallback(() => {
+    if (openTimerRef.current !== null) {
+      window.clearTimeout(openTimerRef.current)
+      openTimerRef.current = null
     }
   }, [])
 
@@ -273,8 +455,11 @@ export function TranscriptUserMessageGutter({
   }, [cancelDismiss])
 
   useEffect(() => {
-    return () => cancelDismiss()
-  }, [cancelDismiss])
+    return () => {
+      cancelDismiss()
+      cancelOpen()
+    }
+  }, [cancelDismiss, cancelOpen])
 
   useEffect(() => {
     if (!activeMarker) return
@@ -282,15 +467,29 @@ export function TranscriptUserMessageGutter({
     setActiveMarker(null)
   }, [activeMarker, markers])
 
-  const activateMarker = useCallback((marker: TranscriptUserGutterMarker, button: HTMLButtonElement) => {
-    cancelDismiss()
-    const rect = button.getBoundingClientRect()
-    setActiveMarker({
-      key: marker.key,
-      anchorX: rect.right,
-      anchorY: rect.top + rect.height / 2
-    })
-  }, [cancelDismiss])
+  const activateMarker = useCallback(
+    (marker: TranscriptUserGutterMarker, button: HTMLButtonElement, immediate: boolean) => {
+      cancelDismiss()
+      cancelOpen()
+      const commit = (): void => {
+        openTimerRef.current = null
+        // If the marker's row was removed during the dwell, the button unmounts;
+        // skip so we don't read a detached (zero) rect or set a dangling activeMarker.
+        if (!button.isConnected) return
+        const rect = button.getBoundingClientRect()
+        setActiveMarker({
+          key: marker.key,
+          anchorX: rect.right,
+          anchorY: rect.top + rect.height / 2
+        })
+      }
+      // Focus (keyboard) opens at once; pointer hover waits out a brief dwell so a
+      // fast traversal across a dense rail doesn't spawn a preview per marker.
+      if (immediate) commit()
+      else openTimerRef.current = window.setTimeout(commit, 110)
+    },
+    [cancelDismiss, cancelOpen]
+  )
 
   const focusMarkerAt = useCallback(
     (index: number) => {
@@ -303,17 +502,35 @@ export function TranscriptUserMessageGutter({
 
   if (markers.length < 2) return null
 
-  const activeIndex = Math.max(
+  // Roving-tabindex default: prefer the hovered/focused marker, then fall back
+  // to the scroll-spy in-view marker, so Tab-into-rail lands on the reader's
+  // current position rather than always the oldest message. Finally 0.
+  const activeIndex = (() => {
+    if (activeMarker) {
+      const hovered = markers.findIndex((marker) => marker.key === activeMarker.key)
+      if (hovered >= 0) return hovered
+    }
+    if (activeScrollRowKey) {
+      const inView = markers.findIndex((marker) => marker.key === activeScrollRowKey)
+      if (inView >= 0) return inView
+    }
+    return 0
+  })()
+
+  const progressFraction = Math.max(
     0,
-    activeMarker ? markers.findIndex((marker) => marker.key === activeMarker.key) : 0
+    Math.min(1, Number.isFinite(scrollProgress) ? (scrollProgress as number) : 0)
   )
 
   const rail = (
     <div
+      ref={railRef}
       className={`transcript-user-gutter${frame ? '' : ' is-unmeasured'}`}
       style={frame ? { left: frame.left, top: frame.top, height: frame.height } : undefined}
       role="navigation"
       aria-label="User messages"
+      onPointerMove={handleRailPointerMove}
+      onPointerLeave={handleRailPointerLeave}
     >
       <button
         type="button"
@@ -325,9 +542,24 @@ export function TranscriptUserMessageGutter({
       >
         <span aria-hidden="true">↑</span>
       </button>
+      {markerStackBounds && (
+        <div
+          className="transcript-user-gutter-progress"
+          aria-hidden="true"
+          style={{
+            top: markerStackBounds.first,
+            height: Math.max(1, markerStackBounds.last - markerStackBounds.first)
+          }}
+        >
+          <div
+            className="transcript-user-gutter-progress-fill"
+            style={{ transform: `scaleY(${progressFraction})` }}
+          />
+        </div>
+      )}
       {markers.map((marker, index) => (
         <button
-          key={marker.key}
+          key={markerReactKey(marker)}
           ref={(element) => {
             if (element) markerRefs.current.set(marker.key, element)
             else markerRefs.current.delete(marker.key)
@@ -335,7 +567,7 @@ export function TranscriptUserMessageGutter({
           type="button"
           className={`transcript-user-gutter-marker${
             activeMarker?.key === marker.key ? ' is-active' : ''
-          }`}
+          }${activeScrollRowKey === marker.key ? ' is-in-view' : ''}`}
           style={{
             top:
               markerLayoutByKey?.get(marker.key) !== undefined
@@ -344,15 +576,20 @@ export function TranscriptUserMessageGutter({
           }}
           data-message-id={marker.messageId}
           data-row-key={marker.rowKey}
+          aria-current={activeScrollRowKey === marker.key ? 'true' : undefined}
           aria-label={`Jump to user message ${marker.ordinal}: ${marker.title}`}
           tabIndex={index === activeIndex ? 0 : -1}
-          onMouseEnter={(event) => activateMarker(marker, event.currentTarget)}
-          onMouseLeave={scheduleDismiss}
-          onFocus={(event) => activateMarker(marker, event.currentTarget)}
+          onMouseEnter={(event) => activateMarker(marker, event.currentTarget, false)}
+          onMouseLeave={() => {
+            cancelOpen()
+            scheduleDismiss()
+          }}
+          onFocus={(event) => activateMarker(marker, event.currentTarget, true)}
           onBlur={(event) => {
             const related = event.relatedTarget
             const rail = event.currentTarget.closest('.transcript-user-gutter')
             if (related instanceof Node && rail?.contains(related)) return
+            cancelOpen()
             scheduleDismiss()
           }}
           onKeyDown={(event) => {
@@ -398,6 +635,12 @@ export function TranscriptUserMessageGutter({
           }}
           onKeepOpen={cancelDismiss}
           onDismiss={scheduleDismiss}
+          onEscape={() => {
+            cancelDismiss()
+            cancelOpen()
+            markerRefs.current.get(activeMarkerModel.key)?.focus()
+            setActiveMarker(null)
+          }}
         />
       )}
     </div>

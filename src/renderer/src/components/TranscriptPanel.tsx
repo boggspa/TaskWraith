@@ -40,7 +40,10 @@ import {
   type VirtualRow,
   type VirtualWindow
 } from '../lib/TranscriptVirtualWindow'
-import { buildTranscriptUserGutterMarkers } from '../lib/TranscriptUserMessageGutter'
+import {
+  buildTranscriptUserGutterMarkers,
+  findActiveGutterMarkerKey
+} from '../lib/TranscriptUserMessageGutter'
 import {
   transcriptChatRenderSignature,
   transcriptRowRenderSignatureEqual,
@@ -539,6 +542,16 @@ function useTranscriptVirtualization(params: {
   spacerBottomRef: React.RefObject<HTMLDivElement | null>
   heights: readonly number[]
   syncScrollPosition: (scrollTop: number) => void
+  /**
+   * Scroll-spy: the virtual-row index the reading line (top-third of the
+   * viewport) currently sits on, derived from the SAME `effectiveScrollTop` +
+   * held `windowHeights` that drive the window — a pure read, never a scroll
+   * write. Null on the non-virtualised path. Consumers map it to a user-message
+   * marker via `findActiveGutterMarkerKey`.
+   */
+  spyRowIndex: number | null
+  /** Scroll-progress fraction (0..1) for the rail's read-position fill. */
+  spyProgress: number
 } {
   const {
     enabled,
@@ -702,6 +715,30 @@ function useTranscriptVirtualization(params: {
         forceIndex: forcedRowIndex
       })
     : { startIndex: 0, endIndex: rows.length, topSpacerPx: 0, bottomSpacerPx: 0 }
+
+  // Scroll-spy anchor (reading position). Same inputs as the window — the held
+  // `windowHeights` snapshot + `effectiveScrollTop` — so it recomputes on scroll
+  // (scrollTick) but is HELD across a pure measurement bump, sharing the window's
+  // anti-flicker hysteresis. The reference line is the top-third of the viewport
+  // (the common scroll-spy `-30% / -70%` convention) so a turn reads "current"
+  // once it's comfortably into the reading pane, not at the literal top pixel.
+  // Pure arithmetic over the FULL heights array (covers off-window rows that
+  // virtualisation has unmounted) — never a scroll write, never touches
+  // autoFollowRef. During `forceBottomOnLoad` `effectiveScrollTop` is the synthetic
+  // bottom, so it resolves to the latest turn (never flashes the first message).
+  const spyRowIndex =
+    enabled && windowHeights.length > 0
+      ? findScrollAnchor(effectiveScrollTop + viewportRef.current * 0.3, windowHeights).index
+      : null
+
+  // Scroll-progress fraction (0..1) for the rail's read-position fill. The rail
+  // is body-portaled (position:fixed, NOT a descendant of the scroller), so a CSS
+  // `scroll()` timeline can't bind to the transcript — we derive the fraction here
+  // from the same held snapshot and hand it to the gutter as a plain number. 0
+  // when nothing scrolls (short chats), which reads better than a full bar.
+  const spyMaxScroll = enabled ? Math.max(0, totalHeight - viewportRef.current) : 0
+  const spyProgress =
+    spyMaxScroll > 0 ? Math.max(0, Math.min(1, effectiveScrollTop / spyMaxScroll)) : 0
 
   // Read-only passive scroll + resize listener: refresh metrics, capture
   // the anchor, and request a window recompute. Never writes scrollTop.
@@ -944,7 +981,15 @@ function useTranscriptVirtualization(params: {
     observerRef.current?.observe(el)
   }, [])
 
-  return { window: virtualWindow, blockRef, spacerBottomRef, heights, syncScrollPosition }
+  return {
+    window: virtualWindow,
+    blockRef,
+    spacerBottomRef,
+    heights,
+    syncScrollPosition,
+    spyRowIndex,
+    spyProgress
+  }
 }
 /* eslint-enable react-hooks/refs */
 
@@ -1481,7 +1526,9 @@ export const TranscriptPanel = memo(
       blockRef: virtualBlockRef,
       spacerBottomRef,
       heights: virtualHeights,
-      syncScrollPosition: syncVirtualizerScrollPosition
+      syncScrollPosition: syncVirtualizerScrollPosition,
+      spyRowIndex,
+      spyProgress
     } = useTranscriptVirtualization({
       enabled: virtualizeEnabled,
       rows: virtualRows,
@@ -1501,6 +1548,14 @@ export const TranscriptPanel = memo(
           virtualizeEnabled ? virtualHeights : undefined
         ),
       [displayMessages, projectedRows, virtualHeights, virtualizeEnabled]
+    )
+    // Scroll-spy: resolve the virtualiser's current anchor-row index to the
+    // nearest user-message marker at or above it. Recomputes each scroll frame,
+    // but the resolved key changes only when the reader crosses into a new turn.
+    const activeScrollRowKey = useMemo(
+      () =>
+        spyRowIndex === null ? null : findActiveGutterMarkerKey(userGutterMarkers, spyRowIndex),
+      [userGutterMarkers, spyRowIndex]
     )
     const [highlightedMessageTarget, setHighlightedMessageTarget] = useState<{
       messageId: string
@@ -1720,6 +1775,8 @@ export const TranscriptPanel = memo(
           <TranscriptUserMessageGutter
             key={currentChat?.appChatId || 'transcript-user-gutter'}
             markers={userGutterMarkers}
+            activeScrollRowKey={activeScrollRowKey}
+            scrollProgress={spyProgress}
             scrollRef={scrollRef}
             contentRef={contentRef}
             currentChat={currentChat}
