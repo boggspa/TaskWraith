@@ -505,6 +505,72 @@ describe('SettingsPanel provider cards', () => {
     expect(html).toContain('Export full audit bundle')
   })
 
+  it('renders the latest signed audit bundle verification result', () => {
+    const html = renderToStaticMarkup(
+      <SettingsPanel
+        {...makeSettingsProps({
+          activeTab: 'behavior',
+          auditBundleVerificationResult: {
+            ok: true,
+            path: '/tmp/taskwraith-audit.json',
+            manifest: {
+              generatedAt: '2026-07-03T10:11:12.000Z',
+              redactionMode: 'default',
+              filters: { workspaceId: 'workspace-1' },
+              tamperEvidence: 'local_hashes_signed'
+            },
+            verification: {
+              ok: true,
+              signaturePresent: true,
+              payloadHashValid: true,
+              signatureValid: true,
+              sectionHashesValid: true,
+              countsValid: true,
+              keyId: 'local-key-1'
+            }
+          }
+        })}
+      />
+    )
+
+    expect(html).toContain('Latest audit bundle verification: passed')
+    expect(html).toContain('/tmp/taskwraith-audit.json')
+    expect(html).toContain('signed local hashes')
+    expect(html).toContain('Signature: valid')
+    expect(html).toContain('local-key-1')
+    expect(html).toContain('payload hash: pass')
+    expect(html).toContain('section hashes: pass')
+    expect(html).toContain('counts: pass')
+  })
+
+  it('renders audit bundle verification failure details', () => {
+    const html = renderToStaticMarkup(
+      <SettingsPanel
+        {...makeSettingsProps({
+          activeTab: 'behavior',
+          auditBundleVerificationResult: {
+            ok: false,
+            error: 'Bundle sections were modified after signing.',
+            verification: {
+              ok: false,
+              signaturePresent: true,
+              payloadHashValid: true,
+              signatureValid: false,
+              sectionHashesValid: false,
+              countsValid: true,
+              reason: 'section hash mismatch'
+            }
+          }
+        })}
+      />
+    )
+
+    expect(html).toContain('Latest audit bundle verification: failed')
+    expect(html).toContain('Signature: invalid')
+    expect(html).toContain('section hashes: fail')
+    expect(html).toContain('Reason: section hash mismatch')
+  })
+
   it('locks approval timeout controls when organization policy owns them', () => {
     const html = renderToStaticMarkup(
       <SettingsPanel

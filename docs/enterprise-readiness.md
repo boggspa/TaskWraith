@@ -284,6 +284,11 @@ What exists:
   Product operations now has a verifier action that lets the user pick an
   exported JSON bundle and records whether its payload hash, signature, section
   hashes, and counts verify.
+- Settings -> System -> Product operations now retains the latest manual audit
+  bundle verification result on screen. The status pane shows pass/fail, bundle
+  path, signed/unsigned tamper-evidence mode, redaction mode, generated time,
+  signature status/key id, payload-hash result, section-hash result, count
+  result, and failure reason when available.
 - Audit-bundle exports are now signed when Electron `safeStorage` is available:
   a long-lived Ed25519 key is generated once under `userData`,
   safeStorage-encrypted at rest, and reused so each exported bundle carries a
@@ -294,9 +299,9 @@ What exists:
 
 What is missing:
 
-- A polished verification/export UI around the signed bundle evidence. The
-  Settings action reports pass/fail into the app log, but there is not yet a
-  detailed verifier status pane or retained verification receipt browser.
+- A retained verification receipt browser. The latest manual verification is
+  visible in Settings, but verification receipts are not yet durable,
+  searchable, or exportable as their own audit surface.
 - An explicit sensitive-field export flow. The current route is redacted-only
   and rejects unsupported sensitive modes, but there is not yet a separate
   user/admin decision path for exporting sensitive fields.

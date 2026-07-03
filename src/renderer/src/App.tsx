@@ -1530,6 +1530,8 @@ function App(): React.JSX.Element {
   })
   const [productOperationsStatus, setProductOperationsStatus] =
     useState<ProductOperationsStatus | null>(null)
+  const [auditBundleVerificationResult, setAuditBundleVerificationResult] =
+    useState<ProductAuditBundleVerificationResult | null>(null)
 
   // Trust & Session
   const [trustResult, setTrustResult] = useState<any>(null)
@@ -15326,6 +15328,7 @@ function App(): React.JSX.Element {
     try {
       const result = await window.api.verifyProductAuditBundle()
       if (!result.ok && result.error === 'Audit bundle verification cancelled.') return
+      setAuditBundleVerificationResult(result)
       const summary = summarizeAuditBundleVerification(result)
       setRawLogs((prev) => [
         ...prev,
@@ -15335,11 +15338,13 @@ function App(): React.JSX.Element {
         }
       ])
     } catch (error) {
+      const message = redactLog(String(error))
+      setAuditBundleVerificationResult({ ok: false, error: message })
       setRawLogs((prev) => [
         ...prev,
         {
           type: 'stderr',
-          content: `Audit bundle verification failed: ${redactLog(String(error))}`
+          content: `Audit bundle verification failed: ${message}`
         }
       ])
     }
@@ -23905,6 +23910,7 @@ function App(): React.JSX.Element {
     autoFollowRef,
     autoResumeParentOnSubThreadCompletion,
     autoUpdateEnabled,
+    auditBundleVerificationResult,
     beginManualMainTranscriptJump,
     beginManualSideTranscriptJump,
     canCreateSideChatFromCurrent,

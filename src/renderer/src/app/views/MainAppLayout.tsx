@@ -117,6 +117,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   autoFollowRef,
   autoResumeParentOnSubThreadCompletion,
   autoUpdateEnabled,
+  auditBundleVerificationResult,
   beginManualMainTranscriptJump,
   beginManualSideTranscriptJump,
   canCreateSideChatFromCurrent,
@@ -801,6 +802,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                 chat: Boolean(currentChat?.appChatId),
                 run: Boolean(currentRun?.runId)
               }}
+              auditBundleVerificationResult={auditBundleVerificationResult}
               managedPolicyStatus={managedPolicyStatus}
               productOperationsStatus={productOperationsStatus}
               codexStatus={codexStatus}

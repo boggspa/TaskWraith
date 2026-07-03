@@ -18,6 +18,7 @@ import type {
   ProviderReroutePlan,
   ProviderRunPauseState,
   ProductOperationsStatus,
+  ProductAuditBundleVerificationResult,
   ProductUpdateChannel,
   AuditRetentionSurface,
   PromptSurfaceStyle,
@@ -137,6 +138,24 @@ function isManagedPolicySettingLocked(
   )
 }
 
+function auditBundleCheckLabel(value: boolean | undefined): string {
+  return value ? 'pass' : 'fail'
+}
+
+function auditBundleSignatureLabel(
+  verification: ProductAuditBundleVerificationResult['verification']
+): string {
+  if (!verification) return 'not checked'
+  if (!verification.signaturePresent) return 'not present'
+  return verification.signatureValid ? 'valid' : 'invalid'
+}
+
+function auditBundleTamperEvidenceLabel(value: string | undefined): string {
+  if (value === 'local_hashes_signed') return 'signed local hashes'
+  if (value === 'local_hashes_unsigned') return 'unsigned local hashes'
+  return 'unknown evidence'
+}
+
 const AUDIT_RETENTION_SURFACES: Array<{ key: AuditRetentionSurface; label: string }> = [
   { key: 'approvalLedger', label: 'Approvals' },
   { key: 'runEvents', label: 'Run events' },
@@ -227,6 +246,7 @@ interface SettingsPanelProps {
   approvalTimeouts: AppSettings['approvalTimeouts']
   auditRetention?: AppSettings['auditRetention']
   auditBundleExportAvailability?: Partial<Record<Exclude<AuditBundleExportScope, 'all'>, boolean>>
+  auditBundleVerificationResult?: ProductAuditBundleVerificationResult | null
   managedPolicyStatus?: ManagedPolicyStatus | null
   productOperationsStatus: ProductOperationsStatus | null
   codexStatus?: any
@@ -3137,6 +3157,7 @@ export function SettingsPanel({
   approvalTimeouts,
   auditRetention,
   auditBundleExportAvailability,
+  auditBundleVerificationResult,
   managedPolicyStatus,
   productOperationsStatus,
   codexStatus,
@@ -8766,6 +8787,63 @@ export function SettingsPanel({
                     Export run bundle
                   </button>
                 </div>
+                {auditBundleVerificationResult && (
+                  <div
+                    className={
+                      auditBundleVerificationResult.ok ? 'settings-hint' : 'settings-error'
+                    }
+                    role="status"
+                  >
+                    <strong>
+                      Latest audit bundle verification:{' '}
+                      {auditBundleVerificationResult.ok ? 'passed' : 'failed'}
+                    </strong>
+                    <br />
+                    Bundle: {auditBundleVerificationResult.path || 'selected bundle'}
+                    {auditBundleVerificationResult.manifest && (
+                      <>
+                        <br />
+                        Evidence:{' '}
+                        {auditBundleTamperEvidenceLabel(
+                          auditBundleVerificationResult.manifest.tamperEvidence
+                        )}
+                        ; redaction: {auditBundleVerificationResult.manifest.redactionMode};
+                        generated: {auditBundleVerificationResult.manifest.generatedAt}
+                      </>
+                    )}
+                    {auditBundleVerificationResult.verification && (
+                      <>
+                        <br />
+                        Signature:{' '}
+                        {auditBundleSignatureLabel(auditBundleVerificationResult.verification)}
+                        {auditBundleVerificationResult.verification.keyId
+                          ? ` (${auditBundleVerificationResult.verification.keyId})`
+                          : ''}
+                        ; payload hash:{' '}
+                        {auditBundleCheckLabel(
+                          auditBundleVerificationResult.verification.payloadHashValid
+                        )}
+                        ; section hashes:{' '}
+                        {auditBundleCheckLabel(
+                          auditBundleVerificationResult.verification.sectionHashesValid
+                        )}
+                        ; counts:{' '}
+                        {auditBundleCheckLabel(
+                          auditBundleVerificationResult.verification.countsValid
+                        )}
+                      </>
+                    )}
+                    {!auditBundleVerificationResult.ok && (
+                      <>
+                        <br />
+                        Reason:{' '}
+                        {auditBundleVerificationResult.verification?.reason ||
+                          auditBundleVerificationResult.error ||
+                          'verification failed'}
+                      </>
+                    )}
+                  </div>
+                )}
                 {/* Phase G2: auto-update status pane. Self-contained so the
             SettingsPanel doesn't need to plumb the snapshot through —
             it reads it via the api binding on mount + listens for live

@@ -162,6 +162,7 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   autoFollowRef: any
   autoResumeParentOnSubThreadCompletion: any
   autoUpdateEnabled: any
+  auditBundleVerificationResult: any
   beginManualMainTranscriptJump: any
   beginManualSideTranscriptJump: any
   canCreateSideChatFromCurrent: any
