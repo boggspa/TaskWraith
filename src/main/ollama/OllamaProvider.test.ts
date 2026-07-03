@@ -191,8 +191,6 @@ function makeProviderDeps(
         ({
           ollamaBaseUrl: 'http://127.0.0.1:11434',
           ollamaDefaultModel: 'stream-model:latest',
-          ollamaDefaultRunProfile: 'local_scout',
-          ollamaRunProfiles: {},
           ollamaModelPreflightAt: { 'stream-model:latest@digest-stream': Date.now() },
           agenticServices: { mcpTools: 'allow' },
           geminiMcpBridgeEnabled: true,
