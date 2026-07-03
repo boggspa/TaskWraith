@@ -438,6 +438,28 @@ describe('SettingsPanel provider cards', () => {
     )
   })
 
+  it('renders managed-policy status when organization controls are active', () => {
+    const html = renderToStaticMarkup(
+      <SettingsPanel
+        {...makeSettingsProps({
+          activeTab: 'behavior',
+          managedPolicyStatus: {
+            active: true,
+            organizationName: 'Acme Corp',
+            source: 'signed-mdm-preferences',
+            lockedSettings: ['agenticServices', 'approvalTimeouts'],
+            enforcedSettings: ['approvalTimeouts'],
+            errors: []
+          }
+        })}
+      />
+    )
+
+    expect(html).toContain('Managed by organization')
+    expect(html).toContain('Acme Corp is enforcing TaskWraith settings from signed-mdm-preferences.')
+    expect(html).toContain('Locked controls: agenticServices, approvalTimeouts')
+  })
+
   it('renders the General auto-update checkbox unchecked when disabled', () => {
     const html = renderToStaticMarkup(
       <SettingsPanel

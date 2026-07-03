@@ -27496,6 +27496,8 @@ if (isGeminiMcpBridgeProcess) {
       getExtensionSecretStatusSnapshot: () => AppStore.getExtensionSecretStatusSnapshot(),
       setExtensionSecret: (ref, value) => AppStore.setExtensionSecret(ref, value),
       clearExtensionSecret: (ref) => AppStore.clearExtensionSecret(ref),
+      getManagedPolicyStatus: () =>
+        managedPolicyService.snapshot() as unknown as Record<string, unknown>,
       getHandoffCards: (filter) => AppStore.getHandoffCards(filter),
       saveHandoffCard: (card) => AppStore.saveHandoffCard(card),
       updateHandoffCard: (id, partial) => AppStore.updateHandoffCard(id, partial),

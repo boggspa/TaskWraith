@@ -321,11 +321,16 @@ What exists:
   provider (`gemini`, `codex`, `claude`, `kimi`, `grok`, `cursor`, and
   `ollama`) instead of silently pinning the newer provider adapters to hidden
   runtime defaults.
+- Settings can now read a redacted managed-policy status snapshot and render a
+  "Managed by organization" notice with policy source, organization label,
+  locked setting keys, and error count. The notice gives users an immediate
+  explanation for enforced controls without exposing raw policy payload details.
 
 What is missing:
 
-- No locked-control affordances in Settings for enterprise-managed installs.
-  Enforcement exists, but the UI does not yet explain why a control is locked.
+- Per-control locked/disabled affordances in Settings are not complete yet.
+  Enforcement exists, and the top-level managed notice explains why controls are
+  locked, but individual controls do not all render inline lock badges.
 - Other non-settings live controls still need explicit inventory and managed
   clamps. The current policy source is startup-loaded, so future live policy
   reload support must also revoke or re-materialize affected in-memory state.

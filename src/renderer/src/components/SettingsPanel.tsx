@@ -114,6 +114,7 @@ import {
 } from '../../../main/TaskWraithMcpTools'
 
 type ProviderCliUpgradeState = 'idle' | 'opening' | 'opened' | 'error'
+type ManagedPolicyStatus = Record<string, unknown>
 
 interface SettingsPanelProps {
   mode: AppearanceMode
@@ -193,6 +194,7 @@ interface SettingsPanelProps {
   autoUpdateEnabled: boolean
   updateChannel: ProductUpdateChannel
   approvalTimeouts: AppSettings['approvalTimeouts']
+  managedPolicyStatus?: ManagedPolicyStatus | null
   productOperationsStatus: ProductOperationsStatus | null
   codexStatus?: any
   claudeAuthStatus?: ProviderApiKeyStatus | null
@@ -2925,6 +2927,7 @@ export function SettingsPanel({
   autoUpdateEnabled,
   updateChannel,
   approvalTimeouts,
+  managedPolicyStatus,
   productOperationsStatus,
   codexStatus,
   claudeAuthStatus,
@@ -4024,6 +4027,24 @@ export function SettingsPanel({
       setDeleteHistoryPending(false)
     }
   }
+  const managedPolicyActive = managedPolicyStatus?.active === true
+  const managedPolicyLockedSettings = Array.isArray(managedPolicyStatus?.lockedSettings)
+    ? managedPolicyStatus.lockedSettings
+        .map((value) => String(value || '').trim())
+        .filter(Boolean)
+    : []
+  const managedPolicyErrorCount = Array.isArray(managedPolicyStatus?.errors)
+    ? managedPolicyStatus.errors.length
+    : 0
+  const managedPolicyOrganization =
+    typeof managedPolicyStatus?.organizationName === 'string' &&
+    managedPolicyStatus.organizationName.trim()
+      ? managedPolicyStatus.organizationName.trim()
+      : ''
+  const managedPolicySource =
+    typeof managedPolicyStatus?.source === 'string' && managedPolicyStatus.source.trim()
+      ? managedPolicyStatus.source.trim()
+      : 'managed policy'
 
   return (
     <div className={`settings-panel settings-panel-${layout}`}>
@@ -4116,6 +4137,27 @@ export function SettingsPanel({
           <h1 className="settings-takeover-title">
             {visibleSettingsTabs.find((tab) => tab.id === activeTab)?.label ?? 'Settings'}
           </h1>
+        )}
+        {managedPolicyActive && (
+          <div className="settings-group settings-managed-policy-summary">
+            <label className="settings-label">Managed by organization</label>
+            <p className="settings-hint">
+              {managedPolicyOrganization
+                ? `${managedPolicyOrganization} is enforcing TaskWraith settings from ${managedPolicySource}.`
+                : `TaskWraith settings are being enforced from ${managedPolicySource}.`}
+            </p>
+            {managedPolicyLockedSettings.length > 0 && (
+              <p className="settings-hint">
+                Locked controls: {managedPolicyLockedSettings.join(', ')}
+              </p>
+            )}
+            {managedPolicyErrorCount > 0 && (
+              <p className="settings-error" style={{ margin: 0 }}>
+                Managed policy has {managedPolicyErrorCount} configuration error
+                {managedPolicyErrorCount === 1 ? '' : 's'}; open diagnostics for details.
+              </p>
+            )}
+          </div>
         )}
         {/* ── Appearance ─────────────────────────────────── */}
         {

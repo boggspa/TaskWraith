@@ -1173,6 +1173,7 @@ declare global {
         value: string
       ) => Promise<ExtensionSecretMutationResult>
       clearExtensionSecret: (ref: ExtensionSecretRef) => Promise<ExtensionSecretMutationResult>
+      getManagedPolicyStatus: () => Promise<Record<string, unknown> | null>
       getHandoffCards: (filter?: HandoffCardFilter) => Promise<HandoffCard[]>
       saveHandoffCard: (
         card: Partial<HandoffCard> &

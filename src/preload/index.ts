@@ -863,6 +863,7 @@ const api = {
   setExtensionSecret: (ref: any, value: string) =>
     ipcRenderer.invoke('set-extension-secret', ref, value),
   clearExtensionSecret: (ref: any) => ipcRenderer.invoke('clear-extension-secret', ref),
+  getManagedPolicyStatus: () => ipcRenderer.invoke('get-managed-policy-status'),
   getHandoffCards: (filter: any = {}) => ipcRenderer.invoke('get-handoff-cards', filter),
   saveHandoffCard: (card: any) => ipcRenderer.invoke('save-handoff-card', card),
   updateHandoffCard: (id: string, partial: any) =>

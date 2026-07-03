@@ -98,6 +98,13 @@ function createDeps(overrides: Partial<Parameters<typeof registerSettingsHandler
         secrets: [{ ...ref, configured: false }]
       }
     })),
+    getManagedPolicyStatus: vi.fn(() => ({
+      active: true,
+      source: 'signed-mdm-preferences',
+      lockedSettings: ['approvalTimeouts'],
+      enforcedSettings: ['approvalTimeouts'],
+      errors: []
+    })),
     getHandoffCards: vi.fn(() => [handoffCard()]),
     saveHandoffCard: vi.fn((card) => handoffCard(card)),
     updateHandoffCard: vi.fn((id, partial) => handoffCard({ id, ...partial })),
@@ -185,6 +192,20 @@ describe('registerSettingsHandlers', () => {
       }
     })
     expect(deps.clearExtensionSecret).toHaveBeenCalledWith(ref)
+  })
+
+  it('exposes redacted managed-policy status for Settings affordances', () => {
+    const deps = createDeps()
+    registerSettingsHandlers(deps)
+
+    expect(handlerFor('get-managed-policy-status')({} as any)).toEqual({
+      active: true,
+      source: 'signed-mdm-preferences',
+      lockedSettings: ['approvalTimeouts'],
+      enforcedSettings: ['approvalTimeouts'],
+      errors: []
+    })
+    expect(deps.getManagedPolicyStatus).toHaveBeenCalled()
   })
 
   it('sanitizes handoff card reads and mutations', () => {

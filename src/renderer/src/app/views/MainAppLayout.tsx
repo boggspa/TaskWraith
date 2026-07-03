@@ -339,6 +339,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   latestSideChatRunResultSeed,
   logsEndRef,
   manualUsageRefreshInFlight,
+  managedPolicyStatus,
   multiview,
   ollamaBaseUrl,
   ollamaDefaultModel,
@@ -790,6 +791,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
               autoUpdateEnabled={autoUpdateEnabled}
               updateChannel={updateChannel}
               approvalTimeouts={approvalTimeouts}
+              managedPolicyStatus={managedPolicyStatus}
               productOperationsStatus={productOperationsStatus}
               codexStatus={codexStatus}
               claudeAuthStatus={claudeAuthStatus}

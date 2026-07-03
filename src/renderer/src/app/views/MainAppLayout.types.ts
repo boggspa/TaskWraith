@@ -390,6 +390,7 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   latestSideChatRunResultSeed: any
   logsEndRef: any
   manualUsageRefreshInFlight: MainAppLayoutSidebarProps['manualUsageRefreshInFlight']
+  managedPolicyStatus: any
   multiview: any
   ollamaBaseUrl: any
   ollamaDefaultModel: any

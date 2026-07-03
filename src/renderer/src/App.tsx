@@ -834,6 +834,9 @@ function App(): React.JSX.Element {
   const isDockingChatPopoutRef = useRef(false)
   const skipCloseSideChatPresentationIdRef = useRef<string | null>(null)
   const [settings, setSettings] = useState<AppSettings | null>(null)
+  const [managedPolicyStatus, setManagedPolicyStatus] = useState<Record<string, unknown> | null>(
+    null
+  )
   // 1.0.7 — per-provider rate table (USD per 1M tokens) for the ensemble
   // run-complete card's projected cost estimate. Hydrated once at mount from
   // the `providerRates:get` IPC; empty until then (no estimate shown).
@@ -4490,8 +4493,12 @@ function App(): React.JSX.Element {
   }, [runQueueJobs])
 
   const loadInitialData = async () => {
-    const s = await window.api.getSettings()
+    const [s, policyStatus] = await Promise.all([
+      window.api.getSettings(),
+      window.api.getManagedPolicyStatus().catch(() => null)
+    ])
     setSettings(s)
+    setManagedPolicyStatus(policyStatus)
     setActiveProvider(coerceLiveProvider(s.activeProvider))
     setClaudeBinaryPath(s.claudeBinaryPath || '')
     setKimiBinaryPath(s.kimiBinaryPath || '')
@@ -23945,6 +23952,7 @@ function App(): React.JSX.Element {
     latestSideChatRunResultSeed,
     logsEndRef,
     manualUsageRefreshInFlight,
+    managedPolicyStatus,
     multiview,
     ollamaBaseUrl,
     ollamaDefaultModel,

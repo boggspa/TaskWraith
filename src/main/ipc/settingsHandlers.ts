@@ -24,6 +24,7 @@ export interface SettingsHandlerDeps {
   getExtensionSecretStatusSnapshot: () => ExtensionSecretStatusSnapshot
   setExtensionSecret: (ref: ExtensionSecretRef, value: string) => ExtensionSecretMutationResult
   clearExtensionSecret: (ref: ExtensionSecretRef) => ExtensionSecretMutationResult
+  getManagedPolicyStatus: () => Record<string, unknown> | null | undefined
   getHandoffCards: (filter?: HandoffCardFilter) => HandoffCard[]
   saveHandoffCard: (
     card: Partial<HandoffCard> &
@@ -75,6 +76,7 @@ export function registerSettingsHandlers(deps: SettingsHandlerDeps): void {
   ipcMain.handle('clear-extension-secret', (_event, ref: ExtensionSecretRef) =>
     deps.clearExtensionSecret(ref)
   )
+  ipcMain.handle('get-managed-policy-status', () => deps.getManagedPolicyStatus() || null)
 
   ipcMain.handle('get-handoff-cards', (_event, filter?: HandoffCardFilter) =>
     deps.getHandoffCards(deps.sanitizeHandoffCardFilter(filter))
