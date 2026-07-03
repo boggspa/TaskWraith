@@ -47,6 +47,10 @@ export function effectiveAgenticSettings(
       ...current,
       shellCommands: preserveCurrentDeny(current.shellCommands, effective.shellCommands),
       fileChanges: preserveCurrentDeny(current.fileChanges, effective.fileChanges),
+      externalPublish: preserveCurrentDeny(
+        current.externalPublish,
+        effective.externalPublish
+      ),
       mcpTools: preserveCurrentDeny(current.mcpTools, effective.mcpTools),
       subThreadDelegation: preserveCurrentDeny(
         current.subThreadDelegation,
@@ -180,6 +184,11 @@ export function taskWraithToolAgenticService(toolName: string): AgenticServiceId
   )
     return 'shellCommands'
   if (
+    toolName === 'git_push' ||
+    toolName === 'git_create_pr'
+  )
+    return 'externalPublish'
+  if (
     toolName === 'write_file' ||
     toolName === 'replace' ||
     toolName === 'create_directory' ||
@@ -188,9 +197,7 @@ export function taskWraithToolAgenticService(toolName: string): AgenticServiceId
     toolName === 'rename_path' ||
     toolName === 'apply_patch' ||
     toolName === 'git_stage' ||
-    toolName === 'git_commit' ||
-    toolName === 'git_push' ||
-    toolName === 'git_create_pr'
+    toolName === 'git_commit'
   )
     return 'fileChanges'
   if (toolName === 'delegate_to_subthread' || toolName === 'cancel_subthread')

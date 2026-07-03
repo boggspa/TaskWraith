@@ -198,7 +198,7 @@ describe('AuditService', () => {
       { appRunId: 'run-1', appChatId: 'chat-1' },
       'mcpTools',
       '/workspace',
-      { method: 'mcp/call', title: 'Call MCP tool' },
+      { method: 'mcp/call', title: 'Call MCP tool', body: 'Call MCP tool' },
       'autoDeny',
       'policy',
       'request',

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import {
   applyRuntimeProfileToPayload,
+  createCliEnv,
   getCliProviderMcpStatus,
   runtimeSettings,
   type CliProviderRuntimeDependencies,
@@ -102,6 +103,7 @@ describe('runtimeSettings', () => {
     agenticServices: {
       shellCommands: 'ask',
       fileChanges: 'deny',
+      externalPublish: 'ask',
       mcpTools: 'ask',
       subThreadDelegation: 'workspace',
       networkAccess: 'deny'
@@ -115,6 +117,7 @@ describe('runtimeSettings', () => {
         agenticServices: {
           shellCommands: 'allow',
           fileChanges: 'allow',
+          externalPublish: 'allow',
           mcpTools: 'deny',
           subThreadDelegation: 'allow',
           canvasInteraction: 'ask',
@@ -126,9 +129,41 @@ describe('runtimeSettings', () => {
 
     expect(settings.agenticServices.shellCommands).toBe('ask')
     expect(settings.agenticServices.fileChanges).toBe('deny')
+    expect(settings.agenticServices.externalPublish).toBe('ask')
     expect(settings.agenticServices.mcpTools).toBe('deny')
     expect(settings.agenticServices.subThreadDelegation).toBe('workspace')
     expect(settings.agenticServices.networkAccess).toBe('deny')
+  })
+})
+
+describe('createCliEnv', () => {
+  it('scrubs signing and publishing credentials after merging process/profile/extra env', () => {
+    const env = createCliEnv(
+      {
+        TASKWRAITH_RUNTIME_PROFILE_ID: 'profile-1',
+        GH_TOKEN: 'extra-gh',
+        FORCE_COLOR: '0'
+      },
+      null,
+      {
+        getRuntimeProfiles: () => [
+          makeProfile({
+            id: 'profile-1',
+            env: {
+              APPLE_ID: 'profile-apple',
+              CSC_LINK: 'profile-csc',
+              SAFE_PROFILE_FLAG: 'kept'
+            }
+          })
+        ]
+      }
+    )
+
+    expect(env.GH_TOKEN).toBeUndefined()
+    expect(env.APPLE_ID).toBeUndefined()
+    expect(env.CSC_LINK).toBeUndefined()
+    expect(env.SAFE_PROFILE_FLAG).toBe('kept')
+    expect(env.FORCE_COLOR).toBe('0')
   })
 })
 

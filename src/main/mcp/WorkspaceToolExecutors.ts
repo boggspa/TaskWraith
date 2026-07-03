@@ -28,6 +28,7 @@ import {
   type TranscriptMediaAssetReadResult
 } from '../services/TranscriptMediaAssetStore'
 import type { McpToolExecutionResult } from './McpBridgeRuntime'
+import { releaseScriptBlockReason } from '../ReleaseCommandPolicy'
 
 export interface HostCommandResult {
   stdout: string
@@ -1204,6 +1205,21 @@ export async function executeRunTask(
   if (scripts && task in scripts) {
     command = ['npm', 'run', task]
     const script = String(scripts[task] || '')
+    const blockedReleaseScript = releaseScriptBlockReason(task, script)
+    if (blockedReleaseScript) {
+      return {
+        task,
+        command,
+        cwd,
+        exitCode: null,
+        timedOut: false,
+        durationMs: 0,
+        stdout: '',
+        stderr: blockedReleaseScript,
+        error: blockedReleaseScript,
+        summary: blockedReleaseScript
+      }
+    }
     const isVitestTestScript = task === 'test' && /\bvitest\b/.test(script)
     const scriptAlreadyRunsVitest =
       /\bvitest\b[^\n|;&]*\brun\b/.test(script) || /\s--run\b/.test(script)
@@ -3124,6 +3140,7 @@ function summarizeRunControlEvent(event: RunEventRecord) {
     phase: event.phase,
     source: event.source,
     timestamp: event.timestamp,
+    approvalId: event.approvalId,
     summary: event.summary
   }
 }

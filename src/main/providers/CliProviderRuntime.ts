@@ -6,6 +6,7 @@ import { TASKWRAITH_MCP_TOOLS } from '../TaskWraithMcpTools'
 import { buildProviderCapabilityContract } from '../ProviderCapabilities'
 import { providerLabel } from '../ProviderAdapters'
 import { AppStore } from '../store'
+import { scrubCliEnv } from '../CliEnvSecurity'
 import { approvalModeRank, coerceApprovalMode } from '../RunPermissionPosture'
 import { buildUserMcpLaunchServers } from '../UserMcpServers'
 import type {
@@ -177,14 +178,14 @@ export function createCliEnv(
   binaryPath?: string | null,
   deps?: CliProviderRuntimeDependencies
 ): Record<string, string> {
-  return {
+  return scrubCliEnv({
     ...(process.env as Record<string, string>),
     PATH: getCliSearchDirs(binaryPath).join(delimiter),
     TERM: process.env.TERM || 'xterm-256color',
     COLORTERM: process.env.COLORTERM || 'truecolor',
     ...(activeRuntimeProfileEnv(extra, deps) || {}),
     ...extra
-  }
+  })
 }
 
 export function runtimeSettings(base: AppSettings, profile?: RuntimeProfile | null): AppSettings {
@@ -200,6 +201,10 @@ export function runtimeSettings(base: AppSettings, profile?: RuntimeProfile | nu
       fileChanges: stricterServicePolicy(
         base.agenticServices?.fileChanges,
         profile.agenticServices.fileChanges
+      ),
+      externalPublish: stricterServicePolicy(
+        base.agenticServices?.externalPublish,
+        profile.agenticServices.externalPublish
       ),
       mcpTools: stricterServicePolicy(
         base.agenticServices?.mcpTools,

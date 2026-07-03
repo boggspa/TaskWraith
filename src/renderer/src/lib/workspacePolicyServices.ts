@@ -19,6 +19,7 @@ export interface WorkspacePolicyService {
 export const WORKSPACE_POLICY_SERVICE_LABELS: Record<AgenticServiceId, string> = {
   shellCommands: 'Shell commands',
   fileChanges: 'File changes',
+  externalPublish: 'External publishing',
   mcpTools: 'Tool calls',
   subThreadDelegation: 'Sub-thread delegation',
   canvasInteraction: 'Canvas interaction',
@@ -42,6 +43,8 @@ export const WORKSPACE_POLICY_SERVICE_LABELS: Record<AgenticServiceId, string> =
 export const WORKSPACE_POLICY_SERVICE_HELP: Record<AgenticServiceId, string> = {
   shellCommands: 'Run workspace-scoped shell commands without asking again.',
   fileChanges: 'Write, replace, or patch workspace files without asking again.',
+  externalPublish:
+    'Push branches, create pull requests, or publish release artifacts. Always asks; cannot be pre-authorised.',
   mcpTools: 'Use read/search/status tools without asking again.',
   subThreadDelegation: 'Spawn cross-provider sub-threads without asking again.',
   canvasInteraction: 'Click and fill elements in a Canvas preview without asking again.',
@@ -91,7 +94,7 @@ export const WORKSPACE_POLICY_SERVICES: WorkspacePolicyService[] = [
     label: WORKSPACE_POLICY_SERVICE_LABELS.mediaEditing,
     help: WORKSPACE_POLICY_SERVICE_HELP.mediaEditing
   }
-  // mediaRecording is DELIBERATELY absent — non-grantable (default-deny capture
-  // scaffold), like canvasEval/crossThreadRead. Its label/help exist above only
-  // for audit/ledger rendering.
+  // externalPublish, mediaRecording, canvasEval, and crossThreadRead are
+  // deliberately absent: they are not pre-authorised from the workspace policy
+  // list. Their label/help exist above for audit/ledger rendering.
 ]

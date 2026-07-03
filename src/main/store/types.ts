@@ -225,6 +225,10 @@ export type SideChatLifecycleState = 'active' | 'closed' | 'terminated'
 export type AgenticServiceId =
   | 'shellCommands'
   | 'fileChanges'
+  // External publication / distribution: git pushes, pull-request creation, and
+  // future release-center actions. Non-grantable: every action must be
+  // individually approved, even under full access / session grants.
+  | 'externalPublish'
   | 'mcpTools'
   | 'subThreadDelegation'
   // Canvas click/fill — a DEDICATED grant bucket so a session/workspace grant on
@@ -389,6 +393,7 @@ export interface ExternalPathGrant {
 export interface AgenticServicesSettings {
   shellCommands: AgenticServicePolicy
   fileChanges: AgenticServicePolicy
+  externalPublish?: AgenticServicePolicy
   mcpTools: AgenticServicePolicy
   subThreadDelegation: AgenticServicePolicy
   canvasInteraction: AgenticServicePolicy
@@ -2806,6 +2811,9 @@ export interface RunEventRecord {
   provider?: ProviderId
   providerSessionId?: string
   providerRunId?: string
+  approvalId?: string
+  commitSha?: string
+  externalUrl?: string
   spanId?: string
   parentSpanId?: string
   toolCallId?: string
@@ -2880,6 +2888,7 @@ export interface RunEventFilter {
   chatId?: string
   workspaceId?: string
   provider?: ProviderId
+  approvalId?: string
   kinds?: RunEventKind[]
   phases?: RunEventPhase[]
   fromSequence?: number
@@ -2904,9 +2913,13 @@ export interface RunEventReplay {
     spanId?: string
     parentSpanId?: string
     toolCallId?: string
+    approvalId?: string
+    commitSha?: string
+    externalUrl?: string
     artifactIds?: string[]
     hash?: string
   }>
+  approvalIds: string[]
   startedAt?: string
   endedAt?: string
 }

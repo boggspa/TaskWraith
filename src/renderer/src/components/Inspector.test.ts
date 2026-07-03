@@ -52,6 +52,7 @@ function makeCapabilityContract(provider: ProviderId): ProviderCapabilityContrac
     tools: {
       shellCommands: tool('shellCommands', 'Shell'),
       fileChanges: tool('fileChanges', 'Files'),
+      externalPublish: tool('externalPublish', 'External publishing'),
       mcpTools: tool('mcpTools', 'MCP'),
       creativeApps: tool('creativeApps', 'Creative apps'),
       networkAccess: tool('networkAccess', 'Network'),

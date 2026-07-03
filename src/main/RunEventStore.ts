@@ -82,6 +82,31 @@ function inferToolCallId(payload: unknown): string | undefined {
   return inferToolCallId(nested)
 }
 
+function inferStringPayloadField(payload: unknown, keys: string[]): string | undefined {
+  if (!payload || typeof payload !== 'object') return undefined
+  const record = payload as Record<string, unknown>
+  for (const key of keys) {
+    const value = record[key]
+    if (typeof value === 'string' && value.trim()) return value.trim()
+  }
+  const nested = record.metadata || record.data || record.result || record.payload || record.params
+  return nested && nested !== payload ? inferStringPayloadField(nested, keys) : undefined
+}
+
+function inferApprovalId(kind: RunEventKind, payload: unknown): string | undefined {
+  const direct = inferStringPayloadField(payload, ['approvalId', 'approval_id'])
+  if (direct) return direct
+  if (kind === 'approval_request') return inferStringPayloadField(payload, ['id'])
+  if (kind === 'approval_response') {
+    return inferStringPayloadField(payload, ['requestId', 'request_id'])
+  }
+  return undefined
+}
+
+function runEventApprovalId(event: RunEventRecord): string | undefined {
+  return event.approvalId || inferApprovalId(event.kind, event.payload)
+}
+
 function redactSensitiveText(value: string): string {
   return redactSecrets(value)
 }
@@ -142,6 +167,19 @@ export function createRunEventRecord(
     provider: input.provider,
     providerSessionId: input.providerSessionId || undefined,
     providerRunId: input.providerRunId || undefined,
+    approvalId: input.approvalId || inferApprovalId(input.kind, input.payload),
+    commitSha:
+      input.commitSha ||
+      inferStringPayloadField(input.payload, ['commitSha', 'commit_sha', 'headSha', 'head_sha']),
+    externalUrl:
+      input.externalUrl ||
+      inferStringPayloadField(input.payload, [
+        'externalUrl',
+        'external_url',
+        'htmlUrl',
+        'html_url',
+        'url'
+      ]),
     spanId:
       input.spanId ||
       `${runId}:${Number.isFinite(sequence) && sequence > 0 ? Math.floor(sequence) : 1}`,
@@ -230,6 +268,7 @@ export function filterRunEvents(
     if (filter.chatId && event.chatId !== filter.chatId) return false
     if (filter.workspaceId && event.workspaceId !== filter.workspaceId) return false
     if (filter.provider && event.provider !== filter.provider) return false
+    if (filter.approvalId && runEventApprovalId(event) !== filter.approvalId) return false
     if (kindSet && !kindSet.has(event.kind)) return false
     if (phaseSet && !phaseSet.has(event.phase)) return false
     if (fromSequence !== null && event.sequence < fromSequence) return false
@@ -252,6 +291,9 @@ export function createRunEventReplay(runId: string, events: RunEventRecord[]): R
   }
 
   const lifecycleEvents = runEvents.filter((event) => event.kind === 'lifecycle')
+  const approvalIds = Array.from(
+    new Set(runEvents.map(runEventApprovalId).filter((id): id is string => !!id))
+  )
   const terminalEvent = [...lifecycleEvents].reverse().find((event) => {
     const status =
       event.payload && typeof event.payload === 'object'
@@ -278,9 +320,13 @@ export function createRunEventReplay(runId: string, events: RunEventRecord[]): R
       spanId: event.spanId,
       parentSpanId: event.parentSpanId,
       toolCallId: event.toolCallId,
+      approvalId: runEventApprovalId(event),
+      commitSha: event.commitSha,
+      externalUrl: event.externalUrl,
       artifactIds: event.artifacts?.map((artifact) => artifact.id),
       hash: event.hash
     })),
+    approvalIds,
     startedAt: lifecycleEvents[0]?.timestamp || runEvents[0]?.timestamp,
     endedAt: terminalEvent?.timestamp || runEvents[runEvents.length - 1]?.timestamp
   }

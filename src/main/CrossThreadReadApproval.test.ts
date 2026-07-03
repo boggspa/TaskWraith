@@ -38,6 +38,7 @@ function effectiveServices(
   return {
     shellCommands: 'ask',
     fileChanges: 'ask',
+    externalPublish: 'ask',
     mcpTools: 'ask',
     subThreadDelegation: 'ask',
     canvasInteraction: 'ask',

@@ -47,6 +47,7 @@ function settings(overrides: Partial<AppSettings> = {}): AppSettings {
     agenticServices: {
       shellCommands: 'ask',
       fileChanges: 'ask',
+      externalPublish: 'ask',
       mcpTools: 'ask',
       subThreadDelegation: 'ask',
       canvasInteraction: 'ask',
@@ -84,6 +85,7 @@ describe('resolveEffectiveRunPermissions', () => {
       // Shared floor: neither preset can write, run shell, eval, capture, or
       // cross-thread-read — the split only diverges on the instrument services.
       expect(resolved.agenticServices.fileChanges).toBe('deny')
+      expect(resolved.agenticServices.externalPublish).toBe('deny')
       expect(resolved.agenticServices.shellCommands).toBe('deny')
       expect(resolved.agenticServices.mcpTools).toBe('ask')
       expect(resolved.agenticServices.crossThreadRead).toBe('deny')
@@ -115,6 +117,7 @@ describe('resolveEffectiveRunPermissions', () => {
     expect(resolved.agenticServices.canvasInteraction).toBe('ask')
     expect(resolved.agenticServices.mediaEditing).toBe('ask')
     expect(resolved.agenticServices.fileChanges).toBe('deny')
+    expect(resolved.agenticServices.externalPublish).toBe('deny')
     expect(resolved.agenticServices.shellCommands).toBe('deny')
     expect(resolved.agenticServices.mediaRecording).toBe('deny')
     expect(resolved.agenticServices.canvasEval).toBe('deny')
@@ -324,6 +327,7 @@ describe('resolveEffectiveRunPermissions', () => {
         agenticServices: {
           shellCommands: 'ask',
           fileChanges: 'ask',
+          externalPublish: 'allow',
           mcpTools: 'ask',
           subThreadDelegation: 'ask',
           canvasInteraction: 'ask',
@@ -335,6 +339,7 @@ describe('resolveEffectiveRunPermissions', () => {
     })
     // A settings/import value of 'allow' must not produce an auto-allow policy.
     expect(withAllow.agenticServices.canvasEval).toBe('ask')
+    expect(withAllow.agenticServices.externalPublish).toBe('ask')
 
     const withDeny = resolveEffectiveRunPermissions({
       provider: 'codex',
@@ -343,6 +348,7 @@ describe('resolveEffectiveRunPermissions', () => {
         agenticServices: {
           shellCommands: 'ask',
           fileChanges: 'ask',
+          externalPublish: 'deny',
           mcpTools: 'ask',
           subThreadDelegation: 'ask',
           canvasInteraction: 'ask',
@@ -354,6 +360,38 @@ describe('resolveEffectiveRunPermissions', () => {
     })
     // An explicit deny is still honored.
     expect(withDeny.agenticServices.canvasEval).toBe('deny')
+    expect(withDeny.agenticServices.externalPublish).toBe('deny')
+  })
+
+  it('treats externalPublish as non-grantable and never auto-allows it under full access', () => {
+    const fullAccess = resolveEffectiveRunPermissions({
+      provider: 'codex',
+      workspacePath: '/repo',
+      settings: settings(),
+      presetId: 'full_access'
+    })
+    expect(fullAccess.agenticServices.fileChanges).toBe('allow')
+    expect(fullAccess.agenticServices.externalPublish).toBe('ask')
+
+    const withGrant = resolveEffectiveRunPermissions({
+      provider: 'codex',
+      workspacePath: '/repo',
+      settings: settings({
+        agenticWorkspaceGrants: [
+          {
+            id: 'workspace-grant-publish',
+            provider: 'codex',
+            workspacePath: '/repo',
+            service: 'externalPublish',
+            createdAt: '2026-05-24T00:00:00.000Z',
+            updatedAt: '2026-05-24T00:00:00.000Z'
+          }
+        ]
+      }),
+      presetId: 'default'
+    })
+    expect(withGrant.workspaceGrantServiceIds).not.toContain('externalPublish')
+    expect(withGrant.agenticServices.externalPublish).toBe('ask')
   })
 
   it('merges workspace grants and provider-scoped external path grants', () => {

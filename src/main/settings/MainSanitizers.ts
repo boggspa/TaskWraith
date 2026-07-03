@@ -44,6 +44,7 @@ const PROVIDER_IDS = new Set<ProviderId>([
 const DEFAULT_AGENTIC_SERVICES_FOR_PROFILE: AppSettings['agenticServices'] = {
   shellCommands: 'workspace',
   fileChanges: 'ask',
+  externalPublish: 'ask',
   mcpTools: 'ask',
   subThreadDelegation: 'ask',
   canvasInteraction: 'ask',
@@ -1020,6 +1021,10 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
               input.agenticServices.fileChanges,
               DEFAULT_AGENTIC_SERVICES_FOR_PROFILE.fileChanges
             ),
+            externalPublish: sanitizeAgenticServicePolicy(
+              input.agenticServices.externalPublish,
+              DEFAULT_AGENTIC_SERVICES_FOR_PROFILE.externalPublish ?? 'ask'
+            ),
             mcpTools: sanitizeAgenticServicePolicy(
               input.agenticServices.mcpTools,
               DEFAULT_AGENTIC_SERVICES_FOR_PROFILE.mcpTools
@@ -1267,6 +1272,10 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
       sanitized.agenticServices = {
         shellCommands: sanitizeAgenticServicePolicy(services.shellCommands, current.shellCommands),
         fileChanges: sanitizeAgenticServicePolicy(services.fileChanges, current.fileChanges),
+        externalPublish: sanitizeAgenticServicePolicy(
+          services.externalPublish,
+          current.externalPublish ?? 'ask'
+        ),
         mcpTools: sanitizeAgenticServicePolicy(services.mcpTools, current.mcpTools),
         subThreadDelegation: sanitizeAgenticServicePolicy(
           services.subThreadDelegation,

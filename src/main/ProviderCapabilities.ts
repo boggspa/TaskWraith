@@ -29,6 +29,7 @@ export const TASKWRAITH_GEMINI_MCP_TOOLS = TASKWRAITH_MCP_TOOLS
 const TOOLING_LABELS: Record<ProviderToolingCapabilityId, string> = {
   shellCommands: 'Shell commands',
   fileChanges: 'File changes',
+  externalPublish: 'External publishing',
   mcpTools: 'MCP and tool calls',
   creativeApps: 'Creative app tools',
   networkAccess: 'Network access',
@@ -48,6 +49,7 @@ const TOOLING_LABELS: Record<ProviderToolingCapabilityId, string> = {
 export const TOOLING_CONTROL_IDS = [
   'shellCommands',
   'fileChanges',
+  'externalPublish',
   'mcpTools',
   'creativeApps',
   'networkAccess'
@@ -661,6 +663,7 @@ export function buildProviderCapabilityContract({
 
   let shellCommands: ProviderToolingCapability
   let fileChanges: ProviderToolingCapability
+  let externalPublish: ProviderToolingCapability
   let mcpTools: ProviderToolingCapability
   let elicit: ProviderToolingCapability
   let delegate: ProviderToolingCapability
@@ -682,6 +685,13 @@ export function buildProviderCapabilityContract({
         'bridge',
         ['write_file', 'replace'],
         'Gemini uses the TaskWraith MCP bridge for workspace file writes and replacements.'
+      )
+      externalPublish = serviceCapability(
+        'externalPublish',
+        services.externalPublish,
+        'bridge',
+        ['git_push', 'git_create_pr'],
+        'Gemini uses the TaskWraith MCP bridge for external publishing actions.'
       )
       mcpTools = serviceCapability(
         'mcpTools',
@@ -711,6 +721,11 @@ export function buildProviderCapabilityContract({
         'fileChanges',
         'bridge',
         'TaskWraith file editing tools are not advertised to Gemini until the MCP bridge is enabled, installed, and available.'
+      )
+      externalPublish = unavailableCapability(
+        'externalPublish',
+        'bridge',
+        'TaskWraith external publishing tools are not advertised to Gemini until the MCP bridge is enabled, installed, and available.'
       )
       mcpTools = unavailableCapability(
         'mcpTools',
@@ -770,6 +785,13 @@ export function buildProviderCapabilityContract({
       'taskwraith',
       ['edit_file', 'create_file', 'delete_file'],
       'Codex file approvals and diffs are routed through TaskWraith.'
+    )
+    externalPublish = serviceCapability(
+      'externalPublish',
+      services.externalPublish,
+      'taskwraith',
+      ['git_push', 'git_create_pr'],
+      'Codex external publishing approvals are routed through TaskWraith.'
     )
     mcpTools = serviceCapability('mcpTools', services.mcpTools, 'provider', mcp.tools, mcp.message)
     elicit = elicitCapability(
@@ -849,6 +871,13 @@ export function buildProviderCapabilityContract({
             'taskwraith',
             'Ollama local mode does not expose file edits or patch tools at this tier.'
           )
+    externalPublish = serviceCapability(
+      'externalPublish',
+      services.externalPublish,
+      'taskwraith',
+      ['git_push', 'git_create_pr'],
+      'Ollama external publishing actions require a modal approval through TaskWraith.'
+    )
     mcpTools = mcp.available
       ? serviceCapability(
           'mcpTools',
@@ -927,6 +956,20 @@ export function buildProviderCapabilityContract({
           provider === 'claude' ? ['provider_file_edit'] : ['provider_file_edit_or_wire_tool'],
           `${label} file edit handling is delegated to the provider CLI.`
         )
+    externalPublish = taskWraithBridgeProvider
+      ? serviceCapability(
+          'externalPublish',
+          services.externalPublish,
+          'bridge',
+          ['git_push', 'git_create_pr'],
+          `${label} should use the TaskWraith MCP bridge for external publishing.`
+        )
+      : delegatedCapability(
+          'externalPublish',
+          services.externalPublish,
+          ['provider_git_or_release_tool'],
+          `${label} external publishing is delegated to the provider CLI but gated by TaskWraith when observable.`
+        )
     mcpTools =
       provider === 'claude' || provider === 'kimi' || taskWraithBridgeProvider
         ? mcp.source === 'provider'
@@ -999,7 +1042,7 @@ export function buildProviderCapabilityContract({
     )
   }
 
-  for (const tool of [shellCommands, fileChanges, mcpTools]) {
+  for (const tool of [shellCommands, fileChanges, externalPublish, mcpTools]) {
     if (tool.state === 'blocked') {
       warnings.push(
         warning(
@@ -1045,6 +1088,7 @@ export function buildProviderCapabilityContract({
     tools: {
       shellCommands,
       fileChanges,
+      externalPublish,
       mcpTools,
       creativeApps,
       networkAccess,

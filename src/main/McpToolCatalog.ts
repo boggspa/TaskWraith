@@ -1492,6 +1492,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
             enum: [
               'shellCommands',
               'fileChanges',
+              'externalPublish',
               'mcpTools',
               'subThreadDelegation',
               'canvasInteraction',

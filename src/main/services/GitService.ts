@@ -2,6 +2,7 @@ import { spawn } from 'child_process'
 import { promises as fs } from 'fs'
 import { homedir } from 'os'
 import { dirname, isAbsolute, join, normalize, relative, resolve, sep } from 'path'
+import { scrubCliEnv } from '../CliEnvSecurity'
 
 const DEFAULT_TIMEOUT_MS = 30_000
 
@@ -582,7 +583,11 @@ async function runCommand(
     let settled = false
     const child = spawn(command, args, {
       cwd: options.cwd,
-      env: { ...process.env, ...(command === 'gh' ? { GH_PROMPT_DISABLED: '1' } : {}), ...options.env },
+      env: scrubCliEnv({
+        ...process.env,
+        ...(command === 'gh' ? { GH_PROMPT_DISABLED: '1' } : {}),
+        ...options.env
+      }),
       stdio: ['ignore', 'pipe', 'pipe']
     })
     const timeout = setTimeout(() => {

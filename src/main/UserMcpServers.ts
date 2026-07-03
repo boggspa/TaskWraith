@@ -77,9 +77,10 @@ function normalizeBuildOptions(
 ): Required<Pick<BuildUserMcpLaunchServersOptions, 'supportedTransports'>> &
   Omit<BuildUserMcpLaunchServersOptions, 'supportedTransports'> {
   if (Array.isArray(input)) {
-    return { supportedTransports: input }
+    return { supportedTransports: input as readonly UserMcpServerTransport[] }
   }
-  return { ...input, supportedTransports: input?.supportedTransports ?? ['stdio', 'http', 'sse'] }
+  const options = (input ?? {}) as BuildUserMcpLaunchServersOptions
+  return { ...options, supportedTransports: options.supportedTransports ?? ['stdio', 'http', 'sse'] }
 }
 
 function normalizeCaseSet(values: readonly string[]): Set<string> {

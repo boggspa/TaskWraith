@@ -842,6 +842,7 @@ const defaultSettings: AppSettings = {
   agenticServices: {
     shellCommands: 'workspace',
     fileChanges: 'ask',
+    externalPublish: 'ask',
     mcpTools: 'ask',
     subThreadDelegation: 'ask',
     canvasInteraction: 'ask',

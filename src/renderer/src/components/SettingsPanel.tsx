@@ -560,6 +560,13 @@ const AGENTIC_SERVICE_POLICY_OPTIONS: Array<{ value: AgenticServicePolicy; label
   { value: 'allow', label: 'Always allow' },
   { value: 'deny', label: 'Block' }
 ]
+const NON_GRANTABLE_AGENTIC_SERVICE_POLICY_OPTIONS: Array<{
+  value: AgenticServicePolicy
+  label: string
+}> = [
+  { value: 'ask', label: 'Ask every time' },
+  { value: 'deny', label: 'Block' }
+]
 const NETWORK_POLICY_OPTIONS: Array<{ value: AgenticNetworkPolicy; label: string }> = [
   { value: 'allow', label: 'Allow' },
   { value: 'deny', label: 'Block' }
@@ -1978,6 +1985,7 @@ function inferMcpPolicyKey(tool: TaskWraithMcpToolName): McpToolPolicyKey {
   if (tool === 'run_shell_command' || tool === 'run_task' || tool === 'get_diagnostics') {
     return 'shellCommands'
   }
+  if (tool === 'git_push' || tool === 'git_create_pr') return 'externalPublish'
   // Audio/video media tools share the dedicated mediaEditing policy bucket
   // (parity with the runtime classifier). Checked before the creative_/fileChanges
   // branches so the per-tool Settings policy chip reflects the real gate.
@@ -1993,8 +2001,6 @@ function inferMcpPolicyKey(tool: TaskWraithMcpToolName): McpToolPolicyKey {
     tool === 'apply_patch' ||
     tool === 'git_stage' ||
     tool === 'git_commit' ||
-    tool === 'git_push' ||
-    tool === 'git_create_pr' ||
     tool.includes('import') ||
     tool.includes('dispatch')
   ) {
@@ -3784,6 +3790,7 @@ export function SettingsPanel({
   const networkPolicyLabel = (value: AgenticNetworkPolicy): string =>
     NETWORK_POLICY_OPTIONS.find((option) => option.value === value)?.label ?? value
   const canvasInteractionPolicy = agenticServices.canvasInteraction ?? 'ask'
+  const externalPublishPolicy = agenticServices.externalPublish ?? 'ask'
   const mediaEditingPolicy = agenticServices.mediaEditing ?? 'ask'
   const safetyPolicyRows = [
     {
@@ -3803,6 +3810,15 @@ export function SettingsPanel({
       display: agenticPolicyLabel(agenticServices.fileChanges),
       tone: policyTone(agenticServices.fileChanges),
       description: 'Write, replace, and patch tools stay inside the workspace boundary.'
+    },
+    {
+      id: 'publish',
+      label: 'External publishing',
+      scope: 'External',
+      value: externalPublishPolicy,
+      display: agenticPolicyLabel(externalPublishPolicy),
+      tone: policyTone(externalPublishPolicy),
+      description: 'Agent-routed pushes, pull requests, and release publishing require explicit approval.'
     },
     {
       id: 'mcp',
@@ -5917,6 +5933,32 @@ export function SettingsPanel({
                       }
                     >
                       {AGENTIC_SERVICE_POLICY_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label className="settings-service-row">
+                    <span>
+                      External publishing
+                      <small>
+                        Agent-routed branch pushes, pull requests, and release-style publishing ask
+                        for an explicit receipt; workspace/session grants do not pre-authorise them.
+                      </small>
+                    </span>
+                    <select
+                      className="settings-select"
+                      value={agenticServices.externalPublish ?? 'ask'}
+                      onChange={(e) =>
+                        updateAgenticService(
+                          'externalPublish',
+                          e.target.value as AgenticServicePolicy
+                        )
+                      }
+                    >
+                      {NON_GRANTABLE_AGENTIC_SERVICE_POLICY_OPTIONS.map((option) => (
                         <option key={option.value} value={option.value}>
                           {option.label}
                         </option>

@@ -2,6 +2,7 @@ import type { AgenticServiceId, AgentApprovalAction } from './store/types'
 export const AGENTIC_SERVICE_LABELS: Record<AgenticServiceId, string> = {
   shellCommands: 'Shell commands',
   fileChanges: 'File changes',
+  externalPublish: 'External publishing',
   mcpTools: 'Tool calls',
   subThreadDelegation: 'Sub-thread delegation',
   canvasInteraction: 'Canvas interaction',
@@ -18,6 +19,7 @@ export function agenticServiceBlockedMessage(service: AgenticServiceId): string 
 export function agenticServiceDisabledMessage(service: AgenticServiceId): string {
   if (
     service === 'subThreadDelegation' ||
+    service === 'externalPublish' ||
     service === 'canvasInteraction' ||
     service === 'crossThreadRead' ||
     service === 'mediaEditing' ||
@@ -32,6 +34,7 @@ export function agenticServiceDisabledMessage(service: AgenticServiceId): string
 export const AGENTIC_SERVICE_IDS = new Set<AgenticServiceId>([
   'shellCommands',
   'fileChanges',
+  'externalPublish',
   'mcpTools',
   'subThreadDelegation',
   'canvasInteraction',
@@ -50,8 +53,16 @@ export function assertAgenticServiceId(value: unknown): AgenticServiceId {
 
 export function approvalActionsForPolicy(
   policy: string,
-  workspacePath?: string
+  workspacePath?: string,
+  service?: AgenticServiceId
 ): AgentApprovalAction[] {
+  if (
+    service === 'externalPublish' ||
+    service === 'canvasEval' ||
+    service === 'mediaRecording'
+  ) {
+    return ['accept', 'decline', 'cancel']
+  }
   const actions: AgentApprovalAction[] = ['accept']
   if (policy === 'workspace' && workspacePath) {
     actions.push('acceptForWorkspace')

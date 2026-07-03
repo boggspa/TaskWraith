@@ -12,6 +12,7 @@ const readOnlyPermissions: EffectiveRunPermissions = {
   agenticServices: {
     shellCommands: 'deny',
     fileChanges: 'deny',
+    externalPublish: 'deny',
     mcpTools: 'ask',
     subThreadDelegation: 'ask',
     canvasInteraction: 'deny',

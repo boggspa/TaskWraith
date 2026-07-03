@@ -83,6 +83,7 @@ const PROVIDER_IDS = new Set(['gemini', 'codex', 'claude', 'kimi', 'grok', 'curs
 const AGENTIC_SERVICE_IDS = new Set([
   'shellCommands',
   'fileChanges',
+  'externalPublish',
   'mcpTools',
   'subThreadDelegation',
   'canvasInteraction',

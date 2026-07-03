@@ -21,6 +21,7 @@ function readOnlyPerms(): EffectiveRunPermissions {
     agenticServices: {
       shellCommands: 'deny',
       fileChanges: 'deny',
+      externalPublish: 'deny',
       mcpTools: 'ask',
       subThreadDelegation: 'ask',
       canvasInteraction: 'ask',
@@ -43,6 +44,7 @@ function fullAccessPerms(): EffectiveRunPermissions {
     agenticServices: {
       shellCommands: 'allow',
       fileChanges: 'allow',
+      externalPublish: 'ask',
       mcpTools: 'allow',
       subThreadDelegation: 'allow',
       canvasInteraction: 'ask',
@@ -65,6 +67,7 @@ function defaultPerms(): EffectiveRunPermissions {
     agenticServices: {
       shellCommands: 'workspace',
       fileChanges: 'ask',
+      externalPublish: 'ask',
       mcpTools: 'ask',
       subThreadDelegation: 'ask',
       canvasInteraction: 'ask',
@@ -140,6 +143,7 @@ describe('canonical posture + sign/verify', () => {
         canvasEval: 'ask',
         mcpTools: 'allow',
         fileChanges: 'allow',
+        externalPublish: 'ask',
         shellCommands: 'allow'
       },
       approvalMode: 'auto_edit',

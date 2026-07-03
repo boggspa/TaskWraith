@@ -140,6 +140,64 @@ describe('RunEventStore', () => {
     expect(nextRunEventSequence(events.filter((event) => event.runId === 'run-1'))).toBe(3)
   })
 
+  it('projects approval ids into records, filters, and replay timelines', () => {
+    const request = createRunEventRecord(
+      {
+        runId: 'run-approval',
+        kind: 'approval_request',
+        phase: 'control',
+        source: 'main',
+        payload: { id: 'approval-1', title: 'Approve command' }
+      },
+      1
+    )
+    const response = {
+      ...createRunEventRecord(
+        {
+          runId: 'run-approval',
+          kind: 'approval_response',
+          phase: 'control',
+          source: 'main',
+          payload: { requestId: 'approval-1', action: 'accept' }
+        },
+        2,
+        { previousHash: request.hash }
+      ),
+      // Simulate an older parsed event whose durable hash predated the top-level
+      // approvalId field. Replay should infer the join key without mutating it.
+      approvalId: undefined
+    }
+
+    expect(request.approvalId).toBe('approval-1')
+    expect(filterRunEvents([request, response], { approvalId: 'approval-1' })).toHaveLength(2)
+
+    const replay = createRunEventReplay('run-approval', [request, response])
+    expect(replay.approvalIds).toEqual(['approval-1'])
+    expect(replay.timeline.map((event) => event.approvalId)).toEqual([
+      'approval-1',
+      'approval-1'
+    ])
+    expect(response.approvalId).toBeUndefined()
+  })
+
+  it('infers external urls from tool payload url fields', () => {
+    const event = createRunEventRecord(
+      {
+        runId: 'run-pr',
+        kind: 'tool',
+        phase: 'control',
+        source: 'mcp',
+        payload: { toolName: 'git_create_pr', result: { url: 'https://example.test/pr/2' } }
+      },
+      1
+    )
+
+    expect(event.externalUrl).toBe('https://example.test/pr/2')
+    expect(createRunEventReplay('run-pr', [event]).timeline[0].externalUrl).toBe(
+      'https://example.test/pr/2'
+    )
+  })
+
   it('builds replay metadata for a run journal', () => {
     const first = createRunEventRecord(
       {
@@ -158,6 +216,9 @@ describe('RunEventStore', () => {
         kind: 'final_message',
         phase: 'normalized',
         source: 'renderer',
+        approvalId: 'approval-final',
+        commitSha: 'abc123',
+        externalUrl: 'https://example.test/pr/1',
         payload: { content: 'Done' }
       },
       2,
@@ -183,6 +244,10 @@ describe('RunEventStore', () => {
     expect(replay.countsByKind.final_message).toBe(1)
     expect(replay.hashChainValid).toBe(true)
     expect(replay.timeline).toHaveLength(3)
+    expect(replay.approvalIds).toEqual(['approval-final'])
+    expect(replay.timeline[1].approvalId).toBe('approval-final')
+    expect(replay.timeline[1].commitSha).toBe('abc123')
+    expect(replay.timeline[1].externalUrl).toBe('https://example.test/pr/1')
     expect(replay.hashHead).toBe(events[2].hash)
     expect(replay.startedAt).toBe('2026-05-07T00:00:00.000Z')
     expect(replay.endedAt).toBe('2026-05-07T00:00:02.000Z')

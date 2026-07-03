@@ -2074,6 +2074,7 @@ export function createDesktopToolExecutors(deps: DesktopToolExecutorDeps) {
       count: replay.count,
       lastSequence: replay.lastSequence,
       hashHead: replay.hashHead,
+      approvalIds: replay.approvalIds,
       startedAt: replay.startedAt,
       endedAt: replay.endedAt,
       hashChainValid: replay.hashChainValid,
@@ -2094,6 +2095,9 @@ export function createDesktopToolExecutors(deps: DesktopToolExecutorDeps) {
               spanId: event.spanId,
               parentSpanId: event.parentSpanId,
               toolCallId: event.toolCallId,
+              approvalId: event.approvalId,
+              commitSha: event.commitSha,
+              externalUrl: event.externalUrl,
               artifacts: event.artifacts,
               payload: args.includePayload === true ? event.payload : undefined
             }))

@@ -18936,6 +18936,7 @@ function App(): React.JSX.Element {
   const hasAgenticApprovalGate =
     agenticServices.shellCommands !== 'allow' ||
     agenticServices.fileChanges !== 'allow' ||
+    agenticServices.externalPublish !== 'allow' ||
     agenticServices.mcpTools !== 'allow'
   const currentComposerWorkflowMode =
     currentChat?.providerMetadata?.workflowMode === 'plan' ||

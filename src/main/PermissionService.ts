@@ -32,6 +32,14 @@ export interface ApprovalDecisionInput {
   action: AgentApprovalAction
 }
 
+function isNonGrantableService(service: AgenticServiceId | undefined): boolean {
+  return (
+    service === 'canvasEval' ||
+    service === 'mediaRecording' ||
+    service === 'externalPublish'
+  )
+}
+
 export class PermissionService {
   constructor(private readonly options: PermissionServiceOptions) {}
 
@@ -151,10 +159,11 @@ export class PermissionService {
     // Gemini/Claude gate and the Codex native gate route through here); the YOLO
     // bypasses are blocked separately, and read-only denies it via the preset.
     // mediaRecording (future mic/camera capture) is non-grantable for the same
-    // reason: a session/workspace grant must never promote capture above its
-    // default-deny. (EffectiveRunPermissions.workspaceGrantServiceIdsFor drops its
-    // workspace grants; this is the session/resolve half.)
-    const grantable = service !== 'canvasEval' && service !== 'mediaRecording'
+    // reason. externalPublish (push/PR/release surfaces) is also non-grantable:
+    // publication must stay a per-action approval even under workspace/session
+    // grants. EffectiveRunPermissions drops matching workspace grants; this is
+    // the session/resolve half.
+    const grantable = !isNonGrantableService(service)
     const workspaceGrantAllowed =
       grantable &&
       policy !== 'deny' &&
@@ -189,10 +198,11 @@ export class PermissionService {
   }
 
   applyApprovalDecision(input: ApprovalDecisionInput): boolean {
-    if (input.action === 'acceptForWorkspace' && input.service) {
+    const grantable = !isNonGrantableService(input.service)
+    if (grantable && input.action === 'acceptForWorkspace' && input.service) {
       this.upsertWorkspaceGrant(input.provider, input.workspacePath, input.service)
     }
-    if (input.action === 'acceptForSession' && input.service) {
+    if (grantable && input.action === 'acceptForSession' && input.service) {
       this.addSessionGrant(input.provider, input.workspacePath, input.service, input.runId)
     }
     return this.isApprovedAction(input.action)

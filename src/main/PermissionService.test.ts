@@ -53,6 +53,7 @@ const settings: AppSettings = {
   agenticServices: {
     shellCommands: 'workspace',
     fileChanges: 'ask',
+    externalPublish: 'ask',
     mcpTools: 'deny',
     subThreadDelegation: 'ask',
     canvasInteraction: 'ask',
@@ -166,6 +167,50 @@ describe('PermissionService', () => {
           id: 'grant-eval',
           provider: 'gemini',
           service: 'canvasEval',
+          workspacePath: '/repo',
+          createdAt: '2026-05-08T00:00:00.000Z',
+          updatedAt: '2026-05-08T00:00:00.000Z'
+        }
+      ]
+    })
+    expect(withWorkspace.workspaceGrantAllowed).toBe(false)
+    expect(withWorkspace.decision).toBe('ask')
+
+    expect(
+      service.applyApprovalDecision({
+        provider: 'codex',
+        workspacePath: '/repo',
+        service: 'externalPublish',
+        runId: 'run-publish',
+        action: 'acceptForSession'
+      })
+    ).toBe(true)
+    expect(service.hasSessionGrant('codex', '/repo', 'externalPublish', 'run-publish')).toBe(false)
+  })
+
+  it('treats externalPublish as non-grantable — no session/workspace grant auto-allows it', () => {
+    const runManager = new RunManager()
+    runManager.create({ runId: 'run-publish', provider: 'codex', workspacePath: '/repo' })
+    const service = new PermissionService({ runManager, sessionGrants: new Set() })
+
+    service.addSessionGrant('codex', '/repo', 'externalPublish', 'run-publish')
+    const withSession = service.resolvePermission(
+      'codex',
+      'externalPublish',
+      '/repo',
+      'run-publish',
+      settings
+    )
+    expect(withSession.sessionGrantAllowed).toBe(false)
+    expect(withSession.decision).toBe('ask')
+
+    const withWorkspace = service.resolvePermission('codex', 'externalPublish', '/repo', undefined, {
+      ...settings,
+      agenticWorkspaceGrants: [
+        {
+          id: 'grant-publish',
+          provider: 'codex',
+          service: 'externalPublish',
           workspacePath: '/repo',
           createdAt: '2026-05-08T00:00:00.000Z',
           updatedAt: '2026-05-08T00:00:00.000Z'

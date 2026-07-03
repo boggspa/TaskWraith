@@ -17,6 +17,7 @@ import { isPreviewRiskModel } from '../shared/previewModelCatalog'
 const AGENTIC_SERVICE_IDS: AgenticServiceId[] = [
   'shellCommands',
   'fileChanges',
+  'externalPublish',
   'mcpTools',
   'subThreadDelegation',
   'canvasInteraction',
@@ -55,6 +56,7 @@ const AGENTIC_SERVICE_IDS: AgenticServiceId[] = [
 const READ_ONLY_AGENTIC_SERVICES: PermissionPreset['agenticServices'] = {
   shellCommands: 'deny',
   fileChanges: 'deny',
+  externalPublish: 'deny',
   mcpTools: 'ask',
   // No elevation path: a read_only seat may not delegate to a subthread (which
   // would inherit no read_only posture). This is the load-bearing delta from
@@ -85,6 +87,7 @@ const READ_ONLY_AGENTIC_SERVICES: PermissionPreset['agenticServices'] = {
 const PLAN_AGENTIC_SERVICES: PermissionPreset['agenticServices'] = {
   shellCommands: 'deny',
   fileChanges: 'deny',
+  externalPublish: 'deny',
   mcpTools: 'ask',
   // Plan may delegate to a subthread with per-invocation approval.
   subThreadDelegation: 'ask',
@@ -140,6 +143,8 @@ export const DEFAULT_PERMISSION_PRESETS: Record<PermissionPresetId, PermissionPr
     agenticServices: {
       shellCommands: 'allow',
       fileChanges: 'allow',
+      // External publishing is non-grantable: even Full access must prompt for
+      // each push / PR / future release-center action.
       mcpTools: 'allow',
       subThreadDelegation: 'allow',
       canvasInteraction: 'allow',
@@ -173,6 +178,7 @@ export interface ResolveEffectiveRunPermissionsInput {
 const PREVIEW_RISK_PROMPT_SERVICES: AgenticServiceId[] = [
   'shellCommands',
   'fileChanges',
+  'externalPublish',
   'mcpTools',
   'subThreadDelegation',
   'canvasInteraction',
@@ -303,6 +309,9 @@ function servicesFromSettings(
   return {
     shellCommands: normalizePolicy(settings?.shellCommands, 'ask'),
     fileChanges: normalizePolicy(settings?.fileChanges, 'ask'),
+    externalPublish: clampNonGrantablePolicy(
+      normalizePolicy(settings?.externalPublish, 'ask')
+    ),
     mcpTools: normalizePolicy(settings?.mcpTools, 'ask'),
     subThreadDelegation: normalizePolicy(settings?.subThreadDelegation, 'ask'),
     canvasInteraction: normalizePolicy(settings?.canvasInteraction, 'ask'),
@@ -350,12 +359,15 @@ function workspaceGrantServiceIdsFor(
     if (grant.provider !== provider) continue
     if (grant.workspacePath !== workspacePath) continue
     if (grant.expiresAt && Date.parse(grant.expiresAt) <= Date.now()) continue
-    // canvasEval (RCE) is non-grantable: a stale/forged workspace grant must never
-    // promote eval to an automatic allow. PermissionService enforces the same for
-    // session grants; this is the workspace-grant half of that guarantee.
-    // mediaRecording (future capture) is non-grantable for the same reason — a
-    // stored/forged grant must never promote capture above its default-deny.
-    if (grant.service === 'canvasEval' || grant.service === 'mediaRecording') continue
+    // Non-grantable services: stale/forged workspace grants must never promote
+    // these above a per-action prompt. PermissionService enforces the same for
+    // session grants.
+    if (
+      grant.service === 'canvasEval' ||
+      grant.service === 'mediaRecording' ||
+      grant.service === 'externalPublish'
+    )
+      continue
     serviceIds.add(grant.service)
   }
   return [...serviceIds]

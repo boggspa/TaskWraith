@@ -30,6 +30,16 @@ function contract(partial: Partial<ProviderCapabilityContract> = {}): ProviderCa
         requiresApproval: true,
         tools: ['edit_file']
       },
+      externalPublish: {
+        id: 'externalPublish',
+        label: 'External publishing',
+        state: 'gated',
+        source: 'taskwraith',
+        enforcedByTaskWraith: true,
+        enforcement: 'taskwraith',
+        requiresApproval: true,
+        tools: ['git_push', 'git_create_pr']
+      },
       mcpTools: {
         id: 'mcpTools',
         label: 'MCP and tool calls',

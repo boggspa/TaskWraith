@@ -64,6 +64,7 @@ function makeEffectivePermissions(
     agenticServices: {
       shellCommands: 'deny',
       fileChanges: 'deny',
+      externalPublish: 'deny',
       mcpTools: 'ask',
       subThreadDelegation: 'deny',
       canvasInteraction: 'ask',

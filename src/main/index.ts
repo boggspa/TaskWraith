@@ -744,6 +744,10 @@ import { createVtToolExecutors, isVtMcpToolName } from './mcp/VtToolExecutors'
 import { ffmpegMissingError, resolveFfmpegBinaries } from './media/FfmpegResolver'
 import { createSemaphore } from './media/Semaphore'
 import {
+  releaseCommandBlockReason,
+  releasePackageScriptBlockReason
+} from './ReleaseCommandPolicy'
+import {
   createImageGenExecutor,
   isImageGenMcpToolName,
   parseImageGenResponse,
@@ -1870,6 +1874,21 @@ interface BackgroundProcessEntry {
   stderrLength: number
 }
 
+function packageScriptsForCwd(cwd: string): Record<string, unknown> | null {
+  try {
+    const packageJsonPath = join(cwd, 'package.json')
+    if (!fsSync.existsSync(packageJsonPath)) return null
+    const parsed = JSON.parse(fsSync.readFileSync(packageJsonPath, 'utf8')) as {
+      scripts?: unknown
+    }
+    return parsed.scripts && typeof parsed.scripts === 'object'
+      ? (parsed.scripts as Record<string, unknown>)
+      : null
+  } catch {
+    return null
+  }
+}
+
 class BackgroundProcessRegistry {
   private entries = new Map<string, BackgroundProcessEntry>()
 
@@ -1885,6 +1904,19 @@ class BackgroundProcessRegistry {
   ): Promise<Record<string, unknown>> {
     const startedAt = new Date().toISOString()
     const processId = `bg-${Date.now()}-${randomBytes(4).toString('hex')}`
+    const blockedReleaseCommand =
+      releaseCommandBlockReason(command) ||
+      releasePackageScriptBlockReason(command, packageScriptsForCwd(cwd))
+    if (blockedReleaseCommand) {
+      return {
+        ok: false,
+        processId,
+        command,
+        cwd,
+        startedAt,
+        error: blockedReleaseCommand
+      }
+    }
     const shellCommand =
       process.env.SHELL || (process.platform === 'win32' ? 'powershell.exe' : '/bin/zsh')
     const shellArgs =
@@ -7234,6 +7266,7 @@ function resolveNativeApprovalPreflight(args: {
     neverAutoAllow:
       args.service === 'canvasEval' ||
       args.service === 'mediaRecording' ||
+      args.service === 'externalPublish' ||
       isPlanInstrumentGrantHold(effectivePermissions?.presetId, args.service),
     effectivePermissions
   })
@@ -7611,6 +7644,7 @@ async function requestAgenticServiceApproval(
   const neverAutoAllow =
     service === 'canvasEval' ||
     service === 'mediaRecording' ||
+    service === 'externalPublish' ||
     isPlanInstrumentGrantHold(effectivePermissions?.presetId, service)
   if (
     sessionYoloState.enabled &&
@@ -7693,7 +7727,7 @@ async function requestAgenticServiceApproval(
     ? ['grantExternalPathRead', 'grantExternalPathEdit', 'declineExternalPath']
     : requestOnly
       ? ['accept', 'decline', 'cancel']
-      : approvalActionsForPolicy(policy, workspacePath)
+      : approvalActionsForPolicy(policy, workspacePath, service)
   const baseTitle = externalPathDetection ? externalPathApprovalTitle() : request.title
   const baseBody = externalPathDetection
     ? externalPathApprovalBody(externalPathDetection)
@@ -8435,7 +8469,10 @@ function previewForGeminiMcpTool(
     return {
       title: `Approve ${actionLabel}`,
       body,
-      service: 'fileChanges' as AgenticServiceId,
+      service:
+        toolName === 'git_push' || toolName === 'git_create_pr'
+          ? ('externalPublish' as AgenticServiceId)
+          : ('fileChanges' as AgenticServiceId),
       preview: {
         kind: 'tool',
         toolName,
@@ -8642,6 +8679,20 @@ function runHostCommand(
     let settled = false
     let child: ChildProcess
     const commandText = codexCommandText(command)
+    const blockedReleaseCommand =
+      releaseCommandBlockReason(command) ||
+      releasePackageScriptBlockReason(command, packageScriptsForCwd(cwd))
+    if (blockedReleaseCommand) {
+      resolveRun({
+        stdout,
+        stderr,
+        exitCode: null,
+        error: blockedReleaseCommand,
+        timedOut: false,
+        durationMs: Date.now() - startedAt
+      })
+      return
+    }
     // When enabled (Settings → Local servers), run agent commands in their own
     // process group so the Local Servers panel can group-kill the whole tree
     // (npm → node → workers), not just the wrapper. Default off — does not
@@ -10754,6 +10805,8 @@ function claudeTaskWraithMcpInput(route?: AgentRunRoute | null): ClaudeTaskWrait
 function claudeAgenticServiceForTool(toolName: string): AgenticServiceId | null {
   const normalized = toolName.trim().toLowerCase()
   if (!normalized) return null
+  const taskWraithService = taskWraithToolServiceIfKnown(normalized)
+  if (taskWraithService) return taskWraithService
   if (
     normalized === 'bash' ||
     normalized === 'shell' ||
@@ -12720,7 +12773,11 @@ async function runKimiWireProvider(
               const actions: AgentApprovalAction[] = externalPathDetection
                 ? ['grantExternalPathRead', 'grantExternalPathEdit', 'declineExternalPath']
                 : nativePreflight.kind === 'ask'
-                  ? approvalActionsForPolicy(nativePreflight.policy, workspacePathForKimiApproval)
+                  ? approvalActionsForPolicy(
+                      nativePreflight.policy,
+                      workspacePathForKimiApproval,
+                      kimiGateService || undefined
+                    )
                   : ['accept', 'acceptForSession', 'decline', 'cancel']
               const approvalTitle = externalPathDetection
                 ? externalPathApprovalTitle()
@@ -15496,7 +15553,7 @@ function handleCodexServerRequest(message: any) {
   const actions: AgentApprovalAction[] = externalPathDetection
     ? ['grantExternalPathRead', 'grantExternalPathEdit', 'declineExternalPath']
     : nativePreflight.kind === 'ask'
-      ? approvalActionsForPolicy(nativePreflight.policy, workspacePathForCodexApproval)
+      ? approvalActionsForPolicy(nativePreflight.policy, workspacePathForCodexApproval, gateService)
       : ['accept', 'acceptForSession', 'decline', 'cancel']
   const previewForDecision = {
     ...(formatted.preview || {}),

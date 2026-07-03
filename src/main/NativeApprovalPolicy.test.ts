@@ -29,6 +29,7 @@ const effectivePermissions = (
   agenticServices: Record<AgenticServiceId, AgenticServicePolicy> = {
     shellCommands: 'deny',
     fileChanges: 'deny',
+    externalPublish: 'deny',
     mcpTools: 'ask',
     subThreadDelegation: 'ask',
     canvasInteraction: 'deny',
@@ -77,8 +78,8 @@ describe('taskWraithToolServiceIfKnown', () => {
     expect(taskWraithToolServiceIfKnown('taskwraith__write_file')).toBe('fileChanges')
     expect(taskWraithToolServiceIfKnown('taskwraith__delete_path')).toBe('fileChanges')
     expect(taskWraithToolServiceIfKnown('taskwraith__move_path')).toBe('fileChanges')
-    expect(taskWraithToolServiceIfKnown('taskwraith__git_push')).toBe('fileChanges')
-    expect(taskWraithToolServiceIfKnown('taskwraith__git_create_pr')).toBe('fileChanges')
+    expect(taskWraithToolServiceIfKnown('taskwraith__git_push')).toBe('externalPublish')
+    expect(taskWraithToolServiceIfKnown('taskwraith__git_create_pr')).toBe('externalPublish')
     expect(taskWraithToolServiceIfKnown('delegate_to_subthread')).toBe('subThreadDelegation')
     expect(taskWraithToolServiceIfKnown('list_active_runs')).toBe('mcpTools')
     expect(taskWraithToolServiceIfKnown('cancel_active_run')).toBe('mcpTools')
@@ -290,6 +291,7 @@ describe('effectiveAgenticSettings', () => {
     const effective = effectivePermissions(false, {
       shellCommands: 'allow',
       fileChanges: 'allow',
+      externalPublish: 'ask',
       mcpTools: 'allow',
       subThreadDelegation: 'allow',
       canvasInteraction: 'ask',

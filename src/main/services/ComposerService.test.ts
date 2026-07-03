@@ -942,6 +942,7 @@ describe('composeRun ↔ normalize posture clamp contract', () => {
     agenticServices: {
       shellCommands: 'deny',
       fileChanges: 'deny',
+      externalPublish: 'deny',
       mcpTools: 'ask',
       subThreadDelegation: 'ask',
       canvasInteraction: 'ask',
@@ -1122,6 +1123,7 @@ describe('composeRun ↔ normalize posture clamp contract', () => {
           agenticServices: {
             shellCommands: 'allow',
             fileChanges: 'allow',
+            externalPublish: 'ask',
             mcpTools: 'allow',
             subThreadDelegation: 'allow',
             canvasInteraction: 'ask',
