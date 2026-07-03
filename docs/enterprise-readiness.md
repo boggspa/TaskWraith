@@ -331,13 +331,13 @@ What exists:
 - Transport-specific readiness checks exist.
 - The launch builder now has an optional allowlist policy decision point before
   enabled user MCP servers materialize into provider launch config. It can gate
-  transports, stdio command roots, remote URL hosts, header names, env keys,
-  and plugin provenance / plugin ids, and can report blocked-server reasons to
-  callers.
+  transports, stdio command roots, remote URL scheme/host/port/path, header
+  names, env keys, and plugin provenance / plugin ids, and can report
+  blocked-server reasons to callers.
 - The managed-policy spine now accepts a `userMcpLaunchAllowlist` block and
   feeds it into the Claude, Cursor, and Codex user-MCP launch materialization
   paths. Diagnostics report only allowlist shape/counts, not the configured
-  roots, hosts, headers, env keys, or plugin ids.
+  roots, remote URL policies, headers, env keys, or plugin ids.
 - Settings writes now apply the same managed user-MCP allowlist before
   persistence. Servers that fail the allowlist are preserved but saved disabled,
   so the user does not lose configuration while launch bypasses remain closed.
@@ -359,8 +359,9 @@ What is missing:
   hash.
 - Command-root checks are a launch allowlist, not a sandbox; argument policy
   still needs to come with managed policy enforcement.
-- Remote checks currently gate host patterns, not full URL egress policy for
-  scheme, port, path, userinfo, or DNS-rebinding behavior.
+- Remote checks cover managed scheme/host/port/path allowlists and reject URL
+  userinfo, but they are still not a full DNS-rebinding or runtime egress
+  policy.
 - Long-lived provider app servers, especially Codex app-server, need an
   explicit restart or re-materialization path before mid-session policy changes
   can remove previously attached user MCP servers.

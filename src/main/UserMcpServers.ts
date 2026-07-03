@@ -30,7 +30,10 @@ export type UserMcpLaunchServer = UserMcpStdioLaunchServer | UserMcpRemoteLaunch
 export interface UserMcpLaunchAllowlistPolicy {
   allowedTransports?: readonly UserMcpServerTransport[]
   allowedCommandRoots?: readonly string[]
+  allowedRemoteSchemes?: readonly ('http' | 'https')[]
   allowedRemoteHosts?: readonly string[]
+  allowedRemotePorts?: readonly number[]
+  allowedRemotePathPrefixes?: readonly string[]
   allowedHeaderNames?: readonly string[]
   allowedEnvKeys?: readonly string[]
   requirePluginProvenance?: boolean
@@ -163,6 +166,33 @@ function isRemoteHostAllowed(url: string, allowedRemoteHosts: readonly string[])
   }
 }
 
+function parseRemoteUrl(url: string | undefined): URL | undefined {
+  if (!url) return undefined
+  try {
+    const parsed = new URL(url)
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? parsed : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function effectiveRemotePort(url: URL): number {
+  if (url.port) return Number(url.port)
+  return url.protocol === 'http:' ? 80 : 443
+}
+
+function remotePathMatchesPrefix(pathname: string, prefixes: readonly string[]): boolean {
+  return prefixes.some((prefix) => {
+    const normalized = prefix.trim()
+    if (!normalized) return false
+    const pathPrefix = normalized.startsWith('/') ? normalized : `/${normalized}`
+    return (
+      pathname === pathPrefix ||
+      pathname.startsWith(pathPrefix.endsWith('/') ? pathPrefix : `${pathPrefix}/`)
+    )
+  })
+}
+
 function blockedDecision(
   server: UserMcpServerConfig,
   reason: string
@@ -239,11 +269,47 @@ export function evaluateUserMcpLaunchPolicy(
     }
   }
 
+  const parsedRemoteUrl = parseRemoteUrl(server.url?.trim())
+  if (
+    policy.allowedRemoteSchemes ||
+    policy.allowedRemoteHosts ||
+    policy.allowedRemotePorts ||
+    policy.allowedRemotePathPrefixes ||
+    server.url?.includes('@')
+  ) {
+    if (!parsedRemoteUrl) return blockedDecision(server, 'remote URL is invalid')
+    if (parsedRemoteUrl.username || parsedRemoteUrl.password) {
+      return blockedDecision(server, 'remote URL userinfo is not allowed')
+    }
+  }
+
+  if (policy.allowedRemoteSchemes && parsedRemoteUrl) {
+    const scheme = parsedRemoteUrl.protocol.replace(/:$/, '') as 'http' | 'https'
+    if (!policy.allowedRemoteSchemes.includes(scheme)) {
+      return blockedDecision(server, 'remote scheme is not allowlisted')
+    }
+  }
+
   if (policy.allowedRemoteHosts) {
     const url = server.url?.trim()
     if (!url || !isRemoteHostAllowed(url, policy.allowedRemoteHosts)) {
       return blockedDecision(server, 'remote host is not allowlisted')
     }
+  }
+
+  if (policy.allowedRemotePorts && parsedRemoteUrl) {
+    const port = effectiveRemotePort(parsedRemoteUrl)
+    if (!policy.allowedRemotePorts.includes(port)) {
+      return blockedDecision(server, `remote port ${port} is not allowlisted`)
+    }
+  }
+
+  if (
+    policy.allowedRemotePathPrefixes &&
+    parsedRemoteUrl &&
+    !remotePathMatchesPrefix(parsedRemoteUrl.pathname, policy.allowedRemotePathPrefixes)
+  ) {
+    return blockedDecision(server, 'remote path is not allowlisted')
   }
 
   if (policy.allowedHeaderNames) {

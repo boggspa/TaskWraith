@@ -393,6 +393,81 @@ describe('buildUserMcpStdioLaunchServers', () => {
     })
   })
 
+  it('can constrain managed remote MCP URLs by scheme, port, path, and userinfo', () => {
+    expect(
+      evaluateUserMcpLaunchPolicy(
+        {
+          id: 'docs',
+          name: 'Docs',
+          enabled: true,
+          transport: 'http',
+          url: 'https://docs.example.test:8443/mcp/v1'
+        },
+        {
+          allowedRemoteSchemes: ['https'],
+          allowedRemoteHosts: ['docs.example.test'],
+          allowedRemotePorts: [8443],
+          allowedRemotePathPrefixes: ['/mcp']
+        }
+      ).allowed
+    ).toBe(true)
+
+    expect(
+      evaluateUserMcpLaunchPolicy(
+        {
+          id: 'userinfo',
+          name: 'Userinfo',
+          enabled: true,
+          transport: 'http',
+          url: 'https://user:pass@docs.example.test/mcp'
+        },
+        { allowedRemoteHosts: ['docs.example.test'] }
+      )
+    ).toMatchObject({
+      allowed: false,
+      reason: 'remote URL userinfo is not allowed'
+    })
+
+    expect(
+      evaluateUserMcpLaunchPolicy(
+        {
+          id: 'wrong-path',
+          name: 'Wrong Path',
+          enabled: true,
+          transport: 'http',
+          url: 'https://docs.example.test/private'
+        },
+        {
+          allowedRemoteSchemes: ['https'],
+          allowedRemoteHosts: ['docs.example.test'],
+          allowedRemotePorts: [443],
+          allowedRemotePathPrefixes: ['/mcp']
+        }
+      )
+    ).toMatchObject({
+      allowed: false,
+      reason: 'remote path is not allowlisted'
+    })
+
+    expect(
+      evaluateUserMcpLaunchPolicy(
+        {
+          id: 'wrong-segment',
+          name: 'Wrong Segment',
+          enabled: true,
+          transport: 'http',
+          url: 'https://docs.example.test/mcp-evil'
+        },
+        {
+          allowedRemotePathPrefixes: ['/mcp']
+        }
+      )
+    ).toMatchObject({
+      allowed: false,
+      reason: 'remote path is not allowlisted'
+    })
+  })
+
   it('treats bearer token env vars as synthesized Authorization headers for policy', () => {
     expect(
       evaluateUserMcpLaunchPolicy(

@@ -60,7 +60,10 @@ export interface ManagedPolicySnapshot {
     active: boolean
     allowedTransportCount: number
     allowedCommandRootCount: number
+    allowedRemoteSchemeCount: number
     allowedRemoteHostCount: number
+    allowedRemotePortCount: number
+    allowedRemotePathPrefixCount: number
     allowedHeaderNameCount: number
     allowedEnvKeyCount: number
     requirePluginProvenance: boolean
@@ -189,6 +192,22 @@ function uniqueStrings(value: unknown, max = 128): string[] | undefined {
   return strings.length > 0 ? strings : undefined
 }
 
+function uniquePositiveIntegers(
+  value: unknown,
+  max = 128,
+  upperBound = Number.MAX_SAFE_INTEGER
+): number[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const integers = Array.from(
+    new Set(
+      value
+        .map((entry) => Number(entry))
+        .filter((entry) => Number.isInteger(entry) && entry > 0 && entry <= upperBound)
+    )
+  ).slice(0, max)
+  return integers.length > 0 ? integers : undefined
+}
+
 function sanitizeUserMcpLaunchAllowlist(value: unknown): UserMcpLaunchAllowlistPolicy | undefined {
   if (!isRecord(value)) return undefined
   const policy: UserMcpLaunchAllowlistPolicy = {}
@@ -199,8 +218,23 @@ function sanitizeUserMcpLaunchAllowlist(value: unknown): UserMcpLaunchAllowlistP
   if (transports && transports.length > 0) policy.allowedTransports = transports
   const commandRoots = uniqueStrings(value.allowedCommandRoots)
   if (commandRoots) policy.allowedCommandRoots = commandRoots
+  const schemes = uniqueStrings(value.allowedRemoteSchemes)?.filter(
+    (scheme): scheme is 'http' | 'https' => scheme === 'http' || scheme === 'https'
+  )
+  if (schemes && schemes.length > 0) policy.allowedRemoteSchemes = schemes
   const remoteHosts = uniqueStrings(value.allowedRemoteHosts)
   if (remoteHosts) policy.allowedRemoteHosts = remoteHosts
+  const remotePorts = uniquePositiveIntegers(value.allowedRemotePorts, 64, 65_535)
+  if (remotePorts) policy.allowedRemotePorts = remotePorts
+  const rawRemotePathPrefixes = uniqueStrings(value.allowedRemotePathPrefixes, 128)
+  const remotePathPrefixes = rawRemotePathPrefixes
+    ? Array.from(
+        new Set(
+          rawRemotePathPrefixes.map((prefix) => (prefix.startsWith('/') ? prefix : `/${prefix}`))
+        )
+      )
+    : undefined
+  if (remotePathPrefixes) policy.allowedRemotePathPrefixes = remotePathPrefixes
   const headerNames = uniqueStrings(value.allowedHeaderNames)
   if (headerNames) policy.allowedHeaderNames = headerNames
   const envKeys = uniqueStrings(value.allowedEnvKeys)
@@ -270,7 +304,11 @@ export class ManagedPolicyService {
               active: true,
               allowedTransportCount: userMcpLaunchAllowlist.allowedTransports?.length || 0,
               allowedCommandRootCount: userMcpLaunchAllowlist.allowedCommandRoots?.length || 0,
+              allowedRemoteSchemeCount: userMcpLaunchAllowlist.allowedRemoteSchemes?.length || 0,
               allowedRemoteHostCount: userMcpLaunchAllowlist.allowedRemoteHosts?.length || 0,
+              allowedRemotePortCount: userMcpLaunchAllowlist.allowedRemotePorts?.length || 0,
+              allowedRemotePathPrefixCount:
+                userMcpLaunchAllowlist.allowedRemotePathPrefixes?.length || 0,
               allowedHeaderNameCount: userMcpLaunchAllowlist.allowedHeaderNames?.length || 0,
               allowedEnvKeyCount: userMcpLaunchAllowlist.allowedEnvKeys?.length || 0,
               requirePluginProvenance:
@@ -292,8 +330,21 @@ export class ManagedPolicyService {
           ...(this.document.userMcpLaunchAllowlist.allowedCommandRoots
             ? { allowedCommandRoots: [...this.document.userMcpLaunchAllowlist.allowedCommandRoots] }
             : {}),
+          ...(this.document.userMcpLaunchAllowlist.allowedRemoteSchemes
+            ? { allowedRemoteSchemes: [...this.document.userMcpLaunchAllowlist.allowedRemoteSchemes] }
+            : {}),
           ...(this.document.userMcpLaunchAllowlist.allowedRemoteHosts
             ? { allowedRemoteHosts: [...this.document.userMcpLaunchAllowlist.allowedRemoteHosts] }
+            : {}),
+          ...(this.document.userMcpLaunchAllowlist.allowedRemotePorts
+            ? { allowedRemotePorts: [...this.document.userMcpLaunchAllowlist.allowedRemotePorts] }
+            : {}),
+          ...(this.document.userMcpLaunchAllowlist.allowedRemotePathPrefixes
+            ? {
+                allowedRemotePathPrefixes: [
+                  ...this.document.userMcpLaunchAllowlist.allowedRemotePathPrefixes
+                ]
+              }
             : {}),
           ...(this.document.userMcpLaunchAllowlist.allowedHeaderNames
             ? { allowedHeaderNames: [...this.document.userMcpLaunchAllowlist.allowedHeaderNames] }
