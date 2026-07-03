@@ -939,8 +939,6 @@ const defaultSettings: AppSettings = {
   kimiBinaryPath: '',
   ollamaBaseUrl: 'http://127.0.0.1:11434',
   ollamaDefaultModel: '',
-  ollamaDefaultRunProfile: 'local_scout',
-  ollamaRunProfiles: {},
   defaultGeminiAuthProfileId: null,
   geminiAuthProfiles: [],
   geminiApiRuntime: 'auto',
@@ -1888,15 +1886,6 @@ export class AppStore {
         stored.geminiApiRuntime === 'never'
           ? stored.geminiApiRuntime
           : defaultSettings.geminiApiRuntime,
-      ollamaDefaultRunProfile:
-        stored.ollamaDefaultRunProfile === 'local_scout' ||
-        stored.ollamaDefaultRunProfile === 'approved_patcher' ||
-        stored.ollamaDefaultRunProfile === 'verify_with_shell' ||
-        stored.ollamaDefaultRunProfile === 'provider_parity' ||
-        stored.ollamaDefaultRunProfile === 'custom'
-          ? stored.ollamaDefaultRunProfile
-          : defaultSettings.ollamaDefaultRunProfile,
-      ollamaRunProfiles: objectOrUndefined(stored.ollamaRunProfiles) || {},
       agenticServices: {
         ...defaultSettings.agenticServices,
         ...(stored.agenticServices || {})

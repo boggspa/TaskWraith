@@ -1492,10 +1492,6 @@ function App(): React.JSX.Element {
   const [kimiBinaryPath, setKimiBinaryPath] = useState('')
   const [ollamaBaseUrl, setOllamaBaseUrl] = useState('http://127.0.0.1:11434')
   const [ollamaDefaultModel, setOllamaDefaultModel] = useState('')
-  const [ollamaDefaultRunProfile, setOllamaDefaultRunProfile] =
-    useState<AppSettings['ollamaDefaultRunProfile']>('local_scout')
-  const [ollamaRunProfiles, setOllamaRunProfiles] =
-    useState<AppSettings['ollamaRunProfiles']>({})
   const [claudeAuthStatus, setClaudeAuthStatus] = useState<ProviderApiKeyStatus | null>(null)
   const [kimiAuthStatus, setKimiAuthStatus] = useState<ProviderApiKeyStatus | null>(null)
   const [geminiAuthStatus, setGeminiAuthStatus] = useState<GeminiAuthStatus | null>(null)
@@ -4062,14 +4058,12 @@ function App(): React.JSX.Element {
         typeof metadata.claudeFastMode === 'boolean' ? metadata.claudeFastMode : false,
       kimiThinkingEnabled:
         typeof metadata.kimiThinkingEnabled === 'boolean' ? metadata.kimiThinkingEnabled : true,
-      // Per-chat Ollama tier + run-profile (composer picker, stored in
-      // providerMetadata like approvalMode) coalescing to the GLOBAL default
-      // when this chat has never set one — so existing chats inherit the global
-      // value with no migration.
+      // Solo-chat Ollama run profile: honored only if a legacy chat still
+      // carries one in providerMetadata (there is no picker to set it any more).
+      // Absent → undefined → the runtime defaults to provider_parity. The
+      // per-ensemble-participant selector is the sole runtime knob now.
       ollamaRunProfile:
-        typeof metadata.ollamaRunProfile === 'string'
-          ? metadata.ollamaRunProfile
-          : ollamaDefaultRunProfile
+        typeof metadata.ollamaRunProfile === 'string' ? metadata.ollamaRunProfile : undefined
     }
   }
 
@@ -4595,15 +4589,6 @@ function App(): React.JSX.Element {
     setKimiBinaryPath(s.kimiBinaryPath || '')
     setOllamaBaseUrl(s.ollamaBaseUrl || 'http://127.0.0.1:11434')
     setOllamaDefaultModel(s.ollamaDefaultModel || '')
-    setOllamaDefaultRunProfile(
-      s.ollamaDefaultRunProfile === 'approved_patcher' ||
-        s.ollamaDefaultRunProfile === 'verify_with_shell' ||
-        s.ollamaDefaultRunProfile === 'provider_parity' ||
-        s.ollamaDefaultRunProfile === 'custom'
-        ? s.ollamaDefaultRunProfile
-        : 'local_scout'
-    )
-    setOllamaRunProfiles(s.ollamaRunProfiles || {})
     setAgenticServices({ ...DEFAULT_AGENTIC_SERVICES, ...(s.agenticServices || {}) })
     setAutoResumeParentOnSubThreadCompletion(
       typeof s.autoResumeParentOnSubThreadCompletion === 'boolean'
@@ -5048,16 +5033,6 @@ function App(): React.JSX.Element {
     if (next.ollamaDefaultModel !== undefined) {
       setOllamaDefaultModel(next.ollamaDefaultModel)
       settingsPatch.ollamaDefaultModel = next.ollamaDefaultModel
-      providersToRefresh.push('ollama')
-    }
-    if (next.ollamaDefaultRunProfile !== undefined) {
-      setOllamaDefaultRunProfile(next.ollamaDefaultRunProfile)
-      settingsPatch.ollamaDefaultRunProfile = next.ollamaDefaultRunProfile
-      providersToRefresh.push('ollama')
-    }
-    if (next.ollamaRunProfiles !== undefined) {
-      setOllamaRunProfiles(next.ollamaRunProfiles)
-      settingsPatch.ollamaRunProfiles = next.ollamaRunProfiles
       providersToRefresh.push('ollama')
     }
     if (next.auditOrchestration !== undefined) {
@@ -24244,8 +24219,6 @@ function App(): React.JSX.Element {
     multiview,
     ollamaBaseUrl,
     ollamaDefaultModel,
-    ollamaDefaultRunProfile,
-    ollamaRunProfiles,
     openChatPopoutWindow,
     openCurrentSideChatPresentation,
     openFileChangeInWorkbench,

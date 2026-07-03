@@ -202,7 +202,7 @@ describe('ComposerService', () => {
         }
       },
       { selectedModelType: 'gpt-oss:latest' },
-      { ollamaDefaultRunProfile: 'local_scout' }
+      {}
     )
     expect(payload.ollamaRunProfile).toBe('verify_with_shell')
   })

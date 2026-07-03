@@ -397,8 +397,6 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   multiview: any
   ollamaBaseUrl: any
   ollamaDefaultModel: any
-  ollamaDefaultRunProfile: any
-  ollamaRunProfiles: any
   openChatPopoutWindow: any
   openCurrentSideChatPresentation: any
   openFileChangeInWorkbench: any

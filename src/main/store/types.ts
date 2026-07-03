@@ -1669,8 +1669,6 @@ export interface AppSettings {
   kimiApiKey?: string
   ollamaBaseUrl?: string
   ollamaDefaultModel?: string
-  ollamaDefaultRunProfile?: OllamaRunProfileId
-  ollamaRunProfiles?: Record<string, OllamaRunProfile>
   /** Per-model timestamps (ms) for the one-shot honest capability preflight. */
   ollamaModelPreflightAt?: Record<string, number>
   defaultGeminiAuthProfileId?: string | null

@@ -132,8 +132,6 @@ export interface OllamaProviderDeps {
     AppSettings,
     | 'ollamaBaseUrl'
     | 'ollamaDefaultModel'
-    | 'ollamaDefaultRunProfile'
-    | 'ollamaRunProfiles'
     | 'ollamaModelPreflightAt'
     | 'agenticServices'
     | 'geminiMcpBridgeEnabled'

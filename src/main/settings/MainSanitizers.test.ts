@@ -722,34 +722,6 @@ describe('MainSanitizers settings patches', () => {
     ).toEqual({})
   })
 
-  it('sanitizes Ollama run profile settings', () => {
-    const settings = makeSettings()
-    const { sanitizeSettingsPatch } = makeSanitizers(settings)
-
-    expect(
-      sanitizeSettingsPatch({
-        ollamaDefaultRunProfile: 'verify_with_shell',
-        ollamaRunProfiles: {
-          default: { reasoningLevel: 'high' }
-        }
-      })
-    ).toMatchObject({
-      ollamaDefaultRunProfile: 'verify_with_shell',
-      ollamaRunProfiles: {
-        default: { reasoningLevel: 'high' }
-      }
-    })
-
-    expect(
-      sanitizeSettingsPatch({
-        ollamaDefaultRunProfile: 'bad-profile',
-        ollamaRunProfiles: 'bad'
-      })
-    ).toMatchObject({
-      ollamaRunProfiles: {}
-    })
-  })
-
   it('round-trips advancedFx.refraction and coerces non-boolean values', () => {
     const settings = makeSettings() // refraction defaults true in the fixture
     const { sanitizeSettingsPatch } = makeSanitizers(settings)
