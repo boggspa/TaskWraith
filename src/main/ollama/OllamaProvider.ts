@@ -257,6 +257,10 @@ interface OllamaChatTurnResult {
   /** Native structured tool calls (Ollama `tools` API). Preferred over the
    * legacy JSON-in-prose protocol when present. */
   toolCalls: OllamaToolRequest[]
+  /** Names of native tool_calls that were DROPPED because the name is not a
+   * known/callable tool (a hallucinated tool). Surfaced so the run loop can send
+   * a name-specific "that tool doesn't exist" repair instead of a generic nudge. */
+  droppedNativeToolNames: string[]
   lastDone: OllamaChatChunk | null
   parseErrors: string[]
   streamedContent: string
@@ -1710,6 +1714,30 @@ export function ollamaToolIntentNudgePrompt(
     .join(' ')
 }
 
+/** Nudge for a model that emitted a native tool call naming a tool that does
+ * not exist (hallucinated name) — the call is dropped before execution, so
+ * instead of misreading the turn as empty we tell the model the name is invalid,
+ * list what IS available, and point at tool_help for the tail. */
+export function ollamaUnknownToolNameNudgePrompt(
+  droppedNames: string[],
+  toolNames: string[] = [],
+  options?: OllamaRetryPromptOptions
+): string {
+  const invalid = [...new Set(droppedNames.filter(Boolean))]
+  const available = toolNames.filter(Boolean)
+  return [
+    invalid.length
+      ? `The tool ${invalid.map((n) => `"${n}"`).join(', ')} is not a TaskWraith tool, so that call did nothing.`
+      : 'That tool call named a tool that does not exist, so it did nothing.',
+    available.length ? `Available tools: ${available.join(', ')}.` : '',
+    'Call tool_help with an empty name to list every tool, or with a name to get its exact arguments.',
+    'Re-issue a call to a REAL tool now, or answer in normal prose if no tool is needed.',
+    ...ollamaEnsembleRetryReminder(options)
+  ]
+    .filter(Boolean)
+    .join(' ')
+}
+
 /** Detect a leaked tool-protocol attempt: the model tried to emit the
  * `{"taskwraith_tool":{...}}` JSON contract in prose but it could not be parsed
  * into a real request (e.g. invalid JSON escapes that even the tolerant parser
@@ -2076,6 +2104,42 @@ function ollamaArgPresent(
   return false
 }
 
+// Resolve an argument value through the tool's synonyms (first non-null key wins).
+function ollamaResolvedArgValue(
+  toolName: OllamaToolName,
+  args: Record<string, unknown>,
+  field: string
+): unknown {
+  for (const key of [field, ...(OLLAMA_ARG_SYNONYMS_BY_TOOL[toolName]?.[field] || [])]) {
+    const value = args[key]
+    if (value !== undefined && value !== null) return value
+  }
+  return undefined
+}
+
+function ollamaArgTypeMatches(expected: 'string' | 'array', value: unknown): boolean {
+  return expected === 'array' ? Array.isArray(value) : typeof value === 'string'
+}
+
+// Curated (tool → field → type) checks for load-bearing args where a wrong type
+// is unambiguously fatal at execution. Deliberately narrow: only fields with NO
+// string-or-array synonym variance (e.g. find_files' pattern accepts a glob
+// LIST via the `globs` synonym, so it is intentionally absent) — a pre-execution
+// gate must never false-positive a call the executor would run. Presence/required
+// is handled separately; this only fires on a PRESENT arg of the wrong shape.
+const OLLAMA_ARG_TYPE_CHECKS: Partial<Record<OllamaToolName, Record<string, 'string' | 'array'>>> = {
+  read_file: { path: 'string' },
+  write_file: { path: 'string', content: 'string' },
+  replace: { path: 'string', old_string: 'string', new_string: 'string' },
+  create_directory: { path: 'string' },
+  delete_path: { path: 'string' },
+  move_path: { from: 'string', to: 'string' },
+  rename_path: { path: 'string', newName: 'string' },
+  run_shell_command: { command: 'string' },
+  workspace_search: { query: 'string' },
+  todo_write: { todos: 'array' }
+}
+
 /**
  * Validate a tool call's arguments against the tool's declared schema BEFORE
  * execution — specifically the required fields (the tools declare no enums).
@@ -2111,6 +2175,24 @@ export function validateOllamaToolArguments(
       }: ${fields}. Re-issue the ${toolName} tool call with ${missing
         .map((field) => `"${field}"`)
         .join(', ')} set.`
+    }
+  }
+  const typeChecks = OLLAMA_ARG_TYPE_CHECKS[typedToolName]
+  if (typeChecks) {
+    for (const [field, expected] of Object.entries(typeChecks)) {
+      const value = ollamaResolvedArgValue(typedToolName, args, field)
+      if (value === undefined) continue
+      if (!ollamaArgTypeMatches(expected, value)) {
+        const got = Array.isArray(value) ? 'a list' : `a ${typeof value}`
+        return {
+          ok: false,
+          message: `Your ${toolName} call has the wrong type for "${field}": it must be ${
+            expected === 'array' ? 'a list' : `a ${expected}`
+          }, but you sent ${got}. Re-issue the ${toolName} tool call with "${field}" as ${
+            expected === 'array' ? 'a list' : `a ${expected}`
+          }.`
+        }
+      }
     }
   }
   return { ok: true }
@@ -2210,6 +2292,7 @@ async function runOllamaChatTurn(input: {
   let thinking = ''
   let streamedThinking = ''
   const toolCalls: OllamaToolRequest[] = []
+  const droppedNativeToolNames: string[] = []
   let lastDone: OllamaChatChunk | null = null
   const parseErrors: string[] = []
   const handleChunk = (chunk: OllamaChatChunk) => {
@@ -2255,7 +2338,16 @@ async function runOllamaChatTurn(input: {
     }
     for (const call of chunk.message?.tool_calls || []) {
       const normalized = normalizeOllamaNativeToolCall(call)
-      if (normalized) toolCalls.push(normalized)
+      if (normalized) {
+        toolCalls.push(normalized)
+      } else {
+        // Hallucinated / unknown tool name — record it so the run loop can send a
+        // specific repair rather than silently dropping the call and misreading
+        // the turn as empty/reasoning-only.
+        const droppedName =
+          typeof call.function?.name === 'string' ? call.function.name.trim() : ''
+        if (droppedName) droppedNativeToolNames.push(droppedName)
+      }
     }
     if (chunk.done) {
       lastDone = chunk
@@ -2287,7 +2379,16 @@ async function runOllamaChatTurn(input: {
   if (trailing) {
     handleLine(trailing)
   }
-  return { content, thinking, toolCalls, lastDone, parseErrors, streamedContent, streamedThinking }
+  return {
+    content,
+    thinking,
+    toolCalls,
+    droppedNativeToolNames,
+    lastDone,
+    parseErrors,
+    streamedContent,
+    streamedThinking
+  }
 }
 
 export async function runOllamaProvider(
@@ -2705,6 +2806,22 @@ export async function runOllamaProvider(
         // emits a final answer and `break`s (loop ends, counter irrelevant).
         consecutiveNonProductiveTurns += 1
         const hasContent = turn.content.trim().length > 0
+        // Hallucinated native tool name: the model DID try to call a tool, but
+        // the name isn't real, so it was dropped. Give a name-specific repair
+        // (not the generic empty/reasoning steer) so it fixes the name or uses
+        // tool_help, instead of being told it "said nothing".
+        if (toolProtocolEnabled && turn.droppedNativeToolNames.length > 0) {
+          forceJsonToolFallback = true
+          messages.push({
+            role: 'user',
+            content: ollamaUnknownToolNameNudgePrompt(
+              turn.droppedNativeToolNames,
+              availableToolNames,
+              { ensembleRun }
+            )
+          })
+          continue
+        }
         // Reasoning-only (or empty) turn while tools are available: nudge the
         // model to either call a tool or answer in prose rather than surfacing
         // hidden chain-of-thought as the final answer.

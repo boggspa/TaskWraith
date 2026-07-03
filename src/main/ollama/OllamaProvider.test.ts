@@ -1953,6 +1953,61 @@ describe('runOllamaProvider streaming', () => {
     expect(toolNames).not.toContain('run_shell_command')
     expect(toolNames).not.toContain('run_task')
   })
+
+  it('sends a name-specific repair when a native tool call names a nonexistent tool', async () => {
+    let chatCalls = 0
+    const chatBodies: string[] = []
+    const executeTool = vi.fn(async () => ({ ok: true, output: 'should not run' }))
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (String(url).endsWith('/api/tags')) {
+        return jsonResponse({
+          models: [
+            {
+              name: 'stream-model:latest',
+              digest: 'digest-stream',
+              details: { family: 'qwen' },
+              capabilities: ['tools']
+            }
+          ]
+        })
+      }
+      if (String(url).endsWith('/api/show')) {
+        return jsonResponse({ details: { family: 'qwen' }, capabilities: ['tools'] })
+      }
+      if (String(url).endsWith('/api/chat')) {
+        chatCalls += 1
+        chatBodies.push(String(init?.body || ''))
+        if (chatCalls === 1) {
+          // A hallucinated tool name — dropped by normalizeOllamaNativeToolCall.
+          return ollamaStreamResponse([
+            JSON.stringify({
+              message: {
+                role: 'assistant',
+                content: '',
+                tool_calls: [{ function: { name: 'search_the_web', arguments: { q: 'weather' } } }]
+              }
+            }),
+            JSON.stringify({ done: true, prompt_eval_count: 6, eval_count: 3 })
+          ])
+        }
+        return ollamaStreamResponse([
+          JSON.stringify({ message: { role: 'assistant', content: 'Answering directly instead.' } }),
+          JSON.stringify({ done: true, prompt_eval_count: 6, eval_count: 4 })
+        ])
+      }
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const { deps } = makeProviderDeps({ fetchMock, executeTool })
+
+    await runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
+
+    // The invalid call did not execute; the model got a specific repair naming
+    // the bad tool + pointing at tool_help.
+    expect(executeTool).not.toHaveBeenCalled()
+    expect(chatBodies.length).toBeGreaterThanOrEqual(2)
+    expect(chatBodies[1]).toContain('search_the_web')
+    expect(chatBodies[1]).toContain('tool_help')
+  })
 })
 
 describe('normalizeOllamaBaseUrl', () => {
@@ -2344,6 +2399,32 @@ describe('parseOllamaToolRequest', () => {
     const missingIntent = validateOllamaToolArguments('write_file', { path: 'a.ts', content: 'x' })
     expect(missingIntent.ok).toBe(false)
     if (!missingIntent.ok) expect(missingIntent.message).toContain('intent')
+  })
+
+  it('flags a wrong-TYPE load-bearing argument with a repairable message', () => {
+    const numPath = validateOllamaToolArguments('write_file', {
+      path: 5 as unknown as string,
+      content: 'x',
+      intent: 'write'
+    })
+    expect(numPath.ok).toBe(false)
+    if (!numPath.ok) {
+      expect(numPath.message).toContain('path')
+      expect(numPath.message).toContain('string')
+    }
+    const stringTodos = validateOllamaToolArguments('todo_write', {
+      todos: 'do the thing' as unknown as unknown[]
+    })
+    expect(stringTodos.ok).toBe(false)
+    if (!stringTodos.ok) expect(stringTodos.message).toContain('todos')
+
+    // Correct types pass...
+    expect(
+      validateOllamaToolArguments('write_file', { path: 'a.ts', content: 'x', intent: 'write' })
+    ).toEqual({ ok: true })
+    // ...and the type check must NOT false-positive find_files' glob LIST (its
+    // `pattern` accepts a string OR an array via the `globs` synonym).
+    expect(validateOllamaToolArguments('find_files', { globs: ['*.ts'] })).toEqual({ ok: true })
   })
 
   it('keeps empty-response retry nudges anchored to ensemble assignments', () => {
