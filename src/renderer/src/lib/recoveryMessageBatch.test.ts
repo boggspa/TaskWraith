@@ -83,6 +83,43 @@ describe('buildRecoveryMessagesForChat', () => {
     expect(messages[1]).toMatchObject({ id: 'recovery-run-2-record', runId: 'run-2' })
   })
 
+  it('re-derives ensemble identity from the chat runs when the record is unlabelled', () => {
+    // A recovered ensemble job that lost its identity → the record has no
+    // ensembleRole/participant, but the chat's persisted runs still carry it.
+    const records = [
+      makeRecord({ runId: 'run-1', provider: 'claude' }),
+      makeRecord({ runId: 'run-2', provider: 'codex' })
+    ]
+    const identityByRunId = new Map([
+      ['run-1', { ensembleParticipantId: 'participant-a', ensembleRole: 'Reviewer' }],
+      ['run-2', { ensembleParticipantId: 'participant-b', ensembleRole: 'Builder' }]
+    ])
+
+    const messages = buildRecoveryMessagesForChat('chat-1', records, new Set(), (runId) =>
+      runId ? identityByRunId.get(runId) : undefined
+    )
+
+    // Now labelled → batched into one ensemble message with both lane labels.
+    expect(messages).toHaveLength(1)
+    expect(messages[0].content).toContain('Reviewer')
+    expect(messages[0].content).toContain('Builder')
+    expect(messages[0].content).toContain('participant-a')
+  })
+
+  it('leaves a record unlabelled when the resolver has no identity for its run', () => {
+    const records = [makeRecord({ runId: 'solo-run', provider: 'claude' })]
+    const messages = buildRecoveryMessagesForChat(
+      'chat-1',
+      records,
+      new Set(),
+      () => undefined
+    )
+    expect(messages).toHaveLength(1)
+    // Solo run: still the plain "Claude run" message, no lane label parentheses.
+    expect(messages[0].content).toContain('Claude run')
+    expect(messages[0].content).not.toMatch(/run \(.*\/.*\)/)
+  })
+
   it('avoids creating a batch when the exact batch message already exists', () => {
     const records = [
       makeRecord({

@@ -9662,10 +9662,27 @@ function App(): React.JSX.Element {
       const chatRecords = recordsByChatId.get(chat.appChatId) || []
       if (chatRecords.length === 0) return chat
       const existingMessageIds = new Set(chat.messages.map((message) => message.id))
+      // A recovered ensemble participant job can lose its ensemble identity, so
+      // the recovery record reads as a solo provider run. Re-derive it from the
+      // chat's persisted runs (which keep ensembleParticipantId/Role across
+      // restart) so the message labels the ensemble seat and batches correctly.
+      const ensembleIdentityByRunId = new Map<
+        string,
+        { ensembleParticipantId?: string; ensembleRole?: string }
+      >()
+      for (const run of chat.runs) {
+        if (run.ensembleParticipantId || run.ensembleRole) {
+          ensembleIdentityByRunId.set(run.runId, {
+            ensembleParticipantId: run.ensembleParticipantId,
+            ensembleRole: run.ensembleRole
+          })
+        }
+      }
       const messagesToAdd = buildRecoveryMessagesForChat(
         chat.appChatId,
         chatRecords,
-        existingMessageIds
+        existingMessageIds,
+        (runId) => (runId ? ensembleIdentityByRunId.get(runId) : undefined)
       )
       if (messagesToAdd.length === 0) return chat
       return {

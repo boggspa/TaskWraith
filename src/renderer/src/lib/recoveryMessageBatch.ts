@@ -33,6 +33,40 @@ const laneLabel = (record: RunRecoveryRecord): string => {
 const hasEnsembleIdentity = (record: RunRecoveryRecord): boolean =>
   Boolean(record.ensembleRole?.trim() || record.ensembleParticipantId?.trim())
 
+/** Ensemble identity re-derived from the chat's persisted `runs[]` by runId. */
+export interface RecoveryEnsembleIdentity {
+  ensembleParticipantId?: string
+  ensembleRole?: string
+}
+
+/**
+ * A recovered RunQueueJob can lose its ensemble identity (the job was registered
+ * before its ChatRun was persisted, so `lookupEnsembleQueueMetadata` found no
+ * match), leaving the recovery record with empty `ensembleRole`/
+ * `ensembleParticipantId`. The message then reads as a solo provider run
+ * ("Recovered interrupted Claude run …") with no lane label, and same-pass
+ * participants aren't batched. The chat's persisted `runs[]` DO carry the
+ * identity (EnsembleOrchestrator writes it on every seeded run and it survives
+ * restart), so re-derive it by runId when the record itself is unlabelled.
+ */
+const enrichRecordWithEnsembleIdentity = (
+  record: RunRecoveryRecord,
+  resolveEnsembleIdentity?: (runId: string | undefined) => RecoveryEnsembleIdentity | undefined
+): RunRecoveryRecord => {
+  if (record.ensembleRole?.trim() || record.ensembleParticipantId?.trim()) return record
+  const identity = resolveEnsembleIdentity?.(record.runId)
+  if (!identity || (!identity.ensembleParticipantId?.trim() && !identity.ensembleRole?.trim())) {
+    return record
+  }
+  return {
+    ...record,
+    ...(identity.ensembleParticipantId?.trim()
+      ? { ensembleParticipantId: identity.ensembleParticipantId }
+      : {}),
+    ...(identity.ensembleRole?.trim() ? { ensembleRole: identity.ensembleRole } : {})
+  }
+}
+
 const formatRecoveryLineForRecord = (record: RunRecoveryRecord): string => {
   const providerLabel = getProviderLabel(record.provider)
   const detailsText = `${record.reason} TaskWraith marked the run as ${record.recoveredStatus}.`
@@ -52,10 +86,16 @@ export const formatRecoveryMessage = (record: RunRecoveryRecord): string => {
 export const buildRecoveryMessagesForChat = (
   chatId: string,
   records: RunRecoveryRecord[],
-  existingMessageIds: Set<string>
+  existingMessageIds: Set<string>,
+  resolveEnsembleIdentity?: (runId: string | undefined) => RecoveryEnsembleIdentity | undefined
 ): ChatMessage[] => {
+  // Re-derive ensemble identity from the chat's persisted runs BEFORE grouping,
+  // so both the batch decision (`hasEnsembleIdentity`) and the lane label see it.
+  const enrichedRecords = resolveEnsembleIdentity
+    ? records.map((record) => enrichRecordWithEnsembleIdentity(record, resolveEnsembleIdentity))
+    : records
   const recordsByRecoveredAt = new Map<string, RunRecoveryRecord[]>()
-  for (const record of records) {
+  for (const record of enrichedRecords) {
     const recoveredAt = record.recoveredAt
     const existing = recordsByRecoveredAt.get(recoveredAt)
     if (existing) existing.push(record)
