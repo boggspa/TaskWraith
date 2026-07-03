@@ -1395,6 +1395,14 @@ function App(): React.JSX.Element {
   // cancellation because Stop should still surface its stopped feedback.
   const steerSuppressedSummaryRunIdsRef = useRef<Set<string>>(new Set())
   const queuedSteerInFlightRunIdsRef = useRef<Set<string>>(new Set())
+  // Single-flight guard for the ENSEMBLE composer Steer path. The solo steer
+  // path uses `steerState`/`isSteerInFlight`, but the ensemble branch of
+  // `handleSteer` returns before that machine and never disables the button —
+  // so a second Steer click before the first `runEnsembleRound` IPC resolves
+  // would fire a second, independent steer that cancels + restarts the round
+  // the first click just began. Keyed by chatId; added before dispatch and
+  // cleared in a `finally`.
+  const ensembleSteerInFlightChatIdsRef = useRef<Set<string>>(new Set())
   const runStreamMetricsByRunIdRef = useRef<Map<string, RunStreamMetrics>>(new Map())
   const pendingStreamFlushCharsByRunIdRef = useRef<Map<string, number>>(new Map())
   const pendingStreamFlushCharsByRunItemRef = useRef<Map<string, number>>(new Map())
@@ -12583,30 +12591,48 @@ function App(): React.JSX.Element {
 
     const targetChat = request.chatRecord || currentChat
     if (targetChat?.chatKind === 'ensemble') {
+      // Single-flight: ignore a re-entrant Steer click for this chat while the
+      // previous dispatch's IPC round-trip is still in flight (the button is
+      // never disabled on the ensemble path, so a fast double-click would
+      // otherwise fire two independent steers).
+      if (ensembleSteerInFlightChatIdsRef.current.has(targetChatId)) {
+        return
+      }
       const fanoutPolicy = normalizeEnsembleFanoutPolicy(
         targetChat.ensemble?.fanoutPolicy,
         targetChat.ensemble?.concurrentModeEnabled
       )
-      await window.api.runEnsembleRound({
-        chatId: targetChatId,
-        prompt: request.prompt,
-        mode: isEnsembleActiveRoundDispatchLive(targetChat.ensemble?.activeRound)
-          ? 'steer'
-          : 'normal',
-        concurrentMode: ensembleFanoutPolicyEnabled(fanoutPolicy),
-        fanoutPolicy,
-        imageAttachments: request.imageAttachments.map((attachment) => ({
-          id: attachment.id,
-          path: attachment.path,
-          name: attachment.name
-        }))
-      })
-      clearComposerAttachmentsForSubmittedRequest(request)
-      if (!request.existingPrompt) {
-        setChatPromptDraft(targetChatId, '')
+      ensembleSteerInFlightChatIdsRef.current.add(targetChatId)
+      try {
+        await window.api.runEnsembleRound({
+          chatId: targetChatId,
+          prompt: request.prompt,
+          // The Steer gesture unconditionally means "interrupt the current
+          // round and run this prompt now." Never downgrade to 'normal' off a
+          // possibly-stale `activeRound` snapshot: that made the orchestrator
+          // take its queue branch (mode !== 'steer' ⇒ queue) instead of
+          // steering, which is exactly what forced the user to click Steer a
+          // second time. The main orchestrator is authoritative about whether
+          // there's a live participant to cancel — if nothing is live it simply
+          // starts a fresh round with this prompt.
+          mode: 'steer',
+          concurrentMode: ensembleFanoutPolicyEnabled(fanoutPolicy),
+          fanoutPolicy,
+          imageAttachments: request.imageAttachments.map((attachment) => ({
+            id: attachment.id,
+            path: attachment.path,
+            name: attachment.name
+          }))
+        })
+        clearComposerAttachmentsForSubmittedRequest(request)
+        if (!request.existingPrompt) {
+          setChatPromptDraft(targetChatId, '')
+        }
+        setIsThinking(true)
+        void refreshSingleChat(targetChatId)
+      } finally {
+        ensembleSteerInFlightChatIdsRef.current.delete(targetChatId)
       }
-      setIsThinking(true)
-      void refreshSingleChat(targetChatId)
       return
     }
 
