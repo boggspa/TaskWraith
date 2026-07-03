@@ -2373,6 +2373,76 @@ Next action:
     )
   })
 
+  it('coalesces a second queued steer that lands while the first is still cancelling (no double-click)', async () => {
+    // Reproduces the "click Steer twice" bug. The interrupted provider's
+    // cancellation is slow (resolveCancel pending), so the first steer's
+    // replacement round is parked in runRound before it dispatches. A second
+    // steer arriving in that window must NOT supersede the first: doing so
+    // orphaned the truly-interrupted run into "Failed exit 130" and aborted the
+    // first steer's dispatch, so the user had to click a second time.
+    let resolveCancel: (() => void) | undefined
+    const harness = makeHarness({
+      cancelRun: async () => {
+        await new Promise<void>((resolve) => {
+          resolveCancel = resolve
+        })
+        return true
+      }
+    })
+
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Original prompt',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const oldRun = harness.dispatched[0]
+
+    for (const prompt of ['Queued A', 'Queued B']) {
+      harness.orchestrator.startRound({
+        chatId: 'ensemble-chat',
+        prompt,
+        event: { sender: {} as Electron.WebContents },
+        mode: 'queue'
+      })
+    }
+
+    // First steer — parks awaiting the (still-pending) interrupted cancellation.
+    const steer1 = harness.orchestrator.steerQueuedPrompt({
+      chatId: 'ensemble-chat',
+      index: 0,
+      textPrefix: 'Queued A',
+      event: { sender: {} as Electron.WebContents }
+    })
+    expect(steer1.status).toBe('steered')
+    // Not dispatched yet — the replacement round is parked.
+    expect(harness.dispatched).toHaveLength(1)
+
+    // Second steer during the parked window — must coalesce onto the in-flight
+    // steer (same round id), NOT start a competing cancel+dispatch.
+    const steer2 = harness.orchestrator.steerQueuedPrompt({
+      chatId: 'ensemble-chat',
+      index: 0,
+      textPrefix: 'Queued B',
+      event: { sender: {} as Electron.WebContents }
+    })
+    expect(steer2.status).toBe('steered')
+    expect(steer2.roundId).toBe(steer1.roundId)
+    expect(harness.dispatched).toHaveLength(1)
+
+    // Let the interrupted cancellation land: the first steer now dispatches.
+    resolveCancel?.()
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    expect(harness.dispatched[1].prompt).toContain('Queued A')
+    expect(harness.chat.ensemble?.activeRound?.roundId).toBe(steer1.roundId)
+    // 'Queued B' is never lost — it stays in the FIFO for a later steer.
+    expect(harness.chat.ensemble?.activeRound?.queuedPrompts).toEqual(['Queued B'])
+
+    // The interrupted participant was finalised as 'cancelled' before its
+    // SIGINT, so a late code-130 exit is a no-op — it never surfaces 'failed'.
+    expect(harness.orchestrator.markRunExited(oldRun.appRunId, 130)).toBe(false)
+  })
+
   it('preserves queued prompt external grants when the queued ensemble round dispatches', async () => {
     const harness = makeHarness()
     const queuedGrant = externalGrant('claude', '/tmp/queued-spec.pdf')

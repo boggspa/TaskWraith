@@ -2325,6 +2325,20 @@ export class EnsembleOrchestrator {
     if (!runtime || runtime.cancelled) {
       return { status: 'ignored', error: 'No active Ensemble round' }
     }
+    // Single-flight for the parked-steer window. A steered round dispatches
+    // asynchronously: `beginRound` returns immediately while `runRound` awaits
+    // the interrupted round's `cancelRound` before it dispatches (see the
+    // `startAfterCancellation` guard above). If a second queued steer lands in
+    // that window, cancelling this still-parked round would find NO active run
+    // to finalise (it never dispatched) — so the truly-interrupted process is
+    // left to exit on its own SIGINT and surface as a red "Failed exit 130",
+    // and the first steer's pending dispatch is aborted. That is exactly what
+    // forced the user to click Steer twice. Coalesce onto the in-flight steer:
+    // the newly-targeted prompt stays in the FIFO queue and remains steerable
+    // once the pending round dispatches.
+    if (runtime.startAfterCancellation) {
+      return { status: 'steered', roundId: runtime.roundId }
+    }
     const resolved = this.resolveQueuedPrompt(runtime, input)
     if ('error' in resolved) {
       return { status: 'ignored', error: resolved.error }
@@ -6114,6 +6128,13 @@ export class EnsembleOrchestrator {
       if (runtime.cancelled || this.roundsByChatId.get(runtime.chatId)?.roundId !== runtime.roundId) {
         return
       }
+      // The interrupted round's cancellation has settled and this replacement
+      // round now owns the chat, so it is committed to dispatch. Drop the
+      // "parked" marker: from here on a concurrent steer cancels THIS round
+      // through its live activeRun (correctly finalising the interrupted
+      // participant as 'cancelled'), rather than being coalesced by the
+      // parked-steer guard in `steerQueuedPrompt`.
+      runtime.startAfterCancellation = undefined
     }
     // Slice C extension (1.0.3) — convert the fixed for-loop into a
     // mutable remaining-queue so `ensemble_yield(target:...)` can
