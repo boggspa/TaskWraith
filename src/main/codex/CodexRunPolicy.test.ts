@@ -26,6 +26,20 @@ describe('codexSandboxForMode', () => {
     expect(codexSandboxForMode('auto_edit')).toBe('workspace-write')
     expect(codexSandboxForMode(undefined)).toBe('workspace-write')
   })
+
+  it('drops to danger-full-access only under a full-access grant', () => {
+    expect(codexSandboxForMode('auto_edit', true)).toBe('danger-full-access')
+    expect(codexSandboxForMode('default', true)).toBe('danger-full-access')
+    // Without the grant flag every non-plan run stays workspace-confined.
+    expect(codexSandboxForMode('auto_edit', false)).toBe('workspace-write')
+    expect(codexSandboxForMode('default')).toBe('workspace-write')
+  })
+
+  it('never lets a full-access flag override the plan read-only floor', () => {
+    // plan + full_access is mutually exclusive in practice, but if the flag ever
+    // leaked onto a plan run the read-only floor must still win.
+    expect(codexSandboxForMode('plan', true)).toBe('read-only')
+  })
 })
 
 describe('codexGitMetadataRootsForWorkspace', () => {

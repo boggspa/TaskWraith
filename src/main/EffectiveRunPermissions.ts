@@ -229,6 +229,34 @@ export function isPlanInstrumentGrantHold(
   return presetId === 'plan' && !!service && PLAN_APPROVAL_ONLY_INSTRUMENT_SERVICES.has(service)
 }
 
+/**
+ * Is this run a genuine, trusted Full-Access grant — the ONLY posture allowed to
+ * drop provider sandboxing (Codex `danger-full-access`, Gemini seatbelt off) and
+ * reach outside the workspace (login keychain, ~/Library, sibling dirs) for
+ * signing / archiving / uploading?
+ *
+ * True only when BOTH hold on the POST-CLAMP effective permissions:
+ *   - `presetId === 'full_access'` — the explicit per-workspace / per-run opt-in.
+ *     presetId is part of the HMAC-signed posture, so a tampered or unsigned
+ *     payload that forged it would already have been clamped to read_only by
+ *     `clampUntrustedRunPosture` before reaching a spawn site; and
+ *   - `agenticServices.shellCommands === 'allow'` — so the GLOBAL shellCommands
+ *     kill-switch (`preserveExplicitDeny`) still vetoes it: a user who set global
+ *     shell to 'deny' keeps the sandbox even on a full_access run.
+ *
+ * A global `shellCommands: 'allow'` on a NON-full_access preset deliberately does
+ * NOT qualify (the presetId gate), keeping the sandbox-drop tied to the explicit
+ * Full Access opt-in rather than any write-capable run.
+ */
+export function isFullShellAccessGranted(
+  effectivePermissions: EffectiveRunPermissions | null | undefined
+): boolean {
+  return (
+    effectivePermissions?.presetId === 'full_access' &&
+    effectivePermissions?.agenticServices?.shellCommands === 'allow'
+  )
+}
+
 export function resolveEffectiveRunPermissions(
   input: ResolveEffectiveRunPermissionsInput
 ): EffectiveRunPermissions {

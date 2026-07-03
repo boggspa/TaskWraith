@@ -7,8 +7,21 @@ import {
 } from 'node:fs'
 import { isAbsolute, resolve } from 'node:path'
 
-export function codexSandboxForMode(approvalMode?: string): 'read-only' | 'workspace-write' {
-  return approvalMode === 'plan' ? 'read-only' : 'workspace-write'
+export function codexSandboxForMode(
+  approvalMode?: string,
+  fullAccessGranted?: boolean
+): 'read-only' | 'workspace-write' | 'danger-full-access' {
+  // Plan is always the read-only floor, even if a full-access flag leaks in
+  // (the two are mutually exclusive — full_access resolves to auto_edit).
+  if (approvalMode === 'plan') return 'read-only'
+  // A signed, post-clamp full_access grant (see `isFullShellAccessGranted`)
+  // drops Codex's workspace confinement so an approved agent can reach
+  // ~/Library (SwiftPM caches / DerivedData), the login keychain (codesign
+  // identities) and paths outside the repo — the capabilities an iOS
+  // archive / notarize / TestFlight upload needs. Gated strictly on the
+  // trusted grant; every other run stays workspace-confined.
+  if (fullAccessGranted) return 'danger-full-access'
+  return 'workspace-write'
 }
 
 export interface CodexGitMetadataFs {

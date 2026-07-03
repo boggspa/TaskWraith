@@ -605,7 +605,11 @@ import {
   previewModelCatalogEnabledForProvider
 } from '../shared/previewModelCatalog'
 import { buildCodexStatusSnapshot } from './CodexStatusSnapshot'
-import { resolveEffectiveRunPermissions, isPlanInstrumentGrantHold } from './EffectiveRunPermissions'
+import {
+  resolveEffectiveRunPermissions,
+  isPlanInstrumentGrantHold,
+  isFullShellAccessGranted
+} from './EffectiveRunPermissions'
 import { isReconRunPosture } from './ReconPosture'
 import {
   buildRunPermissionPostureSnapshot,
@@ -16526,7 +16530,10 @@ async function runCodexAppServer(event: Electron.IpcMainInvokeEvent, payload: Ag
     payload.scope === 'global'
       ? 'on-request'
       : codexApprovalPolicyForMode(payload.approvalMode, settings)
-  const sandbox = codexSandboxForMode(payload.approvalMode)
+  const sandbox = codexSandboxForMode(
+    payload.approvalMode,
+    isFullShellAccessGranted(payload.effectivePermissions)
+  )
   const startOrResumeParams = {
     cwd: payload.workspace!,
     model,
@@ -16679,7 +16686,10 @@ async function runCodexExecFallback(
   }
 
   const model = normalizeCodexModel(payload.model)
-  const sandbox = codexSandboxForMode(payload.approvalMode)
+  const sandbox = codexSandboxForMode(
+    payload.approvalMode,
+    isFullShellAccessGranted(payload.effectivePermissions)
+  )
   const args = [
     ...buildCodexFastServiceTierCompatibilityArgs(),
     'exec',
