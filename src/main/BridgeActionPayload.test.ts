@@ -474,13 +474,17 @@ describe('decodeBridgeActionPayload', () => {
           workspaceId: 'ws-1',
           threadId: 'thread-1',
           orchestrationMode: 'continuous',
-          maxContinuationHops: 12
+          maxContinuationHops: 12,
+          fanoutPolicy: 'locked_writers_user_preflight',
+          ensembleContextChars: 120_000
         })
       ).payload
       expect(payload.kind).toBe('ensembleSettingsUpdate')
       if (payload.kind === 'ensembleSettingsUpdate') {
         expect(payload.orchestrationMode).toBe('continuous')
         expect(payload.maxContinuationHops).toBe(12)
+        expect(payload.fanoutPolicy).toBe('locked_writers_user_preflight')
+        expect(payload.ensembleContextChars).toBe(120_000)
       }
       expect(workspaceIdFromPayload(payload)).toBe('ws-1')
       expect(payloadRequiresWorkspaceGating(payload)).toBe(true)
@@ -496,6 +500,17 @@ describe('decodeBridgeActionPayload', () => {
         })
       ).payload
       expect(badMode).toMatchObject({ kind: 'unknown', rawKind: 'ensembleSettingsUpdate' })
+
+      const badFanout = decodeBridgeActionPayload(
+        encode({
+          kind: 'ensembleSettingsUpdate',
+          actionId: 'a-ensemble-settings-bad-fanout',
+          workspaceId: 'ws-1',
+          threadId: 'thread-1',
+          fanoutPolicy: 'write'
+        })
+      ).payload
+      expect(badFanout).toMatchObject({ kind: 'unknown', rawKind: 'ensembleSettingsUpdate' })
 
       const emptyPatch = decodeBridgeActionPayload(
         encode({

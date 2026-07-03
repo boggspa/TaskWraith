@@ -520,6 +520,8 @@ export interface RemoteEnsembleState {
   secondInCommandParticipantId?: string
   continuationHops?: number
   maxContinuationHops?: number
+  fanoutPolicy?: string
+  ensembleContextChars?: number
   queuedPromptCount: number
   participantCount: number
   participants: RemoteEnsembleParticipantState[]
@@ -1382,6 +1384,8 @@ export function buildRemoteEnsembleState(chat: ChatRecord): RemoteEnsembleState 
     secondInCommandParticipantId: ensemble.secondInCommandParticipantId,
     continuationHops: activeRound?.continuationHops,
     maxContinuationHops: activeRound?.maxContinuationHops ?? ensemble.maxContinuationHops,
+    fanoutPolicy: activeRound?.fanoutPolicy ?? ensemble.fanoutPolicy,
+    ensembleContextChars: ensemble.ensembleContextChars,
     queuedPromptCount: queuedPrompts.length,
     ...(queuedPrompts.length > 0
       ? {

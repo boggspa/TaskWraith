@@ -119,7 +119,9 @@ const sample = {
     workspaceId: 'ws-1',
     threadId: 't-1',
     orchestrationMode: 'continuous',
-    maxContinuationHops: 9
+    maxContinuationHops: 9,
+    fanoutPolicy: 'read_only',
+    ensembleContextChars: 120_000
   } satisfies BridgeEnsembleSettingsUpdateAction,
   registerApnsToken: {
     kind: 'registerApnsToken',

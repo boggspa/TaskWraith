@@ -23579,6 +23579,17 @@ if (isGeminiMcpBridgeProcess) {
           const nextMaxContinuationHops = shouldUpdateHops
             ? Math.max(1, Math.min(500, Math.floor(action.maxContinuationHops as number)))
             : chat.ensemble.maxContinuationHops
+          const shouldUpdateFanoutPolicy = action.fanoutPolicy !== undefined
+          const nextFanoutPolicy = shouldUpdateFanoutPolicy
+            ? normalizeScheduledFanoutPolicy(action.fanoutPolicy)
+            : normalizeScheduledFanoutPolicy(
+                chat.ensemble.fanoutPolicy,
+                chat.ensemble.concurrentModeEnabled
+              )
+          const shouldUpdateContextChars = typeof action.ensembleContextChars === 'number'
+          const nextEnsembleContextChars = shouldUpdateContextChars
+            ? Math.max(5_000, Math.min(500_000, Math.round(action.ensembleContextChars as number)))
+            : chat.ensemble.ensembleContextChars
           const activeRound =
             shouldUpdateHops && chat.ensemble.activeRound
               ? {
@@ -23592,6 +23603,15 @@ if (isGeminiMcpBridgeProcess) {
               ...chat.ensemble,
               ...(action.orchestrationMode ? { orchestrationMode: nextMode } : {}),
               ...(shouldUpdateHops ? { maxContinuationHops: nextMaxContinuationHops } : {}),
+              ...(shouldUpdateFanoutPolicy
+                ? {
+                    fanoutPolicy: nextFanoutPolicy,
+                    concurrentModeEnabled: nextFanoutPolicy !== 'off'
+                  }
+                : {}),
+              ...(shouldUpdateContextChars
+                ? { ensembleContextChars: nextEnsembleContextChars }
+                : {}),
               ...(activeRound ? { activeRound } : {})
             },
             updatedAt: Date.now()
@@ -23605,7 +23625,9 @@ if (isGeminiMcpBridgeProcess) {
           return {
             ok: true,
             orchestrationMode: updated.ensemble?.orchestrationMode,
-            maxContinuationHops: updated.ensemble?.maxContinuationHops
+            maxContinuationHops: updated.ensemble?.maxContinuationHops,
+            fanoutPolicy: updated.ensemble?.fanoutPolicy,
+            ensembleContextChars: updated.ensemble?.ensembleContextChars
           }
         },
         ensembleSteerFn: async (action) => {

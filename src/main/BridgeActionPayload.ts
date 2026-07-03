@@ -606,6 +606,12 @@ export interface BridgeEnsembleSettingsUpdateAction extends BridgeActionMetadata
   threadId: string
   orchestrationMode?: 'turn_bound' | 'continuous'
   maxContinuationHops?: number
+  fanoutPolicy?:
+    | 'off'
+    | 'read_only'
+    | 'locked_writers_with_boss'
+    | 'locked_writers_user_preflight'
+  ensembleContextChars?: number
 }
 
 export interface BridgeEnsembleSteerAction extends BridgeActionMetadata {
@@ -1771,11 +1777,27 @@ function isEnsembleSettingsUpdate(v: Record<string, unknown>): boolean {
   const mode = v.orchestrationMode
   const hasMode = mode !== undefined
   const hasHops = v.maxContinuationHops !== undefined
-  if (!hasMode && !hasHops) return false
+  const fanoutPolicy = v.fanoutPolicy
+  const hasFanoutPolicy = fanoutPolicy !== undefined
+  const hasContextChars = v.ensembleContextChars !== undefined
+  if (!hasMode && !hasHops && !hasFanoutPolicy && !hasContextChars) return false
   if (hasMode && mode !== 'turn_bound' && mode !== 'continuous') return false
+  if (
+    hasFanoutPolicy &&
+    fanoutPolicy !== 'off' &&
+    fanoutPolicy !== 'read_only' &&
+    fanoutPolicy !== 'locked_writers_with_boss' &&
+    fanoutPolicy !== 'locked_writers_user_preflight'
+  ) {
+    return false
+  }
   if (hasHops) {
     const hops = v.maxContinuationHops
     if (typeof hops !== 'number' || !Number.isFinite(hops)) return false
+  }
+  if (hasContextChars) {
+    const chars = v.ensembleContextChars
+    if (typeof chars !== 'number' || !Number.isFinite(chars)) return false
   }
   return true
 }

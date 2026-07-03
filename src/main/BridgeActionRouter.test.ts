@@ -1082,7 +1082,9 @@ describe('BridgeActionRouter', () => {
             workspaceId: 'ws-allowed',
             threadId: 't-1',
             orchestrationMode: 'continuous',
-            maxContinuationHops: 9
+            maxContinuationHops: 9,
+            fanoutPolicy: 'read_only',
+            ensembleContextChars: 120_000
           })
         ),
         'utf-8'
