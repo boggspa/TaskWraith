@@ -1,4 +1,4 @@
-import { app } from 'electron'
+import { app, safeStorage } from 'electron'
 import * as fs from 'fs'
 import * as path from 'path'
 import { coerceLiveProvider, DEFAULT_PROVIDER } from '../../shared/retiredProviders'
@@ -168,6 +168,14 @@ import {
   findStalledScheduledTasks,
   stallReason
 } from '../WorkflowStallReconciler'
+import {
+  ExtensionSecretStore,
+  type ExtensionSecretMutationResult,
+  type ExtensionSecretOwnerKind,
+  type ExtensionSecretRef,
+  type ExtensionSecretResolution,
+  type ExtensionSecretStatusSnapshot
+} from '../ExtensionSecretStore'
 
 function cloneEnsembleForSideChat(parent: ChatRecord, provider: ProviderId) {
   const source = parent.ensemble || createDefaultEnsembleConfig(provider)
@@ -269,6 +277,11 @@ const LEGACY_TASKWRAITH_FONT_STACK =
 const TASKWRAITH_DEFAULT_FONT_STACK =
   '"Avenir Next", Avenir, system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif'
 const RETIRED_SETTINGS_KEYS = ['messageBridgeEnabled', 'messageBridgePollIntervalMs'] as const
+
+const extensionSecretStore = new ExtensionSecretStore({
+  userDataPath,
+  safeStorage
+})
 
 function stripRetiredSettingsKeys<T extends Record<string, unknown>>(input: T): T {
   const next = { ...input }
@@ -1541,6 +1554,26 @@ export class AppStore {
     this.orphanSubThreadsReaped = false
   }
 
+  static getExtensionSecretStatusSnapshot(): ExtensionSecretStatusSnapshot {
+    return extensionSecretStore.getSecretStatusSnapshot()
+  }
+
+  static setExtensionSecret(ref: ExtensionSecretRef, value: string): ExtensionSecretMutationResult {
+    return extensionSecretStore.setSecret(ref, value)
+  }
+
+  static clearExtensionSecret(ref: ExtensionSecretRef): ExtensionSecretMutationResult {
+    return extensionSecretStore.clearSecret(ref)
+  }
+
+  static clearExtensionOwnerSecrets(ownerKind: ExtensionSecretOwnerKind, ownerId: string): number {
+    return extensionSecretStore.clearOwnerSecrets(ownerKind, ownerId)
+  }
+
+  static resolveExtensionSecretValues(refs: ExtensionSecretRef[]): ExtensionSecretResolution[] {
+    return extensionSecretStore.resolveSecretValues(refs)
+  }
+
   // Settings
   static getSettings(): AppSettings {
     migrateLegacySettingsIfMissing()
@@ -1683,10 +1716,15 @@ export class AppStore {
 
   static updateSettings(partial: Partial<AppSettings>) {
     const current = this.getSettings()
-    writeJson(
-      settingsPath,
-      stripRetiredSettingsKeys({ ...current, ...partial } as Record<string, unknown>)
-    )
+    const next = stripRetiredSettingsKeys({ ...current, ...partial } as Record<string, unknown>)
+    writeJson(settingsPath, next)
+    if (Object.prototype.hasOwnProperty.call(partial, 'userMcpServers')) {
+      const previousIds = new Set((current.userMcpServers || []).map((server) => server.id))
+      const nextIds = new Set(normalizeUserMcpServers(next.userMcpServers).map((server) => server.id))
+      for (const id of previousIds) {
+        if (!nextIds.has(id)) extensionSecretStore.clearOwnerSecrets('userMcpServer', id)
+      }
+    }
   }
 
   static getDefaultRuntimeProfiles(): RuntimeProfile[] {
@@ -1784,6 +1822,7 @@ export class AppStore {
       runtimeProfilesPath,
       readJson<RuntimeProfile[]>(runtimeProfilesPath, []).filter((profile) => profile.id !== id)
     )
+    extensionSecretStore.clearOwnerSecrets('runtimeProfile', id)
   }
 
   static getHandoffCards(filter: HandoffCardFilter = {}): HandoffCard[] {

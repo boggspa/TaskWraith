@@ -155,15 +155,18 @@ What exists:
   returns typed main-process resolution statuses for launch-time callers,
   supports owner-wide cleanup, and writes the store file with restrictive
   permissions.
+- `AppStore` exposes the extension-secret status/mutation/resolution surface and
+  clears owner-scoped encrypted secrets when a user MCP server or runtime
+  profile is deleted.
 
 What is missing:
 
-- User-managed MCP server `env` and `headers` are not yet wired to secret
-  references/status in settings, and existing plaintext records still need
+- Renderer settings forms are not yet wired to save secret refs/status instead
+  of raw user MCP env/header values, and existing plaintext records still need
   migration into the encrypted store.
-- Runtime profile environment variables are not yet wired to secret
-  references/status in profile records; reference-based values still remain
-  ordinary profile JSON.
+- Runtime profile environment variables are not yet represented as secret
+  refs/status in profile records; reference-based values still remain ordinary
+  profile JSON.
 - Plugin `requiredSecrets` are not an end-to-end launch-time secret delivery
   path for MCP materialization.
 - Provider/runtime launch paths do not yet resolve `ExtensionSecretStore`

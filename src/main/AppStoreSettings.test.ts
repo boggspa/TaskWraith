@@ -16,6 +16,11 @@ const userDataPath = settingsTestPaths.userDataPath
 vi.mock('electron', () => ({
   app: {
     getPath: () => settingsTestPaths.userDataPath
+  },
+  safeStorage: {
+    isEncryptionAvailable: () => true,
+    encryptString: (plain: string) => Buffer.from(`enc:${plain}`, 'utf8'),
+    decryptString: (encrypted: Buffer) => encrypted.toString('utf8').replace(/^enc:/, '')
   }
 }))
 
@@ -203,5 +208,58 @@ describe('AppStore settings defaults', () => {
         transport: 'http'
       }
     ])
+  })
+
+  it('cleans extension secrets when a user MCP server is removed', () => {
+    AppStore.updateSettings({
+      userMcpServers: [
+        {
+          id: 'docs',
+          name: 'Docs',
+          enabled: true,
+          transport: 'http',
+          url: 'https://example.test/mcp'
+        }
+      ]
+    })
+
+    const ref = {
+      ownerKind: 'userMcpServer' as const,
+      ownerId: 'docs',
+      fieldKind: 'header' as const,
+      fieldName: 'Authorization'
+    }
+    expect(AppStore.setExtensionSecret(ref, 'Bearer docs-token').ok).toBe(true)
+    expect(AppStore.resolveExtensionSecretValues([ref])).toEqual([
+      { ref, status: 'ok', value: 'Bearer docs-token' }
+    ])
+
+    AppStore.updateSettings({ userMcpServers: [] })
+
+    expect(AppStore.resolveExtensionSecretValues([ref])).toEqual([{ ref, status: 'missing' }])
+    expect(AppStore.getExtensionSecretStatusSnapshot().secrets).toEqual([])
+  })
+
+  it('cleans extension secrets when a runtime profile is deleted', () => {
+    const profile = AppStore.saveRuntimeProfile({
+      name: 'Codex test',
+      provider: 'codex',
+      env: {}
+    })
+    const ref = {
+      ownerKind: 'runtimeProfile' as const,
+      ownerId: profile.id,
+      fieldKind: 'env' as const,
+      fieldName: 'OPENAI_API_KEY'
+    }
+    expect(AppStore.setExtensionSecret(ref, 'sk-runtime-token').ok).toBe(true)
+    expect(AppStore.resolveExtensionSecretValues([ref])).toEqual([
+      { ref, status: 'ok', value: 'sk-runtime-token' }
+    ])
+
+    AppStore.deleteRuntimeProfile(profile.id)
+
+    expect(AppStore.resolveExtensionSecretValues([ref])).toEqual([{ ref, status: 'missing' }])
+    expect(AppStore.getExtensionSecretStatusSnapshot().secrets).toEqual([])
   })
 })
