@@ -4,7 +4,6 @@ import * as path from 'path'
 import { coerceLiveProvider, DEFAULT_PROVIDER } from '../../shared/retiredProviders'
 import { redactSecrets } from '../../shared/secretRedaction'
 import { isRetiredExternalChannelInboundMessage } from '../LegacyExternalChannelHistory'
-import { normalizeFullWorkspaceAccessPaths } from '../WorkspaceFullAccess'
 import type { TaskWraithPluginResourceProvenance } from '../../shared/plugins/PluginTypes'
 import type { UnattendedElevationAck } from '../UnattendedPostureGate'
 import {
@@ -1028,7 +1027,6 @@ const defaultSettings: AppSettings = {
     networkAccess: 'allow'
   },
   agenticWorkspaceGrants: [],
-  fullWorkspaceAccessPaths: [],
   nativeSubAgentRequests: 'ask',
   // Default on — the user-visible win is that delegated sub-threads
   // resume their parent agent automatically when they finish. Users
@@ -1908,7 +1906,6 @@ export class AppStore {
       agenticWorkspaceGrants: Array.isArray(stored.agenticWorkspaceGrants)
         ? stored.agenticWorkspaceGrants
         : [],
-      fullWorkspaceAccessPaths: normalizeFullWorkspaceAccessPaths(stored.fullWorkspaceAccessPaths),
       nativeSubAgentRequests:
         stored.nativeSubAgentRequests === 'provider' ||
         stored.nativeSubAgentRequests === 'taskwraith'

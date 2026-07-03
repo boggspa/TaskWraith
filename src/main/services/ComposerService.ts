@@ -11,7 +11,6 @@ import {
 import { normalizeOllamaSessionMemory } from '../ollama/OllamaRunMemory'
 import { isOllamaRunProfileId } from '../ollama/OllamaRunProfiles'
 import { resolveEffectiveRunPermissions } from '../EffectiveRunPermissions'
-import { isWorkspaceFullAccessEnabled } from '../WorkspaceFullAccess'
 import {
   approvalModeRank,
   coerceApprovalMode,
@@ -275,22 +274,6 @@ export class ComposerService {
     if (previewRiskModel && approvalMode !== 'plan') {
       approvalMode = 'default'
     }
-    // Per-workspace Full Workspace Access opt-in. A workspace the user (Mac
-    // Settings) or an allow-listed iOS device flagged elevates its non-plan runs
-    // to the signed `full_access` posture (resolved below), which drops the Codex
-    // sandbox (danger-full-access) so the agent can sign / notarize / upload.
-    // Respects an explicit plan/read-only choice (the floor), skips unattended
-    // loops (their own elevation gate) and preview-risk models (clamped); the
-    // global `shellCommands: 'deny'` kill-switch still vetoes the resolved posture.
-    const workspaceFullAccess =
-      scope !== 'global' &&
-      !unattended &&
-      !previewRiskModel &&
-      approvalMode !== 'plan' &&
-      isWorkspaceFullAccessEnabled(settings, effectiveInput.workspace || chat.workspacePath)
-    if (workspaceFullAccess) {
-      approvalMode = 'auto_edit'
-    }
     const externalPathGrants =
       scope !== 'global' && !(unattended && approvalMode === 'plan')
         ? normalizeComposerExternalPathGrants(effectiveInput.externalPathGrants || [], provider)
@@ -404,15 +387,6 @@ export class ComposerService {
             // keep readOnly:true so the signed posture still clears the clamp.
             presetId: workflowMode === 'plan' ? 'plan' : 'read_only'
           })
-        : workspaceFullAccess
-          ? resolveEffectiveRunPermissions({
-              provider,
-              // `workspaceFullAccess` already implies scope === 'workspace'.
-              workspacePath: effectiveInput.workspace || chat.workspacePath,
-              model: requestedModel,
-              settings,
-              presetId: 'full_access'
-            })
         : elevatedPresetId
           ? resolveEffectiveRunPermissions({
               provider,
