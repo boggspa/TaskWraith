@@ -1,12 +1,19 @@
-import { randomUUID } from 'crypto'
+import { createHash, randomUUID } from 'crypto'
 import { normalizeDiscordContextSelection } from '../channels/DiscordContextService'
 import type { RunQueueJobInput } from '../RunQueue'
 import type { RunSession } from '../RunManager'
 import type {
+  AgenticServiceId,
+  AgenticNetworkPolicy,
+  AgenticServicePolicy,
+  ChatWorkflowMode,
   ChatRecord,
   ChatScope,
   ExternalPathGrant,
+  PermissionPresetId,
   ProviderId,
+  RunPermissionPostureSnapshot,
+  RunQueueDispatchReceipt,
   RunQueueJob,
   RunQueueJobFilter,
   RunQueueJobSource,
@@ -38,6 +45,28 @@ const RUN_QUEUE_SOURCES = new Set<RunQueueJobSource>([
 ])
 // Grok + Cursor are first-class providers; no eligibility gate (see ProviderId).
 const PROVIDER_IDS = new Set<ProviderId>(['gemini', 'codex', 'claude', 'kimi', 'grok', 'cursor', 'ollama'])
+const PERMISSION_PRESET_IDS = new Set<PermissionPresetId>([
+  'read_only',
+  'plan',
+  'default',
+  'workspace_write',
+  'full_access',
+  'custom'
+])
+const AGENTIC_SERVICE_IDS = new Set<AgenticServiceId>([
+  'shellCommands',
+  'fileChanges',
+  'externalPublish',
+  'mcpTools',
+  'subThreadDelegation',
+  'canvasInteraction',
+  'canvasEval',
+  'crossThreadRead',
+  'mediaEditing',
+  'mediaRecording',
+  'networkAccess'
+])
+const AGENTIC_SERVICE_POLICIES = new Set<AgenticServicePolicy>(['ask', 'workspace', 'allow', 'deny'])
 
 export interface RunQueueStore {
   getChat: (chatId: string) => ChatRecord | null
@@ -278,7 +307,10 @@ export class RunQueueService {
       this.deps.validateChatWorkspaceIdentity(chatId, workspace)
     }
     const status = sanitizePublicRunQueueStatus(record.status, 'queued')
-    return {
+    const source = sanitizeRunQueueSource(record.source)
+    const request = this.sanitizeRunQueueRequestSnapshot(record.request)
+    const permissionPosture = sanitizePermissionPostureSnapshot(record.permissionPosture)
+    const normalized: Partial<RunQueueJob> & Pick<RunQueueJob, 'runId' | 'provider' | 'source'> = {
       id: optionalString(record.id) || runId,
       runId,
       provider,
@@ -295,12 +327,13 @@ export class RunQueueService {
       workspacePath,
       workspaceId,
       chatId,
-      source: sanitizeRunQueueSource(record.source),
+      source,
       status: status === 'active' || status === 'cancelling' ? 'starting' : status,
       priority: optionalNumber(record.priority),
       attempt: optionalNumber(record.attempt),
       promptPreview: optionalString(record.promptPreview),
-      request: this.sanitizeRunQueueRequestSnapshot(record.request),
+      request,
+      ...(permissionPosture ? { permissionPosture } : {}),
       providerSessionId: optionalString(record.providerSessionId),
       providerRunId: optionalString(record.providerRunId),
       parentRunId: optionalString(record.parentRunId),
@@ -309,6 +342,8 @@ export class RunQueueService {
       statusReason: optionalString(record.statusReason),
       lastError: optionalString(record.lastError)
     }
+    normalized.dispatchReceipt = buildRunQueueDispatchReceipt(normalized)
+    return normalized
   }
 
   private sanitizeRunQueueRequestSnapshot(value: unknown): RunQueueRequestSnapshot | undefined {
@@ -333,6 +368,7 @@ export class RunQueueService {
     ) {
       throw new Error('Queued external path grants must be issued by TaskWraith in this app session.')
     }
+    const workflowMode = sanitizeWorkflowMode(value.workflowMode)
     return {
       scope: value.scope === 'global' ? 'global' : 'workspace',
       prompt: typeof value.prompt === 'string' ? value.prompt : '',
@@ -340,6 +376,7 @@ export class RunQueueService {
       selectedModelType: optionalString(value.selectedModelType) || 'cli-default',
       customModel: typeof value.customModel === 'string' ? value.customModel : '',
       approvalMode: optionalString(value.approvalMode) || 'default',
+      ...(workflowMode ? { workflowMode } : {}),
       sessionTrust: Boolean(value.sessionTrust),
       imageAttachments,
       ...(discordContextSelection ? { discordContextSelection } : {}),
@@ -397,6 +434,176 @@ function sanitizeRunQueueSource(value: unknown): RunQueueJobSource {
     : 'manual'
 }
 
+function sanitizeWorkflowMode(value: unknown): ChatWorkflowMode | undefined {
+  return value === 'plan' || value === 'normal' ? value : undefined
+}
+
+function sanitizePermissionPresetId(value: unknown): PermissionPresetId | undefined {
+  return typeof value === 'string' && PERMISSION_PRESET_IDS.has(value as PermissionPresetId)
+    ? (value as PermissionPresetId)
+    : undefined
+}
+
+function sanitizeAgenticNetworkPolicy(value: unknown): AgenticNetworkPolicy | undefined {
+  return value === 'allow' || value === 'deny' ? value : undefined
+}
+
+function sanitizeAgenticServices(
+  value: unknown
+): Record<AgenticServiceId, AgenticServicePolicy> | undefined {
+  if (!isRecord(value)) return undefined
+  const sanitized: Partial<Record<AgenticServiceId, AgenticServicePolicy>> = {}
+  for (const [serviceId, policy] of Object.entries(value)) {
+    if (
+      AGENTIC_SERVICE_IDS.has(serviceId as AgenticServiceId) &&
+      AGENTIC_SERVICE_POLICIES.has(policy as AgenticServicePolicy)
+    ) {
+      sanitized[serviceId as AgenticServiceId] = policy as AgenticServicePolicy
+    }
+  }
+  return Object.keys(sanitized).length
+    ? (sanitized as Record<AgenticServiceId, AgenticServicePolicy>)
+    : undefined
+}
+
+function sanitizeAgenticServiceIds(value: unknown): AgenticServiceId[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const sanitized = value.filter(
+    (serviceId): serviceId is AgenticServiceId =>
+      typeof serviceId === 'string' && AGENTIC_SERVICE_IDS.has(serviceId as AgenticServiceId)
+  )
+  return sanitized.length ? sanitized : undefined
+}
+
+function sanitizePermissionPostureContext(
+  value: unknown
+): RunPermissionPostureSnapshot['context'] | undefined {
+  if (!isRecord(value)) return undefined
+  const context: RunPermissionPostureSnapshot['context'] = {
+    provider: optionalString(value.provider),
+    scope: optionalString(value.scope),
+    appRunId: optionalString(value.appRunId),
+    appChatId: optionalString(value.appChatId),
+    workflowMode: optionalString(value.workflowMode),
+    runtimeProfileId: optionalString(value.runtimeProfileId),
+    promptHash: optionalString(value.promptHash)
+  }
+  return Object.values(context).some(Boolean) ? context : undefined
+}
+
+function sanitizePermissionPostureSnapshot(
+  value: unknown
+): RunPermissionPostureSnapshot | undefined {
+  if (!isRecord(value) || value.schemaVersion !== 1) return undefined
+  const postureHash = optionalString(value.postureHash)
+  if (!postureHash) return undefined
+  const externalPathGrantCount =
+    typeof value.externalPathGrantCount === 'number' &&
+    Number.isFinite(value.externalPathGrantCount) &&
+    value.externalPathGrantCount >= 0
+      ? Math.floor(value.externalPathGrantCount)
+      : 0
+  const workflowMode = sanitizeWorkflowMode(value.workflowMode)
+  const presetId = sanitizePermissionPresetId(value.presetId)
+  const agenticServices = sanitizeAgenticServices(value.agenticServices)
+  const networkAccess = sanitizeAgenticNetworkPolicy(value.networkAccess)
+  const workspaceGrantServiceIds = sanitizeAgenticServiceIds(value.workspaceGrantServiceIds)
+  const signature = optionalString(value.signature)
+  const context = sanitizePermissionPostureContext(value.context)
+  return {
+    schemaVersion: 1,
+    approvalMode: optionalString(value.approvalMode),
+    ...(workflowMode ? { workflowMode } : {}),
+    ...(presetId ? { presetId } : {}),
+    ...(typeof value.readOnly === 'boolean' ? { readOnly: value.readOnly } : {}),
+    ...(agenticServices ? { agenticServices } : {}),
+    ...(networkAccess ? { networkAccess } : {}),
+    externalPathGrantCount,
+    externalPathGrantHash: optionalString(value.externalPathGrantHash),
+    ...(workspaceGrantServiceIds ? { workspaceGrantServiceIds } : {}),
+    postureHash,
+    ...(signature ? { signature } : {}),
+    signaturePresent:
+      typeof value.signaturePresent === 'boolean' ? value.signaturePresent : Boolean(signature),
+    ...(context ? { context } : {})
+  }
+}
+
+function buildRunQueueDispatchReceipt(
+  job: Partial<RunQueueJob> & Pick<RunQueueJob, 'runId' | 'provider' | 'source'>,
+  generatedAt = new Date().toISOString()
+): RunQueueDispatchReceipt {
+  const request = job.request
+  const permissionPosture = job.permissionPosture
+  const remoteComposer = request?.remoteComposer
+  const workflowMode =
+    request?.workflowMode || permissionPosture?.workflowMode || remoteComposer?.workflowMode
+  const remoteComposerReceipt = remoteComposer
+    ? {
+        workspaceId: optionalString(remoteComposer.workspaceId),
+        threadId: optionalString(remoteComposer.threadId),
+        provider: optionalString(remoteComposer.provider),
+        approvalMode: optionalString(remoteComposer.approvalMode),
+        workflowMode: remoteComposer.workflowMode
+      }
+    : undefined
+  const body: Omit<RunQueueDispatchReceipt, 'receiptHash'> = {
+    schemaVersion: 1,
+    generatedAt,
+    runId: job.runId,
+    provider: job.provider,
+    source: job.source,
+    ...(job.scope ? { scope: job.scope } : {}),
+    ...(job.workspaceId ? { workspaceId: job.workspaceId } : {}),
+    ...(job.chatId ? { chatId: job.chatId } : {}),
+    ...(job.ensembleParticipantId ? { ensembleParticipantId: job.ensembleParticipantId } : {}),
+    ...(job.ensembleLaneId ? { ensembleLaneId: job.ensembleLaneId } : {}),
+    ...(job.ensembleRole ? { ensembleRole: job.ensembleRole } : {}),
+    ...(job.ensembleStageRole ? { ensembleStageRole: job.ensembleStageRole } : {}),
+    ...(request?.approvalMode || permissionPosture?.approvalMode || remoteComposer?.approvalMode
+      ? {
+          approvalMode:
+            request?.approvalMode || permissionPosture?.approvalMode || remoteComposer?.approvalMode
+        }
+      : {}),
+    ...(workflowMode ? { workflowMode } : {}),
+    ...(permissionPosture?.presetId ? { permissionPresetId: permissionPosture.presetId } : {}),
+    ...(typeof permissionPosture?.readOnly === 'boolean'
+      ? { readOnly: permissionPosture.readOnly }
+      : {}),
+    ...(permissionPosture?.postureHash
+      ? { permissionPostureHash: permissionPosture.postureHash }
+      : {}),
+    permissionPostureSignaturePresent: Boolean(permissionPosture?.signaturePresent),
+    ...(remoteComposerReceipt && Object.values(remoteComposerReceipt).some(Boolean)
+      ? { remoteComposer: remoteComposerReceipt }
+      : {})
+  }
+  return {
+    ...body,
+    receiptHash: hashStableJson(body)
+  }
+}
+
+function hashStableJson(value: unknown): string {
+  return createHash('sha256').update(stableJson(value)).digest('hex')
+}
+
+function stableJson(value: unknown): string {
+  if (value === null || typeof value !== 'object') {
+    return JSON.stringify(value)
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableJson(item)).join(',')}]`
+  }
+  const record = value as Record<string, unknown>
+  return `{${Object.keys(record)
+    .filter((key) => record[key] !== undefined)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${stableJson(record[key])}`)
+    .join(',')}}`
+}
+
 function sanitizeWorkspaceGeminiWorktree(
   value: unknown
 ): WorkspaceRecord['geminiWorktree'] | undefined {
@@ -416,6 +623,7 @@ function sanitizeWorkspaceGeminiWorktree(
 function sanitizeRemoteComposer(value: unknown): RunQueueRequestSnapshot['remoteComposer'] | undefined {
   if (!isRecord(value)) return undefined
   const approvalMode = optionalString(value.approvalMode)
+  const workflowMode = sanitizeWorkflowMode(value.workflowMode)
   const model = optionalString(value.model)
   const reasoningEffort = optionalStringOrNull(value.reasoningEffort)
   const claudeReasoningEffort = optionalStringOrNull(value.claudeReasoningEffort)
@@ -425,6 +633,7 @@ function sanitizeRemoteComposer(value: unknown): RunQueueRequestSnapshot['remote
     provider: optionalString(value.provider) || 'gemini',
     text: optionalString(value.text) || '',
     ...(approvalMode ? { approvalMode } : {}),
+    ...(workflowMode ? { workflowMode } : {}),
     ...(model ? { model } : {}),
     ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
     ...(claudeReasoningEffort !== undefined ? { claudeReasoningEffort } : {}),

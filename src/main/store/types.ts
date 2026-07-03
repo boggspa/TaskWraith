@@ -4201,6 +4201,35 @@ export interface RunQueueRequestSnapshot {
   }
 }
 
+export interface RunQueueDispatchReceipt {
+  schemaVersion: 1
+  generatedAt: string
+  receiptHash: string
+  runId: string
+  provider: ProviderId
+  source: RunQueueJobSource
+  scope?: ChatScope
+  workspaceId?: string
+  chatId?: string
+  ensembleParticipantId?: string
+  ensembleLaneId?: string
+  ensembleRole?: string
+  ensembleStageRole?: EnsembleStageRole
+  approvalMode?: string
+  workflowMode?: ChatWorkflowMode
+  permissionPresetId?: PermissionPresetId
+  readOnly?: boolean
+  permissionPostureHash?: string
+  permissionPostureSignaturePresent: boolean
+  remoteComposer?: {
+    workspaceId?: string
+    threadId?: string
+    provider?: string
+    approvalMode?: string
+    workflowMode?: ChatWorkflowMode
+  }
+}
+
 export type RunRecoveryProcessAction = 'left_running' | 'not_found' | 'inaccessible' | 'unknown'
 
 export interface RunRecoveryProcessSnapshot {
@@ -4239,6 +4268,7 @@ export interface RunQueueJob {
   promptPreview?: string
   request?: RunQueueRequestSnapshot
   permissionPosture?: RunPermissionPostureSnapshot
+  dispatchReceipt?: RunQueueDispatchReceipt
   providerSessionId?: string
   providerRunId?: string
   processPid?: number

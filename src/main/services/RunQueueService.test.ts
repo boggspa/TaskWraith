@@ -294,15 +294,34 @@ describe('RunQueueService', () => {
   it('preserves ensemble lane and stage metadata on generic queue requests', () => {
     const { deps, repository } = makeDeps()
     const service = new RunQueueService(deps)
+    const permissionPosture = {
+      schemaVersion: 1,
+      approvalMode: 'plan',
+      workflowMode: 'plan',
+      presetId: 'plan',
+      readOnly: true,
+      networkAccess: 'deny',
+      externalPathGrantCount: 0,
+      postureHash: 'posture-hash',
+      signature: 'signed-posture',
+      signaturePresent: true
+    } as const
     service.requestJob({
       runId: 'ensemble-run',
       provider: 'codex',
       workspacePath: '/input',
       chatId: 'chat-1',
+      source: 'scheduled',
       ensembleParticipantId: 'participant-codex',
       ensembleLaneId: 'lane-round-1-participant-codex-1',
       ensembleRole: 'Worker',
-      ensembleStageRole: 'worker'
+      ensembleStageRole: 'worker',
+      request: {
+        prompt: 'Review the worker patch',
+        approvalMode: 'plan',
+        workflowMode: 'plan'
+      },
+      permissionPosture
     })
     expect(repository.saveRunQueueJob).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -310,7 +329,32 @@ describe('RunQueueService', () => {
         ensembleParticipantId: 'participant-codex',
         ensembleLaneId: 'lane-round-1-participant-codex-1',
         ensembleRole: 'Worker',
-        ensembleStageRole: 'worker'
+        ensembleStageRole: 'worker',
+        permissionPosture: expect.objectContaining({
+          postureHash: 'posture-hash',
+          workflowMode: 'plan',
+          presetId: 'plan',
+          signaturePresent: true
+        }),
+        dispatchReceipt: expect.objectContaining({
+          schemaVersion: 1,
+          runId: 'ensemble-run',
+          provider: 'codex',
+          source: 'scheduled',
+          workspaceId: 'workspace-1',
+          chatId: 'chat-1',
+          ensembleParticipantId: 'participant-codex',
+          ensembleLaneId: 'lane-round-1-participant-codex-1',
+          ensembleRole: 'Worker',
+          ensembleStageRole: 'worker',
+          approvalMode: 'plan',
+          workflowMode: 'plan',
+          permissionPresetId: 'plan',
+          readOnly: true,
+          permissionPostureHash: 'posture-hash',
+          permissionPostureSignaturePresent: true,
+          receiptHash: expect.stringMatching(/^[a-f0-9]{64}$/)
+        })
       })
     )
   })
@@ -326,12 +370,14 @@ describe('RunQueueService', () => {
       source: 'remote',
       request: {
         prompt: 'From device',
+        workflowMode: 'plan',
         remoteComposer: {
           workspaceId: 'workspace-1',
           threadId: 'thread-2',
           provider: 'codex',
           text: 'From paired device',
           approvalMode: 'default',
+          workflowMode: 'plan',
           model: 'opus'
         }
       }
@@ -341,12 +387,14 @@ describe('RunQueueService', () => {
         runId: 'remote-run',
         source: 'remote',
         request: expect.objectContaining({
+          workflowMode: 'plan',
           remoteComposer: {
             workspaceId: 'workspace-1',
             threadId: 'thread-2',
             provider: 'codex',
             text: 'From paired device',
             approvalMode: 'default',
+            workflowMode: 'plan',
             model: 'opus'
           }
         })

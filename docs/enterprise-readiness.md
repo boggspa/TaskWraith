@@ -451,6 +451,10 @@ What exists:
 - Participant `ChatRun` records, participant transcript metadata, run queue
   rows, and runtime lifecycle events now freeze the dispatch participant,
   lane, role, stage role, and posture metadata where available.
+- Generic run queue rows now carry a `dispatchReceipt` hash that spans the
+  frozen provider, source, chat/workspace, ensemble lane/stage, workflow mode,
+  remote-composer workflow posture, and permission-posture proof fields
+  available at enqueue time.
 - MCP tool context for brokered Codex/Claude/Kimi runs carries `ensembleRun`,
   so lane-aware write-lock previews and acquisitions can enforce against the
   dispatched lane instead of losing identity outside Gemini.
@@ -460,8 +464,9 @@ What exists:
 What is missing:
 
 - Stage-role scheduling intent is not yet a first-class frozen receipt across
-  every deferred path; this slice covers live participant dispatch and generic
-  queue rows, not every scheduled/wakeup replay path.
+  every deferred path; generic queue rows now have receipts, but dedicated
+  scheduled/wakeup replay receipts and start-time audit export still need to
+  prove which frozen intent was used.
 - Ensemble wakeups and scheduled ensemble occurrences still need explicit
   proof that they resume the participant/stage/posture that was scheduled, not
   whatever a mutable live roster happens to contain later.
@@ -470,8 +475,9 @@ What is missing:
   rebuilds a wire action and dispatches directly, so it must either re-run the
   bridge router's allowlist decision or use an explicitly frozen signed posture.
 - `EnsembleRunIdentity`, `ChatRun`, run queue metadata, approval previews, and
-  run events now persist live dispatch `stageRole`/`laneId`, but there is still
-  no dedicated dispatch receipt object or receipt hash spanning those fields.
+  run events now persist live dispatch `stageRole`/`laneId`, but run-start
+  events and audit export still need to include the queued `dispatchReceipt`
+  instead of relying on each consumer to reassemble the same evidence.
 - Native provider approval paths still need a separate lane-aware bypass audit
   for host reruns / native command approvals outside brokered MCP tools.
 
