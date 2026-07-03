@@ -203,6 +203,21 @@ export function toolNameToFamily(name: string | undefined | null): ToolFamily | 
     case 'provider_usage_status':
     case 'video_probe':
       return 'diagnostic'
+    // Evidence & audit suite (see `EvidenceToolExecutors.ts`) — reuse existing
+    // families by primary action so the row reads at a glance: normalize a
+    // messy prompt into a task contract (plan), scan the prompt/repo for scope
+    // + conventions (search), gate the diff / completion claims (diagnostic),
+    // and persist the capability-cell + claims checklist (task).
+    case 'prompt_task_normalize':
+      return 'plan'
+    case 'scope_radar':
+    case 'repo_convention_scan':
+      return 'search'
+    case 'coherence_gate_check':
+    case 'completion_claim_check':
+      return 'diagnostic'
+    case 'evidence_pack_write':
+      return 'task'
     case 'image_edit':
     case 'svg_rasterize':
     case 'image_generate':
