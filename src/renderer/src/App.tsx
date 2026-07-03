@@ -5584,9 +5584,10 @@ function App(): React.JSX.Element {
     const workspaceChats = allChats.filter(
       (chat) => chat.workspaceId === ws.id && isTopLevelWorkspaceChat(chat)
     )
-    const emptyChat = workspaceChats.find((chat) =>
-      isChatSummaryRecord(chat) ? chat.messageCount === 0 : chat.messages.length === 0
-    )
+    // Reuse an existing pristine workspace chat (no messages AND no runs) so we
+    // land on the welcome screen, not a blank transcript. Twin of the launch
+    // reuse fixed in 9e2c1b7f0 — isReusableWelcomeChat mirrors shouldRenderWelcome.
+    const emptyChat = workspaceChats.find((chat) => isReusableWelcomeChat(chat))
     let selectedProvider: ProviderId = DEFAULT_PROVIDER
     let selectedChat: ChatRecord
     if (emptyChat) {
