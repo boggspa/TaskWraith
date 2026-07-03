@@ -511,7 +511,6 @@ export class CodexAppServerClient {
       'app-server'
     ]
     const codexEnv: Record<string, string> = {
-      ...(this.runtimeProfile?.env || {}),
       ...collectUserMcpProviderEnv(this.mcpConfig?.userMcpServers),
       FORCE_COLOR: '0',
       NO_COLOR: '1'

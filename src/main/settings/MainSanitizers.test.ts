@@ -592,6 +592,9 @@ describe('MainSanitizers settings patches', () => {
         OPENAI_API_KEY: 'sk-1234567890abcdefghijklmnop',
         OPENAI_API_KEY_REF: '${OPENAI_API_KEY}',
         CLIENT_SECRET: '$CLIENT_SECRET'
+      },
+      secretRefs: {
+        env: ['OPENAI_API_KEY', 'bad-name', 'OPENAI_API_KEY']
       }
     })
 
@@ -599,6 +602,9 @@ describe('MainSanitizers settings patches', () => {
       PROJECT_ROOT: '/repo',
       OPENAI_API_KEY_REF: '${OPENAI_API_KEY}',
       CLIENT_SECRET: '$CLIENT_SECRET'
+    })
+    expect(sanitized.secretRefs).toEqual({
+      env: ['OPENAI_API_KEY']
     })
   })
 

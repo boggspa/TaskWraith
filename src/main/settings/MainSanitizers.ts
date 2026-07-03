@@ -1032,6 +1032,16 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
         }
       }
     }
+    const secretRefsInput = isRecord(input.secretRefs) ? input.secretRefs : {}
+    const secretEnvRefs = Array.isArray(secretRefsInput.env)
+      ? Array.from(
+          new Set(
+            secretRefsInput.env.filter(
+              (key): key is string => typeof key === 'string' && /^[A-Za-z_][A-Za-z0-9_]*$/.test(key)
+            )
+          )
+        ).slice(0, 64)
+      : []
     const workspaceMode =
       input.workspaceMode === 'worktree' || input.workspaceMode === 'container'
         ? input.workspaceMode
@@ -1049,6 +1059,7 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
       workspaceMode,
       binaryPath: optionalString(input.binaryPath),
       env,
+      ...(secretEnvRefs.length > 0 ? { secretRefs: { env: secretEnvRefs } } : {}),
       mcpProfileId: optionalString(input.mcpProfileId),
       approvalMode: optionalString(input.approvalMode),
       agenticServices: isRecord(input.agenticServices)

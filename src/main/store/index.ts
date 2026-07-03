@@ -43,6 +43,7 @@ import {
   ProductCrashInput,
   ProductCrashRecord,
   RuntimeProfile,
+  RuntimeProfileSecretRefs,
   UserMcpServerConfig,
   HandoffCard,
   HandoffCardFilter,
@@ -979,6 +980,20 @@ function isValidUserMcpRemoteUrl(value: string): boolean {
   }
 }
 
+function normalizeRuntimeProfileSecretRefs(value: unknown): RuntimeProfileSecretRefs | undefined {
+  const record = objectOrUndefined(value as Record<string, unknown> | null | undefined)
+  const env = Array.isArray(record?.env)
+    ? Array.from(
+        new Set(
+          record.env.filter(
+            (key): key is string => typeof key === 'string' && /^[A-Za-z_][A-Za-z0-9_]*$/.test(key)
+          )
+        )
+      ).slice(0, 64)
+    : []
+  return env.length > 0 ? { env } : undefined
+}
+
 function normalizePluginResourceProvenance(
   value: unknown
 ): TaskWraithPluginResourceProvenance | undefined {
@@ -1856,6 +1871,7 @@ export class AppStore {
       workspaceMode: input.workspaceMode || 'local',
       binaryPath: input.binaryPath,
       env: input.env && typeof input.env === 'object' ? input.env : {},
+      secretRefs: normalizeRuntimeProfileSecretRefs(input.secretRefs),
       mcpProfileId: input.mcpProfileId,
       approvalMode: input.approvalMode,
       agenticServices: input.agenticServices,

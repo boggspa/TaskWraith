@@ -294,4 +294,24 @@ describe('AppStore settings defaults', () => {
     expect(AppStore.resolveExtensionSecretValues([ref])).toEqual([{ ref, status: 'missing' }])
     expect(AppStore.getExtensionSecretStatusSnapshot().secrets).toEqual([])
   })
+
+  it('normalizes runtime profile secret refs on direct save', () => {
+    const profile = AppStore.saveRuntimeProfile({
+      name: 'Codex secret refs',
+      provider: 'codex',
+      env: {
+        PROJECT_ROOT: '/repo'
+      },
+      secretRefs: {
+        env: ['OPENAI_API_KEY', 'bad-name', 'OPENAI_API_KEY']
+      }
+    })
+
+    expect(profile.secretRefs).toEqual({
+      env: ['OPENAI_API_KEY']
+    })
+    expect(AppStore.getRuntimeProfiles('codex').find((item) => item.id === profile.id)?.secretRefs).toEqual({
+      env: ['OPENAI_API_KEY']
+    })
+  })
 })

@@ -1484,6 +1484,7 @@ export interface RuntimeProfile {
   workspaceMode: RuntimeWorkspaceMode
   binaryPath?: string
   env: Record<string, string>
+  secretRefs?: RuntimeProfileSecretRefs
   mcpProfileId?: string
   approvalMode?: string
   agenticServices?: AgenticServicesSettings
@@ -1497,6 +1498,10 @@ export interface RuntimeProfile {
   builtin?: boolean
   createdAt: string
   updatedAt: string
+}
+
+export interface RuntimeProfileSecretRefs {
+  env?: string[]
 }
 
 export type UserMcpServerTransport = 'stdio' | 'http' | 'sse'

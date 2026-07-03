@@ -14,7 +14,11 @@ import type { AppSettings, RuntimeProfile } from '../store/types'
 // AppStore is never called — mock the module purely to avoid the side-effectful
 // import during the test run. (vitest hoists vi.mock above the imports.)
 vi.mock('../store', () => ({
-  AppStore: { getSettings: () => ({}), getRuntimeProfiles: () => [] }
+  AppStore: {
+    getSettings: () => ({}),
+    getRuntimeProfiles: () => [],
+    resolveExtensionSecretValues: () => []
+  }
 }))
 
 function makeProfile(overrides: Partial<RuntimeProfile> = {}): RuntimeProfile {
@@ -164,6 +168,66 @@ describe('createCliEnv', () => {
     expect(env.CSC_LINK).toBeUndefined()
     expect(env.SAFE_PROFILE_FLAG).toBe('kept')
     expect(env.FORCE_COLOR).toBe('0')
+  })
+
+  it('resolves runtime profile secret env refs and lets encrypted values beat plaintext profile env', () => {
+    const env = createCliEnv(
+      {
+        TASKWRAITH_RUNTIME_PROFILE_ID: 'profile-1',
+        FORCE_COLOR: '0'
+      },
+      null,
+      {
+        getRuntimeProfiles: () => [
+          makeProfile({
+            id: 'profile-1',
+            env: {
+              SAFE_PROFILE_FLAG: 'kept',
+              SERVICE_TOKEN: 'plaintext-placeholder'
+            },
+            secretRefs: {
+              env: ['SERVICE_TOKEN']
+            }
+          })
+        ],
+        resolveExtensionSecretValues: (refs) =>
+          refs.map((ref) => ({
+            ref,
+            status: 'ok' as const,
+            value: ref.fieldName === 'SERVICE_TOKEN' ? 'encrypted-token' : ''
+          }))
+      }
+    )
+
+    expect(env.SAFE_PROFILE_FLAG).toBe('kept')
+    expect(env.SERVICE_TOKEN).toBe('encrypted-token')
+  })
+
+  it('fails closed when a runtime profile secret env ref cannot be resolved', () => {
+    expect(() =>
+      createCliEnv(
+        {
+          TASKWRAITH_RUNTIME_PROFILE_ID: 'profile-1',
+          FORCE_COLOR: '0'
+        },
+        null,
+        {
+          getRuntimeProfiles: () => [
+            makeProfile({
+              id: 'profile-1',
+              secretRefs: {
+                env: ['SERVICE_TOKEN']
+              }
+            })
+          ],
+          resolveExtensionSecretValues: (refs) =>
+            refs.map((ref) => ({
+              ref,
+              status: 'missing' as const
+            }))
+        }
+      )
+    ).toThrow(/encrypted env secret SERVICE_TOKEN is missing/)
   })
 })
 

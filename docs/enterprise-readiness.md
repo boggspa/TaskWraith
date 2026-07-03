@@ -165,15 +165,19 @@ What exists:
   allowlists to the ref names before decryption, blocks servers with missing or
   undecryptable refs, and passes remote bearer-token values through provider
   process env where the provider supports env indirection.
+- Runtime profile records can carry env `secretRefs`. Launch env assembly
+  resolves those refs centrally through `createCliEnv`, blocks runs when a
+  referenced encrypted value is missing or undecryptable, and lets the encrypted
+  value override any same-name placeholder in the profile JSON.
 
 What is missing:
 
 - Renderer settings forms are not yet wired to save secret refs/status instead
   of raw user MCP env/header values, and existing plaintext records still need
   migration into the encrypted store.
-- Runtime profile environment variables are not yet represented as secret
-  refs/status in profile records; reference-based values still remain ordinary
-  profile JSON.
+- Runtime profile settings surfaces are not yet wired to create/manage encrypted
+  env refs directly, and existing plaintext profile env records still need
+  migration into the encrypted store.
 - Plugin `requiredSecrets` are not an end-to-end launch-time secret delivery
   path for MCP materialization.
 - Renderer and iOS settings surfaces are not yet wired to create or manage

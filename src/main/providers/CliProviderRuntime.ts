@@ -9,6 +9,7 @@ import { AppStore } from '../store'
 import { scrubCliEnv } from '../CliEnvSecurity'
 import { approvalModeRank, coerceApprovalMode } from '../RunPermissionPosture'
 import { buildUserMcpLaunchServers } from '../UserMcpServers'
+import type { ExtensionSecretRef, ExtensionSecretResolution } from '../ExtensionSecretStore'
 import type {
   AppSettings,
   AgenticServicePolicy,
@@ -52,6 +53,7 @@ export interface CliProviderRuntimeDependencies {
   }) => Promise<GeminiMcpBridgeStatus>
   getCodexStatusSnapshot?: () => Promise<unknown>
   getCodexMcpStatusSnapshot?: () => Promise<unknown>
+  resolveExtensionSecretValues?: (refs: ExtensionSecretRef[]) => ExtensionSecretResolution[]
 }
 
 export interface RuntimeProfilePayload {
@@ -170,7 +172,57 @@ export function activeRuntimeProfileEnv(
   const rawProfileId = extra.TASKWRAITH_RUNTIME_PROFILE_ID
   if (!rawProfileId) return null
   const profile = runtimeProfilesFromDeps(deps).find((item) => item.id === rawProfileId)
-  return profile?.env || null
+  return profile ? resolveRuntimeProfileEnv(profile, deps) : null
+}
+
+const RUNTIME_PROFILE_ENV_REF_RE = /^[A-Za-z_][A-Za-z0-9_]*$/
+
+function runtimeProfileEnvSecretRefs(profile: RuntimeProfile): ExtensionSecretRef[] {
+  const env = Array.isArray(profile.secretRefs?.env)
+    ? Array.from(
+        new Set(
+          profile.secretRefs.env.filter(
+            (key): key is string => typeof key === 'string' && RUNTIME_PROFILE_ENV_REF_RE.test(key)
+          )
+        )
+      ).slice(0, 64)
+    : []
+  return env.map((fieldName) => ({
+    ownerKind: 'runtimeProfile' as const,
+    ownerId: profile.id,
+    fieldKind: 'env' as const,
+    fieldName
+  }))
+}
+
+export function resolveRuntimeProfileEnv(
+  profile: RuntimeProfile,
+  deps?: Pick<CliProviderRuntimeDependencies, 'resolveExtensionSecretValues'>
+): Record<string, string> {
+  const env = { ...(profile.env || {}) }
+  const refs = runtimeProfileEnvSecretRefs(profile)
+  if (refs.length === 0) return env
+
+  const resolveSecretValues =
+    deps?.resolveExtensionSecretValues || ((items: ExtensionSecretRef[]) => AppStore.resolveExtensionSecretValues(items))
+  const resolutions = resolveSecretValues(refs)
+  refs.forEach((ref, index) => {
+    const resolution = resolutions[index]
+    const resolvedRef = resolution?.ref
+    const matchesRef =
+      resolvedRef?.ownerKind === ref.ownerKind &&
+      resolvedRef.ownerId === ref.ownerId &&
+      resolvedRef.fieldKind === ref.fieldKind &&
+      resolvedRef.fieldName === ref.fieldName
+    if (resolution?.status !== 'ok' || !matchesRef || typeof resolution.value !== 'string') {
+      const status = resolution?.status || 'missing'
+      throw new Error(
+        `Runtime profile ${profile.name || profile.id} cannot launch because encrypted env secret ${ref.fieldName} is ${status}.`
+      )
+    }
+    env[ref.fieldName] = resolution.value
+  })
+  return env
 }
 
 export function createCliEnv(
