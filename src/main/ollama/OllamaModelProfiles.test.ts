@@ -75,6 +75,31 @@ describe('ollamaLocalToolSystemPrompt', () => {
     expect(prompt).toContain('workspace_search')
   })
 
+  it('opens with a model-naming identity envelope', () => {
+    // Identity envelope: name the actual model so the seat knows who it is.
+    const prompt = ollamaLocalToolSystemPrompt('read_only', 'qwen3.5:9b')
+    expect(prompt.startsWith('You are the local "qwen3.5:9b" model running through Ollama')).toBe(
+      true
+    )
+    // No model id → generic, still an identity line, no crash.
+    expect(ollamaLocalToolSystemPrompt('read_only').startsWith('You are a local model running')).toBe(
+      true
+    )
+  })
+
+  it('advertises the curated ~22-tool working set, not the full catalog', () => {
+    const prompt = ollamaLocalToolSystemPrompt('read_only', 'qwen3.5:9b')
+    // Detailed inline: only the protocol-critical few.
+    expect(prompt).toContain('- read_file:')
+    expect(prompt).toContain('- write_file:')
+    // Advertised by name.
+    expect(prompt).toContain('run_task')
+    // Tail tools are NOT advertised (reachable via tool_help).
+    expect(prompt).not.toContain('creative_blender_python')
+    expect(prompt).not.toContain('browser_screenshot')
+    expect(prompt).not.toContain('git_push')
+  })
+
   it('tells conversational turns to answer directly without the checklist ritual', () => {
     const prompt = ollamaLocalToolSystemPrompt('approved_edits', 'gpt-oss:latest', {
       intent: 'conversational'
@@ -91,24 +116,24 @@ describe('ollamaLocalToolSystemPrompt', () => {
     expect(prompt).not.toContain('The current user message is conversational')
   })
 
-  it('details goal_read inline and name-lists the goal lifecycle mutators', () => {
+  it('name-lists advertised coordination tools and keeps the lifecycle mutators in the tool_help tail', () => {
     const prompt = ollamaLocalToolSystemPrompt('provider_parity', 'ornith:9b')
-    // Tier retirement / preamble slim (2026-07): goal_read is a core tool spelled
-    // out inline; goal_update/complete/blocked are discoverable by name in the
-    // "Also available" list rather than each getting a paragraph.
-    expect(prompt).toContain('read the active TaskWraith thread goal only')
-    expect(prompt).toContain('goal_update')
-    expect(prompt).toContain('goal_complete')
-    expect(prompt).toContain('goal_blocked')
+    // Curated taxonomy (2026-07): goal_read is advertised (name-listed); the goal
+    // lifecycle MUTATORS (goal_update/complete/blocked) are NOT advertised — they
+    // are the tool_help tail, reachable on demand but out of the preamble.
+    expect(prompt).toContain('goal_read')
+    expect(prompt).not.toContain('goal_update')
+    expect(prompt).not.toContain('goal_complete')
+    expect(prompt).not.toContain('goal_blocked')
     // Ornith family delegation guidance still rides along.
     expect(prompt).toContain('instead of defaulting to another provider')
   })
 
-  it('includes ask_user_question in the safe read-only local tool tier', () => {
+  it('advertises ask_user_question by name but keeps tail tools (git_blame) out of the preamble', () => {
     const prompt = ollamaLocalToolSystemPrompt('read_only', 'qwen3.5:9b')
     expect(prompt).toContain('ask_user_question')
-    expect(prompt).toContain('pause and ask the user for clarification')
-    expect(prompt).toContain('git_blame')
+    // git_blame is not in the curated advertised set — it lives in the tool_help tail.
+    expect(prompt).not.toContain('git_blame')
   })
 })
 

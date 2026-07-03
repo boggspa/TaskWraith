@@ -137,17 +137,22 @@ export function buildOllamaToolsMarkdown(): string {
 
 /**
  * Runtime `tool_help` lookup: the markdown section for ONE tool (description,
- * access class, required/optional args, call example), or a short valid-names
- * message when the name is unknown. Lets a text-protocol local model fetch a
- * long-tail tool's exact arguments on demand instead of guessing — without
- * reading the whole 143-tool doc (which read_file can't reach anyway).
+ * access class, required/optional args, call example). Called with an EMPTY name
+ * it lists every tool name (the discovery path for the curated-taxonomy tail).
+ * An unknown name returns the same list so a small model can self-correct. Lets a
+ * text-protocol local model fetch a tool's exact arguments on demand instead of
+ * guessing — without reading the whole doc (which read_file can't reach anyway).
  */
 export function buildOllamaToolDocSection(name: string): string {
   const wanted = String(name || '').trim()
   const defs = createTaskWraithMcpToolDefinitions()
+  const allNames = defs.map((entry) => entry.name).join(', ')
+  if (!wanted) {
+    return `All ${defs.length} TaskWraith tools (call tool_help with a name for its schema): ${allNames}.`
+  }
   const def = defs.find((entry) => entry.name === wanted)
   if (!def) {
-    return `Unknown tool "${wanted}". Call tool_help with one of: ${defs.map((entry) => entry.name).join(', ')}.`
+    return `Unknown tool "${wanted}". Available tools: ${allNames}.`
   }
   return renderToolSectionLines(def).join('\n').trimEnd()
 }

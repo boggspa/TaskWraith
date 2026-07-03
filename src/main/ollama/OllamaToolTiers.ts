@@ -83,6 +83,67 @@ const OLLAMA_TIER4_EXTRA_TOOL_NAMES = TASKWRAITH_MCP_TOOLS.filter(
 
 export const OLLAMA_KNOWN_TOOL_NAMES = new Set<OllamaToolName>(TASKWRAITH_MCP_TOOLS)
 
+/**
+ * The CURATED working set a local model is ADVERTISED (preamble prose + native
+ * function defs). Deliberately small (~22) — small local models degrade badly
+ * when shown the full ~134-tool catalog ("too many tool names"). The EXECUTABLE
+ * surface is unchanged and stays at full parity (executeOllamaLocalTool routes
+ * any known tool through the role-governed gate); the long tail is reachable via
+ * `tool_help` (schema on demand) and, for the text protocol, by naming a known
+ * tool directly. Keep this list minimal + deterministic; add a tool here only
+ * when a local model needs it as a FIRST-CLASS default, not for completeness.
+ */
+export const OLLAMA_ADVERTISED_TOOL_NAMES = [
+  // Read / navigate
+  'read_file',
+  'list_directory',
+  'find_files',
+  'workspace_search',
+  'workspace_symbols',
+  'git_status',
+  'git_diff',
+  // Edit (role-gated: prompts/denies by permission role)
+  'write_file',
+  'replace',
+  'apply_patch',
+  'create_directory',
+  'delete_path',
+  'move_path',
+  'rename_path',
+  // Shell / verify (role-gated)
+  'run_shell_command',
+  'run_task',
+  'get_diagnostics',
+  // Web (read-only)
+  'web_search',
+  'web_fetch',
+  // Coordination
+  'todo_write',
+  'ask_user_question',
+  'goal_read'
+] as const satisfies readonly OllamaToolName[]
+
+const OLLAMA_ADVERTISED_TOOL_NAME_SET = new Set<OllamaToolName>(OLLAMA_ADVERTISED_TOOL_NAMES)
+
+/**
+ * The tool NAMES advertised to a local model, honoring the run's networkAccess
+ * (web tools stripped when networkAccess is 'deny', matching the gate). This is
+ * the curated ~22-tool surface, NOT the full catalog — see
+ * OLLAMA_ADVERTISED_TOOL_NAMES.
+ */
+export function ollamaAdvertisedToolNames(
+  options: { networkAccess?: string | null } = {}
+): OllamaToolName[] {
+  return options.networkAccess === 'deny'
+    ? OLLAMA_ADVERTISED_TOOL_NAMES.filter((toolName) => !OLLAMA_NETWORK_TOOL_NAMES.has(toolName))
+    : [...OLLAMA_ADVERTISED_TOOL_NAMES]
+}
+
+/** Is this tool part of the curated advertised default set (vs the tool_help tail)? */
+export function isOllamaAdvertisedTool(toolName: string): boolean {
+  return OLLAMA_ADVERTISED_TOOL_NAME_SET.has(toolName as OllamaToolName)
+}
+
 export function normalizeOllamaToolControlTier(value?: string | null): OllamaToolControlTier {
   if (value === 'approved_edits' || value === 'approved_shell' || value === 'provider_parity') {
     return value

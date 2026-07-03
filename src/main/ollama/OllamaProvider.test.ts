@@ -1980,15 +1980,14 @@ describe('parseOllamaToolRequest', () => {
       toolName: 'write_file',
       arguments: { path: 'x', content: 'y' }
     })
-    // Tier retirement (2026-07): the "Current Ollama tool-control tier" label is
-    // gone. Core tools (incl. web) are still detailed inline so the text protocol
-    // has concrete arg shapes to copy.
+    // Curated preamble (2026-07): only the ~7 protocol-critical tools are detailed
+    // inline (concrete arg shapes); web tools are advertised by NAME, and full
+    // schemas come from tool_help on demand.
     expect(ollamaLocalToolSystemPrompt()).toContain(
-      '- web_search: {"query":"current information to search for"}'
+      '- write_file: {"path":"relative/path.txt","content":"...","intent":"short reason before changing files"}'
     )
-    expect(ollamaLocalToolSystemPrompt()).toContain(
-      '- web_fetch: {"url":"https://example.com/page"}'
-    )
+    expect(ollamaLocalToolSystemPrompt()).toContain('web_search')
+    expect(ollamaLocalToolSystemPrompt()).toContain('web_fetch')
   })
 
   it('encourages local models to chain multi-step work after a tool result', () => {
@@ -2056,7 +2055,11 @@ describe('parseOllamaToolRequest', () => {
   it('advertises the tool_help lookup for on-demand tool arguments', () => {
     const prompt = ollamaLocalToolSystemPrompt('read_only')
     expect(prompt).toContain('tool_help')
-    expect(prompt).toContain('{"taskwraith_tool":{"name":"tool_help","arguments":{"name":"<tool>"}}}')
+    expect(prompt).toContain(
+      '{"taskwraith_tool":{"name":"tool_help","arguments":{"name":"<tool or empty to list>"}}}'
+    )
+    // Curated taxonomy: the preamble tells the model more tools exist beyond the advertised set.
+    expect(prompt).toContain('More TaskWraith tools exist beyond these')
   })
 
   it('falls back to the thinking channel when content is empty (gpt-oss)', () => {

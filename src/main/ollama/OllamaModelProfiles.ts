@@ -4,7 +4,7 @@ import type { OllamaPromptIntent } from './OllamaPromptIntent'
 import type { OllamaToolControlTier } from '../store/types'
 import {
   normalizeOllamaToolControlTier,
-  ollamaToolNamesForTier,
+  ollamaAdvertisedToolNames,
   type OllamaToolName
 } from './OllamaToolTiers'
 
@@ -128,27 +128,17 @@ export function ollamaModelFamilyTemperature(modelId: string): number | undefine
 
 // Tier retirement (2026-07): Ollama gets the full tool surface, but a local
 // model only needs the handful it actually drives spelled out. The preamble
-// details THESE inline (call-format examples the text protocol depends on) and
-// name-lists the rest, instead of dumping ~100 schemas into every system prompt.
-const OLLAMA_CORE_PREAMBLE_TOOLS = new Set<OllamaToolName>([
+// details ONLY these ~7 protocol-critical tools inline (concrete JSON arg shapes
+// the text protocol's first moves depend on); every other advertised tool is
+// name-listed, and full schemas for ANY tool come from `tool_help` on demand —
+// so the inline block does not re-duplicate what tool_help already serves.
+const OLLAMA_PREAMBLE_DETAILED_TOOLS = new Set<OllamaToolName>([
   'read_file',
   'list_directory',
-  'find_files',
   'workspace_search',
-  'workspace_symbols',
-  'git_status',
-  'git_diff',
-  'web_search',
-  'web_fetch',
   'write_file',
   'replace',
-  'apply_patch',
-  'run_shell_command',
-  'run_task',
-  'get_diagnostics',
-  'todo_write',
-  'ask_user_question',
-  'goal_read'
+  'run_shell_command'
 ])
 
 function describeTool(toolName: OllamaToolName): string | null {
@@ -250,30 +240,34 @@ export function ollamaLocalToolSystemPrompt(
 ): string {
   const intent = options.intent ?? 'workspace'
   const normalizedTier = normalizeOllamaToolControlTier(tier)
-  const tools = ollamaToolNamesForTier(normalizedTier, {
-    networkAccess: options.networkAccess
-  })
+  // Advertise only the CURATED working set (~22), not the full ~134-tool catalog
+  // — small local models degrade badly when shown too many tool names. The tail
+  // stays executable at the gate and reachable via tool_help.
+  const tools = ollamaAdvertisedToolNames({ networkAccess: options.networkAccess })
   const hasWebTools = tools.includes('web_search') || tools.includes('web_fetch')
   const familyLines = modelId?.trim()
     ? ollamaModelFamilyPromptLines(modelId, intent, normalizedTier)
     : []
-  // Detail the core tools a local model actually drives (their JSON arg shapes
-  // are load-bearing for the text protocol); list the rest by name so the full
-  // surface is discoverable without a ~100-line schema dump. Governance is the
-  // run's permission ROLE at the approval gate — the preamble no longer states a
-  // "tier" (a retired concept that misled small models).
+  // Detail ONLY the ~7 protocol-critical tools inline (concrete JSON arg shapes);
+  // name-list the rest of the advertised set. Full schemas for any tool come from
+  // tool_help — the inline block does not re-duplicate what tool_help serves.
   const detailed: string[] = []
   const named: string[] = []
   for (const toolName of tools) {
-    if (OLLAMA_CORE_PREAMBLE_TOOLS.has(toolName)) {
+    if (OLLAMA_PREAMBLE_DETAILED_TOOLS.has(toolName)) {
       const line = describeTool(toolName)
       if (line) detailed.push(line)
     } else {
       named.push(toolName)
     }
   }
+  // Hard identity envelope: name the actual model so the seat knows who it is and
+  // never adopts a stronger-sounding provider label from the transcript. The
+  // ensemble prompt adds the "you are NOT Claude/Codex/Gemini" anchor where peers
+  // are actually named (see EnsemblePrompt.ts).
+  const modelLabel = modelId?.trim() ? `the local "${modelId.trim()}" model` : 'a local model'
   const lines = [
-    'You are running inside TaskWraith through local Ollama with real workspace tools — call them instead of telling the user you lack a capability.',
+    `You are ${modelLabel} running through Ollama inside TaskWraith — a real workspace agent with the tools below. Call them instead of saying you lack a capability.`,
     'To use a tool, either emit a native tool/function call, or reply with ONLY a JSON object in this exact shape:',
     '{"taskwraith_tool":{"name":"read_file","arguments":{"path":"README.md"}}}',
     'Do NOT announce or describe a tool call in prose. Either issue the call now, or give your final answer in normal prose — describing a tool without calling it does nothing.',
@@ -283,12 +277,10 @@ export function ollamaLocalToolSystemPrompt(
         ]
       : []),
     ...familyLines,
-    'Available tools:',
+    'Common tools:',
     ...detailed,
     ...(named.length
-      ? [
-          `Also available (same JSON shape; infer standard MCP arguments, or read the target first): ${named.join(', ')}.`
-        ]
+      ? [`Also ready (same JSON shape): ${named.join(', ')}.`]
       : [])
   ]
   if (hasWebTools) {
@@ -297,7 +289,7 @@ export function ollamaLocalToolSystemPrompt(
     )
   }
   lines.push(
-    'Need a tool\'s exact arguments? Call tool_help: {"taskwraith_tool":{"name":"tool_help","arguments":{"name":"<tool>"}}} — it returns that tool\'s schema and a call example.',
+    'More TaskWraith tools exist beyond these. For any tool\'s exact arguments — or to list them all — call tool_help: {"taskwraith_tool":{"name":"tool_help","arguments":{"name":"<tool or empty to list>"}}}.',
     'Paths must stay inside the active workspace.',
     'File edits, shell, and publishing are governed by the run\'s permission role: TaskWraith either shows the user an approval modal or blocks the tool. If a tool is blocked, say so and continue with what you can do.',
     'Use ask_user_question when the request is too ambiguous to continue safely or when a mid-task choice belongs to the user.',

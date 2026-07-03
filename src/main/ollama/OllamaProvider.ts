@@ -58,6 +58,7 @@ import {
 export { ollamaLocalToolSystemPrompt } from './OllamaModelProfiles'
 import {
   OLLAMA_KNOWN_TOOL_NAMES,
+  ollamaAdvertisedToolNames,
   ollamaToolNamesForTier,
   type OllamaToolName
 } from './OllamaToolTiers'
@@ -1472,11 +1473,16 @@ function ollamaNativeToolParameters(
  * pass via Ollama's native `tools` request field. Models with native tool
  * support (gpt-oss, qwen, etc.) emit structured `tool_calls` against these. */
 export function ollamaNativeToolDefinitions(
-  tier: OllamaToolControlTier | string | undefined | null,
+  _tier: OllamaToolControlTier | string | undefined | null,
   options?: { compact?: boolean; networkAccess?: string | null }
 ): OllamaNativeToolDefinition[] {
   const compact = Boolean(options?.compact)
-  return ollamaToolNamesForTier(tier, { networkAccess: options?.networkAccess }).map((toolName) => {
+  // Advertise only the curated working set as native function defs (not the full
+  // ~134-tool catalog) — a small model degrades when handed too many tools. The
+  // tail is still executable at the gate; the model discovers it via tool_help.
+  const defs: OllamaNativeToolDefinition[] = ollamaAdvertisedToolNames({
+    networkAccess: options?.networkAccess
+  }).map((toolName) => {
     const { description, properties, required } = ollamaNativeToolParameters(toolName, compact)
     return {
       type: 'function',
@@ -1487,13 +1493,32 @@ export function ollamaNativeToolDefinitions(
       }
     }
   })
+  // tool_help is a virtual meta-tool (not in the catalog) — advertise it so
+  // native-calling models can also fetch any tail tool's schema on demand.
+  defs.push({
+    type: 'function',
+    function: {
+      name: OLLAMA_TOOL_HELP_NAME,
+      description:
+        'Get the exact arguments/schema for any TaskWraith tool (or pass an empty name to list every tool). Use before calling an unfamiliar tool.',
+      parameters: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', description: 'Tool name, or empty to list all tools.' }
+        }
+      }
+    }
+  })
+  return defs
 }
 
 /** Normalize a single native tool call from an Ollama stream chunk into the
  * internal request shape, or null when the name is unknown / unparseable. */
 export function normalizeOllamaNativeToolCall(call: OllamaNativeToolCall): OllamaToolRequest | null {
   const name = typeof call.function?.name === 'string' ? call.function.name.trim() : ''
-  if (!OLLAMA_KNOWN_TOOL_NAMES.has(name as OllamaToolName)) return null
+  if (!OLLAMA_KNOWN_TOOL_NAMES.has(name as OllamaToolName) && name !== OLLAMA_TOOL_HELP_NAME) {
+    return null
+  }
   const rawArgs = call.function?.arguments
   let args: Record<string, unknown> = {}
   if (rawArgs && typeof rawArgs === 'object' && !Array.isArray(rawArgs)) {
@@ -1501,7 +1526,7 @@ export function normalizeOllamaNativeToolCall(call: OllamaNativeToolCall): Ollam
   } else if (typeof rawArgs === 'string' && rawArgs.trim()) {
     args = recordFromUnknown(parseJsonObjectLoose(rawArgs)) || {}
   }
-  return { toolName: name as OllamaToolName, arguments: args }
+  return { toolName: name as OllamaCallableToolName, arguments: args }
 }
 
 export function ollamaToolResultFollowUpPrompt(input: {
@@ -2199,7 +2224,7 @@ export async function runOllamaProvider(
       nativeToolDefs.length > 0
         ? nativeToolDefs.map((def) => def.function.name)
         : toolProtocolEnabled
-          ? ollamaToolNamesForTier(toolControlTier, { networkAccess: runtimeNetworkAccess })
+          ? [...ollamaAdvertisedToolNames({ networkAccess: runtimeNetworkAccess }), OLLAMA_TOOL_HELP_NAME]
           : []
     const modelTemperature = ollamaModelFamilyTemperature(model)
     const thinkingLevel = resolveOllamaThinkingLevel(model, runProfile)
