@@ -1983,6 +1983,35 @@ function ollamaModelSupportsNativeTools(modelInfo?: OllamaModelInfo | null): boo
   return modelInfo.capabilities.some((capability) => capability.toLowerCase() === 'tools')
 }
 
+/**
+ * JSON schema for the text-protocol tool-call envelope, passed as Ollama's
+ * `format` so llama.cpp compiles a GBNF grammar and the model CANNOT decode a
+ * wrong wrapper key or a hallucinated tool name — it can only emit
+ * {"taskwraith_tool":{"name":<one of the advertised names>,"arguments":{...}}}.
+ * This is used only on the json-tool-fallback path (which already expects a tool
+ * call, not prose), so constraining the envelope is a strict tightening of the
+ * old bare `format:'json'`. `arguments` is intentionally left an open object —
+ * per-tool arg schemas can't be applied until `name` decodes, and required-field
+ * / enum checks are enforced separately by validateOllamaToolArguments.
+ */
+export function ollamaToolCallFormatSchema(toolNames: readonly string[]): Record<string, unknown> {
+  const names = toolNames.filter((name) => typeof name === 'string' && name.length > 0)
+  return {
+    type: 'object',
+    properties: {
+      taskwraith_tool: {
+        type: 'object',
+        properties: {
+          ...(names.length ? { name: { type: 'string', enum: names } } : { name: { type: 'string' } }),
+          arguments: { type: 'object' }
+        },
+        required: ['name']
+      }
+    },
+    required: ['taskwraith_tool']
+  }
+}
+
 async function runOllamaChatTurn(input: {
   baseUrl: string
   model: string
@@ -2019,7 +2048,16 @@ async function runOllamaChatTurn(input: {
       stream: true,
       messages: input.messages,
       ...(input.tools && input.tools.length ? { tools: input.tools } : {}),
-      ...(input.jsonToolFallback ? { format: 'json' } : {}),
+      // Constrained decoding: on the json-tool-fallback path, pass a JSON SCHEMA
+      // (envelope + tool-name enum) as `format`, not the bare 'json' string — the
+      // model then cannot emit a wrong wrapper key or an invalid tool name.
+      ...(input.jsonToolFallback
+        ? {
+            format: input.availableToolNames?.length
+              ? ollamaToolCallFormatSchema(input.availableToolNames)
+              : 'json'
+          }
+        : {}),
       ...(input.think ? { think: input.think } : {}),
       ...(input.keepAlive ? { keep_alive: input.keepAlive } : {}),
       options

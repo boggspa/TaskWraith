@@ -30,6 +30,7 @@ import {
   ollamaDegenerateResponseNudgePrompt,
   parseJsonObjectLoose,
   parseOllamaToolRequest,
+  ollamaToolCallFormatSchema,
   sanitizeLooseJsonEscapes,
   parseOllamaMemoryPsOutput,
   ollamaPreToolContentText,
@@ -1935,6 +1936,20 @@ describe('parseOllamaToolRequest', () => {
       toolName: 'web_search',
       arguments: { query: 'Cambridge UK weather' }
     })
+  })
+
+  it('builds a constrained-decoding format schema with the tool-name enum', () => {
+    const schema = ollamaToolCallFormatSchema(['read_file', 'write_file', 'tool_help']) as any
+    // Envelope is required, name is enum-constrained → the model cannot decode a
+    // wrong wrapper key or a hallucinated tool name.
+    expect(schema.required).toEqual(['taskwraith_tool'])
+    const inner = schema.properties.taskwraith_tool
+    expect(inner.required).toEqual(['name'])
+    expect(inner.properties.name.enum).toEqual(['read_file', 'write_file', 'tool_help'])
+    expect(inner.properties.arguments.type).toBe('object')
+    // Empty name list → unconstrained name (no empty enum that rejects everything).
+    const open = ollamaToolCallFormatSchema([]) as any
+    expect(open.properties.taskwraith_tool.properties.name.enum).toBeUndefined()
   })
 
   it('accepts the virtual tool_help lookup (not in the catalog)', () => {
