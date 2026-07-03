@@ -7,8 +7,7 @@ import {
   isOllamaToolControlTier,
   ollamaProviderParityWorkspaceGranted,
   ollamaToolNamesForTier,
-  ollamaToolRequiresIntent,
-  resolveOllamaExecutionToolControlTier
+  ollamaToolRequiresIntent
 } from './OllamaToolTiers'
 
 function settingsWith(
@@ -135,54 +134,6 @@ describe('effectiveOllamaToolControlTier', () => {
       const settings = settingsWith('provider_parity', { '/tmp/granted': '2026-01-01T00:00:00Z' })
       expect(effectiveOllamaToolControlTier(settings, '/tmp/granted', 'read_only')).toBe('read_only')
     })
-  })
-})
-
-describe('resolveOllamaExecutionToolControlTier', () => {
-  it('uses the carried run-start tier instead of mutable current settings', () => {
-    const settings = settingsWith('read_only')
-
-    expect(
-      resolveOllamaExecutionToolControlTier(
-        settings,
-        '/tmp/x',
-        'approved_shell',
-        'read_only'
-      )
-    ).toBe('approved_shell')
-  })
-
-  it('does not revalidate a carried provider-parity tier after grant revocation', () => {
-    const settingsAfterRevocation = settingsWith('provider_parity', {})
-
-    expect(
-      resolveOllamaExecutionToolControlTier(
-        settingsAfterRevocation,
-        '/tmp/granted-at-run-start',
-        'provider_parity',
-        'read_only'
-      )
-    ).toBe('provider_parity')
-  })
-
-  it('falls back to live settings/chat metadata when no run-start tier is carried', () => {
-    expect(
-      resolveOllamaExecutionToolControlTier(
-        settingsWith('read_only'),
-        '/tmp/x',
-        undefined,
-        'approved_edits'
-      )
-    ).toBe('approved_edits')
-
-    expect(
-      resolveOllamaExecutionToolControlTier(
-        settingsWith('approved_shell'),
-        '/tmp/x',
-        'bogus',
-        undefined
-      )
-    ).toBe('approved_shell')
   })
 })
 

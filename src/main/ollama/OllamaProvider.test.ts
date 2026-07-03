@@ -49,7 +49,6 @@ import {
   effectiveOllamaToolControlTier,
   normalizeOllamaToolControlTier,
   ollamaProviderParityWorkspaceGranted,
-  ollamaToolAllowedInTier,
   ollamaToolNamesForTier,
   ollamaToolRequiresIntent
 } from './OllamaToolTiers'
@@ -2234,9 +2233,6 @@ describe('Ollama tool surface (tier retired)', () => {
     ]) {
       expect(readOnly).toContain(tool)
     }
-    // ollamaToolAllowedInTier now reflects the full surface (no tier narrowing).
-    expect(ollamaToolAllowedInTier('write_file', 'read_only')).toBe(true)
-    expect(ollamaToolAllowedInTier('run_shell_command', 'read_only')).toBe(true)
   })
 
   it('still marks mutating / remote-git / process-control tools as intent-required', () => {
