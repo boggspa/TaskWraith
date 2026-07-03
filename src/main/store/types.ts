@@ -2213,6 +2213,7 @@ export interface ProductDiagnosticsAuditReceipts {
     messageFeedback: number
     messageFeedbackCastingSignals: number
     externalPublish: number
+    auditBundleVerifications: number
     auditRetentionPurges: number
     userMcpBlockedServers: number
   }
@@ -2222,6 +2223,7 @@ export interface ProductDiagnosticsAuditReceipts {
     messageFeedback: string
     messageFeedbackCastingSignals: string
     externalPublish: string
+    auditBundleVerifications: string
     auditRetentionPurges: string
     userMcpBlockedServers: string
   }
@@ -2229,6 +2231,7 @@ export interface ProductDiagnosticsAuditReceipts {
     messageFeedback: Array<Record<string, unknown>>
     messageFeedbackCastingSignals: Array<Record<string, unknown>>
     externalPublish: Array<Record<string, unknown>>
+    auditBundleVerifications: Array<Record<string, unknown>>
     auditRetentionPurges: Array<Record<string, unknown>>
     userMcpBlockedServers: Array<Record<string, unknown>>
   }
@@ -2309,6 +2312,7 @@ export interface ProductAuditBundleManifest {
     messageFeedback: number
     messageFeedbackCastingSignals: number
     externalPublish: number
+    auditBundleVerifications: number
     auditRetentionPurges: number
     userMcpBlockedServers: number
   }
@@ -2322,6 +2326,7 @@ export interface ProductAuditBundleManifest {
     messageFeedback: string
     messageFeedbackCastingSignals: string
     externalPublish: string
+    auditBundleVerifications: string
     auditRetentionPurges: string
     userMcpBlockedServers: string
   }
@@ -2335,6 +2340,7 @@ export interface ProductAuditBundleManifest {
       auditRuns: 'retained_capped'
       messageFeedback: 'retained_hard_capped_local'
       externalPublish: 'retained_capped'
+      auditBundleVerifications: 'retained_capped_local'
     }
     runEventHashChains: {
       checked: number
@@ -2364,6 +2370,7 @@ export interface ProductAuditBundleSnapshot {
     messageFeedback: Array<Record<string, unknown>>
     messageFeedbackCastingSignals: Array<Record<string, unknown>>
     externalPublish: Array<Record<string, unknown>>
+    auditBundleVerifications: Array<Record<string, unknown>>
     auditRetentionPurges: Array<Record<string, unknown>>
     userMcpBlockedServers: Array<Record<string, unknown>>
   }
@@ -2407,6 +2414,27 @@ export interface ProductAuditBundleVerificationResult {
     filters: ProductAuditBundleFilter
     tamperEvidence: ProductAuditBundleTamperEvidence
   }
+  error?: string
+}
+
+export interface ProductAuditBundleVerificationReceipt {
+  schemaVersion: 1
+  id: string
+  verifiedAt: string
+  ok: boolean
+  bundlePathHash?: string
+  bundlePathBasename?: string
+  bundleGeneratedAt?: string
+  redactionMode?: ProductAuditBundleRedactionMode
+  filtersHash?: string
+  tamperEvidence?: ProductAuditBundleTamperEvidence
+  signaturePresent?: boolean
+  payloadHashValid?: boolean
+  signatureValid?: boolean
+  sectionHashesValid?: boolean
+  countsValid?: boolean
+  keyId?: string
+  reason?: string
   error?: string
 }
 
