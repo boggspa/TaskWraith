@@ -831,6 +831,8 @@ struct Composer: View {
                 model.startTask(
                     workspaceId: workspaceId, provider: selectedProvider, prompt: trimmed,
                     model: selectedModelId,
+                    approvalMode: bridgeApprovalMode,
+                    workflowMode: bridgeWorkflowMode,
                     reasoningEffort: selectedReasoningEffort,
                     imageAttachments: hasAttachments ? encoded : nil)
                 attachments = []
@@ -838,6 +840,8 @@ struct Composer: View {
                 model.startTask(
                     workspaceId: workspaceId, provider: selectedProvider, prompt: trimmed,
                     model: selectedModelId,
+                    approvalMode: bridgeApprovalMode,
+                    workflowMode: bridgeWorkflowMode,
                     reasoningEffort: selectedReasoningEffort)
             #endif
             text = ""

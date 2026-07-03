@@ -4274,6 +4274,8 @@ public final class RemoteSessionModel: ObservableObject {
     /// now fails correctly.
     public func startTask(
         workspaceId: String, provider: String, prompt: String, model: String? = nil,
+        approvalMode: String? = nil,
+        workflowMode: String? = nil,
         reasoningEffort: String? = nil,
         imageAttachments: [[String: Any]]? = nil
     ) {
@@ -4295,7 +4297,8 @@ public final class RemoteSessionModel: ObservableObject {
             self.send(
                 BridgeAction.composerPrompt(
                     workspaceId: workspaceId, threadId: threadId, provider: provider,
-                    text: trimmed, model: model, reasoningEffort: reasoningEffort,
+                    text: trimmed, approvalMode: approvalMode, workflowMode: workflowMode,
+                    model: model, reasoningEffort: reasoningEffort,
                     imageAttachments: imageAttachments),
                 timeoutMs: 12_000,
                 successLabel: "Sent.",
