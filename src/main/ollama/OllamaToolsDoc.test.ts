@@ -55,6 +55,15 @@ describe('buildOllamaToolDocSection (tool_help runtime lookup)', () => {
     expect(section).not.toContain('## read_file')
   })
 
+  it('serves a real section for a NON-advertised tail tool (the tool_help promise)', () => {
+    // git_blame is deliberately NOT in the curated advertised set — the whole
+    // point of tool_help is that the tail is still discoverable on demand.
+    const section = buildOllamaToolDocSection('git_blame')
+    expect(section.startsWith('## git_blame')).toBe(true)
+    expect(section).toContain('{"taskwraith_tool":{"name":"git_blame"')
+    expect(buildOllamaToolsMarkdown()).toContain(section)
+  })
+
   it('lists valid names for an unknown tool', () => {
     const section = buildOllamaToolDocSection('not_a_real_tool')
     expect(section).toContain('Unknown tool "not_a_real_tool"')

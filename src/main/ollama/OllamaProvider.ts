@@ -1616,6 +1616,16 @@ function ollamaEnsembleRetryReminder(options?: OllamaRetryPromptOptions): string
     : []
 }
 
+/** Terminal content emitted when the retry ceiling fires. Solo runs get a
+ * user-facing "rephrase" instruction; an ensemble seat gets panel-voiced text
+ * with no user directive (it defers to the panel rather than telling the user
+ * what to do — that's the orchestrator's job, not one seat's). */
+export function ollamaCeilingFinalizeContent(options?: OllamaRetryPromptOptions): string {
+  return options?.ensembleRun
+    ? 'I could not converge on a usable result for my assigned slice this round after several attempts, so I am stopping here and deferring to the panel.'
+    : 'I could not produce a valid tool call or a usable answer after several attempts, so I am stopping instead of looping. Please rephrase or narrow the request.'
+}
+
 export function ollamaEmptyToolResponseRetryPrompt(options?: OllamaRetryPromptOptions): string {
   return [
     'Your previous response was empty after TaskWraith returned tool results.',
@@ -2609,9 +2619,7 @@ export async function runOllamaProvider(
     }
     for (let turnIndex = 0; ; turnIndex += 1) {
       if (consecutiveNonProductiveTurns >= OLLAMA_MAX_CONSECUTIVE_NON_PRODUCTIVE_TURNS) {
-        emitOllamaContent(
-          'I could not produce a valid tool call or a usable answer after several attempts, so I am stopping instead of looping. Please rephrase or narrow the request.'
-        )
+        emitOllamaContent(ollamaCeilingFinalizeContent({ ensembleRun }))
         break
       }
       const jsonToolFallback =

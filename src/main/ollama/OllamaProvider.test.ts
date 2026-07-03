@@ -14,6 +14,7 @@ import {
   ollamaReasoningOnlyNudgePrompt,
   ollamaToolIntentNudgePrompt,
   ollamaToolArgumentRepairPrompt,
+  ollamaCeilingFinalizeContent,
   ollamaToolResultFollowUpPrompt,
   ollamaToolCallKey,
   ollamaToolResultSignature,
@@ -1954,6 +1955,97 @@ describe('runOllamaProvider streaming', () => {
     expect(toolNames).not.toContain('run_task')
   })
 
+  it('keys ensemble session memory per participant seat (no cross-seat leak)', async () => {
+    const store = new Map<string, unknown>()
+    const getKeys: Array<string | undefined> = []
+    const saveKeys: Array<string | undefined> = []
+    let chatCalls = 0
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).endsWith('/api/tags')) {
+        return jsonResponse({
+          models: [
+            {
+              name: 'stream-model:latest',
+              digest: 'digest-stream',
+              details: { family: 'qwen' },
+              capabilities: ['tools']
+            }
+          ]
+        })
+      }
+      if (String(url).endsWith('/api/show')) {
+        return jsonResponse({ details: { family: 'qwen' }, capabilities: ['tools'] })
+      }
+      if (String(url).endsWith('/api/chat')) {
+        chatCalls += 1
+        // Odd calls: a workspace_search tool call (so the run persists memory).
+        // Even calls: a final answer so the seat's run terminates.
+        return chatCalls % 2 === 1
+          ? ollamaStreamResponse([
+              JSON.stringify({
+                message: {
+                  role: 'assistant',
+                  content:
+                    '{"taskwraith_tool":{"name":"workspace_search","arguments":{"query":"seat marker","path":".","maxResults":3}}}'
+                }
+              }),
+              JSON.stringify({ done: true, prompt_eval_count: 6, eval_count: 4 })
+            ])
+          : ollamaStreamResponse([
+              JSON.stringify({ message: { role: 'assistant', content: 'Done for my slice.' } }),
+              JSON.stringify({ done: true, prompt_eval_count: 6, eval_count: 4 })
+            ])
+      }
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const { deps } = makeProviderDeps({
+      fetchMock,
+      settings: { ollamaRunProfiles: { 'stream-model:latest': { protocolMode: 'json_only' } } },
+      executeTool: async () => ({ ok: true, output: 'src/seat.ts:1: seat marker' })
+    })
+    deps.getOllamaSessionMemory = (chatId: string, memoryKey?: string) => {
+      getKeys.push(memoryKey)
+      return store.get(`${chatId}::${memoryKey ?? ''}`) as never
+    }
+    deps.saveOllamaSessionMemory = (chatId: string, memory: unknown, memoryKey?: string) => {
+      saveKeys.push(memoryKey)
+      store.set(`${chatId}::${memoryKey ?? ''}`, memory)
+    }
+
+    const runSeat = (participantId: string) =>
+      runOllamaProvider(
+        deps,
+        stubEvent,
+        {
+          ...basePayload,
+          ensembleRun: {
+            roundId: 'round-1',
+            participantId,
+            provider: 'ollama',
+            role: 'SliceWorker',
+            order: 1
+          }
+        },
+        baseRoute
+      )
+
+    await runSeat('seat-a')
+    // seat-b loads BEFORE it saves — with only seat-a persisted, a leak would
+    // surface here.
+    await runSeat('seat-b')
+
+    expect(getKeys).toContain('ensemble:seat-a')
+    expect(getKeys).toContain('ensemble:seat-b')
+    expect(saveKeys).toContain('ensemble:seat-a')
+    expect(saveKeys).toContain('ensemble:seat-b')
+    // Distinct, non-colliding storage slots — one per seat, separate objects.
+    expect(store.has('chat-ollama-1::ensemble:seat-a')).toBe(true)
+    expect(store.has('chat-ollama-1::ensemble:seat-b')).toBe(true)
+    expect(store.get('chat-ollama-1::ensemble:seat-a')).not.toBe(
+      store.get('chat-ollama-1::ensemble:seat-b')
+    )
+  })
+
   it('sends a name-specific repair when a native tool call names a nonexistent tool', async () => {
     let chatCalls = 0
     const chatBodies: string[] = []
@@ -2399,6 +2491,16 @@ describe('parseOllamaToolRequest', () => {
     const missingIntent = validateOllamaToolArguments('write_file', { path: 'a.ts', content: 'x' })
     expect(missingIntent.ok).toBe(false)
     if (!missingIntent.ok) expect(missingIntent.message).toContain('intent')
+  })
+
+  it('voices the retry-ceiling finalize differently for solo vs ensemble runs', () => {
+    const solo = ollamaCeilingFinalizeContent()
+    expect(solo).toContain('stopping instead of looping')
+    expect(solo).toContain('rephrase or narrow the request')
+    const ensemble = ollamaCeilingFinalizeContent({ ensembleRun: true })
+    expect(ensemble).toContain('deferring to the panel')
+    // An ensemble seat must NOT instruct the user — that's the orchestrator's job.
+    expect(ensemble).not.toContain('rephrase or narrow the request')
   })
 
   it('flags a wrong-TYPE load-bearing argument with a repairable message', () => {

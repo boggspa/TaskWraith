@@ -86,7 +86,7 @@ export const OLLAMA_KNOWN_TOOL_NAMES = new Set<OllamaToolName>(TASKWRAITH_MCP_TO
 /**
  * The CURATED working set a local model is ADVERTISED (preamble prose + native
  * function defs). Deliberately small (~22) — small local models degrade badly
- * when shown the full ~134-tool catalog ("too many tool names"). The EXECUTABLE
+ * when shown the full tool catalog ("too many tool names"). The EXECUTABLE
  * surface is unchanged and stays at full parity (executeOllamaLocalTool routes
  * any known tool through the role-governed gate); the long tail is reachable via
  * `tool_help` (schema on demand) and, for the text protocol, by naming a known
