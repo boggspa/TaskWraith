@@ -39,6 +39,8 @@ public struct EnsembleRosterSheet: View {
     @State private var presetNameDraft = ""
     @State private var orchestrationModeDraft: String? = nil
     @State private var maxContinuationHopsDraft: Int? = nil
+    @State private var fanoutPolicyDraft: String? = nil
+    @State private var ensembleContextCharsDraft: Int? = nil
 
     public init(model: RemoteSessionModel, threadId: String, workspaceId: String) {
         self.model = model
@@ -97,8 +99,56 @@ public struct EnsembleRosterSheet: View {
         max(0, state?.continuationHops ?? 0)
     }
 
+    private var remoteFanoutPolicy: String {
+        normalizeFanoutPolicy(state?.fanoutPolicy)
+    }
+
+    private var selectedFanoutPolicy: String {
+        fanoutPolicyDraft ?? remoteFanoutPolicy
+    }
+
+    private var selectedFanoutPickerValue: String {
+        if isWriterFanoutPolicy(selectedFanoutPolicy) { return "write" }
+        return selectedFanoutPolicy == "read_only" ? "read_only" : "off"
+    }
+
+    private var writerFanoutPolicy: String {
+        (state?.bossmanParticipantId?.isEmpty == false)
+            ? "locked_writers_with_boss" : "locked_writers_user_preflight"
+    }
+
+    private var remoteEnsembleContextChars: Int {
+        clampEnsembleContextChars(state?.ensembleContextChars ?? 24_000)
+    }
+
+    private var selectedEnsembleContextChars: Int {
+        ensembleContextCharsDraft ?? remoteEnsembleContextChars
+    }
+
     private func clampContinuationHops(_ value: Int) -> Int {
         max(1, min(500, value))
+    }
+
+    private func clampEnsembleContextChars(_ value: Int) -> Int {
+        max(5_000, min(500_000, value))
+    }
+
+    private func isWriterFanoutPolicy(_ value: String) -> Bool {
+        value == "locked_writers_with_boss" || value == "locked_writers_user_preflight"
+    }
+
+    private func normalizeFanoutPolicy(_ value: String?) -> String {
+        guard let value else { return "off" }
+        switch value {
+        case "read_only", "locked_writers_with_boss", "locked_writers_user_preflight":
+            return value
+        default:
+            return "off"
+        }
+    }
+
+    private func formatCharBudget(_ value: Int) -> String {
+        value >= 1_000 ? "\(value / 1_000)K" : "\(value)"
     }
 
     private func workSessionStatusLabel(_ status: String?) -> String {
@@ -241,6 +291,16 @@ public struct EnsembleRosterSheet: View {
                 maxContinuationHopsDraft = nil
             }
         }
+        .onChange(of: state?.fanoutPolicy) { _, fresh in
+            if fanoutPolicyDraft == normalizeFanoutPolicy(fresh) {
+                fanoutPolicyDraft = nil
+            }
+        }
+        .onChange(of: state?.ensembleContextChars) { _, fresh in
+            if ensembleContextCharsDraft == clampEnsembleContextChars(fresh ?? 24_000) {
+                ensembleContextCharsDraft = nil
+            }
+        }
     }
 
     private var orchestrationSection: some View {
@@ -262,6 +322,49 @@ public struct EnsembleRosterSheet: View {
                 Text("Continuous").tag("continuous")
             }
             .pickerStyle(.segmented)
+
+            Picker(
+                "Fan-Out",
+                selection: Binding(
+                    get: { selectedFanoutPickerValue },
+                    set: { value in
+                        let next =
+                            value == "read_only" ? "read_only"
+                            : value == "write" ? writerFanoutPolicy : "off"
+                        fanoutPolicyDraft = next
+                        model.updateEnsembleSettings(
+                            workspaceId: workspaceId,
+                            threadId: threadId,
+                            fanoutPolicy: next)
+                    })
+            ) {
+                Text("Off").tag("off")
+                Text("Read").tag("read_only")
+                Text("Write").tag("write")
+            }
+            .pickerStyle(.segmented)
+
+            Stepper(
+                value: Binding(
+                    get: { selectedEnsembleContextChars },
+                    set: { value in
+                        let next = clampEnsembleContextChars(value)
+                        ensembleContextCharsDraft = next
+                        model.updateEnsembleSettings(
+                            workspaceId: workspaceId,
+                            threadId: threadId,
+                            ensembleContextChars: next)
+                    }),
+                in: 5_000...500_000,
+                step: 5_000
+            ) {
+                HStack {
+                    Label("Chars", systemImage: "text.quote")
+                    Spacer()
+                    Text(formatCharBudget(selectedEnsembleContextChars))
+                        .foregroundStyle(TWTheme.textSecondary)
+                }
+            }
 
             if selectedOrchestrationMode == "continuous" {
                 Stepper(
