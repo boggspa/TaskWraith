@@ -619,6 +619,8 @@ export class BridgeActionRouter {
         return this.executor.executeEnsembleSteer(payload)
       case 'ensembleRosterUpdate':
         return this.executor.executeEnsembleRosterUpdate(payload)
+      case 'ensembleSettingsUpdate':
+        return this.executor.executeEnsembleSettingsUpdate(payload)
       case 'ensembleQueueItem':
         return this.executor.executeEnsembleQueueItem(payload)
       case 'setGuestParticipant':
@@ -1161,6 +1163,7 @@ function capabilityForPayload(payload: BridgeActionPayload): RemoteWorkspaceCapa
     case 'ensembleQueuePrompt':
     case 'ensembleSteer':
     case 'ensembleRosterUpdate':
+    case 'ensembleSettingsUpdate':
     case 'ensembleQueueItem':
     case 'composerQueueItem':
       return 'steer'

@@ -8,6 +8,7 @@ import type {
   BridgeEnsembleCancelWakeupAction,
   BridgeEnsembleQueuePromptAction,
   BridgeEnsembleSkipActiveParticipantAction,
+  BridgeEnsembleSettingsUpdateAction,
   BridgeEnsembleSteerAction,
   BridgeEnsembleWakeNowAction,
   BridgeQuestionRejectAction,
@@ -113,6 +114,13 @@ const sample = {
     threadId: 't-1',
     text: 'steer this'
   } satisfies BridgeEnsembleSteerAction,
+  ensembleSettingsUpdate: {
+    kind: 'ensembleSettingsUpdate',
+    workspaceId: 'ws-1',
+    threadId: 't-1',
+    orchestrationMode: 'continuous',
+    maxContinuationHops: 9
+  } satisfies BridgeEnsembleSettingsUpdateAction,
   registerApnsToken: {
     kind: 'registerApnsToken',
     pairID: 'pair-1',
@@ -829,6 +837,25 @@ describe('MainProcessActionExecutor session and pin controls', () => {
     const result = await executor.executeCanvasAction(sample.canvasAction)
     expect(result.executed).toBe(false)
     expect(result.message).toContain('No open canvas')
+  })
+
+  it('updates ensemble settings through ensembleSettingsUpdateFn', async () => {
+    const ensembleSettingsUpdateFn = vi.fn().mockResolvedValue({ ok: true })
+    const executor = new MainProcessActionExecutor({ cancelRunFn, ensembleSettingsUpdateFn })
+    const result = await executor.executeEnsembleSettingsUpdate(sample.ensembleSettingsUpdate)
+    expect(ensembleSettingsUpdateFn).toHaveBeenCalledWith(sample.ensembleSettingsUpdate)
+    expect(result.executed).toBe(true)
+  })
+
+  it('surfaces ensembleSettingsUpdateFn errors', async () => {
+    const ensembleSettingsUpdateFn = vi.fn().mockResolvedValue({
+      ok: false,
+      error: 'Thread is not an Ensemble chat'
+    })
+    const executor = new MainProcessActionExecutor({ cancelRunFn, ensembleSettingsUpdateFn })
+    const result = await executor.executeEnsembleSettingsUpdate(sample.ensembleSettingsUpdate)
+    expect(result.executed).toBe(false)
+    expect(result.message).toContain('Thread is not an Ensemble chat')
   })
 
   it('reports canvasAction not wired when no canvasActionFn is supplied', async () => {

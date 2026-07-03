@@ -28,6 +28,7 @@ import type {
   BridgeEnsembleSkipActiveParticipantAction,
   BridgeEnsembleSteerAction,
   BridgeEnsembleRosterUpdateAction,
+  BridgeEnsembleSettingsUpdateAction,
   BridgeEnsembleQueueItemAction,
   BridgeSetGuestParticipantAction,
   BridgeRemoveGuestParticipantAction,
@@ -158,6 +159,9 @@ export interface BridgeActionExecutor {
   executeEnsembleSteer(action: BridgeEnsembleSteerAction): Promise<BridgeActionExecutionResult>
   executeEnsembleRosterUpdate(
     action: BridgeEnsembleRosterUpdateAction
+  ): Promise<BridgeActionExecutionResult>
+  executeEnsembleSettingsUpdate(
+    action: BridgeEnsembleSettingsUpdateAction
   ): Promise<BridgeActionExecutionResult>
   executeEnsembleQueueItem(
     action: BridgeEnsembleQueueItemAction
@@ -354,6 +358,11 @@ export class NoopActionExecutor implements BridgeActionExecutor {
     action: BridgeEnsembleRosterUpdateAction
   ): Promise<BridgeActionExecutionResult> {
     return notWired('ensembleRosterUpdate', action.threadId)
+  }
+  async executeEnsembleSettingsUpdate(
+    action: BridgeEnsembleSettingsUpdateAction
+  ): Promise<BridgeActionExecutionResult> {
+    return notWired('ensembleSettingsUpdate', action.threadId)
   }
   async executeEnsembleQueueItem(
     action: BridgeEnsembleQueueItemAction
@@ -658,6 +667,7 @@ export interface MainProcessActionExecutorDependencies {
   ensembleQueuePromptFn?: (action: BridgeEnsembleQueuePromptAction) => Promise<unknown>
   ensembleSteerFn?: (action: BridgeEnsembleSteerAction) => Promise<unknown>
   ensembleRosterUpdateFn?: (action: BridgeEnsembleRosterUpdateAction) => Promise<unknown>
+  ensembleSettingsUpdateFn?: (action: BridgeEnsembleSettingsUpdateAction) => Promise<unknown>
   ensembleQueueItemFn?: (action: BridgeEnsembleQueueItemAction) => Promise<unknown>
   setGuestParticipantFn?: (action: BridgeSetGuestParticipantAction) => Promise<unknown>
   removeGuestParticipantFn?: (action: BridgeRemoveGuestParticipantAction) => Promise<unknown>
@@ -1439,6 +1449,17 @@ export class MainProcessActionExecutor implements BridgeActionExecutor {
       'ensembleRosterUpdate',
       action.threadId,
       this.deps.ensembleRosterUpdateFn,
+      action
+    )
+  }
+
+  async executeEnsembleSettingsUpdate(
+    action: BridgeEnsembleSettingsUpdateAction
+  ): Promise<BridgeActionExecutionResult> {
+    return this.executeEnsembleAction(
+      'ensembleSettingsUpdate',
+      action.threadId,
+      this.deps.ensembleSettingsUpdateFn,
       action
     )
   }

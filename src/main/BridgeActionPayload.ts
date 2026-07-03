@@ -600,6 +600,14 @@ export interface BridgeEnsembleRosterUpdateAction extends BridgeActionMetadata {
   participants: BridgeRosterParticipant[]
 }
 
+export interface BridgeEnsembleSettingsUpdateAction extends BridgeActionMetadata {
+  kind: 'ensembleSettingsUpdate'
+  workspaceId: string
+  threadId: string
+  orchestrationMode?: 'turn_bound' | 'continuous'
+  maxContinuationHops?: number
+}
+
 export interface BridgeEnsembleSteerAction extends BridgeActionMetadata {
   kind: 'ensembleSteer'
   workspaceId: string
@@ -676,6 +684,7 @@ export type BridgeActionPayload =
   | BridgeEnsembleQueuePromptAction
   | BridgeEnsembleSteerAction
   | BridgeEnsembleRosterUpdateAction
+  | BridgeEnsembleSettingsUpdateAction
   | BridgeEnsembleQueueItemAction
   | BridgeSetGuestParticipantAction
   | BridgeRemoveGuestParticipantAction
@@ -805,6 +814,7 @@ export function workspaceIdFromPayload(payload: BridgeActionPayload): string | n
     case 'ensembleQueuePrompt':
     case 'ensembleSteer':
     case 'ensembleRosterUpdate':
+    case 'ensembleSettingsUpdate':
     case 'ensembleQueueItem':
     case 'setGuestParticipant':
     case 'removeGuestParticipant':
@@ -875,6 +885,7 @@ export function payloadRequiresWorkspaceGating(payload: BridgeActionPayload): bo
     case 'ensembleQueuePrompt':
     case 'ensembleSteer':
     case 'ensembleRosterUpdate':
+    case 'ensembleSettingsUpdate':
     case 'ensembleQueueItem':
     case 'setGuestParticipant':
     case 'removeGuestParticipant':
@@ -949,6 +960,7 @@ export function payloadIsMutating(payload: BridgeActionPayload): boolean {
     case 'ensembleQueuePrompt':
     case 'ensembleSteer':
     case 'ensembleRosterUpdate':
+    case 'ensembleSettingsUpdate':
     case 'ensembleQueueItem':
     case 'setGuestParticipant':
     case 'removeGuestParticipant':
@@ -1126,6 +1138,10 @@ function coerceToPayload(parsed: unknown): BridgeActionPayload {
       return isEnsembleRosterUpdate(parsed)
         ? (parsed as unknown as BridgeEnsembleRosterUpdateAction)
         : { kind: 'unknown', rawKind: 'ensembleRosterUpdate', raw: parsed }
+    case 'ensembleSettingsUpdate':
+      return isEnsembleSettingsUpdate(parsed)
+        ? (parsed as unknown as BridgeEnsembleSettingsUpdateAction)
+        : { kind: 'unknown', rawKind: 'ensembleSettingsUpdate', raw: parsed }
     case 'ensembleQueueItem':
       return isEnsembleQueueItem(parsed)
         ? (parsed as unknown as BridgeEnsembleQueueItemAction)
@@ -1748,6 +1764,20 @@ function isEnsembleRosterUpdate(v: Record<string, unknown>): boolean {
     }
     return true
   })
+}
+
+function isEnsembleSettingsUpdate(v: Record<string, unknown>): boolean {
+  if (!isWorkspaceThreadAction(v)) return false
+  const mode = v.orchestrationMode
+  const hasMode = mode !== undefined
+  const hasHops = v.maxContinuationHops !== undefined
+  if (!hasMode && !hasHops) return false
+  if (hasMode && mode !== 'turn_bound' && mode !== 'continuous') return false
+  if (hasHops) {
+    const hops = v.maxContinuationHops
+    if (typeof hops !== 'number' || !Number.isFinite(hops)) return false
+  }
+  return true
 }
 
 function isEnsembleSteer(v: Record<string, unknown>): boolean {

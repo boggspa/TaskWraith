@@ -466,6 +466,48 @@ describe('decodeBridgeActionPayload', () => {
       expect(oversized).toMatchObject({ kind: 'unknown', rawKind: 'ensembleRosterUpdate' })
     })
 
+    it('decodes ensembleSettingsUpdate and rejects non-wire mode names', () => {
+      const payload = decodeBridgeActionPayload(
+        encode({
+          kind: 'ensembleSettingsUpdate',
+          actionId: 'a-ensemble-settings',
+          workspaceId: 'ws-1',
+          threadId: 'thread-1',
+          orchestrationMode: 'continuous',
+          maxContinuationHops: 12
+        })
+      ).payload
+      expect(payload.kind).toBe('ensembleSettingsUpdate')
+      if (payload.kind === 'ensembleSettingsUpdate') {
+        expect(payload.orchestrationMode).toBe('continuous')
+        expect(payload.maxContinuationHops).toBe(12)
+      }
+      expect(workspaceIdFromPayload(payload)).toBe('ws-1')
+      expect(payloadRequiresWorkspaceGating(payload)).toBe(true)
+      expect(payloadIsMutating(payload)).toBe(true)
+
+      const badMode = decodeBridgeActionPayload(
+        encode({
+          kind: 'ensembleSettingsUpdate',
+          actionId: 'a-ensemble-settings-bad',
+          workspaceId: 'ws-1',
+          threadId: 'thread-1',
+          orchestrationMode: 'turn-bound'
+        })
+      ).payload
+      expect(badMode).toMatchObject({ kind: 'unknown', rawKind: 'ensembleSettingsUpdate' })
+
+      const emptyPatch = decodeBridgeActionPayload(
+        encode({
+          kind: 'ensembleSettingsUpdate',
+          actionId: 'a-ensemble-settings-empty',
+          workspaceId: 'ws-1',
+          threadId: 'thread-1'
+        })
+      ).payload
+      expect(emptyPatch).toMatchObject({ kind: 'unknown', rawKind: 'ensembleSettingsUpdate' })
+    })
+
     it('decodes a threadSnapshotRequest and classifies it read-only', () => {
       const wire = encode({
         kind: 'threadSnapshotRequest',

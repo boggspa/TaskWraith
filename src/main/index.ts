@@ -547,6 +547,7 @@ import {
   EffectiveRunPermissions,
   EnsembleRunIdentity,
   EnsembleParticipant,
+  EnsembleOrchestrationMode,
   EnsembleWakeupRecord,
   RunEventKind,
   TranscriptMediaRef,
@@ -23562,6 +23563,50 @@ if (isGeminiMcpBridgeProcess) {
           bridgeBroadcasterRef?.resetThrottle()
           bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
           return { ok: true }
+        },
+        ensembleSettingsUpdateFn: async (action) => {
+          const chat = AppStore.getChat(action.threadId)
+          if (!chat?.ensemble) return { ok: false, error: 'Thread is not an Ensemble chat' }
+          const nextMode: EnsembleOrchestrationMode =
+            action.orchestrationMode === 'continuous'
+              ? 'continuous'
+              : action.orchestrationMode === 'turn_bound'
+                ? 'turn_bound'
+                : chat.ensemble.orchestrationMode === 'continuous'
+                  ? 'continuous'
+                  : 'turn_bound'
+          const shouldUpdateHops = typeof action.maxContinuationHops === 'number'
+          const nextMaxContinuationHops = shouldUpdateHops
+            ? Math.max(1, Math.min(500, Math.floor(action.maxContinuationHops as number)))
+            : chat.ensemble.maxContinuationHops
+          const activeRound =
+            shouldUpdateHops && chat.ensemble.activeRound
+              ? {
+                  ...chat.ensemble.activeRound,
+                  maxContinuationHops: nextMaxContinuationHops
+                }
+              : chat.ensemble.activeRound
+          const updated: ChatRecord = {
+            ...chat,
+            ensemble: {
+              ...chat.ensemble,
+              ...(action.orchestrationMode ? { orchestrationMode: nextMode } : {}),
+              ...(shouldUpdateHops ? { maxContinuationHops: nextMaxContinuationHops } : {}),
+              ...(activeRound ? { activeRound } : {})
+            },
+            updatedAt: Date.now()
+          }
+          AppStore.saveChat(updated)
+          broadcastChatUpdated(updated)
+          const canonical = canonicalRemoteWorkspaceId(updated.workspaceId)
+          if (canonical) pushRemoteThreadSnapshot(updated, canonical)
+          bridgeBroadcasterRef?.resetThrottle()
+          bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
+          return {
+            ok: true,
+            orchestrationMode: updated.ensemble?.orchestrationMode,
+            maxContinuationHops: updated.ensemble?.maxContinuationHops
+          }
         },
         ensembleSteerFn: async (action) => {
           const chat = AppStore.getChat(action.threadId)

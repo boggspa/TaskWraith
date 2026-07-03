@@ -137,9 +137,13 @@ function makeStubExecutor(
       executed: true,
       message: 'ensembleSteer done'
     }),
-        executeEnsembleRosterUpdate: make('executeEnsembleRosterUpdate', {
+    executeEnsembleRosterUpdate: make('executeEnsembleRosterUpdate', {
       executed: true,
       message: 'ensembleSteer done'
+    }),
+    executeEnsembleSettingsUpdate: make('executeEnsembleSettingsUpdate', {
+      executed: true,
+      message: 'ensembleSettingsUpdate done'
     }),
     executeEnsembleQueueItem: make('executeEnsembleQueueItem', {
       executed: true,
@@ -1066,6 +1070,30 @@ describe('BridgeActionRouter', () => {
       expect(result.message).toBe('canvasAction done')
       expect(calls).toHaveLength(1)
       expect(calls[0].method).toBe('executeCanvasAction')
+    })
+
+    it('dispatches ensembleSettingsUpdate to executor.executeEnsembleSettingsUpdate', async () => {
+      const { executor, calls } = makeStubExecutor()
+      const router = new BridgeActionRouter({ allowlist: seedAllowlist(), executor })
+      const wire = Buffer.from(
+        JSON.stringify(
+          withReplayMeta({
+            kind: 'ensembleSettingsUpdate',
+            workspaceId: 'ws-allowed',
+            threadId: 't-1',
+            orchestrationMode: 'continuous',
+            maxContinuationHops: 9
+          })
+        ),
+        'utf-8'
+      ).toString('base64')
+      const result = (await router.route('bridge.requestActionAck', {
+        payloadBase64: wire
+      })) as { accepted: boolean; message?: string }
+      expect(result.accepted).toBe(true)
+      expect(result.message).toBe('ensembleSettingsUpdate done')
+      expect(calls).toHaveLength(1)
+      expect(calls[0].method).toBe('executeEnsembleSettingsUpdate')
     })
 
     it('dispatches approvalReply to executor.executeApprovalReply', async () => {
