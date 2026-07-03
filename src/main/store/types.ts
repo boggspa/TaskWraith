@@ -2159,7 +2159,7 @@ export interface ProductReleaseAutomationStatus {
 
 export type ProductOperationsAuditReceiptsStatus = Pick<
   ProductDiagnosticsAuditReceipts,
-  'schemaVersion' | 'generatedAt' | 'redactionMode' | 'counts' | 'hashes' | 'validation'
+  'schemaVersion' | 'generatedAt' | 'redactionMode' | 'counts' | 'hashes' | 'recent' | 'validation'
 >
 
 export interface ProductOperationsStatus {

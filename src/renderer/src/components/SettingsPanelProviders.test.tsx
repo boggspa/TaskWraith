@@ -642,6 +642,23 @@ describe('SettingsPanel provider cards', () => {
                 messageFeedback: 'a'.repeat(64),
                 messageFeedbackCastingSignals: 'b'.repeat(64),
                 auditBundleVerifications: 'c'.repeat(64)
+              },
+              recent: {
+                auditBundleVerifications: [
+                  {
+                    idHash: 'd'.repeat(64),
+                    verifiedAt: '2026-07-03T10:11:12.000Z',
+                    ok: true,
+                    bundlePathHash: 'e'.repeat(64),
+                    hasBundlePathBasename: true,
+                    tamperEvidence: 'local_hashes_signed',
+                    signaturePresent: true,
+                    signatureValid: true,
+                    payloadHashValid: true,
+                    sectionHashesValid: true,
+                    countsValid: true
+                  }
+                ]
               }
             }
           } as any
@@ -654,6 +671,12 @@ describe('SettingsPanel provider cards', () => {
     expect(html).toContain('casting bbbbbbbbbbbb')
     expect(html).toContain('Free-text notes stay redacted')
     expect(html).toContain('. Audit bundle verification receipts: 3 retained; hash cccccccccccc')
+    expect(html).toContain('Recent retained verification receipts are redacted')
+    expect(html).toContain('Passed · 2026-07-03T10:11:12.000Z')
+    expect(html).toContain('signature valid')
+    expect(html).toContain('receipt dddddddddddd')
+    expect(html).toContain('path eeeeeeeeeeee')
+    expect(html).not.toContain('/Users/alice/private')
   })
 
   it('locks approval timeout controls when organization policy owns them', () => {

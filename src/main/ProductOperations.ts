@@ -1163,6 +1163,7 @@ export function buildProductOperationsStatus(input: {
       redactionMode: auditReceipts.redactionMode,
       counts: auditReceipts.counts,
       hashes: auditReceipts.hashes,
+      recent: auditReceipts.recent,
       validation: auditReceipts.validation
     },
     counts: {

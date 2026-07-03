@@ -199,7 +199,8 @@ describe('ProductOperations', () => {
     expect(status.auditReceipts?.counts.messageFeedback).toBe(1)
     expect(status.auditReceipts?.counts.messageFeedbackCastingSignals).toBe(1)
     expect(status.auditReceipts?.hashes.messageFeedback).toMatch(/^[a-f0-9]{64}$/)
-    expect(status.auditReceipts).not.toHaveProperty('recent')
+    expect(status.auditReceipts?.recent.messageFeedback).toHaveLength(1)
+    expect(status.auditReceipts?.recent.messageFeedback[0].receiptHash).toMatch(/^[a-f0-9]{64}$/)
     expect(serialized).not.toContain('feedback-secret')
     expect(serialized).not.toContain('message-secret')
     expect(serialized).not.toContain('gpt-5.5')
@@ -264,6 +265,12 @@ describe('ProductOperations', () => {
 
     expect(status.auditReceipts?.counts.auditBundleVerifications).toBe(1)
     expect(status.auditReceipts?.hashes.auditBundleVerifications).toMatch(/^[a-f0-9]{64}$/)
+    expect(status.auditReceipts?.recent.auditBundleVerifications[0]).toMatchObject({
+      ok: true,
+      hasBundlePathBasename: true,
+      tamperEvidence: 'local_hashes_signed',
+      signatureValid: true
+    })
     expect(serialized).not.toContain('/Users/alice/private')
     expect(serialized).not.toContain('ws-secret')
     expect(serialized).not.toContain('chat-secret')

@@ -304,13 +304,12 @@ What exists:
   metadata without storing raw local paths. Product Operations shows the
   retained count/hash, and diagnostics/audit bundles export redacted recent
   verification receipt summaries.
+- Product Operations status now carries those redacted recent verification
+  summaries, and Settings -> System -> Product operations renders a searchable
+  recent-verification receipt browser using hashed path/id fields only.
 
 What is missing:
 
-- A richer retained verification receipt browser/filter UI. The retained
-  count/hash is visible in Settings and the redacted receipt summaries export
-  through diagnostics/audit bundles, but there is not yet a dedicated searchable
-  table for verification receipts.
 - An explicit sensitive-field export flow. The current route is redacted-only
   and rejects unsupported sensitive modes, but there is not yet a separate
   user/admin decision path for exporting sensitive fields.

@@ -3396,6 +3396,7 @@ export function SettingsPanel({
   const [composerPreviewText, setComposerPreviewText] = useState('')
   const [mcpToolQuery, setMcpToolQuery] = useState('')
   const [mcpServerQuery, setMcpServerQuery] = useState('')
+  const [auditReceiptQuery, setAuditReceiptQuery] = useState('')
   const [pluginQuery, setPluginQuery] = useState('')
   const [pluginCatalog, setPluginCatalog] = useState<TaskWraithPluginCatalogSnapshot | null>(null)
   const [pluginCatalogError, setPluginCatalogError] = useState('')
@@ -4362,6 +4363,15 @@ export function SettingsPanel({
       .toLowerCase()
     return haystack.includes(mcpToolSearch)
   })
+  const auditReceiptSearch = auditReceiptQuery.trim().toLowerCase()
+  const recentAuditBundleVerificationReceipts =
+    productOperationsStatus?.auditReceipts?.recent?.auditBundleVerifications ?? []
+  const filteredAuditBundleVerificationReceipts = recentAuditBundleVerificationReceipts.filter(
+    (receipt) => {
+      if (!auditReceiptSearch) return true
+      return JSON.stringify(receipt).toLowerCase().includes(auditReceiptSearch)
+    }
+  )
   const resolvedKeyCommandBindings = resolveKeyCommandBindings(keyCommandBindings)
   const sanitizedKeyCommandOverrides = sanitizeKeyCommandOverrides(keyCommandBindings)
   const keyCommandSearch = keyCommandQuery.trim().toLowerCase()
@@ -9488,16 +9498,108 @@ export function SettingsPanel({
                     . Free-text notes stay redacted in diagnostics and audit bundles.
                   </p>
                 )}
-                {productOperationsStatus?.auditReceipts && (
-                  <p className="settings-hint">
-                    Audit bundle verification receipts:{' '}
-                    {productOperationsStatus.auditReceipts.counts.auditBundleVerifications}{' '}
-                    retained; hash{' '}
-                    {shortAuditHash(
-                      productOperationsStatus.auditReceipts.hashes.auditBundleVerifications
+                {recentAuditBundleVerificationReceipts.length > 0 && (
+                  <div className="settings-user-mcp-config settings-user-mcp-config-all">
+                    <div className="settings-mcp-section-title">
+                      <h4 className="sidebar-section-title" style={{ margin: 0 }}>
+                        Audit bundle verification receipts
+                      </h4>
+                      <p className="settings-hint">
+                        Recent retained verification receipts are redacted: local paths and receipt
+                        ids are hashed before they reach this table.
+                      </p>
+                    </div>
+                    <div className="settings-audit-toolbar">
+                      <label className="settings-audit-search">
+                        <span className="sr-only">Filter audit bundle verification receipts</span>
+                        <input
+                          className="settings-select"
+                          value={auditReceiptQuery}
+                          onChange={(event) => setAuditReceiptQuery(event.target.value)}
+                          aria-label="Filter audit bundle verification receipts"
+                          placeholder="Filter verification receipts"
+                        />
+                      </label>
+                      <div className="settings-audit-toolbar-meta">
+                        <span>
+                          {filteredAuditBundleVerificationReceipts.length} of{' '}
+                          {recentAuditBundleVerificationReceipts.length} receipts
+                        </span>
+                        {auditReceiptSearch && (
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-ghost"
+                            onClick={() => setAuditReceiptQuery('')}
+                          >
+                            Clear
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                    {filteredAuditBundleVerificationReceipts.length === 0 ? (
+                      <div className="settings-audit-empty">
+                        No verification receipts match that filter.
+                      </div>
+                    ) : (
+                      <div className="settings-user-mcp-list">
+                        {filteredAuditBundleVerificationReceipts.map((receipt, index) => {
+                          const receiptHash = String(receipt.idHash || '')
+                          const pathHash = String(receipt.bundlePathHash || '')
+                          const signatureLabel =
+                            receipt.signaturePresent === false
+                              ? 'not present'
+                              : receipt.signatureValid === true
+                                ? 'valid'
+                                : receipt.signaturePresent === true
+                                  ? 'invalid'
+                                  : 'not checked'
+                          return (
+                            <article
+                              key={`${receiptHash || 'receipt'}-${index}`}
+                              className="settings-user-mcp-row"
+                            >
+                              <div className="settings-user-mcp-main">
+                                <strong>
+                                  {receipt.ok === true ? 'Passed' : 'Failed'} ·{' '}
+                                  {String(receipt.verifiedAt || 'unknown time')}
+                                </strong>
+                                <span>
+                                  {String(receipt.tamperEvidence || 'unknown evidence')} ·
+                                  signature {signatureLabel}
+                                </span>
+                                <div className="settings-mcp-server-meta">
+                                  {receiptHash && (
+                                    <span>receipt {shortAuditHash(receiptHash)}</span>
+                                  )}
+                                  {pathHash && <span>path {shortAuditHash(pathHash)}</span>}
+                                  {Boolean(receipt.hasBundlePathBasename) && (
+                                    <span>basename hashed</span>
+                                  )}
+                                  {receipt.payloadHashValid !== undefined && (
+                                    <span>
+                                      payload {auditBundleCheckLabel(receipt.payloadHashValid === true)}
+                                    </span>
+                                  )}
+                                  {receipt.sectionHashesValid !== undefined && (
+                                    <span>
+                                      sections{' '}
+                                      {auditBundleCheckLabel(receipt.sectionHashesValid === true)}
+                                    </span>
+                                  )}
+                                  {receipt.countsValid !== undefined && (
+                                    <span>
+                                      counts {auditBundleCheckLabel(receipt.countsValid === true)}
+                                    </span>
+                                  )}
+                                  {Boolean(receipt.hasError) && <span>error redacted</span>}
+                                </div>
+                              </div>
+                            </article>
+                          )
+                        })}
+                      </div>
                     )}
-                    . Bundle paths are stored as hashes in diagnostics and audit bundles.
-                  </p>
+                  </div>
                 )}
                 {auditRetentionManagedLocked && (
                   <p className="settings-hint">
