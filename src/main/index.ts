@@ -884,6 +884,7 @@ import {
   signAuditBundleSnapshot
 } from './ProductOperations'
 import { AuditBundleSigningKeyStore } from './AuditBundleSigningKeyStore'
+import { loadManagedPolicyFromEnvironment } from './ManagedPolicyService'
 import { installIpcValidation } from './IpcValidation'
 import { registerPtyHandlers } from './ipc/ptyHandlers'
 import { registerLaunchHandlers } from './ipc/launchHandlers'
@@ -1860,6 +1861,7 @@ const scheduledTaskIdByEnsembleRound = new Map<string, string>()
 let wakeupTimerServiceRef: WakeupTimerService | null = null
 let sessionCheckpointStoreRef: SessionCheckpointStore | null = null
 let updateServiceRef: UpdateService | null = null
+let managedPolicySnapshotForDiagnostics: (() => Record<string, unknown> | undefined) | null = null
 let localServersServiceRef: LocalServersService | null = null
 /** Processes TaskWraith spawns for agent tool calls — tracked so the Local
  * Servers panel can attribute them and group-kill them cleanly. */
@@ -18416,6 +18418,7 @@ async function buildCurrentDiagnosticsSnapshot() {
     messageFeedbackReceipts: AppStore.getMessageFeedbackReceipts(),
     externalPublishReceipts: listExternalPublishReceipts(),
     auditRetentionPurgeReceipts: AppStore.getAuditRetentionPurgeReceipts(),
+    managedPolicy: managedPolicySnapshotForDiagnostics?.(),
     recentCrashes: AppStore.getProductCrashes({ limit: 100 })
   })
 }
@@ -26159,7 +26162,16 @@ if (isGeminiMcpBridgeProcess) {
     })
     updateServiceRef = updateService
     const autoUpdateForce = process.env.TASKWRAITH_AUTO_UPDATE
-    const initialSettings = AppStore.getSettings()
+    const managedPolicyService = loadManagedPolicyFromEnvironment({
+      env: process.env,
+      readFileSync: (filePath, encoding) => fsSync.readFileSync(filePath, encoding)
+    })
+    managedPolicySnapshotForDiagnostics = () => managedPolicyService.snapshot()
+    const startupManagedPatch = managedPolicyService.enforcedSettingsPatch(AppStore.getSettings())
+    if (Object.keys(startupManagedPatch).length > 0) {
+      AppStore.updateSettings(startupManagedPatch)
+    }
+    const initialSettings = managedPolicyService.effectiveSettings(AppStore.getSettings())
     const resolveAutoUpdateEnabled = (settings: AppSettings): boolean => {
       return resolveAutoUpdateServiceEnabled({
         autoUpdateEnabled: settings.autoUpdateEnabled,
@@ -26308,6 +26320,7 @@ if (isGeminiMcpBridgeProcess) {
       getSettings: () => AppStore.getSettings(),
       updateSettings: (partial) => AppStore.updateSettings(partial),
       sanitizeSettingsPatch,
+      managedPolicy: managedPolicyService,
       sideEffects: [
         ({ sanitizedPatch }) => {
           // Phase G2: re-configure the auto-updater when the user flips

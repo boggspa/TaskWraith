@@ -1200,6 +1200,7 @@ export function buildDiagnosticsSnapshot(input: {
   messageFeedbackReceipts?: MessageFeedbackReceipt[]
   externalPublishReceipts?: ExternalPublishReceipt[]
   auditRetentionPurgeReceipts?: AuditRetentionPurgeReceipt[]
+  managedPolicy?: Record<string, unknown>
   recentCrashes: ProductCrashRecord[]
   now?: string
 }): ProductDiagnosticsSnapshot {
@@ -1217,6 +1218,24 @@ export function buildDiagnosticsSnapshot(input: {
       geminiMcpBridgeEnabled: input.settings.geminiMcpBridgeEnabled,
       codexSandboxFallback: input.settings.codexSandboxFallback
     },
+    ...(input.managedPolicy
+      ? {
+          managedPolicy: {
+            active: input.managedPolicy.active === true,
+            source: input.managedPolicy.source,
+            hasOrganizationName: Boolean(input.managedPolicy.organizationName),
+            lockedSettings: Array.isArray(input.managedPolicy.lockedSettings)
+              ? input.managedPolicy.lockedSettings
+              : [],
+            enforcedSettings: Array.isArray(input.managedPolicy.enforcedSettings)
+              ? input.managedPolicy.enforcedSettings
+              : [],
+            errorCount: Array.isArray(input.managedPolicy.errors)
+              ? input.managedPolicy.errors.length
+              : 0
+          }
+        }
+      : {}),
     workspaces: input.workspaces.slice(0, MAX_DIAGNOSTIC_RECORDS).map((workspace) => ({
       id: workspace.id,
       path: workspace.path,

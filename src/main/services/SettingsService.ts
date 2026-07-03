@@ -9,10 +9,17 @@ export interface SettingsUpdateContext {
 
 export type SettingsUpdateSideEffect = (context: SettingsUpdateContext) => void
 
+export interface SettingsManagedPolicy {
+  effectiveSettings: (settings: AppSettings) => AppSettings
+  enforcedSettingsPatch: (settings: AppSettings) => Partial<AppSettings>
+  filterSettingsPatch: (patch: Partial<AppSettings>) => Partial<AppSettings>
+}
+
 export interface SettingsServiceDeps {
   getSettings: () => AppSettings
   updateSettings: (partial: Partial<AppSettings>) => void
   sanitizeSettingsPatch: (partial: unknown) => Partial<AppSettings>
+  managedPolicy?: SettingsManagedPolicy
   sideEffects?: SettingsUpdateSideEffect[]
 }
 
@@ -38,17 +45,26 @@ export class SettingsService {
   }
 
   getSettings(): AppSettings {
-    return this.deps.getSettings()
+    const settings = this.deps.getSettings()
+    return this.deps.managedPolicy?.effectiveSettings(settings) ?? settings
   }
 
   updateSettings(rawPatch: unknown): void {
     const previousSettings = this.deps.getSettings()
-    const sanitizedPatch = this.deps.sanitizeSettingsPatch(rawPatch)
-    this.deps.updateSettings(sanitizedPatch)
+    const sanitizedPatch = this.deps.managedPolicy?.filterSettingsPatch(
+      this.deps.sanitizeSettingsPatch(rawPatch)
+    ) ?? this.deps.sanitizeSettingsPatch(rawPatch)
+    const enforcedPatch =
+      this.deps.managedPolicy?.enforcedSettingsPatch({
+        ...previousSettings,
+        ...sanitizedPatch
+      } as AppSettings) ?? {}
+    const finalPatch = { ...sanitizedPatch, ...enforcedPatch }
+    this.deps.updateSettings(finalPatch)
     const nextSettings = this.deps.getSettings()
     const context: SettingsUpdateContext = {
       rawPatch,
-      sanitizedPatch,
+      sanitizedPatch: finalPatch,
       previousSettings,
       nextSettings
     }

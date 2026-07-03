@@ -2238,6 +2238,7 @@ export interface ProductDiagnosticsSnapshot {
     geminiMcpBridgeEnabled: boolean
     codexSandboxFallback: CodexSandboxFallbackMode
   }
+  managedPolicy?: Record<string, unknown>
   workspaces: Array<
     Pick<WorkspaceRecord, 'id' | 'path' | 'displayName' | 'lastOpenedAt' | 'pinned'>
   >

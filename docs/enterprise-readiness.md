@@ -283,19 +283,33 @@ What exists:
 - Local settings and approval policy are comprehensive.
 - Remote/iOS workspace allowlists are per-action and explicit.
 - `canvasEval` and future `mediaRecording` are intentionally non-grantable.
+- A first managed-policy spine exists in main: `ManagedPolicyService` can load
+  JSON from `TASKWRAITH_MANAGED_POLICY_JSON` or
+  `TASKWRAITH_MANAGED_POLICY_PATH`, compute locked/enforced setting keys, apply
+  a startup clamp before update-service configuration, and filter future
+  `SettingsService` writes. The first clamp surface covers update channel,
+  auto-update, bridge enablement, Codex sandbox fallback, agentic-service
+  policy, approval timeouts, user MCP servers (disable-only), and workspace
+  grants (clear-only). Diagnostics export reports a redacted policy status
+  summary.
 
 What is missing:
 
-- No signed/MDM/env managed policy source.
-- No locked controls in Settings for enterprise-managed installs.
-- Users can locally change update channel, disable updates, loosen agentic
-  services to `allow`, grant workspace/session approvals, enable YOLO, and add
-  user-managed MCP servers.
+- No signed or MDM-delivered managed policy source yet; the current source is
+  local env/path JSON for managed test deployments.
+- No locked-control affordances in Settings for enterprise-managed installs.
+  Enforcement exists, but the UI does not yet explain why a control is locked.
+- Session YOLO and other non-settings live controls still need explicit managed
+  clamps. The current slice covers stored settings and clears persisted
+  workspace grants, but does not yet block an already-running process' in-memory
+  session state.
+- User MCP policy is disable-only in this first spine. Managed allowlisting,
+  save-time validation, and plugin provenance checks still land under B5.4.
 
 Target:
 
-- Add `ManagedPolicyService` that loads signed or MDM-delivered policy, computes
-  effective settings, and exposes which controls are locked.
+- Promote the env/path policy format to a signed or MDM-delivered policy source,
+  retaining the same effective-settings clamp seam.
 - Clamp agentic service policy, workspace grants, approval timeouts, YOLO,
   update channel, auto-update, bridge access, and user-managed MCP according to
   managed policy.

@@ -176,4 +176,39 @@ describe('SettingsService', () => {
       enabled: false
     })
   })
+
+  it('enforces managed policy before persisting settings updates', () => {
+    const { deps } = makeDeps({
+      managedPolicy: {
+        effectiveSettings: (current) => ({
+          ...current,
+          updateChannel: 'stable',
+          agenticServices: { ...current.agenticServices, shellCommands: 'deny' }
+        }),
+        filterSettingsPatch: (patch) => {
+          const filtered = { ...patch }
+          delete filtered.updateChannel
+          delete filtered.agenticServices
+          return filtered
+        },
+        enforcedSettingsPatch: (current) => ({
+          ...(current.updateChannel !== 'stable' ? { updateChannel: 'stable' as const } : {}),
+          agenticServices: { ...current.agenticServices, shellCommands: 'deny' as const }
+        })
+      }
+    })
+    const service = new SettingsService(deps)
+
+    service.updateSettings({
+      updateChannel: 'nightly',
+      agenticServices: { ...makeSettings().agenticServices, shellCommands: 'allow' },
+      chatContextTurns: 3
+    })
+
+    expect(deps.updateSettings).toHaveBeenCalledWith({
+      chatContextTurns: 3,
+      updateChannel: 'stable',
+      agenticServices: expect.objectContaining({ shellCommands: 'deny' })
+    })
+  })
 })
