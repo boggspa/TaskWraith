@@ -15777,6 +15777,19 @@ function handleCodexServerRequest(message: any) {
         }
       : {})
   }
+  const codexEnsembleApproval = gateService
+    ? ensembleApprovalContext(state.ensembleRun, gateService, workspacePathForCodexApproval)
+    : undefined
+  const codexApprovalTitle = codexEnsembleApproval
+    ? `${codexEnsembleApproval.label}: ${formatted.title}`
+    : formatted.title
+  const codexApprovalBody = codexEnsembleApproval
+    ? `${codexEnsembleApproval.bodyPrefix}\n\n${formatted.body}`
+    : formatted.body
+  const codexApprovalPreview = {
+    ...previewForDecision,
+    ...(codexEnsembleApproval ? { ensembleParticipant: codexEnsembleApproval.preview } : {})
+  }
   const codexPlanArtifactWriteMetadata =
     gateService && nativePreflight.kind === 'deny'
       ? planArtifactWriteApprovalMetadata({
@@ -15796,14 +15809,18 @@ function handleCodexServerRequest(message: any) {
       workspacePathForCodexApproval,
       {
         method,
-        title: formatted.title,
-        body: formatted.body,
-        preview: previewForDecision
+        title: codexApprovalTitle,
+        body: codexApprovalBody,
+        preview: codexApprovalPreview
       },
       'autoAllow',
       'plan_artifact',
       'request',
-      { policy: nativePreflight.policy, ...codexPlanArtifactWriteMetadata }
+      {
+        policy: nativePreflight.policy,
+        ...codexPlanArtifactWriteMetadata,
+        ...(codexEnsembleApproval ? { ensembleParticipant: codexEnsembleApproval.preview } : {})
+      }
     )
     stampPlanArtifactPathOnPendingPlan(state.appChatId, codexPlanArtifactWriteMetadata)
     if (method === 'mcpServer/elicitation/request' || method === 'mcp/elicitation/request') {
@@ -15828,15 +15845,16 @@ function handleCodexServerRequest(message: any) {
       workspacePathForCodexApproval,
       {
         method,
-        title: formatted.title,
-        body: formatted.body,
-        preview: previewForDecision
+        title: codexApprovalTitle,
+        body: codexApprovalBody,
+        preview: codexApprovalPreview
       },
       'autoDeny',
       'policy',
       'request',
       {
         policy: nativePreflight.policy,
+        ...(codexEnsembleApproval ? { ensembleParticipant: codexEnsembleApproval.preview } : {}),
         ...(externalPathDetection ? { externalPathDetected: true } : {})
       }
     )
@@ -15852,15 +15870,16 @@ function handleCodexServerRequest(message: any) {
       workspacePathForCodexApproval,
       {
         method,
-        title: formatted.title,
-        body: formatted.body,
-        preview: previewForDecision
+        title: codexApprovalTitle,
+        body: codexApprovalBody,
+        preview: codexApprovalPreview
       },
       'autoAllow',
       nativePreflight.reason,
       nativePreflight.scope,
       {
         policy: nativePreflight.policy,
+        ...(codexEnsembleApproval ? { ensembleParticipant: codexEnsembleApproval.preview } : {}),
         ...(nativePreflight.reason === 'session_yolo'
           ? { yoloEnabledAt: sessionYoloState.enabledAt }
           : {})
@@ -15884,7 +15903,7 @@ function handleCodexServerRequest(message: any) {
     return
   }
 
-  formatted.preview = previewForDecision
+  formatted.preview = codexApprovalPreview
 
   approvalService?.registerCodex(approvalId, {
     rpcId: message.id,
@@ -15912,8 +15931,8 @@ function handleCodexServerRequest(message: any) {
     requestId: message.id,
     method,
     params,
-    title: formatted.title,
-    body: formatted.body,
+    title: codexApprovalTitle,
+    body: codexApprovalBody,
     preview: formatted.preview,
     actions
   }
@@ -15922,7 +15941,7 @@ function handleCodexServerRequest(message: any) {
     { appRunId: state.appRunId, appChatId: state.appChatId },
     'approval_request',
     'control',
-    formatted.title,
+    codexApprovalTitle,
     approvalPayload
   )
   recordApprovalLedgerRequest(
@@ -15932,7 +15951,10 @@ function handleCodexServerRequest(message: any) {
     {
       service: gateService,
       workspacePath: workspacePathForCodexApproval,
-      metadata: { policy }
+      metadata: {
+        policy,
+        ...(codexEnsembleApproval ? { ensembleParticipant: codexEnsembleApproval.preview } : {})
+      }
     }
   )
   safeSendToSender(state.sender, 'agent-approval-request', approvalPayload)
@@ -15943,7 +15965,7 @@ function handleCodexServerRequest(message: any) {
     approvalId,
     workspaceId: workspaceIdForApprovalPush(workspacePathForCodexApproval),
     threadId: state.threadId ?? state.appChatId,
-    summary: formatted.title || `Codex approval: ${method}`
+    summary: codexApprovalTitle || `Codex approval: ${method}`
   })
 }
 
@@ -16009,6 +16031,21 @@ function maybeRequestCodexHostRerun(
     route: { appRunId: state.appRunId, appChatId: state.appChatId },
     kind: 'hostCommand/rerun'
   })
+  const hostRerunEnsembleApproval = ensembleApprovalContext(
+    state.ensembleRun,
+    'shellCommands',
+    state.scope === 'global' ? undefined : state.workspacePath
+  )
+  const hostRerunBaseTitle = swiftPmNestedSandbox
+    ? 'Rerun SwiftPM outside sandbox'
+    : 'Rerun command outside sandbox'
+  const hostRerunTitle = hostRerunEnsembleApproval
+    ? `${hostRerunEnsembleApproval.label}: ${hostRerunBaseTitle}`
+    : hostRerunBaseTitle
+  const hostRerunBaseBody = `${reason}\n\n${commandText}\n${normalizedCwd}`
+  const hostRerunBody = hostRerunEnsembleApproval
+    ? `${hostRerunEnsembleApproval.bodyPrefix}\n\n${hostRerunBaseBody}`
+    : hostRerunBaseBody
   const approvalPayload = {
     provider: 'codex',
     appRunId: state.appRunId,
@@ -16016,14 +16053,17 @@ function maybeRequestCodexHostRerun(
     id: approvalId,
     approvalId,
     method: 'hostCommand/rerun',
-    title: swiftPmNestedSandbox ? 'Rerun SwiftPM outside sandbox' : 'Rerun command outside sandbox',
-    body: `${reason}\n\n${commandText}\n${normalizedCwd}`,
+    title: hostRerunTitle,
+    body: hostRerunBody,
     preview: {
       kind: 'host-command-rerun',
       command: commandText,
       cwd: normalizedCwd,
       output: output.slice(0, 4000),
       swiftPmNestedSandbox,
+      ...(hostRerunEnsembleApproval
+        ? { ensembleParticipant: hostRerunEnsembleApproval.preview }
+        : {}),
       actions: ['accept', 'decline'] as AgentApprovalAction[]
     },
     actions: ['accept', 'decline'] as AgentApprovalAction[]
@@ -16033,7 +16073,7 @@ function maybeRequestCodexHostRerun(
     { appRunId: state.appRunId, appChatId: state.appChatId },
     'approval_request',
     'control',
-    swiftPmNestedSandbox ? 'Rerun SwiftPM outside sandbox' : 'Rerun command outside sandbox',
+    hostRerunTitle,
     approvalPayload
   )
   recordApprovalLedgerRequest(
@@ -16047,7 +16087,10 @@ function maybeRequestCodexHostRerun(
         kind: 'host-command-rerun',
         policy,
         reason,
-        swiftPmNestedSandbox
+        swiftPmNestedSandbox,
+        ...(hostRerunEnsembleApproval
+          ? { ensembleParticipant: hostRerunEnsembleApproval.preview }
+          : {})
       }
     }
   )
@@ -16060,9 +16103,7 @@ function maybeRequestCodexHostRerun(
       state.scope === 'global' ? undefined : state.workspacePath
     ),
     threadId: state.threadId ?? state.appChatId,
-    summary: swiftPmNestedSandbox
-      ? `Rerun SwiftPM outside sandbox: ${commandText.slice(0, 120)}`
-      : `Rerun command outside sandbox: ${commandText.slice(0, 120)}`
+    summary: `${hostRerunTitle}: ${commandText.slice(0, 120)}`
   })
 }
 

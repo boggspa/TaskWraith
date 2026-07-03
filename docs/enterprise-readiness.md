@@ -493,6 +493,9 @@ What exists:
 - Remote queued dispatch also revalidates the current bridge allowlist when a
   queued item is dequeued, failing the queue job if the workspace/provider
   `startTurn` grant was revoked after enqueue.
+- Codex native approval preflights and host-rerun approval requests now carry
+  the same Ensemble participant/lane/stage metadata in approval cards and audit
+  ledger entries as the central brokered approval path.
 
 What is missing:
 
@@ -507,8 +510,9 @@ What is missing:
   run events now persist live dispatch `stageRole`/`laneId`, but scheduled and
   wakeup replay paths still need explicit tests that they preserve or re-check
   the frozen intent rather than inheriting mutable roster state silently.
-- Native provider approval paths still need a separate lane-aware bypass audit
-  for host reruns / native command approvals outside brokered MCP tools.
+- Remaining native-provider work is a broader provider-by-provider audit beyond
+  Codex: verify every future native command/approval seam either routes through
+  the central gate or stamps equivalent participant/lane metadata.
 
 Target:
 
