@@ -19,6 +19,29 @@ function makeRequest(overrides: Partial<RunQueueRequestSnapshot> = {}): RunQueue
   }
 }
 
+function makeDispatchReceipt(
+  overrides: Partial<NonNullable<RunQueueJob['dispatchReceipt']>> = {}
+): NonNullable<RunQueueJob['dispatchReceipt']> {
+  return {
+    schemaVersion: 1,
+    generatedAt: '2026-06-24T00:00:00.000Z',
+    receiptHash: 'd'.repeat(64),
+    runId: 'queued-run',
+    provider: 'codex',
+    source: 'manual',
+    scope: 'workspace',
+    workspaceId: 'workspace-1',
+    chatId: 'chat-1',
+    approvalMode: 'plan',
+    workflowMode: 'plan',
+    permissionPresetId: 'plan',
+    readOnly: true,
+    permissionPostureHash: 'a'.repeat(64),
+    permissionPostureSignaturePresent: true,
+    ...overrides
+  }
+}
+
 function makeJob(overrides: Partial<RunQueueJob> = {}): RunQueueJob {
   return {
     id: 'queue-1',
@@ -42,6 +65,7 @@ function makeJob(overrides: Partial<RunQueueJob> = {}): RunQueueJob {
 describe('RunLifecycleCoordinator', () => {
   it('claims the next queued job and returns a sanitized legacy dispatch ticket', async () => {
     let job = makeJob({
+      dispatchReceipt: makeDispatchReceipt(),
       request: makeRequest({
         prompt: 'Clean this up.',
         selectedModelType: '',
@@ -89,6 +113,12 @@ describe('RunLifecycleCoordinator', () => {
         sessionTrust: false,
         imageAttachments: [{ id: 'img-1', path: '/tmp/a.png', name: 'a.png' }],
         displayPrompt: '   Clean this up.   '
+      },
+      dispatchReceipt: {
+        receiptHash: 'd'.repeat(64),
+        workflowMode: 'plan',
+        permissionPostureHash: 'a'.repeat(64),
+        permissionPostureSignaturePresent: true
       }
     })
     expect(leaseQueuedJob).toHaveBeenCalledWith({
@@ -136,7 +166,7 @@ describe('RunLifecycleCoordinator', () => {
   })
 
   it('reserves a queued steer promotion before cancelling the active provider run', async () => {
-    let job = makeJob()
+    let job = makeJob({ dispatchReceipt: makeDispatchReceipt({ receiptHash: 'e'.repeat(64) }) })
     const events: string[] = []
     const queue: RunLifecycleCoordinatorDeps['queue'] = {
       getRunQueueJob: () => job,
@@ -172,6 +202,11 @@ describe('RunLifecycleCoordinator', () => {
       runId: 'queued-run',
       ownerToken: 'owner-1',
       jobStatus: 'steer_promoting',
+      dispatchReceipt: {
+        receiptHash: 'e'.repeat(64),
+        workflowMode: 'plan',
+        permissionPostureSignaturePresent: true
+      },
       cancelRequested: true
     })
     expect(events).toEqual(['promote', 'cancel:steer_promoting'])

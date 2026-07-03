@@ -109,6 +109,7 @@ export interface LifecycleDispatchTicket {
   source: RunQueueJob['source']
   ownerToken: string
   request: RunQueueRequestSnapshot
+  dispatchReceipt?: RunQueueJob['dispatchReceipt']
 }
 
 export interface RunLifecyclePromoteDispatchPermission {
@@ -120,6 +121,7 @@ export interface RunLifecyclePromoteDispatchPermission {
   promotionToken: string
   jobStatus: Exclude<RunQueueJobStatus, 'starting' | 'active' | 'paused' | 'cancelling' | 'failed' | 'cancelled' | 'completed'>
   request: RunQueueRequestSnapshot
+  dispatchReceipt?: RunQueueJob['dispatchReceipt']
   cancelRequested: boolean
 }
 
@@ -133,6 +135,7 @@ export interface RunLifecyclePromoteFallback {
   reason: string
   requeuedTo?: RunQueueJobStatus
   request?: RunQueueRequestSnapshot
+  dispatchReceipt?: RunQueueJob['dispatchReceipt']
   cancelRequested: boolean
 }
 
@@ -145,6 +148,7 @@ export interface LeasePromotedSteerResult {
   kind: 'leased'
   job: RunQueueJob
   request: RunQueueRequestSnapshot
+  dispatchReceipt?: RunQueueJob['dispatchReceipt']
   ownerToken: string
 }
 
@@ -155,6 +159,7 @@ export interface LeasePromotedSteerFallback {
   reason: string
   ownerToken: string
   request?: RunQueueRequestSnapshot
+  dispatchReceipt?: RunQueueJob['dispatchReceipt']
 }
 
 export type LeasePromotedSteerJobResult = LeasePromotedSteerResult | LeasePromotedSteerFallback
@@ -167,6 +172,7 @@ export interface FallbackPromotedSteerResult {
   jobStatus: RunQueueJobStatus
   finalReason: string
   request?: RunQueueRequestSnapshot
+  dispatchReceipt?: RunQueueJob['dispatchReceipt']
   cancelRequested: boolean
 }
 
@@ -209,7 +215,8 @@ export class RunLifecycleCoordinator {
       ...(leased.chatId ? { chatId: leased.chatId } : {}),
       source: leased.source,
       ownerToken,
-      request: this.sanitizeRequestSnapshot(leased.request)
+      request: this.sanitizeRequestSnapshot(leased.request),
+      ...(leased.dispatchReceipt ? { dispatchReceipt: leased.dispatchReceipt } : {})
     }
   }
 
@@ -260,6 +267,7 @@ export class RunLifecycleCoordinator {
             ? 'Steer promotion could not be reserved; job remains queued for fallback.'
             : 'Steer promotion could not be reserved.',
         request: this.sanitizeRequestSnapshot(job.request),
+        ...(job.dispatchReceipt ? { dispatchReceipt: job.dispatchReceipt } : {}),
         requeuedTo: fallback?.status === 'queued' ? 'queued' : undefined,
         cancelRequested: false
       }
@@ -284,6 +292,7 @@ export class RunLifecycleCoordinator {
             ? 'Missing queued request payload; marked failed.'
             : 'Missing queued request payload.',
         request: this.sanitizeRequestSnapshot(job.request),
+        ...(promotion.dispatchReceipt ? { dispatchReceipt: promotion.dispatchReceipt } : {}),
         cancelRequested: false
       }
     }
@@ -298,6 +307,7 @@ export class RunLifecycleCoordinator {
         jobStatus: promotion.status,
         reason: 'Steer promotion returned an unexpected queue state.',
         request,
+        ...(promotion.dispatchReceipt ? { dispatchReceipt: promotion.dispatchReceipt } : {}),
         cancelRequested: false
       }
     }
@@ -316,6 +326,7 @@ export class RunLifecycleCoordinator {
       promotionToken: promotion.promotionToken || ownerToken,
       jobStatus: 'steer_promoting',
       request,
+      ...(promotion.dispatchReceipt ? { dispatchReceipt: promotion.dispatchReceipt } : {}),
       cancelRequested
     }
   }
@@ -339,7 +350,8 @@ export class RunLifecycleCoordinator {
         runId,
         ownerToken: input.ownerToken,
         reason: `Run queue job ${runId} is not waiting for steer lease.`,
-        request: this.sanitizeRequestSnapshot(job.request)
+        request: this.sanitizeRequestSnapshot(job.request),
+        ...(job.dispatchReceipt ? { dispatchReceipt: job.dispatchReceipt } : {})
       }
     }
 
@@ -354,7 +366,8 @@ export class RunLifecycleCoordinator {
         runId,
         ownerToken: input.ownerToken,
         reason: 'Steer lease did not succeed.',
-        request: this.sanitizeRequestSnapshot(job.request)
+        request: this.sanitizeRequestSnapshot(job.request),
+        ...(job.dispatchReceipt ? { dispatchReceipt: job.dispatchReceipt } : {})
       }
     }
 
@@ -375,6 +388,7 @@ export class RunLifecycleCoordinator {
       kind: 'leased',
       job: leased,
       request,
+      ...(leased.dispatchReceipt ? { dispatchReceipt: leased.dispatchReceipt } : {}),
       ownerToken: input.ownerToken
     }
   }
@@ -415,6 +429,7 @@ export class RunLifecycleCoordinator {
       jobStatus: fallback.status,
       finalReason: reason,
       request: this.sanitizeRequestSnapshot(fallback.request),
+      ...(fallback.dispatchReceipt ? { dispatchReceipt: fallback.dispatchReceipt } : {}),
       cancelRequested: false
     }
   }
