@@ -70,7 +70,7 @@ function settings(overrides: Partial<AppSettings> = {}): AppSettings {
 }
 
 describe('resolveEffectiveRunPermissions', () => {
-  it('keeps read_only and plan both no-write, no-network, plan approvalMode', () => {
+  it('keeps read_only and plan both no-write, plan approvalMode, but web-readable', () => {
     for (const presetId of ['read_only', 'plan'] as const) {
       const resolved = resolveEffectiveRunPermissions({
         provider: 'claude',
@@ -81,7 +81,12 @@ describe('resolveEffectiveRunPermissions', () => {
       expect(resolved.presetId).toBe(presetId)
       expect(resolved.approvalMode).toBe('plan')
       expect(resolved.readOnly).toBe(true)
-      expect(resolved.networkAccess).toBe('deny')
+      // Web-read allowance (2026-07): web_search/web_fetch are non-mutating and
+      // permitted under Read-Only/Plan for ALL providers. networkAccess gates only
+      // the web_read tool class, never file/shell — the write/shell floor below is
+      // untouched. The global-deny kill switch and preview-risk models still force
+      // 'deny' ahead of the preset (covered by the deny-path tests below).
+      expect(resolved.networkAccess).toBe('allow')
       // Shared floor: neither preset can write, run shell, eval, capture, or
       // cross-thread-read — the split only diverges on the instrument services.
       expect(resolved.agenticServices.fileChanges).toBe('deny')

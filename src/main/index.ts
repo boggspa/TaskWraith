@@ -860,18 +860,14 @@ import {
 import {
   chatOllamaToolControlTier,
   effectiveOllamaToolControlTier,
-  ollamaToolAllowedInTier,
-  ollamaToolNamesForTier,
-  resolveOllamaExecutionToolControlTier
+  ollamaToolNamesForTier
 } from './ollama/OllamaToolTiers'
 import { normalizeOllamaSessionMemory } from './ollama/OllamaRunMemory'
-import { ollamaMidRunTierBumpMessage } from './ollama/OllamaTierSuggestion'
 import {
   assertOllamaMutationIntent,
   assertOllamaProtectedWritePaths,
   ollamaShellApprovalPreviewMetadata,
-  ollamaTextDiffPreview,
-  ollamaToolRequiresModalApproval
+  ollamaTextDiffPreview
 } from './ollama/OllamaToolPolicy'
 import {
   buildDiagnosticsSnapshot,
@@ -1716,8 +1712,12 @@ function applyFailoverReroutePosture(
   originalPayload: AgentRunPayload
 ): void {
   const target = routedPayload.provider
-  // Ollama is forced to plan/read-only by every first-party producer (its tool
-  // tier ladder lives outside the posture object); mirror that for parity.
+  // Auto-failover is a non-escalating safety path: cap a reroute TARGETING Ollama
+  // to plan/read-only regardless of the origin posture. (This is deliberately
+  // MORE conservative than an interactive Ollama run, which now honors the user's
+  // picked role — see runOllamaProviderAdapter — because a machine-initiated
+  // failover must never silently gain write/shell authority the user didn't pick
+  // for this target.)
   if (target === 'ollama') routedPayload.approvalMode = 'plan'
   const cappedMode = routedPayload.approvalMode
   const originalPresetId = originalPayload.effectivePermissions?.presetId
@@ -16748,16 +16748,12 @@ async function executeOllamaLocalTool(
   request: OllamaToolExecutionRequest
 ): Promise<OllamaToolExecutionResult> {
   const workspacePath = canonicalPath(requireNonEmptyString(request.workspacePath, 'Workspace'))
-  // Live runs carry the run-start tier on every tool request. Prefer that
-  // receipt so settings/chat changes cannot silently reshape a running tool
-  // surface. Older/internal callers that omit it keep the historical fallback.
-  const gateChat = request.appChatId ? AppStore.getChat(request.appChatId) : undefined
-  const tier = resolveOllamaExecutionToolControlTier(
-    AppStore.getSettings(),
-    workspacePath,
-    request.toolControlTier,
-    chatOllamaToolControlTier(gateChat?.providerMetadata)
-  )
+  // Tier retirement (2026-07): the Ollama tool surface is no longer narrowed by
+  // a per-run tier receipt. Every tool the model can name reaches its executor
+  // and is governed by the standard permission ROLE at the approval gate (the
+  // mutation routing below delegates to executeGeminiMcpTool → the shared
+  // requestAgenticServiceApproval gate). The tier-independent, defense-in-depth
+  // asserts below (mutation intent + protected .git/.env/key paths) still run.
   const context: WorkspaceToolContext = {
     scope: 'workspace',
     cwd: workspacePath,
@@ -16765,13 +16761,6 @@ async function executeOllamaLocalTool(
     appChatId: request.appChatId
   }
   try {
-    if (!ollamaToolAllowedInTier(request.toolName, tier)) {
-      return {
-        ok: false,
-        tierBumpRequired: true,
-        output: ollamaMidRunTierBumpMessage(request.toolName, tier)
-      }
-    }
     assertOllamaMutationIntent(request.toolName, request.arguments)
     assertOllamaProtectedWritePaths(request.toolName, request.arguments, context, workspacePath)
 
@@ -16924,8 +16913,7 @@ async function executeOllamaLocalTool(
       request.toolName === 'run_task' ||
       request.toolName === 'get_diagnostics' ||
       request.toolName === 'test_result_summary' ||
-      request.toolName === 'todo_write' ||
-      tier === 'provider_parity'
+      request.toolName === 'todo_write'
     ) {
       const result = await executeGeminiMcpTool(
         request.toolName as TaskWraithMcpToolName,
@@ -16969,12 +16957,29 @@ async function executeOllamaLocalTool(
       }
     }
 
-    // No silent fallback: an unrouted tool name used to fall through to the
-    // list_directory branch above, so e.g. todo_write returned a directory
-    // listing and the model re-published its checklist every turn.
-    throw new Error(
-      `Tool ${request.toolName} has no local Ollama executor at the ${tier} tier.`
-    )
+    // Full-surface catch-all (tier retirement): any remaining KNOWN TaskWraith
+    // MCP tool the model named — git_stage/commit/push, git_create_pr,
+    // background-process control, browser/creative/ensemble/recall, etc. — has no
+    // bespoke local fast-path above, so route it through the shared
+    // executeGeminiMcpTool gate exactly like every other provider. This replaces
+    // the old `tier === 'provider_parity'` disjunct: the standard permission role
+    // (not a tier) decides deny/prompt/allow there. An UNKNOWN tool name still
+    // throws (no silent fall-through to list_directory, which is why todo_write
+    // used to echo a directory listing).
+    if (isTaskWraithMcpToolName(request.toolName)) {
+      const result = await executeGeminiMcpTool(
+        request.toolName as TaskWraithMcpToolName,
+        request.arguments,
+        { appRunId: request.appRunId, appChatId: request.appChatId },
+        'ollama'
+      )
+      return {
+        ok: result.isError !== true,
+        output: result.text,
+        structuredContent: result.structuredContent
+      }
+    }
+    throw new Error(`Tool ${request.toolName} is not a recognized TaskWraith tool.`)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     return {
@@ -17057,7 +17062,17 @@ async function runOllamaProviderAdapter(
       sender: event.sender,
       startedAt: Date.now(),
       model: payload.model,
-      approvalMode: 'plan',
+      // Tier retirement (2026-07): honor the standard permission role the
+      // composer resolved (Plan/Read-Only → 'plan'; Default → 'default'; Full
+      // Workspace Access → 'auto_edit'), exactly like the kimi/grok adapters —
+      // no more force-'plan'. The approval gate reads
+      // `session.state.effectivePermissions` (carried below), so read_only/plan
+      // DENY writes+shell, default PROMPTS, and workspace_write/full_access honor
+      // grants. approvalMode is not itself consulted by the gate; it drives the
+      // plan→read_only clamp (index.ts ~l.9700) and provider-native posture.
+      approvalMode: payload.approvalMode,
+      effectivePermissions: payload.effectivePermissions,
+      effectivePermissionsSignature: payload.effectivePermissionsSignature,
       ...route
     }
   )
@@ -17082,10 +17097,7 @@ async function runOllamaProviderAdapter(
       }
     },
     event,
-    {
-      ...payload,
-      approvalMode: 'plan'
-    },
+    payload,
     route
   )
 }
@@ -18927,18 +18939,12 @@ async function executeGeminiMcpTool(
     approvalPreview.service === 'mcpTools'
       ? 'shellCommands'
       : approvalPreview.service
-  const ollamaTier =
-    parentProvider === 'ollama'
-      ? effectiveOllamaToolControlTier(
-          AppStore.getSettings(),
-          context.workspacePath,
-          chatOllamaToolControlTier(
-            context.appChatId ? AppStore.getChat(context.appChatId)?.providerMetadata : undefined
-          )
-        )
-      : null
-  const ollamaMustPrompt =
-    parentProvider === 'ollama' && ollamaToolRequiresModalApproval(toolName, ollamaTier)
+  // Tier retirement (2026-07): Ollama approval is now 100% standard-role driven
+  // via requestAgenticServiceApproval (which reads the run's effectivePermissions
+  // — deny under read_only/plan, prompt under default, honor grants under
+  // workspace_write/full_access), identical to every other provider. The old
+  // Ollama-only `ollamaMustPrompt` forcePrompt (tier != provider_parity) is gone;
+  // forcePrompt is now only the two universal exceptions below.
   const allowed = skipGenericApproval
     ? true
     : await requestAgenticServiceApproval(
@@ -18952,11 +18958,11 @@ async function executeGeminiMcpTool(
           body: approvalPreview.body,
           preview: approvalPreview.preview,
           runId: context.appRunId,
-          // image_generate ALWAYS prompts (even under full_access / session-YOLO):
-          // it ships agent-chosen text off-box to a 3rd-party API — a prompt-
-          // injection exfil channel that must never be auto-allowed silently.
-          forcePrompt:
-            context.scope === 'global' || ollamaMustPrompt || toolName === 'image_generate',
+          // global chats always prompt; image_generate ALWAYS prompts (even under
+          // full_access / session-YOLO) — it ships agent-chosen text off-box to a
+          // 3rd-party API, a prompt-injection exfil channel that must never be
+          // auto-allowed silently.
+          forcePrompt: context.scope === 'global' || toolName === 'image_generate',
           externalPathDetection
         }
       )

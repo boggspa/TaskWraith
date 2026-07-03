@@ -237,44 +237,47 @@ describe('chatOllamaToolControlTier (mid-run gate reader)', () => {
   })
 })
 
-describe('ollamaToolNamesForTier (edit-tool gating sanity)', () => {
-  it('excludes file-edit tools at read_only', () => {
-    const names = ollamaToolNamesForTier('read_only')
-    expect(names).toEqual(expect.arrayContaining(['git_log', 'git_show', 'git_blame']))
-    expect(names).not.toContain('write_file')
-    expect(names).not.toContain('replace')
-    expect(names).not.toContain('create_directory')
-    expect(names).not.toContain('delete_path')
-    expect(names).not.toContain('move_path')
-    expect(names).not.toContain('rename_path')
-    expect(names).not.toContain('apply_patch')
-    expect(names).not.toContain('get_diagnostics')
-    expect(names).not.toContain('git_push')
-    expect(names).not.toContain('git_create_pr')
-    expect(names).toContain('list_active_runs')
-    expect(names).not.toContain('cancel_active_run')
+describe('ollamaToolNamesForTier (tier retirement: full surface)', () => {
+  // Tier retirement (2026-07): the tier arg no longer narrows the surface. Every
+  // value resolves to the SAME full provider-parity list — governance moved to the
+  // standard permission ROLE at the approval gate. read_only/plan DENY writes+shell
+  // there; they no longer hide the tools from the advertised surface (parity with
+  // every other provider, which advertises the full surface and denies at the gate).
+  it('advertises the full surface for every tier value', () => {
+    const readOnly = ollamaToolNamesForTier('read_only')
+    const parity = ollamaToolNamesForTier('provider_parity')
+    expect(readOnly).toEqual(parity)
+    for (const tool of [
+      'read_file',
+      'git_log',
+      'git_show',
+      'git_blame',
+      'list_active_runs',
+      'write_file',
+      'replace',
+      'create_directory',
+      'delete_path',
+      'move_path',
+      'rename_path',
+      'apply_patch',
+      'get_diagnostics',
+      'run_shell_command',
+      'run_task',
+      'git_push',
+      'git_create_pr',
+      'cancel_active_run',
+      'todo_write'
+    ] as const) {
+      expect(readOnly).toContain(tool)
+    }
   })
 
-  it('includes file-edit tools at approved_edits and provider_parity', () => {
-    for (const tier of ['approved_edits', 'approved_shell', 'provider_parity'] as const) {
-      const names = ollamaToolNamesForTier(tier)
-      expect(names).toContain('write_file')
-      expect(names).toContain('replace')
-      expect(names).toContain('create_directory')
-      expect(names).toContain('delete_path')
-      expect(names).toContain('move_path')
-      expect(names).toContain('rename_path')
-      expect(names).toContain('apply_patch')
-    }
+  it('still flags mutating / remote-git / process-control tools as intent-required', () => {
+    // Defense-in-depth is tier-independent: the mutation-intent assert survives the
+    // tier retirement even though the surface is no longer tier-narrowed.
     expect(ollamaToolRequiresIntent('move_path')).toBe(true)
     expect(ollamaToolRequiresIntent('delete_path')).toBe(true)
-    expect(ollamaToolNamesForTier('approved_shell')).toContain('get_diagnostics')
     expect(ollamaToolRequiresIntent('get_diagnostics')).toBe(true)
-    expect(ollamaToolNamesForTier('approved_shell')).not.toContain('git_push')
-    expect(ollamaToolNamesForTier('approved_shell')).not.toContain('cancel_active_run')
-    expect(ollamaToolNamesForTier('provider_parity')).toContain('git_push')
-    expect(ollamaToolNamesForTier('provider_parity')).toContain('git_create_pr')
-    expect(ollamaToolNamesForTier('provider_parity')).toContain('cancel_active_run')
     expect(ollamaToolRequiresIntent('git_push')).toBe(true)
     expect(ollamaToolRequiresIntent('git_create_pr')).toBe(true)
     expect(ollamaToolRequiresIntent('cancel_active_run')).toBe(true)

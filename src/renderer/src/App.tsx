@@ -3924,10 +3924,12 @@ function App(): React.JSX.Element {
         .filter((option) => !option.disabled)
         .map((option) => option.reasoningEffort)
     )
+    // Tier retirement (2026-07): Ollama chats resolve their permission role the
+    // same way as every provider — the persisted per-chat approvalMode, else the
+    // snapshot/composer default ('default' = Default Approval out of the box). No
+    // more force-'plan'; the Ollama tier ladder that used to govern tools is gone.
     const resolvedApprovalMode =
-      provider === 'ollama'
-        ? 'plan'
-        : typeof metadata.approvalMode === 'string'
+      typeof metadata.approvalMode === 'string'
         ? metadata.approvalMode
         : chat.settingsSnapshot?.approvalMode || approvalMode
     return {

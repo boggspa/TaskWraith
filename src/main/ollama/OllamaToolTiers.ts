@@ -121,37 +121,27 @@ export function chatOllamaToolControlTier(
 }
 
 export function ollamaToolNamesForTier(
-  tier: OllamaToolControlTier | string | undefined | null,
+  _tier: OllamaToolControlTier | string | undefined | null,
   options: { networkAccess?: string | null } = {}
 ): OllamaToolName[] {
-  const normalized = normalizeOllamaToolControlTier(tier)
-  let names: OllamaToolName[]
-  if (normalized === 'provider_parity') {
-    names = [
-      ...OLLAMA_READ_TOOL_NAMES,
-      ...OLLAMA_FILE_EDIT_TOOL_NAMES,
-      ...OLLAMA_SHELL_TOOL_NAMES,
-      ...OLLAMA_REMOTE_GIT_TOOL_NAMES,
-      ...OLLAMA_PROCESS_CONTROL_TOOL_NAMES,
-      ...OLLAMA_TIER3_COORDINATION_TOOL_NAMES,
-      ...OLLAMA_TIER4_EXTRA_TOOL_NAMES
-    ]
-  } else if (normalized === 'approved_shell') {
-    names = [
-      ...OLLAMA_READ_TOOL_NAMES,
-      ...OLLAMA_FILE_EDIT_TOOL_NAMES,
-      ...OLLAMA_SHELL_TOOL_NAMES,
-      ...OLLAMA_TIER3_COORDINATION_TOOL_NAMES
-    ]
-  } else if (normalized === 'approved_edits') {
-    names = [
-      ...OLLAMA_READ_TOOL_NAMES,
-      ...OLLAMA_FILE_EDIT_TOOL_NAMES,
-      ...OLLAMA_TIER3_COORDINATION_TOOL_NAMES
-    ]
-  } else {
-    names = [...OLLAMA_READ_TOOL_NAMES]
-  }
+  // Tier retirement (2026-07): local Ollama models now get the SAME full tool
+  // surface as every first-party provider, governed by the standard permission
+  // ROLE at the approval gate (read_only/plan DENY writes+shell; default
+  // PROMPTS; workspace_write/full_access honor grants) — not by an Ollama-only
+  // tier ladder. The `_tier` arg is retained for call-site compatibility but no
+  // longer narrows the surface. The ONLY remaining filter is networkAccess:
+  // web_search/web_fetch are stripped when the run's networkAccess is 'deny'
+  // (global kill switch or a preview-risk model), matching the gate's
+  // networkAccessBlockedToolName check so advertised == executable.
+  const names: OllamaToolName[] = [
+    ...OLLAMA_READ_TOOL_NAMES,
+    ...OLLAMA_FILE_EDIT_TOOL_NAMES,
+    ...OLLAMA_SHELL_TOOL_NAMES,
+    ...OLLAMA_REMOTE_GIT_TOOL_NAMES,
+    ...OLLAMA_PROCESS_CONTROL_TOOL_NAMES,
+    ...OLLAMA_TIER3_COORDINATION_TOOL_NAMES,
+    ...OLLAMA_TIER4_EXTRA_TOOL_NAMES
+  ]
   return options.networkAccess === 'deny'
     ? names.filter((toolName) => !OLLAMA_NETWORK_TOOL_NAMES.has(toolName))
     : names

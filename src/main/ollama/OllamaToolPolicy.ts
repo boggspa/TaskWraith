@@ -4,7 +4,6 @@ import {
   resolveMcpScopedPath,
   type WorkspaceToolContext
 } from '../mcp/WorkspaceToolExecutors'
-import type { OllamaToolControlTier } from '../store/types'
 import { ollamaToolIntent, ollamaToolRequiresIntent } from './OllamaToolTiers'
 
 export const OLLAMA_SHELL_ENV_DELTAS = {
@@ -38,22 +37,6 @@ export const OLLAMA_PROTECTED_WORKSPACE_PATHS = new Set([
   'electron-builder.yaml',
   'entitlements.mac.plist',
   'entitlements.plist'
-])
-
-const OLLAMA_FORCE_PROMPT_TOOLS = new Set([
-  'write_file',
-  'replace',
-  'create_directory',
-  'delete_path',
-  'move_path',
-  'rename_path',
-  'apply_patch',
-  'run_shell_command',
-  'run_task',
-  'get_diagnostics',
-  'git_push',
-  'git_create_pr',
-  'cancel_active_run'
 ])
 
 export function ollamaShellRiskLabels(command: string): string[] {
@@ -197,9 +180,3 @@ export function assertOllamaProtectedWritePaths(
   }
 }
 
-export function ollamaToolRequiresModalApproval(
-  toolName: string,
-  tier: OllamaToolControlTier | null | undefined
-): boolean {
-  return Boolean(tier && tier !== 'provider_parity' && OLLAMA_FORCE_PROMPT_TOOLS.has(toolName))
-}

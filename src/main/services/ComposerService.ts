@@ -239,14 +239,16 @@ export class ComposerService {
     )
     const requestedApprovalMode = workflowMode === 'plan' ? 'plan' : effectiveInput.approvalMode
     const appRunId = optionalString(input.appRunId)
-    let approvalMode =
-      provider === 'ollama'
-        ? 'plan'
-        : capRequestedApprovalMode(
-            resolveApprovalMode(scope, undefined, trustedApprovalChat),
-            resolveApprovalMode(scope, requestedApprovalMode, trustedApprovalChat),
-            appRunId
-          )
+    // Tier retirement (2026-07): Ollama now honors the user's picked permission
+    // role through the SAME cap path as every other provider (it used to be
+    // force-'plan', with its own tier ladder governing tools). read_only/plan
+    // resolve the deny presets; default/auto_edit carry the standard posture the
+    // gate reads. No Ollama special-case here anymore.
+    let approvalMode = capRequestedApprovalMode(
+      resolveApprovalMode(scope, undefined, trustedApprovalChat),
+      resolveApprovalMode(scope, requestedApprovalMode, trustedApprovalChat),
+      appRunId
+    )
     // Unattended (scheduled/workflow) runs must NEVER silently inherit the chat's
     // elevated approvalMode. capRequestedApprovalMode can't prevent it: the "trusted"
     // ceiling is the scheduled chat's OWN persisted mode (a poisoned floor) and the

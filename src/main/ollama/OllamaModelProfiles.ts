@@ -4,7 +4,6 @@ import type { OllamaPromptIntent } from './OllamaPromptIntent'
 import type { OllamaToolControlTier } from '../store/types'
 import {
   normalizeOllamaToolControlTier,
-  ollamaTierLabel,
   ollamaToolNamesForTier,
   type OllamaToolName
 } from './OllamaToolTiers'
@@ -127,6 +126,31 @@ export function ollamaModelFamilyTemperature(modelId: string): number | undefine
   return undefined
 }
 
+// Tier retirement (2026-07): Ollama gets the full tool surface, but a local
+// model only needs the handful it actually drives spelled out. The preamble
+// details THESE inline (call-format examples the text protocol depends on) and
+// name-lists the rest, instead of dumping ~100 schemas into every system prompt.
+const OLLAMA_CORE_PREAMBLE_TOOLS = new Set<OllamaToolName>([
+  'read_file',
+  'list_directory',
+  'find_files',
+  'workspace_search',
+  'workspace_symbols',
+  'git_status',
+  'git_diff',
+  'web_search',
+  'web_fetch',
+  'write_file',
+  'replace',
+  'apply_patch',
+  'run_shell_command',
+  'run_task',
+  'get_diagnostics',
+  'todo_write',
+  'ask_user_question',
+  'goal_read'
+])
+
 function describeTool(toolName: OllamaToolName): string | null {
   if (toolName === 'list_directory') return '- list_directory: {"path":"."}'
   if (toolName === 'find_files') {
@@ -233,42 +257,50 @@ export function ollamaLocalToolSystemPrompt(
   const familyLines = modelId?.trim()
     ? ollamaModelFamilyPromptLines(modelId, intent, normalizedTier)
     : []
+  // Detail the core tools a local model actually drives (their JSON arg shapes
+  // are load-bearing for the text protocol); list the rest by name so the full
+  // surface is discoverable without a ~100-line schema dump. Governance is the
+  // run's permission ROLE at the approval gate — the preamble no longer states a
+  // "tier" (a retired concept that misled small models).
+  const detailed: string[] = []
+  const named: string[] = []
+  for (const toolName of tools) {
+    if (OLLAMA_CORE_PREAMBLE_TOOLS.has(toolName)) {
+      const line = describeTool(toolName)
+      if (line) detailed.push(line)
+    } else {
+      named.push(toolName)
+    }
+  }
   const lines = [
-    'You are running inside TaskWraith through local Ollama.',
-    'You do not have direct shell or filesystem access, but TaskWraith DOES give you working tools (listed below) that you can call right now. Use them instead of telling the user you lack a capability.',
-    ...(hasWebTools
-      ? [
-          'You CAN access the live internet through the web_search and web_fetch tools below. When the user asks about current events, weather, prices, or anything you cannot answer from memory, use web_search to find sources, then web_fetch to read a chosen page. web_fetch returns the readable text of the page, so you can summarize it directly.'
-        ]
-      : []),
-    'To request a tool, either emit a native tool/function call, or reply with ONLY a JSON object in this exact shape:',
+    'You are running inside TaskWraith through local Ollama with real workspace tools — call them instead of telling the user you lack a capability.',
+    'To use a tool, either emit a native tool/function call, or reply with ONLY a JSON object in this exact shape:',
     '{"taskwraith_tool":{"name":"read_file","arguments":{"path":"README.md"}}}',
-    'Do NOT announce or describe a tool call in prose (for example, "we need to use web_search" or "let\'s do web_search"). Either actually issue the tool call now, or give your final answer in normal prose. Describing a tool without calling it does nothing.',
-    `Current Ollama tool-control tier: ${ollamaTierLabel(normalizedTier)}.`,
+    'Do NOT announce or describe a tool call in prose. Either issue the call now, or give your final answer in normal prose — describing a tool without calling it does nothing.',
     ...(intent === 'conversational'
       ? [
           'The current user message is conversational (a greeting, thanks, or general question — not a coding task). Answer it directly in friendly prose. Do not call tools, explore the workspace, or publish todo checklists unless the question genuinely needs live web data or workspace facts — and then call at most one tool before answering.'
         ]
       : []),
     ...familyLines,
-    ...(normalizedTier === 'provider_parity' && tools.includes('delegate_to_subthread')
+    'Available tools:',
+    ...detailed,
+    ...(named.length
       ? [
-          'Provider parity includes delegation tools in this workspace. Use delegate_to_subthread only when the task explicitly needs a separate participant, hosted execution, or an independent verification lane; otherwise keep the run local and scoped.'
+          `Also available (same JSON shape; infer standard MCP arguments, or read the target first): ${named.join(', ')}.`
         ]
-      : []),
-    'Available tools:'
+      : [])
   ]
-  for (const toolName of tools) {
-    const line = describeTool(toolName)
-    if (line) lines.push(line)
+  if (hasWebTools) {
+    lines.push(
+      'For current events, weather, prices, or anything outside your knowledge: web_search to find sources, then web_fetch a chosen URL and summarize its readable text.'
+    )
   }
   lines.push(
     'Paths must stay inside the active workspace.',
-    'Use ask_user_question when the request is too ambiguous to continue safely or when a mid-task choice belongs to the user. After the answer returns, continue the task and summarize the chosen path.',
-    'web_search and web_fetch are read-only network tools routed through TaskWraith policy. A typical flow is: web_search for the topic, pick the most relevant result, then web_fetch that URL and summarize its readable text for the user.',
-    'Mutating tools require an intent or summary. TaskWraith will show a modal approval before running approved-edit and approved-shell tools.',
-    'After TaskWraith returns a tool result, answer normally or request one more tool with the same JSON shape.',
-    'Do not invent file contents or workspace facts when a tool result is needed.'
+    'File edits, shell, and publishing are governed by the run\'s permission role: TaskWraith either shows the user an approval modal or blocks the tool. If a tool is blocked, say so and continue with what you can do.',
+    'Use ask_user_question when the request is too ambiguous to continue safely or when a mid-task choice belongs to the user.',
+    'After a tool result returns, answer normally or request one more tool with the same JSON shape. Do not invent file contents or workspace facts when a tool result is needed.'
   )
   return lines.join('\n')
 }

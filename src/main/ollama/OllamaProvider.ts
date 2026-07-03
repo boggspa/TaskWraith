@@ -50,7 +50,6 @@ import {
   ollamaLocalToolSystemPrompt,
   ollamaModelFamilyTemperature,
 } from './OllamaModelProfiles'
-import { buildOllamaMidRunTierBumpWarning } from './OllamaTierSuggestion'
 import {
   resolveOllamaRunProfile,
   resolveOllamaThinkingLevel
@@ -2123,7 +2122,10 @@ export async function runOllamaProvider(
       event.sender,
       'ollama',
       payload.workspace,
-      'plan',
+      // Tier retirement (2026-07): report the run's actual permission role, not a
+      // hardcoded 'plan' — Ollama now honors Plan/Read-Only/Default/Full like
+      // every provider, so capability warnings must reflect the real posture.
+      payload.approvalMode || 'default',
       route
     )
 
@@ -2577,21 +2579,6 @@ export async function runOllamaProvider(
             appRunId: route.appRunId || payload.appRunId,
             toolControlTier
           })
-        }
-        if (toolResult.tierBumpRequired) {
-          const warning = buildOllamaMidRunTierBumpWarning(toolRequest.toolName, toolControlTier)
-          deps.sendAgentCompatLine(
-            event.sender,
-            'ollama',
-            {
-              type: 'provider_warning',
-              id: warning.id,
-              severity: warning.severity,
-              title: warning.title,
-              message: warning.message
-            },
-            route
-          )
         }
         if (harnessEnabled) {
           harnessState = recordOllamaHarnessToolResult(

@@ -91,11 +91,16 @@ describe('ollamaLocalToolSystemPrompt', () => {
     expect(prompt).not.toContain('The current user message is conversational')
   })
 
-  it('documents goal tools as lifecycle-only for local tool use', () => {
+  it('details goal_read inline and name-lists the goal lifecycle mutators', () => {
     const prompt = ollamaLocalToolSystemPrompt('provider_parity', 'ornith:9b')
+    // Tier retirement / preamble slim (2026-07): goal_read is a core tool spelled
+    // out inline; goal_update/complete/blocked are discoverable by name in the
+    // "Also available" list rather than each getting a paragraph.
+    expect(prompt).toContain('read the active TaskWraith thread goal only')
     expect(prompt).toContain('goal_update')
-    expect(prompt).toContain('lifecycle status for an existing active TaskWraith goal only')
-    expect(prompt).toContain('Do NOT use it for planning')
+    expect(prompt).toContain('goal_complete')
+    expect(prompt).toContain('goal_blocked')
+    // Ornith family delegation guidance still rides along.
     expect(prompt).toContain('instead of defaulting to another provider')
   })
 

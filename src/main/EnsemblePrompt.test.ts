@@ -1796,7 +1796,10 @@ describe('Ollama ensemble prompt budgeting', () => {
       chatContextTurns: 10
     })
     expect(prompt).toContain('Local Ollama participant notes:')
-    expect(prompt).toContain('TaskWraith gives you real workspace tools')
+    // Tier retirement (2026-07): the ensemble note no longer hard-codes the old
+    // "write with approval, shell with approval" tier semantics — approval is set
+    // by the run's permission role, same tools as every participant.
+    expect(prompt).toContain('the same real workspace tools as every participant')
     expect(prompt).toContain('sized for your local context window')
     // Ensemble ollama seats get the findings-shaped recon hint unless they
     // are the designated plan owner of a plan-workflow chat — the old

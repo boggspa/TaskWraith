@@ -837,7 +837,7 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
       ? [
           '',
           'Local Ollama participant notes:',
-          '- TaskWraith gives you real workspace tools (search, read, write with approval, shell with approval). Use them instead of claiming you lack access.',
+          '- TaskWraith gives you the same real workspace tools as every participant (search, read, edit, shell); which ones auto-run vs. need approval is set by this run\'s permission role. Use them instead of claiming you lack access.',
           '- Prefer one concrete workspace action per turn (a smoke test, a targeted read, a small edit) over long meta commentary.',
           ollamaTranscriptBudget?.autoCompacted
             ? '- The tagged transcript below is auto-compacted for your local context window; call list_directory or read_file when you need file contents the transcript omitted.'

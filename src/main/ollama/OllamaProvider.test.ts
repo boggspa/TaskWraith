@@ -1892,9 +1892,9 @@ describe('parseOllamaToolRequest', () => {
       toolName: 'write_file',
       arguments: { path: 'x', content: 'y' }
     })
-    expect(ollamaLocalToolSystemPrompt()).toContain(
-      'Current Ollama tool-control tier: read-only workspace.'
-    )
+    // Tier retirement (2026-07): the "Current Ollama tool-control tier" label is
+    // gone. Core tools (incl. web) are still detailed inline so the text protocol
+    // has concrete arg shapes to copy.
     expect(ollamaLocalToolSystemPrompt()).toContain(
       '- web_search: {"query":"current information to search for"}'
     )
@@ -1940,15 +1940,20 @@ describe('parseOllamaToolRequest', () => {
 
   it('tells local models they can reach the live internet via web tools', () => {
     const prompt = ollamaLocalToolSystemPrompt('read_only')
-    expect(prompt).toContain('You CAN access the live internet')
-    expect(prompt).toContain('web_fetch returns the readable text')
+    // Slim preamble (2026-07): the concise web-flow line replaces the old hype
+    // paragraph; web tools are always present under read_only now (networkAccess
+    // allows web reads), so the flow guidance appears.
+    expect(prompt).toContain('web_search to find sources')
+    expect(prompt).toContain('web_fetch a chosen URL and summarize its readable text')
   })
 
   it('omits live internet copy when the resolved run posture denies network access', () => {
     const prompt = ollamaLocalToolSystemPrompt('read_only', 'gpt-oss:latest', {
       networkAccess: 'deny'
     })
-    expect(prompt).not.toContain('You CAN access the live internet')
+    // When the run denies network (global kill switch / preview-risk model), the
+    // web tools are stripped from the surface and the web-flow guidance is omitted.
+    expect(prompt).not.toContain('web_search to find sources')
     expect(prompt).not.toContain('- web_search:')
     expect(prompt).not.toContain('- web_fetch:')
     expect(prompt).toContain('- read_file:')
@@ -1957,7 +1962,7 @@ describe('parseOllamaToolRequest', () => {
   it('tells local models not to announce a tool call without issuing it', () => {
     const prompt = ollamaLocalToolSystemPrompt('read_only')
     expect(prompt).toContain('Do NOT announce or describe a tool call in prose')
-    expect(prompt).toContain('Describing a tool without calling it does nothing')
+    expect(prompt).toContain('describing a tool without calling it does nothing')
   })
 
   it('falls back to the thinking channel when content is empty (gpt-oss)', () => {
@@ -2143,33 +2148,22 @@ describe('ollamaNativeToolDefinitions', () => {
     expect(compact.length).toBeLessThan(full.length)
     expect(compact).not.toContain('maxResults')
   })
-  it('exposes read-only tools as OpenAI-style function schemas', () => {
+  it('exposes tools as OpenAI-style function schemas (full surface)', () => {
     const defs = ollamaNativeToolDefinitions('read_only')
     const names = defs.map((def) => def.function.name)
-    expect(names).toEqual([
+    // Tier retirement (2026-07): native defs advertise the full surface for every
+    // tier value — the gate governs approval by the standard role, so read, write,
+    // and shell tools all appear regardless of the (retired) tier arg.
+    for (const tool of [
       'read_file',
-      'list_directory',
-      'find_files',
       'workspace_search',
-      'workspace_symbols',
-      'git_status',
-      'git_diff',
-      'git_log',
-      'git_show',
-      'git_blame',
-      'test_result_summary',
-      'list_active_runs',
       'web_search',
       'web_fetch',
-      'ask_user_question',
-      'goal_read',
-      'goal_update',
-      'goal_complete',
-      'goal_blocked',
-      'tw_recall_find',
-      'tw_recall_read',
-      'tw_recall_read_events'
-    ])
+      'write_file',
+      'run_shell_command'
+    ]) {
+      expect(names).toContain(tool)
+    }
     const webSearch = defs.find((def) => def.function.name === 'web_search')
     expect(webSearch?.type).toBe('function')
     expect(webSearch?.function.parameters.required).toEqual(['query'])
@@ -2219,56 +2213,35 @@ describe('normalizeOllamaNativeToolCall', () => {
   })
 })
 
-describe('Ollama tool tiers', () => {
-  it('defaults to read-only tools', () => {
+describe('Ollama tool surface (tier retired)', () => {
+  it('advertises the full surface for every tier value', () => {
+    // Tier retirement (2026-07): the tier arg no longer narrows the surface — the
+    // read_only list equals the full provider-parity list, and governance moves to
+    // the standard permission role at the approval gate.
     expect(normalizeOllamaToolControlTier('bad-value')).toBe('read_only')
-    expect(ollamaToolNamesForTier('read_only')).toEqual([
+    const readOnly = ollamaToolNamesForTier('read_only')
+    expect(readOnly).toEqual(ollamaToolNamesForTier('provider_parity'))
+    for (const tool of [
       'read_file',
-      'list_directory',
-      'find_files',
-      'workspace_search',
-      'workspace_symbols',
       'git_status',
-      'git_diff',
-      'git_log',
-      'git_show',
-      'git_blame',
-      'test_result_summary',
-      'list_active_runs',
       'web_search',
       'web_fetch',
-      'ask_user_question',
-      'goal_read',
-      'goal_update',
-      'goal_complete',
-      'goal_blocked',
-      'tw_recall_find',
-      'tw_recall_read',
-      'tw_recall_read_events'
-    ])
-    expect(ollamaToolAllowedInTier('ask_user_question', 'read_only')).toBe(true)
-    expect(ollamaToolAllowedInTier('goal_read', 'read_only')).toBe(true)
-    expect(ollamaToolAllowedInTier('goal_complete', 'read_only')).toBe(true)
-    expect(ollamaToolAllowedInTier('git_status', 'read_only')).toBe(true)
-    expect(ollamaToolAllowedInTier('git_blame', 'read_only')).toBe(true)
-    expect(ollamaToolAllowedInTier('test_result_summary', 'read_only')).toBe(true)
-    expect(ollamaToolAllowedInTier('list_active_runs', 'read_only')).toBe(true)
-    expect(ollamaToolAllowedInTier('write_file', 'read_only')).toBe(false)
-    expect(ollamaToolAllowedInTier('cancel_active_run', 'read_only')).toBe(false)
+      'write_file',
+      'run_shell_command',
+      'git_push',
+      'cancel_active_run',
+      'delegate_to_subthread'
+    ]) {
+      expect(readOnly).toContain(tool)
+    }
+    // ollamaToolAllowedInTier now reflects the full surface (no tier narrowing).
+    expect(ollamaToolAllowedInTier('write_file', 'read_only')).toBe(true)
+    expect(ollamaToolAllowedInTier('run_shell_command', 'read_only')).toBe(true)
   })
 
-  it('adds file edits and shell incrementally', () => {
-    expect(ollamaToolAllowedInTier('write_file', 'approved_edits')).toBe(true)
-    expect(ollamaToolAllowedInTier('todo_write', 'approved_edits')).toBe(true)
-    expect(ollamaToolAllowedInTier('todo_write', 'read_only')).toBe(false)
-    expect(ollamaToolAllowedInTier('run_shell_command', 'approved_edits')).toBe(false)
-    expect(ollamaToolAllowedInTier('run_shell_command', 'approved_shell')).toBe(true)
-    expect(ollamaToolAllowedInTier('run_task', 'approved_shell')).toBe(true)
-    expect(ollamaToolAllowedInTier('get_diagnostics', 'approved_shell')).toBe(true)
-    expect(ollamaToolAllowedInTier('git_push', 'approved_shell')).toBe(false)
-    expect(ollamaToolAllowedInTier('cancel_active_run', 'approved_shell')).toBe(false)
-    expect(ollamaToolAllowedInTier('git_push', 'provider_parity')).toBe(true)
-    expect(ollamaToolAllowedInTier('cancel_active_run', 'provider_parity')).toBe(true)
+  it('still marks mutating / remote-git / process-control tools as intent-required', () => {
+    // Defense-in-depth survives the tier retirement even though the surface is
+    // no longer tier-narrowed.
     expect(ollamaToolRequiresIntent('write_file')).toBe(true)
     expect(ollamaToolRequiresIntent('run_shell_command')).toBe(true)
     expect(ollamaToolRequiresIntent('get_diagnostics')).toBe(true)

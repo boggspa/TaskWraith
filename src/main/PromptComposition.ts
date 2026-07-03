@@ -5,7 +5,6 @@ import {
 } from './ollama/OllamaRunMemory'
 import { classifyOllamaPromptIntent } from './ollama/OllamaPromptIntent'
 import { ollamaTierAwareWorkflowHint } from './ollama/OllamaModelProfiles'
-import { suggestOllamaTierBump } from './ollama/OllamaTierSuggestion'
 import { formatActiveGoalPromptBlock, shouldInjectActiveGoal } from './GoalState'
 import { grokAcpEnabled } from './grokGate'
 import type {
@@ -898,12 +897,9 @@ export function composeRunPrompt(input: ComposeRunPromptInput): ComposeRunPrompt
     }
   }
 
-  if (provider === 'ollama' && ollamaToolControlTier) {
-    const tierSuggestion = suggestOllamaTierBump(finalPrompt, ollamaToolControlTier)
-    if (tierSuggestion && !uiNoticeMessage) {
-      uiNoticeMessage = tierSuggestion.message
-    }
-  }
+  // Tier retirement (2026-07): no more "raise your Ollama tier in Settings"
+  // pre-run notices — the tier ladder is gone; the standard permission role now
+  // governs the tool surface, so there is nothing to bump.
 
   return {
     contextualPrompt,

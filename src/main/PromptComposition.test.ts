@@ -674,7 +674,10 @@ describe('composeRunPrompt sub-thread returns', () => {
     )
   })
 
-  it('surfaces an Ollama tier bump notice for ambitious prompts', () => {
+  it('no longer surfaces an Ollama tier-bump notice (tier retired)', () => {
+    // Tier retirement (2026-07): the "raise your Ollama tier in Settings" pre-run
+    // notice is gone — the standard permission role governs the tool surface, so
+    // there is no tier to bump and no notice to surface.
     const result = composeRunPrompt({
       provider: 'ollama',
       finalPrompt: 'Refactor this entire module and fix all tests',
@@ -687,7 +690,7 @@ describe('composeRunPrompt sub-thread returns', () => {
       ollamaToolControlTier: 'read_only'
     })
 
-    expect(result.uiNoticeMessage).toContain('Approved edits')
+    expect(result.uiNoticeMessage).toBeUndefined()
   })
 })
 

@@ -109,14 +109,23 @@ export const DEFAULT_PERMISSION_PRESETS: Record<PermissionPresetId, PermissionPr
     label: 'Read only',
     approvalMode: 'plan',
     agenticServices: READ_ONLY_AGENTIC_SERVICES,
-    networkAccess: 'deny'
+    // Web reads (web_search/web_fetch) are non-mutating retrospection — a
+    // Read-Only/Recon seat may reach the live web. networkAccess gates ONLY the
+    // web_read tool class (isNetworkAccessBlockedTool); it never touches the
+    // file/shell/mcp approval gates, so this is a pure read-capability
+    // expansion. The previewRiskModel guard (resolver l.263) and the global
+    // networkAccess='deny' kill switch (l.265) still force-deny ahead of this
+    // preset value, so a locked-down workspace or a preview model stays offline.
+    networkAccess: 'allow'
   },
   plan: {
     id: 'plan',
     label: 'Plan',
     approvalMode: 'plan',
     agenticServices: PLAN_AGENTIC_SERVICES,
-    networkAccess: 'deny'
+    // Plan may also web-read (same rationale as read_only above); still gated by
+    // the previewRiskModel + global-deny guards in the resolver's network chain.
+    networkAccess: 'allow'
   },
   default: {
     id: 'default',

@@ -9,8 +9,7 @@ import {
   ollamaShellApprovalPreviewMetadata,
   ollamaShellRiskLabels,
   ollamaTextDiffPreview,
-  ollamaProtectedPathReason,
-  ollamaToolRequiresModalApproval
+  ollamaProtectedPathReason
 } from './OllamaToolPolicy'
 
 const workspace = '/tmp/taskwraith-ollama-policy'
@@ -137,29 +136,6 @@ describe('Ollama tool policy', () => {
     } finally {
       await rm(root, { recursive: true, force: true })
     }
-  })
-
-  it('forces per-call modals for Tier 2 and Tier 3 mutation requests', () => {
-    expect(ollamaToolRequiresModalApproval('write_file', 'approved_edits')).toBe(true)
-    expect(ollamaToolRequiresModalApproval('delete_path', 'approved_edits')).toBe(true)
-    expect(ollamaToolRequiresModalApproval('move_path', 'approved_edits')).toBe(true)
-    expect(ollamaToolRequiresModalApproval('apply_patch', 'approved_edits')).toBe(true)
-    expect(ollamaToolRequiresModalApproval('run_shell_command', 'approved_shell')).toBe(true)
-    expect(ollamaToolRequiresModalApproval('run_task', 'approved_shell')).toBe(true)
-    expect(ollamaToolRequiresModalApproval('get_diagnostics', 'approved_shell')).toBe(true)
-    expect(ollamaToolRequiresModalApproval('git_push', 'approved_shell')).toBe(true)
-    expect(ollamaToolRequiresModalApproval('git_create_pr', 'approved_shell')).toBe(true)
-    expect(ollamaToolRequiresModalApproval('cancel_active_run', 'approved_shell')).toBe(true)
-    expect(ollamaToolRequiresModalApproval('find_files', 'approved_shell')).toBe(false)
-    expect(ollamaToolRequiresModalApproval('list_active_runs', 'approved_shell')).toBe(false)
-    expect(ollamaToolRequiresModalApproval('workspace_search', 'approved_shell')).toBe(false)
-    expect(ollamaToolRequiresModalApproval('git_log', 'approved_shell')).toBe(false)
-    expect(ollamaToolRequiresModalApproval('git_show', 'approved_shell')).toBe(false)
-    expect(ollamaToolRequiresModalApproval('git_blame', 'approved_shell')).toBe(false)
-    expect(ollamaToolRequiresModalApproval('test_result_summary', 'approved_shell')).toBe(false)
-    expect(ollamaToolRequiresModalApproval('write_file', 'provider_parity')).toBe(false)
-    expect(ollamaToolRequiresModalApproval('cancel_active_run', 'provider_parity')).toBe(false)
-    expect(ollamaToolRequiresModalApproval('run_shell_command', 'read_only')).toBe(true)
   })
 
   it('adds host-derived shell approval metadata for Ollama commands', () => {
