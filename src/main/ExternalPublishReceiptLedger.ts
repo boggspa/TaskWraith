@@ -58,6 +58,11 @@ export interface ExternalPublishReceiptWriter {
   complete(
     input: ExternalPublishReceiptCompletion
   ): ExternalPublishReceipt | null | Promise<ExternalPublishReceipt | null>
+  list(): ExternalPublishReceipt[]
+  purgeOlderThan(
+    cutoffMs: number | null,
+    options?: { dryRun?: boolean }
+  ): AuditRetentionSurfacePurgeCounts
 }
 
 export interface ExternalPublishReceiptLedgerOptions {
@@ -168,7 +173,7 @@ export class ExternalPublishReceiptLedger implements ExternalPublishReceiptWrite
         )
         return []
       }
-      return capExternalPublishReceipts(parsed.map(normalizeStoredReceipt).filter(Boolean))
+      return capExternalPublishReceipts(parsed.map(normalizeStoredReceipt).filter(isExternalPublishReceipt))
     } catch (err) {
       this.log(
         `[ExternalPublishReceiptLedger] load failed (starting empty): ${err instanceof Error ? err.message : String(err)}`

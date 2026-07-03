@@ -212,7 +212,7 @@ describe('ExtensionSecretStore', () => {
           ownerId: 'codex-default',
           fieldKind: 'header',
           fieldName: 'Authorization'
-        },
+        } as any,
         'secret'
       ).ok
     ).toBe(false)

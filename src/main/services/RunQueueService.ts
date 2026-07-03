@@ -63,8 +63,7 @@ const AGENTIC_SERVICE_IDS = new Set<AgenticServiceId>([
   'canvasEval',
   'crossThreadRead',
   'mediaEditing',
-  'mediaRecording',
-  'networkAccess'
+  'mediaRecording'
 ])
 const AGENTIC_SERVICE_POLICIES = new Set<AgenticServicePolicy>(['ask', 'workspace', 'allow', 'deny'])
 

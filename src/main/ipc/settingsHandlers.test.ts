@@ -75,7 +75,7 @@ function createDeps(overrides: Partial<Parameters<typeof registerSettingsHandler
     saveRuntimeProfile: vi.fn((profile) => runtimeProfile(profile)),
     deleteRuntimeProfile: vi.fn(() => true),
     getExtensionSecretStatusSnapshot: vi.fn(() => ({
-      schemaVersion: 1,
+      schemaVersion: 1 as const,
       generatedAt: '2026-07-03T00:00:00.000Z',
       encryptionAvailable: true,
       secrets: []
@@ -83,7 +83,7 @@ function createDeps(overrides: Partial<Parameters<typeof registerSettingsHandler
     setExtensionSecret: vi.fn((ref: ExtensionSecretRef, _value: string) => ({
       ok: true,
       snapshot: {
-        schemaVersion: 1,
+        schemaVersion: 1 as const,
         generatedAt: '2026-07-03T00:00:00.000Z',
         encryptionAvailable: true,
         secrets: [{ ...ref, configured: true, updatedAt: '2026-07-03T00:00:00.000Z' }]
@@ -92,7 +92,7 @@ function createDeps(overrides: Partial<Parameters<typeof registerSettingsHandler
     clearExtensionSecret: vi.fn((ref: ExtensionSecretRef) => ({
       ok: true,
       snapshot: {
-        schemaVersion: 1,
+        schemaVersion: 1 as const,
         generatedAt: '2026-07-03T00:00:00.000Z',
         encryptionAvailable: true,
         secrets: [{ ...ref, configured: false }]

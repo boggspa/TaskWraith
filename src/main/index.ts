@@ -498,6 +498,7 @@ import {
   ActiveGoal,
   GuestParticipantConfig,
   ChatScope,
+  ChatWorkflowMode,
   ToolActivity,
   WorkspaceSnapshot,
   GeminiWorktreeLaunchOption,
@@ -2990,7 +2991,7 @@ function externalPublishPolicyDecision(origin: ExternalPublishOrigin): {
 
 async function beginExternalPublishReceipt(
   input: Omit<ExternalPublishReceiptInput, 'decision' | 'reason'>
-): Promise<ExternalPublishReceipt | null> {
+): Promise<ExternalPublishReceipt> {
   const ledger = getExternalPublishReceiptLedger()
   const decision = externalPublishPolicyDecision(input.origin)
   if (!ledger) {
@@ -3052,7 +3053,7 @@ function externalPublishReceiptsForOrigin(
 function listExternalPublishReceipts(): ExternalPublishReceipt[] {
   const ledger = getExternalPublishReceiptLedger()
   if (!ledger || typeof (ledger as { list?: unknown }).list !== 'function') return []
-  return (ledger as { list: () => ExternalPublishReceipt[] }).list()
+  return ledger.list()
 }
 
 const recallToolExecutors = createRecallToolExecutors({
@@ -22584,7 +22585,7 @@ if (isGeminiMcpBridgeProcess) {
           evaluatedAt: new Date().toISOString()
         }
         const queueId = `remote-queue-${randomUUID()}`
-        const workflowMode = action.workflowMode === 'plan' ? 'plan' : 'normal'
+        const workflowMode: ChatWorkflowMode = action.workflowMode === 'plan' ? 'plan' : 'normal'
         const approvalMode = action.approvalMode || 'default'
         const permissionPosture = buildRemoteComposerQueuePermissionPosture({
           provider,
@@ -22632,7 +22633,7 @@ if (isGeminiMcpBridgeProcess) {
               provider,
               text,
               ...(action.approvalMode ? { approvalMode: action.approvalMode } : {}),
-              ...(action.workflowMode === 'plan' ? { workflowMode: 'plan' } : {}),
+              ...(workflowMode === 'plan' ? { workflowMode } : {}),
               ...(action.model ? { model: action.model } : {}),
               ...(action.reasoningEffort !== undefined
                 ? { reasoningEffort: action.reasoningEffort }
@@ -26440,7 +26441,8 @@ if (isGeminiMcpBridgeProcess) {
       readFileSync: (filePath, encoding) => fsSync.readFileSync(filePath, encoding),
       validateUserMcpPluginProvenance
     })
-    managedPolicySnapshotForDiagnostics = () => managedPolicyService.snapshot()
+    managedPolicySnapshotForDiagnostics = () =>
+      managedPolicyService.snapshot() as unknown as Record<string, unknown>
     managedUserMcpLaunchAllowlistPolicy = () =>
       managedPolicyService.userMcpLaunchAllowlistPolicy()
     const startupManagedPatch = managedPolicyService.enforcedSettingsPatch(AppStore.getSettings())

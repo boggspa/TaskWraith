@@ -1,9 +1,7 @@
 import { createHash, createPublicKey, verify as verifySignature, type KeyObject } from 'node:crypto'
 import type {
   AgenticServicesSettings,
-  AppSettings,
-  ProductUpdateChannel,
-  CodexSandboxFallbackMode
+  AppSettings
 } from './store/types'
 import {
   evaluateUserMcpLaunchPolicy,
@@ -103,8 +101,6 @@ interface ManagedPolicySignatureSnapshot {
 }
 
 const settingKeySet = new Set<string>(MANAGED_POLICY_SETTING_KEYS)
-const updateChannels = new Set<ProductUpdateChannel>(['debug', 'stable', 'nightly'])
-const sandboxFallbacks = new Set<CodexSandboxFallbackMode>(['ask_rerun', 'off'])
 const servicePolicies = new Set(['ask', 'workspace', 'allow', 'deny'])
 const networkPolicies = new Set(['allow', 'deny'])
 const managedPolicySignatureAlgorithms = new Set(['ed25519'])
@@ -193,14 +189,18 @@ function sanitizeManagedSettings(value: unknown): ManagedPolicySettings {
   if (typeof value.autoUpdateEnabled === 'boolean') {
     settings.autoUpdateEnabled = value.autoUpdateEnabled
   }
-  if (updateChannels.has(String(value.updateChannel))) {
-    settings.updateChannel = value.updateChannel as ProductUpdateChannel
+  if (
+    value.updateChannel === 'debug' ||
+    value.updateChannel === 'stable' ||
+    value.updateChannel === 'nightly'
+  ) {
+    settings.updateChannel = value.updateChannel
   }
   if (typeof value.geminiMcpBridgeEnabled === 'boolean') {
     settings.geminiMcpBridgeEnabled = value.geminiMcpBridgeEnabled
   }
-  if (sandboxFallbacks.has(String(value.codexSandboxFallback))) {
-    settings.codexSandboxFallback = value.codexSandboxFallback as CodexSandboxFallbackMode
+  if (value.codexSandboxFallback === 'ask_rerun' || value.codexSandboxFallback === 'off') {
+    settings.codexSandboxFallback = value.codexSandboxFallback
   }
   const agenticServices = sanitizeAgenticServices(value.agenticServices)
   if (agenticServices) settings.agenticServices = agenticServices

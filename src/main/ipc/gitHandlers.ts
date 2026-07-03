@@ -17,7 +17,6 @@ import type {
   GitSnapshotPublisher
 } from '../services/GitSnapshotPublisher'
 import type {
-  ExternalPublishReceipt,
   ExternalPublishReceiptCompletion,
   ExternalPublishReceiptInput,
   ExternalPublishReceiptWriter

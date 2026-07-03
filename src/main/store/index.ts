@@ -3932,8 +3932,6 @@ export class AppStore {
       const isExpired = (surface: AuditRetentionSurface, timestamp: unknown): boolean =>
         enabled &&
         isBeforeAuditRetentionCutoff(timestamp, auditRetentionCutoffMs(policy, surface, nowMs))
-      const shouldDelete = (surface: AuditRetentionSurface, timestamp: unknown): boolean =>
-        !dryRun && isExpired(surface, timestamp)
       const recordScan = (
         surface: AuditRetentionSurface,
         scanned: number,
@@ -5036,7 +5034,7 @@ export class AppStore {
     const records = readJson<ProductCrashRecord[] | unknown>(productCrashesPath, [])
     const current = Array.isArray(records) ? records : []
     const record = createProductCrashRecord(input, {
-      appVersion: app.getVersion() || 'unknown',
+      appVersion: electron.app.getVersion() || 'unknown',
       platform: process.platform,
       arch: process.arch
     })

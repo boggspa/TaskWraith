@@ -6,6 +6,7 @@ import {
   createApprovalLedgerRecord,
   resolveApprovalLedgerRecord
 } from './ApprovalLedger'
+import type { AgentApprovalAction } from './store/types'
 
 const userDataPath = vi.hoisted(() => `/tmp/taskwraith-audit-retention-test-${process.pid}`)
 
@@ -32,7 +33,7 @@ function seedApprovalLedger(): void {
     method: 'codex-mcp/run_shell_command',
     title: 'Approve',
     body: 'Run command',
-    actions: ['accept', 'acceptForWorkspace', 'decline'] as const,
+    actions: ['accept', 'acceptForWorkspace', 'decline'] as AgentApprovalAction[],
     workspaceId: 'ws-1',
     workspacePath: '/repo'
   }

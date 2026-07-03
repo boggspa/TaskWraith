@@ -18,6 +18,7 @@ import type {
   EnsembleParticipant,
   EnsembleParticipantStatus,
   EnsembleWakeupRecord,
+  EffectiveRunPermissions,
   ExternalPathGrant,
   RunQueueJobStatus,
   TranscriptMediaRef,

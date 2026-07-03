@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { RunQueueJob } from '../store/types'
+import type { AllowlistDecision } from '../RemoteWorkspaceAllowlist'
 import {
   REMOTE_COMPOSER_ACTIVE_QUEUE_STATUSES,
   authorizeRemoteComposerQueueDispatch,
@@ -150,18 +151,20 @@ describe('buildRemoteComposerQueueDispatchAction', () => {
 
 describe('authorizeRemoteComposerQueueDispatch', () => {
   it('revalidates queued remote dispatch against the current startTurn allowlist', () => {
-    const evaluateAllowlist = vi.fn(() => ({
-      allowed: true,
-      entry: {
-        workspaceId: 'workspace-1',
-        path: '/repo',
-        mode: 'read-write',
-        allowedProviders: ['gemini'],
-        allowedApprovalModes: ['plan'],
-        createdAt: 1,
-        updatedAt: 1
-      }
-    }))
+    const evaluateAllowlist = vi.fn(
+      (): AllowlistDecision => ({
+        allowed: true,
+        entry: {
+          workspaceId: 'workspace-1',
+          path: '/repo',
+          mode: 'read-write',
+          allowedProviders: ['gemini'],
+          allowedApprovalModes: ['plan'],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      })
+    )
 
     expect(
       authorizeRemoteComposerQueueDispatch(makeJob(), { evaluateAllowlist })
