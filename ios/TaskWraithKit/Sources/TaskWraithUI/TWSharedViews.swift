@@ -4690,8 +4690,15 @@ struct RosterChipEditor: View {
                         Text("Read-Only/Recon").tag("read_only")
                         Text("Plan workflow").tag("plan")
                         Text("Default approval").tag("default")
-                        Text("Full workspace").tag("workspace_write")
                         Text("Full access").tag("full_access")
+                        // 'Workspace write' (contained auto-edit) was coalesced into
+                        // Full access on iOS. A participant already stored on it keeps
+                        // showing its real value — never silently escalated to Full
+                        // access — and can switch to a tier above. New selections use
+                        // the four tiers above only.
+                        if entry.permissionPresetId == "workspace_write" {
+                            Text("Workspace write (legacy)").tag("workspace_write")
+                        }
                     }
                     .pickerStyle(.menu)
                 }

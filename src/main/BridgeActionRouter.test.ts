@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { BridgeActionRouter } from './BridgeActionRouter'
+import { BridgeActionRouter, approvalModeFromPayload } from './BridgeActionRouter'
 import { RemoteWorkspaceAllowlist } from './RemoteWorkspaceAllowlist'
 import type { BridgeActionExecutionResult, BridgeActionExecutor } from './BridgeActionExecutor'
 import type {
@@ -7,6 +7,38 @@ import type {
   RemoteDeviceAuditRecord,
   RemoteDeviceAuditRecordInput
 } from './remote/RemoteDeviceAuditLedger'
+import type { BridgeActionPayload } from './BridgeActionPayload'
+
+describe('approvalModeFromPayload — Full-access allowlist gating', () => {
+  const payload = (extra: Record<string, unknown>): BridgeActionPayload =>
+    ({
+      kind: 'composerPrompt',
+      workspaceId: 'ws',
+      threadId: 't',
+      provider: 'codex',
+      text: 'x',
+      ...extra
+    }) as unknown as BridgeActionPayload
+
+  it('normalizes a full_access preset to auto_edit regardless of approvalMode', () => {
+    // Escalation-prevention: a low approvalMode must NOT let full_access slip past
+    // the workspace allowlist (allowedApprovalModes) — it is gated as auto_edit.
+    expect(
+      approvalModeFromPayload(payload({ approvalMode: 'default', permissionPresetId: 'full_access' }))
+    ).toBe('auto_edit')
+    expect(approvalModeFromPayload(payload({ permissionPresetId: 'full_access' }))).toBe('auto_edit')
+  })
+
+  it('passes through the raw approvalMode when the preset is not full_access', () => {
+    expect(
+      approvalModeFromPayload(
+        payload({ approvalMode: 'default', permissionPresetId: 'workspace_write' })
+      )
+    ).toBe('default')
+    expect(approvalModeFromPayload(payload({ approvalMode: 'plan' }))).toBe('plan')
+    expect(approvalModeFromPayload(payload({}))).toBeUndefined()
+  })
+})
 
 /** Stub executor for router tests — captures method invocations + returns
  * configurable results. */

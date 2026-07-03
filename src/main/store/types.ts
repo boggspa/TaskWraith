@@ -4269,6 +4269,7 @@ export interface RunQueueRequestSnapshot {
     text: string
     approvalMode?: string
     workflowMode?: ChatWorkflowMode
+    permissionPresetId?: string
     model?: string
     reasoningEffort?: string | null
     claudeReasoningEffort?: string | null

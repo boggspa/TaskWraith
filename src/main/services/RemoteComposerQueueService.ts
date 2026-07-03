@@ -90,6 +90,9 @@ export function buildRemoteComposerQueueDispatchAction(
       text: remote.text,
       ...(remote.approvalMode ? { approvalMode: remote.approvalMode } : {}),
       ...(remote.workflowMode ? { workflowMode: remote.workflowMode } : {}),
+      ...(remote.permissionPresetId === 'full_access'
+        ? { permissionPresetId: remote.permissionPresetId }
+        : {}),
       ...(remote.model ? { model: remote.model } : {}),
       ...(remote.reasoningEffort !== undefined ? { reasoningEffort: remote.reasoningEffort } : {}),
       ...(remote.claudeReasoningEffort !== undefined

@@ -76,6 +76,12 @@ struct Composer: View {
             return "plan"
         case "default":
             return nil
+        case "full_access":
+            // Full access runs auto_edit; the Mac gates it against the workspace
+            // allowlist (permissionPresetId → auto_edit in approvalModeFromPayload)
+            // and re-signs the full_access posture. Paired with
+            // bridgePermissionPresetId below.
+            return "auto_edit"
         default:
             return approvalMode
         }
@@ -83,10 +89,17 @@ struct Composer: View {
     private var bridgeWorkflowMode: String? {
         !isGlobalChat && approvalMode == "plan" ? "plan" : nil
     }
+    /// The composer's single "Full access" tier maps to the signed `full_access`
+    /// preset on the Mac (single-provider parity with the ensemble roster). Only
+    /// emitted for a non-global workspace chat; nil otherwise.
+    private var bridgePermissionPresetId: String? {
+        !isGlobalChat && approvalMode == "full_access" ? "full_access" : nil
+    }
     private var approvalIconName: String {
         switch approvalMode {
         case "plan": return "list.bullet.clipboard"
         case "read_only": return "eye"
+        case "full_access": return "bolt.fill"
         default: return "checkmark.shield"
         }
     }
@@ -94,6 +107,7 @@ struct Composer: View {
         switch approvalMode {
         case "plan": return "Plan"
         case "read_only": return "Read-Only/Recon"
+        case "full_access": return "Full Access"
         default: return "Default"
         }
     }
@@ -434,6 +448,7 @@ struct Composer: View {
                     Label("Read-Only/Recon", systemImage: "eye").tag("read_only")
                     Label("Default Approval", systemImage: "checkmark.shield").tag("default")
                     Label("Plan workflow", systemImage: "list.bullet.clipboard").tag("plan")
+                    Label("Full Access", systemImage: "bolt.fill").tag("full_access")
                 }
             } label: {
                 HStack(spacing: 3) {
@@ -834,6 +849,7 @@ struct Composer: View {
                     model: selectedModelId,
                     approvalMode: bridgeApprovalMode,
                     workflowMode: bridgeWorkflowMode,
+                    permissionPresetId: bridgePermissionPresetId,
                     reasoningEffort: selectedReasoningEffort,
                     imageAttachments: hasAttachments ? encoded : nil)
                 attachments = []
@@ -843,6 +859,7 @@ struct Composer: View {
                     model: selectedModelId,
                     approvalMode: bridgeApprovalMode,
                     workflowMode: bridgeWorkflowMode,
+                    permissionPresetId: bridgePermissionPresetId,
                     reasoningEffort: selectedReasoningEffort)
             #endif
             text = ""
@@ -854,6 +871,7 @@ struct Composer: View {
                 card, prompt: text,
                 approvalMode: bridgeApprovalMode,
                 workflowMode: bridgeWorkflowMode,
+                permissionPresetId: bridgePermissionPresetId,
                 model: selectedModelId,
                 providerOverride: canChangeProvider ? selectedProvider : nil,
                 reasoningEffort: selectedReasoningEffort,
@@ -866,6 +884,7 @@ struct Composer: View {
                 card, prompt: text,
                 approvalMode: bridgeApprovalMode,
                 workflowMode: bridgeWorkflowMode,
+                permissionPresetId: bridgePermissionPresetId,
                 model: selectedModelId,
                 providerOverride: canChangeProvider ? selectedProvider : nil,
                 reasoningEffort: selectedReasoningEffort,
@@ -884,6 +903,7 @@ struct Composer: View {
                 card, prompt: trimmed,
                 approvalMode: bridgeApprovalMode,
                 workflowMode: bridgeWorkflowMode,
+                permissionPresetId: bridgePermissionPresetId,
                 model: selectedModelId,
                 providerOverride: canChangeProvider ? selectedProvider : nil,
                 reasoningEffort: selectedReasoningEffort,

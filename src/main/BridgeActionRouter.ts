@@ -1101,7 +1101,17 @@ function providerFromPayload(payload: BridgeActionPayload): string | undefined {
     : undefined
 }
 
-function approvalModeFromPayload(payload: BridgeActionPayload): string | undefined {
+export function approvalModeFromPayload(payload: BridgeActionPayload): string | undefined {
+  // A composer "Full access" run carries permissionPresetId:'full_access' and
+  // resolves to auto_edit on the Mac. Gate it as auto_edit here so it can't slip
+  // past the workspace allowlist (allowedApprovalModes) by riding a lower
+  // approvalMode such as 'default'. Every other payload uses its raw approvalMode.
+  if (
+    'permissionPresetId' in payload &&
+    (payload as { permissionPresetId?: unknown }).permissionPresetId === 'full_access'
+  ) {
+    return 'auto_edit'
+  }
   return 'approvalMode' in payload && typeof payload.approvalMode === 'string'
     ? payload.approvalMode
     : undefined

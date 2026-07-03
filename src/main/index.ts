@@ -22693,6 +22693,7 @@ if (isGeminiMcpBridgeProcess) {
         text: string
         approvalMode?: string
         workflowMode?: 'normal' | 'plan'
+        permissionPresetId?: string
         model?: string
         reasoningEffort?: string | null
         claudeReasoningEffort?: string | null
@@ -22752,6 +22753,7 @@ if (isGeminiMcpBridgeProcess) {
           text,
           approvalMode,
           workflowMode,
+          permissionPresetId: action.permissionPresetId,
           settings: AppStore.getSettings(),
           signRunPermissionPosture: signRunPosture
         })
@@ -22790,6 +22792,12 @@ if (isGeminiMcpBridgeProcess) {
               text,
               ...(action.approvalMode ? { approvalMode: action.approvalMode } : {}),
               ...(workflowMode === 'plan' ? { workflowMode } : {}),
+              // Only the exact 'full_access' preset survives into the queued job —
+              // mirrors the immediate-send honoring so a queued Full-access prompt
+              // isn't silently downgraded on drain.
+              ...(action.permissionPresetId === 'full_access'
+                ? { permissionPresetId: action.permissionPresetId }
+                : {}),
               ...(action.model ? { model: action.model } : {}),
               ...(action.reasoningEffort !== undefined
                 ? { reasoningEffort: action.reasoningEffort }
@@ -24831,7 +24839,12 @@ if (isGeminiMcpBridgeProcess) {
               ? 'plan'
               : effectiveApprovalMode === 'plan'
                 ? 'read_only'
-                : undefined
+                : // Single-provider composer "Full access": honored strictly (only
+                  // this exact value), re-derived + signed below, and never for a
+                  // global-scope run (effectiveApprovalMode is forced to 'plan' there).
+                  action.permissionPresetId === 'full_access'
+                  ? 'full_access'
+                  : undefined
           const bridgeEffectivePermissions =
             bridgePermissionPresetId
               ? resolveEffectiveRunPermissions({
@@ -24854,7 +24867,12 @@ if (isGeminiMcpBridgeProcess) {
             ...(resumeSessionId ? { providerSessionId: resumeSessionId } : {}),
             appChatId: chat.appChatId,
             appRunId: runId,
-            approvalMode: effectiveApprovalMode,
+            // Full access resolves to auto_edit — keep the payload's approvalMode
+            // consistent with the signed full_access preset (otherwise the posture
+            // signs an inconsistent approvalMode/effectivePermissions pair). Only
+            // full_access changes here; plan / read_only / default are unchanged.
+            approvalMode:
+              bridgePermissionPresetId === 'full_access' ? 'auto_edit' : effectiveApprovalMode,
             workflowMode: effectiveWorkflowMode,
             ...(bridgeEffectivePermissions
               ? { effectivePermissions: bridgeEffectivePermissions }

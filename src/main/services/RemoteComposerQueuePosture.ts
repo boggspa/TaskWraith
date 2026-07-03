@@ -22,6 +22,7 @@ export interface RemoteComposerQueuePostureInput {
   text: string
   approvalMode?: string | null
   workflowMode?: ChatWorkflowMode | null
+  permissionPresetId?: string | null
   settings: Pick<AppSettings, 'agenticServices' | 'agenticWorkspaceGrants'>
   signRunPermissionPosture: (
     approvalMode: string | null | undefined,
@@ -40,7 +41,11 @@ export function buildRemoteComposerQueuePermissionPosture(
       : workflowMode === 'plan'
         ? 'plan'
         : normalizeApprovalMode(input.approvalMode)
-  const permissionPresetId = remoteComposerQueuePermissionPresetId(approvalMode, workflowMode)
+  const permissionPresetId = remoteComposerQueuePermissionPresetId(
+    approvalMode,
+    workflowMode,
+    input.permissionPresetId
+  )
   const effectivePermissions = permissionPresetId
     ? resolveEffectiveRunPermissions({
         provider: input.provider,
@@ -69,10 +74,14 @@ export function buildRemoteComposerQueuePermissionPosture(
 
 function remoteComposerQueuePermissionPresetId(
   approvalMode: string,
-  workflowMode: ChatWorkflowMode
+  workflowMode: ChatWorkflowMode,
+  permissionPresetId?: string | null
 ): PermissionPresetId | undefined {
   if (workflowMode === 'plan') return 'plan'
   if (approvalMode === 'plan') return 'read_only'
+  // Single-provider composer "Full access" — only this exact preset is honored,
+  // matching the immediate-send bridge compose + approvalModeFromPayload gating.
+  if (permissionPresetId === 'full_access') return 'full_access'
   return undefined
 }
 
