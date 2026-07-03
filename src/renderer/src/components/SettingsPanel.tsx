@@ -8889,6 +8889,17 @@ export function SettingsPanel({
                     . Free-text notes stay redacted in diagnostics and audit bundles.
                   </p>
                 )}
+                {productOperationsStatus?.auditReceipts && (
+                  <p className="settings-hint">
+                    Audit bundle verification receipts:{' '}
+                    {productOperationsStatus.auditReceipts.counts.auditBundleVerifications}{' '}
+                    retained; hash{' '}
+                    {shortAuditHash(
+                      productOperationsStatus.auditReceipts.hashes.auditBundleVerifications
+                    )}
+                    . Bundle paths are stored as hashes in diagnostics and audit bundles.
+                  </p>
+                )}
                 {auditRetentionManagedLocked && (
                   <p className="settings-hint">
                     Audit retention settings are managed by organization policy. Dry-run and purge
