@@ -122,7 +122,7 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
     id: 'claude-fable-mythos-return-2026-07-01',
     kind: 'addition',
     title: 'Claude Fable 5 access is returning.',
-    body: 'Anthropic says Fable 5 access is being restored after export controls were lifted. Fable 5 is back in TaskWraith with 1M context, 128K max output, adaptive thinking, a Fast tier, and $10/$50 per MTok pricing.',
+    body: 'Fable 5 is currently available in TaskWraith until July 7, 2026. After that it becomes SDK/API-only for a short while before broader access returns. It still brings 1M context, 128K max output, adaptive thinking, a Fast tier, and $10/$50 per MTok pricing.',
     accent: 'claude',
     dismissible: true
   },

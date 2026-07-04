@@ -246,6 +246,8 @@ describe('buildRemoteFirstLaunchState', () => {
     expect(returnedClaude5?.tone).toBe('default')
     expect(returnedClaude5?.accent).toBe('claude')
     expect(returnedClaude5?.title).toBe('Claude Fable 5 access is returning.')
+    expect(returnedClaude5?.body).toContain('July 7, 2026')
+    expect(returnedClaude5?.body).toContain('SDK/API-only')
   })
 
   it('surfaces stale usage snapshots and no-workspace access without leaking setup internals', () => {
