@@ -1183,12 +1183,15 @@
 }
 
 .sidebar-hierarchy-scroll {
+  --sidebar-section-row-gap: 10px;
+  --sidebar-section-header-height: 28px;
+  --sidebar-section-body-gap: 4px;
   flex: 1;
   min-height: 0;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: var(--space-sm);
+  gap: var(--sidebar-section-row-gap);
   padding-right: 2px;
 }
 
@@ -1202,15 +1205,21 @@
   .sidebar-ensembles-section,
   .sidebar-workspace-scroll,
   .sidebar-chats-section,
+  .sidebar-shared-section,
   .sidebar-pin-drop-placeholder
 ) {
+  margin-bottom: 0;
+}
+
+.sidebar-hierarchy-scroll .sidebar-section-header {
+  min-height: var(--sidebar-section-header-height);
   margin-bottom: 0;
 }
 
 .sidebar-hierarchy-section {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--sidebar-section-body-gap);
 }
 
 .sidebar-hierarchy-section.is-dragging {
