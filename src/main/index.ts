@@ -29624,6 +29624,17 @@ if (isGeminiMcpBridgeProcess) {
       getProviderUsageSnapshot: (provider) => AppStore.getProviderUsageSnapshot(provider),
       scheduleWakeupTimer: (wakeup) => wakeupTimerServiceRef?.schedule(wakeup),
       cancelWakeupTimer: (wakeupId) => wakeupTimerServiceRef?.cancel(wakeupId),
+      notifyUserAttention: (input) => {
+        if (input.reason !== 'yieldToUser') return
+        remoteAttentionApnsFanoutRef?.notify({
+          reason: 'yieldToUser',
+          workspaceId: input.workspaceId,
+          threadId: input.chatId,
+          runId: input.runId,
+          projectionKind: 'RemoteTaskCard',
+          generatedAt: new Date().toISOString()
+        })
+      },
       persistSessionCheckpoint: (chat, reason) =>
         sessionCheckpointStoreRef?.upsertFromChat(chat, reason),
       completeSessionCheckpoint: (chatId, roundId, status) => {

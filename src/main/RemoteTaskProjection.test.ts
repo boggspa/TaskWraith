@@ -346,6 +346,19 @@ describe('RemoteTaskProjection', () => {
     })
   })
 
+  it('keeps a task card non-terminal while a remote composer follow-up is queued', () => {
+    const card = buildRemoteTaskCard(
+      chat({
+        runs: [run({ runId: 'done', status: 'success', startedAt: ISO })]
+      }),
+      { queuedComposerJobs: [queueJob({ id: 'queued-follow-up', runId: 'queued-run' })] }
+    )
+
+    expect(card.status).toBe('running')
+    expect(card.queuedComposerPrompts).toHaveLength(1)
+    expect(card.queuedComposerPrompts?.[0]?.id).toBe('queued-follow-up')
+  })
+
   it('omits retired external-channel inbound rows from task-card previews', () => {
     const card = buildRemoteTaskCard(
       chat({
@@ -882,6 +895,42 @@ describe('RemoteTaskProjection', () => {
       })
     )
     expect(card.status).toBe('success')
+  })
+
+  it('keeps a completed ensemble card non-terminal while follow-up prompts are queued', () => {
+    const card = buildRemoteTaskCard(
+      chat({
+        chatKind: 'ensemble',
+        runs: [
+          run({ runId: 'p2-run', status: 'success', startedAt: '2026-05-30T12:01:00.000Z' })
+        ],
+        ensemble: {
+          enabled: true,
+          maxParticipants: 2,
+          participants: [],
+          activeRound: {
+            roundId: 'round-1',
+            status: 'completed',
+            prompt: 'Coordinate',
+            startedAt: ISO,
+            endedAt: ISO,
+            queuedPrompts: ['Continue with the next queued prompt.'],
+            participants: [
+              {
+                participantId: 'p2',
+                provider: 'claude',
+                role: 'Reviewer',
+                order: 2,
+                status: 'answered',
+                runId: 'p2-run'
+              }
+            ]
+          }
+        }
+      })
+    )
+    expect(card.status).toBe('running')
+    expect(card.ensembleState?.queuedPromptCount).toBe(1)
   })
 
   it('does not gate a single-provider card (no ensemble) — terminal run reports success', () => {

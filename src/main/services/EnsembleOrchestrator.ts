@@ -279,6 +279,14 @@ export interface EnsembleOrchestratorDeps {
   ) => NormalizedProviderUsageSnapshot | null | undefined
   scheduleWakeupTimer?: (wakeup: EnsembleWakeupRecord) => void
   cancelWakeupTimer?: (wakeupId: string) => void
+  notifyUserAttention?: (input: {
+    reason: 'yieldToUser'
+    chatId: string
+    workspaceId?: string | null
+    runId?: string
+    roundId?: string
+    participantId?: string
+  }) => void
   /**
    * 1.0.7 — record a finished participant run's usage into the shared usage
    * store. Ensemble runs complete inside the orchestrator (not via the
@@ -6829,6 +6837,14 @@ export class EnsembleOrchestrator {
             runtime.roundId,
             `${participant.role || providerLabel(participant.provider)} yielded to the user. Round closed.`
           )
+          this.deps.notifyUserAttention?.({
+            reason: 'yieldToUser',
+            chatId: runtime.chatId,
+            workspaceId: chat.workspaceId ?? null,
+            runId: run.runId,
+            roundId: runtime.roundId,
+            participantId: participant.id
+          })
         } else {
           const idx = resolveYieldTargetIndex(remaining, runtime.yieldTarget)
           if (idx > 0) {
@@ -7195,7 +7211,13 @@ export class EnsembleOrchestrator {
     const [nextEntry, ...remainingQueue] = sessionTerminal
       ? ([] as QueuedRoundEntry[])
       : runtime.queuedPrompts
-    this.finishRound(runtime.chatId, runtime.roundId, runtime.cancelled ? 'cancelled' : 'completed')
+    const queuedPromptsForFinishedRound =
+      nextEntry && !runtime.cancelled && !sessionTerminal
+        ? runtime.queuedPrompts.map((entry) => entry.prompt)
+        : []
+    this.finishRound(runtime.chatId, runtime.roundId, runtime.cancelled ? 'cancelled' : 'completed', {
+      queuedPrompts: queuedPromptsForFinishedRound
+    })
     this.clearRuntimeIfCurrent(runtime)
     if (nextEntry && !runtime.cancelled && !sessionTerminal) {
       this.beginRound(
@@ -8499,7 +8521,8 @@ export class EnsembleOrchestrator {
   private finishRound(
     chatId: string,
     roundId: string,
-    status: Extract<EnsembleRoundState['status'], 'completed' | 'cancelled' | 'failed'>
+    status: Extract<EnsembleRoundState['status'], 'completed' | 'cancelled' | 'failed'>,
+    options: { queuedPrompts?: string[] } = {}
   ): void {
     const runtime = this.roundsByChatId.get(chatId)
     if (runtime?.roundId === roundId) {
@@ -8515,8 +8538,8 @@ export class EnsembleOrchestrator {
       ...activeRound,
       status,
       activeParticipantId: undefined,
-      queuedPrompt: undefined,
-      queuedPrompts: [],
+      queuedPrompt: options.queuedPrompts?.[0],
+      queuedPrompts: options.queuedPrompts ?? [],
       endedAt,
       participants: activeRound.participants.map((participant) =>
         participant.status === 'idle'

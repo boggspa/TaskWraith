@@ -336,6 +336,8 @@ function remoteAttentionRelevanceScore(reason: BridgeRemoteAttentionReason): num
     case 'approval':
     case 'question':
       return 1
+    case 'yieldToUser':
+      return 0.9
     case 'taskNeedsAttention':
       return 0.85
     case 'runFailed':
@@ -356,6 +358,8 @@ function remoteAttentionAlert(reason: BridgeRemoteAttentionReason): { title: str
       return { title: 'Approval required', body: 'TaskWraith needs your approval to continue.' }
     case 'question':
       return { title: 'TaskWraith has a question', body: 'Open TaskWraith to answer.' }
+    case 'yieldToUser':
+      return { title: 'TaskWraith yielded to you', body: 'Open TaskWraith to continue.' }
     case 'taskNeedsAttention':
       return { title: 'Task needs attention', body: 'Open TaskWraith to review.' }
     case 'runComplete':

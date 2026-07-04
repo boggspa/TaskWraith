@@ -102,6 +102,7 @@ export class RemoteAttentionApnsFanout {
           const blocksOnUser =
             payload.reason === 'approval' ||
             payload.reason === 'question' ||
+            payload.reason === 'yieldToUser' ||
             payload.reason === 'taskNeedsAttention'
           if (blocksOnUser && typeof pusher.pushSilentToToken === 'function') {
             try {

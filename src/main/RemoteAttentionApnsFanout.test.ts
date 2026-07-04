@@ -227,6 +227,37 @@ describe('RemoteAttentionApnsFanout', () => {
     expect(pushRemoteAttentionToToken).toHaveBeenCalledTimes(5)
   })
 
+  it('sends the silent wake supplement for yield-to-user notifications', async () => {
+    const tokenStore = makeTokenStore()
+    const pushRemoteAttentionToToken = vi.fn(async () => ({
+      delivered: true,
+      apnsId: 'apns-1'
+    }))
+    const pushSilentToToken = vi.fn(async () => ({
+      delivered: true,
+      apnsId: 'apns-silent-1'
+    }))
+    const fanout = new RemoteAttentionApnsFanout({
+      getTokenStore: () => tokenStore as never,
+      getPusher: () => ({ pushRemoteAttentionToToken, pushSilentToToken }),
+      isUserAtDesktop: () => false
+    })
+
+    fanout.notify({ reason: 'yieldToUser', threadId: 'thread-id', runId: 'run-1' })
+    await flushFanout()
+
+    expect(pushRemoteAttentionToToken).toHaveBeenCalledTimes(1)
+    expect(pushSilentToToken).toHaveBeenCalledTimes(1)
+    expect((pushRemoteAttentionToToken.mock.calls as unknown as AttentionPushCall[])[0][2]).toEqual(
+      expect.objectContaining({
+        pairID: 'pair-1',
+        reason: 'yieldToUser',
+        threadId: 'thread-id',
+        runId: 'run-1'
+      })
+    )
+  })
+
   it('coalesces fungible non-blocking events per pair, thread, and reason', async () => {
     const tokenStore = makeTokenStore()
     const pushRemoteAttentionToToken = vi.fn(async () => ({

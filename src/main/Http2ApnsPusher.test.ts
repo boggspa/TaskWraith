@@ -786,7 +786,7 @@ describe('Http2ApnsPusher — privacy-safe alert bodies', () => {
     }
   })
 
-  it('sets aps.category for blocking reasons only (lock-screen action buttons)', async () => {
+  it('sets aps.category for approval/question action-button reasons only', async () => {
     const { dir, path } = writeTestAuthKey()
     try {
       const bodyWrites: string[] = []
@@ -826,6 +826,12 @@ describe('Http2ApnsPusher — privacy-safe alert bodies', () => {
       })
       void pusher.pushRemoteAttentionToToken('a', 'sandbox', {
         pairID: 'p',
+        reason: 'yieldToUser',
+        threadId: 't',
+        runId: 'r-1'
+      })
+      void pusher.pushRemoteAttentionToToken('a', 'sandbox', {
+        pairID: 'p',
         reason: 'runComplete',
         threadId: 't'
       })
@@ -836,10 +842,13 @@ describe('Http2ApnsPusher — privacy-safe alert bodies', () => {
       expect(JSON.parse(bodyWrites[1]).aps.category).toBe('TW_QUESTION')
       expect(JSON.parse(bodyWrites[1]).aps['thread-id']).toBe('t')
       expect(JSON.parse(bodyWrites[1]).aps['relevance-score']).toBe(1)
-      // Non-blocking reason → no category → no lock-screen buttons.
       expect(JSON.parse(bodyWrites[2]).aps.category).toBeUndefined()
       expect(JSON.parse(bodyWrites[2]).aps['thread-id']).toBe('t')
-      expect(JSON.parse(bodyWrites[2]).aps['relevance-score']).toBe(0.35)
+      expect(JSON.parse(bodyWrites[2]).aps['relevance-score']).toBe(0.9)
+      // Non-blocking reason → no category → no lock-screen buttons.
+      expect(JSON.parse(bodyWrites[3]).aps.category).toBeUndefined()
+      expect(JSON.parse(bodyWrites[3]).aps['thread-id']).toBe('t')
+      expect(JSON.parse(bodyWrites[3]).aps['relevance-score']).toBe(0.35)
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }

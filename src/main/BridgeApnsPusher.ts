@@ -64,6 +64,7 @@ export interface BridgeApprovalPushPayload {
 export type BridgeRemoteAttentionReason =
   | 'approval'
   | 'question'
+  | 'yieldToUser'
   | 'taskNeedsAttention'
   | 'ensemble'
   | 'wakeup'

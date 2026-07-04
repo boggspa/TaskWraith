@@ -1054,7 +1054,8 @@ export function buildRemoteTaskCard(
     provider: chat.provider ?? 'gemini',
     title: normalizeThreadTitle(chat.title, 'Untitled chat'),
     status: deriveTaskStatus(latestRun, pendingApprovalCount, pendingQuestionCount, {
-      ensembleRound: chat.ensemble?.activeRound
+      ensembleRound: chat.ensemble?.activeRound,
+      hasQueuedFollowup: hasQueuedRemoteComposerJobs(options.queuedComposerJobs)
     }),
     preview: preview.preview,
     previewTruncated: preview.truncated,
@@ -1159,6 +1160,10 @@ export function buildRemoteQueuedComposerPrompts(
         ...(job.enqueuedAt ? { enqueuedAt: job.enqueuedAt } : {})
       }
     })
+}
+
+function hasQueuedRemoteComposerJobs(jobs: RunQueueJob[] | undefined): boolean {
+  return Boolean(jobs?.some((job) => job.status === 'queued' && job.request?.remoteComposer))
 }
 
 export function buildRemoteTaskFeedSnapshot(
@@ -1348,7 +1353,9 @@ export function buildRemoteEnsembleState(chat: ChatRecord): RemoteEnsembleState 
   const activeRound = ensemble.activeRound
   const projectedRoundStatus = projectEnsembleRoundStatus(activeRound)
   const queuedPrompts =
-    projectedRoundStatus === 'running' ? combinedQueuedPrompts(activeRound) : []
+    projectedRoundStatus === 'running' || activeRound?.status === 'completed'
+      ? combinedQueuedPrompts(activeRound)
+      : []
   const participants = activeRound?.participants ?? []
   return {
     threadId: chat.appChatId,
@@ -1410,7 +1417,7 @@ function deriveTaskStatus(
   run: ChatRun | undefined,
   pendingApprovalCount: number,
   pendingQuestionCount: number,
-  options: { ensembleRound?: EnsembleConfig['activeRound'] } = {}
+  options: { ensembleRound?: EnsembleConfig['activeRound']; hasQueuedFollowup?: boolean } = {}
 ): RemoteTaskStatus {
   if (pendingQuestionCount > 0) return 'awaitingQuestion'
   if (pendingApprovalCount > 0) return 'awaitingApproval'
@@ -1425,6 +1432,8 @@ function deriveTaskStatus(
   // card never reports a terminal status off a single participant's run.
   const round = options.ensembleRound
   if (isEnsembleRoundDispatchLive(round)) return 'running'
+  if (round?.status === 'completed' && combinedQueuedPrompts(round).length > 0) return 'running'
+  if (options.hasQueuedFollowup) return 'running'
   if (!run) return 'idle'
   if (run.status === 'running') return 'running'
   if (run.status === 'cancelled' || run.cancelled) return 'cancelled'
