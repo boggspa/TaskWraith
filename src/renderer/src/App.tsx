@@ -2725,6 +2725,71 @@ function App(): React.JSX.Element {
         null
       : null
   const canCreateSideChatFromCurrent = Boolean(currentChat && !currentChatIsLinkedChild)
+  const buildProviderMetadataFromEnsembleParticipant = (
+    participant: EnsembleParticipant
+  ): Record<string, unknown> => {
+    const provider = participant.provider
+    const providerOptions =
+      provider === 'codex'
+        ? codexModels
+        : provider === 'claude'
+          ? agentModelsByProvider.claude || CLAUDE_DEFAULT_MODELS
+          : provider === 'kimi'
+            ? KIMI_DEFAULT_MODELS
+            : provider === 'gemini'
+              ? GEMINI_DEFAULT_MODELS
+              : provider === 'grok'
+                ? GROK_DEFAULT_MODELS
+                : provider === 'cursor'
+                  ? CURSOR_DEFAULT_MODELS
+                  : provider === 'ollama'
+                    ? mergeOllamaModelCatalog(agentModelsByProvider.ollama)
+                    : []
+    const defaultModel = providerOptions.find((model) => model.id !== 'custom')?.id
+    const providerModel =
+      participant.model || defaultModel || getDefaultEnsembleParticipantConfig(provider).model
+    const isKnownModel = providerOptions.some((model) => model.id === providerModel)
+    const selectedClaudeModelOption =
+      provider === 'claude'
+        ? (agentModelsByProvider.claude || CLAUDE_DEFAULT_MODELS).find(
+            (model) => model.id === providerModel
+          )
+        : undefined
+    const selectedClaudeSettings =
+      provider === 'claude' ? resolveEnsembleParticipantSettings(participant) : null
+    return {
+      selectedModelType:
+        provider !== 'kimi' && !isKnownModel && providerModel !== 'custom'
+          ? 'custom'
+          : providerModel,
+      customModel:
+        provider !== 'kimi' && !isKnownModel && providerModel !== 'custom' ? providerModel : '',
+      approvalMode: permissionPresetToApprovalMode(participant.permissionPresetId),
+      ...(participant.permissionPresetId === 'plan' ? { workflowMode: 'plan' } : {}),
+      ...(participant.runtimeProfileId ? { runtimeProfileId: participant.runtimeProfileId } : {}),
+      ...(provider === 'gemini'
+        ? { geminiAuthProfileId: participant.geminiAuthProfileId ?? null }
+        : {}),
+      ...(provider === 'codex'
+        ? {
+            codexReasoningEffort: participant.reasoningEffort || 'medium',
+            codexServiceTier:
+              participant.serviceTier || (participant.fastModeEnabled ? 'fast' : '')
+          }
+        : {}),
+      ...(provider === 'claude'
+        ? {
+            claudeReasoningEffort:
+              selectedClaudeSettings?.reasoningEffort ||
+              resolveClaudeDefaultReasoningEffort(selectedClaudeModelOption),
+            claudeFastMode: Boolean(participant.fastModeEnabled)
+          }
+        : {}),
+      ...(provider === 'kimi'
+        ? { kimiThinkingEnabled: participant.thinkingEnabled ?? true }
+        : {})
+    }
+  }
   const ensembleToSoloModalChat =
     pendingEnsembleToSoloChatId && currentChat?.appChatId === pendingEnsembleToSoloChatId
       ? currentChat
@@ -2753,15 +2818,21 @@ function App(): React.JSX.Element {
       !seen.has(ensembleToSoloModalChat.provider as ProviderId)
     ) {
       const fallbackProvider = ensembleToSoloModalChat.provider as ProviderId
-      const fallbackSelection = getChatComposerSelection(ensembleToSoloModalChat, fallbackProvider)
+      const fallbackMetadata = ensembleToSoloModalChat.providerMetadata || {}
       candidates.push({
         provider: fallbackProvider,
         label: getProviderLabel(fallbackProvider),
         metadata: {
-          selectedModelType: fallbackSelection.selectedModelType,
-          customModel: fallbackSelection.customModel,
-          approvalMode: fallbackSelection.approvalMode,
-          ...(fallbackSelection.workflowMode === 'plan' ? { workflowMode: 'plan' } : {}),
+          ...(typeof fallbackMetadata.selectedModelType === 'string'
+            ? { selectedModelType: fallbackMetadata.selectedModelType }
+            : {}),
+          ...(typeof fallbackMetadata.customModel === 'string'
+            ? { customModel: fallbackMetadata.customModel }
+            : {}),
+          ...(typeof fallbackMetadata.approvalMode === 'string'
+            ? { approvalMode: fallbackMetadata.approvalMode }
+            : {}),
+          ...(fallbackMetadata.workflowMode === 'plan' ? { workflowMode: 'plan' } : {}),
           ...(getRuntimeProfileIdForChat(ensembleToSoloModalChat, fallbackProvider)
             ? {
                 runtimeProfileId: getRuntimeProfileIdForChat(
@@ -2780,18 +2851,28 @@ function App(): React.JSX.Element {
             : {}),
           ...(fallbackProvider === 'codex'
             ? {
-                codexReasoningEffort: fallbackSelection.codexReasoningEffort,
-                codexServiceTier: fallbackSelection.codexServiceTier
+                ...(typeof fallbackMetadata.codexReasoningEffort === 'string'
+                  ? { codexReasoningEffort: fallbackMetadata.codexReasoningEffort }
+                  : {}),
+                ...(typeof fallbackMetadata.codexServiceTier === 'string'
+                  ? { codexServiceTier: fallbackMetadata.codexServiceTier }
+                  : {})
               }
             : {}),
           ...(fallbackProvider === 'claude'
             ? {
-                claudeReasoningEffort: fallbackSelection.claudeReasoningEffort,
-                claudeFastMode: fallbackSelection.claudeFastMode
+                ...(typeof fallbackMetadata.claudeReasoningEffort === 'string'
+                  ? { claudeReasoningEffort: fallbackMetadata.claudeReasoningEffort }
+                  : {}),
+                ...(typeof fallbackMetadata.claudeFastMode === 'boolean'
+                  ? { claudeFastMode: fallbackMetadata.claudeFastMode }
+                  : {})
               }
             : {}),
           ...(fallbackProvider === 'kimi'
-            ? { kimiThinkingEnabled: fallbackSelection.kimiThinkingEnabled }
+            ? typeof fallbackMetadata.kimiThinkingEnabled === 'boolean'
+              ? { kimiThinkingEnabled: fallbackMetadata.kimiThinkingEnabled }
+              : {}
             : {})
         }
       })
@@ -4203,51 +4284,6 @@ function App(): React.JSX.Element {
     )
     if (selection.provider === 'gemini' && selection.selectedModelType !== 'custom') {
       syncPersistentModelSelection(selection.selectedModelType)
-    }
-  }
-
-  const buildProviderMetadataFromEnsembleParticipant = (
-    participant: EnsembleParticipant
-  ): Record<string, unknown> => {
-    const provider = participant.provider
-    const providerModel = participant.model || getDefaultModelForProvider(provider)
-    const providerOptions = getProviderModelOptions(provider)
-    const isKnownModel = providerOptions.some((model) => model.id === providerModel)
-    const selectedClaudeModelOption =
-      provider === 'claude'
-        ? (agentModelsByProvider.claude || CLAUDE_DEFAULT_MODELS).find(
-            (model) => model.id === providerModel
-          )
-        : undefined
-    const selectedClaudeSettings =
-      provider === 'claude' ? resolveEnsembleParticipantSettings(participant) : null
-    return {
-      selectedModelType:
-        provider !== 'kimi' && !isKnownModel && providerModel !== 'custom' ? 'custom' : providerModel,
-      customModel:
-        provider !== 'kimi' && !isKnownModel && providerModel !== 'custom' ? providerModel : '',
-      approvalMode: permissionPresetToApprovalMode(participant.permissionPresetId),
-      ...(participant.permissionPresetId === 'plan' ? { workflowMode: 'plan' } : {}),
-      ...(participant.runtimeProfileId ? { runtimeProfileId: participant.runtimeProfileId } : {}),
-      ...(provider === 'gemini' ? { geminiAuthProfileId: participant.geminiAuthProfileId ?? null } : {}),
-      ...(provider === 'codex'
-        ? {
-            codexReasoningEffort: participant.reasoningEffort || 'medium',
-            codexServiceTier:
-              participant.serviceTier || (participant.fastModeEnabled ? 'fast' : '')
-          }
-        : {}),
-      ...(provider === 'claude'
-        ? {
-            claudeReasoningEffort:
-              selectedClaudeSettings?.reasoningEffort ||
-              resolveClaudeDefaultReasoningEffort(selectedClaudeModelOption),
-            claudeFastMode: Boolean(participant.fastModeEnabled)
-          }
-        : {}),
-      ...(provider === 'kimi'
-        ? { kimiThinkingEnabled: participant.thinkingEnabled ?? true }
-        : {})
     }
   }
 
