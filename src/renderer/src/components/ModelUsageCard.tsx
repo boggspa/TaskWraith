@@ -118,7 +118,7 @@ const SIDEBAR_USAGE_MIN_HEIGHT = 220
 // Six providers (gemini/codex/claude/kimi/cursor/grok) make the meter list
 // much taller, so the drag cap was raised 1080 → 1400 (the rendered height is
 // still bounded by `calc(100vh - 56px)` in ModelUsageCard.css so it can't
-// overflow the viewport / push the Activity heatmap fully off-screen).
+// overflow the viewport).
 const SIDEBAR_USAGE_MAX_HEIGHT = 1400
 const SIDEBAR_USAGE_RESIZE_STEP = 24
 
@@ -879,13 +879,15 @@ export function ModelUsageCard({ usageSummary, variant = 'card', apiSpend }: Mod
           )}
         </div>
       </div>
-      {/* Phase L6 slice 5 — activity heatmap. Renders the last 30
-       * days of usage as a 30×12 grid (12 × 2h buckets per day),
-       * coloured by the dominant provider in each bucket. Pulls
-       * records via the existing `getUsage` IPC; sits at the foot
-       * of the card so the bars stay the primary read. The heatmap is
-       * token-activity (view-agnostic) so it stays under both views. */}
-      <UsageHeatmap />
+      {!isSidebarVariant && (
+        /* Phase L6 slice 5 — activity heatmap. Renders the last 30
+         * days of usage as a 30×12 grid (12 × 2h buckets per day),
+         * coloured by the dominant provider in each bucket. Pulls
+         * records via the existing `getUsage` IPC; sits at the foot
+         * of the card so the bars stay the primary read. The workspace
+         * sidebar overlay omits this grid to keep the panel compact. */
+        <UsageHeatmap />
+      )}
     </div>
   )
 }

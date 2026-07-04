@@ -89,6 +89,16 @@ describe('ModelUsageCard', () => {
     expect(html).toContain('model-usage-resize-grip')
   })
 
+  it('omits the 30-day activity heatmap from the sidebar overlay only', () => {
+    const sidebarHtml = renderToStaticMarkup(
+      <ModelUsageCard usageSummary={[quotaEntry()]} variant="sidebar" />
+    )
+    const cardHtml = renderToStaticMarkup(<ModelUsageCard usageSummary={[quotaEntry()]} />)
+
+    expect(sidebarHtml).not.toContain('usage-heatmap')
+    expect(cardHtml).toContain('usage-heatmap')
+  })
+
   it('does NOT render the view toggle when apiSpend is omitted', () => {
     const html = renderToStaticMarkup(
       <ModelUsageCard usageSummary={[quotaEntry()]} variant="sidebar" />
