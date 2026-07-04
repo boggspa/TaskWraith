@@ -13,70 +13,134 @@ published. The repository is currently ahead of the latest tagged release, and t
 next semver bump (with curated Unreleased/source-ahead notes) must happen before
 shipping these commits.
 
+## 1.7.4 - 2026-07-04
+
 ### Added
 - **Mid-thread ensemble toggle.** Top-level chats can now flip in place between
-  single-provider and Ensemble mode on the same `appChatId`, preserving
-  transcript and run history. Solo → Ensemble seeds a single participant from
-  the current provider instead of recreating the thread, and Ensemble → Solo
-  collapses back through a canonical-provider pick. The toggle is available on
-  started threads when idle and stays disabled while a turn is active.
+  single-provider and Ensemble mode on the same chat, preserving transcript and
+  run history. Solo → Ensemble seeds a single participant from the current
+  provider instead of recreating the thread, and Ensemble → Solo collapses back
+  to a canonical provider — defaulting to the current Boss participant so the
+  thread keeps its lead voice. The toggle is available on started threads when
+  idle and stays disabled while a turn is active.
+- **Ensemble blackboard — a shared scratchpad for your agents.** Participants can
+  now post durable, bounded shared-memory entries (decisions, verified facts,
+  open risks, do-not-repeat notes, concise notes) that every seat sees as a
+  compact digest instead of re-deriving the same facts each turn. Agents get
+  `blackboard_post` / `blackboard_read` / `blackboard_delete` tools with per-seat
+  "seen" tracking, entries carry a round / session / chat lifespan, and the whole
+  board is browsable — with its unseen/seen state — from the Pins panel.
+- **Ensemble fan-out controls, refined.** The orchestration-row Fan-Out control is
+  clearer to steer, and a parallel writer wave now lands as a single **Fan-out
+  result card** that gathers each seat's contribution in one place instead of
+  scattering them down the transcript.
+- **Live seat-compaction progress.** When an Ensemble seat approaches its context
+  ceiling, you now see its compaction happening live — an in-progress indicator
+  on the participant and a boss-facing cue — rather than only a card after the fact.
+- **File-change hover diffs.** Hovering a changed file in a run now previews a
+  compact per-file diff summary (added / removed line counts and the change
+  shape), so you can gauge what a step touched without opening the editor.
 - **Transcript rail reading lens.** The user-message marker rail now carries a
-  skeuomorphic slide-rule-cursor "lens": a frosted-glass carriage whose height
-  shows how much of the thread is on screen and whose position tracks your
-  scroll — read position legible from geometry alone. Ticks the lens has swept
-  past settle into an "inked" spent state, marking the done/upcoming boundary
-  as a second colour-independent cue. The old vertical spine + blue accent
-  fill behind the ticks were retired in the lens's favour, leaving just the
-  horizontal go-to-message lines, the carriage, and the jump arrows.
+  slide-rule-style "lens": a frosted carriage whose height shows how much of the
+  thread is on screen and whose position tracks your scroll. Ticks it has swept
+  past settle into an "inked" spent state, marking the done/upcoming boundary as
+  a second, colour-independent cue.
 - **Rail jumps now glide.** Clicking a go-to-message tick or the ↑ / ↓ arrows
-  animates the transcript to the target over ~0.5–1.6s (distance-scaled,
-  eased) instead of teleporting, so you keep a sense of how far you
-  travelled. Any wheel / touch / key input mid-glide cancels it instantly,
-  and reduced-motion settings restore the instant jump.
-- **Collapsed rounds keep their rail markers.** In Ensemble chats, user
-  prompts hidden inside a collapsed round card now still appear on the
-  go-to-message rail, anchored at the round's header. Clicking one
-  auto-expands the round and glides to the prompt.
-
-- **Quick controls survive collapsing the sidebar.** Hiding the workspace
-  sidebar now surfaces a bottom-left vertical glass pill with the sidebar
-  footer's quick controls — Settings, Approvals (shield), Shares (share fan),
-  and Devices — each opening the same popover as its sidebar counterpart,
-  with the same pending-approval / collaborator / device-connected glows.
+  animates the transcript to the target (distance-scaled, eased) instead of
+  teleporting. Any wheel / touch / key input mid-glide cancels it instantly, and
+  reduced-motion settings restore the instant jump.
+- **Collapsed rounds keep their rail markers.** In Ensemble chats, user prompts
+  hidden inside a collapsed round card still appear on the go-to-message rail,
+  anchored at the round's header; clicking one auto-expands the round and glides
+  to the prompt.
+- **Quick controls survive collapsing the sidebar.** Hiding the workspace sidebar
+  now surfaces a bottom-left vertical glass pill with the sidebar footer's quick
+  controls — Settings, Approvals, Shares, and Devices — each opening the same
+  popover as its sidebar counterpart, with the same pending/collaborator/device
+  glows.
+- **iOS: richer notification banners.** Turn-complete and status banners on the
+  companion carry more context at a glance, while genuinely noisy remote
+  notifications are dialled back so the ones that arrive are worth reading.
 
 ### Changed
-- **Provider/model/reasoning switching no longer stops at first send.** In
-  normal chats, the composer provider and model/reasoning pickers stay usable
+- **Provider / model / reasoning switching no longer stops at first send.** In
+  normal chats, the composer provider and model / reasoning pickers stay usable
   after a thread has history. Idle changes apply immediately; while a turn is
   active they queue and apply at turn end. The same-provider case keeps the live
   session; only a genuine provider switch resets provider-linked session state.
-- **Guest participants removed.** The older Guest helper path has been removed
-  from desktop, iOS, bridge, and live docs. Historical guest transcript rows
-  remain render-safe and inert.
-- **Corner-pill polish.** The bottom-left column pill's dividers now span the
-  full pill width and its icons are ~1.3x larger. Active pill buttons (both
-  the top horizontal pills and the column pill) swapped the old left-weighted
-  blue gradient smear — whose near-white glyph vanished on light themes — for
-  the neutral glass blob + hairline ring the hover state already used.
+  The iOS companion mid-thread switch got the same session-hygiene treatment.
+- **Continuous-mode ensembles keep going on their own.** A Continuous round no
+  longer stops the moment agents stop explicitly handing off. When the roster
+  drains with an active goal, TaskWraith re-dispatches another pass automatically
+  — up to the handoff-turn budget — and stops cleanly when the goal is completed,
+  blocked, or paused, when the hop budget runs out, or when a round makes no
+  progress.
+- **Ensemble roster is easier to shape.** The old minimum-two-participant floor is
+  gone, so you can pare a roster down freely, and collapsing or reworking the
+  roster no longer discards participants you meant to keep.
+- **Guest participants removed.** The older Guest helper path has been removed from
+  desktop, iOS, bridge, and live docs. Historical guest transcript rows remain
+  render-safe and inert.
+- **Corner-pill polish.** The bottom-left column pill's dividers span the full pill
+  width and its icons are larger. Active pill buttons swapped the old
+  left-weighted blue gradient — whose near-white glyph vanished on light themes —
+  for the neutral glass blob + hairline ring the hover state already used.
+- **Quieter sidebar and calmer flourishes.** The sidebar's model-usage heatmap was
+  retired, the masthead and New button line up with the brand row, transcript
+  item separators read as a softer silver, and the sky-diff easter egg is pared
+  back to just its drifting +/− line counts.
 
 ### Fixed
+- **Priority @-mentions reach the Boss even after they've spoken.** Directing a
+  round back to the Boss — or the acting Captain when the Boss is away — after
+  that authority had already taken its turn printed a "takes routing priority"
+  note but then silently dropped the route. The authority is now genuinely
+  re-summoned (bounded by the handoff budget so it can't loop), and when a
+  re-summon truly can't be delivered the note reports the real reason.
+- **Dedicated writers fan out in parallel again.** Two round-start gating bugs let
+  stage reviewers and read-only workers falsely veto a parallel writer wave,
+  forcing writers back to a slower serial pass; parallel writer fan-out now runs
+  when it's warranted.
+- **Ensemble steering and recovery hardened.** A steer issued during a parked
+  window is now honoured, zombie dispatch after a cancel is stopped, and an
+  ensemble participant recovered after an app restart is labelled as itself
+  rather than mislabelled as a solo run.
+- **Stale run-queue rows no longer linger.** Active-run queue entries left behind
+  by a finished or interrupted run are suppressed, so the queue reflects what's
+  actually running.
+- **Chat titles and summaries stay honest.** Chat-list summaries are validated
+  against each chat's own file so a title can't drift away from its conversation,
+  index churn is throttled to keep the list steady, and session checkpoints
+  persist more reliably across compaction.
+- **A pending question now sits at the live tail.** In Ensemble chats an
+  `ask_user_question` card could strand itself above the speaker; it now pins to
+  the bottom of the live conversation where you'd expect to answer it.
 - **Rail no longer bleeds under the composer.** With the workspace sidebar
-  collapsed, the go-to-message rail could overlap the floating composer's
-  left edge (the composer stack can be wider than the transcript column on a
-  wide pane). The rail now anchors off the leftmost of the transcript column,
-  the widest mounted row, and the composer stack, keeps itself fully to the
-  composer's left (hiding only when there's genuinely no lane), and
-  re-measures when layout transitions settle.
-- **Settings is reachable with the sidebar collapsed.** Opening Settings
-  while the workspace sidebar was hidden left no tab navigation and no "Back
-  to app" — the sidebar slot (which hosts the Settings nav) now force-mounts
-  for the duration of the takeover and slides back out on close, without
-  touching the user's collapsed preference.
-- **Right-dock panels no longer stack from the top pill.** The rim buttons
-  (Run rail, Media, Notes/Pins, Terminal, File editor, Inspector) now route
-  through the dock's exclusive lifecycle: opening one surface replaces the
-  previous one, and closing the active surface collapses the whole dock in a
-  single click — no more dismissing each stacked panel in turn.
+  collapsed, the go-to-message rail could overlap the floating composer's left
+  edge; it now anchors to the leftmost mounted lane, stays fully to the
+  composer's left, and re-measures when layout transitions settle.
+- **Settings is reachable with the sidebar collapsed.** Opening Settings while the
+  sidebar was hidden left no tab navigation and no "Back to app"; the sidebar slot
+  that hosts the Settings nav now force-mounts for the takeover and slides back
+  out on close, without touching the user's collapsed preference.
+- **Right-dock panels no longer stack from the top pill.** The rim buttons (Run
+  rail, Media, Notes / Pins, Terminal, File editor, Inspector) route through the
+  dock's exclusive lifecycle: opening one surface replaces the previous, and
+  closing the active surface collapses the whole dock in a single click.
+- **Remote approvals that over-shoot the offered tier are honoured.** Tapping
+  "Accept for workspace" on an iOS approval that only offered a narrower accept no
+  longer silently drops it; the accept is down-clamped to the strongest offered
+  tier and the command actually runs.
+
+### Security
+- **Roster permission changes respect the workspace auto-edit gate.** Setting an
+  ensemble participant to an auto-edit-tier posture (workspace-write or full
+  access) from a remote device now requires the workspace to permit auto-edit,
+  closing an escalation path that bypassed the gate the composer already enforces.
+- **Cursor native shell and writes unlock only under a real Full access grant.** A
+  write-capable Cursor run keeps its native shell / write deny-list — routing
+  through the TaskWraith broker — unless it's running under a genuine, signed Full
+  access grant, matching how Codex full-access is treated.
 
 ## 1.7.3 - 2026-07-03
 
