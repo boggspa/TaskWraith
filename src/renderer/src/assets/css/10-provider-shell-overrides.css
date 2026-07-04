@@ -1594,8 +1594,8 @@
     .queued-messages-above-row,
     .ensemble-roster-preset-picker.is-compact
   ) {
-  width: min(calc(100% - 80px), 900px) !important;
-  max-width: min(calc(100% - 80px), 900px) !important;
+  width: min(calc(100% - 80px), calc(var(--composer-content-max-width, 850px) - 80px)) !important;
+  max-width: min(calc(100% - 80px), calc(var(--composer-content-max-width, 850px) - 80px)) !important;
   align-self: center;
   border-radius: calc(var(--radius-lg) * 1.6) !important;
   border-bottom-left-radius: 0 !important;
@@ -1613,8 +1613,8 @@
   -webkit-backdrop-filter: none !important;
 }
 [data-composer-style="grok"] .composer-above-bar-stack:has(> :nth-child(2)) {
-  width: min(calc(100% - 80px), 900px);
-  max-width: min(calc(100% - 80px), 900px);
+  width: min(calc(100% - 80px), calc(var(--composer-content-max-width, 850px) - 80px));
+  max-width: min(calc(100% - 80px), calc(var(--composer-content-max-width, 850px) - 80px));
   align-self: center;
   gap: 0;
   border: 1px solid var(--grok-border-strong);

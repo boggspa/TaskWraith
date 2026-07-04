@@ -7971,8 +7971,8 @@
    * while still shrinking on narrow panes. The parent is full-width,
    * so `100% - 80px` alone scaled the tab with the window instead of
    * keeping it matched to the fixed-width composer shell. */
-  width: min(calc(100% - 80px), 900px);
-  max-width: min(calc(100% - 80px), 900px);
+  width: min(calc(100% - 80px), calc(var(--composer-content-max-width, 850px) - 80px));
+  max-width: min(calc(100% - 80px), calc(var(--composer-content-max-width, 850px) - 80px));
   align-self: center;
   /* Tucked-tab geometry retained from the earlier shape. */
   border-bottom-left-radius: 0;
@@ -10239,8 +10239,8 @@
    * overlap the composer's top edge by 10px, z-index 1 so the
    * composer-surface (z-index 2) paints over the overlap and the
    * stack reads as a real "tab tucked under" the composer. */
-  width: min(calc(100% - 80px), 900px);
-  max-width: min(calc(100% - 80px), 900px);
+  width: min(calc(100% - 80px), calc(var(--composer-content-max-width, 850px) - 80px));
+  max-width: min(calc(100% - 80px), calc(var(--composer-content-max-width, 850px) - 80px));
   align-self: center;
   gap: 0;
   border: 1px solid color-mix(in srgb, #ffffff 12%, transparent);

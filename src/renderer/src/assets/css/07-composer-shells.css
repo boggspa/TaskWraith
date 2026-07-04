@@ -3505,7 +3505,7 @@
 /* Parity: transcript inherits the composer's max-width across themed shells
  * so the chat bubbles and the composer line up at the same column edges.
  * Previous override hardcoded 860px which left the chat narrower than the
- * 980px composer after the width-equalization slice. */
+ * 850px composer after the width-equalization slice. */
 
 [data-interface-style="codex"] .message-group,
 [data-interface-style="claude"] .message-group {

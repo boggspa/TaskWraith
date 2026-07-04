@@ -83,7 +83,7 @@
 }
 
 .multiview-pane-composer-area.composer-area {
-  --composer-content-max-width: min(980px, calc(100% - 28px));
+  --composer-content-max-width: min(850px, calc(100% - 28px));
   position: relative;
   inset: auto;
   transform: none;

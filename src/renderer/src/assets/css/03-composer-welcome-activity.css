@@ -42,7 +42,7 @@
 
 .chat-popout-window .app-transcript {
   --chat-side-gutter: clamp(22px, 5vw, 64px);
-  --composer-content-max-width: min(980px, calc(100vw - 32px));
+  --composer-content-max-width: min(850px, calc(100vw - 32px));
   border-left: none;
 }
 

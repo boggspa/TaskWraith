@@ -47,7 +47,7 @@
     var(--composer-scroll-under-padding) + var(--gemini-terminal-height) +
       var(--gemini-terminal-bottom-gap)
   );
-  --composer-content-max-width: 980px;
+  --composer-content-max-width: 850px;
   --welcome-usage-top: clamp(112px, 17vh, 220px);
   --chat-side-gutter: clamp(24px, 4.4vw, 72px);
   --agent-accent-rgb: 105 157 255;
@@ -2337,6 +2337,157 @@
   display: none;
 }
 
+.transcript-participant-filter-rail {
+  position: fixed;
+  z-index: 10031;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 5px;
+  padding: 0;
+  pointer-events: none;
+  overflow: visible;
+}
+
+.transcript-participant-filter-rail.is-unmeasured {
+  display: none;
+}
+
+html:has(.chat-split-region.chat-split-hidden-for-settings) .transcript-participant-filter-rail {
+  display: none !important;
+}
+
+.transcript-participant-filter-grid {
+  display: grid;
+  grid-auto-flow: column;
+  grid-template-rows: repeat(10, 24px);
+  grid-auto-columns: 36px;
+  column-gap: 4px;
+  row-gap: 2px;
+  pointer-events: none;
+}
+
+.transcript-participant-filter-system-row {
+  display: flex;
+  justify-content: flex-start;
+  pointer-events: none;
+}
+
+.transcript-participant-filter-button {
+  appearance: none;
+  position: relative;
+  width: 36px;
+  height: 24px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: color-mix(in srgb, var(--text-primary) 74%, transparent);
+  cursor: pointer;
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 2px;
+  pointer-events: auto;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
+  transition:
+    transform 120ms ease,
+    color 120ms ease,
+    filter 120ms ease;
+}
+
+.transcript-participant-filter-button:hover,
+.transcript-participant-filter-button:focus-visible {
+  transform: translateX(-2px) scale(1.04);
+  color: color-mix(in srgb, var(--text-primary) 88%, var(--accent) 12%);
+  filter: drop-shadow(0 0 8px color-mix(in srgb, var(--accent) 34%, transparent));
+}
+
+.transcript-participant-filter-button.is-active {
+  color: color-mix(in srgb, var(--text-primary) 92%, var(--accent) 8%);
+  filter:
+    drop-shadow(0 0 2px color-mix(in srgb, var(--accent) 70%, transparent))
+    drop-shadow(0 0 12px color-mix(in srgb, var(--accent) 32%, transparent));
+}
+
+.transcript-participant-filter-button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 72%, transparent);
+  outline-offset: 2px;
+}
+
+.transcript-participant-filter-side-stack {
+  width: 14px;
+  min-height: 18px;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 1px;
+  flex: 0 0 14px;
+}
+
+.transcript-participant-filter-index {
+  font-size: 8px;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: 0;
+  color: currentColor;
+  font-variant-numeric: tabular-nums;
+}
+
+.transcript-participant-filter-icon {
+  position: relative;
+  width: 17px;
+  height: 17px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 17px;
+}
+
+.transcript-participant-filter-icon .provider-glyph,
+.transcript-participant-filter-icon > svg,
+.transcript-participant-filter-pooled-icon,
+.transcript-participant-filter-provider-icon {
+  width: 16px;
+  height: 16px;
+}
+
+.transcript-participant-filter-authority {
+  width: 9px;
+  height: 9px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.48));
+}
+
+.transcript-participant-filter-authority svg {
+  width: 9px;
+  height: 9px;
+}
+
+.transcript-participant-filter-authority.is-boss {
+  color: #f7c948;
+}
+
+.transcript-participant-filter-authority.is-captain {
+  color: color-mix(in srgb, #d9e4f5 82%, var(--accent));
+}
+
+.transcript-participant-filter-button.is-system {
+  width: 21px;
+  height: 21px;
+  justify-content: center;
+  margin-left: 16px;
+}
+
+[data-reduce-motion="true"] .transcript-participant-filter-button {
+  transition: none;
+}
+
 /* Skeuomorphic reading lens — a slide-rule cursor / fader carriage riding the
  * marker stack. Its HEIGHT is the visible share of the transcript and its
  * POSITION is the scroll progress, so scroll position now reads from geometry
@@ -3423,7 +3574,7 @@ html:has(.chat-split-region.chat-split-hidden-for-settings) .transcript-user-gut
 .transcript-inner {
   width: 100%;
   /* 1.0.6-CRUX44 — cap the transcript + run-summary to the SAME fixed width as
-   * the composer (--composer-content-max-width, 980px) and centre it, so resizing
+   * the composer (--composer-content-max-width, 850px) and centre it, so resizing
    * the window grows the side gutters instead of widening the chat column. The
    * composer is already centred at this width, so the two line up at the same
    * column edges. (Was max-width:none → the transcript stretched full-width.) */

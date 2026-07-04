@@ -268,8 +268,8 @@
 .settings-composer-preview-card[data-composer-style="grok"]
   .settings-composer-preview-area
   .composer-above-bar-stack {
-  width: min(calc(100% - 80px), 900px);
-  max-width: min(calc(100% - 80px), 900px);
+  width: min(calc(100% - 80px), calc(var(--composer-content-max-width, 850px) - 80px));
+  max-width: min(calc(100% - 80px), calc(var(--composer-content-max-width, 850px) - 80px));
   align-self: center;
 }
 .settings-composer-preview-card[data-composer-style="codex"]
