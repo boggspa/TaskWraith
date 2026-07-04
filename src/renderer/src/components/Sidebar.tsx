@@ -5,8 +5,6 @@ import {
   useState,
   useEffect,
   type CSSProperties,
-  type ChangeEvent,
-  type FormEvent,
   type KeyboardEvent,
   type MouseEvent,
   type PointerEvent as ReactPointerEvent,
@@ -2147,9 +2145,6 @@ export function Sidebar({
   const [newMenuOpen, setNewMenuOpen] = useState(false)
   const [newMenuSharedOpen, setNewMenuSharedOpen] = useState(false)
   const [sharedCreateMenuOpen, setSharedCreateMenuOpen] = useState(false)
-  const [boardCreatorOpen, setBoardCreatorOpen] = useState(false)
-  const [boardCreatorWorkspaceId, setBoardCreatorWorkspaceId] = useState('')
-  const [boardCreatorName, setBoardCreatorName] = useState('')
   const [settingsMenuOpen, setSettingsMenuOpen] = useState(false)
   const [settingsMenuPane, setSettingsMenuPane] = useState<SidebarSettingsMenuPane>('root')
   // Footer control-row popovers (Approvals / Shares / Devices). At most one is
@@ -2224,7 +2219,6 @@ export function Sidebar({
   // menu portal, etc.).
   const newMenuWrapRef = useRef<HTMLDivElement | null>(null)
   const sharedCreateMenuWrapRef = useRef<HTMLDivElement | null>(null)
-  const boardCreatorWrapRef = useRef<HTMLDivElement | null>(null)
   const settingsMenuWrapRef = useRef<HTMLDivElement | null>(null)
   // One wrap around the whole footer control cluster (Approvals/Shares/Devices
   // buttons + their popovers) so a single outside-click/Escape listener
@@ -2370,8 +2364,6 @@ export function Sidebar({
   const totalChatCount = displayChats.filter((chat) => !chat.archived).length
   const workspaceWorkflowIds = new Set(workspaces.map((workspace) => workspace.id))
   const workspaceById = new Map(workspaces.map((workspace) => [workspace.id, workspace]))
-  const boardCreatorWorkspace =
-    workspaceById.get(boardCreatorWorkspaceId) || currentWorkspace || workspaces[0] || null
   const scopedWorkflows = workflows
     .filter((workflow) => workspaceWorkflowIds.has(workflow.workspaceId))
     .slice()
@@ -2710,31 +2702,13 @@ export function Sidebar({
   }
   const openWorkspaceBoardCreator = () => {
     if (!onCreateWorkspaceBoard || workspaces.length === 0) return
-    const workspace = currentWorkspace || workspaces[0]
     setNewMenuOpen(false)
     setSharedCreateMenuOpen(false)
     expandSidebarSection('workspace-boards')
-    setBoardCreatorWorkspaceId(workspace.id)
-    setBoardCreatorName(`${workspace.displayName} Board`)
-    setBoardCreatorOpen(true)
+    onCreateWorkspaceBoard()
   }
   const handleNewWorkspaceBoard = () => {
     openWorkspaceBoardCreator()
-  }
-  const handleBoardCreatorWorkspaceChange = (event: ChangeEvent<HTMLSelectElement>) => {
-    const workspaceId = event.target.value
-    const workspace = workspaceById.get(workspaceId)
-    setBoardCreatorWorkspaceId(workspaceId)
-    if (workspace) {
-      setBoardCreatorName(`${workspace.displayName} Board`)
-    }
-  }
-  const handleBoardCreatorSubmit = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    if (!onCreateWorkspaceBoard || !boardCreatorWorkspace) return
-    const name = boardCreatorName.trim() || `${boardCreatorWorkspace.displayName} Board`
-    onCreateWorkspaceBoard({ workspaceId: boardCreatorWorkspace.id, name })
-    setBoardCreatorOpen(false)
   }
   const sharedChatCreateOptions = getSharedChatCreateOptions({
     hasWorkspace: Boolean(currentWorkspace),
@@ -2797,27 +2771,6 @@ export function Sidebar({
       document.removeEventListener('keydown', handleKeyDown)
     }
   }, [sharedCreateMenuOpen])
-
-  useEffect(() => {
-    if (!boardCreatorOpen) return
-    const handleMouseDown = (event: globalThis.MouseEvent) => {
-      const wrap = boardCreatorWrapRef.current
-      if (!wrap) return
-      if (event.target instanceof Node && wrap.contains(event.target)) return
-      setBoardCreatorOpen(false)
-    }
-    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setBoardCreatorOpen(false)
-      }
-    }
-    document.addEventListener('mousedown', handleMouseDown)
-    document.addEventListener('keydown', handleKeyDown)
-    return () => {
-      document.removeEventListener('mousedown', handleMouseDown)
-      document.removeEventListener('keydown', handleKeyDown)
-    }
-  }, [boardCreatorOpen])
 
   useEffect(() => {
     if (!settingsMenuOpen) return
@@ -5451,55 +5404,6 @@ export function Sidebar({
             )}
           </div>
         </div>
-        {boardCreatorOpen && (
-          <div
-            ref={boardCreatorWrapRef}
-            className="sidebar-new-menu sidebar-board-creator-menu"
-            role="dialog"
-            aria-modal="true"
-            aria-label="New Workspace Board"
-          >
-            <form className="sidebar-board-creator-form" onSubmit={handleBoardCreatorSubmit}>
-              <div className="sidebar-board-creator-title">New Workspace Board</div>
-              <label className="sidebar-board-creator-field" htmlFor="sidebar-board-creator-workspace">
-                <span>Workspace</span>
-                <select
-                  id="sidebar-board-creator-workspace"
-                  value={boardCreatorWorkspace?.id || boardCreatorWorkspaceId}
-                  onChange={handleBoardCreatorWorkspaceChange}
-                  disabled={workspaces.length === 0}
-                >
-                  {workspaces.map((workspace) => (
-                    <option key={workspace.id} value={workspace.id}>
-                      {workspace.displayName}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="sidebar-board-creator-field" htmlFor="sidebar-board-creator-name">
-                <span>Board name</span>
-                <input
-                  id="sidebar-board-creator-name"
-                  type="text"
-                  value={boardCreatorName}
-                  onChange={(event) => setBoardCreatorName(event.target.value)}
-                  placeholder={
-                    boardCreatorWorkspace ? `${boardCreatorWorkspace.displayName} Board` : 'Board'
-                  }
-                  autoFocus
-                />
-              </label>
-              <div className="sidebar-board-creator-actions">
-                <button type="button" onClick={() => setBoardCreatorOpen(false)}>
-                  Cancel
-                </button>
-                <button type="submit" className="primary" disabled={workspaces.length === 0}>
-                  Create
-                </button>
-              </div>
-            </form>
-          </div>
-        )}
         <AppShellStatsToolbar />
       </div>
     </div>

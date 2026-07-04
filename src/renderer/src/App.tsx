@@ -2181,6 +2181,7 @@ function App(): React.JSX.Element {
   const [workspaceBoards, setWorkspaceBoards] = useState<WorkspaceBoardDefinition[]>([])
   const [workspaceBoardCards, setWorkspaceBoardCards] = useState<WorkspaceBoardCard[]>([])
   const [activeWorkspaceBoardId, setActiveWorkspaceBoardId] = useState<string | null>(null)
+  const [workspaceBoardCreatorOpen, setWorkspaceBoardCreatorOpen] = useState(false)
   const [capabilityLedgerSnapshot, setCapabilityLedgerSnapshot] =
     useState<CapabilityLedgerSnapshot | null>(null)
   const workspaceBoardApiReady =
@@ -13442,6 +13443,10 @@ function App(): React.JSX.Element {
 
   const handleCreateWorkspaceBoard = async (input?: WorkspaceBoardCreateInput) => {
     if (!workspaceBoardApiReady) return
+    if (!input) {
+      setWorkspaceBoardCreatorOpen(true)
+      return
+    }
     const requestedWorkspace = input?.workspaceId
       ? workspaces.find((item) => item.id === input.workspaceId) || null
       : null
@@ -13469,6 +13474,7 @@ function App(): React.JSX.Element {
         .catch(() => {})
     }
     setWorkspaceBoards((prev) => [saved, ...prev.filter((board) => board.id !== saved.id)])
+    setWorkspaceBoardCreatorOpen(false)
     enterWorkspaceBoardMode(saved.id)
   }
 
@@ -24195,6 +24201,7 @@ function App(): React.JSX.Element {
     setShowSettings,
     setShowSkyVisualFx,
     setShowTerminal,
+    setWorkspaceBoardCreatorOpen,
     setShowWorkspaceSidebar,
     setSideChatMenuOpen,
     setSubThreadCreatorParent,
@@ -24218,6 +24225,7 @@ function App(): React.JSX.Element {
     showRunDataVizFx,
     showSettings,
     showTerminal,
+    showWorkspaceBoardCreatorSheet: workspaceBoardCreatorOpen,
     showWorkspaceSidebar,
     sideAutoFollowRef,
     sideCanRun,

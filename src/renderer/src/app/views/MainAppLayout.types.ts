@@ -111,10 +111,12 @@ type MainAppLayoutSidebarProps = {
   scheduledTasks: NonNullable<SidebarProps['scheduledTasks']>
   setSettingsActiveTab: Dispatch<SetStateAction<SettingsSidebarProps['activeTab']>>
   setShowSettings: Dispatch<SetStateAction<boolean>>
+  setWorkspaceBoardCreatorOpen: Dispatch<SetStateAction<boolean>>
   settings: AppSettings | null
   settingsActiveTab: SettingsSidebarProps['activeTab']
   showOnboardingHint: SidebarProps['showOnboardingHint']
   showSettings: boolean
+  showWorkspaceBoardCreatorSheet: boolean
   sidebarPresence: PanelPresence
   sidebarSearchFocusRequestId: SidebarProps['focusSearchRequestId']
   startWorkspaceSidebarResize: NonNullable<ResizeHandleProps['onMouseDown']>

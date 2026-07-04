@@ -87,6 +87,7 @@ import { MediaPane } from '../../components/MediaPane'
 import { CanvasPane } from '../../components/CanvasPane'
 import { CanvasPaneLauncher } from '../../components/CanvasPaneLauncher'
 import { Composer } from '../../components/Composer'
+import { WorkspaceBoardCreatorSheet } from '../../components/WorkspaceBoardCreatorSheet'
 
 import type { MainAppLayoutProps } from './MainAppLayout.types'
 
@@ -442,6 +443,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   showGeminiTerminal,
   showJumpToLatestPill,
   showOnboardingHint,
+  showWorkspaceBoardCreatorSheet,
   showRunDataVizFx,
   showSettings,
   showTerminal,
@@ -545,6 +547,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   workspaceBoardApiReady,
   workspaceBoardCards,
   workspaceBoards,
+  setWorkspaceBoardCreatorOpen,
   workspaceSearchShortcutHint,
   workspaceSidebarWidth,
   workspaces
@@ -871,6 +874,16 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
               }
             />
           </div>
+        )}
+
+        {!isChatPopoutWindow && !showSettings && workspaceBoardApiReady && (
+          <WorkspaceBoardCreatorSheet
+            open={showWorkspaceBoardCreatorSheet}
+            workspaces={workspaces}
+            currentWorkspace={currentWorkspace}
+            onCreate={handleCreateWorkspaceBoard}
+            onDismiss={() => setWorkspaceBoardCreatorOpen(false)}
+          />
         )}
 
         {!isChatPopoutWindow && !showSettings && workspaceBoardApiReady && activeWorkspaceBoard && (
