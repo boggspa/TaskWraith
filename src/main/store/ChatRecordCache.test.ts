@@ -13,13 +13,28 @@ vi.mock('electron', () => ({
 }))
 
 const chatsDir = join(userDataPath, 'chats')
+const chatListIndexPath = join(userDataPath, 'chat-list-index.json')
 
 function diskPath(chatId: string): string {
   return join(chatsDir, `${chatId}.json`)
 }
 
+function readChatListIndex(): Record<string, ChatRecord & { searchPreview?: string }> {
+  return JSON.parse(fs.readFileSync(chatListIndexPath, 'utf-8'))
+}
+
+function message(content: string): ChatRecord['messages'][number] {
+  return {
+    id: 'message-1',
+    role: 'assistant',
+    content,
+    timestamp: '2026-01-01T00:00:00.000Z'
+  }
+}
+
 describe('AppStore chat record cache', () => {
   beforeEach(() => {
+    AppStore.resetTransientDeletionGuardsForTests()
     fs.rmSync(userDataPath, { recursive: true, force: true })
     fs.mkdirSync(chatsDir, { recursive: true })
   })
@@ -84,5 +99,71 @@ describe('AppStore chat record cache', () => {
     const wsA = AppStore.getChats('ws-a')
     expect(wsA.map((c) => c.appChatId)).toContain(a.appChatId)
     expect(wsA.map((c) => c.appChatId)).not.toContain(b.appChatId)
+  })
+
+  it('throttles chat-list index rewrites when only volatile summary fields change', () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'))
+      const chat = AppStore.createChat('ws-1', '/repo')
+
+      vi.setSystemTime(new Date('2026-01-01T00:00:01.000Z'))
+      AppStore.saveChat({ ...chat, messages: [message('first preview')] } as ChatRecord)
+      const firstIndex = readChatListIndex()
+      expect(firstIndex[chat.appChatId].searchPreview).toBe('first preview')
+
+      vi.setSystemTime(new Date('2026-01-01T00:00:02.000Z'))
+      AppStore.saveChat({ ...chat, messages: [message('second preview')] } as ChatRecord)
+      const throttledIndex = readChatListIndex()
+      expect(throttledIndex[chat.appChatId].searchPreview).toBe('first preview')
+
+      vi.setSystemTime(new Date('2026-01-01T00:00:03.100Z'))
+      AppStore.saveChat({ ...chat, messages: [message('second preview')] } as ChatRecord)
+      const refreshedIndex = readChatListIndex()
+      expect(refreshedIndex[chat.appChatId].searchPreview).toBe('second preview')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('updates the chat-list index immediately for structural summary changes', () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'))
+      const chat = AppStore.createChat('ws-1', '/repo')
+
+      vi.setSystemTime(new Date('2026-01-01T00:00:01.000Z'))
+      AppStore.saveChat({ ...chat, messages: [message('first preview')] } as ChatRecord)
+
+      vi.setSystemTime(new Date('2026-01-01T00:00:01.500Z'))
+      AppStore.saveChat({
+        ...chat,
+        title: 'Renamed immediately',
+        messages: [message('second preview')]
+      } as ChatRecord)
+
+      const index = readChatListIndex()
+      expect(index[chat.appChatId].title).toBe('Renamed immediately')
+      expect(index[chat.appChatId].searchPreview).toBe('second preview')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('invalidates the chat-list index cache when the index changes out of band', () => {
+    const chat = AppStore.createChat('ws-1', '/repo')
+    expect(AppStore.getChatList().find((item) => item.appChatId === chat.appChatId)?.title).toBe(
+      'New Chat'
+    )
+
+    const rawIndex = readChatListIndex()
+    rawIndex[chat.appChatId].title = 'Edited index outside the store'
+    fs.writeFileSync(chatListIndexPath, JSON.stringify(rawIndex, null, 2))
+    const future = new Date(Date.now() + 5000)
+    fs.utimesSync(chatListIndexPath, future, future)
+
+    expect(AppStore.getChatList().find((item) => item.appChatId === chat.appChatId)?.title).toBe(
+      'Edited index outside the store'
+    )
   })
 })

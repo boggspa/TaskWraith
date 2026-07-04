@@ -273,6 +273,7 @@ const legacyUserDataDirs = ['TaskWraith'].map((dirName) =>
 )
 const chatsDir = path.join(userDataPath, 'chats')
 const chatListIndexPath = path.join(userDataPath, 'chat-list-index.json')
+const CHAT_LIST_INDEX_VOLATILE_REFRESH_INTERVAL_MS = 2000
 const auditRunsPath = path.join(userDataPath, 'audit-runs.json')
 const runEventsDir = path.join(userDataPath, 'run-events')
 const runArtifactsDir = path.join(userDataPath, 'run-artifacts')
@@ -1807,6 +1808,8 @@ export class AppStore {
     runEventSequenceCache.clear()
     runEventHashCache.clear()
     this.chatRecordCache.clear()
+    this.chatListIndexCache = null
+    this.chatListIndexWriteAtByChatId.clear()
     this.orphanSubThreadsReaped = false
   }
 
@@ -2301,7 +2304,7 @@ export class AppStore {
   static getChatList(workspaceId?: string): ChatListItem[] {
     if (!fs.existsSync(chatsDir)) return []
     const files = fs.readdirSync(chatsDir).filter((f) => f.endsWith('.json'))
-    const existingIndex = readJson<Record<string, ChatListItem>>(chatListIndexPath, {})
+    const existingIndex = this.readChatListIndexCached()
     const nextIndex: Record<string, ChatListItem> = {}
     const items: ChatListItem[] = []
     let dirty = false
@@ -2330,9 +2333,76 @@ export class AppStore {
       dirty = true
     }
     if (dirty) {
-      writeJson(chatListIndexPath, nextIndex)
+      this.writeChatListIndex(nextIndex)
     }
     return items.sort((a, b) => b.updatedAt - a.updatedAt)
+  }
+
+  private static chatListIndexCache: {
+    mtimeMs: number
+    size: number
+    index: Record<string, ChatListItem>
+  } | null = null
+
+  private static chatListIndexWriteAtByChatId = new Map<string, number>()
+
+  private static readChatListIndexCached(): Record<string, ChatListItem> {
+    let stat: fs.Stats
+    try {
+      stat = fs.statSync(chatListIndexPath)
+    } catch {
+      this.chatListIndexCache = null
+      return {}
+    }
+    const cached = this.chatListIndexCache
+    if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) {
+      return { ...cached.index }
+    }
+    const index = readJson<Record<string, ChatListItem>>(chatListIndexPath, {})
+    this.chatListIndexCache = { mtimeMs: stat.mtimeMs, size: stat.size, index }
+    return { ...index }
+  }
+
+  private static writeChatListIndex(index: Record<string, ChatListItem>): void {
+    writeJson(chatListIndexPath, index)
+    const now = Date.now()
+    for (const chatId of Object.keys(index)) {
+      this.chatListIndexWriteAtByChatId.set(chatId, now)
+    }
+    try {
+      const stat = fs.statSync(chatListIndexPath)
+      this.chatListIndexCache = {
+        mtimeMs: stat.mtimeMs,
+        size: stat.size,
+        index: { ...index }
+      }
+    } catch {
+      this.chatListIndexCache = null
+    }
+  }
+
+  private static chatListItemJson(item: ChatListItem | undefined, includeVolatile: boolean): string {
+    if (!item) return ''
+    if (includeVolatile) return JSON.stringify(item)
+    const { updatedAt: _updatedAt, searchText: _searchText, searchPreview: _searchPreview, ...stable } =
+      item
+    return JSON.stringify(stable)
+  }
+
+  private static shouldWriteChatListIndexItem(
+    previous: ChatListItem | undefined,
+    next: ChatListItem
+  ): boolean {
+    if (!previous) return true
+    if (this.chatListItemJson(previous, true) === this.chatListItemJson(next, true)) {
+      return false
+    }
+    if (this.chatListItemJson(previous, false) !== this.chatListItemJson(next, false)) {
+      return true
+    }
+    const lastWriteAt = this.chatListIndexWriteAtByChatId.get(next.appChatId)
+    if (lastWriteAt === undefined) return true
+    return Date.now() - lastWriteAt >= CHAT_LIST_INDEX_VOLATILE_REFRESH_INTERVAL_MS
   }
 
   /** Parsed+normalized chat records keyed by chatId, validated against the
@@ -2965,9 +3035,12 @@ export class AppStore {
     } catch {
       this.chatRecordCache.delete(normalizedChat.appChatId)
     }
-    const index = readJson<Record<string, ChatListItem>>(chatListIndexPath, {})
-    index[normalizedChat.appChatId] = this.toChatListItem(normalizedChat)
-    writeJson(chatListIndexPath, index)
+    const index = this.readChatListIndexCached()
+    const nextItem = this.toChatListItem(normalizedChat)
+    if (this.shouldWriteChatListIndexItem(index[normalizedChat.appChatId], nextItem)) {
+      index[normalizedChat.appChatId] = nextItem
+      this.writeChatListIndex(index)
+    }
     try {
       this.harvestMessageFeedbackReceipts(previousChatForFeedback, normalizedChat)
     } catch (e) {
@@ -3013,10 +3086,11 @@ export class AppStore {
       fs.unlinkSync(chatPath)
     }
     this.chatRecordCache.delete(chatId)
-    const index = readJson<Record<string, ChatListItem>>(chatListIndexPath, {})
+    const index = this.readChatListIndexCached()
+    this.chatListIndexWriteAtByChatId.delete(chatId)
     if (index[chatId]) {
       delete index[chatId]
-      writeJson(chatListIndexPath, index)
+      this.writeChatListIndex(index)
     }
     this.removeMessageFeedbackReceipts({ chatIds: [chatId] })
   }
@@ -3048,6 +3122,8 @@ export class AppStore {
       deletePathBestEffort(runRecoveryPath, 'run recovery history')
       deletePathBestEffort(messageFeedbackLedgerPath, 'message feedback receipt ledger')
       this.chatRecordCache.clear()
+      this.chatListIndexCache = null
+      this.chatListIndexWriteAtByChatId.clear()
       this.orphanSubThreadsReaped = false
       runEventSequenceCache.clear()
       runEventHashCache.clear()
