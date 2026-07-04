@@ -82,17 +82,22 @@ export function makeBlackboardEntry(input: MakeBlackboardEntryInput): Blackboard
   const key = clamp(input.key ?? '', BLACKBOARD_MAX_KEY_LEN)
   const value = clamp(input.value ?? '', BLACKBOARD_MAX_STORE_LEN)
   if (!key || !value) return null
+  const participantId = input.participantId || 'system'
   return {
     id: input.id,
     chatId: input.chatId,
     roundId: input.roundId,
-    participantId: input.participantId || 'system',
+    participantId,
     key,
     value,
     category: normalizeBlackboardCategory(input.category),
     scope: normalizeBlackboardScope(input.scope),
     ...(input.derivedFrom ? { derivedFrom: input.derivedFrom } : {}),
-    createdAt: input.createdAt
+    createdAt: input.createdAt,
+    // The author has, by definition, seen their own post. Upserts mint a NEW
+    // entry object, so a rewritten key resets to author-only — the fresh
+    // content is correctly "unseen" for everyone else.
+    seenBy: [participantId]
   }
 }
 
@@ -149,6 +154,142 @@ export function selectBlackboardForRound(
   currentRoundId: string
 ): BlackboardEntry[] {
   return entries.filter((e) => e.scope !== 'round' || e.roundId === currentRoundId)
+}
+
+/** Has `participantId` seen this entry (via injection or an explicit read)? */
+export function isBlackboardEntrySeenBy(entry: BlackboardEntry, participantId: string): boolean {
+  return Boolean(participantId) && (entry.seenBy || []).includes(participantId)
+}
+
+/**
+ * Entries `participantId` has NOT yet seen. Drives the slim resumed-turn
+ * digest: the seat's provider session already holds every entry it was shown
+ * before, so only unseen entries are new information.
+ */
+export function selectUnseenBlackboard(
+  entries: BlackboardEntry[],
+  participantId: string
+): BlackboardEntry[] {
+  return entries.filter((entry) => !isBlackboardEntrySeenBy(entry, participantId))
+}
+
+/**
+ * Mark `entryIds` as seen by `participantId`. Pure — returns the SAME array
+ * reference when nothing changes so callers can cheaply skip a persist.
+ */
+export function markBlackboardEntriesSeen(
+  entries: BlackboardEntry[],
+  entryIds: Iterable<string>,
+  participantId: string
+): BlackboardEntry[] {
+  if (!participantId) return entries
+  const ids = entryIds instanceof Set ? entryIds : new Set(entryIds)
+  if (ids.size === 0) return entries
+  let changed = false
+  const next = entries.map((entry) => {
+    if (!ids.has(entry.id) || isBlackboardEntrySeenBy(entry, participantId)) return entry
+    changed = true
+    return { ...entry, seenBy: [...(entry.seenBy || []), participantId] }
+  })
+  return changed ? next : entries
+}
+
+export interface BlackboardRemovalSelector {
+  ids?: string[]
+  keys?: string[]
+  category?: unknown
+  /** Explicit clear-the-board switch; combines with category as a filter. */
+  all?: boolean
+}
+
+/**
+ * Hygiene: remove entries matched by ids / keys / category (or everything
+ * when `all`). Pure — `{ next, removed }`, with `next === entries` (same ref)
+ * when nothing matched. A selector must be present: an EMPTY selector removes
+ * nothing (never an implicit clear).
+ */
+export function removeBlackboardEntries(
+  entries: BlackboardEntry[],
+  selector: BlackboardRemovalSelector
+): { next: BlackboardEntry[]; removed: BlackboardEntry[] } {
+  const ids = new Set((selector.ids || []).filter(Boolean))
+  const keys = new Set((selector.keys || []).map((key) => String(key).trim()).filter(Boolean))
+  const category =
+    typeof selector.category === 'string' && VALID_CATEGORIES.has(selector.category as BlackboardCategory)
+      ? (selector.category as BlackboardCategory)
+      : null
+  const hasSelector = selector.all === true || ids.size > 0 || keys.size > 0 || category !== null
+  if (!hasSelector) return { next: entries, removed: [] }
+  const matches = (entry: BlackboardEntry): boolean => {
+    if (category && entry.category !== category) return false
+    if (selector.all === true) return true
+    if (ids.has(entry.id)) return true
+    if (keys.has(entry.key)) return true
+    // category-only selector: category filter alone selects the whole bucket.
+    return ids.size === 0 && keys.size === 0 && category !== null
+  }
+  const removed = entries.filter(matches)
+  if (removed.length === 0) return { next: entries, removed: [] }
+  return { next: entries.filter((entry) => !matches(entry)), removed }
+}
+
+export interface BlackboardReadSelector {
+  ids?: string[]
+  keys?: string[]
+  category?: unknown
+  unseenOnly?: boolean
+  /** Oldest-N window (chronological). */
+  first?: number
+  /** Newest-N window (chronological output). Default window when no selector. */
+  last?: number
+}
+
+export const BLACKBOARD_READ_DEFAULT_LAST = 10
+
+/**
+ * Deterministic, bounded read for the `blackboard_read` tool. Explicit
+ * ids/keys return exactly those entries; otherwise category / unseen filters
+ * apply and the `first`/`last` window bounds the result (defaulting to the
+ * newest {@link BLACKBOARD_READ_DEFAULT_LAST} so a bare read can never flood a
+ * small context window). Output is chronological; `omitted` reports how many
+ * in-filter entries fell outside the window.
+ */
+export function selectBlackboardReadWindow(
+  entries: BlackboardEntry[],
+  selector: BlackboardReadSelector,
+  participantId?: string
+): { selected: BlackboardEntry[]; omitted: number } {
+  const ids = new Set((selector.ids || []).filter(Boolean))
+  const keys = new Set((selector.keys || []).map((key) => String(key).trim()).filter(Boolean))
+  const chronological = [...entries]
+    .map((e, i) => ({ e, i }))
+    .sort((a, b) =>
+      a.e.createdAt === b.e.createdAt ? a.i - b.i : a.e.createdAt < b.e.createdAt ? -1 : 1
+    )
+    .map((x) => x.e)
+  if (ids.size > 0 || keys.size > 0) {
+    const selected = chronological.filter((entry) => ids.has(entry.id) || keys.has(entry.key))
+    return { selected, omitted: 0 }
+  }
+  const category =
+    typeof selector.category === 'string' && VALID_CATEGORIES.has(selector.category as BlackboardCategory)
+      ? (selector.category as BlackboardCategory)
+      : null
+  let filtered = chronological
+  if (category) filtered = filtered.filter((entry) => entry.category === category)
+  if (selector.unseenOnly && participantId) {
+    filtered = filtered.filter((entry) => !isBlackboardEntrySeenBy(entry, participantId))
+  }
+  const first = Number.isFinite(selector.first) ? Math.max(0, Math.floor(selector.first!)) : 0
+  const last = Number.isFinite(selector.last) ? Math.max(0, Math.floor(selector.last!)) : 0
+  if (first > 0) {
+    return { selected: filtered.slice(0, first), omitted: Math.max(0, filtered.length - first) }
+  }
+  const window = last > 0 ? last : BLACKBOARD_READ_DEFAULT_LAST
+  return {
+    selected: filtered.slice(Math.max(0, filtered.length - window)),
+    omitted: Math.max(0, filtered.length - window)
+  }
 }
 
 /**

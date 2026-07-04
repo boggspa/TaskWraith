@@ -41,7 +41,11 @@ import { findAllMentions, getParticipantAliases } from './services/EnsembleMenti
 // M4 (1.0.7) — shared blackboard digest. Surfaced above the prior-round
 // summary so every participant opens its turn with the panel's agreed
 // decisions / risks / corrections as compact context.
-import { formatBlackboardForPrompt, selectBlackboardForRound } from './blackboard/Blackboard'
+import {
+  formatBlackboardForPrompt,
+  selectBlackboardForRound,
+  selectUnseenBlackboard
+} from './blackboard/Blackboard'
 // M6 (1.0.7) — thinking-ephemerality. Defensive strip of inlined reasoning
 // chains from ephemeral-reasoning providers' messages before they enter
 // future-round transcript context (Codex reasoning is retained).
@@ -767,11 +771,31 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
       ...(input.scoutBriefs && input.scoutBriefs.length > 0
         ? ['', formatScoutBriefsForPrompt(input.scoutBriefs)]
         : []),
+      // Blackboard delta: the seat's resumed session already holds every
+      // entry it was shown on previous turns (injections are marked seen at
+      // run flush; blackboard_read marks seen on read). Re-sending the full
+      // board each resumed turn was the dominant waste in long panels — only
+      // UNSEEN entries are new information. A one-line note points at
+      // blackboard_read for a deterministic on-demand re-read of the rest.
       ...(() => {
-        const digest = formatBlackboardForPrompt(
-          selectBlackboardForRound(input.config.blackboard || [], input.roundId)
-        )
-        return digest ? ['', digest] : []
+        const visible = selectBlackboardForRound(input.config.blackboard || [], input.roundId)
+        const unseen = selectUnseenBlackboard(visible, input.participant.id)
+        const seenCount = visible.length - unseen.length
+        const digest = formatBlackboardForPrompt(unseen)
+        const lines: string[] = []
+        if (digest) {
+          lines.push('', digest.replace(
+            'Ensemble blackboard (shared scratchpad — treat as agreed context):',
+            'Ensemble blackboard — NEW entries since your previous turn (treat as agreed context):'
+          ))
+        }
+        if (seenCount > 0) {
+          lines.push(
+            '',
+            `(${seenCount} blackboard ${seenCount === 1 ? 'entry' : 'entries'} you have already seen ${seenCount === 1 ? 'is' : 'are'} omitted — call blackboard_read to re-read the board on demand.)`
+          )
+        }
+        return lines
       })(),
       '',
       'New since your previous turn (tagged transcript):',
@@ -879,7 +903,7 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
     '- If another participant should handle this turn, call ensemble_yield with a short reason and optional target.',
     '- Use ensemble_fanout when multiple peers should work in parallel. Default read_only fan-out only targets read-only participants; locked_writers fan-out is feature-gated, requires the assigned Boss (or active Captain after Boss unavailability) as caller with explicit writeScopes for writer targets, and relies on workspace write locks. When no Boss is assigned, automatic writer fan-out is host-mediated by user-enabled write-scope claim + matrix-ack preflight rather than peer tool calls.',
     '- If you are the assigned Boss, or the Captain after Boss is unavailable, and Boss/Captain Auto Approvals are enabled, use list_ensemble_participants before ensemble_roster_edit to inspect participant ids, available providers/models, model context windows, and coarse provider quota bands; then you may swap a non-active participant seat provider/model/reasoning/permissions or adjust role instructions/mini-goals when quota walls, weak output, or agreed role changes warrant it.',
-    '- Use blackboard_post only for durable shared facts, decisions, risks, or do-not-repeat notes. Do not use the blackboard for conversational side messages.',
+    '- Use blackboard_post only for durable shared facts, decisions, risks, or do-not-repeat notes. Do not use the blackboard for conversational side messages. Read the board on demand with blackboard_read (bounded: pass keys/category/first/last — a bare call returns the newest entries, so small-context seats can read specific posts a peer points them at). Retire stale or superseded entries with blackboard_delete so the board stays current.',
     '- In Continuous mode the round auto-continues each pass until the goal/tasks are marked complete or the hop budget runs out — when the work is genuinely finished, mark the active goal/tasks complete (e.g. call goal_complete) instead of restating "done", and use @mention/ensemble_yield only to route a specific next actor.',
     '- Respect your permission preset. Read-only roles should not attempt file or shell mutations.',
     '- Respond as yourself only. Do not impersonate other participants.',

@@ -966,6 +966,14 @@ export interface BlackboardEntry {
   /** Provenance — a tool-call id or a prior entry id this was derived from. */
   derivedFrom?: string
   createdAt: string
+  /**
+   * Participant ids that have had this entry surfaced to them — via prompt
+   * injection (marked at run flush) or an explicit `blackboard_read`. Drives
+   * the unseen-only digest on slim resumed turns and the renderer's
+   * "seen by" rail. The author is seeded as seen at post time. Upserting a
+   * key resets the list (new content = unseen again).
+   */
+  seenBy?: string[]
 }
 
 /** M5 — what a complexity-escalation signal is flagging.

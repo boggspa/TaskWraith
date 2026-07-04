@@ -2154,6 +2154,53 @@ describe('slim resumed-turn prompt shape', () => {
     expect(prompt).not.toContain('Rules:')
     expect(prompt).toContain('Respond now as')
   })
+
+  it('injects only unseen blackboard entries and points to blackboard_read for omitted ones', () => {
+    const base = chat()
+    const config: EnsembleConfig = {
+      ...ensemble,
+      blackboard: [
+        {
+          id: 'bb-seen',
+          chatId: 'chat-1',
+          roundId: 'round-slim',
+          participantId: 'codex',
+          key: 'seen-note',
+          value: 'This note was already shown.',
+          category: 'fact',
+          scope: 'session',
+          createdAt: '2026-05-24T00:00:01.000Z',
+          seenBy: ['codex', 'claude']
+        },
+        {
+          id: 'bb-new',
+          chatId: 'chat-1',
+          roundId: 'round-slim',
+          participantId: 'codex',
+          key: 'new-note',
+          value: 'Fresh blackboard detail.',
+          category: 'risk',
+          scope: 'session',
+          createdAt: '2026-05-24T00:00:02.000Z',
+          seenBy: ['codex']
+        }
+      ]
+    }
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: { ...base, ensemble: config },
+      config,
+      participant: config.participants.find((entry) => entry.id === 'claude')!,
+      currentPrompt: 'Continue.',
+      roundId: 'round-slim',
+      chatContextTurns: 6,
+      slimTurn: true
+    })
+    expect(prompt).toContain('Ensemble blackboard — NEW entries since your previous turn')
+    expect(prompt).toContain('new-note: Fresh blackboard detail.')
+    expect(prompt).not.toContain('seen-note: This note was already shown.')
+    expect(prompt).toContain('1 blackboard entry you have already seen is omitted')
+    expect(prompt).toContain('blackboard_read')
+  })
 })
 
 describe('seat compaction summary injection (wave 3)', () => {

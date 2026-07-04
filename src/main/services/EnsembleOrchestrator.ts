@@ -77,6 +77,9 @@ import { sanitizeRawProviderMediaRefs } from '../../shared/transcriptMediaRefSan
 import {
   deriveBlackboardFromRoundSummary,
   makeBlackboardEntry,
+  markBlackboardEntriesSeen,
+  selectBlackboardForRound,
+  selectUnseenBlackboard,
   upsertBlackboardEntry
 } from '../blackboard/Blackboard'
 // M5 (1.0.7) — emit advisory complexity-escalation signals at round end
@@ -389,6 +392,14 @@ interface ActiveParticipantRun {
    * flushRun so the NEXT dispatch can decide slim-vs-full.
    */
   promptShellStamp?: string
+  /**
+   * Blackboard entry ids injected into THIS run's prompt (full board on a
+   * full briefing; unseen-only on a slim resumed turn). flushRun merges the
+   * participant into each entry's `seenBy`, which is what lets the NEXT slim
+   * turn drop them from the digest. Set alongside `promptShellStamp` — only
+   * once the provider actually received the prompt.
+   */
+  injectedBlackboardEntryIds?: string[]
   /**
    * Aggregate text for back-compat consumers (per-run token stats,
    * "did this run produce any output" checks, etc.). Stays in sync
@@ -6604,6 +6615,20 @@ export class EnsembleOrchestrator {
         Boolean(run.providerSessionId || participant.linkedProviderSessionId) &&
         !resumeWakeup &&
         participant.promptShellVersion === promptShellStamp
+      // Blackboard delta bookkeeping: same selection the prompt builder makes
+      // (full board on a full briefing, unseen-only on a slim turn). Captured
+      // BEFORE dispatch so entries posted mid-run stay unseen; stamped onto
+      // the run only after the provider received the prompt (below), then
+      // merged into each entry's seenBy at flush.
+      const injectedBlackboardEntryIds = (() => {
+        const visible = selectBlackboardForRound(
+          ensembleConfigForRound.blackboard || [],
+          runtime.roundId
+        )
+        return (slimTurn ? selectUnseenBlackboard(visible, participant.id) : visible).map(
+          (entry) => entry.id
+        )
+      })()
       const prompt = buildEnsembleParticipantPrompt({
         chat,
         config: ensembleConfigForRound,
@@ -6756,8 +6781,11 @@ export class EnsembleOrchestrator {
         // Review F2c — record the shell stamp only once the provider
         // actually RECEIVED this prompt. Stamping before dispatch let a
         // spawn/preflight failure persist a stamp for a shell the session
-        // never saw, wrongly slim-qualifying the next turn.
+        // never saw, wrongly slim-qualifying the next turn. Same rule for
+        // the injected blackboard ids: a prompt the session never saw must
+        // not mark entries seen.
         run.promptShellStamp = promptShellStamp
+        run.injectedBlackboardEntryIds = injectedBlackboardEntryIds
         await completion
       }
       runtime.activeRunId = undefined
@@ -8388,6 +8416,14 @@ export class EnsembleOrchestrator {
       timestamp,
       reason
     )
+    // Blackboard delta bookkeeping — the entries injected into this run's
+    // prompt are now part of the seat's session memory. Idempotent + same-ref
+    // when nothing changes, so repeat flushes cost nothing.
+    const blackboard = markBlackboardEntriesSeen(
+      chat.ensemble.blackboard || [],
+      run.injectedBlackboardEntryIds || [],
+      run.participant.id
+    )
     this.saveChatWithCheckpoint({
       ...chat,
       messages,
@@ -8396,6 +8432,7 @@ export class EnsembleOrchestrator {
         ...chat.ensemble,
         participants,
         activeRound,
+        ...(blackboard !== chat.ensemble.blackboard ? { blackboard } : {}),
         updatedAt: timestamp
       },
       updatedAt: this.deps.now()

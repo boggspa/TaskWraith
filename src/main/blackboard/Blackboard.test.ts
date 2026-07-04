@@ -7,10 +7,14 @@ import {
   deriveBlackboardFromRoundSummary,
   formatBlackboardForPrompt,
   makeBlackboardEntry,
+  markBlackboardEntriesSeen,
   normalizeBlackboardCategory,
   normalizeBlackboardScope,
   pruneBlackboard,
+  removeBlackboardEntries,
   selectBlackboardForRound,
+  selectBlackboardReadWindow,
+  selectUnseenBlackboard,
   upsertBlackboardEntry
 } from './Blackboard'
 
@@ -25,7 +29,8 @@ function entry(overrides: Partial<BlackboardEntry> = {}): BlackboardEntry {
     category: overrides.category ?? 'note',
     scope: overrides.scope ?? 'session',
     ...(overrides.derivedFrom ? { derivedFrom: overrides.derivedFrom } : {}),
-    createdAt: overrides.createdAt ?? '2026-05-31T00:00:00.000Z'
+    createdAt: overrides.createdAt ?? '2026-05-31T00:00:00.000Z',
+    ...(overrides.seenBy ? { seenBy: overrides.seenBy } : {})
   }
 }
 
@@ -65,7 +70,13 @@ describe('makeBlackboardEntry', () => {
   it('builds a normalized entry', () => {
     const e = makeBlackboardEntry({ ...base, key: '  topic  ', value: '  hello  ', category: 'risk', scope: 'chat' })
     expect(e).not.toBeNull()
-    expect(e).toMatchObject({ key: 'topic', value: 'hello', category: 'risk', scope: 'chat' })
+    expect(e).toMatchObject({
+      key: 'topic',
+      value: 'hello',
+      category: 'risk',
+      scope: 'chat',
+      seenBy: ['p1']
+    })
   })
 
   it('rejects empty key or value (returns null)', () => {
@@ -164,6 +175,77 @@ describe('selectBlackboardForRound', () => {
       entry({ id: 's', scope: 'session' })
     ]
     expect(selectBlackboardForRound(list, 'round-2').map((e) => e.id).sort()).toEqual(['r-cur', 's'])
+  })
+})
+
+describe('blackboard seen-by helpers', () => {
+  it('filters unseen entries for a participant', () => {
+    const list = [
+      entry({ id: 'seen', key: 'seen', seenBy: ['p1'] }),
+      entry({ id: 'unseen', key: 'unseen', seenBy: ['p2'] }),
+      entry({ id: 'legacy', key: 'legacy' })
+    ]
+    expect(selectUnseenBlackboard(list, 'p1').map((e) => e.id)).toEqual(['unseen', 'legacy'])
+  })
+
+  it('marks entries seen without changing the array when nothing changes', () => {
+    const list = [
+      entry({ id: 'a', key: 'a', seenBy: ['p1'] }),
+      entry({ id: 'b', key: 'b', seenBy: [] })
+    ]
+    const next = markBlackboardEntriesSeen(list, ['b'], 'p1')
+    expect(next).not.toBe(list)
+    expect(next.find((e) => e.id === 'b')?.seenBy).toEqual(['p1'])
+    expect(markBlackboardEntriesSeen(next, ['b'], 'p1')).toBe(next)
+  })
+})
+
+describe('selectBlackboardReadWindow', () => {
+  const list = [
+    entry({ id: 'old', key: 'old', category: 'fact', createdAt: '2026-05-31T00:00:00.001Z' }),
+    entry({ id: 'mid', key: 'mid', category: 'risk', createdAt: '2026-05-31T00:00:00.002Z', seenBy: ['p1'] }),
+    entry({ id: 'new', key: 'new', category: 'risk', createdAt: '2026-05-31T00:00:00.003Z' })
+  ]
+
+  it('returns explicit ids and keys without window omission', () => {
+    const out = selectBlackboardReadWindow(list, { ids: ['old'], keys: ['new'], last: 1 }, 'p1')
+    expect(out.selected.map((e) => e.id)).toEqual(['old', 'new'])
+    expect(out.omitted).toBe(0)
+  })
+
+  it('filters by category, unseenOnly, and newest window', () => {
+    const out = selectBlackboardReadWindow(list, { category: 'risk', unseenOnly: true, last: 1 }, 'p1')
+    expect(out.selected.map((e) => e.id)).toEqual(['new'])
+    expect(out.omitted).toBe(0)
+  })
+
+  it('reports omitted entries outside the first window', () => {
+    const out = selectBlackboardReadWindow(list, { first: 2 }, 'p1')
+    expect(out.selected.map((e) => e.id)).toEqual(['old', 'mid'])
+    expect(out.omitted).toBe(1)
+  })
+})
+
+describe('removeBlackboardEntries', () => {
+  it('removes by key or id and returns the removed entries', () => {
+    const list = [entry({ id: 'a', key: 'a' }), entry({ id: 'b', key: 'b' }), entry({ id: 'c', key: 'c' })]
+    const out = removeBlackboardEntries(list, { ids: ['a'], keys: ['c'] })
+    expect(out.removed.map((e) => e.id).sort()).toEqual(['a', 'c'])
+    expect(out.next.map((e) => e.id)).toEqual(['b'])
+  })
+
+  it('does not clear the board for an empty selector', () => {
+    const list = [entry({ id: 'a', key: 'a' })]
+    const out = removeBlackboardEntries(list, {})
+    expect(out.next).toBe(list)
+    expect(out.removed).toEqual([])
+  })
+
+  it('clears a single category when category is the only selector', () => {
+    const list = [entry({ id: 'a', category: 'risk' }), entry({ id: 'b', category: 'fact' })]
+    const out = removeBlackboardEntries(list, { category: 'risk' })
+    expect(out.removed.map((e) => e.id)).toEqual(['a'])
+    expect(out.next.map((e) => e.id)).toEqual(['b'])
   })
 })
 
