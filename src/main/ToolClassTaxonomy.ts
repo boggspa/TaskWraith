@@ -90,7 +90,8 @@ export const READ_ONLY_TOOL_PRESET: ReadonlyArray<string> = Object.freeze([
   'goal_complete',
   'goal_blocked',
   // 1.4.2 — read-only runs may publish goal-step checklists.
-  'todo_write'
+  'todo_write',
+  'blackboard_read'
 ])
 
 const WORKSPACE_READ_TOOLS = new Set<string>([
@@ -189,6 +190,8 @@ const ORCHESTRATION_TOOLS = new Set<string>([
   'ensemble_roster_edit',
   'scout_brief',
   'blackboard_post',
+  'blackboard_read',
+  'blackboard_delete',
   'workspace_board_snapshot',
   'workspace_board_preview_plan',
   'workspace_board_apply_plan',

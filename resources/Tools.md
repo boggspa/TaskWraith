@@ -11,7 +11,7 @@ Local Ollama models call any tool by emitting exactly one JSON object per turn:
 {"taskwraith_tool":{"name":"<tool>","arguments":{ ... }}}
 ```
 
-The 143 tools below are the full TaskWraith surface, generated from the tool catalog so this reference cannot drift from what the app actually grants. Every mutating tool (file edits, shell, publishing) is gated by your run's permission role, and paths must stay inside the active workspace.
+The 145 tools below are the full TaskWraith surface, generated from the tool catalog so this reference cannot drift from what the app actually grants. Every mutating tool (file edits, shell, publishing) is gated by your run's permission role, and paths must stay inside the active workspace.
 
 ## run_shell_command
 
@@ -908,6 +908,24 @@ Post a durable shared-memory entry for the Ensemble. Use for agreed facts, decis
 - Required args: key, value
 - Optional args: category, scope
 - Example: `{"taskwraith_tool":{"name":"blackboard_post","arguments":{"key":"text","value":"text"}}}`
+
+## blackboard_read
+
+Read bounded entries from the Ensemble blackboard. A bare call returns the newest entries; pass ids, keys, category, first, last, or unseenOnly to keep the result small. Entries returned by this tool are marked as seen for the calling participant.
+
+- Access: read-only (no approval needed)
+- Required args: none
+- Optional args: ids, keys, category, unseenOnly, first, last
+- Example: `{"taskwraith_tool":{"name":"blackboard_read","arguments":{"ids":[]}}}`
+
+## blackboard_delete
+
+Retire stale or superseded Ensemble blackboard entries by id, key, category, or all:true. This mutates shared blackboard state and is not available to read-only seats.
+
+- Access: governed by your run permission role
+- Required args: none
+- Optional args: ids, keys, category, all
+- Example: `{"taskwraith_tool":{"name":"blackboard_delete","arguments":{"ids":[]}}}`
 
 ## launch_list_targets
 

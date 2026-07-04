@@ -2745,6 +2745,67 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
       }
     },
     {
+      name: 'blackboard_read',
+      description:
+        'Read bounded entries from the Ensemble blackboard. A bare call returns the newest entries; pass ids, keys, category, first, last, or unseenOnly to keep the result small. Entries returned by this tool are marked as seen for the calling participant.',
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          ids: { type: 'array', items: { type: 'string' } },
+          keys: { type: 'array', items: { type: 'string' } },
+          category: {
+            type: 'string',
+            enum: ['decision', 'fact', 'risk', 'do-not-repeat', 'note']
+          },
+          unseenOnly: {
+            type: 'boolean',
+            description: 'When true, only return entries the calling participant has not seen.'
+          },
+          first: {
+            type: 'number',
+            description: 'Return the oldest N matching entries. Overrides last when positive.'
+          },
+          last: {
+            type: 'number',
+            description: 'Return the newest N matching entries. Defaults to a small safe window.'
+          }
+        }
+      }
+    },
+    {
+      name: 'blackboard_delete',
+      description:
+        'Retire stale or superseded Ensemble blackboard entries by id, key, category, or all:true. This mutates shared blackboard state and is not available to read-only seats.',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          ids: { type: 'array', items: { type: 'string' } },
+          keys: { type: 'array', items: { type: 'string' } },
+          category: {
+            type: 'string',
+            enum: ['decision', 'fact', 'risk', 'do-not-repeat', 'note']
+          },
+          all: {
+            type: 'boolean',
+            description:
+              'Required to clear the whole board. May be combined with category to clear one category.'
+          }
+        }
+      }
+    },
+    {
       name: 'launch_list_targets',
       description:
         'List the runnable "Run Button" targets TaskWraith discovered for this workspace (dev servers, build/test/run targets from package.json scripts, .vscode tasks/launch, Package.swift, .xcodeproj). Read-only. Each entry has a `targetId` (pass to launch_start), `label`, `command`, `kind`, `longRunning`, `runnable`, and any `blockers`. Use this before launch_start — you can only start a discovered target, not an arbitrary command.',

@@ -70,6 +70,9 @@ export const MCP_AUTO_ALLOWED_TOOLS = new Set<TaskWraithMcpToolName>([
   'goal_blocked',
   // 1.4.2 — goal-step checklist updates are non-mutating run coordination.
   'todo_write',
+  // Blackboard reads are bounded, chat-local, and only mutate the per-entry
+  // seenBy marker for the calling participant so slim prompts can omit it.
+  'blackboard_read',
   // Evidence Packs are run-observability/progress records, not workspace
   // mutation. Read-only agents must still be able to leave auditable evidence
   // and check whether completion language is supported.
@@ -113,6 +116,7 @@ export const MCP_APP_STATE_MUTATION_TOOLS = new Set<TaskWraithMcpToolName>([
   'schedule_wakeup',
   'cancel_wakeup',
   'blackboard_post',
+  'blackboard_delete',
   'workspace_board_apply_plan'
 ])
 

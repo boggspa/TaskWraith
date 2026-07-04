@@ -31,7 +31,8 @@ describe('MCP_AUTO_ALLOWED_TOOLS', () => {
       'repo_convention_scan',
       'coherence_gate_check',
       'evidence_pack_write',
-      'completion_claim_check'
+      'completion_claim_check',
+      'blackboard_read'
     ] as const) {
       expect(autoAllowedTools.has(tool)).toBe(true)
     }
@@ -95,7 +96,8 @@ describe('READ_ONLY_MCP_ADVERTISE_TOOLS', () => {
       'repo_convention_scan',
       'coherence_gate_check',
       'evidence_pack_write',
-      'completion_claim_check'
+      'completion_claim_check',
+      'blackboard_read'
     ] as const) {
       expect(READ_ONLY_MCP_ADVERTISE_TOOLS).toContain(tool)
     }
@@ -163,7 +165,8 @@ describe('isReadOnlyAdvertisedTool (bridge scope guard)', () => {
       'repo_convention_scan',
       'coherence_gate_check',
       'evidence_pack_write',
-      'completion_claim_check'
+      'completion_claim_check',
+      'blackboard_read'
     ]) {
       expect(isReadOnlyAdvertisedTool(tool)).toBe(true)
     }
@@ -194,6 +197,7 @@ describe('isReadOnlyAdvertisedTool (bridge scope guard)', () => {
       'schedule_wakeup',
       'cancel_wakeup',
       'blackboard_post',
+      'blackboard_delete',
       'delegate_to_subthread',
       'cancel_active_run',
       'workspace_board_apply_plan',

@@ -151,6 +151,8 @@ export const TASKWRAITH_MCP_TOOLS = [
   // for durable agreed facts / risks / decisions; conversational
   // participant-to-participant messages use `ensemble_send`.
   'blackboard_post',
+  'blackboard_read',
+  'blackboard_delete',
   // TaskWraith Canvas (P0) — exclusive preview/runtime surface. Agents open a
   // sandboxed preview of a running app (web driver = an http(s) dev server),
   // then snapshot (a stable-ref element tree), screenshot, inspect, and read

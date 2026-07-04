@@ -1049,7 +1049,14 @@ import { evaluateBossmanAutoApproval } from './BossmanAutoApproval'
 import { resolveRosterUpdateBossmanAssignment } from './EnsembleRosterUpdate'
 import { buildEnsembleYieldToolResult } from './EnsembleYieldToolResult'
 import { handleScoutBrief, type ScoutBriefConfidence } from './ScoutBrief'
-import { makeBlackboardEntry, upsertBlackboardEntry } from './blackboard/Blackboard'
+import {
+  makeBlackboardEntry,
+  markBlackboardEntriesSeen,
+  removeBlackboardEntries,
+  selectBlackboardForRound,
+  selectBlackboardReadWindow,
+  upsertBlackboardEntry
+} from './blackboard/Blackboard'
 import { WorkspaceWriteIntentRegistry, type WriteIntentToken } from './WorkspaceWriteIntentRegistry'
 import { CreativeApprovalGate } from './CreativeApprovalGate'
 import { assignAgentIdentityFromSeed } from './AgentIdentitySeed'
@@ -20174,6 +20181,114 @@ async function executeGeminiMcpTool(
           })
         }
       }
+    } else if (toolName === 'blackboard_read') {
+      const chatId = context.appChatId || ''
+      const chat = chatId ? AppStore.getChat(chatId) : null
+      const participantId =
+        ensembleOrchestratorRef?.getParticipantIdForRun(context.appRunId) || ''
+      if (!chat?.ensemble) {
+        toolIsError = true
+        text = mcpJson({
+          ok: false,
+          tool: 'blackboard_read',
+          error: 'blackboard_read requires an Ensemble chat.'
+        })
+      } else {
+        const activeRound = chat.ensemble.activeRound
+        const currentBlackboard = chat.ensemble.blackboard || []
+        const visible = activeRound
+          ? selectBlackboardForRound(currentBlackboard, activeRound.roundId)
+          : currentBlackboard.filter((entry) => entry.scope !== 'round')
+        const result = selectBlackboardReadWindow(
+          visible,
+          {
+            ids: stringArray(args.ids),
+            keys: stringArray(args.keys),
+            category: args.category,
+            unseenOnly: args.unseenOnly === true,
+            first: optionalNumber(args.first),
+            last: optionalNumber(args.last)
+          },
+          participantId
+        )
+        const selectedIds = result.selected.map((entry) => entry.id)
+        const marked = markBlackboardEntriesSeen(
+          currentBlackboard,
+          selectedIds,
+          participantId
+        )
+        if (marked !== currentBlackboard) {
+          const updated: ChatRecord = {
+            ...chat,
+            ensemble: {
+              ...chat.ensemble,
+              blackboard: marked,
+              updatedAt: new Date().toISOString()
+            },
+            updatedAt: Date.now()
+          }
+          saveAndBroadcastChat(updated)
+        }
+        text = mcpJson({
+          ok: true,
+          tool: 'blackboard_read',
+          entries: result.selected,
+          count: result.selected.length,
+          omitted: result.omitted,
+          visibleCount: visible.length,
+          markedSeen: Boolean(participantId) ? selectedIds : []
+        })
+      }
+    } else if (toolName === 'blackboard_delete') {
+      const chatId = context.appChatId || ''
+      const chat = chatId ? AppStore.getChat(chatId) : null
+      if (!chat?.ensemble) {
+        toolIsError = true
+        text = mcpJson({
+          ok: false,
+          tool: 'blackboard_delete',
+          error: 'blackboard_delete requires an Ensemble chat.'
+        })
+      } else {
+        const result = removeBlackboardEntries(chat.ensemble.blackboard || [], {
+          ids: stringArray(args.ids),
+          keys: stringArray(args.keys),
+          category: args.category,
+          all: args.all === true
+        })
+        if (result.removed.length === 0) {
+          toolIsError = true
+          text = mcpJson({
+            ok: false,
+            tool: 'blackboard_delete',
+            error:
+              'No blackboard entries matched. Pass ids, keys, category, or all:true to delete.'
+          })
+        } else {
+          const timestamp = new Date().toISOString()
+          const updated: ChatRecord = {
+            ...chat,
+            ensemble: {
+              ...chat.ensemble,
+              blackboard: result.next,
+              updatedAt: timestamp
+            },
+            updatedAt: Date.now()
+          }
+          saveAndBroadcastChat(updated)
+          ensembleOrchestratorRef?.appendStatusForRun(
+            context.appRunId || '',
+            `Blackboard cleaned: removed ${result.removed.length} ${result.removed.length === 1 ? 'entry' : 'entries'}.`
+          )
+          text = mcpJson({
+            ok: true,
+            tool: 'blackboard_delete',
+            removed: result.removed,
+            removedCount: result.removed.length,
+            remainingCount: result.next.length
+          })
+        }
+      }
     } else if (toolName === 'goal_read') {
       const chatId = String(context.appChatId || '').trim()
       const chat = chatId ? AppStore.getChat(chatId) : null
@@ -29903,6 +30018,57 @@ if (isGeminiMcpBridgeProcess) {
     ipcMain.handle('cancel-ensemble-round', async (_, chatId?: string) => {
       return ensembleOrchestratorRef?.cancelRound(requireNonEmptyString(chatId, 'Ensemble chat id'))
     })
+
+    ipcMain.handle(
+      'post-blackboard-entry',
+      async (
+        _,
+        payload?: {
+          chatId?: string
+          key?: string
+          value?: string
+          category?: string
+          scope?: string
+        }
+      ) => {
+        if (AppStore.getSettings().ensembleModeEnabled === false) {
+          throw new Error('Ensemble Mode is disabled.')
+        }
+        const chatId = requireNonEmptyString(payload?.chatId, 'Ensemble chat id')
+        const chat = AppStore.getChat(chatId)
+        if (!chat?.ensemble) throw new Error('Blackboard entries require an Ensemble chat.')
+        const scope = payload?.scope === 'round' || payload?.scope === 'chat' ? payload.scope : 'session'
+        if (scope === 'round' && !chat.ensemble.activeRound) {
+          throw new Error('Round-scoped blackboard entries require an active Ensemble round.')
+        }
+        const value = requireNonEmptyString(payload?.value, 'Blackboard entry value')
+        const createdAt = new Date().toISOString()
+        const fallbackKey = `user-note-${createdAt.replace(/[^0-9]/g, '').slice(0, 14)}`
+        const entry = makeBlackboardEntry({
+          id: `blackboard-user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          chatId: chat.appChatId,
+          roundId: chat.ensemble.activeRound?.roundId || 'manual',
+          participantId: 'user',
+          key: optionalString(payload?.key) || fallbackKey,
+          value,
+          category: payload?.category,
+          scope,
+          createdAt
+        })
+        if (!entry) throw new Error('Blackboard entry requires non-empty key and value.')
+        const updated: ChatRecord = {
+          ...chat,
+          ensemble: {
+            ...chat.ensemble,
+            blackboard: upsertBlackboardEntry(chat.ensemble.blackboard || [], entry),
+            updatedAt: createdAt
+          },
+          updatedAt: Date.now()
+        }
+        saveAndBroadcastChat(updated)
+        return { ok: true, entry }
+      }
+    )
 
     ipcMain.handle(
       'request-ensemble-participant-seat-change',

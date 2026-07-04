@@ -2145,7 +2145,10 @@ const OLLAMA_ARG_TYPE_CHECKS: Partial<Record<OllamaToolName, Record<string, 'str
   rename_path: { path: 'string', newName: 'string' },
   run_shell_command: { command: 'string' },
   workspace_search: { query: 'string' },
-  todo_write: { todos: 'array' }
+  todo_write: { todos: 'array' },
+  blackboard_post: { key: 'string', value: 'string' },
+  blackboard_read: { ids: 'array', keys: 'array' },
+  blackboard_delete: { ids: 'array', keys: 'array' }
 }
 
 /**
