@@ -2,7 +2,9 @@ import {
   AppSettings,
   WorkspaceRecord,
   ChatRecord,
+  ChatKind,
   ChatListItem,
+  EnsembleParticipant,
   PinnedMessageGroup,
   UsageRecord,
   TrustStatusResult,
@@ -1322,6 +1324,13 @@ declare global {
         sideChatMode?: 'ensembleClone' | 'singleProvider' | 'fanOut'
       }) => Promise<ChatRecord>
       getSideChats: (parentChatId: string) => Promise<ChatRecord[]>
+      setChatKind: (args: {
+        chatId: string
+        targetKind: ChatKind
+        seedParticipant?: EnsembleParticipant
+        canonicalProvider?: ProviderId
+        canonicalProviderMetadata?: Record<string, unknown>
+      }) => Promise<ChatRecord>
       listDiscordContextTargets: () => Promise<DiscordContextTargets>
       readDiscordContext: (selection: DiscordContextSelection) => Promise<DiscordContextSnapshot>
       humanCollaborationCreateShare: (input: {

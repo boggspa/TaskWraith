@@ -44,7 +44,10 @@ function createDeps(overrides: Partial<Parameters<typeof registerChatHandlers>[0
       createSubThread: vi.fn(() => chat('sub-thread')),
       getSubThreads: vi.fn(() => [chat('sub-thread')]),
       createSideChat: vi.fn(() => chat('side-chat', { parentChatRelation: 'sideChat' })),
-      getSideChats: vi.fn(() => [chat('side-chat')])
+      getSideChats: vi.fn(() => [chat('side-chat')]),
+      setChatKind: vi.fn((args: { chatId: string; targetKind: 'single' | 'ensemble' }) =>
+        chat(args.chatId, { chatKind: args.targetKind })
+      )
     },
     getSettings: vi.fn(() => settings),
     detectConfiguredProviders: vi.fn(async () => new Set(['codex'] as const)),
@@ -108,4 +111,48 @@ describe('registerChatHandlers', () => {
     expect(deps.detectConfiguredProviders).not.toHaveBeenCalled()
   })
 
+  it('routes set-chat-kind through the chat service and broadcasts the result', () => {
+    const deps = createDeps()
+    registerChatHandlers(deps)
+
+    const result = handlerFor('set-chat-kind')({} as any, {
+      chatId: 'chat-1',
+      targetKind: 'ensemble'
+    })
+    expect(result).toEqual(chat('chat-1', { chatKind: 'ensemble' }))
+    expect(deps.chatService.setChatKind).toHaveBeenCalledWith({
+      chatId: 'chat-1',
+      targetKind: 'ensemble'
+    })
+    expect(deps.broadcastThreadUpdate).toHaveBeenCalledWith('chat-1')
+  })
+
+  it('blocks a solo→ensemble conversion when ensemble mode is disabled', () => {
+    const deps = createDeps({
+      getSettings: vi.fn(() => ({ ensembleModeEnabled: false }) as AppSettings)
+    })
+    registerChatHandlers(deps)
+
+    expect(() =>
+      handlerFor('set-chat-kind')({} as any, { chatId: 'chat-1', targetKind: 'ensemble' })
+    ).toThrow('Ensemble Mode is disabled.')
+    expect(deps.chatService.setChatKind).not.toHaveBeenCalled()
+  })
+
+  it('allows an ensemble→solo conversion even when ensemble mode is disabled', () => {
+    const deps = createDeps({
+      getSettings: vi.fn(() => ({ ensembleModeEnabled: false }) as AppSettings)
+    })
+    registerChatHandlers(deps)
+
+    const result = handlerFor('set-chat-kind')({} as any, {
+      chatId: 'chat-1',
+      targetKind: 'single'
+    })
+    expect(result).toEqual(chat('chat-1', { chatKind: 'single' }))
+    expect(deps.chatService.setChatKind).toHaveBeenCalledWith({
+      chatId: 'chat-1',
+      targetKind: 'single'
+    })
+  })
 })

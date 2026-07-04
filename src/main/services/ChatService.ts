@@ -1,8 +1,10 @@
 import type { AgentRunRoute } from '../run/AgentRunTypes'
 import type {
+  ChatKind,
   ChatListItem,
   ChatMessage,
   ChatRecord,
+  EnsembleParticipant,
   PinnedMessageGroup,
   ProviderId,
   RunEventInput,
@@ -60,6 +62,17 @@ export interface CreateSideChatInput {
   claudeReasoningEffort?: string | null
 }
 
+/** Slice C — in-place mid-thread ensemble toggle. */
+export interface SetChatKindInput {
+  chatId: string
+  targetKind: ChatKind
+  /** Solo→Ensemble: the single seed participant built by the renderer. */
+  seedParticipant?: EnsembleParticipant
+  /** Ensemble→Solo: the canonical provider the user picked in the modal. */
+  canonicalProvider?: ProviderId
+  canonicalProviderMetadata?: Record<string, unknown>
+}
+
 export interface ChatServiceStore {
   getChats: (workspaceId?: string) => ChatRecord[]
   getChatList: (workspaceId?: string) => ChatListItem[]
@@ -70,6 +83,15 @@ export interface ChatServiceStore {
   createEnsembleChat: (args?: { workspaceId?: string; workspacePath?: string }, configuredProviders?: Set<ProviderId>) => ChatRecord
   createSubThread: (args: CreateSubThreadInput) => ChatRecord
   createSideChat: (args: CreateSideChatInput) => ChatRecord
+  setChatKind: (
+    chatId: string,
+    targetKind: ChatKind,
+    opts?: {
+      seedParticipant?: EnsembleParticipant
+      canonicalProvider?: ProviderId
+      canonicalProviderMetadata?: Record<string, unknown>
+    }
+  ) => ChatRecord
   getChildChats: (parentChatId: string) => ChatRecord[]
   getSideChats: (parentChatId: string) => ChatRecord[]
   saveChat: (chat: ChatRecord) => void
@@ -229,6 +251,38 @@ export class ChatService {
     }
 
     return sideChat
+  }
+
+  /** Slice C — in-place mid-thread ensemble toggle. Validates + delegates to
+   * the AppStore mutation (which enforces the idle-only running guard + the
+   * single-participant seed). */
+  setChatKind(args: SetChatKindInput | undefined): ChatRecord {
+    const chatId = requireSafeChatId(args?.chatId, 'Chat id')
+    const targetKind: ChatKind = args?.targetKind === 'ensemble' ? 'ensemble' : 'single'
+    const result = this.deps.appStore.setChatKind(chatId, targetKind, {
+      seedParticipant: args?.seedParticipant,
+      canonicalProvider:
+        args?.canonicalProvider === undefined ? undefined : assertProviderId(args.canonicalProvider),
+      canonicalProviderMetadata:
+        args?.canonicalProviderMetadata && typeof args.canonicalProviderMetadata === 'object'
+          ? args.canonicalProviderMetadata
+          : undefined
+    })
+
+    try {
+      this.deps.appendDurableRunEventForRoute(
+        result.provider ?? 'gemini',
+        { appChatId: chatId },
+        'lifecycle',
+        'control',
+        targetKind === 'ensemble' ? 'Converted chat to Ensemble' : 'Converted chat to solo',
+        { chatKind: targetKind }
+      )
+    } catch {
+      // No active run — durable trace is best-effort.
+    }
+
+    return result
   }
 
   getSubThreads(parentChatId: string): ChatRecord[] {

@@ -87,6 +87,7 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'get-sub-threads': ['chatId'],
   'create-side-chat': ['object'],
   'get-side-chats': ['chatId'],
+  'set-chat-kind': ['object'],
   'save-chat': ['chatRecord'],
   'delete-chat': ['chatId'],
   // Human collaboration (shared chat: host + up to 2 human collaborators). These

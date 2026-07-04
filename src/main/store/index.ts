@@ -29,6 +29,9 @@ import {
   ApprovalLedgerScope,
   MessageFeedbackReceipt,
   ProviderId,
+  ChatKind,
+  EnsembleConfig,
+  EnsembleParticipant,
   SideChatMode,
   SideChatLifecycleState,
   RunRecoveryFilter,
@@ -78,6 +81,7 @@ import {
 } from './types'
 import { canonicalizeExternalPathGrantMetadata } from './ExternalPathGrants'
 import { createDefaultEnsembleConfig } from '../EnsembleDefaults'
+import { isEnsembleRoundDispatchLive } from '../../shared/ensembleRoundLifecycle'
 import { createHash, randomUUID } from 'crypto'
 import { buildRunQueueDispatchReceipt } from '../RunQueueDispatchReceipt'
 import {
@@ -2598,6 +2602,107 @@ export class AppStore {
       this.saveChat(chat)
     }
     return chat
+  }
+
+  /**
+   * Slice C — in-place mid-thread ensemble toggle (Q1=D locked semantics).
+   * Flips `chatKind` on the SAME appChatId, preserving all messages/runs/history.
+   *
+   * IDLE-ONLY (running-guard LOCKED): rejects while a run streams or an ensemble
+   * round is live. A chatKind flip swaps the entire runtime model (solo dispatch
+   * ↔ ensemble orchestrator), so toggling mid-run would orphan the activeRound /
+   * seat-locks / dispatch. The renderer also disables the toggle — this backend
+   * reject is defense in depth. Guard reads record-derivable signals only; it
+   * does NOT reach into EnsembleOrchestrator runtime.
+   *
+   * Solo→Ensemble: writes the ensemble block seeded with EXACTLY ONE participant.
+   * The seed is passed in by the renderer (built from the chat's current provider
+   * + providerMetadata via `getDefaultEnsembleParticipantConfig`, which is
+   * renderer-only — same pattern as Slice B's renderer-baked provider metadata).
+   * The single-participant array MUST be written before save, or
+   * `normalizeChatRecord` auto-fills the full default multi-provider roster.
+   *
+   * Ensemble→Solo: strips the ensemble block, sets `chat.provider` to the
+   * renderer-chosen canonical provider (never leave it stale), `chatKind:'single'`.
+   * Transcript + runs are preserved verbatim.
+   */
+  static setChatKind(
+    chatId: string,
+    targetKind: ChatKind,
+    opts: {
+      /** Solo→Ensemble: the single seed participant (renderer-built). */
+      seedParticipant?: EnsembleParticipant
+      /** Ensemble→Solo: the canonical provider the user picked in the modal. */
+      canonicalProvider?: ProviderId
+      /** Ensemble→Solo: optional provider-scoped metadata for the canonical provider. */
+      canonicalProviderMetadata?: Record<string, unknown>
+    } = {}
+  ): ChatRecord {
+    const chat = this.getChat(chatId)
+    if (!chat) {
+      throw new Error(`Cannot change chat mode: chat ${chatId} not found`)
+    }
+    const currentKind: ChatKind = chat.chatKind === 'ensemble' ? 'ensemble' : 'single'
+    const nextKind: ChatKind = targetKind === 'ensemble' ? 'ensemble' : 'single'
+    if (currentKind === nextKind) {
+      return chat // no-op — already the requested kind
+    }
+    // Running-guard (idle-only, LOCKED): reject while a run streams or an
+    // ensemble round is live. Record-derivable signals only.
+    const hasRunningRun = (chat.runs ?? []).some((run) => run.status === 'running')
+    const roundLive = isEnsembleRoundDispatchLive(chat.ensemble?.activeRound)
+    if (hasRunningRun || roundLive) {
+      throw new Error(
+        'Cannot change chat mode while a turn is active — finish the current turn first.'
+      )
+    }
+    const now = Date.now()
+    if (nextKind === 'ensemble') {
+      const seed = opts.seedParticipant
+      if (!seed) {
+        throw new Error('Cannot convert to Ensemble without a seed participant')
+      }
+      // Reuse the default config scaffolding (maxParticipants / orchestration /
+      // hops) but replace the roster with the SINGLE seed participant, so
+      // normalizeChatRecord keeps it (participants.length > 0) instead of
+      // auto-filling the multi-provider default roster.
+      const base = createDefaultEnsembleConfig(chat.provider)
+      const ensemble: EnsembleConfig = {
+        ...base,
+        participants: [seed],
+        updatedAt: new Date(now).toISOString()
+      }
+      const updated: ChatRecord = {
+        ...chat,
+        chatKind: 'ensemble',
+        ensemble,
+        updatedAt: now
+      }
+      this.saveChat(updated)
+      return this.getChat(chatId) ?? updated
+    }
+    // Ensemble→Solo: strip the ensemble block, set the canonical provider.
+    const canonicalProvider =
+      opts.canonicalProvider ||
+      chat.provider ||
+      coerceLiveProvider(this.getSettings().activeProvider)
+    const { ensemble: _dropEnsemble, ...withoutEnsemble } = chat
+    const updated: ChatRecord = {
+      ...withoutEnsemble,
+      chatKind: 'single',
+      provider: canonicalProvider,
+      ...(opts.canonicalProviderMetadata
+        ? {
+            providerMetadata: {
+              ...(withoutEnsemble.providerMetadata || {}),
+              ...opts.canonicalProviderMetadata
+            }
+          }
+        : {}),
+      updatedAt: now
+    }
+    this.saveChat(updated)
+    return this.getChat(chatId) ?? updated
   }
 
   static createSideChat(args: {

@@ -1,6 +1,12 @@
 import { ipcMain } from 'electron'
 import type { ChatService } from '../services/ChatService'
-import type { AppSettings, ChatRecord, ProviderId } from '../store/types'
+import type {
+  AppSettings,
+  ChatKind,
+  ChatRecord,
+  EnsembleParticipant,
+  ProviderId
+} from '../store/types'
 
 export interface ChatHandlerDeps {
   chatService: Pick<
@@ -15,6 +21,7 @@ export interface ChatHandlerDeps {
     | 'createSubThread'
     | 'getSubThreads'
     | 'createSideChat'
+    | 'setChatKind'
     | 'getSideChats'
   >
   getSettings: () => AppSettings
@@ -98,5 +105,25 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
   )
   ipcMain.handle('get-side-chats', (_event, parentChatId: string) =>
     deps.chatService.getSideChats(parentChatId)
+  )
+  ipcMain.handle(
+    'set-chat-kind',
+    (
+      _event,
+      args: {
+        chatId: string
+        targetKind: ChatKind
+        seedParticipant?: EnsembleParticipant
+        canonicalProvider?: ProviderId
+        canonicalProviderMetadata?: Record<string, unknown>
+      }
+    ) => {
+      if (args?.targetKind === 'ensemble' && deps.getSettings().ensembleModeEnabled === false) {
+        throw new Error('Ensemble Mode is disabled.')
+      }
+      const chat = deps.chatService.setChatKind(args)
+      deps.broadcastThreadUpdate(chat?.appChatId)
+      return chat
+    }
   )
 }

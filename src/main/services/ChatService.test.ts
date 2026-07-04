@@ -121,6 +121,9 @@ function makeStore(overrides: Partial<ChatServiceStore> = {}): ChatServiceStore 
         }
       })
     ),
+    setChatKind: vi.fn((chatId: string, targetKind: 'single' | 'ensemble') =>
+      makeChat({ appChatId: chatId, chatKind: targetKind })
+    ),
     getChildChats: vi.fn(() => [
       makeChat({
         appChatId: 'sub-thread-1',

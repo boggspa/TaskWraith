@@ -1030,6 +1030,13 @@ const api = {
     sideChatMode?: 'ensembleClone' | 'singleProvider' | 'fanOut'
   }) => ipcRenderer.invoke('create-side-chat', args),
   getSideChats: (parentChatId: string) => ipcRenderer.invoke('get-side-chats', parentChatId),
+  setChatKind: (args: {
+    chatId: string
+    targetKind: 'single' | 'ensemble'
+    seedParticipant?: unknown
+    canonicalProvider?: string
+    canonicalProviderMetadata?: Record<string, unknown>
+  }) => ipcRenderer.invoke('set-chat-kind', args),
   listDiscordContextTargets: () => ipcRenderer.invoke('discord-context:list-targets'),
   readDiscordContext: (selection: DiscordContextSelection) =>
     ipcRenderer.invoke('discord-context:read-channel', selection),
