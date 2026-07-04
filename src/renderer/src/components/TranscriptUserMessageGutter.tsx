@@ -28,6 +28,30 @@ interface ActiveMarkerState {
 const EDGE_CONTROL_SLOT_PX = 24
 const EDGE_CONTROL_GAP_PX = 22
 const GUTTER_VERTICAL_OFFSET_PX = 35
+const GUTTER_RAIL_WIDTH_PX = 34
+const GUTTER_COMPOSER_CLEARANCE_PX = 6
+
+/**
+ * Left edge of the pane's floating composer stack (surface + any above-bar
+ * rows), in viewport px. The rail's bottom third runs alongside the composer's
+ * vertical band, so the frame must keep the WHOLE rail left of this line —
+ * with the workspace sidebar collapsed the pane widens and the composer's
+ * left edge can otherwise cross the rail's x-position (bleed-under). Children
+ * are measured individually because the `.composer-area` wrapper itself spans
+ * the full pane width; its centred children are the visible furniture.
+ */
+function composerLeftEdgePx(scroller: HTMLElement): number | null {
+  const composerArea = scroller.closest('.app-transcript')?.querySelector('.composer-area')
+  if (!composerArea) return null
+  let left = Number.POSITIVE_INFINITY
+  for (const child of Array.from(composerArea.children)) {
+    if (!(child instanceof HTMLElement)) continue
+    const rect = child.getBoundingClientRect()
+    if (rect.width <= 0 || rect.height <= 0) continue
+    left = Math.min(left, rect.left)
+  }
+  return Number.isFinite(left) ? left : null
+}
 
 interface TranscriptUserMessageGutterProps {
   markers: readonly TranscriptUserGutterMarker[]
@@ -223,7 +247,20 @@ export function TranscriptUserMessageGutter({
       setFrame(null)
       return
     }
-    const left = Math.max(scrollerRect.left + 8, contentRect.left - 34)
+    let left = Math.max(scrollerRect.left + 8, contentRect.left - GUTTER_RAIL_WIDTH_PX)
+    // Keep the rail fully LEFT of the composer stack: the composer floats over
+    // the scroller's bottom band at a max-width that can exceed the transcript
+    // column's (sidebar collapsed → wider pane), so anchoring off the content
+    // edge alone lets the rail bleed under the composer. Clamp against the
+    // measured composer left edge; hide when there's no lane left of it.
+    const composerLeft = composerLeftEdgePx(scroller)
+    if (composerLeft !== null) {
+      left = Math.min(left, composerLeft - GUTTER_RAIL_WIDTH_PX - GUTTER_COMPOSER_CLEARANCE_PX)
+      if (left < scrollerRect.left + 4) {
+        setFrame(null)
+        return
+      }
+    }
     const topInset = clamp(scrollerRect.height * 0.12, 64, 104)
     const bottomInset = clamp(scrollerRect.height * 0.08, 56, 96)
     const top = scrollerRect.top + topInset + GUTTER_VERTICAL_OFFSET_PX
@@ -268,6 +305,11 @@ export function TranscriptUserMessageGutter({
       observer = new ResizeObserver(() => updateFrame())
       if (scroller) observer.observe(scroller)
       if (content) observer.observe(content)
+      // The composer clamp (composerLeftEdgePx) depends on the composer
+      // stack's size — observe it too so an ensemble roster mounting or a
+      // composer-style swap re-clamps the rail without a window resize.
+      const composerArea = scroller?.closest('.app-transcript')?.querySelector('.composer-area')
+      if (composerArea instanceof HTMLElement) observer.observe(composerArea)
     }
     return () => {
       observer?.disconnect()

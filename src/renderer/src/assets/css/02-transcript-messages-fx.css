@@ -320,6 +320,74 @@
   left: 80px;
 }
 
+/* Bottom-left VERTICAL pill — shown only while the workspace sidebar is
+ * collapsed (see CollapsedSidebarCornerPill). Same glass shell as the top
+ * pills, rotated to a column: Settings / Approvals / Shares / Devices. The
+ * shared `> *::before` divider rule below draws LEFT-edge separators; the
+ * column variant re-aims them at the TOP edge instead. */
+.chat-corner-controls.chat-corner-controls-bottom-left {
+  top: auto;
+  bottom: 14px;
+  left: calc(var(--space-sm) * 2);
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.chat-corner-controls.chat-corner-controls-bottom-left > *:not(:first-child)::before {
+  left: 6px;
+  right: 6px;
+  top: 0;
+  bottom: auto;
+  width: auto;
+  height: 1px;
+}
+
+.chat-corner-controls.chat-corner-controls-bottom-left .chat-corner-btn {
+  min-height: 38px;
+  width: 38px;
+}
+
+/* Sidebar-footer state glows, restyled for the glass pill's borderless icon
+ * buttons: colour + icon halo only (the sidebar variants also tint borders /
+ * backgrounds, which don't exist here). */
+.chat-corner-controls-bottom-left .chat-corner-btn.glow-red {
+  color: color-mix(in srgb, var(--danger, #e2554f) 90%, var(--text-primary));
+}
+.chat-corner-controls-bottom-left .chat-corner-btn.glow-red .sf-symbol-icon {
+  filter: drop-shadow(0 0 5px color-mix(in srgb, var(--danger, #e2554f) 58%, transparent));
+}
+.chat-corner-controls-bottom-left .chat-corner-btn.glow-yellow {
+  color: color-mix(in srgb, var(--warning, #f5b14c) 92%, var(--text-primary));
+}
+.chat-corner-controls-bottom-left .chat-corner-btn.glow-yellow .sf-symbol-icon {
+  filter: drop-shadow(0 0 5px color-mix(in srgb, var(--warning, #f5b14c) 56%, transparent));
+}
+.chat-corner-controls-bottom-left .chat-corner-btn.glow-green {
+  color: color-mix(in srgb, var(--success, #34d399) 88%, var(--text-primary));
+}
+.chat-corner-controls-bottom-left .chat-corner-btn.glow-green .sf-symbol-icon {
+  filter: drop-shadow(0 0 5px color-mix(in srgb, var(--success, #34d399) 60%, transparent));
+}
+
+/* The sidebar-footer popovers open ABOVE-RIGHT-ALIGNED inside the sidebar; from
+ * the bottom-left pill they open BESIDE it (bottom-aligned, to the right) so
+ * they never run off the window's left/bottom edges. `--sidebar-width` doesn't
+ * exist outside the sidebar, so pin an explicit width for the shell to size
+ * from. Dividers are per-BUTTON furniture — never on the popovers. */
+.chat-corner-controls-bottom-left .sidebar-footer-popover,
+.chat-corner-controls-bottom-left .sidebar-settings-menu {
+  --sidebar-width: 296px;
+  right: auto;
+  left: calc(100% + 10px);
+  bottom: 0;
+  transform-origin: bottom left;
+}
+
+.chat-corner-controls.chat-corner-controls-bottom-left
+  > :is(.sidebar-footer-popover, .sidebar-settings-menu)::before {
+  content: none;
+}
+
 /* Glide `left` in step with the 260ms sidebar collapse (see 13-panel-
  * transitions.css) so the pill slides in sync with the pane reclaiming the
  * space instead of snapping across the traffic lights. */

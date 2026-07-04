@@ -32,7 +32,18 @@ shipping these commits.
   go-to-message rail, anchored at the round's header. Clicking one
   auto-expands the round and glides to the prompt.
 
+- **Quick controls survive collapsing the sidebar.** Hiding the workspace
+  sidebar now surfaces a bottom-left vertical glass pill with the sidebar
+  footer's quick controls — Settings, Approvals (shield), Shares (share fan),
+  and Devices — each opening the same popover as its sidebar counterpart,
+  with the same pending-approval / collaborator / device-connected glows.
+
 ### Fixed
+- **Rail no longer bleeds under the composer.** With the workspace sidebar
+  collapsed, the go-to-message rail could overlap the floating composer's
+  left edge (the composer stack can be wider than the transcript column on a
+  wide pane). The rail now measures the composer and keeps itself fully to
+  the composer's left, hiding only when there's genuinely no lane for it.
 - **Right-dock panels no longer stack from the top pill.** The rim buttons
   (Run rail, Media, Notes/Pins, Terminal, File editor, Inspector) now route
   through the dock's exclusive lifecycle: opening one surface replaces the

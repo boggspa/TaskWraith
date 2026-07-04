@@ -13,6 +13,7 @@ import { isGlobalChat } from '../../lib/chatScope'
 import { RunRailPanel } from '../../components/RunRailPanel'
 import { decideApprovalElevation } from '../../lib/approvalElevation'
 import { Sidebar } from '../../components/Sidebar'
+import { CollapsedSidebarCornerPill } from '../../components/CollapsedSidebarCornerPill'
 import { WorkspaceBoardView } from '../../components/WorkspaceBoardView'
 import { Inspector, INSPECTOR_TAB_META } from '../../components/Inspector'
 import { RightDockSurfaceSwitcher } from '../../components/RightDockSurfaceSwitcher'
@@ -1059,6 +1060,40 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                 {currentChat?.title || currentWorkspace?.displayName || 'New chat'}
               </span>
             </div>
+          )}
+
+          {/* Sidebar collapsed → the footer quick controls (Settings /
+              Approvals / Shares / Devices) resurface as a bottom-left
+              vertical glass pill, so collapsing the sidebar never costs
+              access to pending approvals or device state. */}
+          {!isChatPopoutWindow && !showWorkspaceSidebar && (
+            <CollapsedSidebarCornerPill
+              chats={chats}
+              onSelectChat={handleSelectChat}
+              quickSettings={{
+                composerStyle: appearance.composerStyle,
+                themeAccentStyle: appearance.themeAccentStyle,
+                themeAppearance: appearance.themeAppearance,
+                toolIconAccent: appearance.toolIconAccent
+              }}
+              onAppearanceQuickChange={handleSettingsChange}
+              onOpenSettings={() => setShowSettings(true)}
+              onOpenSettingsTab={(tab) => {
+                setSettingsActiveTab(tab)
+                setShowSettings(true)
+              }}
+              onOpenWorkspacePopout={openWorkspacePopoutWindow}
+              canOpenWorkspacePopout={canOpenWorkspacePopout}
+              onQuitApp={() => {
+                void window.api.quitApp?.()
+              }}
+              pendingAgentApprovalByChatId={pendingAgentApprovalByChatId}
+              pendingApprovalQueueByChatId={pendingApprovalQueueByChatId}
+              collaborationShares={humanCollaborationShares}
+              collaboratingChatIds={collaboratingChatIds}
+              hasConnectedCollaborator={connectedCollaborationChatIds.size > 0}
+              onRevokeShare={handleRevokeHumanShare}
+            />
           )}
 
           {!isChatPopoutWindow && (

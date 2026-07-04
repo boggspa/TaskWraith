@@ -294,7 +294,7 @@ interface SidebarProps {
   modelUsageApiSpend?: ModelUsageApiSpendOptions
 }
 
-interface PairedRemoteDeviceSummary {
+export interface PairedRemoteDeviceSummary {
   iphoneIdentityPubKey: string
   pairId: string
   controllerDisplayName: string
@@ -438,7 +438,7 @@ const SIDEBAR_SECTION_PREVIEW_LIMIT = 5
  *  the Workspaces / Chats sections already surface. */
 const SIDEBAR_RECENTS_MAX = 20
 
-type SidebarSettingsMenuPane = 'root' | 'themes' | 'composer' | 'accent' | 'system' | 'tool'
+export type SidebarSettingsMenuPane = 'root' | 'themes' | 'composer' | 'accent' | 'system' | 'tool'
 
 const SIDEBAR_COMPOSER_STYLE_OPTIONS: Array<{ value: ComposerStyle; label: string }> = [
   { value: 'default', label: 'TaskWraith native' },
@@ -527,7 +527,7 @@ function FolderSymbolIcon() {
   )
 }
 
-function GearSymbolIcon() {
+export function GearSymbolIcon() {
   return (
     <span className="sf-symbol-icon" aria-hidden>
       <svg
@@ -583,7 +583,7 @@ function MenuCheckIcon() {
   )
 }
 
-function RemoteConnectionSymbolIcon() {
+export function RemoteConnectionSymbolIcon() {
   return (
     <span className="sf-symbol-icon" aria-hidden>
       <svg
@@ -606,7 +606,7 @@ function RemoteConnectionSymbolIcon() {
 
 // Shield + check — mirrors the Settings → "Approvals & Grants" tab glyph so the
 // footer Approvals button reads as the same surface.
-function ApprovalsShieldIcon() {
+export function ApprovalsShieldIcon() {
   return (
     <span className="sf-symbol-icon" aria-hidden>
       <svg
@@ -627,7 +627,7 @@ function ApprovalsShieldIcon() {
 // Share-fan: one source node linking out to two recipients. Distinct from the
 // People (two-person) glyph and the shield — reads as "this thread is shared
 // out to others".
-function ShareNetworkIcon() {
+export function ShareNetworkIcon() {
   return (
     <span className="sf-symbol-icon" aria-hidden>
       <svg
@@ -712,7 +712,7 @@ function moveMenuFocus(event: KeyboardEvent<HTMLDivElement>): void {
   items[nextIndex]?.focus()
 }
 
-function SidebarSettingsMenu({
+export function SidebarSettingsMenu({
   pane,
   setPane,
   quickSettings,
