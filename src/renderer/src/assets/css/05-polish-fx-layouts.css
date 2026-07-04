@@ -4519,7 +4519,7 @@ button.sidebar-footer-approval-row.is-clickable:focus-visible {
   border: 0;
   height: 1px;
   margin: 1.2rem 0;
-  background: linear-gradient(90deg, transparent, rgb(var(--agent-accent-rgb) / 0.32), transparent);
+  background: linear-gradient(90deg, transparent, rgb(184 191 200 / 0.5), transparent);
 }
 
 .message-markdown-pro .markdown-table-scroll {
