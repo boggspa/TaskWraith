@@ -26,7 +26,7 @@ const ENSEMBLE_FANOUT_POLICIES = new Set<EnsembleFanoutPolicy>([
  * `MAX_ROSTER_PRESET_PARTICIPANTS` clamp in App.tsx's
  * `applyEnsembleRosterPreset`.
  */
-export const MIN_ROSTER_PRESET_PARTICIPANTS = 2
+export const MIN_ROSTER_PRESET_PARTICIPANTS = 1
 // 1.7.x — 18 → 20 in step with MAX_ENSEMBLE_PARTICIPANTS.
 export const MAX_ROSTER_PRESET_PARTICIPANTS = 20
 const DEFAULT_ROSTER_PRESET_MAX_PARTICIPANTS = 6
@@ -555,8 +555,8 @@ export function saveEnsembleRosterPresetFromParticipants(
 }
 
 /**
- * Create + persist a new roster preset seeded with the minimum two
- * participants (the live ensemble floor). The returned preset already passes
+ * Create + persist a new roster preset seeded with a practical
+ * two-participant starter lineup. The returned preset already passes
  * `isEnsembleRosterPreset`, so it survives the next `readRawPresets`.
  */
 export function createEmptyEnsembleRosterPreset(name: string): EnsembleRosterPreset {

@@ -222,7 +222,7 @@ function RosterParticipantRow({
               className="settings-roster-remove"
               onClick={() => onRemove(participant.id)}
               disabled={!canRemove}
-              title={canRemove ? 'Remove participant' : `Keep at least ${MIN_ROSTER_PRESET_PARTICIPANTS}`}
+              title={canRemove ? 'Remove participant' : 'Keep at least one participant'}
               aria-label="Remove participant"
               style={{ marginLeft: 'auto' }}
             >
@@ -290,7 +290,7 @@ function RosterParticipantRow({
             className="settings-roster-remove"
             onClick={() => onRemove(participant.id)}
             disabled={!canRemove}
-            title={canRemove ? 'Remove participant' : `Keep at least ${MIN_ROSTER_PRESET_PARTICIPANTS}`}
+            title={canRemove ? 'Remove participant' : 'Keep at least one participant'}
             aria-label="Remove participant"
           >
             ✕

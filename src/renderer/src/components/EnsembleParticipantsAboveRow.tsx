@@ -68,9 +68,8 @@ import { getProviderName } from './Sidebar'
 // 1.0.4-AR2 — global ceiling raised from 6 → 8 so the panel can host
 // the broader four-provider roster plus alternates (e.g. two Claudes
 // in different roles). The hard minimum is enforced in
-// `removeParticipant` below at `<= 2` so a panel is never reduced to
-// a solo speaker — keeps the ensemble distinct from a single-provider
-// chat throughout its lifecycle.
+// `removeParticipant` below at `<= 1` so a panel is never reduced to
+// zero participants.
 //
 // 1.0.5-EW1 — Ceiling raised again 8 → 12. The chip strip now wraps
 // at 7+ participants instead of overflowing horizontally.
@@ -84,7 +83,7 @@ import { getProviderName } from './Sidebar'
 // main-process copies (EnsembleRosterMutation.ts, EnsemblePrompt.ts)
 // and MAX_ROSTER_PRESET_PARTICIPANTS in ensembleRosterPresets.ts.
 const MAX_ENSEMBLE_PARTICIPANTS = 20
-const MIN_ENSEMBLE_PARTICIPANTS = 2
+const MIN_ENSEMBLE_PARTICIPANTS = 1
 // Threshold at which the chip strip switches from the centered
 // content-width flex layout to the balanced-rows grid. 6 is the first
 // count that no longer fits the 5-per-row ceiling on a single row.
@@ -786,11 +785,9 @@ export function EnsembleParticipantsAboveRow({
   }
 
   const removeParticipant = (id: string): void => {
-    // 1.0.4-AR2 — hard floor of 2 participants. Pre-AR2 this was
-    // `<= 1` (i.e. you could always have a solo ensemble), which
-    // defeats the point of the ensemble surface. The chip strip
-    // already renders the trash button disabled when at the floor;
-    // this guard is the defense-in-depth for IPC-driven roster edits.
+    // Keep a live ensemble roster non-empty. The chip strip already
+    // renders the trash button disabled at the floor; this guard is
+    // the defense-in-depth for IPC-driven roster edits.
     if (isRoundRunning || participants.length <= MIN_ENSEMBLE_PARTICIPANTS) return
     const nextSelectedParticipantId = resolveParticipantSelectionAfterRemoval(
       participants,
@@ -1162,7 +1159,7 @@ export function EnsembleParticipantsAboveRow({
         "+" on the right edge so the roster's add/remove controls
         live in one visual locus, freeing the popover from
         carrying a destructive row. Disabled when no chip is
-        selected, when at the 2-participant floor, or when a round
+        selected, when at the 1-participant floor, or when a round
         is running (matches `removeParticipant`'s own guards).
       */}
       <button
@@ -1182,7 +1179,7 @@ export function EnsembleParticipantsAboveRow({
             : !selectedParticipantId
               ? 'Select a participant chip first.'
               : participants.length <= MIN_ENSEMBLE_PARTICIPANTS
-                ? `Ensembles require at least ${MIN_ENSEMBLE_PARTICIPANTS} participants.`
+                ? 'Ensembles need at least one participant.'
                 : 'Remove the selected participant'
         }
         aria-label="Remove selected Ensemble participant"
