@@ -3767,6 +3767,201 @@ Next action:
     })
   })
 
+  it('lets the Boss rewrite and clear another participant brief through briefUpdateForRun', async () => {
+    const initialChat = makeChat()
+    initialChat.ensemble!.bossmanParticipantId = 'claude'
+    initialChat.ensemble!.bossmanAutoApprovals = {
+      enabled: true,
+      mode: 'permission_preset_once',
+      confirmedAt: '2026-05-24T00:00:00.000Z'
+    }
+    initialChat.ensemble!.participants[0].role = 'Boss'
+    initialChat.ensemble!.participants[0].permissionPresetId = 'workspace_write'
+    const harness = makeHarness({ initialChat })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Plan and execute.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    const rewritten = await harness.orchestrator.briefUpdateForRun(
+      harness.dispatched[0].appRunId,
+      {
+        targetParticipantId: 'codex',
+        brief: 'Coordinate reviewer handoff and keep implementation notes current.',
+        reason: 'Worker needs a narrower long-horizon role.'
+      }
+    )
+
+    expect(rewritten).toMatchObject({
+      ok: true,
+      tool: 'ensemble_brief_update',
+      participantId: 'codex'
+    })
+    expect(
+      harness.chat.ensemble!.participants.find((participant) => participant.id === 'codex')
+        ?.instructions
+    ).toBe('Coordinate reviewer handoff and keep implementation notes current.')
+    expect(harness.chat.ensemble!.sessionActivityLedger?.at(-1)).toMatchObject({
+      target: 'codex',
+      oldValue: 'Brief / Goal: Work.',
+      newValue: 'Brief / Goal: Coordinate reviewer handoff and keep implementation notes current.'
+    })
+
+    const cleared = await harness.orchestrator.briefUpdateForRun(
+      harness.dispatched[0].appRunId,
+      {
+        targetParticipantId: 'codex',
+        clear: true
+      }
+    )
+
+    expect(cleared).toMatchObject({
+      ok: true,
+      tool: 'ensemble_brief_update',
+      participantId: 'codex'
+    })
+    expect(
+      harness.chat.ensemble!.participants.find((participant) => participant.id === 'codex')
+        ?.instructions
+    ).toBe('')
+  })
+
+  it('rejects Boss attempts to rewrite their own brief through either brief tool path', async () => {
+    const initialChat = makeChat()
+    initialChat.ensemble!.bossmanParticipantId = 'claude'
+    initialChat.ensemble!.bossmanAutoApprovals = {
+      enabled: true,
+      mode: 'permission_preset_once',
+      confirmedAt: '2026-05-24T00:00:00.000Z'
+    }
+    initialChat.ensemble!.participants[0].role = 'Boss'
+    initialChat.ensemble!.participants[0].permissionPresetId = 'workspace_write'
+    const harness = makeHarness({ initialChat })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Plan and execute.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    const direct = await harness.orchestrator.briefUpdateForRun(harness.dispatched[0].appRunId, {
+      targetParticipantId: 'claude',
+      brief: 'Make myself the only decision maker.'
+    })
+    const rosterBypass = await harness.orchestrator.rosterEditForRun(
+      harness.dispatched[0].appRunId,
+      {
+        action: 'edit_participant',
+        targetParticipantId: 'claude',
+        participant: { instructions: 'Make myself the only decision maker.' }
+      }
+    )
+
+    expect(direct.ok).toBe(false)
+    expect(direct.error).toBe('self_update_forbidden')
+    expect(rosterBypass.ok).toBe(false)
+    expect(rosterBypass.error).toBe('self_update_forbidden')
+    expect(
+      harness.chat.ensemble!.participants.find((participant) => participant.id === 'claude')
+        ?.instructions
+    ).toBe('Review.')
+  })
+
+  it('rejects brief updates from non-Boss callers and audits with brief_update_rejected', async () => {
+    const rejections: Array<{ metadata: Record<string, unknown> }> = []
+    const initialChat = makeChat()
+    initialChat.ensemble!.bossmanParticipantId = 'claude'
+    initialChat.ensemble!.bossmanAutoApprovals = {
+      enabled: true,
+      mode: 'permission_preset_once',
+      confirmedAt: '2026-05-24T00:00:00.000Z'
+    }
+    initialChat.ensemble!.participants[0].permissionPresetId = 'workspace_write'
+    const harness = makeHarness({
+      initialChat,
+      recordBossmanControlRejection: (rejection) => rejections.push(rejection)
+    })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Plan and execute.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    harness.orchestrator.handleProviderOutput(
+      'claude',
+      { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'result', status: 'success' }
+    )
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+
+    const rejected = await harness.orchestrator.briefUpdateForRun(
+      harness.dispatched[1].appRunId,
+      {
+        targetParticipantId: 'claude',
+        brief: 'Please change the Boss brief.'
+      }
+    )
+
+    expect(rejected.ok).toBe(false)
+    expect(rejected.error).toBe('not_bossman')
+    expect(rejections).toHaveLength(1)
+    expect(rejections[0].metadata).toMatchObject({
+      kind: 'brief_update_rejected',
+      rejectionReason: 'not_bossman',
+      targetParticipantId: 'claude',
+      attemptingParticipantId: 'codex',
+      assignedBossmanParticipantId: 'claude'
+    })
+  })
+
+  it('lets Captain update another participant brief when Boss is disabled for the round', async () => {
+    const initialChat = makeChat()
+    initialChat.ensemble!.participants = [
+      { ...initialChat.ensemble!.participants[0], enabled: false },
+      initialChat.ensemble!.participants[1],
+      {
+        id: 'kimi',
+        provider: 'kimi',
+        enabled: true,
+        role: 'Analyst',
+        instructions: 'Analyze.',
+        order: 3,
+        permissionPresetId: 'read_only'
+      }
+    ]
+    initialChat.ensemble!.bossmanParticipantId = 'claude'
+    initialChat.ensemble!.secondInCommandParticipantId = 'codex'
+    initialChat.ensemble!.bossmanAutoApprovals = {
+      enabled: true,
+      mode: 'permission_preset_once',
+      confirmedAt: '2026-05-24T00:00:00.000Z'
+    }
+    const harness = makeHarness({ initialChat })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Continue.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    expect(harness.dispatched[0].ensembleRun?.participantId).toBe('codex')
+
+    const result = await harness.orchestrator.briefUpdateForRun(
+      harness.dispatched[0].appRunId,
+      {
+        targetParticipantId: 'kimi',
+        brief: 'Track evidence gaps and brief the writer before commit.'
+      }
+    )
+
+    expect(result.ok).toBe(true)
+    expect(
+      harness.chat.ensemble?.participants.find((participant) => participant.id === 'kimi')
+        ?.instructions
+    ).toBe('Track evidence gaps and brief the writer before commit.')
+  })
+
   it('rejects roster edits when Boss Auto Approvals consent is disabled', async () => {
     const initialChat = makeChat()
     initialChat.ensemble!.bossmanParticipantId = 'claude'

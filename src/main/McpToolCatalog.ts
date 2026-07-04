@@ -2329,9 +2329,47 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
       }
     },
     {
+      name: 'ensemble_brief_update',
+      description:
+        'In Ensemble Mode, lets the assigned Boss participant, or Captain only after Boss is unavailable, set or clear another participant\'s Brief / Goal for future turns. Authority-only and audited; requires the user\'s Allow Auto Approvals opt-in on the Ensemble. Call list_ensemble_participants first to inspect live participant ids. The caller cannot edit their own brief.',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          roundId: {
+            type: 'string',
+            description: 'Optional stale-command guard. Must match the active Ensemble round id.'
+          },
+          targetParticipantId: {
+            type: 'string',
+            description: 'Participant id whose Brief / Goal should change. The caller cannot target themself.'
+          },
+          brief: {
+            type: 'string',
+            description:
+              'Replacement Brief / Goal text. Empty string clears the brief unless clear=true is supplied.'
+          },
+          clear: {
+            type: 'boolean',
+            description: 'When true, clears the target participant Brief / Goal and ignores brief.'
+          },
+          reason: {
+            type: 'string',
+            description: 'Human-readable rationale recorded into transcript/status metadata.'
+          }
+        },
+        required: ['targetParticipantId']
+      }
+    },
+    {
       name: 'list_ensemble_participants',
       description:
-        'In Ensemble Mode, list the current participants, providers, roles, models, per-round statuses, Boss/Captain roster-edit eligibility, available provider/model catalog, per-model context windows, and coarse provider quota bands for the active round. Boss participants and active Captain should use this before ensemble_roster_edit when selecting a replacement provider/model. Context usage fields are latest usage-bearing run estimates: contextTokens is latest input+output tokens, contextWindow is the resolved token window, and contextPercent is a 0-100 usage percentage; in-flight output is not included.',
+        'In Ensemble Mode, list the current participants, providers, roles, models, per-round statuses, Boss/Captain roster-edit eligibility, available provider/model catalog, per-model context windows, and coarse provider quota bands for the active round. Boss participants and active Captain should use this before ensemble_roster_edit when selecting a replacement provider/model, or before ensemble_brief_update when changing another participant Brief / Goal. Context usage fields are latest usage-bearing run estimates: contextTokens is latest input+output tokens, contextWindow is the resolved token window, and contextPercent is a 0-100 usage percentage; in-flight output is not included.',
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,

@@ -11,7 +11,7 @@ Local Ollama models call any tool by emitting exactly one JSON object per turn:
 {"taskwraith_tool":{"name":"<tool>","arguments":{ ... }}}
 ```
 
-The 145 tools below are the full TaskWraith surface, generated from the tool catalog so this reference cannot drift from what the app actually grants. Every mutating tool (file edits, shell, publishing) is gated by your run's permission role, and paths must stay inside the active workspace.
+The 146 tools below are the full TaskWraith surface, generated from the tool catalog so this reference cannot drift from what the app actually grants. Every mutating tool (file edits, shell, publishing) is gated by your run's permission role, and paths must stay inside the active workspace.
 
 ## run_shell_command
 
@@ -786,9 +786,18 @@ In Ensemble Mode, lets the assigned Boss participant, or Captain only after Boss
 - Optional args: roundId, targetParticipantId, participant
 - Example: `{"taskwraith_tool":{"name":"ensemble_roster_edit","arguments":{"action":"text"}}}`
 
+## ensemble_brief_update
+
+In Ensemble Mode, lets the assigned Boss participant, or Captain only after Boss is unavailable, set or clear another participant's Brief / Goal for future turns. Authority-only and audited; requires the user's Allow Auto Approvals opt-in on the Ensemble. Call list_ensemble_participants first to inspect live participant ids. The caller cannot edit their own brief.
+
+- Access: governed by your run permission role
+- Required args: targetParticipantId
+- Optional args: roundId, brief, clear, reason
+- Example: `{"taskwraith_tool":{"name":"ensemble_brief_update","arguments":{"targetParticipantId":"text"}}}`
+
 ## list_ensemble_participants
 
-In Ensemble Mode, list the current participants, providers, roles, models, per-round statuses, Boss/Captain roster-edit eligibility, available provider/model catalog, per-model context windows, and coarse provider quota bands for the active round. Boss participants and active Captain should use this before ensemble_roster_edit when selecting a replacement provider/model. Context usage fields are latest usage-bearing run estimates: contextTokens is latest input+output tokens, contextWindow is the resolved token window, and contextPercent is a 0-100 usage percentage; in-flight output is not included.
+In Ensemble Mode, list the current participants, providers, roles, models, per-round statuses, Boss/Captain roster-edit eligibility, available provider/model catalog, per-model context windows, and coarse provider quota bands for the active round. Boss participants and active Captain should use this before ensemble_roster_edit when selecting a replacement provider/model, or before ensemble_brief_update when changing another participant Brief / Goal. Context usage fields are latest usage-bearing run estimates: contextTokens is latest input+output tokens, contextWindow is the resolved token window, and contextPercent is a 0-100 usage percentage; in-flight output is not included.
 
 - Access: read-only (no approval needed)
 - Required args: none

@@ -142,6 +142,8 @@ export type EnsembleQueuedSteerResult = {
 const BOSSMAN_ASSIGNABLE_PERMISSION_PRESET_SET = new Set<string>(ASSIGNABLE_PERMISSION_PRESETS)
 const ENSEMBLE_SEAT_STAGE_ROLES = new Set<string>(['scout', 'worker', 'reviewer'])
 const SESSION_ACTIVITY_LEDGER_LIMIT = 40
+const MAX_BOSSMAN_BRIEF_CHARS = 4000
+const BRIEF_SEAT_VALUE_PREVIEW_CHARS = 160
 type HostSeatCompactionProvider = 'cursor' | 'kimi' | 'grok'
 function isHostSeatCompactionProvider(provider: ProviderId): provider is HostSeatCompactionProvider {
   return provider === 'cursor' || provider === 'kimi' || provider === 'grok'
@@ -646,9 +648,37 @@ export interface EnsembleRosterEditResult {
     | 'second_in_command_standby'
     | 'invalid_action'
     | 'stale_round'
+    | 'self_update_forbidden'
     | 'unknown_provider'
     | 'health_check_unavailable'
     | 'participant_unreachable'
+}
+
+export interface EnsembleBriefUpdateInput {
+  roundId?: string
+  targetParticipantId?: string
+  brief?: string
+  clear?: boolean
+  reason?: string
+}
+
+export interface EnsembleBriefUpdateResult {
+  ok: boolean
+  tool: 'ensemble_brief_update'
+  message: string
+  roundId?: string
+  participantId?: string
+  deferred?: boolean
+  error?:
+    | RosterEditError
+    | 'no_active_run'
+    | 'not_ensemble'
+    | 'no_active_round'
+    | 'bossman_not_configured'
+    | 'not_bossman'
+    | 'second_in_command_standby'
+    | 'stale_round'
+    | 'self_update_forbidden'
 }
 
 export interface EnsembleParticipantSeatChangeInput {
@@ -1448,6 +1478,28 @@ function participantSeatValue(participant: EnsembleParticipant): string {
   const role = participant.role ? ` (${participant.role})` : ''
   const stage = participant.stageRole ? ` [${participant.stageRole}]` : ''
   return `${provider}${model}${role}${stage}`
+}
+
+function compactBriefValue(value: string): string {
+  const normalized = value.trim().replace(/\s+/g, ' ')
+  if (!normalized) return '(empty)'
+  return normalized.length > BRIEF_SEAT_VALUE_PREVIEW_CHARS
+    ? `${normalized.slice(0, BRIEF_SEAT_VALUE_PREVIEW_CHARS - 3)}...`
+    : normalized
+}
+
+function participantSeatChangeValue(
+  before: EnsembleParticipant,
+  after: EnsembleParticipant,
+  participant: EnsembleParticipant
+): string {
+  if (
+    participantSeatValue(before) === participantSeatValue(after) &&
+    before.instructions !== after.instructions
+  ) {
+    return `Brief / Goal: ${compactBriefValue(participant.instructions)}`
+  }
+  return participantSeatValue(participant)
 }
 
 function hasSeatChangePatch(patch: RosterEditParticipantInput | undefined | null): boolean {
@@ -3319,6 +3371,22 @@ export class EnsembleOrchestrator {
         error: 'stale_target'
       }
     }
+    if (
+      action === 'edit_participant' &&
+      input.targetParticipantId === caller.participant.id &&
+      input.participant &&
+      Object.prototype.hasOwnProperty.call(input.participant, 'instructions')
+    ) {
+      return {
+        ok: false,
+        tool: 'ensemble_roster_edit',
+        action,
+        roundId: runtime.roundId,
+        participantId: caller.participant.id,
+        message: 'Roster edit rejected: Boss/Captain participants cannot update their own Brief / Goal through MCP.',
+        error: 'self_update_forbidden'
+      }
+    }
 
     const preflightCallerPermissions = this.resolveParticipantPermissions(
       chat,
@@ -3580,6 +3648,356 @@ export class EnsembleOrchestrator {
     }
   }
 
+  async briefUpdateForRun(
+    runId: string | undefined,
+    input: EnsembleBriefUpdateInput
+  ): Promise<EnsembleBriefUpdateResult> {
+    const targetParticipantId =
+      typeof input.targetParticipantId === 'string' ? input.targetParticipantId.trim() : ''
+    const clear = input.clear === true
+    const hasBrief = typeof input.brief === 'string'
+    const nextBrief = clear ? '' : hasBrief ? input.brief! : undefined
+    if (!targetParticipantId) {
+      return {
+        ok: false,
+        tool: 'ensemble_brief_update',
+        message: 'Brief update rejected: targetParticipantId is required.',
+        error: 'invalid_request'
+      }
+    }
+    if (nextBrief === undefined) {
+      return {
+        ok: false,
+        tool: 'ensemble_brief_update',
+        message: 'Brief update rejected: provide brief text or set clear=true.',
+        error: 'invalid_request'
+      }
+    }
+    if (nextBrief.length > MAX_BOSSMAN_BRIEF_CHARS) {
+      return {
+        ok: false,
+        tool: 'ensemble_brief_update',
+        message: `Brief update rejected: brief is longer than ${MAX_BOSSMAN_BRIEF_CHARS} characters.`,
+        error: 'invalid_request'
+      }
+    }
+    if (!runId) {
+      return {
+        ok: false,
+        tool: 'ensemble_brief_update',
+        message: 'ensemble_brief_update requires an active Ensemble participant run.',
+        error: 'no_active_run'
+      }
+    }
+    const caller = this.runsByRunId.get(runId)
+    if (!caller) {
+      return {
+        ok: false,
+        tool: 'ensemble_brief_update',
+        message: 'No active Ensemble participant run matches this brief update call.',
+        error: 'no_active_run'
+      }
+    }
+    const chat = this.deps.getChat(caller.chatId)
+    if (!chat?.ensemble) {
+      return {
+        ok: false,
+        tool: 'ensemble_brief_update',
+        message: 'The active chat is not an Ensemble chat.',
+        error: 'not_ensemble'
+      }
+    }
+    const runtime = this.roundsByChatId.get(caller.chatId)
+    if (!runtime || runtime.roundId !== caller.roundId || runtime.cancelled) {
+      return {
+        ok: false,
+        tool: 'ensemble_brief_update',
+        message: 'There is no active Ensemble round for this brief update call.',
+        error: 'no_active_round'
+      }
+    }
+    if (input.roundId && input.roundId !== runtime.roundId) {
+      return {
+        ok: false,
+        tool: 'ensemble_brief_update',
+        roundId: runtime.roundId,
+        message: 'Brief update rejected: roundId is no longer active.',
+        error: 'stale_round'
+      }
+    }
+    const authority = this.resolveBossAuthorityForCaller(chat, runtime, caller.participant.id)
+    if (!authority.ok) {
+      this.appendRoundStatus(
+        caller.chatId,
+        runtime.roundId,
+        `Brief update rejected from ${caller.participant.role || caller.participant.provider}: ${authority.message}.`
+      )
+      if (authority.error !== 'bossman_not_configured') {
+        this.deps.recordBossmanControlRejection?.({
+          provider: caller.participant.provider,
+          workspacePath: chat.workspacePath,
+          chatId: caller.chatId,
+          runId: caller.runId,
+          metadata: {
+            kind: 'brief_update_rejected',
+            rejectionReason: authority.error,
+            roundId: runtime.roundId,
+            targetParticipantId,
+            attemptingParticipantId: caller.participant.id,
+            attemptingParticipantRole: caller.participant.role,
+            attemptingProvider: caller.participant.provider,
+            assignedBossmanParticipantId: authority.bossmanParticipantId,
+            assignedSecondInCommandParticipantId: authority.secondInCommandParticipantId,
+            primaryUnavailableReason: authority.primaryUnavailableReason
+          }
+        })
+      }
+      return {
+        ok: false,
+        tool: 'ensemble_brief_update',
+        roundId: runtime.roundId,
+        participantId: caller.participant.id,
+        message: `Brief update rejected: ${authority.message}.`,
+        error: authority.error
+      }
+    }
+    if (targetParticipantId === caller.participant.id) {
+      return {
+        ok: false,
+        tool: 'ensemble_brief_update',
+        roundId: runtime.roundId,
+        participantId: caller.participant.id,
+        message: 'Brief update rejected: Boss/Captain participants cannot update their own Brief / Goal through MCP.',
+        error: 'self_update_forbidden'
+      }
+    }
+    if (!this.roundHasParticipant(chat.ensemble.activeRound, runtime.roundId, targetParticipantId)) {
+      return {
+        ok: false,
+        tool: 'ensemble_brief_update',
+        roundId: runtime.roundId,
+        message: 'Brief update rejected: targetParticipantId is not part of the active round.',
+        error: 'stale_target'
+      }
+    }
+
+    const patch: RosterEditParticipantInput = { instructions: nextBrief }
+    const preflightCallerPermissions = this.resolveParticipantPermissions(
+      chat,
+      caller.participant,
+      runtime.externalPathGrants
+    )
+    const preflight = evaluateRosterEdit(
+      {
+        action: 'edit_participant',
+        targetParticipantId,
+        participant: patch
+      },
+      {
+        participants: chat.ensemble.participants,
+        bossmanParticipantId: authority.rosterGuardParticipantId,
+        autoApprovals: chat.ensemble.bossmanAutoApprovals,
+        roundReadOnly: preflightCallerPermissions.readOnly,
+        nextParticipantId: () => this.nextRosterEditParticipantId(chat.ensemble!.participants)
+      }
+    )
+    if (!preflight.ok) {
+      return {
+        ok: false,
+        tool: 'ensemble_brief_update',
+        roundId: runtime.roundId,
+        message: preflight.message,
+        error: preflight.error
+      }
+    }
+
+    const currentRuntime = this.roundsByChatId.get(caller.chatId)
+    if (!currentRuntime || currentRuntime.roundId !== runtime.roundId || currentRuntime.cancelled) {
+      return {
+        ok: false,
+        tool: 'ensemble_brief_update',
+        roundId: runtime.roundId,
+        message: 'There is no active Ensemble round for this brief update call.',
+        error: 'no_active_round'
+      }
+    }
+    const latestChat = this.deps.getChat(runtime.chatId)
+    if (!latestChat?.ensemble) {
+      return {
+        ok: false,
+        tool: 'ensemble_brief_update',
+        roundId: runtime.roundId,
+        message: 'Brief update rejected: active chat is no longer an Ensemble chat.',
+        error: 'not_ensemble'
+      }
+    }
+    const latestAuthority = this.resolveBossAuthorityForCaller(
+      latestChat,
+      runtime,
+      caller.participant.id
+    )
+    if (!latestAuthority.ok) {
+      this.appendRoundStatus(
+        caller.chatId,
+        runtime.roundId,
+        `Brief update rejected from ${caller.participant.role || caller.participant.provider}: ${latestAuthority.message}.`
+      )
+      if (latestAuthority.error !== 'bossman_not_configured') {
+        this.deps.recordBossmanControlRejection?.({
+          provider: caller.participant.provider,
+          workspacePath: latestChat.workspacePath,
+          chatId: caller.chatId,
+          runId: caller.runId,
+          metadata: {
+            kind: 'brief_update_rejected',
+            rejectionReason: latestAuthority.error,
+            roundId: runtime.roundId,
+            targetParticipantId,
+            attemptingParticipantId: caller.participant.id,
+            attemptingParticipantRole: caller.participant.role,
+            attemptingProvider: caller.participant.provider,
+            assignedBossmanParticipantId: latestAuthority.bossmanParticipantId,
+            assignedSecondInCommandParticipantId: latestAuthority.secondInCommandParticipantId,
+            primaryUnavailableReason: latestAuthority.primaryUnavailableReason
+          }
+        })
+      }
+      return {
+        ok: false,
+        tool: 'ensemble_brief_update',
+        roundId: runtime.roundId,
+        participantId: caller.participant.id,
+        message: `Brief update rejected: ${latestAuthority.message}.`,
+        error: latestAuthority.error
+      }
+    }
+    if (!this.roundHasParticipant(latestChat.ensemble.activeRound, runtime.roundId, targetParticipantId)) {
+      return {
+        ok: false,
+        tool: 'ensemble_brief_update',
+        roundId: runtime.roundId,
+        message: 'Brief update rejected: targetParticipantId is not part of the active round.',
+        error: 'stale_target'
+      }
+    }
+    const latestCaller =
+      latestChat.ensemble.participants.find((participant) => participant.id === caller.participant.id) ||
+      caller.participant
+    const callerPermissions = this.resolveParticipantPermissions(
+      latestChat,
+      latestCaller,
+      runtime.externalPathGrants
+    )
+    const resolution = evaluateRosterEdit(
+      {
+        action: 'edit_participant',
+        targetParticipantId,
+        participant: patch
+      },
+      {
+        participants: latestChat.ensemble.participants,
+        bossmanParticipantId: latestAuthority.rosterGuardParticipantId,
+        autoApprovals: latestChat.ensemble.bossmanAutoApprovals,
+        roundReadOnly: callerPermissions.readOnly,
+        nextParticipantId: () => this.nextRosterEditParticipantId(latestChat.ensemble!.participants)
+      }
+    )
+    if (!resolution.ok) {
+      return {
+        ok: false,
+        tool: 'ensemble_brief_update',
+        roundId: runtime.roundId,
+        message: resolution.message,
+        error: resolution.error
+      }
+    }
+
+    const affectedBefore = latestChat.ensemble.participants.find(
+      (participant) => participant.id === resolution.affectedParticipantId
+    )
+    const affectedAfter = resolution.nextParticipants.find(
+      (participant) => participant.id === resolution.affectedParticipantId
+    )
+    if (!affectedBefore || !affectedAfter) {
+      return {
+        ok: false,
+        tool: 'ensemble_brief_update',
+        roundId: runtime.roundId,
+        message: 'Brief update rejected: target participant is not in the roster.',
+        error: 'stale_target'
+      }
+    }
+    const reason =
+      input.reason ||
+      (clear
+        ? `Boss cleared ${participantLabel(affectedBefore)} Brief / Goal.`
+        : `Boss updated ${participantLabel(affectedBefore)} Brief / Goal.`)
+    if (this.isParticipantActivelyExecuting(runtime, resolution.affectedParticipantId)) {
+      const queued = this.queueOrApplyParticipantSeatChange({
+        chat: latestChat,
+        runtime,
+        before: affectedBefore,
+        after: affectedAfter,
+        changedBy: 'orchestrator',
+        reason
+      })
+      return {
+        ok: queued.ok,
+        tool: 'ensemble_brief_update',
+        roundId: runtime.roundId,
+        participantId: resolution.affectedParticipantId,
+        message: queued.message,
+        deferred: true
+      }
+    }
+
+    this.applyRosterEditToRuntime(
+      runtime,
+      'edit_participant',
+      resolution.affectedParticipantId,
+      resolution.nextParticipants
+    )
+    const activeRound = this.applyRosterEditToActiveRound(
+      latestChat.ensemble.activeRound,
+      runtime.roundId,
+      resolution.nextParticipants
+    )
+    this.saveChatWithCheckpoint(
+      {
+        ...latestChat,
+        ensemble: {
+          ...latestChat.ensemble,
+          participants: resolution.nextParticipants,
+          activeRound,
+          sessionActivityLedger: [
+            ...(latestChat.ensemble.sessionActivityLedger || []),
+            this.createSeatChangeActivityEntry(
+              affectedBefore,
+              affectedAfter,
+              'orchestrator',
+              reason,
+              this.deps.nowIso()
+            )
+          ].slice(-SESSION_ACTIVITY_LEDGER_LIMIT),
+          updatedAt: this.deps.nowIso()
+        },
+        updatedAt: this.deps.now()
+      },
+      'participant-updated'
+    )
+    const message = clear
+      ? `Boss cleared ${participantLabel(affectedBefore)} Brief / Goal.`
+      : `Boss updated ${participantLabel(affectedBefore)} Brief / Goal.`
+    this.appendRoundStatus(runtime.chatId, runtime.roundId, message)
+    return {
+      ok: true,
+      tool: 'ensemble_brief_update',
+      roundId: runtime.roundId,
+      participantId: resolution.affectedParticipantId,
+      message
+    }
+  }
+
   async requestParticipantSeatChange(
     input: EnsembleParticipantSeatChangeInput
   ): Promise<EnsembleParticipantSeatChangeResult> {
@@ -3658,7 +4076,7 @@ export class EnsembleOrchestrator {
       ]
       const message =
         `Authoritative seat change queued for ${participantLabel(before)}: ` +
-        `${participantSeatValue(before)} -> ${participantSeatValue(after)}. ` +
+        `${participantSeatChangeValue(before, after, before)} -> ${participantSeatChangeValue(before, after, after)}. ` +
         'It will apply at that participant turn boundary.'
       this.appendRoundStatus(runtime.chatId, runtime.roundId, message)
       return {
@@ -3771,7 +4189,7 @@ export class EnsembleOrchestrator {
       this.applyRosterEditToRuntime(runtime, 'edit_participant', before.id, nextParticipants)
       const message =
         `Authoritative seat change ${boundary ? 'applied at turn boundary' : 'applied'} for ` +
-        `${participantLabel(before)}: ${participantSeatValue(before)} -> ${participantSeatValue(after)}.`
+        `${participantLabel(before)}: ${participantSeatChangeValue(before, after, before)} -> ${participantSeatChangeValue(before, after, after)}.`
       this.appendRoundStatus(runtime.chatId, runtime.roundId, message)
     }
     return this.deps.getChat(chat.appChatId) || saved
@@ -3790,8 +4208,8 @@ export class EnsembleOrchestrator {
       changedBy,
       scope: 'participant',
       target: before.id,
-      oldValue: participantSeatValue(before),
-      newValue: participantSeatValue(after),
+      oldValue: participantSeatChangeValue(before, after, before),
+      newValue: participantSeatChangeValue(before, after, after),
       reason
     }
   }

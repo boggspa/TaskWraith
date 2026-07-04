@@ -188,6 +188,7 @@ const ORCHESTRATION_TOOLS = new Set<string>([
   'ensemble_continue',
   'ensemble_bossman_control',
   'ensemble_roster_edit',
+  'ensemble_brief_update',
   'scout_brief',
   'blackboard_post',
   'blackboard_read',

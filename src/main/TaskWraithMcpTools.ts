@@ -110,6 +110,7 @@ export const TASKWRAITH_MCP_TOOLS = [
   'ensemble_fanout',
   'ensemble_bossman_control',
   'ensemble_roster_edit',
+  'ensemble_brief_update',
   'list_ensemble_participants',
   'schedule_wakeup',
   'cancel_wakeup',

@@ -20096,6 +20096,28 @@ async function executeGeminiMcpTool(
       }))
       toolIsError = result.ok === false
       text = mcpJson(result)
+    } else if (toolName === 'ensemble_brief_update') {
+      const result = await (ensembleOrchestratorRef?.briefUpdateForRun(context.appRunId, {
+        roundId: optionalString(args.roundId || args.round_id),
+        targetParticipantId: optionalString(
+          args.targetParticipantId || args.target_participant_id
+        ),
+        brief:
+          typeof args.brief === 'string'
+            ? args.brief
+            : typeof args.instructions === 'string'
+              ? args.instructions
+              : undefined,
+        clear: args.clear === true || args.action === 'clear',
+        reason: optionalString(args.reason)
+      }) ?? Promise.resolve({
+        ok: false,
+        tool: 'ensemble_brief_update' as const,
+        message: 'Ensemble orchestrator is not available.',
+        error: 'no_active_run' as const
+      }))
+      toolIsError = result.ok === false
+      text = mcpJson(result)
     } else if (toolName === 'list_ensemble_participants') {
       const result = ensembleOrchestratorRef?.listParticipantsForRun(context.appRunId) || {
         ok: false,
@@ -29800,21 +29822,30 @@ if (isGeminiMcpBridgeProcess) {
       // Classified under `mcpTools` since the rejected call IS an MCP tool
       // invocation.
       recordBossmanControlRejection: (rejection) => {
-        const rosterEditRejected = rejection.metadata?.kind === 'roster_edit_rejected'
+        const rejectedKind = rejection.metadata?.kind
+        const rosterEditRejected = rejectedKind === 'roster_edit_rejected'
+        const briefUpdateRejected = rejectedKind === 'brief_update_rejected'
+        const method = briefUpdateRejected
+          ? 'ensemble_brief_update'
+          : rosterEditRejected
+            ? 'ensemble_roster_edit'
+            : 'ensemble_bossman_control'
+        const title = briefUpdateRejected
+          ? 'Ensemble brief update rejected'
+          : rosterEditRejected
+            ? 'Ensemble roster edit rejected'
+            : 'Ensemble Boss control rejected'
+        const body = briefUpdateRejected
+          ? 'A non-Boss participant attempted to use ensemble_brief_update.'
+          : rosterEditRejected
+            ? 'A non-Boss participant attempted to use ensemble_roster_edit.'
+            : 'A non-Boss participant attempted to use ensemble_bossman_control.'
         return auditService.recordAutomaticApprovalDecision(
           rejection.provider,
           { appRunId: rejection.runId, appChatId: rejection.chatId },
           'mcpTools',
           rejection.workspacePath,
-          {
-            method: rosterEditRejected ? 'ensemble_roster_edit' : 'ensemble_bossman_control',
-            title: rosterEditRejected
-              ? 'Ensemble roster edit rejected'
-              : 'Ensemble Boss control rejected',
-            body: rosterEditRejected
-              ? 'A non-Boss participant attempted to use ensemble_roster_edit.'
-              : 'A non-Boss participant attempted to use ensemble_bossman_control.'
-          },
+          { method, title, body },
           'autoDeny',
           'policy',
           'request',
