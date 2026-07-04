@@ -20309,7 +20309,7 @@ async function executeGeminiMcpTool(
           count: result.selected.length,
           omitted: result.omitted,
           visibleCount: visible.length,
-          markedSeen: Boolean(participantId) ? selectedIds : []
+          markedSeen: participantId ? selectedIds : []
         })
       }
     } else if (toolName === 'blackboard_delete') {
