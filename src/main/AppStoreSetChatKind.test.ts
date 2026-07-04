@@ -272,4 +272,73 @@ describe('AppStore.setChatKind (Slice C — mid-thread ensemble toggle)', () => 
     // Stash consumed either way.
     expect(restored.providerMetadata?.stashedEnsemble).toBeUndefined()
   })
+
+  it('E2 — ensemble→solo with no canonicalProvider derives the Boss participant provider + model/reasoning', () => {
+    const ensemble = AppStore.createEnsembleChat()
+    AppStore.saveChat({
+      ...ensemble,
+      provider: 'gemini', // stale legacy top-level provider — must NOT win over the Boss
+      ensemble: {
+        ...ensemble.ensemble!,
+        participants: [
+          // Worker has the lower order, but the Boss marker takes precedence.
+          seedParticipant({ id: 'w', provider: 'codex', role: 'Worker', order: 1 }),
+          seedParticipant({
+            id: 'boss',
+            provider: 'claude',
+            role: 'Boss',
+            order: 2,
+            model: 'claude-opus-x',
+            reasoningEffort: 'high'
+          })
+        ],
+        bossmanParticipantId: 'boss'
+      }
+    } as ChatRecord)
+
+    // No canonicalProvider passed → backend fallback must derive from the Boss.
+    const solo = AppStore.setChatKind(ensemble.appChatId, 'single')
+    expect(solo.chatKind).toBe('single')
+    expect(solo.provider).toBe('claude') // Boss — not stale gemini, not lowest-order codex worker
+    expect(solo.providerMetadata?.selectedModelType).toBe('claude-opus-x')
+    expect(solo.providerMetadata?.claudeReasoningEffort).toBe('high')
+  })
+
+  it('E2 — with no Boss marker, ensemble→solo derives the lowest-order ENABLED participant (first-to-speak)', () => {
+    const ensemble = AppStore.createEnsembleChat()
+    AppStore.saveChat({
+      ...ensemble,
+      provider: 'gemini',
+      ensemble: {
+        ...ensemble.ensemble!,
+        participants: [
+          // Lowest order (1) but DISABLED — must be skipped.
+          seedParticipant({ id: 'disabled', provider: 'claude', role: 'A', order: 1, enabled: false }),
+          // Lowest-order ENABLED — the real first-to-speak.
+          seedParticipant({ id: 'first', provider: 'kimi', role: 'B', order: 2, enabled: true }),
+          seedParticipant({ id: 'third', provider: 'codex', role: 'C', order: 3, enabled: true })
+        ]
+        // no bossmanParticipantId
+      }
+    } as ChatRecord)
+
+    const solo = AppStore.setChatKind(ensemble.appChatId, 'single')
+    expect(solo.provider).toBe('kimi') // lowest-order ENABLED, skipping the disabled order-1 seat
+  })
+
+  it('E2 — an explicit canonicalProvider overrides the Boss-derived fallback', () => {
+    const ensemble = AppStore.createEnsembleChat()
+    AppStore.saveChat({
+      ...ensemble,
+      provider: 'gemini',
+      ensemble: {
+        ...ensemble.ensemble!,
+        participants: [seedParticipant({ id: 'boss', provider: 'claude', role: 'Boss', order: 1 })],
+        bossmanParticipantId: 'boss'
+      }
+    } as ChatRecord)
+
+    const solo = AppStore.setChatKind(ensemble.appChatId, 'single', { canonicalProvider: 'codex' })
+    expect(solo.provider).toBe('codex') // explicit modal choice wins over Boss-derived 'claude'
+  })
 })

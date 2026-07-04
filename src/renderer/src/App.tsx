@@ -2750,27 +2750,40 @@ function App(): React.JSX.Element {
         null
       : null
   const canCreateSideChatFromCurrent = Boolean(currentChat && !currentChatIsLinkedChild)
+  const getProviderModelOptions = (provider: ProviderId): CodexModelOption[] => {
+    if (provider === 'codex') return codexModels
+    if (provider === 'claude') return agentModelsByProvider.claude || CLAUDE_DEFAULT_MODELS
+    if (provider === 'kimi') return KIMI_DEFAULT_MODELS
+    if (provider === 'gemini') return GEMINI_DEFAULT_MODELS
+    if (provider === 'grok') return GROK_DEFAULT_MODELS
+    if (provider === 'cursor') return CURSOR_DEFAULT_MODELS
+    if (provider === 'ollama') return mergeOllamaModelCatalog(agentModelsByProvider.ollama)
+    return []
+  }
+
+  const getDefaultModelForProvider = (provider: ProviderId): string => {
+    if (provider === 'codex') return codexModels[0]?.id || CODEX_DEFAULT_MODEL
+    if (provider === 'claude') return CLAUDE_DEFAULT_MODEL
+    if (provider === 'kimi') return KIMI_DEFAULT_MODEL
+    if (provider === 'grok') return GROK_DEFAULT_MODEL
+    if (provider === 'cursor') return 'composer-2.5-fast'
+    if (provider === 'ollama') {
+      const ollamaModels = mergeOllamaModelCatalog(agentModelsByProvider.ollama)
+      return (
+        ollamaModels.find((model) => model.isDefault)?.id ||
+        ollamaModels.find((model) => model.id !== 'custom')?.id ||
+        OLLAMA_DEFAULT_MODEL
+      )
+    }
+    return GEMINI_DEFAULT_MODEL
+  }
+
   const buildProviderMetadataFromEnsembleParticipant = (
     participant: EnsembleParticipant
   ): Record<string, unknown> => {
     const provider = participant.provider
-    const providerOptions =
-      provider === 'codex'
-        ? codexModels
-        : provider === 'claude'
-          ? agentModelsByProvider.claude || CLAUDE_DEFAULT_MODELS
-          : provider === 'kimi'
-            ? KIMI_DEFAULT_MODELS
-            : provider === 'gemini'
-              ? GEMINI_DEFAULT_MODELS
-              : provider === 'grok'
-                ? GROK_DEFAULT_MODELS
-                : provider === 'cursor'
-                  ? CURSOR_DEFAULT_MODELS
-                  : provider === 'ollama'
-                    ? mergeOllamaModelCatalog(agentModelsByProvider.ollama)
-                    : []
-    const defaultModel = providerOptions.find((model) => model.id !== 'custom')?.id
+    const providerOptions = getProviderModelOptions(provider)
+    const defaultModel = getDefaultModelForProvider(provider)
     const providerModel =
       participant.model || defaultModel || getDefaultEnsembleParticipantConfig(provider).model
     const isKnownModel = providerOptions.some((model) => model.id === providerModel)
@@ -2821,26 +2834,48 @@ function App(): React.JSX.Element {
       : null
   const ensembleToSoloCanonicalProviders = useMemo(() => {
     if (!ensembleToSoloModalChat?.ensemble?.participants?.length) return []
-    const seen = new Set<ProviderId>()
+    const sortedParticipants = [...ensembleToSoloModalChat.ensemble.participants].sort(
+      (left, right) => left.order - right.order
+    )
+    const bossParticipantId = ensembleToSoloModalChat.ensemble.bossmanParticipantId
+    const defaultParticipant =
+      (bossParticipantId
+        ? sortedParticipants.find((participant) => participant.id === bossParticipantId) || null
+        : null) ||
+      sortedParticipants.find((participant) => participant.enabled) ||
+      null
+    const defaultProvider = defaultParticipant?.provider ?? null
+    const defaultDescription =
+      defaultParticipant == null
+        ? null
+        : defaultParticipant.id === bossParticipantId
+          ? 'Boss default'
+          : 'First to speak'
+    const candidateIndexByProvider = new Map<ProviderId, number>()
     const candidates: Array<{
       provider: ProviderId
       label: string
       metadata: Record<string, unknown>
     }> = []
-    for (const participant of [...ensembleToSoloModalChat.ensemble.participants].sort(
-      (left, right) => left.order - right.order
-    )) {
-      if (seen.has(participant.provider)) continue
-      seen.add(participant.provider)
-      candidates.push({
+    for (const participant of sortedParticipants) {
+      const nextCandidate = {
         provider: participant.provider,
         label: getProviderLabel(participant.provider),
         metadata: buildProviderMetadataFromEnsembleParticipant(participant)
-      })
+      }
+      const existingIndex = candidateIndexByProvider.get(participant.provider)
+      if (existingIndex == null) {
+        candidateIndexByProvider.set(participant.provider, candidates.length)
+        candidates.push(nextCandidate)
+        continue
+      }
+      if (defaultParticipant && participant.id === defaultParticipant.id) {
+        candidates[existingIndex] = nextCandidate
+      }
     }
     if (
       ensembleToSoloModalChat.provider &&
-      !seen.has(ensembleToSoloModalChat.provider as ProviderId)
+      !candidateIndexByProvider.has(ensembleToSoloModalChat.provider as ProviderId)
     ) {
       const fallbackProvider = ensembleToSoloModalChat.provider as ProviderId
       const fallbackMetadata = ensembleToSoloModalChat.providerMetadata || {}
@@ -2858,12 +2893,9 @@ function App(): React.JSX.Element {
             ? { approvalMode: fallbackMetadata.approvalMode }
             : {}),
           ...(fallbackMetadata.workflowMode === 'plan' ? { workflowMode: 'plan' } : {}),
-          ...(getRuntimeProfileIdForChat(ensembleToSoloModalChat, fallbackProvider)
+          ...(typeof fallbackMetadata.runtimeProfileId === 'string'
             ? {
-                runtimeProfileId: getRuntimeProfileIdForChat(
-                  ensembleToSoloModalChat,
-                  fallbackProvider
-                )
+                runtimeProfileId: fallbackMetadata.runtimeProfileId
               }
             : {}),
           ...(fallbackProvider === 'gemini'
@@ -2902,8 +2934,14 @@ function App(): React.JSX.Element {
         }
       })
     }
-    return candidates
-  }, [ensembleToSoloModalChat])
+    return candidates.map((candidate) => ({
+      ...candidate,
+      isDefault: defaultProvider === candidate.provider,
+      ...(defaultProvider === candidate.provider && defaultDescription
+        ? { defaultDescription }
+        : {})
+    }))
+  }, [agentModelsByProvider, codexModels, ensembleToSoloModalChat])
   const popoutSideChatLifecycleId =
     isChatPopoutWindow && currentChat?.parentChatRelation === 'sideChat'
       ? currentChat.appChatId
@@ -4054,34 +4092,6 @@ function App(): React.JSX.Element {
     },
     [applyHydratedChat]
   )
-
-  const getProviderModelOptions = (provider: ProviderId): CodexModelOption[] => {
-    if (provider === 'codex') return codexModels
-    if (provider === 'claude') return agentModelsByProvider.claude || CLAUDE_DEFAULT_MODELS
-    if (provider === 'kimi') return KIMI_DEFAULT_MODELS
-    if (provider === 'gemini') return GEMINI_DEFAULT_MODELS
-    if (provider === 'grok') return GROK_DEFAULT_MODELS
-    if (provider === 'cursor') return CURSOR_DEFAULT_MODELS
-    if (provider === 'ollama') return mergeOllamaModelCatalog(agentModelsByProvider.ollama)
-    return []
-  }
-
-  const getDefaultModelForProvider = (provider: ProviderId): string => {
-    if (provider === 'codex') return codexModels[0]?.id || CODEX_DEFAULT_MODEL
-    if (provider === 'claude') return CLAUDE_DEFAULT_MODEL
-    if (provider === 'kimi') return KIMI_DEFAULT_MODEL
-    if (provider === 'grok') return GROK_DEFAULT_MODEL
-    if (provider === 'cursor') return 'composer-2.5-fast'
-    if (provider === 'ollama') {
-      const ollamaModels = mergeOllamaModelCatalog(agentModelsByProvider.ollama)
-      return (
-        ollamaModels.find((model) => model.isDefault)?.id ||
-        ollamaModels.find((model) => model.id !== 'custom')?.id ||
-        OLLAMA_DEFAULT_MODEL
-      )
-    }
-    return GEMINI_DEFAULT_MODEL
-  }
 
   const isValidModelForProvider = (
     provider: ProviderId,
@@ -24483,13 +24493,26 @@ function App(): React.JSX.Element {
                 <button
                   key={candidate.provider}
                   type="button"
-                  className="composer-combined-picker-row"
+                  className={`composer-combined-picker-row composer-plus-picker-row${
+                    candidate.isDefault ? ' is-selected is-highlighted' : ''
+                  }`}
                   onClick={() => void handleConfirmEnsembleToSolo(candidate.provider)}
                   disabled={chatKindMutationBusy}
+                  aria-pressed={candidate.isDefault}
                 >
-                  <span className="composer-combined-picker-row-label">
-                    {candidate.label}
+                  <span className="composer-plus-picker-row-copy">
+                    <span className="composer-combined-picker-row-label">{candidate.label}</span>
+                    {candidate.defaultDescription ? (
+                      <span className="composer-combined-picker-row-sub">
+                        {candidate.defaultDescription}
+                      </span>
+                    ) : null}
                   </span>
+                  {candidate.isDefault ? (
+                    <span className="composer-combined-picker-check" aria-hidden>
+                      ✓
+                    </span>
+                  ) : null}
                 </button>
               ))}
             </div>

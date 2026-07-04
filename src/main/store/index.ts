@@ -2814,8 +2814,50 @@ export class AppStore {
       return this.getChat(chatId) ?? updated
     }
     // Ensemble→Solo: strip the ensemble block, set the canonical provider.
+    // E2-backend-fallback (defense-in-depth): when the renderer did NOT pass an
+    // explicit canonicalProvider, derive the canonical from the ensemble's Boss
+    // participant (id === bossmanParticipantId), else the lowest-order ENABLED
+    // participant (first-to-speak) — the SAME rule the renderer's E2 modal uses,
+    // so backend + UI agree. Only then fall back to the (possibly stale) legacy
+    // chat.provider, then settings.activeProvider. The renderer normally passes
+    // canonicalProvider explicitly, so this is a safety net, not the hot path.
+    const pickBossDefaultParticipant = (
+      config: EnsembleConfig | undefined
+    ): EnsembleParticipant | undefined => {
+      const participants = config?.participants
+      if (!Array.isArray(participants) || participants.length === 0) return undefined
+      const bossId = config?.bossmanParticipantId
+      if (bossId) {
+        const boss = participants.find((participant) => participant.id === bossId)
+        if (boss) return boss
+      }
+      const enabled = participants.filter((participant) => participant.enabled !== false)
+      if (enabled.length === 0) return undefined
+      return enabled.reduce(
+        (best, participant) => ((participant.order ?? 0) < (best.order ?? 0) ? participant : best),
+        enabled[0]
+      )
+    }
+    const buildFallbackCanonicalMetadata = (
+      participant: EnsembleParticipant
+    ): Record<string, unknown> => {
+      const derived: Record<string, unknown> = {}
+      if (participant.model) derived.selectedModelType = participant.model
+      if (participant.reasoningEffort) {
+        if (participant.provider === 'codex') {
+          derived.codexReasoningEffort = participant.reasoningEffort
+        } else if (participant.provider === 'claude') {
+          derived.claudeReasoningEffort = participant.reasoningEffort
+        }
+      }
+      return derived
+    }
+    const bossDefault = opts.canonicalProvider
+      ? undefined
+      : pickBossDefaultParticipant(chat.ensemble)
     const canonicalProvider =
       opts.canonicalProvider ||
+      bossDefault?.provider ||
       chat.provider ||
       coerceLiveProvider(this.getSettings().activeProvider)
     const nowIso = new Date(now).toISOString()
@@ -2824,8 +2866,16 @@ export class AppStore {
     let providerMetadata: Record<string, unknown> | undefined = withoutEnsemble.providerMetadata
       ? { ...withoutEnsemble.providerMetadata }
       : undefined
+    // Explicit modal metadata wins; else, when we derived the Boss default
+    // above, carry that participant's model/reasoning so the solo composer opens
+    // on the Boss's settings (defense-in-depth — the renderer normally passes it).
     if (opts.canonicalProviderMetadata) {
       providerMetadata = { ...(providerMetadata || {}), ...opts.canonicalProviderMetadata }
+    } else if (bossDefault) {
+      const derived = buildFallbackCanonicalMetadata(bossDefault)
+      if (Object.keys(derived).length > 0) {
+        providerMetadata = { ...(providerMetadata || {}), ...derived }
+      }
     }
     // E3 preserve-roster: stash the outgoing roster so a later toggle back to
     // Ensemble can restore it. Stash under providerMetadata — NOT on
