@@ -52,7 +52,11 @@ import { formatTokenCount } from '../lib/UsageHeatmap'
 import { buildModelContextLengthGroups } from '../lib/modelContextLengths'
 import { humaniseModelIdCompact } from '../lib/modelDisplayName'
 import { getProviderName } from './Sidebar'
-import { GrokCreditsMeter } from './GrokCreditsMeter'
+import {
+  GrokCreditsMeterView,
+  useGrokCreditsMeterState,
+  type GrokCreditsMeterViewProps
+} from './GrokCreditsMeter'
 import { ProviderLogoTile } from './ProviderLogoTile'
 import { QuotaProgressBar } from './QuotaProgressBar'
 import { UsageHeatmap } from './UsageHeatmap'
@@ -121,6 +125,29 @@ const SIDEBAR_USAGE_MIN_HEIGHT = 220
 // overflow the viewport).
 const SIDEBAR_USAGE_MAX_HEIGHT = 1400
 const SIDEBAR_USAGE_RESIZE_STEP = 24
+const COMPACT_USAGE_PROVIDERS: ProviderId[] = ['codex', 'claude', 'kimi', 'cursor', 'grok']
+const COMPACT_USAGE_PROVIDER_LABELS: Partial<Record<ProviderId, string>> = {
+  codex: 'Codex',
+  claude: 'Claude',
+  kimi: 'Kimi',
+  cursor: 'Cursor',
+  grok: 'Grok'
+}
+const COMPACT_USAGE_ROWS = [
+  { key: 'fiveHour', label: '5H' },
+  { key: 'weekly', label: 'WK' },
+  { key: 'extraOne', label: 'X1' },
+  { key: 'extraTwo', label: 'X2' }
+] as const
+
+type CompactUsageRowKey = (typeof COMPACT_USAGE_ROWS)[number]['key']
+
+interface CompactQuotaCell {
+  value: string
+  fraction: number | null
+  title: string
+  state?: 'loading'
+}
 
 function clampSidebarUsageHeight(height: number, maxHeight = SIDEBAR_USAGE_MAX_HEIGHT): number {
   return Math.max(SIDEBAR_USAGE_MIN_HEIGHT, Math.min(maxHeight, height))
@@ -182,6 +209,213 @@ function fillFractionForWindow(window: UsageWindowAggregate): number {
     return Math.max(0, Math.min(1, 1 - (window.remainingPercent as number) / 100))
   }
   return 0
+}
+
+function compactQuotaTone(fraction: number | null): string {
+  if (fraction === null) return ''
+  if (fraction >= 0.98) return ' is-danger'
+  if (fraction >= 0.9) return ' is-warning'
+  return ''
+}
+
+function normaliseQuotaWindowText(windowEntry: UsageWindowAggregate): string {
+  return `${windowEntry.id} ${windowEntry.label}`.toLowerCase().replace(/[-_+]/g, ' ')
+}
+
+function compactWindowCell(
+  provider: ProviderId,
+  windowEntry: UsageWindowAggregate
+): CompactQuotaCell {
+  const fraction = fillFractionForWindow(windowEntry)
+  const percentText = `${Math.round(fraction * 100)}%`
+  const resetText = formatResetShort({ resetAt: windowEntry.resetAt })
+  const title = [
+    `${getProviderName(provider)} ${windowEntry.label}: ${percentText}`,
+    windowEntry.limitLabel,
+    resetText ? `resets ${resetText}` : ''
+  ]
+    .filter(Boolean)
+    .join(' · ')
+  return { value: percentText, fraction, title }
+}
+
+function findCompactWindow(
+  entry: ModelUsageAggregate | undefined,
+  predicate: (text: string) => boolean
+): UsageWindowAggregate | undefined {
+  return entry?.windows?.find((windowEntry) => predicate(normaliseQuotaWindowText(windowEntry)))
+}
+
+function isFiveHourWindow(text: string): boolean {
+  return /\b5\s*h\b/.test(text) || /\b5h\b/.test(text) || text.includes('session')
+}
+
+function isWeeklyWindow(text: string): boolean {
+  return text.includes('weekly') || text.includes('7 day') || text.includes('seven day')
+}
+
+function isCodexSparkWindow(text: string): boolean {
+  return text.includes('spark') || text.includes('gpt 5.3 codex')
+}
+
+function isClaudeExtraWindow(text: string): boolean {
+  return text.includes('fable') || text.includes('sonnet') || text.includes('design')
+}
+
+function compactCellsForEntry(
+  provider: ProviderId,
+  entry: ModelUsageAggregate | undefined
+): Partial<Record<CompactUsageRowKey, CompactQuotaCell>> {
+  const cells: Partial<Record<CompactUsageRowKey, CompactQuotaCell>> = {}
+  const assign = (row: CompactUsageRowKey, windowEntry: UsageWindowAggregate | undefined) => {
+    if (windowEntry) cells[row] = compactWindowCell(provider, windowEntry)
+  }
+
+  if (provider === 'codex') {
+    assign(
+      'fiveHour',
+      findCompactWindow(entry, (text) => isFiveHourWindow(text) && !isCodexSparkWindow(text))
+    )
+    assign(
+      'weekly',
+      findCompactWindow(entry, (text) => isWeeklyWindow(text) && !isCodexSparkWindow(text))
+    )
+    assign(
+      'extraOne',
+      findCompactWindow(entry, (text) => isCodexSparkWindow(text) && isFiveHourWindow(text))
+    )
+    assign(
+      'extraTwo',
+      findCompactWindow(entry, (text) => isCodexSparkWindow(text) && isWeeklyWindow(text))
+    )
+    return cells
+  }
+
+  if (provider === 'claude') {
+    assign('fiveHour', findCompactWindow(entry, isFiveHourWindow))
+    assign(
+      'weekly',
+      findCompactWindow(entry, (text) => isWeeklyWindow(text) && !isClaudeExtraWindow(text))
+    )
+    assign('extraOne', findCompactWindow(entry, isClaudeExtraWindow))
+    return cells
+  }
+
+  if (provider === 'kimi') {
+    assign('fiveHour', findCompactWindow(entry, isFiveHourWindow))
+    assign('weekly', findCompactWindow(entry, isWeeklyWindow))
+    return cells
+  }
+
+  if (provider === 'cursor') {
+    assign(
+      'extraOne',
+      findCompactWindow(entry, (text) => text.includes('included') || text.includes('pro'))
+    )
+    assign(
+      'extraTwo',
+      findCompactWindow(entry, (text) => text.includes('auto') && text.includes('composer'))
+    )
+    return cells
+  }
+
+  if (provider === 'grok') {
+    assign(
+      'weekly',
+      findCompactWindow(entry, (text) => isWeeklyWindow(text) || text.includes('credits'))
+    )
+  }
+  return cells
+}
+
+function compactGrokCell(grokUsage: GrokCreditsMeterViewProps | undefined): CompactQuotaCell | null {
+  if (!grokUsage) return null
+  const snapshot = grokUsage.snapshot
+  if (snapshot?.confidence !== 'observed') {
+    if (grokUsage.loading) {
+      return {
+        value: '...',
+        fraction: null,
+        title: 'Grok weekly usage is loading',
+        state: 'loading'
+      }
+    }
+    return null
+  }
+  const bandFloor = snapshot.creditsUsedDisplay.match(/^>(\d[\d.]*)%$/)
+  const fraction =
+    snapshot.creditsUsedPercent != null && Number.isFinite(snapshot.creditsUsedPercent)
+      ? Math.max(0, Math.min(1, snapshot.creditsUsedPercent / 100))
+      : bandFloor
+        ? Math.max(0, Math.min(1, Number(bandFloor[1]) / 100))
+        : null
+  const kindText = snapshot.usageKind === 'weekly_limit' ? 'Weekly limit' : 'Subscription credits'
+  return {
+    value: snapshot.creditsUsedDisplay,
+    fraction,
+    title: `Grok ${kindText}: ${snapshot.creditsUsedDisplay}${
+      grokUsage.stale ? ' · stale' : ''
+    }`
+  }
+}
+
+export function CompactModelUsageGrid({
+  quotaEntries,
+  grokUsage
+}: {
+  quotaEntries: ModelUsageAggregate[]
+  grokUsage?: GrokCreditsMeterViewProps
+}) {
+  const entriesByProvider = new Map(quotaEntries.map((entry) => [entry.provider, entry]))
+  const cellsByProvider = new Map(
+    COMPACT_USAGE_PROVIDERS.map((provider) => [
+      provider,
+      compactCellsForEntry(provider, entriesByProvider.get(provider))
+    ])
+  )
+  const grokCell = compactGrokCell(grokUsage)
+  if (grokCell) {
+    cellsByProvider.set('grok', { ...cellsByProvider.get('grok'), weekly: grokCell })
+  }
+
+  return (
+    <table className="model-usage-compact-grid" aria-label="Compact model usage">
+      <thead>
+        <tr>
+          <th scope="col" className="model-usage-compact-corner" aria-label="Window" />
+          {COMPACT_USAGE_PROVIDERS.map((provider) => (
+            <th key={provider} scope="col" className={`provider-${provider}`}>
+              {COMPACT_USAGE_PROVIDER_LABELS[provider]}
+            </th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        {COMPACT_USAGE_ROWS.map((row) => (
+          <tr key={row.key}>
+            <th scope="row">{row.label}</th>
+            {COMPACT_USAGE_PROVIDERS.map((provider) => {
+              const cell = cellsByProvider.get(provider)?.[row.key]
+              return (
+                <td
+                  key={`${row.key}-${provider}`}
+                  className={`model-usage-compact-cell provider-${provider}${
+                    cell ? compactQuotaTone(cell.fraction) : ' is-empty'
+                  }${cell?.state === 'loading' ? ' is-loading' : ''}`}
+                  title={
+                    cell?.title ||
+                    `${COMPACT_USAGE_PROVIDER_LABELS[provider]} ${row.label}: unavailable`
+                  }
+                >
+                  {cell?.value || '--'}
+                </td>
+              )
+            })}
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  )
 }
 
 function UsageWindowRow({
@@ -631,6 +865,7 @@ export function ModelUsageCard({ usageSummary, variant = 'card', apiSpend }: Mod
       active = false
     }
   }, [])
+  const grokUsage = useGrokCreditsMeterState(apiSpend?.refreshKey, grokAvailable)
   const quotaEntries = sortByProvider(usageSummary).filter(
     (entry) => entry.model === 'usage limits' && (entry.windows?.length || 0) > 0
   )
@@ -659,6 +894,7 @@ export function ModelUsageCard({ usageSummary, variant = 'card', apiSpend }: Mod
         ? 'spend'
         : 'context'
   const showQuotaEntries = !isSidebarVariant || sidebarExpanded
+  const showCollapsedCompactUsage = isSidebarVariant && !sidebarExpanded && planViewAvailable
   const title = sidebarExpanded ? 'Collapse provider usage' : 'Expand provider usage'
   const refreshTitle = 'Refresh usage data'
   const usageRefreshPending = localRefreshPending || apiSpend?.refreshing === true
@@ -858,6 +1094,9 @@ export function ModelUsageCard({ usageSummary, variant = 'card', apiSpend }: Mod
           </button>
         )}
       </div>
+      {showCollapsedCompactUsage && (
+        <CompactModelUsageGrid quotaEntries={quotaEntries} grokUsage={grokUsage} />
+      )}
       <div id={quotaContentId} className="model-usage-collapsible" aria-hidden={!showQuotaEntries}>
         <div className="model-usage-collapsible-inner">
           {effectiveView === 'spend' ? (
@@ -874,7 +1113,7 @@ export function ModelUsageCard({ usageSummary, variant = 'card', apiSpend }: Mod
                * mounts when the gated Grok provider adapter is registered. Kept
                * inside the list so the `.model-usage-item + .model-usage-item`
                * divider lands between Kimi and Grok. */}
-              {grokAvailable ? <GrokCreditsMeter refreshKey={apiSpend?.refreshKey} /> : null}
+              {grokAvailable ? <GrokCreditsMeterView {...grokUsage} /> : null}
             </div>
           )}
         </div>

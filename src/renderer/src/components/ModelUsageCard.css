@@ -254,6 +254,94 @@
   opacity: 0;
 }
 
+.model-usage-compact-grid {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  margin-top: -2px;
+  font-size: 8.5px;
+  line-height: 1.05;
+  letter-spacing: 0;
+  color: color-mix(in srgb, var(--sidebar-text-secondary, var(--text-secondary)) 72%, transparent);
+}
+
+.model-usage-compact-grid th,
+.model-usage-compact-grid td {
+  height: 13px;
+  padding: 0 2px;
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.model-usage-compact-grid thead th {
+  font-size: 7.5px;
+  font-weight: 700;
+  color: color-mix(in srgb, var(--sidebar-text-secondary, var(--text-secondary)) 64%, transparent);
+  overflow: hidden;
+  text-overflow: clip;
+}
+
+.model-usage-compact-grid tbody th {
+  width: 18px;
+  padding-left: 0;
+  padding-right: 4px;
+  color: color-mix(in srgb, var(--sidebar-text-secondary, var(--text-secondary)) 72%, transparent);
+  font-size: 8px;
+  font-weight: 800;
+  text-align: left;
+}
+
+.model-usage-compact-corner {
+  width: 18px;
+}
+
+.model-usage-compact-cell {
+  --compact-quota-color: var(--sidebar-text, var(--text-primary));
+  color: var(--compact-quota-color);
+  font-weight: 760;
+  text-shadow: 0 0 8px color-mix(in srgb, var(--compact-quota-color) 22%, transparent);
+}
+
+.model-usage-compact-cell.provider-codex {
+  --compact-quota-color: var(--provider-codex-color);
+}
+
+.model-usage-compact-cell.provider-claude {
+  --compact-quota-color: var(--provider-claude-color);
+}
+
+.model-usage-compact-cell.provider-kimi {
+  --compact-quota-color: var(--provider-kimi-color);
+}
+
+.model-usage-compact-cell.provider-cursor {
+  --compact-quota-color: var(--provider-cursor-color);
+}
+
+.model-usage-compact-cell.provider-grok {
+  --compact-quota-color: var(--provider-grok-color);
+}
+
+.model-usage-compact-cell.is-warning {
+  --compact-quota-color: var(--quota-warning-color, #f59e0b);
+}
+
+.model-usage-compact-cell.is-danger {
+  --compact-quota-color: var(--quota-danger-color, #dc2626);
+}
+
+.model-usage-compact-cell.is-empty {
+  color: color-mix(in srgb, var(--sidebar-text-secondary, var(--text-secondary)) 42%, transparent);
+  font-weight: 650;
+  text-shadow: none;
+}
+
+.model-usage-compact-cell.is-loading {
+  color: color-mix(in srgb, var(--sidebar-text-secondary, var(--text-secondary)) 70%, transparent);
+  text-shadow: none;
+}
+
 [data-appearance='solid'] .app-sidebar .model-usage-summary--sidebar,
 [data-appearance='soft_glass'] .app-sidebar .model-usage-summary--sidebar,
 [data-appearance='native_glass'][data-reduce-transparency='false']

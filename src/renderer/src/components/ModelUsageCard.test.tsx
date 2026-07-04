@@ -2,6 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import {
   ApiSpendProviderBlock,
+  CompactModelUsageGrid,
   ModelUsageCard,
   type ModelUsageApiSpendOptions
 } from './ModelUsageCard'
@@ -9,6 +10,7 @@ import type { ModelUsageAggregate } from '../lib/usageAggregateTypes'
 import { buildApiSpendByProvider } from '../lib/apiSpendAggregation'
 import type { RendererProviderRates } from '../lib/providerRateEstimate'
 import type { UsageRecord } from '../../../main/store/types'
+import { parseGrokUsage } from '../../../main/grok/GrokUsage'
 
 function quotaEntry(overrides: Partial<ModelUsageAggregate> = {}): ModelUsageAggregate {
   return {
@@ -201,6 +203,155 @@ describe('ModelUsageCard', () => {
     expect(html).not.toContain('aria-label="Plan limits"')
     // spend is the active view by default (plan unavailable, spend is first fallback)
     expect(html).toContain('No API spend tracked in the last 30 days')
+  })
+
+  it('renders a compact collapsed quota grid with provider-specific slot mapping', () => {
+    const summary: ModelUsageAggregate[] = [
+      quotaEntry({
+        provider: 'codex',
+        windows: [
+          {
+            id: 'codex-5h',
+            label: '5h',
+            runs: 0,
+            totalTokens: 0,
+            limitLabel: '78% remaining',
+            usedPercent: 22
+          },
+          {
+            id: 'codex-weekly',
+            label: 'Weekly',
+            runs: 0,
+            totalTokens: 0,
+            limitLabel: '24% remaining',
+            usedPercent: 76
+          },
+          {
+            id: 'spark-5h',
+            label: 'GPT-5.3-Codex-Spark 5h',
+            runs: 0,
+            totalTokens: 0,
+            limitLabel: '100% remaining',
+            usedPercent: 0
+          },
+          {
+            id: 'spark-weekly',
+            label: 'GPT-5.3-Codex-Spark Weekly',
+            runs: 0,
+            totalTokens: 0,
+            limitLabel: '21% remaining',
+            usedPercent: 79
+          }
+        ]
+      }),
+      quotaEntry({
+        provider: 'claude',
+        windows: [
+          {
+            id: 'claude-session',
+            label: 'Session',
+            runs: 0,
+            totalTokens: 0,
+            limitLabel: '100% remaining',
+            usedPercent: 0
+          },
+          {
+            id: 'claude-weekly',
+            label: 'Weekly',
+            runs: 0,
+            totalTokens: 0,
+            limitLabel: '2% remaining',
+            usedPercent: 98
+          },
+          {
+            id: 'claude-fable',
+            label: 'Fable',
+            runs: 0,
+            totalTokens: 0,
+            limitLabel: '0% remaining',
+            usedPercent: 100
+          }
+        ]
+      }),
+      quotaEntry({
+        provider: 'kimi',
+        windows: [
+          {
+            id: 'kimi-5h',
+            label: '5H',
+            runs: 0,
+            totalTokens: 0,
+            limitLabel: '31 / 100 remaining',
+            usedPercent: 69
+          },
+          {
+            id: 'kimi-weekly',
+            label: 'Weekly',
+            runs: 0,
+            totalTokens: 0,
+            limitLabel: '30 / 100 remaining',
+            usedPercent: 70
+          }
+        ]
+      }),
+      quotaEntry({
+        provider: 'cursor',
+        windows: [
+          {
+            id: 'cursor-included',
+            label: 'Included in Pro',
+            runs: 0,
+            totalTokens: 0,
+            limitLabel: 'This cycle',
+            usedPercent: 13
+          },
+          {
+            id: 'cursor-auto',
+            label: 'Auto + Composer',
+            runs: 0,
+            totalTokens: 0,
+            limitLabel: 'This cycle',
+            usedPercent: 0
+          },
+          {
+            id: 'cursor-api',
+            label: 'API',
+            runs: 0,
+            totalTokens: 0,
+            limitLabel: 'This cycle',
+            usedPercent: 100
+          }
+        ]
+      })
+    ]
+    const html = renderToStaticMarkup(
+      <CompactModelUsageGrid
+        quotaEntries={summary}
+        grokUsage={{
+          snapshot: parseGrokUsage('Weekly limit: 5%', '2026-07-04T12:00:00.000Z'),
+          loading: false,
+          errored: false,
+          stale: false
+        }}
+      />
+    )
+
+    expect(html).toContain('model-usage-compact-grid')
+    expect(html).toContain('>5H</th>')
+    expect(html).toContain('>WK</th>')
+    expect(html).toContain('>X1</th>')
+    expect(html).toContain('>X2</th>')
+    expect(html).toContain('Codex GPT-5.3-Codex-Spark 5h: 0%')
+    expect(html).toContain('Codex GPT-5.3-Codex-Spark Weekly: 79%')
+    expect(html).toContain('Claude Fable: 100%')
+    expect(html).toContain('Kimi 5H: 69%')
+    expect(html).toContain('Kimi Weekly: 70%')
+    expect(html).toContain('Cursor Included in Pro: 13%')
+    expect(html).toContain('Cursor Auto + Composer: 0%')
+    expect(html).toContain('Grok Weekly limit: 5%')
+    expect(html).not.toContain('Cursor API: 100%')
+    expect(html).toContain('provider-claude is-danger')
+    expect(html).toContain('provider-grok')
   })
 })
 

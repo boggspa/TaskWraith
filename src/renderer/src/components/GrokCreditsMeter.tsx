@@ -143,11 +143,13 @@ export function GrokCreditsMeterView({
   )
 }
 
-/** Stateful shell: owns the PTY probe + render state (no button). */
-export function GrokCreditsMeter({ refreshKey }: GrokCreditsMeterProps): React.ReactElement {
+export function useGrokCreditsMeterState(
+  refreshKey?: number,
+  enabled = true
+): GrokCreditsMeterViewProps {
   const [result, setResult] = useState<GrokUsageSnapshot | null>(null)
   const [lastObserved, setLastObserved] = useState<GrokUsageSnapshot | null>(null)
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(enabled)
   const [errored, setErrored] = useState(false)
   const mountedRef = useRef(true)
   const retriedRef = useRef(false)
@@ -202,6 +204,15 @@ export function GrokCreditsMeter({ refreshKey }: GrokCreditsMeterProps): React.R
   }, [runProbe])
 
   useEffect(() => {
+    if (!enabled) {
+      mountedRef.current = false
+      retriedRef.current = false
+      setLoading(false)
+      setErrored(false)
+      setResult(null)
+      setLastObserved(null)
+      return
+    }
     mountedRef.current = true
     retriedRef.current = false
     setErrored(false)
@@ -210,7 +221,7 @@ export function GrokCreditsMeter({ refreshKey }: GrokCreditsMeterProps): React.R
     return () => {
       mountedRef.current = false
     }
-  }, [runProbe, refreshKey])
+  }, [enabled, runProbe, refreshKey])
 
   const resultObserved = result?.confidence === 'observed'
   // Prefer a fresh observed result; otherwise fall back to the last good one.
@@ -218,7 +229,10 @@ export function GrokCreditsMeter({ refreshKey }: GrokCreditsMeterProps): React.R
   const displayObserved = display?.confidence === 'observed'
   const stale = displayObserved && (errored || !resultObserved)
 
-  return (
-    <GrokCreditsMeterView snapshot={display} loading={loading} errored={errored} stale={stale} />
-  )
+  return { snapshot: display, loading, errored, stale }
+}
+
+/** Stateful shell: owns the PTY probe + render state (no button). */
+export function GrokCreditsMeter({ refreshKey }: GrokCreditsMeterProps): React.ReactElement {
+  return <GrokCreditsMeterView {...useGrokCreditsMeterState(refreshKey)} />
 }
