@@ -12,6 +12,7 @@ interface ComposerEnsembleToggleButtonProps {
   onToggle: (enabled: boolean) => void
   composerStyle?: string
   disabled?: boolean
+  title?: string
 }
 
 export function ComposerEnsembleToggleButton({
@@ -19,7 +20,8 @@ export function ComposerEnsembleToggleButton({
   visible,
   onToggle,
   composerStyle = 'default',
-  disabled = false
+  disabled = false,
+  title: overrideTitle
 }: ComposerEnsembleToggleButtonProps): React.JSX.Element | null {
   const [open, setOpen] = useState(false)
   const [position, setPosition] = useState<ComposerPlanPopoverPosition | null>(null)
@@ -83,7 +85,7 @@ export function ComposerEnsembleToggleButton({
 
   if (!visible) return null
 
-  const title = enabled ? 'Ensemble on' : 'Ensemble off'
+  const title = overrideTitle || (enabled ? 'Ensemble on' : 'Ensemble off')
   const selectMode = (nextEnabled: boolean): void => {
     setOpen(false)
     if (nextEnabled !== enabled) onToggle(nextEnabled)

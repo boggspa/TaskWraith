@@ -106,6 +106,7 @@ import {
   HandoffCard,
   RunAnalystSnapshot,
   EnsembleParticipant,
+  PermissionPresetId,
   EnsembleFanoutPolicy,
   EnsembleOrchestrationMode,
   PinnedMessageGroup,
@@ -378,6 +379,7 @@ import {
 import { hydrateParticipantsWithPooledAgentIdentity } from './lib/ensembleAgentPool'
 import {
   buildProviderChangeParticipantPatch,
+  getDefaultEnsembleParticipantConfig,
   resolveEnsembleParticipantSettings
 } from './lib/ensembleProviderDefaults'
 import {
@@ -795,6 +797,17 @@ function permissionPresetToApprovalMode(preset?: string): string {
   if (preset === 'read_only') return 'plan'
   if (preset === 'plan') return 'plan'
   if (preset === 'workspace_write' || preset === 'full_access') return 'auto_edit'
+  return 'default'
+}
+
+function approvalModeToPermissionPreset(
+  approvalMode: string,
+  workflowMode: ChatWorkflowMode
+): PermissionPresetId {
+  if (approvalMode === 'plan') {
+    return workflowMode === 'plan' ? 'plan' : 'read_only'
+  }
+  if (approvalMode === 'auto_edit') return 'workspace_write'
   return 'default'
 }
 
@@ -2169,9 +2182,13 @@ function App(): React.JSX.Element {
     // object), behind a Tier-4-style confirm. Default 'safe' = no elevation.
     unattendedLevel: UnattendedElevationLevel
   } | null>(null)
-  // Guards the async chat-recreate behind the welcome Ensemble footer control
-  // so a fast double-click can't spawn (and orphan) a second draft chat.
-  const welcomeEnsembleTogglingRef = useRef(false)
+  // Guards the in-place chatKind mutation behind the ensemble toggle so a fast
+  // double-click can't race a second mutation onto the same chat.
+  const chatKindTogglingRef = useRef(false)
+  const [pendingEnsembleToSoloChatId, setPendingEnsembleToSoloChatId] = useState<string | null>(
+    null
+  )
+  const [chatKindMutationBusy, setChatKindMutationBusy] = useState(false)
   const [scheduleRunAtByChatId, setScheduleRunAtForChat] = usePerChatState('')
   const [dueScheduledTasks, setDueScheduledTasks] = useState<ScheduledTask[]>([])
   const [runningChatIds, setRunningChatIds] = useState<Set<string>>(new Set())
@@ -2693,6 +2710,79 @@ function App(): React.JSX.Element {
         null
       : null
   const canCreateSideChatFromCurrent = Boolean(currentChat && !currentChatIsLinkedChild)
+  const ensembleToSoloModalChat =
+    pendingEnsembleToSoloChatId && currentChat?.appChatId === pendingEnsembleToSoloChatId
+      ? currentChat
+      : null
+  const ensembleToSoloCanonicalProviders = useMemo(() => {
+    if (!ensembleToSoloModalChat?.ensemble?.participants?.length) return []
+    const seen = new Set<ProviderId>()
+    const candidates: Array<{
+      provider: ProviderId
+      label: string
+      metadata: Record<string, unknown>
+    }> = []
+    for (const participant of [...ensembleToSoloModalChat.ensemble.participants].sort(
+      (left, right) => left.order - right.order
+    )) {
+      if (seen.has(participant.provider)) continue
+      seen.add(participant.provider)
+      candidates.push({
+        provider: participant.provider,
+        label: getProviderLabel(participant.provider),
+        metadata: buildProviderMetadataFromEnsembleParticipant(participant)
+      })
+    }
+    if (
+      ensembleToSoloModalChat.provider &&
+      !seen.has(ensembleToSoloModalChat.provider as ProviderId)
+    ) {
+      const fallbackProvider = ensembleToSoloModalChat.provider as ProviderId
+      const fallbackSelection = getChatComposerSelection(ensembleToSoloModalChat, fallbackProvider)
+      candidates.push({
+        provider: fallbackProvider,
+        label: getProviderLabel(fallbackProvider),
+        metadata: {
+          selectedModelType: fallbackSelection.selectedModelType,
+          customModel: fallbackSelection.customModel,
+          approvalMode: fallbackSelection.approvalMode,
+          ...(fallbackSelection.workflowMode === 'plan' ? { workflowMode: 'plan' } : {}),
+          ...(getRuntimeProfileIdForChat(ensembleToSoloModalChat, fallbackProvider)
+            ? {
+                runtimeProfileId: getRuntimeProfileIdForChat(
+                  ensembleToSoloModalChat,
+                  fallbackProvider
+                )
+              }
+            : {}),
+          ...(fallbackProvider === 'gemini'
+            ? {
+                geminiAuthProfileId:
+                  typeof ensembleToSoloModalChat.providerMetadata?.geminiAuthProfileId === 'string'
+                    ? ensembleToSoloModalChat.providerMetadata.geminiAuthProfileId
+                    : null
+              }
+            : {}),
+          ...(fallbackProvider === 'codex'
+            ? {
+                codexReasoningEffort: fallbackSelection.codexReasoningEffort,
+                codexServiceTier: fallbackSelection.codexServiceTier
+              }
+            : {}),
+          ...(fallbackProvider === 'claude'
+            ? {
+                claudeReasoningEffort: fallbackSelection.claudeReasoningEffort,
+                claudeFastMode: fallbackSelection.claudeFastMode
+              }
+            : {}),
+          ...(fallbackProvider === 'kimi'
+            ? { kimiThinkingEnabled: fallbackSelection.kimiThinkingEnabled }
+            : {})
+        }
+      })
+    }
+    return candidates
+  }, [ensembleToSoloModalChat])
   const popoutSideChatLifecycleId =
     isChatPopoutWindow && currentChat?.parentChatRelation === 'sideChat'
       ? currentChat.appChatId
@@ -2730,6 +2820,17 @@ function App(): React.JSX.Element {
       setSideChatId(null)
     }
   }, [sideChatId, chats, currentChat?.appChatId])
+
+  useEffect(() => {
+    if (!pendingEnsembleToSoloChatId) return
+    if (!currentChat || currentChat.appChatId !== pendingEnsembleToSoloChatId) {
+      setPendingEnsembleToSoloChatId(null)
+      return
+    }
+    if (currentChat.chatKind !== 'ensemble') {
+      setPendingEnsembleToSoloChatId(null)
+    }
+  }, [currentChat, pendingEnsembleToSoloChatId])
   useLayoutEffect(() => {
     if (!sideChat || !sideAutoFollowRef.current) return
     const scroller = sideTranscriptScrollRef.current
@@ -4087,6 +4188,101 @@ function App(): React.JSX.Element {
     )
     if (selection.provider === 'gemini' && selection.selectedModelType !== 'custom') {
       syncPersistentModelSelection(selection.selectedModelType)
+    }
+  }
+
+  const buildProviderMetadataFromEnsembleParticipant = (
+    participant: EnsembleParticipant
+  ): Record<string, unknown> => {
+    const provider = participant.provider
+    const providerModel = participant.model || getDefaultModelForProvider(provider)
+    const providerOptions = getProviderModelOptions(provider)
+    const isKnownModel = providerOptions.some((model) => model.id === providerModel)
+    const selectedClaudeModelOption =
+      provider === 'claude'
+        ? (agentModelsByProvider.claude || CLAUDE_DEFAULT_MODELS).find(
+            (model) => model.id === providerModel
+          )
+        : undefined
+    const selectedClaudeSettings =
+      provider === 'claude' ? resolveEnsembleParticipantSettings(participant) : null
+    return {
+      selectedModelType:
+        provider !== 'kimi' && !isKnownModel && providerModel !== 'custom' ? 'custom' : providerModel,
+      customModel:
+        provider !== 'kimi' && !isKnownModel && providerModel !== 'custom' ? providerModel : '',
+      approvalMode: permissionPresetToApprovalMode(participant.permissionPresetId),
+      ...(participant.permissionPresetId === 'plan' ? { workflowMode: 'plan' } : {}),
+      ...(participant.runtimeProfileId ? { runtimeProfileId: participant.runtimeProfileId } : {}),
+      ...(provider === 'gemini' ? { geminiAuthProfileId: participant.geminiAuthProfileId ?? null } : {}),
+      ...(provider === 'codex'
+        ? {
+            codexReasoningEffort: participant.reasoningEffort || 'medium',
+            codexServiceTier:
+              participant.serviceTier || (participant.fastModeEnabled ? 'fast' : '')
+          }
+        : {}),
+      ...(provider === 'claude'
+        ? {
+            claudeReasoningEffort:
+              selectedClaudeSettings?.reasoningEffort ||
+              resolveClaudeDefaultReasoningEffort(selectedClaudeModelOption),
+            claudeFastMode: Boolean(participant.fastModeEnabled)
+          }
+        : {}),
+      ...(provider === 'kimi'
+        ? { kimiThinkingEnabled: participant.thinkingEnabled ?? true }
+        : {})
+    }
+  }
+
+  const buildEnsembleSeedParticipantFromChat = (chat: ChatRecord): EnsembleParticipant => {
+    const provider = getChatProvider(chat)
+    const selection = getChatComposerSelection(chat, provider)
+    const defaults = getDefaultEnsembleParticipantConfig(provider)
+    const selectedModel =
+      selection.selectedModelType === 'custom' && selection.customModel.trim()
+        ? selection.customModel.trim()
+        : selection.selectedModelType || defaults.model
+    const permissionPresetId: PermissionPresetId = approvalModeToPermissionPreset(
+      selection.approvalMode,
+      selection.workflowMode
+    )
+    const runtimeProfileId = getRuntimeProfileIdForChat(chat, provider)
+    return {
+      id: `ensemble-seed-${provider}-${globalThis.crypto?.randomUUID?.() || Date.now()}`,
+      provider,
+      enabled: true,
+      role: getProviderLabel(provider),
+      instructions: '',
+      order: 1,
+      model: selectedModel,
+      permissionPresetId,
+      ...(runtimeProfileId ? { runtimeProfileId } : {}),
+      ...(provider === 'gemini'
+        ? {
+            geminiAuthProfileId:
+              typeof chat.providerMetadata?.geminiAuthProfileId === 'string'
+                ? chat.providerMetadata.geminiAuthProfileId
+                : null
+          }
+        : {}),
+      ...(provider === 'codex'
+        ? {
+            reasoningEffort: selection.codexReasoningEffort || defaults.reasoningEffort,
+            fastModeEnabled: selection.codexServiceTier === 'fast',
+            serviceTier: selection.codexServiceTier || defaults.serviceTier
+          }
+        : {}),
+      ...(provider === 'claude'
+        ? {
+            reasoningEffort: selection.claudeReasoningEffort || defaults.reasoningEffort,
+            fastModeEnabled: Boolean(selection.claudeFastMode)
+          }
+        : {}),
+      ...(provider === 'kimi'
+        ? { thinkingEnabled: selection.kimiThinkingEnabled ?? defaults.thinkingEnabled ?? true }
+        : {})
     }
   }
 
@@ -12829,57 +13025,98 @@ function App(): React.JSX.Element {
     })
   }
 
-  // Footer Ensemble toggle for welcome chats. A chat's kind is fixed at
-  // creation, so flipping Ensemble recreates the empty draft chat and carries
-  // the typed prompt across. The abandoned draft is removed after the new one
-  // is selected.
+  // Slice C — in-place mid-thread ensemble toggle. The backend `setChatKind`
+  // mutation preserves the SAME appChatId + transcript/runs/history; renderer
+  // builds the seed participant (solo→ensemble) and the canonical-provider
+  // metadata (ensemble→solo), while the backend enforces the idle-only guard.
   const handleToggleWelcomeEnsemble = async (enabled: boolean) => {
-    if (!isWelcomeChat || !currentChat?.appChatId) return
+    if (!currentChat?.appChatId || currentChatIsLinkedChild) return
     if (settings?.ensembleModeEnabled === false && enabled) return
     if (isCurrentEnsembleChat === enabled) return
-    if (welcomeEnsembleTogglingRef.current) return
-    welcomeEnsembleTogglingRef.current = true
+    if (chatKindTogglingRef.current) return
+    if (isCurrentChatRunning) {
+      appendThreadRawLog(currentChat.appChatId, {
+        type: 'info',
+        content: 'Finish the current turn first to change chat mode.'
+      })
+      return
+    }
+    if (!enabled) {
+      const modalChat =
+        isChatSummaryRecord(currentChat)
+          ? (await refreshSingleChat(currentChat.appChatId)) || currentChat
+          : currentChat
+      setPendingEnsembleToSoloChatId(modalChat.appChatId)
+      return
+    }
+    chatKindTogglingRef.current = true
+    setChatKindMutationBusy(true)
     try {
-      const oldChatId = currentChat.appChatId
-      const carriedPrompt = prompt
-      const workflowDraftForCurrent =
-        workflowDraft?.chatId === oldChatId ? workflowDraft : null
-      const workspace =
-        currentChat.scope === 'workspace'
-          ? getWorkspaceForChat(currentChat) || currentWorkspace
-          : null
-      let newChat: ChatRecord | null = null
-      if (enabled) {
-        newChat = workspace?.id && workspace.path
-          ? await handleNewEnsemble(workspace)
-          : await handleNewGlobalEnsembleChat()
-      } else {
-        newChat = workspace?.id && workspace.path
-          ? await handleNewChat(workspace.id, workspace.path)
-          : await handleNewSingleGlobalChat()
-      }
-      const newChatId = newChat?.appChatId || currentChatIdRef.current
-      if (!newChatId || newChatId === oldChatId) return
-      if (workflowDraftForCurrent) {
+      const baseChat =
+        isChatSummaryRecord(currentChat)
+          ? (await refreshSingleChat(currentChat.appChatId)) || currentChat
+          : currentChat
+      const updatedChat = applyHydratedChat(
+        await window.api.setChatKind({
+          chatId: baseChat.appChatId,
+          targetKind: 'ensemble',
+          seedParticipant: buildEnsembleSeedParticipantFromChat(baseChat)
+        })
+      )
+      applyChatComposerSelection(updatedChat, getChatProvider(updatedChat))
+      setSelectedParticipantId(updatedChat.ensemble?.participants[0]?.id || null)
+      if (workflowDraft?.chatId === updatedChat.appChatId) {
         setWorkflowDraft({
-          ...workflowDraftForCurrent,
-          chatId: newChatId,
-          ensembleEnabled: enabled
+          ...workflowDraft,
+          ensembleEnabled: true
         })
       }
-      if (carriedPrompt.trim()) {
-        setChatPromptDraft(newChatId, carriedPrompt)
-        setPrompt(carriedPrompt)
-      }
-      setChats((prev) => prev.filter((chat) => chat.appChatId !== oldChatId))
-      chatByIdRef.current.delete(oldChatId)
-      try {
-        await window.api.deleteChat(oldChatId)
-      } catch {
-        /* best-effort cleanup of the abandoned empty draft chat */
-      }
+      void refreshChatList()
+    } catch (error) {
+      appendThreadRawLog(currentChat.appChatId, {
+        type: 'stderr',
+        content: redactLog(error instanceof Error ? error.message : String(error))
+      })
     } finally {
-      welcomeEnsembleTogglingRef.current = false
+      chatKindTogglingRef.current = false
+      setChatKindMutationBusy(false)
+    }
+  }
+
+  const handleConfirmEnsembleToSolo = async (provider: ProviderId): Promise<void> => {
+    const modalChat = ensembleToSoloModalChat
+    if (!modalChat) return
+    const providerChoice =
+      ensembleToSoloCanonicalProviders.find((candidate) => candidate.provider === provider) || null
+    chatKindTogglingRef.current = true
+    setChatKindMutationBusy(true)
+    try {
+      const updatedChat = applyHydratedChat(
+        await window.api.setChatKind({
+          chatId: modalChat.appChatId,
+          targetKind: 'single',
+          canonicalProvider: provider,
+          canonicalProviderMetadata: providerChoice?.metadata
+        })
+      )
+      applyChatComposerSelection(updatedChat, getChatProvider(updatedChat))
+      setSelectedParticipantId(null)
+      if (workflowDraft?.chatId === updatedChat.appChatId) {
+        setWorkflowDraft({
+          ...workflowDraft,
+          ensembleEnabled: false
+        })
+      }
+      void refreshChatList()
+      setPendingEnsembleToSoloChatId(null)
+    } catch (error) {
+      appendThreadRawLog(modalChat.appChatId, {
+        type: 'stderr',
+        content: redactLog(error instanceof Error ? error.message : String(error))
+      })
+    } finally {
+      chatKindTogglingRef.current = false
+      setChatKindMutationBusy(false)
     }
   }
 
@@ -21979,6 +22216,7 @@ function App(): React.JSX.Element {
       })(),
       isCurrentGlobalChat: viewerIsGlobalChat,
       isCurrentChatRunning: viewerIsRunning,
+      isCurrentChatLinkedChild: true,
       isCurrentEnsembleChat: paneIsEnsembleChat,
       isWelcomeChat: viewerIsWelcomeChat,
       isCurrentChatProviderLocked: viewerProviderLocked,
@@ -23068,6 +23306,7 @@ function App(): React.JSX.Element {
         })(),
         isCurrentGlobalChat: viewerIsGlobalChat,
         isCurrentChatRunning: viewerIsRunning,
+        isCurrentChatLinkedChild: true,
         isCurrentEnsembleChat: paneIsEnsembleChat,
         isWelcomeChat: viewerIsWelcomeChat,
         isCurrentChatProviderLocked: viewerProviderLocked,
@@ -23338,6 +23577,7 @@ function App(): React.JSX.Element {
     openSlashCommandsRequestId: slashCommandsOpenRequestId,
     isCurrentChatProviderLocked,
     isCurrentChatRunning,
+    isCurrentChatLinkedChild: currentChatIsLinkedChild,
     isCurrentComposerLocked,
     isCurrentEnsembleChat,
     isCurrentGlobalChat,
@@ -24058,6 +24298,61 @@ function App(): React.JSX.Element {
           window.api.decideCreativeAction(requestId, approved, rememberForSession)
         }
       />
+      {ensembleToSoloModalChat && (
+        <div
+          className="creative-approval-backdrop"
+          role="presentation"
+          onMouseDown={() => {
+            if (!chatKindMutationBusy) setPendingEnsembleToSoloChatId(null)
+          }}
+        >
+          <div
+            className="creative-approval-modal approval-elevation-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="ensemble-to-solo-title"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <header className="creative-approval-modal-header">
+              <span className="creative-approval-modal-eyebrow" aria-hidden>
+                Ensemble off
+              </span>
+              <h2 id="ensemble-to-solo-title" className="creative-approval-modal-title">
+                Pick the solo provider
+              </h2>
+            </header>
+            <p className="creative-approval-modal-description">
+              This keeps the same thread and transcript, removes the ensemble roster, and switches
+              the chat back to a single provider.
+            </p>
+            <div className="composer-combined-picker-popover composer-plus-picker-popover shell-default">
+              {ensembleToSoloCanonicalProviders.map((candidate) => (
+                <button
+                  key={candidate.provider}
+                  type="button"
+                  className="composer-combined-picker-row"
+                  onClick={() => void handleConfirmEnsembleToSolo(candidate.provider)}
+                  disabled={chatKindMutationBusy}
+                >
+                  <span className="composer-combined-picker-row-label">
+                    {candidate.label}
+                  </span>
+                </button>
+              ))}
+            </div>
+            <footer className="creative-approval-modal-actions">
+              <button
+                type="button"
+                className="creative-approval-modal-reject"
+                onClick={() => setPendingEnsembleToSoloChatId(null)}
+                disabled={chatKindMutationBusy}
+              >
+                Cancel
+              </button>
+            </footer>
+          </div>
+        </div>
+      )}
       {pendingRemoteAccessWorkspace && (
         <WorkspaceRemoteAccessModal
           workspace={pendingRemoteAccessWorkspace.workspace}

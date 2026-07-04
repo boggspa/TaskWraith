@@ -282,6 +282,7 @@ export interface ComposerProps {
   isCurrentChatBusyForSteer: any
   isCurrentChatProviderLocked: any
   isCurrentChatRunning: any
+  isCurrentChatLinkedChild: boolean
   isCurrentComposerLocked: any
   isCurrentEnsembleChat: any
   isCurrentEnsembleRoundRunning: any
@@ -560,9 +561,10 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     isAttachingWindow,
     openSlashCommandsRequestId,
     isCurrentChatBusyForSteer,
-    isCurrentChatProviderLocked,
-    isCurrentChatRunning,
-    isCurrentComposerLocked,
+  isCurrentChatProviderLocked,
+  isCurrentChatRunning,
+  isCurrentChatLinkedChild,
+  isCurrentComposerLocked,
     isCurrentEnsembleChat,
     isCurrentEnsembleRoundRunning,
     isCurrentGlobalChat,
@@ -4105,10 +4107,17 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                 />
                 <ComposerEnsembleToggleButton
                   enabled={isCurrentEnsembleChat}
-                  visible={Boolean(isWelcomeChat && isEnsembleModeEnabled)}
+                  visible={Boolean(isEnsembleModeEnabled && currentChat && !isCurrentChatLinkedChild)}
                   onToggle={handleToggleWelcomeEnsemble}
                   composerStyle={appearance.composerStyle}
-                  disabled={isCurrentComposerLocked}
+                  disabled={isCurrentChatRunning}
+                  title={
+                    isCurrentChatRunning
+                      ? 'Finish the current turn first to change chat mode.'
+                      : isCurrentEnsembleChat
+                        ? 'Ensemble on'
+                        : 'Ensemble off'
+                  }
                 />
                 {/* 1.0.4-AS3 — Screen Watch (Appwatch/Appshots) button.
                     Pre-AS3 the attached-window UX was an inline pill in the
