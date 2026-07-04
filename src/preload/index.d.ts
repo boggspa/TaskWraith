@@ -1,5 +1,6 @@
 import {
   AppSettings,
+  BlackboardEntry,
   WorkspaceRecord,
   ChatRecord,
   ChatKind,
@@ -1228,6 +1229,13 @@ declare global {
         workspaceId?: string
         workspacePath?: string
       }) => Promise<ChatRecord>
+      postBlackboardEntry: (payload: {
+        chatId: string
+        key?: string
+        value: string
+        category?: string
+        scope?: string
+      }) => Promise<{ ok: true; entry: BlackboardEntry }>
       runEnsembleRound: (payload: {
         chatId: string
         prompt: string

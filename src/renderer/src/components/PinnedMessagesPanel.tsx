@@ -1,5 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
-import type { BlackboardEntry, ChatRecord, PinnedMessageSummary } from '../../../main/store/types'
+import type {
+  BlackboardEntry,
+  ChatRecord,
+  EnsembleParticipant,
+  PinnedMessageSummary
+} from '../../../main/store/types'
+import { resolveProviderBrandLabel, resolveProviderHueClass } from '../lib/ollamaDisplayBrand'
+import { ProviderGlyph } from './icons/ProviderGlyph'
 import { MarkdownMessage } from './MarkdownMessage'
 
 interface PinnedMessagesPanelProps {
@@ -108,6 +115,125 @@ function JumpMiniIcon(): React.JSX.Element {
   )
 }
 
+function BossmanCrownIcon(): React.JSX.Element {
+  return (
+    <svg viewBox="0 0 24 24" width="12" height="12" aria-hidden focusable="false">
+      <path
+        d="M4.7 17.8h14.6l1.2-9.1-4.8 3.4-3.7-6-3.7 6-4.8-3.4 1.2 9.1Z"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinejoin="round"
+      />
+      <path d="M5.4 20h13.2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+    </svg>
+  )
+}
+
+function CaptainHatIcon(): React.JSX.Element {
+  return (
+    <svg viewBox="0 0 24 24" width="12" height="12" aria-hidden focusable="false">
+      <path
+        d="M5.2 15.8c2.3 1.2 11.3 1.2 13.6 0"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.9"
+        strokeLinecap="round"
+      />
+      <path
+        d="M6.8 14.8 8 9.7c.3-1.1 1.2-1.8 2.3-1.8h3.4c1.1 0 2 .7 2.3 1.8l1.2 5.1"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.9"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M9.3 8c.7-1.2 1.6-1.9 2.7-1.9s2 .7 2.7 1.9M10.1 11.4h3.8"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+      />
+      <path
+        d="M4 16.4c1.9 1.3 4.6 2 8 2s6.1-.7 8-2"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.9"
+        strokeLinecap="round"
+      />
+    </svg>
+  )
+}
+
+function participantLabel(participant: EnsembleParticipant | undefined, participantId: string): string {
+  if (participantId === 'user') return 'You'
+  if (!participant) return participantId
+  return (
+    participant.role ||
+    resolveProviderBrandLabel(participant.provider, participant.model) ||
+    participant.provider
+  )
+}
+
+function SeenByRail({
+  chat,
+  entry
+}: {
+  chat: ChatRecord | null
+  entry: BlackboardEntry
+}): React.JSX.Element | null {
+  const seenBy = entry.seenBy || []
+  if (seenBy.length === 0) return null
+  const participants = chat?.ensemble?.participants || []
+  const bossmanId = chat?.ensemble?.bossmanParticipantId
+  const captainId = chat?.ensemble?.secondInCommandParticipantId
+  const byId = new Map(participants.map((participant) => [participant.id, participant]))
+
+  return (
+    <div className="pinned-blackboard-seen-rail" aria-label="Seen by">
+      {seenBy.slice(0, 12).map((participantId) => {
+        const participant = byId.get(participantId)
+        const providerClass = participant
+          ? resolveProviderHueClass(participant.provider, participant.model)
+          : participantId === 'user'
+            ? 'user'
+            : 'ensemble'
+        const label = participantLabel(participant, participantId)
+        const isBossman = participantId === bossmanId
+        const isCaptain = participantId === captainId && !isBossman
+        return (
+          <span
+            key={participantId}
+            className={`pinned-blackboard-seen-chip provider-${providerClass}${
+              participantId === 'user' ? ' is-user' : ''
+            }`}
+            style={{
+              '--blackboard-seen-color': `var(--provider-${providerClass}-color, var(--accent))`
+            } as React.CSSProperties}
+            title={`${label} has seen this entry`}
+            aria-label={`${label} has seen this entry`}
+          >
+            {participant ? (
+              <ProviderGlyph
+                provider={participant.provider}
+                className="pinned-blackboard-seen-glyph"
+              />
+            ) : (
+              <span className="pinned-blackboard-seen-initial" aria-hidden>
+                {label.slice(0, 1).toUpperCase()}
+              </span>
+            )}
+            <span>{label}</span>
+            {isBossman && <BossmanCrownIcon />}
+            {isCaptain && <CaptainHatIcon />}
+          </span>
+        )
+      })}
+      {seenBy.length > 12 && <span className="pinned-blackboard-seen-more">+{seenBy.length - 12}</span>}
+    </div>
+  )
+}
+
 function BlackboardSection({
   chat,
   entries
@@ -115,6 +241,10 @@ function BlackboardSection({
   chat: ChatRecord | null
   entries: BlackboardEntry[]
 }): React.JSX.Element {
+  const [draft, setDraft] = useState('')
+  const [posting, setPosting] = useState(false)
+  const [postError, setPostError] = useState<string | null>(null)
+  const canPost = Boolean(chat?.appChatId && chat?.ensemble)
   const visibleEntries = entries
     .filter((entry) => entry.key.trim() && entry.value.trim())
     .sort(sortBlackboardEntries)
@@ -123,6 +253,26 @@ function BlackboardSection({
     category,
     entries: visibleEntries.filter((entry) => entry.category === category)
   })).filter((group) => group.entries.length > 0)
+  const draftValue = draft.trim()
+  const submitPost = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (!chat?.appChatId || !draftValue || posting) return
+    setPosting(true)
+    setPostError(null)
+    try {
+      await window.api.postBlackboardEntry({
+        chatId: chat.appChatId,
+        value: draftValue,
+        category: 'note',
+        scope: 'session'
+      })
+      setDraft('')
+    } catch (error) {
+      setPostError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setPosting(false)
+    }
+  }
 
   return (
     <section className="pinned-blackboard-block" aria-label="Blackboard">
@@ -130,6 +280,20 @@ function BlackboardSection({
         <span>Blackboard</span>
         {visibleEntries.length > 0 && <small>{visibleEntries.length}</small>}
       </div>
+      {canPost && (
+        <form className="pinned-blackboard-compose" onSubmit={submitPost}>
+          <textarea
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            placeholder="Post to blackboard..."
+            rows={2}
+          />
+          <button type="submit" disabled={!draftValue || posting}>
+            {posting ? 'Posting' : 'Post'}
+          </button>
+          {postError && <small className="pinned-blackboard-post-error">{postError}</small>}
+        </form>
+      )}
       {visibleEntries.length === 0 ? (
         <div className="right-dock-empty pinned-blackboard-empty">No blackboard entries.</div>
       ) : (
@@ -151,6 +315,7 @@ function BlackboardSection({
                   <div className="pinned-blackboard-entry-body">
                     <MarkdownMessage content={entry.value} chat={chat || undefined} />
                   </div>
+                  <SeenByRail chat={chat} entry={entry} />
                   {entry.participantId && (
                     <div className="pinned-blackboard-author">{entry.participantId}</div>
                   )}

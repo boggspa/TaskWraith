@@ -454,7 +454,13 @@ const TASK_LIKE_TOOL_NAMES = new Set([
   'todo_write',
   'todowrite',
   'update_todo_list',
-  'updatetodolist'
+  'updatetodolist',
+  'blackboard_post',
+  'blackboardpost',
+  'blackboard_read',
+  'blackboardread',
+  'blackboard_delete',
+  'blackboarddelete'
 ])
 
 const SEARCH_LIKE_TOOL_NAMES = new Set([

@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type {
   GeminiWorktreeLaunchOption,
+  BlackboardEntry,
   EnsembleFanoutPolicy,
   ProviderId,
   RunAnalystRequest,
@@ -924,6 +925,17 @@ const api = {
   createGlobalChat: () => ipcRenderer.invoke('create-global-chat'),
   createEnsembleChat: (args?: { workspaceId?: string; workspacePath?: string }) =>
     ipcRenderer.invoke('create-ensemble-chat', args),
+  postBlackboardEntry: (payload: {
+    chatId: string
+    key?: string
+    value: string
+    category?: string
+    scope?: string
+  }) =>
+    ipcRenderer.invoke('post-blackboard-entry', payload) as Promise<{
+      ok: true
+      entry: BlackboardEntry
+    }>,
   runEnsembleRound: (payload: {
     chatId: string
     prompt: string
