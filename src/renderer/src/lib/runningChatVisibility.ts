@@ -24,9 +24,20 @@ export interface RunningChatRecordLike {
     activeRound?: EnsembleRoundState | null
   }
   runs?: ReadonlyArray<{
+    runId?: string
     endedAt?: string
     status?: string
   }>
+}
+
+export interface RunningRunQueueJobLike {
+  chatId?: string | null
+  runId?: string | null
+  status?: string
+  startedAt?: string
+  updatedAt?: string
+  enqueuedAt?: string
+  createdAt?: string
 }
 
 /**
@@ -86,6 +97,57 @@ export function hasKnownInactiveEnsembleRound(chat: RunningChatRecordLike): bool
 }
 
 /**
+ * Run queue rows are a second source of "active" sidebar state. They can be
+ * newer than the last persisted run (legitimate queue work) or older than a
+ * terminal run/round (stale durable queue work). Keep the new work visible
+ * while suppressing rows whose own timestamp or run id proves they were
+ * superseded by completed chat state.
+ */
+export function isRunQueueJobVisibleForChat(
+  job: RunningRunQueueJobLike,
+  chat: RunningChatRecordLike | null | undefined
+): boolean {
+  if (!job.chatId || !chat) return true
+  if (isRunQueueJobSupersededByInactiveEnsembleRound(job, chat)) return false
+  if (isRunQueueJobSupersededByTerminalRun(job, chat)) return false
+  return true
+}
+
+function isRunQueueJobSupersededByInactiveEnsembleRound(
+  job: RunningRunQueueJobLike,
+  chat: RunningChatRecordLike
+): boolean {
+  const activeRound = chat.ensemble?.activeRound
+  if (!activeRound || isEnsembleRoundDispatchLive(activeRound)) return false
+  const roundEndMs = Date.parse(activeRound.endedAt || '')
+  const jobMs = runQueueJobTimeMs(job)
+  if (Number.isFinite(roundEndMs) && Number.isFinite(jobMs)) return jobMs <= roundEndMs
+  return job.status !== 'queued'
+}
+
+function isRunQueueJobSupersededByTerminalRun(
+  job: RunningRunQueueJobLike,
+  chat: RunningChatRecordLike
+): boolean {
+  const runs = chat.runs
+  if (!runs || runs.length === 0) return false
+
+  const matchingRun = job.runId
+    ? runs.find((run) => run.runId && run.runId === job.runId)
+    : undefined
+  if (matchingRun && isTerminalRunSnapshot(matchingRun)) return true
+
+  const latestTerminalRun = [...runs]
+    .reverse()
+    .find((run) => isTerminalRunSnapshot(run) && Number.isFinite(Date.parse(run.endedAt || '')))
+  if (!latestTerminalRun) return false
+  const runEndMs = Date.parse(latestTerminalRun.endedAt || '')
+  const jobMs = runQueueJobTimeMs(job)
+  if (Number.isFinite(runEndMs) && Number.isFinite(jobMs)) return jobMs <= runEndMs
+  return false
+}
+
+/**
  * True iff the chat's most-recent run is in a terminal state (i.e.
  * has an `endedAt` set, or its persisted `status` is one of the
  * terminal labels). Treat unknown/missing runs as non-terminal so
@@ -95,8 +157,12 @@ export function hasTerminalLastRun(chat: RunningChatRecordLike): boolean {
   const runs = chat.runs
   if (!runs || runs.length === 0) return false
   const last = runs[runs.length - 1]
-  if (last.endedAt) return true
-  switch (last.status) {
+  return isTerminalRunSnapshot(last)
+}
+
+function isTerminalRunSnapshot(run: { endedAt?: string; status?: string }): boolean {
+  if (run.endedAt) return true
+  switch (run.status) {
     case 'failed':
     case 'cancelled':
     case 'success':
@@ -105,4 +171,12 @@ export function hasTerminalLastRun(chat: RunningChatRecordLike): boolean {
     default:
       return false
   }
+}
+
+function runQueueJobTimeMs(job: RunningRunQueueJobLike): number {
+  for (const value of [job.startedAt, job.updatedAt, job.enqueuedAt, job.createdAt]) {
+    const parsed = Date.parse(value || '')
+    if (Number.isFinite(parsed)) return parsed
+  }
+  return Number.NaN
 }

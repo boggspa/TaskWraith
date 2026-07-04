@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   hasKnownInactiveEnsembleRound,
   hasTerminalLastRun,
+  isRunQueueJobVisibleForChat,
   visibleRunningChatIds
 } from './runningChatVisibility'
 
@@ -272,5 +273,133 @@ describe('hasKnownInactiveEnsembleRound', () => {
         }
       })
     ).toBe(false)
+  })
+})
+
+describe('isRunQueueJobVisibleForChat', () => {
+  it('hides a queue job superseded by a completed ensemble round', () => {
+    expect(
+      isRunQueueJobVisibleForChat(
+        {
+          chatId: 'ensemble-chat',
+          runId: 'wrapper-run',
+          status: 'starting',
+          updatedAt: '2026-07-01T20:00:30.000Z'
+        },
+        {
+          appChatId: 'ensemble-chat',
+          ensemble: {
+            activeRound: {
+              roundId: 'round-1',
+              status: 'completed',
+              prompt: 'done',
+              startedAt: '2026-07-01T20:00:00.000Z',
+              endedAt: '2026-07-01T20:01:00.000Z',
+              participants: []
+            }
+          }
+        }
+      )
+    ).toBe(false)
+  })
+
+  it('keeps queue work created after a completed ensemble round', () => {
+    expect(
+      isRunQueueJobVisibleForChat(
+        {
+          chatId: 'ensemble-chat',
+          runId: 'new-run',
+          status: 'queued',
+          createdAt: '2026-07-01T20:02:00.000Z'
+        },
+        {
+          appChatId: 'ensemble-chat',
+          ensemble: {
+            activeRound: {
+              roundId: 'round-1',
+              status: 'completed',
+              prompt: 'done',
+              startedAt: '2026-07-01T20:00:00.000Z',
+              endedAt: '2026-07-01T20:01:00.000Z',
+              participants: []
+            }
+          }
+        }
+      )
+    ).toBe(true)
+  })
+
+  it('hides a queue job matching a terminal last run', () => {
+    expect(
+      isRunQueueJobVisibleForChat(
+        { chatId: 'chat-1', runId: 'run-1', status: 'active' },
+        {
+          appChatId: 'chat-1',
+          runs: [{ runId: 'run-1', status: 'failed' }]
+        }
+      )
+    ).toBe(false)
+  })
+
+  it('hides a queue job matching a non-last terminal run', () => {
+    expect(
+      isRunQueueJobVisibleForChat(
+        { chatId: 'chat-1', runId: 'run-1', status: 'active' },
+        {
+          appChatId: 'chat-1',
+          runs: [
+            { runId: 'run-1', status: 'success' },
+            { runId: 'run-2', status: 'running' }
+          ]
+        }
+      )
+    ).toBe(false)
+  })
+
+  it('hides an older wrapper job superseded by a later terminal run', () => {
+    expect(
+      isRunQueueJobVisibleForChat(
+        {
+          chatId: 'chat-1',
+          runId: 'wrapper-run',
+          status: 'starting',
+          updatedAt: '2026-07-01T20:00:30.000Z'
+        },
+        {
+          appChatId: 'chat-1',
+          runs: [
+            {
+              runId: 'participant-run',
+              endedAt: '2026-07-01T20:01:00.000Z',
+              status: 'success'
+            },
+            { runId: 'current-run', status: 'running' }
+          ]
+        }
+      )
+    ).toBe(false)
+  })
+
+  it('keeps a new queued job after a terminal last run', () => {
+    expect(
+      isRunQueueJobVisibleForChat(
+        {
+          chatId: 'chat-1',
+          runId: 'run-2',
+          status: 'queued',
+          createdAt: '2026-07-01T20:02:00.000Z'
+        },
+        {
+          appChatId: 'chat-1',
+          runs: [
+            {
+              runId: 'run-1',
+              endedAt: '2026-07-01T20:01:00.000Z',
+              status: 'success'
+            }
+          ]
+        }
+      )
+    ).toBe(true)
   })
 })

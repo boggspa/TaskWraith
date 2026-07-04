@@ -25,6 +25,17 @@ export const isRemoteComposerRunQueueJob = (job: RunQueueJob): boolean =>
 export const isQueuedDesktopRunQueueJob = (job: RunQueueJob): boolean =>
   job.status === 'queued' && !isRemoteComposerRunQueueJob(job)
 
+export const acceptedEnsembleRunQueueWrapperReason = (input: {
+  mode: 'normal' | 'queue'
+  scheduledTaskId?: string
+  scheduledRunAt?: string
+}): string | null => {
+  if (input.scheduledTaskId || input.scheduledRunAt) return null
+  return input.mode === 'queue'
+    ? 'Accepted into Ensemble queued prompt list.'
+    : 'Accepted by Ensemble orchestrator.'
+}
+
 export const queuedRunFallbackId = (request: QueuedRunRequest): string =>
   request.appRunId || `${request.provider}-${request.prompt.slice(0, 16)}`
 

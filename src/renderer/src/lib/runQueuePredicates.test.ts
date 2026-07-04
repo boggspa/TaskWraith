@@ -3,6 +3,7 @@ import type { RunQueueJob, ScheduledTask } from '../../../main/store/types'
 import type { QueuedRunRequest } from './runRequestTypes'
 import {
   GUEST_PENDING_RUN_QUEUE_STATUSES,
+  acceptedEnsembleRunQueueWrapperReason,
   isQueuedDesktopRunQueueJob,
   isRemoteComposerRunQueueJob,
   isScheduledTaskReadyToDispatch,
@@ -127,5 +128,26 @@ describe('run queue predicates', () => {
       'active',
       'cancelling'
     ])
+  })
+
+  it('terminalizes accepted non-scheduled ensemble queue wrappers', () => {
+    expect(acceptedEnsembleRunQueueWrapperReason({ mode: 'normal' })).toBe(
+      'Accepted by Ensemble orchestrator.'
+    )
+    expect(acceptedEnsembleRunQueueWrapperReason({ mode: 'queue' })).toBe(
+      'Accepted into Ensemble queued prompt list.'
+    )
+    expect(
+      acceptedEnsembleRunQueueWrapperReason({
+        mode: 'normal',
+        scheduledTaskId: 'scheduled-task-1'
+      })
+    ).toBeNull()
+    expect(
+      acceptedEnsembleRunQueueWrapperReason({
+        mode: 'queue',
+        scheduledRunAt: '2026-06-27T12:00:00.000Z'
+      })
+    ).toBeNull()
   })
 })
