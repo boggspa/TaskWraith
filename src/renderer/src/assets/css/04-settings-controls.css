@@ -6539,6 +6539,7 @@ input:disabled, select:disabled, textarea:disabled {
 }
 
 .settings-roster-field.settings-roster-brief-editor {
+  align-items: stretch;
   gap: 5px;
 }
 
@@ -6551,6 +6552,12 @@ input:disabled, select:disabled, textarea:disabled {
 
 .settings-roster-brief-editor .ensemble-brief-preset-controls {
   flex: 0 1 auto;
+}
+
+.settings-roster-brief-editor .ensemble-brief-textarea-wrap,
+.settings-roster-brief-editor .ensemble-brief-textarea {
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .settings-roster-field-label {
