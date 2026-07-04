@@ -556,7 +556,7 @@ import {
   UserMcpServerConfig
 } from './store/types'
 import type { AgentRunPayload, AgentRunRoute } from './run/AgentRunTypes'
-import { applyPendingProviderChangeOnFinalize } from './providerChangeQueue'
+import { applyPendingProviderChangeOnFinalize, applyProviderChange } from './providerChangeQueue'
 import {
   DEFAULT_WINDOW_HEIGHT,
   DEFAULT_WINDOW_WIDTH,
@@ -3765,13 +3765,28 @@ function prepareIosComposerPromptChat(args: {
         }
       : {})
   }
-  const updated: ChatRecord = {
+  const providerSwitched = provider !== chat.provider
+  const withUserMessage: ChatRecord = {
     ...chat,
-    provider,
     ...(action.model ? { requestedModel: action.model } : {}),
     messages: [...(chat.messages || []), userMessage],
     updatedAt: now
   }
+  // Slice B.1 — iOS provider-switch session hygiene. An iOS provider change
+  // rides `providerOverride` on the send (no separate persist action), landing
+  // here as `action.provider`. On a GENUINE switch of an existing thread, route
+  // through the shared `applyProviderChange` so the old provider's linked
+  // sessions are cleared — otherwise the next bridge run resumes the old
+  // session under the new provider (see the resume-session read further down).
+  // `withUserMessage` still holds the OLD provider (we haven't overwritten it),
+  // so `providerChanged` fires correctly. A same-provider send keeps the live
+  // session; a brand-new chat never switches (its provider was just set above).
+  const updated: ChatRecord = providerSwitched
+    ? applyProviderChange(withUserMessage, {
+        provider,
+        ...(action.model ? { providerMetadata: { selectedModelType: action.model } } : {})
+      })
+    : { ...withUserMessage, provider }
   AppStore.saveChat(updated)
   return updated
 }
