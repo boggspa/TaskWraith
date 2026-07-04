@@ -4584,6 +4584,11 @@ export interface AgentIdentity {
   assignedAt: string
 }
 
+export interface PooledAgentStatsBreakdown {
+  key: string
+  count: number
+}
+
 /**
  * Aggregated work profile for a Settings → Roster pooled Agent
  * (`pooled-agent-<uuid>`), folded from the per-Agent stats ledger. Attribution
@@ -4607,8 +4612,22 @@ export interface PooledAgentStatsSummary {
   linesAdded: number
   linesRemoved: number
   filesTouched: number
+  /** Tool activity count for attributed runs. */
+  toolCalls: number
+  /** Tool activities categorized as writes/edits for attributed runs. */
+  writeToolCalls: number
   /** Distinct chat ids this agent participated in. */
   distinctChats: number
+  /** Distinct provider session/thread ids observed on attributed runs. */
+  distinctSessions: number
+  /** Distinct ensemble round ids observed on attributed runs. */
+  distinctEnsembleRounds: number
+  /** Agent-facing role labels observed on attributed runs, count-sorted. */
+  ensembleRoles: PooledAgentStatsBreakdown[]
+  /** Ensemble stage role attribution observed on attributed runs, count-sorted. */
+  ensembleStageRoles: PooledAgentStatsBreakdown[]
+  /** Fan-out lane intent attribution observed on attributed runs, count-sorted. */
+  ensembleLaneIntents: PooledAgentStatsBreakdown[]
   /** Finalized runs with no run-diff available (so ±lines is undercounted). */
   runsWithDiffUnavailable: number
   /** Most-recent attributed run finalize time (ms epoch), 0 if never run. */

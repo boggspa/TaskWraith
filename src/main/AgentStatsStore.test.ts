@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { ChatRun } from './store/types'
+import type { ChatMessage, ChatRun, ToolActivity } from './store/types'
 import {
   buildAgentStatDelta,
   compactToRollup,
@@ -16,6 +16,7 @@ import {
   seenRunIds,
   serializeAgentStatRecord,
   statusBucket,
+  toolActivityStatsForRun,
   type AgentStatDelta,
   type AgentStatRecord
 } from './AgentStatsStore'
@@ -28,6 +29,17 @@ function run(overrides: Partial<ChatRun> = {}): ChatRun {
     status: 'success',
     ...overrides
   } as ChatRun
+}
+
+function activity(overrides: Partial<ToolActivity> = {}): ToolActivity {
+  return {
+    id: 'activity-1',
+    toolName: 'read_file',
+    displayName: 'Read file',
+    category: 'read',
+    status: 'success',
+    ...overrides
+  }
 }
 
 describe('isPooledAgentId', () => {
@@ -114,6 +126,29 @@ describe('diffLineStats', () => {
   })
 })
 
+describe('toolActivityStatsForRun', () => {
+  it('counts only tool activities attached to the target run', () => {
+    const messages: Pick<ChatMessage, 'runId' | 'toolActivities'>[] = [
+      {
+        runId: 'run-1',
+        toolActivities: [
+          activity({ id: 'read-1', category: 'read' }),
+          activity({ id: 'write-1', category: 'write' })
+        ]
+      },
+      {
+        runId: 'run-2',
+        toolActivities: [activity({ id: 'write-2', category: 'write' })]
+      },
+      { runId: 'run-1' }
+    ]
+    expect(toolActivityStatsForRun('run-1', messages)).toEqual({
+      toolCalls: 2,
+      writeToolCalls: 1
+    })
+  })
+})
+
 describe('status + terminal', () => {
   it('buckets statuses', () => {
     expect(statusBucket(run({ status: 'success_with_warnings' }))).toBe('success')
@@ -137,18 +172,33 @@ describe('buildAgentStatDelta', () => {
   it('builds a delta for a finalized run', () => {
     const delta = buildAgentStatDelta(
       'chat-1',
-      run({ stats: { input_tokens: 100, output_tokens: 20, cost_usd: 0.1 } }),
-      999
+      run({
+        stats: { input_tokens: 100, output_tokens: 20, cost_usd: 0.1 },
+        providerThreadId: 'session-1',
+        ensembleRoundId: 'round-1',
+        ensembleRole: 'Worker',
+        ensembleStageRole: 'worker',
+        ensembleLaneIntent: 'write'
+      }),
+      999,
+      { toolCalls: 3, writeToolCalls: 2 }
     )
     expect(delta).toMatchObject({
       runId: 'run-1',
       chatId: 'chat-1',
+      providerThreadId: 'session-1',
+      ensembleRoundId: 'round-1',
+      ensembleRole: 'Worker',
+      ensembleStageRole: 'worker',
+      ensembleLaneIntent: 'write',
       status: 'success',
       tokensIn: 100,
       tokensOut: 20,
       tokensTotal: 120,
       costUsd: 0.1,
       durationMs: 60_000,
+      toolCalls: 3,
+      writeToolCalls: 2,
       diffAvailable: false
     })
   })
@@ -167,6 +217,8 @@ function delta(over: Partial<AgentStatDelta>): AgentStatDelta {
     linesAdded: 0,
     linesRemoved: 0,
     filesTouched: 0,
+    toolCalls: 0,
+    writeToolCalls: 0,
     diffAvailable: true,
     at: 0,
     ...over
@@ -177,10 +229,43 @@ describe('foldAgentStats', () => {
   it('sums, dedupes by runId, counts distinct chats + status buckets', () => {
     const records: AgentStatRecord[] = [
       delta({ runId: 'r1', chatId: 'c1', status: 'success', tokensTotal: 100, at: 10 }),
-      delta({ runId: 'r2', chatId: 'c1', status: 'failed', tokensTotal: 50, at: 20 }),
-      delta({ runId: 'r3', chatId: 'c2', status: 'cancelled', diffAvailable: false, at: 30 }),
+      delta({
+        runId: 'r2',
+        chatId: 'c1',
+        providerThreadId: 'session-1',
+        ensembleRoundId: 'round-1',
+        ensembleRole: 'Worker',
+        ensembleStageRole: 'worker',
+        ensembleLaneIntent: 'write',
+        status: 'failed',
+        tokensTotal: 50,
+        toolCalls: 4,
+        writeToolCalls: 2,
+        at: 20
+      }),
+      delta({
+        runId: 'r3',
+        chatId: 'c2',
+        providerThreadId: 'session-2',
+        ensembleRoundId: 'round-1',
+        ensembleRole: 'Reviewer',
+        ensembleStageRole: 'reviewer',
+        ensembleLaneIntent: 'read',
+        status: 'cancelled',
+        toolCalls: 1,
+        diffAvailable: false,
+        at: 30
+      }),
       // Duplicate runId — must be ignored.
-      delta({ runId: 'r1', chatId: 'c1', tokensTotal: 9999, at: 99 })
+      delta({
+        runId: 'r1',
+        chatId: 'c3',
+        providerThreadId: 'session-ignored',
+        ensembleRoundId: 'round-ignored',
+        tokensTotal: 9999,
+        toolCalls: 99,
+        at: 99
+      })
     ]
     const summary = foldAgentStats('pooled-agent-1', records)
     expect(summary.runs).toBe(3)
@@ -188,13 +273,64 @@ describe('foldAgentStats', () => {
     expect(summary.failed).toBe(1)
     expect(summary.cancelled).toBe(1)
     expect(summary.tokensTotal).toBe(150)
+    expect(summary.toolCalls).toBe(5)
+    expect(summary.writeToolCalls).toBe(2)
     expect(summary.distinctChats).toBe(2)
+    expect(summary.distinctSessions).toBe(2)
+    expect(summary.distinctEnsembleRounds).toBe(1)
+    expect(summary.ensembleRoles).toEqual([
+      { key: 'Reviewer', count: 1 },
+      { key: 'Worker', count: 1 }
+    ])
+    expect(summary.ensembleStageRoles).toEqual([
+      { key: 'reviewer', count: 1 },
+      { key: 'worker', count: 1 }
+    ])
+    expect(summary.ensembleLaneIntents).toEqual([
+      { key: 'read', count: 1 },
+      { key: 'write', count: 1 }
+    ])
     expect(summary.runsWithDiffUnavailable).toBe(1)
     expect(summary.lastRunAt).toBe(30)
   })
 
   it('an empty file yields an all-zero summary', () => {
-    expect(foldAgentStats('pooled-agent-1', [])).toMatchObject({ runs: 0, tokensTotal: 0 })
+    expect(foldAgentStats('pooled-agent-1', [])).toMatchObject({
+      runs: 0,
+      tokensTotal: 0,
+      toolCalls: 0,
+      writeToolCalls: 0,
+      distinctSessions: 0,
+      distinctEnsembleRounds: 0,
+      ensembleRoles: []
+    })
+  })
+
+  it('folds legacy records with missing new fields as zero/empty', () => {
+    const legacy = {
+      runId: 'legacy-run',
+      chatId: 'legacy-chat',
+      status: 'success',
+      tokensIn: 0,
+      tokensOut: 0,
+      tokensTotal: 10,
+      costUsd: 0,
+      durationMs: 0,
+      linesAdded: 0,
+      linesRemoved: 0,
+      filesTouched: 0,
+      diffAvailable: true,
+      at: 1
+    } as AgentStatDelta
+    expect(foldAgentStats('pooled-agent-1', [legacy])).toMatchObject({
+      runs: 1,
+      tokensTotal: 10,
+      toolCalls: 0,
+      writeToolCalls: 0,
+      distinctSessions: 0,
+      distinctEnsembleRounds: 0,
+      ensembleStageRoles: []
+    })
   })
 })
 

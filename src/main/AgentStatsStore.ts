@@ -15,7 +15,12 @@
 // count crosses AGENT_STATS_FILE_CAP — the rollup keeps `runIds` so dedup
 // survives compaction.
 
-import type { ChatRun, PooledAgentStatsSummary } from './store/types'
+import type {
+  ChatMessage,
+  ChatRun,
+  PooledAgentStatsBreakdown,
+  PooledAgentStatsSummary
+} from './store/types'
 
 export const AGENT_STATS_SCHEMA_VERSION = 1
 /** Raw per-run records tolerated before a file is compacted into one rollup. */
@@ -39,6 +44,11 @@ export type AgentRunStatusBucket = 'success' | 'failed' | 'cancelled' | 'other'
 export interface AgentStatDelta {
   runId: string
   chatId: string
+  providerThreadId?: string
+  ensembleRoundId?: string
+  ensembleRole?: string
+  ensembleStageRole?: string
+  ensembleLaneIntent?: string
   status: AgentRunStatusBucket
   tokensIn: number
   tokensOut: number
@@ -48,6 +58,8 @@ export interface AgentStatDelta {
   linesAdded: number
   linesRemoved: number
   filesTouched: number
+  toolCalls: number
+  writeToolCalls: number
   /** False when the run carried no run-diff, so ±lines is undercounted. */
   diffAvailable: boolean
   /** Finalize time (ms epoch). */
@@ -70,8 +82,15 @@ export interface AgentStatRollup {
   linesAdded: number
   linesRemoved: number
   filesTouched: number
+  toolCalls: number
+  writeToolCalls: number
   runsWithDiffUnavailable: number
   chats: string[]
+  providerThreads: string[]
+  ensembleRounds: string[]
+  ensembleRoles: PooledAgentStatsBreakdown[]
+  ensembleStageRoles: PooledAgentStatsBreakdown[]
+  ensembleLaneIntents: PooledAgentStatsBreakdown[]
   runIds: string[]
   lastRunAt: number
 }
@@ -80,6 +99,11 @@ export type AgentStatRecord = AgentStatDelta | AgentStatRollup
 
 function isRollup(record: AgentStatRecord): record is AgentStatRollup {
   return (record as AgentStatRollup).rollup === true
+}
+
+export interface AgentRunToolActivityStats {
+  toolCalls: number
+  writeToolCalls: number
 }
 
 // ── pure extraction (self-contained; no provider-coupled deps) ───────────────
@@ -233,6 +257,29 @@ export function diffLineStats(run: Pick<ChatRun, 'runDiff'>): {
   }
 }
 
+export function toolActivityStatsForRun(
+  runId: string,
+  messages: readonly Pick<ChatMessage, 'runId' | 'toolActivities'>[] | undefined
+): AgentRunToolActivityStats {
+  if (!runId || !Array.isArray(messages)) return { toolCalls: 0, writeToolCalls: 0 }
+  let toolCalls = 0
+  let writeToolCalls = 0
+  for (const message of messages) {
+    if (message.runId !== runId || !Array.isArray(message.toolActivities)) continue
+    for (const activity of message.toolActivities) {
+      toolCalls += 1
+      if (activity.category === 'write') writeToolCalls += 1
+    }
+  }
+  return { toolCalls, writeToolCalls }
+}
+
+function compactString(value: unknown, max = 120): string | undefined {
+  if (typeof value !== 'string') return undefined
+  const trimmed = value.trim()
+  return trimmed ? trimmed.slice(0, max) : undefined
+}
+
 export function statusBucket(run: Pick<ChatRun, 'status' | 'cancelled'>): AgentRunStatusBucket {
   if (run.cancelled === true || run.status === 'cancelled') return 'cancelled'
   if (run.status === 'failed') return 'failed'
@@ -251,15 +298,26 @@ export function isTerminalRun(run: Pick<ChatRun, 'status' | 'cancelled' | 'ended
 export function buildAgentStatDelta(
   chatId: string,
   run: ChatRun,
-  now: number
+  now: number,
+  toolStats: AgentRunToolActivityStats = { toolCalls: 0, writeToolCalls: 0 }
 ): AgentStatDelta | null {
   if (!isTerminalRun(run)) return null
   const tokens = extractRunTokens(run.stats)
   const diff = diffLineStats(run)
   const endedMs = run.endedAt ? Date.parse(run.endedAt) : NaN
+  const providerThreadId = compactString(run.providerThreadId, 240)
+  const ensembleRoundId = compactString(run.ensembleRoundId, 160)
+  const ensembleRole = compactString(run.ensembleRole, 120)
+  const ensembleStageRole = compactString(run.ensembleStageRole, 40)
+  const ensembleLaneIntent = compactString(run.ensembleLaneIntent, 40)
   return {
     runId: run.runId,
     chatId,
+    ...(providerThreadId ? { providerThreadId } : {}),
+    ...(ensembleRoundId ? { ensembleRoundId } : {}),
+    ...(ensembleRole ? { ensembleRole } : {}),
+    ...(ensembleStageRole ? { ensembleStageRole } : {}),
+    ...(ensembleLaneIntent ? { ensembleLaneIntent } : {}),
     status: statusBucket(run),
     tokensIn: tokens.inputTokens,
     tokensOut: tokens.outputTokens,
@@ -269,12 +327,41 @@ export function buildAgentStatDelta(
     linesAdded: diff.linesAdded,
     linesRemoved: diff.linesRemoved,
     filesTouched: diff.filesTouched,
+    toolCalls: Math.max(0, Math.trunc(toolStats.toolCalls || 0)),
+    writeToolCalls: Math.max(0, Math.trunc(toolStats.writeToolCalls || 0)),
     diffAvailable: diff.available,
     at: Number.isFinite(endedMs) ? endedMs : now
   }
 }
 
 // ── fold + compaction ────────────────────────────────────────────────────────
+
+function positiveInt(value: unknown): number {
+  const number = Number(value)
+  return Number.isFinite(number) && number > 0 ? Math.trunc(number) : 0
+}
+
+function addString(set: Set<string>, value: unknown): void {
+  const compact = compactString(value)
+  if (compact) set.add(compact)
+}
+
+function addBreakdown(map: Map<string, number>, key: unknown, count = 1): void {
+  const compact = compactString(key)
+  if (!compact || count <= 0) return
+  map.set(compact, (map.get(compact) ?? 0) + count)
+}
+
+function mergeBreakdown(map: Map<string, number>, records: PooledAgentStatsBreakdown[] | undefined): void {
+  if (!Array.isArray(records)) return
+  for (const record of records) addBreakdown(map, record.key, positiveInt(record.count))
+}
+
+function breakdownFromMap(map: Map<string, number>): PooledAgentStatsBreakdown[] {
+  return [...map.entries()]
+    .map(([key, count]) => ({ key, count }))
+    .sort((a, b) => b.count - a.count || a.key.localeCompare(b.key))
+}
 
 const EMPTY_SUMMARY = (agentId: string): PooledAgentStatsSummary => ({
   agentId,
@@ -290,7 +377,14 @@ const EMPTY_SUMMARY = (agentId: string): PooledAgentStatsSummary => ({
   linesAdded: 0,
   linesRemoved: 0,
   filesTouched: 0,
+  toolCalls: 0,
+  writeToolCalls: 0,
   distinctChats: 0,
+  distinctSessions: 0,
+  distinctEnsembleRounds: 0,
+  ensembleRoles: [],
+  ensembleStageRoles: [],
+  ensembleLaneIntents: [],
   runsWithDiffUnavailable: 0,
   lastRunAt: 0
 })
@@ -302,6 +396,11 @@ export function foldAgentStats(
 ): PooledAgentStatsSummary {
   const summary = EMPTY_SUMMARY(agentId)
   const chats = new Set<string>()
+  const sessions = new Set<string>()
+  const rounds = new Set<string>()
+  const roleCounts = new Map<string, number>()
+  const stageRoleCounts = new Map<string, number>()
+  const laneIntentCounts = new Map<string, number>()
   const seenRuns = new Set<string>()
   for (const record of records) {
     if (isRollup(record)) {
@@ -317,9 +416,16 @@ export function foldAgentStats(
       summary.linesAdded += record.linesAdded
       summary.linesRemoved += record.linesRemoved
       summary.filesTouched += record.filesTouched
+      summary.toolCalls += positiveInt(record.toolCalls)
+      summary.writeToolCalls += positiveInt(record.writeToolCalls)
       summary.runsWithDiffUnavailable += record.runsWithDiffUnavailable
       summary.lastRunAt = Math.max(summary.lastRunAt, record.lastRunAt)
       for (const chatId of record.chats) chats.add(chatId)
+      for (const providerThreadId of record.providerThreads ?? []) sessions.add(providerThreadId)
+      for (const roundId of record.ensembleRounds ?? []) rounds.add(roundId)
+      mergeBreakdown(roleCounts, record.ensembleRoles)
+      mergeBreakdown(stageRoleCounts, record.ensembleStageRoles)
+      mergeBreakdown(laneIntentCounts, record.ensembleLaneIntents)
       for (const runId of record.runIds) seenRuns.add(runId)
     } else {
       // Raw delta — skip a runId already counted (in a rollup or earlier line).
@@ -337,12 +443,24 @@ export function foldAgentStats(
       summary.linesAdded += record.linesAdded
       summary.linesRemoved += record.linesRemoved
       summary.filesTouched += record.filesTouched
+      summary.toolCalls += positiveInt(record.toolCalls)
+      summary.writeToolCalls += positiveInt(record.writeToolCalls)
       if (!record.diffAvailable) summary.runsWithDiffUnavailable += 1
       summary.lastRunAt = Math.max(summary.lastRunAt, record.at)
       chats.add(record.chatId)
+      addString(sessions, record.providerThreadId)
+      addString(rounds, record.ensembleRoundId)
+      addBreakdown(roleCounts, record.ensembleRole)
+      addBreakdown(stageRoleCounts, record.ensembleStageRole)
+      addBreakdown(laneIntentCounts, record.ensembleLaneIntent)
     }
   }
   summary.distinctChats = chats.size
+  summary.distinctSessions = sessions.size
+  summary.distinctEnsembleRounds = rounds.size
+  summary.ensembleRoles = breakdownFromMap(roleCounts)
+  summary.ensembleStageRoles = breakdownFromMap(stageRoleCounts)
+  summary.ensembleLaneIntents = breakdownFromMap(laneIntentCounts)
   return summary
 }
 
@@ -368,13 +486,20 @@ export function countRawDeltas(records: AgentStatRecord[]): number {
 export function compactToRollup(agentId: string, records: AgentStatRecord[]): AgentStatRollup {
   const folded = foldAgentStats(agentId, records)
   const chats = new Set<string>()
+  const providerThreads = new Set<string>()
+  const ensembleRounds = new Set<string>()
   const runIds = new Set<string>()
   for (const record of records) {
     if (isRollup(record)) {
       for (const chatId of record.chats) chats.add(chatId)
+      for (const providerThreadId of record.providerThreads ?? []) providerThreads.add(providerThreadId)
+      for (const roundId of record.ensembleRounds ?? []) ensembleRounds.add(roundId)
       for (const runId of record.runIds) runIds.add(runId)
     } else {
+      if (runIds.has(record.runId)) continue
       chats.add(record.chatId)
+      addString(providerThreads, record.providerThreadId)
+      addString(ensembleRounds, record.ensembleRoundId)
       runIds.add(record.runId)
     }
   }
@@ -392,8 +517,15 @@ export function compactToRollup(agentId: string, records: AgentStatRecord[]): Ag
     linesAdded: folded.linesAdded,
     linesRemoved: folded.linesRemoved,
     filesTouched: folded.filesTouched,
+    toolCalls: folded.toolCalls,
+    writeToolCalls: folded.writeToolCalls,
     runsWithDiffUnavailable: folded.runsWithDiffUnavailable,
     chats: [...chats],
+    providerThreads: [...providerThreads],
+    ensembleRounds: [...ensembleRounds],
+    ensembleRoles: folded.ensembleRoles,
+    ensembleStageRoles: folded.ensembleStageRoles,
+    ensembleLaneIntents: folded.ensembleLaneIntents,
     runIds: [...runIds],
     lastRunAt: folded.lastRunAt
   }

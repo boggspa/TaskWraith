@@ -129,6 +129,7 @@ import {
   safeAgentStatsFileName,
   seenRunIds,
   serializeAgentStatRecord,
+  toolActivityStatsForRun,
   type AgentStatRecord
 } from '../AgentStatsStore'
 import {
@@ -4738,12 +4739,17 @@ export class AppStore {
    * path does NO file read (the raw-count cache gates compaction). Best-effort: a
    * write failure must never break the saveChat that triggered it.
    */
-  private static recordAgentRunDelta(agentId: string, chatId: string, run: ChatRun): void {
+  private static recordAgentRunDelta(
+    agentId: string,
+    chatId: string,
+    run: ChatRun,
+    messages: ChatRecord['messages']
+  ): void {
     if (!isPooledAgentId(agentId) || typeof run.runId !== 'string' || !run.runId) return
     this.ensureAgentStatsLoaded(agentId)
     const seen = agentStatsSeenCache.get(agentId) as Set<string>
     if (seen.has(run.runId)) return
-    const delta = buildAgentStatDelta(chatId, run, Date.now())
+    const delta = buildAgentStatDelta(chatId, run, Date.now(), toolActivityStatsForRun(run.runId, messages))
     if (!delta) return
     const filePath = agentStatsFilePath(agentId)
     const rawCount = agentStatsRawCountCache.get(agentId) ?? 0
@@ -4797,7 +4803,7 @@ export class AppStore {
       const agentId = directAgentId || (run?.ensembleParticipantId
         ? agentByParticipant.get(run.ensembleParticipantId)
         : undefined)
-      if (agentId) this.recordAgentRunDelta(agentId, chatId, run)
+      if (agentId) this.recordAgentRunDelta(agentId, chatId, run, chat.messages)
     }
   }
 
