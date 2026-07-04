@@ -147,6 +147,17 @@ const CONTINUATION_BLOCKED_PARTICIPANT_STATUSES = new Set<EnsembleParticipantSta
   'failed',
   'unreachable'
 ])
+// Outcome of `tryAppendContinuationTurn`. When it declines, the caller needs the
+// REASON so it can report accurately (e.g. a Boss priority @-mention that can't be
+// re-summoned should say WHY — hop budget vs. the Boss run failed/was skipped —
+// rather than always blaming the hop budget).
+type ContinuationTurnResult =
+  | { appended: true }
+  | {
+      appended: false
+      reason: 'not_continuous' | 'unreachable' | 'blocked_status' | 'hop_limit'
+      blockedStatus?: EnsembleParticipantStatus
+    }
 export type EnsembleQueuedPromptMutationResult = {
   ok: boolean
   prompt?: string
@@ -6810,7 +6821,7 @@ export class EnsembleOrchestrator {
                 remaining,
                 target,
                 `Yielded back to ${target.role || target.provider} (${target.provider}).`
-              )
+              ).appended
             }
           }
           if (!routedByYieldTarget) {
@@ -6938,17 +6949,36 @@ export class EnsembleOrchestrator {
         )
         if (runtime.orchestrationMode === 'continuous') {
           for (const tagged of extraTargets.slice().reverse()) {
-            if (
-              this.tryAppendContinuationTurn(
-                runtime,
-                remaining,
-                tagged,
-                `@-mention: extra turn appended for ${tagged.role || tagged.provider}.`
-              )
-            ) {
+            // The Boss/Captain priority authority is re-summoned even after it
+            // already spoke ('answered') this round — a directed @-mention to the
+            // Boss must actually route, not just print the priority note above.
+            // The hop budget still throttles it (one hop per re-summon, same as
+            // any continuation). Advisory (non-authority) participants keep the
+            // existing "no re-summon of an already-terminal participant" behavior.
+            const isPriorityAuthority = tagged.id === priorityAuthorityMatch?.participant.id
+            const continuation = this.tryAppendContinuationTurn(
+              runtime,
+              remaining,
+              tagged,
+              `@-mention: extra turn appended for ${tagged.role || tagged.provider}.`,
+              { allowAnsweredParticipant: isPriorityAuthority }
+            )
+            if (continuation.appended) {
               // Spike 4 — an explicitly summoned extra turn outranks the
               // reviewer stage gate.
               stageGateExemptIds.add(tagged.id)
+            } else if (isPriorityAuthority) {
+              // The priority route couldn't be delivered. Report the ACTUAL
+              // reason (hop budget vs. the Boss run failed/skipped/cancelled)
+              // so the earlier "takes routing priority" note isn't left as an
+              // unfulfilled promise — and isn't misattributed to the hop budget.
+              const authorityLabel =
+                tagged.id === bossmanParticipantId ? 'Boss' : 'active Captain'
+              this.appendRoundStatus(
+                runtime.chatId,
+                runtime.roundId,
+                `@-mention: could not re-summon ${participantDisplayName(tagged)} (${authorityLabel}) — ${this.describeContinuationDecline(continuation)}.`
+              )
             }
           }
         } else {
@@ -7733,7 +7763,7 @@ export class EnsembleOrchestrator {
       returnParticipant,
       `Yield-return: returning to ${returnParticipant.role || returnParticipant.provider} (${returnParticipant.provider}).`,
       { allowYieldedParticipant: true }
-    )
+    ).appended
   }
 
   private tryAppendContinuationTurn(
@@ -7741,21 +7771,29 @@ export class EnsembleOrchestrator {
     remaining: EnsembleParticipant[],
     participant: EnsembleParticipant,
     statusMessage: string,
-    options: { allowYieldedParticipant?: boolean } = {}
-  ): boolean {
-    if (runtime.orchestrationMode !== 'continuous') return false
-    if (runtime.unreachableParticipantIds?.has(participant.id)) return false
+    // `allowYieldedParticipant` re-summons a participant who explicitly yielded
+    // (yield-return). `allowAnsweredParticipant` re-summons one who already
+    // answered normally — used ONLY for a Boss/Captain priority @-mention so a
+    // directed tag to the authority actually routes. Neither bypasses
+    // 'skipped'/'failed'/'cancelled'/'unreachable' (those mean the participant
+    // errored out or was removed — re-summoning is a different, riskier concern).
+    options: { allowYieldedParticipant?: boolean; allowAnsweredParticipant?: boolean } = {}
+  ): ContinuationTurnResult {
+    if (runtime.orchestrationMode !== 'continuous') return { appended: false, reason: 'not_continuous' }
+    if (runtime.unreachableParticipantIds?.has(participant.id))
+      return { appended: false, reason: 'unreachable' }
     const participantStatus = this.activeRoundParticipantStatus(runtime, participant.id)
     if (
       participantStatus &&
       CONTINUATION_BLOCKED_PARTICIPANT_STATUSES.has(participantStatus) &&
-      !(options.allowYieldedParticipant && participantStatus === 'yielded')
+      !(options.allowYieldedParticipant && participantStatus === 'yielded') &&
+      !(options.allowAnsweredParticipant && participantStatus === 'answered')
     ) {
-      return false
+      return { appended: false, reason: 'blocked_status', blockedStatus: participantStatus }
     }
     if (runtime.continuationHops >= runtime.maxContinuationHops) {
       this.notifyContinuationLimitReached(runtime)
-      return false
+      return { appended: false, reason: 'hop_limit' }
     }
     runtime.continuationHops += 1
     remaining.unshift(participant)
@@ -7774,7 +7812,37 @@ export class EnsembleOrchestrator {
       runtime.roundId,
       `${statusMessage} ${label} ${runtime.continuationHops}/${runtime.maxContinuationHops}.`
     )
-    return true
+    return { appended: true }
+  }
+
+  /**
+   * Human-readable reason a priority @-mention re-summon was declined, so the
+   * "could not re-summon the Boss/Captain" note is honest about WHY (the whole
+   * point of the note) instead of always blaming the hop budget.
+   */
+  private describeContinuationDecline(result: ContinuationTurnResult): string {
+    if (result.appended) return ''
+    switch (result.reason) {
+      case 'hop_limit':
+        return 'continuation-hop budget exhausted'
+      case 'unreachable':
+        return 'it is unreachable this round'
+      case 'blocked_status':
+        switch (result.blockedStatus) {
+          case 'failed':
+            return 'its last run failed'
+          case 'skipped':
+            return 'its last run was skipped'
+          case 'cancelled':
+            return 'its last run was cancelled'
+          case 'yielded':
+            return 'it yielded control this round'
+          default:
+            return 'it already completed its turn'
+        }
+      default:
+        return 'the round is no longer continuous'
+    }
   }
 
   private notifyContinuationLimitReached(runtime: ActiveRoundRuntime): void {

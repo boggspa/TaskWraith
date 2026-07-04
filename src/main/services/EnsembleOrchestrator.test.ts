@@ -6658,7 +6658,7 @@ Next action:
           remaining: EnsembleParticipant[],
           participant: EnsembleParticipant,
           statusMessage: string
-        ) => boolean
+        ) => { appended: boolean }
       }
     ).tryAppendContinuationTurn.bind(harness.orchestrator)
     const terminalStatuses: EnsembleParticipantStatus[] = [
@@ -6692,7 +6692,7 @@ Next action:
           remaining,
           target,
           `@-mention: extra turn appended for ${target.role}.`
-        )
+        ).appended
       ).toBe(false)
       expect(remaining).toEqual([])
       expect(runtime!.continuationHops).toBe(0)
@@ -6729,7 +6729,7 @@ Next action:
           remaining: EnsembleParticipant[],
           participant: EnsembleParticipant,
           statusMessage: string
-        ) => boolean
+        ) => { appended: boolean }
       }
     ).tryAppendContinuationTurn(
       runtime!,
@@ -6738,7 +6738,7 @@ Next action:
       '@-mention: extra turn appended for Worker.'
     )
 
-    expect(appended).toBe(false)
+    expect(appended.appended).toBe(false)
     expect(runtime!.continuationLimitNotified).toBe(true)
     expect(harness.chat.messages.map((message) => message.content)).toContain(
       'Continuous handoff limit reached (1/1); returning control to the user.'
@@ -7355,6 +7355,204 @@ Next action:
           content.includes('takes routing priority')
       )
     ).toBe(true)
+  })
+
+  it('re-summons the Boss on a priority @-mention even after the Boss already spoke', async () => {
+    // Before the fix, an @-mention of a Boss/Captain who already answered this
+    // round emitted the priority note but silently dropped the route (the
+    // continuation was blocked on the 'answered' status), so the round skipped to
+    // the next participant. Now the priority authority is re-summoned.
+    const harness = makeHarness()
+    harness.chat.ensemble!.orchestrationMode = 'continuous'
+    harness.chat.ensemble!.bossmanParticipantId = 'ensemble-codex'
+    // Completed goal disables auto-continuation, isolating the re-summon route.
+    harness.chat.activeGoal = { ...buildActiveGoal('goal-x'), status: 'completed' }
+    harness.chat.ensemble!.participants = [
+      {
+        id: 'ensemble-codex',
+        provider: 'codex',
+        enabled: true,
+        role: 'Lead',
+        instructions: 'Lead.',
+        order: 1,
+        permissionPresetId: 'workspace_write'
+      },
+      {
+        id: 'ensemble-claude',
+        provider: 'claude',
+        enabled: true,
+        role: 'Worker',
+        instructions: 'Work.',
+        order: 2,
+        permissionPresetId: 'read_only'
+      }
+    ]
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Coordinate.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    expect(harness.dispatched[0].provider).toBe('codex') // Boss speaks first
+
+    // Boss (codex) answers without a mention.
+    const bossRun = { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' }
+    harness.orchestrator.handleProviderOutput('codex', bossRun, {
+      type: 'content',
+      text: 'Kicking off. Worker, take the implementation.'
+    })
+    harness.orchestrator.handleProviderOutput('codex', bossRun, { type: 'result', status: 'success' })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    expect(harness.dispatched[1].provider).toBe('claude')
+
+    // Worker (claude) @-mentions the Boss, who has already spoken this round.
+    const workerRun = { appRunId: harness.dispatched[1].appRunId, appChatId: 'ensemble-chat' }
+    harness.orchestrator.handleProviderOutput('claude', workerRun, {
+      type: 'content',
+      text: 'Done with the slice. @Lead please review and decide next steps.'
+    })
+    harness.orchestrator.handleProviderOutput('claude', workerRun, {
+      type: 'result',
+      status: 'success'
+    })
+
+    // The Boss is re-summoned (not skipped) — a third dispatch, back to codex.
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
+    expect(harness.dispatched[2].provider).toBe('codex')
+    expect(harness.chat.ensemble?.activeRound?.continuationHops).toBe(1)
+  })
+
+  it('surfaces an honest note when a Boss priority @-mention cannot be re-summoned (hops exhausted)', async () => {
+    const harness = makeHarness()
+    harness.chat.ensemble!.orchestrationMode = 'continuous'
+    harness.chat.ensemble!.bossmanParticipantId = 'ensemble-codex'
+    harness.chat.ensemble!.maxContinuationHops = 1 // clamps to [1,500]
+    harness.chat.activeGoal = { ...buildActiveGoal('goal-x'), status: 'completed' }
+    harness.chat.ensemble!.participants = [
+      {
+        id: 'ensemble-codex',
+        provider: 'codex',
+        enabled: true,
+        role: 'Lead',
+        instructions: 'Lead.',
+        order: 1,
+        permissionPresetId: 'workspace_write'
+      },
+      {
+        id: 'ensemble-claude',
+        provider: 'claude',
+        enabled: true,
+        role: 'Worker',
+        instructions: 'Work.',
+        order: 2,
+        permissionPresetId: 'read_only'
+      }
+    ]
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Coordinate.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const bossRun = { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' }
+    harness.orchestrator.handleProviderOutput('codex', bossRun, { type: 'content', text: 'Go.' })
+    harness.orchestrator.handleProviderOutput('codex', bossRun, { type: 'result', status: 'success' })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    // Exhaust the hop budget so the priority re-summon is blocked.
+    const runtime = (
+      harness.orchestrator as unknown as {
+        roundsByChatId: Map<string, { continuationHops: number; maxContinuationHops: number }>
+      }
+    ).roundsByChatId.get('ensemble-chat')!
+    runtime.continuationHops = runtime.maxContinuationHops
+    const workerRun = { appRunId: harness.dispatched[1].appRunId, appChatId: 'ensemble-chat' }
+    harness.orchestrator.handleProviderOutput('claude', workerRun, {
+      type: 'content',
+      text: 'Done. @Lead review please.'
+    })
+    harness.orchestrator.handleProviderOutput('claude', workerRun, {
+      type: 'result',
+      status: 'success'
+    })
+    await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('completed'))
+    // Boss NOT re-dispatched (no hop budget), and an honest note explains why —
+    // with the ACCURATE reason (the hop budget), not a generic decline.
+    expect(harness.dispatched).toHaveLength(2)
+    expect(
+      harness.chat.messages.some(
+        (m) =>
+          (m.content || '').includes('could not re-summon') &&
+          (m.content || '').includes('continuation-hop budget exhausted')
+      )
+    ).toBe(true)
+  })
+
+  it('reports the ACCURATE reason (not the hop budget) when a Boss re-summon is blocked by a failed run', async () => {
+    // Regression for the honesty-note misattribution: `tryAppendContinuationTurn`
+    // declines a Boss re-summon for reasons OTHER than hop exhaustion (the Boss's
+    // own run failed/was skipped/cancelled — not 'answered', so it isn't bypassed).
+    // The note must say WHY accurately, not always blame the hop budget (which
+    // would send the user chasing "add more hops" when the Boss run keeps failing).
+    const harness = makeHarness()
+    harness.chat.ensemble!.orchestrationMode = 'continuous'
+    harness.chat.ensemble!.bossmanParticipantId = 'ensemble-codex'
+    harness.chat.activeGoal = { ...buildActiveGoal('goal-x'), status: 'completed' }
+    harness.chat.ensemble!.participants = [
+      {
+        id: 'ensemble-codex',
+        provider: 'codex',
+        enabled: true,
+        role: 'Lead',
+        instructions: 'Lead.',
+        order: 1,
+        permissionPresetId: 'workspace_write'
+      },
+      {
+        id: 'ensemble-claude',
+        provider: 'claude',
+        enabled: true,
+        role: 'Worker',
+        instructions: 'Work.',
+        order: 2,
+        permissionPresetId: 'read_only'
+      }
+    ]
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Coordinate.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const bossRun = { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' }
+    harness.orchestrator.handleProviderOutput('codex', bossRun, { type: 'content', text: 'Go.' })
+    harness.orchestrator.handleProviderOutput('codex', bossRun, { type: 'result', status: 'success' })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    // Force the Boss's round-participant status to 'failed' (hops untouched, so a
+    // hop-budget attribution would be flatly wrong). The re-summon must decline
+    // on the failed status and the note must report THAT, not the hop budget.
+    harness.chat.ensemble!.activeRound = {
+      ...harness.chat.ensemble!.activeRound!,
+      participants: harness.chat.ensemble!.activeRound!.participants.map((p) =>
+        p.participantId === 'ensemble-codex' ? { ...p, status: 'failed' } : p
+      )
+    }
+    const workerRun = { appRunId: harness.dispatched[1].appRunId, appChatId: 'ensemble-chat' }
+    harness.orchestrator.handleProviderOutput('claude', workerRun, {
+      type: 'content',
+      text: 'Done. @Lead review please.'
+    })
+    harness.orchestrator.handleProviderOutput('claude', workerRun, {
+      type: 'result',
+      status: 'success'
+    })
+    await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('completed'))
+    expect(harness.dispatched).toHaveLength(2) // Boss not re-dispatched.
+    const note = harness.chat.messages
+      .map((m) => m.content || '')
+      .find((c) => c.includes('could not re-summon'))
+    expect(note).toBeTruthy()
+    expect(note).toContain('its last run failed')
+    expect(note).not.toContain('continuation-hop budget exhausted')
   })
 
   it('does NOT emit an ambiguity warning when the speaker exclusion resolves the alias', async () => {
