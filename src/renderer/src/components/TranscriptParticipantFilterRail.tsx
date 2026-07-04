@@ -3,6 +3,7 @@ import {
   useLayoutEffect,
   useMemo,
   useState,
+  type CSSProperties,
   type ReactElement,
   type RefObject
 } from 'react'
@@ -252,7 +253,18 @@ export function TranscriptParticipantFilterRail({
 
   if (!currentChat || currentChat.chatKind !== 'ensemble' || participantItems.length === 0) return null
 
-  const renderFilterButton = (item: TranscriptParticipantFilterItem): ReactElement => {
+  const participantGridRowOffset =
+    participantItems.length < FILTER_MAX_ROWS ? FILTER_MAX_ROWS - participantItems.length : 0
+
+  const gridPlacementForIndex = (index: number): CSSProperties => ({
+    gridRowStart: String(participantGridRowOffset + (index % FILTER_MAX_ROWS) + 1),
+    gridColumnStart: String(Math.floor(index / FILTER_MAX_ROWS) + 1)
+  })
+
+  const renderFilterButton = (
+    item: TranscriptParticipantFilterItem,
+    gridPlacement?: CSSProperties
+  ): ReactElement => {
     const active = activeFilterKeys.has(item.key)
     return (
       <button
@@ -267,6 +279,7 @@ export function TranscriptParticipantFilterRail({
         aria-pressed={active}
         aria-label={itemAccessibleLabel(item, active)}
         title={item.title}
+        style={gridPlacement}
         onClick={() => onToggleFilter(item.key)}
       >
         {item.kind === 'participant' && (
@@ -301,8 +314,13 @@ export function TranscriptParticipantFilterRail({
       role="navigation"
       aria-label="Transcript participant filters"
     >
-      <div className="transcript-participant-filter-grid">
-        {participantItems.map((item) => renderFilterButton(item))}
+      <div
+        className="transcript-participant-filter-grid"
+        data-row-offset={participantGridRowOffset}
+      >
+        {participantItems.map((item, index) =>
+          renderFilterButton(item, gridPlacementForIndex(index))
+        )}
       </div>
       {systemItem && (
         <div className="transcript-participant-filter-system-row">

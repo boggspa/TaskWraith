@@ -72,6 +72,7 @@ describe('TranscriptParticipantFilterRail', () => {
 
     expect(html).toContain('aria-label="Transcript participant filters"')
     expect(html).toContain('data-column-count="1"')
+    expect(html).toContain('data-row-offset="8"')
     expect(html).toContain('transcript-participant-filter-grid')
     expect(html).toContain('transcript-participant-filter-system-row')
     expect(html).toContain('transcript-participant-filter-side-stack')
@@ -88,6 +89,30 @@ describe('TranscriptParticipantFilterRail', () => {
     expect(html).toContain('Remove transcript filter for Boss Lead (Codex, 1)')
     expect(html).toContain('Show only transcript messages from Captain Reviewer (Claude, 2)')
     expect(html).toContain('Remove transcript filter for system messages')
+  })
+
+  it('bottom-aligns an underfilled participant column above the system filter', () => {
+    const participants = Array.from({ length: 6 }, (_, index) =>
+      participant({
+        id: `participant-${index + 1}`,
+        role: `P${index + 1}`,
+        order: index + 1
+      })
+    )
+    const html = renderToStaticMarkup(
+      <TranscriptParticipantFilterRail
+        currentChat={ensembleChat(participants)}
+        activeFilterKeys={new Set()}
+        scrollRef={createRef<HTMLDivElement>()}
+        contentRef={createRef<HTMLDivElement>()}
+        onToggleFilter={() => {}}
+      />
+    )
+
+    expect(html).toContain('data-column-count="1"')
+    expect(html).toContain('data-row-offset="4"')
+    expect(html).toMatch(/data-filter-ordinal="1"[\s\S]*?grid-row-start:5;grid-column-start:1/)
+    expect(html).toMatch(/data-filter-ordinal="6"[\s\S]*?grid-row-start:10;grid-column-start:1/)
   })
 
   it('caps participant columns at ten rows before adding a column', () => {
@@ -109,10 +134,13 @@ describe('TranscriptParticipantFilterRail', () => {
     )
 
     expect(html).toContain('data-column-count="2"')
+    expect(html).toContain('data-row-offset="0"')
     expect(html).toContain('data-filter-ordinal="1"')
     expect(html).toContain('data-filter-ordinal="10"')
     expect(html).toContain('data-filter-ordinal="11"')
     expect(html).toContain('data-filter-ordinal="20"')
+    expect(html).toMatch(/data-filter-ordinal="11"[\s\S]*?grid-row-start:1;grid-column-start:2/)
+    expect(html).toMatch(/data-filter-ordinal="20"[\s\S]*?grid-row-start:10;grid-column-start:2/)
     expect(html).toContain('System messages')
   })
 
