@@ -166,4 +166,22 @@ describe('AppStore chat record cache', () => {
       'Edited index outside the store'
     )
   })
+
+  it('self-heals stale chat-list rows when the backing chat file is newer', () => {
+    const chat = AppStore.createChat('ws-1', '/repo')
+    expect(AppStore.getChatList().find((item) => item.appChatId === chat.appChatId)?.title).toBe(
+      'New Chat'
+    )
+
+    const rawChat = JSON.parse(fs.readFileSync(diskPath(chat.appChatId), 'utf-8'))
+    rawChat.title = 'Edited chat outside the index'
+    fs.writeFileSync(diskPath(chat.appChatId), JSON.stringify(rawChat))
+    const future = new Date(Date.now() + 5000)
+    fs.utimesSync(diskPath(chat.appChatId), future, future)
+
+    expect(AppStore.getChatList().find((item) => item.appChatId === chat.appChatId)?.title).toBe(
+      'Edited chat outside the index'
+    )
+    expect(readChatListIndex()[chat.appChatId].title).toBe('Edited chat outside the index')
+  })
 })

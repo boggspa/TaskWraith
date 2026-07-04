@@ -2998,6 +2998,8 @@ export interface ChatListItem extends ChatRecord {
   lastRun?: ChatRun
   searchText?: string
   searchPreview?: string
+  sourceChatMtimeMs?: number
+  sourceChatSize?: number
 }
 
 export type RunEventKind =

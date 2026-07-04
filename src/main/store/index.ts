@@ -2249,7 +2249,7 @@ export class AppStore {
     }
   }
 
-  static toChatListItem(chat: ChatRecord): ChatListItem {
+  static toChatListItem(chat: ChatRecord, sourceStat?: Pick<fs.Stats, 'mtimeMs' | 'size'>): ChatListItem {
     const normalizedChat = this.normalizeChatRecord(chat)
     const messages = Array.isArray(normalizedChat.messages)
       ? normalizedChat.messages.filter((message) => !isRetiredExternalChannelInboundMessage(message))
@@ -2272,6 +2272,9 @@ export class AppStore {
       messageCount: messages.length,
       runCount: runs.length,
       ...(lastRun ? { lastRun } : {}),
+      ...(sourceStat
+        ? { sourceChatMtimeMs: sourceStat.mtimeMs, sourceChatSize: sourceStat.size }
+        : {}),
       searchText: [
         normalizedChat.title,
         normalizedChat.provider,
@@ -2296,6 +2299,10 @@ export class AppStore {
       messageCount: typeof item.messageCount === 'number' ? item.messageCount : 0,
       runCount: typeof item.runCount === 'number' ? item.runCount : 0,
       ...(item.lastRun ? { lastRun: summarizeLastRun(item.lastRun) || item.lastRun } : {}),
+      ...(typeof item.sourceChatMtimeMs === 'number'
+        ? { sourceChatMtimeMs: item.sourceChatMtimeMs }
+        : {}),
+      ...(typeof item.sourceChatSize === 'number' ? { sourceChatSize: item.sourceChatSize } : {}),
       ...(typeof item.searchText === 'string' ? { searchText: item.searchText } : {}),
       ...(typeof item.searchPreview === 'string' ? { searchPreview: item.searchPreview } : {})
     }
@@ -2311,14 +2318,22 @@ export class AppStore {
 
     for (const file of files) {
       const chatId = path.basename(file, '.json')
+      const chatPath = path.join(chatsDir, file)
+      let sourceStat: fs.Stats
+      try {
+        sourceStat = fs.statSync(chatPath)
+      } catch {
+        dirty = true
+        continue
+      }
       let item: ChatListItem | undefined
       const indexed = existingIndex[chatId]
-      if (indexed?.summaryOnly === true) {
+      if (indexed?.summaryOnly === true && this.chatListItemMatchesSource(indexed, sourceStat)) {
         item = this.normalizeChatListItem(indexed)
       } else {
-        const chat = readJson<ChatRecord | null>(path.join(chatsDir, file), null)
+        const chat = readJson<ChatRecord | null>(chatPath, null)
         if (chat) {
-          item = this.toChatListItem(chat)
+          item = this.toChatListItem(chat, sourceStat)
           dirty = true
         }
       }
@@ -2384,9 +2399,22 @@ export class AppStore {
   private static chatListItemJson(item: ChatListItem | undefined, includeVolatile: boolean): string {
     if (!item) return ''
     if (includeVolatile) return JSON.stringify(item)
-    const { updatedAt: _updatedAt, searchText: _searchText, searchPreview: _searchPreview, ...stable } =
-      item
+    const {
+      updatedAt: _updatedAt,
+      searchText: _searchText,
+      searchPreview: _searchPreview,
+      sourceChatMtimeMs: _sourceChatMtimeMs,
+      sourceChatSize: _sourceChatSize,
+      ...stable
+    } = item
     return JSON.stringify(stable)
+  }
+
+  private static chatListItemMatchesSource(
+    item: ChatListItem,
+    sourceStat: Pick<fs.Stats, 'mtimeMs' | 'size'>
+  ): boolean {
+    return item.sourceChatMtimeMs === sourceStat.mtimeMs && item.sourceChatSize === sourceStat.size
   }
 
   private static shouldWriteChatListIndexItem(
@@ -3014,13 +3042,14 @@ export class AppStore {
       return
     }
     const preStat = fs.existsSync(chatPath) ? fs.statSync(chatPath) : null
+    let postStat: fs.Stats | null = null
     writeJson(chatPath, normalizedChat)
     // Write-through: the next read (bridge broadcast fires right after most
     // saves) must not re-parse what we just serialized. Still only trust the
     // cache when the file visibly changed; otherwise invalidate and let disk be
     // the truth.
     try {
-      const postStat = fs.statSync(chatPath)
+      postStat = fs.statSync(chatPath)
       const wrote =
         !preStat || postStat.mtimeMs !== preStat.mtimeMs || postStat.size !== preStat.size
       if (wrote) {
@@ -3036,7 +3065,7 @@ export class AppStore {
       this.chatRecordCache.delete(normalizedChat.appChatId)
     }
     const index = this.readChatListIndexCached()
-    const nextItem = this.toChatListItem(normalizedChat)
+    const nextItem = this.toChatListItem(normalizedChat, postStat || undefined)
     if (this.shouldWriteChatListIndexItem(index[normalizedChat.appChatId], nextItem)) {
       index[normalizedChat.appChatId] = nextItem
       this.writeChatListIndex(index)
