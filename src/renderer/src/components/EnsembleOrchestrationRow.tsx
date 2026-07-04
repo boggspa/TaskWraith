@@ -17,15 +17,17 @@
  *
  * The shared-history slider moved OUT of the EnsembleModePicker
  * popover onto this row (the picker now holds only the three
- * orchestration choices). The Fan-Out segment group keeps the existing
+ * orchestration choices). The Fan-Out picker keeps the existing
  * `.composer-ensemble-mode` capsule + `data-composer-control="ensemble-mode"`
- * hook so every per-shell button/capsule override keeps applying. The
+ * hook so every per-shell picker/capsule override keeps applying. The
  * row itself and the mode-picker trigger deliberately carry NEITHER —
  * several shells pill-ify anything matching the bare attribute (e.g.
  * 07-composer-shells claude/gemini/kimi blocks), which drew a spurious
  * capsule around the whole row and around the Turn/Continuous trigger.
  */
 
+import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { ContinuousHopsLimitChip } from './ContinuousHopsLimitChip'
 import { EnsembleModePicker, type EnsembleOrchestrationMode } from './EnsembleModePicker'
 import type { ComposerStyle, EnsembleFanoutPolicy } from '../../../main/store/types'
@@ -36,6 +38,13 @@ const CONTEXT_MIN = 5_000
 const CONTEXT_MAX = 500_000
 const CONTEXT_DEFAULT = 24_000
 type FanoutPickerValue = 'off' | 'read_only' | 'write' | 'all'
+
+interface FanoutPolicyRow {
+  key: FanoutPickerValue
+  label: string
+  description: string
+  disabled?: boolean
+}
 
 function formatCharBudget(chars: number): string {
   return chars >= 1000 ? `${Math.round(chars / 1000)}K` : `${chars}`
@@ -167,25 +176,15 @@ export function EnsembleOrchestrationRow({
           Fan-Out
         </span>
         <span className="composer-ensemble-mode" data-composer-control="ensemble-mode">
-          <span className="composer-fanout-policy" aria-label="Fan-out policy">
-            <select
-              className="composer-fanout-policy-select"
+          <span className="composer-fanout-policy">
+            <FanoutPolicyPicker
               value={selectedFanoutValue}
-              onChange={(event) =>
-                handleFanoutPickerChange(event.target.value as FanoutPickerValue)
-              }
               title={fanoutTitle}
-              aria-label="Fan-out policy"
-            >
-              <option value="off">Off</option>
-              <option value="read_only">Read</option>
-              <option value="write" disabled={!concurrentWriteLanesAvailable}>
-                Write
-              </option>
-              <option value="all" disabled={!concurrentWriteLanesAvailable}>
-                All
-              </option>
-            </select>
+              composerStyle={composerStyle}
+              concurrentWriteLanesAvailable={concurrentWriteLanesAvailable}
+              bossmanAssigned={bossmanAssigned}
+              onSelect={handleFanoutPickerChange}
+            />
           </span>
         </span>
       </span>
@@ -254,5 +253,175 @@ export function EnsembleOrchestrationRow({
         </div>
       )}
     </div>
+  )
+}
+
+function fanoutRows({
+  concurrentWriteLanesAvailable,
+  bossmanAssigned
+}: {
+  concurrentWriteLanesAvailable: boolean
+  bossmanAssigned: boolean
+}): FanoutPolicyRow[] {
+  const writeDisabled = !concurrentWriteLanesAvailable
+  return [
+    { key: 'off', label: 'Off', description: 'Run participants serially.' },
+    {
+      key: 'read_only',
+      label: 'Read',
+      description: 'Fan out scouts/read-only participants at the start and reviewers later.'
+    },
+    {
+      key: 'write',
+      label: 'Write',
+      description: bossmanAssigned
+        ? 'Only writer/worker fan-out is enabled; Boss-triggered lanes require explicit writeScopes.'
+        : 'Only writer/worker fan-out is enabled; user-preflight claims scopes before dispatch.',
+      disabled: writeDisabled
+    },
+    {
+      key: 'all',
+      label: 'All',
+      description: bossmanAssigned
+        ? 'Read/review fan-out plus Boss-triggered writer lanes with explicit writeScopes.'
+        : 'Read/review fan-out plus user-preflight writer lanes.',
+      disabled: writeDisabled
+    }
+  ]
+}
+
+function FanoutPolicyPicker({
+  value,
+  title,
+  composerStyle,
+  concurrentWriteLanesAvailable,
+  bossmanAssigned,
+  onSelect
+}: {
+  value: FanoutPickerValue
+  title: string
+  composerStyle: ComposerStyle
+  concurrentWriteLanesAvailable: boolean
+  bossmanAssigned: boolean
+  onSelect: (value: FanoutPickerValue) => void
+}): React.JSX.Element {
+  const triggerRef = useRef<HTMLButtonElement | null>(null)
+  const popoverRef = useRef<HTMLDivElement | null>(null)
+  const [open, setOpen] = useState(false)
+  const [position, setPosition] = useState<{ left: number; top: number } | null>(null)
+  const rows = fanoutRows({ concurrentWriteLanesAvailable, bossmanAssigned })
+  const triggerLabel = rows.find((row) => row.key === value)?.label || 'Off'
+
+  useEffect(() => {
+    let cancelled = false
+    queueMicrotask(() => {
+      if (cancelled) return
+      if (!open) {
+        setPosition(null)
+        return
+      }
+      const trigger = triggerRef.current
+      if (!trigger) return
+      const rect = trigger.getBoundingClientRect()
+      const left = Math.max(8, Math.min(rect.left, window.innerWidth - 340))
+      const top = rect.top - 8
+      setPosition({ left, top })
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [open])
+
+  useEffect(() => {
+    if (!open) return
+    const handleClick = (event: MouseEvent): void => {
+      const target = event.target as Node
+      if (popoverRef.current?.contains(target)) return
+      if (triggerRef.current?.contains(target)) return
+      setOpen(false)
+    }
+    const handleKey = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      setOpen(false)
+      triggerRef.current?.focus()
+    }
+    document.addEventListener('mousedown', handleClick, true)
+    document.addEventListener('keydown', handleKey, true)
+    return () => {
+      document.removeEventListener('mousedown', handleClick, true)
+      document.removeEventListener('keydown', handleKey, true)
+    }
+  }, [open])
+
+  const handleSelect = (row: FanoutPolicyRow): void => {
+    if (row.disabled) return
+    onSelect(row.key)
+    setOpen(false)
+  }
+
+  const popover =
+    open && position
+      ? createPortal(
+          <div
+            ref={popoverRef}
+            className={`composer-combined-picker-popover composer-plus-picker-popover shell-${composerStyle}`}
+            style={{
+              position: 'fixed',
+              left: `${position.left}px`,
+              top: `${position.top}px`,
+              transform: 'translateY(-100%)'
+            }}
+            role="dialog"
+            aria-label="Fan-out policy"
+          >
+            <div className="composer-plus-picker-section">
+              <div className="composer-combined-picker-column-header">Fan-Out</div>
+              {rows.map((row) => {
+                const active = row.key === value
+                return (
+                  <button
+                    key={row.key}
+                    type="button"
+                    className={`composer-combined-picker-row composer-plus-picker-row ${active ? 'is-selected' : ''}`}
+                    onClick={() => handleSelect(row)}
+                    title={row.disabled ? 'Writer fan-out is disabled.' : row.description}
+                    aria-pressed={active}
+                    disabled={row.disabled}
+                  >
+                    <span className="composer-plus-picker-row-copy">
+                      <span className="composer-combined-picker-row-label">{row.label}</span>
+                      <span className="composer-combined-picker-row-sub">{row.description}</span>
+                    </span>
+                    {active && (
+                      <span className="composer-combined-picker-check" aria-hidden>
+                        ✓
+                      </span>
+                    )}
+                  </button>
+                )
+              })}
+            </div>
+          </div>,
+          document.body
+        )
+      : null
+
+  return (
+    <>
+      <button
+        ref={triggerRef}
+        type="button"
+        className="composer-picker-label composer-ensemble-mode-trigger composer-fanout-policy-trigger"
+        title={title}
+        aria-label="Fan-out policy"
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        onClick={() => setOpen((current) => !current)}
+      >
+        <span className="composer-fanout-policy-trigger-label">{triggerLabel}</span>
+      </button>
+      {popover}
+    </>
   )
 }

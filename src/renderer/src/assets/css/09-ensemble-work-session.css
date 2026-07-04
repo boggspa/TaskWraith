@@ -139,6 +139,9 @@
 :root .composer-ensemble-orchestration-row .composer-ensemble-hop-meter {
   padding: 0 !important;
   color: color-mix(in srgb, var(--accent-color) 82%, var(--text-primary)) !important;
+  font-size: var(--font-size-xs) !important;
+  font-weight: 700 !important;
+  line-height: 1 !important;
 }
 :root .composer-ensemble-orchestration-row .composer-ensemble-hop-meter:is(:hover, .is-open) {
   color: color-mix(in srgb, var(--accent-color) 96%, var(--text-primary)) !important;
@@ -1976,27 +1979,8 @@
   gap: 1px;
 }
 
-.composer-fanout-policy-select {
-  min-height: 24px;
-  border: 1px solid color-mix(in srgb, var(--accent-color) 28%, var(--border-color));
-  border-radius: 7px;
-  background: color-mix(in srgb, var(--surface) 82%, var(--accent-color) 8%);
-  color: var(--text-primary);
-  font: inherit;
-  font-size: 11px;
-  font-weight: 800;
-  letter-spacing: 0;
-  padding: 3px 24px 3px 8px;
-}
-
-.composer-fanout-policy-select:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--accent-color) 58%, transparent);
-  outline-offset: 2px;
-}
-
-.composer-fanout-policy .composer-ensemble-mode-button:disabled {
-  cursor: default;
-  opacity: 0.46;
+.composer-fanout-policy-trigger {
+  font-weight: 700;
 }
 
 .composer-ensemble-hop-meter {
@@ -2008,8 +1992,8 @@
   border: 1px solid color-mix(in srgb, var(--accent-color) 42%, transparent);
   background: color-mix(in srgb, var(--accent-color) 14%, transparent);
   box-shadow: none;
-  font-size: 11px;
-  font-weight: 800;
+  font-size: var(--font-size-xs);
+  font-weight: 700;
   font-variant-numeric: tabular-nums;
   letter-spacing: 0;
 }
