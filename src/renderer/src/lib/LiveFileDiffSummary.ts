@@ -524,6 +524,67 @@ function reconcileLiveStatusWithWorkspace(
   return liveStatus
 }
 
+function mergeWorkspacePreview(
+  summary: DiffFileSummary,
+  workspaceSummary: DiffFileSummary
+): DiffFileSummary {
+  const hasWorkspacePreview =
+    Boolean(workspaceSummary.diffText) ||
+    workspaceSummary.previewKind !== 'none' ||
+    workspaceSummary.diffTextTruncated !== undefined ||
+    workspaceSummary.diffTextOmittedLines !== undefined ||
+    workspaceSummary.diffTextOriginalBytes !== undefined ||
+    workspaceSummary.isBinary !== undefined ||
+    workspaceSummary.isSensitive !== undefined ||
+    workspaceSummary.sizeBytes !== undefined ||
+    workspaceSummary.staged !== undefined ||
+    workspaceSummary.unstaged !== undefined
+
+  if (!hasWorkspacePreview) return summary
+
+  const merged = { ...summary }
+  if (!merged.diffText && workspaceSummary.diffText) {
+    merged.diffText = workspaceSummary.diffText
+  }
+  if (merged.previewKind === 'none' && workspaceSummary.previewKind !== 'none') {
+    merged.previewKind = workspaceSummary.previewKind
+  }
+  if (
+    merged.diffTextTruncated === undefined &&
+    workspaceSummary.diffTextTruncated !== undefined
+  ) {
+    merged.diffTextTruncated = workspaceSummary.diffTextTruncated
+  }
+  if (
+    merged.diffTextOmittedLines === undefined &&
+    workspaceSummary.diffTextOmittedLines !== undefined
+  ) {
+    merged.diffTextOmittedLines = workspaceSummary.diffTextOmittedLines
+  }
+  if (
+    merged.diffTextOriginalBytes === undefined &&
+    workspaceSummary.diffTextOriginalBytes !== undefined
+  ) {
+    merged.diffTextOriginalBytes = workspaceSummary.diffTextOriginalBytes
+  }
+  if (merged.isBinary === undefined && workspaceSummary.isBinary !== undefined) {
+    merged.isBinary = workspaceSummary.isBinary
+  }
+  if (merged.isSensitive === undefined && workspaceSummary.isSensitive !== undefined) {
+    merged.isSensitive = workspaceSummary.isSensitive
+  }
+  if (merged.sizeBytes === undefined && workspaceSummary.sizeBytes !== undefined) {
+    merged.sizeBytes = workspaceSummary.sizeBytes
+  }
+  if (merged.staged === undefined && workspaceSummary.staged !== undefined) {
+    merged.staged = workspaceSummary.staged
+  }
+  if (merged.unstaged === undefined && workspaceSummary.unstaged !== undefined) {
+    merged.unstaged = workspaceSummary.unstaged
+  }
+  return merged
+}
+
 /**
  * Aggregate per-file change summaries across every tool activity in the chat.
  *
@@ -608,33 +669,45 @@ export function applyWorkspaceDiffOverlay(
   }
   const seen = new Set<string>()
   const overlaid = summaries.map((summary) => {
-    seen.add(summary.path)
-    const match = lookup.get(summary.path)
+    const key = normalisePath(summary.path, workspacePath)
+    seen.add(key)
+    const match = lookup.get(key)
     if (!match) return summary
     const nextStatus = reconcileLiveStatusWithWorkspace(summary.status, match.status)
+    const baseSummary =
+      nextStatus === summary.status
+        ? summary
+        : {
+            ...summary,
+            status: nextStatus
+          }
     if (summary.additions !== undefined || summary.deletions !== undefined) {
-      return nextStatus === summary.status ? summary : { ...summary, status: nextStatus }
+      return mergeWorkspacePreview(baseSummary, match)
     }
     if (match.additions === undefined && match.deletions === undefined) {
-      return nextStatus === summary.status ? summary : { ...summary, status: nextStatus }
+      return mergeWorkspacePreview(baseSummary, match)
     }
-    return {
-      ...summary,
-      status: nextStatus,
-      additions: match.additions,
-      deletions: match.deletions
-    }
+    return mergeWorkspacePreview(
+      {
+        ...summary,
+        status: nextStatus,
+        additions: match.additions,
+        deletions: match.deletions
+      },
+      match
+    )
   })
   if (!options.addMissing) return overlaid
   for (const [path, match] of lookup.entries()) {
     if (seen.has(path)) continue
     if (!RENDERABLE_FILE_STATUSES.has(match.status)) continue
     overlaid.push({
+      ...match,
       path,
       status: match.status,
       additions: match.additions,
       deletions: match.deletions,
-      previewKind: 'none'
+      previewKind: match.previewKind || 'none'
     })
   }
   return overlaid

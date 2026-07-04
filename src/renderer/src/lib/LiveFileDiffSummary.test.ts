@@ -516,6 +516,72 @@ describe('LiveFileDiffSummary', () => {
       expect(overlaid[1]).toMatchObject({ path: 'b.ts', additions: 1, deletions: 1 })
     })
 
+    it('copies workspace diff previews without clobbering live line counts', () => {
+      const summaries: DiffFileSummary[] = [
+        { path: 'a.ts', status: 'modified', additions: 5, deletions: 1, previewKind: 'none' }
+      ]
+      const workspaceDiff = [
+        'diff --git a/a.ts b/a.ts',
+        '--- a/a.ts',
+        '+++ b/a.ts',
+        '@@ -1 +1 @@',
+        '-old',
+        '+new'
+      ].join('\n')
+      const workspace: DiffFileSummary[] = [
+        {
+          path: 'a.ts',
+          status: 'modified',
+          additions: 999,
+          deletions: 999,
+          previewKind: 'git_diff',
+          diffText: workspaceDiff,
+          diffTextTruncated: true,
+          diffTextOmittedLines: 12,
+          diffTextOriginalBytes: 2048
+        }
+      ]
+
+      const overlaid = applyWorkspaceDiffOverlay(summaries, workspace)
+
+      expect(overlaid[0]).toMatchObject({
+        path: 'a.ts',
+        additions: 5,
+        deletions: 1,
+        previewKind: 'git_diff',
+        diffText: workspaceDiff,
+        diffTextTruncated: true,
+        diffTextOmittedLines: 12,
+        diffTextOriginalBytes: 2048
+      })
+    })
+
+    it('copies workspace diff previews when filling missing line counts', () => {
+      const summaries: DiffFileSummary[] = [
+        { path: 'a.ts', status: 'modified', previewKind: 'none' }
+      ]
+      const workspace: DiffFileSummary[] = [
+        {
+          path: 'a.ts',
+          status: 'modified',
+          additions: 5,
+          deletions: 5,
+          previewKind: 'git_diff',
+          diffText: '@@ -1 +1 @@\n-old\n+new'
+        }
+      ]
+
+      const overlaid = applyWorkspaceDiffOverlay(summaries, workspace)
+
+      expect(overlaid[0]).toMatchObject({
+        path: 'a.ts',
+        additions: 5,
+        deletions: 5,
+        previewKind: 'git_diff',
+        diffText: '@@ -1 +1 @@\n-old\n+new'
+      })
+    })
+
     it('does not introduce extra rows for unrelated workspace dirt by default', () => {
       const summaries: DiffFileSummary[] = [
         { path: 'a.ts', status: 'modified', previewKind: 'none' }
@@ -570,6 +636,34 @@ describe('LiveFileDiffSummary', () => {
       ]
       expect(applyWorkspaceDiffOverlay(summaries, undefined)).toBe(summaries)
       expect(applyWorkspaceDiffOverlay(summaries, [])).toBe(summaries)
+    })
+
+    it('preserves workspace diff previews for explicitly added missing rows', () => {
+      const workspace: DiffFileSummary[] = [
+        {
+          path: '/Users/me/proj/src/new.ts',
+          status: 'created',
+          additions: 2,
+          deletions: 0,
+          previewKind: 'synthetic_new_file',
+          diffText: '+one\n+two'
+        }
+      ]
+
+      const overlaid = applyWorkspaceDiffOverlay([], workspace, '/Users/me/proj', {
+        addMissing: true
+      })
+
+      expect(overlaid).toEqual([
+        {
+          path: 'src/new.ts',
+          status: 'created',
+          additions: 2,
+          deletions: 0,
+          previewKind: 'synthetic_new_file',
+          diffText: '+one\n+two'
+        }
+      ])
     })
   })
 

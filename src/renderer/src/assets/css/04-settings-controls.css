@@ -5192,8 +5192,7 @@ input:disabled, select:disabled, textarea:disabled {
   gap: 6px;
 }
 
-.diff-hover-preview-status,
-.diff-hover-preview-badges strong {
+.diff-hover-preview-status {
   min-height: 22px;
   display: inline-flex;
   align-items: center;
@@ -5209,11 +5208,29 @@ input:disabled, select:disabled, textarea:disabled {
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text-primary) 8%, transparent);
 }
 
-.diff-hover-preview-badges strong {
-  color: var(--success);
+.diff-hover-preview-stats {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 22px;
+}
+
+.diff-hover-preview-stat {
+  display: inline-flex;
+  align-items: center;
   font-size: var(--font-size-sm);
-  background: color-mix(in srgb, var(--success) 12%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--success) 20%, transparent);
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: 0;
+  text-shadow: 0 0 10px color-mix(in srgb, currentColor 24%, transparent);
+}
+
+.diff-hover-preview-stat.add {
+  color: color-mix(in srgb, var(--success) 86%, var(--text-primary));
+}
+
+.diff-hover-preview-stat.delete {
+  color: color-mix(in srgb, var(--danger, #ff6363) 86%, var(--text-primary));
 }
 
 .diff-hover-preview-body {
@@ -5292,12 +5309,12 @@ input:disabled, select:disabled, textarea:disabled {
   align-items: center;
   justify-content: space-between;
   gap: var(--space-md);
-  border-top: 1px solid color-mix(in srgb, var(--warning) 24%, transparent);
+  border-top: 1px solid color-mix(in srgb, var(--text-primary) 12%, transparent);
   background:
     linear-gradient(
       180deg,
-      color-mix(in srgb, var(--text-primary) 4%, transparent),
-      color-mix(in srgb, var(--warning) 8%, transparent)
+      color-mix(in srgb, var(--text-primary) 7%, transparent),
+      color-mix(in srgb, var(--text-primary) 3%, transparent)
     );
 }
 
@@ -5319,16 +5336,16 @@ input:disabled, select:disabled, textarea:disabled {
 
 .diff-hover-preview-footer-actions > span {
   flex: 0 0 auto;
-  color: var(--warning);
+  color: var(--text-secondary);
 }
 
 .diff-hover-preview-action {
   min-height: 24px;
-  border: 1px solid color-mix(in srgb, var(--accent) 32%, transparent);
+  border: 1px solid color-mix(in srgb, var(--text-primary) 18%, transparent);
   border-radius: 7px;
   padding: 0 9px;
   color: var(--text-primary);
-  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  background: color-mix(in srgb, var(--text-primary) 9%, transparent);
   box-shadow:
     inset 0 1px 0 color-mix(in srgb, #fff 10%, transparent),
     0 0 0 1px color-mix(in srgb, #000 12%, transparent);
@@ -5340,8 +5357,8 @@ input:disabled, select:disabled, textarea:disabled {
 
 .diff-hover-preview-action:hover,
 .diff-hover-preview-action:focus-visible {
-  border-color: color-mix(in srgb, var(--accent) 54%, transparent);
-  background: color-mix(in srgb, var(--accent) 28%, transparent);
+  border-color: color-mix(in srgb, var(--text-primary) 30%, transparent);
+  background: color-mix(in srgb, var(--text-primary) 14%, transparent);
   outline: none;
 }
 

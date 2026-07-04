@@ -55,6 +55,33 @@ export function canShowDiffHoverPreview(
   return Boolean(summary.diffText?.trim() || hasAction)
 }
 
+export interface DiffHoverPreviewStat {
+  kind: 'add' | 'delete'
+  label: string
+  ariaLabel: string
+}
+
+export function getDiffHoverPreviewStats(
+  summary: Pick<DiffHoverPreviewSummary, 'additions' | 'deletions'>
+): DiffHoverPreviewStat[] {
+  const stats: DiffHoverPreviewStat[] = []
+  if (summary.additions !== undefined) {
+    stats.push({
+      kind: 'add',
+      label: `+${summary.additions}`,
+      ariaLabel: `${summary.additions.toLocaleString()} additions`
+    })
+  }
+  if (summary.deletions !== undefined) {
+    stats.push({
+      kind: 'delete',
+      label: `-${summary.deletions}`,
+      ariaLabel: `${summary.deletions.toLocaleString()} deletions`
+    })
+  }
+  return stats
+}
+
 export interface DiffHoverPreviewLayout {
   left: number
   maxHeight: number
@@ -325,10 +352,8 @@ export function DiffHoverPreviewOverlay({
     viewportHeight,
     viewportWidth
   })
-  const changeText =
-    preview.summary.additions !== undefined || preview.summary.deletions !== undefined
-      ? `+${preview.summary.additions || 0} -${preview.summary.deletions || 0}`
-      : ''
+  const stats = getDiffHoverPreviewStats(preview.summary)
+  const changeText = stats.map((stat) => stat.label).join(' ')
   const statusText = preview.summary.status || 'modified'
   const sourceLabel = diffHoverPreviewSourceLabel(preview.summary.source)
   const role = diffHoverPreviewRole(Boolean(preview.action))
@@ -375,7 +400,19 @@ export function DiffHoverPreviewOverlay({
         <div className="diff-hover-preview-badges" aria-label={badgeLabel}>
           <span className="diff-hover-preview-status">{sourceLabel}</span>
           <span className="diff-hover-preview-status">{statusText}</span>
-          {changeText && <strong>{changeText}</strong>}
+          {stats.length > 0 && (
+            <span className="diff-hover-preview-stats" aria-label={changeText}>
+              {stats.map((stat) => (
+                <span
+                  key={stat.kind}
+                  className={`diff-hover-preview-stat ${stat.kind}`}
+                  aria-label={stat.ariaLabel}
+                >
+                  {stat.label}
+                </span>
+              ))}
+            </span>
+          )}
         </div>
       </div>
       <div className="diff-hover-preview-body">

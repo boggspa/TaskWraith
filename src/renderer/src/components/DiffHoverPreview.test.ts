@@ -4,6 +4,7 @@ import {
   diffHoverPreviewRole,
   diffHoverPreviewSourceLabel,
   getDiffHoverPreviewLayout,
+  getDiffHoverPreviewStats,
   prepareDiffHoverPreviewText
 } from './DiffHoverPreview'
 
@@ -89,5 +90,23 @@ describe('DiffHoverPreview semantics', () => {
     expect(canShowDiffHoverPreview({ diffText: undefined }, false)).toBe(false)
     expect(canShowDiffHoverPreview({ diffText: '' }, true)).toBe(true)
     expect(canShowDiffHoverPreview({ diffText: '@@ -1 +1 @@\n-old\n+new' }, false)).toBe(true)
+  })
+})
+
+describe('DiffHoverPreview stats', () => {
+  it('formats additions and deletions as separate satellites', () => {
+    expect(getDiffHoverPreviewStats({ additions: 3, deletions: 2 })).toEqual([
+      { kind: 'add', label: '+3', ariaLabel: '3 additions' },
+      { kind: 'delete', label: '-2', ariaLabel: '2 deletions' }
+    ])
+  })
+
+  it('does not invent an exact zero for unknown stat sides', () => {
+    expect(getDiffHoverPreviewStats({ additions: undefined, deletions: 4 })).toEqual([
+      { kind: 'delete', label: '-4', ariaLabel: '4 deletions' }
+    ])
+    expect(getDiffHoverPreviewStats({ additions: 0, deletions: undefined })).toEqual([
+      { kind: 'add', label: '+0', ariaLabel: '0 additions' }
+    ])
   })
 })
