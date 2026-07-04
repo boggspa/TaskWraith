@@ -7,6 +7,8 @@ import {
   buildTranscriptUserGutterMarkers,
   findActiveGutterMarkerKey,
   gutterBulgeRadiusPx,
+  hiddenRoundMarkerRowKey,
+  isHiddenRoundMarkerRowKey,
   layoutGutterLens,
   layoutTranscriptUserGutterMarkers,
   userGutterPreview,
@@ -194,6 +196,33 @@ describe('collapsed ensemble-round markers', () => {
     expect(hiddenMarker.rowKey).toContain('~')
     // Keys stay unique across the whole rail.
     expect(new Set(markers.map((marker) => marker.key)).size).toBe(markers.length)
+  })
+
+  it('detects minted hidden rowKeys and never a real projected rowKey', () => {
+    const minted = hiddenRoundMarkerRowKey('ensemble-round-header-r1#1', 'u-hidden')
+    expect(isHiddenRoundMarkerRowKey(minted)).toBe(true)
+    // Every rowKey the projector emits must classify as real — the jump path
+    // strips ONLY minted keys, so a false positive here would break normal
+    // duplicate-id row targeting.
+    for (const row of projectRows(displayMessages)) {
+      expect(isHiddenRoundMarkerRowKey(row.rowKey)).toBe(false)
+    }
+    // Ids containing troublesome characters still classify as real.
+    expect(isHiddenRoundMarkerRowKey('msg~with~tildes#4')).toBe(false)
+    expect(isHiddenRoundMarkerRowKey(undefined)).toBe(false)
+    // Round-trip through the builder: the markers it mints classify as
+    // hidden, its flat markers as real.
+    const markers = buildTranscriptUserGutterMarkers(
+      displayMessages,
+      projectRows(displayMessages),
+      undefined,
+      collapsed
+    )
+    expect(markers.map((marker) => isHiddenRoundMarkerRowKey(marker.rowKey))).toEqual([
+      false,
+      true,
+      false
+    ])
   })
 
   it('emits no extra markers when the map is absent or empty', () => {

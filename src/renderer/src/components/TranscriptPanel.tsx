@@ -40,7 +40,8 @@ import {
 } from '../lib/TranscriptVirtualWindow'
 import {
   buildTranscriptUserGutterMarkers,
-  findActiveGutterMarkerKey
+  findActiveGutterMarkerKey,
+  isHiddenRoundMarkerRowKey
 } from '../lib/TranscriptUserMessageGutter'
 import {
   transcriptChatRenderSignature,
@@ -1781,14 +1782,21 @@ export const TranscriptPanel = memo(
 
     const scrollToMessage = useCallback(
       (messageId: string, rowKey?: string): void => {
+        // Markers for user messages hidden in a collapsed round carry a
+        // SYNTHETIC rowKey that never matches a projected row (by design —
+        // see hiddenRoundMarkerRowKey). Strip it here so every downstream
+        // lookup (focus, estimate, pending-target clearing) runs id-only;
+        // carrying it forward would seed a pending focus target whose rowKey
+        // can never be satisfied, which pins the retry loop open forever.
+        const effectiveRowKey = isHiddenRoundMarkerRowKey(rowKey) ? undefined : rowKey
         // If the target lives in a collapsed ensemble round, expand it
         // first; the pending-focus retry loop below then finds the row
         // once it re-renders into the window.
         ensureRoundExpandedForMessage(messageId)
-        if (focusMessageBlock(messageId, rowKey)) return
+        if (focusMessageBlock(messageId, effectiveRowKey)) return
 
-        setPendingFocusTarget({ messageId, rowKey, attempt: 0 })
-        estimateScrollToMessage(messageId, rowKey, { animate: true })
+        setPendingFocusTarget({ messageId, rowKey: effectiveRowKey, attempt: 0 })
+        estimateScrollToMessage(messageId, effectiveRowKey, { animate: true })
       },
       [ensureRoundExpandedForMessage, estimateScrollToMessage, focusMessageBlock]
     )
@@ -1868,7 +1876,16 @@ export const TranscriptPanel = memo(
       // re-runs naturally each glide frame (renderedRows changes as the
       // window follows), so the first post-landing pass resumes the search.
       if (scrollAnimatorRef.current?.isAnimating()) return
-      if (focusMessageBlock(pendingFocusTarget.messageId, pendingFocusTarget.rowKey)) return
+      if (focusMessageBlock(pendingFocusTarget.messageId, pendingFocusTarget.rowKey)) {
+        // Termination guarantee: a successful focus means the target is on
+        // screen, so this pending target is DONE regardless of whether
+        // focusMessageBlock's rowKey-matched clear fired (an id-fallback
+        // resolution reports a different rowKey; without this force-clear
+        // the effect would re-focus every render — the "maximum update
+        // depth" loop). Identity compare so a newer jump is never clobbered.
+        setPendingFocusTarget((current) => (current === pendingFocusTarget ? null : current))
+        return
+      }
       if (pendingFocusTarget.attempt >= 10) return
 
       estimateScrollToMessage(pendingFocusTarget.messageId, pendingFocusTarget.rowKey, {

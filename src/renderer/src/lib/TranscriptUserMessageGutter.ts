@@ -72,6 +72,21 @@ export function hiddenRoundMarkerRowKey(headerRowKey: string, messageId: string)
   return `${headerRowKey}~${messageId}`
 }
 
+/**
+ * True for rowKeys minted by {@link hiddenRoundMarkerRowKey}. Real projected
+ * rowKeys are `${id}#${index}` with a NUMERIC index, so a `~` after the last
+ * `#` can only come from the hidden-marker mint. Jump entry points use this
+ * to strip the synthetic key down to an id-only jump — passing it through as
+ * a real rowKey would leave a pending focus target that can never match the
+ * row that eventually mounts (post-expansion), pinning the retry loop open.
+ */
+export function isHiddenRoundMarkerRowKey(rowKey: string | undefined): boolean {
+  if (!rowKey) return false
+  // `#<digits>~` is the seam where the mint appended to a real `${id}#${index}`
+  // rowKey — a genuine projected rowKey ends at the digits.
+  return /#\d+~/.test(rowKey)
+}
+
 export function buildTranscriptUserGutterMarkers(
   messages: readonly ChatMessage[],
   rows: readonly VirtualRow[],
