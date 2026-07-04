@@ -136,6 +136,7 @@ type MainAppLayoutSidebarProps = {
 export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   acknowledgedElevationDefaults: any
   activateRightDockTab: any
+  toggleRightDockPanel: any
   activeDiff: any
   activeProvider: any
   activeRightDockTab: any

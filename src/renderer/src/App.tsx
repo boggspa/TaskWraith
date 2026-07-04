@@ -19174,6 +19174,18 @@ function App(): React.JSX.Element {
     openRightDockPanel(id)
     setRightDockTab(id)
   }
+  // Single toggle entry point for the glass-pill rim buttons. Opening goes
+  // through the exclusive dock lifecycle (close siblings, open, select) so
+  // surfaces REPLACE each other instead of stacking; closing collapses EVERY
+  // dock surface, not just the clicked one, so one click always dismisses the
+  // dock even if earlier gestures left extra panels open behind the active tab.
+  const toggleRightDockPanel = (panelId: RightDockTab): void => {
+    if (isRightDockPanelOpen(panelId)) {
+      closeOtherRightDockPanels()
+      return
+    }
+    activateRightDockTab(panelId)
+  }
   // Per-chat memory of the active dock surface. RESTORE is declared before
   // PERSIST on purpose: on mount the saved value must be read into memory before
   // the persist effect can write the initial 'run' over it.
@@ -23651,6 +23663,7 @@ function App(): React.JSX.Element {
     threadSearchVisible,
     toggleFeedbackMessageInChat,
     togglePinMessageInChat,
+    toggleRightDockPanel,
     transcriptContentRef,
     transcriptJumpRequest,
     transcriptMessages,

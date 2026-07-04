@@ -404,20 +404,16 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   setDiffView,
   setGeminiTerminalInput,
   setInspectingRunId,
-  setIsPinnedMessagesPanelOpen,
   setJoinSharedChatOpen,
   setPendingElevation,
   setPopoutMenuOpen,
   setPreviewChatMediaRef,
   setPreviewMenuTarget,
   setRawFilter,
-  setRightDockTab,
   setRightTab,
   setSessionTrust,
   setSettingsActiveTab,
   setShowBugReportSheet,
-  setShowCockpit,
-  setShowFileEditor,
   setShowFirstLaunchSheet,
   setShowGeminiTerminal,
   setShowGhostCompanion,
@@ -518,6 +514,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   threadSearchVisible,
   toggleFeedbackMessageInChat,
   togglePinMessageInChat,
+  toggleRightDockPanel,
   transcriptContentRef,
   transcriptJumpRequest,
   transcriptMessages,
@@ -1443,10 +1440,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
             <button
               className={`chat-corner-btn ${showCockpit ? 'active' : ''}`}
               type="button"
-              onClick={() => {
-                setShowCockpit((open) => !open)
-                setRightDockTab('run')
-              }}
+              onClick={() => toggleRightDockPanel('run')}
               title={showCockpit ? 'Hide Run rail' : 'Open Run rail'}
               aria-label="Toggle Run rail"
               aria-pressed={showCockpit}
@@ -1456,10 +1450,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
             <button
               className={`chat-corner-btn ${isChatMediaPanelOpen ? 'active' : ''}`}
               type="button"
-              onClick={() => {
-                setChatMediaPanelOpenPreservingTranscript((open) => !open)
-                setRightDockTab('media')
-              }}
+              onClick={() => toggleRightDockPanel('media')}
               title="Show chat uploads and paths"
               aria-label="Show chat uploads and paths"
               aria-pressed={isChatMediaPanelOpen}
@@ -1474,10 +1465,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
             <button
               className={`chat-corner-btn ${isPinnedMessagesPanelOpen ? 'active' : ''}`}
               type="button"
-              onClick={() => {
-                setIsPinnedMessagesPanelOpen((open) => !open)
-                setRightDockTab('pins')
-              }}
+              onClick={() => toggleRightDockPanel('pins')}
               title={
                 isPinnedMessagesPanelOpen
                   ? 'Hide notes and pinned messages'
@@ -1498,10 +1486,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
               <button
                 className={`chat-corner-btn ${showGeminiTerminal ? 'active' : ''}`}
                 type="button"
-                onClick={() => {
-                  setShowGeminiTerminal((current) => !current)
-                  setRightDockTab('terminal')
-                }}
+                onClick={() => toggleRightDockPanel('terminal')}
                 title={`${showGeminiTerminal ? 'Hide' : 'Show'} Gemini terminal`}
                 aria-label="Toggle Gemini terminal"
                 aria-pressed={showGeminiTerminal}
@@ -1514,9 +1499,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
               type="button"
               onClick={() => {
                 if (!hasWorkspaceContext) return
-                const nextShowFileEditor = !showFileEditor
-                setShowFileEditor(nextShowFileEditor)
-                setRightDockTab('files')
+                toggleRightDockPanel('files')
               }}
               title={`${showFileEditor ? 'Hide' : 'Show'} file editor`}
               aria-label="Toggle file editor"
@@ -1530,11 +1513,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
               <button
                 className="chat-corner-btn"
                 type="button"
-                onClick={() => {
-                  const nextShowInspector = !appearance.showInspector
-                  appearance.update({ showInspector: nextShowInspector })
-                  setRightDockTab('inspector')
-                }}
+                onClick={() => toggleRightDockPanel('inspector')}
                 title={`${appearance.showInspector ? 'Hide' : 'Show'} inspector`}
                 aria-label="Toggle inspector"
                 aria-pressed={appearance.showInspector}
@@ -1771,8 +1750,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                 onOpenFileChangeInWorkbench={openFileChangeInWorkbench}
                 onInspectRun={(runId) => {
                   setInspectingRunId(runId)
-                  setShowCockpit(true)
-                  setRightDockTab('run')
+                  activateRightDockTab('run')
                 }}
                 onOpenSideChatFromRun={
                   canCreateSideChatFromCurrent ? handleOpenSideChatFromRunResult : undefined
@@ -2093,8 +2071,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
               onInspectRun={(runId) => {
                 void openLinkedChatAsMain(sideChat).then(() => {
                   setInspectingRunId(runId)
-                  setShowCockpit(true)
-                  setRightDockTab('run')
+                  activateRightDockTab('run')
                 })
               }}
               compactDensity={appearance.compactDensity}

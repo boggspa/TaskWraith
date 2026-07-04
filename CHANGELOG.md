@@ -32,6 +32,13 @@ shipping these commits.
   go-to-message rail, anchored at the round's header. Clicking one
   auto-expands the round and glides to the prompt.
 
+### Fixed
+- **Right-dock panels no longer stack from the top pill.** The rim buttons
+  (Run rail, Media, Notes/Pins, Terminal, File editor, Inspector) now route
+  through the dock's exclusive lifecycle: opening one surface replaces the
+  previous one, and closing the active surface collapses the whole dock in a
+  single click — no more dismissing each stacked panel in turn.
+
 ## 1.7.3 - 2026-07-03
 
 ### Fixed
