@@ -1,0 +1,75 @@
+.model-usage-table--agent-leaderboard {
+  min-width: 980px;
+}
+
+.model-usage-table--agent-leaderboard col.model-usage-table-rank-col {
+  width: 1%;
+}
+
+.model-usage-table--agent-leaderboard col.model-usage-table-name-col {
+  width: 210px;
+}
+
+.agent-pool-leaderboard-rank-head {
+  width: 1%;
+  min-width: 38px;
+}
+
+.agent-pool-leaderboard-rank {
+  width: 1%;
+  min-width: 38px;
+  padding: 6px 8px !important;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-tertiary, var(--text-secondary));
+  border-top: 1px solid color-mix(in srgb, var(--panel-border, var(--surface-border)) 45%, transparent);
+}
+
+.agent-pool-leaderboard-agent-cell {
+  max-width: 230px;
+}
+
+.agent-pool-leaderboard-agent {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.agent-pool-leaderboard-agent-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.agent-pool-leaderboard-agent-name,
+.agent-pool-leaderboard-agent-meta {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-pool-leaderboard-agent-name {
+  color: var(--text-primary);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.agent-pool-leaderboard-agent-meta {
+  color: var(--text-tertiary, var(--text-secondary));
+  font-size: 9.5px;
+  font-weight: 500;
+}
+
+.agent-pool-leaderboard-role-cell {
+  max-width: 128px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.agent-pool-leaderboard .model-usage-table-empty {
+  margin-top: 0;
+}

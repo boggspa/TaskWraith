@@ -20,6 +20,7 @@ import { CommittedDraftField } from './CommittedDraftField'
 import { ParticipantPickerCluster } from './ParticipantPickerCluster'
 import { AgentPoolCard } from './AgentPoolCard'
 import { IdentityIconPicker } from './IdentityIconPicker'
+import { AgentPoolLeaderboardTable } from './AgentPoolLeaderboardTable'
 
 interface AgentPoolContainerProps {
   composerStyle: ComposerStyle
@@ -301,6 +302,8 @@ export function AgentPoolContainer({
           </div>
         </div>
       )}
+
+      <AgentPoolLeaderboardTable agents={agents} stats={stats} />
     </section>
   )
 }
