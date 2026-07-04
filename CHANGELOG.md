@@ -14,6 +14,12 @@ next semver bump (with curated Unreleased/source-ahead notes) must happen before
 shipping these commits.
 
 ### Added
+- **Mid-thread ensemble toggle.** Top-level chats can now flip in place between
+  single-provider and Ensemble mode on the same `appChatId`, preserving
+  transcript and run history. Solo → Ensemble seeds a single participant from
+  the current provider instead of recreating the thread, and Ensemble → Solo
+  collapses back through a canonical-provider pick. The toggle is available on
+  started threads when idle and stays disabled while a turn is active.
 - **Transcript rail reading lens.** The user-message marker rail now carries a
   skeuomorphic slide-rule-cursor "lens": a frosted-glass carriage whose height
   shows how much of the thread is on screen and whose position tracks your
@@ -39,6 +45,14 @@ shipping these commits.
   with the same pending-approval / collaborator / device-connected glows.
 
 ### Changed
+- **Provider/model/reasoning switching no longer stops at first send.** In
+  normal chats, the composer provider and model/reasoning pickers stay usable
+  after a thread has history. Idle changes apply immediately; while a turn is
+  active they queue and apply at turn end. The same-provider case keeps the live
+  session; only a genuine provider switch resets provider-linked session state.
+- **Guest participants removed.** The older Guest helper path has been removed
+  from desktop, iOS, bridge, and live docs. Historical guest transcript rows
+  remain render-safe and inert.
 - **Corner-pill polish.** The bottom-left column pill's dividers now span the
   full pill width and its icons are ~1.3x larger. Active pill buttons (both
   the top horizontal pills and the column pill) swapped the old left-weighted

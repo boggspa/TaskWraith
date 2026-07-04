@@ -46,6 +46,13 @@ They pair with Multiview, Workflows, slash commands, MCP tools, and the activity
 viewport so multi-agent work remains inspectable rather than becoming a hidden
 background process.
 
+Normal top-level chats no longer need to be recreated just to change shape.
+You can now switch provider, model, and reasoning on an existing single-provider
+thread after it has history, and if a turn is already running those changes queue
+and apply at turn end. Top-level idle chats can also flip in place between
+single-provider and Ensemble mode on the same thread, preserving transcript
+history; the ensemble toggle stays disabled until the current turn finishes.
+
 ## Trust, Safety, and First Runs
 
 <table>

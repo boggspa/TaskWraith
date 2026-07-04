@@ -6,15 +6,17 @@
 An Ensemble chat is a single thread where multiple provider agents (Claude, Codex, Kimi, Grok, Cursor, and/or local Ollama models) take part in the same conversation and respond in turn, instead of you running separate single-provider chats.
 
 ## Where to find it
-Open a new draft and turn on the **Ensemble** button in the composer's bottom row before your first send, or click the **+** button in the sidebar's **Ensembles** section header.
+Open a new draft and turn on the **Ensemble** button in the composer's bottom row before your first send, click the **+** button in the sidebar's **Ensembles** section header, or use the same **Ensemble** button in an existing top-level idle chat to convert that thread in place.
 
 <!-- screenshot-pending: New draft composer with the Ensemble button in the bottom row highlighted -->
 
 ## How to use it
 1. Create a new draft, then open the **Ensemble** button in the composer's bottom row and choose **On** before your first send (or click the **+** on the **Ensembles** section header). The draft switches to Ensemble — there's no setup modal.
-2. The draft opens with a default panel of participants already enabled (one per configured provider, or the full roster if fewer than two providers are configured), shown as a chip strip above the composer.
-3. Click a chip to select that participant; the composer's model and permissions pickers below now read and write that participant's settings. Click the selected chip again to open its overflow popover, where you can enable/disable it, rename its role, or edit its brief.
-4. Drag a chip to reorder the speaking sequence, then type your prompt and send — each enabled participant responds in turn according to that order.
+2. To convert an existing normal chat, wait until the thread is idle, then use the same **Ensemble** button. The chat flips in place on the same thread and keeps its history.
+3. The draft or converted chat opens with a default panel of participants already enabled (one per configured provider for brand-new ensembles, or exactly one seeded participant when converting an existing single-provider thread), shown as a chip strip above the composer.
+4. Click a chip to select that participant; the composer's model and permissions pickers below now read and write that participant's settings. Click the selected chip again to open its overflow popover, where you can enable/disable it, rename its role, or edit its brief.
+5. Drag a chip to reorder the speaking sequence, then type your prompt and send — each enabled participant responds in turn according to that order.
+6. To collapse an ensemble back to a single-provider chat, use the **Ensemble** button again while the thread is idle and choose the canonical provider for the solo thread.
 
 ## Tips & related
 - [Participant Chip Strip](participant-chip-strip.md) — full detail on selecting, reordering, and editing participants.
