@@ -6337,11 +6337,14 @@ export class EnsembleOrchestrator {
               'read_only'
             )
           : null
-        if (permissions?.readOnly) {
-          // Explicit stage workers take a serial turn even when their
-          // permissions resolve read-only.
-          if (participant.stageRole !== 'worker') readers.push(participant)
+        if (permissions?.readOnly && participant.stageRole !== 'worker') {
+          readers.push(participant)
         } else {
+          // Everything that isn't a read-only reader goes to `writers` — including
+          // an explicit stage 'worker' whose permissions resolve read-only. That
+          // worker still takes a serial turn (it's write-capable in role), but it
+          // must NOT be silently dropped from BOTH buckets: a stranded participant
+          // left inert in `remaining` permanently defeats `eligibleWriterTail`.
           writers.push(participant)
         }
       }
@@ -6365,9 +6368,21 @@ export class EnsembleOrchestrator {
       if (chatForFanout && writers.length > 0 && !runtime.cancelled) {
         const writerPolicy = roundFanoutPolicy
         const bossmanParticipantId = this.activeBossmanParticipantId(chatForFanout, runtime)
+        // A writer fan-out needs >=2 writers that form the contiguous tail of the
+        // round (no genuine serial participant runs between the read-only fan-out
+        // and the writers). A stage-role REVIEWER sitting in `remaining` does NOT
+        // count as an intervening participant: the reviewer stage-gate below
+        // always defers reviewers until every non-reviewer has spoken, so a
+        // reviewer is provably never dispatched before the writers this round.
+        // (Before this exclusion, a single deferred reviewer wrongly vetoed the
+        // whole writer fan-out, dropping the writers to serial.)
         const eligibleWriterTail =
           writers.length >= 2 &&
-          remaining.every((participant) => writers.some((writer) => writer.id === participant.id))
+          remaining.every(
+            (participant) =>
+              participant.stageRole === 'reviewer' ||
+              writers.some((writer) => writer.id === participant.id)
+          )
         if (
           writerPolicy !== 'locked_writers_with_boss' &&
           writerPolicy !== 'locked_writers_user_preflight'

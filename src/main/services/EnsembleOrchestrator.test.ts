@@ -9854,57 +9854,73 @@ describe('slim resumed-turn prompts', () => {
  * serial writers with an explanatory note; the reviewer still goes last.
  */
 describe('locked-writers preflight excludes stage reviewers', () => {
-  it('keeps the reviewer out of the round-start preflight and defers it to the end', async () => {
-    const harness = makeHarness()
-    harness.chat.ensemble!.fanoutPolicy = 'locked_writers_user_preflight'
-    harness.chat.ensemble!.participants = [
-      {
-        id: 'codex',
-        provider: 'codex',
-        enabled: true,
-        role: 'Builder A',
-        instructions: 'Build.',
-        order: 1,
-        permissionPresetId: 'workspace_write'
-      },
-      {
-        id: 'claude',
-        provider: 'claude',
-        enabled: true,
-        role: 'Builder B',
-        instructions: 'Build.',
-        order: 2,
-        permissionPresetId: 'workspace_write'
-      },
-      {
-        id: 'kimi',
-        provider: 'kimi',
-        enabled: true,
-        role: 'Auditor',
-        instructions: 'Review.',
-        order: 3,
-        permissionPresetId: 'read_only',
-        stageRole: 'reviewer'
-      }
-    ]
-    harness.orchestrator.startRound({
-      chatId: 'ensemble-chat',
-      prompt: 'Build it, then review.',
-      event: { sender: {} as Electron.WebContents }
-    })
-    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
-    // No write-claim preflight lane reached ANY participant.
-    expect(
-      harness.dispatched.every(
-        (payload) => !(payload.prompt || '').includes('Write-scope claim')
-      )
-    ).toBe(true)
-    // Serial fallback: Builder A speaks first; the reviewer is NOT dispatched.
-    expect(harness.dispatched[0].provider).toBe('codex')
-    const fallbackNote = harness.chat.messages.find((message) =>
-      message.content?.includes('no intervening serial participants')
-    )
-    expect(fallbackNote).toBeTruthy()
+  it('runs the write-scope preflight for the writers and defers the reviewer (reviewer no longer vetoes fan-out)', async () => {
+    // A stage reviewer sitting in `remaining` is provably deferred to the end by
+    // the reviewer stage-gate, so it must NOT count against `eligibleWriterTail`.
+    // Before the fix, this single deferred reviewer wrongly dropped the two
+    // writers to serial ("no intervening serial participants" note). Now the
+    // write-scope preflight engages: the claim pass fans out to BOTH writers only.
+    const previous = process.env.TASKWRAITH_CONCURRENT_WRITE_LANES
+    process.env.TASKWRAITH_CONCURRENT_WRITE_LANES = '1'
+    try {
+      const harness = makeHarness()
+      harness.chat.ensemble!.fanoutPolicy = 'locked_writers_user_preflight'
+      harness.chat.ensemble!.participants = [
+        {
+          id: 'codex',
+          provider: 'codex',
+          enabled: true,
+          role: 'Builder A',
+          instructions: 'Build.',
+          order: 1,
+          permissionPresetId: 'workspace_write'
+        },
+        {
+          id: 'claude',
+          provider: 'claude',
+          enabled: true,
+          role: 'Builder B',
+          instructions: 'Build.',
+          order: 2,
+          permissionPresetId: 'workspace_write'
+        },
+        {
+          id: 'kimi',
+          provider: 'kimi',
+          enabled: true,
+          role: 'Auditor',
+          instructions: 'Review.',
+          order: 3,
+          permissionPresetId: 'read_only',
+          stageRole: 'reviewer'
+        }
+      ]
+      harness.orchestrator.startRound({
+        chatId: 'ensemble-chat',
+        prompt: 'Build it, then review.',
+        event: { sender: {} as Electron.WebContents }
+      })
+      // The write-scope claim preflight fans out to BOTH writers concurrently.
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+      expect(harness.dispatched.map((payload) => payload.provider).sort()).toEqual([
+        'claude',
+        'codex'
+      ])
+      // The reviewer is NOT part of the writer preflight.
+      expect(harness.dispatched.every((payload) => payload.provider !== 'kimi')).toBe(true)
+      // The preflight engaged; the false "intervening serial participant" veto is gone.
+      expect(
+        harness.chat.messages.some((message) => message.content?.includes('Write-scope preflight'))
+      ).toBe(true)
+      expect(
+        harness.chat.messages.some((message) =>
+          message.content?.includes('no intervening serial participants')
+        )
+      ).toBe(false)
+    } finally {
+      if (previous === undefined) delete process.env.TASKWRAITH_CONCURRENT_WRITE_LANES
+      else process.env.TASKWRAITH_CONCURRENT_WRITE_LANES = previous
+    }
   })
 })
 
