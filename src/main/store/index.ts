@@ -2756,25 +2756,59 @@ export class AppStore {
     }
     const now = Date.now()
     if (nextKind === 'ensemble') {
-      const seed = opts.seedParticipant
-      if (!seed) {
-        throw new Error('Cannot convert to Ensemble without a seed participant')
+      const nowIso = new Date(now).toISOString()
+      // E3 preserve-roster: if this chat was previously collapsed from an
+      // Ensemble (roster stashed under providerMetadata.stashedEnsemble) AND the
+      // solo provider is unchanged since that collapse, RESTORE the full stashed
+      // roster instead of re-seeding a single participant — so a toggle back to
+      // Ensemble does not lose the user's roster/settings. If the provider
+      // changed in between, the stash is stale → fresh single-participant seed.
+      const priorMetadata = chat.providerMetadata
+      const stash = priorMetadata?.stashedEnsemble as
+        | { config?: EnsembleConfig; provider?: ProviderId }
+        | undefined
+      const stashedConfig = stash?.config
+      const restorable =
+        !!stashedConfig &&
+        stash?.provider === chat.provider &&
+        Array.isArray(stashedConfig.participants) &&
+        stashedConfig.participants.length > 0
+
+      let ensemble: EnsembleConfig
+      if (restorable) {
+        ensemble = { ...(stashedConfig as EnsembleConfig), updatedAt: nowIso }
+      } else {
+        // Reuse the default config scaffolding (maxParticipants / orchestration /
+        // hops) but replace the roster with the SINGLE seed participant, so
+        // normalizeChatRecord keeps it (participants.length > 0) instead of
+        // auto-filling the multi-provider default roster.
+        const seed = opts.seedParticipant
+        if (!seed) {
+          throw new Error('Cannot convert to Ensemble without a seed participant')
+        }
+        const base = createDefaultEnsembleConfig(chat.provider)
+        ensemble = {
+          ...base,
+          participants: [seed],
+          updatedAt: nowIso
+        }
       }
-      // Reuse the default config scaffolding (maxParticipants / orchestration /
-      // hops) but replace the roster with the SINGLE seed participant, so
-      // normalizeChatRecord keeps it (participants.length > 0) instead of
-      // auto-filling the multi-provider default roster.
-      const base = createDefaultEnsembleConfig(chat.provider)
-      const ensemble: EnsembleConfig = {
-        ...base,
-        participants: [seed],
-        updatedAt: new Date(now).toISOString()
-      }
+
       const updated: ChatRecord = {
         ...chat,
         chatKind: 'ensemble',
         ensemble,
         updatedAt: now
+      }
+      // Consume the stash on any expand (restored OR invalidated by a provider
+      // change) so a stale roster can't resurrect on a later toggle.
+      if (priorMetadata && 'stashedEnsemble' in priorMetadata) {
+        const { stashedEnsemble: _consumed, ...restMetadata } = priorMetadata
+        if (Object.keys(restMetadata).length > 0) {
+          updated.providerMetadata = restMetadata
+        } else {
+          delete updated.providerMetadata
+        }
       }
       this.saveChat(updated)
       return this.getChat(chatId) ?? updated
@@ -2784,19 +2818,42 @@ export class AppStore {
       opts.canonicalProvider ||
       chat.provider ||
       coerceLiveProvider(this.getSettings().activeProvider)
-    const { ensemble: _dropEnsemble, ...withoutEnsemble } = chat
+    const nowIso = new Date(now).toISOString()
+    const { ensemble: priorEnsemble, ...withoutEnsemble } = chat
+
+    let providerMetadata: Record<string, unknown> | undefined = withoutEnsemble.providerMetadata
+      ? { ...withoutEnsemble.providerMetadata }
+      : undefined
+    if (opts.canonicalProviderMetadata) {
+      providerMetadata = { ...(providerMetadata || {}), ...opts.canonicalProviderMetadata }
+    }
+    // E3 preserve-roster: stash the outgoing roster so a later toggle back to
+    // Ensemble can restore it. Stash under providerMetadata — NOT on
+    // chat.ensemble, whose mere presence keys buildRemoteEnsembleState() and
+    // would leak the roster onto this now-solo chat's remote/iOS projection.
+    // Drop the ephemeral activeRound (dispatch state, not roster config; the
+    // idle-only guard above already bars a live round).
+    if (
+      priorEnsemble &&
+      Array.isArray(priorEnsemble.participants) &&
+      priorEnsemble.participants.length > 0
+    ) {
+      const { activeRound: _dropRound, ...stashableConfig } = priorEnsemble
+      providerMetadata = {
+        ...(providerMetadata || {}),
+        stashedEnsemble: {
+          config: stashableConfig,
+          provider: canonicalProvider,
+          stashedAt: nowIso
+        }
+      }
+    }
+
     const updated: ChatRecord = {
       ...withoutEnsemble,
       chatKind: 'single',
       provider: canonicalProvider,
-      ...(opts.canonicalProviderMetadata
-        ? {
-            providerMetadata: {
-              ...(withoutEnsemble.providerMetadata || {}),
-              ...opts.canonicalProviderMetadata
-            }
-          }
-        : {}),
+      ...(providerMetadata ? { providerMetadata } : {}),
       updatedAt: now
     }
     this.saveChat(updated)

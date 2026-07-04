@@ -8,7 +8,6 @@ import type {
 
 const ENSEMBLE_STAGE_ROLES = new Set<string>(['scout', 'worker', 'reviewer'])
 
-export const MIN_ENSEMBLE_PARTICIPANTS = 2
 // 1.7.x — 18 → 20 in step with the renderer strip's balanced rows of
 // at most 5 chips (EnsembleParticipantsAboveRow.MAX_ENSEMBLE_PARTICIPANTS).
 export const MAX_ENSEMBLE_PARTICIPANTS = 20
@@ -198,9 +197,9 @@ function evaluateRemove(req: RosterEditRequest, ctx: RosterEditContext): RosterE
   if (target.id === ctx.bossmanParticipantId) {
     return fail('remove_boss', 'Roster remove rejected: the configured Boss participant cannot be removed.')
   }
-  if (ctx.participants.length <= MIN_ENSEMBLE_PARTICIPANTS) {
-    return fail('roster_min', 'Roster remove rejected: the Ensemble roster is already at the minimum size.')
-  }
+  // E4 — the old "minimum of 2 participants" roster floor is removed: a
+  // single-participant Ensemble is now valid, so removal is allowed down to 1
+  // (the Boss guard above still protects the configured Boss seat).
 
   return {
     ok: true,

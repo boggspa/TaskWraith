@@ -3,7 +3,6 @@ import {
   ASSIGNABLE_PERMISSION_PRESETS,
   evaluateRosterEdit,
   MAX_ENSEMBLE_PARTICIPANTS,
-  MIN_ENSEMBLE_PARTICIPANTS,
   type RosterEditContext
 } from './EnsembleRosterMutation'
 import type { AgenticServicePolicy, EnsembleParticipant, ExternalPathGrant } from './store/types'
@@ -60,7 +59,6 @@ function externalGrant(): ExternalPathGrant {
 
 describe('evaluateRosterEdit', () => {
   it('exports the main-side roster bounds and assignable preset ceiling', () => {
-    expect(MIN_ENSEMBLE_PARTICIPANTS).toBe(2)
     expect(MAX_ENSEMBLE_PARTICIPANTS).toBe(20)
     expect(ASSIGNABLE_PERMISSION_PRESETS).toEqual([
       'read_only',
@@ -190,7 +188,7 @@ describe('evaluateRosterEdit', () => {
     ])
   })
 
-  it('rejects remove requests for missing targets, the Boss, and the roster floor', () => {
+  it('rejects remove requests for missing targets and the Boss', () => {
     expect(
       evaluateRosterEdit({ action: 'remove_participant' }, makeContext())
     ).toMatchObject({ ok: false, error: 'invalid_request' })
@@ -206,12 +204,20 @@ describe('evaluateRosterEdit', () => {
         makeContext()
       )
     ).toMatchObject({ ok: false, error: 'remove_boss' })
-    expect(
-      evaluateRosterEdit(
-        { action: 'remove_participant', targetParticipantId: 'worker' },
-        makeContext({ participants: makeContext().participants.slice(0, MIN_ENSEMBLE_PARTICIPANTS) })
-      )
-    ).toMatchObject({ ok: false, error: 'roster_min' })
+  })
+
+  it('E4 — allows removing down to a single participant (roster floor removed)', () => {
+    // The old "minimum of 2" rule is gone: removing the non-Boss participant
+    // from a 2-seat roster now succeeds and leaves a valid single-seat roster.
+    const removedToSingle = evaluateRosterEdit(
+      { action: 'remove_participant', targetParticipantId: 'worker' },
+      makeContext()
+    )
+    expect(removedToSingle).toMatchObject({ ok: true, affectedParticipantId: 'worker' })
+    if (removedToSingle.ok) {
+      expect(removedToSingle.nextParticipants).toHaveLength(1)
+      expect(removedToSingle.nextParticipants[0].id).toBe('boss')
+    }
   })
 
   it('edits provider, model, reasoning, preset, and narrow permission overrides without mutating input', () => {

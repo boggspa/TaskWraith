@@ -175,4 +175,101 @@ describe('AppStore.setChatKind (Slice C — mid-thread ensemble toggle)', () => 
       AppStore.setChatKind('missing-chat', 'ensemble', { seedParticipant: seedParticipant() })
     ).toThrow(/not found/)
   })
+
+  it('E3 — ensemble→solo stashes the roster under providerMetadata (not chat.ensemble), and solo→ensemble restores it when the provider is unchanged', () => {
+    const ensemble = AppStore.createEnsembleChat()
+    const roster: EnsembleParticipant[] = [
+      seedParticipant({ id: 'p1', provider: 'claude', role: 'Boss', order: 1 }),
+      seedParticipant({ id: 'p2', provider: 'codex', role: 'Worker', order: 2 }),
+      seedParticipant({ id: 'p3', provider: 'grok', role: 'Reviewer', order: 3 })
+    ]
+    AppStore.saveChat({
+      ...ensemble,
+      provider: 'claude',
+      ensemble: {
+        ...ensemble.ensemble!,
+        participants: roster,
+        bossmanParticipantId: 'p1'
+      },
+      messages: [
+        {
+          id: 'message-1',
+          role: 'user',
+          content: 'Preserve my roster.',
+          timestamp: '2026-07-04T00:00:00.000Z'
+        }
+      ]
+    } as ChatRecord)
+
+    // Collapse to solo (canonical provider matches the chat/Boss provider).
+    const solo = AppStore.setChatKind(ensemble.appChatId, 'single', {
+      canonicalProvider: 'claude'
+    })
+    expect(solo.chatKind).toBe('single')
+    // Leak-prevention invariant: the roster must NOT remain on chat.ensemble
+    // (its presence keys the remote/iOS ensemble projection).
+    expect(solo.ensemble).toBeUndefined()
+    // ...but it IS preserved under providerMetadata for a later toggle back.
+    const stash = solo.providerMetadata?.stashedEnsemble as
+      | { config?: { participants?: unknown[]; bossmanParticipantId?: string }; provider?: string }
+      | undefined
+    expect(stash?.provider).toBe('claude')
+    expect(stash?.config?.participants).toHaveLength(3)
+    expect(stash?.config?.bossmanParticipantId).toBe('p1')
+    expect(solo.messages).toHaveLength(1)
+
+    // Toggle back to ensemble — the FULL roster is restored, not a 1-seat seed.
+    const restored = AppStore.setChatKind(ensemble.appChatId, 'ensemble', {
+      seedParticipant: seedParticipant({ id: 'ignored-seed', provider: 'claude' })
+    })
+    expect(restored.chatKind).toBe('ensemble')
+    expect(restored.ensemble?.participants).toHaveLength(3)
+    expect(restored.ensemble?.participants.map((participant) => participant.id)).toEqual([
+      'p1',
+      'p2',
+      'p3'
+    ])
+    expect(restored.ensemble?.bossmanParticipantId).toBe('p1')
+    // Stash consumed on restore.
+    expect(restored.providerMetadata?.stashedEnsemble).toBeUndefined()
+    // History intact throughout.
+    expect(restored.messages).toHaveLength(1)
+
+    const reloaded = AppStore.getChat(ensemble.appChatId)
+    expect(reloaded?.ensemble?.participants).toHaveLength(3)
+    expect(reloaded?.providerMetadata?.stashedEnsemble).toBeUndefined()
+  })
+
+  it('E3 — a provider change while solo invalidates the stash, so toggle-back re-seeds a single participant', () => {
+    const ensemble = AppStore.createEnsembleChat()
+    AppStore.saveChat({
+      ...ensemble,
+      provider: 'claude',
+      ensemble: {
+        ...ensemble.ensemble!,
+        participants: [
+          seedParticipant({ id: 'p1', provider: 'claude', role: 'Boss', order: 1 }),
+          seedParticipant({ id: 'p2', provider: 'codex', role: 'Worker', order: 2 })
+        ],
+        bossmanParticipantId: 'p1'
+      }
+    } as ChatRecord)
+
+    AppStore.setChatKind(ensemble.appChatId, 'single', { canonicalProvider: 'claude' })
+
+    // User switches provider while solo (Slice B) — the stash-time provider no
+    // longer matches the current solo provider.
+    const afterCollapse = AppStore.getChat(ensemble.appChatId)!
+    AppStore.saveChat({ ...afterCollapse, provider: 'codex' } as ChatRecord)
+
+    const restored = AppStore.setChatKind(ensemble.appChatId, 'ensemble', {
+      seedParticipant: seedParticipant({ id: 'fresh-seed', provider: 'codex' })
+    })
+    // Stale stash (claude !== codex) → fresh single-participant seed.
+    expect(restored.ensemble?.participants).toHaveLength(1)
+    expect(restored.ensemble?.participants[0]?.id).toBe('fresh-seed')
+    expect(restored.ensemble?.participants[0]?.provider).toBe('codex')
+    // Stash consumed either way.
+    expect(restored.providerMetadata?.stashedEnsemble).toBeUndefined()
+  })
 })
