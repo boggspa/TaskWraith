@@ -5465,8 +5465,20 @@ html:has(.chat-split-region.chat-split-hidden-for-settings) .transcript-user-gut
 }
 
 .ensemble-fanout-result-body-inner {
+  display: flex;
+  flex-direction: column;
+  gap: 0.72rem;
   min-width: 0;
   color: var(--text-primary);
+}
+
+.ensemble-fanout-result-part {
+  min-width: 0;
+}
+
+.ensemble-fanout-result-tools .activity-timeline {
+  margin: 0;
+  padding-left: 14px;
 }
 
 .ensemble-fanout-result-empty {

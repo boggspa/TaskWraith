@@ -194,6 +194,16 @@ export function contentVersion(message: ChatMessage): string {
     }
     return `t:${activities.length}:${statuses}:${outputLen}`
   }
+  const activities = message.toolActivities || []
+  if (activities.length > 0) {
+    let outputLen = 0
+    let statuses = ''
+    for (const a of activities) {
+      outputLen += a.outputPreview?.length || a.resultSummary?.length || 0
+      statuses += `${a.status || '?'}|`
+    }
+    return `${message.role[0] || 'x'}t:${(message.content || '').length}:${activities.length}:${statuses}:${outputLen}`
+  }
   const len = (message.content || '').length
   return `${message.role[0] || 'x'}:${len}`
 }

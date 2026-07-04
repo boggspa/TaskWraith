@@ -55,7 +55,11 @@ import type { RendererProviderRates } from '../lib/providerRateEstimate'
 import { shouldSuppressRunCompleteSummary, type RunCompleteNotice } from '../lib/runCompleteNotice'
 import { formatTranscriptClock } from '../lib/dateTimeFormat'
 import { EMPTY_CHAT_MESSAGES } from '../lib/stableEmpties'
-import { groupAdjacentToolMessages } from '../lib/transcriptToolMessageGrouping'
+import {
+  groupAdjacentToolMessages,
+  groupFanoutLaneMessages,
+  groupedTranscriptMessageIds
+} from '../lib/transcriptToolMessageGrouping'
 import {
   buildEnsembleRoundCardRows,
   isEnsembleRoundHeaderMessage,
@@ -1442,7 +1446,7 @@ export const TranscriptPanel = memo(
     // one-shot anchor correction. So ensembles keep windowing and converge.
     const virtualizeEnabled = virtualize ?? TRANSCRIPT_VIRTUALIZATION_ENABLED
     const groupedMessages = useMemo(
-      () => groupAdjacentToolMessages(visibleMessages),
+      () => groupFanoutLaneMessages(groupAdjacentToolMessages(visibleMessages)),
       [visibleMessages]
     )
     // Ensemble round cards: completed rounds collapse into expandable
@@ -1475,11 +1479,8 @@ export const TranscriptPanel = memo(
             : null
         if (!roundId) continue
         map.set(message.id, roundId)
-        const grouped = message.metadata?.groupedToolMessageIds
-        if (Array.isArray(grouped)) {
-          for (const gid of grouped) {
-            if (typeof gid === 'string') map.set(gid, roundId)
-          }
+        for (const gid of groupedTranscriptMessageIds(message)) {
+          map.set(gid, roundId)
         }
       }
       return map
@@ -1558,9 +1559,7 @@ export const TranscriptPanel = memo(
       const map = new Map(runBoundaryByMessageId)
       for (const message of displayMessages) {
         if (map.has(message.id)) continue
-        const groupedIds = message.metadata?.groupedToolMessageIds
-        if (!Array.isArray(groupedIds)) continue
-        const boundaryId = groupedIds.find((id) => typeof id === 'string' && map.has(id))
+        const boundaryId = groupedTranscriptMessageIds(message).find((id) => map.has(id))
         if (boundaryId) map.set(message.id, map.get(boundaryId)!)
       }
       return map
@@ -1597,8 +1596,7 @@ export const TranscriptPanel = memo(
           projectedRows.find((candidate) => candidate.id === messageId) ||
           projectedRows.find((candidate) => {
             const message = displayMessages[candidate.index]
-            const groupedIds = message?.metadata?.groupedToolMessageIds
-            return Array.isArray(groupedIds) && groupedIds.includes(messageId)
+            return message ? groupedTranscriptMessageIds(message).includes(messageId) : false
           })
         )
       },
@@ -2205,7 +2203,9 @@ export const TranscriptPanel = memo(
                     key={msg.id}
                     className="message-group ensemble-fanout-result-message"
                     onContextMenu={(event) =>
-                      openMessageContextMenu(event, msg, msg.content || '', 'fan-out result')
+                      openMessageContextMenu(event, msg, msg.content || '', 'fan-out result', {
+                        copySource: 'static'
+                      })
                     }
                   >
                     <EnsembleFanoutResultCard
@@ -2219,6 +2219,12 @@ export const TranscriptPanel = memo(
                       }
                       expanded={expandedFanoutResults.has(msg.id)}
                       onExpandedChange={(expanded) => setFanoutResultExpanded(msg.id, expanded)}
+                      compactDensity={compactDensity}
+                      expandedActivityIds={activityExpansionIds ?? EMPTY_ACTIVITY_EXPANSION}
+                      onExpandedActivityIdsChange={(next) =>
+                        setActivityExpansionForRow(msg.id, next)
+                      }
+                      onOpenFileChangeInWorkbench={onOpenFileChangeInWorkbench}
                       onPreviewImage={onPreviewImage}
                       onDetachToPane={onDetachToPane}
                     />
