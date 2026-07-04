@@ -4690,6 +4690,17 @@ html:has(.chat-split-region.chat-split-hidden-for-settings) .transcript-user-gut
   padding-block: calc(var(--space-sm) + 1px);
 }
 
+.message-working-stack {
+  gap: calc(var(--space-sm) + 2px);
+}
+
+.message-working-stack-row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-xs);
+}
+
 /*
  * iOS LiveActivityAnchor parity: monoline ghost + provider-tinted radial
  * glow + provider-hue shimmer sweep on "Working".

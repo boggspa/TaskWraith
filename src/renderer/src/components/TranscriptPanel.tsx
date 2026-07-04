@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import type { ReactElement } from 'react'
+import type { CSSProperties, ReactElement } from 'react'
 import type {
   ChatMessage,
   ChatRecord,
@@ -23,7 +23,11 @@ import {
 } from '../lib/runCompleteSummary'
 import { decideMeasurePass, MAX_MEASURE_REWRITE_PASSES } from '../lib/transcriptMeasureConvergence'
 import { deriveQueuedLifecycleProjection } from '../lib/queuedMessageRows'
-import { deriveActiveEnsembleWorkingPresentation } from '../lib/workingIndicatorPresentation'
+import {
+  deriveActiveEnsembleWorkingPresentation,
+  deriveActiveEnsembleWorkingPresentations,
+  type WorkingIndicatorPresentation
+} from '../lib/workingIndicatorPresentation'
 import {
   TRANSCRIPT_VIRTUALIZATION_ENABLED,
   DEFAULT_OVERSCAN_PX,
@@ -425,6 +429,35 @@ function formatTranscriptMessageFooterTime(timestamp: string | undefined): {
       timeStyle: 'medium'
     })
   }
+}
+
+function workingStatusLabel(presentation: WorkingIndicatorPresentation): string {
+  return presentation.roleLabel
+    ? `${presentation.roleLabel} (${presentation.providerLabel || 'Agent'}) working`
+    : `${presentation.providerLabel || 'Agent'} working`
+}
+
+function workingIndicatorKey(
+  presentation: WorkingIndicatorPresentation,
+  index: number
+): string {
+  return [
+    presentation.providerClass || presentation.provider || 'agent',
+    presentation.roleLabel || '',
+    presentation.modelBadge || '',
+    index
+  ].join(':')
+}
+
+function workingAccentStyle(presentation: WorkingIndicatorPresentation): CSSProperties | undefined {
+  const providerClass = (presentation.providerClass || presentation.provider || '').replace(
+    /[^a-z0-9-]/gi,
+    ''
+  )
+  if (!providerClass) return undefined
+  return {
+    '--message-working-accent': `var(--provider-${providerClass}-color, var(--accent))`
+  } as CSSProperties
 }
 
 function TranscriptMessageFooter({
@@ -1150,6 +1183,10 @@ export const TranscriptPanel = memo(
       () => deriveActiveEnsembleWorkingPresentation(currentChat),
       [currentChat]
     )
+    const ensembleWorkingPresentations = useMemo(
+      () => deriveActiveEnsembleWorkingPresentations(currentChat),
+      [currentChat]
+    )
     const workingProviderLabel =
       ensembleWorkingPresentation?.providerLabel || thinkingProviderLabel || currentProviderLabel
     const workingProvider = ensembleWorkingPresentation?.provider ?? thinkingProvider
@@ -1158,6 +1195,29 @@ export const TranscriptPanel = memo(
     const workingRoleLabel = ensembleWorkingPresentation?.roleLabel || null
     const workingModelBadge =
       ensembleWorkingPresentation?.modelBadge ?? thinkingModelBadge ?? null
+    const workingPresentations = useMemo<WorkingIndicatorPresentation[]>(
+      () =>
+        ensembleWorkingPresentations.length > 0
+          ? ensembleWorkingPresentations
+          : [
+              {
+                providerLabel: workingProviderLabel || currentProviderLabel || 'Agent',
+                provider: workingProvider ?? null,
+                providerClass: workingProviderClass || (workingProvider ? String(workingProvider) : null),
+                roleLabel: workingRoleLabel,
+                modelBadge: workingModelBadge
+              }
+            ],
+      [
+        currentProviderLabel,
+        ensembleWorkingPresentations,
+        workingModelBadge,
+        workingProvider,
+        workingProviderClass,
+        workingProviderLabel,
+        workingRoleLabel
+      ]
+    )
     const [messageContextMenu, setMessageContextMenu] =
       useState<TranscriptMessageContextMenuSelection | null>(null)
     const {
@@ -2815,46 +2875,53 @@ export const TranscriptPanel = memo(
           {isThinking && (
             <div
               key="thinking-indicator"
-              className="message-group"
+              className={`message-group${workingPresentations.length > 1 ? ' message-working-stack' : ''}`}
               role="status"
               aria-live="polite"
               aria-atomic="true"
             >
               <span className="sr-only">
-                {workingRoleLabel
-                  ? `${workingRoleLabel} (${workingProviderLabel || 'Agent'}) working`
-                  : `${workingProviderLabel || 'Agent'} working`}
+                {workingPresentations.map(workingStatusLabel).join('; ')}
               </span>
-              <div
-                className={`message-meta${
-                  workingProviderClass || workingProvider
-                    ? ` provider-${workingProviderClass || workingProvider}`
-                    : ''
-                }`}
-              >
-                <span className="message-meta-label">
-                  {workingProviderLabel || currentProviderLabel}
-                </span>
-                {workingRoleLabel && (
-                  <span
-                    className="message-meta-model-badge message-meta-role-badge"
-                    title={`Role: ${workingRoleLabel}`}
-                    aria-label={`Role ${workingRoleLabel}`}
+              {workingPresentations.map((presentation, index) => {
+                const providerClass = presentation.providerClass || presentation.provider
+                return (
+                  <div
+                    key={workingIndicatorKey(presentation, index)}
+                    className="message-working-stack-row"
+                    style={workingAccentStyle(presentation)}
                   >
-                    {workingRoleLabel}
-                  </span>
-                )}
-                {workingModelBadge && (
-                  <span
-                    className="message-meta-model-badge"
-                    title={`Model: ${workingModelBadge}`}
-                    aria-label={`Model ${workingModelBadge}`}
-                  >
-                    {workingModelBadge}
-                  </span>
-                )}
-              </div>
-              <ThinkingIndicator />
+                    <div
+                      className={`message-meta${
+                        providerClass ? ` provider-${providerClass}` : ''
+                      }`}
+                    >
+                      <span className="message-meta-label">
+                        {presentation.providerLabel || currentProviderLabel}
+                      </span>
+                      {presentation.roleLabel && (
+                        <span
+                          className="message-meta-model-badge message-meta-role-badge"
+                          title={`Role: ${presentation.roleLabel}`}
+                          aria-label={`Role ${presentation.roleLabel}`}
+                        >
+                          {presentation.roleLabel}
+                        </span>
+                      )}
+                      {presentation.modelBadge && (
+                        <span
+                          className="message-meta-model-badge"
+                          title={`Model: ${presentation.modelBadge}`}
+                          aria-label={`Model ${presentation.modelBadge}`}
+                        >
+                          {presentation.modelBadge}
+                        </span>
+                      )}
+                    </div>
+                    <ThinkingIndicator ariaLabel={workingStatusLabel(presentation)} />
+                  </div>
+                )
+              })}
             </div>
           )}
           {showRunCompleteSummary !== false && shouldShowRunCompleteNotice && runCompleteNotice && (

@@ -62,6 +62,14 @@ function activeParticipantId(chat: ChatRecord): string | undefined {
   )?.participantId
 }
 
+function participantOrder(chat: ChatRecord, participantId: string): number {
+  const participant = chat.ensemble?.participants.find((item) => item.id === participantId)
+  if (typeof participant?.order === 'number') return participant.order
+  const roundParticipant = roundParticipantForId(chat, participantId)
+  if (typeof roundParticipant?.order === 'number') return roundParticipant.order
+  return Number.MAX_SAFE_INTEGER
+}
+
 function roundParticipantForId(
   chat: ChatRecord,
   participantId: string
@@ -71,13 +79,10 @@ function roundParticipantForId(
   )
 }
 
-export function deriveActiveEnsembleWorkingPresentation(
-  chat: ChatRecord | null | undefined
+function workingPresentationForParticipant(
+  chat: ChatRecord,
+  participantId: string
 ): WorkingIndicatorPresentation | null {
-  if (chat?.chatKind !== 'ensemble') return null
-  const participantId = activeParticipantId(chat)
-  if (!participantId) return null
-
   const participant = chat.ensemble?.participants.find((item) => item.id === participantId)
   const roundParticipant = roundParticipantForId(chat, participantId)
   const provider = participant?.provider || roundParticipant?.provider || null
@@ -97,4 +102,41 @@ export function deriveActiveEnsembleWorkingPresentation(
     roleLabel,
     modelBadge: participant ? modelBadgeForParticipant(participant) : null
   }
+}
+
+export function deriveActiveEnsembleWorkingPresentation(
+  chat: ChatRecord | null | undefined
+): WorkingIndicatorPresentation | null {
+  if (chat?.chatKind !== 'ensemble') return null
+  const participantId = activeParticipantId(chat)
+  if (!participantId) return null
+  return workingPresentationForParticipant(chat, participantId)
+}
+
+export function deriveActiveEnsembleWorkingPresentations(
+  chat: ChatRecord | null | undefined
+): WorkingIndicatorPresentation[] {
+  if (chat?.chatKind !== 'ensemble') return []
+  const round = chat.ensemble?.activeRound
+  const lanes = Object.values(round?.lanes || {})
+  if (!round || round.status !== 'running' || round.concurrentMode !== true || lanes.length === 0) {
+    return []
+  }
+  if (round.fanoutPolicy === 'off') return []
+
+  const liveParticipantIds = new Set<string>()
+  for (const lane of lanes) {
+    if (LIVE_LANE_STATUSES.has(lane.status)) {
+      liveParticipantIds.add(lane.participantId)
+    }
+  }
+
+  return Array.from(liveParticipantIds)
+    .sort((left, right) => {
+      const orderDelta = participantOrder(chat, left) - participantOrder(chat, right)
+      if (orderDelta !== 0) return orderDelta
+      return left.localeCompare(right)
+    })
+    .map((participantId) => workingPresentationForParticipant(chat, participantId))
+    .filter((presentation): presentation is WorkingIndicatorPresentation => Boolean(presentation))
 }
