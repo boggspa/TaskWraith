@@ -26,7 +26,7 @@
  * capsule around the whole row and around the Turn/Continuous trigger.
  */
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import { ContinuousHopsLimitChip } from './ContinuousHopsLimitChip'
 import { EnsembleModePicker, type EnsembleOrchestrationMode } from './EnsembleModePicker'
@@ -104,6 +104,13 @@ export function EnsembleOrchestrationRow({
   onMaxContinuationHopsChange: (nextMax: number) => void
 }): React.JSX.Element {
   const effectiveContextChars = contextChars ?? CONTEXT_DEFAULT
+  const contextSliderFill = Math.max(
+    0,
+    Math.min(
+      100,
+      ((effectiveContextChars - CONTEXT_MIN) / (CONTEXT_MAX - CONTEXT_MIN)) * 100
+    )
+  )
   const visibleOllamaContextWarning =
     ollamaContextWarning?.severity === 'ok' ? null : ollamaContextWarning
   const selectedFanoutValue: FanoutPickerValue =
@@ -202,6 +209,11 @@ export function EnsembleOrchestrationRow({
           onChange={(event) => onContextCharsChange(Number(event.target.value))}
           aria-label="Shared transcript character budget"
           title={`${formatCharBudget(effectiveContextChars)} chars of recent panel history shared with each participant`}
+          style={
+            {
+              '--ensemble-context-slider-fill': `${contextSliderFill}%`
+            } as CSSProperties
+          }
         />
         <span className="composer-ensemble-context-value">
           {formatCharBudget(effectiveContextChars)}
