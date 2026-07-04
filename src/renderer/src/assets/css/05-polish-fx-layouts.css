@@ -1902,6 +1902,11 @@
   gap: 3px;
 }
 
+/* Center the + New pill on the ghost + TaskWraith row (56px mark, 30px button). */
+.sidebar-masthead .sidebar-new-menu-wrap {
+  margin-top: calc((56px - 30px) / 2);
+}
+
 /* One-click update pill — top of the workspaces sidebar, above the masthead.
  * Uses the same rim-highlight chrome as sidebar selection; hidden at rest. */
 .sidebar-update-pill-row {
