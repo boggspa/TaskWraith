@@ -10,6 +10,10 @@ import { getPoolIconAsset, preparePoolIconSvg } from '../../lib/agentPoolIconAss
 import { AgentIdentityIcon } from './AgentIdentityIcon'
 import type { PooledAgentIdentitySnapshot } from '../../../../main/store/types'
 
+type IdentityColorSource = (PooledAgent['identity'] | PooledAgentIdentitySnapshot) & {
+  brightness?: number
+}
+
 interface PooledAgentIconProps {
   agent?: PooledAgent
   identity?: PooledAgentIdentitySnapshot
@@ -17,6 +21,17 @@ interface PooledAgentIconProps {
   className?: string
   style?: CSSProperties
   title?: string
+}
+
+function resolvedTintColor(identity: IdentityColorSource): string {
+  const hasUserBrightness =
+    typeof identity.brightness === 'number' && Number.isFinite(identity.brightness)
+  return pooledIconColor(
+    hasUserBrightness ? identity.accent : undefined,
+    identity.hue,
+    identity.hueEnabled,
+    identity.brightness
+  )
 }
 
 /**
@@ -53,11 +68,7 @@ export function PooledAgentIcon({
   const asset = identity.iconKind === 'asset' ? getPoolIconAsset(identity.assetKey) : undefined
 
   if (asset) {
-    const accent = pooledIconColor(
-      identity.accent || asset.accent,
-      identity.hue,
-      identity.hueEnabled
-    )
+    const accent = resolvedTintColor(identity)
     return (
       <span
         className={['agent-pool-asset-icon', className].filter(Boolean).join(' ')}
@@ -78,23 +89,23 @@ export function PooledAgentIcon({
     const base = pooledAgentIconProps(agent)
     iconProps = {
       ...base,
-      color: pooledIconColor(base.color, agent.identity.hue, agent.identity.hueEnabled)
+      color: resolvedTintColor(agent.identity)
     }
   } else if (identity.iconKind === 'named' && identity.slug) {
     const entry = namedAgentIdenticonForSlug(identity.slug)
     iconProps = entry
       ? {
           name: entry.name,
-          color: pooledIconColor(identity.accent || entry.accent, identity.hue, identity.hueEnabled)
+          color: resolvedTintColor(identity)
         }
       : {
           seed: identity.seed || agentId,
-          color: pooledIconColor(identity.accent, identity.hue, identity.hueEnabled)
+          color: resolvedTintColor(identity)
         }
   } else {
     iconProps = {
       seed: identity.seed || agentId,
-      color: pooledIconColor(identity.accent, identity.hue, identity.hueEnabled)
+      color: resolvedTintColor(identity)
     }
   }
   return (

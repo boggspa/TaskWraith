@@ -1,5 +1,14 @@
-import { useState, type JSX } from 'react'
-import { accentFromHue, hueForSeed } from '../lib/ensembleAgentPool'
+import { useEffect, useState, type KeyboardEvent, type JSX } from 'react'
+import {
+  accentFromHue,
+  DEFAULT_POOL_ICON_BRIGHTNESS,
+  hueForSeed,
+  normalizeHexColor,
+  normalizePoolIconBrightness,
+  parsePoolColorInput,
+  POOL_ICON_NEUTRAL,
+  rgbStringFromHexColor
+} from '../lib/ensembleAgentPool'
 import { NAMED_AGENT_IDENTICONS } from '../lib/agentIdentityCatalog'
 import {
   poolIconAssetsByGroup,
@@ -13,20 +22,35 @@ export type IdentityIconKind = 'named' | 'seed' | 'asset'
 export type IdentityIconValue = {
   iconKind: IdentityIconKind
   hue: number
+  brightness?: number
   slug?: string
   seed?: string
   assetKey?: string
   accent?: string
+  hueEnabled?: boolean
 }
 
-function PoolAssetSwatch({ asset, size }: { asset: PoolIconAsset; size: number }): JSX.Element {
-  const accent = asset.accent ?? '#9AA0AA'
+function normalizeHue(hue: number): number {
+  if (!Number.isFinite(hue)) return 0
+  return ((Math.round(hue) % 360) + 360) % 360
+}
+
+function PoolAssetSwatch({
+  asset,
+  size,
+  accent
+}: {
+  asset: PoolIconAsset
+  size: number
+  accent?: string
+}): JSX.Element {
+  const swatchAccent = accent ?? asset.accent ?? '#9AA0AA'
   return (
     <span
       className="agent-pool-asset-icon"
-      style={{ width: size, height: size, display: 'inline-flex', color: accent }}
+      style={{ width: size, height: size, display: 'inline-flex', color: swatchAccent }}
       aria-hidden
-      dangerouslySetInnerHTML={{ __html: preparePoolIconSvg(asset, size, accent) }}
+      dangerouslySetInnerHTML={{ __html: preparePoolIconSvg(asset, size, swatchAccent) }}
     />
   )
 }
@@ -41,11 +65,82 @@ export function IdentityIconPicker({
   onChange: (next: IdentityIconValue) => void
 }): JSX.Element {
   const [isOpen, setIsOpen] = useState(false)
-  const safeHue = Number.isFinite(value.hue) ? value.hue : 0
+  const safeHue = normalizeHue(value.hue)
+  const tintEnabled = value.hueEnabled !== false
+  const fallbackBrightness =
+    parsePoolColorInput(value.accent)?.brightness ?? DEFAULT_POOL_ICON_BRIGHTNESS
+  const safeBrightness = normalizePoolIconBrightness(value.brightness ?? fallbackBrightness)
+  const hasUserBrightness =
+    typeof value.brightness === 'number' && Number.isFinite(value.brightness)
+  const explicitAccent = hasUserBrightness ? normalizeHexColor(value.accent) : undefined
+  const selectedAccent = explicitAccent ?? accentFromHue(safeHue, safeBrightness)
+  const previewAccent = tintEnabled ? selectedAccent : POOL_ICON_NEUTRAL
+  const selectedRgbText = rgbStringFromHexColor(selectedAccent)
+  const [hexDraft, setHexDraft] = useState(selectedAccent)
+  const [rgbDraft, setRgbDraft] = useState(selectedRgbText)
+
+  useEffect(() => {
+    setHexDraft(selectedAccent)
+    setRgbDraft(selectedRgbText)
+  }, [selectedAccent, selectedRgbText])
 
   const apply = (next: Partial<IdentityIconValue>): void => {
     onChange({ ...value, ...next })
   }
+
+  const applyColor = (hue: number, brightness = safeBrightness): void => {
+    const nextHue = normalizeHue(hue)
+    const nextBrightness = normalizePoolIconBrightness(brightness)
+    apply({
+      hue: nextHue,
+      brightness: nextBrightness,
+      accent: accentFromHue(nextHue, nextBrightness)
+    })
+  }
+
+  const colorPatchForPickedIcon = (
+    bakedHue: number | undefined,
+    bakedAccent: string | undefined
+  ): Pick<IdentityIconValue, 'hue' | 'brightness' | 'accent'> => {
+    if (tintEnabled) {
+      return { hue: safeHue, brightness: safeBrightness, accent: selectedAccent }
+    }
+    const fallbackAccent = normalizeHexColor(bakedAccent)
+    const fallbackHue = Number.isFinite(bakedHue) ? normalizeHue(bakedHue ?? safeHue) : safeHue
+    const fallbackColor = fallbackAccent ?? accentFromHue(fallbackHue)
+    const fallbackColorParts = parsePoolColorInput(fallbackColor)
+    return {
+      hue: fallbackHue,
+      brightness: fallbackColorParts?.brightness ?? DEFAULT_POOL_ICON_BRIGHTNESS,
+      accent: fallbackColor
+    }
+  }
+
+  const commitHexDraft = (): void => {
+    const next = parsePoolColorInput(hexDraft)
+    if (!next) {
+      setHexDraft(selectedAccent)
+      return
+    }
+    apply({ hue: next.hue, brightness: next.brightness, accent: next.accent })
+  }
+
+  const commitRgbDraft = (): void => {
+    const next = parsePoolColorInput(rgbDraft)
+    if (!next) {
+      setRgbDraft(selectedRgbText)
+      return
+    }
+    apply({ hue: next.hue, brightness: next.brightness, accent: next.accent })
+  }
+
+  const blurOnEnter =
+    () =>
+    (event: KeyboardEvent<HTMLInputElement>): void => {
+      if (event.key !== 'Enter') return
+      event.preventDefault()
+      event.currentTarget.blur()
+    }
 
   return (
     <div>
@@ -74,14 +169,15 @@ export function IdentityIconPicker({
               slug: undefined,
               assetKey: undefined,
               hue,
-              accent: accentFromHue(hue)
+              brightness: safeBrightness,
+              accent: accentFromHue(hue, safeBrightness)
             })
           }}
         >
           Shuffle
         </button>
-        {value.iconKind === 'seed' && (
-          <label className="agent-pool-hue">
+        <div className="agent-pool-color-controls">
+          <label className="agent-pool-color-slider">
             <span className="agent-pool-hue-label">Hue</span>
             <input
               type="range"
@@ -90,12 +186,54 @@ export function IdentityIconPicker({
               value={safeHue}
               onChange={(event) => {
                 const hue = Number(event.target.value)
-                apply({ iconKind: 'seed', hue, accent: accentFromHue(hue) })
+                applyColor(hue)
               }}
               aria-label="Icon hue"
             />
           </label>
-        )}
+          <label className="agent-pool-color-slider">
+            <span className="agent-pool-hue-label">Brightness</span>
+            <input
+              type="range"
+              min={0}
+              max={100}
+              value={safeBrightness}
+              onChange={(event) => applyColor(safeHue, Number(event.target.value))}
+              aria-label="Icon brightness"
+            />
+          </label>
+          <div className="agent-pool-color-fields">
+            <span
+              className="agent-pool-color-swatch"
+              style={{ backgroundColor: selectedAccent }}
+              aria-hidden
+            />
+            <label className="agent-pool-color-field">
+              <span>Hex</span>
+              <input
+                type="text"
+                value={hexDraft}
+                onChange={(event) => setHexDraft(event.target.value)}
+                onBlur={commitHexDraft}
+                onKeyDown={blurOnEnter()}
+                aria-label="Icon color hex value"
+                spellCheck={false}
+              />
+            </label>
+            <label className="agent-pool-color-field agent-pool-color-field--rgb">
+              <span>RGB</span>
+              <input
+                type="text"
+                value={rgbDraft}
+                onChange={(event) => setRgbDraft(event.target.value)}
+                onBlur={commitRgbDraft}
+                onKeyDown={blurOnEnter()}
+                aria-label="Icon color RGB value"
+                spellCheck={false}
+              />
+            </label>
+          </div>
+        </div>
       </div>
 
       {isOpen && (
@@ -120,12 +258,15 @@ export function IdentityIconPicker({
                           seed: undefined,
                           slug: undefined,
                           assetKey: asset.key,
-                          hue: asset.hue ?? safeHue,
-                          accent: asset.accent ?? value.accent
+                          ...colorPatchForPickedIcon(asset.hue, asset.accent)
                         })
                       }
                     >
-                      <PoolAssetSwatch asset={asset} size={26} />
+                      <PoolAssetSwatch
+                        asset={asset}
+                        size={26}
+                        accent={previewAccent}
+                      />
                     </button>
                   )
                 })}
@@ -151,12 +292,15 @@ export function IdentityIconPicker({
                         seed: undefined,
                         assetKey: undefined,
                         slug: entry.slug,
-                        hue: entry.hue,
-                        accent: entry.accent
+                        ...colorPatchForPickedIcon(entry.hue, entry.accent)
                       })
                     }
                   >
-                    <AgentIdentityIcon name={entry.name} color={entry.accent} size={26} />
+                    <AgentIdentityIcon
+                      name={entry.name}
+                      color={previewAccent}
+                      size={26}
+                    />
                   </button>
                 )
               })}

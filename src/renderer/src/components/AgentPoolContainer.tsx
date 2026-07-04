@@ -235,13 +235,16 @@ export function AgentPoolContainer({
                   slug: editing.identity.slug,
                   seed: editing.identity.seed,
                   assetKey: editing.identity.assetKey,
-                  accent: editing.identity.accent
+                  accent: editing.identity.accent,
+                  brightness: editing.identity.brightness,
+                  hueEnabled: editing.identity.hueEnabled
                 }}
                 seedBase={editing.agentId}
                 onChange={(next) =>
                   updateIdentity(editing, {
                     iconKind: next.iconKind,
                     hue: next.hue,
+                    brightness: next.brightness,
                     slug: next.slug,
                     seed: next.seed,
                     assetKey: next.assetKey,
@@ -251,7 +254,7 @@ export function AgentPoolContainer({
               />
               <label
                 className="agent-pool-hue-toggle"
-                title="Tint this icon with its accent colour. Off = monochrome — for pool icons that carry their own colours."
+                title="Tint this icon with the selected hue and brightness. Off = monochrome."
               >
                 <input
                   type="checkbox"
