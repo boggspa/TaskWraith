@@ -64,6 +64,8 @@ export type PooledAgentIdentity = {
   seed?: string
   /** 0-359, drives the accent (mirrors the manifest hue spirit). */
   hue: number
+  /** 0-100 lightness control for the derived accent. Absent => legacy 58. */
+  brightness?: number
   /** Optional explicit #RRGGBB override; otherwise derived from hue. */
   accent?: string
   /** When false, render the icon monochrome (ignore accent/hue) — for pool
@@ -138,11 +140,125 @@ export function hueForSeed(seed: string | null | undefined): number {
   return agentIdenticonHash(seed) % 360
 }
 
-/** HSL(hue, 65%, 58%) -> uppercase #RRGGBB. AgentIdentityIcon only accepts hex. */
-export function accentFromHue(hue: number): string {
-  const h = ((Math.round(hue) % 360) + 360) % 360
+export const DEFAULT_POOL_ICON_BRIGHTNESS = 58
+
+export type RgbColor = {
+  r: number
+  g: number
+  b: number
+}
+
+export type ParsedPoolColor = {
+  accent: string
+  hue: number
+  brightness: number
+}
+
+export function normalizePoolIconBrightness(value: number | null | undefined): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return DEFAULT_POOL_ICON_BRIGHTNESS
+  return Math.max(0, Math.min(100, Math.round(value)))
+}
+
+function normalizedHue(hue: number): number {
+  return ((Math.round(hue) % 360) + 360) % 360
+}
+
+function hexByte(value: number): string {
+  return Math.max(0, Math.min(255, Math.round(value)))
+    .toString(16)
+    .padStart(2, '0')
+}
+
+function rgbToHex({ r, g, b }: RgbColor): string {
+  return `#${hexByte(r)}${hexByte(g)}${hexByte(b)}`.toUpperCase()
+}
+
+export function normalizeHexColor(value: string | null | undefined): string | undefined {
+  if (typeof value !== 'string') return undefined
+  const trimmed = value.trim()
+  const match = trimmed.match(/^#?([0-9a-f]{3}|[0-9a-f]{6})$/i)
+  if (!match) return undefined
+  const raw = match[1]
+  const expanded =
+    raw.length === 3
+      ? raw
+          .split('')
+          .map((part) => `${part}${part}`)
+          .join('')
+      : raw
+  return `#${expanded.toUpperCase()}`
+}
+
+export function rgbFromHexColor(value: string | null | undefined): RgbColor | undefined {
+  const hex = normalizeHexColor(value)
+  if (!hex) return undefined
+  return {
+    r: Number.parseInt(hex.slice(1, 3), 16),
+    g: Number.parseInt(hex.slice(3, 5), 16),
+    b: Number.parseInt(hex.slice(5, 7), 16)
+  }
+}
+
+export function rgbStringFromHexColor(value: string | null | undefined): string {
+  const rgb = rgbFromHexColor(value)
+  return rgb ? `${rgb.r}, ${rgb.g}, ${rgb.b}` : ''
+}
+
+function parseRgbColorInput(value: string): RgbColor | undefined {
+  const trimmed = value.trim()
+  const match = trimmed.match(/^rgba?\(\s*([+-]?\d+(?:\.\d+)?)\s*,\s*([+-]?\d+(?:\.\d+)?)\s*,\s*([+-]?\d+(?:\.\d+)?)(?:\s*,\s*(?:0|1|0?\.\d+))?\s*\)$/i)
+  const parts = match ? [match[1], match[2], match[3]] : trimmed.split(/\s*,\s*/)
+  if (parts.length !== 3) return undefined
+  const channels = parts.map((part) => Number(part))
+  if (!channels.every((part) => Number.isFinite(part) && part >= 0 && part <= 255)) {
+    return undefined
+  }
+  return {
+    r: Math.round(channels[0]),
+    g: Math.round(channels[1]),
+    b: Math.round(channels[2])
+  }
+}
+
+function hueBrightnessFromRgb({ r, g, b }: RgbColor): Pick<ParsedPoolColor, 'hue' | 'brightness'> {
+  const rn = r / 255
+  const gn = g / 255
+  const bn = b / 255
+  const max = Math.max(rn, gn, bn)
+  const min = Math.min(rn, gn, bn)
+  const delta = max - min
+  const lightness = (max + min) / 2
+  let hue = 0
+  if (delta !== 0) {
+    if (max === rn) hue = 60 * (((gn - bn) / delta) % 6)
+    else if (max === gn) hue = 60 * ((bn - rn) / delta + 2)
+    else hue = 60 * ((rn - gn) / delta + 4)
+  }
+  return {
+    hue: normalizedHue(hue),
+    brightness: normalizePoolIconBrightness(lightness * 100)
+  }
+}
+
+export function parsePoolColorInput(value: string | null | undefined): ParsedPoolColor | undefined {
+  if (typeof value !== 'string') return undefined
+  const hex = normalizeHexColor(value)
+  const rgb = hex ? rgbFromHexColor(hex) : parseRgbColorInput(value)
+  if (!rgb) return undefined
+  return {
+    accent: rgbToHex(rgb),
+    ...hueBrightnessFromRgb(rgb)
+  }
+}
+
+/** HSL(hue, 65%, brightness%) -> uppercase #RRGGBB. AgentIdentityIcon only accepts hex. */
+export function accentFromHue(
+  hue: number,
+  brightness = DEFAULT_POOL_ICON_BRIGHTNESS
+): string {
+  const h = normalizedHue(hue)
   const s = 0.65
-  const l = 0.58
+  const l = normalizePoolIconBrightness(brightness) / 100
   const c = (1 - Math.abs(2 * l - 1)) * s
   const x = c * (1 - Math.abs(((h / 60) % 2) - 1))
   const m = l - c / 2
@@ -155,11 +271,7 @@ export function accentFromHue(hue: number): string {
   else if (h < 240) [r, g, b] = [0, x, c]
   else if (h < 300) [r, g, b] = [x, 0, c]
   else [r, g, b] = [c, 0, x]
-  const toHex = (v: number): string =>
-    Math.round((v + m) * 255)
-      .toString(16)
-      .padStart(2, '0')
-  return `#${toHex(r)}${toHex(g)}${toHex(b)}`.toUpperCase()
+  return rgbToHex({ r: (r + m) * 255, g: (g + m) * 255, b: (b + m) * 255 })
 }
 
 /** Neutral ink for a de-tinted (monochrome) pool icon. */
@@ -173,22 +285,27 @@ export const POOL_ICON_NEUTRAL = '#8A8F98'
 export function pooledIconColor(
   accent: string | undefined,
   hue: number,
-  hueEnabled?: boolean
+  hueEnabled?: boolean,
+  brightness?: number
 ): string {
   if (hueEnabled === false) return POOL_ICON_NEUTRAL
-  return accent || accentFromHue(hue)
+  return normalizeHexColor(accent) || accentFromHue(hue, brightness)
 }
 
 export function pooledAgentIdentitySnapshot(agent: PooledAgent): PooledAgentIdentitySnapshot {
   const identity = agent.identity
   const nickname = identity.nickname.trim() || agent.config.role || 'Agent'
+  const accent = normalizeHexColor(identity.accent)
   return {
     schemaVersion: 1,
     agentId: agent.agentId,
     nickname,
     iconKind: identity.iconKind,
-    hue: ((Math.round(identity.hue) % 360) + 360) % 360,
-    ...(identity.accent ? { accent: identity.accent } : {}),
+    hue: normalizedHue(identity.hue),
+    ...(typeof identity.brightness === 'number' && Number.isFinite(identity.brightness)
+      ? { brightness: normalizePoolIconBrightness(identity.brightness) }
+      : {}),
+    ...(accent ? { accent } : {}),
     ...(identity.slug ? { slug: identity.slug } : {}),
     ...(identity.assetKey ? { assetKey: identity.assetKey } : {}),
     ...(identity.seed ? { seed: identity.seed } : {}),
@@ -234,13 +351,26 @@ export function pooledAgentIconProps(agent: PooledAgent): {
   if (identity.iconKind === 'named' && identity.slug) {
     const entry = namedAgentIdenticonForSlug(identity.slug)
     if (entry) {
-      return { name: entry.name, color: identity.accent || entry.accent }
+      return {
+        name: entry.name,
+        color: pooledIconColor(
+          identity.accent,
+          identity.hue,
+          identity.hueEnabled,
+          identity.brightness
+        )
+      }
     }
     // Dangling slug — fall through to procedural rendering below.
   }
   return {
     seed: identity.seed || agentId,
-    color: identity.accent || accentFromHue(identity.hue)
+    color: pooledIconColor(
+      identity.accent,
+      identity.hue,
+      identity.hueEnabled,
+      identity.brightness
+    )
   }
 }
 
@@ -343,7 +473,9 @@ function isPooledAgentIdentity(value: unknown): value is PooledAgentIdentity {
     typeof entry.nickname === 'string' &&
     (entry.iconKind === 'named' || entry.iconKind === 'seed' || entry.iconKind === 'asset') &&
     typeof entry.hue === 'number' &&
-    Number.isFinite(entry.hue)
+    Number.isFinite(entry.hue) &&
+    (entry.brightness === undefined ||
+      (typeof entry.brightness === 'number' && Number.isFinite(entry.brightness)))
   )
 }
 

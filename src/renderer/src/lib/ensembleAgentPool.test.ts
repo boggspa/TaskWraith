@@ -37,11 +37,15 @@ import {
   accentFromHue,
   applyPooledAgentToParticipant,
   createPooledAgentFromParticipant,
+  DEFAULT_POOL_ICON_BRIGHTNESS,
   getPooledAgent,
   hueForSeed,
   isPooledAgentId,
   listPooledAgents,
+  normalizeHexColor,
+  normalizePoolIconBrightness,
   participantSnapshotToPooledAgentConfig,
+  parsePoolColorInput,
   pickNextPoolNickname,
   pooledAgentIconProps,
   pooledAgentIdentitySnapshot,
@@ -50,6 +54,7 @@ import {
   POOL_ICON_NEUTRAL,
   POOLED_AGENT_STORAGE_KEY,
   propagatePooledAgentToPresets,
+  rgbStringFromHexColor,
   removePooledAgent,
   subscribeEnsembleAgentPool,
   upsertPooledAgent,
@@ -153,6 +158,7 @@ describe('hue toggle', () => {
     expect(pooledIconColor('#FF0000', 120, true)).toBe('#FF0000')
     expect(pooledIconColor('#FF0000', 120, undefined)).toBe('#FF0000')
     expect(pooledIconColor(undefined, 120, undefined)).toBe(accentFromHue(120))
+    expect(pooledIconColor(undefined, 120, true, 42)).toBe(accentFromHue(120, 42))
   })
 
   it('pooledIconColor collapses to neutral when tinting is off, regardless of accent/hue', () => {
@@ -166,6 +172,12 @@ describe('hue toggle', () => {
     expect('hueEnabled' in pooledAgentIdentitySnapshot(agent)).toBe(false)
     const untinted = { ...agent, identity: { ...agent.identity, hueEnabled: false } }
     expect(pooledAgentIdentitySnapshot(untinted).hueEnabled).toBe(false)
+  })
+
+  it('snapshot carries normalized brightness when set', () => {
+    const agent = createPooledAgentFromParticipant(sampleParticipant())
+    const bright = { ...agent, identity: { ...agent.identity, brightness: 72.4 } }
+    expect(pooledAgentIdentitySnapshot(bright).brightness).toBe(72)
   })
 })
 
@@ -242,6 +254,36 @@ describe('identity helpers', () => {
     }
   })
 
+  it('accentFromHue preserves the legacy default and responds to brightness', () => {
+    expect(accentFromHue(210)).toBe(accentFromHue(210, DEFAULT_POOL_ICON_BRIGHTNESS))
+    expect(accentFromHue(210, 35)).not.toBe(accentFromHue(210, 75))
+    expect(normalizePoolIconBrightness(-5)).toBe(0)
+    expect(normalizePoolIconBrightness(140)).toBe(100)
+    expect(normalizePoolIconBrightness(undefined)).toBe(DEFAULT_POOL_ICON_BRIGHTNESS)
+  })
+
+  it('normalizes hex and rgb color input for manual color fields', () => {
+    expect(normalizeHexColor('abc')).toBe('#AABBCC')
+    expect(normalizeHexColor(' #00aaFF ')).toBe('#00AAFF')
+    expect(rgbStringFromHexColor('#00AAFF')).toBe('0, 170, 255')
+    expect(parsePoolColorInput('#00aaff')).toEqual({
+      accent: '#00AAFF',
+      hue: 200,
+      brightness: 50
+    })
+    expect(parsePoolColorInput('rgb(255, 0, 128)')).toEqual({
+      accent: '#FF0080',
+      hue: 330,
+      brightness: 50
+    })
+    expect(parsePoolColorInput('255, 0, 128')).toEqual({
+      accent: '#FF0080',
+      hue: 330,
+      brightness: 50
+    })
+    expect(parsePoolColorInput('not-a-color')).toBeUndefined()
+  })
+
   it('hueForSeed is stable and in range', () => {
     const h = hueForSeed('pooled-agent-abc')
     expect(h).toBe(hueForSeed('pooled-agent-abc'))
@@ -267,9 +309,10 @@ describe('identity helpers', () => {
     const agent = createPooledAgentFromParticipant(sampleParticipant())
     const namedAgent: PooledAgent = {
       ...agent,
-      identity: { ...agent.identity, iconKind: 'named', slug: named.slug }
+      identity: { ...agent.identity, iconKind: 'named', slug: named.slug, hue: 22, brightness: 44 }
     }
     expect(pooledAgentIconProps(namedAgent).name).toBe(named.name)
+    expect(pooledAgentIconProps(namedAgent).color).toBe(accentFromHue(22, 44))
 
     const danglingAgent: PooledAgent = {
       ...agent,
