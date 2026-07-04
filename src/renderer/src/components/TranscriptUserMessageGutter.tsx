@@ -40,9 +40,10 @@ interface TranscriptUserMessageGutterProps {
    */
   activeScrollRowKey?: string | null
   /**
-   * Overall scroll-progress fraction (0..1) for the read-position fill behind
-   * the markers. Driven from TranscriptPanel because the body-portaled rail is
-   * not a descendant of the scroller (so a CSS `scroll()` timeline can't bind).
+   * Overall scroll-progress fraction (0..1) — drives the reading lens's travel
+   * and the spent-tick threshold. Driven from TranscriptPanel because the
+   * body-portaled rail is not a descendant of the scroller (so a CSS `scroll()`
+   * timeline can't bind).
    */
   scrollProgress?: number
   /**
@@ -532,8 +533,8 @@ export function TranscriptUserMessageGutter({
   )
 
   // Skeuomorphic reading lens: a slide-rule-cursor carriage riding the stack.
-  // Geometry (height = visible share, position = scroll progress) carries the
-  // scroll-position signal, so the accent fill is no longer the only channel.
+  // Geometry (height = visible share, position = scroll progress) is THE
+  // scroll-position channel now that the vertical spine/fill is gone.
   const lensLayout = markerStackBounds
     ? layoutGutterLens(
         markerStackBounds.first,
@@ -543,9 +544,9 @@ export function TranscriptUserMessageGutter({
       )
     : null
 
-  // "Spent ticks": the rail pixel the read-position fill has reached. Markers
-  // whose centre sits at/above it get `.is-read` — passed ticks visibly settle
-  // (shape/opacity change), which reads as position even without the accent.
+  // "Spent ticks": the rail pixel the read position has reached (progress
+  // mapped across the stack span). Markers whose centre sits at/above it get
+  // `.is-read` — passed ticks visibly settle, a second geometry-side cue.
   const readFillPx = markerStackBounds
     ? markerStackBounds.first +
       (markerStackBounds.last - markerStackBounds.first) * progressFraction
@@ -571,21 +572,6 @@ export function TranscriptUserMessageGutter({
       >
         <span aria-hidden="true">↑</span>
       </button>
-      {markerStackBounds && (
-        <div
-          className="transcript-user-gutter-progress"
-          aria-hidden="true"
-          style={{
-            top: markerStackBounds.first,
-            height: Math.max(1, markerStackBounds.last - markerStackBounds.first)
-          }}
-        >
-          <div
-            className="transcript-user-gutter-progress-fill"
-            style={{ transform: `scaleY(${progressFraction})` }}
-          />
-        </div>
-      )}
       {lensLayout && (
         <div
           className="transcript-user-gutter-lens"

@@ -17,9 +17,11 @@ shipping these commits.
 - **Transcript rail reading lens.** The user-message marker rail now carries a
   skeuomorphic slide-rule-cursor "lens": a frosted-glass carriage whose height
   shows how much of the thread is on screen and whose position tracks your
-  scroll — so read position is legible from geometry, not just the blue accent
-  fill. Ticks the lens has swept past settle into an "inked" spent state,
-  marking the done/upcoming boundary as a second colour-independent cue.
+  scroll — read position legible from geometry alone. Ticks the lens has swept
+  past settle into an "inked" spent state, marking the done/upcoming boundary
+  as a second colour-independent cue. The old vertical spine + blue accent
+  fill behind the ticks were retired in the lens's favour, leaving just the
+  horizontal go-to-message lines, the carriage, and the jump arrows.
 
 ## 1.7.3 - 2026-07-03
 

@@ -2269,31 +2269,6 @@
   display: none;
 }
 
-/* Read-position spine behind the markers: a faint vertical track the marker
- * ticks branch off, filled top→current position. Sits at the marker lines' left
- * edge (x≈7px) so it reads as a timeline. JS-driven `scaleY` (the rail is
- * body-portaled, so a CSS scroll() timeline can't bind to the scroller); the
- * fill is updated every scroll frame, so NO transform transition (that would lag
- * the scroll). Compositor-only (transform), pointer-transparent, below markers. */
-.transcript-user-gutter-progress {
-  position: absolute;
-  left: 7px;
-  width: 2px;
-  border-radius: 2px;
-  background: color-mix(in srgb, var(--text-primary) 14%, transparent);
-  overflow: hidden;
-  pointer-events: none;
-}
-
-.transcript-user-gutter-progress-fill {
-  position: absolute;
-  inset: 0;
-  border-radius: 2px;
-  background: color-mix(in srgb, var(--accent) 52%, transparent);
-  transform-origin: top center;
-  transform: scaleY(0);
-}
-
 /* Skeuomorphic reading lens — a slide-rule cursor / fader carriage riding the
  * marker stack. Its HEIGHT is the visible share of the transcript and its
  * POSITION is the scroll progress, so scroll position now reads from geometry
@@ -2302,8 +2277,10 @@
  * colour, no backdrop-filter (the rail floats over the transcript margin, so
  * there's nothing meaningful to blur and reduce-transparency stays trivially
  * satisfied). Inline top/height update every scroll frame → NO transition on
- * position (it would lag the scroll). Pointer-transparent; sits above the
- * spine/fill but below the marker buttons via source order. */
+ * position (it would lag the scroll). Pointer-transparent; sits below the
+ * marker buttons via source order. It is the rail's ONLY scroll-position
+ * furniture — the old vertical spine + accent fill were removed in its favour
+ * (the ticks + lens carry the whole signal without a permanent colour bar). */
 .transcript-user-gutter-lens {
   position: absolute;
   left: 0;
@@ -2383,12 +2360,11 @@ html:has(.chat-split-region.chat-split-hidden-for-settings) .transcript-user-gut
     box-shadow 120ms ease;
 }
 
-/* Spent ticks — the second non-hue position channel, paired with the lens: as
- * the read-position fill sweeps past a marker it settles to "inked" (opaquer,
- * still neutral-toned), so the boundary between done and upcoming ticks marks
- * the scroll position even with the accent hue squinted away. Declared BEFORE
- * the in-view / hover blocks so those brighter states win at equal specificity
- * (source order). */
+/* Spent ticks — the second position channel, paired with the lens: as the
+ * reading position sweeps past a marker it settles to "inked" (opaquer, still
+ * neutral-toned), so the boundary between done and upcoming ticks marks the
+ * scroll position without any colour bar. Declared BEFORE the in-view / hover
+ * blocks so those brighter states win at equal specificity (source order). */
 .transcript-user-gutter-marker.is-read .transcript-user-gutter-line {
   background: color-mix(in srgb, var(--text-primary) 62%, transparent);
   opacity: 0.85;
