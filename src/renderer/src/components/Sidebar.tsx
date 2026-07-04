@@ -235,7 +235,7 @@ interface SidebarProps {
    * "Active runs" sidebar section navigates to the chat AND opens
    * the Run Inspector for that runId. */
   onInspectRun?: (runId: string, chatId: string | undefined) => void
-  onCreateWorkflow?: () => void
+  onCreateWorkflow?: (workspace?: WorkspaceRecord) => void
   onCreateWorkspaceBoard?: (input?: WorkspaceBoardCreateInput) => void
   onOpenWorkspaceBoard?: (board: WorkspaceBoardDefinition) => void
   onRenameWorkspaceBoard?: (board: WorkspaceBoardDefinition) => void
@@ -2677,6 +2677,7 @@ export function Sidebar({
     currentWorkspace ||
     [...workspaces].sort((a, b) => (b.lastOpenedAt || 0) - (a.lastOpenedAt || 0))[0] ||
     null
+  const defaultWorkflowWorkspace = defaultWorkspaceForNewChat
   const handlePrimaryNewChat = () => {
     setNewMenuOpen(false)
     setNewMenuSharedOpen(false)
@@ -2695,10 +2696,11 @@ export function Sidebar({
     onNewEnsemble()
   }
   const handleNewWorkflow = () => {
+    if (!defaultWorkflowWorkspace) return
     setNewMenuOpen(false)
     setNewMenuSharedOpen(false)
     expandSidebarSection('workflows')
-    onCreateWorkflow?.()
+    onCreateWorkflow?.(defaultWorkflowWorkspace)
   }
   const openWorkspaceBoardCreator = () => {
     if (!onCreateWorkspaceBoard || workspaces.length === 0) return
@@ -3629,10 +3631,10 @@ export function Sidebar({
                     role="menuitem"
                     className="sidebar-new-menu-item"
                     onClick={handleNewWorkflow}
-                    disabled={!currentWorkspace}
+                    disabled={!defaultWorkflowWorkspace}
                     title={
-                      currentWorkspace
-                        ? 'New workflow'
+                      defaultWorkflowWorkspace
+                        ? `New workflow in ${defaultWorkflowWorkspace.displayName}`
                         : 'Open a workspace first — workflows run inside a workspace'
                     }
                   >
@@ -3864,12 +3866,14 @@ export function Sidebar({
               <button
                 type="button"
                 className="sidebar-section-header-action sidebar-workflow-create"
-                onClick={onCreateWorkflow}
+                onClick={handleNewWorkflow}
                 disabled={!onCreateWorkflow || workspaces.length === 0}
                 title={
                   workspaces.length === 0
                     ? 'Add a workspace first — workflows run inside a workspace'
-                    : 'New workflow'
+                    : defaultWorkflowWorkspace
+                      ? `New workflow in ${defaultWorkflowWorkspace.displayName}`
+                      : 'Open a workspace first — workflows run inside a workspace'
                 }
                 aria-label="New workflow"
               >

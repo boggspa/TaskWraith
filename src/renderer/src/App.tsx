@@ -13176,12 +13176,15 @@ function App(): React.JSX.Element {
   // First-class workflow compose: the Workflows "+" opens a fresh chat in
   // workflow-compose mode (welcome screen with the workflow controls) instead of
   // the old modal. The WorkflowDefinition is saved on first send.
-  const handleOpenWorkflowCompose = async () => {
-    if (!currentWorkspace) return // workflows are workspace-scoped
-    const ensembleEnabled = settings?.ensembleModeEnabled !== false
-    const chat = ensembleEnabled
-      ? await handleNewEnsemble(currentWorkspace)
-      : await handleNewChat(currentWorkspace.id, currentWorkspace.path)
+  const handleOpenWorkflowCompose = async (workspaceOverride?: WorkspaceRecord) => {
+    const workflowWorkspace =
+      workspaceOverride ||
+      currentWorkspace ||
+      (currentChat?.scope === 'workspace' ? getWorkspaceForChat(currentChat) : null) ||
+      [...workspaces].sort((a, b) => (b.lastOpenedAt || 0) - (a.lastOpenedAt || 0))[0] ||
+      null
+    if (!workflowWorkspace) return // workflows are workspace-scoped
+    const chat = await handleNewDefaultWorkspaceChat(workflowWorkspace.id, workflowWorkspace.path)
     const chatId = chat?.appChatId || currentChatIdRef.current
     if (!chatId) return
     setWorkflowDraft({
@@ -13189,7 +13192,7 @@ function App(): React.JSX.Element {
       cadence: 'manual',
       intervalMinutes: 60,
       maxRunsPerDay: 24,
-      ensembleEnabled,
+      ensembleEnabled: chat?.chatKind === 'ensemble',
       unattendedLevel: 'safe'
     })
   }

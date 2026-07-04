@@ -159,7 +159,7 @@ function renderSidebar(
     activeWorkspaceBoardId?: string | null
     workspaces?: WorkspaceRecord[]
     currentWorkspace?: WorkspaceRecord | null
-    onCreateWorkflow?: () => void
+    onCreateWorkflow?: (workspace?: WorkspaceRecord) => void
     onCreateWorkspaceBoard?: (input?: WorkspaceBoardCreateInput) => void
     onOpenWorkspaceBoard?: (board: WorkspaceBoardDefinition) => void
     onRenameWorkspaceBoard?: (board: WorkspaceBoardDefinition) => void
@@ -379,6 +379,23 @@ describe('Sidebar workflows', () => {
     expect(html).toContain('sidebar-workflows-section')
     expect(html).toContain('sidebar-workflow-create')
     expect(html).toContain('aria-label="New workflow"')
+    expect(html).not.toContain('sidebar-workflow-create" disabled=""')
+  })
+
+  it('keeps workflow quick-create enabled from General chats by targeting the latest workspace', () => {
+    stubSidebarStorage({})
+
+    const html = renderSidebar([], {
+      currentWorkspace: null,
+      workspaces: [
+        makeWorkspace({ id: 'old', displayName: 'Old Repo', lastOpenedAt: 1 }),
+        makeWorkspace({ id: 'new', displayName: 'New Repo', lastOpenedAt: 5 })
+      ],
+      onCreateWorkflow: () => {}
+    })
+
+    expect(html).toContain('sidebar-workflow-create')
+    expect(html).toContain('New workflow in New Repo')
     expect(html).not.toContain('sidebar-workflow-create" disabled=""')
   })
 
