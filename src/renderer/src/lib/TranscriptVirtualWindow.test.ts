@@ -200,6 +200,28 @@ describe('TranscriptVirtualWindow', () => {
       expect(contentVersion(msg({ id: 't', role: 'tool', content: 'legacy result' }))).toBe('t:13')
       expect(contentVersion(msg({ id: 'a', content: undefined as unknown as string }))).toBe('a:0')
     })
+
+    it('includes folded fan-out tool activity state in assistant row versions', () => {
+      const running = msg({
+        id: 'fanout',
+        role: 'assistant',
+        content: 'Scout note.',
+        metadata: {
+          kind: 'ensembleParticipant',
+          ensembleRoundId: 'round-1',
+          ensembleParticipantId: 'reader-1',
+          ensembleLaneId: 'lane-round-1-reader-1'
+        },
+        toolActivities: [activity({ id: '1', status: 'running', outputPreview: 'a' })]
+      })
+      const done = msg({
+        ...running,
+        toolActivities: [activity({ id: '1', status: 'success', resultSummary: 'done' })]
+      })
+
+      expect(contentVersion(done)).not.toBe(contentVersion(running))
+      expect(contentVersion(done)).toBe('at:11:1:success|:4')
+    })
   })
 
   describe('estimatedHeightFor', () => {

@@ -1,10 +1,11 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import type { ChatMessage } from '../../../main/store/types'
+import type { ChatMessage, ToolActivity } from '../../../main/store/types'
 import { EnsembleFanoutResultCard } from './EnsembleFanoutResultCard'
 import {
   ensembleFanoutLaneIntent,
-  isEnsembleFanoutResultMessage
+  isEnsembleFanoutResultMessage,
+  readEnsembleFanoutTranscriptParts
 } from './EnsembleFanoutResultCardModel'
 
 function fanoutMessage(overrides: Partial<ChatMessage> = {}): ChatMessage {
@@ -29,24 +30,31 @@ function fanoutMessage(overrides: Partial<ChatMessage> = {}): ChatMessage {
   }
 }
 
+function toolActivity(overrides: Partial<ToolActivity> = {}): ToolActivity {
+  return {
+    id: 'activity-1',
+    toolName: 'read_file',
+    displayName: 'Read file',
+    category: 'read',
+    status: 'success',
+    resultSummary: 'Read src/App.tsx',
+    ...overrides
+  } as ToolActivity
+}
+
 describe('EnsembleFanoutResultCard', () => {
   it('detects assistant messages materialized from fan-out lanes only', () => {
     expect(isEnsembleFanoutResultMessage(fanoutMessage())).toBe(true)
     expect(ensembleFanoutLaneIntent(fanoutMessage())).toBe('read')
     expect(
-      isEnsembleFanoutResultMessage(
-        fanoutMessage({ metadata: { kind: 'ensembleParticipant' } })
-      )
+      isEnsembleFanoutResultMessage(fanoutMessage({ metadata: { kind: 'ensembleParticipant' } }))
     ).toBe(false)
     expect(isEnsembleFanoutResultMessage(fanoutMessage({ role: 'system' }))).toBe(false)
   })
 
   it('renders provider, role, intent, and a fixed viewport', () => {
     const html = renderToStaticMarkup(
-      <EnsembleFanoutResultCard
-        message={fanoutMessage()}
-        onPreviewImage={() => {}}
-      />
+      <EnsembleFanoutResultCard message={fanoutMessage()} onPreviewImage={() => {}} />
     )
 
     expect(html).toContain('ensemble-fanout-result-card')
@@ -75,5 +83,50 @@ describe('EnsembleFanoutResultCard', () => {
 
     expect(html).toContain('Writer fan-out')
     expect(html).toContain('Writer')
+  })
+
+  it('renders grouped fan-out tool activity inside the bounded result card', () => {
+    const activity = toolActivity()
+    const message = fanoutMessage({
+      id: 'fanout-group-1',
+      content: 'First note.\n\nSecond note.',
+      toolActivities: [activity],
+      metadata: {
+        ...fanoutMessage().metadata,
+        groupedFanoutMessageIds: ['content-1', 'tool-1', 'content-2'],
+        groupedToolMessageIds: ['tool-1'],
+        ensembleFanoutTranscriptParts: [
+          {
+            kind: 'content',
+            id: 'content-1',
+            messageIds: ['content-1'],
+            content: 'First note.'
+          },
+          {
+            kind: 'tools',
+            id: 'tool-1',
+            messageIds: ['tool-1'],
+            toolActivities: [activity]
+          },
+          {
+            kind: 'content',
+            id: 'content-2',
+            messageIds: ['content-2'],
+            content: 'Second note.'
+          }
+        ]
+      }
+    })
+    const html = renderToStaticMarkup(
+      <EnsembleFanoutResultCard message={message} onPreviewImage={() => {}} />
+    )
+
+    expect(readEnsembleFanoutTranscriptParts(message)).toHaveLength(3)
+    expect(html).toContain('ensemble-fanout-result-viewport')
+    expect(html).toContain('ensemble-fanout-result-tools')
+    expect(html).toContain('activity-timeline')
+    expect(html).toContain('Read file')
+    expect(html).toContain('First note.')
+    expect(html).toContain('Second note.')
   })
 })

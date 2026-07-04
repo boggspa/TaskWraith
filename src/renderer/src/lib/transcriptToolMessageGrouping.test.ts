@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import type { ChatMessage, ToolActivity } from '../../../main/store/types'
-import { groupAdjacentToolMessages } from './transcriptToolMessageGrouping'
+import {
+  groupAdjacentToolMessages,
+  groupFanoutLaneMessages,
+  groupedTranscriptMessageIds
+} from './transcriptToolMessageGrouping'
+import {
+  isEnsembleFanoutResultMessage,
+  readEnsembleFanoutTranscriptParts
+} from '../components/EnsembleFanoutResultCardModel'
 
 function activity(
   id: string,
@@ -40,6 +48,48 @@ function textMessage(id: string): ChatMessage {
     content: 'Break the tool run.',
     timestamp: '2026-06-13T00:00:00.000Z'
   }
+}
+
+function fanoutContentMessage(
+  id: string,
+  content: string,
+  overrides: Partial<ChatMessage> = {}
+): ChatMessage {
+  return {
+    id,
+    role: 'assistant',
+    content,
+    timestamp: '2026-06-13T00:00:00.000Z',
+    runId: 'run-fanout',
+    metadata: {
+      kind: 'ensembleParticipant',
+      ensembleRoundId: 'round-1',
+      ensembleParticipantId: 'participant-reader',
+      ensembleLaneId: 'lane-round-1-reader-1',
+      ensembleLaneIntent: 'read',
+      ensembleProvider: 'codex',
+      ensembleRole: 'Reader',
+      ensembleOrder: 2
+    },
+    ...overrides
+  }
+}
+
+function fanoutToolMessage(id: string, overrides: Partial<ChatMessage> = {}): ChatMessage {
+  return toolMessage(id, [activity(`${id}-a`, 'read')], {
+    runId: 'run-fanout',
+    metadata: {
+      kind: 'ensembleParticipantTools',
+      ensembleRoundId: 'round-1',
+      ensembleParticipantId: 'participant-reader',
+      ensembleLaneId: 'lane-round-1-reader-1',
+      ensembleLaneIntent: 'read',
+      ensembleProvider: 'codex',
+      ensembleRole: 'Reader',
+      ensembleOrder: 2
+    },
+    ...overrides
+  })
 }
 
 describe('groupAdjacentToolMessages', () => {
@@ -169,5 +219,86 @@ describe('groupAdjacentToolMessages', () => {
       't1',
       't2'
     ])
+  })
+})
+
+describe('groupFanoutLaneMessages', () => {
+  it('folds a fan-out participant timeline into one result row with ordered content/tool parts', () => {
+    const grouped = groupFanoutLaneMessages([
+      fanoutContentMessage('c1', 'First note.'),
+      fanoutToolMessage('t1'),
+      fanoutContentMessage('c2', 'Second note.')
+    ])
+
+    expect(grouped).toHaveLength(1)
+    expect(grouped[0].id).toBe('c1')
+    expect(isEnsembleFanoutResultMessage(grouped[0])).toBe(true)
+    expect(grouped[0].content).toBe('First note.\n\nSecond note.')
+    expect(grouped[0].toolActivities?.map((entry) => entry.id)).toEqual(['t1-a'])
+    expect(grouped[0].metadata?.groupedFanoutMessageIds).toEqual(['c1', 't1', 'c2'])
+    expect(grouped[0].metadata?.groupedToolMessageIds).toEqual(['t1'])
+    expect(groupedTranscriptMessageIds(grouped[0])).toEqual(['c1', 't1', 'c2'])
+    expect(readEnsembleFanoutTranscriptParts(grouped[0]).map((part) => part.kind)).toEqual([
+      'content',
+      'tools',
+      'content'
+    ])
+  })
+
+  it('keeps same-round fan-out lanes separated by lane/run identity', () => {
+    const otherLane = fanoutContentMessage('c-other', 'Other lane.', {
+      runId: 'run-other',
+      metadata: {
+        ...fanoutContentMessage('base', '').metadata,
+        ensembleParticipantId: 'participant-other',
+        ensembleLaneId: 'lane-round-1-other-1',
+        ensembleRole: 'Other'
+      }
+    })
+
+    const grouped = groupFanoutLaneMessages([
+      fanoutContentMessage('c1', 'First note.'),
+      fanoutToolMessage('t1'),
+      otherLane
+    ])
+
+    expect(grouped.map((message) => message.id)).toEqual(['c1', 'c-other'])
+    expect(grouped[0].metadata?.groupedFanoutMessageIds).toEqual(['c1', 't1'])
+    expect(grouped[1].metadata?.groupedFanoutMessageIds).toBeUndefined()
+  })
+
+  it('materializes tool-only fan-out lane activity as a fan-out result card row', () => {
+    const grouped = groupFanoutLaneMessages([fanoutToolMessage('t-only')])
+
+    expect(grouped).toHaveLength(1)
+    expect(grouped[0].id).toBe('t-only')
+    expect(grouped[0].role).toBe('assistant')
+    expect(isEnsembleFanoutResultMessage(grouped[0])).toBe(true)
+    expect(grouped[0].toolActivities?.map((entry) => entry.id)).toEqual(['t-only-a'])
+    expect(readEnsembleFanoutTranscriptParts(grouped[0]).map((part) => part.kind)).toEqual([
+      'tools'
+    ])
+  })
+
+  it('keeps real constituent ids when the lane starts with an adjacent tool group', () => {
+    const toolGrouped = groupAdjacentToolMessages([
+      fanoutToolMessage('t1'),
+      fanoutToolMessage('t2')
+    ])
+    const grouped = groupFanoutLaneMessages([
+      ...toolGrouped,
+      fanoutContentMessage('c1', 'Summary after tools.')
+    ])
+
+    expect(toolGrouped[0].id).toBe('tool-group-t1')
+    expect(grouped).toHaveLength(1)
+    expect(grouped[0].id).toBe('t1')
+    expect(grouped[0].metadata?.groupedFanoutMessageIds).toEqual([
+      'tool-group-t1',
+      't1',
+      't2',
+      'c1'
+    ])
+    expect(groupedTranscriptMessageIds(grouped[0])).toEqual(['tool-group-t1', 't1', 't2', 'c1'])
   })
 })
