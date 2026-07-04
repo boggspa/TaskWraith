@@ -1844,7 +1844,9 @@ describe('RemoteThreadProjection', () => {
               iconKind: 'asset',
               assetKey: 'pool:circuit-cactus',
               hue: 139,
-              accent: '#41F27A'
+              brightness: 64,
+              accent: '#41F27A',
+              hueEnabled: true
             }
           }
         })
@@ -1858,7 +1860,9 @@ describe('RemoteThreadProjection', () => {
         iconKind: 'asset',
         assetKey: 'pool:circuit-cactus',
         hue: 139,
-        accent: '#41F27A'
+        brightness: 64,
+        accent: '#41F27A',
+        hueEnabled: true
       })
     })
 

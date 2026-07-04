@@ -9413,6 +9413,11 @@ function pooledAgentTranscriptMetadata(participant: EnsembleParticipant): Record
     nickname,
     iconKind,
     hue: ((Math.round(hue) % 360) + 360) % 360,
+    ...(Number.isFinite(Number(snapshot.brightness))
+      ? {
+          brightness: Math.max(0, Math.min(100, Math.round(Number(snapshot.brightness))))
+        }
+      : {}),
     ...(typeof snapshot.accent === 'string' && snapshot.accent
       ? { accent: snapshot.accent }
       : {}),
@@ -9420,7 +9425,8 @@ function pooledAgentTranscriptMetadata(participant: EnsembleParticipant): Record
     ...(typeof snapshot.assetKey === 'string' && snapshot.assetKey
       ? { assetKey: snapshot.assetKey }
       : {}),
-    ...(typeof snapshot.seed === 'string' && snapshot.seed ? { seed: snapshot.seed } : {})
+    ...(typeof snapshot.seed === 'string' && snapshot.seed ? { seed: snapshot.seed } : {}),
+    ...(typeof snapshot.hueEnabled === 'boolean' ? { hueEnabled: snapshot.hueEnabled } : {})
   }
   return { pooledAgentId: agentId, pooledAgentIdentity }
 }

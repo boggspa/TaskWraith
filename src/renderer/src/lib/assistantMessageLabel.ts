@@ -85,12 +85,18 @@ const pooledAgentIdentityForMessage = (
     nickname,
     iconKind,
     hue: ((Math.round(hue) % 360) + 360) % 360,
+    ...(Number.isFinite(Number(record.brightness))
+      ? {
+          brightness: Math.max(0, Math.min(100, Math.round(Number(record.brightness))))
+        }
+      : {}),
     ...(typeof record.accent === 'string' && record.accent ? { accent: record.accent } : {}),
     ...(typeof record.slug === 'string' && record.slug ? { slug: record.slug } : {}),
     ...(typeof record.assetKey === 'string' && record.assetKey
       ? { assetKey: record.assetKey }
       : {}),
-    ...(typeof record.seed === 'string' && record.seed ? { seed: record.seed } : {})
+    ...(typeof record.seed === 'string' && record.seed ? { seed: record.seed } : {}),
+    ...(typeof record.hueEnabled === 'boolean' ? { hueEnabled: record.hueEnabled } : {})
   }
 }
 

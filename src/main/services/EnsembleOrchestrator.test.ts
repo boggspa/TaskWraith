@@ -495,7 +495,9 @@ describe('EnsembleOrchestrator', () => {
       iconKind: 'asset' as const,
       assetKey: 'pool:circuit-cactus',
       hue: 139,
-      accent: '#41F27A'
+      brightness: 64,
+      accent: '#41F27A',
+      hueEnabled: true
     }
     chat.ensemble!.participants[0] = {
       ...chat.ensemble!.participants[0],

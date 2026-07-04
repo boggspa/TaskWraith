@@ -973,6 +973,10 @@ function normalizePooledAgentIdentity(
     iconKind,
     hue: ((Math.round(hue) % 360) + 360) % 360
   }
+  const brightness = Number(record.brightness)
+  if (Number.isFinite(brightness)) {
+    identity.brightness = Math.max(0, Math.min(100, Math.round(brightness)))
+  }
   const accent = stringField(record.accent, 24)
   if (accent) identity.accent = accent
   const slug = stringField(record.slug, 120)
@@ -981,6 +985,7 @@ function normalizePooledAgentIdentity(
   if (assetKey) identity.assetKey = assetKey
   const seed = stringField(record.seed, 180)
   if (seed) identity.seed = seed
+  if (typeof record.hueEnabled === 'boolean') identity.hueEnabled = record.hueEnabled
   return identity
 }
 
