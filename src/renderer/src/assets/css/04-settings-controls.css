@@ -6538,6 +6538,21 @@ input:disabled, select:disabled, textarea:disabled {
   gap: 3px;
 }
 
+.settings-roster-field.settings-roster-brief-editor {
+  gap: 5px;
+}
+
+.settings-roster-brief-editor .ensemble-brief-editor-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.settings-roster-brief-editor .ensemble-brief-preset-controls {
+  flex: 0 1 auto;
+}
+
 .settings-roster-field-label {
   font-size: 11px;
   text-transform: uppercase;
@@ -6574,7 +6589,7 @@ input:disabled, select:disabled, textarea:disabled {
 
 .settings-roster-textarea {
   resize: vertical;
-  min-height: 38px;
+  min-height: 76px;
   line-height: 1.45;
 }
 

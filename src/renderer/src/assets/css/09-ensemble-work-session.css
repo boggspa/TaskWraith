@@ -1535,9 +1535,97 @@
   border-color: transparent;
 }
 
+/* Shared Brief / Goal editor: native textarea plus a read-only overlay that
+ * tint-highlights resolved @participant references without changing typing
+ * behavior. Used by Settings → Ensemble roster and the chip popover. */
+.ensemble-brief-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.ensemble-brief-editor-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.ensemble-brief-preset-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.ensemble-brief-preset-select,
+.ensemble-brief-preset-action {
+  border: 1px solid color-mix(in srgb, var(--text-primary) 14%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--bg-primary, #1c1c1e) 60%, transparent);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 11px;
+  line-height: 1.25;
+}
+
+.ensemble-brief-preset-select {
+  min-width: 0;
+  max-width: 126px;
+  padding: 4px 6px;
+  cursor: pointer;
+}
+
+.ensemble-brief-preset-action {
+  flex: 0 0 auto;
+  padding: 4px 6px;
+  cursor: pointer;
+}
+
+.ensemble-brief-preset-action:disabled,
+.ensemble-brief-preset-select:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.ensemble-brief-preset-action:not(:disabled):hover {
+  background: color-mix(in srgb, var(--accent) 11%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 36%, transparent);
+}
+
+.ensemble-brief-textarea-wrap {
+  position: relative;
+  width: 100%;
+}
+
+.ensemble-brief-textarea-wrap .composer-textarea-highlight {
+  z-index: 2;
+}
+
+.ensemble-brief-textarea-wrap .composer-textarea-highlight-content {
+  color: var(--text-primary);
+}
+
+.ensemble-brief-textarea {
+  position: relative;
+  z-index: 1;
+}
+
+.ensemble-brief-textarea.has-mention-overlay,
+.ensemble-brief-textarea.has-mention-overlay:focus {
+  color: transparent !important;
+  -webkit-text-fill-color: transparent !important;
+  caret-color: var(--text-primary);
+}
+
+.ensemble-brief-textarea.has-mention-overlay::selection {
+  background: color-mix(in srgb, var(--accent) 28%, transparent);
+  color: var(--text-primary);
+}
+
 /* Overflow popover (enabled toggle + role rename for the selected chip). */
 .ensemble-above-overflow {
-  width: 260px;
+  width: 296px;
   padding: 12px;
   border-radius: 12px;
   background: var(--surface-elevated);
@@ -1628,13 +1716,31 @@
 .ensemble-above-overflow-instructions {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 5px;
+}
+
+.ensemble-above-overflow-instructions .ensemble-brief-editor-head {
+  align-items: flex-start;
+  flex-direction: column;
+}
+
+.ensemble-above-overflow-instructions .ensemble-brief-preset-controls {
+  width: 100%;
+}
+
+.ensemble-above-overflow-instructions .ensemble-brief-preset-select {
+  flex: 1 1 auto;
+  max-width: none;
+}
+
+.ensemble-above-overflow-instructions .ensemble-brief-preset-action {
+  padding-inline: 5px;
 }
 
 .ensemble-above-overflow-instructions-field {
   width: 100%;
-  min-height: 54px;
-  max-height: 96px;
+  min-height: 108px;
+  max-height: 192px;
   resize: vertical;
   overflow-y: auto;
   border: 1px solid var(--border-color);

@@ -1495,6 +1495,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                 <EnsembleParticipantOverflowPopover
                                   anchor={welcomeParticipantOverflow.anchor}
                                   participant={overflowParticipant}
+                                  mentionParticipants={currentChat.ensemble.participants}
                                   onPatch={(patch) =>
                                     patchEnsembleParticipantById(overflowParticipant.id, patch)
                                   }

@@ -43,6 +43,7 @@ import {
 } from '../lib/ensembleStageRoles'
 import { ParticipantPickerCluster } from './ParticipantPickerCluster'
 import { PooledAgentIcon } from './icons/PooledAgentIcon'
+import { EnsembleBriefEditor } from './EnsembleBriefEditor'
 import {
   applyPooledAgentToParticipant,
   createPooledAgentFromParticipant,
@@ -119,6 +120,7 @@ function freshWorkingId(existing: EnsembleParticipant[]): string {
 // ── Per-participant row ─────────────────────────────────────────────────────
 interface RosterParticipantRowProps {
   participant: EnsembleParticipant
+  mentionParticipants: EnsembleParticipant[]
   index: number
   total: number
   canRemove: boolean
@@ -141,6 +143,7 @@ interface RosterParticipantRowProps {
 
 function RosterParticipantRow({
   participant,
+  mentionParticipants,
   index,
   total,
   canRemove,
@@ -360,19 +363,19 @@ function RosterParticipantRow({
           </select>
         </div>
 
-        <div className="settings-roster-field">
-          <span className="settings-roster-field-label">Brief / goal</span>
-          <textarea
-            className="settings-roster-textarea"
-            rows={2}
-            value={participant.instructions}
-            placeholder="What should this participant focus on each turn?"
-            onChange={(event) =>
-              onPatch(participant.id, { instructions: event.target.value }, false)
-            }
-            onBlur={onFlush}
-          />
-        </div>
+        <EnsembleBriefEditor
+          label="Brief / goal"
+          value={participant.instructions}
+          participants={mentionParticipants}
+          rows={4}
+          editorClassName="settings-roster-field settings-roster-brief-editor"
+          labelClassName="settings-roster-field-label"
+          textareaClassName="settings-roster-textarea"
+          syncEpoch={`${participant.id}:${mentionParticipants.length}`}
+          placeholder="What should this participant focus on each turn?"
+          onChange={(value) => onPatch(participant.id, { instructions: value }, false)}
+          onBlur={onFlush}
+        />
       </div>
     </li>
   )
@@ -956,6 +959,7 @@ export function RosterSettingsPanel({
                   <RosterParticipantRow
                     key={participant.id}
                     participant={participant}
+                    mentionParticipants={orderedParticipants}
                     index={index}
                     total={orderedParticipants.length}
                     canRemove={canRemove}

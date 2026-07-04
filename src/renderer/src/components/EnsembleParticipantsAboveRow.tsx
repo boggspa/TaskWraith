@@ -64,6 +64,7 @@ import {
   useComposerTextareaContextMenu
 } from './ComposerTextareaContextMenu'
 import { getProviderName } from './Sidebar'
+import { EnsembleBriefEditor } from './EnsembleBriefEditor'
 
 // 1.0.4-AR2 — global ceiling raised from 6 → 8 so the panel can host
 // the broader four-provider roster plus alternates (e.g. two Claudes
@@ -998,6 +999,7 @@ export function EnsembleParticipantsAboveRow({
             <ParticipantChip
               key={participant.id}
               participant={participant}
+              mentionParticipants={participants}
               gridSpan={chipGridSpans?.[participantIndex]}
               statusLabel={statusLabel}
               statusTooltip={wakeupTooltip || statusTooltip}
@@ -1333,6 +1335,7 @@ function EnsembleAddParticipantButton({
 
 interface ParticipantChipProps {
   participant: EnsembleParticipant
+  mentionParticipants: EnsembleParticipant[]
   /** `grid-column` span in the wrapped balanced-rows strip (see
    * computeEnsembleChipGridSpans); undefined in single-row flex mode. */
   gridSpan?: number
@@ -1409,6 +1412,7 @@ interface ParticipantChipProps {
 
 function ParticipantChip({
   participant,
+  mentionParticipants,
   gridSpan,
   statusLabel,
   statusTooltip,
@@ -1689,6 +1693,7 @@ function ParticipantChip({
         <EnsembleParticipantOverflowPopover
           anchor={chipAnchor}
           participant={participant}
+          mentionParticipants={mentionParticipants}
           onPatch={onPatch}
           isBossman={isBossman}
           isSecondInCommand={isSecondInCommand}
@@ -1711,6 +1716,7 @@ function ParticipantChip({
 interface OverflowPopoverProps {
   anchor: HTMLElement | null
   participant: EnsembleParticipant
+  mentionParticipants: EnsembleParticipant[]
   onPatch: (patch: Partial<EnsembleParticipant>) => void
   isBossman: boolean
   isSecondInCommand: boolean
@@ -1735,6 +1741,7 @@ interface OverflowPopoverProps {
 export function EnsembleParticipantOverflowPopover({
   anchor,
   participant,
+  mentionParticipants,
   onPatch,
   isBossman,
   isSecondInCommand,
@@ -1988,21 +1995,22 @@ export function EnsembleParticipantOverflowPopover({
           ))}
         </select>
       </label>
-      <label className="ensemble-above-overflow-instructions">
-        <span className="ensemble-above-overflow-label">Goal / brief</span>
-        <textarea
-          ref={instructionsTextareaRef}
-          className="ensemble-above-overflow-instructions-field"
-          rows={3}
-          value={instructionsDraft}
-          disabled={locked}
-          spellCheck
-          onChange={(event) => setInstructionsDraft(event.target.value)}
-          onContextMenu={instructionsContextMenu.handleContextMenu}
-          onBlur={commitDrafts}
-          placeholder="Optional focus for this participant's turns…"
-        />
-      </label>
+      <EnsembleBriefEditor
+        label="Goal / brief"
+        value={instructionsDraft}
+        participants={mentionParticipants}
+        disabled={locked}
+        rows={6}
+        editorClassName="ensemble-above-overflow-instructions"
+        labelClassName="ensemble-above-overflow-label"
+        textareaClassName="ensemble-above-overflow-instructions-field"
+        textareaRef={instructionsTextareaRef}
+        syncEpoch={`${participant.id}:${mentionParticipants.length}`}
+        onChange={setInstructionsDraft}
+        onContextMenu={instructionsContextMenu.handleContextMenu}
+        onBlur={commitDrafts}
+        placeholder="Optional focus for this participant's turns…"
+      />
       <ComposerTextareaContextMenu
         anchor={instructionsContextMenu.anchor}
         spellcheckContext={instructionsContextMenu.spellcheckContext}
