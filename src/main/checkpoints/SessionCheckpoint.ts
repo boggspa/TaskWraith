@@ -313,7 +313,7 @@ export class SessionCheckpointStore {
     try {
       mkdirSync(dirname(this.storagePath), { recursive: true })
       const tmpPath = `${this.storagePath}.${this.idFactory()}.tmp`
-      writeFileSync(tmpPath, JSON.stringify(this.records, null, 2), 'utf-8')
+      writeFileSync(tmpPath, JSON.stringify(this.records), 'utf-8')
       renameSync(tmpPath, this.storagePath)
     } catch (err) {
       this.log(

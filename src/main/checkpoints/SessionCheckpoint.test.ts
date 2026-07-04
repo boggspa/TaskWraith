@@ -163,6 +163,37 @@ describe('SessionCheckpoint', () => {
     }
   })
 
+  it('round-trips compact persisted checkpoints through reload and transitions', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'taskwraith-checkpoints-'))
+    try {
+      const storagePath = join(tmp, 'session-checkpoints.json')
+      const store = new SessionCheckpointStore({
+        storagePath,
+        now: () => '2026-06-01T09:01:00.000Z',
+        idFactory: () => 'tmp'
+      })
+      const checkpoint = store.upsertFromChat(makeCheckpointChat(), 'round-started')
+      expect(checkpoint).not.toBeNull()
+      expect(readFileSync(storagePath, 'utf-8')).not.toContain('\n  {')
+
+      const reloaded = new SessionCheckpointStore({
+        storagePath,
+        now: () => '2026-06-01T09:02:00.000Z',
+        idFactory: () => 'tmp'
+      })
+      expect(reloaded.latestForChat('chat-1')?.id).toBe(checkpoint?.id)
+
+      const accepted = reloaded.accept(checkpoint!.id)
+      expect(accepted?.checkpoint.status).toBe('accepted')
+
+      const reloadedAccepted = new SessionCheckpointStore({ storagePath })
+      expect(reloadedAccepted.list()[0].status).toBe('accepted')
+      expect(reloadedAccepted.dismiss(checkpoint!.id)?.status).toBe('dismissed')
+    } finally {
+      rmSync(tmp, { recursive: true, force: true })
+    }
+  })
+
   it('retires completed rounds so restart recovery only offers interrupted rounds', () => {
     const store = new SessionCheckpointStore({
       now: () => '2026-06-01T09:01:00.000Z',
