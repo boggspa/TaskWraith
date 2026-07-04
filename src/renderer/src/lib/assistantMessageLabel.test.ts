@@ -110,6 +110,19 @@ describe('formatAssistantMessageLabel', () => {
     })
   })
 
+  it('adds the run model badge for non-Ollama solo chats when available', () => {
+    expect(
+      formatAssistantMessageLabel(assistant(), 'Codex', 'codex', {
+        soloModelId: 'gpt-5.5'
+      })
+    ).toEqual({
+      label: 'Codex',
+      provider: 'codex',
+      providerClass: 'codex',
+      modelBadge: '5.5'
+    })
+  })
+
   it('does not apply chat-level Ollama spoofing to ensemble messages missing ensembleProvider', () => {
     expect(
       formatAssistantMessageLabel(
@@ -224,13 +237,14 @@ describe('formatAssistantMessageLabel', () => {
           }
         }),
         'Codex',
-        'codex'
+        'codex',
+        { soloModelId: 'gpt-5.5' }
       )
     ).toMatchObject({
       label: 'Socket Sorcery',
       provider: 'codex',
       providerClass: 'codex',
-      modelBadge: null,
+      modelBadge: '5.5',
       agentAccent: '#06D6A0'
     })
   })

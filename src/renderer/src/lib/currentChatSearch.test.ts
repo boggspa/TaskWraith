@@ -57,6 +57,16 @@ describe('current chat search', () => {
     expect(findCurrentChatSearchMatches(targets, 'line second')).toHaveLength(1)
   })
 
+  it('uses contextual assistant labels in targets and searchable text', () => {
+    const targets = buildCurrentChatSearchTargets(
+      [message({ id: 'assistant-provider-model', role: 'assistant', content: 'Ready' })],
+      { assistantLabel: () => 'Codex 5.5' }
+    )
+
+    expect(targets[0]).toMatchObject({ messageId: 'assistant-provider-model', label: 'Codex 5.5' })
+    expect(findCurrentChatSearchMatches(targets, 'codex 5.5')).toHaveLength(1)
+  })
+
   it('matches provider failure metadata lines even when content is empty', () => {
     const targets = buildCurrentChatSearchTargets([
       message({

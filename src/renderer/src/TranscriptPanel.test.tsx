@@ -230,6 +230,50 @@ function spacerHeight(html: string, cls: string): number {
 }
 
 describe('TranscriptPanel virtualisation wiring (TV1)', () => {
+  it('labels global solo assistant rows with provider and run model instead of Assistant', () => {
+    const html = renderToStaticMarkup(
+      <TranscriptPanel
+        {...makeProps({
+          virtualize: false,
+          isGlobal: true,
+          currentProviderLabel: 'Codex',
+          currentProvider: 'codex',
+          currentChat: {
+            appChatId: 'global-codex',
+            scope: 'global',
+            title: 'General',
+            provider: 'codex',
+            createdAt: 0,
+            updatedAt: 0,
+            archived: false,
+            messages: [],
+            runs: [
+              {
+                runId: 'run-codex-1',
+                startedAt: '2026-07-04T18:00:00.000Z',
+                requestedModel: 'gpt-5.5'
+              }
+            ]
+          } as ChatRecord,
+          messages: [
+            {
+              id: 'assistant-global-codex',
+              role: 'assistant',
+              content: 'Done.',
+              timestamp: '2026-07-04T18:00:01.000Z',
+              runId: 'run-codex-1'
+            }
+          ]
+        })}
+      />
+    )
+
+    expect(html).toContain('provider-codex')
+    expect(html).toContain('Codex')
+    expect(html).toContain('Model: 5.5')
+    expect(html).not.toContain('>Assistant</span>')
+  })
+
   it('renders the active Ensemble participant role in the working indicator', () => {
     const html = renderToStaticMarkup(
       <TranscriptPanel

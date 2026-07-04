@@ -25,6 +25,10 @@ type FormatAssistantMessageLabelOptions = {
    * when `chat.provider` was `ollama` or stray `providerModel` leaked in).
    */
   isEnsembleChat?: boolean
+  /** Run-scoped model for solo/provider chats. Used when the message itself
+   * does not carry provider model metadata. */
+  soloModelId?: string | null
+  soloModelLabel?: string | null
 }
 
 const ollamaBrandPresentation = (
@@ -138,25 +142,40 @@ const formatAssistantMessageLabel = (
   }
   const provider = (message.metadata?.ensembleProvider as ProviderId | undefined) ?? null
   if (!provider) {
+    const allowSoloModel = !options?.isEnsembleChat
+    const soloModel =
+      allowSoloModel &&
+      typeof message.metadata?.providerModel === 'string' &&
+      message.metadata.providerModel
+        ? message.metadata.providerModel
+        : allowSoloModel
+          ? options?.soloModelId || ''
+          : ''
+    const soloModelLabel =
+      allowSoloModel &&
+      typeof message.metadata?.providerModelLabel === 'string' &&
+      message.metadata.providerModelLabel
+        ? message.metadata.providerModelLabel
+        : allowSoloModel
+          ? options?.soloModelLabel || ''
+          : ''
     if (!options?.isEnsembleChat && fallbackProvider === 'ollama') {
-      const model =
-        typeof message.metadata?.providerModel === 'string' ? message.metadata.providerModel : ''
-      const modelLabel =
-        typeof message.metadata?.providerModelLabel === 'string'
-          ? message.metadata.providerModelLabel
-          : humaniseModelId('ollama', model)
-      const branded = ollamaBrandPresentation(model, modelLabel)
+      const modelLabel = soloModelLabel || humaniseModelId('ollama', soloModel)
+      const branded = ollamaBrandPresentation(soloModel, modelLabel)
       if (branded) return withPooledIdentity(branded)
     }
-    // Solo chats: use the chat-level provider as the colouring hook.
-    // The label is still the plain provider name (no role suffix
-    // since there's no ensemble context). The composer chip already
-    // shows the model in solo chats — no need to duplicate it here.
+    const soloModelBadge =
+      fallbackProvider && (soloModel || soloModelLabel)
+        ? shortModelName(fallbackProvider, soloModelLabel, soloModel || soloModelLabel)
+        : null
+    // Solo chats: use the chat-level provider as the colouring hook and
+    // include the run model when one is known, matching the provider/model
+    // identity used elsewhere in the transcript.
     return withPooledIdentity({
       label: fallbackLabel,
       provider: fallbackProvider,
       providerClass: fallbackProvider,
-      modelBadge: null
+      modelBadge: soloModelBadge
     })
   }
   const role =

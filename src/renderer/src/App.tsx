@@ -169,6 +169,7 @@ import {
   buildCurrentChatSearchTargets,
   findCurrentChatSearchMatches
 } from './lib/currentChatSearch'
+import { formatAssistantMessageLabel } from './lib/assistantMessageLabel'
 import { groupAdjacentToolMessages } from './lib/transcriptToolMessageGrouping'
 import {
   MIN_RIGHT_PANEL_WIDTH,
@@ -19247,11 +19248,60 @@ function App(): React.JSX.Element {
     [currentChat, transcriptMessages, isCurrentChatRunning]
   )
   const threadSearchTargets = useMemo(
-    () =>
-      buildCurrentChatSearchTargets(
-        isWelcomeChat ? EMPTY_CHAT_MESSAGES : groupAdjacentToolMessages(transcriptMessages)
-      ),
-    [isWelcomeChat, transcriptMessages]
+    () => {
+      const chatPooledIdentity =
+        currentChat?.providerMetadata?.pooledAgentIdentity &&
+        typeof currentChat.providerMetadata.pooledAgentIdentity === 'object'
+          ? (currentChat.providerMetadata.pooledAgentIdentity as NonNullable<
+              ChatMessage['metadata']
+            >['pooledAgentIdentity'])
+          : undefined
+      const chatPooledAgentId =
+        typeof currentChat?.providerMetadata?.pooledAgentId === 'string'
+          ? currentChat.providerMetadata.pooledAgentId
+          : undefined
+      return buildCurrentChatSearchTargets(
+        isWelcomeChat ? EMPTY_CHAT_MESSAGES : groupAdjacentToolMessages(transcriptMessages),
+        {
+          assistantLabel: (message) => {
+            const assistantMessage =
+              chatPooledIdentity && !message.metadata?.pooledAgentIdentity
+                ? {
+                    ...message,
+                    metadata: {
+                      ...(message.metadata || {}),
+                      ...(chatPooledAgentId ? { pooledAgentId: chatPooledAgentId } : {}),
+                      pooledAgentIdentity: chatPooledIdentity
+                    }
+                  }
+                : message
+            const run =
+              message.runId && currentChat?.runs
+                ? currentChat.runs.find((item) => item.runId === message.runId) || null
+                : null
+            const presentation = formatAssistantMessageLabel(
+              assistantMessage,
+              currentProviderLabel,
+              currentProvider,
+              {
+                isEnsembleChat: currentChat?.chatKind === 'ensemble',
+                soloModelId: run?.actualModel || run?.requestedModel || null
+              }
+            )
+            return [presentation.label, presentation.modelBadge].filter(Boolean).join(' ')
+          }
+        }
+      )
+    },
+    [
+      currentChat?.chatKind,
+      currentChat?.providerMetadata,
+      currentChat?.runs,
+      currentProvider,
+      currentProviderLabel,
+      isWelcomeChat,
+      transcriptMessages
+    ]
   )
   const threadSearchMatches = useMemo(
     () => findCurrentChatSearchMatches(threadSearchTargets, threadSearchQuery),

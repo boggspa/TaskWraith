@@ -2409,6 +2409,15 @@ export const TranscriptPanel = memo(
                                 }
                               }
                             : msg
+                        const assistantRun =
+                          msg.runId && currentChat?.runs
+                            ? currentChat.runs.find((run) => run.runId === msg.runId) ||
+                              (currentRun?.runId === msg.runId ? currentRun : null)
+                            : currentRun?.runId === msg.runId
+                              ? currentRun
+                              : null
+                        const assistantRunModel =
+                          assistantRun?.actualModel || assistantRun?.requestedModel || null
                         const {
                           label,
                           provider,
@@ -2421,19 +2430,10 @@ export const TranscriptPanel = memo(
                             currentProviderLabel,
                             currentProvider,
                             {
-                              isEnsembleChat: currentChat?.chatKind === 'ensemble'
+                              isEnsembleChat: currentChat?.chatKind === 'ensemble',
+                              soloModelId: assistantRunModel
                             }
                           )
-                        // Solo General (global, non-ensemble) chats read as one
-                        // friendly "Assistant" voice: drop the provider tint +
-                        // model badge. Ensemble — AND a solo guest reply — keep
-                        // their per-speaker tint/badge so the reader can still
-                        // tell host from guest in a legitimate multi-voice chat.
-                        const soloGlobal =
-                          isGlobal === true &&
-                          currentChat?.chatKind !== 'ensemble' &&
-                          !isGuestReply &&
-                          !pooledAgentIdentity
                         // 1.0.7 — participant-rename continuity. The
                         // header keeps the FROZEN role label; this quiet
                         // badge tells the reader the seat has since been
@@ -2450,22 +2450,22 @@ export const TranscriptPanel = memo(
                         return (
                           <div
                             className={`message-meta${
-                              !soloGlobal && (providerClass || provider)
+                              providerClass || provider
                                 ? ` provider-${providerClass || provider}`
                                 : ''
                             }`}
                           >
                             <span className="message-meta-label">
-                              {!soloGlobal && pooledAgentIdentity && (
+                              {pooledAgentIdentity && (
                                 <PooledAgentIcon
                                   identity={pooledAgentIdentity}
                                   size={14}
                                   className="message-meta-agent-icon"
                                 />
                               )}
-                              {soloGlobal ? 'Assistant' : label}
+                              {label}
                             </span>
-                            {!soloGlobal && modelBadge && (
+                            {modelBadge && (
                               <span
                                 className="message-meta-model-badge"
                                 title={`Model: ${modelBadge}`}

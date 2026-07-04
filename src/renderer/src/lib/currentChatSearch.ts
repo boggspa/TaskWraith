@@ -11,6 +11,10 @@ export interface CurrentChatSearchMatch extends CurrentChatSearchTarget {
   preview: string
 }
 
+export interface CurrentChatSearchOptions {
+  assistantLabel?: (message: ChatMessage) => string | undefined
+}
+
 const SKIPPED_OBJECT_KEYS = new Set([
   'dataBase64',
   'encryptedClientSecret',
@@ -65,12 +69,12 @@ function toolActivitySearchText(activity: ToolActivity): string {
   return parts.join('\n')
 }
 
-function messageLabel(message: ChatMessage): string {
+function messageLabel(message: ChatMessage, options?: CurrentChatSearchOptions): string {
   if (message.metadata?.kind === 'providerRunFailure') return 'Provider failure'
   if (message.role === 'tool') return 'Tool'
   if (message.role === 'system') return 'System'
   if (message.role === 'error') return 'Error'
-  if (message.role === 'assistant') return 'Assistant'
+  if (message.role === 'assistant') return options?.assistantLabel?.(message) || 'Assistant'
   return 'You'
 }
 
@@ -78,9 +82,12 @@ function isRetiredExternalChannelInboundMessage(message: ChatMessage): boolean {
   return message.metadata?.kind === 'channelInbound'
 }
 
-export function currentChatSearchTextForMessage(message: ChatMessage): string {
+export function currentChatSearchTextForMessage(
+  message: ChatMessage,
+  options?: CurrentChatSearchOptions
+): string {
   if (isRetiredExternalChannelInboundMessage(message)) return ''
-  const parts: string[] = [messageLabel(message), message.role, message.content].filter(
+  const parts: string[] = [messageLabel(message, options), message.role, message.content].filter(
     (part): part is string => Boolean(part)
   )
   collectStringValues(message.metadata, parts)
@@ -91,7 +98,8 @@ export function currentChatSearchTextForMessage(message: ChatMessage): string {
 }
 
 export function buildCurrentChatSearchTargets(
-  messages: readonly ChatMessage[]
+  messages: readonly ChatMessage[],
+  options?: CurrentChatSearchOptions
 ): CurrentChatSearchTarget[] {
   return messages
     .map((message, index) => ({ message, index }))
@@ -99,8 +107,8 @@ export function buildCurrentChatSearchTargets(
     .map(({ message, index }) => ({
       messageId: message.id,
       rowKey: `${message.id}#${index}`,
-      label: messageLabel(message),
-      text: currentChatSearchTextForMessage(message)
+      label: messageLabel(message, options),
+      text: currentChatSearchTextForMessage(message, options)
     }))
 }
 
