@@ -482,7 +482,7 @@ export type EscalationChipModel = {
 
 const ESCALATION_KIND_LABEL: Record<ComplexityEscalationKind, string> = {
   stuck: 'Round stalled',
-  looping: 'Handoffs exhausted',
+  looping: 'Handoff/Turns Exhausted',
   'disagreement-unresolved': 'Unreconciled answers',
   'tool-error-cluster': 'Tool errors clustered'
 }

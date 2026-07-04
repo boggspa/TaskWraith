@@ -340,7 +340,7 @@ describe('buildEscalationChips', () => {
     expect(chips).toEqual([
       {
         id: 's1',
-        label: 'Handoffs exhausted',
+        label: 'Handoff/Turns Exhausted',
         action: 'Handoff/Turns reached their limit (3/3).',
         tone: 'info'
       }
@@ -387,7 +387,7 @@ describe('buildEscalationChips', () => {
       )
     )
     expect(chips[0]).toMatchObject({
-      label: 'Handoffs exhausted',
+      label: 'Handoff/Turns Exhausted',
       action: 'Handoff/Turns reached their limit (7/7).'
     })
   })
