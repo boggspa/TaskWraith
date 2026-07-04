@@ -27,6 +27,7 @@ import type {
 import { normalizeThreadTitle } from '../shared/threadTitles'
 import { isEnsembleRoundDispatchLive } from '../shared/ensembleRoundLifecycle'
 import { collectExternalPathGrantsFromMetadata } from './store/ExternalPathGrants'
+import { readPendingProviderChange } from './providerChangeQueue'
 import { isContentlessRemoteDraftChat, remoteDraftVariant } from './remote/RemoteDraftChats'
 import { isRetiredExternalChannelInboundMessage } from './LegacyExternalChannelHistory'
 import { computeMergedTodosByLane, TODO_SOLO_LANE, type TodoStatus } from './TodoList'
@@ -273,6 +274,15 @@ export interface RemoteTaskCard {
   customModel?: string
   codexReasoningEffort?: string
   claudeReasoningEffort?: string
+  /** Slice B (provider unlock): a provider/model/reasoning switch queued while
+   *  a run is active, applied at turn end. Remote composers show a "switching at
+   *  turn end" pill and reflect the queued target instead of snapping the picker
+   *  back. Absent when nothing is queued. */
+  pendingProviderChange?: {
+    provider: ProviderId
+    selectedModelType?: string
+    customModel?: string
+  }
   title: string
   status: RemoteTaskStatus
   createdAt?: string
@@ -1063,6 +1073,17 @@ export function buildRemoteTaskCard(
   }
   if (isString(providerMetadata.claudeReasoningEffort)) {
     card.claudeReasoningEffort = providerMetadata.claudeReasoningEffort
+  }
+  const pendingProviderChange = readPendingProviderChange(chat)
+  if (pendingProviderChange) {
+    const pendingMeta = pendingProviderChange.providerMetadata ?? {}
+    card.pendingProviderChange = {
+      provider: pendingProviderChange.provider,
+      ...(isString(pendingMeta.selectedModelType)
+        ? { selectedModelType: pendingMeta.selectedModelType }
+        : {}),
+      ...(isString(pendingMeta.customModel) ? { customModel: pendingMeta.customModel } : {})
+    }
   }
   const createdAt = msToIso(chat.createdAt)
   if (createdAt) card.createdAt = createdAt

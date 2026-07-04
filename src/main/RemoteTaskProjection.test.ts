@@ -455,6 +455,26 @@ describe('RemoteTaskProjection', () => {
     expect(card.customModel).toBeUndefined()
   })
 
+  it('projects a queued provider change (Slice B) for the remote "switching at turn end" pill', () => {
+    const card = buildRemoteTaskCard(
+      chat({
+        provider: 'claude',
+        providerMetadata: {
+          selectedModelType: 'claude-sonnet',
+          pendingProviderChange: {
+            provider: 'codex',
+            providerMetadata: { selectedModelType: 'gpt-5.5' }
+          }
+        }
+      })
+    )
+    expect(card.pendingProviderChange).toEqual({ provider: 'codex', selectedModelType: 'gpt-5.5' })
+  })
+
+  it('omits pendingProviderChange when nothing is queued', () => {
+    expect(buildRemoteTaskCard(chat({ provider: 'claude' })).pendingProviderChange).toBeUndefined()
+  })
+
   it('projects sanitized additional workspace rows from external path grants', () => {
     const card = buildRemoteTaskCard(
       chat({

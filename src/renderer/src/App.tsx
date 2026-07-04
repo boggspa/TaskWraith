@@ -376,7 +376,10 @@ import {
   type EnsembleRosterPreset
 } from './lib/ensembleRosterPresets'
 import { hydrateParticipantsWithPooledAgentIdentity } from './lib/ensembleAgentPool'
-import { resolveEnsembleParticipantSettings } from './lib/ensembleProviderDefaults'
+import {
+  buildProviderChangeParticipantPatch,
+  resolveEnsembleParticipantSettings
+} from './lib/ensembleProviderDefaults'
 import {
   rebindEnsembleChatToWorkspace,
   rebindWelcomeEnsembleChatToGlobal,
@@ -598,6 +601,14 @@ import {
 import type { PersistentSessionStatus } from './lib/persistentSessionStatus'
 import { DEFAULT_AGENTIC_SERVICES } from './lib/agenticServicesDefaults'
 import { EMPTY_CHAT_MESSAGES, EMPTY_IMAGE_ATTACHMENTS } from './lib/stableEmpties'
+import {
+  applyPendingProviderChangeOnFinalize,
+  applyProviderChange,
+  hasPendingProviderChange,
+  queueProviderChange,
+  readPendingProviderChange,
+  type PendingProviderChange
+} from '../../main/providerChangeQueue'
 import {
   EMPTY_PERMISSION_STATE,
   type ComposerPermissionState
@@ -2467,12 +2478,21 @@ function App(): React.JSX.Element {
   const visibleAuditRunNotice =
     auditRunNotice && auditRunNotice.chatId === currentChat?.appChatId ? auditRunNotice : null
   const canOpenWorkspacePopout = Boolean(currentWorkspacePopoutPath)
+  const hasCurrentChatQueuedRunForProviderLock = Boolean(
+    currentChat?.appChatId &&
+      runQueueJobs.some(
+        (job) =>
+          job.chatId === currentChat.appChatId && ACTIVE_RUN_QUEUE_STATUSES.has(job.status)
+      )
+  )
+  const currentPendingProviderChange =
+    currentChat && currentChat.chatKind !== 'ensemble' ? readPendingProviderChange(currentChat) : null
   const isCurrentChatProviderLocked = Boolean(
-    currentChat &&
-    ((currentChat.messages?.length || 0) > 0 ||
-      (currentChat.runs?.length || 0) > 0 ||
-      Boolean(currentChat.linkedGeminiSessionId) ||
-      Boolean(currentChat.linkedProviderSessionId))
+    currentChat?.appChatId &&
+      (runningChatIds.has(currentChat.appChatId) ||
+        hasCurrentChatQueuedRunForProviderLock ||
+        isEnsembleActiveRoundDispatchLive(currentChat?.ensemble?.activeRound) ||
+        Boolean(currentPendingProviderChange))
   )
   const isFxEnabled = appearance.funFxEnabled && appearance.funFxMode !== 'off'
   // Refraction is an independent MATERIAL toggle (not part of the fun-FX system),
@@ -4094,6 +4114,18 @@ function App(): React.JSX.Element {
     })
   }
 
+  const PROVIDER_SCOPED_COMPOSER_METADATA_KEYS = new Set([
+    'selectedModelType',
+    'customModel',
+    'codexReasoningEffort',
+    'codexServiceTier',
+    'claudeReasoningEffort',
+    'claudeFastMode',
+    'kimiThinkingEnabled',
+    'runtimeProfileId',
+    'geminiAuthProfileId'
+  ])
+
   const rememberChatComposerSelectionById = (chatId: string, patch: Record<string, unknown>) => {
     if (!chatId) return
     const maybeWorkflowMode = patch.workflowMode
@@ -4101,15 +4133,36 @@ function App(): React.JSX.Element {
       maybeWorkflowMode === 'plan' || maybeWorkflowMode === 'normal'
         ? maybeWorkflowMode
         : undefined
-    updateChatById(chatId, (source) => ({
-      ...source,
-      ...(nextWorkflowMode ? { workflowMode: nextWorkflowMode } : {}),
-      providerMetadata: {
-        ...(source.providerMetadata || {}),
-        ...patch
-      },
-      updatedAt: Date.now()
-    }))
+    const touchesProviderScopedMetadata = Object.keys(patch).some((key) =>
+      PROVIDER_SCOPED_COMPOSER_METADATA_KEYS.has(key)
+    )
+    updateChatById(chatId, (source) => {
+      if (source.chatKind !== 'ensemble' && touchesProviderScopedMetadata && isChatBusy(chatId)) {
+        const pendingChange = readPendingProviderChange(source)
+        const queuedChat = queueProviderChange(source, {
+          provider: pendingChange?.provider || getChatProvider(source),
+          providerMetadata: {
+            ...(pendingChange?.providerMetadata || {}),
+            ...patch
+          },
+          queuedAt: pendingChange?.queuedAt || new Date().toISOString()
+        })
+        return {
+          ...queuedChat,
+          ...(nextWorkflowMode ? { workflowMode: nextWorkflowMode } : {}),
+          updatedAt: Date.now()
+        }
+      }
+      return {
+        ...source,
+        ...(nextWorkflowMode ? { workflowMode: nextWorkflowMode } : {}),
+        providerMetadata: {
+          ...(source.providerMetadata || {}),
+          ...patch
+        },
+        updatedAt: Date.now()
+      }
+    })
   }
 
   const rememberCurrentChatComposerSelection = (patch: Record<string, unknown>) => {
@@ -5256,53 +5309,109 @@ function App(): React.JSX.Element {
     }
   }
 
-  const handleProviderChange = async (provider: ProviderId) => {
-    if (currentChat && isCurrentChatProviderLocked && provider !== currentProvider) {
-      setRawLogs((prev) => [
-        ...prev,
-        {
-          type: 'info',
-          content:
-            'Provider is locked for this chat (' +
-            currentProvider +
-            '). Create a new chat to use ' +
-            provider +
-            '.'
-        }
-      ])
-      return
-    }
-    const nextModel = getDefaultModelForProvider(provider)
-    const nextRuntimeProfileId = defaultRuntimeProfileIdForProvider(provider)
-    const nextMetadata = {
-      selectedModelType: nextModel,
-      customModel: '',
-      approvalMode,
-      ...(provider === 'kimi' ? { kimiThinkingEnabled: true } : {}),
-      runtimeProfileId: nextRuntimeProfileId
-    }
-    setActiveProvider(provider)
-    setSelectedModelType(nextModel)
-    setLastNonCustomModelType(nextModel)
-    setCustomModel('')
-    if (provider === 'kimi') {
-      setKimiThinkingEnabled(true)
-    }
-    setRuntimeProfileForChat(currentChat?.appChatId, nextRuntimeProfileId)
-    if (provider === 'gemini') {
-      syncPersistentModelSelection(nextModel)
-    }
-    if (currentChat && !isCurrentChatProviderLocked) {
-      const updatedChat = updateChatById(currentChat.appChatId, (source) => ({
-        ...source,
-        provider,
-        providerMetadata: {
-          ...(source.providerMetadata || {}),
-          ...nextMetadata
+  const buildQueuedProviderChange = useCallback(
+    (
+      provider: ProviderId,
+      options: {
+        approvalMode: string
+        workflowMode?: ChatWorkflowMode
+      }
+    ): {
+      change: PendingProviderChange
+      nextModel: string
+      nextRuntimeProfileId: string
+    } => {
+      const defaults = buildProviderChangeParticipantPatch(provider)
+      const nextModel =
+        typeof defaults.model === 'string' && defaults.model
+          ? defaults.model
+          : getDefaultModelForProvider(provider)
+      const nextRuntimeProfileId = defaultRuntimeProfileIdForProvider(provider)
+      const claudeModelOption =
+        provider === 'claude'
+          ? (agentModelsByProvider.claude || CLAUDE_DEFAULT_MODELS).find(
+              (model) => model.id === nextModel
+            )
+          : undefined
+      const providerMetadata: Record<string, unknown> = {
+        selectedModelType: nextModel,
+        customModel: '',
+        approvalMode: options.approvalMode,
+        ...(options.workflowMode ? { workflowMode: options.workflowMode } : {}),
+        runtimeProfileId: nextRuntimeProfileId,
+        geminiAuthProfileId: provider === 'gemini' ? null : undefined,
+        codexReasoningEffort:
+          provider === 'codex' ? defaults.reasoningEffort || 'medium' : undefined,
+        codexServiceTier:
+          provider === 'codex'
+            ? defaults.serviceTier || (defaults.fastModeEnabled ? 'fast' : '')
+            : undefined,
+        claudeReasoningEffort:
+          provider === 'claude'
+            ? defaults.reasoningEffort || resolveClaudeDefaultReasoningEffort(claudeModelOption)
+            : undefined,
+        claudeFastMode: provider === 'claude' ? Boolean(defaults.fastModeEnabled) : undefined,
+        kimiThinkingEnabled:
+          provider === 'kimi' ? (defaults.thinkingEnabled ?? true) : undefined
+      }
+      return {
+        change: {
+          provider,
+          providerMetadata,
+          queuedAt: new Date().toISOString()
         },
-        updatedAt: Date.now()
-      }))
-      if (updatedChat) currentChatIdRef.current = updatedChat.appChatId
+        nextModel,
+        nextRuntimeProfileId
+      }
+    },
+    [agentModelsByProvider.claude, defaultRuntimeProfileIdForProvider, getDefaultModelForProvider]
+  )
+
+  const handleProviderChange = async (provider: ProviderId) => {
+    const pendingProvider =
+      currentChat && currentChat.chatKind !== 'ensemble'
+        ? readPendingProviderChange(currentChat)?.provider
+        : null
+    if (provider === (pendingProvider || currentProvider)) return
+    const { change, nextModel, nextRuntimeProfileId } = buildQueuedProviderChange(provider, {
+      approvalMode
+    })
+    const queueAtTurnEnd = Boolean(currentChat && isCurrentChatRunning)
+    if (currentChat) {
+      const updatedChat = updateChatById(currentChat.appChatId, (source) => {
+        const nextChat = queueAtTurnEnd
+          ? queueProviderChange(source, change)
+          : applyProviderChange(source, change)
+        return {
+          ...nextChat,
+          updatedAt: Date.now()
+        }
+      })
+      if (updatedChat) {
+        currentChatIdRef.current = updatedChat.appChatId
+        if (queueAtTurnEnd) {
+          setRuntimeProfileForChat(updatedChat.appChatId, nextRuntimeProfileId)
+        } else {
+          applyChatComposerSelection(updatedChat, provider)
+        }
+      }
+      if (queueAtTurnEnd) {
+        appendThreadRawLog(currentChat.appChatId, {
+          type: 'info',
+          content: `${getProviderLabel(provider)} provider change queued. It will apply at turn end.`
+        })
+      }
+    } else {
+      setActiveProvider(provider)
+      setSelectedModelType(nextModel)
+      setLastNonCustomModelType(nextModel)
+      setCustomModel('')
+      if (provider === 'kimi') {
+        setKimiThinkingEnabled(true)
+      }
+      if (provider === 'gemini') {
+        syncPersistentModelSelection(nextModel)
+      }
     }
     setPendingAgentApproval(null)
     window.api.updateSettings({ activeProvider: provider }).catch(() => {})
@@ -5326,10 +5435,10 @@ function App(): React.JSX.Element {
       setCodexThreads([])
     }
 
-    if (provider !== 'gemini' && showGeminiTerminal) {
+    if (!queueAtTurnEnd && provider !== 'gemini' && showGeminiTerminal) {
       setShowGeminiTerminal(false)
     }
-    if (provider !== 'gemini' && persistentSessionActiveRef.current) {
+    if (!queueAtTurnEnd && provider !== 'gemini' && persistentSessionActiveRef.current) {
       const geminiSessionApi = window.api as any
       if (typeof geminiSessionApi.stopGeminiSession === 'function') {
         geminiSessionApi.stopGeminiSession().catch(() => {})
@@ -9470,25 +9579,38 @@ function App(): React.JSX.Element {
       (workspace) => workspace.id === job.workspaceId || workspace.path === job.workspacePath
     )
     const chatRecord = chatList.find((chat) => chat.appChatId === job.chatId)
+    if (!chatRecord) return null
+    const hasQueuedProviderChange = Boolean(chatRecord && hasPendingProviderChange(chatRecord))
+    const queuedProviderBaseChat =
+      hasQueuedProviderChange
+        ? applyProviderChange(chatRecord, readPendingProviderChange(chatRecord)!)
+        : chatRecord
+    const queuedProviderSelection =
+      hasQueuedProviderChange
+        ? getChatComposerSelection(queuedProviderBaseChat)
+        : null
+    const effectiveProvider = queuedProviderSelection?.provider || job.provider
     const scope =
       job.scope === 'global' || job.request.scope === 'global' || isGlobalChat(chatRecord)
         ? 'global'
         : 'workspace'
-    if (!chatRecord || (scope !== 'global' && !workspaceRecord)) return null
+    if (scope !== 'global' && !workspaceRecord) return null
     const request = job.request
-    const selectedModel = isValidModelForProvider(job.provider, request.selectedModelType)
-      ? request.selectedModelType
-      : getDefaultModelForProvider(job.provider)
+    const selectedModel = queuedProviderSelection
+      ? queuedProviderSelection.selectedModelType
+      : isValidModelForProvider(job.provider, request.selectedModelType)
+        ? request.selectedModelType
+        : getDefaultModelForProvider(job.provider)
     return {
       appRunId: job.runId,
       scope,
-      provider: job.provider,
+      provider: effectiveProvider,
       prompt: request.prompt,
       displayPrompt: request.displayPrompt,
       selectedModelType: selectedModel,
-      customModel: request.customModel,
-      approvalMode: request.approvalMode,
-      workflowMode: request.workflowMode,
+      customModel: queuedProviderSelection?.customModel ?? request.customModel,
+      approvalMode: queuedProviderSelection?.approvalMode ?? request.approvalMode,
+      workflowMode: queuedProviderSelection?.workflowMode ?? request.workflowMode,
       sessionTrust: request.sessionTrust,
       imageAttachments: request.imageAttachments.map((attachment, index) => ({
         id: attachment.id || `${job.runId}-attachment-${index}`,
@@ -9499,15 +9621,26 @@ function App(): React.JSX.Element {
       externalPathGrants: request.externalPathGrants,
       geminiWorktree: request.geminiWorktree,
       codexNativeReview: request.codexNativeReview,
-      codexReasoningEffort: request.codexReasoningEffort,
-      codexServiceTier: request.codexServiceTier,
-      claudeReasoningEffort: request.claudeReasoningEffort,
-      claudeFastMode: request.claudeFastMode,
-      kimiThinkingEnabled: request.kimiThinkingEnabled,
+      codexReasoningEffort:
+        queuedProviderSelection?.codexReasoningEffort ?? request.codexReasoningEffort,
+      codexServiceTier: queuedProviderSelection?.codexServiceTier ?? request.codexServiceTier,
+      claudeReasoningEffort:
+        queuedProviderSelection?.claudeReasoningEffort ?? request.claudeReasoningEffort,
+      claudeFastMode: queuedProviderSelection?.claudeFastMode ?? request.claudeFastMode,
+      kimiThinkingEnabled:
+        queuedProviderSelection?.kimiThinkingEnabled ?? request.kimiThinkingEnabled,
       scheduledTaskId: request.scheduledTaskId,
       scheduledRunAt: request.scheduledRunAt,
-      runtimeProfileId: job.runtimeProfileId || request.runtimeProfileId,
-      geminiAuthProfileId: request.geminiAuthProfileId,
+      runtimeProfileId: queuedProviderSelection
+        ? getRuntimeProfileIdForChat(queuedProviderBaseChat, effectiveProvider)
+        : job.runtimeProfileId || request.runtimeProfileId,
+      geminiAuthProfileId: queuedProviderSelection
+        ? effectiveProvider === 'gemini'
+          ? typeof queuedProviderBaseChat.providerMetadata?.geminiAuthProfileId === 'string'
+            ? queuedProviderBaseChat.providerMetadata.geminiAuthProfileId
+            : geminiAuthStatus?.activeProfileId || null
+          : null
+        : request.geminiAuthProfileId,
       handoffSourceRunId: job.handoffSourceRunId || request.handoffSourceRunId,
       workspaceRecord: scope === 'global' ? undefined : workspaceRecord,
       chatRecord,
@@ -10784,8 +10917,10 @@ function App(): React.JSX.Element {
           }
         }
 
+        let finalizedProviderChangeChat: ChatRecord | null = null
+        let finalizedProviderChangeChatId: string | null = null
         updateChatById(runChatId, (source) => {
-          const updated = { ...source }
+          let updated = { ...source }
 
           // Steer suppression: while the user has clicked Steer and the
           // cancel is in flight, drop in-flight assistant content so the
@@ -11103,6 +11238,14 @@ function App(): React.JSX.Element {
               }
             }
             updated.runs = runs
+            if (updated.chatKind !== 'ensemble') {
+              const nextChat = applyPendingProviderChangeOnFinalize(updated)
+              if (nextChat !== updated) {
+                updated = nextChat
+                finalizedProviderChangeChat = nextChat
+                finalizedProviderChangeChatId = nextChat.appChatId
+              }
+            }
 
             const runDurationMs = Math.max(
               0,
@@ -11256,6 +11399,15 @@ function App(): React.JSX.Element {
 
           return updated
         }, { coalesce: event.type === 'assistant_message_delta' })
+        if (
+          finalizedProviderChangeChat &&
+          currentChatIdRef.current === finalizedProviderChangeChatId
+        ) {
+          applyChatComposerSelection(
+            finalizedProviderChangeChat,
+            getChatProvider(finalizedProviderChangeChat)
+          )
+        }
       })
       Object.assign(runContext, {
         runId: currentRunId,
@@ -15255,11 +15407,31 @@ function App(): React.JSX.Element {
         if (!leased) {
           return
         }
+        let dispatchChat = nextRun.chatRecord
+        if (dispatchChat && hasPendingProviderChange(dispatchChat)) {
+          const appliedChat = updateChatById(dispatchChat.appChatId, (source) => ({
+            ...applyPendingProviderChangeOnFinalize(source),
+            updatedAt: Date.now()
+          }))
+          if (appliedChat) {
+            dispatchChat = appliedChat
+            if (currentChatIdRef.current === appliedChat.appChatId) {
+              applyChatComposerSelection(appliedChat, getChatProvider(appliedChat))
+            }
+          }
+        }
         appEventHandlersRef.current.appendThreadRawLog(nextRun.chatRecord?.appChatId, {
           type: 'info',
-          content: `Starting ${nextRun.scheduledRunAt ? 'scheduled ' : 'queued '}${getProviderLabel(nextRun.provider)} run. ${remainingRuns.length} queued task${remainingRuns.length === 1 ? '' : 's'} remain.`
+          content: `Starting ${nextRun.scheduledRunAt ? 'scheduled ' : 'queued '}${getProviderLabel(
+            getChatProvider(dispatchChat || nextRun.chatRecord)
+          )} run. ${remainingRuns.length} queued task${remainingRuns.length === 1 ? '' : 's'} remain.`
         })
-        void executeRunRef.current({ ...nextRun, appRunId: leased.runId })
+        void executeRunRef.current({
+          ...nextRun,
+          appRunId: leased.runId,
+          provider: getChatProvider(dispatchChat || nextRun.chatRecord),
+          chatRecord: dispatchChat || nextRun.chatRecord
+        })
       })
   }, [queuedRuns, runningChatIds, runQueueJobs, workspaces, currentWorkspace, currentChat, scheduledQueueWakeTick])
 
@@ -16697,8 +16869,16 @@ function App(): React.JSX.Element {
       : sideThinkingOllamaBrand?.providerClass || sideProvider
   const sideThinkingModelBadge = sideThinkingOllamaBrand?.modelLabel || null
   const sideCanRun = Boolean(sideChat && (getChatScope(sideChat) === 'global' || sideWorkspace))
-  const sideComposerSelection = sideChat ? getChatComposerSelection(sideChat, sideProvider) : null
-  const sideComposerProvider = sideComposerSelection?.provider || sideProvider
+  const sidePendingProviderChange =
+    sideChat && sideChat.chatKind !== 'ensemble' ? readPendingProviderChange(sideChat) : null
+  const sideComposerSourceChat =
+    sideChat && sidePendingProviderChange ? applyProviderChange(sideChat, sidePendingProviderChange) : sideChat
+  const sideComposerSelection = sideComposerSourceChat
+    ? getChatComposerSelection(sideComposerSourceChat, getChatProvider(sideComposerSourceChat))
+    : null
+  const sideComposerProvider =
+    sideComposerSelection?.provider ||
+    (sideComposerSourceChat ? getChatProvider(sideComposerSourceChat) : sideProvider)
   const sideComposerModelOptionsRaw = getProviderModelOptions(sideComposerProvider)
   const sideComposerSelectedModel = sideComposerSelection?.selectedModelType
     ? isValidModelForProvider(sideComposerProvider, sideComposerSelection.selectedModelType)
@@ -16837,12 +17017,7 @@ function App(): React.JSX.Element {
     ? WORKSPACE_POLICY_SERVICES
     : []
   const isSideChatProviderLocked = Boolean(
-    sideChat &&
-      (sidePanelRelation !== 'sideChat' ||
-        (sideChat.messages?.length || 0) > 0 ||
-        (sideChat.runs?.length || 0) > 0 ||
-        Boolean(sideChat.linkedGeminiSessionId) ||
-        Boolean(sideChat.linkedProviderSessionId))
+    sideChat && (isSideChatRunning || Boolean(sidePendingProviderChange))
   )
   const sideChatIsWelcome = Boolean(sideChat && (sideChat.messages?.length || 0) === 0)
   const isSideEnsembleComposerLocked = Boolean(sideChat?.chatKind === 'ensemble')
@@ -16856,56 +17031,38 @@ function App(): React.JSX.Element {
   }
   const rememberSideChatComposerSelection = (patch: Record<string, unknown>) => {
     if (!sideChat || isSideEnsembleComposerLocked) return
-    const maybeWorkflowMode = patch.workflowMode
-    const nextWorkflowMode =
-      maybeWorkflowMode === 'plan' || maybeWorkflowMode === 'normal'
-        ? maybeWorkflowMode
-        : undefined
-    updateChatById(sideChat.appChatId, (source) => ({
-      ...source,
-      ...(nextWorkflowMode ? { workflowMode: nextWorkflowMode } : {}),
-      providerMetadata: {
-        ...(source.providerMetadata || {}),
-        ...patch
-      },
-      updatedAt: Date.now()
-    }))
+    rememberChatComposerSelectionById(sideChat.appChatId, patch)
   }
   const handleSideProviderChange = (provider: ProviderId): void => {
+    const pendingProvider = sidePendingProviderChange?.provider || sideComposerProvider
     if (
       !sideChat ||
       isSideEnsembleComposerLocked ||
-      isSideChatProviderLocked ||
-      provider === sideComposerProvider
+      provider === pendingProvider
     ) {
       return
     }
-    const nextModel = getDefaultModelForProvider(provider)
-    updateChatById(sideChat.appChatId, (source) => ({
-      ...source,
-      provider,
-      workflowMode: sideComposerWorkflowMode,
-      providerMetadata: {
-        ...(source.providerMetadata || {}),
-        selectedModelType: nextModel,
-        customModel: '',
-        approvalMode: sideSelectedApprovalMode,
+    const { change, nextModel, nextRuntimeProfileId } = buildQueuedProviderChange(provider, {
+      approvalMode: sideSelectedApprovalMode,
+      workflowMode: sideComposerWorkflowMode
+    })
+    updateChatById(sideChat.appChatId, (source) => {
+      const nextChat = isSideChatRunning
+        ? queueProviderChange(source, change)
+        : applyProviderChange(source, change)
+      return {
+        ...nextChat,
         workflowMode: sideComposerWorkflowMode,
-        ...(provider === 'claude'
-          ? {
-              claudeReasoningEffort: resolveClaudeDefaultReasoningEffort(
-                (agentModelsByProvider.claude || CLAUDE_DEFAULT_MODELS).find(
-                  (model) => model.id === nextModel
-                )
-              ),
-              claudeFastMode: false
-            }
-          : {}),
-        ...(provider === 'kimi' ? { kimiThinkingEnabled: true } : {}),
-        runtimeProfileId: defaultRuntimeProfileIdForProvider(provider)
-      },
-      updatedAt: Date.now()
-    }))
+        updatedAt: Date.now()
+      }
+    })
+    if (isSideChatRunning) {
+      appendThreadRawLog(sideChat.appChatId, {
+        type: 'info',
+        content: `${getProviderLabel(provider)} provider change queued. It will apply at turn end.`
+      })
+    }
+    setRuntimeProfileForChat(sideChat.appChatId, nextRuntimeProfileId)
     void refreshProviderMetadata(provider, sideWorkspace?.path)
     if (provider === 'ollama') {
       void checkOllamaModelAvailability(nextModel, getOllamaModelLabel(nextModel))
@@ -20806,47 +20963,62 @@ function App(): React.JSX.Element {
   }, [])
   const rememberMultiviewPaneComposerSelection = useCallback(
     (chatId: string, patch: Record<string, unknown>) => {
-      updateChatById(chatId, (source) => ({
-        ...source,
-        providerMetadata: {
-          ...(source.providerMetadata || {}),
-          ...patch
-        },
-        updatedAt: Date.now()
-      }))
+      rememberChatComposerSelectionById(chatId, patch)
     },
-    [updateChatById]
+    [rememberChatComposerSelectionById]
   )
   const handleMultiviewPaneProviderChange = useCallback(
     (_paneIndex: number, chatId: string, provider: ProviderId) => {
       const paneChat = chatByIdRef.current.get(chatId)
-      if (!paneChat || paneChat.chatKind === 'ensemble' || provider === getChatProvider(paneChat)) {
+      const pendingProvider =
+        paneChat && paneChat.chatKind !== 'ensemble'
+          ? readPendingProviderChange(paneChat)?.provider
+          : null
+      if (
+        !paneChat ||
+        paneChat.chatKind === 'ensemble' ||
+        provider === (pendingProvider || getChatProvider(paneChat))
+      ) {
         return
       }
-      const nextModel = getDefaultModelForProvider(provider)
+      const paneSelection = getChatComposerSelection(paneChat)
+      const { change, nextModel, nextRuntimeProfileId } = buildQueuedProviderChange(provider, {
+        approvalMode: paneSelection.approvalMode,
+        workflowMode: paneSelection.workflowMode
+      })
       const paneWorkspace = getWorkspaceForChat(paneChat)
-      updateChatById(chatId, (source) => ({
-        ...source,
-        provider,
-        providerMetadata: {
-          ...(source.providerMetadata || {}),
-          selectedModelType: nextModel,
-          customModel: '',
-          approvalMode:
-            typeof source.providerMetadata?.approvalMode === 'string'
-              ? source.providerMetadata.approvalMode
-              : 'default',
-          ...(provider === 'kimi' ? { kimiThinkingEnabled: true } : {}),
-          runtimeProfileId: defaultRuntimeProfileIdForProvider(provider)
-        },
-        updatedAt: Date.now()
-      }))
+      const paneBusy = isChatBusy(chatId)
+      const updatedChat = updateChatById(chatId, (source) => {
+        const nextChat = paneBusy ? queueProviderChange(source, change) : applyProviderChange(source, change)
+        return {
+          ...nextChat,
+          updatedAt: Date.now()
+        }
+      })
+      if (updatedChat && currentChatIdRef.current === chatId && !paneBusy) {
+        applyChatComposerSelection(updatedChat, provider)
+      }
+      if (paneBusy) {
+        appendThreadRawLog(chatId, {
+          type: 'info',
+          content: `${getProviderLabel(provider)} provider change queued. It will apply at turn end.`
+        })
+      }
+      setRuntimeProfileForChat(chatId, nextRuntimeProfileId)
       void refreshProviderMetadata(provider, paneWorkspace?.path)
       if (provider === 'ollama') {
         void checkOllamaModelAvailability(nextModel, getOllamaModelLabel(nextModel))
       }
     },
-    [checkOllamaModelAvailability, getOllamaModelLabel, updateChatById]
+    [
+      applyChatComposerSelection,
+      buildQueuedProviderChange,
+      checkOllamaModelAvailability,
+      getChatComposerSelection,
+      getOllamaModelLabel,
+      setRuntimeProfileForChat,
+      updateChatById
+    ]
   )
   const handleMultiviewPaneToggleGrant = useCallback(
     async (_paneIndex: number, chatId: string, service: AgenticServiceId, enabled: boolean) => {
@@ -21232,11 +21404,8 @@ function App(): React.JSX.Element {
     // per-pane provider/model/selection fields in paneComposerCtx), mirroring
     // the focused composer — so they no longer need pane-local copies here.
     const viewerProviderLocked = Boolean(
-      viewerChat.chatKind === 'ensemble' ||
-        (viewerChat.messages?.length || 0) > 0 ||
-        (viewerChat.runs?.length || 0) > 0 ||
-        viewerChat.linkedGeminiSessionId ||
-        viewerChat.linkedProviderSessionId
+      viewerIsRunning ||
+        (viewerChat.chatKind !== 'ensemble' && hasPendingProviderChange(viewerChat))
     )
     const viewerComposerLocked = Boolean(viewerIsRunning && viewerChat.chatKind !== 'ensemble')
     const viewerRunStartedAt = viewerIsRunning
@@ -22492,11 +22661,8 @@ function App(): React.JSX.Element {
       // per-pane provider/model/selection fields in paneComposerCtx), mirroring
       // the focused composer — so they no longer need pane-local copies here.
       const viewerProviderLocked = Boolean(
-        viewerChat.chatKind === 'ensemble' ||
-          (viewerChat.messages?.length || 0) > 0 ||
-          (viewerChat.runs?.length || 0) > 0 ||
-          viewerChat.linkedGeminiSessionId ||
-          viewerChat.linkedProviderSessionId
+        viewerIsRunning ||
+          (viewerChat.chatKind !== 'ensemble' && hasPendingProviderChange(viewerChat))
       )
       const viewerComposerLocked = Boolean(viewerIsRunning && viewerChat.chatKind !== 'ensemble')
       const viewerRunStartedAt = viewerIsRunning

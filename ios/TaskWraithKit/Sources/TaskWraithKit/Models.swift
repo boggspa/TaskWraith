@@ -576,6 +576,11 @@ public struct RemoteTaskCard: Codable, Sendable {
     public let customModel: String?
     public let codexReasoningEffort: String?
     public let claudeReasoningEffort: String?
+    /// Slice B: a provider (and optional model/reasoning) switch queued by the
+    /// Mac while a run is active (`readPendingProviderChange`). PRESENT only
+    /// while a switch is pending, ABSENT otherwise — the composer reflects it as
+    /// a "switching at turn end" pill; the host applies it at the turn boundary.
+    public let pendingProviderChange: PendingProviderChange?
     public let workspaceId: String?
     public let threadId: String?
     /// Present for sub-threads / isolated side chats — nested under the
@@ -650,6 +655,16 @@ public struct RemoteTaskCard: Codable, Sendable {
         public let index: Int?
         public let createdAt: String?
         public let enqueuedAt: String?
+    }
+
+    /// Mac-projected target of a queued mid-run provider (and optional
+    /// model/reasoning) switch. Field names mirror the card's current-provider
+    /// fields (`provider` / `selectedModelType` / `customModel`). All optional
+    /// for decode resilience across Mac builds.
+    public struct PendingProviderChange: Codable, Sendable {
+        public let provider: String?
+        public let selectedModelType: String?
+        public let customModel: String?
     }
 
     public var isEnsemble: Bool { chatKind == "ensemble" }

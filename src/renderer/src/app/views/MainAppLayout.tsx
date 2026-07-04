@@ -10,6 +10,7 @@ import {
 } from '../../lib/panelWidths'
 import { getProviderLabel } from '../../lib/providerLabels'
 import { isGlobalChat } from '../../lib/chatScope'
+import { readPendingProviderChange } from '../../../../main/providerChangeQueue'
 import { RunRailPanel } from '../../components/RunRailPanel'
 import { decideApprovalElevation } from '../../lib/approvalElevation'
 import { Sidebar } from '../../components/Sidebar'
@@ -548,6 +549,12 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   workspaceSidebarWidth,
   workspaces
   } = props
+  const sidePendingProviderChange =
+    sideChat && sideChat.chatKind !== 'ensemble' ? readPendingProviderChange(sideChat) : null
+  const sidePendingProviderModelId =
+    typeof sidePendingProviderChange?.providerMetadata?.selectedModelType === 'string'
+      ? sidePendingProviderChange.providerMetadata.selectedModelType
+      : null
 
   return (
       <div
@@ -2218,18 +2225,22 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                         ) : (
                           <>
                             <ComposerProviderPicker
-                              provider={sideComposerProvider}
+                              provider={sidePendingProviderChange?.provider || sideComposerProvider}
                               composerStyle={appearance.composerStyle}
                               grokAvailable={grokProviderAvailable}
                               cursorAvailable={cursorProviderAvailable}
                               providerRunPauses={settings?.providerRunPauses}
                               onSelect={handleSideProviderChange}
-                              disabled={isSideComposerLocked || isSideChatProviderLocked}
-                              activeModelId={sideComposerSelectedModel}
+                              disabled={false}
+                              activeModelId={sidePendingProviderModelId || sideComposerSelectedModel}
                               title={
-                                sidePanelRelation === 'subThread'
-                                  ? 'Sub-thread provider'
-                                  : `${sidePanelKindLabel} provider`
+                                sidePendingProviderChange || isSideChatProviderLocked
+                                  ? 'Provider change applies at turn end'
+                                  : isSideChatRunning
+                                    ? 'Choose a provider to queue for turn end'
+                                    : sidePanelRelation === 'subThread'
+                                      ? 'Sub-thread provider'
+                                      : `${sidePanelKindLabel} provider`
                               }
                             />
                             <CombinedModelPicker
@@ -2247,7 +2258,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                               fastModeCapableModelIds={sideFastModeCapableModelIds}
                               fastModeEnabled={sideFastModeEnabled}
                               onToggleFastMode={handleSideToggleFastMode}
-                              disabled={isSideComposerLocked}
+                              disabled={false}
                             />
                             {sideComposerSelectedModel === 'custom' &&
                               sideComposerProvider !== 'kimi' && (

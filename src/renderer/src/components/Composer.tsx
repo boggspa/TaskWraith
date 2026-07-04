@@ -57,6 +57,7 @@ import { WelcomeHeatmaps } from '../components/WelcomeHeatmaps'
 import { WelcomeWorkspacePicker } from '../components/WelcomeWorkspacePicker'
 import { WorkflowComposeControls } from '../components/WorkflowComposeControls'
 import { extractFirstEnsembleDmTarget, formatComposerPathMention, parseComposerMentionTrigger } from '../lib/ComposerMentionTrigger'
+import { readPendingProviderChange } from '../../../main/providerChangeQueue'
 import {
   hasSlashCommandPlaceholders,
   slashCommandDispatchPrefix,
@@ -3053,7 +3054,19 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               )
                             : null
                           const participantControlsLocked = Boolean(participantSeatMutation?.locked)
-                          const pickerProvider = ensembleBinding?.provider ?? currentProvider
+                          const soloPendingProviderChange =
+                            !ensembleBinding && currentChat
+                              ? readPendingProviderChange(currentChat)
+                              : null
+                          const pendingProviderModelId =
+                            typeof soloPendingProviderChange?.providerMetadata?.selectedModelType ===
+                            'string'
+                              ? soloPendingProviderChange.providerMetadata.selectedModelType
+                              : null
+                          const pickerProvider =
+                            ensembleBinding?.provider ||
+                            soloPendingProviderChange?.provider ||
+                            currentProvider
                           const handleComposerProviderChange = (provider: ProviderId): void => {
                             if (ensembleBinding) {
                               const defaults = getDefaultEnsembleParticipantConfig(provider)
@@ -3099,18 +3112,21 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               cursorAvailable={cursorProviderAvailable}
                               providerRunPauses={settings?.providerRunPauses}
                               onSelect={handleComposerProviderChange}
-                              disabled={
-                                isCurrentComposerLocked ||
-                                (!ensembleBinding && isCurrentChatProviderLocked)
-                              }
+                              disabled={Boolean(ensembleBinding && participantControlsLocked)}
                               activeModelId={
-                                ensembleBinding?.model ?? selectedComposerModelType
+                                ensembleBinding?.model ??
+                                pendingProviderModelId ??
+                                selectedComposerModelType
                               }
                               title={
                                 participantControlsLocked
                                   ? participantSeatMutation?.message || 'Seat change applies at turn end'
                                   : ensembleBinding
                                     ? 'Selected participant provider'
+                                    : soloPendingProviderChange || isCurrentChatProviderLocked
+                                      ? 'Provider change applies at turn end'
+                                      : isCurrentChatRunning
+                                        ? 'Choose a provider to queue for turn end'
                                     : 'Provider'
                               }
                             />
@@ -3158,34 +3174,74 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                           const ensembleResolved = ensembleBinding
                             ? resolveEnsembleParticipantSettings(ensembleBinding)
                             : null
+                          const soloPendingProviderChange =
+                            !ensembleBinding && currentChat
+                              ? readPendingProviderChange(currentChat)
+                              : null
+                          const soloPendingProviderMetadata = soloPendingProviderChange?.providerMetadata
                           const effectiveProvider: ProviderId =
-                            ensembleBinding?.provider ?? currentProvider
+                            ensembleBinding?.provider ??
+                            soloPendingProviderChange?.provider ??
+                            currentProvider
                           const effectiveModelOptionsRaw = ensembleBinding
                             ? getProviderModelOptions(ensembleBinding.provider)
-                            : currentProviderModelOptions
+                            : effectiveProvider === currentProvider
+                              ? currentProviderModelOptions
+                              : getProviderModelOptions(effectiveProvider)
+                          const pendingSelectedModel =
+                            typeof soloPendingProviderMetadata?.selectedModelType === 'string'
+                              ? soloPendingProviderMetadata.selectedModelType
+                              : null
+                          const hasValidPendingSelectedModel = Boolean(
+                            pendingSelectedModel &&
+                              (pendingSelectedModel === 'custom'
+                                ? effectiveProvider !== 'kimi'
+                                : effectiveModelOptionsRaw.some(
+                                    (model) => model.id === pendingSelectedModel
+                                  ))
+                          )
                           const effectiveSelectedModel = ensembleResolved
                             ? ensembleResolved.model
-                            : selectedComposerModelType
+                            : hasValidPendingSelectedModel
+                              ? pendingSelectedModel!
+                              : selectedComposerModelType
                           const effectiveCodexReasoning =
                             ensembleResolved?.provider === 'codex'
                               ? ensembleResolved.reasoningEffort
-                              : codexReasoningEffort
+                              : typeof soloPendingProviderMetadata?.codexReasoningEffort ===
+                                    'string'
+                                ? soloPendingProviderMetadata.codexReasoningEffort
+                                : codexReasoningEffort
                           const effectiveClaudeReasoning =
                             ensembleResolved?.provider === 'claude'
                               ? ensembleResolved.reasoningEffort
-                              : claudeReasoningEffort
+                              : typeof soloPendingProviderMetadata?.claudeReasoningEffort ===
+                                    'string'
+                                ? soloPendingProviderMetadata.claudeReasoningEffort
+                                : claudeReasoningEffort
                           const effectiveKimiThinking =
                             ensembleResolved?.provider === 'kimi'
                               ? ensembleResolved.thinkingEnabled
-                              : kimiThinkingEnabled
+                              : typeof soloPendingProviderMetadata?.kimiThinkingEnabled ===
+                                    'boolean'
+                                ? soloPendingProviderMetadata.kimiThinkingEnabled
+                                : kimiThinkingEnabled
                           const effectiveCodexServiceTier =
                             ensembleResolved?.provider === 'codex'
                               ? ensembleResolved.serviceTier
-                              : codexServiceTier
+                              : typeof soloPendingProviderMetadata?.codexServiceTier === 'string'
+                                ? soloPendingProviderMetadata.codexServiceTier
+                                : codexServiceTier
                           const effectiveClaudeFastMode =
                             ensembleResolved?.provider === 'claude'
                               ? ensembleResolved.fastModeEnabled
-                              : claudeFastMode
+                              : typeof soloPendingProviderMetadata?.claudeFastMode === 'boolean'
+                                ? soloPendingProviderMetadata.claudeFastMode
+                                : claudeFastMode
+                          const shouldUpdateLiveComposerState =
+                            !ensembleBinding &&
+                            (!soloPendingProviderChange ||
+                              soloPendingProviderChange.provider === currentProvider)
                           const shouldAppendCustomModelOption =
                             effectiveProvider !== 'kimi' &&
                             !effectiveModelOptionsRaw.some((model) => model.id === 'custom')
@@ -3297,28 +3353,34 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               updateSelectedParticipant(patch)
                               return
                             }
-                            if (nextModel !== 'custom') {
+                            if (shouldUpdateLiveComposerState && nextModel !== 'custom') {
                               setLastNonCustomModelType(nextModel)
                             }
-                            setSelectedModelType(nextModel)
+                            if (shouldUpdateLiveComposerState) {
+                              setSelectedModelType(nextModel)
+                            }
                             const metadataPatch: Record<string, unknown> = {
                               selectedModelType: nextModel
                             }
-                            if (currentProvider === 'codex') {
+                            if (effectiveProvider === 'codex') {
                               const modelOption = codexModels.find(
                                 (model) => model.id === nextModel
                               )
                               if (modelOption?.defaultReasoningEffort) {
-                                setCodexReasoningEffort(modelOption.defaultReasoningEffort)
+                                if (shouldUpdateLiveComposerState) {
+                                  setCodexReasoningEffort(modelOption.defaultReasoningEffort)
+                                }
                                 metadataPatch.codexReasoningEffort =
                                   modelOption.defaultReasoningEffort
                               }
                               if (!modelOption?.additionalSpeedTiers?.includes('fast')) {
-                                setCodexServiceTier('')
+                                if (shouldUpdateLiveComposerState) {
+                                  setCodexServiceTier('')
+                                }
                                 metadataPatch.codexServiceTier = ''
                               }
                             }
-                            if (currentProvider === 'claude') {
+                            if (effectiveProvider === 'claude') {
                               // Symmetric to Codex above: clear Fast when
                               // switching to a non-capable Claude model so
                               // the persisted flag doesn't outlive its
@@ -3328,14 +3390,18 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               ).find((model) => model.id === nextModel)
                               const nextReasoning =
                                 resolveClaudeDefaultReasoningEffort(claudeModelOption)
-                              setClaudeReasoningEffort(nextReasoning)
+                              if (shouldUpdateLiveComposerState) {
+                                setClaudeReasoningEffort(nextReasoning)
+                              }
                               metadataPatch.claudeReasoningEffort = nextReasoning
                               if (!claudeModelOption?.additionalSpeedTiers?.includes('fast')) {
-                                setClaudeFastMode(false)
+                                if (shouldUpdateLiveComposerState) {
+                                  setClaudeFastMode(false)
+                                }
                                 metadataPatch.claudeFastMode = false
                               }
                             }
-                            if (currentProvider === 'gemini') {
+                            if (effectiveProvider === 'gemini' && shouldUpdateLiveComposerState) {
                               syncPersistentModelSelection(nextModel)
                             }
                             rememberCurrentChatComposerSelection(metadataPatch)
@@ -3396,7 +3462,9 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                     })
                                     return
                                   }
-                                  setCodexServiceTier(nextTier)
+                                  if (shouldUpdateLiveComposerState) {
+                                    setCodexServiceTier(nextTier)
+                                  }
                                   rememberCurrentChatComposerSelection({
                                     codexServiceTier: nextTier
                                   })
@@ -3408,7 +3476,9 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                       updateSelectedParticipant({ fastModeEnabled: nextFast })
                                       return
                                     }
-                                    setClaudeFastMode(nextFast)
+                                    if (shouldUpdateLiveComposerState) {
+                                      setClaudeFastMode(nextFast)
+                                    }
                                     rememberCurrentChatComposerSelection({
                                       claudeFastMode: nextFast
                                     })
@@ -3436,19 +3506,25 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               }
                               return
                             }
-                            if (currentProvider === 'codex') {
-                              setCodexReasoningEffort(value)
+                            if (effectiveProvider === 'codex') {
+                              if (shouldUpdateLiveComposerState) {
+                                setCodexReasoningEffort(value)
+                              }
                               rememberCurrentChatComposerSelection({
                                 codexReasoningEffort: value
                               })
-                            } else if (currentProvider === 'claude') {
-                              setClaudeReasoningEffort(value)
+                            } else if (effectiveProvider === 'claude') {
+                              if (shouldUpdateLiveComposerState) {
+                                setClaudeReasoningEffort(value)
+                              }
                               rememberCurrentChatComposerSelection({
                                 claudeReasoningEffort: value
                               })
-                            } else if (currentProvider === 'kimi') {
+                            } else if (effectiveProvider === 'kimi') {
                               const enabled = value !== 'off'
-                              setKimiThinkingEnabled(enabled)
+                              if (shouldUpdateLiveComposerState) {
+                                setKimiThinkingEnabled(enabled)
+                              }
                               rememberCurrentChatComposerSelection({
                                 kimiThinkingEnabled: enabled
                               })
@@ -3484,9 +3560,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                 fastModeCapableModelIds={fastModeCapableModelIds}
                                 fastModeEnabled={fastModeEnabledForProvider}
                                 onToggleFastMode={handleToggleFastMode}
-                                disabled={
-                                  isCurrentComposerLocked
-                                }
+                                disabled={false}
                               />
                               {!ensembleBinding &&
                                 selectedModelType === 'custom' &&

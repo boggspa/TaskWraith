@@ -360,6 +360,10 @@ struct Composer: View {
     private var composerControlsRow: some View {
         HStack(spacing: 8) {
             modelPickerControl
+            // Slice B: reflect a Mac-queued mid-run provider switch (idle
+            // switches apply immediately, so they never linger here). Shown in
+            // both compact + expanded states — a pending switch is rare + salient.
+            pendingProviderPill
             // Compact idle bar: only the model pill shows. The approval
             // control appears once the composer is focused/expanded.
             if isExpanded {
@@ -384,6 +388,25 @@ struct Composer: View {
         // CS12: two-rect shells (obsidian/alabaster) give the control row its OWN
         // lit rect; bare-footer shells (claude/gemini/cursor) leave it transparent.
         .composerShellIf(shell.layout.splitChromeRects, shell)
+    }
+
+    @ViewBuilder
+    private var pendingProviderPill: some View {
+        if let pending = card.pendingProviderChange, let prov = pending.provider {
+            HStack(spacing: 3) {
+                Image(systemName: "clock.arrow.circlepath")
+                    .font(.system(size: 9, weight: .semibold))
+                Text("→ \(TWTheme.providerLabel(prov)) at turn end")
+                    .font(.caption2.weight(.medium))
+                    .lineLimit(1)
+            }
+            .foregroundStyle(TWTheme.textSecondary)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(TWTheme.surface3, in: Capsule())
+            .accessibilityLabel(
+                "Provider switching to \(TWTheme.providerLabel(prov)) at turn end")
+        }
     }
 
     @ViewBuilder

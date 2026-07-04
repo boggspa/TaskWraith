@@ -556,6 +556,7 @@ import {
   UserMcpServerConfig
 } from './store/types'
 import type { AgentRunPayload, AgentRunRoute } from './run/AgentRunTypes'
+import { applyPendingProviderChangeOnFinalize } from './providerChangeQueue'
 import {
   DEFAULT_WINDOW_HEIGHT,
   DEFAULT_WINDOW_WIDTH,
@@ -6399,7 +6400,15 @@ function flushBridgeRunTranscript(runId: string, final = false): void {
     runs,
     updatedAt: Date.now()
   }
-  const saved = saveAndBroadcastChat(updated)
+  // Slice B (provider unlock, Q2): a provider/model/reasoning switch queued
+  // during this bridge/iOS-origin turn applies NOW, at the terminal turn
+  // boundary — before the next send can seed a session under the old provider.
+  // On a genuine provider switch this also clears the linkedProviderSessionId
+  // just written above (the old provider's session must not carry over); a
+  // same-provider model/reasoning tweak keeps the live session. Desktop-origin
+  // runs finalize in the renderer, which applies the same helper there.
+  const finalizedChat = final ? applyPendingProviderChangeOnFinalize(updated) : updated
+  const saved = saveAndBroadcastChat(finalizedChat)
   if (final) {
     // The 1s broadcast throttle has NO trailing retry — during a busy run
     // the FINAL snapshot (the one flipping status running→terminal) often

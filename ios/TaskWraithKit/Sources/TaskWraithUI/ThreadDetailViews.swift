@@ -370,11 +370,15 @@ struct ThreadDetailView: View {
     private var threadAgentIdentity: ThreadAgentIdentity? {
         ThreadAgentIdentity(card: card)
     }
-    private var allowsFirstTurnProviderChange: Bool {
+    /// Slice B: provider is switchable on any non-ensemble chat while idle,
+    /// regardless of history (was first-turn-only: empty snapshot). A running
+    /// chat still defers — iOS doesn't queue the switch itself; the host owns
+    /// the queue-at-turn-end path and projects it back as
+    /// `card.pendingProviderChange`, which the composer reflects. Ensemble seats
+    /// keep their own seat-lock path (guarded out here).
+    private var allowsIdleProviderChange: Bool {
         guard card?.isEnsemble != true, !isRunning else { return false }
-        guard let snapshot else { return false }
-        let rows = snapshot.rows ?? []
-        return rows.isEmpty && (snapshot.totalRows ?? 0) == 0
+        return true
     }
     private var showsEmptyWelcomeCanvas: Bool {
         guard card != nil, !isRunning else { return false }
@@ -1564,7 +1568,7 @@ struct ThreadDetailView: View {
                                 // focused (rail present) → flatten to fuse the rail.
                                 attachedBottom: composerFocused,
                                 extraWorkspaceIds: extraWorkspaceIdsForSend(card: card),
-                                allowsProviderChange: allowsFirstTurnProviderChange,
+                                allowsProviderChange: allowsIdleProviderChange,
                                 onFocusChange: { focused in
                                     // Drive the focus-gated row transitions with a
                                     // damped spring (flat fade under Reduce Motion).
