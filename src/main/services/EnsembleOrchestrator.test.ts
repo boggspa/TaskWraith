@@ -10147,7 +10147,7 @@ describe('shell stamp persistence requires a successful dispatch', () => {
 })
 
 describe('post-round host seat auto-compaction (maybeAutoCompactSeatsAfterRound)', () => {
-  // A cursor/kimi seat run whose sealed stats produce a deterministic context
+  // A cursor/kimi/grok seat run whose sealed stats produce a deterministic context
   // percent: `totalTokenLimit` wins in resolveContextWindow, so window == limit.
   function seatRun(
     participantId: string,
@@ -10185,15 +10185,24 @@ describe('post-round host seat auto-compaction (maybeAutoCompactSeatsAfterRound)
     runs: ChatRun[]
     hostAutoCompactEnabled?: boolean
     startClock?: number
+    onCompactSeatContext?: (input: {
+      chatId: string
+      participantId: string
+      provider: 'cursor' | 'kimi' | 'grok'
+      trigger: 'auto'
+    }) => Promise<void> | void
   }) {
     let clock = opts.startClock ?? 1_000
     const compactSeatContext = vi.fn(
       async (_input: {
         chatId: string
         participantId: string
-        provider: 'cursor' | 'kimi'
+        provider: 'cursor' | 'kimi' | 'grok'
         trigger: 'auto'
-      }): Promise<{ ok: boolean; error?: string }> => ({ ok: true })
+      }): Promise<{ ok: boolean; error?: string }> => {
+        await opts.onCompactSeatContext?.(_input)
+        return { ok: true }
+      }
     )
     const chat: ChatRecord = {
       ...makeChat(),
@@ -10223,7 +10232,16 @@ describe('post-round host seat auto-compaction (maybeAutoCompactSeatsAfterRound)
       ).maybeAutoCompactSeatsAfterRound('ensemble-chat', status)
       vi.advanceTimersByTime(250)
     }
-    return { compactSeatContext, fire, setClock: (v: number) => (clock = v) }
+    const beforeDispatch = (participant: EnsembleParticipant): Promise<void> =>
+      (
+        orchestrator as unknown as {
+          awaitSeatCompactionBeforeDispatch: (
+            chatId: string,
+            participant: EnsembleParticipant
+          ) => Promise<void>
+        }
+      ).awaitSeatCompactionBeforeDispatch('ensemble-chat', participant)
+    return { chat, compactSeatContext, fire, setClock: (v: number) => (clock = v), beforeDispatch }
   }
 
   beforeEach(() => vi.useFakeTimers())
@@ -10308,7 +10326,7 @@ describe('post-round host seat auto-compaction (maybeAutoCompactSeatsAfterRound)
     expect(h.compactSeatContext).toHaveBeenCalledTimes(2)
   })
 
-  it('skips a cursor seat with no provider session but allows a kimi seat without one', () => {
+  it('skips a cursor seat with no provider session but allows kimi/grok seats without one', () => {
     const cursorOnly = harness({
       participants: [participant({ id: 'cursor', provider: 'cursor' })], // no session
       runs: [seatRun('cursor', 'cursor', 195_000, 200_000)]
@@ -10322,14 +10340,55 @@ describe('post-round host seat auto-compaction (maybeAutoCompactSeatsAfterRound)
     })
     kimiOnly.fire('completed')
     expect(kimiOnly.compactSeatContext).toHaveBeenCalledTimes(1)
+
+    const grokOnly = harness({
+      participants: [participant({ id: 'grok', provider: 'grok' })], // material is in-prompt
+      runs: [seatRun('grok', 'grok', 250_000, 256_000)]
+    })
+    grokOnly.fire('completed')
+    expect(grokOnly.compactSeatContext).toHaveBeenCalledTimes(1)
   })
 
-  it('never auto-compacts a grok seat (its live-session growth is invisible to the meter)', () => {
+  it('auto-compacts a grok seat over the threshold', () => {
     const h = harness({
       participants: [participant({ id: 'grok', provider: 'grok', linkedProviderSessionId: 's' })],
-      runs: [seatRun('grok', 'grok', 250_000, 256_000)] // 97% by the meter, still excluded
+      runs: [seatRun('grok', 'grok', 250_000, 256_000)] // ~97.6%
     })
     h.fire('completed')
-    expect(h.compactSeatContext).not.toHaveBeenCalled()
+    expect(h.compactSeatContext).toHaveBeenCalledWith({
+      chatId: 'ensemble-chat',
+      participantId: 'grok',
+      provider: 'grok',
+      trigger: 'auto'
+    })
+  })
+
+  it('auto-compacts an over-threshold host seat before dispatch', async () => {
+    const h = harness({
+      participants: [participant({ id: 'grok', provider: 'grok' })],
+      runs: [seatRun('grok', 'grok', 250_000, 256_000)]
+    })
+    await h.beforeDispatch(h.chat.ensemble!.participants[0])
+    expect(h.compactSeatContext).toHaveBeenCalledTimes(1)
+    expect(h.compactSeatContext).toHaveBeenCalledWith({
+      chatId: 'ensemble-chat',
+      participantId: 'grok',
+      provider: 'grok',
+      trigger: 'auto'
+    })
+  })
+
+  it('honors the cooldown for pre-dispatch auto-compaction', async () => {
+    const h = harness({
+      participants: [participant({ id: 'kimi', provider: 'kimi' })],
+      runs: [seatRun('kimi', 'kimi', 250_000, 256_000)],
+      startClock: 10_000
+    })
+    await h.beforeDispatch(h.chat.ensemble!.participants[0])
+    expect(h.compactSeatContext).toHaveBeenCalledTimes(1)
+
+    h.setClock(10_000 + CONTEXT_AUTO_COMPACT_COOLDOWN_MS - 1)
+    await h.beforeDispatch(h.chat.ensemble!.participants[0])
+    expect(h.compactSeatContext).toHaveBeenCalledTimes(1)
   })
 })

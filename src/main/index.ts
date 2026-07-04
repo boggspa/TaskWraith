@@ -15186,7 +15186,7 @@ async function compactProviderContextForRequest(payload: {
     if (!chat?.ensemble) {
       return { ok: false, error: 'Participant compaction requires an ensemble chat.' }
     }
-    if (isEnsembleRoundDispatchLive(chat.ensemble.activeRound)) {
+    if (payload.trigger !== 'auto' && isEnsembleRoundDispatchLive(chat.ensemble.activeRound)) {
       return {
         ok: false,
         error: 'A round is live — wait for the panel to finish before compacting a seat.'

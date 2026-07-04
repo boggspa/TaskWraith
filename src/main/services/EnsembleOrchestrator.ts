@@ -142,6 +142,10 @@ export type EnsembleQueuedSteerResult = {
 const BOSSMAN_ASSIGNABLE_PERMISSION_PRESET_SET = new Set<string>(ASSIGNABLE_PERMISSION_PRESETS)
 const ENSEMBLE_SEAT_STAGE_ROLES = new Set<string>(['scout', 'worker', 'reviewer'])
 const SESSION_ACTIVITY_LEDGER_LIMIT = 40
+type HostSeatCompactionProvider = 'cursor' | 'kimi' | 'grok'
+function isHostSeatCompactionProvider(provider: ProviderId): provider is HostSeatCompactionProvider {
+  return provider === 'cursor' || provider === 'kimi' || provider === 'grok'
+}
 const CONTINUATION_BLOCKED_PARTICIPANT_STATUSES = new Set<EnsembleParticipantStatus>([
   'answered',
   'yielded',
@@ -256,7 +260,7 @@ export interface EnsembleOrchestratorDeps {
    */
   probeParticipant?: (participant: EnsembleParticipant) => Promise<ParticipantProbeResult>
   /**
-   * Wave 3 seat compaction — host maintenance-lane compaction for cursor/kimi
+   * Wave 3 seat compaction — host maintenance-lane compaction for cursor/kimi/grok
    * seats. `awaitPendingSeatCompaction` returns the in-flight compaction
    * promise for a seat (if any); every participant dispatch awaits it so a
    * round started mid-compaction can't race the seat's session reset.
@@ -267,7 +271,7 @@ export interface EnsembleOrchestratorDeps {
   compactSeatContext?: (input: {
     chatId: string
     participantId: string
-    provider: 'cursor' | 'kimi'
+    provider: HostSeatCompactionProvider
     trigger: 'auto'
   }) => Promise<{ ok: boolean; error?: string }>
   getProviderUsageSnapshot?: (
@@ -8801,8 +8805,57 @@ export class EnsembleOrchestrator {
     participant: EnsembleParticipant
   ): Promise<void> {
     const pending = this.deps.awaitPendingSeatCompaction?.(participant.id)
-    if (!pending) return
-    await Promise.resolve(pending).catch(() => {})
+    if (pending) {
+      await Promise.resolve(pending).catch(() => {})
+      const refreshed = this.deps
+        .getChat(chatId)
+        ?.ensemble?.participants?.find((candidate) => candidate.id === participant.id)
+      if (refreshed) {
+        participant.linkedProviderSessionId = refreshed.linkedProviderSessionId
+        participant.contextCompactionSummary = refreshed.contextCompactionSummary
+      }
+    }
+    await this.maybeAutoCompactSeatBeforeDispatch(chatId, participant)
+  }
+
+  private async maybeAutoCompactSeatBeforeDispatch(
+    chatId: string,
+    participant: EnsembleParticipant
+  ): Promise<void> {
+    const compactSeatContext = this.deps.compactSeatContext
+    if (!compactSeatContext) return
+    if (this.deps.getSettings().hostAutoCompactEnabled === false) return
+    if (!isHostSeatCompactionProvider(participant.provider)) return
+    if (participant.enabled === false) return
+    if (participant.provider === 'cursor' && !participant.linkedProviderSessionId) return
+    const lastAttempt = this.seatAutoCompactLastAttemptAt.get(participant.id)
+    if (
+      lastAttempt !== undefined &&
+      this.deps.now() - lastAttempt < CONTEXT_AUTO_COMPACT_COOLDOWN_MS
+    ) {
+      return
+    }
+    const chat = this.deps.getChat(chatId)
+    if (!chat?.ensemble) return
+    const usage = latestRunContextUsage(chat.runs ?? [], participant.id)
+    const windowTokens = resolveContextWindow(
+      participant.provider,
+      participant.model,
+      usage.totalTokenLimit
+    )
+    const percent = contextPercent(usage.tokens, windowTokens)
+    if (percent < CONTEXT_AUTO_COMPACT_PERCENT) return
+    this.seatAutoCompactLastAttemptAt.set(participant.id, this.deps.now())
+    try {
+      await compactSeatContext({
+        chatId,
+        participantId: participant.id,
+        provider: participant.provider,
+        trigger: 'auto'
+      })
+    } catch {
+      return
+    }
     const refreshed = this.deps
       .getChat(chatId)
       ?.ensemble?.participants?.find((candidate) => candidate.id === participant.id)
@@ -8813,7 +8866,7 @@ export class EnsembleOrchestrator {
   }
 
   /**
-   * Wave 3 — post-round host auto-compaction for cursor/kimi seats (the
+   * Wave 3 — post-round host auto-compaction for cursor/kimi/grok seats (the
    * providers with no native lever). Runs in the idle dead-time after a
    * COMPLETED round: deferred a tick so a chained queued round is visible,
    * then compacts only the single WORST seat at/over the shared 90%
@@ -8839,7 +8892,7 @@ export class EnsembleOrchestrator {
         let worst: { participant: EnsembleParticipant; percent: number } | null = null
         for (const participant of chat.ensemble.participants || []) {
           if (participant.enabled === false) continue
-          if (participant.provider !== 'cursor' && participant.provider !== 'kimi') continue
+          if (!isHostSeatCompactionProvider(participant.provider)) continue
           if (participant.provider === 'cursor' && !participant.linkedProviderSessionId) continue
           // Cooldown applies only to a seat we've ALREADY attempted — a
           // genuinely-new seat (no recorded attempt) is never held back. Using
@@ -8867,7 +8920,7 @@ export class EnsembleOrchestrator {
         void compactSeatContext({
           chatId,
           participantId: worst.participant.id,
-          provider: worst.participant.provider as 'cursor' | 'kimi',
+          provider: worst.participant.provider as HostSeatCompactionProvider,
           trigger: 'auto'
         }).catch(() => {
           // Best-effort: the lane cards its own failures; cooldown holds.
