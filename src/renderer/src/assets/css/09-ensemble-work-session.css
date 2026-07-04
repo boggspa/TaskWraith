@@ -100,7 +100,12 @@
   -webkit-appearance: none;
   height: 22px;
   margin: 0;
-  background: transparent;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  outline: none;
+  background: transparent !important;
+  box-shadow: none;
   cursor: pointer;
   color: var(--text-primary);
 }
