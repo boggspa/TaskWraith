@@ -242,6 +242,21 @@ describe('IpcValidation', () => {
     expect(() => validateIpcArgs('compose-run', ['just a string'])).toThrow()
   })
 
+  it('accepts post-blackboard-entry payloads', () => {
+    expect(() =>
+      validateIpcArgs('post-blackboard-entry', [
+        {
+          chatId: 'chat-1',
+          value: 'Keep the synthesis concise.',
+          key: 'synthesis-style',
+          category: 'decision',
+          scope: 'session'
+        }
+      ])
+    ).not.toThrow()
+    expect(() => validateIpcArgs('post-blackboard-entry', ['just a string'])).toThrow(/object/)
+  })
+
   // Regression test for the bug reported 2026-05-28 (1.0.6-EW69): the
   // composer workspace-manager add flows (proactive folder grant +
   // attach-known-workspace-as-secondary) go through

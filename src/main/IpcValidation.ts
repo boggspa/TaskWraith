@@ -72,6 +72,7 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'create-chat': ['string', 'workspacePath'],
   'create-global-chat': [],
   'create-ensemble-chat': ['optionalObject'],
+  'post-blackboard-entry': ['object'],
   'run-ensemble-round': ['object'],
   'steer-queued-ensemble-prompt': ['object'],
   'remove-queued-ensemble-prompt': ['object'],
