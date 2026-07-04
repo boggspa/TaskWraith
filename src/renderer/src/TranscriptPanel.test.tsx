@@ -320,6 +320,44 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
     expect(html).toContain('Actions for fan-out result')
   })
 
+  it('ignores legacy completion-claim support metadata in the transcript', () => {
+    const html = renderToStaticMarkup(
+      <TranscriptPanel
+        {...makeProps({
+          virtualize: false,
+          messages: [
+            {
+              id: 'assistant-legacy-claim',
+              role: 'assistant',
+              content: 'Done. Work is complete.',
+              timestamp: '2026-07-04T18:56:00.000Z',
+              runId: 'run-legacy-claim',
+              metadata: {
+                completionClaimSupport: {
+                  status: 'unsupported',
+                  hasCompletionLanguage: true,
+                  completionPhrases: ['done', 'complete'],
+                  evidencePackIds: [],
+                  supportingEvidenceRefs: [],
+                  message:
+                    'Completion-style language is unsupported because no evidence-backed completion claim was found.',
+                  recommendedCaveat:
+                    'Avoid done/implemented/ready wording until an Evidence Pack includes supported claims or verified cells.',
+                  assessedAt: '2026-07-04T18:56:30.000Z'
+                }
+              }
+            } as ChatMessage
+          ]
+        })}
+      />
+    )
+
+    expect(html).toContain('Done. Work is complete.')
+    expect(html).not.toContain('completion-claim-card')
+    expect(html).not.toContain('Unsupported completion claim')
+    expect(html).not.toContain('Avoid done/implemented/ready wording')
+  })
+
   it('renders a user-message gutter from the full display row set', () => {
     const html = renderToStaticMarkup(
       <TranscriptPanel {...makeProps({ virtualize: true, autoFollowRef: { current: false } })} />
