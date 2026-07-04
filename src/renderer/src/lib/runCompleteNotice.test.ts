@@ -38,14 +38,4 @@ describe('deriveVisibleRunCompleteNotice', () => {
       })
     ).toBeNull()
   })
-
-  it('keeps guest-participant running suppression intact', () => {
-    expect(
-      deriveVisibleRunCompleteNotice({
-        notice,
-        isChatRunning: false,
-        isGuestParticipantRunning: true
-      })
-    ).toBeNull()
-  })
 })

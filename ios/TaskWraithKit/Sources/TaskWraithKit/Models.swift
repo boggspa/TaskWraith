@@ -1800,35 +1800,6 @@ public enum BridgeAction {
         ])
     }
 
-    public static func setGuestParticipant(
-        workspaceId: String, threadId: String, provider: String, model: String?,
-        reasoningEffort: String? = nil, actionId: String = UUID().uuidString
-    ) -> [String: Any] {
-        var payload: [String: Any] = [
-            "kind": "setGuestParticipant", "actionId": actionId,
-            "workspaceId": workspaceId, "threadId": threadId, "provider": provider,
-        ]
-        if let model, !model.isEmpty { payload["model"] = model }
-        if let reasoningEffort, !reasoningEffort.isEmpty {
-            if provider.lowercased() == "claude" {
-                payload["claudeReasoningEffort"] = reasoningEffort
-            } else {
-                payload["codexReasoningEffort"] = reasoningEffort
-            }
-        }
-        return encode(payload)
-    }
-
-    public static func removeGuestParticipant(
-        workspaceId: String, threadId: String,
-        actionId: String = UUID().uuidString
-    ) -> [String: Any] {
-        encode([
-            "kind": "removeGuestParticipant", "actionId": actionId,
-            "workspaceId": workspaceId, "threadId": threadId,
-        ])
-    }
-
     public static func createSideChat(
         workspaceId: String, threadId: String, provider: String?, model: String? = nil,
         reasoningEffort: String? = nil,

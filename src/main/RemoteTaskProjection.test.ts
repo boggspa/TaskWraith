@@ -574,9 +574,9 @@ describe('RemoteTaskProjection', () => {
   })
 
   it('projects the closed lifecycle of a removed guest so the phone can drop its chip', () => {
-    // removeGuestParticipant marks the guest child `closed` (it is not deleted),
-    // so the card MUST carry the lifecycle for the phone's active-guest detector
-    // to filter it out — otherwise the composer guest chip lingers after removal.
+    // Historical guest side chats persist with lifecycleState `closed` (the live
+    // guest feature was removed; existing rows are kept render-safe). The card MUST
+    // still carry that lifecycle so the phone classifies it as inert history.
     const closedGuest = buildRemoteTaskCard(
       chat({
         appChatId: 'guest-closed',
@@ -874,25 +874,6 @@ describe('RemoteTaskProjection', () => {
     expect(card.status).toBe('success')
   })
 
-  it('does not gate a guest chat — it has no ensemble round, so its own run drives status', () => {
-    const card = buildRemoteTaskCard(
-      chat({
-        provider: 'claude',
-        guestParticipant: {
-          childChatId: 'guest-child-1',
-          provider: 'gemini',
-          selectedModelType: 'default',
-          customModel: '',
-          createdAt: NOW,
-          updatedAt: NOW,
-          persistent: true
-        },
-        runs: [run({ runId: 'guest-host-run', status: 'success' })]
-      })
-    )
-    expect(card.status).toBe('success')
-  })
-
   it('derives per-lane todo plans from the activity stream (ensemble PlanRail)', () => {
     const card = buildRemoteTaskCard(
       chat({
@@ -1130,40 +1111,8 @@ describe('canvasPreviews (P3 read-only Canvas projection)', () => {
   })
 })
 
-describe('buildRemoteEnsembleState — single-provider + guest', () => {
-  const guestChat = (): ChatRecord =>
-    chat({
-      appChatId: 'parent-1',
-      provider: 'claude',
-      guestParticipant: {
-        childChatId: 'guest-child-1',
-        provider: 'gemini',
-        selectedModelType: 'default',
-        customModel: '',
-        createdAt: NOW,
-        updatedAt: NOW,
-        persistent: true
-      }
-    })
-
-  it('synthesizes a minimal host + guest participant list for a guest chat', () => {
-    const state = buildRemoteEnsembleState(guestChat())
-    expect(state?.participants.map((p) => [p.provider, p.role])).toEqual([
-      ['claude', 'Parent'],
-      ['gemini', 'Guest']
-    ])
-    expect(state?.participantCount).toBe(2)
-  })
-
-  it('omits the ensemble-only fields so iOS ensemble chrome stays dormant', () => {
-    const state = buildRemoteEnsembleState(guestChat())
-    expect(state?.status).toBe('idle')
-    expect(state?.roundId).toBeUndefined()
-    expect(state?.activeParticipantId).toBeUndefined()
-    expect(state?.roster).toBeUndefined()
-  })
-
-  it('returns undefined for a plain single chat (no ensemble, no guest)', () => {
+describe('buildRemoteEnsembleState — non-ensemble chats', () => {
+  it('returns undefined for a non-ensemble chat', () => {
     expect(buildRemoteEnsembleState(chat({ provider: 'claude' }))).toBeUndefined()
   })
 })

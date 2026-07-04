@@ -10,7 +10,6 @@ import {
   ProviderId
 } from '../../../main/store/types'
 import type { CodexModelOption } from '../lib/providerModelDefaults'
-import { isRetiredProvider } from '../../../shared/retiredProviders'
 import { resolveWorkspaceDisplayName } from '../../../shared/workspaceDisplayName'
 import type { HumanCollaborationShare } from '../../../main/collaboration/HumanCollaborationStore'
 import type {
@@ -91,7 +90,6 @@ import {
 } from '../lib/imageAttachments'
 import { ComposerImageThumb } from './ComposerImageThumb'
 import { ComposerEnsembleToggleButton } from './ComposerEnsembleToggleButton'
-import { CommittedDraftField } from './CommittedDraftField'
 import { ComposerPlanImportCard } from './ComposerPlanImportCard'
 import { ComposerPlanPopoverButton } from './ComposerPlanPopoverButton'
 import { shouldOfferPlanImport } from '../lib/planImport'
@@ -191,7 +189,6 @@ export interface ComposerProps {
   currentGoalButtonTitle: any
   currentGoalModeLabel: any
   currentGoalStatus: any
-  currentGuestParticipant: any
   humanCollaborationInviteActive?: boolean
   humanCollaborationShare?: HumanCollaborationShare | null
   humanCollaborationInviteHealth?: HumanCollaborationInviteHealth | null
@@ -227,7 +224,6 @@ export interface ComposerProps {
   geminiTrustWriteError: any
   geminiWorkspaceTrustReady: any
   getCreatePrState: any
-  getDefaultModelForProvider: any
   getProviderModelOptions: any
   goalButtonRef: any
   goalControlDisabledReason?: string
@@ -237,16 +233,6 @@ export interface ComposerProps {
   goalPopoverPosition: any
   goalPopoverRef: any
   grokProviderAvailable: any
-  guestClaudeReasoning: any
-  guestCodexReasoning: any
-  guestComposerModelOptions: any
-  guestComposerProvider: any
-  guestComposerReasoningOptions: any
-  guestComposerSelectedModel: any
-  guestComposerSelectedReasoning: any
-  guestFastModeCapableModelIds: any
-  guestFastModeEnabled: any
-  guestKimiThinking: any
   handleAddKnownWorkspaceAsSecondary: any
   handleAddWorkspaceFolder: any
   handleAgentApprovalAction: any
@@ -260,10 +246,6 @@ export interface ComposerProps {
   handleDetachWindow: any
   handleEditQueuedMessage: any
   handleGroundImportedPlanFiles: any
-  handleGuestModelChange: any
-  handleGuestProviderChange: any
-  handleGuestReasoningChange: any
-  handleGuestToggleFastMode: any
   handleNewGlobalChat: any
   handlePaletteCommand: any
   handlePermissionRetry: any
@@ -271,7 +253,6 @@ export interface ComposerProps {
   handleProviderChange: any
   handleRemoveExternalPathGrant: any
   handleRemoveExternalPathGrantsByPath: any
-  handleRemoveGuestParticipant: any
   handleRemoveImageAttachment: any
   handleReorderExternalPathGrants: any
   handleReorderQueuedMessages: any
@@ -304,7 +285,6 @@ export interface ComposerProps {
   isCurrentEnsembleChat: any
   isCurrentEnsembleRoundRunning: any
   isCurrentGlobalChat: any
-  isCurrentGuestParticipantRunning: any
   isEnsembleModeEnabled: any
   isPreparingDiffReview: any
   isSteerBusyForCurrentChat: any
@@ -382,7 +362,6 @@ export interface ComposerProps {
   setGoalEditing: any
   setGoalFromObjective: any
   setGoalPopoverOpen: any
-  setGuestParticipantForCurrentChat: any
   setIntentNote: any
   setKimiThinkingEnabled: any
   setLastNonCustomModelType: any
@@ -491,7 +470,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     currentGoalButtonTitle,
     currentGoalModeLabel,
     currentGoalStatus,
-    currentGuestParticipant,
     humanCollaborationInviteActive,
     humanCollaborationShare,
     humanCollaborationInviteHealth,
@@ -527,7 +505,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     geminiTrustWriteError,
     geminiWorkspaceTrustReady,
     getCreatePrState,
-    getDefaultModelForProvider,
     getProviderModelOptions,
     goalButtonRef,
     goalControlDisabledReason,
@@ -537,16 +514,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     goalPopoverPosition,
     goalPopoverRef,
     grokProviderAvailable,
-    guestClaudeReasoning,
-    guestCodexReasoning,
-    guestComposerModelOptions,
-    guestComposerProvider,
-    guestComposerReasoningOptions,
-    guestComposerSelectedModel,
-    guestComposerSelectedReasoning,
-    guestFastModeCapableModelIds,
-    guestFastModeEnabled,
-    guestKimiThinking,
     handleAddKnownWorkspaceAsSecondary,
     handleAddWorkspaceFolder,
     handleAgentApprovalAction,
@@ -560,10 +527,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     handleDetachWindow,
     handleEditQueuedMessage,
     handleGroundImportedPlanFiles,
-    handleGuestModelChange,
-    handleGuestProviderChange,
-    handleGuestReasoningChange,
-    handleGuestToggleFastMode,
     handleNewGlobalChat,
     handlePaletteCommand,
     handlePermissionRetry,
@@ -571,7 +534,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     handleProviderChange,
     handleRemoveExternalPathGrant,
     handleRemoveExternalPathGrantsByPath,
-    handleRemoveGuestParticipant,
     handleRemoveImageAttachment,
     handleReorderExternalPathGrants,
     handleReorderQueuedMessages,
@@ -603,7 +565,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     isCurrentEnsembleChat,
     isCurrentEnsembleRoundRunning,
     isCurrentGlobalChat,
-    isCurrentGuestParticipantRunning,
     isEnsembleModeEnabled,
     isPreparingDiffReview,
     isSteerBusyForCurrentChat,
@@ -674,7 +635,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     setGoalEditing,
     setGoalFromObjective,
     setGoalPopoverOpen,
-    setGuestParticipantForCurrentChat,
     setIntentNote,
     setKimiThinkingEnabled,
     setLastNonCustomModelType,
@@ -2539,9 +2499,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                         // `@Worker` works the same as a picker click.
                         return `@${mention.name} `
                       }
-                      if (mention.kind === 'guest-participant') {
-                        return `@${mention.name} `
-                      }
                       return formatComposerPathMention(mention.path || mention.name)
                     })()
                     const next = `${before}${insertion}${afterQuery}`
@@ -2953,15 +2910,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                       <div className="composer-inline-pickers-left">
                         {(() => {
                           const workspaceActionDisabled = !currentWorkspace || !currentChat
-                          const guestProviderOptions: ProviderId[] = ([
-                            'gemini',
-                            'codex',
-                            'claude',
-                            'kimi',
-                            ...(grokProviderAvailable ? (['grok'] as ProviderId[]) : []),
-                            ...(cursorProviderAvailable ? (['cursor'] as ProviderId[]) : []),
-                            'ollama'
-                          ] as ProviderId[]).filter((id) => !isRetiredProvider(id))
                           const plusSections: ComposerPlusPickerSection[] = [
                             {
                               id: 'add',
@@ -3005,37 +2953,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                 }
                               ]
                             },
-                            ...(!isCurrentEnsembleChat && currentChat
-                              ? [
-                                  {
-                                    id: 'guest',
-                                    title: 'Guest',
-                                    items: guestProviderOptions.map((provider) => ({
-                                      id: `guest-${provider}`,
-                                      label: getProviderLabel(provider),
-                                      description: currentGuestParticipant
-                                        ? provider === guestComposerProvider
-                                          ? 'Current guest participant'
-                                          : 'Switch guest participant'
-                                        : 'Add guest participant',
-                                      icon: <ProviderBadgeIcon provider={provider} />,
-                                      active: Boolean(
-                                        currentGuestParticipant &&
-                                          provider === guestComposerProvider
-                                      ),
-                                      disabled: isCurrentComposerLocked,
-                                      onSelect: () => {
-                                        if (
-                                          !currentGuestParticipant ||
-                                          provider !== guestComposerProvider
-                                        ) {
-                                          handleGuestProviderChange(provider)
-                                        }
-                                      }
-                                    }))
-                                  }
-                                ]
-                              : []),
                             {
                               id: 'workspace',
                               title: 'Workspace',
@@ -3618,94 +3535,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             </>
                           )
                         })()}
-
-                        {!isCurrentEnsembleChat && currentChat && currentGuestParticipant && (
-                          <span
-                            data-composer-control="guest"
-                            data-guest-provider={guestComposerProvider}
-                            className={`composer-guest-control is-active provider-${guestComposerProvider}${isCurrentGuestParticipantRunning ? ' is-running' : ''}`}
-                            title={
-                              isCurrentGuestParticipantRunning
-                                ? `${getProviderLabel(guestComposerProvider)} guest is thinking`
-                                : `Guest participant: ${getProviderLabel(guestComposerProvider)}`
-                            }
-                          >
-                            {isCurrentGuestParticipantRunning && (
-                              <span
-                                className="composer-guest-running-indicator"
-                                aria-label={`${getProviderLabel(guestComposerProvider)} guest is thinking`}
-                                title={`${getProviderLabel(guestComposerProvider)} guest is thinking`}
-                              >
-                                Thinking
-                                <span className="thinking-dots" aria-hidden>
-                                  <span className="thinking-dot" />
-                                  <span className="thinking-dot" />
-                                  <span className="thinking-dot" />
-                                </span>
-                              </span>
-                            )}
-                            <CombinedModelPicker
-                              provider={guestComposerProvider}
-                              composerStyle={appearance.composerStyle}
-                              modelOptions={guestComposerModelOptions}
-                              selectedModelId={guestComposerSelectedModel}
-                              onSelectModel={handleGuestModelChange}
-                              reasoningOptions={guestComposerReasoningOptions}
-                              selectedReasoning={guestComposerSelectedReasoning}
-                              onSelectReasoning={handleGuestReasoningChange}
-                              codexReasoningEffort={guestCodexReasoning}
-                              claudeReasoningEffort={guestClaudeReasoning}
-                              kimiThinkingEnabled={guestKimiThinking}
-                              fastModeCapableModelIds={guestFastModeCapableModelIds}
-                              fastModeEnabled={guestFastModeEnabled}
-                              onToggleFastMode={handleGuestToggleFastMode}
-                              disabled={isCurrentComposerLocked}
-                            />
-                            {guestComposerSelectedModel === 'custom' &&
-                              guestComposerProvider !== 'kimi' && (
-                                <span className="composer-inline-custom-model composer-guest-custom-model">
-                                  <CommittedDraftField
-                                    className="composer-inline-input"
-                                    type="text"
-                                    committed={currentGuestParticipant.customModel || ''}
-                                    onCommit={(value) =>
-                                      void setGuestParticipantForCurrentChat({
-                                        customModel: value
-                                      })
-                                    }
-                                    placeholder="Model ID"
-                                    disabled={isCurrentComposerLocked}
-                                  />
-                                  <button
-                                    className="composer-inline-clear"
-                                    type="button"
-                                    onClick={() =>
-                                      void setGuestParticipantForCurrentChat({
-                                        customModel: '',
-                                        selectedModelType:
-                                          getDefaultModelForProvider(guestComposerProvider)
-                                      })
-                                    }
-                                    disabled={isCurrentComposerLocked}
-                                    title="Cancel custom guest model"
-                                    aria-label="Cancel custom guest model"
-                                  >
-                                    <XSymbolIcon />
-                                  </button>
-                                </span>
-                              )}
-                            <button
-                              className="composer-inline-clear composer-guest-remove"
-                              type="button"
-                              onClick={handleRemoveGuestParticipant}
-                              disabled={isCurrentComposerLocked}
-                              title={`Remove ${getProviderLabel(guestComposerProvider)} guest participant`}
-                              aria-label="Remove guest participant"
-                            >
-                              <XSymbolIcon />
-                            </button>
-                          </span>
-                        )}
 
                         {/*
                         Codex speed-tier `<select>` removed — Fast mode

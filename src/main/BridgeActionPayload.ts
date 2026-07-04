@@ -560,22 +560,6 @@ export interface BridgeCanvasActionAction extends BridgeActionMetadata {
   action: 'close' | 'reload'
 }
 
-export interface BridgeSetGuestParticipantAction extends BridgeActionMetadata {
-  kind: 'setGuestParticipant'
-  workspaceId: string
-  threadId: string
-  provider: string
-  model?: string
-  codexReasoningEffort?: string | null
-  claudeReasoningEffort?: string | null
-}
-
-export interface BridgeRemoveGuestParticipantAction extends BridgeActionMetadata {
-  kind: 'removeGuestParticipant'
-  workspaceId: string
-  threadId: string
-}
-
 export interface BridgeCreateSideChatAction extends BridgeActionMetadata {
   kind: 'createSideChat'
   workspaceId: string
@@ -699,8 +683,6 @@ export type BridgeActionPayload =
   | BridgeEnsembleRosterUpdateAction
   | BridgeEnsembleSettingsUpdateAction
   | BridgeEnsembleQueueItemAction
-  | BridgeSetGuestParticipantAction
-  | BridgeRemoveGuestParticipantAction
   | BridgeCreateSideChatAction
   | BridgeSetThreadNotesAction
   | BridgeSetThreadTitleAction
@@ -829,8 +811,6 @@ export function workspaceIdFromPayload(payload: BridgeActionPayload): string | n
     case 'ensembleRosterUpdate':
     case 'ensembleSettingsUpdate':
     case 'ensembleQueueItem':
-    case 'setGuestParticipant':
-    case 'removeGuestParticipant':
     case 'createSideChat':
     case 'setThreadNotes':
     case 'setThreadTitle':
@@ -900,8 +880,6 @@ export function payloadRequiresWorkspaceGating(payload: BridgeActionPayload): bo
     case 'ensembleRosterUpdate':
     case 'ensembleSettingsUpdate':
     case 'ensembleQueueItem':
-    case 'setGuestParticipant':
-    case 'removeGuestParticipant':
     case 'createSideChat':
     case 'setThreadNotes':
     case 'setThreadTitle':
@@ -975,8 +953,6 @@ export function payloadIsMutating(payload: BridgeActionPayload): boolean {
     case 'ensembleRosterUpdate':
     case 'ensembleSettingsUpdate':
     case 'ensembleQueueItem':
-    case 'setGuestParticipant':
-    case 'removeGuestParticipant':
     case 'createSideChat':
     case 'setThreadNotes':
     case 'setThreadTitle':
@@ -1159,14 +1135,6 @@ function coerceToPayload(parsed: unknown): BridgeActionPayload {
       return isEnsembleQueueItem(parsed)
         ? (parsed as unknown as BridgeEnsembleQueueItemAction)
         : { kind: 'unknown', rawKind: 'ensembleQueueItem', raw: parsed }
-    case 'setGuestParticipant':
-      return isSetGuestParticipant(parsed)
-        ? (parsed as unknown as BridgeSetGuestParticipantAction)
-        : { kind: 'unknown', rawKind: 'setGuestParticipant', raw: parsed }
-    case 'removeGuestParticipant':
-      return isWorkspaceThreadAction(parsed)
-        ? (parsed as unknown as BridgeRemoveGuestParticipantAction)
-        : { kind: 'unknown', rawKind: 'removeGuestParticipant', raw: parsed }
     case 'createSideChat':
       return isCreateSideChat(parsed)
         ? (parsed as unknown as BridgeCreateSideChatAction)
@@ -1690,21 +1658,6 @@ function isCanvasAction(v: Record<string, unknown>): boolean {
     typeof v.canvasId === 'string' &&
     v.canvasId.trim().length > 0 &&
     (v.action === 'close' || v.action === 'reload')
-  )
-}
-
-function isSetGuestParticipant(v: Record<string, unknown>): boolean {
-  return (
-    isWorkspaceThreadAction(v) &&
-    typeof v.provider === 'string' &&
-    v.provider.trim().length > 0 &&
-    (v.model === undefined || typeof v.model === 'string') &&
-    (v.codexReasoningEffort === undefined ||
-      v.codexReasoningEffort === null ||
-      typeof v.codexReasoningEffort === 'string') &&
-    (v.claudeReasoningEffort === undefined ||
-      v.claudeReasoningEffort === null ||
-      typeof v.claudeReasoningEffort === 'string')
   )
 }
 

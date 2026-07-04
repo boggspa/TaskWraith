@@ -2818,21 +2818,6 @@ export interface RunAnalystSnapshot {
   error?: string
 }
 
-export interface GuestParticipantConfig {
-  childChatId: string
-  provider: ProviderId
-  selectedModelType: string
-  customModel: string
-  codexReasoningEffort?: string | null
-  codexServiceTier?: string | null
-  claudeReasoningEffort?: string | null
-  claudeFastMode?: boolean | null
-  kimiThinkingEnabled?: boolean
-  createdAt: number
-  updatedAt: number
-  persistent: true
-}
-
 export interface StoredOllamaSessionMemory {
   modelId: string
   updatedAt: number
@@ -2897,7 +2882,6 @@ export interface ChatRecord {
    * to renderer + iOS via the chat-updated path. */
   chatTodos?: Record<string, TodoItem[]>
   ensemble?: EnsembleConfig
-  guestParticipant?: GuestParticipantConfig
   /**
    * 1.0.5-EW37 — Solo-chat wakeup records. Mirror of
    * `ensemble.wakeups` for solo chats: the agent calls

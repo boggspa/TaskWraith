@@ -1027,22 +1027,9 @@ const api = {
     title?: string
     originMessageId?: string
     originRunId?: string
-    sideChatMode?: 'ensembleClone' | 'singleProvider' | 'fanOut' | 'guestParticipant'
+    sideChatMode?: 'ensembleClone' | 'singleProvider' | 'fanOut'
   }) => ipcRenderer.invoke('create-side-chat', args),
   getSideChats: (parentChatId: string) => ipcRenderer.invoke('get-side-chats', parentChatId),
-  setGuestParticipant: (args: {
-    parentChatId: string
-    provider: string
-    selectedModelType?: string
-    customModel?: string
-    codexReasoningEffort?: string | null
-    codexServiceTier?: string | null
-    claudeReasoningEffort?: string | null
-    claudeFastMode?: boolean | null
-    kimiThinkingEnabled?: boolean
-  }) => ipcRenderer.invoke('set-guest-participant', args),
-  removeGuestParticipant: (parentChatId: string) =>
-    ipcRenderer.invoke('remove-guest-participant', parentChatId),
   listDiscordContextTargets: () => ipcRenderer.invoke('discord-context:list-targets'),
   readDiscordContext: (selection: DiscordContextSelection) =>
     ipcRenderer.invoke('discord-context:read-channel', selection),

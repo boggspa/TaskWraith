@@ -1319,23 +1319,9 @@ declare global {
         title?: string
         originMessageId?: string
         originRunId?: string
-        sideChatMode?: 'ensembleClone' | 'singleProvider' | 'fanOut' | 'guestParticipant'
+        sideChatMode?: 'ensembleClone' | 'singleProvider' | 'fanOut'
       }) => Promise<ChatRecord>
       getSideChats: (parentChatId: string) => Promise<ChatRecord[]>
-      setGuestParticipant: (args: {
-        parentChatId: string
-        provider: ProviderId
-        selectedModelType?: string
-        customModel?: string
-        codexReasoningEffort?: string | null
-        codexServiceTier?: string | null
-        claudeReasoningEffort?: string | null
-        claudeFastMode?: boolean | null
-        kimiThinkingEnabled?: boolean
-      }) => Promise<{ parent: ChatRecord; guest: ChatRecord }>
-      removeGuestParticipant: (
-        parentChatId: string
-      ) => Promise<{ parent: ChatRecord; guest?: ChatRecord }>
       listDiscordContextTargets: () => Promise<DiscordContextTargets>
       readDiscordContext: (selection: DiscordContextSelection) => Promise<DiscordContextSnapshot>
       humanCollaborationCreateShare: (input: {

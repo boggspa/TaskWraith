@@ -335,7 +335,6 @@ export class ComposerService {
       runtimePreambleProvider: metadataString(chat, 'taskWraithRuntimePreambleProvider'),
       providerLabel: getProviderLabel(provider),
       nativeSubAgentRequests: settings.nativeSubAgentRequests,
-      guestParticipant: chat.guestParticipant,
       activeGoal,
       ...(provider === 'ollama'
         ? {

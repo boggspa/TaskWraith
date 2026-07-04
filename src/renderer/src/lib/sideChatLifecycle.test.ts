@@ -100,7 +100,7 @@ describe('side chat lifecycle helpers', () => {
     )
     expect(getLinkedChatAgentIdentity(guestChat)).toEqual(assignAgentIdentityFromSeed('parent-1:guest'))
     expect(getLinkedChatKindLabel(sideChat)).toBe('Isolated side chat')
-    expect(getLinkedChatKindLabel(guestChat)).toBe('Guest')
+    expect(getLinkedChatKindLabel(guestChat)).toBe('Guest side chat')
     expect(getLinkedChatKindLabel(subThread)).toBe('Sub-thread')
     expect(getSideChatSelectedParticipantId(sideChat)).toBe('participant-1')
   })

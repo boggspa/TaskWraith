@@ -33,8 +33,6 @@ function harness() {
     createEnsembleChat: vi.fn(),
     createSubThread: vi.fn(),
     createSideChat: vi.fn(),
-    setGuestParticipant: vi.fn(),
-    removeGuestParticipant: vi.fn(),
     getChildChats: vi.fn(() => []),
     getSideChats: vi.fn(() => []),
     saveChat: vi.fn((next: ChatRecord) => chats.set(next.appChatId, next)),

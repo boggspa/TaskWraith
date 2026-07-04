@@ -44,15 +44,7 @@ function createDeps(overrides: Partial<Parameters<typeof registerChatHandlers>[0
       createSubThread: vi.fn(() => chat('sub-thread')),
       getSubThreads: vi.fn(() => [chat('sub-thread')]),
       createSideChat: vi.fn(() => chat('side-chat', { parentChatRelation: 'sideChat' })),
-      getSideChats: vi.fn(() => [chat('side-chat')]),
-      setGuestParticipant: vi.fn(() => ({
-        parent: chat('parent'),
-        guest: chat('guest', { parentChatRelation: 'sideChat' })
-      })),
-      removeGuestParticipant: vi.fn(() => ({
-        parent: chat('parent'),
-        guest: chat('guest', { parentChatRelation: 'sideChat' })
-      }))
+      getSideChats: vi.fn(() => [chat('side-chat')])
     },
     getSettings: vi.fn(() => settings),
     detectConfiguredProviders: vi.fn(async () => new Set(['codex'] as const)),
@@ -116,40 +108,4 @@ describe('registerChatHandlers', () => {
     expect(deps.detectConfiguredProviders).not.toHaveBeenCalled()
   })
 
-  it('broadcasts popout and thread updates for guest participant changes', () => {
-    const deps = createDeps()
-    registerChatHandlers(deps)
-
-    const result = handlerFor('set-guest-participant')({} as any, {
-      parentChatId: 'parent',
-      provider: 'claude'
-    })
-
-    expect(result).toEqual({
-      parent: chat('parent'),
-      guest: chat('guest', { parentChatRelation: 'sideChat' })
-    })
-    expect(deps.broadcastChatPopoutUpdate).toHaveBeenCalledWith(chat('parent'))
-    expect(deps.broadcastChatPopoutUpdate).toHaveBeenCalledWith(
-      chat('guest', { parentChatRelation: 'sideChat' })
-    )
-    expect(deps.broadcastThreadUpdate).toHaveBeenCalledWith('parent')
-    expect(deps.broadcastThreadUpdate).toHaveBeenCalledWith('guest')
-  })
-
-  it('skips optional guest broadcasts when removing a missing guest', () => {
-    const deps = createDeps({
-      chatService: {
-        ...createDeps().chatService,
-        removeGuestParticipant: vi.fn(() => ({ parent: chat('parent') }))
-      }
-    })
-    registerChatHandlers(deps)
-
-    expect(handlerFor('remove-guest-participant')({} as any, 'parent')).toEqual({
-      parent: chat('parent')
-    })
-    expect(deps.broadcastChatPopoutUpdate).toHaveBeenCalledTimes(1)
-    expect(deps.broadcastThreadUpdate).toHaveBeenCalledTimes(1)
-  })
 })

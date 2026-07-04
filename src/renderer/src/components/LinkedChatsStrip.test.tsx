@@ -246,18 +246,8 @@ describe('LinkedChatsStrip', () => {
     expect(html).toContain('linked-chats-strip-agent-icon')
   })
 
-  it('shows only the currently attached guest participant in the linked strip', () => {
-    const parent = makeChat({
-      guestParticipant: {
-        childChatId: 'guest-current',
-        provider: 'cursor',
-        selectedModelType: 'composer-2.5-fast',
-        customModel: '',
-        createdAt: 2,
-        updatedAt: 5,
-        persistent: true
-      }
-    })
+  it('renders historical guest side chats as inert linked chats', () => {
+    const parent = makeChat()
     const supersededGuest = makeChat({
       appChatId: 'guest-old',
       parentChatId: 'parent-1',
@@ -294,39 +284,13 @@ describe('LinkedChatsStrip', () => {
       />
     )
 
-    expect(html).toContain('1 linked | 1 guest')
+    expect(html).toContain('2 linked | 2 guests')
+    expect(html).toContain('Guest side chat')
+    expect(html).toContain('Historical guest chat')
+    expect(html).toContain('Historical guest transcript')
     expect(html).toContain('Guest participant (cursor)')
-    expect(html).toContain('Gemini with Cursor guest')
-    expect(html).not.toContain('Guest participant (codex)')
-    expect(html).not.toContain('Gemini with Codex guest')
-  })
-
-  it('does not show detached guest participant children after the parent guest is removed', () => {
-    const parent = makeChat()
-    const detachedGuest = makeChat({
-      appChatId: 'guest-old',
-      parentChatId: 'parent-1',
-      parentChatRelation: 'sideChat',
-      provider: 'codex',
-      title: 'Guest participant (codex)',
-      sideChatContext: {
-        createdAt: 2,
-        lifecycleState: 'closed',
-        mode: 'guestParticipant',
-        transcriptVisibility: 'none'
-      }
-    })
-
-    const html = renderToStaticMarkup(
-      <LinkedChatsStrip
-        currentChat={parent}
-        chats={[parent, detachedGuest]}
-        runningChatIds={[]}
-        onOpenBeside={() => {}}
-      />
-    )
-
-    expect(html).toBe('')
+    expect(html).toContain('Guest participant (codex)')
+    expect(html).toContain('Gemini historical guest transcript')
   })
 
   it('labels run-result seeded side chats explicitly', () => {

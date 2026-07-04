@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
   extractFirstEnsembleDmTarget,
-  extractGuestParticipantAddressTarget,
   formatComposerPathMention,
   parseComposerMentionTrigger
 } from './ComposerMentionTrigger'
@@ -148,49 +147,5 @@ describe('extractFirstEnsembleDmTarget', () => {
         participants
       )
     ).toBe('forced-id')
-  })
-})
-
-describe('extractGuestParticipantAddressTarget', () => {
-  it('routes distinct-provider mentions to the named parent or guest', () => {
-    const route = {
-      parentProvider: 'codex' as const,
-      guestProvider: 'cursor' as const
-    }
-    expect(extractGuestParticipantAddressTarget('@Cursor double-check this', route)).toBe('guest')
-    expect(extractGuestParticipantAddressTarget('can @Codex handle the edit?', route)).toBe(
-      'parent'
-    )
-  })
-
-  it('supports explicit role aliases independent of provider', () => {
-    const route = {
-      parentProvider: 'claude' as const,
-      guestProvider: 'gemini' as const
-    }
-    expect(extractGuestParticipantAddressTarget('@Guest read only, please', route)).toBe('guest')
-    expect(extractGuestParticipantAddressTarget('@Main take this one', route)).toBe('parent')
-    expect(extractGuestParticipantAddressTarget('@guest participant sanity-check', route)).toBe(
-      'guest'
-    )
-  })
-
-  it('does not route same-provider provider aliases because they are ambiguous', () => {
-    const route = {
-      parentProvider: 'codex' as const,
-      guestProvider: 'codex' as const
-    }
-    expect(extractGuestParticipantAddressTarget('@Codex inspect this', route)).toBeNull()
-    expect(extractGuestParticipantAddressTarget('@Guest inspect this', route)).toBe('guest')
-    expect(extractGuestParticipantAddressTarget('@Parent inspect this', route)).toBe('parent')
-  })
-
-  it('ignores email-like tokens', () => {
-    expect(
-      extractGuestParticipantAddressTarget('send this to cursor@example.com', {
-        parentProvider: 'codex',
-        guestProvider: 'cursor'
-      })
-    ).toBeNull()
   })
 })

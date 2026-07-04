@@ -292,23 +292,6 @@ export const buildEnsembleRoundOllamaRamRow = (
   return buildOllamaRamRowFromPeak(peakGb, samples)
 }
 
-/** Guest-child Ollama peak RAM for a standard chat's run-complete summary. */
-export const buildGuestCompanionRamRow = (
-  companionRuns: ChatRun[] = []
-): RunCompleteSummaryRow | null => {
-  const { peakGb, samples } = findPeakOllamaRamFromRuns(companionRuns)
-  return buildOllamaRamRowFromPeak(peakGb, samples)
-}
-
-export const resolveGuestCompanionRuns = (
-  chat: ChatRecord | null | undefined,
-  chats: ChatRecord[]
-): ChatRun[] => {
-  const childId = chat?.guestParticipant?.childChatId
-  if (!childId) return []
-  return chats.find((entry) => entry.appChatId === childId)?.runs || []
-}
-
 export const buildRunCompleteSummaryRows = (run?: ChatRun | null): RunCompleteSummaryRow[] => {
   if (!run) return []
 

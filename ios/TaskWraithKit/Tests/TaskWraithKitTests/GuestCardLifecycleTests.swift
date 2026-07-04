@@ -1,11 +1,14 @@
-// Guest-card lifecycle decode — the wire contract behind "remove guest".
+// Guest-card lifecycle decode — the wire contract behind PRE-EXISTING guest
+// side chats. The live Guests feature has been removed (no new guest can be
+// invited or removed from the client), but old data can still carry a guest
+// side chat, so this pins how it must keep decoding and classifying correctly.
 //
-// removeGuestParticipant on the Mac clears the parent's guestParticipant and
-// marks the guest CHILD chat `lifecycleState: 'closed'` (it is NOT deleted).
-// The phone detects the active guest purely from that child card, so it must
-// read `sideChatLifecycleState` and treat a closed child as no-longer-the-guest
-// — otherwise the composer guest chip lingers after removal. This pins the
-// decode + the `sideChatIsActive` predicate that the active-guest detector uses.
+// Removing a guest used to clear the parent's guestParticipant and mark the
+// guest CHILD chat `lifecycleState: 'closed'` (never deleted) — so existing
+// data can carry a closed guest child indefinitely. The phone must still
+// read `sideChatLifecycleState` and treat a closed child as no-longer-active,
+// otherwise a historical guest chip would look live again. This pins the
+// decode + the `sideChatIsActive` predicate that Q3 render-safety relies on.
 
 import Foundation
 import Testing

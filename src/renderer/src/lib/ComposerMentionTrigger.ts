@@ -21,10 +21,7 @@
  * room for someone tightening the regex later and creating a
  * silent overlap).
  */
-
-import type { ProviderId } from '../../../main/store/types'
-import { findAllMentions, normalizeAlias } from '../../../main/services/EnsembleMentionAlias'
-import { getProviderLabel } from './providerLabels'
+import { findAllMentions } from '../../../main/services/EnsembleMentionAlias'
 
 export type ComposerMentionTriggerKind = 'mention' | 'file-mention'
 
@@ -96,13 +93,6 @@ export interface EnsembleDmCandidate {
   model?: string
 }
 
-export type GuestParticipantAddressTarget = 'parent' | 'guest'
-
-export interface GuestParticipantAddressInput {
-  parentProvider: ProviderId
-  guestProvider: ProviderId
-}
-
 /**
  * Extract the first ensemble-dm participant id mentioned in a
  * composer prompt. Used on send to translate an `@participant`
@@ -164,62 +154,4 @@ export function extractFirstEnsembleDmTarget(
   // User mentions are informational in this send path. They do not
   // create a DM target.
   return participantIds.length === 1 ? participantIds[0] : null
-}
-
-const GUEST_ROUTE_MENTION_REGEX = new RegExp(
-  `(^|[\\s(\\[{<>"'\`!?,;:.])@([A-Za-z][A-Za-z0-9._#-]{0,32}(?:\\s+[A-Za-z0-9#][A-Za-z0-9._#-]{0,32}){0,3})`,
-  'g'
-)
-const GUEST_ROUTE_TRAILING_PUNCT_RE = /[.,!?;:]+$/
-
-function addRouteAlias(out: Set<string>, value: string | null | undefined): void {
-  const normalised = normalizeAlias(value || '')
-  if (!normalised) return
-  out.add(normalised)
-  const compact = normalised.replace(/\s+/g, '')
-  if (compact.length >= 3) out.add(compact)
-}
-
-function providerRouteAliases(provider: ProviderId): string[] {
-  return [provider, getProviderLabel(provider)]
-}
-
-/**
- * Resolve a normal-chat guest participant @mention to either the parent/main
- * agent or the attached guest. Distinct-provider chats accept provider aliases
- * (`@Codex`, `@Cursor`); same-provider chats intentionally require role aliases
- * (`@Parent`, `@Guest`) so `@Codex` cannot silently pick the wrong side.
- */
-export function extractGuestParticipantAddressTarget(
-  prompt: string,
-  input: GuestParticipantAddressInput | null | undefined
-): GuestParticipantAddressTarget | null {
-  if (!prompt || !prompt.includes('@') || !input) return null
-
-  const parentAliases = new Set<string>()
-  const guestAliases = new Set<string>()
-  ;['parent', 'main', 'primary', 'host'].forEach((alias) => addRouteAlias(parentAliases, alias))
-  ;['guest', 'guest participant'].forEach((alias) => addRouteAlias(guestAliases, alias))
-
-  if (input.parentProvider !== input.guestProvider) {
-    providerRouteAliases(input.parentProvider).forEach((alias) => addRouteAlias(parentAliases, alias))
-    providerRouteAliases(input.guestProvider).forEach((alias) => addRouteAlias(guestAliases, alias))
-  }
-
-  GUEST_ROUTE_MENTION_REGEX.lastIndex = 0
-  let regexMatch: RegExpExecArray | null
-  while ((regexMatch = GUEST_ROUTE_MENTION_REGEX.exec(prompt)) !== null) {
-    const phrase = regexMatch[2]
-    const rawWords = phrase.split(/\s+/).filter(Boolean)
-    for (let len = Math.min(rawWords.length, 4); len >= 1; len -= 1) {
-      const words = rawWords.slice(0, len)
-      words[len - 1] = words[len - 1].replace(GUEST_ROUTE_TRAILING_PUNCT_RE, '')
-      const key = normalizeAlias(words.join(' '))
-      const parentMatch = parentAliases.has(key)
-      const guestMatch = guestAliases.has(key)
-      if (parentMatch && !guestMatch) return 'parent'
-      if (guestMatch && !parentMatch) return 'guest'
-    }
-  }
-  return null
 }

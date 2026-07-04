@@ -121,53 +121,6 @@ function makeStore(overrides: Partial<ChatServiceStore> = {}): ChatServiceStore 
         }
       })
     ),
-    setGuestParticipant: vi.fn((args) => ({
-      parent: makeChat({
-        appChatId: args.parentChatId,
-        guestParticipant: {
-          childChatId: 'guest-chat-1',
-          provider: args.provider,
-          selectedModelType: args.selectedModelType || 'default',
-          customModel: args.customModel || '',
-          codexReasoningEffort: args.codexReasoningEffort,
-          codexServiceTier: args.codexServiceTier,
-          claudeReasoningEffort: args.claudeReasoningEffort,
-          claudeFastMode: args.claudeFastMode,
-          kimiThinkingEnabled: args.kimiThinkingEnabled,
-          createdAt: 2,
-          updatedAt: 2,
-          persistent: true
-        }
-      }),
-      guest: makeChat({
-        appChatId: 'guest-chat-1',
-        provider: args.provider,
-        parentChatId: args.parentChatId,
-        parentChatRelation: 'sideChat',
-        sideChatContext: {
-          createdAt: 2,
-          mode: 'guestParticipant',
-          lifecycleState: 'active',
-          openedAt: 2,
-          transcriptVisibility: 'none'
-        }
-      })
-    })),
-    removeGuestParticipant: vi.fn((parentChatId) => ({
-      parent: makeChat({ appChatId: parentChatId }),
-      guest: makeChat({
-        appChatId: 'guest-chat-1',
-        parentChatId,
-        parentChatRelation: 'sideChat',
-        sideChatContext: {
-          createdAt: 2,
-          mode: 'guestParticipant',
-          lifecycleState: 'closed',
-          closedAt: 3,
-          transcriptVisibility: 'none'
-        }
-      })
-    })),
     getChildChats: vi.fn(() => [
       makeChat({
         appChatId: 'sub-thread-1',
@@ -306,38 +259,6 @@ describe('ChatService', () => {
         returnResultToParent: true
       }
     )
-  })
-
-  it('sets and removes guest participants through the store', () => {
-    const { deps, store } = makeDeps()
-    const service = new ChatService(deps)
-    const result = service.setGuestParticipant({
-      parentChatId: 'chat-1',
-      provider: 'codex',
-      selectedModelType: 'gpt-5.5',
-      codexReasoningEffort: 'high'
-    })
-    expect(result.parent.guestParticipant).toMatchObject({
-      childChatId: 'guest-chat-1',
-      provider: 'codex',
-      selectedModelType: 'gpt-5.5',
-      persistent: true
-    })
-    expect(store.setGuestParticipant).toHaveBeenCalledWith({
-      parentChatId: 'chat-1',
-      provider: 'codex',
-      selectedModelType: 'gpt-5.5',
-      customModel: '',
-      codexReasoningEffort: 'high',
-      codexServiceTier: undefined,
-      claudeReasoningEffort: undefined,
-      claudeFastMode: undefined,
-      kimiThinkingEnabled: undefined
-    })
-
-    const removed = service.removeGuestParticipant('chat-1')
-    expect(removed.guest?.sideChatContext?.lifecycleState).toBe('closed')
-    expect(store.removeGuestParticipant).toHaveBeenCalledWith('chat-1')
   })
 
   it('creates workspace ensemble chats only for a matching registered workspace', () => {

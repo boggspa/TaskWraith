@@ -30,8 +30,6 @@ import type {
   BridgeEnsembleRosterUpdateAction,
   BridgeEnsembleSettingsUpdateAction,
   BridgeEnsembleQueueItemAction,
-  BridgeSetGuestParticipantAction,
-  BridgeRemoveGuestParticipantAction,
   BridgeCreateSideChatAction,
   BridgeSetThreadNotesAction,
   BridgeSetThreadTitleAction,
@@ -165,12 +163,6 @@ export interface BridgeActionExecutor {
   ): Promise<BridgeActionExecutionResult>
   executeEnsembleQueueItem(
     action: BridgeEnsembleQueueItemAction
-  ): Promise<BridgeActionExecutionResult>
-  executeSetGuestParticipant(
-    action: BridgeSetGuestParticipantAction
-  ): Promise<BridgeActionExecutionResult>
-  executeRemoveGuestParticipant(
-    action: BridgeRemoveGuestParticipantAction
   ): Promise<BridgeActionExecutionResult>
   executeCreateSideChat(
     action: BridgeCreateSideChatAction
@@ -368,16 +360,6 @@ export class NoopActionExecutor implements BridgeActionExecutor {
     action: BridgeEnsembleQueueItemAction
   ): Promise<BridgeActionExecutionResult> {
     return notWired('ensembleQueueItem', action.threadId)
-  }
-  async executeSetGuestParticipant(
-    action: BridgeSetGuestParticipantAction
-  ): Promise<BridgeActionExecutionResult> {
-    return notWired('setGuestParticipant', action.threadId)
-  }
-  async executeRemoveGuestParticipant(
-    action: BridgeRemoveGuestParticipantAction
-  ): Promise<BridgeActionExecutionResult> {
-    return notWired('removeGuestParticipant', action.threadId)
   }
   async executeCreateSideChat(
     action: BridgeCreateSideChatAction
@@ -669,8 +651,6 @@ export interface MainProcessActionExecutorDependencies {
   ensembleRosterUpdateFn?: (action: BridgeEnsembleRosterUpdateAction) => Promise<unknown>
   ensembleSettingsUpdateFn?: (action: BridgeEnsembleSettingsUpdateAction) => Promise<unknown>
   ensembleQueueItemFn?: (action: BridgeEnsembleQueueItemAction) => Promise<unknown>
-  setGuestParticipantFn?: (action: BridgeSetGuestParticipantAction) => Promise<unknown>
-  removeGuestParticipantFn?: (action: BridgeRemoveGuestParticipantAction) => Promise<unknown>
   createSideChatFn?: (action: BridgeCreateSideChatAction) => Promise<unknown>
   setThreadNotesFn?: (action: BridgeSetThreadNotesAction) => Promise<unknown>
   setThreadTitleFn?: (action: BridgeSetThreadTitleAction) => Promise<unknown>
@@ -1471,28 +1451,6 @@ export class MainProcessActionExecutor implements BridgeActionExecutor {
       'ensembleQueueItem',
       action.threadId,
       this.deps.ensembleQueueItemFn,
-      action
-    )
-  }
-
-  async executeSetGuestParticipant(
-    action: BridgeSetGuestParticipantAction
-  ): Promise<BridgeActionExecutionResult> {
-    return this.executeEnsembleAction(
-      'setGuestParticipant',
-      action.threadId,
-      this.deps.setGuestParticipantFn,
-      action
-    )
-  }
-
-  async executeRemoveGuestParticipant(
-    action: BridgeRemoveGuestParticipantAction
-  ): Promise<BridgeActionExecutionResult> {
-    return this.executeEnsembleAction(
-      'removeGuestParticipant',
-      action.threadId,
-      this.deps.removeGuestParticipantFn,
       action
     )
   }

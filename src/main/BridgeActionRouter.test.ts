@@ -247,14 +247,6 @@ function makeStubExecutor(
       executed: true,
       message: 'ensembleSteer done'
     }),
-    executeSetGuestParticipant: make('executeSetGuestParticipant', {
-      executed: true,
-      message: 'ensembleSteer done'
-    }),
-    executeRemoveGuestParticipant: make('executeRemoveGuestParticipant', {
-      executed: true,
-      message: 'ensembleSteer done'
-    }),
     executeCreateSideChat: make('executeCreateSideChat', {
       executed: true,
       message: 'ensembleSteer done'

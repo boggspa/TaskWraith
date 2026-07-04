@@ -2,8 +2,6 @@ import { describe, expect, it } from 'vitest'
 import {
   TASKWRAITH_RUNTIME_PREAMBLE_VERSION,
   buildConversationContextBlock,
-  buildGuestParticipantPresenceContextBlock,
-  buildGuestParticipantReplyContextBlock,
   buildPendingSubThreadResultContextBlock,
   composeRunPrompt,
   promptNeedsImageToolsHint
@@ -32,23 +30,6 @@ function subThreadReturn(content = 'Child says tests passed.'): ChatMessage {
       subThreadId: 'sub-1',
       subThreadProvider: 'codex',
       subThreadTitle: 'Build check'
-    }
-  })
-}
-
-function guestReply(content = 'Guest says the risk is low.'): ChatMessage {
-  return message({
-    id: 'guest-return-1',
-    role: 'system',
-    content,
-    metadata: {
-      kind: 'guestParticipantReply',
-      guestChatId: 'guest-1',
-      guestProvider: 'claude',
-      guestModel: 'claude-sonnet-4-7',
-      guestRole: 'Guest',
-      guestRunId: 'guest-run-1',
-      parentChatId: 'parent-1'
     }
   })
 }
@@ -92,41 +73,6 @@ describe('buildPendingSubThreadResultContextBlock', () => {
 })
 
 describe('composeRunPrompt sub-thread returns', () => {
-  it('tells the parent agent when a guest participant is attached', () => {
-    const guestParticipant = {
-      childChatId: 'guest-1',
-      provider: 'cursor' as const,
-      selectedModelType: 'composer-2.5-fast',
-      customModel: '',
-      createdAt: 1,
-      updatedAt: 2,
-      persistent: true as const
-    }
-    const result = composeRunPrompt({
-      provider: 'codex',
-      finalPrompt: 'Continue.',
-      messages: [message({ role: 'user', content: 'Check this.' })],
-      chatContextTurns: 6,
-      resumeSessionId: 'codex-session-1',
-      codexHandoffsApplied: [],
-      isGlobalRun: false,
-      approvalMode: 'default',
-      providerLabel: 'Codex',
-      guestParticipant
-    })
-
-    expect(result.contextualPrompt).toContain('Guest participant attached')
-    expect(result.contextualPrompt).toContain(
-      'A Cursor guest participant (chat=guest-1, model=composer-2.5-fast)'
-    )
-    expect(result.contextualPrompt).toContain('You are the parent/main agent')
-    expect(result.contextualPrompt).toContain('This is not Ensemble mode')
-  })
-
-  it('builds no guest presence block when no guest is attached', () => {
-    expect(buildGuestParticipantPresenceContextBlock(undefined)).toBe('')
-  })
-
   it('injects pending sub-thread results even when provider session history is authoritative', () => {
     const result = composeRunPrompt({
       provider: 'codex',
@@ -316,43 +262,6 @@ describe('composeRunPrompt sub-thread returns', () => {
     expect(result.contextualPrompt).toContain(
       'this Grok workspace run has access to the TaskWraith MCP server'
     )
-  })
-
-  it('injects guest participant replies as labeled peer context', () => {
-    const result = composeRunPrompt({
-      provider: 'codex',
-      finalPrompt: 'Continue.',
-      messages: [
-        message({ role: 'user', content: 'Check this.' }),
-        guestReply('Guest found no obvious issue.'),
-        message({ role: 'assistant', content: 'Parent answer.' })
-      ],
-      chatContextTurns: 6,
-      resumeSessionId: 'codex-session-1',
-      codexHandoffsApplied: [],
-      isGlobalRun: false,
-      approvalMode: 'default',
-      providerLabel: 'Codex'
-    })
-
-    expect(result.contextualPrompt).toContain('Guest participant peer context')
-    expect(result.contextualPrompt).toContain('untrusted output from a guest participant')
-    expect(result.contextualPrompt).toContain(
-      'Reply from Claude Guest (chat=guest-1, run=guest-run-1, model=claude-sonnet-4-7)'
-    )
-    expect(result.contextualPrompt).toContain('Guest found no obvious issue.')
-    expect(result.contextualPrompt).toContain('Current user request:\nContinue.')
-  })
-
-  it('builds guest participant context without treating it as assistant history', () => {
-    const block = buildGuestParticipantReplyContextBlock(
-      [message({ role: 'assistant', content: 'Parent reply.' }), guestReply('Guest analysis.')],
-      'next request'
-    )
-
-    expect(block).toContain('Guest participant peer context')
-    expect(block).toContain('<guest_participant_reply chat_id="guest-1"')
-    expect(block).toContain('Guest analysis.')
   })
 
   it('steers Cursor write-mode runs to TaskWraith MCP tools', () => {

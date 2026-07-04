@@ -10,7 +10,6 @@ import {
 } from '../../lib/panelWidths'
 import { getProviderLabel } from '../../lib/providerLabels'
 import { isGlobalChat } from '../../lib/chatScope'
-import { getSideChatMode } from '../../lib/sideChatLifecycle'
 import { RunRailPanel } from '../../components/RunRailPanel'
 import { decideApprovalElevation } from '../../lib/approvalElevation'
 import { Sidebar } from '../../components/Sidebar'
@@ -154,8 +153,6 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   currentChatIdRef,
   currentChatMediaRefs,
   currentGeminiWorktree,
-  currentGuestParticipant,
-  currentGuestParticipantChatId,
   currentPinnedMessages,
   currentPreviewMenuOpen,
   currentPreviewTargets,
@@ -198,9 +195,6 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   geminiVersion,
   getDefaultModelForProvider,
   grokProviderAvailable,
-  guestComposerProvider,
-  guestThinkingModelBadge,
-  guestThinkingOllamaBrand,
   handleAddChatToWorkspaceBoard,
   handleAddLocalServerToWorkspaceBoard,
   handleAddPinnedMessageToWorkspaceBoard,
@@ -324,7 +318,6 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   isChatPopoutWindow,
   isCurrentEnsembleChat,
   isCurrentGlobalChat,
-  isCurrentGuestParticipantRunning,
   isEnsembleModeEnabled,
   isFxEnabled,
   isLinkedChatPopout,
@@ -943,16 +936,8 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                   type="button"
                   className="side-chat-action-btn danger"
                   onClick={() => void handleEndCurrentLinkedMainChat()}
-                  title={
-                    getSideChatMode(currentChat) === 'guestParticipant'
-                      ? 'Remove this guest participant from the parent chat'
-                      : 'End this isolated side chat, cancel queued work, and archive it'
-                  }
-                  aria-label={
-                    getSideChatMode(currentChat) === 'guestParticipant'
-                      ? 'Remove guest participant'
-                      : 'End side chat'
-                  }
+                  title="End this isolated side chat, cancel queued work, and archive it"
+                  aria-label="End side chat"
                 >
                   <EndSideChatIcon />
                 </button>
@@ -1297,23 +1282,6 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                     <span>Open linked chat as main</span>
                     <small>Navigate to linked chat</small>
                   </button>
-                  {!isCurrentEnsembleChat && currentGuestParticipantChatId && (
-                    <>
-                      <div className="side-chat-layout-menu-section" role="presentation">
-                        Guest
-                      </div>
-                      <button
-                        type="button"
-                        role="menuitem"
-                        onClick={() =>
-                          handleOpenLinkedChatInSidePanelById(currentGuestParticipantChatId)
-                        }
-                      >
-                        <span>Open current guest</span>
-                        <small>Attached peer on the parent transcript</small>
-                      </button>
-                    </>
-                  )}
                   {canCreateSideChatFromCurrent && currentChat && (
                     <>
                       <div className="side-chat-layout-menu-section" role="presentation">
@@ -1786,26 +1754,6 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                 thinkingProvider={thinkingProvider}
                 thinkingProviderClass={thinkingProviderClass}
                 thinkingModelBadge={thinkingModelBadge}
-                guestThinkingProviderLabel={
-                  currentGuestParticipant && isCurrentGuestParticipantRunning
-                    ? `Guest · ${guestThinkingOllamaBrand?.providerLabel || getProviderLabel(guestComposerProvider)}`
-                    : null
-                }
-                guestThinkingProvider={
-                  currentGuestParticipant && isCurrentGuestParticipantRunning
-                    ? guestComposerProvider
-                    : null
-                }
-                guestThinkingProviderClass={
-                  currentGuestParticipant && isCurrentGuestParticipantRunning
-                    ? guestThinkingOllamaBrand?.providerClass || guestComposerProvider
-                    : null
-                }
-                guestThinkingModelBadge={
-                  currentGuestParticipant && isCurrentGuestParticipantRunning
-                    ? guestThinkingModelBadge
-                    : null
-                }
                 displayFileChangeSummaries={displayFileChangeSummaries}
                 fileChangeSummaryText={fileChangeSummaryText}
                 fileChangeShouldShowStats={fileChangeShouldShowStats}
@@ -2020,16 +1968,8 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                     type="button"
                     className="side-chat-action-btn danger"
                     onClick={() => void handleEndSidePanelChat()}
-                    title={
-                      getSideChatMode(sideChat) === 'guestParticipant'
-                        ? 'Remove this guest participant from the parent chat'
-                        : 'End this isolated side chat, cancel queued work, and archive it'
-                    }
-                    aria-label={
-                      getSideChatMode(sideChat) === 'guestParticipant'
-                        ? 'Remove guest participant'
-                        : 'End side chat'
-                    }
+                    title="End this isolated side chat, cancel queued work, and archive it"
+                    aria-label="End side chat"
                   >
                     <EndSideChatIcon />
                   </button>

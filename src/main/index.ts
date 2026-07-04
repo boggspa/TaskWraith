@@ -501,7 +501,6 @@ import {
   ChatMessage,
   ChatRun,
   ActiveGoal,
-  GuestParticipantConfig,
   ChatScope,
   ChatWorkflowMode,
   ToolActivity,
@@ -557,11 +556,6 @@ import {
   UserMcpServerConfig
 } from './store/types'
 import type { AgentRunPayload, AgentRunRoute } from './run/AgentRunTypes'
-import {
-  buildGuestParticipantPrompt,
-  buildGuestParticipantReplyMessage
-} from './GuestParticipantRun'
-import { extractGuestParticipantAddressTarget } from '../renderer/src/lib/ComposerMentionTrigger'
 import {
   DEFAULT_WINDOW_HEIGHT,
   DEFAULT_WINDOW_WIDTH,
@@ -1106,29 +1100,6 @@ const remoteQuestionRegistry = new RemoteQuestionRegistry({
   defaultTtlMs: AGENT_QUESTION_TIMEOUT_MS
 })
 let bridgeBroadcasterRef: BridgeBroadcaster | null = null
-/** Guest-participant turn dispatch + reply mirror. Assigned inside the bridge
- * setup closure (where dispatchAgentRun + the broadcast helpers live) so the
- * module-scope finalizeBridgeRunTranscript can drive turn-based guest runs:
- * host finishes -> dispatch guest (sees host reply) -> mirror guest reply. */
-let bridgeGuestParticipantRunner: {
-  dispatchGuestTurn: (args: {
-    parentChatId: string
-    guestConfig: GuestParticipantConfig
-    userText: string
-    workspaceId: string
-    approvalMode: string
-  }) => void
-  mirrorGuestReply: (args: {
-    runId: string
-    parentChatId: string
-    guestChatId: string
-    workspaceId: string
-    provider: ProviderId
-    model: string
-    role: string
-    content: string
-  }) => void
-} | null = null
 // Remote-session power assertion: while >=1 iOS device is connected over the
 // bridge, hold an Electron powerSaveBlocker so the Mac stays awake to serve
 // remote approvals/questions (the agent runs on-Mac; a sleeping Mac can't be
@@ -3279,26 +3250,6 @@ type BridgeRunTranscriptState = {
   extraWorkspacePaths?: string[]
   runDiff?: ChatRun['runDiff']
   runDiffByPath?: ChatRun['runDiffByPath']
-  /** Set on a HOST bridge run when the chat has a guest participant and the
-   * turn fanned out (no @-tag, or not @parent): finalize dispatches the guest
-   * run AFTER the host finishes so the guest sees the host's reply (turn-based). */
-  guestFanout?: {
-    guestConfig: GuestParticipantConfig
-    userText: string
-    parentChatId: string
-    workspaceId: string
-    approvalMode: string
-  }
-  /** Set on a GUEST bridge run: finalize mirrors the guest's reply into the
-   * parent transcript (deduped by guestRunId), matching the renderer. */
-  guestReturn?: {
-    parentChatId: string
-    guestChatId: string
-    workspaceId: string
-    provider: ProviderId
-    model: string
-    role: string
-  }
 }
 
 const bridgeRunTranscripts = new Map<string, BridgeRunTranscriptState>()
@@ -6535,32 +6486,6 @@ function finalizeBridgeRunTranscript(
       console.warn(`[bridge-run] run diff failed for ${runId}:`, err)
     }
     flushBridgeRunTranscript(runId, true)
-    // Turn-based guest participation. After the HOST reply is flushed
-    // (persisted), dispatch the guest so it answers WITH the host's reply in
-    // context; after a GUEST run finishes, mirror its reply into the parent.
-    if (state.guestFanout) {
-      const f = state.guestFanout
-      bridgeGuestParticipantRunner?.dispatchGuestTurn({
-        parentChatId: f.parentChatId,
-        guestConfig: f.guestConfig,
-        userText: f.userText,
-        workspaceId: f.workspaceId,
-        approvalMode: f.approvalMode
-      })
-    }
-    if (state.guestReturn) {
-      const g = state.guestReturn
-      bridgeGuestParticipantRunner?.mirrorGuestReply({
-        runId,
-        parentChatId: g.parentChatId,
-        guestChatId: g.guestChatId,
-        workspaceId: g.workspaceId,
-        provider: g.provider,
-        model: g.model,
-        role: g.role,
-        content: state.content
-      })
-    }
   })()
 }
 
@@ -23317,49 +23242,6 @@ if (isGeminiMcpBridgeProcess) {
           if (canonical) pushRemoteThreadSnapshot(updated, canonical)
           return { ok: true }
         },
-        setGuestParticipantFn: async (action) => {
-          try {
-            const result = chatService.setGuestParticipant({
-              parentChatId: action.threadId,
-              provider: assertProviderId(action.provider),
-              ...(action.model ? { selectedModelType: action.model } : {}),
-              ...(action.codexReasoningEffort !== undefined
-                ? { codexReasoningEffort: action.codexReasoningEffort }
-                : {}),
-              ...(action.claudeReasoningEffort !== undefined
-                ? { claudeReasoningEffort: action.claudeReasoningEffort }
-                : {})
-            })
-            broadcastChatUpdated(result.parent)
-            broadcastChatUpdated(result.guest)
-            broadcastThreadUpdate(result.parent.appChatId)
-            broadcastThreadUpdate(result.guest.appChatId)
-            const canonical = canonicalRemoteWorkspaceId(result.parent.workspaceId)
-            if (canonical) pushRemoteThreadSnapshot(result.parent, canonical)
-            // Throttle-cleared: a recent broadcast must not swallow the
-            // snapshot that carries the new guest card (no trailing retry).
-            bridgeBroadcasterRef?.resetThrottle()
-            bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
-            return { ok: true, guestThreadId: result.guest.appChatId }
-          } catch (err) {
-            return { ok: false, error: err instanceof Error ? err.message : String(err) }
-          }
-        },
-        removeGuestParticipantFn: async (action) => {
-          try {
-            const result = chatService.removeGuestParticipant(action.threadId)
-            broadcastChatUpdated(result.parent)
-            broadcastThreadUpdate(result.parent.appChatId)
-            if (result.guest) broadcastThreadUpdate(result.guest.appChatId)
-            const canonical = canonicalRemoteWorkspaceId(result.parent.workspaceId)
-            if (canonical) pushRemoteThreadSnapshot(result.parent, canonical)
-            bridgeBroadcasterRef?.resetThrottle()
-            bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
-            return { ok: true }
-          } catch (err) {
-            return { ok: false, error: err instanceof Error ? err.message : String(err) }
-          }
-        },
         createSideChatFn: async (action) => {
           try {
             const chat = chatService.createSideChat({
@@ -24642,34 +24524,6 @@ if (isGeminiMcpBridgeProcess) {
                   .find((run) => run.provider === 'gemini' && run.geminiAuthProfileId !== undefined)
                   ?.geminiAuthProfileId
               : undefined
-          // Guest participant turn routing (parity with the renderer send
-          // path): default = host now, guest AFTER the host finishes
-          // (turn-based, marked below); @parent/@host = host only; @guest =
-          // guest only. The guest runs as a normal leaf turn on its child chat.
-          const guestParticipantConfig =
-            chat.chatKind !== 'ensemble' ? (chat.guestParticipant ?? null) : null
-          const guestAddressTarget = guestParticipantConfig
-            ? extractGuestParticipantAddressTarget(action.text, {
-                parentProvider: provider,
-                guestProvider: guestParticipantConfig.provider
-              })
-            : null
-          if (guestParticipantConfig && guestAddressTarget === 'guest') {
-            // @guest — only the guest runs. The user message is already on the
-            // parent (prepareIosComposerPromptChat); the guest reply mirrors
-            // back via finalize. No host run, so no host appRunId to ack.
-            bridgeGuestParticipantRunner?.dispatchGuestTurn({
-              parentChatId: chat.appChatId,
-              guestConfig: guestParticipantConfig,
-              userText: action.text,
-              workspaceId: action.workspaceId,
-              approvalMode: effectiveApprovalMode || 'default'
-            })
-            const refreshed = AppStore.getChat(chat.appChatId)
-            if (refreshed) pushRemoteThreadSnapshot(refreshed, action.workspaceId)
-            bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
-            return { dispatched: true, appRunId: null }
-          }
           const route = routeWithRunId(provider, {
             appChatId: chat.appChatId,
             appRunId: internalQueueDispatch?.appRunId
@@ -24738,20 +24592,6 @@ if (isGeminiMcpBridgeProcess) {
             promptMessageId,
             workspacePath: workspaceRecord?.path ?? globalRunCwd()
           })
-          if (guestParticipantConfig && guestAddressTarget !== 'parent') {
-            // Default fan-out (no tag): dispatch the guest once THIS host run
-            // finalizes, so it answers with the host's reply already in context.
-            const hostState = bridgeRunTranscripts.get(runId)
-            if (hostState) {
-              hostState.guestFanout = {
-                guestConfig: guestParticipantConfig,
-                userText: action.text,
-                parentChatId: chat.appChatId,
-                workspaceId: action.workspaceId,
-                approvalMode: effectiveApprovalMode || 'default'
-              }
-            }
-          }
           if (extraWorkspacePaths.length > 0) {
             const transcript = bridgeRunTranscripts.get(runId)
             if (transcript) transcript.extraWorkspacePaths = extraWorkspacePaths
@@ -24810,10 +24650,6 @@ if (isGeminiMcpBridgeProcess) {
             finalPrompt: action.text,
             messages: priorMessages,
             chatContextTurns: AppStore.getSettings().chatContextTurns,
-            // Host-awareness: tell the parent agent a guest is attached + replay
-            // prior guest replies, so it can anticipate/avoid conflicts (parity
-            // with the desktop send path, which already passes this).
-            guestParticipant: guestParticipantConfig ?? undefined,
             ...(resumeSessionId ? { resumeSessionId } : {}),
             nextModel: action.model,
             codexHandoffsApplied: [],
@@ -29882,250 +29718,6 @@ if (isGeminiMcpBridgeProcess) {
       event: Electron.IpcMainInvokeEvent
     ): Promise<{ dispatched: boolean; appRunId: string }> => {
       return dispatchRunWithProviderPause(payload, event)
-    }
-
-    // Guest-participant turn dispatch + reply mirror for bridge (iOS-origin)
-    // turns. The renderer's dispatchGuestParticipantRun/appendGuestParticipant
-    // ReplyToParent only ran in the renderer, so phone turns never fired the
-    // guest. This mirrors that on the bridge: dispatched AFTER the host (so the
-    // guest sees the host's reply — turn-based), running as a normal leaf run
-    // on the guest's child chat (no re-entry of the host fan-out logic, since
-    // the child chat has no guest participant of its own).
-    bridgeGuestParticipantRunner = {
-      dispatchGuestTurn: ({ parentChatId, guestConfig, userText, workspaceId, approvalMode }) => {
-        void (async () => {
-          try {
-            const isGlobalScope = workspaceId === GLOBAL_REMOTE_SCOPE
-            const workspaceRecord = isGlobalScope
-              ? null
-              : (AppStore.getWorkspaces().find((w) => w.id === workspaceId) ?? null)
-            if (!isGlobalScope && !workspaceRecord) return
-            const parent = AppStore.getChat(parentChatId)
-            let guestChat = AppStore.getChat(guestConfig.childChatId)
-            if (
-              !parent ||
-              !guestChat ||
-              guestChat.archived ||
-              guestChat.parentChatId !== parentChatId ||
-              guestChat.parentChatRelation !== 'sideChat' ||
-              guestChat.sideChatContext?.mode !== 'guestParticipant'
-            ) {
-              return
-            }
-            const provider = assertProviderId(guestConfig.provider)
-            const guestModel =
-              guestConfig.selectedModelType === 'custom'
-                ? guestConfig.customModel || undefined
-                : guestConfig.selectedModelType && guestConfig.selectedModelType !== 'default'
-                  ? guestConfig.selectedModelType
-                  : undefined
-            // Built AFTER the host finalized, so the parent transcript already
-            // carries the host's reply — the guest replies to it (turn-based).
-            const guestPrompt = buildGuestParticipantPrompt({
-              parentChat: parent,
-              userText,
-              providerLabel
-            })
-            const now = Date.now()
-            const userMessage: ChatMessage = {
-              id: `ios-guest-user-${randomUUID()}`,
-              role: 'user',
-              content: userText.trim(),
-              timestamp: new Date(now).toISOString()
-            }
-            guestChat = {
-              ...guestChat,
-              provider,
-              messages: [...(guestChat.messages || []), userMessage],
-              updatedAt: now
-            }
-            AppStore.saveChat(guestChat)
-            const route = routeWithRunId(provider, {
-              appChatId: guestChat.appChatId,
-              appRunId: undefined
-            } as AgentRunRoute)
-            const runId = route.appRunId!
-            const lastProviderRun = [...(guestChat.runs ?? [])]
-              .reverse()
-              .find((entry) => entry.runId !== runId && entry.provider === provider)
-            const inheritedProfileId = [...(guestChat.runs ?? [])]
-              .reverse()
-              .find((run) => run.provider === provider && run.runtimeProfileId)?.runtimeProfileId
-            const defaultProfileId =
-              inheritedProfileId || isGlobalScope
-                ? undefined
-                : AppStore.getRuntimeProfiles(provider).find(
-                    (profile) => profile.builtin && profile.scope === 'workspace'
-                  )?.id
-            const resolvedProfileId = inheritedProfileId ?? defaultProfileId
-            const run: ChatRun = {
-              runId,
-              provider,
-              startedAt: new Date().toISOString(),
-              promptMessageId: userMessage.id,
-              requestedModel: guestModel,
-              approvalMode,
-              ...(resolvedProfileId ? { runtimeProfileId: resolvedProfileId } : {}),
-              status: 'running',
-              rawEventsFile: `run-events/${runId}.jsonl`
-            }
-            guestChat = {
-              ...guestChat,
-              runs: [...(guestChat.runs || []).filter((entry) => entry.runId !== runId), run],
-              updatedAt: Date.now()
-            }
-            AppStore.saveChat(guestChat)
-            registerBridgeRunTranscript({
-              runId,
-              chatId: guestChat.appChatId,
-              provider,
-              promptMessageId: userMessage.id,
-              workspacePath: workspaceRecord?.path ?? globalRunCwd()
-            })
-            const guestState = bridgeRunTranscripts.get(runId)
-            if (guestState) {
-              guestState.guestReturn = {
-                parentChatId,
-                guestChatId: guestChat.appChatId,
-                workspaceId,
-                provider,
-                model: guestModel || '',
-                role: 'Guest'
-              }
-            }
-            if (workspaceRecord) {
-              void captureWorkspaceSnapshot(workspaceRecord.path)
-                .then((snapshot) => {
-                  const t = bridgeRunTranscripts.get(runId)
-                  if (t) t.preSnapshot = snapshot
-                })
-                .catch(() => {})
-            }
-            broadcastChatUpdated(guestChat)
-            broadcastThreadUpdate(guestChat.appChatId)
-            pushRemoteThreadSnapshot(guestChat, workspaceId)
-            bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
-            const linkedSessionForProvider =
-              provider === 'gemini'
-                ? guestChat.linkedGeminiSessionId
-                : guestChat.linkedProviderSessionId
-            const resumeSessionId =
-              (lastProviderRun
-                ? linkedSessionForProvider || lastProviderRun.providerThreadId
-                : undefined) || undefined
-            const priorMessages = guestChat.messages.filter((m) => m.id !== userMessage.id)
-            const composed = composeRunPrompt({
-              provider,
-              finalPrompt: guestPrompt,
-              messages: priorMessages,
-              chatContextTurns: AppStore.getSettings().chatContextTurns,
-              ...(resumeSessionId ? { resumeSessionId } : {}),
-              nextModel: guestModel,
-              codexHandoffsApplied: [],
-              isGlobalRun: isGlobalScope,
-              approvalMode: approvalMode || 'default',
-              workflowMode: guestChat.workflowMode === 'plan' ? 'plan' : 'normal',
-              providerLabel: providerLabel(provider)
-            })
-            const guestEffectivePermissions =
-              approvalMode === 'plan'
-                ? resolveEffectiveRunPermissions({
-                    provider,
-                    workspacePath: isGlobalScope ? undefined : workspaceRecord?.path,
-                    settings: AppStore.getSettings(),
-                    presetId: 'read_only'
-                  })
-                : undefined
-            const payload: AgentRunPayload = {
-              provider,
-              scope: isGlobalScope ? 'global' : 'workspace',
-              ...(workspaceRecord ? { workspace: workspaceRecord.path } : {}),
-              prompt: composed.contextualPrompt,
-              ...(resumeSessionId ? { providerSessionId: resumeSessionId } : {}),
-              appChatId: guestChat.appChatId,
-              appRunId: runId,
-              approvalMode,
-              ...(guestEffectivePermissions
-                ? { effectivePermissions: guestEffectivePermissions }
-                : {}),
-              model: guestModel,
-              ...(provider === 'codex' && guestConfig.codexReasoningEffort
-                ? { reasoningEffort: guestConfig.codexReasoningEffort }
-                : {}),
-              ...(provider === 'claude' && guestConfig.claudeReasoningEffort
-                ? { claudeReasoningEffort: guestConfig.claudeReasoningEffort }
-                : {}),
-              ...(resolvedProfileId ? { runtimeProfileId: resolvedProfileId } : {})
-            }
-            payload.effectivePermissionsSignature = signRunPosture(
-              payload.approvalMode,
-              payload.effectivePermissions,
-              runPostureContextFromPayload(payload)
-            )
-            const liveSender = mainWindow?.webContents
-            const sender =
-              liveSender && !liveSender.isDestroyed() ? liveSender : createHeadlessRunSender()
-            const fakeEvent = { sender } as unknown as Electron.IpcMainInvokeEvent
-            void dispatchAgentRun(payload, fakeEvent)
-              .then((result) => {
-                if (!result.dispatched) {
-                  finalizeBridgeRunTranscript(
-                    runId,
-                    'failed',
-                    'Guest participant run did not dispatch — check the guest provider profile on your Mac.'
-                  )
-                }
-                const refreshed = AppStore.getChat(guestChat.appChatId)
-                if (refreshed) pushRemoteThreadSnapshot(refreshed, workspaceId)
-                bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
-              })
-              .catch((err) => {
-                console.error('[remote-bridge] guest participant dispatch failed:', err)
-              })
-            console.log(
-              `[bridge-run] guest participant turn dispatched run=${runId} parent=${parentChatId} provider=${provider}`
-            )
-          } catch (err) {
-            console.error('[remote-bridge] guest participant dispatch error:', err)
-          }
-        })()
-      },
-      mirrorGuestReply: ({
-        runId,
-        parentChatId,
-        guestChatId,
-        workspaceId,
-        provider,
-        model,
-        role,
-        content
-      }) => {
-        const parent = AppStore.getChat(parentChatId)
-        if (!parent) return
-        const message = buildGuestParticipantReplyMessage({
-          parentChat: parent,
-          guestChatId,
-          runId,
-          provider,
-          model,
-          role,
-          content
-        })
-        if (!message) return
-        const updated: ChatRecord = {
-          ...parent,
-          messages: [...(parent.messages || []), message],
-          updatedAt: Date.now()
-        }
-        AppStore.saveChat(updated)
-        broadcastChatUpdated(updated)
-        broadcastThreadUpdate(updated.appChatId)
-        if (workspaceId) pushRemoteThreadSnapshot(updated, workspaceId)
-        bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
-        console.log(
-          `[bridge-run] mirrored guest reply run=${runId} -> parent=${parentChatId} (${content.length} chars)`
-        )
-      }
     }
 
     ipcMain.handle('run-agent', async (event, payload: AgentRunPayload) => {

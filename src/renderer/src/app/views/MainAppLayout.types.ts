@@ -200,8 +200,6 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   currentChatIdRef: any
   currentChatMediaRefs: any
   currentGeminiWorktree: any
-  currentGuestParticipant: any
-  currentGuestParticipantChatId: any
   currentPinnedMessages: any
   currentPreviewMenuOpen: any
   currentPreviewTargets: any
@@ -246,9 +244,6 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   geminiVersion: any
   getDefaultModelForProvider: any
   grokProviderAvailable: any
-  guestComposerProvider: any
-  guestThinkingModelBadge: any
-  guestThinkingOllamaBrand: any
   handleAddChatToWorkspaceBoard: MainAppLayoutSidebarProps['handleAddChatToWorkspaceBoard']
   handleAddLocalServerToWorkspaceBoard: MainAppLayoutSidebarProps['handleAddLocalServerToWorkspaceBoard']
   handleAddPinnedMessageToWorkspaceBoard: any
@@ -373,7 +368,6 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   isChatPopoutWindow: MainAppLayoutSidebarProps['isChatPopoutWindow']
   isCurrentEnsembleChat: any
   isCurrentGlobalChat: any
-  isCurrentGuestParticipantRunning: any
   isEnsembleModeEnabled: MainAppLayoutSidebarProps['isEnsembleModeEnabled']
   isFxEnabled: any
   isLinkedChatPopout: any

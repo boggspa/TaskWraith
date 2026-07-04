@@ -21,7 +21,7 @@ You can also right-click (or use the context menu on) any message in the transcr
 2. For ensemble chats, the menu also offers **Side ensemble clone** (same participants), **Isolated participant side chat** (a single participant), or **Fan-out side chat** (all participants answer in parallel).
 3. To start from existing context instead of a blank sidecar, use **Open from selected message**, **Open from latest run result**, or **Open from summary** in the same menu.
 4. Work in the side chat like any other chat — it has its own composer and transcript.
-5. When you're done, use the docking controls to re-dock it as a **split** or **drawer**, or click the danger button to **End side chat** (or **Remove guest participant** for guest-mode side chats), which cancels queued work and archives it.
+5. When you're done, use the docking controls to re-dock it as a **split** or **drawer**, or click the danger button to **End side chat**, which cancels queued work and archives it.
 
 ## Tips & related
 - [Sub-Thread Delegation](sub-thread-delegation.md) — delegate work to a new child agent instead of a linked sidecar.

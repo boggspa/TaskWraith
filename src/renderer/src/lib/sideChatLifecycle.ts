@@ -63,7 +63,7 @@ export function getLinkedChatKindLabel(chat: ChatRecord): string {
     const mode = getSideChatMode(chat)
     if (mode === 'fanOut') return 'Fan-out side chat'
     if (mode === 'ensembleClone') return 'Side ensemble'
-    if (mode === 'guestParticipant') return 'Guest'
+    if (mode === 'guestParticipant') return 'Guest side chat'
     return 'Isolated side chat'
   }
   return 'Sub-thread'

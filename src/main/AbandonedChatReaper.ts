@@ -97,10 +97,9 @@ export function isReapableAbandonedChat(
     return false
   if (chat.soloWakeups && Object.keys(chat.soloWakeups).length > 0) return false
 
-  // ── Relationships: is a child, configured a guest, or HAS children. ──
+  // ── Relationships: is a child, or HAS children. ──
   if (chat.parentChatId || chat.parentChatRelation || chat.sideChatContext) return false
   if (chat.delegationContext) return false
-  if (chat.guestParticipant) return false
   if (inSet(ctx.parentChatIds, chat.appChatId)) return false
 
   // ── Renamed from the type default ⇒ keep (defensive; a started chat is

@@ -16,8 +16,6 @@ export interface ChatHandlerDeps {
     | 'getSubThreads'
     | 'createSideChat'
     | 'getSideChats'
-    | 'setGuestParticipant'
-    | 'removeGuestParticipant'
   >
   getSettings: () => AppSettings
   detectConfiguredProviders: (settings: AppSettings) => Promise<Set<ProviderId>>
@@ -90,7 +88,7 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
         title?: string
         originMessageId?: string
         originRunId?: string
-        sideChatMode?: 'ensembleClone' | 'singleProvider' | 'fanOut' | 'guestParticipant'
+        sideChatMode?: 'ensembleClone' | 'singleProvider' | 'fanOut'
       }
     ) => {
       const chat = deps.chatService.createSideChat(args)
@@ -101,36 +99,4 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
   ipcMain.handle('get-side-chats', (_event, parentChatId: string) =>
     deps.chatService.getSideChats(parentChatId)
   )
-  ipcMain.handle(
-    'set-guest-participant',
-    (
-      _event,
-      args: {
-        parentChatId: string
-        provider: ProviderId
-        selectedModelType?: string
-        customModel?: string
-        codexReasoningEffort?: string | null
-        codexServiceTier?: string | null
-        claudeReasoningEffort?: string | null
-        claudeFastMode?: boolean | null
-        kimiThinkingEnabled?: boolean
-      }
-    ) => {
-      const result = deps.chatService.setGuestParticipant(args)
-      deps.broadcastChatPopoutUpdate(result.parent)
-      deps.broadcastChatPopoutUpdate(result.guest)
-      deps.broadcastThreadUpdate(result.parent.appChatId)
-      deps.broadcastThreadUpdate(result.guest.appChatId)
-      return result
-    }
-  )
-  ipcMain.handle('remove-guest-participant', (_event, parentChatId: string) => {
-    const result = deps.chatService.removeGuestParticipant(parentChatId)
-    deps.broadcastChatPopoutUpdate(result.parent)
-    if (result.guest) deps.broadcastChatPopoutUpdate(result.guest)
-    deps.broadcastThreadUpdate(result.parent.appChatId)
-    if (result.guest) deps.broadcastThreadUpdate(result.guest.appChatId)
-    return result
-  })
 }

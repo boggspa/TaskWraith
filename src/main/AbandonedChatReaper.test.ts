@@ -88,9 +88,8 @@ describe('isReapableAbandonedChat — relationship exclusions', () => {
     expect(isReapableAbandonedChat(chat({ parentChatRelation: 'subThread' }))).toBe(false)
     expect(isReapableAbandonedChat(chat({ sideChatContext: {} as never }))).toBe(false)
   })
-  it('protects a delegation/guest-configured chat', () => {
+  it('protects a delegation-configured chat', () => {
     expect(isReapableAbandonedChat(chat({ delegationContext: {} as never }))).toBe(false)
-    expect(isReapableAbandonedChat(chat({ guestParticipant: {} as never }))).toBe(false)
   })
   it('protects a chat that HAS children', () => {
     expect(isReapableAbandonedChat(chat({ appChatId: 'parent' }), { parentChatIds: new Set(['parent']) })).toBe(

@@ -17,7 +17,6 @@ export const shouldSuppressRunCompleteSummary = (notice: RunCompleteNotice | nul
 export interface DeriveVisibleRunCompleteNoticeInput {
   notice: RunCompleteNotice | null
   isChatRunning: boolean
-  isGuestParticipantRunning?: boolean
 }
 
 /**
@@ -28,9 +27,8 @@ export interface DeriveVisibleRunCompleteNoticeInput {
  */
 export function deriveVisibleRunCompleteNotice({
   notice,
-  isChatRunning,
-  isGuestParticipantRunning = false
+  isChatRunning
 }: DeriveVisibleRunCompleteNoticeInput): RunCompleteNotice | null {
-  if (isChatRunning || isGuestParticipantRunning) return null
+  if (isChatRunning) return null
   return notice
 }

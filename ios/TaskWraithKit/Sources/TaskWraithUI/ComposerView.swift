@@ -119,11 +119,10 @@ struct Composer: View {
         @State private var attachments: [(name: String, image: UIImage)] = []
     #endif
 
-    /// Participants available to @-mention: a true ensemble's round participants,
-    /// OR the synthesized host+guest pair the Mac projects for a single+guest chat.
-    /// Gating the suggestion chips on this (not `card.isEnsemble`) lights them up for
-    /// guest chats too; idle ensembles already have empty round participants, so this
-    /// is a no-op for them (no regression).
+    /// Participants available to @-mention: a true ensemble's round participants.
+    /// Idle ensembles already have empty round participants, so the suggestion
+    /// chips stay hidden for them (no regression), and non-ensemble chats have no
+    /// projected participants at all.
     private var mentionParticipants: [RemoteEnsembleState.Participant] {
         model.ensembleStates[card.id]?.displayParticipants ?? []
     }
@@ -361,22 +360,16 @@ struct Composer: View {
     private var composerControlsRow: some View {
         HStack(spacing: 8) {
             modelPickerControl
-            // Compact idle bar: only the model pill shows. Approval + guest
-            // controls appear once the composer is focused/expanded.
+            // Compact idle bar: only the model pill shows. The approval
+            // control appears once the composer is focused/expanded.
             if isExpanded {
-                // Fade the approval/guest/separator chips in together as the
+                // Fade the approval/separator chips in together as the
                 // composer expands. Opacity-only (inherently Reduce-Motion-safe)
                 // so the always-present model pill never shifts; the Group is
                 // layout-transparent so HStack spacing is unchanged.
                 Group {
                     composerControlSeparator
                     approvalControl
-                    if !canChangeProvider, card.parentChatId == nil, newTaskWorkspaceId == nil {
-                        composerControlSeparator
-                        // Guest participant: + invites, chip shows/changes,
-                        // × removes (desktop guest-picker parity).
-                        GuestParticipantControl(model: model, card: card)
-                    }
                 }
                 .transition(.opacity)
             }
@@ -915,10 +908,6 @@ struct Composer: View {
     private var placeholder: String {
         if card.isEnsemble {
             return "Ask the Ensemble"
-        }
-        // Single-provider + guest: keep it short; the chip bar surfaces on "@".
-        if !mentionParticipants.isEmpty {
-            return "Ask \(providerName) or the guest"
         }
         return "Ask \(providerName) anything…"
     }

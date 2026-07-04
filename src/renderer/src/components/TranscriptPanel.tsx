@@ -19,9 +19,7 @@ import { shouldCollapseUserMessage, truncateUserMessagePreview } from '../lib/Us
 import {
   buildEnsembleRoundSummaryRows,
   buildEscalationChips,
-  buildGuestCompanionRamRow,
-  buildRunCompleteSummaryRows,
-  resolveGuestCompanionRuns
+  buildRunCompleteSummaryRows
 } from '../lib/runCompleteSummary'
 import { decideMeasurePass, MAX_MEASURE_REWRITE_PASSES } from '../lib/transcriptMeasureConvergence'
 import { deriveQueuedLifecycleProjection } from '../lib/queuedMessageRows'
@@ -191,15 +189,6 @@ export type TranscriptPanelProps = {
    * legacy ensembles without per-participant model data.
    */
   thinkingModelBadge?: string | null
-  /**
-   * Guest participant in-flight indicator. Guest runs happen in a linked
-   * child chat, so the parent transcript needs its own pending row or the
-   * user sees the main run summary before the guest reply lands.
-   */
-  guestThinkingProviderLabel?: string | null
-  guestThinkingProvider?: ProviderId | null
-  guestThinkingProviderClass?: string | null
-  guestThinkingModelBadge?: string | null
   displayFileChangeSummaries: DiffFileSummary[]
   fileChangeSummaryText: string
   fileChangeShouldShowStats: boolean
@@ -1035,10 +1024,6 @@ export const TranscriptPanel = memo(
     thinkingProvider,
     thinkingProviderClass,
     thinkingModelBadge,
-    guestThinkingProviderLabel,
-    guestThinkingProvider,
-    guestThinkingProviderClass,
-    guestThinkingModelBadge,
     displayFileChangeSummaries,
     fileChangeSummaryText,
     fileChangeShouldShowStats,
@@ -1272,16 +1257,8 @@ export const TranscriptPanel = memo(
           providerRates
         })
       }
-      const rows = buildRunCompleteSummaryRows(currentRun)
-      if (!rows.some((row) => row.label === 'RAM')) {
-        const guestRam = buildGuestCompanionRamRow(
-          resolveGuestCompanionRuns(currentChat, chats)
-        )
-        if (guestRam) rows.push(guestRam)
-      }
-      return rows
+      return buildRunCompleteSummaryRows(currentRun)
     }, [
-      chats,
       currentChat,
       currentRun,
       runCompleteNotice?.exitCode,
@@ -2622,36 +2599,6 @@ export const TranscriptPanel = memo(
               <ThinkingIndicator />
             </div>
           )}
-          {guestThinkingProviderLabel && (
-            <div
-              key="guest-thinking-indicator"
-              className="message-group guest-participant-thinking-message"
-              role="status"
-              aria-live="polite"
-              aria-atomic="true"
-            >
-              <span className="sr-only">{guestThinkingProviderLabel} working</span>
-              <div
-                className={`message-meta${
-                  guestThinkingProviderClass || guestThinkingProvider
-                    ? ` provider-${guestThinkingProviderClass || guestThinkingProvider}`
-                    : ''
-                }`}
-              >
-                <span className="message-meta-label">{guestThinkingProviderLabel}</span>
-                {guestThinkingModelBadge && (
-                  <span
-                    className="message-meta-model-badge"
-                    title={`Model: ${guestThinkingModelBadge}`}
-                    aria-label={`Model ${guestThinkingModelBadge}`}
-                  >
-                    {guestThinkingModelBadge}
-                  </span>
-                )}
-              </div>
-              <ThinkingIndicator />
-            </div>
-          )}
           {showRunCompleteSummary !== false && shouldShowRunCompleteNotice && runCompleteNotice && (
             <div
               className={`run-complete-card${isGlobal ? ' is-global-stripped' : ''}`}
@@ -3014,10 +2961,6 @@ export const TranscriptPanel = memo(
     previous.thinkingProvider === next.thinkingProvider &&
     previous.thinkingProviderClass === next.thinkingProviderClass &&
     previous.thinkingModelBadge === next.thinkingModelBadge &&
-    previous.guestThinkingProviderLabel === next.guestThinkingProviderLabel &&
-    previous.guestThinkingProvider === next.guestThinkingProvider &&
-    previous.guestThinkingProviderClass === next.guestThinkingProviderClass &&
-    previous.guestThinkingModelBadge === next.guestThinkingModelBadge &&
     previous.displayFileChangeSummaries === next.displayFileChangeSummaries &&
     previous.fileChangeSummaryText === next.fileChangeSummaryText &&
     previous.fileChangeShouldShowStats === next.fileChangeShouldShowStats &&

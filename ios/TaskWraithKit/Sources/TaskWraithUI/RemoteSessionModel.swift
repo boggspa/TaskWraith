@@ -3511,36 +3511,6 @@ public final class RemoteSessionModel: ObservableObject {
             successLabel: "Preset deleted.")
     }
 
-    /// The current guest participant child of a thread, if any.
-    /// Filters on `sideChatIsActive` so a removed guest (whose child the Mac
-    /// marks `closed` rather than deleting) drops out — otherwise the composer
-    /// guest chip lingers after the user removes the guest.
-    public func guestParticipant(of threadId: String) -> RemoteTaskCard? {
-        taskCards.first { $0.parentChatId == threadId && $0.isGuestSideChat && $0.sideChatIsActive }
-    }
-
-    /// Invite / change the guest participant on a solo thread.
-    public func setGuestParticipant(
-        _ card: RemoteTaskCard, provider: String, model: String?,
-        reasoningEffort: String? = nil
-    ) {
-        guard let ws = card.workspaceId, let thread = card.threadId else { return }
-        send(
-            BridgeAction.setGuestParticipant(
-                workspaceId: ws, threadId: thread, provider: provider, model: model,
-                reasoningEffort: reasoningEffort),
-            successLabel: "Guest invited.")
-        scheduleThreadRefresh(thread)
-    }
-
-    public func removeGuestParticipant(_ card: RemoteTaskCard) {
-        guard let ws = card.workspaceId, let thread = card.threadId else { return }
-        send(
-            BridgeAction.removeGuestParticipant(workspaceId: ws, threadId: thread),
-            successLabel: "Guest removed.")
-        scheduleThreadRefresh(thread)
-    }
-
     /// Create an isolated side chat off a parent thread. Inspector callers keep
     /// the child inline; compact callers can still navigate on ack.
     public func createSideChat(

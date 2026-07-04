@@ -7440,10 +7440,6 @@ public struct QueuedComposerPromptsStack: View {
     }
 }
 
-/// Guest participant control for solo composers: + opens the full provider /
-/// model picker; an active guest renders as a green-accent chip
-/// — tap to change provider/model, × to remove. One guest per thread
-/// (desktop set/remove semantics).
 /// Compact, generic diff summary shown above the ONE-LINE composer when it's
 /// blurred and there are active changes — a stand-in for the (composer-specific)
 /// changes row, which only returns on focus. Same look for every shell. Tap
@@ -7746,183 +7742,6 @@ public struct ComposerDiffPill: View {
     }
 }
 
-public struct GuestParticipantControl: View {
-    @ObservedObject var model: RemoteSessionModel
-    let card: RemoteTaskCard
-
-    public init(model: RemoteSessionModel, card: RemoteTaskCard) {
-        self.model = model
-        self.card = card
-    }
-
-    private var guest: RemoteTaskCard? {
-        card.threadId.flatMap { model.guestParticipant(of: $0) }
-    }
-
-    private var catalogs: [ProviderModelCatalog] {
-        model.providerModels
-            .map { ProviderModelCatalog(provider: $0.key, models: $0.value) }
-            .filter { !TWTheme.isRetiredProvider($0.provider) }
-            .sorted { TWTheme.providerLabel($0.provider) < TWTheme.providerLabel($1.provider) }
-    }
-
-    private let guestAccent = Color(hex: 0x35C284)
-
-    public var body: some View {
-        Group {
-            if let guest {
-                // The guest card carries the same (name, accent, slug) identity
-                // triple as a subagent, so render the catalog identicon badge and
-                // tint the chip with the identity's accent — matching subagents
-                // instead of a generic person glyph + fixed green. Gate the tint on
-                // the SAME field as the badge (agentName) so the chip ring and the
-                // identicon ring always derive from twAgentAccentColor together
-                // (green stays only as the genuine no-identity fallback), mirroring
-                // childRow's identityAccent above.
-                let identityAccent =
-                    guest.agentName != nil ? twAgentAccentColor(guest.agentAccent) : guestAccent
-                HStack(spacing: 4) {
-                    Menu {
-                        guestPickerEntries
-                    } label: {
-                        HStack(spacing: 4) {
-                            if let agentName = guest.agentName {
-                                AgentIdentityBadge(
-                                    name: agentName, accentHex: guest.agentAccent,
-                                    slug: guest.agentSlug, size: 14)
-                            } else {
-                                Image(systemName: "person.crop.circle.badge.plus")
-                                    .font(.system(size: 10))
-                            }
-                            Text(guestLabel(guest))
-                                .font(.caption2.weight(.semibold))
-                                .lineLimit(1)
-                        }
-                        .foregroundStyle(identityAccent)
-                    }
-                    .buttonStyle(.plain)
-                    Button {
-                        model.removeGuestParticipant(card)
-                    } label: {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 9, weight: .bold))
-                            .foregroundStyle(TWTheme.textMuted)
-                            // An 8pt glyph with no frame gave a ~8×8pt tap target
-                            // (far below the 44pt minimum), so taps missed and the
-                            // guest never got removed. Give it real hit area.
-                            .frame(width: 22, height: 22)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Remove guest")
-                }
-                .padding(.leading, 7)
-                .padding(.trailing, 1)
-                .padding(.vertical, 3)
-                .background(identityAccent.opacity(0.12), in: Capsule())
-                .overlay(Capsule().strokeBorder(identityAccent.opacity(0.4)))
-            } else {
-                Menu {
-                    guestPickerEntries
-                } label: {
-                    Image(systemName: "plus")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(TWTheme.textTertiary)
-                        .frame(width: 20, height: 20)
-                        .background(TWTheme.surface3, in: Circle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Add guest participant")
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var guestPickerEntries: some View {
-        ForEach(catalogs) { catalog in
-            Menu {
-                guestDefaultEntry(for: catalog)
-                ForEach(catalog.models) { option in
-                    guestModelEntry(option, catalog: catalog)
-                }
-            } label: {
-                if guest?.provider?.lowercased() == catalog.provider.lowercased() {
-                    Label(TWTheme.providerLabel(catalog.provider), systemImage: "checkmark")
-                } else {
-                    Text(TWTheme.providerLabel(catalog.provider))
-                }
-            }
-        }
-        // A reliable removal path from the provider/model picker itself — the
-        // tiny inline X is easy to miss. Only meaningful once a guest exists.
-        if guest != nil {
-            Divider()
-            Button(role: .destructive) {
-                model.removeGuestParticipant(card)
-            } label: {
-                Label("Remove guest", systemImage: "person.crop.circle.badge.minus")
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func guestDefaultEntry(for catalog: ProviderModelCatalog) -> some View {
-        let option = twReasoningModelOption(in: catalog, modelId: nil)
-        let reasoning = option?.supportedReasoningEfforts ?? []
-        if reasoning.isEmpty {
-            Button("Default") {
-                model.setGuestParticipant(
-                    card, provider: catalog.provider, model: nil, reasoningEffort: nil)
-            }
-        } else {
-            Menu("Default") {
-                Button("Default reasoning") {
-                    model.setGuestParticipant(
-                        card, provider: catalog.provider, model: nil, reasoningEffort: nil)
-                }
-                ForEach(reasoning) { effort in
-                    Button(twReasoningDisplayLabel(effort.reasoningEffort)) {
-                        model.setGuestParticipant(
-                            card, provider: catalog.provider, model: nil,
-                            reasoningEffort: effort.reasoningEffort)
-                    }
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func guestModelEntry(_ option: ModelOption, catalog: ProviderModelCatalog) -> some View {
-        let reasoning = option.supportedReasoningEfforts ?? []
-        if reasoning.isEmpty {
-            Button(option.label ?? option.id) {
-                model.setGuestParticipant(
-                    card, provider: catalog.provider, model: option.id, reasoningEffort: nil)
-            }
-        } else {
-            Menu(option.label ?? option.id) {
-                Button("Default reasoning") {
-                    model.setGuestParticipant(
-                        card, provider: catalog.provider, model: option.id,
-                        reasoningEffort: nil)
-                }
-                ForEach(reasoning) { effort in
-                    Button(twReasoningDisplayLabel(effort.reasoningEffort)) {
-                        model.setGuestParticipant(
-                            card, provider: catalog.provider, model: option.id,
-                            reasoningEffort: effort.reasoningEffort)
-                    }
-                }
-            }
-        }
-    }
-
-    private func guestLabel(_ guest: RemoteTaskCard) -> String {
-        if let name = guest.agentName { return name }
-        return TWTheme.providerLabel(guest.provider)
-    }
-}
-
 /// Side chats tab — the thread's isolated/guest side chats, plus creation.
 struct SideChatsPanel: View {
     @ObservedObject var model: RemoteSessionModel
@@ -7940,10 +7759,11 @@ struct SideChatsPanel: View {
     private var card: RemoteTaskCard? { model.taskCards.first { $0.id == threadId } }
 
     private var sideChats: [RemoteTaskCard] {
-        // Isolated side chats only — a guest participant (sideChatMode
-        // "guestParticipant") is a MAIN-transcript peer whose replies mirror
-        // inline, not an isolated sidecar, so it belongs to the composer guest
-        // control, not this tab.
+        // Isolated side chats only — a guest-mode side chat (sideChatMode
+        // "guestParticipant") was historically a MAIN-transcript peer whose
+        // replies mirrored inline rather than an isolated sidecar. The live
+        // guest feature is removed, but pre-existing guest side chats still
+        // carry that mode, so they stay excluded here to avoid double-listing.
         model.taskCards.filter {
             $0.parentChatId == threadId && $0.isIsolatedSideChat
         }

@@ -27,7 +27,7 @@ enum ComposerMotion {
         response: 0.32, dampingFraction: 0.82, blendDuration: 0.04)
 
     /// Neutral fade for inline control swaps inside the composer
-    /// (approval / guest / separator chips) that should not pull the eye.
+    /// (approval / separator chips) that should not pull the eye.
     static let inlineFade: Animation = .easeInOut(duration: 0.16)
 
     /// Reduce Motion fallback: a near-instant opacity crossfade. Short enough to

@@ -33,7 +33,7 @@ function linkedKindLabel(chat: ChatRecord): string {
   if (chat.parentChatRelation === 'sideChat') {
     if (chat.sideChatContext?.mode === 'fanOut') return 'Fan-out side chat'
     if (chat.sideChatContext?.mode === 'ensembleClone') return 'Side ensemble'
-    if (chat.sideChatContext?.mode === 'guestParticipant') return 'Guest'
+    if (chat.sideChatContext?.mode === 'guestParticipant') return 'Guest side chat'
     if (chat.sideChatContext?.mode === 'singleProvider') return 'Isolated side chat'
     return chat.chatKind === 'ensemble' ? 'Side ensemble' : 'Isolated side chat'
   }
@@ -43,7 +43,7 @@ function linkedKindLabel(chat: ChatRecord): string {
 function linkedModeLabel(chat: ChatRecord): string {
   if (chat.parentChatRelation !== 'sideChat') return 'Delegated child'
   if (chat.sideChatContext?.mode === 'ensembleClone') return 'Ensemble clone'
-  if (chat.sideChatContext?.mode === 'guestParticipant') return 'Attached peer'
+  if (chat.sideChatContext?.mode === 'guestParticipant') return 'Historical guest chat'
   if (chat.sideChatContext?.mode === 'singleProvider') {
     const participantLabel = linkedParticipantLabel(chat)
     return participantLabel ? `Participant: ${participantLabel}` : 'Isolated sidecar'
@@ -86,7 +86,7 @@ function linkedRouteLabel(chat: ChatRecord, parentChat: ChatRecord): string {
   if (chat.sideChatContext?.mode === 'fanOut') return `${parentLabel} parallel fan-out`
   if (chat.sideChatContext?.mode === 'ensembleClone') return `${parentLabel} ensemble side branch`
   if (chat.sideChatContext?.mode === 'guestParticipant') {
-    return `${parentLabel} with ${childLabel} guest`
+    return `${parentLabel} historical guest transcript`
   }
   const participantLabel = linkedParticipantLabel(chat)
   if (!participantLabel && parentProvider === chat.provider) return `${parentLabel} isolated side chat`
@@ -97,7 +97,7 @@ function linkedRouteLabel(chat: ChatRecord, parentChat: ChatRecord): string {
 
 function linkedContextLabel(chat: ChatRecord): string {
   if (chat.parentChatRelation !== 'sideChat') return 'Delegation context'
-  if (chat.sideChatContext?.mode === 'guestParticipant') return 'Parent transcript peer'
+  if (chat.sideChatContext?.mode === 'guestParticipant') return 'Historical guest transcript'
   if (chat.sideChatContext?.originMessageId) return 'Seeded from selected message'
   if (chat.sideChatContext?.originRunId) return 'Seeded from run result'
   if (chat.sideChatContext?.transcriptVisibility === 'summary') return 'Seeded from summary'
@@ -110,12 +110,6 @@ function isTerminatedSideChat(chat: ChatRecord): boolean {
   const state = chat.sideChatContext?.lifecycleState
   if (state === 'terminated') return true
   return chat.archived && !state
-}
-
-function isCurrentGuestParticipantChild(parentChat: ChatRecord, chat: ChatRecord): boolean {
-  if (chat.parentChatRelation !== 'sideChat') return false
-  if (chat.sideChatContext?.mode !== 'guestParticipant') return false
-  return parentChat.guestParticipant?.childChatId === chat.appChatId
 }
 
 function linkedStateLabel(chat: ChatRecord, running: boolean): string {
@@ -149,9 +143,7 @@ export function LinkedChatsStrip({
         !chat.archived &&
         !isTerminatedSideChat(chat) &&
         chat.parentChatId === currentChat.appChatId &&
-        (chat.parentChatRelation === 'sideChat' || isSubThreadChat(chat)) &&
-        (chat.sideChatContext?.mode !== 'guestParticipant' ||
-          isCurrentGuestParticipantChild(currentChat, chat))
+        (chat.parentChatRelation === 'sideChat' || isSubThreadChat(chat))
     )
     .sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0))
 

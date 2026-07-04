@@ -30,7 +30,7 @@ tokens (`#141414` bg, `#1c1c20/#24242a/#2e2e36` surfaces, chroma
 - **iPad**: the shell for advanced affordances. NavigationSplitView, richer
   inspector tabs, file/diff review, and larger settings surfaces should breathe
   here before being compressed onto phone.
-- **Ensemble + guest parity matters**: panel messages carry the SAME
+- **Ensemble parity matters**: panel messages carry the SAME
   participant identity as the desktop transcript tag (`Provider / Role
   (Model)`) via the `speaker` field on thread rows (Mac commit e44f56cd).
 - **Providers are not gated per-workspace by default** anymore — the Mac's
@@ -44,7 +44,7 @@ tokens (`#141414` bg, `#1c1c20/#24242a/#2e2e36` surfaces, chroma
 - Pairing: QR/paste pairing, confirm-code verification, persisted paired Mac,
   trusted reconnect, local-network preflight, and Tailscale-oriented off-LAN
   setup. Demo Mode works without a paired Mac and uses local canned data.
-- Home: Mac/device header, Workflows section, global/side/guest chat visibility,
+- Home: Mac/device header, Workflows section, global/side chat visibility,
   collapsed iPad sidebar headers, usage/readiness surfaces, and a rebuilt
   Pair-with-Mac screen in TaskWraith chrome.
 - Thread: speaker-labelled rows, token streaming, inline image attachments,
@@ -238,7 +238,7 @@ tokens (`#141414` bg, `#1c1c20/#24242a/#2e2e36` surfaces, chroma
     `diffSummaries[threadId]`) — totals header (+N/−M, file count),
     Created/Edited/Deleted chips, per-file mono rows with status dot and
     diff stats, truncation notice pointing at the Mac for full review.
-  - **Agents**: sub-threads / side chats / guests delegated from this
+  - **Agents**: sub-threads / side chats delegated from this
     thread (taskCards with `parentChatId == threadId`), relation chips +
     provider accents; tapping selects the child on iPad
     (`model.navigationTarget` → split selection; iPhone push-from-detail
@@ -565,19 +565,15 @@ lifecycle modifiers landed.)
     '[tw] DECODE FAILED: …' so contract drift is visible instead of
     masquerading as 'connected, nothing accessible'.
 
-## v0.28 — guests + side-chats tab (boss mini-missions)
+## v0.28 — side-chats tab follow-up (historical note)
 
-- **Guest participants** (solo threads): a + next to the composer's
-  provider/model labels opens the provider→model tree; the active guest
-  renders as a green-accent chip (identity name when assigned, ×
-  removes, tap-to-change). One guest per thread — the desktop's
-  set/remove semantics via new setGuestParticipant /
-  removeGuestParticipant actions riding chatService (the same code the
-  desktop IPC calls). Current-guest state derives from the child card
-  with the guestParticipant relation — no new wire state needed.
+- **Historical note:** this milestone originally included a solo-thread
+  guest-participant experiment. That feature has since been removed from
+  the product; current iOS builds do not expose guest invite/switch/remove
+  controls.
 - **Side chats inspector tab** (4th tab): lists the thread's side chats
-  (Guest / Isolated chips, identity badges, status dots, tap-to-open
-  via the cross-column nav) + a "New side chat" provider menu →
+  (identity badges, status dots, tap-to-open via the cross-column nav)
+  + a "New side chat" provider menu →
   createSideChat (ack returns threadId; singleProvider mode default —
   ensembleClone/fanOut modes accepted by the action for later UI).
 - All three actions gate under startTurn (thread create/configure write

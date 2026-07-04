@@ -49,8 +49,6 @@ export interface QueuedRunRequest {
   runtimeProfileId?: string
   geminiAuthProfileId?: string | null
   handoffSourceRunId?: string
-  guestParentChatId?: string
-  guestRole?: string
   /**
    * A2 (1.0.3) — DM routing through the ensemble orchestrator. When
    * set on an ensemble chat dispatch, the resulting round contains
