@@ -308,13 +308,14 @@ function sig(partial: Partial<ComplexityEscalationSignal>): ComplexityEscalation
 
 function chatWithSignals(
   signals: ComplexityEscalationSignal[],
-  roundId: string | null = 'r1'
+  roundId: string | null = 'r1',
+  roundOverrides: Record<string, unknown> = {}
 ): ChatRecord {
   return {
     chatKind: 'ensemble',
     runs: [],
     ensemble: {
-      ...(roundId ? { activeRound: { roundId, participants: [] } } : {}),
+      ...(roundId ? { activeRound: { roundId, participants: [], ...roundOverrides } } : {}),
       escalationSignals: signals
     }
   } as unknown as ChatRecord
@@ -330,15 +331,17 @@ describe('buildEscalationChips', () => {
 
   it('maps kind + recommendedAction to label/action/tone for the current round', () => {
     const chips = buildEscalationChips(
-      chatWithSignals([
-        sig({ id: 's1', kind: 'disagreement-unresolved', recommendedAction: 'call-synthesizer' })
-      ])
+      chatWithSignals(
+        [sig({ id: 's1', kind: 'looping', recommendedAction: 'pause-for-user' })],
+        'r1',
+        { continuationHops: 3, maxContinuationHops: 3 }
+      )
     )
     expect(chips).toEqual([
       {
         id: 's1',
-        label: 'Unreconciled answers',
-        action: 'Add a synthesizer to reconcile the answers.',
+        label: 'Handoffs exhausted',
+        action: 'Handoff/Turns reached their limit (3/3).',
         tone: 'info'
       }
     ])
@@ -366,14 +369,26 @@ describe('buildEscalationChips', () => {
     expect(chips[0].id).toBe('a')
   })
 
-  it('never frames panel size as waste — copy leans into the panel', () => {
+  it('hides disagreement-unresolved because the transcript chip was noisy and ambiguous', () => {
     const chips = buildEscalationChips(
       chatWithSignals([
-        sig({ id: '1', kind: 'disagreement-unresolved', recommendedAction: 'call-synthesizer' }),
-        sig({ id: '2', kind: 'looping', recommendedAction: 'extend-rounds' })
+        sig({ id: '1', kind: 'disagreement-unresolved', recommendedAction: 'call-synthesizer' })
       ])
     )
-    const allCopy = chips.map((c) => `${c.label} ${c.action}`).join(' ')
-    expect(allCopy.toLowerCase()).not.toMatch(/too many|waste|fewer seats|reduce/)
+    expect(chips).toEqual([])
+  })
+
+  it('renders the looping chip with the live continuation limit counters', () => {
+    const chips = buildEscalationChips(
+      chatWithSignals(
+        [sig({ id: '2', kind: 'looping', recommendedAction: 'pause-for-user' })],
+        'r1',
+        { continuationHops: 7, maxContinuationHops: 7 }
+      )
+    )
+    expect(chips[0]).toMatchObject({
+      label: 'Handoffs exhausted',
+      action: 'Handoff/Turns reached their limit (7/7).'
+    })
   })
 })

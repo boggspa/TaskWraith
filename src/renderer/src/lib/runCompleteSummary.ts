@@ -466,8 +466,9 @@ export const buildEnsembleRoundSummaryRows = (
  * FRAMING (the maintainer's explicit constraint): these are advisory only —
  * the orchestrator never auto-acts. The copy makes a tradeoff VISIBLE so the
  * user decides; it must never frame a multi-seat panel as waste. Note the
- * recommended action for `disagreement-unresolved` is to ADD a synthesizer to
- * reconcile — i.e. lean INTO the panel, not shrink it.
+ * recommended action for `disagreement-unresolved` used to be to add a
+ * synthesizer, but that signal now stays hidden in the transcript summary:
+ * it was persistently noisy and ambiguous in practice.
  */
 export type EscalationChipModel = {
   id: string
@@ -500,6 +501,21 @@ const ESCALATION_ACTION_COPY: Record<ComplexityEscalationAction, string> = {
   'pause-for-user': 'Your input would help unblock this.'
 }
 
+function loopingLimitCopy(round: NonNullable<ChatRecord['ensemble']>['activeRound']): string {
+  const max =
+    typeof round?.maxContinuationHops === 'number' && Number.isFinite(round.maxContinuationHops)
+      ? Math.max(0, round.maxContinuationHops)
+      : null
+  const used =
+    typeof round?.continuationHops === 'number' && Number.isFinite(round.continuationHops)
+      ? Math.max(0, round.continuationHops)
+      : max
+  if (used !== null && max !== null) {
+    return `Handoff/Turns reached their limit (${used}/${max}).`
+  }
+  return 'Handoff/Turns reached their limit.'
+}
+
 /**
  * Map the signals persisted on a chat's ensemble state to chip view-models
  * for the CURRENT round only (signals carry their originating `roundId`).
@@ -519,12 +535,16 @@ export const buildEscalationChips = (chat: ChatRecord | null): EscalationChipMod
   const chips: EscalationChipModel[] = []
   for (const signal of signals as ComplexityEscalationSignal[]) {
     if (signal.roundId !== round.roundId) continue
+    if (signal.kind === 'disagreement-unresolved') continue
     if (seenKinds.has(signal.kind)) continue
     seenKinds.add(signal.kind)
     chips.push({
       id: signal.id,
       label: ESCALATION_KIND_LABEL[signal.kind] || signal.kind,
-      action: ESCALATION_ACTION_COPY[signal.recommendedAction] || '',
+      action:
+        signal.kind === 'looping'
+          ? loopingLimitCopy(round)
+          : ESCALATION_ACTION_COPY[signal.recommendedAction] || '',
       tone: ESCALATION_KIND_TONE[signal.kind] || 'info'
     })
   }
