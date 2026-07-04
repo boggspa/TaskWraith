@@ -160,6 +160,58 @@ export function gutterBulgeRadiusPx(markerCount: number): number {
   return Math.max(20, Math.min(44, Math.round(step * 4)))
 }
 
+export interface GutterLensLayout {
+  topPx: number
+  heightPx: number
+}
+
+/**
+ * Vertical bleed (px) the reading lens extends past the first/last marker
+ * CENTRES, so a tick at either extreme sits inside the lens glass instead of
+ * being bisected by its border.
+ */
+export const GUTTER_LENS_BLEED_PX = 7
+
+/** Minimum lens height (px) so it stays grabbable-looking on huge transcripts. */
+export const GUTTER_LENS_MIN_HEIGHT_PX = 18
+
+/**
+ * Skeuomorphic "reading lens": a slide-rule-cursor / scrollbar-thumb carriage
+ * that rides the marker stack. Its HEIGHT encodes what fraction of the
+ * transcript is visible and its POSITION encodes where the viewport sits —
+ * scroll position read from geometry, not hue (the accent fill stays as the
+ * colour channel; this is the physical channel).
+ *
+ * Classic thumb mapping: at progress 0 the lens top kisses the stack top; at
+ * progress 1 its bottom kisses the stack bottom. Returns null when the whole
+ * transcript is visible (viewportFraction >= 1 → nothing to indicate), when
+ * the stack is degenerate, or on non-finite input.
+ */
+export function layoutGutterLens(
+  stackTopPx: number,
+  stackBottomPx: number,
+  scrollProgress: number,
+  viewportFraction: number
+): GutterLensLayout | null {
+  if (
+    !Number.isFinite(stackTopPx) ||
+    !Number.isFinite(stackBottomPx) ||
+    !Number.isFinite(scrollProgress) ||
+    !Number.isFinite(viewportFraction)
+  ) {
+    return null
+  }
+  if (viewportFraction <= 0 || viewportFraction >= 1) return null
+  const top = stackTopPx - GUTTER_LENS_BLEED_PX
+  const bottom = stackBottomPx + GUTTER_LENS_BLEED_PX
+  const span = bottom - top
+  if (span < GUTTER_LENS_MIN_HEIGHT_PX + 4) return null
+  const heightPx = Math.min(span, Math.max(GUTTER_LENS_MIN_HEIGHT_PX, span * viewportFraction))
+  const progress = Math.max(0, Math.min(1, scrollProgress))
+  const topPx = top + (span - heightPx) * progress
+  return { topPx, heightPx }
+}
+
 export function layoutTranscriptUserGutterMarkers(
   markers: readonly TranscriptUserGutterMarker[],
   frameHeight: number

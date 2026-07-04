@@ -2,9 +2,12 @@ import { describe, expect, it } from 'vitest'
 import type { ChatMessage } from '../../../main/store/types'
 import { projectRows } from './TranscriptVirtualWindow'
 import {
+  GUTTER_LENS_BLEED_PX,
+  GUTTER_LENS_MIN_HEIGHT_PX,
   buildTranscriptUserGutterMarkers,
   findActiveGutterMarkerKey,
   gutterBulgeRadiusPx,
+  layoutGutterLens,
   layoutTranscriptUserGutterMarkers,
   userGutterPreview,
   userGutterTitle
@@ -174,6 +177,52 @@ describe('findActiveGutterMarkerKey (scroll-spy join)', () => {
   it('is defensive against empty markers and non-finite anchors', () => {
     expect(findActiveGutterMarkerKey([], 3)).toBeNull()
     expect(findActiveGutterMarkerKey(markers, Number.NaN)).toBeNull()
+  })
+})
+
+describe('layoutGutterLens (reading-lens carriage)', () => {
+  // A 300px marker stack (centres 100..400) with bleed applied at both ends.
+  const top = 100
+  const bottom = 400
+  const span = bottom - top + GUTTER_LENS_BLEED_PX * 2
+
+  it('sizes the lens by the visible fraction and rides thumb-style with progress', () => {
+    const atStart = layoutGutterLens(top, bottom, 0, 0.25)
+    const atEnd = layoutGutterLens(top, bottom, 1, 0.25)
+    const midway = layoutGutterLens(top, bottom, 0.5, 0.25)
+
+    expect(atStart).not.toBeNull()
+    expect(atStart!.heightPx).toBeCloseTo(span * 0.25, 5)
+    // Progress 0 → lens top kisses the (bled) stack top.
+    expect(atStart!.topPx).toBeCloseTo(top - GUTTER_LENS_BLEED_PX, 5)
+    // Progress 1 → lens bottom kisses the (bled) stack bottom.
+    expect(atEnd!.topPx + atEnd!.heightPx).toBeCloseTo(bottom + GUTTER_LENS_BLEED_PX, 5)
+    // Monotonic travel in between.
+    expect(midway!.topPx).toBeGreaterThan(atStart!.topPx)
+    expect(midway!.topPx).toBeLessThan(atEnd!.topPx)
+  })
+
+  it('clamps the lens to a grabbable minimum height on huge transcripts', () => {
+    const lens = layoutGutterLens(top, bottom, 0.5, 0.001)
+    expect(lens!.heightPx).toBe(GUTTER_LENS_MIN_HEIGHT_PX)
+  })
+
+  it('hides when everything is visible, unmeasured, or the stack is degenerate', () => {
+    // Whole transcript fits (nothing to indicate) / unmeasured 0.
+    expect(layoutGutterLens(top, bottom, 0.5, 1)).toBeNull()
+    expect(layoutGutterLens(top, bottom, 0.5, 0)).toBeNull()
+    // Degenerate stack (single-point span) can't host a carriage.
+    expect(layoutGutterLens(100, 100, 0.5, 0.25)).toBeNull()
+    // Non-finite inputs never throw or emit NaN geometry.
+    expect(layoutGutterLens(Number.NaN, bottom, 0.5, 0.25)).toBeNull()
+    expect(layoutGutterLens(top, bottom, Number.POSITIVE_INFINITY, 0.25)).toBeNull()
+  })
+
+  it('clamps out-of-range progress instead of overshooting the stack', () => {
+    const below = layoutGutterLens(top, bottom, -3, 0.25)
+    const above = layoutGutterLens(top, bottom, 42, 0.25)
+    expect(below!.topPx).toBeCloseTo(top - GUTTER_LENS_BLEED_PX, 5)
+    expect(above!.topPx + above!.heightPx).toBeCloseTo(bottom + GUTTER_LENS_BLEED_PX, 5)
   })
 })
 

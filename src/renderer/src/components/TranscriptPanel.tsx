@@ -551,6 +551,12 @@ function useTranscriptVirtualization(params: {
   spyRowIndex: number | null
   /** Scroll-progress fraction (0..1) for the rail's read-position fill. */
   spyProgress: number
+  /**
+   * Fraction (0..1) of the transcript's total content height currently visible
+   * in the viewport — sizes the rail's skeuomorphic "reading lens" carriage.
+   * 1 when everything fits (lens hidden), 0 on the non-virtualised path.
+   */
+  spyViewportFraction: number
 } {
   const {
     enabled,
@@ -739,6 +745,15 @@ function useTranscriptVirtualization(params: {
   const spyMaxScroll = enabled ? Math.max(0, totalHeight - viewportRef.current) : 0
   const spyProgress =
     spyMaxScroll > 0 ? Math.max(0, Math.min(1, effectiveScrollTop / spyMaxScroll)) : 0
+
+  // Visible-content fraction for the rail's reading lens: viewport ÷ total
+  // content height, from the same held snapshot as spyProgress. 1 (not 0) when
+  // the whole transcript fits, so the lens layout can distinguish "everything
+  // visible → hide lens" from "unmeasured → hide lens" with one code path.
+  const spyViewportFraction =
+    enabled && totalHeight > 0
+      ? Math.max(0, Math.min(1, viewportRef.current / totalHeight))
+      : 0
 
   // Read-only passive scroll + resize listener: refresh metrics, capture
   // the anchor, and request a window recompute. Never writes scrollTop.
@@ -995,7 +1010,8 @@ function useTranscriptVirtualization(params: {
     heights,
     syncScrollPosition,
     spyRowIndex,
-    spyProgress
+    spyProgress,
+    spyViewportFraction
   }
 }
 /* eslint-enable react-hooks/refs */
@@ -1524,7 +1540,8 @@ export const TranscriptPanel = memo(
       heights: virtualHeights,
       syncScrollPosition: syncVirtualizerScrollPosition,
       spyRowIndex,
-      spyProgress
+      spyProgress,
+      spyViewportFraction
     } = useTranscriptVirtualization({
       enabled: virtualizeEnabled,
       rows: virtualRows,
@@ -1774,6 +1791,7 @@ export const TranscriptPanel = memo(
             markers={userGutterMarkers}
             activeScrollRowKey={activeScrollRowKey}
             scrollProgress={spyProgress}
+            scrollViewportFraction={spyViewportFraction}
             scrollRef={scrollRef}
             contentRef={contentRef}
             currentChat={currentChat}

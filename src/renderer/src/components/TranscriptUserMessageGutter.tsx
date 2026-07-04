@@ -4,6 +4,7 @@ import type { ChatRecord } from '../../../main/store/types'
 import {
   GUTTER_BULGE_MAX_SCALE,
   gutterBulgeRadiusPx,
+  layoutGutterLens,
   layoutTranscriptUserGutterMarkers,
   type TranscriptUserGutterMarker
 } from '../lib/TranscriptUserMessageGutter'
@@ -44,6 +45,13 @@ interface TranscriptUserMessageGutterProps {
    * not a descendant of the scroller (so a CSS `scroll()` timeline can't bind).
    */
   scrollProgress?: number
+  /**
+   * Fraction (0..1) of the transcript's content height visible in the viewport.
+   * Sizes the skeuomorphic reading-lens carriage (slide-rule-cursor metaphor):
+   * lens height = visible share of the thread, lens position = scrollProgress.
+   * Omitted / 0 / >=1 hides the lens (unmeasured, or everything fits).
+   */
+  scrollViewportFraction?: number
   scrollRef: React.RefObject<HTMLDivElement | null>
   contentRef: React.RefObject<HTMLDivElement | null>
   currentChat?: ChatRecord | null
@@ -161,6 +169,7 @@ export function TranscriptUserMessageGutter({
   markers,
   activeScrollRowKey,
   scrollProgress,
+  scrollViewportFraction,
   scrollRef,
   contentRef,
   currentChat,
@@ -522,6 +531,26 @@ export function TranscriptUserMessageGutter({
     Math.min(1, Number.isFinite(scrollProgress) ? (scrollProgress as number) : 0)
   )
 
+  // Skeuomorphic reading lens: a slide-rule-cursor carriage riding the stack.
+  // Geometry (height = visible share, position = scroll progress) carries the
+  // scroll-position signal, so the accent fill is no longer the only channel.
+  const lensLayout = markerStackBounds
+    ? layoutGutterLens(
+        markerStackBounds.first,
+        markerStackBounds.last,
+        progressFraction,
+        Number.isFinite(scrollViewportFraction) ? (scrollViewportFraction as number) : 0
+      )
+    : null
+
+  // "Spent ticks": the rail pixel the read-position fill has reached. Markers
+  // whose centre sits at/above it get `.is-read` — passed ticks visibly settle
+  // (shape/opacity change), which reads as position even without the accent.
+  const readFillPx = markerStackBounds
+    ? markerStackBounds.first +
+      (markerStackBounds.last - markerStackBounds.first) * progressFraction
+    : null
+
   const rail = (
     <div
       ref={railRef}
@@ -557,6 +586,13 @@ export function TranscriptUserMessageGutter({
           />
         </div>
       )}
+      {lensLayout && (
+        <div
+          className="transcript-user-gutter-lens"
+          aria-hidden="true"
+          style={{ top: lensLayout.topPx, height: lensLayout.heightPx }}
+        />
+      )}
       {markers.map((marker, index) => (
         <button
           key={markerReactKey(marker)}
@@ -567,7 +603,11 @@ export function TranscriptUserMessageGutter({
           type="button"
           className={`transcript-user-gutter-marker${
             activeMarker?.key === marker.key ? ' is-active' : ''
-          }${activeScrollRowKey === marker.key ? ' is-in-view' : ''}`}
+          }${activeScrollRowKey === marker.key ? ' is-in-view' : ''}${
+            readFillPx !== null && (markerCenters.get(marker.key) ?? Infinity) <= readFillPx + 0.5
+              ? ' is-read'
+              : ''
+          }`}
           style={{
             top:
               markerLayoutByKey?.get(marker.key) !== undefined

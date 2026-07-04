@@ -13,6 +13,14 @@ published. The repository is currently ahead of the latest tagged release, and t
 next semver bump (with curated Unreleased/source-ahead notes) must happen before
 shipping these commits.
 
+### Added
+- **Transcript rail reading lens.** The user-message marker rail now carries a
+  skeuomorphic slide-rule-cursor "lens": a frosted-glass carriage whose height
+  shows how much of the thread is on screen and whose position tracks your
+  scroll — so read position is legible from geometry, not just the blue accent
+  fill. Ticks the lens has swept past settle into an "inked" spent state,
+  marking the done/upcoming boundary as a second colour-independent cue.
+
 ## 1.7.3 - 2026-07-03
 
 ### Fixed

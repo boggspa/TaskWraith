@@ -2294,6 +2294,50 @@
   transform: scaleY(0);
 }
 
+/* Skeuomorphic reading lens — a slide-rule cursor / fader carriage riding the
+ * marker stack. Its HEIGHT is the visible share of the transcript and its
+ * POSITION is the scroll progress, so scroll position now reads from geometry
+ * (a physical carriage over the ticks) rather than accent hue alone. Frosted
+ * glass: hairline frame, top bevel highlight, bottom seat shadow — no accent
+ * colour, no backdrop-filter (the rail floats over the transcript margin, so
+ * there's nothing meaningful to blur and reduce-transparency stays trivially
+ * satisfied). Inline top/height update every scroll frame → NO transition on
+ * position (it would lag the scroll). Pointer-transparent; sits above the
+ * spine/fill but below the marker buttons via source order. */
+.transcript-user-gutter-lens {
+  position: absolute;
+  left: 0;
+  width: 28px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--text-primary) 20%, transparent);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--text-primary) 9%, transparent),
+    color-mix(in srgb, var(--text-primary) 3%, transparent) 46%,
+    color-mix(in srgb, var(--text-primary) 7%, transparent)
+  );
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, white 18%, transparent),
+    inset 0 -1px 0 color-mix(in srgb, black 24%, transparent),
+    0 1px 3px rgba(0, 0, 0, 0.2);
+  pointer-events: none;
+}
+
+/* Fader-cap grip ridge: a tiny horizontal notch at the carriage centre, the
+ * literal "you are here" hairline of a slide-rule cursor. */
+.transcript-user-gutter-lens::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  right: 3px;
+  width: 6px;
+  height: 2px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-primary) 34%, transparent);
+  box-shadow: 0 1px 0 color-mix(in srgb, white 12%, transparent);
+  transform: translateY(-50%);
+}
+
 /* The gutter portals to <body>, so the transcript region's `display:none` (when
    Settings OR a workspace board takes over — both add `chat-split-hidden-for-settings`)
    can't reach it, and it holds a stale frame because no scroll/resize fires on
@@ -2337,6 +2381,17 @@ html:has(.chat-split-region.chat-split-hidden-for-settings) .transcript-user-gut
     background 120ms ease,
     opacity 120ms ease,
     box-shadow 120ms ease;
+}
+
+/* Spent ticks — the second non-hue position channel, paired with the lens: as
+ * the read-position fill sweeps past a marker it settles to "inked" (opaquer,
+ * still neutral-toned), so the boundary between done and upcoming ticks marks
+ * the scroll position even with the accent hue squinted away. Declared BEFORE
+ * the in-view / hover blocks so those brighter states win at equal specificity
+ * (source order). */
+.transcript-user-gutter-marker.is-read .transcript-user-gutter-line {
+  background: color-mix(in srgb, var(--text-primary) 62%, transparent);
+  opacity: 0.85;
 }
 
 /* Scroll-spy reading position — a PERSISTENT, subtler-than-hover, accent-tinted
