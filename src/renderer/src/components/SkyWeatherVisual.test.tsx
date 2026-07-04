@@ -52,27 +52,24 @@ describe('SkyWeatherVisual', () => {
     )
   })
 
-  it('generates scary diff-cloud deletions with stronger red bars', () => {
+  it('generates scary floating diff deletions', () => {
     const flight = createSkyDiffCloudFlight(1)
     const additions = Number(flight.additions.replace(/[+,]/g, ''))
     const deletions = Number(flight.deletions.replace(/[-,]/g, ''))
 
     expect(deletions).toBeGreaterThan(additions)
-    expect(flight.deleteBlockCount).toBeGreaterThan(flight.addBlockCount)
     expect(flight.style).toMatchObject({
       '--sky-diff-duration': '58000ms'
     })
   })
 
-  it('generates a separate tiny-addition / huge-deletion diff-cloud variant', () => {
+  it('generates a separate tiny-addition / huge-deletion diff variant', () => {
     const flight = createSkyMegaDeleteDiffCloudFlight(1)
     const additions = Number(flight.additions.replace(/[+,]/g, ''))
     const deletions = Number(flight.deletions.replace(/[-,]/g, ''))
 
     expect(flight.variant).toBe('mega-delete')
-    expect(additions).toBeLessThanOrEqual(9)
+    expect(additions).toBeLessThanOrEqual(24)
     expect(deletions).toBeGreaterThanOrEqual(125_000)
-    expect(flight.addBlockCount).toBe(1)
-    expect(flight.deleteBlockCount).toBeGreaterThanOrEqual(8)
   })
 })

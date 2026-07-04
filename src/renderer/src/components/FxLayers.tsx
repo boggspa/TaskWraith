@@ -52,8 +52,6 @@ interface SkyDiffCloudFlight {
   variant: 'regular' | 'mega-delete'
   additions: string
   deletions: string
-  addBlockCount: number
-  deleteBlockCount: number
   style: CSSProperties
 }
 
@@ -157,16 +155,12 @@ function createSkyDiffCloudFlightFromParts({
   id,
   variant,
   additions,
-  deletions,
-  addBlockCount,
-  deleteBlockCount
+  deletions
 }: {
   id: number
   variant: SkyDiffCloudFlight['variant']
   additions: number
   deletions: number
-  addBlockCount: number
-  deleteBlockCount: number
 }): SkyDiffCloudFlight {
   const fromLeft = Math.random() > 0.5
   const xStops = fromLeft
@@ -178,8 +172,6 @@ function createSkyDiffCloudFlightFromParts({
     variant,
     additions: `+${formatDiffNumber(additions)}`,
     deletions: `-${formatDiffNumber(deletions)}`,
-    addBlockCount,
-    deleteBlockCount,
     style: {
       '--sky-diff-duration': `${SKY_DIFF_CLOUD_FLIGHT_MS}ms`,
       '--sky-diff-scale': randomBetween(0.82, 1.06).toFixed(2),
@@ -207,14 +199,11 @@ function createSkyDiffCloudFlightFromParts({
 
 export function createSkyDiffCloudFlight(id: number): SkyDiffCloudFlight {
   const additions = randomInt(1_400, 4_900)
-  const addBlockCount = randomInt(2, 4)
   return createSkyDiffCloudFlightFromParts({
     id,
     variant: 'regular',
     additions,
-    deletions: additions + randomInt(1_900, 8_400),
-    addBlockCount,
-    deleteBlockCount: Math.min(8, addBlockCount + randomInt(2, 4))
+    deletions: additions + randomInt(1_900, 8_400)
   })
 }
 
@@ -222,10 +211,8 @@ export function createSkyMegaDeleteDiffCloudFlight(id: number): SkyDiffCloudFlig
   return createSkyDiffCloudFlightFromParts({
     id,
     variant: 'mega-delete',
-    additions: randomInt(1, 9),
-    deletions: randomInt(125_000, 285_000),
-    addBlockCount: 1,
-    deleteBlockCount: randomInt(8, 10)
+    additions: randomInt(1, 24),
+    deletions: randomInt(125_000, 285_000)
   })
 }
 
@@ -547,22 +534,9 @@ export function SkyWeatherVisual({ weather }: { weather: HostWeatherVisualState 
               className={`sky-diff-cloud sky-diff-cloud-${flight.variant}`}
               style={flight.style}
             >
-              <span className="sky-diff-cloud-soft" />
               <span className="sky-diff-cloud-card">
-                <span className="sky-diff-cloud-stat sky-diff-cloud-add">
-                  {flight.additions}
-                </span>
-                <span className="sky-diff-cloud-stat sky-diff-cloud-delete">
-                  {flight.deletions}
-                </span>
-                <span className="sky-diff-cloud-bars">
-                  {Array.from({ length: flight.addBlockCount }).map((_, index) => (
-                    <span key={`add-${index}`} className="sky-diff-cloud-bar add" />
-                  ))}
-                  {Array.from({ length: flight.deleteBlockCount }).map((_, index) => (
-                    <span key={`delete-${index}`} className="sky-diff-cloud-bar delete" />
-                  ))}
-                </span>
+                <span className="sky-diff-cloud-stat sky-diff-cloud-add">{flight.additions}</span>
+                <span className="sky-diff-cloud-stat sky-diff-cloud-delete">{flight.deletions}</span>
               </span>
             </div>
           )
