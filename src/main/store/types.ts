@@ -2646,7 +2646,8 @@ export interface ChatMessage {
       status: 'pending' | 'approved' | 'dismissed'
       artifactPath?: string
     }
-    /** Deterministic Evidence Pack check for completion-style final answers. */
+    /** Legacy retired Evidence Pack completion-claim annotation. Preserved only
+     * so older persisted chats can still deserialize without dropping metadata. */
     completionClaimSupport?: CompletionClaimSupportAnnotation
     /** Presentation-only link preview targets extracted from user-visible prompt text. */
     linkPreviews?: Array<{ url: string; origin: string; host: string }>

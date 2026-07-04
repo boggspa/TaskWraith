@@ -690,7 +690,6 @@ import {
   createEvidenceToolExecutors,
   isEvidenceMcpToolName
 } from './mcp/EvidenceToolExecutors'
-import { annotateChatCompletionClaimSupport } from './CompletionClaimInterceptor'
 import {
   buildProviderSignals,
   createAuditRoleDispatcher,
@@ -5549,23 +5548,19 @@ function writeTranscriptMediaAsset(input: {
 
 function saveAndBroadcastChat(chat: ChatRecord): ChatRecord {
   const normalized = normalizeTranscriptMarkdownMediaForChat(chat)
-  const assessed = annotateChatCompletionClaimSupport(
-    normalized,
-    normalized.workspaceId ? AppStore.getEvidencePacks(normalized.workspaceId) : []
-  ).chat
-  const previous = AppStore.getChat(assessed.appChatId)
-  AppStore.saveChat(assessed)
-  broadcastChatUpdated(assessed)
-  maybeScheduleCodexNativeGoalSync(previous, assessed, 'chat-save')
+  const previous = AppStore.getChat(normalized.appChatId)
+  AppStore.saveChat(normalized)
+  broadcastChatUpdated(normalized)
+  maybeScheduleCodexNativeGoalSync(previous, normalized, 'chat-save')
   // 1.0.5-PO2 — Notify open workspace popouts that something in
   // their workspace may have changed. The popout debounces a
   // re-fetch on its end; we just need to tell it something
   // happened. Filter on workspacePath so a chat update in a
   // *different* workspace doesn't churn unrelated popouts.
-  if (assessed.workspacePath) {
-    broadcastWorkspacePopoutRefresh(assessed.workspacePath, 'chat-updated')
+  if (normalized.workspacePath) {
+    broadcastWorkspacePopoutRefresh(normalized.workspacePath, 'chat-updated')
   }
-  return assessed
+  return normalized
 }
 
 function providerForTranscriptMessage(chat: ChatRecord, message: ChatMessage): ProviderId | undefined {
