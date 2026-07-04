@@ -283,6 +283,43 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
     expect(html).toContain('provider-alibaba')
   })
 
+  it('renders fan-out lane assistant output as a fixed-height result card', () => {
+    const html = renderToStaticMarkup(
+      <TranscriptPanel
+        {...makeProps({
+          virtualize: false,
+          messages: [
+            {
+              id: 'fanout-result-1',
+              role: 'assistant',
+              content: '**Reader result**\n\n- Stable lane output',
+              timestamp: '2026-07-04T12:00:00.000Z',
+              runId: 'codex-run-1',
+              metadata: {
+                kind: 'ensembleParticipant',
+                ensembleRoundId: 'round-1',
+                ensembleParticipantId: 'reader-1',
+                ensembleLaneId: 'lane-round-1-reader-1-1',
+                ensembleLaneIntent: 'read',
+                ensembleProvider: 'codex',
+                ensembleRole: 'Reader',
+                ensembleModel: 'gpt-5.5',
+                ensembleOrder: 1
+              }
+            } as ChatMessage
+          ]
+        })}
+      />
+    )
+
+    expect(html).toContain('ensemble-fanout-result-card')
+    expect(html).toContain('Reader fan-out')
+    expect(html).toContain('ensemble-fanout-result-viewport')
+    expect(html).toContain('live-activity-viewport')
+    expect(html).toContain('<strong>Reader result</strong>')
+    expect(html).toContain('Actions for fan-out result')
+  })
+
   it('renders a user-message gutter from the full display row set', () => {
     const html = renderToStaticMarkup(
       <TranscriptPanel {...makeProps({ virtualize: true, autoFollowRef: { current: false } })} />

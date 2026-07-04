@@ -159,12 +159,12 @@ describe('ensembleRosterPresets — capture + materialize', () => {
       'Writer panel',
       {
         ...sampleEnsemble(),
-        fanoutPolicy: 'locked_writers_with_boss',
+        fanoutPolicy: 'all',
         concurrentModeEnabled: false
       },
       1_700_000_000_000
     )
-    expect(preset.fanoutPolicy).toBe('locked_writers_with_boss')
+    expect(preset.fanoutPolicy).toBe('all')
     expect(preset.concurrentModeEnabled).toBe(false)
   })
 

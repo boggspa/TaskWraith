@@ -7,6 +7,7 @@ import type {
 const ENSEMBLE_FANOUT_POLICIES = new Set<EnsembleFanoutPolicy>([
   'off',
   'read_only',
+  'all',
   'locked_writers_with_boss',
   'locked_writers_user_preflight'
 ])

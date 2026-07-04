@@ -43,6 +43,7 @@ const signature = (
   expandedUser: false,
   activityExpansionKey: '',
   subThreadExpanded: false,
+  fanoutExpanded: false,
   pendingPlanChoiceKey: '',
   pendingAgentQuestionsKey: '',
   auxiliaryKey: '',

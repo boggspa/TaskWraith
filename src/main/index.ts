@@ -9151,6 +9151,7 @@ function clearScheduledTaskTimer() {
 const ENSEMBLE_FANOUT_POLICIES = new Set<EnsembleFanoutPolicy>([
   'off',
   'read_only',
+  'all',
   'locked_writers_with_boss',
   'locked_writers_user_preflight'
 ])
@@ -19931,6 +19932,7 @@ async function executeGeminiMcpTool(
         prompt: optionalString(args.prompt),
         reason: optionalString(args.reason),
         mode: args.mode === 'locked_writers' ? 'locked_writers' : args.mode === 'read_only' ? 'read_only' : undefined,
+        targetStage: args.targetStage ?? args.target_stage ?? args.stage,
         writeScopes: args.writeScopes ?? args.write_scopes
       }) ?? Promise.resolve({
         ok: false,

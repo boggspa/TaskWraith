@@ -475,7 +475,7 @@ describe('decodeBridgeActionPayload', () => {
           threadId: 'thread-1',
           orchestrationMode: 'continuous',
           maxContinuationHops: 12,
-          fanoutPolicy: 'locked_writers_user_preflight',
+          fanoutPolicy: 'all',
           ensembleContextChars: 120_000
         })
       ).payload
@@ -483,7 +483,7 @@ describe('decodeBridgeActionPayload', () => {
       if (payload.kind === 'ensembleSettingsUpdate') {
         expect(payload.orchestrationMode).toBe('continuous')
         expect(payload.maxContinuationHops).toBe(12)
-        expect(payload.fanoutPolicy).toBe('locked_writers_user_preflight')
+        expect(payload.fanoutPolicy).toBe('all')
         expect(payload.ensembleContextChars).toBe(120_000)
       }
       expect(workspaceIdFromPayload(payload)).toBe('ws-1')

@@ -9,6 +9,7 @@ describe('ensembleFanoutPolicy', () => {
     for (const policy of [
       'off',
       'read_only',
+      'all',
       'locked_writers_with_boss',
       'locked_writers_user_preflight'
     ] as const) {
@@ -31,6 +32,7 @@ describe('ensembleFanoutPolicy', () => {
   it('reports whether concurrent fanout is enabled', () => {
     expect(ensembleFanoutPolicyEnabled('off')).toBe(false)
     expect(ensembleFanoutPolicyEnabled('read_only')).toBe(true)
+    expect(ensembleFanoutPolicyEnabled('all')).toBe(true)
     expect(ensembleFanoutPolicyEnabled('locked_writers_with_boss')).toBe(true)
     expect(ensembleFanoutPolicyEnabled('locked_writers_user_preflight')).toBe(true)
   })

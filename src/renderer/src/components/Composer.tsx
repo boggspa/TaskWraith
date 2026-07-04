@@ -688,9 +688,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
   const writerFanoutPolicy: EnsembleFanoutPolicy = currentChat?.ensemble?.bossmanParticipantId
     ? 'locked_writers_with_boss'
     : 'locked_writers_user_preflight'
-  const currentWriterFanoutSelected =
-    currentEnsembleFanoutPolicy === 'locked_writers_with_boss' ||
-    currentEnsembleFanoutPolicy === 'locked_writers_user_preflight'
   const goalControlDisabled = !currentChat || Boolean(goalControlDisabledReason)
   const goalControlTitle = goalControlDisabledReason || currentGoalButtonTitle
 
@@ -722,7 +719,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
         onOpenWorkSession={() => setShowWorkSessionSheet(true)}
         fanoutPolicy={currentEnsembleFanoutPolicy}
         writerFanoutPolicy={writerFanoutPolicy}
-        writerFanoutSelected={currentWriterFanoutSelected}
         onFanoutPolicyChange={updateCurrentEnsembleFanoutPolicy}
         concurrentLanesAvailable={ensembleConcurrentLanesAvailable}
         concurrentWriteLanesAvailable={ensembleConcurrentWriteLanesAvailable}

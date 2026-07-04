@@ -20146,7 +20146,8 @@ function App(): React.JSX.Element {
     if (token === 'on' || token === 'read' || token === 'read-only' || token === 'readonly') {
       return 'read_only'
     }
-    if (token === 'writers' || token === 'writer') {
+    if (token === 'all') return 'all'
+    if (token === 'write' || token === 'writers' || token === 'writer') {
       return hasBossman ? 'locked_writers_with_boss' : 'locked_writers_user_preflight'
     }
     if (token === 'boss' || token === 'bossman') return 'locked_writers_with_boss'
@@ -20496,7 +20497,7 @@ function App(): React.JSX.Element {
             command: '/ensemble-fanout',
             label: 'Set safe fanout',
             description:
-              'Toggle or set safe concurrent fanout. Usage: /ensemble-fanout off|read|writers|boss|preflight.',
+              'Toggle or set safe concurrent fanout. Usage: /ensemble-fanout off|read|write|all|boss|preflight.',
             group: 'Custom' as const,
             run: (ctx: SlashCommandRunContext) => {
               if (!chat || chat.chatKind !== 'ensemble' || !chat.ensemble) {
@@ -20512,7 +20513,7 @@ function App(): React.JSX.Element {
                   chat.ensemble.concurrentModeEnabled
                 ),
                 Boolean(chat.ensemble.bossmanParticipantId),
-                'Usage: /ensemble-fanout off|read|writers|boss|preflight.'
+                'Usage: /ensemble-fanout off|read|write|all|boss|preflight.'
               )
               if (next === null) return
               patchScopedEnsembleConfig(chat, (ensemble) => ({

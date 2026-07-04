@@ -19,6 +19,7 @@ export interface TranscriptRowRenderSignature {
   expandedUser: boolean
   activityExpansionKey: string
   subThreadExpanded: boolean
+  fanoutExpanded: boolean
   pendingPlanChoiceKey: string
   pendingAgentQuestionsKey: string
   auxiliaryKey: string
@@ -82,6 +83,7 @@ export function transcriptRowRenderSignatureEqual(
   if (prev.expandedUser !== next.expandedUser) return false
   if (prev.activityExpansionKey !== next.activityExpansionKey) return false
   if (prev.subThreadExpanded !== next.subThreadExpanded) return false
+  if (prev.fanoutExpanded !== next.fanoutExpanded) return false
   if (prev.pendingPlanChoiceKey !== next.pendingPlanChoiceKey) return false
   if (prev.pendingAgentQuestionsKey !== next.pendingAgentQuestionsKey) return false
   if (prev.auxiliaryKey !== next.auxiliaryKey) return false

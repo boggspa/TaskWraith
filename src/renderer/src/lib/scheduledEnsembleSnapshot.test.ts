@@ -71,14 +71,14 @@ describe('buildScheduledEnsembleSnapshot', () => {
     const snap = buildScheduledEnsembleSnapshot(
       chat({
         ensemble: ensemble({
-          fanoutPolicy: 'locked_writers_user_preflight',
+          fanoutPolicy: 'all',
           concurrentModeEnabled: true
         })
       }),
       { now: () => FIXED_NOW }
     )!
     expect(snap.orchestrationMode).toBe('turn_bound')
-    expect(snap.fanoutPolicy).toBe('locked_writers_user_preflight')
+    expect(snap.fanoutPolicy).toBe('all')
     expect(snap.concurrentModeEnabled).toBe(true)
     expect(snap.participants.map((p) => p.id)).toEqual(['claude', 'codex'])
     expect(snap.maxParticipants).toBe(8)

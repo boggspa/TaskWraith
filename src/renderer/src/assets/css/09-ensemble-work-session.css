@@ -1976,6 +1976,24 @@
   gap: 1px;
 }
 
+.composer-fanout-policy-select {
+  min-height: 24px;
+  border: 1px solid color-mix(in srgb, var(--accent-color) 28%, var(--border-color));
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--surface) 82%, var(--accent-color) 8%);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0;
+  padding: 3px 24px 3px 8px;
+}
+
+.composer-fanout-policy-select:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent-color) 58%, transparent);
+  outline-offset: 2px;
+}
+
 .composer-fanout-policy .composer-ensemble-mode-button:disabled {
   cursor: default;
   opacity: 0.46;

@@ -67,6 +67,8 @@ import {
 } from '../lib/transcriptSmoothScroll'
 import { ActivityStack } from './ActivityStack'
 import { EnsembleRoundCardHeader } from './EnsembleRoundCardHeader'
+import { EnsembleFanoutResultCard } from './EnsembleFanoutResultCard'
+import { isEnsembleFanoutResultMessage } from './EnsembleFanoutResultCardModel'
 import { AgentQuestionCard, type AgentQuestionState } from './AgentQuestionCard'
 import { isGuestParticipantReplyMessage } from './GuestParticipantReplyCardModel'
 import { SubThreadDelegationCard } from './SubThreadDelegationCard'
@@ -1399,6 +1401,15 @@ export const TranscriptPanel = memo(
         return next
       })
     }, [])
+    const [expandedFanoutResults, setExpandedFanoutResults] = useState<Set<string>>(new Set())
+    const setFanoutResultExpanded = useCallback((rowId: string, expanded: boolean) => {
+      setExpandedFanoutResults((prev) => {
+        const next = new Set(prev)
+        if (expanded) next.add(rowId)
+        else next.delete(rowId)
+        return next
+      })
+    }, [])
     // Row ids whose tool stack has something open — the measurementKey
     // geometry bit, so collapsed vs expanded rows cache distinct heights.
     const expandedRowIds = useMemo(() => {
@@ -1409,8 +1420,11 @@ export const TranscriptPanel = memo(
       for (const rowId of expandedSubThreadResults) {
         ids.add(rowId)
       }
+      for (const rowId of expandedFanoutResults) {
+        ids.add(rowId)
+      }
       return ids
-    }, [activityExpansionByRow, expandedSubThreadResults])
+    }, [activityExpansionByRow, expandedSubThreadResults, expandedFanoutResults])
 
     // 1.0.6-TV1 — windowing. `virtualize` defaults to the global flag;
     // tests pass it explicitly. When off, `useTranscriptVirtualization`
@@ -1966,6 +1980,7 @@ export const TranscriptPanel = memo(
           {renderedRows.map(({ msg, rowKey }) => {
             const isDelegationCard = isSubThreadDelegationMessage(msg)
             const isReturnCard = isSubThreadReturnMessage(msg)
+            const isFanoutResultCard = isEnsembleFanoutResultMessage(msg)
             const isGuestReply = isGuestParticipantReplyMessage(msg)
             const isCollaboratorComment = isHumanCollaboratorComment(msg)
             const isToolActivityStack = msg.role === 'tool' && (msg.toolActivities?.length || 0) > 0
@@ -1994,6 +2009,8 @@ export const TranscriptPanel = memo(
             const footerLabel =
               msg.role === 'user'
                 ? 'user message'
+                : isFanoutResultCard
+                  ? 'fan-out result'
                 : isGuestReply
                   ? 'guest participant message'
                   : isCollaboratorComment
@@ -2072,6 +2089,7 @@ export const TranscriptPanel = memo(
                 ? Array.from(activityExpansionIds).sort().join('\u0000')
                 : '',
               subThreadExpanded: expandedSubThreadResults.has(msg.id),
+              fanoutExpanded: expandedFanoutResults.has(msg.id),
               pendingPlanChoiceKey,
               pendingAgentQuestionsKey,
               auxiliaryKey: auxiliaryKeyWithPendingPlan,
@@ -2098,6 +2116,7 @@ export const TranscriptPanel = memo(
                 onDetachToPane,
                 setActivityExpansionForRow,
                 setSubThreadResultExpanded,
+                setFanoutResultExpanded,
                 toggleUserMessageExpanded,
                 setRoundExpanded
               ]
@@ -2180,6 +2199,29 @@ export const TranscriptPanel = memo(
                         }
                       />
                     )}
+                  </div>
+                ) : isFanoutResultCard ? (
+                  <div
+                    key={msg.id}
+                    className="message-group ensemble-fanout-result-message"
+                    onContextMenu={(event) =>
+                      openMessageContextMenu(event, msg, msg.content || '', 'fan-out result')
+                    }
+                  >
+                    <EnsembleFanoutResultCard
+                      message={msg}
+                      chat={currentChat || undefined}
+                      workspacePath={currentWorkspacePath}
+                      streamRunId={
+                        typeof msg.runId === 'string' && msg.runId
+                          ? msg.runId
+                          : boundaryRun?.runId
+                      }
+                      expanded={expandedFanoutResults.has(msg.id)}
+                      onExpandedChange={(expanded) => setFanoutResultExpanded(msg.id, expanded)}
+                      onPreviewImage={onPreviewImage}
+                      onDetachToPane={onDetachToPane}
+                    />
                   </div>
                 ) : isToolActivityStack ? (
                   <ActivityStack

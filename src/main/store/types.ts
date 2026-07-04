@@ -500,6 +500,7 @@ export type EnsembleOrchestrationMode = 'turn_bound' | 'continuous'
 export type EnsembleFanoutPolicy =
   | 'off'
   | 'read_only'
+  | 'all'
   | 'locked_writers_with_boss'
   | 'locked_writers_user_preflight'
 
@@ -2605,6 +2606,8 @@ export interface ChatMessage {
     returnResultToParent?: boolean
     /** Concurrent Ensemble lane id for lane-aware transcript rows. */
     ensembleLaneId?: string
+    /** Concurrent Ensemble lane intent for reader/writer fan-out presentation. */
+    ensembleLaneIntent?: ConcurrentLaneIntent
     /** Agent Pool identity frozen at dispatch/materialization time. */
     pooledAgentId?: string
     pooledAgentIdentity?: PooledAgentIdentitySnapshot
@@ -2742,6 +2745,7 @@ export interface ChatRun {
   ensembleRoundId?: string
   ensembleParticipantId?: string
   ensembleLaneId?: string
+  ensembleLaneIntent?: ConcurrentLaneIntent
   ensembleRole?: string
   ensembleStageRole?: EnsembleStageRole
   ensembleOrder?: number

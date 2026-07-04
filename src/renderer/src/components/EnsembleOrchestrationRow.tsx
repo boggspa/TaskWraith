@@ -11,7 +11,7 @@
  * a full line of real estate and each control gets an explicit label:
  *
  *   Mode:          [Turn/Continuous/Work Session picker]
- *   Fan-Out:       [Off | Read | Write]
+ *   Fan-Out:       [Off/Read/Write/All picker]
  *   Chars:         [slider] 24K
  *   Turns:         [n/m hop meter]           (continuous mode only)
  *
@@ -35,6 +35,7 @@ import type { ComposerStyle, EnsembleFanoutPolicy } from '../../../main/store/ty
 const CONTEXT_MIN = 5_000
 const CONTEXT_MAX = 500_000
 const CONTEXT_DEFAULT = 24_000
+type FanoutPickerValue = 'off' | 'read_only' | 'write' | 'all'
 
 function formatCharBudget(chars: number): string {
   return chars >= 1000 ? `${Math.round(chars / 1000)}K` : `${chars}`
@@ -57,7 +58,6 @@ export function EnsembleOrchestrationRow({
   onOpenWorkSession,
   fanoutPolicy,
   writerFanoutPolicy,
-  writerFanoutSelected,
   onFanoutPolicyChange,
   concurrentLanesAvailable,
   concurrentWriteLanesAvailable,
@@ -83,7 +83,6 @@ export function EnsembleOrchestrationRow({
   /** Which locked-writers policy the Write button selects (boss-mediated
    * vs user-preflight) — resolved upstream from bossmanParticipantId. */
   writerFanoutPolicy: EnsembleFanoutPolicy
-  writerFanoutSelected: boolean
   onFanoutPolicyChange: (policy: EnsembleFanoutPolicy) => void
   concurrentLanesAvailable: boolean
   concurrentWriteLanesAvailable: boolean
@@ -98,6 +97,40 @@ export function EnsembleOrchestrationRow({
   const effectiveContextChars = contextChars ?? CONTEXT_DEFAULT
   const visibleOllamaContextWarning =
     ollamaContextWarning?.severity === 'ok' ? null : ollamaContextWarning
+  const selectedFanoutValue: FanoutPickerValue =
+    fanoutPolicy === 'all'
+      ? 'all'
+      : fanoutPolicy === 'locked_writers_with_boss' ||
+          fanoutPolicy === 'locked_writers_user_preflight'
+        ? 'write'
+        : fanoutPolicy
+  const fanoutTitle = (() => {
+    if (!concurrentLanesAvailable) {
+      return 'Parallel lanes are disabled (TASKWRAITH_CONCURRENT_LANES=0); rounds run serially.'
+    }
+    if (selectedFanoutValue === 'off') return 'Run participants serially.'
+    if (selectedFanoutValue === 'read_only') {
+      return 'Fan out scouts/read-only participants at the start and reviewers later.'
+    }
+    if (!concurrentWriteLanesAvailable) {
+      return 'Writer fan-out is disabled (TASKWRAITH_CONCURRENT_WRITE_LANES=0).'
+    }
+    if (selectedFanoutValue === 'write') {
+      return bossmanAssigned
+        ? 'Only writer/worker fan-out is enabled; Boss-triggered lanes require explicit writeScopes.'
+        : 'Only writer/worker fan-out is enabled; user-preflight claims scopes before dispatch.'
+    }
+    return bossmanAssigned
+      ? 'Read/review fan-out plus Boss-triggered writer lanes with explicit writeScopes.'
+      : 'Read/review fan-out plus user-preflight writer lanes.'
+  })()
+  const handleFanoutPickerChange = (value: FanoutPickerValue) => {
+    if (value === 'write') {
+      onFanoutPolicyChange(writerFanoutPolicy)
+      return
+    }
+    onFanoutPolicyChange(value)
+  }
   return (
     <div
       className="composer-ensemble-orchestration-row"
@@ -110,7 +143,9 @@ export function EnsembleOrchestrationRow({
                 ? ' + Read fan-out'
                 : activeFanoutPolicy === 'off'
                   ? ''
-                  : ' + Writer fan-out'
+                  : activeFanoutPolicy === 'all'
+                    ? ' + All fan-out'
+                    : ' + Writer fan-out'
             }`
           : 'Choose whether agents speak once per round or can hand work back and forth.'
       }
@@ -133,43 +168,24 @@ export function EnsembleOrchestrationRow({
         </span>
         <span className="composer-ensemble-mode" data-composer-control="ensemble-mode">
           <span className="composer-fanout-policy" aria-label="Fan-out policy">
-            <button
-              type="button"
-              className={`composer-ensemble-mode-button ${fanoutPolicy === 'off' ? 'is-active' : ''}`}
-              onClick={() => onFanoutPolicyChange('off')}
-              title="Run participants serially."
-            >
-              Off
-            </button>
-            <button
-              type="button"
-              className={`composer-ensemble-mode-button ${fanoutPolicy === 'read_only' ? 'is-active' : ''}`}
-              onClick={() => onFanoutPolicyChange('read_only')}
-              title={
-                concurrentLanesAvailable
-                  ? 'Fan out read-only participants in parallel before writer-capable participants run serially.'
-                  : 'Parallel lanes are disabled (TASKWRAITH_CONCURRENT_LANES=0); rounds run serially.'
+            <select
+              className="composer-fanout-policy-select"
+              value={selectedFanoutValue}
+              onChange={(event) =>
+                handleFanoutPickerChange(event.target.value as FanoutPickerValue)
               }
+              title={fanoutTitle}
+              aria-label="Fan-out policy"
             >
-              Read
-            </button>
-            <button
-              type="button"
-              className={`composer-ensemble-mode-button ${writerFanoutSelected ? 'is-active' : ''} ${
-                !concurrentWriteLanesAvailable ? 'is-locked' : ''
-              }`}
-              disabled={!concurrentWriteLanesAvailable}
-              onClick={() => onFanoutPolicyChange(writerFanoutPolicy)}
-              title={
-                concurrentWriteLanesAvailable
-                  ? bossmanAssigned
-                    ? 'Writer fan-out is available when the assigned Boss calls ensemble_fanout with explicit writeScopes.'
-                    : 'Writer fan-out is mediated by user-enabled write-scope preflight: claim scopes, host conflict matrix, then ack.'
-                  : 'Writer fan-out is disabled (TASKWRAITH_CONCURRENT_WRITE_LANES=0).'
-              }
-            >
-              Write
-            </button>
+              <option value="off">Off</option>
+              <option value="read_only">Read</option>
+              <option value="write" disabled={!concurrentWriteLanesAvailable}>
+                Write
+              </option>
+              <option value="all" disabled={!concurrentWriteLanesAvailable}>
+                All
+              </option>
+            </select>
           </span>
         </span>
       </span>

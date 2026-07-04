@@ -600,6 +600,7 @@ export interface BridgeEnsembleSettingsUpdateAction extends BridgeActionMetadata
   fanoutPolicy?:
     | 'off'
     | 'read_only'
+    | 'all'
     | 'locked_writers_with_boss'
     | 'locked_writers_user_preflight'
   ensembleContextChars?: number
@@ -1746,6 +1747,7 @@ function isEnsembleSettingsUpdate(v: Record<string, unknown>): boolean {
     hasFanoutPolicy &&
     fanoutPolicy !== 'off' &&
     fanoutPolicy !== 'read_only' &&
+    fanoutPolicy !== 'all' &&
     fanoutPolicy !== 'locked_writers_with_boss' &&
     fanoutPolicy !== 'locked_writers_user_preflight'
   ) {

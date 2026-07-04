@@ -5368,6 +5368,112 @@ html:has(.chat-split-region.chat-split-hidden-for-settings) .transcript-user-gut
   color: var(--text-primary);
 }
 
+.ensemble-fanout-result-message {
+  width: 100%;
+}
+
+.ensemble-fanout-result-card {
+  width: min(100%, 860px);
+  position: relative;
+  border: 1px solid color-mix(in srgb, var(--accent) 34%, transparent);
+  border-radius: 8px;
+  background:
+    linear-gradient(135deg, rgb(var(--agent-accent-rgb, 255 255 255) / 0.1), transparent 56%),
+    rgb(255 255 255 / 0.032);
+  box-shadow: 0 12px 28px rgb(0 0 0 / 0.13);
+  color: var(--text-primary);
+  padding: 0.78rem 0.9rem 0.9rem;
+}
+
+.ensemble-fanout-result-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  margin-bottom: 0.72rem;
+}
+
+.ensemble-fanout-result-heading {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.ensemble-fanout-result-glyph {
+  color: var(--accent);
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.ensemble-fanout-result-label {
+  white-space: nowrap;
+}
+
+.ensemble-fanout-result-provider,
+.ensemble-fanout-result-model,
+.ensemble-fanout-result-order {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  border: 1px solid rgb(var(--agent-accent-rgb, 255 255 255) / 0.24);
+  border-radius: 7px;
+  background: rgb(var(--agent-accent-rgb, 255 255 255) / 0.11);
+  color: var(--text-primary);
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  line-height: 1;
+  padding: 0.26rem 0.45rem;
+}
+
+.ensemble-fanout-result-model,
+.ensemble-fanout-result-order {
+  border-color: rgb(255 255 255 / 0.12);
+  background: rgb(255 255 255 / 0.045);
+  color: var(--text-secondary);
+}
+
+.ensemble-fanout-result-title {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ensemble-fanout-result-body {
+  color: var(--text-primary);
+}
+
+.ensemble-fanout-result-viewport {
+  margin: 0;
+  padding-left: 12px;
+  --live-activity-edge-fade-size: 44px;
+}
+
+.ensemble-fanout-result-viewport .live-activity-viewport-rail {
+  background: color-mix(in srgb, var(--accent) 48%, transparent);
+}
+
+.ensemble-fanout-result-viewport .live-activity-viewport-scroll {
+  padding-right: 2px;
+}
+
+.ensemble-fanout-result-body-inner {
+  min-width: 0;
+  color: var(--text-primary);
+}
+
+.ensemble-fanout-result-empty {
+  color: var(--text-tertiary);
+  font-size: var(--font-size-sm);
+}
+
 /* Phase I3.2 — inline delegation card rendered in the parent transcript
  * when a sub-thread is spawned via TaskWraith__delegate_to_subthread. */
 .subthread-delegation-card {
@@ -6046,7 +6152,8 @@ html:has(.chat-split-region.chat-split-hidden-for-settings) .transcript-user-gut
   flex: 0 0 auto;
 }
 
-.subthread-return-body .message-markdown-pro {
+.subthread-return-body .message-markdown-pro,
+.ensemble-fanout-result-body .message-markdown-pro {
   max-width: 100%;
 }
 

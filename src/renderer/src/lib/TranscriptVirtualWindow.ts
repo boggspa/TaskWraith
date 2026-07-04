@@ -22,6 +22,7 @@
 
 import type { ChatMessage } from '../../../main/store/types'
 import { isGuestParticipantReplyMessage } from '../components/GuestParticipantReplyCardModel'
+import { isEnsembleFanoutResultMessage } from '../components/EnsembleFanoutResultCardModel'
 import { isSubThreadDelegationMessage } from '../components/SubThreadDelegationCardModel'
 import { isSubThreadReturnMessage } from '../components/SubThreadReturnCardModel'
 import { isHumanCollaboratorComment } from '../../../main/collaboration/HumanCollaboratorMessages'
@@ -40,6 +41,7 @@ export type VirtualRowType =
   | 'participantHealth'
   | 'delegation'
   | 'return'
+  | 'fanoutResult'
   | 'guestReply'
   | 'collaborator'
 
@@ -97,6 +99,7 @@ export const ESTIMATED_ROW_HEIGHT_PX: Record<VirtualRowType, number> = {
   participantHealth: 132,
   delegation: 104,
   return: 148,
+  fanoutResult: 320,
   guestReply: 220,
   collaborator: 132
 }
@@ -148,6 +151,7 @@ export function widthBucket(clientWidth: number, step: number = WIDTH_BUCKET_PX)
 export function classifyRowType(message: ChatMessage): VirtualRowType {
   if (isSubThreadDelegationMessage(message)) return 'delegation'
   if (isSubThreadReturnMessage(message)) return 'return'
+  if (isEnsembleFanoutResultMessage(message)) return 'fanoutResult'
   if (isGuestParticipantReplyMessage(message)) return 'guestReply'
   if (isHumanCollaboratorComment(message)) return 'collaborator'
   if (message.role === 'tool') {
@@ -299,7 +303,7 @@ export function measurementContentVersion(
   if (
     activeLiveRowKey &&
     row.rowKey === activeLiveRowKey &&
-    (row.rowType === 'assistant' || row.rowType === 'guestReply')
+    (row.rowType === 'assistant' || row.rowType === 'guestReply' || row.rowType === 'fanoutResult')
   ) {
     return `${row.rowType}:live`
   }

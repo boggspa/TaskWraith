@@ -365,6 +365,7 @@ interface ActiveParticipantRun {
   roundId: string
   runId: string
   laneId?: string
+  laneIntent?: ConcurrentLane['intent']
   approvedWriteScopes?: ConcurrentLaneWriteScope[]
   participant: EnsembleParticipant
   promptMessageId: string
@@ -539,12 +540,14 @@ export interface CancelWakeupInput {
 }
 
 export type EnsembleFanoutMode = 'read_only' | 'locked_writers'
+export type EnsembleFanoutTargetStage = 'all' | 'scouts' | 'workers' | 'reviewers'
 
 export interface EnsembleFanoutInput {
   targets?: unknown
   prompt?: string
   reason?: string
   mode?: EnsembleFanoutMode
+  targetStage?: unknown
   writeScopes?: unknown
 }
 
@@ -552,6 +555,7 @@ export interface EnsembleFanoutResult {
   ok: boolean
   tool: 'ensemble_fanout'
   mode: EnsembleFanoutMode
+  targetStage?: EnsembleFanoutTargetStage
   message: string
   laneIds?: string[]
   participantIds?: string[]
@@ -560,6 +564,7 @@ export interface EnsembleFanoutResult {
     | 'not_ensemble'
     | 'missing_prompt'
     | 'invalid_mode'
+    | 'invalid_target_stage'
     | 'invalid_target'
     | 'no_eligible_targets'
     | 'not_authorized'
@@ -681,6 +686,7 @@ export interface EnsembleSideMessageResult {
 const ENSEMBLE_FANOUT_POLICIES: EnsembleFanoutPolicy[] = [
   'off',
   'read_only',
+  'all',
   'locked_writers_with_boss',
   'locked_writers_user_preflight'
 ]
@@ -691,6 +697,70 @@ const ENSEMBLE_FANOUT_POLICIES: EnsembleFanoutPolicy[] = [
  * than emit duplicates. */
 function timelineMessageId(runId: string, index: number, kind: 'content' | 'tool'): string {
   return `ensemble-${kind}-${runId}-${index}`
+}
+
+function laneTranscriptMetadata(
+  run: ActiveParticipantRun
+): { ensembleLaneId?: string; ensembleLaneIntent?: ConcurrentLane['intent'] } {
+  return run.laneId
+    ? {
+        ensembleLaneId: run.laneId,
+        ensembleLaneIntent: run.laneIntent || 'read'
+      }
+    : {}
+}
+
+function messageLaneOrder(message: ChatMessage): number {
+  const order = message.metadata?.ensembleOrder
+  return typeof order === 'number' && Number.isFinite(order) ? order : Number.MAX_SAFE_INTEGER
+}
+
+function messageLaneParticipantId(message: ChatMessage): string {
+  const participantId = message.metadata?.ensembleParticipantId
+  return typeof participantId === 'string' ? participantId : ''
+}
+
+function messageLaneId(message: ChatMessage): string {
+  const laneId = message.metadata?.ensembleLaneId
+  return typeof laneId === 'string' ? laneId : ''
+}
+
+function compareRunLaneToMessage(run: ActiveParticipantRun, message: ChatMessage): number {
+  const orderDelta = (run.participant.order ?? Number.MAX_SAFE_INTEGER) - messageLaneOrder(message)
+  if (orderDelta !== 0) return orderDelta
+  const participantDelta = run.participant.id.localeCompare(messageLaneParticipantId(message))
+  if (participantDelta !== 0) return participantDelta
+  return (run.laneId || '').localeCompare(messageLaneId(message))
+}
+
+function isComparableFanoutTimelineMessage(message: ChatMessage, run: ActiveParticipantRun): boolean {
+  if (message.metadata?.ensembleRoundId !== run.roundId) return false
+  const laneId = messageLaneId(message)
+  if (!laneId || laneId === run.laneId) return false
+  if (message.role !== 'assistant' && message.role !== 'tool') return false
+  return (
+    message.metadata?.kind === 'ensembleParticipant' ||
+    message.metadata?.kind === 'ensembleParticipantTools'
+  )
+}
+
+function insertRunTimelineMessages(
+  messages: ChatMessage[],
+  desiredMessages: ChatMessage[],
+  run: ActiveParticipantRun
+): ChatMessage[] {
+  if (!run.laneId || desiredMessages.length === 0) return [...messages, ...desiredMessages]
+  const insertionIndex = messages.findIndex(
+    (message) =>
+      isComparableFanoutTimelineMessage(message, run) &&
+      compareRunLaneToMessage(run, message) < 0
+  )
+  if (insertionIndex < 0) return [...messages, ...desiredMessages]
+  return [
+    ...messages.slice(0, insertionIndex),
+    ...desiredMessages,
+    ...messages.slice(insertionIndex)
+  ]
 }
 
 /** Push a content fragment into the run's timeline, merging into
@@ -768,6 +838,70 @@ function stripPseudoSystemYieldLines(text: string): string {
 function normalizeFanoutMode(value: unknown): EnsembleFanoutMode | null {
   if (value === undefined || value === null || value === '') return 'read_only'
   return value === 'read_only' || value === 'locked_writers' ? value : null
+}
+
+function normalizeFanoutTargetStage(value: unknown): EnsembleFanoutTargetStage | null | undefined {
+  if (value === undefined || value === null || value === '') return undefined
+  const normalized = String(value).trim().toLowerCase().replace(/[\s_-]+/g, '')
+  if (normalized === 'all' || normalized === 'anytyped' || normalized === 'typed') return 'all'
+  if (
+    normalized === 'scout' ||
+    normalized === 'scouts' ||
+    normalized === 'reader' ||
+    normalized === 'readers' ||
+    normalized === 'recon'
+  ) {
+    return 'scouts'
+  }
+  if (
+    normalized === 'worker' ||
+    normalized === 'workers' ||
+    normalized === 'writer' ||
+    normalized === 'writers'
+  ) {
+    return 'workers'
+  }
+  if (normalized === 'review' || normalized === 'reviewer' || normalized === 'reviewers') {
+    return 'reviewers'
+  }
+  return null
+}
+
+function fanoutTargetStageLabel(targetStage: EnsembleFanoutTargetStage | undefined): string {
+  if (targetStage === 'scouts') return 'Scout fan-out'
+  if (targetStage === 'workers') return 'Worker fan-out'
+  if (targetStage === 'reviewers') return 'Review fan-out'
+  if (targetStage === 'all') return 'Ensemble fan-out'
+  return 'Parallel fan-out'
+}
+
+function fanoutTargetStageMatches(
+  participant: EnsembleParticipant,
+  targetStage: EnsembleFanoutTargetStage | undefined
+): boolean {
+  if (!targetStage) return true
+  if (targetStage === 'all') {
+    return (
+      participant.stageRole === 'scout' ||
+      participant.stageRole === 'worker' ||
+      participant.stageRole === 'reviewer'
+    )
+  }
+  if (targetStage === 'scouts') return participant.stageRole === 'scout'
+  if (targetStage === 'workers') return participant.stageRole === 'worker'
+  return participant.stageRole === 'reviewer'
+}
+
+function fanoutPolicyAllowsRead(policy: EnsembleFanoutPolicy): boolean {
+  return policy === 'read_only' || policy === 'all'
+}
+
+function fanoutPolicyAllowsWriters(policy: EnsembleFanoutPolicy): boolean {
+  return (
+    policy === 'all' ||
+    policy === 'locked_writers_with_boss' ||
+    policy === 'locked_writers_user_preflight'
+  )
 }
 
 function isRosterEditAction(value: string): value is RosterEditAction {
@@ -4351,6 +4485,17 @@ export class EnsembleOrchestrator {
         error: 'invalid_mode'
       }
     }
+    const targetStage = normalizeFanoutTargetStage(input.targetStage)
+    if (targetStage === null) {
+      return {
+        ok: false,
+        tool: 'ensemble_fanout',
+        mode,
+        message:
+          'ensemble_fanout: targetStage must be all, scouts, workers, or reviewers.',
+        error: 'invalid_target_stage'
+      }
+    }
     const prompt = (input.prompt || '').trim()
     if (!prompt) {
       return {
@@ -4405,13 +4550,24 @@ export class EnsembleOrchestrator {
         error: 'not_authorized'
       }
     }
-    if (mode === 'locked_writers' && fanoutPolicy !== 'locked_writers_with_boss') {
+    if (mode === 'read_only' && !fanoutPolicyAllowsRead(fanoutPolicy) && !workSessionScoutPass) {
       return {
         ok: false,
         tool: 'ensemble_fanout',
         mode,
+        ...(targetStage ? { targetStage } : {}),
+        message: 'ensemble_fanout: read-only fan-out requires the Read or All fan-out policy.',
+        error: 'not_authorized'
+      }
+    }
+    if (mode === 'locked_writers' && !fanoutPolicyAllowsWriters(fanoutPolicy)) {
+      return {
+        ok: false,
+        tool: 'ensemble_fanout',
+        mode,
+        ...(targetStage ? { targetStage } : {}),
         message:
-          'ensemble_fanout: locked writer lanes require the Boss writer fan-out policy.',
+          'ensemble_fanout: locked writer lanes require the Write or All fan-out policy.',
         error: 'not_authorized'
       }
     }
@@ -4420,6 +4576,7 @@ export class EnsembleOrchestrator {
         ok: false,
         tool: 'ensemble_fanout',
         mode,
+        ...(targetStage ? { targetStage } : {}),
         message:
           'ensemble_fanout: locked writer lanes require TASKWRAITH_CONCURRENT_WRITE_LANES.',
         error: 'write_lanes_disabled'
@@ -4431,6 +4588,7 @@ export class EnsembleOrchestrator {
       this.appendRoundStatus(run.chatId, run.roundId, message)
       this.recordFanoutAuthorizationRejection(chat, run, {
         mode,
+        ...(targetStage ? { targetStage } : {}),
         reason: 'locked_writer_not_authorized',
         targets: normalizeTargetList(input.targets)
       })
@@ -4438,6 +4596,7 @@ export class EnsembleOrchestrator {
         ok: false,
         tool: 'ensemble_fanout',
         mode,
+        ...(targetStage ? { targetStage } : {}),
         message,
         error: 'not_authorized'
       }
@@ -4448,18 +4607,27 @@ export class EnsembleOrchestrator {
         ok: false,
         tool: 'ensemble_fanout',
         mode,
+        ...(targetStage ? { targetStage } : {}),
         message:
           'ensemble_fanout: broad fan-out requires the configured Boss/Lead/manager, or an active Work Session with an explicit participant scope. Use explicit targets for a narrow peer handoff.',
         error: 'not_authorized'
       }
     }
 
-    const resolvedTargets = this.resolveFanoutTargets(chat, runtime, run, input.targets, mode)
+    const resolvedTargets = this.resolveFanoutTargets(
+      chat,
+      runtime,
+      run,
+      input.targets,
+      mode,
+      targetStage
+    )
     if (!resolvedTargets.ok) {
       return {
         ok: false,
         tool: 'ensemble_fanout',
         mode,
+        ...(targetStage ? { targetStage } : {}),
         message: resolvedTargets.message,
         error: resolvedTargets.error
       }
@@ -4486,7 +4654,10 @@ export class EnsembleOrchestrator {
       writeScopesByParticipantId = resolvedScopes.scopesByParticipantId
     }
 
-    const label = mode === 'locked_writers' ? 'Locked writer fan-out' : 'Parallel fan-out'
+    const label =
+      mode === 'locked_writers' && !targetStage
+        ? 'Locked writer fan-out'
+        : fanoutTargetStageLabel(targetStage)
     this.appendRoundStatus(
       run.chatId,
       run.roundId,
@@ -4508,6 +4679,7 @@ export class EnsembleOrchestrator {
         ok: true,
         tool: 'ensemble_fanout',
         mode,
+        ...(targetStage ? { targetStage } : {}),
         laneIds,
         participantIds: resolvedTargets.targets.map((participant) => participant.id),
         message: `${label} complete: ${laneIds.length} lane(s) returned.`
@@ -4520,6 +4692,7 @@ export class EnsembleOrchestrator {
         ok: false,
         tool: 'ensemble_fanout',
         mode,
+        ...(targetStage ? { targetStage } : {}),
         message,
         error: 'dispatch_failed'
       }
@@ -4615,7 +4788,7 @@ export class EnsembleOrchestrator {
         toParticipantIds: recipients.map((participant) => participant.id),
         toProviders: recipients.map((participant) => participant.provider),
         toRoles: recipients.map((participant) => participant.role),
-        ...(run.laneId ? { ensembleLaneId: run.laneId } : {}),
+        ...laneTranscriptMetadata(run),
         ...(input.reason ? { reason: input.reason } : {})
       }
     }
@@ -6334,7 +6507,8 @@ export class EnsembleOrchestrator {
     const chatForFanout = this.deps.getChat(runtime.chatId)
     const workSessionForFanout = chatForFanout?.ensemble?.workSession
     const roundFanoutPolicy = runtime.fanoutPolicy ?? (runtime.concurrentMode ? 'read_only' : 'off')
-    const userFanoutRequested = fanoutPolicyEnablesConcurrent(roundFanoutPolicy)
+    const readFanoutRequested = fanoutPolicyAllowsRead(roundFanoutPolicy)
+    const writerFanoutRequested = fanoutPolicyAllowsWriters(roundFanoutPolicy)
     const workSessionScoutPass =
       workSessionForFanout?.enabled &&
       workSessionForFanout.status === 'active' &&
@@ -6342,8 +6516,12 @@ export class EnsembleOrchestrator {
     // Work Session scout pass is its own explicit Work Session setting. Preserve
     // its existing read-only scout behavior even when the chat fan-out policy is off.
     const shouldRunReadOnlyFanout =
-      userFanoutRequested || Boolean(workSessionScoutPass)
-    if (!options.skipPreamble && shouldRunReadOnlyFanout && !runtime.cancelled) {
+      readFanoutRequested || Boolean(workSessionScoutPass)
+    if (
+      !options.skipPreamble &&
+      (shouldRunReadOnlyFanout || writerFanoutRequested) &&
+      !runtime.cancelled
+    ) {
       const readers: EnsembleParticipant[] = []
       const writers: EnsembleParticipant[] = []
       // Spike 4 (staged fan-out) + review F1 — three-way partition:
@@ -6382,7 +6560,7 @@ export class EnsembleOrchestrator {
           writers.push(participant)
         }
       }
-      if (readers.length >= 2 && chatForFanout) {
+      if (shouldRunReadOnlyFanout && readers.length >= 2 && chatForFanout) {
         // Remove ONLY the dispatched readers from `remaining` (preserving
         // original order) so the serial while-loop below still sees stage
         // reviewers / read-only stage workers alongside the writers.
@@ -6392,7 +6570,7 @@ export class EnsembleOrchestrator {
         await this.runParallelFanoutPass(runtime, chatForFanout, readers, {
           mode: 'read_only'
         })
-      } else if (userFanoutRequested && readers.length > 0) {
+      } else if (readFanoutRequested && readers.length > 0) {
         this.appendRoundStatus(
           runtime.chatId,
           runtime.roundId,
@@ -6400,8 +6578,13 @@ export class EnsembleOrchestrator {
         )
       }
       if (chatForFanout && writers.length > 0 && !runtime.cancelled) {
-        const writerPolicy = roundFanoutPolicy
         const bossmanParticipantId = this.activeBossmanParticipantId(chatForFanout, runtime)
+        const writerPolicy =
+          roundFanoutPolicy === 'all'
+            ? bossmanParticipantId
+              ? 'locked_writers_with_boss'
+              : 'locked_writers_user_preflight'
+            : roundFanoutPolicy
         // A writer fan-out needs >=2 writers that form the contiguous tail of the
         // round (no genuine serial participant runs between the read-only fan-out
         // and the writers). A stage-role REVIEWER sitting in `remaining` does NOT
@@ -6418,8 +6601,9 @@ export class EnsembleOrchestrator {
               writers.some((writer) => writer.id === participant.id)
           )
         if (
-          writerPolicy !== 'locked_writers_with_boss' &&
-          writerPolicy !== 'locked_writers_user_preflight'
+          !writerFanoutRequested ||
+          (writerPolicy !== 'locked_writers_with_boss' &&
+            writerPolicy !== 'locked_writers_user_preflight')
         ) {
           // Read-only fan-out intentionally leaves writer-capable participants serial.
         } else if (!concurrentWriteLanesEnabled()) {
@@ -7281,7 +7465,8 @@ export class EnsembleOrchestrator {
     runtime: ActiveRoundRuntime,
     run: ActiveParticipantRun,
     rawTargets: unknown,
-    mode: EnsembleFanoutMode
+    mode: EnsembleFanoutMode,
+    targetStage?: EnsembleFanoutTargetStage
   ):
     | { ok: true; targets: EnsembleParticipant[] }
     | {
@@ -7301,6 +7486,7 @@ export class EnsembleOrchestrator {
       if (!participant.enabled) return false
       if (participant.id === run.participant.id) return false
       if (activeParticipantIds.has(participant.id)) return false
+      if (!fanoutTargetStageMatches(participant, targetStage)) return false
       if (mode === 'locked_writers') return true
       return this.resolveFanoutEligibilityPermissions(chat, runtime, participant, mode).readOnly
     }
@@ -7334,6 +7520,13 @@ export class EnsembleOrchestrator {
         return {
           ok: false,
           message: `ensemble_fanout: target "${rawTarget}" is already active in this round.`,
+          error: 'invalid_target'
+        }
+      }
+      if (!fanoutTargetStageMatches(participant, targetStage)) {
+        return {
+          ok: false,
+          message: `ensemble_fanout: target "${rawTarget}" does not match targetStage=${targetStage}.`,
           error: 'invalid_target'
         }
       }
@@ -7712,6 +7905,7 @@ export class EnsembleOrchestrator {
       ensembleRoundId: runtime.roundId,
       ensembleParticipantId: participant.id,
       ...(options.laneId ? { ensembleLaneId: options.laneId } : {}),
+      ...(options.laneId ? { ensembleLaneIntent: options.laneIntent || 'read' } : {}),
       ensembleRole: participant.role,
       ...(participant.stageRole ? { ensembleStageRole: participant.stageRole } : {}),
       ensembleOrder: participant.order,
@@ -7736,6 +7930,7 @@ export class EnsembleOrchestrator {
       roundId: runtime.roundId,
       runId,
       ...(options.laneId ? { laneId: options.laneId } : {}),
+      ...(options.laneId ? { laneIntent: options.laneIntent || 'read' } : {}),
       ...(options.approvedWriteScopes?.length
         ? { approvedWriteScopes: options.approvedWriteScopes }
         : {}),
@@ -8192,7 +8387,7 @@ export class EnsembleOrchestrator {
             kind: 'ensembleParticipant',
             ensembleRoundId: run.roundId,
             ensembleParticipantId: run.participant.id,
-            ...(run.laneId ? { ensembleLaneId: run.laneId } : {}),
+            ...laneTranscriptMetadata(run),
             ensembleProvider: run.participant.provider,
             ensembleRole: run.participant.role,
             ...(run.participant.stageRole ? { ensembleStageRole: run.participant.stageRole } : {}),
@@ -8234,7 +8429,7 @@ export class EnsembleOrchestrator {
             kind: 'ensembleParticipantTools',
             ensembleRoundId: run.roundId,
             ensembleParticipantId: run.participant.id,
-            ...(run.laneId ? { ensembleLaneId: run.laneId } : {}),
+            ...laneTranscriptMetadata(run),
             ensembleProvider: run.participant.provider,
             ensembleRole: run.participant.role,
             ...(run.participant.stageRole ? { ensembleStageRole: run.participant.stageRole } : {}),
@@ -8295,7 +8490,7 @@ export class EnsembleOrchestrator {
             kind: 'ensembleParticipant',
             ensembleRoundId: run.roundId,
             ensembleParticipantId: run.participant.id,
-            ...(run.laneId ? { ensembleLaneId: run.laneId } : {}),
+            ...laneTranscriptMetadata(run),
             ensembleProvider: run.participant.provider,
             ensembleRole: run.participant.role,
             ...(run.participant.stageRole ? { ensembleStageRole: run.participant.stageRole } : {}),
@@ -8313,11 +8508,10 @@ export class EnsembleOrchestrator {
 
     // Strip any prior timeline messages for this run from the chat
     // (other messages — round-prompt user msgs, status cards from
-    // OTHER runs, etc. — stay untouched). Then re-insert the fresh
-    // ordered sequence at the end. Insertion-at-end is correct here
-    // because the orchestrator flushes participants in turn order
-    // and each participant's content is contiguous within the
-    // transcript anyway.
+    // OTHER runs, etc. — stay untouched). Serial runs still append at
+    // the tail. Fan-out lanes reinsert relative to other lane rows in
+    // participant order; otherwise every streaming flush would move
+    // the freshest lane to the bottom and churn the transcript order.
     messages = messages.filter((message) => {
       if (message.runId !== run.runId) return true
       if (message.role !== 'assistant' && message.role !== 'tool') return true
@@ -8334,7 +8528,7 @@ export class EnsembleOrchestrator {
         !stableId.startsWith(`ensemble-tool-${run.runId}`)
       )
     })
-    messages = [...messages, ...desiredMessages]
+    messages = insertRunTimelineMessages(messages, desiredMessages, run)
 
     // Status card for yielded / failed / skipped, appended after
     // the timeline messages so it reads as a coda. Unchanged from
@@ -8371,7 +8565,7 @@ export class EnsembleOrchestrator {
           kind: 'ensembleParticipantStatus',
           ensembleRoundId: run.roundId,
           ensembleParticipantId: run.participant.id,
-          ...(run.laneId ? { ensembleLaneId: run.laneId } : {}),
+          ...laneTranscriptMetadata(run),
           ensembleProvider: run.participant.provider,
           ensembleRole: run.participant.role,
           ...(run.participant.stageRole ? { ensembleStageRole: run.participant.stageRole } : {}),

@@ -118,6 +118,20 @@ describe('TranscriptVirtualWindow', () => {
       expect(classifyRowType(m)).toBe('participantHealth')
     })
 
+    it('classifies ensemble fan-out lane answers as fixed-height result rows', () => {
+      const m = msg({
+        id: 'fanout',
+        role: 'assistant',
+        metadata: {
+          kind: 'ensembleParticipant',
+          ensembleRoundId: 'round-1',
+          ensembleParticipantId: 'reader-1',
+          ensembleLaneId: 'lane-round-1-reader-1-1'
+        }
+      })
+      expect(classifyRowType(m)).toBe('fanoutResult')
+    })
+
     it('classifies the role-based bubbles', () => {
       expect(classifyRowType(msg({ id: 'u', role: 'user' }))).toBe('user')
       expect(classifyRowType(msg({ id: 'e', role: 'error' }))).toBe('error')
