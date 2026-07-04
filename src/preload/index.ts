@@ -45,6 +45,7 @@ import type {
   TaskWraithPluginSecretMutationResult,
   TaskWraithPluginSecretStatusSnapshot
 } from '../shared/plugins/PluginTypes'
+import type { ContextCompactionProgressEvent } from '../shared/contextCompaction'
 
 type ComposerImageAttachment = {
   id?: string
@@ -1413,6 +1414,12 @@ const api = {
     const wrapped = (_event: unknown, chat: unknown): void => callback(chat)
     ipcRenderer.on('chat-updated', wrapped)
     return () => ipcRenderer.removeListener('chat-updated', wrapped)
+  },
+  onContextCompactionProgress: (callback: (event: ContextCompactionProgressEvent) => void) => {
+    const wrapped = (_event: unknown, event: ContextCompactionProgressEvent): void =>
+      callback(event)
+    ipcRenderer.on('context-compaction-progress', wrapped)
+    return () => ipcRenderer.removeListener('context-compaction-progress', wrapped)
   },
   onHumanCollaborationUpdated: (callback: (payload: { chatId: string }) => void) => {
     const wrapped = (_event: unknown, payload: { chatId: string }): void => callback(payload)

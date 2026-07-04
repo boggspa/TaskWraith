@@ -206,6 +206,7 @@ import {
   isClaudeContextCompactionSystemEvent,
   isCodexContextCompactionItem,
   normalizeClaudeContextCompactionEvent,
+  type ContextCompactionProgressEvent,
   type ContextCompactionSignal,
   type ContextCompactionTelemetry
 } from '../shared/contextCompaction'
@@ -5827,6 +5828,14 @@ function broadcastWorkspacePopoutRefresh(workspacePath: string, reason: string):
 function broadcastChatUpdated(chat: ChatRecord): void {
   safeSendToWebContents(mainWindow, 'chat-updated', chat)
   broadcastChatPopoutUpdate(chat)
+}
+
+function broadcastContextCompactionProgress(event: ContextCompactionProgressEvent): void {
+  safeSendToWebContents(mainWindow, 'context-compaction-progress', event)
+  if (!event.chatId || workspacePopoutWindows.size === 0) return
+  const win = workspacePopoutWindows.get(`chat:${event.chatId}`)
+  if (!win || win.isDestroyed()) return
+  safeSendToWebContents(win, 'context-compaction-progress', event)
 }
 
 /**
@@ -14944,6 +14953,18 @@ async function compactCliSeatContext(payload: {
     const coversThroughTimestamp = [...(chat.messages || [])]
       .reverse()
       .find((message) => Boolean(message.timestamp))?.timestamp
+    const progressBase: Omit<ContextCompactionProgressEvent, 'status'> = {
+      chatId: payload.chatId,
+      participantId: payload.participantId,
+      provider: payload.provider,
+      trigger,
+      ...(typeof payload.cardMetadata?.displayParticipantLabel === 'string'
+        ? { label: payload.cardMetadata.displayParticipantLabel }
+        : {}),
+      ...(typeof payload.cardMetadata?.displayHueClass === 'string'
+        ? { hueClass: payload.cardMetadata.displayHueClass }
+        : {})
+    }
     let args: string[]
     if (payload.provider === 'cursor') {
       if (!payload.providerSessionId) {
@@ -14993,6 +15014,7 @@ async function compactCliSeatContext(payload: {
         error: resolved.error || `${providerLabel(payload.provider)} CLI was not found.`
       }
     }
+    broadcastContextCompactionProgress({ ...progressBase, status: 'started' })
     const plan = createCliSpawnPlan(resolved.binaryPath, args)
     let summaryText = ''
     let timedOut = false
@@ -15125,6 +15147,10 @@ async function compactCliSeatContext(payload: {
       `seat-${payload.participantId}-${startedAtMs}`,
       payload.cardMetadata
     )
+    broadcastContextCompactionProgress({
+      ...progressBase,
+      status: signal.kind === 'completed' ? 'completed' : 'failed'
+    })
     const lastSeatRunId = [...(chat.runs || [])]
       .reverse()
       .find((run) => run?.ensembleParticipantId === payload.participantId && run?.runId)?.runId

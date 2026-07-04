@@ -43,7 +43,8 @@ import {
   CONTEXT_COMPACTION_SUMMARY_MAX_CHARS,
   CONTEXT_COMPACTION_SUMMARY_PROMPT,
   contextCompactionMessageId,
-  formatContextCompactionSummary
+  formatContextCompactionSummary,
+  type ContextCompactionProgressEvent
 } from '../../shared/contextCompaction'
 import {
   buildOllamaPullCommand,
@@ -705,6 +706,18 @@ function summarizeAuditBundleVerification(result: ProductAuditBundleVerification
 
 const FX_BURST_DURATION_MS = 1150
 const CHAT_SWITCH_USAGE_REFRESH_INTERVAL_MS = 30_000
+const CONTEXT_COMPACTION_PROGRESS_STALE_MS = 5 * 60 * 1000
+
+type ContextCompactionProgressState = ContextCompactionProgressEvent & {
+  key: string
+  updatedAt: number
+}
+
+const EMPTY_CONTEXT_COMPACTION_PROGRESS: readonly ContextCompactionProgressEvent[] = []
+
+function contextCompactionProgressKey(event: Pick<ContextCompactionProgressEvent, 'chatId' | 'participantId' | 'provider'>): string {
+  return `${event.chatId}:${event.participantId || event.provider || 'chat'}`
+}
 
 /**
  * Lifetime of the post-dismissal pointer animation on the sidebar
@@ -919,6 +932,18 @@ function App(): React.JSX.Element {
 
   const [chats, setChats] = useState<ChatRecord[]>([])
   const [currentChat, setCurrentChat] = useState<ChatRecord | null>(null)
+  const [contextCompactionProgressByKey, setContextCompactionProgressByKey] = useState<
+    Record<string, ContextCompactionProgressState>
+  >({})
+  const contextCompactionProgressTimersRef = useRef<Map<string, number>>(new Map())
+  const contextCompactionProgressByChatId = useMemo(() => {
+    const grouped: Record<string, ContextCompactionProgressEvent[]> = {}
+    for (const event of Object.values(contextCompactionProgressByKey)) {
+      if (!grouped[event.chatId]) grouped[event.chatId] = []
+      grouped[event.chatId].push(event)
+    }
+    return grouped
+  }, [contextCompactionProgressByKey])
   const [activeSidebarChatId, setActiveSidebarChatId] = useState<string | null>(null)
   // Phase J3: session-scoped YOLO mode visibility. Driven by main's
   // `agentic-yolo-state` broadcasts so an indicator badge can show the
@@ -9349,6 +9374,40 @@ function App(): React.JSX.Element {
       })
     }
 
+    let contextCompactionProgressUnsubscribe: (() => void) | null = null
+    if (typeof window.api.onContextCompactionProgress === 'function') {
+      contextCompactionProgressUnsubscribe = window.api.onContextCompactionProgress((event) => {
+        if (!event?.chatId) return
+        const key = contextCompactionProgressKey(event)
+        const existingTimer = contextCompactionProgressTimersRef.current.get(key)
+        if (existingTimer !== undefined) {
+          window.clearTimeout(existingTimer)
+          contextCompactionProgressTimersRef.current.delete(key)
+        }
+        if (event.status !== 'started') {
+          setContextCompactionProgressByKey((prev) => {
+            if (!prev[key]) return prev
+            const { [key]: _drop, ...rest } = prev
+            return rest
+          })
+          return
+        }
+        setContextCompactionProgressByKey((prev) => ({
+          ...prev,
+          [key]: { ...event, key, updatedAt: Date.now() }
+        }))
+        const timer = window.setTimeout(() => {
+          contextCompactionProgressTimersRef.current.delete(key)
+          setContextCompactionProgressByKey((prev) => {
+            if (!prev[key]) return prev
+            const { [key]: _drop, ...rest } = prev
+            return rest
+          })
+        }, CONTEXT_COMPACTION_PROGRESS_STALE_MS)
+        contextCompactionProgressTimersRef.current.set(key, timer)
+      })
+    }
+
     // Phase J3: subscribe to YOLO state broadcasts + fetch the initial
     // value at mount. Main resets `enabled: false` on every process
     // start so any previous YOLO session is gone after an app restart;
@@ -9446,6 +9505,11 @@ function App(): React.JSX.Element {
       humanCollaborationUnsubscribe?.()
       humanCollaborationActionRequestUnsubscribe?.()
       trustedMediaRefsUnsubscribe?.()
+      contextCompactionProgressUnsubscribe?.()
+      for (const timer of contextCompactionProgressTimersRef.current.values()) {
+        window.clearTimeout(timer)
+      }
+      contextCompactionProgressTimersRef.current.clear()
       yoloUnsubscribe?.()
       agentQuestionUnsubscribe?.()
       agentQuestionCancelUnsubscribe?.()
@@ -22500,6 +22564,9 @@ function App(): React.JSX.Element {
         pendingPlanChoice={pendingPlanChoiceByChatId[viewerChatId] || null}
         pendingAgentQuestions={
           pendingAgentQuestionsByChatId[viewerChatId] || EMPTY_AGENT_QUESTION_QUEUE
+        }
+        contextCompactionProgress={
+          contextCompactionProgressByChatId[viewerChatId] || EMPTY_CONTEXT_COMPACTION_PROGRESS
         }
         onAgentQuestionSubmit={handleAgentQuestionSubmit}
         onAgentQuestionDismiss={handleAgentQuestionDismiss}

@@ -88,6 +88,7 @@ import type {
   TaskWraithPluginSecretMutationResult,
   TaskWraithPluginSecretStatusSnapshot
 } from '../shared/plugins/PluginTypes'
+import type { ContextCompactionProgressEvent } from '../shared/contextCompaction'
 import type {
   LaunchSnapshot,
   LaunchStartInput,
@@ -1711,6 +1712,9 @@ declare global {
       onAuditRunChanged: (callback: (run: AuditRunRecord) => void) => () => void
       onUsageChanged: (callback: () => void) => void
       onChatUpdated: (callback: (chat: ChatRecord) => void) => () => void
+      onContextCompactionProgress: (
+        callback: (event: ContextCompactionProgressEvent) => void
+      ) => () => void
       onHumanCollaborationUpdated: (callback: (payload: { chatId: string }) => void) => () => void
       onHumanCollaborationActionRequest: (
         callback: (payload: { chatId: string; messageId: string; draft: string }) => void

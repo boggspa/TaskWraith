@@ -30,6 +30,7 @@ export interface BuildChatViewPropsInput {
   pendingProposedPlan?: TranscriptPanelProps['pendingProposedPlan']
   runCompleteNotice: TranscriptPanelProps['runCompleteNotice']
   pendingAgentQuestions: TranscriptPanelProps['pendingAgentQuestions']
+  contextCompactionProgress?: TranscriptPanelProps['contextCompactionProgress']
   onAgentQuestionSubmit?: TranscriptPanelProps['onAgentQuestionSubmit']
   onAgentQuestionDismiss?: TranscriptPanelProps['onAgentQuestionDismiss']
   chats: TranscriptPanelProps['chats']
@@ -86,6 +87,7 @@ export function buildChatViewProps(input: BuildChatViewPropsInput): TranscriptPa
     pendingPlanChoice: input.pendingPlanChoice ?? null,
     pendingProposedPlan: input.pendingProposedPlan ?? null,
     pendingAgentQuestions: input.pendingAgentQuestions,
+    contextCompactionProgress: input.contextCompactionProgress ?? [],
     onAgentQuestionSubmit: input.onAgentQuestionSubmit ?? NOOP_AGENT_QUESTION,
     onAgentQuestionDismiss: input.onAgentQuestionDismiss ?? NOOP,
     runCompleteNotice: input.runCompleteNotice,

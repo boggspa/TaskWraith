@@ -6791,6 +6791,7 @@ export class EnsembleOrchestrator {
         run.promptShellStamp = promptShellStamp
         run.injectedBlackboardEntryIds = injectedBlackboardEntryIds
         await completion
+        this.maybeAutoCompactSeatAfterTurn(runtime.chatId, participant.id)
       }
       runtime.activeRunId = undefined
       this.applyPendingParticipantSeatChangeFor(runtime, participant.id)
@@ -8824,35 +8825,10 @@ export class EnsembleOrchestrator {
   ): Promise<void> {
     const compactSeatContext = this.deps.compactSeatContext
     if (!compactSeatContext) return
-    if (this.deps.getSettings().hostAutoCompactEnabled === false) return
-    if (!isHostSeatCompactionProvider(participant.provider)) return
-    if (participant.enabled === false) return
-    if (participant.provider === 'cursor' && !participant.linkedProviderSessionId) return
-    const lastAttempt = this.seatAutoCompactLastAttemptAt.get(participant.id)
-    if (
-      lastAttempt !== undefined &&
-      this.deps.now() - lastAttempt < CONTEXT_AUTO_COMPACT_COOLDOWN_MS
-    ) {
-      return
-    }
-    const chat = this.deps.getChat(chatId)
-    if (!chat?.ensemble) return
-    const usage = latestRunContextUsage(chat.runs ?? [], participant.id)
-    const windowTokens = resolveContextWindow(
-      participant.provider,
-      participant.model,
-      usage.totalTokenLimit
-    )
-    const percent = contextPercent(usage.tokens, windowTokens)
-    if (percent < CONTEXT_AUTO_COMPACT_PERCENT) return
-    this.seatAutoCompactLastAttemptAt.set(participant.id, this.deps.now())
+    const request = this.buildAutoCompactSeatRequest(chatId, participant)
+    if (!request) return
     try {
-      await compactSeatContext({
-        chatId,
-        participantId: participant.id,
-        provider: participant.provider,
-        trigger: 'auto'
-      })
+      await compactSeatContext(request)
     } catch {
       return
     }
@@ -8862,6 +8838,61 @@ export class EnsembleOrchestrator {
     if (refreshed) {
       participant.linkedProviderSessionId = refreshed.linkedProviderSessionId
       participant.contextCompactionSummary = refreshed.contextCompactionSummary
+    }
+  }
+
+  private maybeAutoCompactSeatAfterTurn(chatId: string, participantId: string): void {
+    const compactSeatContext = this.deps.compactSeatContext
+    if (!compactSeatContext) return
+    const participant = this.deps
+      .getChat(chatId)
+      ?.ensemble?.participants?.find((candidate) => candidate.id === participantId)
+    if (!participant) return
+    const request = this.buildAutoCompactSeatRequest(chatId, participant)
+    if (!request) return
+    void compactSeatContext(request).catch(() => {
+      // Best-effort maintenance; pre-dispatch compaction remains the safety net.
+    })
+  }
+
+  private buildAutoCompactSeatRequest(
+    chatId: string,
+    participant: EnsembleParticipant
+  ):
+    | {
+        chatId: string
+        participantId: string
+        provider: HostSeatCompactionProvider
+        trigger: 'auto'
+      }
+    | null {
+    if (this.deps.getSettings().hostAutoCompactEnabled === false) return null
+    if (!isHostSeatCompactionProvider(participant.provider)) return null
+    if (participant.enabled === false) return null
+    if (participant.provider === 'cursor' && !participant.linkedProviderSessionId) return null
+    const lastAttempt = this.seatAutoCompactLastAttemptAt.get(participant.id)
+    if (
+      lastAttempt !== undefined &&
+      this.deps.now() - lastAttempt < CONTEXT_AUTO_COMPACT_COOLDOWN_MS
+    ) {
+      return null
+    }
+    const chat = this.deps.getChat(chatId)
+    if (!chat?.ensemble) return null
+    const usage = latestRunContextUsage(chat.runs ?? [], participant.id)
+    const windowTokens = resolveContextWindow(
+      participant.provider,
+      participant.model,
+      usage.totalTokenLimit
+    )
+    const percent = contextPercent(usage.tokens, windowTokens)
+    if (percent < CONTEXT_AUTO_COMPACT_PERCENT) return null
+    this.seatAutoCompactLastAttemptAt.set(participant.id, this.deps.now())
+    return {
+      chatId,
+      participantId: participant.id,
+      provider: participant.provider,
+      trigger: 'auto'
     }
   }
 

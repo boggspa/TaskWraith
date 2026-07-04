@@ -58,6 +58,18 @@ export interface ContextCompactionSignal {
   telemetry: ContextCompactionTelemetry
 }
 
+export type ContextCompactionProgressStatus = 'started' | 'completed' | 'failed'
+
+export interface ContextCompactionProgressEvent {
+  chatId: string
+  participantId?: string
+  provider?: string
+  label?: string
+  hueClass?: string
+  status: ContextCompactionProgressStatus
+  trigger?: ContextCompactionTrigger
+}
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)

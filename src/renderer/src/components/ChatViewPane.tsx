@@ -133,6 +133,7 @@ export function chatViewPanePropsEqual(a: ChatViewPaneProps, b: ChatViewPaneProp
     a.messages === b.messages &&
     a.isThinking === b.isThinking &&
     a.runCompleteNotice === b.runCompleteNotice &&
+    a.contextCompactionProgress === b.contextCompactionProgress &&
     a.isWelcomeChat === b.isWelcomeChat &&
     a.provider === b.provider &&
     a.providerLabel === b.providerLabel &&

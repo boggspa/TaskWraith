@@ -10241,7 +10241,21 @@ describe('post-round host seat auto-compaction (maybeAutoCompactSeatsAfterRound)
           ) => Promise<void>
         }
       ).awaitSeatCompactionBeforeDispatch('ensemble-chat', participant)
-    return { chat, compactSeatContext, fire, setClock: (v: number) => (clock = v), beforeDispatch }
+    const afterTurn = (participantId: string): void => {
+      ;(
+        orchestrator as unknown as {
+          maybeAutoCompactSeatAfterTurn: (chatId: string, participantId: string) => void
+        }
+      ).maybeAutoCompactSeatAfterTurn('ensemble-chat', participantId)
+    }
+    return {
+      chat,
+      compactSeatContext,
+      fire,
+      setClock: (v: number) => (clock = v),
+      beforeDispatch,
+      afterTurn
+    }
   }
 
   beforeEach(() => vi.useFakeTimers())
@@ -10369,6 +10383,26 @@ describe('post-round host seat auto-compaction (maybeAutoCompactSeatsAfterRound)
       runs: [seatRun('grok', 'grok', 250_000, 256_000)]
     })
     await h.beforeDispatch(h.chat.ensemble!.participants[0])
+    expect(h.compactSeatContext).toHaveBeenCalledTimes(1)
+    expect(h.compactSeatContext).toHaveBeenCalledWith({
+      chatId: 'ensemble-chat',
+      participantId: 'grok',
+      provider: 'grok',
+      trigger: 'auto'
+    })
+  })
+
+  it('auto-compacts the finished host seat after its turn', () => {
+    const h = harness({
+      participants: [
+        participant({ id: 'grok', provider: 'grok' }),
+        participant({ id: 'codex', provider: 'codex' })
+      ],
+      runs: [seatRun('grok', 'grok', 250_000, 256_000)]
+    })
+
+    h.afterTurn('grok')
+
     expect(h.compactSeatContext).toHaveBeenCalledTimes(1)
     expect(h.compactSeatContext).toHaveBeenCalledWith({
       chatId: 'ensemble-chat',

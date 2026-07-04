@@ -634,11 +634,17 @@ export function SteerSymbolIcon() {
   )
 }
 
-export function ThinkingIndicator() {
+export function ThinkingIndicator({
+  label = 'Working',
+  ariaLabel = label
+}: {
+  label?: string
+  ariaLabel?: string
+} = {}) {
   // Participant name + model badge live in TranscriptPanel's `.message-meta`.
   // This bubble mirrors iOS LiveActivityAnchor: ghost + glow + "Working" + dots.
   return (
-    <div className="message-bubble assistant message-working" aria-label="Working">
+    <div className="message-bubble assistant message-working" aria-label={ariaLabel}>
       <span className="message-working-ghost" aria-hidden>
         <span className="message-working-ghost-glow" />
         <span className="message-working-ghost-mark">
@@ -663,7 +669,7 @@ export function ThinkingIndicator() {
         </span>
       </span>
       <span className="message-working-text">
-        <span className="message-working-label">Working</span>
+        <span className="message-working-label">{label}</span>
         <span className="thinking-dots" aria-hidden>
           <span className="thinking-dot" />
           <span className="thinking-dot" />

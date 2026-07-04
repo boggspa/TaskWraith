@@ -75,6 +75,7 @@ import { SubThreadReturnCard } from './SubThreadReturnCard'
 import { isSubThreadReturnMessage, subThreadReturnBody } from './SubThreadReturnCardModel'
 import { ParticipantHealthCard } from './ParticipantHealthCard'
 import { ContextCompactionCard } from './ContextCompactionCard'
+import type { ContextCompactionProgressEvent } from '../../../shared/contextCompaction'
 import { ProviderRunFailureCard } from './ProviderRunFailureCard'
 import { MarkdownMessage } from './MarkdownMessage'
 import { RevealingMarkdownMessage } from './RevealingMarkdownMessage'
@@ -120,6 +121,31 @@ function completionClaimSupportTitle(message: ChatMessage): string {
   return ''
 }
 
+function ContextCompactionProgressRow({
+  event
+}: {
+  event: ContextCompactionProgressEvent
+}): React.JSX.Element {
+  const provider = event.provider as ProviderId | undefined
+  const providerClass = event.hueClass || provider
+  const label = event.label || (provider ? getProviderLabel(provider) : 'Context')
+  return (
+    <div
+      key={`${event.chatId}:${event.participantId || event.provider || 'chat'}`}
+      className="message-group context-compaction-progress-row"
+      role="status"
+      aria-live="polite"
+      aria-atomic="true"
+    >
+      <span className="sr-only">{label} compacting context</span>
+      <div className={`message-meta${providerClass ? ` provider-${providerClass}` : ''}`}>
+        <span className="message-meta-label">{label}</span>
+      </div>
+      <ThinkingIndicator label="Compacting context" ariaLabel={`${label} compacting context`} />
+    </div>
+  )
+}
+
 export type TranscriptPanelProps = {
   scrollRef: React.RefObject<HTMLDivElement | null>
   /**
@@ -143,6 +169,7 @@ export type TranscriptPanelProps = {
   pendingPlanChoice: PlanChoiceState | null
   pendingProposedPlan: ProposedPlanState | null
   pendingAgentQuestions: readonly AgentQuestionState[]
+  contextCompactionProgress?: readonly ContextCompactionProgressEvent[]
   onAgentQuestionSubmit: (questionId: string, answer: string, isCustom: boolean) => void
   onAgentQuestionDismiss: (questionId: string) => void
   runCompleteNotice: RunCompleteNotice | null
@@ -1033,6 +1060,7 @@ export const TranscriptPanel = memo(
     pendingPlanChoice,
     pendingProposedPlan,
     pendingAgentQuestions,
+    contextCompactionProgress = [],
     onAgentQuestionSubmit,
     onAgentQuestionDismiss,
     runCompleteNotice,
@@ -2696,6 +2724,12 @@ export const TranscriptPanel = memo(
                 />
               </div>
             ))}
+          {contextCompactionProgress.map((event) => (
+            <ContextCompactionProgressRow
+              key={`${event.chatId}:${event.participantId || event.provider || 'chat'}`}
+              event={event}
+            />
+          ))}
           {isThinking && (
             <div
               key="thinking-indicator"
