@@ -60,10 +60,31 @@ export function userGutterPreview(content: string): string {
   return truncateUserMessagePreview(trimmed, GUTTER_PREVIEW_THRESHOLDS)
 }
 
+/**
+ * Build the rowKey a marker carries for a user message HIDDEN inside a
+ * collapsed ensemble round. It is deliberately shaped so it can NEVER collide
+ * with a real projected rowKey (`${id}#${index}` — index is numeric, so the
+ * `~` segment can't be produced): the jump path's rowKey lookup must MISS and
+ * fall through to the message-id lookup, which resolves once
+ * `ensureRoundExpandedForMessage` has re-inserted the round body.
+ */
+export function hiddenRoundMarkerRowKey(headerRowKey: string, messageId: string): string {
+  return `${headerRowKey}~${messageId}`
+}
+
 export function buildTranscriptUserGutterMarkers(
   messages: readonly ChatMessage[],
   rows: readonly VirtualRow[],
-  rowHeights?: readonly number[]
+  rowHeights?: readonly number[],
+  /**
+   * Ensemble round-card support: user messages dropped from the flat display
+   * list because their round is COLLAPSED, keyed by the round-header message
+   * id whose row now stands in for them. Each hidden user message still gets
+   * a gutter marker — anchored at the header row's position — so collapsing a
+   * round never makes its prompts unreachable from the rail. Clicking such a
+   * marker jumps by message id (the caller auto-expands the round first).
+   */
+  collapsedRowUserMessages?: ReadonlyMap<string, readonly ChatMessage[]>
 ): TranscriptUserGutterMarker[] {
   if (!Array.isArray(messages) || messages.length === 0 || rows.length === 0) return []
 
@@ -86,24 +107,49 @@ export function buildTranscriptUserGutterMarkers(
   for (let pos = 0; pos < rows.length; pos++) {
     const row = rows[pos]
     const message = messages[row.index]
-    if (!message || message.role !== 'user') continue
+    if (!message) continue
 
     const rowTop = sumHeights(heights, 0, pos)
     const rowHeight = heights[pos] ?? row.estimatedHeight
     const midpoint = rowTop + Math.max(0, rowHeight) / 2
     const topPercent = Math.max(0, Math.min(100, (midpoint / totalHeight) * 100))
-    const ordinal = markers.length + 1
-    markers.push({
-      key: row.rowKey,
-      messageId: message.id,
-      rowKey: row.rowKey,
-      rowIndex: pos,
-      ordinal,
-      topPercent,
-      title: userGutterTitle(message.content || ''),
-      preview: userGutterPreview(message.content || ''),
-      message
-    })
+
+    if (message.role === 'user') {
+      markers.push({
+        key: row.rowKey,
+        messageId: message.id,
+        rowKey: row.rowKey,
+        rowIndex: pos,
+        ordinal: markers.length + 1,
+        topPercent,
+        title: userGutterTitle(message.content || ''),
+        preview: userGutterPreview(message.content || ''),
+        message
+      })
+      continue
+    }
+
+    // Collapsed ensemble round header standing in for hidden body messages:
+    // surface each hidden user prompt as a marker anchored at the header row.
+    // rowIndex is the header's POSITIONAL index (multiple markers may share
+    // it; the scroll-spy join resolves the last one, which is correct — the
+    // reader is "inside" the collapsed card either way).
+    const hiddenUsers = collapsedRowUserMessages?.get(message.id)
+    if (!hiddenUsers || hiddenUsers.length === 0) continue
+    for (const hidden of hiddenUsers) {
+      if (!hidden || hidden.role !== 'user') continue
+      markers.push({
+        key: hiddenRoundMarkerRowKey(row.rowKey, `${hidden.id}#${markers.length}`),
+        messageId: hidden.id,
+        rowKey: hiddenRoundMarkerRowKey(row.rowKey, hidden.id),
+        rowIndex: pos,
+        ordinal: markers.length + 1,
+        topPercent,
+        title: userGutterTitle(hidden.content || ''),
+        preview: userGutterPreview(hidden.content || ''),
+        message: hidden
+      })
+    }
   }
 
   return markers

@@ -57,8 +57,13 @@ import { EMPTY_CHAT_MESSAGES } from '../lib/stableEmpties'
 import { groupAdjacentToolMessages } from '../lib/transcriptToolMessageGrouping'
 import {
   buildEnsembleRoundCardRows,
-  isEnsembleRoundHeaderMessage
+  isEnsembleRoundHeaderMessage,
+  readEnsembleRoundHeader
 } from '../lib/ensembleRoundCards'
+import {
+  createTranscriptScrollAnimator,
+  type TranscriptScrollAnimator
+} from '../lib/transcriptSmoothScroll'
 import { ActivityStack } from './ActivityStack'
 import { EnsembleRoundCardHeader } from './EnsembleRoundCardHeader'
 import { AgentQuestionCard, type AgentQuestionState } from './AgentQuestionCard'
@@ -1436,6 +1441,37 @@ export const TranscriptPanel = memo(
       }
       return map
     }, [groupedMessages, currentChat?.chatKind])
+    // User messages hidden inside COLLAPSED round cards, keyed by the round
+    // header message id whose row replaces them in `displayMessages`. Feeds
+    // the gutter builder so collapsing a round never drops its prompts from
+    // the jump rail — the marker anchors at the header and the click path
+    // auto-expands before focusing.
+    const collapsedRoundUserMessages = useMemo(() => {
+      const map = new Map<string, ChatMessage[]>()
+      if (currentChat?.chatKind !== 'ensemble') return map
+      let byRound: Map<string, ChatMessage[]> | null = null
+      for (const message of displayMessages) {
+        const header = readEnsembleRoundHeader(message)
+        if (!header || header.expanded) continue
+        if (!byRound) {
+          byRound = new Map()
+          for (const candidate of groupedMessages) {
+            if (candidate.role !== 'user') continue
+            const roundId =
+              typeof candidate.metadata?.ensembleRoundId === 'string'
+                ? candidate.metadata.ensembleRoundId
+                : null
+            if (!roundId) continue
+            const bucket = byRound.get(roundId)
+            if (bucket) bucket.push(candidate)
+            else byRound.set(roundId, [candidate])
+          }
+        }
+        const hidden = byRound.get(header.roundId)
+        if (hidden && hidden.length > 0) map.set(message.id, hidden)
+      }
+      return map
+    }, [currentChat?.chatKind, displayMessages, groupedMessages])
     const ensureRoundExpandedForMessage = useCallback(
       (messageId: string) => {
         const roundId = roundIdByMessageId.get(messageId)
@@ -1559,9 +1595,16 @@ export const TranscriptPanel = memo(
         buildTranscriptUserGutterMarkers(
           displayMessages,
           projectedRows,
-          virtualizeEnabled ? virtualHeights : undefined
+          virtualizeEnabled ? virtualHeights : undefined,
+          collapsedRoundUserMessages
         ),
-      [displayMessages, projectedRows, virtualHeights, virtualizeEnabled]
+      [
+        collapsedRoundUserMessages,
+        displayMessages,
+        projectedRows,
+        virtualHeights,
+        virtualizeEnabled
+      ]
     )
     // Scroll-spy: resolve the virtualiser's current anchor-row index to the
     // nearest user-message marker at or above it. Recomputes each scroll frame,
@@ -1576,6 +1619,19 @@ export const TranscriptPanel = memo(
       rowKey?: string
     } | null>(null)
     const highlightTimerRef = useRef<number | null>(null)
+    // Shared glide animator for every rail-initiated jump (marker / ↑ / ↓).
+    // Lazily created; cancelled on chat switch + unmount. User input on the
+    // scroller interrupts it, so it can never fight a live reader.
+    const scrollAnimatorRef = useRef<TranscriptScrollAnimator | null>(null)
+    const getScrollAnimator = useCallback((): TranscriptScrollAnimator => {
+      if (!scrollAnimatorRef.current) {
+        scrollAnimatorRef.current = createTranscriptScrollAnimator()
+      }
+      return scrollAnimatorRef.current
+    }, [])
+    useEffect(() => {
+      return () => scrollAnimatorRef.current?.cancel()
+    }, [])
     const chatId = currentChat?.appChatId ?? null
     const currentChatRenderSignature = useMemo(
       () => transcriptChatRenderSignature(currentChat),
@@ -1593,6 +1649,7 @@ export const TranscriptPanel = memo(
       rowElementCacheRef.current.clear()
       setHighlightedMessageTarget(null)
       setPendingFocusTarget(null)
+      scrollAnimatorRef.current?.cancel()
       if (highlightTimerRef.current !== null) {
         window.clearTimeout(highlightTimerRef.current)
         highlightTimerRef.current = null
@@ -1622,28 +1679,57 @@ export const TranscriptPanel = memo(
         const targetTop = scroller.scrollTop + targetRect.top - scrollerRect.top
         const topOffset = Math.max(56, Math.round(scroller.clientHeight * 0.22))
         const nextScrollTop = Math.max(0, targetTop - topOffset)
-        scroller.scrollTo({ top: nextScrollTop, behavior: 'auto' })
-        syncVirtualizerScrollPosition(nextScrollTop)
-        setHighlightedMessageTarget({ messageId, rowKey: targetRowKey })
+        // Runs when the glide lands (or immediately under reduced motion):
+        // settle any residual drift from mid-glide re-measures with one small
+        // instant correction, then pulse the arrival highlight — the pulse
+        // reads best when it fires as the message comes to rest, not 1.5s
+        // before arrival.
+        const settleAndHighlight = (): void => {
+          const settled = row
+            ? scroller.querySelector<HTMLElement>(
+                `[data-vrow-id="${escapeDomSelectorValue(row.rowKey)}"]`
+              )
+            : scroller.querySelector<HTMLElement>(
+                `[data-message-id="${escapeDomSelectorValue(messageId)}"]`
+              )
+          if (settled) {
+            const settledRect = settled.getBoundingClientRect()
+            const liveScrollerRect = scroller.getBoundingClientRect()
+            const desired = Math.max(
+              0,
+              scroller.scrollTop + settledRect.top - liveScrollerRect.top - topOffset
+            )
+            if (Math.abs(desired - scroller.scrollTop) > 1) {
+              scroller.scrollTop = desired
+              syncVirtualizerScrollPosition(desired)
+            }
+          }
+          setHighlightedMessageTarget({ messageId, rowKey: targetRowKey })
+          if (highlightTimerRef.current !== null) {
+            window.clearTimeout(highlightTimerRef.current)
+          }
+          highlightTimerRef.current = window.setTimeout(() => {
+            highlightTimerRef.current = null
+            setHighlightedMessageTarget((current) =>
+              current?.messageId === messageId && current?.rowKey === targetRowKey ? null : current
+            )
+          }, 1800)
+        }
+        getScrollAnimator().animateTo(scroller, nextScrollTop, {
+          onFrame: syncVirtualizerScrollPosition,
+          onDone: settleAndHighlight
+        })
         setPendingFocusTarget((current) =>
           current?.messageId === messageId &&
           (!current.rowKey || !targetRowKey || current.rowKey === targetRowKey)
             ? null
             : current
         )
-        if (highlightTimerRef.current !== null) {
-          window.clearTimeout(highlightTimerRef.current)
-        }
-        highlightTimerRef.current = window.setTimeout(() => {
-          highlightTimerRef.current = null
-          setHighlightedMessageTarget((current) =>
-            current?.messageId === messageId && current?.rowKey === targetRowKey ? null : current
-          )
-        }, 1800)
         return true
       },
       [
         findProjectedRowForMessage,
+        getScrollAnimator,
         prepareManualTranscriptJump,
         scrollRef,
         syncVirtualizerScrollPosition
@@ -1651,7 +1737,7 @@ export const TranscriptPanel = memo(
     )
 
     const estimateScrollToMessage = useCallback(
-      (messageId: string, rowKey?: string): void => {
+      (messageId: string, rowKey?: string, options?: { animate?: boolean }): void => {
         const scroller = scrollRef.current
         if (!scroller) return
         const row = findProjectedRowForMessage(messageId, rowKey)
@@ -1668,11 +1754,22 @@ export const TranscriptPanel = memo(
           0,
           estimatedTop - Math.round(scroller.clientHeight * 0.35)
         )
+        if (options?.animate) {
+          // First hop of a rail jump: glide toward the estimated position. If
+          // the user grabs the scroll mid-glide, abandon the pending focus —
+          // their input owns the viewport from that moment.
+          getScrollAnimator().animateTo(scroller, nextScrollTop, {
+            onFrame: syncVirtualizerScrollPosition,
+            onInterrupted: () => setPendingFocusTarget(null)
+          })
+          return
+        }
         scroller.scrollTop = nextScrollTop
         syncVirtualizerScrollPosition(nextScrollTop)
       },
       [
         findProjectedRowForMessage,
+        getScrollAnimator,
         prepareManualTranscriptJump,
         projectedRows,
         scrollRef,
@@ -1691,7 +1788,7 @@ export const TranscriptPanel = memo(
         if (focusMessageBlock(messageId, rowKey)) return
 
         setPendingFocusTarget({ messageId, rowKey, attempt: 0 })
-        estimateScrollToMessage(messageId, rowKey)
+        estimateScrollToMessage(messageId, rowKey, { animate: true })
       },
       [ensureRoundExpandedForMessage, estimateScrollToMessage, focusMessageBlock]
     )
@@ -1700,9 +1797,8 @@ export const TranscriptPanel = memo(
       const scroller = scrollRef.current
       if (!scroller) return
       prepareManualTranscriptJump()
-      scroller.scrollTop = 0
-      syncVirtualizerScrollPosition(0)
-    }, [prepareManualTranscriptJump, scrollRef, syncVirtualizerScrollPosition])
+      getScrollAnimator().animateTo(scroller, 0, { onFrame: syncVirtualizerScrollPosition })
+    }, [getScrollAnimator, prepareManualTranscriptJump, scrollRef, syncVirtualizerScrollPosition])
 
     const jumpToTranscriptEnd = useCallback(() => {
       if (onJumpToLatest) {
@@ -1713,11 +1809,15 @@ export const TranscriptPanel = memo(
       }
       const scroller = scrollRef.current
       if (!scroller) return
-      const nextScrollTop = scroller.scrollHeight
-      if (autoFollowRef) autoFollowRef.current = true
-      scroller.scrollTop = nextScrollTop
-      syncVirtualizerScrollPosition(nextScrollTop)
-    }, [autoFollowRef, onJumpToLatest, scrollRef, syncVirtualizerScrollPosition])
+      getScrollAnimator().animateTo(scroller, scroller.scrollHeight, {
+        onFrame: syncVirtualizerScrollPosition,
+        // Re-arm auto-follow only on ARRIVAL — arming it at glide start would
+        // let the streaming re-pin writes fight the animation frames.
+        onDone: () => {
+          if (autoFollowRef) autoFollowRef.current = true
+        }
+      })
+    }, [autoFollowRef, getScrollAnimator, onJumpToLatest, scrollRef, syncVirtualizerScrollPosition])
 
     useEffect(() => {
       const request = jumpToMessageRequest
@@ -1763,10 +1863,17 @@ export const TranscriptPanel = memo(
 
     useLayoutEffect(() => {
       if (!pendingFocusTarget) return
+      // While a glide toward this target is in flight, hold the retry loop:
+      // don't burn attempts or issue competing scroll writes. The effect
+      // re-runs naturally each glide frame (renderedRows changes as the
+      // window follows), so the first post-landing pass resumes the search.
+      if (scrollAnimatorRef.current?.isAnimating()) return
       if (focusMessageBlock(pendingFocusTarget.messageId, pendingFocusTarget.rowKey)) return
       if (pendingFocusTarget.attempt >= 10) return
 
-      estimateScrollToMessage(pendingFocusTarget.messageId, pendingFocusTarget.rowKey)
+      estimateScrollToMessage(pendingFocusTarget.messageId, pendingFocusTarget.rowKey, {
+        animate: pendingFocusTarget.attempt === 0
+      })
       const frame = window.requestAnimationFrame(() => {
         setPendingFocusTarget((current) =>
           current?.messageId === pendingFocusTarget.messageId &&

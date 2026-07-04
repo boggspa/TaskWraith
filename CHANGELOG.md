@@ -22,6 +22,15 @@ shipping these commits.
   as a second colour-independent cue. The old vertical spine + blue accent
   fill behind the ticks were retired in the lens's favour, leaving just the
   horizontal go-to-message lines, the carriage, and the jump arrows.
+- **Rail jumps now glide.** Clicking a go-to-message tick or the ↑ / ↓ arrows
+  animates the transcript to the target over ~0.5–1.6s (distance-scaled,
+  eased) instead of teleporting, so you keep a sense of how far you
+  travelled. Any wheel / touch / key input mid-glide cancels it instantly,
+  and reduced-motion settings restore the instant jump.
+- **Collapsed rounds keep their rail markers.** In Ensemble chats, user
+  prompts hidden inside a collapsed round card now still appear on the
+  go-to-message rail, anchored at the round's header. Clicking one
+  auto-expands the round and glides to the prompt.
 
 ## 1.7.3 - 2026-07-03
 

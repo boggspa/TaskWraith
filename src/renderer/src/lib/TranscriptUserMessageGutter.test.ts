@@ -150,6 +150,61 @@ describe('TranscriptUserMessageGutter model', () => {
   })
 })
 
+describe('collapsed ensemble-round markers', () => {
+  const headerMessage: ChatMessage = {
+    id: 'ensemble-round-header-r1',
+    role: 'system',
+    content: '',
+    timestamp: '2026-01-01T00:00:00.000Z',
+    metadata: { kind: 'ensembleRoundHeader', ensembleRoundId: 'r1' }
+  }
+  // Display list AFTER round collapse: the header row stands in for the
+  // round's body (its user prompt included), then the thread continues flat.
+  const displayMessages = [
+    message('u0', 'user', 'Before the round'),
+    headerMessage,
+    message('a-after', 'assistant', 'After the round'),
+    message('u9', 'user', 'After the round prompt')
+  ]
+  const hiddenPrompt = message('u-hidden', 'user', 'Prompt inside the collapsed round')
+  const collapsed = new Map([[headerMessage.id, [hiddenPrompt]]])
+
+  it('emits markers for user messages hidden inside a collapsed round, anchored at the header row', () => {
+    const rows = projectRows(displayMessages)
+    const markers = buildTranscriptUserGutterMarkers(displayMessages, rows, undefined, collapsed)
+
+    expect(markers.map((marker) => marker.messageId)).toEqual(['u0', 'u-hidden', 'u9'])
+    const hiddenMarker = markers[1]
+    // Anchored at the header row's POSITIONAL index (scroll-spy join space).
+    expect(hiddenMarker.rowIndex).toBe(1)
+    expect(hiddenMarker.ordinal).toBe(2)
+    expect(hiddenMarker.title).toBe('Prompt inside the collapsed round')
+    expect(hiddenMarker.message).toBe(hiddenPrompt)
+    // Ordered between its flat neighbours on the rail.
+    expect(hiddenMarker.topPercent).toBeGreaterThan(markers[0].topPercent)
+    expect(hiddenMarker.topPercent).toBeLessThan(markers[2].topPercent)
+  })
+
+  it('gives hidden markers a rowKey that can never match a projected row (forces id-based jump)', () => {
+    const rows = projectRows(displayMessages)
+    const markers = buildTranscriptUserGutterMarkers(displayMessages, rows, undefined, collapsed)
+    const hiddenMarker = markers[1]
+
+    expect(rows.some((row) => row.rowKey === hiddenMarker.rowKey)).toBe(false)
+    expect(hiddenMarker.rowKey).toContain('~')
+    // Keys stay unique across the whole rail.
+    expect(new Set(markers.map((marker) => marker.key)).size).toBe(markers.length)
+  })
+
+  it('emits no extra markers when the map is absent or empty', () => {
+    const rows = projectRows(displayMessages)
+    expect(buildTranscriptUserGutterMarkers(displayMessages, rows)).toHaveLength(2)
+    expect(
+      buildTranscriptUserGutterMarkers(displayMessages, rows, undefined, new Map())
+    ).toHaveLength(2)
+  })
+})
+
 describe('findActiveGutterMarkerKey (scroll-spy join)', () => {
   const messages = [
     message('u0', 'user', 'Turn zero'),
