@@ -16,6 +16,7 @@ import Foundation
 public struct CompletionBannerInput: Sendable, Equatable {
     public let title: String?
     public let failed: Bool
+    public let status: CompletionBannerStatus
     public let preview: String?
     public let filesChanged: Int
     public let additions: Int
@@ -23,15 +24,25 @@ public struct CompletionBannerInput: Sendable, Equatable {
 
     public init(
         title: String?, failed: Bool, preview: String?,
-        filesChanged: Int, additions: Int, deletions: Int
+        filesChanged: Int, additions: Int, deletions: Int,
+        status: CompletionBannerStatus? = nil
     ) {
         self.title = title
         self.failed = failed
+        self.status = status ?? (failed ? .error : .success)
         self.preview = preview
         self.filesChanged = filesChanged
         self.additions = additions
         self.deletions = deletions
     }
+}
+
+public enum CompletionBannerStatus: Sendable, Equatable {
+    case success
+    case warning
+    case error
+    case quota
+    case cancelled
 }
 
 public struct RenderedBanner: Sendable, Equatable {
@@ -46,28 +57,28 @@ public struct RenderedBanner: Sendable, Equatable {
 public enum CompletionBannerRenderer {
     public static func render(_ input: CompletionBannerInput) -> RenderedBanner {
         let name = (input.title?.isEmpty == false) ? input.title! : "TaskWraith"
-        let title = input.failed ? "\u{26A0}\u{FE0F} \(name)" : name
+        let title = "\(emoji(for: input.status)) \(name)"
         var lines: [String] = []
         if let summary = bannerSentences(input.preview) { lines.append(summary) }
-        if !input.failed,
+        if input.status == .success,
             let diff = diffBannerLine(
                 files: input.filesChanged, additions: input.additions, deletions: input.deletions)
         {
             lines.append(diff)
         }
-        if lines.isEmpty { lines.append(input.failed ? "Run needs your attention." : "Run finished.") }
+        if lines.isEmpty { lines.append(defaultBody(for: input.status)) }
         return RenderedBanner(title: title, body: lines.joined(separator: "\n"))
     }
 
-    /// "\u{1F4DD} 3 files \u{00B7} \u{1F7E2} +128 \u{00B7} \u{1F534} \u{2212}44" —
-    /// emoji is the only way to colour a plain-text banner. nil when nothing changed.
+    /// "\u{1F7E9} +23,125 \u{1F7E5} -10,055" — compact plain-text diff stats.
+    /// nil when nothing changed.
     public static func diffBannerLine(files: Int, additions: Int, deletions: Int) -> String? {
         guard files > 0 || additions > 0 || deletions > 0 else { return nil }
         var parts: [String] = []
-        if files > 0 { parts.append("\u{1F4DD} \(files) file\(files == 1 ? "" : "s")") }
-        if additions > 0 { parts.append("\u{1F7E2} +\(additions)") }
-        if deletions > 0 { parts.append("\u{1F534} \u{2212}\(deletions)") }
-        return parts.joined(separator: " \u{00B7} ")
+        if additions > 0 { parts.append("\u{1F7E9} +\(grouped(additions))") }
+        if deletions > 0 { parts.append("\u{1F7E5} -\(grouped(deletions))") }
+        if !parts.isEmpty { return parts.joined(separator: " ") }
+        return "\(files) file\(files == 1 ? "" : "s") changed"
     }
 
     /// First 1–2 sentences of a card preview, flattened to one line + capped, for
@@ -98,5 +109,41 @@ public enum CompletionBannerRenderer {
             trimmed = String(trimmed[..<end]).trimmingCharacters(in: .whitespaces) + "\u{2026}"
         }
         return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private static func emoji(for status: CompletionBannerStatus) -> String {
+        switch status {
+        case .success:
+            return "\u{2705}"
+        case .warning:
+            return "\u{26A0}\u{FE0F}"
+        case .error:
+            return "\u{26A0}\u{FE0F}"
+        case .quota:
+            return "\u{274C}"
+        case .cancelled:
+            return "\u{26A0}\u{FE0F}"
+        }
+    }
+
+    private static func defaultBody(for status: CompletionBannerStatus) -> String {
+        switch status {
+        case .success:
+            return "Run finished."
+        case .warning:
+            return "Run finished with warnings."
+        case .error:
+            return "Run needs your attention."
+        case .quota:
+            return "Rate limit or quota wall."
+        case .cancelled:
+            return "Run cancelled."
+        }
+    }
+
+    private static func grouped(_ value: Int) -> String {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .decimal
+        return formatter.string(from: NSNumber(value: value)) ?? "\(value)"
     }
 }

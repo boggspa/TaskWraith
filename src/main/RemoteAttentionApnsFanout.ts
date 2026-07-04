@@ -2,6 +2,7 @@ import type { BridgeApnsPushResult, BridgeRemoteAttentionPushPayload } from './B
 import type { BridgeApnsTokenStore } from './BridgeApnsTokenStore'
 import { sealPush } from '../shared/e2ee/pushSeal'
 import { buildCompletionPushPlaintext, type CompletionPushContent } from './CompletionPushContent'
+import { buildQuestionPushPlaintext, type QuestionPushContent } from './QuestionPushContent'
 
 export interface RemoteAttentionApnsFanoutDeps {
   getTokenStore: () => BridgeApnsTokenStore | null
@@ -46,7 +47,10 @@ export class RemoteAttentionApnsFanout {
   }
 
   notify(
-    input: Omit<BridgeRemoteAttentionPushPayload, 'pairID'> & { rich?: CompletionPushContent }
+    input: Omit<BridgeRemoteAttentionPushPayload, 'pairID'> & {
+      rich?: CompletionPushContent
+      question?: QuestionPushContent
+    }
   ): void {
     const tokenStore = this.deps.getTokenStore()
     const pusher = this.deps.getPusher() as Pushable | null
@@ -77,13 +81,18 @@ export class RemoteAttentionApnsFanout {
           // the push still ships with its generic alert (the NSE just has nothing
           // to decrypt). Each device gets a distinct key, so this is per-iteration.
           const macSeed = this.deps.getMacIdentitySeed?.() ?? null
-          if (input.rich && entry.agreePubRaw && macSeed) {
+          const richPlaintext = input.rich
+            ? buildCompletionPushPlaintext(input.rich)
+            : input.question
+              ? buildQuestionPushPlaintext(input.question)
+              : null
+          if (richPlaintext && entry.agreePubRaw && macSeed) {
             try {
               payload.twpush = sealPush({
                 senderIdentitySeed: macSeed,
                 recipientAgreePubRaw: Buffer.from(entry.agreePubRaw, 'base64'),
                 pairId: entry.pairID,
-                plaintext: buildCompletionPushPlaintext(input.rich)
+                plaintext: richPlaintext
               })
             } catch (err) {
               this.log(
@@ -176,7 +185,10 @@ function sanitizePayload(
     wakeupId: input.wakeupId,
     taskId: input.taskId,
     projectionKind: input.projectionKind,
-    generatedAt: input.generatedAt
+    generatedAt: input.generatedAt,
+    failureKind: input.failureKind,
+    diffAdditions: input.diffAdditions,
+    diffDeletions: input.diffDeletions
   }
 }
 

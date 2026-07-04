@@ -295,6 +295,7 @@ import {
 import { createRelayServer, type RelayServerHandle } from '../../relay/src/server'
 import {
   type BridgeApnsPusher,
+  type BridgeRemoteAttentionFailureKind
 } from './BridgeApnsPusher'
 import { BridgeApnsTokenStore } from './BridgeApnsTokenStore'
 import { RemoteAttentionApnsFanout } from './RemoteAttentionApnsFanout'
@@ -1196,16 +1197,28 @@ function maybeNotifyRemoteTaskNeedsAttention(taskCard: RemoteTaskCard): void {
     // Run-finish transitions (BD2): running → success/failed pushes too,
     // so a headless Mac can tell the phone the work is done. Same idle
     // gate + coalescing as attention pushes (the fanout applies both).
-    const finished = taskCard.status === 'success' || taskCard.status === 'failed'
+    const finished =
+      taskCard.status === 'success' ||
+      taskCard.status === 'failed' ||
+      taskCard.status === 'cancelled'
     if (finished && previousStatus === 'running') {
+      const reason =
+        taskCard.status === 'cancelled'
+          ? 'runCancelled'
+          : taskCard.status === 'failed'
+            ? 'runFailed'
+            : 'runComplete'
       remoteAttentionApnsFanoutRef?.notify({
-        reason: taskCard.status === 'failed' ? 'runFailed' : 'runComplete',
+        reason,
         workspaceId: taskCard.workspaceId,
         threadId: taskCard.threadId,
         runId: taskCard.runId || taskCard.latestRunId,
         taskId: taskCard.id,
         projectionKind: 'RemoteTaskCard',
         generatedAt: new Date().toISOString(),
+        failureKind: remoteAttentionFailureKindForTaskCard(taskCard),
+        diffAdditions: taskCard.diffSummary?.additions,
+        diffDeletions: taskCard.diffSummary?.deletions,
         // Per-device sealed by the fanout (when the device registered an
         // agreement key) so the NSE renders a rich banner; otherwise unused.
         rich: {
@@ -1229,6 +1242,23 @@ function maybeNotifyRemoteTaskNeedsAttention(taskCard: RemoteTaskCard): void {
     projectionKind: 'RemoteTaskCard',
     generatedAt: new Date().toISOString()
   })
+}
+
+function remoteAttentionFailureKindForTaskCard(
+  taskCard: RemoteTaskCard
+): BridgeRemoteAttentionFailureKind | undefined {
+  if (taskCard.status === 'cancelled') return 'cancelled'
+  if (taskCard.status !== 'failed') return undefined
+  const text = [taskCard.title, taskCard.preview].filter(Boolean).join('\n')
+  if (
+    classifyProviderQuotaWall(taskCard.provider, text).hit ||
+    /\b(429|rate[-\s]?limit|quota|usage limit|credits|too many requests|resource_exhausted)\b/i.test(
+      text
+    )
+  ) {
+    return 'quota'
+  }
+  return 'error'
 }
 
 /**
@@ -1320,7 +1350,10 @@ remoteQuestionRegistry.subscribe((event) => {
       threadId: record.threadId,
       runId: record.runId,
       questionId: record.questionId,
-      projectionKind: 'MobileQuestionCard'
+      projectionKind: 'MobileQuestionCard',
+      question: {
+        question: record.question
+      }
     })
   }
   if (

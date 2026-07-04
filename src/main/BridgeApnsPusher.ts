@@ -71,6 +71,9 @@ export type BridgeRemoteAttentionReason =
   | 'resume'
   | 'runComplete'
   | 'runFailed'
+  | 'runCancelled'
+
+export type BridgeRemoteAttentionFailureKind = 'error' | 'quota' | 'warning' | 'cancelled'
 
 export interface BridgeRemoteAttentionPushPayload {
   pairID: string
@@ -84,7 +87,10 @@ export interface BridgeRemoteAttentionPushPayload {
   taskId?: string
   projectionKind?: string
   generatedAt?: string
-  /** Optional per-device ENCRYPTED rich content (run-complete/failed only). The
+  failureKind?: BridgeRemoteAttentionFailureKind
+  diffAdditions?: number
+  diffDeletions?: number
+  /** Optional per-device ENCRYPTED rich content (completion/question). The
    * NSE decrypts it for a rich banner; Apple/the relay see only ciphertext. Set
    * per-device by RemoteAttentionApnsFanout (each device has a distinct key).
    * Serialized OUTSIDE `aps` so only the extension reads it. */

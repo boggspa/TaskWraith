@@ -501,7 +501,7 @@ describe('Http2ApnsPusher — privacy-safe alert bodies', () => {
         const body = JSON.parse(bodyWrites[0])
         const serialized = JSON.stringify(body)
         expect(body.aps.alert).toEqual({
-          title: 'TaskWraith needs attention',
+          title: '🔐 TaskWraith needs attention',
           body: 'Open TaskWraith to respond.'
         })
         expect(body.aps['thread-id']).toBe('t')
@@ -613,7 +613,7 @@ describe('Http2ApnsPusher — privacy-safe alert bodies', () => {
         const body = JSON.parse(bodyWrites[0])
         const serialized = JSON.stringify(body)
         expect(body.aps.alert).toEqual({
-          title: 'TaskWraith needs attention',
+          title: '⚠️ TaskWraith needs attention',
           body: 'Open TaskWraith to review the latest task state.'
         })
         expect(body.aps['thread-id']).toBe('t')
@@ -675,6 +675,8 @@ describe('Http2ApnsPusher — privacy-safe alert bodies', () => {
         threadId: 't',
         runId: 'r',
         taskId: 'task',
+        diffAdditions: 23125,
+        diffDeletions: 10055,
         twpush: envelope
       })
       return Promise.resolve().then(() => {
@@ -684,9 +686,11 @@ describe('Http2ApnsPusher — privacy-safe alert bodies', () => {
         expect(body.aps.twpush).toBeUndefined()
         // The generic alert is untouched — it's the NSE's fallback.
         expect(body.aps.alert).toEqual({
-          title: 'Task complete',
-          body: 'Your TaskWraith run finished.'
+          title: '✅ Task complete',
+          body: '🟩 +23,125 🟥 -10,055'
         })
+        expect(body.diffAdditions).toBe(23125)
+        expect(body.diffDeletions).toBe(10055)
         expect(body.aps['mutable-content']).toBe(1)
         // Ciphertext only — none of the plaintext leaks.
         expect(JSON.stringify(body)).not.toContain('Codex')
@@ -733,7 +737,7 @@ describe('Http2ApnsPusher — privacy-safe alert bodies', () => {
         expect(body.twpush).toBeUndefined() // dropped — too big
         expect(Buffer.byteLength(bodyWrites[0], 'utf8')).toBeLessThanOrEqual(4096)
         expect(body.aps.alert).toEqual({
-          title: 'Task complete',
+          title: '✅ Task complete',
           body: 'Your TaskWraith run finished.'
         })
       })
@@ -835,11 +839,24 @@ describe('Http2ApnsPusher — privacy-safe alert bodies', () => {
         reason: 'runComplete',
         threadId: 't'
       })
+      void pusher.pushRemoteAttentionToToken('a', 'sandbox', {
+        pairID: 'p',
+        reason: 'runFailed',
+        threadId: 't',
+        failureKind: 'quota'
+      })
+      void pusher.pushRemoteAttentionToToken('a', 'sandbox', {
+        pairID: 'p',
+        reason: 'runCancelled',
+        threadId: 't'
+      })
       await new Promise((resolve) => setTimeout(resolve, 0))
       expect(JSON.parse(bodyWrites[0]).aps.category).toBe('TW_APPROVAL')
+      expect(JSON.parse(bodyWrites[0]).aps.alert.title).toBe('🔐 Approval required')
       expect(JSON.parse(bodyWrites[0]).aps['thread-id']).toBe('t')
       expect(JSON.parse(bodyWrites[0]).aps['relevance-score']).toBe(1)
       expect(JSON.parse(bodyWrites[1]).aps.category).toBe('TW_QUESTION')
+      expect(JSON.parse(bodyWrites[1]).aps.alert.title).toBe('❓ TaskWraith question')
       expect(JSON.parse(bodyWrites[1]).aps['thread-id']).toBe('t')
       expect(JSON.parse(bodyWrites[1]).aps['relevance-score']).toBe(1)
       expect(JSON.parse(bodyWrites[2]).aps.category).toBeUndefined()
@@ -849,6 +866,13 @@ describe('Http2ApnsPusher — privacy-safe alert bodies', () => {
       expect(JSON.parse(bodyWrites[3]).aps.category).toBeUndefined()
       expect(JSON.parse(bodyWrites[3]).aps['thread-id']).toBe('t')
       expect(JSON.parse(bodyWrites[3]).aps['relevance-score']).toBe(0.35)
+      expect(JSON.parse(bodyWrites[4]).aps.category).toBeUndefined()
+      expect(JSON.parse(bodyWrites[4]).aps.alert.title).toBe('❌ Rate limit or quota wall')
+      expect(JSON.parse(bodyWrites[4]).failureKind).toBe('quota')
+      expect(JSON.parse(bodyWrites[4]).aps['relevance-score']).toBe(0.75)
+      expect(JSON.parse(bodyWrites[5]).aps.category).toBeUndefined()
+      expect(JSON.parse(bodyWrites[5]).aps.alert.title).toBe('⚠️ Task cancelled')
+      expect(JSON.parse(bodyWrites[5]).aps['relevance-score']).toBe(0.55)
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }

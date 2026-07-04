@@ -37,7 +37,8 @@ final class NotificationService: UNNotificationServiceExtension {
             contentHandler(best)
             return
         }
-        let failed = (info["reason"] as? String) == "runFailed"
+        let reason = info["reason"] as? String
+        let failed = reason == "runFailed"
 
         // pairID is phone-scoped (it identifies this phone, not which Mac), so
         // try each paired host's agreement key — only the real sender's key
@@ -47,10 +48,17 @@ final class NotificationService: UNNotificationServiceExtension {
                 let agreePub = Data(base64Encoded: agreePubB64),
                 let plaintext = try? TWPushSeal.open(
                     envelope: envelope, deviceSeed: seed, senderAgreePubRaw: agreePub,
-                    pairId: pairId),
-                let content = CompletionPushContent.decode(plaintext)
+                    pairId: pairId)
             else { continue }
-            let rendered = CompletionBannerRenderer.render(content.bannerInput(failed: failed))
+            if reason == "question", let content = QuestionPushContent.decode(plaintext) {
+                best.title = "TaskWraith question"
+                best.body = content.bannerBody
+                contentHandler(best)
+                return
+            }
+            guard let content = CompletionPushContent.decode(plaintext) else { continue }
+            let rendered = CompletionBannerRenderer.render(
+                content.bannerInput(failed: failed, status: completionStatus(reason: reason, info: info)))
             best.title = rendered.title
             best.body = rendered.body
             contentHandler(best)
@@ -67,4 +75,12 @@ final class NotificationService: UNNotificationServiceExtension {
             handler(best)
         }
     }
+}
+
+private func completionStatus(reason: String?, info: [AnyHashable: Any]) -> CompletionBannerStatus {
+    if reason == "runComplete" { return .success }
+    if reason == "runCancelled" { return .cancelled }
+    if reason == "runFailed", (info["failureKind"] as? String) == "quota" { return .quota }
+    if reason == "runFailed" { return .error }
+    return .warning
 }

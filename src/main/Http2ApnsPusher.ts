@@ -227,7 +227,7 @@ export class Http2ApnsPusher implements BridgeApnsPusher {
       stripNullish({
         aps: {
           alert: {
-            title: 'TaskWraith needs attention',
+            title: '🔐 TaskWraith needs attention',
             body: 'Open TaskWraith to respond.'
           },
           category: APNS_CATEGORY_APPROVAL,
@@ -270,7 +270,7 @@ export class Http2ApnsPusher implements BridgeApnsPusher {
         // Title/body vary by reason (the reason is already in the payload, so
         // this leaks nothing new) — a generic "needs attention" string can't
         // tell an approval from a finished run on the lock screen.
-        alert: remoteAttentionAlert(payload.reason),
+        alert: remoteAttentionAlert(payload),
         // Lights up the lock-screen Approve/Deny buttons for blocking reasons.
         // undefined for non-blocking reasons → JSON.stringify omits it, so a
         // run-complete push stays button-less.
@@ -290,9 +290,12 @@ export class Http2ApnsPusher implements BridgeApnsPusher {
       wakeupId: payload.wakeupId,
       taskId: payload.taskId,
       projectionKind: payload.projectionKind,
-      generatedAt: payload.generatedAt
+      generatedAt: payload.generatedAt,
+      failureKind: payload.failureKind,
+      diffAdditions: normalizeDiffCount(payload.diffAdditions),
+      diffDeletions: normalizeDiffCount(payload.diffDeletions)
     })
-    // Attach the per-device ENCRYPTED rich blob (run-complete/failed) OUTSIDE
+    // Attach the per-device ENCRYPTED rich blob OUTSIDE
     // `aps`, so only the Notification Service Extension reads it. The generic
     // `aps.alert` above is a complete, privacy-clean notification on its own, so
     // if adding the blob would breach the 4KB APNs alert ceiling we DROP it and
@@ -342,6 +345,8 @@ function remoteAttentionRelevanceScore(reason: BridgeRemoteAttentionReason): num
       return 0.85
     case 'runFailed':
       return 0.75
+    case 'runCancelled':
+      return 0.55
     case 'runComplete':
       return 0.35
     default:
@@ -352,26 +357,56 @@ function remoteAttentionRelevanceScore(reason: BridgeRemoteAttentionReason): num
 /** Lock-screen title/body per reason. Privacy-safe: `reason` is already a
  * payload field, so this adds no new information — it only makes the
  * notification legible instead of a single generic string for every event. */
-function remoteAttentionAlert(reason: BridgeRemoteAttentionReason): { title: string; body: string } {
-  switch (reason) {
+function remoteAttentionAlert(payload: BridgeRemoteAttentionPushPayload): { title: string; body: string } {
+  switch (payload.reason) {
     case 'approval':
-      return { title: 'Approval required', body: 'TaskWraith needs your approval to continue.' }
+      return { title: '🔐 Approval required', body: 'TaskWraith needs your approval to continue.' }
     case 'question':
-      return { title: 'TaskWraith has a question', body: 'Open TaskWraith to answer.' }
+      return { title: '❓ TaskWraith question', body: 'Open TaskWraith to answer.' }
     case 'yieldToUser':
       return { title: 'TaskWraith yielded to you', body: 'Open TaskWraith to continue.' }
     case 'taskNeedsAttention':
-      return { title: 'Task needs attention', body: 'Open TaskWraith to review.' }
+      return { title: '⚠️ Task needs attention', body: 'Open TaskWraith to review.' }
     case 'runComplete':
-      return { title: 'Task complete', body: 'Your TaskWraith run finished.' }
+      return {
+        title: '✅ Task complete',
+        body: completionDiffLine(payload) ?? 'Your TaskWraith run finished.'
+      }
     case 'runFailed':
-      return { title: 'Task failed', body: 'A TaskWraith run needs your attention.' }
+      if (payload.failureKind === 'quota') {
+        return {
+          title: '❌ Rate limit or quota wall',
+          body: 'Open TaskWraith to choose what happens next.'
+        }
+      }
+      return { title: '⚠️ Task failed', body: 'A TaskWraith run needs your attention.' }
+    case 'runCancelled':
+      return { title: '⚠️ Task cancelled', body: 'A TaskWraith run was cancelled.' }
     default:
       return {
-        title: 'TaskWraith needs attention',
+        title: '⚠️ TaskWraith needs attention',
         body: 'Open TaskWraith to review the latest task state.'
       }
   }
+}
+
+function completionDiffLine(payload: BridgeRemoteAttentionPushPayload): string | undefined {
+  const additions = normalizeDiffCount(payload.diffAdditions) ?? 0
+  const deletions = normalizeDiffCount(payload.diffDeletions) ?? 0
+  if (additions <= 0 && deletions <= 0) return undefined
+  const parts: string[] = []
+  if (additions > 0) parts.push(`🟩 +${formatDiffCount(additions)}`)
+  if (deletions > 0) parts.push(`🟥 -${formatDiffCount(deletions)}`)
+  return parts.join(' ')
+}
+
+function normalizeDiffCount(value: number | undefined): number | undefined {
+  if (value === undefined) return undefined
+  return Math.max(0, Math.floor(Number(value) || 0))
+}
+
+function formatDiffCount(value: number): string {
+  return value.toLocaleString('en-US')
 }
 
 function stripNullish<T extends Record<string, unknown>>(value: T): Record<string, unknown> {

@@ -115,6 +115,45 @@ describe('RemoteAttentionApnsFanout', () => {
     })
   })
 
+  it('seals question text without leaking it into the APNs payload', async () => {
+    const macSeed = Buffer.alloc(32, 0x11)
+    const deviceSeed = Buffer.alloc(32, 0x22)
+    const tokenStore = makeTokenStore([
+      {
+        pairID: 'pair-1',
+        deviceToken: 'token-1',
+        env: 'production',
+        agreePubRaw: deriveAgreementPublicRaw(deviceSeed).toString('base64')
+      }
+    ] as never)
+    const pushRemoteAttentionToToken = vi.fn(async () => ({ delivered: true, apnsId: 'a' }))
+    const fanout = new RemoteAttentionApnsFanout({
+      getTokenStore: () => tokenStore as never,
+      getPusher: () => ({ pushRemoteAttentionToToken }),
+      isUserAtDesktop: () => false,
+      getMacIdentitySeed: () => macSeed
+    })
+    fanout.notify({
+      reason: 'question',
+      threadId: 't',
+      questionId: 'q',
+      question: { question: 'Ship this now?\nUse the risky path.' }
+    })
+    await flushFanout()
+    const payload = (pushRemoteAttentionToToken.mock.calls as unknown as AttentionPushCall[])[0][2]
+    expect(payload.twpush).toBeDefined()
+    expect(JSON.stringify(payload)).not.toContain('Ship this now')
+    const opened = JSON.parse(
+      openPush({
+        recipientIdentitySeed: deviceSeed,
+        senderAgreePubRaw: deriveAgreementPublicRaw(macSeed),
+        pairId: 'pair-1',
+        envelope: payload.twpush!
+      }).toString('utf8')
+    )
+    expect(opened).toEqual({ question: 'Ship this now?' })
+  })
+
   it('omits the blob when the device registered no agreement key (generic alert)', async () => {
     const tokenStore = makeTokenStore([
       { pairID: 'pair-1', deviceToken: 'token-1', env: 'production' as const }

@@ -30,4 +30,12 @@ struct CompletionPushContentTests {
         #expect(c.bannerInput(failed: true).failed == true)
         #expect(c.bannerInput(failed: false).title == "Claude")
     }
+
+    @Test("question push content renders the first line with question emoji")
+    func questionPushContent() {
+        let json = Data("{\"question\":\"Ship this now?\\nMore context\"}".utf8)
+        let content = QuestionPushContent.decode(json)
+        #expect(content == QuestionPushContent(question: "Ship this now?\nMore context"))
+        #expect(content?.bannerBody == "\u{2753} Ship this now?")
+    }
 }

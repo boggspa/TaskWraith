@@ -11,11 +11,10 @@ struct CompletionBannerRendererTests {
             CompletionBannerInput(
                 title: "Codex", failed: false, preview: "Refactored the card. It is clean now.",
                 filesChanged: 3, additions: 128, deletions: 44))
-        #expect(r.title == "Codex")
+        #expect(r.title == "\u{2705} Codex")
         #expect(r.body.contains("Refactored the card."))
-        #expect(r.body.contains("\u{1F4DD} 3 files"))
-        #expect(r.body.contains("\u{1F7E2} +128"))
-        #expect(r.body.contains("\u{1F534} \u{2212}44"))
+        #expect(r.body.contains("\u{1F7E9} +128"))
+        #expect(r.body.contains("\u{1F7E5} -44"))
     }
 
     @Test("failed banner: warning glyph + diff line suppressed")
@@ -26,7 +25,7 @@ struct CompletionBannerRendererTests {
                 filesChanged: 3, additions: 1, deletions: 1))
         #expect(r.title == "\u{26A0}\u{FE0F} Claude")
         #expect(r.body.contains("Something broke."))
-        #expect(!r.body.contains("\u{1F4DD}"))
+        #expect(!r.body.contains("\u{1F7E9}"))
     }
 
     @Test("empty title → TaskWraith; empty content → default line")
@@ -34,7 +33,7 @@ struct CompletionBannerRendererTests {
         let s = CompletionBannerRenderer.render(
             CompletionBannerInput(
                 title: nil, failed: false, preview: nil, filesChanged: 0, additions: 0, deletions: 0))
-        #expect(s.title == "TaskWraith")
+        #expect(s.title == "\u{2705} TaskWraith")
         #expect(s.body == "Run finished.")
         let f = CompletionBannerRenderer.render(
             CompletionBannerInput(
@@ -48,7 +47,7 @@ struct CompletionBannerRendererTests {
         let e = CompletionBannerRenderer.render(
             CompletionBannerInput(
                 title: "", failed: false, preview: "", filesChanged: 0, additions: 0, deletions: 0))
-        #expect(e.title == "TaskWraith")
+        #expect(e.title == "\u{2705} TaskWraith")
         #expect(e.body == "Run finished.")
     }
 
@@ -56,11 +55,31 @@ struct CompletionBannerRendererTests {
     func diffLine() {
         #expect(
             CompletionBannerRenderer.diffBannerLine(files: 1, additions: 0, deletions: 0)
-                == "\u{1F4DD} 1 file")
+                == "1 file changed")
         #expect(
             CompletionBannerRenderer.diffBannerLine(files: 2, additions: 0, deletions: 0)
-                == "\u{1F4DD} 2 files")
+                == "2 files changed")
+        #expect(
+            CompletionBannerRenderer.diffBannerLine(files: 2, additions: 23125, deletions: 10055)
+                == "\u{1F7E9} +23,125 \u{1F7E5} -10,055")
         #expect(CompletionBannerRenderer.diffBannerLine(files: 0, additions: 0, deletions: 0) == nil)
+    }
+
+    @Test("quota and cancelled banners use distinct status copy")
+    func quotaAndCancelled() {
+        let quota = CompletionBannerRenderer.render(
+            CompletionBannerInput(
+                title: "Codex", failed: true, preview: nil,
+                filesChanged: 0, additions: 0, deletions: 0, status: .quota))
+        #expect(quota.title == "\u{274C} Codex")
+        #expect(quota.body == "Rate limit or quota wall.")
+
+        let cancelled = CompletionBannerRenderer.render(
+            CompletionBannerInput(
+                title: "Codex", failed: false, preview: nil,
+                filesChanged: 0, additions: 0, deletions: 0, status: .cancelled))
+        #expect(cancelled.title == "\u{26A0}\u{FE0F} Codex")
+        #expect(cancelled.body == "Run cancelled.")
     }
 
     @Test("bannerSentences: 2-sentence + 180-char cap")
