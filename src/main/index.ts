@@ -14816,8 +14816,19 @@ async function compactClaudeProviderContext(payload: {
   const timer = setTimeout(() => controller.abort(), 180_000)
   let observed: ContextCompactionSignal | null = null
   let streamError: string | undefined
+  let pathToClaudeCodeExecutable: string | undefined
   try {
     const model = normalizeCliProviderModel('claude', payload.model)
+    if (app.isPackaged) {
+      const resolvedClaude = await resolveCliProviderBinary('claude', undefined)
+      if (!resolvedClaude.binaryPath) {
+        return {
+          ok: false,
+          error: resolvedClaude.error || 'Claude Code CLI was not found.'
+        }
+      }
+      pathToClaudeCodeExecutable = resolvedClaude.binaryPath
+    }
     const stream = sdk.query({
       prompt: '/compact',
       options: {
@@ -14829,7 +14840,8 @@ async function compactClaudeProviderContext(payload: {
         canUseTool: async () => ({
           behavior: 'deny' as const,
           message: 'Compaction turns run tool-free.'
-        })
+        }),
+        ...(pathToClaudeCodeExecutable ? { pathToClaudeCodeExecutable } : {})
       }
     })
     for await (const message of stream) {
