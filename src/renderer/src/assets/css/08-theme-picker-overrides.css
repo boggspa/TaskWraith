@@ -5480,6 +5480,7 @@
 [data-composer-style="modular"] .composer-picker-label,
 [data-composer-style="modular"] .composer-picker-command,
 [data-composer-style="modular"] .composer-image-picker-btn,
+[data-composer-style="modular"] .composer-action-btn.voice-btn,
 [data-composer-style="modular"] .composer-control-button,
 [data-composer-style="modular"] .composer-schedule-label,
 [data-composer-style="modular"] .composer-runtime-profile {
@@ -5487,6 +5488,20 @@
   border: 1px solid color-mix(in srgb, var(--panel-border) 82%, transparent);
   border-radius: 999px;
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.12);
+}
+
+[data-composer-style="modular"] .composer-voice-control {
+  gap: 2px;
+}
+
+[data-composer-style="modular"] .composer-action-btn.voice-btn {
+  width: 30px;
+  height: 30px;
+  min-width: 30px;
+}
+
+[data-composer-style="modular"] .composer-voice-chevron {
+  width: 14px;
 }
 
 [data-composer-style="modular"] .composer-action-btn.run-btn,
@@ -5502,6 +5517,7 @@
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="modular"] .composer-picker-label,
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="modular"] .composer-picker-command,
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="modular"] .composer-image-picker-btn,
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="modular"] .composer-action-btn.voice-btn,
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="modular"] .composer-control-button,
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="modular"] .composer-schedule-label,
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="modular"] .composer-runtime-profile {
@@ -7148,6 +7164,10 @@
 [data-composer-style="alabaster"] .composer-inline-pickers-left [data-composer-control="permission"] {
   order: 2;
 }
+[data-composer-style="obsidian"] .composer-inline-pickers-left [data-composer-control="voice"],
+[data-composer-style="alabaster"] .composer-inline-pickers-left [data-composer-control="voice"] {
+  order: 2;
+}
 [data-composer-style="obsidian"]
   .composer-inline-pickers-left
   [data-composer-control="ensemble-mode"],
@@ -7192,6 +7212,26 @@
 [data-composer-style="obsidian"] .composer-top-toggles,
 [data-composer-style="alabaster"] .composer-top-toggles {
   display: none;
+}
+
+[data-composer-style="obsidian"][data-composer-style="obsidian"] .composer-voice-control,
+[data-composer-style="alabaster"][data-composer-style="alabaster"] .composer-voice-control {
+  gap: 0;
+  padding: 0 2px !important;
+}
+
+[data-composer-style="obsidian"][data-composer-style="obsidian"] .composer-action-btn.voice-btn,
+[data-composer-style="alabaster"][data-composer-style="alabaster"] .composer-action-btn.voice-btn {
+  width: 24px;
+  height: 24px;
+  min-width: 24px;
+  padding: 0;
+}
+
+[data-composer-style="obsidian"][data-composer-style="obsidian"] .composer-voice-chevron,
+[data-composer-style="alabaster"][data-composer-style="alabaster"] .composer-voice-chevron {
+  width: 12px;
+  height: 24px;
 }
 
 /* (d) Full-width rects: drop the surface padding so the textarea +

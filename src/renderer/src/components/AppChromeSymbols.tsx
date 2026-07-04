@@ -575,6 +575,26 @@ export function ArrowUpSendIcon() {
   )
 }
 
+export function MicrophoneSymbolIcon() {
+  return (
+    <span className="sf-symbol-icon" aria-hidden>
+      <svg
+        viewBox="0 0 16 16"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.35"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <rect x="6.1" y="2.2" width="3.8" height="6.8" rx="1.9" />
+        <path d="M3.9 7.1a4.1 4.1 0 0 0 8.2 0" />
+        <path d="M8 11.2v2.4" />
+        <path d="M5.9 13.6h4.2" />
+      </svg>
+    </span>
+  )
+}
+
 export function StopSymbolIcon() {
   return (
     <span className="sf-symbol-icon" aria-hidden>

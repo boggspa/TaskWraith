@@ -93,6 +93,13 @@ import { ComposerImageThumb } from './ComposerImageThumb'
 import { ComposerEnsembleToggleButton } from './ComposerEnsembleToggleButton'
 import { ComposerPlanImportCard } from './ComposerPlanImportCard'
 import { ComposerPlanPopoverButton } from './ComposerPlanPopoverButton'
+import {
+  ComposerVoiceInputButton,
+  ComposerVoiceWaveform,
+  EMPTY_COMPOSER_VOICE_CAPTURE_STATE,
+  appendComposerVoiceTranscript
+} from './ComposerVoiceInput'
+import type { ComposerVoiceCaptureState } from './ComposerVoiceInput'
 import { shouldOfferPlanImport } from '../lib/planImport'
 import { hasResolvedMention } from '../lib/mentionHighlight'
 import { formatApprovalCountdown, resolveApprovalTimeoutMs } from '../lib/approvalTimeoutCountdown'
@@ -840,9 +847,31 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
   const mentionTriggerLengthRef = useRef<number>(1)
   const [isSendConfirming, setIsSendConfirming] = useState(false)
   const [isComposerDragOver, setIsComposerDragOver] = useState(false)
+  const [voiceCaptureState, setVoiceCaptureState] = useState<ComposerVoiceCaptureState>(
+    EMPTY_COMPOSER_VOICE_CAPTURE_STATE
+  )
+  const latestPromptRef = useRef(prompt)
+  const latestComposerChatIdRef = useRef(currentComposerChatId)
+  const voicePickerProvider: ProviderId =
+    isCurrentEnsembleChat && selectedParticipant ? selectedParticipant.provider : currentProvider
+  const voiceButtonLivesWithPermissions =
+    appearance.composerStyle === 'claude' ||
+    appearance.composerStyle === 'gemini' ||
+    appearance.composerStyle === 'cursor' ||
+    appearance.composerStyle === 'modular' ||
+    appearance.composerStyle === 'obsidian' ||
+    appearance.composerStyle === 'alabaster'
   const imageDragCounterRef = useRef(0)
   const sendConfirmationTimeoutRef = useRef<number | null>(null)
   const sendConfirmationRafRef = useRef<number | null>(null)
+
+  useEffect(() => {
+    latestPromptRef.current = prompt
+  }, [prompt])
+
+  useEffect(() => {
+    latestComposerChatIdRef.current = currentComposerChatId
+  }, [currentComposerChatId])
 
   const parseSlashTokenBeforeCaret = (
     text: string,
@@ -1109,6 +1138,16 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
         ta.setSelectionRange(caret, caret)
       }
     })
+  }
+
+  const handleVoiceTranscript = (transcript: string): void => {
+    const baseDraft = latestPromptRef.current
+    const targetChatId = latestComposerChatIdRef.current
+    const nextDraft = appendComposerVoiceTranscript(baseDraft, transcript)
+    if (nextDraft === baseDraft) return
+    setChatPromptDraft(targetChatId, nextDraft)
+    clearPlanImportIfDraftChanged(nextDraft)
+    focusComposerTextarea(nextDraft.length)
   }
 
   /** Build the context handed to an action command's `run()`. Computed against
@@ -2275,7 +2314,9 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                   // these explicit triggers.
                   const composerOverlaySyncEpoch = `${appearance.composerStyle}|${appearance.themeAppearance}|${isWelcomeChat ? 'welcome' : 'active'}`
                   return (
-                    <div className="composer-textarea-wrap">
+                    <div
+                      className={`composer-textarea-wrap${voiceCaptureState.isRecording ? ' is-voice-recording' : ''}`}
+                    >
                       {composerHasMention && (
                         <ComposerHighlightOverlay
                           value={prompt}
@@ -2390,6 +2431,13 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                           }
                         }}
                       />
+                      {voiceCaptureState.isRecording && (
+                        <ComposerVoiceWaveform
+                          elapsedMs={voiceCaptureState.elapsedMs}
+                          levels={voiceCaptureState.levels}
+                          message={voiceCaptureState.message}
+                        />
+                      )}
                     </div>
                   )
                 })()}
@@ -3796,6 +3844,19 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             />
                           )
                         })()}
+                        {voiceButtonLivesWithPermissions && (
+                          <ComposerVoiceInputButton
+                            composerStyle={appearance.composerStyle}
+                            disabled={
+                              isCurrentComposerLocked ||
+                              !currentChat ||
+                              (!isCurrentGlobalChat && !currentWorkspace)
+                            }
+                            onCaptureStateChange={setVoiceCaptureState}
+                            onTranscript={handleVoiceTranscript}
+                            provider={voicePickerProvider}
+                          />
+                        )}
 
                         {/* Session-scoped YOLO indicator. Kept compact so
                           trust mode reads as an active permission posture,
@@ -3900,6 +3961,19 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                         shells keep it here at the right of the control row.
                       */}
                         <span className="composer-send-cluster">
+                          {appearance.composerStyle === 'codex' && (
+                            <ComposerVoiceInputButton
+                              composerStyle={appearance.composerStyle}
+                              disabled={
+                                isCurrentComposerLocked ||
+                                !currentChat ||
+                                (!isCurrentGlobalChat && !currentWorkspace)
+                              }
+                              onCaptureStateChange={setVoiceCaptureState}
+                              onTranscript={handleVoiceTranscript}
+                              provider={voicePickerProvider}
+                            />
+                          )}
                           {isCurrentChatRunning ? (
                             <>
                               {isTaskWraithNativeComposer && (

@@ -2336,7 +2336,7 @@
 /* Hide the same extra controls Gemini hides. */
 [data-composer-style="cursor"] .composer-top-toggles,
 [data-composer-style="cursor"] .composer-chips,
-[data-composer-style="cursor"] .composer-inline-pickers-left > *:not([data-composer-control="attach"]):not([data-composer-control="schedule"]):not([data-composer-control="ensemble-mode"]):not([data-composer-control="permission"]):not([data-composer-control="model"]):not([data-composer-control="provider"]):not([data-composer-control="workspace"]):not([data-composer-control="guest"]):not([data-composer-control="ollama-tier"]) {
+[data-composer-style="cursor"] .composer-inline-pickers-left > *:not([data-composer-control="attach"]):not([data-composer-control="schedule"]):not([data-composer-control="ensemble-mode"]):not([data-composer-control="permission"]):not([data-composer-control="voice"]):not([data-composer-control="model"]):not([data-composer-control="provider"]):not([data-composer-control="workspace"]):not([data-composer-control="guest"]):not([data-composer-control="ollama-tier"]) {
   display: none !important;
 }
 
@@ -2561,6 +2561,7 @@
 }
 [data-composer-style="cursor"] [data-composer-control="schedule"] { order: 1; }
 [data-composer-style="cursor"] [data-composer-control="permission"] { order: 2; }
+[data-composer-style="cursor"] [data-composer-control="voice"] { order: 2; }
 [data-composer-style="cursor"] [data-composer-control="ensemble-mode"] { order: 3; }
 [data-composer-style="cursor"] [data-composer-control="provider"] { order: 4; }
 [data-composer-style="cursor"] [data-composer-control="workspace"] { order: 5; }
@@ -2682,6 +2683,47 @@
 }
 [data-composer-style="cursor"] [data-composer-control="permission"] svg {
   display: none;
+}
+
+[data-composer-style="cursor"] .composer-action-btn.voice-btn {
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  border-radius: 999px;
+  background: transparent;
+  border: 0;
+  color: var(--cursor-shell-muted);
+  box-shadow: none;
+  transform: none;
+}
+
+[data-composer-style="cursor"] .composer-action-btn.voice-btn:hover:not(:disabled),
+[data-composer-style="cursor"] .composer-action-btn.voice-btn.is-recording {
+  background: var(--cursor-shell-hover);
+  color: var(--cursor-shell-fg);
+  transform: none;
+}
+
+[data-composer-style="cursor"] .composer-action-btn.voice-btn .sf-symbol-icon,
+[data-composer-style="cursor"] .composer-action-btn.voice-btn .sf-symbol-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+[data-composer-style="cursor"] .composer-action-btn.voice-btn:disabled,
+[data-composer-style="cursor"] .composer-voice-chevron:disabled {
+  color: var(--cursor-shell-faint);
+}
+
+[data-composer-style="cursor"] .composer-voice-chevron {
+  width: 14px;
+  color: var(--cursor-shell-muted);
+}
+
+[data-composer-style="cursor"] .composer-voice-chevron:hover:not(:disabled),
+[data-composer-style="cursor"] .composer-voice-control.is-menu-open .composer-voice-chevron {
+  background: var(--cursor-shell-hover);
+  color: var(--cursor-shell-fg);
 }
 
 /* Model picker — gray tier pill (lifted into the capsule's right edge;

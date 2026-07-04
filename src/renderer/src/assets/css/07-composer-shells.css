@@ -13,8 +13,8 @@
  * Anything else TaskWraith-specific in the left bar (model-aware reasoning
  * pills, extra workspace chips, etc.) still gets hidden by these :not()
  * allowlists. */
-[data-composer-style="codex"] .composer-inline-pickers-left > *:not([data-composer-control="attach"]):not([data-composer-control="schedule"]):not([data-composer-control="ensemble-mode"]):not([data-composer-control="permission"]):not([data-composer-control="model"]):not([data-composer-control="provider"]):not([data-composer-control="workspace"]):not([data-composer-control="guest"]):not([data-composer-control="ollama-tier"]):not([data-composer-control="context"]),
-[data-composer-style="claude"] .composer-inline-pickers-left > *:not([data-composer-control="attach"]):not([data-composer-control="schedule"]):not([data-composer-control="ensemble-mode"]):not([data-composer-control="permission"]):not([data-composer-control="model"]):not([data-composer-control="provider"]):not([data-composer-control="workspace"]):not([data-composer-control="guest"]):not([data-composer-control="ollama-tier"]):not([data-composer-control="context"]) {
+[data-composer-style="codex"] .composer-inline-pickers-left > *:not([data-composer-control="attach"]):not([data-composer-control="schedule"]):not([data-composer-control="ensemble-mode"]):not([data-composer-control="permission"]):not([data-composer-control="model"]):not([data-composer-control="provider"]):not([data-composer-control="workspace"]):not([data-composer-control="guest"]):not([data-composer-control="ollama-tier"]):not([data-composer-control="context"]):not([data-composer-control="voice"]),
+[data-composer-style="claude"] .composer-inline-pickers-left > *:not([data-composer-control="attach"]):not([data-composer-control="schedule"]):not([data-composer-control="ensemble-mode"]):not([data-composer-control="permission"]):not([data-composer-control="model"]):not([data-composer-control="provider"]):not([data-composer-control="workspace"]):not([data-composer-control="guest"]):not([data-composer-control="ollama-tier"]):not([data-composer-control="context"]):not([data-composer-control="voice"]) {
   display: none !important;
 }
 
@@ -387,10 +387,34 @@
   color: inherit;
 }
 [data-composer-style="codex"] .composer-action-btn.stop-btn,
-[data-composer-style="codex"] .composer-action-btn.run-btn.queue {
+[data-composer-style="codex"] .composer-action-btn.run-btn.queue,
+[data-composer-style="codex"] .composer-action-btn.voice-btn {
   width: 32px;
   height: 32px;
   border-radius: 999px;
+}
+
+[data-composer-style="codex"] .composer-action-btn.voice-btn {
+  background: transparent;
+  color: color-mix(in srgb, #ffffff 48%, transparent);
+  border: 0;
+  box-shadow: none;
+}
+
+[data-composer-style="codex"] .composer-action-btn.voice-btn:hover:not(:disabled),
+[data-composer-style="codex"] .composer-action-btn.voice-btn.is-recording {
+  background: color-mix(in srgb, #ffffff 10%, transparent);
+  color: color-mix(in srgb, #ffffff 88%, transparent);
+}
+
+[data-composer-style="codex"] .composer-voice-chevron {
+  color: color-mix(in srgb, #ffffff 42%, transparent);
+}
+
+[data-composer-style="codex"] .composer-voice-chevron:hover:not(:disabled),
+[data-composer-style="codex"] .composer-voice-control.is-menu-open .composer-voice-chevron {
+  background: color-mix(in srgb, #ffffff 10%, transparent);
+  color: color-mix(in srgb, #ffffff 88%, transparent);
 }
 
 /* Codex footer chip row sitting below the composer surface */
@@ -498,6 +522,7 @@
   flex: 1;
 }
 [data-composer-style="claude"] [data-composer-control="permission"] { order: 0; }
+[data-composer-style="claude"] [data-composer-control="voice"] { order: 0; }
 [data-composer-style="claude"] [data-composer-control="attach"]    { order: -1; }
 [data-composer-style="claude"] [data-composer-control="schedule"] { order: 1; }
 /* Provider sits in the gap between `+` (attach) and the right-aligned model
@@ -733,6 +758,49 @@
   background: transparent;
   border: 0;
   color: color-mix(in srgb, #ffffff 22%, transparent);
+}
+
+[data-composer-style="claude"] .composer-action-btn.voice-btn {
+  width: 26px;
+  height: 26px;
+  min-width: 26px;
+  border-radius: 8px;
+  background: transparent;
+  border: 0;
+  color: color-mix(in srgb, #ffffff 56%, transparent);
+  box-shadow: none;
+  transform: none;
+}
+
+[data-composer-style="claude"] .composer-action-btn.voice-btn:hover:not(:disabled),
+[data-composer-style="claude"] .composer-action-btn.voice-btn.is-recording {
+  background: color-mix(in srgb, #ffffff 8%, transparent);
+  color: color-mix(in srgb, #ffffff 92%, transparent);
+  transform: none;
+}
+
+[data-composer-style="claude"] .composer-action-btn.voice-btn .sf-symbol-icon,
+[data-composer-style="claude"] .composer-action-btn.voice-btn .sf-symbol-icon svg {
+  width: 16px;
+  height: 16px;
+  transform: none !important;
+}
+
+[data-composer-style="claude"] .composer-action-btn.voice-btn:disabled,
+[data-composer-style="claude"] .composer-voice-chevron:disabled {
+  color: color-mix(in srgb, #ffffff 22%, transparent);
+}
+
+[data-composer-style="claude"] .composer-voice-chevron {
+  width: 13px;
+  height: 26px;
+  color: color-mix(in srgb, #ffffff 48%, transparent);
+}
+
+[data-composer-style="claude"] .composer-voice-chevron:hover:not(:disabled),
+[data-composer-style="claude"] .composer-voice-control.is-menu-open .composer-voice-chevron {
+  background: color-mix(in srgb, #ffffff 8%, transparent);
+  color: color-mix(in srgb, #ffffff 92%, transparent);
 }
 
 /* Claude shell satellite: native Claude Code renders branch / diff /
@@ -2224,7 +2292,7 @@
  * ============================================================ */
 [data-composer-style="gemini"] .composer-top-toggles,
 [data-composer-style="gemini"] .composer-chips,
-[data-composer-style="gemini"] .composer-inline-pickers-left > *:not([data-composer-control="attach"]):not([data-composer-control="schedule"]):not([data-composer-control="ensemble-mode"]):not([data-composer-control="permission"]):not([data-composer-control="model"]):not([data-composer-control="provider"]):not([data-composer-control="workspace"]):not([data-composer-control="guest"]):not([data-composer-control="ollama-tier"]) {
+[data-composer-style="gemini"] .composer-inline-pickers-left > *:not([data-composer-control="attach"]):not([data-composer-control="schedule"]):not([data-composer-control="ensemble-mode"]):not([data-composer-control="permission"]):not([data-composer-control="voice"]):not([data-composer-control="model"]):not([data-composer-control="provider"]):not([data-composer-control="workspace"]):not([data-composer-control="guest"]):not([data-composer-control="ollama-tier"]) {
   display: none !important;
 }
 /* Gemini shell — historically hid `.composer-above-bar` entirely
@@ -2397,6 +2465,7 @@
  * flow, so the remaining modifiers run: schedule · permission · turn · provider · ws. */
 [data-composer-style="gemini"] [data-composer-control="schedule"] { order: 1; }
 [data-composer-style="gemini"] [data-composer-control="permission"] { order: 2; }
+[data-composer-style="gemini"] [data-composer-control="voice"] { order: 2; }
 [data-composer-style="gemini"] [data-composer-control="ensemble-mode"] { order: 3; }
 [data-composer-style="gemini"] [data-composer-control="provider"] { order: 4; }
 /* 1.0.5-AR12 — Workspace pill matches Gemini's softened outline-chip
@@ -2443,6 +2512,7 @@
 [data-composer-style="gemini"] .composer-send-cluster {
   display: inline-flex;
   align-items: center;
+  gap: 4px;
   position: absolute;
   position-anchor: --composer-capsule;
   top: calc(anchor(--composer-capsule bottom) - var(--composer-capsule-single-h) + 12px);
@@ -2503,6 +2573,47 @@
 }
 [data-composer-style="gemini"] [data-composer-control="permission"] svg {
   display: none;
+}
+
+[data-composer-style="gemini"] .composer-action-btn.voice-btn {
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  border-radius: 999px;
+  background: transparent;
+  border: 0;
+  color: color-mix(in srgb, #ffffff 70%, transparent);
+  box-shadow: none;
+  transform: none;
+}
+
+[data-composer-style="gemini"] .composer-action-btn.voice-btn:hover:not(:disabled),
+[data-composer-style="gemini"] .composer-action-btn.voice-btn.is-recording {
+  background: color-mix(in srgb, #ffffff 8%, transparent);
+  color: #ffffff;
+  transform: none;
+}
+
+[data-composer-style="gemini"] .composer-action-btn.voice-btn .sf-symbol-icon,
+[data-composer-style="gemini"] .composer-action-btn.voice-btn .sf-symbol-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+[data-composer-style="gemini"] .composer-action-btn.voice-btn:disabled,
+[data-composer-style="gemini"] .composer-voice-chevron:disabled {
+  color: color-mix(in srgb, #ffffff 24%, transparent);
+}
+
+[data-composer-style="gemini"] .composer-voice-chevron {
+  width: 14px;
+  color: color-mix(in srgb, #ffffff 58%, transparent);
+}
+
+[data-composer-style="gemini"] .composer-voice-chevron:hover:not(:disabled),
+[data-composer-style="gemini"] .composer-voice-control.is-menu-open .composer-voice-chevron {
+  background: color-mix(in srgb, #ffffff 8%, transparent);
+  color: #ffffff;
 }
 
 /* Model picker — Gemini's signature blue tier pill. (Lifted into the

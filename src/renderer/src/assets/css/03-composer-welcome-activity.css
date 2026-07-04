@@ -4057,6 +4057,174 @@
   color: color-mix(in srgb, var(--text-secondary) 60%, transparent);
 }
 
+.composer-textarea-wrap.is-voice-recording .composer-textarea {
+  min-height: calc(1.55em + 58px) !important;
+  padding-bottom: 38px;
+}
+
+.composer-voice-overlay {
+  position: absolute;
+  left: 46px;
+  right: 88px;
+  bottom: 10px;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  height: 34px;
+  color: color-mix(in srgb, var(--text-primary) 88%, transparent);
+  pointer-events: none;
+}
+
+.composer-voice-waveform-window {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 18px, #000 calc(100% - 18px), transparent);
+  mask-image: linear-gradient(90deg, transparent, #000 18px, #000 calc(100% - 18px), transparent);
+}
+
+.composer-voice-waveform {
+  width: 100%;
+  min-width: max-content;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+}
+
+.composer-voice-waveform-bar {
+  flex: 0 0 2px;
+  width: 2px;
+  min-height: 2px;
+  max-height: 31px;
+  border-radius: 999px;
+  background: currentColor;
+  opacity: 0.94;
+}
+
+.composer-voice-elapsed {
+  flex: 0 0 auto;
+  font-size: var(--font-size-sm);
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  color: color-mix(in srgb, var(--text-primary) 72%, transparent);
+}
+
+.composer-voice-status {
+  flex: 0 1 auto;
+  max-width: 172px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-xs);
+  line-height: 1;
+  color: color-mix(in srgb, var(--text-secondary) 78%, transparent);
+}
+
+.composer-voice-control {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+
+.composer-action-btn.voice-btn {
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  color: color-mix(in srgb, var(--text-secondary) 78%, transparent);
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.composer-action-btn.voice-btn:hover:not(:disabled),
+.composer-action-btn.voice-btn.is-recording {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.composer-action-btn.voice-btn .sf-symbol-icon,
+.composer-action-btn.voice-btn .sf-symbol-icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+.composer-action-btn.voice-btn.is-recording .sf-symbol-icon,
+.composer-action-btn.voice-btn.is-recording .sf-symbol-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.composer-action-btn.voice-btn:disabled {
+  color: color-mix(in srgb, var(--text-secondary) 32%, transparent);
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.composer-voice-chevron {
+  appearance: none;
+  -webkit-appearance: none;
+  position: relative;
+  width: 15px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: color-mix(in srgb, var(--text-secondary) 70%, transparent);
+  cursor: pointer;
+}
+
+.composer-voice-chevron span {
+  width: 5px;
+  height: 5px;
+  border-right: 1.4px solid currentColor;
+  border-bottom: 1.4px solid currentColor;
+  transform: translateY(-1px) rotate(45deg);
+}
+
+.composer-voice-chevron:hover:not(:disabled),
+.composer-voice-control.is-menu-open .composer-voice-chevron {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+}
+
+.composer-voice-chevron:disabled {
+  color: color-mix(in srgb, var(--text-secondary) 24%, transparent);
+  cursor: not-allowed;
+}
+
+.composer-voice-menu {
+  width: min(260px, calc(100vw - 16px));
+  min-width: min(260px, calc(100vw - 16px));
+  max-width: min(260px, calc(100vw - 16px));
+}
+
+.composer-voice-menu-item {
+  width: 100%;
+}
+
+.composer-voice-menu-note {
+  margin-top: 6px;
+  margin-bottom: 2px;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
 .composer-inline-pickers {
   display: flex;
   flex-wrap: nowrap;
