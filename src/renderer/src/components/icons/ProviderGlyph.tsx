@@ -5,6 +5,7 @@ type ProviderGlyphId = ProviderId | string | undefined
 
 interface ProviderGlyphProps {
   provider?: ProviderGlyphId
+  accentProvider?: ProviderGlyphId
   className?: string
 }
 
@@ -156,10 +157,11 @@ function glyphBody(provider: string): ReactElement {
   }
 }
 
-export function ProviderGlyph({ provider, className }: ProviderGlyphProps): ReactElement {
+export function ProviderGlyph({ provider, accentProvider, className }: ProviderGlyphProps): ReactElement {
   const providerKey = providerClass(provider)
+  const accentProviderKey = providerClass(accentProvider || provider)
   const style = {
-    '--provider-accent': `var(--provider-${providerKey}-color, currentColor)`
+    '--provider-accent': `var(--provider-${accentProviderKey}-color, currentColor)`
   } as CSSProperties
   return (
     <svg

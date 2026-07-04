@@ -34,4 +34,11 @@ describe('ProviderGlyph', () => {
     expect(html).toContain('provider-glyph-future-provider')
     expect(html).toContain('--provider-accent:var(--provider-future-provider-color, currentColor)')
   })
+
+  it('can keep the glyph shape while overriding the accent provider hue', () => {
+    const html = renderToStaticMarkup(<ProviderGlyph provider="ollama" accentProvider="alibaba" />)
+
+    expect(html).toContain('provider-glyph-ollama')
+    expect(html).toContain('--provider-accent:var(--provider-alibaba-color, currentColor)')
+  })
 })

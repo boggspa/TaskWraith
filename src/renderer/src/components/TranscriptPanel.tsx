@@ -44,6 +44,10 @@ import {
   isHiddenRoundMarkerRowKey
 } from '../lib/TranscriptUserMessageGutter'
 import {
+  buildTranscriptParticipantFilterItems,
+  filterTranscriptMessagesByParticipantKeys
+} from '../lib/transcriptParticipantFilter'
+import {
   transcriptChatRenderSignature,
   transcriptRowRenderSignatureEqual,
   type TranscriptRowRenderSignature
@@ -103,6 +107,7 @@ import {
   isHumanCollaboratorComment
 } from '../../../main/collaboration/HumanCollaboratorMessages'
 import { TranscriptUserMessageGutter } from './TranscriptUserMessageGutter'
+import { TranscriptParticipantFilterRail } from './TranscriptParticipantFilterRail'
 import {
   DIFF_HOVER_PREVIEW_TOOLTIP_ID,
   DiffHoverPreviewOverlay,
@@ -1415,6 +1420,34 @@ export const TranscriptPanel = memo(
       }
       return ids
     }, [activityExpansionByRow, expandedSubThreadResults, expandedFanoutResults])
+    const [activeParticipantFilterKeys, setActiveParticipantFilterKeys] = useState<Set<string>>(
+      new Set()
+    )
+    const participantFilterItems = useMemo(
+      () => buildTranscriptParticipantFilterItems(currentChat),
+      [currentChat]
+    )
+    const toggleParticipantFilter = useCallback((key: string) => {
+      setActiveParticipantFilterKeys((prev) => {
+        const next = new Set(prev)
+        if (next.has(key)) next.delete(key)
+        else next.add(key)
+        return next
+      })
+    }, [])
+    useEffect(() => {
+      if (activeParticipantFilterKeys.size === 0) return
+      const validKeys = new Set(participantFilterItems.map((item) => item.key))
+      setActiveParticipantFilterKeys((prev) => {
+        let changed = false
+        const next = new Set<string>()
+        for (const key of prev) {
+          if (validKeys.has(key)) next.add(key)
+          else changed = true
+        }
+        return changed ? next : prev
+      })
+    }, [activeParticipantFilterKeys.size, participantFilterItems])
 
     // 1.0.6-TV1 — windowing. `virtualize` defaults to the global flag;
     // tests pass it explicitly. When off, `useTranscriptVirtualization`
@@ -1435,6 +1468,11 @@ export const TranscriptPanel = memo(
       () => groupFanoutLaneMessages(groupAdjacentToolMessages(visibleMessages)),
       [visibleMessages]
     )
+    const participantFilteredMessages = useMemo(
+      () => filterTranscriptMessagesByParticipantKeys(groupedMessages, activeParticipantFilterKeys),
+      [activeParticipantFilterKeys, groupedMessages]
+    )
+    const participantFilterActive = activeParticipantFilterKeys.size > 0
     // Ensemble round cards: completed rounds collapse into expandable
     // header rows (older collapsed by default). Returns `groupedMessages`
     // unchanged for non-ensemble chats or when the setting is off, so the
@@ -1443,12 +1481,19 @@ export const TranscriptPanel = memo(
       () =>
         buildEnsembleRoundCardRows({
           chat: currentChat,
-          displayMessages: groupedMessages,
-          collapseOlderRounds: collapseOlderRounds !== false,
+          displayMessages: participantFilteredMessages,
+          collapseOlderRounds: participantFilterActive ? false : collapseOlderRounds !== false,
           manualRoundExpansion,
           hasLiveRunEvidence: isThinking
         }),
-      [currentChat, groupedMessages, collapseOlderRounds, manualRoundExpansion, isThinking]
+      [
+        currentChat,
+        participantFilteredMessages,
+        participantFilterActive,
+        collapseOlderRounds,
+        manualRoundExpansion,
+        isThinking
+      ]
     )
     // Map every (pre-collapse) message id → its round id, so navigation
     // (jump-to-message, pinned, side-chat seed) can auto-expand the round
@@ -1673,6 +1718,7 @@ export const TranscriptPanel = memo(
       setManualRoundExpansion(new Map())
       setActivityExpansionByRow(new Map())
       setExpandedSubThreadResults(new Set())
+      setActiveParticipantFilterKeys(new Set())
       rowElementCacheRef.current.clear()
       setHighlightedMessageTarget(null)
       setPendingFocusTarget(null)
@@ -1950,6 +1996,13 @@ export const TranscriptPanel = memo(
             onJumpToEnd={jumpToTranscriptEnd}
           />
         )}
+        <TranscriptParticipantFilterRail
+          currentChat={currentChat}
+          activeFilterKeys={activeParticipantFilterKeys}
+          scrollRef={scrollRef}
+          contentRef={contentRef}
+          onToggleFilter={toggleParticipantFilter}
+        />
         <div
           className={`transcript-inner${virtualizeEnabled ? ' transcript-virtualized' : ''}`}
           ref={contentRef}
