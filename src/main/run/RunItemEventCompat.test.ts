@@ -58,6 +58,27 @@ describe('RunItemEventCompatMapper', () => {
     })
   })
 
+  it('mints a fresh synthetic assistant item after an id-less segment completes', () => {
+    const mapper = new RunItemEventCompatMapper()
+    const first = mapper.createEvents(identity, {
+      type: 'content',
+      text: 'First section',
+      provider: 'claude',
+      complete: true
+    })
+    const second = mapper.createEvents(identity, {
+      type: 'content',
+      text: 'Second section',
+      provider: 'claude'
+    })
+
+    expect(first.map((event) => event.kind)).toEqual(['item/started', 'item/delta', 'item/completed'])
+    expect(first[0]).toMatchObject({ itemId: 'run-1:assistant' })
+    expect(second.map((event) => event.kind)).toEqual(['item/started', 'item/delta'])
+    expect(second[0]).toMatchObject({ itemId: 'run-1:assistant-2' })
+    expect(second[1]).toMatchObject({ itemId: 'run-1:assistant-2' })
+  })
+
   it('projects tool use/result pairs onto tool progress/output events', () => {
     const mapper = new RunItemEventCompatMapper()
     const use = mapper.createEvents(identity, {

@@ -126,6 +126,7 @@ function createDualLaneHarness(chatId: string, runId: string) {
 const CHAT = 'chat-1'
 const RUN = 'run-1'
 const ASSISTANT_ITEM = `${RUN}:assistant`
+const ASSISTANT_ITEM_2 = `${RUN}:assistant-2`
 
 describe('assistant delta dual-lane dedupe', () => {
   it('applies each Claude-shaped dual-emission delta exactly once (D1+D2+D2+D3+D3 regression)', () => {
@@ -300,6 +301,37 @@ describe('assistant delta dual-lane dedupe', () => {
     const result = messages()
     expect(result).toHaveLength(1)
     expect(result[0].content).toBe('Body\n\n---\n\nSummary')
+  })
+
+  it('shows the same separator for a later id-less assistant segment', () => {
+    const { adapter, messages } = createDualLaneHarness(CHAT, RUN)
+    adapter.appendChunk(
+      wireLine({
+        chatId: CHAT,
+        runId: RUN,
+        text: 'First section',
+        sidecars: [
+          { kind: 'item/started', itemId: ASSISTANT_ITEM },
+          { kind: 'item/delta', itemId: ASSISTANT_ITEM, delta: 'First section' }
+        ]
+      })
+    )
+    adapter.appendChunk(
+      wireLine({
+        chatId: CHAT,
+        runId: RUN,
+        text: 'Second section',
+        sidecars: [
+          { kind: 'item/started', itemId: ASSISTANT_ITEM_2 },
+          { kind: 'item/delta', itemId: ASSISTANT_ITEM_2, delta: 'Second section' }
+        ],
+        sequenceStart: 3
+      })
+    )
+
+    const result = messages()
+    expect(result).toHaveLength(1)
+    expect(result[0].content).toBe('First section\n\n---\n\nSecond section')
   })
 
   it('drops the legacy twin even when sidecar and legacy text would diverge (sidecar authoritative)', () => {

@@ -53,6 +53,8 @@ export class RunItemEventCompatMapper {
   private sequenceByRunId = new Map<string, number>()
   private startedItems = new Set<string>()
   private completedRuns = new Set<string>()
+  private idlessAssistantSeqByRunId = new Map<string, number>()
+  private activeIdlessAssistantItemByRunId = new Map<string, string>()
   private idlessToolSeqByRunId = new Map<string, number>()
   private idlessToolIdByRunAndName = new Map<string, string>()
   private latestIdlessToolIdByRunId = new Map<string, string>()
@@ -95,6 +97,8 @@ export class RunItemEventCompatMapper {
 
   completeRun(runId: string): void {
     this.sequenceByRunId.delete(runId)
+    this.idlessAssistantSeqByRunId.delete(runId)
+    this.activeIdlessAssistantItemByRunId.delete(runId)
     this.idlessToolSeqByRunId.delete(runId)
     this.latestIdlessToolIdByRunId.delete(runId)
     const prefix = `${runId}\0`
@@ -135,6 +139,16 @@ export class RunItemEventCompatMapper {
 
   private explicitToolId(record: Record<string, unknown>): string {
     return stringField(record, 'tool_id', 'toolId', 'id', 'call_id', 'tool_call_id', 'toolCallId')
+  }
+
+  private activeIdlessAssistantItemId(identity: CompatRunItemIdentity): string {
+    const existing = this.activeIdlessAssistantItemByRunId.get(identity.runId)
+    if (existing) return existing
+    const next = (this.idlessAssistantSeqByRunId.get(identity.runId) || 0) + 1
+    this.idlessAssistantSeqByRunId.set(identity.runId, next)
+    const itemId = runItemId(identity, next === 1 ? 'assistant' : `assistant-${next}`)
+    this.activeIdlessAssistantItemByRunId.set(identity.runId, itemId)
+    return itemId
   }
 
   private idlessToolKey(identity: CompatRunItemIdentity, toolName: string | undefined): string {
@@ -193,7 +207,12 @@ export class RunItemEventCompatMapper {
 
     if (type === 'content' || type === 'token') {
       const text = stringField(record, 'text', 'content')
-      const itemId = stringField(record, 'itemId', 'item_id') || runItemId(identity, 'assistant')
+      const explicitItemId = stringField(record, 'itemId', 'item_id')
+      const itemId =
+        explicitItemId ||
+        this.activeIdlessAssistantItemByRunId.get(identity.runId) ||
+        (text ? this.activeIdlessAssistantItemId(identity) : '')
+      if (!itemId) return []
       const drafts = this.ensureItemStarted(identity, itemId, 'assistant_message')
       if (text) {
         drafts.push({
@@ -219,6 +238,7 @@ export class RunItemEventCompatMapper {
           status: 'complete',
           source: 'adapter'
         })
+        if (!explicitItemId) this.activeIdlessAssistantItemByRunId.delete(identity.runId)
       }
       return drafts
     }
