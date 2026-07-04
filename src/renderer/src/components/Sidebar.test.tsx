@@ -253,6 +253,27 @@ describe('Sidebar masthead', () => {
     expect(masthead).toContain('ghost-guy-mark-monoline-title')
     expect(masthead).not.toContain('taskwraith-brand-ghost')
   })
+
+  it('omits the secondary scope title for General chats', () => {
+    stubSidebarStorage({})
+
+    const html = renderSidebar(
+      [
+        makeChat({
+          appChatId: 'global-chat',
+          scope: 'global',
+          workspaceId: undefined,
+          workspacePath: undefined,
+          title: 'General'
+        })
+      ],
+      { currentWorkspace: null }
+    )
+    const masthead = html.slice(html.indexOf('sidebar-masthead'), html.indexOf('sidebar-masthead-stats'))
+
+    expect(masthead).toContain('TaskWraith')
+    expect(masthead).not.toContain('General chats')
+  })
 })
 
 describe('Sidebar active chat override', () => {

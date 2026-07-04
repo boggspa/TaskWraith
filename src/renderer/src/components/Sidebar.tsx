@@ -2674,7 +2674,7 @@ export function Sidebar({
   }, [chats])
   const selectedChatId = activeChatId ?? currentChat?.appChatId ?? null
   const currentScopeTitle =
-    currentWorkspace?.displayName || (currentChat?.scope === 'global' ? 'General chats' : 'TaskWraith')
+    currentWorkspace?.displayName || (currentChat?.scope === 'global' ? null : 'TaskWraith')
   const runningCount = runningChatIdSet.size
   // The masthead "+ New → New Chat" item exclusively creates a General
   // (scope:'global') chat, regardless of the active workspace. The separate
@@ -3617,7 +3617,7 @@ export function Sidebar({
                 back to "TaskWraith" (no workspace, no global chat), which
                 would render "TaskWraith" twice stacked. Suppress the
                 redundant scope title in that single case. */}
-            {currentScopeTitle !== 'TaskWraith' && (
+            {currentScopeTitle && currentScopeTitle !== 'TaskWraith' && (
               <strong title={currentWorkspace?.path || currentScopeTitle}>
                 {currentScopeTitle}
               </strong>
