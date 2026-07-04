@@ -6,6 +6,7 @@ import type {
   RunQueueJob,
   RunQueueJobStatus
 } from '../../../main/store/types'
+import { isRunQueueJobVisibleForChat } from '../lib/runningChatVisibility'
 
 type ActiveRunQueueStatus = RunQueueJobStatus | 'promoting' | 'steer_promoting'
 
@@ -110,7 +111,7 @@ export function ActiveRunsSection({
 
   const visibleJobs = jobs.filter(
     (job): job is RunQueueJob & { status: ActiveRunQueueStatus } =>
-      isActiveQueueStatus(job.status)
+      isActiveQueueStatus(job.status) && isJobBackedByLiveChat(job, chatById.get(job.chatId || ''))
   )
 
   // 1.0.6 — persistent section: always render (so it permanently occupies the
@@ -192,6 +193,10 @@ export function ActiveRunsSection({
       )}
     </div>
   )
+}
+
+function isJobBackedByLiveChat(job: RunQueueJob, chat: ChatRecord | undefined): boolean {
+  return isRunQueueJobVisibleForChat(job, chat)
 }
 
 function getWorkspaceShortName(job: RunQueueJob, chat: ChatRecord | null): string {

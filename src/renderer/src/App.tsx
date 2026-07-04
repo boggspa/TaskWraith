@@ -429,6 +429,7 @@ import { buildProviderRunFailureSnippet } from './lib/providerRunFailureSnippet'
 import { rawLogFromRunEvent, type RawLogEntry } from './lib/rawLogEntry'
 import { findNextRunnableQueueIndex, isTerminalRunQueueStatus } from './lib/runQueueScheduling'
 import {
+  acceptedEnsembleRunQueueWrapperReason,
   isQueuedDesktopRunQueueJob,
   isScheduledTaskReadyToDispatch,
   queuedRunFallbackId,
@@ -465,6 +466,7 @@ import { applyRecoveryRecordsToChatRuns } from './lib/recoverChatRunTerminals'
 import {
   hasKnownInactiveEnsembleRound,
   hasTerminalLastRun,
+  isRunQueueJobVisibleForChat,
   visibleRunningChatIds
 } from './lib/runningChatVisibility'
 import {
@@ -2495,12 +2497,25 @@ function App(): React.JSX.Element {
   const visibleAuditRunNotice =
     auditRunNotice && auditRunNotice.chatId === currentChat?.appChatId ? auditRunNotice : null
   const canOpenWorkspacePopout = Boolean(currentWorkspacePopoutPath)
+  const shouldTreatRunQueueJobAsActive = useCallback((
+    job: Pick<RunQueueJob, 'chatId' | 'status'>
+  ): boolean => {
+    if (!job.chatId || !ACTIVE_RUN_QUEUE_STATUSES.has(job.status)) return false
+    const chat =
+      chatByIdRef.current.get(job.chatId) ||
+      chats.find((candidate) => candidate.appChatId === job.chatId)
+    return isRunQueueJobVisibleForChat(job, chat)
+  }, [chats])
+  const chatHasActiveRunQueueJob = useCallback(
+    (chatId?: string | null): boolean =>
+      Boolean(
+        chatId &&
+          runQueueJobs.some((job) => job.chatId === chatId && shouldTreatRunQueueJobAsActive(job))
+      ),
+    [runQueueJobs, shouldTreatRunQueueJobAsActive]
+  )
   const hasCurrentChatQueuedRunForProviderLock = Boolean(
-    currentChat?.appChatId &&
-      runQueueJobs.some(
-        (job) =>
-          job.chatId === currentChat.appChatId && ACTIVE_RUN_QUEUE_STATUSES.has(job.status)
-      )
+    currentChat?.appChatId && chatHasActiveRunQueueJob(currentChat.appChatId)
   )
   const currentPendingProviderChange =
     currentChat && currentChat.chatKind !== 'ensemble' ? readPendingProviderChange(currentChat) : null
@@ -8316,9 +8331,7 @@ function App(): React.JSX.Element {
     const lastAttempt = lastHostCompactionAttemptAtByChatIdRef.current.get(chatId) || 0
     if (Date.now() - lastAttempt < CONTEXT_AUTO_COMPACT_COOLDOWN_MS) return
     // A queued follow-up is about to pump — don't race it with a synthetic run.
-    if (
-      runQueueJobs.some((job) => job.chatId === chatId && ACTIVE_RUN_QUEUE_STATUSES.has(job.status))
-    ) {
+    if (chatHasActiveRunQueueJob(chatId)) {
       return
     }
     const latestRun = [...(chat.runs || [])].reverse().find((run) => run?.stats)
@@ -10349,6 +10362,8 @@ function App(): React.JSX.Element {
     // any uncaught exception silently rejects — producing the reported
     // "clicking Send does nothing" symptom. Wrap the entire body so the
     // user always sees an error if something escapes the inner catches.
+    let currentRunIdForCleanup = runRequest?.appRunId
+    let dispatchAccepted = false
     try {
       const baseRequest = runRequest ?? buildRunRequest()
       let request = baseRequest.appRunId
@@ -10364,9 +10379,17 @@ function App(): React.JSX.Element {
       }
       const isGlobalRun = request.scope === 'global' || isGlobalChat(runChat)
       const runWorkspace = isGlobalRun ? null : request.workspaceRecord || currentWorkspace
-      if (!runChat || (!isGlobalRun && !runWorkspace) || !runRequestHasContent(request)) return
-      const runProvider = request.provider || currentProvider
       const currentRunId = request.appRunId || Date.now().toString()
+      currentRunIdForCleanup = currentRunId
+      if (!runChat || (!isGlobalRun && !runWorkspace) || !runRequestHasContent(request)) {
+        updateRunQueueJobStatus(
+          currentRunId,
+          'failed',
+          'Queued run could not be dispatched because its chat, workspace, or prompt was unavailable.'
+        )
+        return
+      }
+      const runProvider = request.provider || currentProvider
       if (!isGlobalRun) {
         const grantPreflight = findExternalPathGrantGaps({
           chat: runChat,
@@ -10376,6 +10399,11 @@ function App(): React.JSX.Element {
           primaryWorkspacePath: runWorkspace?.path
         })
         if (grantPreflight.gaps.length > 0) {
+          updateRunQueueJobStatus(
+            currentRunId,
+            'paused',
+            'Waiting for external path grants before dispatch.'
+          )
           openExternalPathGrantPrompt({
             chatId: runChat.appChatId,
             gaps: grantPreflight.gaps,
@@ -10483,12 +10511,27 @@ function App(): React.JSX.Element {
               ? { externalPathGrants: request.externalPathGrants }
               : {})
           })
+          const acceptedQueueWrapperReason = acceptedEnsembleRunQueueWrapperReason({
+            mode,
+            scheduledTaskId: request.scheduledTaskId,
+            scheduledRunAt: request.scheduledRunAt
+          })
+          if (acceptedQueueWrapperReason) {
+            updateRunQueueJobStatus(currentRunId, 'completed', acceptedQueueWrapperReason)
+          }
         } catch (error) {
           if (didOptimisticallyQueue) {
             removeOptimisticEnsembleQueuedPrompt(runChat.appChatId, optimisticQueuedPrompt)
           }
+          updateRunQueueJobStatus(
+            currentRunId,
+            'failed',
+            'Ensemble dispatch handoff failed.',
+            redactLog(String(error))
+          )
           throw error
         }
+        dispatchAccepted = true
         if (!request.existingPrompt && !request.preserveComposer) {
           setChatPromptDraft(runChat.appChatId, '')
           clearComposerAttachmentsForSubmittedRequest(request)
@@ -11639,6 +11682,7 @@ function App(): React.JSX.Element {
           resumeSessionId &&
           typeof window.api.startAgentReview === 'function'
         ) {
+          dispatchAccepted = true
           await window.api.startAgentReview('codex', resumeSessionId, {
             model: modelToPass,
             target: { type: 'uncommittedChanges' },
@@ -11657,6 +11701,7 @@ function App(): React.JSX.Element {
           // routedPayload.scheduledTaskId (read PRE-normalize), so without this
           // all three were inert for solo scheduled runs. scheduledTaskId is not
           // part of the signed posture context, so this cannot affect the clamp.
+          dispatchAccepted = true
           await window.api.runAgent(
             request.scheduledTaskId
               ? ({ ...composedPayload, scheduledTaskId: request.scheduledTaskId } as typeof composedPayload)
@@ -11700,6 +11745,18 @@ function App(): React.JSX.Element {
 
       console.warn('[executeRun] uncaught exception:', error)
       const message = `Run execution failed unexpectedly: ${redactLog(String(error))}`
+      if (
+        currentRunIdForCleanup &&
+        !dispatchAccepted &&
+        !activeRunsRef.current.has(currentRunIdForCleanup)
+      ) {
+        updateRunQueueJobStatus(
+          currentRunIdForCleanup,
+          'failed',
+          'Run execution failed before provider dispatch.',
+          message
+        )
+      }
       const chatId = runRequest?.chatRecord?.appChatId || currentChat?.appChatId
       if (chatId) {
         appendThreadRawLog(chatId, { type: 'stderr', content: message })
@@ -16155,10 +16212,10 @@ function App(): React.JSX.Element {
   const activeRunQueueChatIds = useMemo(
     () =>
       runQueueJobs
-        .filter((job) => job.chatId && ACTIVE_RUN_QUEUE_STATUSES.has(job.status))
+        .filter((job) => shouldTreatRunQueueJobAsActive(job))
         .map((job) => job.chatId!)
         .filter(Boolean),
-    [runQueueJobs]
+    [runQueueJobs, shouldTreatRunQueueJobAsActive]
   )
   const runningChatIdsArray = useMemo(
     () =>
@@ -16175,11 +16232,7 @@ function App(): React.JSX.Element {
     [runningChatIds, pendingAgentApprovalByChatId, chatsByAppChatIdForRunning, activeRunQueueChatIds]
   )
   const hasCurrentChatActiveRunQueueJob = Boolean(
-    currentChat?.appChatId &&
-      runQueueJobs.some(
-        (job) =>
-          job.chatId === currentChat.appChatId && ACTIVE_RUN_QUEUE_STATUSES.has(job.status)
-      )
+    currentChat?.appChatId && chatHasActiveRunQueueJob(currentChat.appChatId)
   )
   const isCurrentEnsembleRoundDispatchLive = isEnsembleActiveRoundDispatchLive(
     currentChat?.ensemble?.activeRound
@@ -17057,10 +17110,7 @@ function App(): React.JSX.Element {
   const currentRun = currentChat?.runs?.[currentChat.runs.length - 1]
   const sideRun = sideChat?.runs?.[sideChat.runs.length - 1]
   const hasSideChatActiveRunQueueJob = Boolean(
-    sideChat?.appChatId &&
-      runQueueJobs.some(
-        (job) => job.chatId === sideChat.appChatId && ACTIVE_RUN_QUEUE_STATUSES.has(job.status)
-      )
+    sideChat?.appChatId && chatHasActiveRunQueueJob(sideChat.appChatId)
   )
   const isSideChatRunning = Boolean(
     sideChat?.appChatId &&
