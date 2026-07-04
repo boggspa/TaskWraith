@@ -6,8 +6,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
  * net for closing without a blur).
  *
  * Why this exists: persisting every keystroke through a heavy/shared sink — a
- * chat `saveChat` IPC + the `chat-updated` echo, or an `updateSettings` /
- * `setGuestParticipant` IPC — makes the controlled value LAG and revert
+ * chat `saveChat` IPC + the `chat-updated` echo, or an `updateSettings`
+ * write — makes the controlled value LAG and revert
  * mid-typing, so characters drop and typing turns jerky (see the memory
  * "renderer-input-echo-clobber"). Buffering locally decouples typing from that
  * round-trip; we commit the final value once, on blur / unmount.
