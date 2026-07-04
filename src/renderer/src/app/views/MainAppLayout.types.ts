@@ -251,6 +251,7 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   handleAddLocalServerToWorkspaceBoard: MainAppLayoutSidebarProps['handleAddLocalServerToWorkspaceBoard']
   handleAddPinnedMessageToWorkspaceBoard: any
   handleAddRunQueueJobToWorkspaceBoard: MainAppLayoutSidebarProps['handleAddRunQueueJobToWorkspaceBoard']
+  handleAddTranscriptMessageToPrompt: any
   handleAddWorkflowToWorkspaceBoard: MainAppLayoutSidebarProps['handleAddWorkflowToWorkspaceBoard']
   handleAddWorkspaceBoardCard: any
   handleAgentQuestionDismiss: any

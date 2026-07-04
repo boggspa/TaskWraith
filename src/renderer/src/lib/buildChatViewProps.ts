@@ -45,6 +45,7 @@ export interface BuildChatViewPropsInput {
   onProposedPlanDismiss?: TranscriptPanelProps['onProposedPlanDismiss']
   onProposedPlanCustom?: TranscriptPanelProps['onProposedPlanCustom']
   onCopyMessage: TranscriptPanelProps['onCopyMessage']
+  onAddMessageToPrompt?: TranscriptPanelProps['onAddMessageToPrompt']
   onDeleteMessage?: TranscriptPanelProps['onDeleteMessage']
   onTogglePinMessage?: TranscriptPanelProps['onTogglePinMessage']
   onMessageFeedback?: TranscriptPanelProps['onMessageFeedback']
@@ -128,6 +129,7 @@ export function buildChatViewProps(input: BuildChatViewPropsInput): TranscriptPa
     pendingQueuedAppRunIds: input.pendingQueuedAppRunIds,
     queuedRunStatusByAppRunId: input.queuedRunStatusByAppRunId,
     onCopyMessage: input.onCopyMessage,
+    onAddMessageToPrompt: input.onAddMessageToPrompt,
     onDeleteMessage: input.onDeleteMessage ?? NOOP,
     onTogglePinMessage: input.onTogglePinMessage,
     onMessageFeedback: input.onMessageFeedback,

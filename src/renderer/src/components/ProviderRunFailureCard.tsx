@@ -10,6 +10,7 @@ import { MessageActionsChip } from './MessageActionsChip'
 interface ProviderRunFailureCardProps {
   message: ChatMessage
   onCopy: (messageId: string, content: string) => void
+  onAddToPrompt?: (messageId: string, content: string) => void
   onContextMenu?: (event: MouseEvent<HTMLDivElement>, copyText: string) => void
   copied?: boolean
 }
@@ -17,6 +18,7 @@ interface ProviderRunFailureCardProps {
 export function ProviderRunFailureCard({
   message,
   onCopy,
+  onAddToPrompt,
   onContextMenu,
   copied = false
 }: ProviderRunFailureCardProps): React.JSX.Element | null {
@@ -87,6 +89,9 @@ export function ProviderRunFailureCard({
       {hint && <div className="provider-run-failure-card-hint">{hint}</div>}
       <MessageActionsChip
         onCopy={() => onCopy(message.id, copyText)}
+        onAddToPrompt={
+          onAddToPrompt && copyText.trim() ? () => onAddToPrompt(message.id, copyText) : undefined
+        }
         label="provider failure"
         copied={copied}
       />

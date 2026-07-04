@@ -18,6 +18,7 @@ interface SubThreadReturnCardProps {
   onOpenSubThread?: (chatId: string) => void
   onOpenSubThreadInSidePanel?: (chatId: string, presentation?: 'split' | 'drawer') => void
   onCopyMessage?: (messageId: string, content: string) => void
+  onAddMessageToPrompt?: (messageId: string, content: string) => void
   onDeleteMessage?: (messageId: string) => void
   onTogglePinMessage?: (messageId: string) => void
   onOpenSideChatFromMessage?: (message: ChatMessage) => void
@@ -37,6 +38,7 @@ export function SubThreadReturnCard({
   onOpenSubThread,
   onOpenSubThreadInSidePanel,
   onCopyMessage,
+  onAddMessageToPrompt,
   onDeleteMessage,
   onTogglePinMessage,
   onOpenSideChatFromMessage,
@@ -141,6 +143,11 @@ export function SubThreadReturnCard({
       {onCopyMessage && (
         <MessageActionsChip
           onCopy={() => onCopyMessage(message.id, body)}
+          onAddToPrompt={
+            onAddMessageToPrompt && body.trim()
+              ? () => onAddMessageToPrompt(message.id, body)
+              : undefined
+          }
           onTogglePin={onTogglePinMessage ? () => onTogglePinMessage(message.id) : undefined}
           onDelete={onDeleteMessage ? () => onDeleteMessage(message.id) : undefined}
           onOpenSideChat={

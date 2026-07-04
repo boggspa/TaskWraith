@@ -32,7 +32,7 @@ import {
  */
 export interface ChatViewPaneProps extends Omit<
   BuildChatViewPropsInput,
-  'onDeleteMessage' | 'onTogglePinMessage' | 'onMessageFeedback'
+  'onDeleteMessage' | 'onTogglePinMessage' | 'onMessageFeedback' | 'onAddMessageToPrompt'
 > {
   paneIndex: number
   /**
@@ -95,6 +95,12 @@ export interface ChatViewPaneProps extends Omit<
   topLeftChromeAction?: ChatViewPaneChromeAction
   topRightChromeActions?: ChatViewPaneChromeAction[]
   onDeleteMessage?: (paneIndex: number, chatId: string, messageId: string) => void
+  onAddMessageToPrompt?: (
+    paneIndex: number,
+    chatId: string,
+    messageId: string,
+    content: string
+  ) => void
   onTogglePinMessage?: (paneIndex: number, chatId: string, messageId: string) => void
   onMessageFeedback?: (
     paneIndex: number,
@@ -189,6 +195,7 @@ export function chatViewPanePropsEqual(a: ChatViewPaneProps, b: ChatViewPaneProp
     a.onOpenSubThreadInSidePanel === b.onOpenSubThreadInSidePanel &&
     a.onOpenSideChatFromMessage === b.onOpenSideChatFromMessage &&
     a.onMessageSelectionCandidate === b.onMessageSelectionCandidate &&
+    a.onAddMessageToPrompt === b.onAddMessageToPrompt &&
     a.onDeleteMessage === b.onDeleteMessage &&
     a.onTogglePinMessage === b.onTogglePinMessage &&
     a.onMessageFeedback === b.onMessageFeedback &&
@@ -414,6 +421,11 @@ function ChatViewPaneInner(props: ChatViewPaneProps) {
               ...props,
               onDeleteMessage: (messageId) =>
                 chatId && props.onDeleteMessage?.(props.paneIndex, chatId, messageId),
+              onAddMessageToPrompt: props.onAddMessageToPrompt
+                ? (messageId, content) =>
+                    chatId &&
+                    props.onAddMessageToPrompt?.(props.paneIndex, chatId, messageId, content)
+                : undefined,
               onTogglePinMessage: props.onTogglePinMessage
                 ? (messageId) =>
                     chatId && props.onTogglePinMessage?.(props.paneIndex, chatId, messageId)

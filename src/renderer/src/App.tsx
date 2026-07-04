@@ -404,7 +404,11 @@ import {
 import { type PermissionOption } from './components/CombinedPermissionsPicker'
 import { useComposerTextareaContextMenu } from './components/ComposerTextareaContextMenu'
 import { WORKSPACE_POLICY_SERVICES } from './lib/workspacePolicyServices'
-import { applyStateAction, usePerChatState } from './hooks/usePerChatState'
+import {
+  applyStateAction,
+  type PerChatStateAction,
+  usePerChatState
+} from './hooks/usePerChatState'
 import { DEFAULT_CONTEXT_TURNS, clampContextTurns } from '../../main/PromptComposition'
 import {
   estimateWorstOllamaEnsembleUiPressure,
@@ -872,6 +876,14 @@ function scheduleAfterNextPaint(callback: () => void): () => void {
 }
 
 const EMPTY_DIFF_FILE_SUMMARIES: DiffFileSummary[] = []
+
+function appendMessageContentToPromptDraft(previous: string, content: string): string {
+  const addition = content.trim()
+  if (!addition) return previous
+  if (!previous.trim()) return addition
+  const separator = previous.endsWith('\n\n') ? '' : previous.endsWith('\n') ? '\n' : '\n\n'
+  return `${previous}${separator}${addition}`
+}
 
 interface LiveToolFileSummaryState {
   chatId: string
@@ -3217,7 +3229,7 @@ function App(): React.JSX.Element {
   )
   let currentProviderRuntimeProfiles = runtimeProfilesForProviderAndCurrentScope(currentProvider)
   const setChatPromptDraft = useCallback(
-    (chatId: string | null | undefined, value: string) => {
+    (chatId: string | null | undefined, value: PerChatStateAction<string>) => {
       setComposerDraftForChat(chatId, value)
     },
     [setComposerDraftForChat]
@@ -3227,6 +3239,13 @@ function App(): React.JSX.Element {
       setChatPromptDraft(currentChatIdRef.current || currentComposerChatId, value)
     },
     [currentComposerChatId, setChatPromptDraft]
+  )
+  const handleAddMessageToPrompt = useCallback(
+    (chatId: string | null | undefined, content: string) => {
+      if (!chatId || !content.trim()) return
+      setChatPromptDraft(chatId, (previous) => appendMessageContentToPromptDraft(previous, content))
+    },
+    [setChatPromptDraft]
   )
   const clearPlanImportIfDraftChanged = (nextValue: string): void => {
     if (pendingPlanImport && nextValue.trim() !== pendingPlanImport.rawText) {
@@ -14989,6 +15008,12 @@ function App(): React.JSX.Element {
     },
     [copy]
   )
+  const handleAddTranscriptMessageToPrompt = useCallback(
+    (chatId: string | null | undefined, content: string) => {
+      handleAddMessageToPrompt(chatId, content)
+    },
+    [handleAddMessageToPrompt]
+  )
 
   const handleCopyCurrentTranscript = useCallback(async () => {
     if (!currentChat?.appChatId) {
@@ -21528,6 +21553,12 @@ function App(): React.JSX.Element {
     },
     [togglePinMessageInChat]
   )
+  const handleMultiviewPaneAddMessageToPrompt = useCallback(
+    (_paneIndex: number, chatId: string, _messageId: string, content: string) => {
+      handleAddTranscriptMessageToPrompt(chatId, content)
+    },
+    [handleAddTranscriptMessageToPrompt]
+  )
   const handleMultiviewPaneMessageFeedback = useCallback(
     (
       _paneIndex: number,
@@ -22667,6 +22698,7 @@ function App(): React.JSX.Element {
         onOpenSubThread={handleOpenCockpitThread}
         onOpenSubThreadInSidePanel={handleOpenLinkedChatInSidePanelById}
         onCopyMessage={handleCopyMessage}
+        onAddMessageToPrompt={handleMultiviewPaneAddMessageToPrompt}
         onDeleteMessage={handleMultiviewPaneDeleteMessage}
         onTogglePinMessage={handleMultiviewPaneTogglePinMessage}
         onMessageFeedback={handleMultiviewPaneMessageFeedback}
@@ -23987,6 +24019,7 @@ function App(): React.JSX.Element {
     grokProviderAvailable,
     handleAddChatToWorkspaceBoard,
     handleAddLocalServerToWorkspaceBoard,
+    handleAddTranscriptMessageToPrompt,
     handleAddPinnedMessageToWorkspaceBoard,
     handleAddRunQueueJobToWorkspaceBoard,
     handleAddWorkflowToWorkspaceBoard,

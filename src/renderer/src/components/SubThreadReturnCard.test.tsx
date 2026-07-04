@@ -80,6 +80,7 @@ describe('SubThreadReturnCard', () => {
       <SubThreadReturnCard
         message={subThreadMessage()}
         onCopyMessage={() => {}}
+        onAddMessageToPrompt={() => {}}
         onTogglePinMessage={() => {}}
         onDeleteMessage={() => {}}
         onOpenSideChatFromMessage={() => {}}
@@ -90,6 +91,7 @@ describe('SubThreadReturnCard', () => {
 
     expect(html).toContain('Actions for sub-thread result')
     expect(html).toContain('message-actions-chip-button--copy')
+    expect(html).toContain('message-actions-chip-button--add-to-prompt')
     expect(html).toContain('message-actions-chip-button--pin is-pinned')
     expect(html).toContain('message-actions-chip-button--side-chat')
     expect(html).toContain('message-actions-chip-button--delete')

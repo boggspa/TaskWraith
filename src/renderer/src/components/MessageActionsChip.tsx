@@ -4,6 +4,8 @@
  * under transcript messages too. Icon-only buttons:
  *   • Copy — writes the bubble's content to the clipboard via the
  *     `onCopy` callback (host calls `navigator.clipboard.writeText`).
+ *   • Add to prompt — appends the bubble's content to the composer draft via
+ *     the `onAddToPrompt` callback.
  *   • Delete — calls the `onDelete` callback (host gates with
  *     `confirm()` before removing the message from the transcript).
  *
@@ -14,6 +16,7 @@
  */
 function MessageActionsChip({
   onCopy,
+  onAddToPrompt,
   onTogglePin,
   onThumbsUp,
   onThumbsDown,
@@ -25,6 +28,7 @@ function MessageActionsChip({
   label
 }: {
   onCopy: () => void
+  onAddToPrompt?: () => void
   onTogglePin?: () => void
   /** Thumbs feedback (assistant messages only — the host gates rendering). */
   onThumbsUp?: () => void
@@ -135,6 +139,31 @@ function MessageActionsChip({
           </svg>
         )}
       </button>
+      {onAddToPrompt && (
+        <button
+          type="button"
+          className="message-actions-chip-button message-actions-chip-button--add-to-prompt"
+          onClick={onAddToPrompt}
+          title="Add to prompt"
+          aria-label={`Add ${label} to prompt`}
+        >
+          <svg
+            width="13"
+            height="13"
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.45"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden
+          >
+            <path d="M3 13l3.1-.7 7-7a1.45 1.45 0 0 0 0-2.05l-.35-.35a1.45 1.45 0 0 0-2.05 0l-7 7z" />
+            <path d="M9.75 3.85 12.15 6.25" />
+            <path d="M3.75 9.8 6.2 12.25" />
+          </svg>
+        </button>
+      )}
       {onTogglePin && (
         <button
           type="button"

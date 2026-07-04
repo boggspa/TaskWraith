@@ -202,6 +202,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   handleAddLocalServerToWorkspaceBoard,
   handleAddPinnedMessageToWorkspaceBoard,
   handleAddRunQueueJobToWorkspaceBoard,
+  handleAddTranscriptMessageToPrompt,
   handleAddWorkflowToWorkspaceBoard,
   handleAddWorkspaceBoardCard,
   handleAgentQuestionDismiss,
@@ -1814,6 +1815,12 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                 liveActivityViewport={appearance.liveActivityViewport}
                 pendingQueuedAppRunIds={pendingQueuedAppRunIds}
                 onCopyMessage={handleCopyMessage}
+                onAddMessageToPrompt={
+                  currentChat
+                    ? (_messageId, content) =>
+                        handleAddTranscriptMessageToPrompt(currentChat.appChatId, content)
+                    : undefined
+                }
                 onDeleteMessage={handleDeleteMessage}
                 onTogglePinMessage={(messageId) => togglePinMessageInChat(currentChat, messageId)}
                 onMessageFeedback={(messageId, vote, details) =>
@@ -2133,6 +2140,9 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
               liveActivityViewport={appearance.liveActivityViewport}
               pendingQueuedAppRunIds={pendingQueuedAppRunIds}
               onCopyMessage={handleCopyMessage}
+              onAddMessageToPrompt={(_messageId, content) =>
+                handleAddTranscriptMessageToPrompt(sideChat.appChatId, content)
+              }
               onDeleteMessage={(messageId) => deleteMessageFromChat(sideChat, messageId)}
               onTogglePinMessage={(messageId) => togglePinMessageInChat(sideChat, messageId)}
               onMessageFeedback={(messageId, vote, details) =>

@@ -19,6 +19,7 @@ export interface TranscriptMessageContextMenuSelection {
 export interface TranscriptMessageContextMenuItem {
   id:
     | 'copy'
+    | 'add-to-prompt'
     | 'pin'
     | 'thumbs-up'
     | 'thumbs-down'
@@ -35,6 +36,7 @@ export interface TranscriptMessageContextMenuItem {
 interface TranscriptMessageContextMenuProps {
   selection: TranscriptMessageContextMenuSelection | null
   onCopyMessage: (messageId: string, content: string) => void
+  onAddMessageToPrompt?: (messageId: string, content: string) => void
   onDeleteMessage?: (messageId: string) => void
   onTogglePinMessage?: (messageId: string) => void
   onMessageFeedback?: (messageId: string, vote: 'up' | 'down', details?: MessageFeedbackDetails) => void
@@ -73,6 +75,7 @@ function canOpenSideChatFromMessage(message: ChatMessage): boolean {
 export function buildTranscriptMessageContextMenuItems({
   selection,
   onCopyMessage,
+  onAddMessageToPrompt,
   onDeleteMessage,
   onTogglePinMessage,
   onMessageFeedback,
@@ -89,6 +92,14 @@ export function buildTranscriptMessageContextMenuItems({
       onSelect: () => onCopyMessage(message.id, copyContent)
     }
   ]
+  if (!selection.copyOnly && onAddMessageToPrompt) {
+    items.push({
+      id: 'add-to-prompt',
+      label: 'Add to prompt',
+      disabled: copyContent.trim().length === 0,
+      onSelect: () => onAddMessageToPrompt(message.id, copyContent)
+    })
+  }
   if (!selection.copyOnly && onTogglePinMessage) {
     items.push({
       id: 'pin',
@@ -141,6 +152,7 @@ export function buildTranscriptMessageContextMenuItems({
 export function TranscriptMessageContextMenu({
   selection,
   onCopyMessage,
+  onAddMessageToPrompt,
   onDeleteMessage,
   onTogglePinMessage,
   onMessageFeedback,
@@ -183,6 +195,7 @@ export function TranscriptMessageContextMenu({
   const items = buildTranscriptMessageContextMenuItems({
     selection,
     onCopyMessage,
+    onAddMessageToPrompt,
     onDeleteMessage,
     onTogglePinMessage,
     onMessageFeedback,

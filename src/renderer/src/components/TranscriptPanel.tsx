@@ -273,6 +273,7 @@ export type TranscriptPanelProps = {
    * differently (e.g. forbid deleting in-flight assistant runs).
    */
   onCopyMessage: (messageId: string, content: string) => void
+  onAddMessageToPrompt?: (messageId: string, content: string) => void
   onDeleteMessage: (messageId: string) => void
   onTogglePinMessage?: (messageId: string) => void
   /** Thumbs feedback on an assistant message (up/down; host writes the receipt). */
@@ -432,6 +433,7 @@ function TranscriptMessageFooter({
   copyContent,
   align,
   onCopyMessage,
+  onAddMessageToPrompt,
   onTogglePinMessage,
   onMessageFeedback,
   onDeleteMessage,
@@ -444,6 +446,7 @@ function TranscriptMessageFooter({
   copyContent?: string
   align: 'start' | 'end'
   onCopyMessage: (messageId: string, content: string) => void
+  onAddMessageToPrompt?: (messageId: string, content: string) => void
   onTogglePinMessage?: (messageId: string) => void
   onMessageFeedback?: (messageId: string, vote: 'up' | 'down', details?: MessageFeedbackDetails) => void
   onDeleteMessage?: (messageId: string) => void
@@ -470,6 +473,11 @@ function TranscriptMessageFooter({
       {hasActionContent && (
         <MessageActionsChip
           onCopy={() => onCopyMessage(message.id, copyContent)}
+          onAddToPrompt={
+            onAddMessageToPrompt && copyContent.trim()
+              ? () => onAddMessageToPrompt(message.id, copyContent)
+              : undefined
+          }
           onTogglePin={onTogglePinMessage ? () => onTogglePinMessage(message.id) : undefined}
           onThumbsUp={
             canRateMessage && onMessageFeedback
@@ -1092,6 +1100,7 @@ export const TranscriptPanel = memo(
     pendingQueuedAppRunIds,
     queuedRunStatusByAppRunId,
     onCopyMessage,
+    onAddMessageToPrompt,
     onDeleteMessage,
     onTogglePinMessage,
     onMessageFeedback,
@@ -2136,6 +2145,7 @@ export const TranscriptPanel = memo(
                 onInspectRun,
                 onOpenSideChatFromRun,
                 onCopyMessage,
+                onAddMessageToPrompt,
                 onTogglePinMessage,
                 onMessageFeedback,
                 onDeleteMessage,
@@ -2223,6 +2233,7 @@ export const TranscriptPanel = memo(
                         onOpenSubThread={onOpenSubThread}
                         onOpenSubThreadInSidePanel={onOpenSubThreadInSidePanel}
                         onCopyMessage={onCopyMessage}
+                        onAddMessageToPrompt={onAddMessageToPrompt}
                         onTogglePinMessage={onTogglePinMessage}
                         onDeleteMessage={onDeleteMessage}
                         onOpenSideChatFromMessage={onOpenSideChatFromMessage}
@@ -2321,6 +2332,7 @@ export const TranscriptPanel = memo(
                     key={msg.id}
                     message={msg}
                     onCopy={onCopyMessage}
+                    onAddToPrompt={onAddMessageToPrompt}
                     onContextMenu={(event, copyText) =>
                       openMessageContextMenu(event, msg, copyText, 'provider failure', {
                         copyOnly: true,
@@ -2741,6 +2753,7 @@ export const TranscriptPanel = memo(
                   copyContent={footerCopyContent}
                   align={msg.role === 'user' ? 'end' : 'start'}
                   onCopyMessage={onCopyMessage}
+                  onAddMessageToPrompt={onAddMessageToPrompt}
                   onTogglePinMessage={onTogglePinMessage}
                   onMessageFeedback={onMessageFeedback}
                   onDeleteMessage={onDeleteMessage}
@@ -3167,6 +3180,7 @@ export const TranscriptPanel = memo(
         <TranscriptMessageContextMenu
           selection={activeMessageContextMenu}
           onCopyMessage={onCopyMessage}
+          onAddMessageToPrompt={onAddMessageToPrompt}
           onTogglePinMessage={onTogglePinMessage}
           onMessageFeedback={onMessageFeedback}
           onOpenSideChatFromMessage={onOpenSideChatFromMessage}
@@ -3217,6 +3231,7 @@ export const TranscriptPanel = memo(
     previous.pendingQueuedAppRunIds === next.pendingQueuedAppRunIds &&
     previous.queuedRunStatusByAppRunId === next.queuedRunStatusByAppRunId &&
     previous.onCopyMessage === next.onCopyMessage &&
+    previous.onAddMessageToPrompt === next.onAddMessageToPrompt &&
     previous.onDeleteMessage === next.onDeleteMessage &&
     previous.onMessageSelectionCandidate === next.onMessageSelectionCandidate &&
     previous.onOpenSideChatFromMessage === next.onOpenSideChatFromMessage &&

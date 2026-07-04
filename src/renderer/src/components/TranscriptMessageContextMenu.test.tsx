@@ -37,6 +37,7 @@ describe('TranscriptMessageContextMenu', () => {
       <TranscriptMessageContextMenu
         selection={selection({ pinned: true })}
         onCopyMessage={() => {}}
+        onAddMessageToPrompt={() => {}}
         onTogglePinMessage={() => {}}
         onOpenSideChatFromMessage={() => {}}
         onDeleteMessage={() => {}}
@@ -46,6 +47,7 @@ describe('TranscriptMessageContextMenu', () => {
 
     expect(html).toContain('Actions for assistant message')
     expect(html).toContain('Copy message')
+    expect(html).toContain('Add to prompt')
     expect(html).toContain('Unpin message')
     expect(html).toContain('Open side chat')
     expect(html).toContain('Delete message')
@@ -55,23 +57,27 @@ describe('TranscriptMessageContextMenu', () => {
   it('routes selected actions through transcript callbacks', () => {
     const selectedMessage = message()
     const onCopyMessage = vi.fn()
+    const onAddMessageToPrompt = vi.fn()
     const onTogglePinMessage = vi.fn()
     const onOpenSideChatFromMessage = vi.fn()
     const onDeleteMessage = vi.fn()
     const items = buildTranscriptMessageContextMenuItems({
       selection: selection({ message: selectedMessage, copyContent: 'copy body' }),
       onCopyMessage,
+      onAddMessageToPrompt,
       onTogglePinMessage,
       onOpenSideChatFromMessage,
       onDeleteMessage
     })
 
     items.find((item) => item.id === 'copy')?.onSelect()
+    items.find((item) => item.id === 'add-to-prompt')?.onSelect()
     items.find((item) => item.id === 'pin')?.onSelect()
     items.find((item) => item.id === 'side-chat')?.onSelect()
     items.find((item) => item.id === 'delete')?.onSelect()
 
     expect(onCopyMessage).toHaveBeenCalledWith('message-1', 'copy body')
+    expect(onAddMessageToPrompt).toHaveBeenCalledWith('message-1', 'copy body')
     expect(onTogglePinMessage).toHaveBeenCalledWith('message-1')
     expect(onOpenSideChatFromMessage).toHaveBeenCalledWith(selectedMessage)
     expect(onDeleteMessage).toHaveBeenCalledWith('message-1')

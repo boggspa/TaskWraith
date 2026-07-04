@@ -7,6 +7,7 @@ describe('MessageActionsChip', () => {
     const html = renderToStaticMarkup(
       <MessageActionsChip
         onCopy={() => {}}
+        onAddToPrompt={() => {}}
         onTogglePin={() => {}}
         onThumbsUp={() => {}}
         onThumbsDown={() => {}}
@@ -19,14 +20,18 @@ describe('MessageActionsChip', () => {
     const thumbsUp = html.indexOf('message-actions-chip-button--thumbs-up')
     const thumbsDown = html.indexOf('message-actions-chip-button--thumbs-down')
     const copy = html.indexOf('message-actions-chip-button--copy')
+    const addToPrompt = html.indexOf('message-actions-chip-button--add-to-prompt')
     const pin = html.indexOf('message-actions-chip-button--pin')
 
     expect(thumbsUp).toBeGreaterThan(-1)
     expect(thumbsDown).toBeGreaterThan(-1)
     expect(copy).toBeGreaterThan(-1)
+    expect(addToPrompt).toBeGreaterThan(-1)
     expect(pin).toBeGreaterThan(-1)
     expect(thumbsUp).toBeLessThan(copy)
     expect(thumbsDown).toBeLessThan(copy)
+    expect(copy).toBeLessThan(addToPrompt)
+    expect(addToPrompt).toBeLessThan(pin)
     expect(thumbsUp).toBeLessThan(pin)
     expect(thumbsDown).toBeLessThan(pin)
     expect(thumbsUp).toBeLessThan(thumbsDown)
