@@ -23668,7 +23668,7 @@ if (isGeminiMcpBridgeProcess) {
               )
           const shouldUpdateContextChars = typeof action.ensembleContextChars === 'number'
           const nextEnsembleContextChars = shouldUpdateContextChars
-            ? Math.max(5_000, Math.min(500_000, Math.round(action.ensembleContextChars as number)))
+            ? Math.max(5_000, Math.min(256_000, Math.round(action.ensembleContextChars as number)))
             : chat.ensemble.ensembleContextChars
           const activeRound =
             shouldUpdateHops && chat.ensemble.activeRound

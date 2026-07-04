@@ -16490,6 +16490,20 @@ function App(): React.JSX.Element {
     const installedOllamaModels = Array.isArray(agentStatusByProvider.ollama?.models)
       ? agentStatusByProvider.ollama.models
       : []
+    const explicitOllamaContextLengths = ollamaParticipants
+      .map(
+        (participant) =>
+          installedOllamaModels.find(
+            (model: { id?: string; contextLength?: number }) =>
+              model.id && isOllamaModelInstalled(participant.model || '', [model.id])
+          )?.contextLength
+      )
+      .filter(
+        (contextLength): contextLength is number =>
+          typeof contextLength === 'number' &&
+          Number.isFinite(contextLength) &&
+          contextLength >= 2048
+      )
     const pressure = estimateWorstOllamaEnsembleUiPressure({
       configuredContextChars: currentChat.ensemble.ensembleContextChars,
       participantCount: currentChat.ensemble.participants.filter((participant) => participant.enabled)
@@ -16507,7 +16521,10 @@ function App(): React.JSX.Element {
     return {
       severity: pressure.severity,
       message: ollamaContextPressureMessage(pressure),
-      suggestedChars: pressure.effectiveTranscriptChars
+      suggestedChars: pressure.effectiveTranscriptChars,
+      clampContextChars: explicitOllamaContextLengths.some(
+        (contextLength) => contextLength < 128 * 1024
+      )
     }
   }, [isCurrentEnsembleChat, currentChat?.ensemble, currentChat?.scope, agentStatusByProvider.ollama?.models])
   const currentEnsembleContinuationHops = currentEnsembleRound?.continuationHops || 0
@@ -16800,13 +16817,13 @@ function App(): React.JSX.Element {
     [updateCurrentEnsembleFanoutPolicy]
   )
 
-  // D — persist the user-set shared-transcript char budget (5K–500K) onto
+  // D — persist the user-set shared-transcript char budget (5K–256K) onto
   // chat.ensemble.ensembleContextChars. Drives buildTaggedTranscript's budget
   // for the NEXT round; clamped here so a malformed value never lands.
   const updateCurrentEnsembleContextChars = useCallback(
     (nextChars: number) => {
       if (!isCurrentEnsembleChat || !currentChat?.ensemble) return
-      const safeChars = Math.max(5_000, Math.min(500_000, Math.round(Number(nextChars) || 0)))
+      const safeChars = Math.max(5_000, Math.min(256_000, Math.round(Number(nextChars) || 0)))
       if (!Number.isFinite(safeChars) || safeChars <= 0) return
       updateChatById(currentChat.appChatId, (source) => {
         if (!source.ensemble) return source
@@ -20594,9 +20611,9 @@ function App(): React.JSX.Element {
               const arg = slashActionRemainder(ctx, /^\/ensemble-context\b/i)
               const next = parseScopedPositiveIntSlashArg(ctx, arg, {
                 min: 5_000,
-                max: 500_000,
+                max: 256_000,
                 fallback: chat.ensemble.ensembleContextChars || 120_000,
-                usage: 'Usage: /ensemble-context 120000. Valid range: 5000-500000.'
+                usage: 'Usage: /ensemble-context 120000. Valid range: 5000-256000.'
               })
               if (next === null) return
               patchScopedEnsembleConfig(chat, (ensemble) => ({

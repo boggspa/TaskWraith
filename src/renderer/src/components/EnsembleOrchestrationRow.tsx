@@ -35,7 +35,7 @@ import type { ComposerStyle, EnsembleFanoutPolicy } from '../../../main/store/ty
 // Shared-transcript char budget bounds (mirror buildTaggedTranscript's clamp).
 // Moved here from EnsembleModePicker when the slider left its popover.
 const CONTEXT_MIN = 5_000
-const CONTEXT_MAX = 500_000
+const CONTEXT_MAX = 256_000
 const CONTEXT_DEFAULT = 24_000
 type FanoutPickerValue = 'off' | 'read_only' | 'write' | 'all'
 
@@ -54,6 +54,7 @@ export interface EnsembleOllamaContextWarning {
   severity: 'ok' | 'warn' | 'critical'
   message: string
   suggestedChars?: number
+  clampContextChars?: boolean
 }
 
 export function EnsembleOrchestrationRow({
@@ -103,16 +104,27 @@ export function EnsembleOrchestrationRow({
   maxContinuationHops: number
   onMaxContinuationHopsChange: (nextMax: number) => void
 }): React.JSX.Element {
-  const effectiveContextChars = contextChars ?? CONTEXT_DEFAULT
+  const configuredContextChars = contextChars ?? CONTEXT_DEFAULT
+  const suggestedContextCap =
+    ollamaContextWarning?.clampContextChars === true &&
+    ollamaContextWarning?.severity !== 'ok' &&
+    typeof ollamaContextWarning?.suggestedChars === 'number' &&
+    Number.isFinite(ollamaContextWarning.suggestedChars)
+      ? Math.max(CONTEXT_MIN, Math.min(CONTEXT_MAX, Math.round(ollamaContextWarning.suggestedChars)))
+      : null
+  const effectiveContextMax = suggestedContextCap ?? CONTEXT_MAX
+  const effectiveContextChars = Math.max(
+    CONTEXT_MIN,
+    Math.min(effectiveContextMax, configuredContextChars)
+  )
   const contextSliderFill = Math.max(
     0,
     Math.min(
       100,
-      ((effectiveContextChars - CONTEXT_MIN) / (CONTEXT_MAX - CONTEXT_MIN)) * 100
+      ((effectiveContextChars - CONTEXT_MIN) / Math.max(1, effectiveContextMax - CONTEXT_MIN)) *
+        100
     )
   )
-  const visibleOllamaContextWarning =
-    ollamaContextWarning?.severity === 'ok' ? null : ollamaContextWarning
   const selectedFanoutValue: FanoutPickerValue =
     fanoutPolicy === 'all'
       ? 'all'
@@ -203,10 +215,12 @@ export function EnsembleOrchestrationRow({
           type="range"
           className="composer-ensemble-context-slider"
           min={CONTEXT_MIN}
-          max={CONTEXT_MAX}
+          max={effectiveContextMax}
           step={5_000}
           value={effectiveContextChars}
-          onChange={(event) => onContextCharsChange(Number(event.target.value))}
+          onChange={(event) =>
+            onContextCharsChange(Math.min(effectiveContextMax, Number(event.target.value)))
+          }
           aria-label="Shared transcript character budget"
           title={`${formatCharBudget(effectiveContextChars)} chars of recent panel history shared with each participant`}
           style={
@@ -230,39 +244,6 @@ export function EnsembleOrchestrationRow({
             onSave={onMaxContinuationHopsChange}
           />
         </span>
-      )}
-      {(visibleOllamaContextWarning || !concurrentLanesAvailable) && (
-        <div className="composer-orchestration-row-hints">
-          {visibleOllamaContextWarning ? (
-            <div
-              className={`composer-ensemble-context-hint severity-${visibleOllamaContextWarning.severity}`}
-              role="note"
-            >
-              {visibleOllamaContextWarning.message}
-              {visibleOllamaContextWarning.suggestedChars &&
-              visibleOllamaContextWarning.severity !== 'ok' &&
-              effectiveContextChars > visibleOllamaContextWarning.suggestedChars ? (
-                <button
-                  type="button"
-                  className="composer-ensemble-context-suggest"
-                  onClick={() =>
-                    onContextCharsChange(
-                      visibleOllamaContextWarning.suggestedChars ?? CONTEXT_DEFAULT
-                    )
-                  }
-                >
-                  Use {formatCharBudget(visibleOllamaContextWarning.suggestedChars)} for panel
-                </button>
-              ) : null}
-            </div>
-          ) : null}
-          {!concurrentLanesAvailable ? (
-            <div className="composer-ensemble-context-hint severity-warn" role="note">
-              Parallel fan-out lanes are disabled (TASKWRAITH_CONCURRENT_LANES=0). Fan-out rounds
-              fall back to serial dispatch.
-            </div>
-          ) : null}
-        </div>
       )}
     </div>
   )

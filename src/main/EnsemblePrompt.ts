@@ -1297,11 +1297,11 @@ function buildTaggedTranscript(
   options?: { deltaOnly?: boolean }
 ): string {
   // Total shared-transcript char budget — user-adjustable per ensemble
-  // (5K–500K via the Turn picker); falls back to the default cap. This is the
+  // (5K–256K via the Turn picker); falls back to the default cap. This is the
   // real lever: it drives BOTH how many recent messages we walk and the hard
   // cap, so a bigger budget genuinely surfaces more panel history rather than
   // being silently capped by the turn-count.
-  const maxChars = Math.min(500_000, Math.max(5_000, contextChars ?? MAX_TRANSCRIPT_CHARS))
+  const maxChars = Math.min(256_000, Math.max(5_000, contextChars ?? MAX_TRANSCRIPT_CHARS))
   // The default budget keeps the historical turn-window (contextTurns*2). A
   // raised budget widens the window enough to actually fill it (~600 chars/line
   // estimate), floored at the turn-window.

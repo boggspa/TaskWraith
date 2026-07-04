@@ -276,16 +276,6 @@
 :root .composer-ensemble-orchestration-row .composer-ensemble-hop-meter:is(:hover, .is-open) {
   color: color-mix(in srgb, var(--accent-color) 96%, var(--text-primary)) !important;
 }
-.composer-orchestration-row-hints {
-  flex-basis: 100%;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-.composer-orchestration-row-hints .composer-ensemble-context-hint {
-  margin-top: 0;
-}
-
 [data-composer-style="codex"]
   .composer-above-bar-stack:not(:has(.ensemble-above-row))
   > .composer-above-bar:not(:first-child) {

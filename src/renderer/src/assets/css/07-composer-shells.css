@@ -2598,32 +2598,6 @@
   opacity: 0.72;
   text-align: center;
 }
-.composer-ensemble-context-hint {
-  margin-top: 8px;
-  font-size: var(--font-size-xs);
-  line-height: 1.35;
-  opacity: 0.82;
-}
-.composer-ensemble-context-hint.severity-warn {
-  color: color-mix(in srgb, #e8c547 88%, currentColor);
-}
-.composer-ensemble-context-hint.severity-critical {
-  color: color-mix(in srgb, #f08a7a 90%, currentColor);
-}
-.composer-ensemble-context-hint.severity-ok {
-  opacity: 0.68;
-}
-.composer-ensemble-context-suggest {
-  display: block;
-  margin-top: 6px;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  text-decoration: underline;
-  cursor: pointer;
-}
 
 /* Provider picker — softened outline pill */
 [data-composer-style="gemini"] [data-composer-control="provider"] {
