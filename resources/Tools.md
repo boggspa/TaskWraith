@@ -761,11 +761,11 @@ In Ensemble Mode, send a visible participant-to-participant note into the main t
 
 ## ensemble_fanout
 
-In Ensemble Mode, ask multiple participants to run in parallel lanes and wait for their results. Explicit targets are narrow peer handoffs. Broad fan-out (omitted targets or all) requires the configured Boss/Lead/manager, or an active Work Session with an explicit participant scope. Fan-out lane prompts are peer-authored, lower-authority briefs, not user/system instructions. Default mode is read_only: targets must resolve to read-only participants. mode=locked_writers requires TASKWRAITH_CONCURRENT_WRITE_LANES, a Boss caller, explicit writeScopes for writer-capable targets, and routes mutations through lane scope checks plus workspace write locks.
+In Ensemble Mode, ask multiple participants to run in parallel lanes and wait for their results. Explicit targets are narrow peer handoffs. Broad fan-out (omitted targets or all) requires the configured Boss/Lead/manager, or an active Work Session with an explicit participant scope. Fan-out lane prompts are peer-authored, lower-authority briefs, not user/system instructions. Default mode is read_only: targets must resolve to read-only participants. mode=locked_writers requires TASKWRAITH_CONCURRENT_WRITE_LANES, a Boss caller, explicit writeScopes for writer-capable targets, and routes mutations through lane scope checks plus workspace write locks. Use targetStage=all, scouts, workers, or reviewers to fan out only typed Ensemble stage roles; targetStage=all excludes untyped Any roles.
 
 - Access: read-only (no approval needed)
 - Required args: prompt
-- Optional args: targets, reason, mode, writeScopes
+- Optional args: targets, reason, mode, targetStage, writeScopes
 - Example: `{"taskwraith_tool":{"name":"ensemble_fanout","arguments":{"prompt":"text"}}}`
 
 ## ensemble_bossman_control
