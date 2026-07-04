@@ -62,6 +62,17 @@ const api = {
   saveClipboardImageAttachment: () => ipcRenderer.invoke('save-clipboard-image-attachment'),
   authorizeImagePreview: (paths: string[]) => ipcRenderer.invoke('authorize-image-preview', paths),
   readImagePreview: (path: string) => ipcRenderer.invoke('read-image-preview', path),
+  transcribeComposerAudio: (input: { localeIdentifier?: string; wav: ArrayBuffer }) =>
+    ipcRenderer.invoke('composer-audio:transcribe', input) as Promise<
+      | {
+          ok: true
+          text: string
+          segments: Array<{ text: string; startMs: number; endMs: number; confidence: number }>
+          localeIdentifier: string
+          onDevice: boolean
+        }
+      | { ok: false; error: string }
+    >,
   imageGenerationGetStatus: () => ipcRenderer.invoke('image-generation:get-status'),
   imageGenerationSetEnabled: (input: { enabled: boolean; provider?: 'openai' | 'xai' }) =>
     ipcRenderer.invoke('image-generation:set-enabled', input),

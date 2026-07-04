@@ -2570,6 +2570,104 @@ const vtToolCallBudget = new ImageToolCallBudget()
 // metadata-only and stays uncapped. Output stages in a dir WE own.
 const mediaProcessLimiter = createSemaphore(2)
 const MEDIA_STAGING_DIR = join(app.getPath('userData'), 'media-staging')
+const COMPOSER_AUDIO_TRANSCRIPTION_MAX_BYTES = 32 * 1024 * 1024
+type ComposerAudioTranscriptionResult =
+  | {
+      ok: true
+      text: string
+      segments: Array<{ text: string; startMs: number; endMs: number; confidence: number }>
+      localeIdentifier: string
+      onDevice: boolean
+    }
+  | { ok: false; error: string }
+
+function bufferFromComposerAudioPayload(rawWav: unknown): Buffer | null {
+  if (Buffer.isBuffer(rawWav)) return rawWav
+  if (rawWav instanceof ArrayBuffer) return Buffer.from(new Uint8Array(rawWav))
+  if (ArrayBuffer.isView(rawWav)) {
+    return Buffer.from(rawWav.buffer, rawWav.byteOffset, rawWav.byteLength)
+  }
+  return null
+}
+
+function isPcmWavBuffer(buffer: Buffer): boolean {
+  return (
+    buffer.length >= 44 &&
+    buffer.toString('ascii', 0, 4) === 'RIFF' &&
+    buffer.toString('ascii', 8, 12) === 'WAVE' &&
+    buffer.toString('ascii', 12, 16) === 'fmt ' &&
+    buffer.toString('ascii', 36, 40) === 'data'
+  )
+}
+
+function normalizeComposerAudioLocale(rawLocale: unknown): string | undefined {
+  if (typeof rawLocale !== 'string') return undefined
+  const locale = rawLocale.trim()
+  if (!locale || locale.length > 32) return undefined
+  return locale
+}
+
+async function transcribeComposerAudioPayload(
+  rawInput: unknown
+): Promise<ComposerAudioTranscriptionResult> {
+  if (process.platform !== 'darwin') {
+    return { ok: false, error: 'Local dictation is not available on this platform yet.' }
+  }
+  const input = asRecord(rawInput)
+  const wav = bufferFromComposerAudioPayload(input?.wav)
+  if (!wav || wav.length === 0) return { ok: false, error: 'No microphone audio was captured.' }
+  if (wav.length > COMPOSER_AUDIO_TRANSCRIPTION_MAX_BYTES) {
+    return { ok: false, error: 'Microphone recording is too long to transcribe.' }
+  }
+  if (!isPcmWavBuffer(wav)) return { ok: false, error: 'Microphone recording was not valid WAV audio.' }
+  const daemon = bridgeDaemonRef
+  if (!daemon) return { ok: false, error: 'Audio transcription service is not running.' }
+
+  fsSync.mkdirSync(MEDIA_STAGING_DIR, { recursive: true })
+  const sourcePath = join(MEDIA_STAGING_DIR, `composer-dictation-${randomUUID()}.wav`)
+  try {
+    await fs.writeFile(sourcePath, wav, { mode: 0o600 })
+    const result = await mediaProcessLimiter.run(() =>
+      daemon.request<{
+        text: string
+        segments: Array<{ text: string; startMs: number; endMs: number; confidence: number }>
+        localeIdentifier: string
+        onDevice: boolean
+      }>(
+        'audio.transcribe',
+        { sourcePath, localeIdentifier: normalizeComposerAudioLocale(input?.localeIdentifier) },
+        { timeoutMs: 120_000 }
+      )
+    )
+    if (result.onDevice !== true) {
+      return { ok: false, error: 'Local dictation refused a non-local transcription result.' }
+    }
+    return {
+      ok: true,
+      text: typeof result.text === 'string' ? result.text : '',
+      segments: Array.isArray(result.segments)
+        ? result.segments
+            .filter((segment) => segment && typeof segment.text === 'string')
+            .map((segment) => ({
+              text: segment.text,
+              startMs: Number.isFinite(segment.startMs) ? segment.startMs : 0,
+              endMs: Number.isFinite(segment.endMs) ? segment.endMs : 0,
+              confidence: Number.isFinite(segment.confidence) ? segment.confidence : 0
+            }))
+        : [],
+      localeIdentifier:
+        typeof result.localeIdentifier === 'string' ? result.localeIdentifier : 'en-US',
+      onDevice: true
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : 'Local dictation failed.'
+    }
+  } finally {
+    await fs.rm(sourcePath, { force: true }).catch(() => undefined)
+  }
+}
 // Reclaim orphaned media-staging outputs: a daemon encode that finishes AFTER its
 // RPC timed out (the late result is dropped, no cancel sent) writes its MP4 to
 // staging with no one to delete it; ffmpeg crash-orphans land here too. Sweep
@@ -28771,6 +28869,10 @@ if (isGeminiMcpBridgeProcess) {
       if (!Array.isArray(rawPaths)) return
       for (const rawPath of rawPaths) await authorizeImagePreviewPath(rawPath)
     })
+
+    ipcMain.handle('composer-audio:transcribe', async (_event, rawInput: unknown) =>
+      transcribeComposerAudioPayload(rawInput)
+    )
 
     ipcMain.handle('select-image-files', async () => {
       if (!mainWindow) return []

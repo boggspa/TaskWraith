@@ -8,6 +8,7 @@ const VOICE_LEVEL_COUNT = 96
 const EMPTY_LEVELS = Array.from({ length: VOICE_LEVEL_COUNT }, () => 0)
 const DEFAULT_AUDIO_DEVICE_ID = 'default'
 const VOICE_PICKER_WIDTH = 260
+const MAX_NATIVE_RECORDING_MS = 120_000
 
 type SpeechRecognitionErrorCode =
   | 'aborted'
@@ -63,6 +64,24 @@ type SpeechRecognitionConstructor = new () => SpeechRecognitionLike
 
 type AudioContextConstructor = new () => AudioContext
 
+type ComposerAudioTranscriptionResult =
+  | {
+      ok: true
+      text: string
+      segments: Array<{ text: string; startMs: number; endMs: number; confidence: number }>
+      localeIdentifier: string
+      onDevice: boolean
+    }
+  | { ok: false; error: string }
+
+type ComposerAudioApi = {
+  hostPlatform?: NodeJS.Platform
+  transcribeComposerAudio?: (input: {
+    localeIdentifier?: string
+    wav: ArrayBuffer
+  }) => Promise<ComposerAudioTranscriptionResult>
+}
+
 export interface ComposerVoiceCaptureState {
   isRecording: boolean
   elapsedMs: number
@@ -109,6 +128,17 @@ function getAudioContextConstructor(): AudioContextConstructor | null {
     webkitAudioContext?: AudioContextConstructor
   }
   return window.AudioContext || candidate.webkitAudioContext || null
+}
+
+function getComposerAudioApi(): ComposerAudioApi | null {
+  if (typeof window === 'undefined') return null
+  const candidate = window as typeof window & { api?: ComposerAudioApi }
+  return candidate.api || null
+}
+
+function canUseNativeComposerTranscription(): boolean {
+  const api = getComposerAudioApi()
+  return api?.hostPlatform === 'darwin' && typeof api.transcribeComposerAudio === 'function'
 }
 
 function normalizeAudioDeviceId(deviceId: string | null | undefined): string {
@@ -172,6 +202,51 @@ async function stopStream(stream: MediaStream | null | undefined): Promise<void>
   }
 }
 
+function writeAscii(view: DataView, offset: number, value: string): void {
+  for (let i = 0; i < value.length; i += 1) {
+    view.setUint8(offset + i, value.charCodeAt(i))
+  }
+}
+
+export function encodeComposerVoiceWav(
+  chunks: readonly Float32Array[],
+  sampleRate: number
+): Uint8Array | null {
+  const safeSampleRate = Math.round(sampleRate)
+  if (!Number.isFinite(safeSampleRate) || safeSampleRate <= 0) return null
+  const sampleCount = chunks.reduce((total, chunk) => total + chunk.length, 0)
+  if (sampleCount <= 0) return null
+
+  const bytesPerSample = 2
+  const channelCount = 1
+  const dataByteLength = sampleCount * bytesPerSample
+  const buffer = new ArrayBuffer(44 + dataByteLength)
+  const view = new DataView(buffer)
+  writeAscii(view, 0, 'RIFF')
+  view.setUint32(4, 36 + dataByteLength, true)
+  writeAscii(view, 8, 'WAVE')
+  writeAscii(view, 12, 'fmt ')
+  view.setUint32(16, 16, true)
+  view.setUint16(20, 1, true)
+  view.setUint16(22, channelCount, true)
+  view.setUint32(24, safeSampleRate, true)
+  view.setUint32(28, safeSampleRate * channelCount * bytesPerSample, true)
+  view.setUint16(32, channelCount * bytesPerSample, true)
+  view.setUint16(34, bytesPerSample * 8, true)
+  writeAscii(view, 36, 'data')
+  view.setUint32(40, dataByteLength, true)
+
+  let offset = 44
+  for (const chunk of chunks) {
+    for (const sample of chunk) {
+      const clamped = Math.max(-1, Math.min(1, sample || 0))
+      view.setInt16(offset, clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff, true)
+      offset += bytesPerSample
+    }
+  }
+  return new Uint8Array(buffer)
+}
+
 export function appendComposerVoiceTranscript(prompt: string, transcript: string): string {
   const cleanTranscript = transcript.replace(/\s+/g, ' ').trim()
   if (!cleanTranscript) return prompt
@@ -221,6 +296,7 @@ export function ComposerVoiceInputButton({
 }: ComposerVoiceInputButtonProps): JSX.Element {
   const [state, setState] = useState<ComposerVoiceCaptureState>(EMPTY_COMPOSER_VOICE_CAPTURE_STATE)
   const [isStarting, setIsStarting] = useState(false)
+  const [isTranscribing, setIsTranscribing] = useState(false)
   const [isMenuOpen, setIsMenuOpen] = useState(false)
   const [isLoadingDevices, setIsLoadingDevices] = useState(false)
   const [devices, setDevices] = useState<ComposerVoiceInputDevice[]>([])
@@ -232,6 +308,9 @@ export function ComposerVoiceInputButton({
   const streamRef = useRef<MediaStream | null>(null)
   const audioContextRef = useRef<AudioContext | null>(null)
   const analyserRef = useRef<AnalyserNode | null>(null)
+  const mediaSourceRef = useRef<MediaStreamAudioSourceNode | null>(null)
+  const recorderProcessorRef = useRef<ScriptProcessorNode | null>(null)
+  const recorderMuteRef = useRef<GainNode | null>(null)
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null)
   const animationFrameRef = useRef<number | null>(null)
   const elapsedTimerRef = useRef<number | null>(null)
@@ -239,6 +318,12 @@ export function ComposerVoiceInputButton({
   const finalTranscriptRef = useRef('')
   const interimTranscriptRef = useRef('')
   const stoppingRef = useRef(false)
+  const nativeRecordingRef = useRef(false)
+  const nativeTranscribingRef = useRef(false)
+  const nativeRecordingLimitNotifiedRef = useRef(false)
+  const recordedChunksRef = useRef<Float32Array[]>([])
+  const recordedSampleRateRef = useRef(0)
+  const recordedSampleCountRef = useRef(0)
   const isMountedRef = useRef(true)
   const isRecordingRef = useRef(false)
   const isStartingRef = useRef(false)
@@ -273,6 +358,12 @@ export function ComposerVoiceInputButton({
     }
     void stopStream(streamRef.current)
     streamRef.current = null
+    recorderProcessorRef.current?.disconnect()
+    recorderProcessorRef.current = null
+    recorderMuteRef.current?.disconnect()
+    recorderMuteRef.current = null
+    mediaSourceRef.current?.disconnect()
+    mediaSourceRef.current = null
     analyserRef.current = null
     const audioContext = audioContextRef.current
     audioContextRef.current = null
@@ -286,17 +377,96 @@ export function ComposerVoiceInputButton({
     if (transcript) onTranscriptRef.current(transcript)
   }
 
+  const transcribeNativeWav = async (wav: Uint8Array | null): Promise<void> => {
+    if (!wav) {
+      if (isMountedRef.current) {
+        setState({ ...EMPTY_COMPOSER_VOICE_CAPTURE_STATE, message: 'No microphone input captured.' })
+        nativeTranscribingRef.current = false
+        setIsTranscribing(false)
+      }
+      return
+    }
+    const api = getComposerAudioApi()
+    if (typeof api?.transcribeComposerAudio !== 'function') {
+      if (isMountedRef.current) {
+        setState({
+          ...EMPTY_COMPOSER_VOICE_CAPTURE_STATE,
+          message: 'Local dictation is unavailable in this runtime.'
+        })
+        nativeTranscribingRef.current = false
+        setIsTranscribing(false)
+      }
+      return
+    }
+    try {
+      const wavBuffer = new ArrayBuffer(wav.byteLength)
+      new Uint8Array(wavBuffer).set(wav)
+      const result = await api.transcribeComposerAudio({
+        wav: wavBuffer,
+        localeIdentifier: navigator.language || 'en-US'
+      })
+      if (!isMountedRef.current) return
+      if (result.ok) {
+        const transcript = result.text.replace(/\s+/g, ' ').trim()
+        if (transcript) {
+          onTranscriptRef.current(transcript)
+          setState({ ...EMPTY_COMPOSER_VOICE_CAPTURE_STATE, message: null })
+        } else {
+          setState({ ...EMPTY_COMPOSER_VOICE_CAPTURE_STATE, message: 'No speech detected.' })
+        }
+      } else {
+        setState({
+          ...EMPTY_COMPOSER_VOICE_CAPTURE_STATE,
+          message: result.error || 'Local dictation failed.'
+        })
+      }
+    } catch (error) {
+      if (!isMountedRef.current) return
+      setState({
+        ...EMPTY_COMPOSER_VOICE_CAPTURE_STATE,
+        message: error instanceof Error ? error.message : 'Local dictation failed.'
+      })
+    } finally {
+      nativeTranscribingRef.current = false
+      if (isMountedRef.current) {
+        setIsStarting(false)
+        setIsTranscribing(false)
+      }
+    }
+  }
+
   const finishRecording = (message: string | null = null): void => {
     if (!isRecordingRef.current && !streamRef.current && !recognitionRef.current) return
-    commitTranscript()
+    const shouldTranscribeNative = nativeRecordingRef.current
+    const nativeWav = shouldTranscribeNative
+      ? encodeComposerVoiceWav(recordedChunksRef.current, recordedSampleRateRef.current)
+      : null
+    if (!shouldTranscribeNative) commitTranscript()
     stopVisualCapture()
     recognitionRef.current = null
     stoppingRef.current = false
+    nativeRecordingRef.current = false
+    nativeRecordingLimitNotifiedRef.current = false
     isRecordingRef.current = false
     finalTranscriptRef.current = ''
     interimTranscriptRef.current = ''
+    recordedChunksRef.current = []
+    recordedSampleRateRef.current = 0
+    recordedSampleCountRef.current = 0
     setIsStarting(false)
     isStartingRef.current = false
+    if (shouldTranscribeNative) {
+      nativeTranscribingRef.current = true
+      setIsTranscribing(true)
+      setState({
+        isRecording: false,
+        elapsedMs: 0,
+        levels: EMPTY_LEVELS,
+        message: 'Transcribing locally...'
+      })
+      void transcribeNativeWav(nativeWav)
+      return
+    }
     setState({
       isRecording: false,
       elapsedMs: 0,
@@ -371,7 +541,42 @@ export function ComposerVoiceInputButton({
       }, 450)
       return
     }
-    finishRecording('Dictation is unavailable in this runtime.')
+    finishRecording(nativeRecordingRef.current ? null : 'Dictation is unavailable in this runtime.')
+  }
+
+  const setupNativeRecorder = (
+    audioContext: AudioContext,
+    source: MediaStreamAudioSourceNode
+  ): void => {
+    recordedChunksRef.current = []
+    recordedSampleRateRef.current = audioContext.sampleRate
+    recordedSampleCountRef.current = 0
+    nativeRecordingLimitNotifiedRef.current = false
+    const processor = audioContext.createScriptProcessor(4096, 1, 1)
+    const mute = audioContext.createGain()
+    mute.gain.value = 0
+    processor.onaudioprocess = (event) => {
+      if (!nativeRecordingRef.current) return
+      const input = event.inputBuffer.getChannelData(0)
+      const maxSamples = Math.floor((recordedSampleRateRef.current * MAX_NATIVE_RECORDING_MS) / 1000)
+      if (recordedSampleCountRef.current >= maxSamples) {
+        if (!nativeRecordingLimitNotifiedRef.current) {
+          nativeRecordingLimitNotifiedRef.current = true
+          publishState({ message: 'Recording limit reached. Stop to transcribe.' })
+        }
+        return
+      }
+      const remaining = maxSamples - recordedSampleCountRef.current
+      const copyLength = Math.min(input.length, remaining)
+      recordedChunksRef.current.push(new Float32Array(input.slice(0, copyLength)))
+      recordedSampleCountRef.current += copyLength
+    }
+    source.connect(processor)
+    processor.connect(mute)
+    mute.connect(audioContext.destination)
+    recorderProcessorRef.current = processor
+    recorderMuteRef.current = mute
+    nativeRecordingRef.current = true
   }
 
   const updateWaveform = (): void => {
@@ -388,7 +593,7 @@ export function ComposerVoiceInputButton({
   }
 
   const startRecording = async (): Promise<void> => {
-    if (disabled || isStartingRef.current || isRecordingRef.current) return
+    if (disabled || isStartingRef.current || isRecordingRef.current || nativeTranscribingRef.current) return
     if (!navigator.mediaDevices?.getUserMedia) {
       setState({
         ...EMPTY_COMPOSER_VOICE_CAPTURE_STATE,
@@ -416,18 +621,24 @@ export function ComposerVoiceInputButton({
       streamRef.current = stream
 
       const AudioContextCtor = getAudioContextConstructor()
+      const useNativeTranscription = canUseNativeComposerTranscription() && Boolean(AudioContextCtor)
       if (AudioContextCtor) {
         const audioContext = new AudioContextCtor()
         const analyser = audioContext.createAnalyser()
         analyser.fftSize = 256
-        audioContext.createMediaStreamSource(stream).connect(analyser)
+        const source = audioContext.createMediaStreamSource(stream)
+        source.connect(analyser)
         audioContextRef.current = audioContext
         analyserRef.current = analyser
+        mediaSourceRef.current = source
+        if (useNativeTranscription) setupNativeRecorder(audioContext, source)
       }
 
       const RecognitionCtor = getSpeechRecognitionConstructor()
       let message: string | null = null
-      if (RecognitionCtor) {
+      if (useNativeTranscription) {
+        message = 'Local dictation. Stop to transcribe.'
+      } else if (RecognitionCtor) {
         const recognition = new RecognitionCtor()
         recognition.continuous = true
         recognition.interimResults = true
@@ -494,7 +705,7 @@ export function ComposerVoiceInputButton({
   }
 
   const handleMenuToggle = (): void => {
-    if (disabled || state.isRecording || isStarting) return
+    if (disabled || state.isRecording || isStarting || isTranscribing) return
     const nextOpen = !isMenuOpen
     setIsMenuOpen(nextOpen)
     if (nextOpen) void refreshDevices({ requestPermission: true })
@@ -567,6 +778,8 @@ export function ComposerVoiceInputButton({
       isMountedRef.current = false
       stoppingRef.current = false
       isStartingRef.current = false
+      nativeTranscribingRef.current = false
+      setIsTranscribing(false)
       try {
         recognitionRef.current?.abort()
       } catch {
@@ -578,9 +791,11 @@ export function ComposerVoiceInputButton({
     []
   )
 
-  const title = state.isRecording
-    ? 'Stop voice dictation'
-    : state.message || 'Voice dictation'
+  const title = isTranscribing
+    ? 'Transcribing locally...'
+    : state.isRecording
+      ? 'Stop voice dictation'
+      : state.message || 'Voice dictation'
   const selectedDevice = devices.find((device) => device.deviceId === selectedDeviceId)
   const menuDevices =
     devices.length > 0
@@ -648,13 +863,15 @@ export function ComposerVoiceInputButton({
             if (state.isRecording) stopRecording()
             else void startRecording()
           }}
-          disabled={(disabled && !state.isRecording) || isStarting}
+          disabled={(disabled && !state.isRecording) || isStarting || isTranscribing}
           title={isStarting ? 'Starting microphone...' : title}
           aria-label={
             state.isRecording
               ? 'Stop voice dictation'
               : isStarting
                 ? 'Starting voice dictation'
+                : isTranscribing
+                  ? 'Transcribing voice dictation'
                 : 'Start voice dictation'
           }
           aria-pressed={state.isRecording}
@@ -666,7 +883,7 @@ export function ComposerVoiceInputButton({
           type="button"
           className="composer-voice-chevron"
           onClick={handleMenuToggle}
-          disabled={disabled || state.isRecording || isStarting}
+          disabled={disabled || state.isRecording || isStarting || isTranscribing}
           title="Select microphone"
           aria-label="Select microphone"
           aria-haspopup="dialog"

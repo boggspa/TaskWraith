@@ -395,6 +395,19 @@ declare global {
       saveClipboardImageAttachment: () => Promise<string[]>
       authorizeImagePreview: (paths: string[]) => Promise<void>
       readImagePreview: (path: string) => Promise<string | null>
+      transcribeComposerAudio: (input: {
+        localeIdentifier?: string
+        wav: ArrayBuffer
+      }) => Promise<
+        | {
+            ok: true
+            text: string
+            segments: Array<{ text: string; startMs: number; endMs: number; confidence: number }>
+            localeIdentifier: string
+            onDevice: boolean
+          }
+        | { ok: false; error: string }
+      >
       imageGenerationGetStatus: () => Promise<{
         enabled: boolean
         defaultProvider: 'openai' | 'xai'
