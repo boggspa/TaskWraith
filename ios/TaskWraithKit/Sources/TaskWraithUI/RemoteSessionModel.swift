@@ -2463,6 +2463,16 @@ public final class RemoteSessionModel: ObservableObject {
                 } else {
                     taskCards.insert(card, at: 0)
                 }
+                // C.iOS: an incremental card that is no longer an ensemble (e.g.
+                // an ensemble→solo collapse) must not keep a stale ensembleState —
+                // otherwise the composer's @-mention chips linger until the next
+                // full snapshot re-sync. Clear it now so the collapse is pristine
+                // immediately. card.id is the key the composer reads
+                // (`ensembleStates[card.id]`), and equals threadId on the
+                // top-level threads where the ensemble toggle is allowed.
+                if !card.isEnsemble {
+                    ensembleStates[card.id] = nil
+                }
             }
         case "workflows":
             if let workflow = envelope.decodePayload(RemoteWorkflow.self) {

@@ -4107,7 +4107,11 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                 />
                 <ComposerEnsembleToggleButton
                   enabled={isCurrentEnsembleChat}
-                  visible={Boolean(isEnsembleModeEnabled && currentChat && !isCurrentChatLinkedChild)}
+                  visible={Boolean(
+                    currentChat &&
+                      !isCurrentChatLinkedChild &&
+                      (isEnsembleModeEnabled || isCurrentEnsembleChat)
+                  )}
                   onToggle={handleToggleWelcomeEnsemble}
                   composerStyle={appearance.composerStyle}
                   disabled={isCurrentChatRunning}
