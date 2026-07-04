@@ -6236,7 +6236,13 @@ export class EnsembleOrchestrator {
 
   private async runRound(
     runtime: ActiveRoundRuntime,
-    participants: EnsembleParticipant[]
+    participants: EnsembleParticipant[],
+    // `skipPreamble` is set for a continuous-mode auto-continuation pass
+    // (see `tryAutoContinueRound`): the round already ran its health probe +
+    // round-start read-only fan-out on the FIRST pass, so a re-dispatched
+    // continuation pass jumps straight to the serial loop rather than
+    // re-probing / re-fanning-out every hop.
+    options: { skipPreamble?: boolean } = {}
   ): Promise<void> {
     if (runtime.startAfterCancellation) {
       await runtime.startAfterCancellation.catch(() => undefined)
@@ -6260,7 +6266,12 @@ export class EnsembleOrchestrator {
     runtime.remainingParticipants = remaining
     let dispatchAttempts = 0
     let unreachableFailures = 0
-    if (this.deps.probeParticipant && remaining.length > 0 && !runtime.cancelled) {
+    if (
+      !options.skipPreamble &&
+      this.deps.probeParticipant &&
+      remaining.length > 0 &&
+      !runtime.cancelled
+    ) {
       const health = await this.probeParticipantsForRound(runtime, remaining)
       dispatchAttempts += health.unreachable.length
       unreachableFailures += health.unreachable.length
@@ -6298,7 +6309,7 @@ export class EnsembleOrchestrator {
     // its existing read-only scout behavior even when the chat fan-out policy is off.
     const shouldRunReadOnlyFanout =
       userFanoutRequested || Boolean(workSessionScoutPass)
-    if (shouldRunReadOnlyFanout && !runtime.cancelled) {
+    if (!options.skipPreamble && shouldRunReadOnlyFanout && !runtime.cancelled) {
       const readers: EnsembleParticipant[] = []
       const writers: EnsembleParticipant[] = []
       // Spike 4 (staged fan-out) + review F1 — three-way partition:
@@ -7065,6 +7076,29 @@ export class EnsembleOrchestrator {
       finalSessionStatus === 'cancelled' ||
       finalSessionStatus === 'limit_reached'
 
+    // Continuous-mode autonomous continuation. When the serial loop drained with
+    // NO explicit yield/@-mention handoff, a 'continuous' round must not silently
+    // end at the round boundary — it keeps re-dispatching the roster (consuming
+    // one hop per participant) until a stop condition fires. Priority order is
+    // preserved: a queued user prompt (checked here) and a pending wakeup
+    // (handled + `return`ed above) both win over auto-continuation. A permission
+    // elevation stall can't reach this point — it blocks `await completion`
+    // upstream, so the loop never drains while a run is paused for approval.
+    // `tryAutoContinueRound` owns the mode/goal/hop/no-progress gating.
+    if (
+      remaining.length === 0 &&
+      !runtime.cancelled &&
+      runtime.queuedPrompts.length === 0 &&
+      !sessionTerminal &&
+      chatAfterCheck
+    ) {
+      const continuationRoster = this.tryAutoContinueRound(runtime, chatAfterCheck)
+      if (continuationRoster && continuationRoster.length > 0 && !runtime.cancelled) {
+        await this.runRound(runtime, continuationRoster, { skipPreamble: true })
+        return
+      }
+    }
+
     // Dequeue the next prompt (FIFO) for the follow-up round. Anything
     // remaining stays in `runtime.queuedPrompts` and gets transferred
     // to the new runtime in `beginRound` so the chain continues
@@ -7705,16 +7739,7 @@ export class EnsembleOrchestrator {
       return false
     }
     if (runtime.continuationHops >= runtime.maxContinuationHops) {
-      if (!runtime.continuationLimitNotified) {
-        runtime.continuationLimitNotified = true
-        const label =
-          runtime.orchestrationMode === 'continuous' ? 'Continuous handoff' : 'Extra turn'
-        this.appendRoundStatus(
-          runtime.chatId,
-          runtime.roundId,
-          `${label} limit reached (${runtime.continuationHops}/${runtime.maxContinuationHops}); returning control to the user.`
-        )
-      }
+      this.notifyContinuationLimitReached(runtime)
       return false
     }
     runtime.continuationHops += 1
@@ -7735,6 +7760,106 @@ export class EnsembleOrchestrator {
       `${statusMessage} ${label} ${runtime.continuationHops}/${runtime.maxContinuationHops}.`
     )
     return true
+  }
+
+  private notifyContinuationLimitReached(runtime: ActiveRoundRuntime): void {
+    if (runtime.continuationLimitNotified) return
+    runtime.continuationLimitNotified = true
+    const label = runtime.orchestrationMode === 'continuous' ? 'Continuous handoff' : 'Extra turn'
+    this.appendRoundStatus(
+      runtime.chatId,
+      runtime.roundId,
+      `${label} limit reached (${runtime.continuationHops}/${runtime.maxContinuationHops}); returning control to the user.`
+    )
+  }
+
+  /**
+   * Continuous-mode AUTONOMOUS continuation. When the serial loop drains with no
+   * explicit yield/@-mention handoff, a `'continuous'` round must not silently
+   * end at the round boundary (`finishRound`) — it keeps re-dispatching the full
+   * roster for another pass until a stop condition fires. Returns the roster to
+   * run next (each participant costs one continuation hop), or `null` to stop.
+   *
+   * Stop conditions:
+   *  - not continuous mode / user cancelled;
+   *  - the active goal is marked complete (`chat.activeGoal.status === 'completed'`)
+   *    — agents end the loop by completing the goal/tasks (see the Continuous-mode
+   *    system prompt);
+   *  - the hop budget is exhausted (`continuationHops >= maxContinuationHops`);
+   *  - NO-PROGRESS: the just-finished pass produced no real output — no
+   *    participant reached `'answered'`/`'yielded'` (everyone `'skipped'`/`'failed'`/
+   *    `'unreachable'`). Another identical pass would just repeat the silence, so
+   *    stop instead of spinning hops on nothing.
+   *
+   * A permission-elevation stall needs no check here (it blocks `await completion`
+   * upstream, so this drain point is unreachable while a run is paused for
+   * approval); work-session-terminal + queued-prompt + pending-wakeup priority are
+   * enforced by the caller before this is invoked.
+   *
+   * Unlike `tryAppendContinuationTurn`, this does NOT apply
+   * `CONTINUATION_BLOCKED_PARTICIPANT_STATUSES` — that guard exists to stop
+   * re-promoting an already-spoken participant WITHIN a pass; a fresh pass
+   * legitimately re-dispatches the whole roster.
+   */
+  private tryAutoContinueRound(
+    runtime: ActiveRoundRuntime,
+    chat: ChatRecord
+  ): EnsembleParticipant[] | null {
+    if (runtime.orchestrationMode !== 'continuous') return null
+    if (runtime.cancelled) return null
+    // Stop once the goal leaves 'active' — completed (done), blocked, or paused.
+    // Agents are prompted to call goal_complete when done and goal_blocked when
+    // genuinely stuck; both hand control back to the user, so don't keep spinning
+    // the roster to the hop cap after either signal. A missing goal is fine (the
+    // round auto-continues until hops/no-progress, per the user's spec).
+    if (chat.activeGoal && chat.activeGoal.status !== 'active') return null
+    const roundParticipants = chat.ensemble?.activeRound?.participants || []
+    const anyProducedContent = roundParticipants.some(
+      (participant) =>
+        participant.status === 'answered' ||
+        participant.status === 'yielded' ||
+        // 'sleeping' = a scheduled-wakeup continuation is in flight (real
+        // progress, matching statusToRunQueueJobStatus's convention); don't
+        // treat it as a no-op pass. In the common path a pending wakeup is
+        // intercepted before this drain hook, but keep the predicate honest.
+        participant.status === 'sleeping'
+    )
+    if (!anyProducedContent) return null
+    if (runtime.continuationHops >= runtime.maxContinuationHops) {
+      this.notifyContinuationLimitReached(runtime)
+      return null
+    }
+    if (!chat.ensemble) return null
+    const roster = getOrderedEnsembleParticipants(chat.ensemble, runtime.prompt).filter(
+      (participant) =>
+        participant.enabled && !runtime.unreachableParticipantIds?.has(participant.id)
+    )
+    if (roster.length === 0) return null
+    const fresh: EnsembleParticipant[] = []
+    for (const participant of roster) {
+      if (runtime.continuationHops >= runtime.maxContinuationHops) {
+        this.notifyContinuationLimitReached(runtime)
+        break
+      }
+      runtime.continuationHops += 1
+      fresh.push(participant)
+    }
+    if (fresh.length === 0) return null
+    this.updateChatRound(runtime.chatId, (round) =>
+      round?.roundId === runtime.roundId
+        ? {
+            ...round,
+            continuationHops: runtime.continuationHops,
+            maxContinuationHops: runtime.maxContinuationHops
+          }
+        : round
+    )
+    this.appendRoundStatus(
+      runtime.chatId,
+      runtime.roundId,
+      `Continuous mode: no explicit handoff — auto-continuing for another pass (${runtime.continuationHops}/${runtime.maxContinuationHops} hops). Mark the goal complete to stop.`
+    )
+    return fresh
   }
 
   private async probeParticipantsForRound(

@@ -6062,6 +6062,12 @@ Next action:
   it('does not re-promote a participant tagged via @mention after they already completed their turn', async () => {
     const harness = makeHarness()
     harness.chat.ensemble!.orchestrationMode = 'continuous'
+    // This test isolates the explicit @-mention/yield ROUTING mechanics. A
+    // pre-completed goal switches OFF continuous-mode auto-continuation (which
+    // would otherwise start another pass at drain), so the round finalizes where
+    // the mechanics assertion expects. The yield/@-mention path is independent of
+    // the goal, so its behavior is unaffected.
+    harness.chat.activeGoal = { ...buildActiveGoal('goal-continuous'), status: 'completed' }
     harness.chat.ensemble!.participants = [
       {
         id: 'ensemble-codex',
@@ -6116,6 +6122,281 @@ Next action:
     await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('completed'))
     expect(harness.dispatched).toHaveLength(2)
     expect(harness.chat.ensemble?.activeRound?.continuationHops || 0).toBe(0)
+  })
+
+  const CONTINUOUS_PAIR: EnsembleParticipant[] = [
+    {
+      id: 'ensemble-codex',
+      provider: 'codex',
+      enabled: true,
+      role: 'Worker',
+      instructions: 'Work.',
+      order: 1,
+      permissionPresetId: 'workspace_write'
+    },
+    {
+      id: 'ensemble-claude',
+      provider: 'claude',
+      enabled: true,
+      role: 'Planner',
+      instructions: 'Plan.',
+      order: 2,
+      permissionPresetId: 'read_only'
+    }
+  ]
+
+  it('auto-continues a continuous round with no explicit handoff until the hop budget is exhausted', async () => {
+    const harness = makeHarness()
+    harness.chat.ensemble!.orchestrationMode = 'continuous'
+    harness.chat.ensemble!.maxContinuationHops = 2
+    harness.chat.ensemble!.participants = CONTINUOUS_PAIR.map((p) => ({ ...p }))
+    const answerLatest = async (waitForLen?: number): Promise<void> => {
+      const run = harness.dispatched[harness.dispatched.length - 1]
+      harness.orchestrator.handleProviderOutput(
+        run.provider,
+        { appRunId: run.appRunId, appChatId: 'ensemble-chat' },
+        { type: 'content', text: `${run.provider} made progress.` }
+      )
+      harness.orchestrator.handleProviderOutput(
+        run.provider,
+        { appRunId: run.appRunId, appChatId: 'ensemble-chat' },
+        { type: 'result', status: 'success' }
+      )
+      if (waitForLen) await vi.waitFor(() => expect(harness.dispatched.length).toBe(waitForLen))
+    }
+
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Keep working.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    await answerLatest(2) // pass 1: codex → claude
+    await answerLatest(3) // drain → NO handoff → auto-continue pass 2: codex
+    await answerLatest(4) // pass 2: codex → claude
+    await answerLatest() // drain → hop budget exhausted → stop
+
+    await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('completed'))
+    expect(harness.dispatched).toHaveLength(4)
+    expect(harness.chat.ensemble?.activeRound?.continuationHops).toBe(2)
+    expect(
+      harness.chat.messages.some((m) => /limit reached \(2\/2\)/.test(m.content || ''))
+    ).toBe(true)
+  })
+
+  it('does not auto-continue a continuous round once the active goal is marked complete', async () => {
+    const harness = makeHarness()
+    harness.chat.ensemble!.orchestrationMode = 'continuous'
+    harness.chat.ensemble!.maxContinuationHops = 50 // plenty of hops remain
+    harness.chat.activeGoal = { ...buildActiveGoal('goal-done'), status: 'completed' }
+    harness.chat.ensemble!.participants = CONTINUOUS_PAIR.map((p) => ({ ...p }))
+    const answerLatest = async (waitForLen?: number): Promise<void> => {
+      const run = harness.dispatched[harness.dispatched.length - 1]
+      harness.orchestrator.handleProviderOutput(
+        run.provider,
+        { appRunId: run.appRunId, appChatId: 'ensemble-chat' },
+        { type: 'content', text: `${run.provider} did work.` }
+      )
+      harness.orchestrator.handleProviderOutput(
+        run.provider,
+        { appRunId: run.appRunId, appChatId: 'ensemble-chat' },
+        { type: 'result', status: 'success' }
+      )
+      if (waitForLen) await vi.waitFor(() => expect(harness.dispatched.length).toBe(waitForLen))
+    }
+
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Finish up.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    await answerLatest(2)
+    await answerLatest()
+    await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('completed'))
+    // Goal already complete → no second pass despite the hop budget.
+    expect(harness.dispatched).toHaveLength(2)
+    expect(harness.chat.ensemble?.activeRound?.continuationHops || 0).toBe(0)
+  })
+
+  it('does not auto-continue a continuous round that produced no content (no-progress guard)', async () => {
+    const harness = makeHarness()
+    harness.chat.ensemble!.orchestrationMode = 'continuous'
+    harness.chat.ensemble!.maxContinuationHops = 50 // hops remain, but nobody spoke
+    harness.chat.ensemble!.participants = CONTINUOUS_PAIR.map((p) => ({ ...p }))
+    const skipLatest = async (waitForLen?: number): Promise<void> => {
+      const run = harness.dispatched[harness.dispatched.length - 1]
+      // result with NO content → finalized 'skipped'
+      harness.orchestrator.handleProviderOutput(
+        run.provider,
+        { appRunId: run.appRunId, appChatId: 'ensemble-chat' },
+        { type: 'result', status: 'success' }
+      )
+      if (waitForLen) await vi.waitFor(() => expect(harness.dispatched.length).toBe(waitForLen))
+    }
+
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Nothing to do.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    await skipLatest(2)
+    await skipLatest()
+    await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('completed'))
+    // Whole pass was 'skipped' → don't spin another empty pass.
+    expect(harness.dispatched).toHaveLength(2)
+    expect(harness.chat.ensemble?.activeRound?.continuationHops || 0).toBe(0)
+  })
+
+  it('a queued user prompt wins over continuous auto-continuation at drain', async () => {
+    const harness = makeHarness()
+    harness.chat.ensemble!.orchestrationMode = 'continuous'
+    harness.chat.ensemble!.maxContinuationHops = 50
+    harness.chat.ensemble!.participants = CONTINUOUS_PAIR.map((p) => ({ ...p }))
+    const answerLatest = async (waitForLen?: number): Promise<void> => {
+      const run = harness.dispatched[harness.dispatched.length - 1]
+      harness.orchestrator.handleProviderOutput(
+        run.provider,
+        { appRunId: run.appRunId, appChatId: 'ensemble-chat' },
+        { type: 'content', text: `${run.provider} did work.` }
+      )
+      harness.orchestrator.handleProviderOutput(
+        run.provider,
+        { appRunId: run.appRunId, appChatId: 'ensemble-chat' },
+        { type: 'result', status: 'success' }
+      )
+      if (waitForLen) await vi.waitFor(() => expect(harness.dispatched.length).toBe(waitForLen))
+    }
+
+    const firstRound = harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'First round.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    // User queues a follow-up mid-round.
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'User follow-up.',
+      event: { sender: {} as Electron.WebContents },
+      mode: 'queue'
+    })
+    await answerLatest(2)
+    await answerLatest(3) // drain → queued prompt drains into a FRESH round, not an auto-continue pass
+    await vi.waitFor(() =>
+      expect(harness.chat.ensemble?.activeRound?.prompt).toBe('User follow-up.')
+    )
+    expect(harness.chat.ensemble?.activeRound?.roundId).not.toBe(firstRound.roundId)
+  })
+
+  it('a user cancel wins over continuous auto-continuation at drain', async () => {
+    const harness = makeHarness()
+    harness.chat.ensemble!.orchestrationMode = 'continuous'
+    harness.chat.ensemble!.maxContinuationHops = 50
+    harness.chat.ensemble!.participants = CONTINUOUS_PAIR.map((p) => ({ ...p }))
+
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Work then get stopped.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const first = harness.dispatched[0]
+    harness.orchestrator.handleProviderOutput(
+      first.provider,
+      { appRunId: first.appRunId, appChatId: 'ensemble-chat' },
+      { type: 'content', text: 'codex did work.' }
+    )
+    harness.orchestrator.handleProviderOutput(
+      first.provider,
+      { appRunId: first.appRunId, appChatId: 'ensemble-chat' },
+      { type: 'result', status: 'success' }
+    )
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    // Stop the round while claude is speaking.
+    await harness.orchestrator.cancelRound('ensemble-chat', 'cancelled')
+    await new Promise((r) => setTimeout(r, 20))
+    expect(harness.chat.ensemble?.activeRound?.status).toBe('cancelled')
+    expect(harness.dispatched).toHaveLength(2) // no auto-continue pass after a cancel
+  })
+
+  it('does not auto-continue a continuous round once the active goal is blocked', async () => {
+    // An agent calling goal_blocked (status 'blocked') hands control back to the
+    // user — the round must NOT keep spinning the roster to the hop cap.
+    const harness = makeHarness()
+    harness.chat.ensemble!.orchestrationMode = 'continuous'
+    harness.chat.ensemble!.maxContinuationHops = 50
+    harness.chat.activeGoal = { ...buildActiveGoal('goal-blocked'), status: 'blocked' }
+    harness.chat.ensemble!.participants = CONTINUOUS_PAIR.map((p) => ({ ...p }))
+    const answerLatest = async (waitForLen?: number): Promise<void> => {
+      const run = harness.dispatched[harness.dispatched.length - 1]
+      harness.orchestrator.handleProviderOutput(
+        run.provider,
+        { appRunId: run.appRunId, appChatId: 'ensemble-chat' },
+        { type: 'content', text: `${run.provider} is blocked.` }
+      )
+      harness.orchestrator.handleProviderOutput(
+        run.provider,
+        { appRunId: run.appRunId, appChatId: 'ensemble-chat' },
+        { type: 'result', status: 'success' }
+      )
+      if (waitForLen) await vi.waitFor(() => expect(harness.dispatched.length).toBe(waitForLen))
+    }
+
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Try the blocked task.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    await answerLatest(2)
+    await answerLatest()
+    await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('completed'))
+    expect(harness.dispatched).toHaveLength(2)
+    expect(harness.chat.ensemble?.activeRound?.continuationHops || 0).toBe(0)
+  })
+
+  it('auto-continues a continuous round after an explicit yield resolves (goal active)', async () => {
+    // Coverage: a mid-pass explicit yield must NOT suppress auto-continuation —
+    // once the yield resolves and the pass drains, the round keeps going.
+    const harness = makeHarness()
+    harness.chat.ensemble!.orchestrationMode = 'continuous'
+    harness.chat.ensemble!.maxContinuationHops = 2
+    harness.chat.activeGoal = { ...buildActiveGoal('goal-active') } // status 'active' → continue
+    harness.chat.ensemble!.participants = CONTINUOUS_PAIR.map((p) => ({ ...p }))
+    const answerLatest = async (waitForLen?: number): Promise<void> => {
+      const run = harness.dispatched[harness.dispatched.length - 1]
+      harness.orchestrator.handleProviderOutput(
+        run.provider,
+        { appRunId: run.appRunId, appChatId: 'ensemble-chat' },
+        { type: 'content', text: `${run.provider} worked.` }
+      )
+      harness.orchestrator.handleProviderOutput(
+        run.provider,
+        { appRunId: run.appRunId, appChatId: 'ensemble-chat' },
+        { type: 'result', status: 'success' }
+      )
+      if (waitForLen) await vi.waitFor(() => expect(harness.dispatched.length).toBe(waitForLen))
+    }
+
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Collaborate.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1)) // codex
+    // codex explicitly yields to claude (the next serial participant → reorder,
+    // no hop consumed).
+    harness.orchestrator.markYielded(harness.dispatched[0].appRunId!, 'Over to Claude', 'claude')
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2)) // claude
+    await answerLatest(3) // claude done → drain → auto-continue pass: codex
+    await answerLatest(4) // codex → claude (pass 2)
+    await answerLatest() // drain → hop budget (2) exhausted → stop
+    await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('completed'))
+    // The explicit yield did not stop auto-continuation: a full second pass ran.
+    expect(harness.dispatched).toHaveLength(4)
+    expect(harness.chat.ensemble?.activeRound?.continuationHops).toBe(2)
   })
 
   it('resolves turn-bound yield targets by model alias', () => {
@@ -6181,6 +6462,9 @@ Next action:
   it('does not append an extra turn when @-tagging a participant who already reached a terminal status', async () => {
     const harness = makeHarness()
     harness.chat.ensemble!.orchestrationMode = 'continuous'
+    // Pre-completed goal disables auto-continuation to isolate the @-mention
+    // terminal-status mechanics under test (see the note on the first such test).
+    harness.chat.activeGoal = { ...buildActiveGoal('goal-continuous'), status: 'completed' }
     harness.chat.ensemble!.participants = [
       {
         id: 'ensemble-claude',
@@ -6583,6 +6867,9 @@ Next action:
   it('auto-returns to the yielding participant after a yielded target answers', async () => {
     const harness = makeHarness()
     harness.chat.ensemble!.orchestrationMode = 'continuous'
+    // Pre-completed goal disables auto-continuation to isolate the yield-return
+    // mechanics under test (see the note on the first such test).
+    harness.chat.activeGoal = { ...buildActiveGoal('goal-continuous'), status: 'completed' }
     harness.chat.ensemble!.participants = [
       {
         id: 'typecheckz',
@@ -6661,6 +6948,9 @@ Next action:
   it('unwinds nested yield-return frames in LIFO order', async () => {
     const harness = makeHarness()
     harness.chat.ensemble!.orchestrationMode = 'continuous'
+    // Pre-completed goal disables auto-continuation to isolate the nested
+    // yield-return LIFO mechanics under test (see the note on the first such test).
+    harness.chat.activeGoal = { ...buildActiveGoal('goal-continuous'), status: 'completed' }
     harness.chat.ensemble!.participants = [
       {
         id: 'participant-a',
@@ -6759,6 +7049,9 @@ Next action:
   it('clears yield-return frames when the yielded target returns to the user', async () => {
     const harness = makeHarness()
     harness.chat.ensemble!.orchestrationMode = 'continuous'
+    // Pre-completed goal disables auto-continuation to isolate the yield-return
+    // frame-clearing mechanics under test (see the note on the first such test).
+    harness.chat.activeGoal = { ...buildActiveGoal('goal-continuous'), status: 'completed' }
     harness.chat.ensemble!.participants = [
       {
         id: 'typecheckz',

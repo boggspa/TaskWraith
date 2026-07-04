@@ -539,12 +539,12 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
   // to `user` instead of bouncing an invalid participant target off the
   // end of the rotation (1.0.4-AJ).
   //
-  // Continuous-mode rounds don't have a fixed "last" speaker —
-  // continuationHops budget keeps the round open until someone
-  // explicitly returns to user — so the last-speaker marker is
-  // skipped there. The continuous-mode rule line already nudges
-  // toward "only request another handoff when more agent work is
-  // genuinely useful" which covers that orchestration mode.
+  // Continuous-mode rounds don't have a fixed "last" speaker — the round
+  // AUTO-CONTINUES (re-dispatches the roster each pass, consuming hops) until
+  // the goal/tasks are marked complete (or blocked/paused), the hop budget is
+  // exhausted, or the user stops it (see the continuous-mode round-policy line
+  // + rule below, and `tryAutoContinueRound` in EnsembleOrchestrator). So the
+  // fixed last-speaker marker is skipped in continuous mode.
   const isMultiParticipantRound = orderedParticipants.length >= 2
   const selfIndex = orderedParticipants.findIndex(
     (participant) => participant.id === input.participant.id
@@ -803,7 +803,7 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
     `Round id: ${input.roundId}`,
     `Round policy: ${
       orchestrationMode === 'continuous'
-        ? `Continuous. You may hand work to another participant with @mentions or ensemble_yield(target), capped at ${continuationHops}/${maxContinuationHops} extra handoffs this round.`
+        ? `Continuous. This round CONTINUES AUTONOMOUSLY: after every participant has spoken it re-dispatches the roster for another pass and keeps going until the goal/tasks are complete and marked complete, the handoff-hop budget is exhausted (${continuationHops}/${maxContinuationHops} used), a permission approval stalls it, or the user stops it. Steer ordering with @mentions or ensemble_yield(target). To END the round, finish the work and mark the active goal/tasks complete (e.g. call goal_complete) — restating "done" WITHOUT completing the goal just loops another pass.`
         : 'Turn-bound. Each participant speaks at most once; @mentions and ensemble_yield(target) only reorder participants who have not spoken yet.'
     }`,
     activeConcurrentMode
@@ -880,7 +880,7 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
     '- Use ensemble_fanout when multiple peers should work in parallel. Default read_only fan-out only targets read-only participants; locked_writers fan-out is feature-gated, requires the assigned Boss (or active Captain after Boss unavailability) as caller with explicit writeScopes for writer targets, and relies on workspace write locks. When no Boss is assigned, automatic writer fan-out is host-mediated by user-enabled write-scope claim + matrix-ack preflight rather than peer tool calls.',
     '- If you are the assigned Boss, or the Captain after Boss is unavailable, and Boss/Captain Auto Approvals are enabled, use list_ensemble_participants before ensemble_roster_edit to inspect participant ids, available providers/models, model context windows, and coarse provider quota bands; then you may swap a non-active participant seat provider/model/reasoning/permissions or adjust role instructions/mini-goals when quota walls, weak output, or agreed role changes warrant it.',
     '- Use blackboard_post only for durable shared facts, decisions, risks, or do-not-repeat notes. Do not use the blackboard for conversational side messages.',
-    '- In Continuous mode, only request another handoff when more agent work is genuinely useful; otherwise return control to the user.',
+    '- In Continuous mode the round auto-continues each pass until the goal/tasks are marked complete or the hop budget runs out — when the work is genuinely finished, mark the active goal/tasks complete (e.g. call goal_complete) instead of restating "done", and use @mention/ensemble_yield only to route a specific next actor.',
     '- Respect your permission preset. Read-only roles should not attempt file or shell mutations.',
     '- Respond as yourself only. Do not impersonate other participants.',
     // 1.0.4-AF / Adv-1 — Plan/Ensemble precedence note. Ensemble
