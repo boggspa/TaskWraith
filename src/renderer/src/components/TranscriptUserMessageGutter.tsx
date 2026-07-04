@@ -32,15 +32,15 @@ const GUTTER_RAIL_WIDTH_PX = 34
 const GUTTER_COMPOSER_CLEARANCE_PX = 6
 
 /**
- * Left edge of the pane's floating composer stack (surface + any above-bar
+ * Bounding box of the pane's floating composer stack (surface + any above-bar
  * rows), in viewport px. The rail's bottom third runs alongside the composer's
- * vertical band, so the frame must keep the WHOLE rail left of this line —
+ * vertical band, so the frame must keep the WHOLE rail left of this box —
  * with the workspace sidebar collapsed the pane widens and the composer's
  * left edge can otherwise cross the rail's x-position (bleed-under). Children
  * are measured individually because the `.composer-area` wrapper itself spans
  * the full pane width; its centred children are the visible furniture.
  */
-function composerLeftEdgePx(scroller: HTMLElement): number | null {
+function composerStackBox(scroller: HTMLElement): { left: number } | null {
   const composerArea = scroller.closest('.app-transcript')?.querySelector('.composer-area')
   if (!composerArea) return null
   let left = Number.POSITIVE_INFINITY
@@ -49,6 +49,26 @@ function composerLeftEdgePx(scroller: HTMLElement): number | null {
     const rect = child.getBoundingClientRect()
     if (rect.width <= 0 || rect.height <= 0) continue
     left = Math.min(left, rect.left)
+  }
+  return Number.isFinite(left) ? { left } : null
+}
+
+/**
+ * Left edge of the widest MOUNTED transcript row, in viewport px. Belt for the
+ * X anchor: rows are the furniture the rail must visually flank, and anchoring
+ * off the row rect (not just `.transcript-inner`, which can be measured
+ * mid-relayout) keeps the rail honest even when the inner's rect is briefly
+ * stale during a sidebar collapse/expand reflow.
+ */
+function mountedRowsLeftEdgePx(scroller: HTMLElement): number | null {
+  const rows = scroller.querySelectorAll<HTMLElement>('[data-vrow-id]')
+  let left = Number.POSITIVE_INFINITY
+  let sampled = 0
+  for (const row of rows) {
+    const rect = row.getBoundingClientRect()
+    if (rect.width <= 0 || rect.height <= 0) continue
+    left = Math.min(left, rect.left)
+    if (++sampled >= 8) break
   }
   return Number.isFinite(left) ? left : null
 }
@@ -247,19 +267,24 @@ export function TranscriptUserMessageGutter({
       setFrame(null)
       return
     }
-    let left = Math.max(scrollerRect.left + 8, contentRect.left - GUTTER_RAIL_WIDTH_PX)
-    // Keep the rail fully LEFT of the composer stack: the composer floats over
-    // the scroller's bottom band at a max-width that can exceed the transcript
-    // column's (sidebar collapsed → wider pane), so anchoring off the content
-    // edge alone lets the rail bleed under the composer. Clamp against the
-    // measured composer left edge; hide when there's no lane left of it.
-    const composerLeft = composerLeftEdgePx(scroller)
-    if (composerLeft !== null) {
-      left = Math.min(left, composerLeft - GUTTER_RAIL_WIDTH_PX - GUTTER_COMPOSER_CLEARANCE_PX)
-      if (left < scrollerRect.left + 4) {
-        setFrame(null)
-        return
-      }
+    // X anchor: the rail flanks the leftmost of (a) the transcript inner, (b)
+    // the widest MOUNTED row, and (c) the floating composer stack. (b) guards
+    // against a stale/mid-reflow inner rect (sidebar collapse animates the
+    // pane width); (c) keeps the rail fully LEFT of the composer, whose
+    // max-width can exceed the column's on a wide pane — anchoring off the
+    // content edge alone let the rail bleed under the composer/roster.
+    const composerBox = composerStackBox(scroller)
+    const rowsLeft = mountedRowsLeftEdgePx(scroller)
+    let anchorLeft = contentRect.left
+    if (rowsLeft !== null) anchorLeft = Math.min(anchorLeft, rowsLeft)
+    if (composerBox) {
+      anchorLeft = Math.min(anchorLeft, composerBox.left - GUTTER_COMPOSER_CLEARANCE_PX)
+    }
+    const left = Math.max(scrollerRect.left + 4, anchorLeft - GUTTER_RAIL_WIDTH_PX)
+    // No lane left of the composer → hide rather than overlap.
+    if (composerBox && left + GUTTER_RAIL_WIDTH_PX > composerBox.left + 1) {
+      setFrame(null)
+      return
     }
     const topInset = clamp(scrollerRect.height * 0.12, 64, 104)
     const bottomInset = clamp(scrollerRect.height * 0.08, 56, 96)
@@ -305,7 +330,7 @@ export function TranscriptUserMessageGutter({
       observer = new ResizeObserver(() => updateFrame())
       if (scroller) observer.observe(scroller)
       if (content) observer.observe(content)
-      // The composer clamp (composerLeftEdgePx) depends on the composer
+      // The composer clamp (composerStackBox) depends on the composer
       // stack's size — observe it too so an ensemble roster mounting or a
       // composer-style swap re-clamps the rail without a window resize.
       const composerArea = scroller?.closest('.app-transcript')?.querySelector('.composer-area')
@@ -322,6 +347,24 @@ export function TranscriptUserMessageGutter({
     const handleResize = () => updateFrame()
     window.addEventListener('resize', handleResize)
     return () => window.removeEventListener('resize', handleResize)
+  }, [updateFrame])
+
+  // Layout-settle belt: the sidebar collapse/expand and dock open/close are
+  // 260ms width/transform transitions. ResizeObserver fires while they run,
+  // but the FINAL settled geometry can land between observer ticks — one more
+  // measure at transitionend guarantees the rail's fixed frame matches the
+  // resting layout. Filtered to geometry-affecting properties and to events
+  // outside the rail itself (marker width/background transitions would
+  // otherwise re-measure on every hover). setFrame's <0.5px bail makes the
+  // no-change case free.
+  useEffect(() => {
+    const handleTransitionEnd = (event: TransitionEvent) => {
+      if (!/^(width|left|right|transform|flex-basis|margin-left)$/.test(event.propertyName)) return
+      if (event.target instanceof Node && railRef.current?.contains(event.target)) return
+      updateFrame()
+    }
+    document.addEventListener('transitionend', handleTransitionEnd, true)
+    return () => document.removeEventListener('transitionend', handleTransitionEnd, true)
   }, [updateFrame])
 
   const activeMarkerModel = useMemo(

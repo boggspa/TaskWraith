@@ -38,12 +38,26 @@ shipping these commits.
   and Devices — each opening the same popover as its sidebar counterpart,
   with the same pending-approval / collaborator / device-connected glows.
 
+### Changed
+- **Corner-pill polish.** The bottom-left column pill's dividers now span the
+  full pill width and its icons are ~1.3x larger. Active pill buttons (both
+  the top horizontal pills and the column pill) swapped the old left-weighted
+  blue gradient smear — whose near-white glyph vanished on light themes — for
+  the neutral glass blob + hairline ring the hover state already used.
+
 ### Fixed
 - **Rail no longer bleeds under the composer.** With the workspace sidebar
   collapsed, the go-to-message rail could overlap the floating composer's
   left edge (the composer stack can be wider than the transcript column on a
-  wide pane). The rail now measures the composer and keeps itself fully to
-  the composer's left, hiding only when there's genuinely no lane for it.
+  wide pane). The rail now anchors off the leftmost of the transcript column,
+  the widest mounted row, and the composer stack, keeps itself fully to the
+  composer's left (hiding only when there's genuinely no lane), and
+  re-measures when layout transitions settle.
+- **Settings is reachable with the sidebar collapsed.** Opening Settings
+  while the workspace sidebar was hidden left no tab navigation and no "Back
+  to app" — the sidebar slot (which hosts the Settings nav) now force-mounts
+  for the duration of the takeover and slides back out on close, without
+  touching the user's collapsed preference.
 - **Right-dock panels no longer stack from the top pill.** The rim buttons
   (Run rail, Media, Notes/Pins, Terminal, File editor, Inspector) now route
   through the dock's exclusive lifecycle: opening one surface replaces the

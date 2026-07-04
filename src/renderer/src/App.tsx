@@ -19190,7 +19190,13 @@ function App(): React.JSX.Element {
   // Animated open/close: keep each panel mounted through a short exit
   // transition instead of snapping in/out. `mounted` gates rendering;
   // `className` drives the slide/fade (see 13-panel-transitions.css).
-  const sidebarShown = showWorkspaceSidebar && !isChatPopoutWindow
+  // `|| showSettings`: the Settings takeover swaps the workspace Sidebar for
+  // the SettingsSidebar in the SAME mounted slot — with the sidebar collapsed
+  // that slot never mounted, leaving Settings with no tab nav and no "Back to
+  // app" (the user was stuck). Deriving (not setting) the force-show means the
+  // user's collapsed preference is untouched: closing Settings slides the
+  // sidebar back out.
+  const sidebarShown = (showWorkspaceSidebar || showSettings) && !isChatPopoutWindow
   const sidebarPresence = usePanelPresence(sidebarShown)
   const dockPresence = usePanelPresence(rightDockVisible)
   const activeRightDockTab = resolveActiveRightDockTab(rightDockTabs, rightDockTab)

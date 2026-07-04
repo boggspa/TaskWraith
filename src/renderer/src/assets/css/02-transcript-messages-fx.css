@@ -334,8 +334,8 @@
 }
 
 .chat-corner-controls.chat-corner-controls-bottom-left > *:not(:first-child)::before {
-  left: 6px;
-  right: 6px;
+  left: 0;
+  right: 0;
   top: 0;
   bottom: auto;
   width: auto;
@@ -343,8 +343,27 @@
 }
 
 .chat-corner-controls.chat-corner-controls-bottom-left .chat-corner-btn {
-  min-height: 38px;
-  width: 38px;
+  min-height: 44px;
+  width: 44px;
+}
+
+/* 1.3x icons for the column pill (base pill glyphs are 22px → ~29px), with
+ * the per-button ring scaled up to keep wrapping the larger glyph. Both the
+ * icon SPAN and its svg scale — the shared `.sf-symbol-icon` base is 14px and
+ * would otherwise clip-center the grown svg. */
+.chat-corner-controls.chat-corner-controls-bottom-left .chat-corner-btn .sf-symbol-icon {
+  width: 29px;
+  height: 29px;
+}
+
+.chat-corner-controls.chat-corner-controls-bottom-left .chat-corner-btn svg {
+  width: 29px;
+  height: 29px;
+}
+
+.chat-corner-controls.chat-corner-controls-bottom-left .chat-corner-btn::after {
+  width: 36px;
+  height: 36px;
 }
 
 /* Sidebar-footer state glows, restyled for the glass pill's borderless icon
@@ -603,21 +622,22 @@
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text-primary) 20%, transparent);
 }
 
+/* Active = the same neutral glass blob as hover, one notch stronger — a
+ * centred circular fill + hairline rim that reads on dark AND light pill
+ * scrims. Replaces the old left-weighted blue gradient smear, whose
+ * near-white icon colour also vanished on light themes. Selectors are shared
+ * pill furniture, so the top horizontal pills and the bottom-left column
+ * pill get the identical treatment. */
 .chat-corner-controls .chat-corner-btn.active {
-  color: rgba(236, 244, 255, 0.98);
+  color: var(--text-primary);
 }
 
 .chat-corner-controls .chat-corner-btn.active::after {
   opacity: 1;
-  background: linear-gradient(
-    90deg,
-    color-mix(in srgb, var(--accent, #5a8cff) 22%, transparent) 0%,
-    color-mix(in srgb, var(--accent, #5a8cff) 8%, transparent) 65%,
-    transparent 100%
-  );
+  background: color-mix(in srgb, var(--text-primary) 13%, transparent);
   box-shadow:
-    inset 0 0 0 1px color-mix(in srgb, var(--accent, #5a8cff) 42%, transparent),
-    inset 0 0 10px color-mix(in srgb, var(--accent, #5a8cff) 11%, transparent);
+    inset 0 0 0 1px color-mix(in srgb, var(--text-primary) 32%, transparent),
+    inset 0 1px 0 color-mix(in srgb, white 14%, transparent);
 }
 
 .chat-corner-controls .side-chat-menu-trigger.chat-corner-btn::after {
