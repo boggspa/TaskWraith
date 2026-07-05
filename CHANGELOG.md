@@ -34,6 +34,11 @@ published.
   `tw_introspection_review` to create, inspect, and review proposal packs from
   chat. The MCP surface intentionally has **no apply tool**; applying approved
   proposals remains gated through the Settings/API flow.
+- **Thread Introspection — decay and supersede lifecycle.** Store-level helpers
+  can now supersede one memory proposal with another, expire past-due proposed
+  items, and preserve bidirectional provenance links. Lifecycle controls are
+  internal for now; no Settings, IPC, MCP, or automatic lifecycle policy is
+  exposed yet.
 
 ## 1.7.6 - 2026-07-05
 

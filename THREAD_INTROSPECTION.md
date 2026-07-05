@@ -326,6 +326,7 @@ Commits:
 - `b4c55f6f1` — Settings daily schedule toggle
 - `44077e6da` — phase-1 apply for low-risk repo-convention proposals
 - `673a1eb11` — `tw_introspection_*` MCP tools for run/list/read/review
+- `21e857890` — decay/supersede lifecycle helpers
 
 | Slice | Status | Notes |
 | --- | --- | --- |
@@ -340,31 +341,45 @@ Commits:
 | Apply UI (phase 1) | **Landed** | Apply affordance for approved `repo_convention` / `do_not_repeat` proposals |
 | Scheduled daily generation | **Landed** | `IntrospectionScheduler.ts` + schedule IPC/toggle |
 | MCP tools | **Landed** | `tw_introspection_run`, `tw_introspection_list`, `tw_introspection_read`, `tw_introspection_review`; no MCP apply tool |
+| Decay / supersede | **Landed** | `IntrospectionLifecycleService.ts` store helpers; no IPC/MCP/renderer controls yet |
 | Apply layer (skills, prefs, bugs) | **Pending** | Skill Patch Manager + rollback; other kinds blocked in phase 1 |
 | Distillation policy | **Pending** | Auto-approve rules per scope/kind |
-| Decay / supersede | **Pending** | Registry lifecycle after apply |
 
 **Tests:** focused introspection suites are green across handlers, harvester,
-run service, scheduler, apply service, MCP executors, Settings panel, and review
-panel.
+run service, scheduler, apply service, lifecycle service, MCP executors,
+Settings panel, and review panel.
 
 **Operational in dev:** Settings → Thread introspection → manual 24h run →
 approve/reject → **Apply** (repo convention / do-not-repeat only). Daily
 read-only generation can create reviewable packs, and MCP agents can
 run/list/read/review packs through `tw_introspection_*`. **Not yet:**
-skill/instruction file apply, MCP apply, full memory registry, decay/supersede.
+skill/instruction file apply, MCP apply, full memory registry UI.
 
 ### Pipeline checklist
 
 ```text
 Collect → Classify → Persist → Review → Scheduled → Apply (phase 1) → MCP → Decay/supersede
-  ✅        ✅         ✅         ✅        ✅             ✅ conventions   ✅      ❌ pending
+  ✅        ✅         ✅         ✅        ✅             ✅ conventions   ✅      ✅ store helpers
 ```
 
 Scheduled generation creates **reviewable packs only** (no auto-apply). Phase-1
 apply targets **RepoConventionIndex** only; skill patches and other kinds remain
 blocked until later gated slices ship. MCP tools intentionally stop at
 run/list/read/review; applying proposals remains outside the MCP surface.
+
+## Decay / supersede lifecycle
+
+`IntrospectionLifecycleService.ts` provides the first store-level lifecycle
+helpers:
+
+- `supersedeMemoryProposal()` links a successor and predecessor with
+  `supersedesId` / `supersededById`, marks the predecessor `superseded`, and
+  blocks superseding already-applied proposals.
+- `expireDueMemoryProposals()` marks past-due `proposed` proposals as
+  `expired` while leaving approved/applied records untouched.
+
+These helpers are internal/store-level today. There are no Settings, IPC, MCP,
+or automatic policy controls for lifecycle management yet.
 
 ## Apply phase 1 (repo conventions only)
 
@@ -433,8 +448,8 @@ Beyond phase 1, approved proposals will route by kind/scope:
 | Skill Patch Manager | `skill_patch` (diff preview, approval ledger, rollback) | Later |
 | Issue tracker / workspace board | `bug` | Later |
 
-Future apply actions should write **audit ledger entries** and support **supersede**
-rather than append forever (decay/supersede slice pending).
+Future apply actions should write **audit ledger entries** and wire **supersede**
+through the apply layer (store helpers landed; IPC/MCP/ledger integration pending).
 
 ## For agents operating in TaskWraith
 
