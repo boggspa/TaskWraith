@@ -169,8 +169,9 @@ export function classifyRowType(message: ChatMessage): VirtualRowType {
  * rendered body would change height. Crucially this lets a streaming
  * token invalidate ONE row's cached measurement, never the whole list:
  *
- *   - text rows (user/assistant/system/error): role + content length —
- *     monotonic per streamed token, O(1).
+ *   - text rows (user/assistant/system/error): role + content length + a bounded
+ *     markdown-shape sample. This stays cheap for long transcripts while catching
+ *     same-length edits that change wrapping/fences/media hints.
  *   - tool rows (ActivityStack): activity count + every activity's
  *     status + total output-preview length. Captures the two things
  *     that change an ActivityStack's height: a status flip
@@ -180,11 +181,34 @@ export function classifyRowType(message: ChatMessage): VirtualRowType {
  * geometry, added at `measurementKey` time so a content-identical row
  * at a new width/expansion gets a distinct cache slot.
  */
+const CONTENT_VERSION_SAMPLE_CHARS = 256
+
+function textShapeVersion(role: ChatMessage['role'], content: string): string {
+  const len = content.length
+  const sample =
+    len > CONTENT_VERSION_SAMPLE_CHARS * 2
+      ? `${content.slice(0, CONTENT_VERSION_SAMPLE_CHARS)}\u0000${content.slice(-CONTENT_VERSION_SAMPLE_CHARS)}`
+      : content
+  let hash = 2166136261
+  let newlines = 0
+  let fenceTicks = 0
+  let markdownImageHints = 0
+  for (let i = 0; i < sample.length; i += 1) {
+    const code = sample.charCodeAt(i)
+    hash ^= code
+    hash = Math.imul(hash, 16777619)
+    if (code === 10) newlines += 1
+    if (code === 96) fenceTicks += 1
+    if (code === 33 && sample.charCodeAt(i + 1) === 91) markdownImageHints += 1
+  }
+  return `${role[0] || 'x'}:${len}:${newlines}:${fenceTicks}:${markdownImageHints}:${(hash >>> 0).toString(36)}`
+}
+
 export function contentVersion(message: ChatMessage): string {
   if (message.role === 'tool') {
     const activities = message.toolActivities || []
     if (activities.length === 0) {
-      return `t:${(message.content || '').length}`
+      return textShapeVersion(message.role, message.content || '')
     }
     let outputLen = 0
     let statuses = ''
@@ -202,10 +226,9 @@ export function contentVersion(message: ChatMessage): string {
       outputLen += a.outputPreview?.length || a.resultSummary?.length || 0
       statuses += `${a.status || '?'}|`
     }
-    return `${message.role[0] || 'x'}t:${(message.content || '').length}:${activities.length}:${statuses}:${outputLen}`
+    return `${textShapeVersion(message.role, message.content || '')}:t:${activities.length}:${statuses}:${outputLen}`
   }
-  const len = (message.content || '').length
-  return `${message.role[0] || 'x'}:${len}`
+  return textShapeVersion(message.role, message.content || '')
 }
 
 /**
@@ -262,23 +285,32 @@ export function projectRows(
   const rows: VirtualRow[] = []
   for (let index = 0; index < messages.length; index++) {
     const message = messages[index]
-    if (!message || typeof message.id !== 'string') continue
-    const rowType = classifyRowType(message)
-    const hasRunBoundary = runBoundaryIds ? runBoundaryIds.has(message.id) : false
-    // Tool rows size by activity count, not text length, so they keep the flat
-    // estimate (contentLength 0); text rows scale with their content length.
-    const contentLength = message.role === 'tool' ? 0 : (message.content || '').length
-    rows.push({
-      id: message.id,
-      rowKey: `${message.id}#${index}`,
-      index,
-      rowType,
-      contentVersion: contentVersion(message),
-      estimatedHeight: estimatedHeightFor(rowType, hasRunBoundary, contentLength),
-      hasRunBoundary
-    })
+    const row = projectRow(message, index, runBoundaryIds)
+    if (row) rows.push(row)
   }
   return rows
+}
+
+export function projectRow(
+  message: ChatMessage | null | undefined,
+  index: number,
+  runBoundaryIds?: ReadonlySet<string> | null
+): VirtualRow | null {
+  if (!message || typeof message.id !== 'string') return null
+  const rowType = classifyRowType(message)
+  const hasRunBoundary = runBoundaryIds ? runBoundaryIds.has(message.id) : false
+  // Tool rows size by activity count, not text length, so they keep the flat
+  // estimate (contentLength 0); text rows scale with their content length.
+  const contentLength = message.role === 'tool' ? 0 : (message.content || '').length
+  return {
+    id: message.id,
+    rowKey: `${message.id}#${index}`,
+    index,
+    rowType,
+    contentVersion: contentVersion(message),
+    estimatedHeight: estimatedHeightFor(rowType, hasRunBoundary, contentLength),
+    hasRunBoundary
+  }
 }
 
 /**
@@ -337,16 +369,81 @@ export function getRowHeight(
   return row.estimatedHeight
 }
 
+function normalizedHeight(value: number | undefined): number {
+  return Number.isFinite(value) && (value as number) > 0 ? (value as number) : 0
+}
+
 /** Sum a slice of a heights array, defensively skipping non-finite values. */
-export function sumHeights(heights: number[], start: number, end: number): number {
+export function sumHeights(heights: readonly number[], start: number, end: number): number {
   let total = 0
   const lo = Math.max(0, start)
   const hi = Math.min(heights.length, end)
   for (let i = lo; i < hi; i++) {
-    const h = heights[i]
-    if (Number.isFinite(h) && h > 0) total += h
+    total += normalizedHeight(heights[i])
   }
   return total
+}
+
+/**
+ * Prefix offsets for variable-height rows. `offsets[i]` is the top of row `i`;
+ * `offsets[offsets.length - 1]` is total content height. Keeping this in one
+ * array lets scroll-window and anchor math use O(log n) binary searches and
+ * O(1) spacer sums instead of repeatedly scanning height slices.
+ */
+export function buildHeightOffsets(heights: readonly number[]): number[] {
+  const hs = Array.isArray(heights) ? heights : []
+  const offsets = new Array<number>(hs.length + 1)
+  offsets[0] = 0
+  for (let i = 0; i < hs.length; i += 1) {
+    offsets[i + 1] = offsets[i] + normalizedHeight(hs[i])
+  }
+  return offsets
+}
+
+function usableHeightOffsets(
+  heights: readonly number[],
+  heightOffsets?: readonly number[] | null
+): readonly number[] {
+  return Array.isArray(heightOffsets) && heightOffsets.length === heights.length + 1
+    ? heightOffsets
+    : buildHeightOffsets(heights)
+}
+
+export function totalHeightFromOffsets(heightOffsets: readonly number[]): number {
+  return heightOffsets.length > 0 ? heightOffsets[heightOffsets.length - 1] || 0 : 0
+}
+
+export function sumHeightOffsets(
+  heightOffsets: readonly number[],
+  start: number,
+  end: number
+): number {
+  const last = Math.max(0, heightOffsets.length - 1)
+  const lo = Math.max(0, Math.min(last, start))
+  const hi = Math.max(lo, Math.min(last, end))
+  return Math.max(0, (heightOffsets[hi] || 0) - (heightOffsets[lo] || 0))
+}
+
+function upperBound(values: readonly number[], target: number): number {
+  let lo = 0
+  let hi = values.length
+  while (lo < hi) {
+    const mid = Math.floor((lo + hi) / 2)
+    if ((values[mid] || 0) <= target) lo = mid + 1
+    else hi = mid
+  }
+  return lo
+}
+
+function lowerBound(values: readonly number[], target: number): number {
+  let lo = 0
+  let hi = values.length
+  while (lo < hi) {
+    const mid = Math.floor((lo + hi) / 2)
+    if ((values[mid] || 0) < target) lo = mid + 1
+    else hi = mid
+  }
+  return lo
 }
 
 export interface SelectWindowInput {
@@ -355,7 +452,9 @@ export interface SelectWindowInput {
   /** Visible height of the scroll container (clientHeight, px). */
   viewportHeight: number
   /** Per-row heights (measured-or-estimated), index-aligned to the rows. */
-  heights: number[]
+  heights: readonly number[]
+  /** Optional prefix offsets from {@link buildHeightOffsets}, index-aligned to heights. */
+  heightOffsets?: readonly number[]
   /** Extra px mounted above + below the visible band. */
   overscanPx?: number
   /** Force-mount one row for programmatic jump/focus requests. */
@@ -382,6 +481,8 @@ export function selectWindow(input: SelectWindowInput): VirtualWindow {
   const heights = Array.isArray(input.heights) ? input.heights : []
   const n = heights.length
   if (n === 0) return { startIndex: 0, endIndex: 0, topSpacerPx: 0, bottomSpacerPx: 0 }
+  const offsets = usableHeightOffsets(heights, input.heightOffsets)
+  const totalHeight = totalHeightFromOffsets(offsets)
 
   const viewportHeight = Number.isFinite(input.viewportHeight)
     ? Math.max(0, input.viewportHeight)
@@ -400,31 +501,20 @@ export function selectWindow(input: SelectWindowInput): VirtualWindow {
 
   let scrollTop = Number.isFinite(input.scrollTop) ? Math.max(0, input.scrollTop) : 0
   if (forceIndex !== null) {
-    const forcedRowTop = sumHeights(heights, 0, forceIndex)
+    const forcedRowTop = offsets[forceIndex] || 0
     scrollTop = Math.max(0, forcedRowTop - Math.round(viewportHeight * 0.35))
   }
 
   const windowTop = scrollTop - overscan
   const windowBottom = scrollTop + viewportHeight + overscan
 
-  // Single pass over cumulative offsets.
-  let cumTop = 0
-  let startIndex = -1
-  let endIndex = n
-  for (let i = 0; i < n; i++) {
-    const h = Number.isFinite(heights[i]) && heights[i] > 0 ? heights[i] : 0
-    const rowTop = cumTop
-    const rowBottom = cumTop + h
-    if (startIndex === -1 && rowBottom > windowTop) {
-      startIndex = i
-    }
-    if (rowTop >= windowBottom) {
-      endIndex = i
-      break
-    }
-    cumTop = rowBottom
-  }
-  if (startIndex === -1) startIndex = n // everything is above the window
+  // First row whose bottom is below the window top. `upperBound(offsets, x) - 1`
+  // matches the old linear `rowBottom > x` rule, including exact row boundaries.
+  let startIndex =
+    windowTop >= totalHeight ? n : Math.max(0, Math.min(n, upperBound(offsets, windowTop) - 1))
+  // First row whose top is at or below the window bottom. `offsets` has one
+  // extra total-height entry, so cap to n for the row index space.
+  let endIndex = Math.max(0, Math.min(n, lowerBound(offsets, windowBottom)))
   if (endIndex < startIndex) endIndex = startIndex
   if (forceIndex !== null && (forceIndex < startIndex || forceIndex >= endIndex)) {
     startIndex = forceIndex
@@ -434,8 +524,8 @@ export function selectWindow(input: SelectWindowInput): VirtualWindow {
   return {
     startIndex,
     endIndex,
-    topSpacerPx: sumHeights(heights, 0, startIndex),
-    bottomSpacerPx: sumHeights(heights, endIndex, n)
+    topSpacerPx: offsets[startIndex] || 0,
+    bottomSpacerPx: Math.max(0, totalHeight - (offsets[endIndex] || 0))
   }
 }
 
@@ -489,20 +579,22 @@ export interface ScrollAnchor {
  * Returns the first row whose cumulative bottom is strictly past
  * `scrollTop`. Defensive against empty / non-finite inputs.
  */
-export function findScrollAnchor(scrollTop: number, heights: number[]): ScrollAnchor {
+export function findScrollAnchor(
+  scrollTop: number,
+  heights: readonly number[],
+  heightOffsets?: readonly number[]
+): ScrollAnchor {
   const hs = Array.isArray(heights) ? heights : []
   const n = hs.length
   if (n === 0) return { index: 0, offsetWithin: 0 }
+  const offsets = usableHeightOffsets(hs, heightOffsets)
+  const totalHeight = totalHeightFromOffsets(offsets)
   const target = Number.isFinite(scrollTop) ? Math.max(0, scrollTop) : 0
-  let cum = 0
-  for (let i = 0; i < n; i++) {
-    const h = Number.isFinite(hs[i]) && hs[i] > 0 ? hs[i] : 0
-    if (cum + h > target) {
-      return { index: i, offsetWithin: target - cum }
-    }
-    cum += h
+  if (target < totalHeight) {
+    const index = Math.max(0, Math.min(n - 1, upperBound(offsets, target) - 1))
+    return { index, offsetWithin: target - (offsets[index] || 0) }
   }
   // Scrolled at/below the end: anchor the last row.
   const lastIndex = n - 1
-  return { index: lastIndex, offsetWithin: Math.max(0, target - sumHeights(hs, 0, lastIndex)) }
+  return { index: lastIndex, offsetWithin: Math.max(0, target - (offsets[lastIndex] || 0)) }
 }

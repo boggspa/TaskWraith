@@ -16,7 +16,10 @@ import {
   measurementKey,
   measurementContentVersion,
   getRowHeight,
+  buildHeightOffsets,
   sumHeights,
+  sumHeightOffsets,
+  totalHeightFromOffsets,
   selectWindow,
   computeAnchorDelta,
   windowReachesEnd,
@@ -142,8 +145,17 @@ describe('TranscriptVirtualWindow', () => {
 
   describe('contentVersion', () => {
     it('encodes role initial + content length for text rows', () => {
-      expect(contentVersion(msg({ id: 'a', role: 'assistant', content: 'hello' }))).toBe('a:5')
-      expect(contentVersion(msg({ id: 'u', role: 'user', content: 'hi' }))).toBe('u:2')
+      expect(contentVersion(msg({ id: 'a', role: 'assistant', content: 'hello' }))).toMatch(
+        /^a:5:/
+      )
+      expect(contentVersion(msg({ id: 'u', role: 'user', content: 'hi' }))).toMatch(/^u:2:/)
+    })
+
+    it('changes for same-length text edits that alter sampled markdown shape', () => {
+      const plain = msg({ id: 'a', role: 'assistant', content: 'hello world' })
+      const shaped = msg({ id: 'a', role: 'assistant', content: 'hello\nworld' })
+      expect(shaped.content).toHaveLength(plain.content.length)
+      expect(contentVersion(shaped)).not.toBe(contentVersion(plain))
     })
 
     it('changes when streamed text grows, stays equal when text is identical', () => {
@@ -196,9 +208,13 @@ describe('TranscriptVirtualWindow', () => {
     })
 
     it('uses content length for a tool fallback row with no activities', () => {
-      expect(contentVersion(msg({ id: 't', role: 'tool' }))).toBe('t:0')
-      expect(contentVersion(msg({ id: 't', role: 'tool', content: 'legacy result' }))).toBe('t:13')
-      expect(contentVersion(msg({ id: 'a', content: undefined as unknown as string }))).toBe('a:0')
+      expect(contentVersion(msg({ id: 't', role: 'tool' }))).toMatch(/^t:0:/)
+      expect(contentVersion(msg({ id: 't', role: 'tool', content: 'legacy result' }))).toMatch(
+        /^t:13:/
+      )
+      expect(contentVersion(msg({ id: 'a', content: undefined as unknown as string }))).toMatch(
+        /^a:0:/
+      )
     })
 
     it('includes folded fan-out tool activity state in assistant row versions', () => {
@@ -220,7 +236,7 @@ describe('TranscriptVirtualWindow', () => {
       })
 
       expect(contentVersion(done)).not.toBe(contentVersion(running))
-      expect(contentVersion(done)).toBe('at:11:1:success|:4')
+      expect(contentVersion(done)).toContain(':t:1:success|:4')
     })
   })
 
@@ -460,6 +476,32 @@ describe('TranscriptVirtualWindow', () => {
     it('returns 0 for an empty or inverted slice', () => {
       expect(sumHeights([], 0, 0)).toBe(0)
       expect(sumHeights([10, 20], 2, 1)).toBe(0)
+    })
+  })
+
+  describe('height offsets', () => {
+    it('builds reusable prefix offsets and sums ranges in O(1)', () => {
+      const offsets = buildHeightOffsets([10, Number.NaN, -5, 20])
+      expect(offsets).toEqual([0, 10, 10, 10, 30])
+      expect(totalHeightFromOffsets(offsets)).toBe(30)
+      expect(sumHeightOffsets(offsets, 1, 4)).toBe(20)
+      expect(sumHeightOffsets(offsets, -5, 99)).toBe(30)
+    })
+
+    it('selects windows and anchors from supplied offsets with boundary parity', () => {
+      const heights = [100, 0, 100, 100]
+      const offsets = buildHeightOffsets(heights)
+      const window = selectWindow({
+        scrollTop: 100,
+        viewportHeight: 100,
+        heights,
+        heightOffsets: offsets,
+        overscanPx: 0
+      })
+      expect(window.startIndex).toBe(2)
+      expect(window.endIndex).toBe(3)
+      expect(window.topSpacerPx).toBe(100)
+      expect(findScrollAnchor(100, heights, offsets)).toEqual({ index: 2, offsetWithin: 0 })
     })
   })
 

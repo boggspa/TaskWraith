@@ -3,6 +3,7 @@ import type { ChatMessage, ChatRecord, ChatRun, ProviderId } from '../../../main
 export interface TranscriptRowRenderSignature {
   rowKey: string
   message: ChatMessage
+  messageSignature: string
   boundaryRun?: ChatRun
   chatSignature: string
   providerLabel: string
@@ -10,6 +11,7 @@ export interface TranscriptRowRenderSignature {
   workspacePath?: string
   compactDensity: boolean
   liveActivityViewport?: boolean
+  virtualized: boolean
   isGlobal?: boolean
   sideChatSeed: boolean
   highlighted: boolean
@@ -22,6 +24,8 @@ export interface TranscriptRowRenderSignature {
   fanoutExpanded: boolean
   pendingPlanChoiceKey: string
   pendingAgentQuestionsKey: string
+  assistantRunModelKey: string
+  renameContinuityKey: string
   auxiliaryKey: string
   revealKey: string
   callbackRefs: readonly unknown[]
@@ -56,9 +60,12 @@ export function transcriptChatRenderSignature(chat: ChatRecord | null | undefine
     agentIdentities: chat.providerMetadata?.agentIdentities || null,
     pooledAgentId: chat.providerMetadata?.pooledAgentId || null,
     pooledAgentIdentity: chat.providerMetadata?.pooledAgentIdentity || null,
-    participants,
-    sessionActivityLedger: chat.ensemble?.sessionActivityLedger || null
+    participants
   })
+}
+
+export function transcriptMessageRenderSignature(message: ChatMessage): string {
+  return stableJson(message)
 }
 
 export function transcriptRowRenderSignatureEqual(
@@ -66,7 +73,7 @@ export function transcriptRowRenderSignatureEqual(
   next: TranscriptRowRenderSignature
 ): boolean {
   if (prev.rowKey !== next.rowKey) return false
-  if (prev.message !== next.message) return false
+  if (prev.messageSignature !== next.messageSignature) return false
   if (prev.boundaryRun !== next.boundaryRun) return false
   if (prev.chatSignature !== next.chatSignature) return false
   if (prev.providerLabel !== next.providerLabel) return false
@@ -74,6 +81,7 @@ export function transcriptRowRenderSignatureEqual(
   if (prev.workspacePath !== next.workspacePath) return false
   if (prev.compactDensity !== next.compactDensity) return false
   if (prev.liveActivityViewport !== next.liveActivityViewport) return false
+  if (prev.virtualized !== next.virtualized) return false
   if (prev.isGlobal !== next.isGlobal) return false
   if (prev.sideChatSeed !== next.sideChatSeed) return false
   if (prev.highlighted !== next.highlighted) return false
@@ -86,6 +94,8 @@ export function transcriptRowRenderSignatureEqual(
   if (prev.fanoutExpanded !== next.fanoutExpanded) return false
   if (prev.pendingPlanChoiceKey !== next.pendingPlanChoiceKey) return false
   if (prev.pendingAgentQuestionsKey !== next.pendingAgentQuestionsKey) return false
+  if (prev.assistantRunModelKey !== next.assistantRunModelKey) return false
+  if (prev.renameContinuityKey !== next.renameContinuityKey) return false
   if (prev.auxiliaryKey !== next.auxiliaryKey) return false
   if (prev.revealKey !== next.revealKey) return false
   if (prev.callbackRefs.length !== next.callbackRefs.length) return false

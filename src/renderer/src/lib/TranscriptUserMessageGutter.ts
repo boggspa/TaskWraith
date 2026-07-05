@@ -1,6 +1,6 @@
 import type { ChatMessage } from '../../../main/store/types'
 import { truncateUserMessagePreview } from './UserMessageCollapse'
-import { sumHeights, type VirtualRow } from './TranscriptVirtualWindow'
+import { buildHeightOffsets, totalHeightFromOffsets, type VirtualRow } from './TranscriptVirtualWindow'
 
 const GUTTER_PREVIEW_THRESHOLDS = {
   maxLines: 4,
@@ -109,7 +109,8 @@ export function buildTranscriptUserGutterMarkers(
       ? measured
       : row.estimatedHeight
   })
-  const totalHeight = Math.max(1, sumHeights(heights, 0, heights.length))
+  const heightOffsets = buildHeightOffsets(heights)
+  const totalHeight = Math.max(1, totalHeightFromOffsets(heightOffsets))
   const markers: TranscriptUserGutterMarker[] = []
 
   // Index the `heights` array and set `rowIndex` by the row's POSITION in `rows`
@@ -124,8 +125,8 @@ export function buildTranscriptUserGutterMarkers(
     const message = messages[row.index]
     if (!message) continue
 
-    const rowTop = sumHeights(heights, 0, pos)
-    const rowHeight = heights[pos] ?? row.estimatedHeight
+    const rowTop = heightOffsets[pos] || 0
+    const rowHeight = Math.max(0, (heightOffsets[pos + 1] || rowTop) - rowTop)
     const midpoint = rowTop + Math.max(0, rowHeight) / 2
     const topPercent = Math.max(0, Math.min(100, (midpoint / totalHeight) * 100))
 
@@ -186,12 +187,14 @@ export function findActiveGutterMarkerKey(
 ): string | null {
   if (!Array.isArray(markers) || markers.length === 0) return null
   if (!Number.isFinite(anchorRowIndex)) return null
-  let activeKey: string | null = null
-  for (const marker of markers) {
-    if (marker.rowIndex <= anchorRowIndex) activeKey = marker.key
-    else break
+  let lo = 0
+  let hi = markers.length
+  while (lo < hi) {
+    const mid = Math.floor((lo + hi) / 2)
+    if (markers[mid].rowIndex <= anchorRowIndex) lo = mid + 1
+    else hi = mid
   }
-  return activeKey
+  return lo > 0 ? markers[lo - 1].key : null
 }
 
 function compactMarkerStepPx(count: number): number {

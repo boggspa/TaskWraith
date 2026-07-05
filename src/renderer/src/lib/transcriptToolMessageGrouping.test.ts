@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest'
 import type { ChatMessage, ToolActivity } from '../../../main/store/types'
 import {
   groupAdjacentToolMessages,
+  groupAdjacentToolMessagesWithRanges,
   groupFanoutLaneMessages,
+  groupFanoutLaneMessagesWithRanges,
   groupedTranscriptMessageIds
 } from './transcriptToolMessageGrouping'
 import {
@@ -105,6 +107,21 @@ describe('groupAdjacentToolMessages', () => {
     expect(grouped[0].id).toBe('tool-group-t1')
     expect(grouped[0].toolActivities?.map((entry) => entry.id)).toEqual(['a1', 'a2'])
     expect(grouped[0].metadata?.groupedToolMessageIds).toEqual(['t1', 't2'])
+  })
+
+  it('reports source ranges for grouped tool runs', () => {
+    const ranges = groupAdjacentToolMessagesWithRanges([
+      textMessage('before'),
+      toolMessage('t1', [activity('a1')]),
+      toolMessage('t2', [activity('a2')]),
+      textMessage('after')
+    ])
+
+    expect(ranges.map((range) => [range.message.id, range.startIndex, range.endIndex])).toEqual([
+      ['before', 0, 1],
+      ['tool-group-t1', 1, 3],
+      ['after', 3, 4]
+    ])
   })
 
   it('keeps the grouped id STABLE as the run grows (no React-key churn)', () => {
@@ -242,6 +259,22 @@ describe('groupFanoutLaneMessages', () => {
       'content',
       'tools',
       'content'
+    ])
+  })
+
+  it('reports source ranges for grouped fan-out lane rows', () => {
+    const ranges = groupFanoutLaneMessagesWithRanges([
+      textMessage('before'),
+      fanoutContentMessage('c1', 'First note.'),
+      fanoutToolMessage('t1'),
+      fanoutContentMessage('c2', 'Second note.'),
+      textMessage('after')
+    ])
+
+    expect(ranges.map((range) => [range.message.id, range.startIndex, range.endIndex])).toEqual([
+      ['before', 0, 1],
+      ['c1', 1, 4],
+      ['after', 4, 5]
     ])
   })
 

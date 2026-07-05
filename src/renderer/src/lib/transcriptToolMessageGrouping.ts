@@ -51,6 +51,10 @@ function sameToolRunBoundary(a: ChatMessage, b: ChatMessage): boolean {
   return toolAttributionSignature(a) === toolAttributionSignature(b)
 }
 
+export function shouldGroupAdjacentToolMessages(a: ChatMessage, b: ChatMessage): boolean {
+  return isPlainToolMessage(a) && isPlainToolMessage(b) && sameToolRunBoundary(a, b)
+}
+
 function mergeToolRun(run: ChatMessage[]): ChatMessage {
   if (run.length === 1) return run[0]
   const first = run[0]
@@ -75,33 +79,54 @@ function mergeToolRun(run: ChatMessage[]): ChatMessage {
   }
 }
 
-export function groupAdjacentToolMessages(messages: ChatMessage[]): ChatMessage[] {
-  const grouped: ChatMessage[] = []
-  let pending: ChatMessage[] = []
+export interface TranscriptGroupedMessageRange {
+  message: ChatMessage
+  startIndex: number
+  endIndex: number
+}
 
-  const flush = (): void => {
+export function groupAdjacentToolMessagesWithRanges(
+  messages: readonly ChatMessage[]
+): TranscriptGroupedMessageRange[] {
+  const grouped: TranscriptGroupedMessageRange[] = []
+  let pending: ChatMessage[] = []
+  let pendingStart = 0
+
+  const flush = (endIndex: number): void => {
     if (pending.length > 0) {
-      grouped.push(mergeToolRun(pending))
+      grouped.push({
+        message: mergeToolRun(pending),
+        startIndex: pendingStart,
+        endIndex
+      })
       pending = []
     }
   }
 
-  for (const message of messages) {
+  for (let index = 0; index < messages.length; index += 1) {
+    const message = messages[index]
     if (!isPlainToolMessage(message)) {
-      flush()
-      grouped.push(message)
+      flush(index)
+      grouped.push({ message, startIndex: index, endIndex: index + 1 })
       continue
     }
 
     const previous = pending[pending.length - 1]
     if (previous && !sameToolRunBoundary(previous, message)) {
-      flush()
+      flush(index)
+    }
+    if (pending.length === 0) {
+      pendingStart = index
     }
     pending.push(message)
   }
 
-  flush()
+  flush(messages.length)
   return grouped
+}
+
+export function groupAdjacentToolMessages(messages: ChatMessage[]): ChatMessage[] {
+  return groupAdjacentToolMessagesWithRanges(messages).map((entry) => entry.message)
 }
 
 function stringMetadata(message: ChatMessage, key: string): string {
@@ -109,7 +134,7 @@ function stringMetadata(message: ChatMessage, key: string): string {
   return typeof value === 'string' ? value : ''
 }
 
-function fanoutLaneGroupingKey(message: ChatMessage): string | null {
+export function fanoutLaneGroupingKey(message: ChatMessage): string | null {
   const laneId = stringMetadata(message, 'ensembleLaneId')
   if (!laneId) return null
   const isContent = isEnsembleFanoutResultMessage(message)
@@ -136,8 +161,10 @@ export function groupedTranscriptMessageIds(message: ChatMessage): string[] {
     ...arrayStringMetadata(message, 'groupedToolMessageIds')
   ]
   const out: string[] = []
+  const seen = new Set<string>()
   for (const id of ids) {
-    if (!id || out.includes(id)) continue
+    if (!id || seen.has(id)) continue
+    seen.add(id)
     out.push(id)
   }
   return out
@@ -145,8 +172,12 @@ export function groupedTranscriptMessageIds(message: ChatMessage): string[] {
 
 function constituentMessageIds(message: ChatMessage): string[] {
   const out = [message.id]
+  const seen = new Set(out)
   for (const id of groupedTranscriptMessageIds(message)) {
-    if (!out.includes(id)) out.push(id)
+    if (!seen.has(id)) {
+      seen.add(id)
+      out.push(id)
+    }
   }
   return out
 }
@@ -158,9 +189,14 @@ function metadataMediaRefs(message: ChatMessage): TranscriptMediaRef[] {
 
 function mergeMediaRefs(messages: ChatMessage[]): TranscriptMediaRef[] | undefined {
   const refs: TranscriptMediaRef[] = []
+  const seen = new Set<string>()
   for (const message of messages) {
     for (const ref of metadataMediaRefs(message)) {
-      if (!refs.some((existing) => existing.id === ref.id)) refs.push(ref)
+      if (ref.id) {
+        if (seen.has(ref.id)) continue
+        seen.add(ref.id)
+      }
+      refs.push(ref)
     }
   }
   return refs.length > 0 ? refs : undefined
@@ -179,11 +215,15 @@ function mergeFanoutLaneRun(run: ChatMessage[]): ChatMessage {
   const contentBlocks: string[] = []
   const groupedFanoutMessageIds: string[] = []
   const groupedToolMessageIds: string[] = []
+  const seenFanoutMessageIds = new Set<string>()
+  const seenToolMessageIds = new Set<string>()
 
   for (const message of run) {
     const messageIds = constituentMessageIds(message)
     for (const id of messageIds) {
-      if (!groupedFanoutMessageIds.includes(id)) groupedFanoutMessageIds.push(id)
+      if (seenFanoutMessageIds.has(id)) continue
+      seenFanoutMessageIds.add(id)
+      groupedFanoutMessageIds.push(id)
     }
     if (isEnsembleFanoutResultMessage(message)) {
       const content = message.content || ''
@@ -196,7 +236,9 @@ function mergeFanoutLaneRun(run: ChatMessage[]): ChatMessage {
     const toolActivities = message.toolActivities || []
     if (toolActivities.length > 0) {
       for (const id of messageIds) {
-        if (!groupedToolMessageIds.includes(id)) groupedToolMessageIds.push(id)
+        if (seenToolMessageIds.has(id)) continue
+        seenToolMessageIds.add(id)
+        groupedToolMessageIds.push(id)
       }
       activities.push(...toolActivities)
       parts.push({ kind: 'tools', id: message.id, messageIds, toolActivities })
@@ -223,31 +265,44 @@ function mergeFanoutLaneRun(run: ChatMessage[]): ChatMessage {
   }
 }
 
-export function groupFanoutLaneMessages(messages: ChatMessage[]): ChatMessage[] {
-  const grouped: ChatMessage[] = []
+export function groupFanoutLaneMessagesWithRanges(
+  messages: readonly ChatMessage[]
+): TranscriptGroupedMessageRange[] {
+  const grouped: TranscriptGroupedMessageRange[] = []
   let pending: ChatMessage[] = []
+  let pendingStart = 0
   let pendingKey: string | null = null
 
-  const flush = (): void => {
+  const flush = (endIndex: number): void => {
     if (pending.length > 0) {
-      grouped.push(mergeFanoutLaneRun(pending))
+      grouped.push({
+        message: mergeFanoutLaneRun(pending),
+        startIndex: pendingStart,
+        endIndex
+      })
       pending = []
       pendingKey = null
     }
   }
 
-  for (const message of messages) {
+  for (let index = 0; index < messages.length; index += 1) {
+    const message = messages[index]
     const key = fanoutLaneGroupingKey(message)
     if (!key) {
-      flush()
-      grouped.push(message)
+      flush(index)
+      grouped.push({ message, startIndex: index, endIndex: index + 1 })
       continue
     }
-    if (pendingKey && pendingKey !== key) flush()
+    if (pendingKey && pendingKey !== key) flush(index)
+    if (pending.length === 0) pendingStart = index
     pending.push(message)
     pendingKey = key
   }
 
-  flush()
+  flush(messages.length)
   return grouped
+}
+
+export function groupFanoutLaneMessages(messages: ChatMessage[]): ChatMessage[] {
+  return groupFanoutLaneMessagesWithRanges(messages).map((entry) => entry.message)
 }

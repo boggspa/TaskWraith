@@ -187,6 +187,27 @@ describe('collapsed ensemble-round markers', () => {
     expect(hiddenMarker.topPercent).toBeLessThan(markers[2].topPercent)
   })
 
+  it('keeps the last hidden prompt active when multiple markers share a collapsed header row', () => {
+    const rows = projectRows(displayMessages)
+    const secondHiddenPrompt = message('u-hidden-2', 'user', 'Second prompt inside the collapsed round')
+    const markers = buildTranscriptUserGutterMarkers(
+      displayMessages,
+      rows,
+      undefined,
+      new Map([[headerMessage.id, [hiddenPrompt, secondHiddenPrompt]]])
+    )
+
+    expect(markers.map((marker) => marker.messageId)).toEqual([
+      'u0',
+      'u-hidden',
+      'u-hidden-2',
+      'u9'
+    ])
+    expect(markers[1].rowIndex).toBe(1)
+    expect(markers[2].rowIndex).toBe(1)
+    expect(findActiveGutterMarkerKey(markers, 1)).toBe(markers[2].key)
+  })
+
   it('gives hidden markers a rowKey that can never match a projected row (forces id-based jump)', () => {
     const rows = projectRows(displayMessages)
     const markers = buildTranscriptUserGutterMarkers(displayMessages, rows, undefined, collapsed)
