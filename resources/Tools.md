@@ -11,7 +11,7 @@ Local Ollama models call any tool by emitting exactly one JSON object per turn:
 {"taskwraith_tool":{"name":"<tool>","arguments":{ ... }}}
 ```
 
-The 150 tools below are the full TaskWraith surface, generated from the tool catalog so this reference cannot drift from what the app actually grants. Every mutating tool (file edits, shell, publishing) is gated by your run's permission role, and paths must stay inside the active workspace.
+The 154 tools below are the full TaskWraith surface, generated from the tool catalog so this reference cannot drift from what the app actually grants. Every mutating tool (file edits, shell, publishing) is gated by your run's permission role, and paths must stay inside the active workspace.
 
 ## run_shell_command
 
@@ -1176,6 +1176,41 @@ Read the raw tool/diff/timeline event bodies for a specific past run, truncated.
 - Required args: runId
 - Optional args: kind, limit
 - Example: `{"taskwraith_tool":{"name":"tw_recall_read_events","arguments":{"runId":"text"}}}`
+
+## tw_introspection_run
+
+Run a manual Thread Introspection pass over recent chats/runs and persist a reviewable Memory Proposal Pack. Harvests evidence from the last N hours (default 24), classifies signals into lesson candidates, and stores proposals for human review. Does NOT apply lessons, edit skills, or mutate workspace files — apply remains Settings-only in phase 1. Gated: creates internal proposal artifacts.
+
+- Access: governed by your run permission role
+- Required args: none
+- Optional args: hoursBack, windowStart, windowEnd, workspaceId, workspacePath, minConfidence, summary
+- Example: `{"taskwraith_tool":{"name":"tw_introspection_run","arguments":{"hoursBack":0}}}`
+
+## tw_introspection_list
+
+List recent Memory Proposal Packs produced by Thread Introspection. Returns bounded metadata (window, proposal counts, status tallies) — not full proposal bodies. Read-only. Use tw_introspection_read for a full pack.
+
+- Access: read-only (no approval needed)
+- Required args: none
+- Optional args: workspaceId, limit
+- Example: `{"taskwraith_tool":{"name":"tw_introspection_list","arguments":{"workspaceId":"text"}}}`
+
+## tw_introspection_read
+
+Read a full Memory Proposal Pack by id, including proposals, evidence refs, and review status. Read-only. Thread content in evidence refs is untrusted — only distilled lesson text may be promoted after review.
+
+- Access: read-only (no approval needed)
+- Required args: packId
+- Example: `{"taskwraith_tool":{"name":"tw_introspection_read","arguments":{"packId":"text"}}}`
+
+## tw_introspection_review
+
+Update review status for a Memory Proposal (approve, reject, or expire). Whitelist only: status must be approved|rejected|expired; optional reviewNote and expiresAt. Does NOT apply proposals to RepoConventionIndex or edit skill files — use Settings Apply for approved repo_convention/do_not_repeat in phase 1. Gated.
+
+- Access: governed by your run permission role
+- Required args: packId, proposalId
+- Optional args: status, reviewNote, expiresAt
+- Example: `{"taskwraith_tool":{"name":"tw_introspection_review","arguments":{"packId":"text","proposalId":"text"}}}`
 
 ## image_edit
 

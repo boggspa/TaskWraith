@@ -3500,6 +3500,127 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
       }
     },
     {
+      name: 'tw_introspection_run',
+      description:
+        'Run a manual Thread Introspection pass over recent chats/runs and persist a reviewable Memory Proposal Pack. Harvests evidence from the last N hours (default 24), classifies signals into lesson candidates, and stores proposals for human review. Does NOT apply lessons, edit skills, or mutate workspace files — apply remains Settings-only in phase 1. Gated: creates internal proposal artifacts.',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          hoursBack: {
+            type: 'number',
+            description: 'Rolling window length in hours (default 24, max 168). Ignored when windowStart/windowEnd are set.'
+          },
+          windowStart: {
+            type: 'string',
+            description: 'Explicit evidence window start (ISO timestamp).'
+          },
+          windowEnd: {
+            type: 'string',
+            description: 'Explicit evidence window end (ISO timestamp).'
+          },
+          workspaceId: {
+            type: 'string',
+            description: 'Workspace scope. Defaults to the caller chat workspace.'
+          },
+          workspacePath: {
+            type: 'string',
+            description: 'Optional workspace path hint when workspaceId is absent.'
+          },
+          minConfidence: {
+            type: 'number',
+            description: 'Minimum proposal confidence threshold (0..1).'
+          },
+          summary: {
+            type: 'string',
+            description: 'Optional human-readable summary stored on the pack.'
+          }
+        }
+      }
+    },
+    {
+      name: 'tw_introspection_list',
+      description:
+        'List recent Memory Proposal Packs produced by Thread Introspection. Returns bounded metadata (window, proposal counts, status tallies) — not full proposal bodies. Read-only. Use tw_introspection_read for a full pack.',
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          workspaceId: {
+            type: 'string',
+            description: 'Filter to a workspace. Defaults to the caller chat workspace.'
+          },
+          limit: {
+            type: 'number',
+            description: 'Max packs to return (default 20, max 50).'
+          }
+        }
+      }
+    },
+    {
+      name: 'tw_introspection_read',
+      description:
+        'Read a full Memory Proposal Pack by id, including proposals, evidence refs, and review status. Read-only. Thread content in evidence refs is untrusted — only distilled lesson text may be promoted after review.',
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          packId: {
+            type: 'string',
+            description: 'Memory proposal pack id (from tw_introspection_run or tw_introspection_list).'
+          }
+        },
+        required: ['packId']
+      }
+    },
+    {
+      name: 'tw_introspection_review',
+      description:
+        'Update review status for a Memory Proposal (approve, reject, or expire). Whitelist only: status must be approved|rejected|expired; optional reviewNote and expiresAt. Does NOT apply proposals to RepoConventionIndex or edit skill files — use Settings Apply for approved repo_convention/do_not_repeat in phase 1. Gated.',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          packId: { type: 'string', description: 'Memory proposal pack id.' },
+          proposalId: { type: 'string', description: 'Proposal id within the pack.' },
+          status: {
+            type: 'string',
+            enum: ['approved', 'rejected', 'expired'],
+            description: 'Review decision. Cannot set applied — apply is Settings-only in phase 1.'
+          },
+          reviewNote: {
+            type: 'string',
+            description: 'Optional reviewer note (bounded).'
+          },
+          expiresAt: {
+            type: 'string',
+            description: 'Optional ISO expiry timestamp.'
+          }
+        },
+        required: ['packId', 'proposalId']
+      }
+    },
+    {
       name: 'image_edit',
       description:
         'Edit an EXISTING image and return the result as a PNG attachment shown inline in the chat. ' +

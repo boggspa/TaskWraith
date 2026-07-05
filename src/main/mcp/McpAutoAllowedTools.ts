@@ -106,7 +106,10 @@ export const MCP_AUTO_ALLOWED_TOOLS = new Set<TaskWraithMcpToolName>([
   'canvas_inspect',
   'canvas_sketch_get',
   'canvas_network',
-  'canvas_console'
+  'canvas_console',
+  // Thread Introspection read-only verbs — bounded pack metadata / full pack read.
+  'tw_introspection_list',
+  'tw_introspection_read'
 ])
 
 export const MCP_APP_STATE_MUTATION_TOOLS = new Set<TaskWraithMcpToolName>([
@@ -119,7 +122,9 @@ export const MCP_APP_STATE_MUTATION_TOOLS = new Set<TaskWraithMcpToolName>([
   'cancel_wakeup',
   'blackboard_post',
   'blackboard_delete',
-  'workspace_board_apply_plan'
+  'workspace_board_apply_plan',
+  'tw_introspection_run',
+  'tw_introspection_review'
 ])
 
 /**

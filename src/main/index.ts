@@ -795,6 +795,11 @@ import {
   isRecallMcpToolName,
   type RecallToolContext
 } from './mcp/RecallToolExecutors'
+import {
+  createIntrospectionToolExecutors,
+  isIntrospectionMcpToolName,
+  type IntrospectionToolContext
+} from './mcp/IntrospectionToolExecutors'
 import { isRemoteOriginRun, markRemoteOriginRun } from './RemoteOriginRuns'
 import {
   annotateRecallCitations,
@@ -3345,6 +3350,44 @@ const recallToolExecutors = createRecallToolExecutors({
   },
   now: () => Date.now(),
   normalizePath: canonicalPath
+})
+
+function resolveIntrospectionCallerWorkspaceId(context: IntrospectionToolContext): string | null {
+  const workspaces = AppStore.getWorkspaces()
+  const chat = context.appChatId ? AppStore.getChat(context.appChatId) : null
+  const fromChat = chat?.workspaceId
+    ? resolveCanonicalWorkspaceId(chat.workspaceId, workspaces, canonicalPath)
+    : null
+  if (fromChat) return fromChat
+  return context.workspacePath
+    ? resolveCanonicalWorkspaceId(context.workspacePath, workspaces, canonicalPath)
+    : null
+}
+
+const introspectionToolExecutors = createIntrospectionToolExecutors({
+  getMemoryProposalPacks: (workspaceId) => AppStore.getMemoryProposalPacks(workspaceId),
+  getMemoryProposalPack: (id) => AppStore.getMemoryProposalPack(id),
+  updateMemoryProposal: (packId, proposalId, partial) =>
+    AppStore.updateMemoryProposal(packId, proposalId, partial),
+  runManualIntrospection: (input) =>
+    runManualIntrospection(
+      createIntrospectionRunServiceDeps({
+        getChats: (workspaceId) => AppStore.getChats(workspaceId),
+        getRunEvents: (filter) => AppStore.getRunEvents(filter),
+        getApprovalLedger: (filter) => AppStore.getApprovalLedger(filter),
+        getMessageFeedbackReceipts: (filter) => AppStore.getMessageFeedbackReceipts(filter),
+        createIntrospectionRun: (record) => AppStore.createIntrospectionRun(record),
+        updateIntrospectionRun: (id, partial) => AppStore.updateIntrospectionRun(id, partial),
+        saveMemoryProposalPack: (pack) => AppStore.saveMemoryProposalPack(pack)
+      }),
+      input
+    ),
+  resolveCallerWorkspaceId: resolveIntrospectionCallerWorkspaceId,
+  resolveCallerWorkspacePath: (context) => {
+    const chat = context.appChatId ? AppStore.getChat(context.appChatId) : null
+    return chat?.workspacePath || context.workspacePath
+  },
+  now: () => new Date().toISOString()
 })
 
 // M11 (1.0.7) — sticky AppWatch: per-chat remembered attachment snapshots,
@@ -20079,6 +20122,10 @@ async function executeGeminiMcpTool(
     } else if (isRecallMcpToolName(toolName)) {
       applyRichResult(
         await recallToolExecutors.executeRecallTool(toolName, args, context, parentProvider)
+      )
+    } else if (isIntrospectionMcpToolName(toolName)) {
+      applyRichResult(
+        await introspectionToolExecutors.executeIntrospectionTool(toolName, args, context)
       )
     } else if (isImageMcpToolName(toolName)) {
       const imageRunKey = context.appRunId || context.appChatId || 'global'

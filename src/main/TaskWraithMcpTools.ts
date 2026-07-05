@@ -197,6 +197,14 @@ export const TASKWRAITH_MCP_TOOLS = [
   'tw_recall_find',
   'tw_recall_read',
   'tw_recall_read_events',
+  // Thread Introspection — memory promotion over recent runs/threads. Read-only
+  // list/read are auto-allowed; run/review mutate internal proposal state and stay
+  // gated. No MCP apply path in phase 1 (Settings-only). See
+  // src/main/mcp/IntrospectionToolExecutors.ts.
+  'tw_introspection_run',
+  'tw_introspection_list',
+  'tw_introspection_read',
+  'tw_introspection_review',
   // Image processing — edit (blur/redact/crop/resize) an existing image, or
   // rasterize SVG to PNG. Output rides back as a visible transcript attachment.
   // Gated as a file change (mutating/compute; denied under read-only), NEVER

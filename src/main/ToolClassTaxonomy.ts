@@ -230,6 +230,10 @@ const ORCHESTRATION_TOOLS = new Set<string>([
   'tw_recall_find',
   'tw_recall_read',
   'tw_recall_read_events',
+  'tw_introspection_list',
+  'tw_introspection_read',
+  'tw_introspection_run',
+  'tw_introspection_review',
   // Evidence-pack / run-observability tools. These read the prompt/workspace/
   // diff and persist their output to the INTERNAL evidence-pack store
   // (userData/evidence-packs.json), never the workspace — the same observe-class
