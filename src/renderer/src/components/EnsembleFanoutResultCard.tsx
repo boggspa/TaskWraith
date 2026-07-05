@@ -18,7 +18,7 @@ import {
 } from './EnsembleFanoutResultCardModel'
 
 const COLLAPSED_FANOUT_PART_LIMIT = 24
-const COLLAPSED_FANOUT_ACTIVITY_LIMIT = 80
+const COLLAPSED_FANOUT_TOOL_VIEWPORT_HEIGHT = 184
 
 interface EnsembleFanoutResultCardProps {
   message: ChatMessage
@@ -138,11 +138,8 @@ export function EnsembleFanoutResultCard({
       ? transcriptParts.slice(-COLLAPSED_FANOUT_PART_LIMIT)
       : transcriptParts
   const hiddenTranscriptPartCount = transcriptParts.length - renderedTranscriptParts.length
-  const renderedActivities =
-    !hasTranscriptParts && !expandedResult && activities.length > COLLAPSED_FANOUT_ACTIVITY_LIMIT
-      ? activities.slice(-COLLAPSED_FANOUT_ACTIVITY_LIMIT)
-      : activities
-  const hiddenActivityCount = activities.length - renderedActivities.length
+  const toolViewportLabel = `${role} fan-out tool calls`
+  const controlledToolViewportExpanded = onExpandedChange ? expandedResult : undefined
 
   return (
     <article className={`ensemble-fanout-result-card provider-${provider || 'unknown'}`}>
@@ -188,7 +185,7 @@ export function EnsembleFanoutResultCard({
             {hasTranscriptParts ? (
               <>
                 {hiddenTranscriptPartCount > 0 && (
-                  <div className="ensemble-fanout-result-truncated" aria-hidden="true">
+                  <div className="ensemble-fanout-result-truncated">
                     {hiddenTranscriptPartCount} earlier parts hidden while collapsed.
                   </div>
                 )}
@@ -210,19 +207,22 @@ export function EnsembleFanoutResultCard({
                       className="ensemble-fanout-result-part ensemble-fanout-result-tools"
                     >
                       <ActivityStack
-                        activities={
-                          !expandedResult &&
-                          part.toolActivities.length > COLLAPSED_FANOUT_ACTIVITY_LIMIT
-                            ? part.toolActivities.slice(-COLLAPSED_FANOUT_ACTIVITY_LIMIT)
-                            : part.toolActivities
-                        }
+                        activities={part.toolActivities}
                         workspacePath={workspacePath}
                         provider={provider}
                         chatId={chat?.appChatId}
                         runId={streamRunId || message.runId}
                         chat={chat}
                         compactDensity={compactDensity}
-                        liveActivityViewport={false}
+                        liveActivityViewport
+                        liveActivityViewportClassName="ensemble-fanout-tools-viewport"
+                        liveActivityViewportCollapsedMaxHeight={COLLAPSED_FANOUT_TOOL_VIEWPORT_HEIGHT}
+                        liveActivityViewportLabel={toolViewportLabel}
+                        liveActivityViewportExpandLabel="Expand tool calls"
+                        liveActivityViewportCollapseLabel="Collapse tool calls"
+                        liveActivityViewportJumpLabel="Jump to latest tool call"
+                        liveActivityViewportExpanded={controlledToolViewportExpanded}
+                        onLiveActivityViewportExpandedChange={onExpandedChange}
                         expandedActivityIds={expandedActivityIds}
                         onExpandedActivityIdsChange={onExpandedActivityIdsChange}
                         onOpenFileChangeInWorkbench={onOpenFileChangeInWorkbench}
@@ -248,20 +248,23 @@ export function EnsembleFanoutResultCard({
               </div>
             ) : activities.length > 0 ? (
               <div className="ensemble-fanout-result-part ensemble-fanout-result-tools">
-                {hiddenActivityCount > 0 && (
-                  <div className="ensemble-fanout-result-truncated" aria-hidden="true">
-                    {hiddenActivityCount} earlier tool events hidden while collapsed.
-                  </div>
-                )}
                 <ActivityStack
-                  activities={renderedActivities}
+                  activities={activities}
                   workspacePath={workspacePath}
                   provider={provider}
                   chatId={chat?.appChatId}
                   runId={streamRunId || message.runId}
                   chat={chat}
                   compactDensity={compactDensity}
-                  liveActivityViewport={false}
+                  liveActivityViewport
+                  liveActivityViewportClassName="ensemble-fanout-tools-viewport"
+                  liveActivityViewportCollapsedMaxHeight={COLLAPSED_FANOUT_TOOL_VIEWPORT_HEIGHT}
+                  liveActivityViewportLabel={toolViewportLabel}
+                  liveActivityViewportExpandLabel="Expand tool calls"
+                  liveActivityViewportCollapseLabel="Collapse tool calls"
+                  liveActivityViewportJumpLabel="Jump to latest tool call"
+                  liveActivityViewportExpanded={controlledToolViewportExpanded}
+                  onLiveActivityViewportExpandedChange={onExpandedChange}
                   expandedActivityIds={expandedActivityIds}
                   onExpandedActivityIdsChange={onExpandedActivityIdsChange}
                   onOpenFileChangeInWorkbench={onOpenFileChangeInWorkbench}

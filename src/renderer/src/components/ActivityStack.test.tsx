@@ -441,6 +441,27 @@ describe('ActivityStack live activity viewport', () => {
     expect(html).toContain('/repo/src/file-119.ts')
   })
 
+  it('forwards custom live viewport presentation props', () => {
+    const html = renderToStaticMarkup(
+      <ActivityStack
+        activities={[makeWriteActivity()]}
+        provider="codex"
+        liveActivityViewport
+        liveActivityViewportClassName="nested-tool-viewport"
+        liveActivityViewportCollapsedMaxHeight={123}
+        liveActivityViewportLabel="Nested tool calls"
+        liveActivityViewportExpandLabel="Expand nested tools"
+        liveActivityViewportCollapseLabel="Collapse nested tools"
+        liveActivityViewportJumpLabel="Jump to nested latest"
+      />
+    )
+
+    expect(html).toContain('nested-tool-viewport')
+    expect(html).toContain('aria-label="Nested tool calls"')
+    expect(html).toContain('max-height:123px')
+    expect(html).toContain('Expand nested tools')
+  })
+
   it('keeps thinking traces as progress notes in compact density so actions are not nested in compact rows', () => {
     const html = renderToStaticMarkup(
       <ActivityStack

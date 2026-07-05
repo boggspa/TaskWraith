@@ -95,6 +95,14 @@ interface ActivityStackProps {
    * edge-faded region that auto-follows while activity is still live and
    * remains scrollable after the activity settles. */
   liveActivityViewport?: boolean
+  liveActivityViewportClassName?: string
+  liveActivityViewportCollapsedMaxHeight?: number
+  liveActivityViewportLabel?: string
+  liveActivityViewportExpandLabel?: string
+  liveActivityViewportCollapseLabel?: string
+  liveActivityViewportJumpLabel?: string
+  liveActivityViewportExpanded?: boolean
+  onLiveActivityViewportExpandedChange?: (expanded: boolean) => void
   /**
    * 1.0.6-TV2 — optional controlled expansion. When BOTH are provided
    * the stack's per-row expansion set is owned by the parent instead of
@@ -2098,6 +2106,14 @@ export function ActivityStack({
   chat,
   compactDensity = false,
   liveActivityViewport = false,
+  liveActivityViewportClassName,
+  liveActivityViewportCollapsedMaxHeight,
+  liveActivityViewportLabel,
+  liveActivityViewportExpandLabel,
+  liveActivityViewportCollapseLabel,
+  liveActivityViewportJumpLabel,
+  liveActivityViewportExpanded: controlledLiveViewportExpanded,
+  onLiveActivityViewportExpandedChange,
   expandedActivityIds,
   onExpandedActivityIdsChange,
   onOpenFileChangeInWorkbench,
@@ -2197,7 +2213,17 @@ export function ActivityStack({
     }
   }
   const allowMultiOpen = !compactDensity
-  const [liveViewportExpanded, setLiveViewportExpanded] = useState(false)
+  const [localLiveViewportExpanded, setLocalLiveViewportExpanded] = useState(false)
+  const liveViewportExpanded = controlledLiveViewportExpanded ?? localLiveViewportExpanded
+  const setLiveViewportExpanded = useCallback(
+    (expanded: boolean) => {
+      if (controlledLiveViewportExpanded === undefined) {
+        setLocalLiveViewportExpanded(expanded)
+      }
+      onLiveActivityViewportExpandedChange?.(expanded)
+    },
+    [controlledLiveViewportExpanded, onLiveActivityViewportExpandedChange]
+  )
 
   if (!activities || activities.length === 0) return null
   // 1.0.74 — same-tool grouping is unified across single + ensemble
@@ -2329,10 +2355,16 @@ export function ActivityStack({
       <div className="activity-timeline">
         {childThreads.length >= 2 && <ChildAgentSpawnBlock threads={childThreads} />}
         <LiveActivityViewport
+          className={liveActivityViewportClassName}
           active={activitiesHaveLiveWork(activities)}
           revision={liveActivityRevision(topLevelActivities)}
+          collapsedMaxHeight={liveActivityViewportCollapsedMaxHeight}
           expanded={liveViewportExpanded}
           onExpandedChange={setLiveViewportExpanded}
+          label={liveActivityViewportLabel}
+          expandLabel={liveActivityViewportExpandLabel}
+          collapseLabel={liveActivityViewportCollapseLabel}
+          jumpLabel={liveActivityViewportJumpLabel}
         >
           {planLanes.length > 1 ? (
             <div className="plan-rail-lanes">
@@ -2352,7 +2384,7 @@ export function ActivityStack({
           )}
           <div className="activity-timeline-live-inner">
             {hiddenTimelineItemCount > 0 && (
-              <div className="activity-timeline-live-truncated" aria-hidden="true">
+              <div className="activity-timeline-live-truncated">
                 {hiddenTimelineItemCount} earlier events hidden while collapsed.
               </div>
             )}

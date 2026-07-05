@@ -123,6 +123,9 @@ describe('EnsembleFanoutResultCard', () => {
 
     expect(readEnsembleFanoutTranscriptParts(message)).toHaveLength(3)
     expect(html).toContain('ensemble-fanout-result-viewport')
+    expect(html.split('live-activity-viewport').length - 1).toBeGreaterThanOrEqual(2)
+    expect(html).toContain('ensemble-fanout-tools-viewport')
+    expect(html).toContain('Expand tool calls')
     expect(html).toContain('ensemble-fanout-result-tools')
     expect(html).toContain('activity-timeline')
     expect(html).toContain('Read file')
@@ -153,5 +156,95 @@ describe('EnsembleFanoutResultCard', () => {
     expect(html).toContain('16 earlier parts hidden while collapsed.')
     expect(html).not.toContain('Fanout note 0')
     expect(html).toContain('Fanout note 39')
+  })
+
+  it('nests and bounds tool-heavy fan-out transcript parts', () => {
+    const activities = Array.from({ length: 120 }, (_, index) =>
+      toolActivity({
+        id: `fanout-tool-${index}`,
+        displayName: `Nested tool ${index}`,
+        status: 'running',
+        resultSummary: `running nested tool ${index}`
+      })
+    )
+    const message = fanoutMessage({
+      content: '',
+      toolActivities: activities,
+      metadata: {
+        ...fanoutMessage().metadata,
+        groupedFanoutMessageIds: ['tool-heavy'],
+        groupedToolMessageIds: ['tool-heavy'],
+        ensembleFanoutTranscriptParts: [
+          {
+            kind: 'tools',
+            id: 'tool-heavy',
+            messageIds: ['tool-heavy'],
+            toolActivities: activities
+          }
+        ]
+      }
+    })
+
+    const collapsedHtml = renderToStaticMarkup(
+      <EnsembleFanoutResultCard
+        message={message}
+        expanded={false}
+        onExpandedChange={() => {}}
+        onPreviewImage={() => {}}
+      />
+    )
+
+    expect(collapsedHtml.split('live-activity-viewport').length - 1).toBeGreaterThanOrEqual(2)
+    expect(collapsedHtml).toContain('ensemble-fanout-tools-viewport')
+    expect(collapsedHtml).toContain('aria-label="Reader fan-out tool calls"')
+    expect(collapsedHtml).toContain('Expand tool calls')
+    expect(collapsedHtml).toContain('40 earlier events hidden while collapsed.')
+    expect(collapsedHtml).not.toContain('Nested tool 0')
+    expect(collapsedHtml).toContain('Nested tool 119')
+
+    const expandedHtml = renderToStaticMarkup(
+      <EnsembleFanoutResultCard
+        message={message}
+        expanded
+        onExpandedChange={() => {}}
+        onPreviewImage={() => {}}
+      />
+    )
+
+    expect(expandedHtml).toContain('Collapse tool calls')
+    expect(expandedHtml).not.toContain('earlier events hidden while collapsed.')
+    expect(expandedHtml).toContain('Nested tool 0')
+    expect(expandedHtml).toContain('Nested tool 119')
+  })
+
+  it('nests and bounds fallback tool-only fan-out activity', () => {
+    const activities = Array.from({ length: 120 }, (_, index) =>
+      toolActivity({
+        id: `fallback-tool-${index}`,
+        displayName: `Fallback tool ${index}`,
+        status: 'running',
+        resultSummary: `running fallback tool ${index}`
+      })
+    )
+    const message = fanoutMessage({
+      content: '',
+      toolActivities: activities
+    })
+
+    const html = renderToStaticMarkup(
+      <EnsembleFanoutResultCard
+        message={message}
+        expanded={false}
+        onExpandedChange={() => {}}
+        onPreviewImage={() => {}}
+      />
+    )
+
+    expect(html.split('live-activity-viewport').length - 1).toBeGreaterThanOrEqual(2)
+    expect(html).toContain('ensemble-fanout-tools-viewport')
+    expect(html).toContain('Expand tool calls')
+    expect(html).toContain('40 earlier events hidden while collapsed.')
+    expect(html).not.toContain('Fallback tool 0')
+    expect(html).toContain('Fallback tool 119')
   })
 })

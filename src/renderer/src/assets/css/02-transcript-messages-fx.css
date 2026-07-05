@@ -5660,6 +5660,15 @@ html:has(.chat-split-region.chat-split-hidden-for-settings) .transcript-user-gut
   padding-left: 14px;
 }
 
+.ensemble-fanout-tools-viewport {
+  margin: 0;
+  --live-activity-edge-fade-size: 36px;
+}
+
+.ensemble-fanout-tools-viewport .live-activity-viewport-controls {
+  margin-top: 0;
+}
+
 .ensemble-fanout-result-empty {
   color: var(--text-tertiary);
   font-size: var(--font-size-sm);
