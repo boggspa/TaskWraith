@@ -28,7 +28,10 @@ import type {
 import type { RunPermissionPostureContext } from '../RunPermissionPosture'
 import { MAX_ENSEMBLE_PARTICIPANTS } from '../EnsembleRosterMutation'
 import { computeEnsemblePromptShellStamp } from '../EnsemblePrompt'
-import { CONTEXT_AUTO_COMPACT_COOLDOWN_MS } from '../../shared/contextCompaction'
+import {
+  CONTEXT_AUTO_COMPACT_COOLDOWN_MS,
+  type ContextCompactionProgressEvent
+} from '../../shared/contextCompaction'
 
 const ensemble: EnsembleConfig = {
   enabled: true,
@@ -252,6 +255,7 @@ function makeHarness(
      */
     probeParticipant?: (participant: EnsembleParticipant) => Promise<ParticipantProbeResult>
     awaitPendingSeatCompaction?: (participantId: string) => Promise<unknown> | undefined
+    onContextCompactionProgress?: (event: ContextCompactionProgressEvent) => void
     scheduleWakeupTimer?: (wakeup: EnsembleWakeupRecord) => void
     cancelWakeupTimer?: (wakeupId: string) => void
     signRunPermissionPosture?: (
@@ -309,6 +313,9 @@ function makeHarness(
     cancelRun,
     ...(options.awaitPendingSeatCompaction
       ? { awaitPendingSeatCompaction: options.awaitPendingSeatCompaction }
+      : {}),
+    ...(options.onContextCompactionProgress
+      ? { onContextCompactionProgress: options.onContextCompactionProgress }
       : {}),
     createRunId: (provider) => `${provider}-run-${++counter}`,
     now: () => counter,
@@ -2729,6 +2736,84 @@ Next action:
       resolveCompaction?.()
       await new Promise((r) => setTimeout(r, 20))
       expect(harness.dispatched).toHaveLength(0)
+    } finally {
+      if (previous === undefined) delete process.env.TASKWRAITH_CONCURRENT_LANES
+      else process.env.TASKWRAITH_CONCURRENT_LANES = previous
+    }
+  })
+
+  it('signposts fan-out lanes waiting on pre-dispatch seat compaction', async () => {
+    const previous = process.env.TASKWRAITH_CONCURRENT_LANES
+    process.env.TASKWRAITH_CONCURRENT_LANES = '1'
+    try {
+      let resolveCompaction: (() => void) | undefined
+      const progressEvents: ContextCompactionProgressEvent[] = []
+      const harness = makeHarness({
+        awaitPendingSeatCompaction: (participantId) =>
+          participantId === 'ollama-a'
+            ? new Promise<void>((resolve) => {
+                resolveCompaction = resolve
+              })
+            : undefined,
+        onContextCompactionProgress: (event) => progressEvents.push(event)
+      })
+      harness.chat.ensemble!.participants = [
+        {
+          id: 'ollama-a',
+          provider: 'ollama',
+          enabled: true,
+          role: 'Scout A',
+          instructions: 'Scout.',
+          order: 1,
+          permissionPresetId: 'read_only',
+          model: 'qwen3.5:9b',
+          ollamaRunProfile: 'local_scout'
+        },
+        {
+          id: 'ollama-b',
+          provider: 'ollama',
+          enabled: true,
+          role: 'Scout B',
+          instructions: 'Scout.',
+          order: 2,
+          permissionPresetId: 'read_only',
+          model: 'gemma4:12b',
+          ollamaRunProfile: 'local_scout'
+        }
+      ]
+
+      harness.orchestrator.startRound({
+        chatId: 'ensemble-chat',
+        prompt: 'Fan out locally.',
+        event: { sender: {} as Electron.WebContents },
+        concurrentMode: true
+      })
+
+      await vi.waitFor(() => expect(resolveCompaction).toBeDefined())
+      expect(harness.dispatched).toHaveLength(0)
+      expect(progressEvents).toContainEqual(
+        expect.objectContaining({
+          chatId: 'ensemble-chat',
+          participantId: 'ollama-a',
+          provider: 'ollama',
+          status: 'started',
+          trigger: 'auto',
+          label: expect.stringContaining('Scout A')
+        })
+      )
+
+      resolveCompaction?.()
+      await vi.waitFor(() =>
+        expect(progressEvents).toContainEqual(
+          expect.objectContaining({
+            chatId: 'ensemble-chat',
+            participantId: 'ollama-a',
+            provider: 'ollama',
+            status: 'completed',
+            trigger: 'auto'
+          })
+        )
+      )
     } finally {
       if (previous === undefined) delete process.env.TASKWRAITH_CONCURRENT_LANES
       else process.env.TASKWRAITH_CONCURRENT_LANES = previous
@@ -11006,6 +11091,7 @@ describe('post-round host seat auto-compaction (maybeAutoCompactSeatsAfterRound)
     }) => Promise<void> | void
   }) {
     let clock = opts.startClock ?? 1_000
+    const progressEvents: ContextCompactionProgressEvent[] = []
     const compactSeatContext = vi.fn(
       async (_input: {
         chatId: string
@@ -11035,7 +11121,8 @@ describe('post-round host seat auto-compaction (maybeAutoCompactSeatsAfterRound)
       createRunId: (provider) => `${provider}-run`,
       now: () => clock,
       nowIso: () => '2026-05-24T00:00:01.000Z',
-      compactSeatContext
+      compactSeatContext,
+      onContextCompactionProgress: (event) => progressEvents.push(event)
     })
     const fire = (status: 'completed' | 'cancelled' | 'failed' = 'completed'): void => {
       ;(
@@ -11064,6 +11151,7 @@ describe('post-round host seat auto-compaction (maybeAutoCompactSeatsAfterRound)
     return {
       chat,
       compactSeatContext,
+      progressEvents,
       fire,
       setClock: (v: number) => (clock = v),
       beforeDispatch,
@@ -11203,6 +11291,22 @@ describe('post-round host seat auto-compaction (maybeAutoCompactSeatsAfterRound)
       provider: 'grok',
       trigger: 'auto'
     })
+    expect(h.progressEvents).toEqual([
+      expect.objectContaining({
+        chatId: 'ensemble-chat',
+        participantId: 'grok',
+        provider: 'grok',
+        status: 'started',
+        trigger: 'auto'
+      }),
+      expect.objectContaining({
+        chatId: 'ensemble-chat',
+        participantId: 'grok',
+        provider: 'grok',
+        status: 'completed',
+        trigger: 'auto'
+      })
+    ])
   })
 
   it('auto-compacts the finished host seat after its turn', () => {

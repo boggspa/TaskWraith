@@ -63,6 +63,7 @@ import {
   contextCompactionMessageId,
   contextPressureSeverity,
   formatContextCompactionSummary,
+  type ContextCompactionProgressEvent,
   type ContextCompactionSignal,
   type ContextPressureSeverity
 } from '../../shared/contextCompaction'
@@ -277,6 +278,7 @@ export interface EnsembleOrchestratorDeps {
     provider: HostSeatCompactionProvider
     trigger: 'auto'
   }) => Promise<{ ok: boolean; error?: string }>
+  onContextCompactionProgress?: (event: ContextCompactionProgressEvent) => void
   getProviderUsageSnapshot?: (
     provider: ProviderId
   ) => NormalizedProviderUsageSnapshot | null | undefined
@@ -9607,6 +9609,31 @@ export class EnsembleOrchestrator {
   /** Wave 3 — per-seat auto-compaction cooldown (attempts, success or not). */
   private seatAutoCompactLastAttemptAt = new Map<string, number>()
 
+  private emitSeatCompactionProgress(
+    chatId: string,
+    participant: EnsembleParticipant,
+    status: ContextCompactionProgressEvent['status'],
+    trigger: ContextCompactionProgressEvent['trigger'] = 'auto'
+  ): void {
+    const emit = this.deps.onContextCompactionProgress
+    if (!emit) return
+    const presentation = resolveHealthEntryPresentation(
+      participant.provider,
+      participant.model,
+      providerLabel(participant.provider)
+    )
+    const role = (participant.role || 'Participant').trim()
+    emit({
+      chatId,
+      participantId: participant.id,
+      provider: participant.provider,
+      trigger,
+      status,
+      label: `${presentation.displayProviderLabel} / ${role}`,
+      hueClass: presentation.displayHueClass
+    })
+  }
+
   /**
    * Await an in-flight host seat compaction for this participant, then refresh
    * the roster object's session/summary fields from the persisted chat — the
@@ -9619,7 +9646,22 @@ export class EnsembleOrchestrator {
   ): Promise<void> {
     const pending = this.deps.awaitPendingSeatCompaction?.(participant.id)
     if (pending) {
-      await Promise.resolve(pending).catch(() => {})
+      this.emitSeatCompactionProgress(chatId, participant, 'started')
+      let succeeded = true
+      try {
+        const result = await Promise.resolve(pending)
+        if (
+          result &&
+          typeof result === 'object' &&
+          'ok' in result &&
+          (result as { ok?: unknown }).ok === false
+        ) {
+          succeeded = false
+        }
+      } catch {
+        succeeded = false
+      }
+      this.emitSeatCompactionProgress(chatId, participant, succeeded ? 'completed' : 'failed')
       const refreshed = this.deps
         .getChat(chatId)
         ?.ensemble?.participants?.find((candidate) => candidate.id === participant.id)
@@ -9639,9 +9681,17 @@ export class EnsembleOrchestrator {
     if (!compactSeatContext) return
     const request = this.buildAutoCompactSeatRequest(chatId, participant)
     if (!request) return
+    this.emitSeatCompactionProgress(chatId, participant, 'started', request.trigger)
     try {
-      await compactSeatContext(request)
+      const result = await compactSeatContext(request)
+      this.emitSeatCompactionProgress(
+        chatId,
+        participant,
+        result.ok === false ? 'failed' : 'completed',
+        request.trigger
+      )
     } catch {
+      this.emitSeatCompactionProgress(chatId, participant, 'failed', request.trigger)
       return
     }
     const refreshed = this.deps
