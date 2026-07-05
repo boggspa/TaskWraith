@@ -1618,13 +1618,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                       onAddNewWorkspace={handleSelectWelcomeWorkspaceDialog}
                       onSelectNoWorkspace={handleNewGlobalChat}
                     />
-                    <EnsembleRosterPresetPicker
-                      ensemble={currentChat?.ensemble}
-                      disabled={isCurrentEnsembleRoundRunning}
-                      onApplyPreset={applyEnsembleRosterPreset}
-                      composerStyle={appearance.composerStyle}
-                      secondRow={renderEnsembleOrchestrationRow()}
-                    />
                   </div>
                 )
               })()}
@@ -1993,14 +1986,11 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                   the first prompt — configure-before-send is the
                   entire point of the strip.
                 */}
-                {/* `!isWelcomeChat` avoids doubling the picker the ensemble
-                  welcome hero already shows — EXCEPT on workflow-compose
-                  welcomes, which render the workflow hero instead of the
-                  ensemble hero and would otherwise lose the roster presets
-                  AND the orchestration second row (mode / fan-out / history
-                  budget moved here from the bottom action row). */}
-                {currentChat?.chatKind === 'ensemble' &&
-                  (!isWelcomeChat || isWorkflowChatWelcome) && (
+                {/* Keep roster presets in the shared composer stack for every
+                  ensemble state. Workflow welcome already used this hierarchy;
+                  normal ensemble welcome used to render a standalone hero copy,
+                  which left the controls visually detached from the chip row. */}
+                {currentChat?.chatKind === 'ensemble' && (
                   <EnsembleRosterPresetPicker
                     ensemble={currentChat.ensemble}
                     disabled={isCurrentEnsembleRoundRunning}
