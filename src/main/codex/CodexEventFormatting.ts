@@ -22,6 +22,40 @@ export function codexString(value: any): string {
   return String(value)
 }
 
+export const CODEX_REASONING_SUMMARY_MODE = 'auto'
+
+export function codexReasoningSummaryModeForEffort(
+  effort: string | null | undefined
+): typeof CODEX_REASONING_SUMMARY_MODE | undefined {
+  const normalized = String(effort || '').trim().toLowerCase()
+  if (!normalized || normalized === 'off' || normalized === 'none') return undefined
+  return CODEX_REASONING_SUMMARY_MODE
+}
+
+export function codexReasoningSummaryText(value: any): string {
+  if (typeof value === 'string') return value
+  if (Array.isArray(value)) return value.map(codexReasoningSummaryText).filter(Boolean).join('')
+  if (!value || typeof value !== 'object') return ''
+  if (value.type === 'summary_text' && typeof value.text === 'string') return value.text
+  if (typeof value.summary === 'string') return value.summary
+  if (Array.isArray(value.summary)) return codexReasoningSummaryText(value.summary)
+  if (
+    (value.kind === 'summary_text' || value.type === 'reasoning_summary_text') &&
+    typeof value.text === 'string'
+  ) {
+    return value.text
+  }
+  if (
+    (value.kind === 'summary_text' ||
+      value.type === 'summary_text' ||
+      value.type === 'reasoning_summary_text') &&
+    typeof value.delta === 'string'
+  ) {
+    return value.delta
+  }
+  return ''
+}
+
 export function codexCommandText(command: any): string {
   if (Array.isArray(command)) return command.map(codexString).join(' ')
   return codexString(command)

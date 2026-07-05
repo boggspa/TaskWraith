@@ -55,6 +55,7 @@ import {
   nestedRecord,
   cliProviderToolId
 } from './providers/ProviderEventText'
+import { claudeSdkThinkingConfigForEffort } from './providers/ClaudeThinkingConfig'
 import type {
   CodexRunState,
   GeminiToolContext,
@@ -169,6 +170,8 @@ import {
   codexCommandFileEditMetadata,
   codexCommandText,
   codexPatchPreviewFromValue,
+  codexReasoningSummaryModeForEffort,
+  codexReasoningSummaryText,
   codexString,
   codexTimelineItemId,
   codexToolResultFromItem,
@@ -10434,7 +10437,11 @@ function emitCliProviderToolEvent(state: CliProviderStreamState, event: unknown)
   }
 }
 
-function emitCliProviderThinkingEvent(state: CliProviderStreamState, text: string) {
+function emitCliProviderThinkingEvent(
+  state: CliProviderStreamState,
+  text: string,
+  options: { cumulative?: boolean } = {}
+) {
   const clean = text.trim()
   if (!clean) return
   const toolId = `${state.provider}-thinking-${state.appRunId || 'run'}`
@@ -10453,7 +10460,13 @@ function emitCliProviderThinkingEvent(state: CliProviderStreamState, text: strin
       state
     )
   }
-  state.thinkingText = `${state.thinkingText || ''}${text}`
+  if (options.cumulative) {
+    const current = state.thinkingText || ''
+    if (text === current) return
+    state.thinkingText = text
+  } else {
+    state.thinkingText = `${state.thinkingText || ''}${text}`
+  }
   sendAgentCompatLine(
     state.sender,
     state.provider,
@@ -10844,14 +10857,18 @@ function handleCliProviderJsonEvent(state: CliProviderStreamState, event: any) {
   if (state.appRunId) workflowBudgetRegistry.onUsage(state.appRunId, state.tokenUsage)
   emitCliProviderToolEvent(state, event)
   if (state.provider === 'kimi' || state.provider === 'claude') {
-    // Claude (SDK + CLI) carries reasoning as `thinking` content blocks on the
-    // cumulative assistant envelope; surface it as a streamed reasoning note so
-    // it renders in the live activity viewport. `extractProviderThinkingText`
-    // only reads thinking from the envelope (not the incremental stream_event
-    // deltas), so this fires once per turn without double-counting, and
-    // `emitCliProviderThinkingEvent` guards empty text when no thinking is
-    // present (e.g. extended thinking disabled).
-    emitCliProviderThinkingEvent(state, extractProviderThinkingText(event))
+    // Claude (SDK + CLI) carries provider-authorized thinking summaries in
+    // `thinking` blocks and, with partial messages, `thinking_delta` stream
+    // events. Surface only those displayable summaries as reasoning activity;
+    // opaque signatures / redacted blocks stay out of the transcript.
+    const thinkingText = extractProviderThinkingText(event, state.provider)
+    const eventTypeStr = String(event?.type || '')
+    emitCliProviderThinkingEvent(state, thinkingText, {
+      cumulative:
+        eventTypeStr === 'assistant' ||
+        eventTypeStr === 'message' ||
+        eventTypeStr === 'message_delta'
+    })
   }
 
   const text = extractProviderText(event)
@@ -11659,6 +11676,7 @@ async function tryRunClaudeSdk(
   )
 
   const claudeSdkEffort = normalizeClaudeEffortFlagForModel(payload.claudeReasoningEffort, model)
+  const claudeSdkThinking = claudeSdkThinkingConfigForEffort(claudeSdkEffort)
   // Phase I3 (Claude initiator): register the TaskWraith MCP server so
   // the Claude agent sees delegate_to_subthread etc. in its tool list.
   // The TaskWraith bridge is gated on the same `geminiMcpBridgeEnabled`
@@ -11744,6 +11762,7 @@ async function tryRunClaudeSdk(
       ...(pathToClaudeCodeExecutable ? { pathToClaudeCodeExecutable } : {}),
       ...(payload.imagePaths?.length ? { images: payload.imagePaths } : {}),
       ...(claudeSdkEffort ? { effort: claudeSdkEffort } : {}),
+      ...(claudeSdkThinking ? { thinking: claudeSdkThinking } : {}),
       ...(claudeSdkMcpServers ? { mcpServers: claudeSdkMcpServers } : {}),
       ...(claudeSdkAllowedTools && claudeSdkAllowedTools.length > 0
         ? { allowedTools: claudeSdkAllowedTools }
@@ -14538,8 +14557,8 @@ function ensureCodexTimelineTool(
 
 function emitCodexReasoningDelta(state: CodexRunState, params: any, label: string) {
   const itemId = codexTimelineItemId(params, 'codex-reasoning')
-  const delta = codexString(
-    params?.delta ?? params?.text ?? params?.summary ?? params?.content ?? params?.part
+  const delta = codexReasoningSummaryText(
+    params?.delta ?? params?.text ?? params?.summary ?? params?.part
   )
   if (!delta) return
   ensureCodexTimelineTool(state, itemId, 'codex_reasoning', { title: label, kind: 'reasoning' })
@@ -15564,15 +15583,18 @@ function handleCodexNotification(message: any) {
     return
   }
 
+  if (message.method === 'item/reasoning/textDelta') {
+    return
+  }
+
   if (
-    message.method === 'item/reasoning/textDelta' ||
     message.method === 'item/reasoning/summaryTextDelta' ||
     message.method === 'item/reasoning/summaryPartAdded'
   ) {
     emitCodexReasoningDelta(
       state,
       params,
-      message.method === 'item/reasoning/summaryPartAdded' ? 'Reasoning summary' : 'Thinking note'
+      'Reasoning summary'
     )
     return
   }
@@ -15727,12 +15749,12 @@ function handleCodexNotification(message: any) {
     }
     if (item?.type === 'reasoning') {
       const itemId = codexTimelineItemId(params, 'codex-reasoning')
-      const text =
-        state.reasoningTextByItemId.get(itemId) ||
-        codexString(item.summary || item.text || item.content || '')
+      const streamed = state.reasoningTextByItemId.get(itemId) || ''
+      const summary = codexReasoningSummaryText(item.summary)
+      const text = summary && summary.length >= streamed.length ? summary : streamed
       if (!text.trim()) return
       ensureCodexTimelineTool(state, itemId, 'codex_reasoning', {
-        title: item.summary ? 'Reasoning summary' : 'Thinking note',
+        title: 'Reasoning summary',
         kind: 'reasoning'
       })
       if (text)
@@ -16824,6 +16846,7 @@ async function runCodexAppServer(event: Electron.IpcMainInvokeEvent, payload: Ag
     codexState
   )
 
+  const codexReasoningSummaryMode = codexReasoningSummaryModeForEffort(payload.reasoningEffort)
   await client.request(
     'turn/start',
     {
@@ -16840,6 +16863,7 @@ async function runCodexAppServer(event: Electron.IpcMainInvokeEvent, payload: Ag
       ),
       model,
       ...(payload.reasoningEffort ? { effort: payload.reasoningEffort } : {}),
+      ...(codexReasoningSummaryMode ? { summary: codexReasoningSummaryMode } : {}),
       ...(payload.serviceTier ? { serviceTier: payload.serviceTier } : {})
     },
     60_000

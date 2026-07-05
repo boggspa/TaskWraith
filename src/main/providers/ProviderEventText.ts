@@ -40,6 +40,23 @@ export function contentPartsToThinkingText(value: any): string {
   return `${direct}${nested}`
 }
 
+function claudeContentPartsToThinkingText(value: any): string {
+  if (!value) return ''
+  if (Array.isArray(value)) {
+    return value.map(claudeContentPartsToThinkingText).filter(Boolean).join('')
+  }
+  if (typeof value !== 'object') return ''
+  if (value.type === 'redacted_thinking') return ''
+  if (value.type === 'thinking') {
+    return typeof value.thinking === 'string' ? value.thinking : ''
+  }
+  if (Array.isArray(value.content)) return claudeContentPartsToThinkingText(value.content)
+  if (Array.isArray(value.message?.content)) {
+    return claudeContentPartsToThinkingText(value.message.content)
+  }
+  return ''
+}
+
 export function extractProviderText(event: any): string {
   if (!event) return ''
   if (typeof event === 'string') return event
@@ -71,8 +88,33 @@ export function extractProviderText(event: any): string {
   return ''
 }
 
-export function extractProviderThinkingText(event: any): string {
+function extractClaudeThinkingText(event: any): string {
   if (!event || typeof event === 'string') return ''
+  const params = event.params || {}
+  const payload = params.payload || event.payload || {}
+  if (event.type === 'content_block_delta' && event.delta?.type === 'thinking_delta') {
+    return event.delta.thinking || ''
+  }
+  if (event.type === 'stream_event') {
+    const inner = event.event || {}
+    if (inner.type === 'content_block_delta' && inner.delta?.type === 'thinking_delta') {
+      return inner.delta.thinking || ''
+    }
+    return ''
+  }
+  if (event.type === 'assistant' || event.type === 'message' || event.type === 'message_delta') {
+    return claudeContentPartsToThinkingText(event.message?.content || event.content || event.delta)
+  }
+  if (event.method === 'event' && params.type === 'ContentPart') {
+    return claudeContentPartsToThinkingText(payload)
+  }
+  if (params.type === 'ContentPart') return claudeContentPartsToThinkingText(payload)
+  return ''
+}
+
+export function extractProviderThinkingText(event: any, provider?: string): string {
+  if (!event || typeof event === 'string') return ''
+  if (provider === 'claude') return extractClaudeThinkingText(event)
   const params = event.params || {}
   const payload = params.payload || event.payload || {}
   if (event.type === 'assistant' || event.type === 'message' || event.type === 'message_delta') {
