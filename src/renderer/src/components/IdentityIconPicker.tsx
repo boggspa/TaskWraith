@@ -17,6 +17,12 @@ import {
 } from '../lib/agentPoolIconAssets'
 import { AgentIdentityIcon } from './icons/AgentIdentityIcon'
 
+function shuffleIdentitySeed(seedBase: string | undefined): string {
+  return `${seedBase || 'identity'}#${Date.now().toString(36)}-${Math.random()
+    .toString(36)
+    .slice(2, 8)}`
+}
+
 export type IdentityIconKind = 'named' | 'seed' | 'asset'
 
 export type IdentityIconValue = {
@@ -159,9 +165,7 @@ export function IdentityIconPicker({
           className="agent-pool-mini-btn"
           title="Reroll the procedural glyph + colour"
           onClick={() => {
-            const seed = `${seedBase || 'identity'}#${Date.now().toString(36)}-${Math.random()
-              .toString(36)
-              .slice(2, 8)}`
+            const seed = shuffleIdentitySeed(seedBase)
             const hue = hueForSeed(seed)
             apply({
               iconKind: 'seed',

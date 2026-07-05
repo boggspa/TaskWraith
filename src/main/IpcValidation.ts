@@ -301,6 +301,7 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'select-image-files': [],
   'save-clipboard-image-attachment': [],
   'authorize-image-preview': ['array'],
+  'composer-audio:transcribe': ['object'],
   'read-image-preview': ['string'],
   'image-generation:get-status': [],
   'image-generation:set-enabled': ['object'],
