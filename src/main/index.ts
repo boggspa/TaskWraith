@@ -55,6 +55,7 @@ import {
   nestedRecord,
   cliProviderToolId
 } from './providers/ProviderEventText'
+import { mergeCliProviderThinkingChunk } from './providers/CliProviderThinking'
 import { claudeSdkThinkingConfigForEffort } from './providers/ClaudeThinkingConfig'
 import type {
   CodexRunState,
@@ -10503,8 +10504,8 @@ function emitCliProviderThinkingEvent(
   text: string,
   options: { cumulative?: boolean } = {}
 ) {
-  const clean = text.trim()
-  if (!clean) return
+  const merged = mergeCliProviderThinkingChunk(state.thinkingText, text, options)
+  if (merged == null) return
   const toolId = `${state.provider}-thinking-${state.appRunId || 'run'}`
   if (!state.thinkingStarted) {
     state.thinkingStarted = true
@@ -10521,13 +10522,7 @@ function emitCliProviderThinkingEvent(
       state
     )
   }
-  if (options.cumulative) {
-    const current = state.thinkingText || ''
-    if (text === current) return
-    state.thinkingText = text
-  } else {
-    state.thinkingText = `${state.thinkingText || ''}${text}`
-  }
+  state.thinkingText = merged
   sendAgentCompatLine(
     state.sender,
     state.provider,
