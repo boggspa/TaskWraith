@@ -525,6 +525,24 @@ describe('ToolParser', () => {
       expect(result.endedAt).toBeDefined()
       expect(result.durationMs).toBeGreaterThanOrEqual(0)
     })
+    it('infers edited-file presentation for nameless Cursor tool results', () => {
+      const use = createToolActivity({
+        type: 'tool_use',
+        tool_id: 'tool_b9223ce2-df66-4fba-a3dc-ebe36837019',
+        tool_name: 'unknown',
+        provider: 'cursor'
+      })
+      const result = pairToolResult(use, {
+        type: 'tool_result',
+        result: { content: [{ text: { text: 'Edited test_gemini_math.py.' } }] }
+      })
+
+      expect(result.toolName).toBe('edit_file')
+      expect(result.category).toBe('write')
+      expect(result.filePath).toBe('test_gemini_math.py')
+      expect(result.displayName).toBe('Edited test_gemini_math.py')
+      expect(result.resultSummary).toBe('Edited test_gemini_math.py.')
+    })
     it('truncates long output', () => {
       const use = createToolActivity({ type: 'tool_use', tool_name: 'x', tool_id: 't1' })
       const longOutput = 'a'.repeat(600)
@@ -658,6 +676,13 @@ describe('ToolParser', () => {
       const envelope =
         '{"content":[{"type":"text","text":"Exit code: 0\\nstdout:\\ntotal 22552\\n"}]}'
       expect(unwrapMcpEnvelope(envelope)).toBe('Exit code: 0\nstdout:\ntotal 22552\n')
+    })
+
+    it('unwraps Cursor nested text content envelopes', () => {
+      const envelope = JSON.stringify({
+        content: [{ text: { text: 'Edited test_gemini_math.py.' } }]
+      })
+      expect(unwrapMcpEnvelope(envelope)).toBe('Edited test_gemini_math.py.')
     })
 
     it('concatenates multiple text parts in order', () => {
@@ -798,6 +823,13 @@ describe('ToolParser', () => {
         content: [{ type: 'text', text: 'whole event is the envelope' }]
       })
       expect(out).toBe('whole event is the envelope')
+    })
+
+    it('unwraps Cursor nested text envelopes from result objects', () => {
+      const out = extractResultOutput({
+        result: { content: [{ text: { text: 'Edited test_gemini_math.py.' } }] }
+      })
+      expect(out).toBe('Edited test_gemini_math.py.')
     })
 
     it('unwraps an MCP envelope passed as a stringified evt.output', () => {

@@ -116,7 +116,7 @@ function extractToolProvider(event: any): ProviderId | undefined {
  * Phase L5 slice 1.
  */
 function isMcpEnvelopeObject(value: unknown): value is {
-  content: Array<{ type: 'text'; text: string } | { type: string; [k: string]: unknown }>
+  content: Array<Record<string, unknown>>
 } {
   if (!value || typeof value !== 'object') return false
   const obj = value as Record<string, unknown>
@@ -124,25 +124,27 @@ function isMcpEnvelopeObject(value: unknown): value is {
   // At least one text-shaped part. We tolerate other part types
   // (image, resource_link, etc.) mixed in — they're skipped during
   // text extraction below rather than rejecting the whole envelope.
-  return obj.content.some(
-    (item) =>
-      item !== null &&
-      typeof item === 'object' &&
-      (item as Record<string, unknown>).type === 'text' &&
-      typeof (item as Record<string, unknown>).text === 'string'
-  )
+  return obj.content.some((item) => mcpContentText(item) !== null)
+}
+
+function mcpContentText(item: unknown): string | null {
+  if (!item || typeof item !== 'object' || Array.isArray(item)) return null
+  const record = item as Record<string, unknown>
+  const type = typeof record.type === 'string' ? record.type : ''
+  if (type && type !== 'text') return null
+  if (typeof record.text === 'string') return record.text
+  const nestedText = record.text
+  if (nestedText && typeof nestedText === 'object' && !Array.isArray(nestedText)) {
+    const nested = nestedText as Record<string, unknown>
+    if (typeof nested.text === 'string') return nested.text
+  }
+  return null
 }
 
 function extractMcpEnvelopeText(value: { content: unknown[] }): string {
   return value.content
-    .filter(
-      (item): item is { type: 'text'; text: string } =>
-        item !== null &&
-        typeof item === 'object' &&
-        (item as Record<string, unknown>).type === 'text' &&
-        typeof (item as Record<string, unknown>).text === 'string'
-    )
-    .map((item) => item.text)
+    .map((item) => mcpContentText(item))
+    .filter((text): text is string => text !== null)
     .join('')
 }
 
@@ -1076,6 +1078,82 @@ export function createToolActivity(toolUseEvent: any): ToolActivity {
   }
 }
 
+function normalizeInferredPath(rawPath: string): string {
+  return rawPath
+    .trim()
+    .replace(/^["'`]+|["'`]+$/g, '')
+    .replace(/[.。]+$/g, '')
+    .trim()
+}
+
+function inferNamelessActivityFromResult(
+  activity: ToolActivity,
+  resultOutput: string
+): Partial<ToolActivity> {
+  if ((activity.toolName || '').trim().toLowerCase() !== 'unknown') return {}
+  const trimmed = resultOutput.trim()
+  const fileMatch = trimmed.match(/^(edited|created|deleted|wrote|read|listed)\s+(.+?)\.?$/i)
+  if (fileMatch) {
+    const verb = fileMatch[1].toLowerCase()
+    const path = normalizeInferredPath(fileMatch[2] || '')
+    if (!path) return {}
+    const toolName =
+      verb === 'created'
+        ? 'create_file'
+        : verb === 'deleted'
+          ? 'delete_file'
+          : verb === 'wrote'
+            ? 'write_file'
+            : verb === 'read'
+              ? 'read_file'
+              : verb === 'listed'
+                ? 'list_directory'
+                : 'edit_file'
+    const category: ToolCategory = verb === 'read' || verb === 'listed' ? 'read' : 'write'
+    const parameters = { ...(activity.parameters || {}), file_path: path }
+    const diffSummary: ToolDiffSummary | undefined =
+      category === 'write'
+        ? {
+            files: [
+              {
+                path,
+                status:
+                  verb === 'created' ? 'created' : verb === 'deleted' ? 'deleted' : 'modified'
+              }
+            ],
+            source: 'unknown',
+            confidence: 'unknown'
+          }
+        : undefined
+    return {
+      toolName,
+      displayName: getToolDisplayName(toolName, parameters),
+      category,
+      parameters,
+      filePath: path,
+      affectedFilePath: path,
+      operationCategory: category === 'write' ? 'edit_file' : 'read_file',
+      ...(diffSummary ? { diffSummary } : {})
+    }
+  }
+
+  const searchMatch = trimmed.match(/^searched(?:\s+(?:for|the workspace for|the web for))?\s+(.+?)\.?$/i)
+  if (searchMatch) {
+    const query = normalizeInferredPath(searchMatch[1] || '')
+    if (!query) return {}
+    const parameters = { ...(activity.parameters || {}), query }
+    return {
+      toolName: 'search',
+      displayName: getToolDisplayName('search', parameters),
+      category: 'search',
+      parameters,
+      operationCategory: 'search'
+    }
+  }
+
+  return {}
+}
+
 export function pairToolResult(activity: ToolActivity, toolResultEvent: any): ToolActivity {
   const resultOutput = extractResultOutput(toolResultEvent)
   const status = extractStatus(toolResultEvent)
@@ -1093,14 +1171,19 @@ export function pairToolResult(activity: ToolActivity, toolResultEvent: any): To
   const summaryText = isReasoning
     ? resultOutput
     : resultOutput.substring(0, 500) + (resultOutput.length > 500 ? '...' : '')
+  const inferred = inferNamelessActivityFromResult(activity, resultOutput)
+  const inferredToolName = inferred.toolName || activity.toolName
+  const inferredParameters = inferred.parameters || activity.parameters
 
   return {
     ...activity,
+    ...inferred,
     status,
     endedAt,
     durationMs,
     diffSummary:
-      deriveToolDiffSummary(activity.toolName, activity.parameters, resultOutput) ||
+      deriveToolDiffSummary(inferredToolName, inferredParameters, resultOutput) ||
+      inferred.diffSummary ||
       activity.diffSummary,
     resultSummary: summaryText,
     outputPreview: summaryText,
