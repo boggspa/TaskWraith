@@ -19797,13 +19797,33 @@ function App(): React.JSX.Element {
       const value = Number.parseFloat(String(raw || ''))
       return Number.isFinite(value) ? value : 0
     }
+    const clampPx = (min: number, viewportPercent: number, max: number): number => {
+      const viewportHeight = window.innerHeight || transcript.clientHeight
+      return Math.min(max, Math.max(min, viewportHeight * viewportPercent))
+    }
+    const welcomeNotificationGridMinSpacerHeight = (): number => {
+      if (
+        !composer.matches(':has(> .notification-zone)') ||
+        transcript.classList.contains('welcome-dashboard-hidden-by-fit')
+      ) {
+        return 0
+      }
+      return clampPx(18, 0.03, 48) + clampPx(18, 0.03, 44) + clampPx(24, 0.04, 64)
+    }
     const measureComposerContentHeight = (): number => {
       let visibleChildCount = 0
       let childrenHeight = 0
       for (const child of Array.from(composer.children)) {
         if (!(child instanceof HTMLElement)) continue
         const childStyle = window.getComputedStyle(child)
-        if (childStyle.display === 'none' || childStyle.visibility === 'hidden') continue
+        if (
+          childStyle.display === 'none' ||
+          childStyle.visibility === 'hidden' ||
+          childStyle.position === 'absolute' ||
+          childStyle.position === 'fixed'
+        ) {
+          continue
+        }
         const childRect = child.getBoundingClientRect()
         if (childRect.width <= 0 && childRect.height <= 0) continue
         visibleChildCount += 1
@@ -19817,6 +19837,7 @@ function App(): React.JSX.Element {
         readPx(composerStyle.paddingTop) +
         childrenHeight +
         gapHeight +
+        welcomeNotificationGridMinSpacerHeight() +
         readPx(composerStyle.paddingBottom)
       )
     }

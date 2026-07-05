@@ -59,6 +59,7 @@
 .composer-area > .composer-header-row,
 .composer-area > .scheduled-task-strip,
 .composer-primary-stack > .provider-shell-status-row,
+.composer-primary-stack > .composer-above-bar-stack,
 .composer-primary-stack > .composer-above-bar,
 .composer-primary-stack > .composer-header-row,
 .composer-primary-stack > .scheduled-task-strip {
@@ -205,7 +206,7 @@
   .composer-area
   > :is(.welcome-standalone-heatmaps, .composer-primary-stack)
   + .notification-zone.is-swipe-enabled {
-  --notification-nav-gutter: 32px;
+  --notification-nav-gutter: min(32px, var(--chat-side-gutter, 32px));
   width: min(
     calc(100% + var(--notification-nav-gutter) + var(--notification-nav-gutter)),
     calc(
@@ -224,6 +225,14 @@
   padding-inline: var(--notification-nav-gutter, 32px);
 }
 
+.app-transcript.welcome-mode:not(.multiview-pane-transcript)
+  .composer-area
+  > :is(.welcome-standalone-heatmaps, .composer-primary-stack)
+  + .notification-zone
+  .notification-zone-pane.is-outgoing {
+  inset-inline: var(--notification-nav-gutter, 32px);
+}
+
 .app-transcript.welcome-mode.welcome-dashboard-hidden-by-fit {
   padding-top: clamp(48px, 7vh, 72px);
 }
@@ -235,6 +244,37 @@
 .app-transcript.welcome-mode.welcome-dashboard-hidden-by-fit .composer-area {
   margin-top: auto;
   margin-bottom: auto;
+}
+
+.app-transcript.welcome-mode.welcome-dashboard-hidden-by-fit:not(.multiview-pane-transcript)
+  .composer-area:has(> .notification-zone) {
+  flex: 0 1 auto;
+  display: flex;
+  margin-top: auto;
+  margin-bottom: auto;
+}
+
+.app-transcript.welcome-mode.welcome-dashboard-hidden-by-fit:not(.multiview-pane-transcript)
+  .composer-area
+  > :is(.welcome-standalone-heatmaps, .composer-primary-stack)
+  + .notification-zone {
+  width: 100%;
+  max-width: min(100%, var(--composer-content-max-width));
+  margin-top: clamp(16px, 2.5vh, 28px);
+}
+
+.app-transcript.welcome-mode.welcome-dashboard-hidden-by-fit:not(.multiview-pane-transcript)
+  .composer-area
+  > :is(.welcome-standalone-heatmaps, .composer-primary-stack)
+  + .notification-zone.is-swipe-enabled {
+  width: min(
+    calc(100% + var(--notification-nav-gutter) + var(--notification-nav-gutter)),
+    calc(
+      var(--composer-content-max-width) + var(--notification-nav-gutter) +
+        var(--notification-nav-gutter)
+    )
+  );
+  max-width: none;
 }
 
 .welcome-hero {

@@ -3723,6 +3723,9 @@
    with no rim and tucks under the primary pill's shadow. */
 [data-composer-style="codex"]
   .composer-area
+  > .composer-above-bar--cursor-lead.composer-above-bar-secondary,
+[data-composer-style="codex"]
+  .composer-primary-stack
   > .composer-above-bar--cursor-lead.composer-above-bar-secondary {
   padding: 6px 14px !important;
   margin-inline: auto !important;

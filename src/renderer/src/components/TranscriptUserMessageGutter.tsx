@@ -31,6 +31,30 @@ const GUTTER_VERTICAL_OFFSET_PX = 35
 const GUTTER_RAIL_WIDTH_PX = 34
 const GUTTER_COMPOSER_CLEARANCE_PX = 6
 
+function visibleComposerChildren(composerArea: Element): HTMLElement[] {
+  const children: HTMLElement[] = []
+  for (const child of Array.from(composerArea.children)) {
+    if (!(child instanceof HTMLElement)) continue
+    const targets = child.classList.contains('composer-primary-stack')
+      ? Array.from(child.children)
+      : [child]
+    for (const target of targets) {
+      if (!(target instanceof HTMLElement)) continue
+      const style = window.getComputedStyle(target)
+      if (
+        style.display === 'none' ||
+        style.visibility === 'hidden' ||
+        style.position === 'absolute' ||
+        style.position === 'fixed'
+      ) {
+        continue
+      }
+      children.push(target)
+    }
+  }
+  return children
+}
+
 /**
  * Bounding box of the pane's floating composer stack (surface + any above-bar
  * rows), in viewport px. The rail's bottom third runs alongside the composer's
@@ -44,8 +68,7 @@ function composerStackBox(scroller: HTMLElement): { left: number } | null {
   const composerArea = scroller.closest('.app-transcript')?.querySelector('.composer-area')
   if (!composerArea) return null
   let left = Number.POSITIVE_INFINITY
-  for (const child of Array.from(composerArea.children)) {
-    if (!(child instanceof HTMLElement)) continue
+  for (const child of visibleComposerChildren(composerArea)) {
     const rect = child.getBoundingClientRect()
     if (rect.width <= 0 || rect.height <= 0) continue
     left = Math.min(left, rect.left)

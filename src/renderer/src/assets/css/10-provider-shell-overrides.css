@@ -1193,6 +1193,20 @@
   .app-transcript
   .composer-area.interface-codex
   > .composer-surface
+  > .composer-inner-module,
+[data-composer-style="codex"]:not(
+    :is(
+      [data-theme="light"],
+      [data-theme="citrus"],
+      [data-theme="mist"],
+      [data-theme="sage"],
+      [data-theme="alabaster"]
+    )
+  )
+  .app-transcript
+  .composer-area.interface-codex
+  > .composer-primary-stack
+  > .composer-surface
   > .composer-inner-module {
   background: #2d2d2d !important;
   background-image: none !important;
@@ -2437,6 +2451,10 @@
 [data-composer-style="cursor"]
   .app-transcript
   .composer-area
+  > .composer-above-bar--cursor-lead,
+[data-composer-style="cursor"]
+  .app-transcript
+  .composer-primary-stack
   > .composer-above-bar--cursor-lead {
   margin-bottom: 6px !important;
   padding: 0 !important;
@@ -2917,12 +2935,20 @@
 [data-composer-style="cursor"]
   .composer-area
   > .composer-above-bar--cursor-lead:not(.composer-above-bar-secondary)
+  > .composer-above-bar-pill--git,
+[data-composer-style="cursor"]
+  .composer-primary-stack
+  > .composer-above-bar--cursor-lead:not(.composer-above-bar-secondary)
   > .composer-above-bar-pill--git {
   flex: 0 1 auto;
   max-width: min(100%, 38rem);
 }
 [data-composer-style="cursor"]
   .composer-area
+  > .composer-above-bar--cursor-lead:not(.composer-above-bar-secondary)
+  > .composer-above-bar-pill--changes,
+[data-composer-style="cursor"]
+  .composer-primary-stack
   > .composer-above-bar--cursor-lead:not(.composer-above-bar-secondary)
   > .composer-above-bar-pill--changes {
   margin-left: auto;
@@ -3623,14 +3649,14 @@
 }
 :root[data-advanced-fx-refraction="true"][data-composer-style="default"]
   .app-transcript
-  .composer-area
+  :is(.composer-area, .composer-primary-stack)
   > .composer-above-bar-stack:not(:empty) {
   position: relative;
   isolation: isolate;
 }
 :root[data-advanced-fx-refraction="true"][data-composer-style="default"]
   .app-transcript
-  .composer-area
+  :is(.composer-area, .composer-primary-stack)
   > .composer-above-bar-stack:not(:empty)::before {
   content: "";
   position: absolute;
@@ -3662,19 +3688,19 @@
     [data-theme="sage"]
   )
   .app-transcript
-  .composer-area
+  :is(.composer-area, .composer-primary-stack)
   > .composer-above-bar-stack:not(:empty)::before {
   mix-blend-mode: screen;
 }
 :root[data-reduce-transparency="true"][data-composer-style="default"]
   .app-transcript
-  .composer-area
+  :is(.composer-area, .composer-primary-stack)
   > .composer-above-bar-stack::before {
   display: none;
 }
 [data-composer-style="default"]
   .app-transcript
-  .composer-area
+  :is(.composer-area, .composer-primary-stack)
   > .composer-above-bar-stack:not(:empty)
   > * {
   position: relative;
@@ -3682,7 +3708,7 @@
 }
 [data-composer-style="default"]
   .app-transcript
-  .composer-area
+  :is(.composer-area, .composer-primary-stack)
   > .composer-above-bar-stack:not(:empty)
   > * + * {
   border-top: 1px solid var(--native-instrument-row-divider) !important;

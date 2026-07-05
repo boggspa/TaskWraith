@@ -48,6 +48,30 @@ const FILTER_ROW_GAP_PX = 2
 const FILTER_SYSTEM_GAP_PX = 5
 const FILTER_SYSTEM_SIZE_PX = 21
 
+function visibleComposerChildren(composerArea: Element): HTMLElement[] {
+  const children: HTMLElement[] = []
+  for (const child of Array.from(composerArea.children)) {
+    if (!(child instanceof HTMLElement)) continue
+    const targets = child.classList.contains('composer-primary-stack')
+      ? Array.from(child.children)
+      : [child]
+    for (const target of targets) {
+      if (!(target instanceof HTMLElement)) continue
+      const style = window.getComputedStyle(target)
+      if (
+        style.display === 'none' ||
+        style.visibility === 'hidden' ||
+        style.position === 'absolute' ||
+        style.position === 'fixed'
+      ) {
+        continue
+      }
+      children.push(target)
+    }
+  }
+  return children
+}
+
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value))
 }
@@ -59,8 +83,7 @@ function composerStackBox(scroller: HTMLElement): ElementRect | null {
   let top = Number.POSITIVE_INFINITY
   let right = Number.NEGATIVE_INFINITY
   let bottom = Number.NEGATIVE_INFINITY
-  for (const child of Array.from(composerArea.children)) {
-    if (!(child instanceof HTMLElement)) continue
+  for (const child of visibleComposerChildren(composerArea)) {
     const rect = child.getBoundingClientRect()
     if (rect.width <= 0 || rect.height <= 0) continue
     left = Math.min(left, rect.left)
@@ -70,6 +93,14 @@ function composerStackBox(scroller: HTMLElement): ElementRect | null {
   }
   if (!Number.isFinite(left) || !Number.isFinite(right)) return null
   return { right, top, height: bottom - top }
+}
+
+function composerSurfaceBox(scroller: HTMLElement): ElementRect | null {
+  const surface = scroller.closest('.app-transcript')?.querySelector('.composer-surface')
+  if (!(surface instanceof HTMLElement)) return null
+  const rect = surface.getBoundingClientRect()
+  if (rect.width <= 0 || rect.height <= 0) return null
+  return { right: rect.right, top: rect.top, height: rect.height }
 }
 
 function mountedRowsRightEdgePx(scroller: HTMLElement): number | null {
@@ -202,6 +233,7 @@ export function TranscriptParticipantFilterRail({
     const contentRect = content.getBoundingClientRect()
     const rowsRight = mountedRowsRightEdgePx(scroller)
     const composerRect = composerStackBox(scroller)
+    const composerSurfaceRect = composerSurfaceBox(scroller)
     const anchorRight = Math.max(contentRect.right, rowsRight ?? 0, composerRect?.right ?? 0)
     const left = anchorRight + RAIL_GAP_PX
     const width =
@@ -215,8 +247,8 @@ export function TranscriptParticipantFilterRail({
       participantRows * FILTER_ROW_HEIGHT_PX + Math.max(0, participantRows - 1) * FILTER_ROW_GAP_PX
     const naturalHeight =
       participantHeight + (systemItem ? FILTER_SYSTEM_GAP_PX + FILTER_SYSTEM_SIZE_PX : 0)
-    const centerY = composerRect
-      ? composerRect.top + composerRect.height / 2
+    const centerY = composerSurfaceRect
+      ? composerSurfaceRect.top + composerSurfaceRect.height / 2
       : scrollerRect.bottom - scrollerRect.height * 0.28
     const top = clamp(
       centerY - naturalHeight / 2,

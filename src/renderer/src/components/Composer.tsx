@@ -413,6 +413,17 @@ export interface ComposerProps {
   workspaces: any
 }
 
+function ComposerPrimaryStack({
+  enabled,
+  children
+}: {
+  enabled: boolean
+  children: React.ReactNode
+}): React.JSX.Element {
+  if (!enabled) return <>{children}</>
+  return <div className="composer-primary-stack">{children}</div>
+}
+
 const normalizeComposerWorkflowMode = (value: unknown): ChatWorkflowMode | null =>
   value === 'plan' || value === 'normal' ? value : null
 
@@ -1340,7 +1351,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
               providerShellCapabilityChips computation kept for any
               future use but the row no longer mounts in any shell.
             */}
-            <div className="composer-primary-stack">
+            <ComposerPrimaryStack enabled={isWelcomeChat}>
             {isWelcomeChat &&
               isCurrentEnsembleChat &&
               !isWorkflowChatWelcome &&
@@ -4553,7 +4564,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                 }
               />
             )}
-            </div>
+            </ComposerPrimaryStack>
             {shouldShowWelcomeStandaloneHeatmaps && (
               <WelcomeHeatmaps slots={welcomeHeatmapSlots} layout="single" />
             )}
