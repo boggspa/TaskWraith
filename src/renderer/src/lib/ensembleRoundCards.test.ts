@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildEnsembleRoundCardRows,
+  buildEnsembleRoundCardRowsWithRanges,
   ensembleRoundHeaderId,
   isEnsembleRoundHeaderMessage,
   readEnsembleRoundHeader
@@ -269,5 +270,29 @@ describe('buildEnsembleRoundCardRows', () => {
     })
     // preface stays inline; r1 is the latest idle round → expanded.
     expect(result.map((m) => m.id)).toEqual(['preface', ensembleRoundHeaderId('r1'), 'u1', 'a1'])
+  })
+
+  it('reports source ranges for collapsed headers and expanded body rows', () => {
+    const display = [
+      userPrompt('u1', 'r1'),
+      message('a1', { roundId: 'r1' }),
+      userPrompt('u2', 'r2'),
+      message('a2', { roundId: 'r2' })
+    ]
+    const result = buildEnsembleRoundCardRowsWithRanges({
+      chat: chat({
+        ensemble: { enabled: true, maxParticipants: 4, participants: [] } as never
+      }),
+      displayMessages: display,
+      collapseOlderRounds: true,
+      manualRoundExpansion: NO_OVERRIDES
+    })
+
+    expect(result.map((entry) => [entry.message.id, entry.startIndex, entry.endIndex])).toEqual([
+      [ensembleRoundHeaderId('r1'), 0, 2],
+      [ensembleRoundHeaderId('r2'), 2, 4],
+      ['u2', 2, 3],
+      ['a2', 3, 4]
+    ])
   })
 })

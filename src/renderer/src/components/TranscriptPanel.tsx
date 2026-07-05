@@ -7,6 +7,7 @@ import type {
   DiffFileSummary,
   ProviderId
 } from '../../../main/store/types'
+import { isEnsembleRoundDispatchLive } from '../../../shared/ensembleRoundLifecycle'
 import { ensembleRoundStatusClass } from '../lib/ensembleRoundStatusClass'
 import { getChatProvider } from '../lib/chatScope'
 import { getProviderLabel } from '../lib/providerLabels'
@@ -77,7 +78,7 @@ import {
   type TranscriptGroupedMessageRange
 } from '../lib/transcriptToolMessageGrouping'
 import {
-  buildEnsembleRoundCardRows,
+  buildEnsembleRoundCardRowsWithRanges,
   isEnsembleRoundHeaderMessage,
   readEnsembleRoundHeader
 } from '../lib/ensembleRoundCards'
@@ -497,17 +498,19 @@ function regroupStartFromChangedIndex(
 function useIncrementalMessageGrouping(
   messages: ChatMessage[],
   groupWithRanges: (messages: readonly ChatMessage[]) => TranscriptGroupedMessageRange[],
-  regroupStart: (messages: readonly ChatMessage[], changedIndex: number) => number
+  regroupStart: (messages: readonly ChatMessage[], changedIndex: number) => number,
+  resetKey = ''
 ): ChatMessage[] {
   const cacheRef = useRef<{
     input: ChatMessage[]
     ranges: TranscriptGroupedMessageRange[]
     output: ChatMessage[]
+    resetKey: string
   } | null>(null)
 
   return useMemo(() => {
     const cached = cacheRef.current
-    if (cached) {
+    if (cached && cached.resetKey === resetKey) {
       const minLength = Math.min(cached.input.length, messages.length)
       let sharedPrefix = 0
       while (sharedPrefix < minLength && cached.input[sharedPrefix] === messages[sharedPrefix]) {
@@ -528,15 +531,15 @@ function useIncrementalMessageGrouping(
       const suffixRanges = offsetGroupedRanges(groupWithRanges(messages.slice(start)), start)
       const ranges = [...prefixRanges, ...suffixRanges]
       const output = ranges.map((range) => range.message)
-      cacheRef.current = { input: messages, ranges, output }
+      cacheRef.current = { input: messages, ranges, output, resetKey }
       return output
     }
 
     const ranges = groupWithRanges(messages)
     const output = ranges.map((range) => range.message)
-    cacheRef.current = { input: messages, ranges, output }
+    cacheRef.current = { input: messages, ranges, output, resetKey }
     return output
-  }, [groupWithRanges, messages, regroupStart])
+  }, [groupWithRanges, messages, regroupStart, resetKey])
 }
 
 const toolGroupingRegroupStart = (
@@ -555,6 +558,51 @@ const fanoutGroupingRegroupStart = (
     const key = fanoutLaneGroupingKey(next)
     return Boolean(key && key === fanoutLaneGroupingKey(previous))
   })
+
+function ensembleRoundGroupingKey(message: ChatMessage): string | null {
+  const value = message.metadata?.ensembleRoundId
+  return typeof value === 'string' && value.length > 0 ? value : null
+}
+
+const roundCardGroupingRegroupStart = (
+  messages: readonly ChatMessage[],
+  changedIndex: number
+): number =>
+  regroupStartFromChangedIndex(messages, changedIndex, (previous, next) => {
+    const key = ensembleRoundGroupingKey(next)
+    return Boolean(key && key === ensembleRoundGroupingKey(previous))
+  })
+
+function booleanMapSignature(map: ReadonlyMap<string, boolean>): string {
+  if (map.size === 0) return ''
+  return Array.from(map.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([key, value]) => `${key}:${value ? 1 : 0}`)
+    .join('\u0000')
+}
+
+type EnsembleActiveRound = NonNullable<NonNullable<ChatRecord['ensemble']>['activeRound']>
+type EnsembleRoundSummaries = NonNullable<NonNullable<ChatRecord['ensemble']>['roundSummaries']>
+
+function ensembleActiveRoundProjectionKey(round: EnsembleActiveRound | null | undefined): string {
+  if (!round) return ''
+  return [round.roundId || '', isEnsembleRoundDispatchLive(round) ? 'live' : 'settled'].join(
+    '\u0000'
+  )
+}
+
+function ensembleRoundSummariesSignature(
+  summaries: EnsembleRoundSummaries | null | undefined
+): string {
+  if (!summaries) return ''
+  return Object.keys(summaries)
+    .sort()
+    .map((roundId) => {
+      const summary = summaries[roundId]?.summary
+      return `${roundId}:${typeof summary === 'string' ? summary : ''}`
+    })
+    .join('\u0000')
+}
 
 function formatTranscriptMessageFooterTime(timestamp: string | undefined): {
   dateTime: string
@@ -1764,27 +1812,61 @@ export const TranscriptPanel = memo(
         currentChat?.ensemble?.roundSummaries
       ]
     )
-    // Ensemble round cards: completed rounds collapse into expandable
-    // header rows (older collapsed by default). Returns `groupedMessages`
-    // unchanged for non-ensemble chats or when the setting is off, so the
-    // flat render path + referential stability are preserved there.
-    const displayMessages = useMemo(
+    const roundCardCollapseEnabled = participantFilterActive ? false : collapseOlderRounds !== false
+    const manualRoundExpansionKey = useMemo(
+      () => booleanMapSignature(manualRoundExpansion),
+      [manualRoundExpansion]
+    )
+    const activeRoundProjectionKey = useMemo(
+      () => ensembleActiveRoundProjectionKey(roundCardChat?.ensemble?.activeRound),
+      [roundCardChat?.ensemble?.activeRound]
+    )
+    const roundSummariesKey = useMemo(
+      () => ensembleRoundSummariesSignature(roundCardChat?.ensemble?.roundSummaries),
+      [roundCardChat?.ensemble?.roundSummaries]
+    )
+    const roundCardResetKey = useMemo(
       () =>
-        buildEnsembleRoundCardRows({
+        [
+          roundCardChat?.appChatId || '',
+          roundCardChat?.chatKind || '',
+          roundCardCollapseEnabled ? 'collapse' : 'flat',
+          isThinking ? 'live' : 'idle',
+          activeRoundProjectionKey,
+          roundCardChat?.ensemble?.lastRoundSummary || '',
+          roundSummariesKey,
+          manualRoundExpansionKey
+        ].join('\u0001'),
+      [
+        activeRoundProjectionKey,
+        isThinking,
+        manualRoundExpansionKey,
+        roundCardChat?.appChatId,
+        roundCardChat?.chatKind,
+        roundCardChat?.ensemble?.lastRoundSummary,
+        roundCardCollapseEnabled,
+        roundSummariesKey
+      ]
+    )
+    const buildRoundCardRanges = useCallback(
+      (messages: readonly ChatMessage[]) =>
+        buildEnsembleRoundCardRowsWithRanges({
           chat: roundCardChat,
-          displayMessages: participantFilteredMessages,
-          collapseOlderRounds: participantFilterActive ? false : collapseOlderRounds !== false,
+          displayMessages: messages as ChatMessage[],
+          collapseOlderRounds: roundCardCollapseEnabled,
           manualRoundExpansion,
           hasLiveRunEvidence: isThinking
         }),
-      [
-        roundCardChat,
-        participantFilteredMessages,
-        participantFilterActive,
-        collapseOlderRounds,
-        manualRoundExpansion,
-        isThinking
-      ]
+      [isThinking, manualRoundExpansion, roundCardChat, roundCardCollapseEnabled]
+    )
+    // Ensemble round cards: completed rounds collapse into expandable
+    // header rows (older collapsed by default). The range-based path keeps
+    // unchanged transcript prefixes cached while the live tail grows.
+    const displayMessages = useIncrementalMessageGrouping(
+      participantFilteredMessages,
+      buildRoundCardRanges,
+      roundCardGroupingRegroupStart,
+      roundCardResetKey
     )
     // Map every (pre-collapse) message id → its round id, so navigation
     // (jump-to-message, pinned, side-chat seed) can auto-expand the round

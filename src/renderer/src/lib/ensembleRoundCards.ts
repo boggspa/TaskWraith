@@ -1,6 +1,7 @@
 import type { ChatMessage, ChatRecord } from '../../../main/store/types'
 import { isEnsembleRoundDispatchLive } from '../../../shared/ensembleRoundLifecycle'
 import { groupEnsembleMessagesByRound } from './ensembleRoundGrouping'
+import type { TranscriptGroupedMessageRange } from './transcriptToolMessageGrouping'
 
 /**
  * 1.0.5 — Round-as-card renderer integration (the follow-up promised by
@@ -165,6 +166,27 @@ export interface BuildEnsembleRoundCardRowsInput {
  * exact pre-existing render path + referential stability.
  */
 export function buildEnsembleRoundCardRows(input: BuildEnsembleRoundCardRowsInput): ChatMessage[] {
+  const { chat, displayMessages, collapseOlderRounds } = input
+  if (!chat || chat.chatKind !== 'ensemble' || !collapseOlderRounds) return displayMessages
+
+  const ranges = buildEnsembleRoundCardRowsWithRanges(input)
+  if (
+    ranges.length === displayMessages.length &&
+    ranges.every(
+      (range, index) =>
+        range.message === displayMessages[index] &&
+        range.startIndex === index &&
+        range.endIndex === index + 1
+    )
+  ) {
+    return displayMessages
+  }
+  return ranges.map((range) => range.message)
+}
+
+export function buildEnsembleRoundCardRowsWithRanges(
+  input: BuildEnsembleRoundCardRowsInput
+): TranscriptGroupedMessageRange[] {
   const {
     chat,
     displayMessages,
@@ -173,14 +195,24 @@ export function buildEnsembleRoundCardRows(input: BuildEnsembleRoundCardRowsInpu
     hasLiveRunEvidence = false
   } = input
   if (!chat || chat.chatKind !== 'ensemble' || !collapseOlderRounds) {
-    return displayMessages
+    return displayMessages.map((message, index) => ({
+      message,
+      startIndex: index,
+      endIndex: index + 1
+    }))
   }
 
   const items = groupEnsembleMessagesByRound({ ...chat, messages: displayMessages })
   const roundItems = items.filter(
     (item): item is Extract<typeof item, { type: 'round-group' }> => item.type === 'round-group'
   )
-  if (roundItems.length === 0) return displayMessages
+  if (roundItems.length === 0) {
+    return displayMessages.map((message, index) => ({
+      message,
+      startIndex: index,
+      endIndex: index + 1
+    }))
+  }
 
   const roundCount = roundItems.length
   const lastRoundId = roundItems[roundItems.length - 1].roundId
@@ -191,20 +223,31 @@ export function buildEnsembleRoundCardRows(input: BuildEnsembleRoundCardRowsInpu
   const liveFallbackRoundId = hasLiveRunEvidence ? lastRoundId : null
   const hasActiveRound = liveActiveRoundId !== null || liveFallbackRoundId !== null
 
-  const out: ChatMessage[] = []
+  const out: TranscriptGroupedMessageRange[] = []
   let roundIndex = 0
+  let sourceIndex = 0
   for (const item of items) {
     if (item.type === 'message') {
-      out.push(item.message)
+      out.push({ message: item.message, startIndex: sourceIndex, endIndex: sourceIndex + 1 })
+      sourceIndex += 1
       continue
     }
     roundIndex += 1
     const { roundId, messages, summary } = item
+    const groupStartIndex = sourceIndex
+    const groupEndIndex = sourceIndex + messages.length
 
     // The active round is always rendered flat so streaming output is
     // never hidden behind a collapsed card.
     if (roundId === liveActiveRoundId || roundId === liveFallbackRoundId) {
-      for (const message of messages) out.push(message)
+      for (let index = 0; index < messages.length; index += 1) {
+        out.push({
+          message: messages[index],
+          startIndex: groupStartIndex + index,
+          endIndex: groupStartIndex + index + 1
+        })
+      }
+      sourceIndex = groupEndIndex
       continue
     }
 
@@ -212,12 +255,21 @@ export function buildEnsembleRoundCardRows(input: BuildEnsembleRoundCardRowsInpu
     const override = manualRoundExpansion.get(roundId)
     const expanded = override === undefined ? defaultExpanded : override
 
-    out.push(
-      buildRoundHeaderMessage({ roundId, roundIndex, roundCount, expanded, messages, summary })
-    )
+    out.push({
+      message: buildRoundHeaderMessage({ roundId, roundIndex, roundCount, expanded, messages, summary }),
+      startIndex: groupStartIndex,
+      endIndex: groupEndIndex
+    })
     if (expanded) {
-      for (const message of messages) out.push(message)
+      for (let index = 0; index < messages.length; index += 1) {
+        out.push({
+          message: messages[index],
+          startIndex: groupStartIndex + index,
+          endIndex: groupStartIndex + index + 1
+        })
+      }
     }
+    sourceIndex = groupEndIndex
   }
   return out
 }
