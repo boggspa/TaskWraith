@@ -5,6 +5,18 @@ export interface ReleaseCommandBlock {
   reason: string
 }
 
+export type ReleaseCommandApprovalSource =
+  | 'externalPublishReceipt'
+  | 'approvedHostCommand'
+  | 'approvedMcpShell'
+  | 'approvedMcpTask'
+  | 'approvedBackgroundProcess'
+
+export interface ReleaseCommandCheckOptions {
+  allowReleaseCommand?: boolean
+  approvalSource?: ReleaseCommandApprovalSource
+}
+
 const SHELL_RELEASE_PATTERNS: Array<{ commandClass: string; pattern: RegExp }> = [
   { commandClass: 'codesign', pattern: commandTokenPattern('codesign') },
   { commandClass: 'notarytool', pattern: commandTokenPattern('notarytool') },
@@ -62,27 +74,42 @@ export function classifyReleaseCommand(command: unknown): ReleaseCommandBlock | 
   return null
 }
 
-export function releaseCommandBlockReason(command: unknown): string | null {
+function releaseCommandAllowed(options?: ReleaseCommandCheckOptions): boolean {
+  return options?.allowReleaseCommand === true && Boolean(options.approvalSource)
+}
+
+export function releaseCommandBlockReason(
+  command: unknown,
+  options?: ReleaseCommandCheckOptions
+): string | null {
+  if (releaseCommandAllowed(options)) return null
   return classifyReleaseCommand(command)?.reason || null
 }
 
-export function releaseScriptBlockReason(taskName: string, scriptBody: string): string | null {
+export function releaseScriptBlockReason(
+  taskName: string,
+  scriptBody: string,
+  options?: ReleaseCommandCheckOptions
+): string | null {
+  if (releaseCommandAllowed(options)) return null
   const normalizedTask = String(taskName || '').trim()
   if (/\b(?:release|publish|deploy|notariz(?:e|ed)|sign(?:ed|ing)?)\b/i.test(normalizedTask)) {
     return block(`package script ${normalizedTask}`).reason
   }
-  return releaseCommandBlockReason(scriptBody)
+  return releaseCommandBlockReason(scriptBody, options)
 }
 
 export function releasePackageScriptBlockReason(
   command: unknown,
-  scripts: Record<string, unknown> | null | undefined
+  scripts: Record<string, unknown> | null | undefined,
+  options?: ReleaseCommandCheckOptions
 ): string | null {
+  if (releaseCommandAllowed(options)) return null
   if (!scripts) return null
   const taskName = packageScriptNameFromCommand(command)
   if (!taskName) return null
   const scriptBody = scripts[taskName]
-  return releaseScriptBlockReason(taskName, typeof scriptBody === 'string' ? scriptBody : '')
+  return releaseScriptBlockReason(taskName, typeof scriptBody === 'string' ? scriptBody : '', options)
 }
 
 function classifyArgv(argv: string[]): ReleaseCommandBlock | null {

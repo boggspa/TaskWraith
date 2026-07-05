@@ -28,7 +28,10 @@ import {
   type TranscriptMediaAssetReadResult
 } from '../services/TranscriptMediaAssetStore'
 import type { McpToolExecutionResult } from './McpBridgeRuntime'
-import { releaseScriptBlockReason } from '../ReleaseCommandPolicy'
+import {
+  releaseScriptBlockReason,
+  type ReleaseCommandCheckOptions
+} from '../ReleaseCommandPolicy'
 import type {
   ExternalPublishReceipt,
   ExternalPublishReceiptInput,
@@ -44,6 +47,13 @@ export interface HostCommandResult {
   durationMs: number
 }
 
+export interface HostCommandRunOptions {
+  timeoutMs?: number
+  releaseApproval?: ReleaseCommandCheckOptions
+}
+
+export type HostCommandRunArgument = number | HostCommandRunOptions
+
 export type BackgroundProcessSignal = 'SIGTERM' | 'SIGKILL'
 export type BackgroundProcessStream = 'stdout' | 'stderr' | 'both'
 
@@ -52,6 +62,7 @@ export interface BackgroundProcessStartOptions {
   appChatId: string
   initialWaitMs: number
   maxInitialChars: number
+  releaseApproval?: ReleaseCommandCheckOptions
 }
 
 export interface BackgroundProcessReadOptions {
@@ -78,7 +89,7 @@ export interface WorkspaceToolHostDependencies {
   runHostCommand: (
     command: string | string[],
     cwd: string,
-    timeoutMs?: number
+    options?: HostCommandRunArgument
   ) => Promise<HostCommandResult>
   startBackgroundProcess?: (
     command: string,
@@ -612,14 +623,20 @@ export async function executeWorkspaceMcpTool(
     }
   }
   if (toolName === 'run_task') {
-    const result = await executeRunTask(deps, args, cwd)
+    const result = await executeRunTask(deps, args, cwd, {
+      allowReleaseCommand: true,
+      approvalSource: 'approvedMcpTask'
+    })
     return {
       result,
       isError: (result.exitCode !== null && result.exitCode !== 0) || result.timedOut === true
     }
   }
   if (toolName === 'start_background_process') {
-    const result = await executeStartBackgroundProcess(deps, args, context, cwd)
+    const result = await executeStartBackgroundProcess(deps, args, context, cwd, {
+      allowReleaseCommand: true,
+      approvalSource: 'approvedBackgroundProcess'
+    })
     return { result, isError: result.ok === false }
   }
   if (toolName === 'list_background_processes') {
@@ -1226,7 +1243,10 @@ export async function executeGitPush(
       error: receiptResult.error
     }
   }
-  const result = await runCommandArgs(deps, command, cwd, 120_000)
+  const result = await runCommandArgs(deps, command, cwd, 120_000, {
+    allowReleaseCommand: true,
+    approvalSource: 'externalPublishReceipt'
+  })
   await completeAgentExternalPublishReceipt(deps, receiptResult.receipt, {
     outcome: result.exitCode === 0 && result.timedOut !== true && !result.error ? 'completed' : 'failed',
     ...(result.error || result.exitCode !== 0 || result.timedOut === true
@@ -1293,7 +1313,10 @@ export async function executeGitCreatePr(
       error: receiptResult.error
     }
   }
-  const result = await runCommandArgs(deps, command, cwd, 120_000)
+  const result = await runCommandArgs(deps, command, cwd, 120_000, {
+    allowReleaseCommand: true,
+    approvalSource: 'externalPublishReceipt'
+  })
   const url = result.stdout.match(/https?:\/\/[^\s]+/)?.[0]
   await completeAgentExternalPublishReceipt(deps, receiptResult.receipt, {
     outcome: result.exitCode === 0 && result.timedOut !== true && !result.error ? 'completed' : 'failed',
@@ -1318,7 +1341,8 @@ export async function executeGitCreatePr(
 export async function executeRunTask(
   deps: WorkspaceToolExecutorDependencies,
   args: Record<string, any>,
-  cwd: string
+  cwd: string,
+  releaseApproval?: ReleaseCommandCheckOptions
 ) {
   const task = requireNonEmptyString(args.task || args.script || args.name, 'Task')
   const taskArgs = toStringArray(args.args)
@@ -1328,7 +1352,7 @@ export async function executeRunTask(
   if (scripts && task in scripts) {
     command = ['npm', 'run', task]
     const script = String(scripts[task] || '')
-    const blockedReleaseScript = releaseScriptBlockReason(task, script)
+    const blockedReleaseScript = releaseScriptBlockReason(task, script, releaseApproval)
     if (blockedReleaseScript) {
       return {
         task,
@@ -1364,7 +1388,7 @@ export async function executeRunTask(
   }
   command.push(...taskArgs)
   const timeoutMs = clampInteger(args.timeoutMs, 600_000, 1_000, 30 * 60_000)
-  const result = await runCommandArgs(deps, command, cwd, timeoutMs)
+  const result = await runCommandArgs(deps, command, cwd, timeoutMs, releaseApproval)
   return {
     task,
     command,
@@ -1382,7 +1406,8 @@ export async function executeStartBackgroundProcess(
   deps: WorkspaceToolExecutorDependencies,
   args: Record<string, any>,
   context: WorkspaceToolContext,
-  cwd: string
+  cwd: string,
+  releaseApproval?: ReleaseCommandCheckOptions
 ) {
   const startBackgroundProcess = deps.host.startBackgroundProcess
   if (!startBackgroundProcess) throw new Error('Background process host is not configured.')
@@ -1397,7 +1422,8 @@ export async function executeStartBackgroundProcess(
     name: optionalString(args.name),
     appChatId,
     initialWaitMs,
-    maxInitialChars
+    maxInitialChars,
+    ...(releaseApproval ? { releaseApproval } : {})
   })
 }
 
@@ -2789,9 +2815,14 @@ async function runCommandArgs(
   deps: WorkspaceToolExecutorDependencies,
   command: string[],
   cwd: string,
-  timeoutMs = 600_000
+  timeoutMs = 600_000,
+  releaseApproval?: ReleaseCommandCheckOptions
 ): Promise<HostCommandResult> {
-  return deps.host.runHostCommand(command, cwd, timeoutMs)
+  return deps.host.runHostCommand(
+    command,
+    cwd,
+    releaseApproval ? { timeoutMs, releaseApproval } : timeoutMs
+  )
 }
 
 async function readJsonFile(filePath: string): Promise<any | null> {

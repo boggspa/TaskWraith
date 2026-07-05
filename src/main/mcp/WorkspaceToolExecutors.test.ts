@@ -173,6 +173,60 @@ describe('executeRunTask', () => {
       await rm(workspace, { recursive: true, force: true })
     }
   })
+
+  it('keeps release scripts blocked by default and allows them with an approval bypass', async () => {
+    const workspace = await mkdtemp(resolve(tmpdir(), 'taskwraith-run-task-release-'))
+    try {
+      await writeFile(
+        resolve(workspace, 'package.json'),
+        JSON.stringify({
+          scripts: {
+            'build:mac:notarized': 'electron-builder --mac -c.mac.notarize=true'
+          }
+        })
+      )
+      const calls: Array<{ command: string[]; options: unknown }> = []
+      const deps = makeDeps(async (command, _cwd, options) => {
+        calls.push({ command: command as string[], options })
+        return commandResult('notarized build complete\n')
+      })
+
+      const blocked = await executeRunTask(deps, { task: 'build:mac:notarized' }, workspace)
+      expect(blocked).toMatchObject({
+        task: 'build:mac:notarized',
+        exitCode: null,
+        error: expect.stringContaining('release-class command')
+      })
+      expect(calls).toEqual([])
+
+      const allowed = await executeRunTask(
+        deps,
+        { task: 'build:mac:notarized' },
+        workspace,
+        { allowReleaseCommand: true, approvalSource: 'approvedMcpTask' }
+      )
+
+      expect(allowed).toMatchObject({
+        task: 'build:mac:notarized',
+        command: ['npm', 'run', 'build:mac:notarized'],
+        exitCode: 0
+      })
+      expect(calls).toEqual([
+        {
+          command: ['npm', 'run', 'build:mac:notarized'],
+          options: {
+            timeoutMs: 600_000,
+            releaseApproval: {
+              allowReleaseCommand: true,
+              approvalSource: 'approvedMcpTask'
+            }
+          }
+        }
+      ])
+    } finally {
+      await rm(workspace, { recursive: true, force: true })
+    }
+  })
 })
 
 describe('resolveMcpScopedPath', () => {
@@ -638,6 +692,41 @@ describe('background process workspace tools', () => {
         workspace
       )
     ).rejects.toThrow('requires an active chat')
+  })
+
+  it('forwards release approval metadata to the background process host when supplied', async () => {
+    const workspace = resolve('/tmp/taskwraith-workspace-tools')
+    const calls: Array<{ command: string; cwd: string; options: unknown }> = []
+    const deps = makeDeps(async () => commandResult(''))
+    deps.host.startBackgroundProcess = async (command, cwd, options) => {
+      calls.push({ command, cwd, options })
+      return { ok: true, processId: 'bg-release', running: true }
+    }
+
+    const result = await executeStartBackgroundProcess(
+      deps,
+      { command: 'npm run release' },
+      { scope: 'workspace', cwd: workspace, workspacePath: workspace, appChatId: 'chat-1' },
+      workspace,
+      { allowReleaseCommand: true, approvalSource: 'approvedBackgroundProcess' }
+    )
+
+    expect(result).toMatchObject({ ok: true, processId: 'bg-release' })
+    expect(calls).toEqual([
+      {
+        command: 'npm run release',
+        cwd: workspace,
+        options: {
+          appChatId: 'chat-1',
+          initialWaitMs: 500,
+          maxInitialChars: 20_000,
+          releaseApproval: {
+            allowReleaseCommand: true,
+            approvalSource: 'approvedBackgroundProcess'
+          }
+        }
+      }
+    ])
   })
 
   it('lists, reads, and kills only through chat-scoped host registry ids', async () => {
@@ -1264,6 +1353,45 @@ describe('git history workspace tools', () => {
     ])
   })
 
+  it('passes a release-command bypass to git push only after the publish receipt is allowed', async () => {
+    const workspace = resolve('/tmp/taskwraith-workspace-tools')
+    const pushOptions: unknown[] = []
+    const deps = makeDeps(async (command, _cwd, options) => {
+      const argv = command as string[]
+      if (argv[1] === 'branch') return commandResult('feature/mcp-publish\n')
+      if (argv[1] === 'rev-parse') return commandResult('', 1)
+      if (argv[1] === 'push') {
+        pushOptions.push(options)
+        return commandResult('branch pushed\n')
+      }
+      if (argv[1] === 'status') return commandResult('## feature/mcp-publish\n')
+      return commandResult('')
+    })
+    deps.externalPublishReceipts = {
+      begin: async (input) =>
+        ({
+          schemaVersion: 1,
+          id: 'agent-push-receipt',
+          requestedAt: '2026-07-03T00:00:00.000Z',
+          ...input
+        }) as any,
+      complete: async () => null
+    }
+
+    const result = await executeGitPush(deps, {}, workspace)
+
+    expect(result.ok).toBe(true)
+    expect(pushOptions).toEqual([
+      {
+        timeoutMs: 120_000,
+        releaseApproval: {
+          allowReleaseCommand: true,
+          approvalSource: 'externalPublishReceipt'
+        }
+      }
+    ])
+  })
+
   it('blocks agent git push when external-publish receipt denies it', async () => {
     const workspace = resolve('/tmp/taskwraith-workspace-tools')
     const commands: string[][] = []
@@ -1349,9 +1477,11 @@ describe('git history workspace tools', () => {
   it('records an agent external-publish receipt before gh pr create side effects', async () => {
     const workspace = resolve('/tmp/taskwraith-workspace-tools')
     const events: string[] = []
-    const deps = makeDeps(async (command) => {
+    const prOptions: unknown[] = []
+    const deps = makeDeps(async (command, _cwd, options) => {
       const argv = command as string[]
       events.push(`command:${argv[0]}:${argv[1]}`)
+      prOptions.push(options)
       return commandResult('https://github.com/example/repo/pull/42\n')
     })
     deps.externalPublishReceipts = {
@@ -1381,6 +1511,15 @@ describe('git history workspace tools', () => {
       'begin:agent:githubCreatePr:Ship MCP publishing',
       'command:gh:pr',
       'complete:completed:https://github.com/example/repo/pull/42'
+    ])
+    expect(prOptions).toEqual([
+      {
+        timeoutMs: 120_000,
+        releaseApproval: {
+          allowReleaseCommand: true,
+          approvalSource: 'externalPublishReceipt'
+        }
+      }
     ])
   })
 })

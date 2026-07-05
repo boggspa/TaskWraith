@@ -62,4 +62,26 @@ describe('ReleaseCommandPolicy', () => {
     expect(releaseScriptBlockReason('prerelease:verify', 'vitest --run')).toBeNull()
     expect(releaseCommandBlockReason('electron-builder --publish never')).toBeNull()
   })
+
+  it('allows release-class commands only with an explicit approval-aware bypass', () => {
+    const approval = {
+      allowReleaseCommand: true,
+      approvalSource: 'approvedMcpTask' as const
+    }
+
+    expect(releaseCommandBlockReason('git push --tags', approval)).toBeNull()
+    expect(releaseScriptBlockReason('release', 'node scripts/release.cjs', approval)).toBeNull()
+    expect(
+      releasePackageScriptBlockReason(
+        'npm run build:mac:notarized',
+        {
+          'build:mac:notarized': 'electron-builder --mac -c.mac.notarize=true'
+        },
+        approval
+      )
+    ).toBeNull()
+    expect(releaseCommandBlockReason('git push --tags', { allowReleaseCommand: true })).toContain(
+      'release-class command'
+    )
+  })
 })

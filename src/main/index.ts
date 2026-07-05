@@ -774,7 +774,8 @@ import { ffmpegMissingError, resolveFfmpegBinaries } from './media/FfmpegResolve
 import { createSemaphore } from './media/Semaphore'
 import {
   releaseCommandBlockReason,
-  releasePackageScriptBlockReason
+  releasePackageScriptBlockReason,
+  type ReleaseCommandCheckOptions
 } from './ReleaseCommandPolicy'
 import {
   createImageGenExecutor,
@@ -2012,6 +2013,13 @@ function packageScriptsForCwd(cwd: string): Record<string, unknown> | null {
   }
 }
 
+interface HostCommandRunOptions {
+  timeoutMs?: number
+  releaseApproval?: ReleaseCommandCheckOptions
+}
+
+type HostCommandRunArgument = number | HostCommandRunOptions
+
 class BackgroundProcessRegistry {
   private entries = new Map<string, BackgroundProcessEntry>()
 
@@ -2023,13 +2031,14 @@ class BackgroundProcessRegistry {
       name?: string
       initialWaitMs: number
       maxInitialChars: number
+      releaseApproval?: ReleaseCommandCheckOptions
     }
   ): Promise<Record<string, unknown>> {
     const startedAt = new Date().toISOString()
     const processId = `bg-${Date.now()}-${randomBytes(4).toString('hex')}`
     const blockedReleaseCommand =
-      releaseCommandBlockReason(command) ||
-      releasePackageScriptBlockReason(command, packageScriptsForCwd(cwd))
+      releaseCommandBlockReason(command, options.releaseApproval) ||
+      releasePackageScriptBlockReason(command, packageScriptsForCwd(cwd), options.releaseApproval)
     if (blockedReleaseCommand) {
       return {
         ok: false,
@@ -8670,6 +8679,21 @@ function previewForGeminiMcpTool(
     }
   }
 
+  if (toolName === 'start_background_process') {
+    const command = String(args.command || '')
+    return {
+      title: `Approve ${providerName} background process`,
+      body: `${intentBody}${command}\n${cwd}`,
+      service: 'shellCommands' as AgenticServiceId,
+      preview: {
+        kind: 'command',
+        command,
+        cwd,
+        ...intentPreview
+      }
+    }
+  }
+
   // Run-Button launch start/stop spawn / terminate processes — route them to the
   // shellCommands gate (denied under read-only, never the softer mcpTools). The
   // EXACT resolved command is shown by LaunchManager.startTarget's own
@@ -9081,18 +9105,20 @@ function runHostCommand(
   // killer fires, which is an acceptable tradeoff. `run_task` lets
   // agents override up to a 30-minute hard clamp via its `timeoutMs`
   // arg if they need more.
-  timeoutMs = 600_000
+  options: HostCommandRunArgument = 600_000
 ): Promise<HostCommandResult> {
   return new Promise((resolveRun) => {
     const startedAt = Date.now()
+    const timeoutMs = typeof options === 'number' ? options : options.timeoutMs ?? 600_000
+    const releaseApproval = typeof options === 'number' ? undefined : options.releaseApproval
     let stdout = ''
     let stderr = ''
     let settled = false
     let child: ChildProcess
     const commandText = codexCommandText(command)
     const blockedReleaseCommand =
-      releaseCommandBlockReason(command) ||
-      releasePackageScriptBlockReason(command, packageScriptsForCwd(cwd))
+      releaseCommandBlockReason(command, releaseApproval) ||
+      releasePackageScriptBlockReason(command, packageScriptsForCwd(cwd), releaseApproval)
     if (blockedReleaseCommand) {
       resolveRun({
         stdout,
@@ -16510,7 +16536,12 @@ async function runApprovedHostCommand(requestId: string): Promise<boolean> {
     },
     approval
   )
-  const result = await runHostCommand(approval.command, approval.cwd)
+  const result = await runHostCommand(approval.command, approval.cwd, {
+    releaseApproval: {
+      allowReleaseCommand: true,
+      approvalSource: 'approvedHostCommand'
+    }
+  })
   const resultText = formatHostCommandResult(result)
   sendAgentCompatLine(
     approval.sender,
@@ -19777,7 +19808,12 @@ async function executeGeminiMcpTool(
         })
         return { text: lock.text, isError: true }
       }
-      const result = await runHostCommand(command, cwd)
+      const result = await runHostCommand(command, cwd, {
+        releaseApproval: {
+          allowReleaseCommand: true,
+          approvalSource: 'approvedMcpShell'
+        }
+      })
       text = formatHostCommandResult(result)
       const isError = Boolean(
         result.error || result.timedOut || (result.exitCode !== null && result.exitCode !== 0)
