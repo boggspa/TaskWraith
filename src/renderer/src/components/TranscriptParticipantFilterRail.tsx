@@ -26,6 +26,7 @@ interface RailFrame {
 
 interface TranscriptParticipantFilterRailProps {
   currentChat?: ChatRecord | null
+  items?: readonly TranscriptParticipantFilterItem[]
   activeFilterKeys: ReadonlySet<string>
   scrollRef: RefObject<HTMLDivElement | null>
   contentRef: RefObject<HTMLDivElement | null>
@@ -206,12 +207,16 @@ function itemAccessibleLabel(item: TranscriptParticipantFilterItem, active: bool
 
 export function TranscriptParticipantFilterRail({
   currentChat,
+  items: providedItems,
   activeFilterKeys,
   scrollRef,
   contentRef,
   onToggleFilter
 }: TranscriptParticipantFilterRailProps): ReactElement | null {
-  const items = useMemo(() => buildTranscriptParticipantFilterItems(currentChat), [currentChat])
+  const items = useMemo(
+    () => providedItems || buildTranscriptParticipantFilterItems(currentChat),
+    [currentChat, providedItems]
+  )
   const participantItems = useMemo(() => items.filter((item) => item.kind === 'participant'), [items])
   const systemItem = useMemo(() => items.find((item) => item.kind === 'system') || null, [items])
   const columnCount = Math.max(1, Math.ceil(participantItems.length / FILTER_MAX_ROWS))

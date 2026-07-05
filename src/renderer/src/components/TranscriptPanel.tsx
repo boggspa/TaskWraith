@@ -31,10 +31,14 @@ import {
 import {
   TRANSCRIPT_VIRTUALIZATION_ENABLED,
   DEFAULT_OVERSCAN_PX,
+  buildHeightOffsets,
+  projectRow,
   projectRows,
   selectWindow,
   findScrollAnchor,
   sumHeights,
+  sumHeightOffsets,
+  totalHeightFromOffsets,
   getRowHeight,
   measurementKey,
   measurementContentVersion,
@@ -53,6 +57,7 @@ import {
 } from '../lib/transcriptParticipantFilter'
 import {
   transcriptChatRenderSignature,
+  transcriptMessageRenderSignature,
   transcriptRowRenderSignatureEqual,
   type TranscriptRowRenderSignature
 } from '../lib/transcriptRowRenderCache'
@@ -64,9 +69,12 @@ import { shouldSuppressRunCompleteSummary, type RunCompleteNotice } from '../lib
 import { formatTranscriptClock } from '../lib/dateTimeFormat'
 import { EMPTY_CHAT_MESSAGES } from '../lib/stableEmpties'
 import {
-  groupAdjacentToolMessages,
-  groupFanoutLaneMessages,
-  groupedTranscriptMessageIds
+  fanoutLaneGroupingKey,
+  groupAdjacentToolMessagesWithRanges,
+  groupFanoutLaneMessagesWithRanges,
+  groupedTranscriptMessageIds,
+  shouldGroupAdjacentToolMessages,
+  type TranscriptGroupedMessageRange
 } from '../lib/transcriptToolMessageGrouping'
 import {
   buildEnsembleRoundCardRows,
@@ -399,6 +407,8 @@ export function buildFileChangeSummaryWindow(
 
 /** Stable empty heights array so the disabled path allocates nothing. */
 const EMPTY_TRANSCRIPT_HEIGHTS: number[] = []
+/** Stable zero-only height offset array for the disabled path. */
+const EMPTY_TRANSCRIPT_HEIGHT_OFFSETS: number[] = [0]
 /** Stable empty rows array for the non-virtualised render path. */
 const EMPTY_VIRTUAL_ROWS: VirtualRow[] = []
 /** Stable empty expansion set so unopened tool rows share one reference. */
@@ -409,6 +419,142 @@ function escapeDomSelectorValue(value: string): string {
     ? CSS.escape(value)
     : value.replace(/["\\]/g, '\\$&')
 }
+
+function useProjectedTranscriptRows(
+  messages: ChatMessage[],
+  runBoundaryIds: ReadonlySet<string> | null | undefined
+): VirtualRow[] {
+  const cacheRef = useRef<{
+    messages: ChatMessage[]
+    rows: VirtualRow[]
+    rowByMessageIndex: Map<number, VirtualRow>
+  } | null>(null)
+
+  return useMemo(() => {
+    const cached = cacheRef.current
+    if (cached && Array.isArray(messages)) {
+      const minLength = Math.min(cached.messages.length, messages.length)
+      let sharedPrefix = 0
+      while (sharedPrefix < minLength) {
+        const previousMessage = cached.messages[sharedPrefix]
+        const nextMessage = messages[sharedPrefix]
+        if (previousMessage !== nextMessage) break
+        const cachedRow = cached.rowByMessageIndex.get(sharedPrefix)
+        const nextBoundary = runBoundaryIds ? runBoundaryIds.has(nextMessage.id) : false
+        if (cachedRow && cachedRow.hasRunBoundary !== nextBoundary) break
+        sharedPrefix += 1
+      }
+
+      // Common streaming shape: unchanged prefix plus a changed/appended/removed
+      // tail. Reuse old row objects for the prefix so row lookup, windowing, and
+      // render caching do not churn through stable transcript history.
+      if (sharedPrefix > 0 && sharedPrefix >= minLength - 1) {
+        const rows = cached.rows.filter((row) => row.index < sharedPrefix)
+        for (let index = sharedPrefix; index < messages.length; index += 1) {
+          const row = projectRow(messages[index], index, runBoundaryIds)
+          if (row) rows.push(row)
+        }
+        const rowByMessageIndex = new Map<number, VirtualRow>()
+        for (const row of rows) rowByMessageIndex.set(row.index, row)
+        cacheRef.current = { messages, rows, rowByMessageIndex }
+        return rows
+      }
+    }
+
+    const rows = projectRows(messages, runBoundaryIds)
+    const rowByMessageIndex = new Map<number, VirtualRow>()
+    for (const row of rows) rowByMessageIndex.set(row.index, row)
+    cacheRef.current = { messages, rows, rowByMessageIndex }
+    return rows
+  }, [messages, runBoundaryIds])
+}
+
+function offsetGroupedRanges(
+  ranges: readonly TranscriptGroupedMessageRange[],
+  offset: number
+): TranscriptGroupedMessageRange[] {
+  if (offset === 0) return ranges as TranscriptGroupedMessageRange[]
+  return ranges.map((range) => ({
+    message: range.message,
+    startIndex: range.startIndex + offset,
+    endIndex: range.endIndex + offset
+  }))
+}
+
+function regroupStartFromChangedIndex(
+  messages: readonly ChatMessage[],
+  changedIndex: number,
+  canJoin: (previous: ChatMessage, next: ChatMessage) => boolean
+): number {
+  if (messages.length === 0) return 0
+  let start = Math.max(0, Math.min(changedIndex, messages.length - 1))
+  while (start > 0 && canJoin(messages[start - 1], messages[start])) {
+    start -= 1
+  }
+  return start
+}
+
+function useIncrementalMessageGrouping(
+  messages: ChatMessage[],
+  groupWithRanges: (messages: readonly ChatMessage[]) => TranscriptGroupedMessageRange[],
+  regroupStart: (messages: readonly ChatMessage[], changedIndex: number) => number
+): ChatMessage[] {
+  const cacheRef = useRef<{
+    input: ChatMessage[]
+    ranges: TranscriptGroupedMessageRange[]
+    output: ChatMessage[]
+  } | null>(null)
+
+  return useMemo(() => {
+    const cached = cacheRef.current
+    if (cached) {
+      const minLength = Math.min(cached.input.length, messages.length)
+      let sharedPrefix = 0
+      while (sharedPrefix < minLength && cached.input[sharedPrefix] === messages[sharedPrefix]) {
+        sharedPrefix += 1
+      }
+      if (sharedPrefix === cached.input.length && sharedPrefix === messages.length) {
+        return cached.output
+      }
+
+      let start = regroupStart(messages, sharedPrefix)
+      let prefixRanges = cached.ranges.filter((range) => range.endIndex <= start)
+      const coveredUntil =
+        prefixRanges.length > 0 ? prefixRanges[prefixRanges.length - 1].endIndex : 0
+      if (coveredUntil !== start) {
+        start = 0
+        prefixRanges = []
+      }
+      const suffixRanges = offsetGroupedRanges(groupWithRanges(messages.slice(start)), start)
+      const ranges = [...prefixRanges, ...suffixRanges]
+      const output = ranges.map((range) => range.message)
+      cacheRef.current = { input: messages, ranges, output }
+      return output
+    }
+
+    const ranges = groupWithRanges(messages)
+    const output = ranges.map((range) => range.message)
+    cacheRef.current = { input: messages, ranges, output }
+    return output
+  }, [groupWithRanges, messages, regroupStart])
+}
+
+const toolGroupingRegroupStart = (
+  messages: readonly ChatMessage[],
+  changedIndex: number
+): number =>
+  regroupStartFromChangedIndex(messages, changedIndex, (previous, next) =>
+    shouldGroupAdjacentToolMessages(previous, next)
+  )
+
+const fanoutGroupingRegroupStart = (
+  messages: readonly ChatMessage[],
+  changedIndex: number
+): number =>
+  regroupStartFromChangedIndex(messages, changedIndex, (previous, next) => {
+    const key = fanoutLaneGroupingKey(next)
+    return Boolean(key && key === fanoutLaneGroupingKey(previous))
+  })
 
 function formatTranscriptMessageFooterTime(timestamp: string | undefined): {
   dateTime: string
@@ -608,6 +754,7 @@ function useTranscriptVirtualization(params: {
    * invalidate the measurement cache. Falls back to the scroller when absent.
    */
   contentRef?: React.RefObject<HTMLDivElement | null>
+  chatId?: string | null
   autoFollowRef?: React.MutableRefObject<boolean>
   onProgrammaticScrollWrite?: (landedScrollTop: number) => void
   compactDensity: boolean
@@ -648,6 +795,7 @@ function useTranscriptVirtualization(params: {
     rows,
     scrollRef,
     contentRef,
+    chatId,
     autoFollowRef,
     onProgrammaticScrollWrite,
     compactDensity,
@@ -661,7 +809,9 @@ function useTranscriptVirtualization(params: {
   const viewportRef = useRef(0)
   const bucketRef = useRef(0)
   const heightsRef = useRef<number[]>(EMPTY_TRANSCRIPT_HEIGHTS)
+  const heightOffsetsRef = useRef<number[]>(EMPTY_TRANSCRIPT_HEIGHT_OFFSETS)
   const rowsRef = useRef<VirtualRow[]>(rows)
+  const measurementChatIdRef = useRef<string | null | undefined>(chatId)
   // The row the viewport is anchored to + the total height ABOVE it as of the
   // last layout pass, PLUS the sub-row offset of the viewport top within that
   // row. The pre-paint correction restores scrollTop ABSOLUTELY to
@@ -718,6 +868,16 @@ function useTranscriptVirtualization(params: {
   const [measureTick, setMeasureTick] = useState(0)
   const bumpScroll = useCallback(() => setScrollTick((t) => (t + 1) % 0x7fffffff), [])
   const bumpMeasure = useCallback(() => setMeasureTick((t) => (t + 1) % 0x7fffffff), [])
+  useEffect(() => {
+    if (measurementChatIdRef.current === chatId) return
+    measurementChatIdRef.current = chatId
+    measurementsRef.current.clear()
+    blockElsRef.current.clear()
+    anchorRef.current = null
+    hasScrolledRef.current = false
+    bumpMeasure()
+    bumpScroll()
+  }, [bumpMeasure, bumpScroll, chatId])
   const syncScrollPosition = useCallback(
     (nextScrollTop: number): void => {
       if (!enabled) return
@@ -749,13 +909,18 @@ function useTranscriptVirtualization(params: {
         row,
         m,
         bucket,
-        expandedRowIds?.has(row.id) ?? false,
+        expandedRowIds?.has(row.rowKey) ?? false,
         measurementContentVersion(row, activeLiveRowKey)
       )
     )
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled, rows, measureTick, expandedRowIds, activeLiveRowKey])
   heightsRef.current = heights
+  const heightOffsets = useMemo(
+    () => (enabled ? buildHeightOffsets(heights) : EMPTY_TRANSCRIPT_HEIGHT_OFFSETS),
+    [enabled, heights]
+  )
+  heightOffsetsRef.current = heightOffsets
   rowsRef.current = rows
 
   // Window selection. Inline (not memoised) because it reads scroll refs;
@@ -770,7 +935,7 @@ function useTranscriptVirtualization(params: {
   // and scroll-up only revealed the empty top spacer — the reported bug.
   // The bottom is forced ONLY for the first frames after a chat loads,
   // before the snap-to-bottom has run and `scrollTopRef` still reads 0.
-  const totalHeight = enabled ? sumHeights(heights, 0, heights.length) : 0
+  const totalHeight = enabled ? totalHeightFromOffsets(heightOffsets) : 0
   const forceBottomOnLoad = Boolean(autoFollowRef?.current) && !hasScrolledRef.current
   const effectiveScrollTop = forceBottomOnLoad
     ? Math.max(0, totalHeight - viewportRef.current)
@@ -797,11 +962,16 @@ function useTranscriptVirtualization(params: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [enabled, rows, expandedRowIds, activeLiveRowKey, scrollTick] // deliberately NOT measureTick
   )
+  const windowHeightOffsets = useMemo(
+    () => (enabled ? buildHeightOffsets(windowHeights) : EMPTY_TRANSCRIPT_HEIGHT_OFFSETS),
+    [enabled, windowHeights]
+  )
   const virtualWindow: VirtualWindow = enabled
     ? selectWindow({
         scrollTop: effectiveScrollTop,
         viewportHeight: viewportRef.current,
         heights: windowHeights,
+        heightOffsets: windowHeightOffsets,
         overscanPx: DEFAULT_OVERSCAN_PX,
         forceIndex: forcedRowIndex
       })
@@ -819,7 +989,11 @@ function useTranscriptVirtualization(params: {
   // bottom, so it resolves to the latest turn (never flashes the first message).
   const spyRowIndex =
     enabled && windowHeights.length > 0
-      ? findScrollAnchor(effectiveScrollTop + viewportRef.current * 0.3, windowHeights).index
+      ? findScrollAnchor(
+          effectiveScrollTop + viewportRef.current * 0.3,
+          windowHeights,
+          windowHeightOffsets
+        ).index
       : null
 
   // Scroll-progress fraction (0..1) for the rail's read-position fill. The rail
@@ -889,12 +1063,16 @@ function useTranscriptVirtualization(params: {
         // correction compose with scroll: a scroll-driven render then sees
         // a zero delta, so it never fights the user; only a genuine height
         // change above the anchor produces a non-zero nudge.
-        const a = findScrollAnchor(scrollTopRef.current, heightsRef.current)
+        const a = findScrollAnchor(
+          scrollTopRef.current,
+          heightsRef.current,
+          heightOffsetsRef.current
+        )
         const anchorRow = rowsRef.current[a.index]
         anchorRef.current = anchorRow
           ? {
               rowKey: anchorRow.rowKey,
-              aboveHeight: sumHeights(heightsRef.current, 0, a.index),
+              aboveHeight: sumHeightOffsets(heightOffsetsRef.current, 0, a.index),
               offsetWithin: a.offsetWithin
             }
           : null
@@ -983,7 +1161,7 @@ function useTranscriptVirtualization(params: {
       const anchor = anchorRef.current
       const idx = rowsRef.current.findIndex((r) => r.rowKey === anchor.rowKey)
       if (idx >= 0) {
-        const aboveHeight = sumHeights(heightsRef.current, 0, idx)
+        const aboveHeight = sumHeightOffsets(heightOffsetsRef.current, 0, idx)
         const target = Math.max(0, aboveHeight + anchor.offsetWithin)
         if (Math.abs(target - scroller.scrollTop) > 0.5) {
           // 1.0.7 — flag the programmatic write so the passive scroll listener
@@ -1010,6 +1188,11 @@ function useTranscriptVirtualization(params: {
     const bucket = bucketRef.current
     const mountedRows = rowsRef.current.slice(virtualWindow.startIndex, virtualWindow.endIndex)
     const spacerBottom = spacerBottomRef.current
+    for (const [rowKey, el] of blockElsRef.current) {
+      if (el.isConnected) continue
+      observerRef.current?.unobserve(el)
+      blockElsRef.current.delete(rowKey)
+    }
     let sawNewKey = false
     let sawRewrite = false
     let sawLiveGrowth = false
@@ -1033,7 +1216,7 @@ function useTranscriptVirtualization(params: {
         row.rowKey,
         measurementContentVersion(row, activeLiveRowKey),
         bucket,
-        expandedRowIds?.has(row.id) ?? false
+        expandedRowIds?.has(row.rowKey) ?? false
       )
       const prev = measurements.get(key)
       if (prev === undefined) {
@@ -1084,6 +1267,8 @@ function useTranscriptVirtualization(params: {
     // an element entry.
     const rowKey = el.dataset.vrowId
     if (!rowKey) return
+    const previous = blockElsRef.current.get(rowKey)
+    if (previous && previous !== el) observerRef.current?.unobserve(previous)
     blockElsRef.current.set(rowKey, el)
     observerRef.current?.observe(el)
   }, [])
@@ -1493,7 +1678,12 @@ export const TranscriptPanel = memo(
     )
     const participantFilterItems = useMemo(
       () => buildTranscriptParticipantFilterItems(currentChat),
-      [currentChat]
+      [
+        currentChat?.chatKind,
+        currentChat?.ensemble?.participants,
+        currentChat?.ensemble?.bossmanParticipantId,
+        currentChat?.ensemble?.secondInCommandParticipantId
+      ]
     )
     const toggleParticipantFilter = useCallback((key: string) => {
       setActiveParticipantFilterKeys((prev) => {
@@ -1532,9 +1722,15 @@ export const TranscriptPanel = memo(
     // window-selection snapshot (select-on-scroll, not on every measure), and a
     // one-shot anchor correction. So ensembles keep windowing and converge.
     const virtualizeEnabled = virtualize ?? TRANSCRIPT_VIRTUALIZATION_ENABLED
-    const groupedMessages = useMemo(
-      () => groupFanoutLaneMessages(groupAdjacentToolMessages(visibleMessages)),
-      [visibleMessages]
+    const toolGroupedMessages = useIncrementalMessageGrouping(
+      visibleMessages,
+      groupAdjacentToolMessagesWithRanges,
+      toolGroupingRegroupStart
+    )
+    const groupedMessages = useIncrementalMessageGrouping(
+      toolGroupedMessages,
+      groupFanoutLaneMessagesWithRanges,
+      fanoutGroupingRegroupStart
     )
     const messageById = useMemo(() => {
       const map = new Map<string, ChatMessage>()
@@ -1558,6 +1754,16 @@ export const TranscriptPanel = memo(
       [activeParticipantFilterKeys, groupedMessages]
     )
     const participantFilterActive = activeParticipantFilterKeys.size > 0
+    const roundCardChat = useMemo(
+      () => currentChat,
+      [
+        currentChat?.appChatId,
+        currentChat?.chatKind,
+        currentChat?.ensemble?.activeRound,
+        currentChat?.ensemble?.lastRoundSummary,
+        currentChat?.ensemble?.roundSummaries
+      ]
+    )
     // Ensemble round cards: completed rounds collapse into expandable
     // header rows (older collapsed by default). Returns `groupedMessages`
     // unchanged for non-ensemble chats or when the setting is off, so the
@@ -1565,14 +1771,14 @@ export const TranscriptPanel = memo(
     const displayMessages = useMemo(
       () =>
         buildEnsembleRoundCardRows({
-          chat: currentChat,
+          chat: roundCardChat,
           displayMessages: participantFilteredMessages,
           collapseOlderRounds: participantFilterActive ? false : collapseOlderRounds !== false,
           manualRoundExpansion,
           hasLiveRunEvidence: isThinking
         }),
       [
-        currentChat,
+        roundCardChat,
         participantFilteredMessages,
         participantFilterActive,
         collapseOlderRounds,
@@ -1685,10 +1891,25 @@ export const TranscriptPanel = memo(
       () => new Set(displayRunBoundaryByMessageId.keys()),
       [displayRunBoundaryByMessageId]
     )
-    const projectedRows = useMemo(
-      () => projectRows(displayMessages, displayRunBoundaryIds),
-      [displayMessages, displayRunBoundaryIds]
-    )
+    const projectedRows = useProjectedTranscriptRows(displayMessages, displayRunBoundaryIds)
+    const projectedRowLookup = useMemo(() => {
+      const byRowKey = new Map<string, VirtualRow>()
+      const byMessageId = new Map<string, VirtualRow>()
+      const byConstituentId = new Map<string, VirtualRow>()
+      const indexByRowKey = new Map<string, number>()
+      for (let index = 0; index < projectedRows.length; index += 1) {
+        const row = projectedRows[index]
+        byRowKey.set(row.rowKey, row)
+        indexByRowKey.set(row.rowKey, index)
+        if (!byMessageId.has(row.id)) byMessageId.set(row.id, row)
+        const message = displayMessages[row.index]
+        if (!message) continue
+        for (const id of groupedTranscriptMessageIds(message)) {
+          if (!byConstituentId.has(id)) byConstituentId.set(id, row)
+        }
+      }
+      return { byRowKey, byMessageId, byConstituentId, indexByRowKey }
+    }, [displayMessages, projectedRows])
     const liveRevealRowKey = useMemo(() => {
       if (!liveRevealMessageId) return null
       return (
@@ -1705,26 +1926,23 @@ export const TranscriptPanel = memo(
     const findProjectedRowForMessage = useCallback(
       (messageId: string, rowKey?: string) => {
         if (rowKey) {
-          const byRowKey = projectedRows.find((candidate) => candidate.rowKey === rowKey)
+          const byRowKey = projectedRowLookup.byRowKey.get(rowKey)
           if (byRowKey) return byRowKey
         }
         return (
-          projectedRows.find((candidate) => candidate.id === messageId) ||
-          projectedRows.find((candidate) => {
-            const message = displayMessages[candidate.index]
-            return message ? groupedTranscriptMessageIds(message).includes(messageId) : false
-          })
+          projectedRowLookup.byMessageId.get(messageId) ||
+          projectedRowLookup.byConstituentId.get(messageId)
         )
       },
-      [displayMessages, projectedRows]
+      [projectedRowLookup]
     )
     const pendingFocusRowIndex = useMemo(() => {
       if (!pendingFocusTarget) return null
       const row = findProjectedRowForMessage(pendingFocusTarget.messageId, pendingFocusTarget.rowKey)
       if (!row) return null
-      const rowPosition = projectedRows.findIndex((candidate) => candidate.rowKey === row.rowKey)
+      const rowPosition = projectedRowLookup.indexByRowKey.get(row.rowKey) ?? -1
       return rowPosition >= 0 ? rowPosition : null
-    }, [findProjectedRowForMessage, pendingFocusTarget, projectedRows])
+    }, [findProjectedRowForMessage, pendingFocusTarget, projectedRowLookup])
     const virtualRows = virtualizeEnabled ? projectedRows : EMPTY_VIRTUAL_ROWS
     const {
       window: virtualWindow,
@@ -1740,6 +1958,7 @@ export const TranscriptPanel = memo(
       rows: virtualRows,
       scrollRef,
       contentRef,
+      chatId: currentChat?.appChatId ?? null,
       autoFollowRef,
       onProgrammaticScrollWrite,
       compactDensity,
@@ -1747,6 +1966,10 @@ export const TranscriptPanel = memo(
       activeLiveRowKey: liveRevealRowKey,
       expandedRowIds
     })
+    const virtualHeightOffsets = useMemo(
+      () => (virtualizeEnabled ? buildHeightOffsets(virtualHeights) : EMPTY_TRANSCRIPT_HEIGHT_OFFSETS),
+      [virtualHeights, virtualizeEnabled]
+    )
     const userGutterMarkers = useMemo(
       () =>
         buildTranscriptUserGutterMarkers(
@@ -1905,9 +2128,12 @@ export const TranscriptPanel = memo(
           virtualizeEnabled && virtualHeights.length === projectedRows.length
             ? virtualHeights
             : projectedRows.map((candidate) => candidate.estimatedHeight)
-        const rowPosition = projectedRows.findIndex((candidate) => candidate.rowKey === row.rowKey)
+        const rowPosition = projectedRowLookup.indexByRowKey.get(row.rowKey) ?? -1
         if (rowPosition < 0) return
-        const estimatedTop = sumHeights([...rowHeights], 0, rowPosition)
+        const estimatedTop =
+          virtualizeEnabled && virtualHeights.length === projectedRows.length
+            ? sumHeightOffsets(virtualHeightOffsets, 0, rowPosition)
+            : sumHeights(rowHeights, 0, rowPosition)
         const nextScrollTop = Math.max(
           0,
           estimatedTop - Math.round(scroller.clientHeight * 0.35)
@@ -1929,9 +2155,11 @@ export const TranscriptPanel = memo(
         findProjectedRowForMessage,
         getScrollAnimator,
         prepareManualTranscriptJump,
+        projectedRowLookup,
         projectedRows,
         scrollRef,
         syncVirtualizerScrollPosition,
+        virtualHeightOffsets,
         virtualHeights,
         virtualizeEnabled
       ]
@@ -2083,6 +2311,7 @@ export const TranscriptPanel = memo(
         )}
         <TranscriptParticipantFilterRail
           currentChat={currentChat}
+          items={participantFilterItems}
           activeFilterKeys={activeParticipantFilterKeys}
           scrollRef={scrollRef}
           contentRef={contentRef}
@@ -2202,7 +2431,7 @@ export const TranscriptPanel = memo(
                 ? highlightedMessageTarget.rowKey === rowKey
                 : highlightedMessageTarget.messageId === msg.id
               : false
-            const activityExpansionIds = activityExpansionByRow.get(msg.id)
+            const activityExpansionIds = activityExpansionByRow.get(rowKey)
             const pendingQuestionsForRow = pendingAgentQuestions.filter(
               (question) => question.messageId === msg.id
             )
@@ -2253,9 +2482,33 @@ export const TranscriptPanel = memo(
               .join('|')
             const isLiveRevealRow = rowKey === liveRevealRowKey
             const revealKey = isLiveRevealRow ? `live:${revealRunId || msg.id}` : 'plain'
+            const assistantRun =
+              msg.runId && currentChat?.runs
+                ? currentChat.runs.find((run) => run.runId === msg.runId) ||
+                  (currentRun?.runId === msg.runId ? currentRun : null)
+                : currentRun?.runId === msg.runId
+                  ? currentRun
+                  : null
+            const assistantRunModel = assistantRun?.actualModel || assistantRun?.requestedModel || null
+            const assistantRunModelKey =
+              msg.role === 'assistant' || isGuestReply
+                ? `${assistantRun?.runId || ''}:${assistantRunModel || ''}`
+                : ''
+            const renameContinuity =
+              msg.role === 'assistant'
+                ? deriveParticipantRenameContinuity(
+                    msg,
+                    currentChat?.ensemble?.participants,
+                    currentChat?.ensemble?.sessionActivityLedger
+                  )
+                : null
+            const renameContinuityKey = renameContinuity
+              ? `${renameContinuity.fromRole}\u0000${renameContinuity.currentRole}`
+              : ''
             const rowSignature: TranscriptRowRenderSignature = {
               rowKey,
               message: msg,
+              messageSignature: transcriptMessageRenderSignature(msg),
               ...(boundaryRun ? { boundaryRun } : {}),
               chatSignature: currentChatRenderSignature,
               providerLabel: currentProviderLabel,
@@ -2263,6 +2516,7 @@ export const TranscriptPanel = memo(
               ...(currentWorkspacePath ? { workspacePath: currentWorkspacePath } : {}),
               compactDensity,
               liveActivityViewport,
+              virtualized: virtualizeEnabled,
               isGlobal,
               sideChatSeed: isSideChatSeedMessage,
               highlighted: isPinnedMessageTarget,
@@ -2273,10 +2527,12 @@ export const TranscriptPanel = memo(
               activityExpansionKey: activityExpansionIds
                 ? Array.from(activityExpansionIds).sort().join('\u0000')
                 : '',
-              subThreadExpanded: expandedSubThreadResults.has(msg.id),
-              fanoutExpanded: expandedFanoutResults.has(msg.id),
+              subThreadExpanded: expandedSubThreadResults.has(rowKey),
+              fanoutExpanded: expandedFanoutResults.has(rowKey),
               pendingPlanChoiceKey,
               pendingAgentQuestionsKey,
+              assistantRunModelKey,
+              renameContinuityKey,
               auxiliaryKey: auxiliaryKeyWithToolActions,
               revealKey,
               callbackRefs: [
@@ -2292,6 +2548,7 @@ export const TranscriptPanel = memo(
                 onDeleteMessage,
                 onOpenSideChatFromMessage,
                 onPromoteCollaboratorComment,
+                onOpenFileChangeInWorkbench,
                 onPlanChoiceSubmit,
                 onProposedPlanApprove,
                 onProposedPlanDismiss,
@@ -2380,9 +2637,9 @@ export const TranscriptPanel = memo(
                         onOpenSideChatFromMessage={onOpenSideChatFromMessage}
                         pinned={isPinned}
                         copied={copiedId === msg.id}
-                        resultExpanded={expandedSubThreadResults.has(msg.id)}
+                        resultExpanded={expandedSubThreadResults.has(rowKey)}
                         onResultExpandedChange={(expanded) =>
-                          setSubThreadResultExpanded(msg.id, expanded)
+                          setSubThreadResultExpanded(rowKey, expanded)
                         }
                       />
                     )}
@@ -2406,12 +2663,12 @@ export const TranscriptPanel = memo(
                           ? msg.runId
                           : boundaryRun?.runId
                       }
-                      expanded={expandedFanoutResults.has(msg.id)}
-                      onExpandedChange={(expanded) => setFanoutResultExpanded(msg.id, expanded)}
+                      expanded={expandedFanoutResults.has(rowKey)}
+                      onExpandedChange={(expanded) => setFanoutResultExpanded(rowKey, expanded)}
                       compactDensity={compactDensity}
                       expandedActivityIds={activityExpansionIds ?? EMPTY_ACTIVITY_EXPANSION}
                       onExpandedActivityIdsChange={(next) =>
-                        setActivityExpansionForRow(msg.id, next)
+                        setActivityExpansionForRow(rowKey, next)
                       }
                       onOpenFileChangeInWorkbench={onOpenFileChangeInWorkbench}
                       onPreviewImage={onPreviewImage}
@@ -2431,7 +2688,7 @@ export const TranscriptPanel = memo(
                     compactDensity={compactDensity}
                     liveActivityViewport={liveActivityViewport}
                     expandedActivityIds={activityExpansionIds ?? EMPTY_ACTIVITY_EXPANSION}
-                    onExpandedActivityIdsChange={(next) => setActivityExpansionForRow(msg.id, next)}
+                    onExpandedActivityIdsChange={(next) => setActivityExpansionForRow(rowKey, next)}
                     onOpenFileChangeInWorkbench={onOpenFileChangeInWorkbench}
                     thinkingTraceActions={thinkingTraceActions}
                   />
@@ -2564,15 +2821,6 @@ export const TranscriptPanel = memo(
                                 }
                               }
                             : msg
-                        const assistantRun =
-                          msg.runId && currentChat?.runs
-                            ? currentChat.runs.find((run) => run.runId === msg.runId) ||
-                              (currentRun?.runId === msg.runId ? currentRun : null)
-                            : currentRun?.runId === msg.runId
-                              ? currentRun
-                              : null
-                        const assistantRunModel =
-                          assistantRun?.actualModel || assistantRun?.requestedModel || null
                         const {
                           label,
                           provider,
@@ -2597,11 +2845,6 @@ export const TranscriptPanel = memo(
                         // participant across a mid-session rename. Ledger-
                         // preferred, with a frozen-vs-current fallback —
                         // see deriveParticipantRenameContinuity.
-                        const renameContinuity = deriveParticipantRenameContinuity(
-                          msg,
-                          currentChat?.ensemble?.participants,
-                          currentChat?.ensemble?.sessionActivityLedger
-                        )
                         return (
                           <div
                             className={`message-meta${

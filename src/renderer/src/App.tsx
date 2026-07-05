@@ -9,7 +9,7 @@ import {
   projectRunItemToolEvents
 } from './lib/runItemProjection'
 import { reconcileChatRefMap } from './lib/reconcileChatRefMap'
-import { messagesRenderEqual } from './lib/messagesRenderEqual'
+import { deepEqual, messagesRenderEqual } from './lib/messagesRenderEqual'
 import { anchorPendingAgentQuestionMarkers } from './lib/agentQuestionMarkerAnchor'
 import { mergeWorkflowTelemetryIntoMessages } from './lib/workflowTelemetryMessages'
 import { mergeReviewTelemetryIntoMessages } from './lib/reviewTelemetryMessages'
@@ -892,6 +892,21 @@ function appendMessageContentToPromptDraft(previous: string, content: string): s
   if (!previous.trim()) return addition
   const separator = previous.endsWith('\n\n') ? '' : previous.endsWith('\n') ? '\n' : '\n\n'
   return `${previous}${separator}${addition}`
+}
+
+function shareUnchangedMessageObjects(
+  previous: readonly ChatMessage[],
+  next: readonly ChatMessage[]
+): ChatMessage[] {
+  let changed = false
+  const shared = next.map((message, index) => {
+    const prior = previous[index]
+    if (!prior || prior === message || prior.id !== message.id) return message
+    if (!deepEqual(prior, message)) return message
+    changed = true
+    return prior
+  })
+  return changed ? shared : (next as ChatMessage[])
 }
 
 interface LiveToolFileSummaryState {
@@ -9457,14 +9472,16 @@ function App(): React.JSX.Element {
           // (messagesRenderEqual): a false negative only costs a redundant
           // render, never a frozen transcript. Routed through the functional
           // setter so it compares against the actual committed state.
-          setCurrentChat((prev) =>
-            prev &&
-            prev.appChatId === merged.appChatId &&
-            prev.messages !== merged.messages &&
-            messagesRenderEqual(prev.messages, merged.messages)
-              ? { ...merged, messages: prev.messages }
-              : merged
-          )
+          setCurrentChat((prev) => {
+            if (!prev || prev.appChatId !== merged.appChatId || prev.messages === merged.messages) {
+              return merged
+            }
+            if (messagesRenderEqual(prev.messages, merged.messages)) {
+              return { ...merged, messages: prev.messages }
+            }
+            const sharedMessages = shareUnchangedMessageObjects(prev.messages, merged.messages)
+            return sharedMessages === merged.messages ? merged : { ...merged, messages: sharedMessages }
+          })
           if (
             merged.chatKind === 'ensemble' &&
             isEnsembleActiveRoundDispatchLive(merged.ensemble?.activeRound)
@@ -19530,8 +19547,14 @@ function App(): React.JSX.Element {
       }),
     [currentChat, transcriptMessages, isCurrentChatRunning]
   )
+  const threadSearchCanBuildTargets =
+    threadSearchOpen &&
+    Boolean(currentChat?.appChatId) &&
+    threadSearchChatId === currentChat?.appChatId &&
+    threadSearchQuery.trim().length > 0
   const threadSearchTargets = useMemo(
     () => {
+      if (!threadSearchCanBuildTargets) return []
       const chatPooledIdentity =
         currentChat?.providerMetadata?.pooledAgentIdentity &&
         typeof currentChat.providerMetadata.pooledAgentIdentity === 'object'
@@ -19583,6 +19606,7 @@ function App(): React.JSX.Element {
       currentProvider,
       currentProviderLabel,
       isWelcomeChat,
+      threadSearchCanBuildTargets,
       transcriptMessages
     ]
   )

@@ -30,6 +30,8 @@ const EDGE_CONTROL_GAP_PX = 22
 const GUTTER_VERTICAL_OFFSET_PX = 35
 const GUTTER_RAIL_WIDTH_PX = 34
 const GUTTER_COMPOSER_CLEARANCE_PX = 6
+const MAX_RENDERED_GUTTER_MARKERS = 420
+const GUTTER_RENDER_CONTEXT_MARKERS = 24
 
 function visibleComposerChildren(composerArea: Element): HTMLElement[] {
   const children: HTMLElement[] = []
@@ -609,17 +611,6 @@ export function TranscriptUserMessageGutter({
     [cancelDismiss, cancelOpen]
   )
 
-  const focusMarkerAt = useCallback(
-    (index: number) => {
-      const marker = markers[index]
-      if (!marker) return
-      markerRefs.current.get(marker.key)?.focus()
-    },
-    [markers]
-  )
-
-  if (markers.length < 2) return null
-
   // Roving-tabindex default: prefer the hovered/focused marker, then fall back
   // to the scroll-spy in-view marker, so Tab-into-rail lands on the reader's
   // current position rather than always the oldest message. Finally 0.
@@ -634,6 +625,82 @@ export function TranscriptUserMessageGutter({
     }
     return 0
   })()
+
+  const renderedMarkerIndexes = useMemo(() => {
+    if (markers.length <= MAX_RENDERED_GUTTER_MARKERS) {
+      return markers.map((_, index) => index)
+    }
+    const keep = new Set<number>([0, markers.length - 1, activeIndex])
+    const contextStart = Math.max(0, activeIndex - GUTTER_RENDER_CONTEXT_MARKERS)
+    const contextEnd = Math.min(markers.length - 1, activeIndex + GUTTER_RENDER_CONTEXT_MARKERS)
+    for (let index = contextStart; index <= contextEnd; index += 1) keep.add(index)
+    const remaining = Math.max(0, MAX_RENDERED_GUTTER_MARKERS - keep.size)
+    if (remaining > 0) {
+      const step = (markers.length - 1) / Math.max(1, remaining - 1)
+      for (let i = 0; i < remaining; i += 1) {
+        keep.add(Math.round(i * step))
+      }
+    }
+    return Array.from(keep)
+      .filter((index) => index >= 0 && index < markers.length)
+      .sort((a, b) => a - b)
+  }, [activeIndex, markers])
+
+  const renderedMarkers = useMemo(
+    () =>
+      renderedMarkerIndexes
+        .map((index) => {
+          const marker = markers[index]
+          return marker ? { marker, index } : null
+        })
+        .filter((item): item is { marker: TranscriptUserGutterMarker; index: number } =>
+          Boolean(item)
+        ),
+    [markers, renderedMarkerIndexes]
+  )
+
+  const focusMarkerAt = useCallback(
+    (index: number) => {
+      if (markers.length === 0) return
+      const clamped = Math.max(0, Math.min(markers.length - 1, index))
+      const direct = markers[clamped]
+      const directRef = direct ? markerRefs.current.get(direct.key) : null
+      if (directRef) {
+        directRef.focus()
+        return
+      }
+      let nearest = renderedMarkerIndexes[0] ?? clamped
+      let nearestDistance = Math.abs(nearest - clamped)
+      for (const candidate of renderedMarkerIndexes) {
+        const distance = Math.abs(candidate - clamped)
+        if (distance >= nearestDistance) continue
+        nearest = candidate
+        nearestDistance = distance
+      }
+      const marker = markers[nearest]
+      if (!marker) return
+      markerRefs.current.get(marker.key)?.focus()
+    },
+    [markers, renderedMarkerIndexes]
+  )
+
+  const focusRenderedMarkerFrom = useCallback(
+    (index: number, direction: -1 | 1) => {
+      const renderedIndex = renderedMarkerIndexes.indexOf(index)
+      if (renderedIndex < 0) {
+        focusMarkerAt(index + direction)
+        return
+      }
+      const nextRenderedIndex = Math.max(
+        0,
+        Math.min(renderedMarkerIndexes.length - 1, renderedIndex + direction)
+      )
+      focusMarkerAt(renderedMarkerIndexes[nextRenderedIndex])
+    },
+    [focusMarkerAt, renderedMarkerIndexes]
+  )
+
+  if (markers.length < 2) return null
 
   const progressFraction = Math.max(
     0,
@@ -687,7 +754,7 @@ export function TranscriptUserMessageGutter({
           style={{ top: lensLayout.topPx, height: lensLayout.heightPx }}
         />
       )}
-      {markers.map((marker, index) => (
+      {renderedMarkers.map(({ marker, index }) => (
         <button
           key={markerReactKey(marker)}
           ref={(element) => {
@@ -727,13 +794,13 @@ export function TranscriptUserMessageGutter({
             scheduleDismiss()
           }}
           onKeyDown={(event) => {
-            const currentIndex = markers.findIndex((candidate) => candidate.key === marker.key)
+            const currentIndex = index
             if (event.key === 'ArrowDown' || event.key === 'ArrowRight') {
               event.preventDefault()
-              focusMarkerAt(Math.min(markers.length - 1, currentIndex + 1))
+              focusRenderedMarkerFrom(currentIndex, 1)
             } else if (event.key === 'ArrowUp' || event.key === 'ArrowLeft') {
               event.preventDefault()
-              focusMarkerAt(Math.max(0, currentIndex - 1))
+              focusRenderedMarkerFrom(currentIndex, -1)
             } else if (event.key === 'Home') {
               event.preventDefault()
               focusMarkerAt(0)
