@@ -44,6 +44,7 @@ import { creativeTimelineDiffModelFromActivity } from './CreativeTimelineDiffCar
 import { CompactToolTrace } from './CompactToolTrace'
 import { LiveActivityViewport } from './LiveActivityViewport'
 import { MarkdownMessage } from './MarkdownMessage'
+import { MessageActionsChip } from './MessageActionsChip'
 import { TodoChecklistCard } from './TodoChecklistCard'
 import {
   computeMergedTodosByActivityId,
@@ -105,6 +106,27 @@ interface ActivityStackProps {
   expandedActivityIds?: Set<string>
   onExpandedActivityIdsChange?: (next: Set<string>) => void
   onOpenFileChangeInWorkbench?: (summary: DiffFileSummary) => void
+  thinkingTraceActions?: ThinkingTraceActionsConfig
+}
+
+export interface ThinkingTraceActionsConfig {
+  messageId: string
+  label?: string
+  copiedId: string | null
+  pinned: boolean
+  thumbsVote?: 'up' | 'down' | null
+  messageIdForActivity?: (activity: ToolActivity) => string | undefined
+  stateForMessage?: (messageId: string) => {
+    pinned: boolean
+    thumbsVote: 'up' | 'down' | null
+  }
+  copy: (copyId: string, content: string) => void
+  onAddToPrompt?: (messageId: string, content: string) => void
+  onTogglePin?: (messageId: string) => void
+  onThumbsUp?: (messageId: string) => void
+  onThumbsDown?: (messageId: string) => void
+  onDelete?: (messageId: string) => void
+  onOpenSideChat?: (messageId: string, content: string) => void
 }
 
 function providerFromPlanLane(lane: string): ProviderId | undefined {
@@ -1101,6 +1123,7 @@ function activityFamilyKey(activity: ToolActivity): string {
 function isGroupableActivity(activity: ToolActivity): boolean {
   if (activity.status === 'error' || activity.status === 'running' || activity.status === 'pending')
     return false
+  if (isThinkingTraceActivity(activity)) return false
   // `ensemble_yield` activities stay inline even when terminal —
   // they're the social glue between turns (provider-tinted target
   // chip + role name) carrying high-signal routing info, not the
@@ -1170,20 +1193,33 @@ export function buildTimelineItems(activities: ToolActivity[]): ActivityTimeline
   return items
 }
 
+function thinkingTraceActionContent(note: { title: string; body?: string }): string {
+  return (note.body || note.title).trim()
+}
+
 function ActivityProgressNote({
   activity,
-  provider
+  provider,
+  thinkingTraceActions
 }: {
   activity: ToolActivity
   provider?: ProviderId
+  thinkingTraceActions?: ThinkingTraceActionsConfig
 }) {
   const note = getProgressNote(activity)
   if (!note) return null
   const isThinkingTrace = isThinkingTraceActivity(activity)
   const noteProvider = activityProvider(activity, provider)
   const providerLabel = noteProvider ? getProviderLabel(noteProvider) : undefined
+  const traceActionContent = isThinkingTrace ? thinkingTraceActionContent(note) : ''
+  const actionMessageId =
+    thinkingTraceActions?.messageIdForActivity?.(activity) ||
+    thinkingTraceActions?.messageId ||
+    'message'
+  const actionState = thinkingTraceActions?.stateForMessage?.(actionMessageId)
+  const traceActionCopyId = `${actionMessageId}:${activity.id}:thinking`
 
-  return (
+  const noteElement = (
     <div
       className={`activity-progress-note status-${activity.status}${isThinkingTrace ? ' is-thinking-trace' : ''}`}
       data-provider={noteProvider || 'unknown'}
@@ -1208,6 +1244,59 @@ function ActivityProgressNote({
           )}
         </div>
         {note.body && <p>{note.body}</p>}
+      </div>
+    </div>
+  )
+
+  if (!isThinkingTrace || !thinkingTraceActions || !traceActionContent) {
+    return noteElement
+  }
+
+  return (
+    <div className="activity-progress-note-shell is-thinking-trace-shell">
+      {noteElement}
+      <div className="activity-thinking-actions-row">
+        <MessageActionsChip
+          onCopy={() => thinkingTraceActions.copy(traceActionCopyId, traceActionContent)}
+          onAddToPrompt={
+            thinkingTraceActions.onAddToPrompt
+              ? () =>
+                  thinkingTraceActions.onAddToPrompt?.(
+                    actionMessageId,
+                    traceActionContent
+                  )
+              : undefined
+          }
+          onTogglePin={
+            thinkingTraceActions.onTogglePin
+              ? () => thinkingTraceActions.onTogglePin?.(actionMessageId)
+              : undefined
+          }
+          onThumbsUp={
+            thinkingTraceActions.onThumbsUp
+              ? () => thinkingTraceActions.onThumbsUp?.(actionMessageId)
+              : undefined
+          }
+          onThumbsDown={
+            thinkingTraceActions.onThumbsDown
+              ? () => thinkingTraceActions.onThumbsDown?.(actionMessageId)
+              : undefined
+          }
+          onDelete={
+            thinkingTraceActions.onDelete
+              ? () => thinkingTraceActions.onDelete?.(actionMessageId)
+              : undefined
+          }
+          onOpenSideChat={
+            thinkingTraceActions.onOpenSideChat
+              ? () => thinkingTraceActions.onOpenSideChat?.(actionMessageId, traceActionContent)
+              : undefined
+          }
+          pinned={actionState?.pinned ?? thinkingTraceActions.pinned}
+          thumbsVote={actionState?.thumbsVote ?? thinkingTraceActions.thumbsVote}
+          copied={thinkingTraceActions.copiedId === traceActionCopyId}
+          label={thinkingTraceActions.label || 'thinking trace'}
+        />
       </div>
     </div>
   )
@@ -1899,7 +1988,8 @@ export function ActivityStack({
   liveActivityViewport = false,
   expandedActivityIds,
   onExpandedActivityIdsChange,
-  onOpenFileChangeInWorkbench
+  onOpenFileChangeInWorkbench,
+  thinkingTraceActions
 }: ActivityStackProps) {
   // 1.0.4-AS1 — drive the shimmer/pulse staleness check. The
   // returned `now` is consumed by InlineActivityRow via `Date.now()`
@@ -2079,7 +2169,8 @@ export function ActivityStack({
     // one-line trace + foldout view. The CompactToolTrace reads
     // its own provider attribution from `activity.metadata` and
     // falls back to the chat-level `provider` passed here.
-    if (compactDensity && !thread) {
+    const isThinkingTrace = isThinkingTraceActivity(item.activity)
+    if (compactDensity && !thread && !isThinkingTrace) {
       return (
         <CompactToolTrace
           key={item.activity.id}
@@ -2100,11 +2191,12 @@ export function ActivityStack({
         provider={provider}
         participants={participants}
         todoItems={mergedTodosByActivityId.get(item.activity.id)}
-        forceCompact={compactDensity}
+        forceCompact={compactDensity && !isThinkingTrace}
         isExpanded={expandedIds.has(item.activity.id)}
         onToggleExpand={(modKey) => toggleExpand(item.activity.id, modKey)}
         shimmerNow={shimmerNow}
         onOpenFileChangeInWorkbench={onOpenFileChangeInWorkbench}
+        thinkingTraceActions={thinkingTraceActions}
       />
     )
   })
@@ -2372,7 +2464,8 @@ function ActivityRow({
   isExpanded,
   onToggleExpand,
   shimmerNow,
-  onOpenFileChangeInWorkbench
+  onOpenFileChangeInWorkbench,
+  thinkingTraceActions
 }: {
   activity: ToolActivity
   workspacePath?: string
@@ -2403,6 +2496,7 @@ function ActivityRow({
   onToggleExpand?: (modKey: boolean) => void
   shimmerNow?: number
   onOpenFileChangeInWorkbench?: (summary: DiffFileSummary) => void
+  thinkingTraceActions?: ThinkingTraceActionsConfig
 }) {
   // Phase L5 slice 3 — when the parent passes `isExpanded` +
   // `onToggleExpand`, use them (the parent coordinates single-open
@@ -2600,10 +2694,14 @@ function ActivityRow({
   // state). If a future surface wants the celebration animation,
   // hang it on `.activity-category-icon` instead.
   const progressNote = getProgressNote(activity)
-  if (progressNote && !forceCompact) {
+  if (progressNote && (!forceCompact || isThinkingTraceActivity(activity))) {
     return (
       <>
-        <ActivityProgressNote activity={activity} provider={provider} />
+        <ActivityProgressNote
+          activity={activity}
+          provider={provider}
+          thinkingTraceActions={thinkingTraceActions}
+        />
         {childThread && (
           <ChildAgentThreadCard
             thread={childThread}

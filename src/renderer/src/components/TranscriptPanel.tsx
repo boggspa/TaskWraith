@@ -77,7 +77,7 @@ import {
   createTranscriptScrollAnimator,
   type TranscriptScrollAnimator
 } from '../lib/transcriptSmoothScroll'
-import { ActivityStack } from './ActivityStack'
+import { ActivityStack, type ThinkingTraceActionsConfig } from './ActivityStack'
 import { EnsembleRoundCardHeader } from './EnsembleRoundCardHeader'
 import { EnsembleFanoutResultCard } from './EnsembleFanoutResultCard'
 import { isEnsembleFanoutResultMessage } from './EnsembleFanoutResultCardModel'
@@ -1537,6 +1537,23 @@ export const TranscriptPanel = memo(
       () => groupFanoutLaneMessages(groupAdjacentToolMessages(visibleMessages)),
       [visibleMessages]
     )
+    const messageById = useMemo(() => {
+      const map = new Map<string, ChatMessage>()
+      for (const message of visibleMessages) {
+        map.set(message.id, message)
+      }
+      return map
+    }, [visibleMessages])
+    const toolActivityMessageIdByActivityId = useMemo(() => {
+      const map = new Map<string, string>()
+      for (const message of visibleMessages) {
+        if (message.role !== 'tool') continue
+        for (const activity of message.toolActivities || []) {
+          if (activity.id) map.set(activity.id, message.id)
+        }
+      }
+      return map
+    }, [visibleMessages])
     const participantFilteredMessages = useMemo(
       () => filterTranscriptMessagesByParticipantKeys(groupedMessages, activeParticipantFilterKeys),
       [activeParticipantFilterKeys, groupedMessages]
@@ -2090,6 +2107,7 @@ export const TranscriptPanel = memo(
             const isGuestReply = isGuestParticipantReplyMessage(msg)
             const isCollaboratorComment = isHumanCollaboratorComment(msg)
             const isToolActivityStack = msg.role === 'tool' && (msg.toolActivities?.length || 0) > 0
+            const hasToolActivitiesForActions = (msg.toolActivities?.length || 0) > 0
             const isParticipantHealth = msg.metadata?.kind === 'ensembleParticipantHealth'
             const isProviderRunFailure = msg.metadata?.kind === 'providerRunFailure'
             const isContextCompaction = msg.metadata?.kind === 'contextCompaction'
@@ -2100,6 +2118,64 @@ export const TranscriptPanel = memo(
               sideChatSeedMessageId && msg.id === sideChatSeedMessageId
             )
             const isPinned = typeof msg.metadata?.pinnedAt === 'number'
+            const groupedToolMessageIds = hasToolActivitiesForActions
+              ? groupedTranscriptMessageIds(msg).filter(
+                  (messageId) => messageById.get(messageId)?.role === 'tool'
+                )
+              : []
+            const toolActivityActionMessageIds = hasToolActivitiesForActions
+              ? groupedToolMessageIds.length > 0
+                ? groupedToolMessageIds
+                : [msg.id]
+              : []
+            const toolActivityActionStateKey = hasToolActivitiesForActions
+              ? `${toolActivityActionMessageIds
+                  .map((messageId) => {
+                    const sourceMessage = messageById.get(messageId) || (messageId === msg.id ? msg : undefined)
+                    return [
+                      messageId,
+                      sourceMessage?.metadata?.pinnedAt || '',
+                      sourceMessage ? readMessageFeedbackVote(sourceMessage) || '' : ''
+                    ].join(':')
+                  })
+                  .join('\u0000')}|copy:${copiedId?.includes(':thinking') ? copiedId : ''}`
+              : ''
+            const thinkingTraceActions: ThinkingTraceActionsConfig | undefined = hasToolActivitiesForActions
+              ? {
+                  messageId: toolActivityActionMessageIds[0] || msg.id,
+                  label: 'thinking trace',
+                  copiedId,
+                  pinned: isPinned,
+                  thumbsVote: readMessageFeedbackVote(msg),
+                  messageIdForActivity: (activity) =>
+                    toolActivityMessageIdByActivityId.get(activity.id) ||
+                    toolActivityActionMessageIds[0] ||
+                    msg.id,
+                  stateForMessage: (messageId) => {
+                    const sourceMessage = messageById.get(messageId) || msg
+                    return {
+                      pinned: typeof sourceMessage.metadata?.pinnedAt === 'number',
+                      thumbsVote: readMessageFeedbackVote(sourceMessage)
+                    }
+                  },
+                  copy,
+                  onAddToPrompt: onAddMessageToPrompt,
+                  onTogglePin: onTogglePinMessage,
+                  onThumbsUp: onMessageFeedback
+                    ? (messageId) => onMessageFeedback(messageId, 'up')
+                    : undefined,
+                  onThumbsDown: onMessageFeedback
+                    ? (messageId) => onMessageFeedback(messageId, 'down')
+                    : undefined,
+                  onDelete: onDeleteMessage,
+                  onOpenSideChat: onOpenSideChatFromMessage
+                    ? (messageId, content) => {
+                        const sourceMessage = messageById.get(messageId) || msg
+                        onOpenSideChatFromMessage({ ...sourceMessage, content })
+                      }
+                    : undefined
+                }
+              : undefined
             const footerCopyContent =
               !isDelegationCard &&
               !isReturnCard &&
@@ -2170,6 +2246,12 @@ export const TranscriptPanel = memo(
             const auxiliaryKeyWithPendingPlan = auxiliaryKey
               ? `${auxiliaryKey}|${pendingProposedPlanKey}`
               : pendingProposedPlanKey
+            const auxiliaryKeyWithToolActions = [
+              auxiliaryKeyWithPendingPlan,
+              toolActivityActionStateKey
+            ]
+              .filter(Boolean)
+              .join('|')
             const isLiveRevealRow = rowKey === liveRevealRowKey
             const revealKey = isLiveRevealRow ? `live:${revealRunId || msg.id}` : 'plain'
             const rowSignature: TranscriptRowRenderSignature = {
@@ -2196,7 +2278,7 @@ export const TranscriptPanel = memo(
               fanoutExpanded: expandedFanoutResults.has(msg.id),
               pendingPlanChoiceKey,
               pendingAgentQuestionsKey,
-              auxiliaryKey: auxiliaryKeyWithPendingPlan,
+              auxiliaryKey: auxiliaryKeyWithToolActions,
               revealKey,
               callbackRefs: [
                 onMessageSelectionCandidate,
@@ -2335,6 +2417,7 @@ export const TranscriptPanel = memo(
                       onOpenFileChangeInWorkbench={onOpenFileChangeInWorkbench}
                       onPreviewImage={onPreviewImage}
                       onDetachToPane={onDetachToPane}
+                      thinkingTraceActions={thinkingTraceActions}
                     />
                   </div>
                 ) : isToolActivityStack ? (
@@ -2351,6 +2434,7 @@ export const TranscriptPanel = memo(
                     expandedActivityIds={activityExpansionIds ?? EMPTY_ACTIVITY_EXPANSION}
                     onExpandedActivityIdsChange={(next) => setActivityExpansionForRow(msg.id, next)}
                     onOpenFileChangeInWorkbench={onOpenFileChangeInWorkbench}
+                    thinkingTraceActions={thinkingTraceActions}
                   />
                 ) : msg.role === 'tool' ? (
                   <div key={msg.id} className="message-group tool-message-fallback">
@@ -3300,6 +3384,8 @@ export const TranscriptPanel = memo(
     previous.onCopyMessage === next.onCopyMessage &&
     previous.onAddMessageToPrompt === next.onAddMessageToPrompt &&
     previous.onDeleteMessage === next.onDeleteMessage &&
+    previous.onTogglePinMessage === next.onTogglePinMessage &&
+    previous.onMessageFeedback === next.onMessageFeedback &&
     previous.onMessageSelectionCandidate === next.onMessageSelectionCandidate &&
     previous.onOpenSideChatFromMessage === next.onOpenSideChatFromMessage &&
     previous.sideChatSeedMessageId === next.sideChatSeedMessageId &&

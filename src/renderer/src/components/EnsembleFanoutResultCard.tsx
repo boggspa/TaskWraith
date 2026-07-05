@@ -7,7 +7,7 @@ import type {
 import { shortModelName } from '../lib/composerChipFormat'
 import { collectInlineImageRefIds } from '../lib/resolveMarkdownImageRef'
 import { getProviderLabel } from '../lib/providerLabels'
-import { ActivityStack } from './ActivityStack'
+import { ActivityStack, type ThinkingTraceActionsConfig } from './ActivityStack'
 import { LiveActivityViewport } from './LiveActivityViewport'
 import { MarkdownMessage } from './MarkdownMessage'
 import { ChatMessageMediaStrip, collectMessageMediaRefs, type ChatMediaRef } from './ChatMediaPanel'
@@ -27,6 +27,7 @@ interface EnsembleFanoutResultCardProps {
   expandedActivityIds?: Set<string>
   onExpandedActivityIdsChange?: (next: Set<string>) => void
   onOpenFileChangeInWorkbench?: (summary: DiffFileSummary) => void
+  thinkingTraceActions?: ThinkingTraceActionsConfig
   onPreviewImage: (ref: ChatMediaRef) => void
   onDetachToPane?: (ref: ChatMediaRef) => void
 }
@@ -57,6 +58,7 @@ export function EnsembleFanoutResultCard({
   expandedActivityIds,
   onExpandedActivityIdsChange,
   onOpenFileChangeInWorkbench,
+  thinkingTraceActions,
   onPreviewImage,
   onDetachToPane
 }: EnsembleFanoutResultCardProps) {
@@ -176,6 +178,7 @@ export function EnsembleFanoutResultCard({
                         expandedActivityIds={expandedActivityIds}
                         onExpandedActivityIdsChange={onExpandedActivityIdsChange}
                         onOpenFileChangeInWorkbench={onOpenFileChangeInWorkbench}
+                        thinkingTraceActions={thinkingTraceActions}
                       />
                     </div>
                   ) : null
@@ -209,6 +212,7 @@ export function EnsembleFanoutResultCard({
                   expandedActivityIds={expandedActivityIds}
                   onExpandedActivityIdsChange={onExpandedActivityIdsChange}
                   onOpenFileChangeInWorkbench={onOpenFileChangeInWorkbench}
+                  thinkingTraceActions={thinkingTraceActions}
                 />
               </div>
             ) : (

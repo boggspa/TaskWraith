@@ -213,6 +213,21 @@ function makeReadActivity(overrides: Partial<ToolActivity> = {}): ToolActivity {
   }
 }
 
+function makeThinkingActivity(overrides: Partial<ToolActivity> = {}): ToolActivity {
+  return {
+    id: 'tool-thinking-1',
+    toolName: 'codex_thinking',
+    displayName: 'Thinking',
+    category: 'task',
+    status: 'success',
+    startedAt: '2026-05-26T17:00:00Z',
+    endedAt: '2026-05-26T17:00:00.250Z',
+    durationMs: 250,
+    resultSummary: 'I am checking the request and keeping the answer concise.',
+    ...overrides
+  }
+}
+
 function makeWorkflowActivity(overrides: Partial<ToolActivity> = {}): ToolActivity {
   return {
     id: 'toolu_wf_1',
@@ -370,6 +385,59 @@ describe('ActivityStack live activity viewport', () => {
 
     expect(html).not.toContain('live-activity-viewport')
     expect(html).toContain('activity-row')
+  })
+
+  it('renders thinking traces inside the live viewport with the full action row', () => {
+    const html = renderToStaticMarkup(
+      <ActivityStack
+        activities={[makeThinkingActivity()]}
+        provider="codex"
+        liveActivityViewport
+        thinkingTraceActions={{
+          messageId: 'tool-message-1',
+          copiedId: 'tool-message-1:tool-thinking-1:thinking',
+          pinned: true,
+          thumbsVote: 'up',
+          copy: () => undefined,
+          onAddToPrompt: () => undefined,
+          onTogglePin: () => undefined,
+          onThumbsUp: () => undefined,
+          onThumbsDown: () => undefined,
+          onDelete: () => undefined,
+          onOpenSideChat: () => undefined
+        }}
+      />
+    )
+
+    expect(html).toContain('live-activity-viewport')
+    expect(html).toContain('activity-progress-note-shell is-thinking-trace-shell')
+    expect(html).toContain('message-actions-chip-button--thumbs-up is-active')
+    expect(html).toContain('message-actions-chip-button--thumbs-down')
+    expect(html).toContain('message-actions-chip-button--copy is-copied')
+    expect(html).toContain('message-actions-chip-button--add-to-prompt')
+    expect(html).toContain('message-actions-chip-button--pin is-pinned')
+    expect(html).toContain('message-actions-chip-button--side-chat')
+    expect(html).toContain('message-actions-chip-button--delete')
+  })
+
+  it('keeps thinking traces as progress notes in compact density so actions are not nested in compact rows', () => {
+    const html = renderToStaticMarkup(
+      <ActivityStack
+        activities={[makeThinkingActivity()]}
+        provider="claude"
+        compactDensity
+        thinkingTraceActions={{
+          messageId: 'tool-message-1',
+          copiedId: null,
+          pinned: false,
+          copy: () => undefined
+        }}
+      />
+    )
+
+    expect(html).toContain('activity-progress-note status-success is-thinking-trace')
+    expect(html).toContain('message-actions-chip')
+    expect(html).not.toContain('compact-tool-trace')
   })
 })
 

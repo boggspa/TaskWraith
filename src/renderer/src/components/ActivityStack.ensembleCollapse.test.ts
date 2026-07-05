@@ -171,6 +171,40 @@ describe('buildTimelineItems — same-tool grouping (unified single + ensemble)'
     expect(items.length).toBe(1)
     expect(items[0].type).toBe('compact-group')
   })
+
+  it('keeps reasoning-name thinking traces inline instead of compacting them as task tools', () => {
+    const acts: ToolActivity[] = [
+      activity({ id: 'think-1', category: 'task', toolName: 'grok_thinking', displayName: 'Thinking' }),
+      activity({ id: 'think-2', category: 'task', toolName: 'kimi_reasoning', displayName: 'Reasoning' })
+    ]
+
+    const items = buildTimelineItems(acts)
+    expect(items.map((i) => i.type)).toEqual(['activity', 'activity'])
+  })
+
+  it('keeps display-name-only thinking traces inline', () => {
+    const acts: ToolActivity[] = [
+      activity({ id: 'think-1', category: 'task', toolName: 'Task', displayName: 'Kimi Thinking' }),
+      activity({ id: 'think-2', category: 'task', toolName: 'Task', displayName: 'Claude Reasoning' })
+    ]
+
+    const items = buildTimelineItems(acts)
+    expect(items.map((i) => i.type)).toEqual(['activity', 'activity'])
+  })
+
+  it('uses a thinking trace as a boundary between task tool groups', () => {
+    const acts: ToolActivity[] = [
+      activity({ id: 't1', category: 'task', toolName: 'plan' }),
+      activity({ id: 't2', category: 'task', toolName: 'plan' }),
+      activity({ id: 'think', category: 'task', toolName: 'codex_thinking', displayName: 'Thinking' }),
+      activity({ id: 't3', category: 'task', toolName: 'plan' }),
+      activity({ id: 't4', category: 'task', toolName: 'plan' })
+    ]
+
+    const items = buildTimelineItems(acts)
+    expect(items.map((i) => i.type)).toEqual(['compact-group', 'activity', 'compact-group'])
+    if (items[1].type === 'activity') expect(items[1].activity.id).toBe('think')
+  })
 })
 
 /*
