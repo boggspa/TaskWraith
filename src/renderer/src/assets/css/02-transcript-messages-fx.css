@@ -4278,6 +4278,9 @@ html:has(.chat-split-region.chat-split-hidden-for-settings) .transcript-user-gut
 .message-meta.provider-openbmb {
   color: var(--provider-openbmb-color) !important;
 }
+.message-meta.provider-poolside {
+  color: var(--provider-poolside-color) !important;
+}
 
 /* Working indicator (transcript tail) inherits provider hue from the
  * sibling `.message-meta.provider-*` row above the bubble. */
@@ -4334,6 +4337,9 @@ html:has(.chat-split-region.chat-split-hidden-for-settings) .transcript-user-gut
 }
 .message-group:has(.message-meta.provider-openbmb) {
   --message-working-accent: var(--provider-openbmb-color);
+}
+.message-group:has(.message-meta.provider-poolside) {
+  --message-working-accent: var(--provider-poolside-color);
 }
 
 .message-bubble {
@@ -5198,6 +5204,9 @@ html:has(.chat-split-region.chat-split-hidden-for-settings) .transcript-user-gut
 }
 .participant-health-chip.provider-openbmb {
   color: var(--provider-openbmb-color, var(--text-primary));
+}
+.participant-health-chip.provider-poolside {
+  color: var(--provider-poolside-color, var(--text-primary));
 }
 
 /* Context-compaction card — the transcript record of a provider (or the

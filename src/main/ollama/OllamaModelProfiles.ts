@@ -72,6 +72,12 @@ export function ollamaModelFamilyPromptLines(
         'Read targeted files before editing, keep each tool call concrete, and call out verification gaps before release-sensitive changes.',
         'Stay local for scoped coding work; prefer a smaller concrete next step over a delegation handoff.'
       ]
+    case 'laguna_xs_2_1':
+      return [
+        'Model profile (Laguna XS 2.1): long-context Poolside local model with native tools and thinking support.',
+        'Search/read before editing, keep tool payloads focused, and use its context for grounded review rather than broad speculative changes.',
+        'For release-critical edits, state verification gaps and run targeted checks when the selected tier allows it.'
+      ]
     case 'lfm2_5_8b':
       return [
         'Model profile (LFM 2.5 8B-A1B): long-context local model with tool-chaining training; search/read before editing and keep each tool step concrete.',
@@ -374,6 +380,7 @@ export function ollamaTierAwareWorkflowHint(
     family === 'gemma4_12b' ||
     family === 'ornith_9b' ||
     family === 'ornith_35b' ||
+    family === 'laguna_xs_2_1' ||
     family === 'lfm2_5_8b' ||
     family === 'granite4_1_3b' ||
     family === 'granite4_1_30b' ||

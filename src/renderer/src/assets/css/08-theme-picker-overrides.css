@@ -9021,6 +9021,10 @@
   --composer-ollama-brand-color: var(--provider-openbmb-color);
 }
 
+.composer-combined-picker-provider-row[data-ollama-provider-class="poolside"] {
+  --composer-ollama-brand-color: var(--provider-poolside-color);
+}
+
 .composer-combined-picker-provider-row.is-selected,
 .composer-combined-picker-provider-row.is-highlighted {
   color: color-mix(in srgb, var(--composer-ollama-brand-color) 82%, var(--text-primary));

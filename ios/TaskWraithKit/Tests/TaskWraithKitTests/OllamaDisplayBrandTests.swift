@@ -28,6 +28,9 @@ struct OllamaDisplayBrandTests {
             OllamaDisplayBrands.resolve(modelId: "gpt-oss:20b")?.providerClass == "openai")
         #expect(
             OllamaDisplayBrands.resolve(modelId: "minicpm-v4.5:8b")?.providerLabel == "OpenBMB")
+        #expect(
+            OllamaDisplayBrands.resolve(modelId: "laguna-xs-2.1:q8_0")?.providerLabel
+                == "Poolside")
     }
 
     @Test("returns nil for unbranded / empty models")
@@ -46,7 +49,8 @@ struct OllamaDisplayBrandTests {
     func explicitOrder() {
         #expect(
             OllamaDisplayBrands.all.map(\.id) == [
-                "alibaba", "deep-reinforce", "google", "ibm", "liquid", "nvidia", "openai", "openbmb",
+                "alibaba", "deep-reinforce", "google", "ibm", "liquid", "nvidia", "openai",
+                "openbmb", "poolside",
             ])
     }
 
@@ -55,6 +59,9 @@ struct OllamaDisplayBrandTests {
         #expect(
             OllamaDisplayBrands.providerHueClass(provider: "ollama", modelId: "qwen3.5:9b")
                 == "alibaba")
+        #expect(
+            OllamaDisplayBrands.providerHueClass(
+                provider: "ollama", modelId: "laguna-xs-2.1:q8_0") == "poolside")
         #expect(
             OllamaDisplayBrands.providerHueClass(provider: "ollama", modelId: "mystery") == "ollama")
         #expect(
@@ -66,6 +73,9 @@ struct OllamaDisplayBrandTests {
     func brandLabel() {
         #expect(
             OllamaDisplayBrands.brandLabel(provider: "ollama", modelId: "nemotron3:33b") == "NVIDIA")
+        #expect(
+            OllamaDisplayBrands.brandLabel(provider: "ollama", modelId: "laguna-xs-2.1:q8_0")
+                == "Poolside")
         #expect(OllamaDisplayBrands.brandLabel(provider: "ollama", modelId: "mystery") == nil)
         #expect(OllamaDisplayBrands.brandLabel(provider: "claude", modelId: "claude-opus-4-8") == nil)
     }

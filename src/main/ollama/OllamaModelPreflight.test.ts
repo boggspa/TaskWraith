@@ -22,6 +22,7 @@ describe('resolveOllamaModelFamily', () => {
     expect(resolveOllamaModelFamily('ornith:9b')).toBe('ornith_9b')
     expect(resolveOllamaModelFamily('ornith:35b')).toBe('ornith_35b')
     expect(resolveOllamaModelFamily('ornith:35b-q4_K_M')).toBe('ornith_35b')
+    expect(resolveOllamaModelFamily('laguna-xs-2.1:q8_0')).toBe('laguna_xs_2_1')
     expect(resolveOllamaModelFamily('lfm2.5')).toBe('lfm2_5_8b')
     expect(resolveOllamaModelFamily('lfm2.5:8b')).toBe('lfm2_5_8b')
     expect(resolveOllamaModelFamily('lfm2.5:8b-q4_K_M')).toBe('lfm2_5_8b')
@@ -74,6 +75,17 @@ describe('resolveOllamaModelFamily', () => {
         parameterSize: '8B'
       })
     ).toBe('lfm2_5_8b')
+  })
+
+  it('detects Laguna from Ollama metadata', () => {
+    expect(
+      resolveOllamaModelFamily('local-custom:latest', {
+        id: 'local-custom:latest',
+        label: 'Laguna XS 2.1',
+        family: 'laguna',
+        parameterSize: '33B'
+      })
+    ).toBe('laguna_xs_2_1')
   })
 })
 
@@ -155,6 +167,26 @@ describe('evaluateOllamaModelPreflight', () => {
     })
     expect(result.family).toBe('lfm2_5_8b')
     expect(result.guidance).toContain('long context')
+    expect(result.checks.find((c) => c.id === 'tools')?.ok).toBe(true)
+  })
+
+  it('surfaces Laguna XS as a known long-context tools/thinking model', () => {
+    const result = evaluateOllamaModelPreflight({
+      modelId: 'laguna-xs-2.1:q8_0',
+      modelLabel: 'Laguna XS 2.1 (33B-A3B Q8)',
+      modelInfo: {
+        id: 'laguna-xs-2.1:q8_0',
+        label: 'Laguna XS 2.1 (33B-A3B Q8)',
+        parameterSize: '33B',
+        quantizationLevel: 'Q8_0',
+        capabilities: ['completion', 'tools', 'thinking']
+      },
+      installedModelIds: ['laguna-xs-2.1:q8_0'],
+      totalMemoryBytes: 96 * GB
+    })
+    expect(result.family).toBe('laguna_xs_2_1')
+    expect(result.guidance).toContain('long-context')
+    expect(result.guidance).toContain('macOS/Metal')
     expect(result.checks.find((c) => c.id === 'tools')?.ok).toBe(true)
   })
 

@@ -1196,6 +1196,9 @@
 .ensemble-above-chip.provider-openbmb[data-linked-session="true"]::after {
   background: var(--provider-openbmb-color, var(--accent));
 }
+.ensemble-above-chip.provider-poolside[data-linked-session="true"]::after {
+  background: var(--provider-poolside-color, var(--accent));
+}
 
 .ensemble-above-chip-body {
   display: flex;
@@ -1516,6 +1519,9 @@
 }
 .ensemble-above-chip.provider-openbmb .ensemble-above-chip-role {
   color: var(--provider-openbmb-color);
+}
+.ensemble-above-chip.provider-poolside .ensemble-above-chip-role {
+  color: var(--provider-poolside-color);
 }
 
 /* Neutralise the per-provider chip-border overrides — the chip

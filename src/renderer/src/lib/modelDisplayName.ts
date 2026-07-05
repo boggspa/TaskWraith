@@ -120,6 +120,7 @@ const KNOWN_MODEL_LABELS: Record<string, string> = {
   'ornith:latest': 'Ornith 1.0 (9B Param)',
   'ornith:9b': 'Ornith 1.0 (9B Param)',
   'ornith:35b': 'Ornith 1.0 (35B Param)',
+  'laguna-xs-2.1:q8_0': 'Laguna XS 2.1 (33B-A3B Q8)',
   'gpt-oss': 'GPT OSS (20B Param)',
   'gpt-oss:20b': 'GPT OSS (20B Param)',
   'gpt-oss:latest': 'GPT OSS (20B Param)',

@@ -249,6 +249,16 @@ struct ModelContextLengthsTests {
         #expect(row?.formatted == "262k")
     }
 
+    @Test("ollama laguna-xs-2.1:q8_0: 262_144 / 262k")
+    func ollamaLagunaXs21Q8() {
+        let groups = ModelContextLengths.buildGroups(includeOllama: true)
+        let row = groups.first { $0.provider == "ollama" }?
+            .models.first { $0.modelId == "laguna-xs-2.1:q8_0" }
+        #expect(row?.label == "Laguna XS 2.1 (33B-A3B Q8)")
+        #expect(row?.contextWindow == 262_144)
+        #expect(row?.formatted == "262k")
+    }
+
     // MARK: - excludeProviders
 
     @Test("excludeProviders: [\"gemini\"] drops gemini; codex & claude present")

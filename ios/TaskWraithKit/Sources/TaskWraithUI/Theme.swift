@@ -112,6 +112,7 @@ public enum TWTheme {
         case "liquid": return Color(hex: 0xF7D5E6)
         case "nvidia": return Color(hex: 0x76B900)
         case "openbmb": return Color(hex: 0xEF6F61)
+        case "poolside": return Color(hex: 0x86E5F5)
         default: return chroma1
         }
     }
@@ -146,6 +147,7 @@ public enum TWTheme {
         case "nvidia": return "NVIDIA"
         case "openai": return "OpenAI"
         case "openbmb": return "OpenBMB"
+        case "poolside": return "Poolside"
         case "qwen": return "Qwen"
         case "ornith": return "Ornith"
         case .some(let other): return other.prefix(1).uppercased() + other.dropFirst()

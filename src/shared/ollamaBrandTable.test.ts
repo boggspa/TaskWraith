@@ -28,4 +28,11 @@ describe('matchOllamaBrand', () => {
   it('matches OpenBMB models', () => {
     expect(matchOllamaBrand('minicpm-v4.5:8b')?.providerLabel).toBe('OpenBMB')
   })
+
+  it('matches Poolside Laguna models', () => {
+    expect(matchOllamaBrand('laguna-xs-2.1:q8_0')).toMatchObject({
+      providerLabel: 'Poolside',
+      providerClass: 'poolside'
+    })
+  })
 })

@@ -2673,6 +2673,9 @@
 .welcome-usage-model-dot.provider-openbmb,
 .welcome-usage-model-meter-fill.provider-openbmb,
 .welcome-usage-bar-segment.provider-openbmb { color: var(--provider-openbmb-color); }
+.welcome-usage-model-dot.provider-poolside,
+.welcome-usage-model-meter-fill.provider-poolside,
+.welcome-usage-bar-segment.provider-poolside { color: var(--provider-poolside-color); }
 
 [data-reduce-transparency="true"] .welcome-usage-dashboard {
   background: color-mix(in srgb, var(--panel-bg-solid) 86%, var(--accent) 6%);
@@ -11601,6 +11604,7 @@ button.diff-file-row {
 .activity-yield-target.provider-nvidia { --provider-tint: var(--provider-nvidia-color); }
 .activity-yield-target.provider-openai { --provider-tint: var(--provider-openai-color); }
 .activity-yield-target.provider-openbmb { --provider-tint: var(--provider-openbmb-color); }
+.activity-yield-target.provider-poolside { --provider-tint: var(--provider-poolside-color); }
 
 /* Light theme — keep the colour but lift saturation against the
  * lighter background so the tag stays legible. */

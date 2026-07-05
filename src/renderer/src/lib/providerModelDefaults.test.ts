@@ -142,6 +142,7 @@ describe('Ollama provider model defaults', () => {
       'gemma4:12b',
       'ornith:9b',
       'ornith:35b',
+      'laguna-xs-2.1:q8_0',
       'gpt-oss:20b',
       'lfm2.5:8b',
       'minicpm-v4.5:8b',

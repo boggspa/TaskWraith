@@ -426,7 +426,7 @@ export function FirstLaunchSheet({
       statusText: ollamaProviderAvailable ? 'Local runtime ready' : 'Local setup optional',
       hint: ollamaProviderAvailable
         ? 'Pick Local / Ollama in the provider picker, then choose an installed model in Settings or the composer.'
-        : 'Install Ollama, then pull a model such as `qwen3:4b-instruct`, `qwen3.6:35b`, `ornith:9b`, `granite4.1:30b`, `minicpm-v4.5:8b`, or `gpt-oss:20b`.',
+        : 'Install Ollama, then pull a model such as `qwen3:4b-instruct`, `qwen3.6:35b`, `ornith:9b`, `laguna-xs-2.1:q8_0`, `granite4.1:30b`, `minicpm-v4.5:8b`, or `gpt-oss:20b`.',
       deemphasised: true,
       optional: true,
       localOnly: true,

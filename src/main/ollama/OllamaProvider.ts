@@ -615,6 +615,9 @@ export function humanizeOllamaModelId(model: string): string {
   if (key === 'ornith:35b' || key.startsWith('ornith:35b-')) {
     return 'Ornith 1.0 (35B Param)'
   }
+  if (key === 'laguna-xs-2.1:q8_0') {
+    return 'Laguna XS 2.1 (33B-A3B Q8)'
+  }
   if (
     key === 'gpt-oss' ||
     key === 'gpt-oss:20b' ||
@@ -2423,7 +2426,7 @@ export async function runOllamaProvider(
       deps.sendAgentCompatError(
         event.sender,
         'ollama',
-        'Ollama is reachable, but no local model is installed. Pull a model with `ollama pull qwen3:4b-instruct`, `ollama pull qwen3.5:9b`, `ollama pull gemma4:12b`, `ollama pull ornith:9b`, or `ollama pull gpt-oss`, then refresh models.',
+        'Ollama is reachable, but no local model is installed. Pull a model with `ollama pull qwen3:4b-instruct`, `ollama pull qwen3.5:9b`, `ollama pull gemma4:12b`, `ollama pull ornith:9b`, `ollama pull laguna-xs-2.1:q8_0`, or `ollama pull gpt-oss`, then refresh models.',
         route
       )
       deps.sendAgentCompatExit(event.sender, 'ollama', 1, route)

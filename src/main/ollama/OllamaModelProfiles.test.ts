@@ -55,6 +55,12 @@ describe('ollamaModelFamilyPromptLines', () => {
     expect(lines.join(' ')).toContain('tool-chaining')
   })
 
+  it('adds Laguna XS Poolside guidance', () => {
+    const lines = ollamaModelFamilyPromptLines('laguna-xs-2.1:q8_0')
+    expect(lines.join(' ')).toContain('Poolside')
+    expect(lines.join(' ')).toContain('thinking support')
+  })
+
   it('keeps only tool-call discipline for conversational GPT-OSS turns', () => {
     const lines = ollamaModelFamilyPromptLines('gpt-oss:latest', 'conversational')
     expect(lines.join(' ')).toContain('tool-intent stub')
@@ -160,6 +166,9 @@ describe('workflow hints', () => {
   it('documents scout escalation without defaulting to cloud implementation', () => {
     expect(ollamaScoutDelegateWorkflowHint('qwen3.5:9b', 'plan')).toContain('continue locally')
     expect(ollamaScoutDelegateWorkflowHint('ornith:35b', 'plan')).toContain('higher tier/profile')
+    expect(ollamaScoutDelegateWorkflowHint('laguna-xs-2.1:q8_0', 'plan')).toContain(
+      'continue locally'
+    )
     expect(ollamaScoutDelegateWorkflowHint('lfm2.5:8b', 'plan')).toContain('continue locally')
     expect(ollamaScoutDelegateWorkflowHint('ornith:35b', 'plan')).not.toContain('Codex or Claude')
     // Default stays the plan variant so intent-unaware callers keep behavior.

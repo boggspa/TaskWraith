@@ -99,6 +99,7 @@ export function resolveOllamaContextBudget(modelId?: string | null): ContextBudg
       return midCodingBudget(trimmedModelId)
     case 'qwen3_6_35b':
     case 'ornith_35b':
+    case 'laguna_xs_2_1':
     case 'granite4_1_30b':
     case 'nemotron3_33b':
       return largeCodingBudget(trimmedModelId)

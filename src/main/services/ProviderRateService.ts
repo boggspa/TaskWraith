@@ -513,6 +513,15 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         confidence: 'baked-in'
       },
       {
+        modelId: 'laguna-xs-2.1:q8_0',
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        sourceUrl: 'local://ollama',
+        lastVerified: RATE_TABLE_VERSION,
+        notes: 'Poolside Laguna XS 2.1 Q8 running through local Ollama. TaskWraith does not charge per token for local inference.',
+        confidence: 'baked-in'
+      },
+      {
         modelId: 'gemma4:12b-it-q4_K_M',
         inputUsdPerMillion: 0,
         outputUsdPerMillion: 0,

@@ -138,6 +138,7 @@ export function resolveOllamaWorkingMemoryLimits(modelId?: string | null): Ollam
       })
     case 'qwen3_6_35b':
     case 'ornith_35b':
+    case 'laguna_xs_2_1':
     case 'nemotron3_33b':
       return scaledWorkingMemoryLimits(trimmedModelId, {
         toolResultMaxChars: 1200,

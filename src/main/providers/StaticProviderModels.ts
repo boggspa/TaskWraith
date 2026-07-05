@@ -283,6 +283,11 @@ const OLLAMA_STATIC_MODELS = [
     description: 'Ornith 1.0 35B via Ollama · 262k context · agentic coding'
   },
   {
+    id: 'laguna-xs-2.1:q8_0',
+    label: 'Laguna XS 2.1 (33B-A3B Q8)',
+    description: 'Poolside Laguna XS 2.1 33B-A3B Q8 via Ollama · 262k context · tools/thinking'
+  },
+  {
     id: 'gpt-oss:20b',
     label: 'GPT OSS (20B Param)',
     description: 'OpenAI gpt-oss 20B via Ollama · 131k context'

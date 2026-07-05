@@ -26,6 +26,9 @@ describe('ollama model availability helpers', () => {
     expect(buildOllamaPullCommand('openai/gpt-oss-20b')).toBe(
       'ollama pull openai/gpt-oss-20b'
     )
+    expect(buildOllamaPullCommand('laguna-xs-2.1:q8_0')).toBe(
+      'ollama pull laguna-xs-2.1:q8_0'
+    )
   })
 
   it('refuses shell-unsafe model ids', () => {

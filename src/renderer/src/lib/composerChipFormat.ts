@@ -146,6 +146,9 @@ export function shortModelName(provider: ProviderId, modelLabel: string, modelId
     if (id === 'ornith:35b' || id.startsWith('ornith:35b-')) {
       return 'Ornith 1.0 (35B Param)'
     }
+    if (id === 'laguna-xs-2.1:q8_0') {
+      return 'Laguna XS 2.1 (33B-A3B Q8)'
+    }
     if (
       id === 'gpt-oss' ||
       id === 'gpt-oss:20b' ||

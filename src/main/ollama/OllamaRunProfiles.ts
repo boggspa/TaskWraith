@@ -134,6 +134,7 @@ export function resolveOllamaThinkingLevel(
     family === 'qwen3_6_35b' ||
     family === 'minicpm_v45_8b' ||
     family === 'lfm2_5_8b' ||
+    family === 'laguna_xs_2_1' ||
     family === 'ornith_9b' ||
     family === 'ornith_35b' ||
     family === 'nemotron3_33b'

@@ -84,6 +84,12 @@ public enum OllamaDisplayBrands {
             providerClass: "openbmb",
             needles: ["minicpm-v4.5", "minicpm v4.5", "minicpm"],
             fallbackModelLabel: "MiniCPM-V 4.5 (8B Param)"),
+        OllamaDisplayBrandDefinition(
+            id: "poolside",
+            providerLabel: "Poolside",
+            providerClass: "poolside",
+            needles: ["laguna-xs-2.1", "laguna xs 2.1", "laguna"],
+            fallbackModelLabel: "Laguna XS 2.1 (33B-A3B Q8)"),
     ]
 
     /// Resolve an Ollama model id (+ optional human label) to its spoofed

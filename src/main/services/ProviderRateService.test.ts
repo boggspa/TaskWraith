@@ -226,6 +226,7 @@ describe('BAKED_IN_RATES', () => {
         'ornith:latest',
         'ornith:9b',
         'ornith:35b',
+        'laguna-xs-2.1:q8_0',
         'minicpm-v4.5:8b',
         'granite4.1:3b',
         'granite4.1:30b',

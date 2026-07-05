@@ -44,6 +44,10 @@ describe('resolveOllamaDisplayBrand', () => {
       providerLabel: 'OpenBMB',
       providerClass: 'openbmb'
     })
+    expect(resolveOllamaDisplayBrand('laguna-xs-2.1:q8_0')).toMatchObject({
+      providerLabel: 'Poolside',
+      providerClass: 'poolside'
+    })
   })
 
   it('keeps the provider picker order explicit', () => {
@@ -55,7 +59,8 @@ describe('resolveOllamaDisplayBrand', () => {
       'liquid',
       'nvidia',
       'openai',
-      'openbmb'
+      'openbmb',
+      'poolside'
     ])
   })
 })
@@ -65,6 +70,7 @@ describe('resolveProviderHueClass', () => {
     expect(resolveProviderHueClass('ollama', 'qwen3.5:9b')).toBe('alibaba')
     expect(resolveProviderHueClass('ollama', 'gemma4:12b')).toBe('google')
     expect(resolveProviderHueClass('ollama', 'gpt-oss:20b')).toBe('openai')
+    expect(resolveProviderHueClass('ollama', 'laguna-xs-2.1:q8_0')).toBe('poolside')
   })
 
   it('returns the runtime provider for non-brand models', () => {
@@ -78,6 +84,7 @@ describe('resolveProviderBrandLabel', () => {
   it('returns the spoofed upstream brand label for Ollama brands', () => {
     expect(resolveProviderBrandLabel('ollama', 'qwen3.5:9b')).toBe('Alibaba')
     expect(resolveProviderBrandLabel('ollama', 'nemotron3:33b')).toBe('NVIDIA')
+    expect(resolveProviderBrandLabel('ollama', 'laguna-xs-2.1:q8_0')).toBe('Poolside')
   })
 
   it('returns null for non-Ollama providers and unbranded Ollama models', () => {

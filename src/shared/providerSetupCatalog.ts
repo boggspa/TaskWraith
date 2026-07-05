@@ -66,6 +66,11 @@ export const OLLAMA_MODEL_COMMANDS: readonly OllamaModelEntry[] = [
   { id: 'gemma4:12b', label: 'Gemma 4 (12B Param)', command: 'ollama run gemma4:12b' },
   { id: 'ornith:9b', label: 'Ornith 1.0 (9B Param)', command: 'ollama run ornith:9b' },
   { id: 'ornith:35b', label: 'Ornith 1.0 (35B Param)', command: 'ollama run ornith:35b' },
+  {
+    id: 'laguna-xs-2.1:q8_0',
+    label: 'Laguna XS 2.1 (33B-A3B Q8)',
+    command: 'ollama run laguna-xs-2.1:q8_0'
+  },
   { id: 'gpt-oss:20b', label: 'GPT OSS (20B Param)', command: 'ollama run gpt-oss:20b' },
   { id: 'lfm2.5:8b', label: 'LFM 2.5 (8B-1A)', command: 'ollama run lfm2.5:8b' },
   { id: 'minicpm-v4.5:8b', label: 'MiniCPM-V 4.5 (8B Param)', command: 'ollama run minicpm-v4.5:8b' },

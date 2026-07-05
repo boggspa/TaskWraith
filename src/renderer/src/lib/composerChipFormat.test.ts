@@ -71,6 +71,9 @@ describe('shortModelName', () => {
     expect(shortModelName('ollama', '', 'ornith:latest')).toBe('Ornith 1.0 (9B Param)')
     expect(shortModelName('ollama', '', 'ornith:9b')).toBe('Ornith 1.0 (9B Param)')
     expect(shortModelName('ollama', '', 'ornith:35b')).toBe('Ornith 1.0 (35B Param)')
+    expect(shortModelName('ollama', '', 'laguna-xs-2.1:q8_0')).toBe(
+      'Laguna XS 2.1 (33B-A3B Q8)'
+    )
     expect(shortModelName('ollama', '', 'gpt-oss')).toBe('GPT OSS (20B Param)')
     expect(shortModelName('ollama', '', 'gpt-oss:20b')).toBe('GPT OSS (20B Param)')
     expect(shortModelName('ollama', '', 'minicpm-v4.5:8b')).toBe('MiniCPM-V 4.5 (8B Param)')

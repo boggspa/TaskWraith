@@ -10,6 +10,16 @@ describe('mergeOllamaModelCatalog', () => {
     )
   })
 
+  it('keeps the curated Laguna label when live Ollama returns the raw Q8 tag', () => {
+    const models = mergeOllamaModelCatalog([
+      { id: 'laguna-xs-2.1:q8_0', label: 'laguna-xs-2.1:q8_0' }
+    ])
+
+    expect(models.find((model) => model.id === 'laguna-xs-2.1:q8_0')?.label).toBe(
+      'Laguna XS 2.1 (33B-A3B Q8)'
+    )
+  })
+
   it('deduplicates GPT OSS aliases into one OpenAI picker row', () => {
     const models = mergeOllamaModelCatalog([
       { id: 'gpt-oss:latest', label: 'gpt-oss:latest' },

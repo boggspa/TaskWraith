@@ -21,6 +21,9 @@ describe('resolveOllamaContextBudget', () => {
       resolveOllamaContextBudget('ornith:9b').maxBlockChars
     )
     expect(resolveOllamaContextBudget('ornith:35b').maxBlockChars).toBeGreaterThanOrEqual(30_000)
+    expect(resolveOllamaContextBudget('laguna-xs-2.1:q8_0').maxBlockChars).toBeGreaterThanOrEqual(
+      30_000
+    )
     expect(resolveOllamaContextBudget('lfm2.5:8b').maxBlockChars).toBeGreaterThan(
       resolveOllamaContextBudget('unknown-local:latest').maxBlockChars
     )

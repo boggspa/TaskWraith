@@ -874,7 +874,6 @@ import {
   fetchOllamaModels,
   getOllamaCapabilityContract,
   getOllamaStatusSnapshot,
-  humanizeOllamaModelId,
   OLLAMA_TOOL_HELP_NAME,
   runOllamaProvider,
   validateOllamaToolArguments,
@@ -29449,39 +29448,7 @@ if (isGeminiMcpBridgeProcess) {
           const models = await fetchOllamaModels(settings)
           return models
         } catch {
-          return [
-            {
-              id: 'qwen3:4b-instruct',
-              label: humanizeOllamaModelId('qwen3:4b-instruct'),
-              description: 'Install with `ollama pull qwen3:4b-instruct`',
-              isDefault: true
-            },
-            {
-              id: 'qwen3.5:9b',
-              label: humanizeOllamaModelId('qwen3.5:9b'),
-              description: 'Install with `ollama pull qwen3.5:9b`'
-            },
-            {
-              id: 'gemma4:12b',
-              label: humanizeOllamaModelId('gemma4:12b'),
-              description: 'Install with `ollama pull gemma4:12b`'
-            },
-            {
-              id: 'ornith:9b',
-              label: humanizeOllamaModelId('ornith:9b'),
-              description: 'Install with `ollama pull ornith:9b`'
-            },
-            {
-              id: 'ornith:35b',
-              label: humanizeOllamaModelId('ornith:35b'),
-              description: 'Install with `ollama pull ornith:35b`'
-            },
-            {
-              id: 'gpt-oss:20b',
-              label: humanizeOllamaModelId('gpt-oss:20b'),
-              description: 'Install with `ollama pull gpt-oss:20b`'
-            }
-          ]
+          return getStaticProviderModels('ollama')
         }
       }
       if (provider !== 'codex') {

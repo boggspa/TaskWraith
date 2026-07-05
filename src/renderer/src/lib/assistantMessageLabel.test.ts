@@ -101,6 +101,21 @@ describe('formatAssistantMessageLabel', () => {
     })
   })
 
+  it('uses the Poolside brand for Laguna through Ollama', () => {
+    expect(
+      formatAssistantMessageLabel(
+        assistant({ providerModel: 'laguna-xs-2.1:q8_0' }),
+        'Ollama',
+        'ollama'
+      )
+    ).toEqual({
+      label: 'Poolside',
+      provider: 'ollama',
+      providerClass: 'poolside',
+      modelBadge: 'Laguna XS 2.1 (33B-A3B Q8)'
+    })
+  })
+
   it('keeps non-Ollama solo chats provider-labelled', () => {
     expect(formatAssistantMessageLabel(assistant(), 'Codex', 'codex')).toEqual({
       label: 'Codex',

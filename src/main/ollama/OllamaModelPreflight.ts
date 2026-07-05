@@ -8,6 +8,7 @@ export type OllamaModelFamily =
   | 'gemma4_12b'
   | 'ornith_9b'
   | 'ornith_35b'
+  | 'laguna_xs_2_1'
   | 'gpt_oss_20b'
   | 'lfm2_5_8b'
   | 'minicpm_v45_8b'
@@ -85,6 +86,7 @@ export function resolveOllamaModelFamily(
     return 'ornith_9b'
   }
   if (key === 'ornith:35b' || key.startsWith('ornith:35b-')) return 'ornith_35b'
+  if (key === 'laguna-xs-2.1:q8_0') return 'laguna_xs_2_1'
   if (
     key === 'gpt-oss' ||
     key === 'gpt-oss:20b' ||
@@ -112,6 +114,7 @@ export function resolveOllamaModelFamily(
   if (meta.includes('ornith') && meta.includes('35b')) return 'ornith_35b'
   if (meta.includes('ornith') && meta.includes('9b')) return 'ornith_9b'
   if (meta.includes('ornith')) return 'ornith_9b'
+  if (meta.includes('laguna') || meta.includes('poolside')) return 'laguna_xs_2_1'
   if (meta.includes('qwen35moe') || meta.includes('qwen3.6')) return 'qwen3_6_35b'
   if (meta.includes('nemotron')) return 'nemotron3_33b'
   if (meta.includes('granite') && (meta.includes('3.4b') || meta.includes('3b'))) {
@@ -248,6 +251,12 @@ function familyGuidance(family: OllamaModelFamily, modelLabel: string): {
         delegateHint:
           'Use it for scoped local analysis, tool-assisted review, and focused patches; keep broad refactors sliced with explicit verification.'
       }
+    case 'laguna_xs_2_1':
+      return {
+        guidance: `${modelLabel} is a long-context local reasoning model with native tools and thinking support.`,
+        delegateHint:
+          'Use it for deeper local review and scoped implementation; on macOS/Metal, watch for empty chat responses from this tag and verify the first run before long work.'
+      }
     case 'granite4_1_3b':
       return {
         guidance: `${modelLabel} is a lightweight tool-capable local model for fast reads and small planning tasks.`,
@@ -297,6 +306,8 @@ function defaultParameterBillionsForFamily(family: OllamaModelFamily): number | 
       return 9
     case 'ornith_35b':
       return 35
+    case 'laguna_xs_2_1':
+      return 33
     case 'lfm2_5_8b':
       return 8
     case 'granite4_1_3b':

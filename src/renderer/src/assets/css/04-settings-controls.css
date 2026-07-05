@@ -4491,6 +4491,14 @@ input:disabled, select:disabled, textarea:disabled {
     inset 0 1px 0 rgba(255, 255, 255, 0.18),
     0 0 10px color-mix(in srgb, var(--provider-openbmb-color) 14%, transparent);
 }
+.run-card-provider.provider-poolside {
+  color: var(--provider-poolside-color);
+  border-color: color-mix(in srgb, var(--provider-poolside-color) 32%, transparent);
+  background: color-mix(in srgb, var(--provider-poolside-color) 12%, transparent);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.18),
+    0 0 10px color-mix(in srgb, var(--provider-poolside-color) 14%, transparent);
+}
 
 /* Status chip — same rim-shine pattern per tone. Each tone
  * keeps its semantic color (success / warning / danger /

@@ -43,6 +43,9 @@ describe('OllamaRunProfiles', () => {
     expect(resolveOllamaRunProfile('ornith:35b').contextCapTokens).toBe(262_144)
     expect(resolveOllamaRunProfile('gpt-oss:20b', 'provider_parity').contextCapTokens).toBe(131_072)
     expect(resolveOllamaRunProfile('lfm2.5:8b', 'provider_parity').contextCapTokens).toBe(131_072)
+    expect(resolveOllamaRunProfile('laguna-xs-2.1:q8_0', 'provider_parity').contextCapTokens).toBe(
+      262_144
+    )
   })
 
   it('keeps unknown local tags at the preset fallback cap', () => {
@@ -67,6 +70,9 @@ describe('OllamaRunProfiles', () => {
     ).toBe('medium')
     expect(
       resolveOllamaThinkingLevel('nemotron3:33b', OLLAMA_RUN_PROFILE_PRESETS.local_scout)
+    ).toBe('medium')
+    expect(
+      resolveOllamaThinkingLevel('laguna-xs-2.1:q8_0', OLLAMA_RUN_PROFILE_PRESETS.local_scout)
     ).toBe('medium')
     expect(
       resolveOllamaThinkingLevel('qwen3.5:9b', OLLAMA_RUN_PROFILE_PRESETS.local_scout)
