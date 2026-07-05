@@ -54,6 +54,16 @@ function resolveHealthEntryPresentation(entry: ParticipantHealthEntry): {
   providerClass: string
 } {
   if (entry.displayProviderLabel && entry.displayHueClass) {
+    if (entry.provider === 'ollama' && entry.displayHueClass === 'ollama' && entry.model) {
+      const brandLabel = resolveProviderBrandLabel(entry.provider, entry.model)
+      const brandHueClass = resolveProviderHueClass(entry.provider, entry.model)
+      if (brandLabel && brandHueClass !== 'ollama') {
+        return {
+          providerName: brandLabel,
+          providerClass: brandHueClass
+        }
+      }
+    }
     return {
       providerName: entry.displayProviderLabel,
       providerClass: entry.displayHueClass

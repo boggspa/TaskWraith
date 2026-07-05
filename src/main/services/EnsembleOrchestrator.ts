@@ -9943,7 +9943,12 @@ function formatParticipantHealthHeader(
   results: Array<{ participant: EnsembleParticipant; result: ParticipantProbeResult }>
 ): string {
   const lines = results.map(({ participant, result }) => {
-    const who = `${providerLabel(participant.provider)} / ${participant.role || 'Participant'}`
+    const presentation = resolveHealthEntryPresentation(
+      participant.provider,
+      participant.model,
+      providerLabel(participant.provider)
+    )
+    const who = `${presentation.displayProviderLabel} / ${participant.role || 'Participant'}`
     if (result.reachable) return `  ${who}: ok`
     const reason = result.reason || `${participant.provider} runtime not reachable`
     const code = result.underlyingCode ? ` (${result.underlyingCode})` : ''
