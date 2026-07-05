@@ -207,7 +207,7 @@ function signatureOf(
   const declaredSignature = declaredServices
     .map(
       (service) =>
-        `${service.id}:${service.status}:${service.ports.join(',')}:${service.healthCheck?.url || ''}:${service.healthCheck?.commandHint || ''}`
+        `${service.id}:${service.status}:${service.ports.join(',')}:${service.healthCheck?.url || ''}:${service.healthCheck?.commandHint || ''}:${(service.launchTargetHints || []).join(',')}`
     )
     .sort()
     .join('|')

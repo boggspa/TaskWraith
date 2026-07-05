@@ -176,7 +176,8 @@ export const BUILT_IN_TASKWRAITH_PLUGIN_MANIFESTS: TaskWraithPluginManifest[] = 
         healthCheck: {
           commandHint: 'Check http://127.0.0.1:<port>/ after the user selects a concrete port.'
         },
-        managedByTaskWraith: false
+        launchTargetHints: ['dev', 'start', 'preview', 'serve'],
+        managedByTaskWraith: true
       }
     ],
     workflowTemplates: [

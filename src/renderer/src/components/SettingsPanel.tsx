@@ -10194,7 +10194,9 @@ export function SettingsPanel({
         )}
 
         {/* ── Local servers (dev servers under workspaces) ─────────────── */}
-        {activeTab === 'local-servers' && <LocalServersSettingsPanel />}
+        {activeTab === 'local-servers' && (
+          <LocalServersSettingsPanel workspaces={workspaces} activeProvider={activeProvider} />
+        )}
 
         {/* ── Model usage (cross-provider) ──────────────────────────────── */}
         {activeTab === 'model-usage' &&

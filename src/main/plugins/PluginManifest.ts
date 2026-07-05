@@ -207,6 +207,18 @@ function validateRequiredSecrets(
   }
 }
 
+function validateStringArray(errors: string[], label: string, value: unknown): void {
+  validateArrayCap(errors, label, value)
+  if (!Array.isArray(value)) return
+  for (const item of value) {
+    if (typeof item !== 'string' || !item.trim()) {
+      errors.push(`${label} contains invalid string "${String(item)}".`)
+      continue
+    }
+    validateStringLength(errors, label, item)
+  }
+}
+
 function validateHttpUrl(errors: string[], label: string, value: unknown): void {
   if (typeof value !== 'string' || !value.trim()) return
   validateStringLength(errors, label, value)
@@ -400,6 +412,11 @@ export function validateTaskWraithPluginManifest(manifest: TaskWraithPluginManif
       }
     }
     validateHttpUrl(errors, `Local service "${service.id}" health check URL`, service.healthCheck?.url)
+    validateStringArray(
+      errors,
+      `Local service "${service.id}" launch target hints`,
+      service.launchTargetHints
+    )
   }
   validateArrayCap(errors, 'Provider setup metadata', manifest.providerSetup)
   for (const setup of manifest.providerSetup ?? []) {

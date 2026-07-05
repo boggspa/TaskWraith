@@ -178,6 +178,12 @@ export interface TaskWraithPluginLocalServiceDefinition {
     url?: string
     commandHint?: string
   }
+  /**
+   * Declarative hints for matching this service to workspace-discovered launch
+   * targets. Plugins never provide commands; TaskWraith re-discovers and starts
+   * matching launch targets through the existing approval-gated launch flow.
+   */
+  launchTargetHints?: string[]
   managedByTaskWraith?: boolean
 }
 

@@ -26933,6 +26933,9 @@ if (isGeminiMcpBridgeProcess) {
             ...(entry.service.description ? { description: entry.service.description } : {}),
             ports: entry.service.ports || [],
             ...(entry.service.healthCheck ? { healthCheck: entry.service.healthCheck } : {}),
+            ...(entry.service.launchTargetHints
+              ? { launchTargetHints: entry.service.launchTargetHints }
+              : {}),
             managedByTaskWraith: entry.managedByTaskWraith,
             pluginProvenance: entry.pluginProvenance,
             status: 'unknown' as const

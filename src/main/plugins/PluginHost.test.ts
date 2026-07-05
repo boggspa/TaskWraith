@@ -632,7 +632,8 @@ describe('PluginPreflightService', () => {
           id: 'service',
           label: 'Service',
           ports: [0, 70000],
-          healthCheck: { url: 'not a url' }
+          healthCheck: { url: 'not a url' },
+          launchTargetHints: ['', 123]
         }
       ],
       providerSetup: [{ provider: 'unknown-provider' }],
@@ -681,6 +682,12 @@ describe('PluginPreflightService', () => {
     expect(errors).toContain('Local service "service" has invalid port "0".')
     expect(errors).toContain('Local service "service" has invalid port "70000".')
     expect(errors).toContain('Local service "service" health check URL must be a valid URL.')
+    expect(errors).toContain(
+      'Local service "service" launch target hints contains invalid string "".'
+    )
+    expect(errors).toContain(
+      'Local service "service" launch target hints contains invalid string "123".'
+    )
     expect(errors).toContain('Provider setup has unsupported provider "unknown-provider".')
     expect(errors).toContain('Marketplace homepage URL must be an http(s) URL.')
     expect(errors).toContain('Manifest signature has unsupported algorithm "rsa".')

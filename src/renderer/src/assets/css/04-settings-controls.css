@@ -6025,6 +6025,7 @@ input:disabled, select:disabled, textarea:disabled {
 }
 .settings-local-servers-list-header button,
 .settings-local-server-port,
+.settings-local-server-start,
 .settings-local-server-stop {
   appearance: none;
   -webkit-appearance: none;
@@ -6038,9 +6039,13 @@ input:disabled, select:disabled, textarea:disabled {
   cursor: pointer;
 }
 .settings-local-servers-list-header button:disabled,
+.settings-local-server-start:disabled,
 .settings-local-server-stop:disabled {
   opacity: 0.5;
   cursor: default;
+}
+.settings-local-server-start:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
 }
 .settings-local-servers-stop-all:hover:not(:disabled),
 .settings-local-server-stop:hover:not(:disabled) {
@@ -6096,6 +6101,7 @@ input:disabled, select:disabled, textarea:disabled {
   flex: 0 0 auto;
   font-variant-numeric: tabular-nums;
 }
+.settings-local-server-start,
 .settings-local-server-stop {
   flex: 0 0 auto;
 }

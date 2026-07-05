@@ -60,6 +60,7 @@ export interface DeclaredLocalService {
     url?: string
     commandHint?: string
   }
+  launchTargetHints?: string[]
   managedByTaskWraith: boolean
   pluginProvenance?: TaskWraithPluginResourceProvenance
   status: 'unknown' | 'running'

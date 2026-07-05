@@ -1,12 +1,26 @@
 import { useEffect, useMemo, useState, type JSX } from 'react'
 import { localServerWorkspaceLabel } from '../../../shared/localServerWorkspaceLabel'
+import { useWorkspaceLaunchTargets } from '../hooks/useWorkspaceLaunchTargets'
 import { useLocalServers } from '../hooks/useLocalServers'
+import type { LaunchTarget } from '../../../main/launchTargets/types'
 import type { DeclaredLocalService, LocalServerEntry } from '../../../main/localServers/types'
+import type { ProviderId, WorkspaceRecord } from '../../../main/store/types'
 
 interface WorkspaceGroup {
   key: string
   label: string
   servers: LocalServerEntry[]
+}
+
+interface LocalServersSettingsPanelProps {
+  workspaces?: WorkspaceRecord[]
+  activeProvider?: ProviderId
+}
+
+interface ServiceLaunchMatch {
+  workspace: WorkspaceRecord
+  target: LaunchTarget
+  hint: string
 }
 
 function groupByWorkspace(servers: LocalServerEntry[]): WorkspaceGroup[] {
@@ -20,15 +34,75 @@ function groupByWorkspace(servers: LocalServerEntry[]): WorkspaceGroup[] {
   return [...groups.values()].sort((a, b) => a.label.localeCompare(b.label))
 }
 
+function normalizeLaunchHint(value: string | undefined): string {
+  return (value || '').trim().toLowerCase().replace(/\s+/g, ' ')
+}
+
+function launchTargetMatchesHint(target: LaunchTarget, hint: string): boolean {
+  const normalizedHint = normalizeLaunchHint(hint)
+  if (!normalizedHint) return false
+  const searchable = [
+    target.id,
+    target.label,
+    target.subtitle,
+    target.source,
+    target.kind,
+    target.platform,
+    target.command?.raw
+  ]
+    .map(normalizeLaunchHint)
+    .filter(Boolean)
+  return searchable.some((value) => value === normalizedHint || value.includes(normalizedHint))
+}
+
+function scoreLaunchTarget(target: LaunchTarget, hint: string): number {
+  const normalizedHint = normalizeLaunchHint(hint)
+  const label = normalizeLaunchHint(target.label)
+  return (
+    (target.id === hint ? 1000 : 0) +
+    (label === normalizedHint ? 600 : 0) +
+    (target.kind === 'dev-server' || target.kind === 'preview' ? 80 : 0) +
+    (target.command?.longRunning ? 40 : 0) +
+    target.confidence * 20
+  )
+}
+
+function findServiceLaunchMatch(
+  service: DeclaredLocalService,
+  workspaces: WorkspaceRecord[],
+  targetsForWorkspace: (workspacePath: string | null | undefined) => LaunchTarget[]
+): ServiceLaunchMatch | null {
+  if (!service.managedByTaskWraith) return null
+  const hints = (service.launchTargetHints || []).map((hint) => hint.trim()).filter(Boolean)
+  if (hints.length === 0) return null
+  const matches: Array<ServiceLaunchMatch & { score: number }> = []
+  for (const workspace of workspaces) {
+    for (const target of targetsForWorkspace(workspace.path)) {
+      if (!target.command || target.blockers.length > 0) continue
+      const hint = hints.find((item) => launchTargetMatchesHint(target, item))
+      if (!hint) continue
+      matches.push({ workspace, target, hint, score: scoreLaunchTarget(target, hint) })
+    }
+  }
+  matches.sort((a, b) => b.score - a.score || a.target.label.localeCompare(b.target.label))
+  return matches[0] || null
+}
+
 /**
  * Settings → Local servers. The persistent home for the dev-server list
  * (grouped by workspace) plus the lifecycle toggles. Shares the same live data
  * as the sidebar section via useLocalServers.
  */
-export function LocalServersSettingsPanel(): JSX.Element {
+export function LocalServersSettingsPanel({
+  workspaces = [],
+  activeProvider = 'codex'
+}: LocalServersSettingsPanelProps): JSX.Element {
   const { servers, snapshot, busy, stop, stopAll, refresh } = useLocalServers()
+  const workspacePaths = useMemo(() => workspaces.map((workspace) => workspace.path), [workspaces])
+  const launchTargets = useWorkspaceLaunchTargets(workspacePaths)
   const [detach, setDetach] = useState(false)
   const [stopOnQuit, setStopOnQuit] = useState(false)
+  const [startingServiceId, setStartingServiceId] = useState<string | null>(null)
 
   useEffect(() => {
     void (async () => {
@@ -53,6 +127,28 @@ export function LocalServersSettingsPanel(): JSX.Element {
     void window.api.updateSettings({ localServersStopOnQuit: next }).catch(() => {})
   }
   const declaredServices: DeclaredLocalService[] = snapshot?.declaredServices || []
+
+  const startDeclaredService = async (
+    service: DeclaredLocalService,
+    match: ServiceLaunchMatch
+  ): Promise<void> => {
+    if (typeof window.api.launchStart !== 'function') return
+    setStartingServiceId(service.id)
+    try {
+      const result = await window.api.launchStart({
+        workspacePath: match.target.workspacePath,
+        targetId: match.target.id,
+        provider: activeProvider
+      })
+      if (!result?.ok) {
+        window.alert(result?.error || 'Launch target did not start.')
+        return
+      }
+      await Promise.all([refresh(), launchTargets.refresh(match.target.workspacePath)])
+    } finally {
+      setStartingServiceId(null)
+    }
+  }
 
   return (
     <div className="settings-local-servers">
@@ -163,27 +259,61 @@ export function LocalServersSettingsPanel(): JSX.Element {
       {declaredServices.length > 0 && (
         <div className="settings-local-servers-group">
           <h4 className="settings-local-servers-group-title">Plugin service declarations</h4>
-          {declaredServices.map((service) => (
-            <div key={service.id} className="settings-local-server-row">
-              <span className="settings-local-server-name">{service.label}</span>
-              <span className="settings-local-server-badge">{service.status}</span>
-              <span className="settings-local-server-cmd" title={service.description || service.id}>
-                {service.pluginProvenance?.pluginId || 'plugin'} ·{' '}
-                {service.healthCheck?.url || service.healthCheck?.commandHint || 'health metadata'}
-              </span>
-              {service.ports[0] != null && (
-                <button
-                  type="button"
-                  className="settings-local-server-port"
-                  onClick={() =>
-                    void window.api.openExternalOrPath(`http://localhost:${service.ports[0]}`)
-                  }
-                >
-                  :{service.ports[0]}
-                </button>
-              )}
-            </div>
-          ))}
+          {declaredServices.map((service) => {
+            const launchMatch = findServiceLaunchMatch(
+              service,
+              workspaces,
+              launchTargets.targetsForWorkspace
+            )
+            const serviceMetadata = [
+              service.pluginProvenance?.pluginId || 'plugin',
+              service.healthCheck?.url || service.healthCheck?.commandHint || 'health metadata',
+              service.managedByTaskWraith
+                ? launchMatch
+                  ? `launch ${launchMatch.workspace.displayName}: ${launchMatch.target.label}`
+                  : 'no matching launch target'
+                : 'external'
+            ].join(' · ')
+            return (
+              <div key={service.id} className="settings-local-server-row">
+                <span className="settings-local-server-name">{service.label}</span>
+                <span className="settings-local-server-badge">{service.status}</span>
+                <span className="settings-local-server-cmd" title={service.description || service.id}>
+                  {serviceMetadata}
+                </span>
+                {service.ports[0] != null && (
+                  <button
+                    type="button"
+                    className="settings-local-server-port"
+                    onClick={() =>
+                      void window.api.openExternalOrPath(`http://localhost:${service.ports[0]}`)
+                    }
+                  >
+                    :{service.ports[0]}
+                  </button>
+                )}
+                {service.managedByTaskWraith && (
+                  <button
+                    type="button"
+                    className="settings-local-server-start"
+                    title={
+                      launchMatch
+                        ? `Start ${launchMatch.target.label} in ${launchMatch.workspace.displayName}`
+                        : 'No matching launch target found in loaded workspaces.'
+                    }
+                    onClick={() => {
+                      if (launchMatch) void startDeclaredService(service, launchMatch)
+                    }}
+                    disabled={
+                      busy || launchTargets.busy || !launchMatch || startingServiceId === service.id
+                    }
+                  >
+                    {startingServiceId === service.id ? 'Starting' : 'Start'}
+                  </button>
+                )}
+              </div>
+            )
+          })}
         </div>
       )}
     </div>
