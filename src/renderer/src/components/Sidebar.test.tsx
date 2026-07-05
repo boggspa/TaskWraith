@@ -18,15 +18,16 @@ import {
 import { assignAgentIdentityFromSeed } from '../lib/agentIdentitySeed'
 import type { AgentApprovalRequest } from '../lib/agentApprovalTypes'
 
-const EXPANDED_WORKSPACES_STORAGE_KEY = 'taskwraith-sidebar-expanded-workspace-ids'
-const COLLAPSED_SUB_THREAD_PARENTS_STORAGE_KEY = 'taskwraith-sidebar-collapsed-sub-thread-parent-ids'
 const COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY = 'taskwraith-sidebar-collapsed-sections'
+const COLLAPSED_SIDEBAR_SECTIONS_DEFAULT_VERSION_KEY =
+  'taskwraith-sidebar-collapsed-sections-default-version'
+const COLLAPSED_SIDEBAR_SECTIONS_DEFAULT_VERSION = 'recents-open-v1'
 
 // Mirrors SIDEBAR_SECTION_IDS in Sidebar.tsx. The sidebar defaults every section
-// to collapsed for new users (ec5bcad, "all-collapsed-v1"), so tests that assert
-// on child rows opt the relevant section(s) open the way a user would by clicking
-// the header. Persisting a non-empty collapsed list also bypasses the new-user
-// default migration, pinning exactly these sections open.
+// except Recents to collapsed for new users, so tests that assert on child rows
+// opt the relevant section(s) open the way a user would by clicking the header.
+// Persisting a non-empty collapsed list also bypasses the new-user default
+// migration, pinning exactly these sections open.
 const SIDEBAR_SECTION_IDS = [
   'workflows',
   'workspace-boards',
@@ -135,6 +136,15 @@ function makeWorkspaceBoard(
 
 function stubSidebarStorage(values: Record<string, string>) {
   const store = new Map(Object.entries(values))
+  if (
+    store.has(COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY) &&
+    !store.has(COLLAPSED_SIDEBAR_SECTIONS_DEFAULT_VERSION_KEY)
+  ) {
+    store.set(
+      COLLAPSED_SIDEBAR_SECTIONS_DEFAULT_VERSION_KEY,
+      COLLAPSED_SIDEBAR_SECTIONS_DEFAULT_VERSION
+    )
+  }
   vi.stubGlobal('localStorage', {
     getItem: vi.fn((key: string) => store.get(key) ?? null),
     setItem: vi.fn((key: string, value: string) => {
@@ -170,6 +180,7 @@ function renderSidebar(
     onDeleteWorkspaceBoard?: (boardId: string) => void
     onCreateSharedChat?: (variant: SharedChatCreateVariant) => void
     collaboratingChatIds?: Set<string>
+    initialExpandedSubThreadParentIds?: string[]
     pendingAgentApprovalByChatId?: Record<string, AgentApprovalRequest | null>
     hasConnectedCollaborator?: boolean
     onRenameChat?: (chatId: string, nextTitle: string) => void
@@ -196,6 +207,7 @@ function renderSidebar(
       workspaceBoards={options.workspaceBoards}
       activeWorkspaceBoardId={options.activeWorkspaceBoardId}
       collaboratingChatIds={options.collaboratingChatIds}
+      initialExpandedSubThreadParentIds={options.initialExpandedSubThreadParentIds}
       pendingAgentApprovalByChatId={options.pendingAgentApprovalByChatId}
       hasConnectedCollaborator={options.hasConnectedCollaborator}
       onSelectWorkspace={() => {}}
@@ -279,7 +291,6 @@ describe('Sidebar masthead', () => {
 describe('Sidebar active chat override', () => {
   it('marks activeChatId as selected before currentChat catches up', () => {
     stubSidebarStorage({
-      [EXPANDED_WORKSPACES_STORAGE_KEY]: JSON.stringify(['ws-1']),
       [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: collapseSectionsExcept('workspaces')
     })
 
@@ -302,10 +313,66 @@ describe('Sidebar active chat override', () => {
   })
 })
 
+describe('Sidebar startup hygiene', () => {
+  it('keeps Recents expanded by default for quick return navigation', () => {
+    stubSidebarStorage({})
+
+    const html = renderSidebar([
+      makeChat({ appChatId: 'recent-1', title: 'Recently active thread', updatedAt: 3 })
+    ])
+
+    const recentsBlock = html.slice(html.indexOf('sidebar-recents-section'))
+    expect(recentsBlock).toContain('Recently active thread')
+  })
+
+  it('starts with only the active workspace tree expanded', () => {
+    stubSidebarStorage({
+      [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: collapseSectionsExcept('workspaces')
+    })
+    const firstWorkspace = makeWorkspace({
+      id: 'ws-1',
+      path: '/repo-one',
+      displayName: 'Repo One',
+      lastOpenedAt: 10
+    })
+    const activeWorkspace = makeWorkspace({
+      id: 'ws-2',
+      path: '/repo-two',
+      displayName: 'Repo Two',
+      lastOpenedAt: 20
+    })
+
+    const html = renderSidebar(
+      [
+        makeChat({
+          appChatId: 'first-workspace-chat',
+          title: 'Older workspace chat',
+          workspaceId: 'ws-1',
+          workspacePath: '/repo-one',
+          updatedAt: 4
+        }),
+        makeChat({
+          appChatId: 'active-workspace-chat',
+          title: 'Active workspace chat',
+          workspaceId: 'ws-2',
+          workspacePath: '/repo-two',
+          updatedAt: 5
+        })
+      ],
+      {
+        workspaces: [firstWorkspace, activeWorkspace],
+        currentWorkspace: activeWorkspace
+      }
+    )
+
+    expect(html).toContain('Active workspace chat')
+    expect(html).not.toContain('Older workspace chat')
+  })
+})
+
 describe('Sidebar chat row markup', () => {
   it('keeps chat rows out of native buttons so rename inputs are valid in every section', () => {
     stubSidebarStorage({
-      [EXPANDED_WORKSPACES_STORAGE_KEY]: JSON.stringify(['ws-1']),
       [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: collapseSectionsExcept(
         'pinned',
         'recents',
@@ -354,6 +421,7 @@ describe('Sidebar chat row markup', () => {
       ],
       {
         collaboratingChatIds: new Set(['shared-1']),
+        initialExpandedSubThreadParentIds: ['workspace-1'],
         onRenameChat: () => {},
         onTogglePinChat: () => {}
       }
@@ -633,12 +701,10 @@ describe('Sidebar shared chat create options', () => {
 })
 
 describe('Sidebar sub-thread collapse', () => {
-  it('renders sub-thread children expanded by default', () => {
+  it('keeps sub-thread children collapsed by default', () => {
     stubSidebarStorage({
-      [EXPANDED_WORKSPACES_STORAGE_KEY]: JSON.stringify(['ws-1']),
       [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: collapseSectionsExcept('workspaces')
     })
-    const childIdentity = assignAgentIdentityFromSeed('child-1')
 
     const html = renderSidebar([
       makeChat(),
@@ -652,6 +718,32 @@ describe('Sidebar sub-thread collapse', () => {
       })
     ])
 
+    expect(html).toContain('aria-expanded="false"')
+    expect(html).not.toContain('sidebar-chat-children')
+    expect(html).not.toContain('Child thread')
+  })
+
+  it('renders sub-thread children after an explicit branch expansion', () => {
+    stubSidebarStorage({
+      [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: collapseSectionsExcept('workspaces')
+    })
+    const childIdentity = assignAgentIdentityFromSeed('child-1')
+
+    const html = renderSidebar(
+      [
+        makeChat(),
+        makeChat({
+          appChatId: 'child-1',
+          provider: 'codex',
+          title: 'Child thread',
+          parentChatId: 'parent-1',
+          createdAt: 2,
+          updatedAt: 2
+        })
+      ],
+      { initialExpandedSubThreadParentIds: ['parent-1'] }
+    )
+
     expect(html).toContain('aria-expanded="true"')
     expect(html).toContain('sidebar-chat-children')
     expect(html).toContain(childIdentity.name)
@@ -661,29 +753,31 @@ describe('Sidebar sub-thread collapse', () => {
 
   it('labels fan-out side-chat children distinctly in the sidebar', () => {
     stubSidebarStorage({
-      [EXPANDED_WORKSPACES_STORAGE_KEY]: JSON.stringify(['ws-1']),
       [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: collapseSectionsExcept('workspaces')
     })
 
-    const html = renderSidebar([
-      makeChat(),
-      makeChat({
-        appChatId: 'fan-out-side-1',
-        provider: 'gemini',
-        chatKind: 'ensemble',
-        title: 'Parallel side branch',
-        parentChatId: 'parent-1',
-        parentChatRelation: 'sideChat',
-        sideChatContext: {
+    const html = renderSidebar(
+      [
+        makeChat(),
+        makeChat({
+          appChatId: 'fan-out-side-1',
+          provider: 'gemini',
+          chatKind: 'ensemble',
+          title: 'Parallel side branch',
+          parentChatId: 'parent-1',
+          parentChatRelation: 'sideChat',
+          sideChatContext: {
+            createdAt: 2,
+            mode: 'fanOut',
+            lifecycleState: 'active',
+            transcriptVisibility: 'none'
+          },
           createdAt: 2,
-          mode: 'fanOut',
-          lifecycleState: 'active',
-          transcriptVisibility: 'none'
-        },
-        createdAt: 2,
-        updatedAt: 2
-      })
-    ])
+          updatedAt: 2
+        })
+      ],
+      { initialExpandedSubThreadParentIds: ['parent-1'] }
+    )
 
     expect(html).toContain('Parallel side branch')
     expect(html).toContain('Fan-out side chat')
@@ -694,34 +788,36 @@ describe('Sidebar sub-thread collapse', () => {
 
   it('shows participant and context metadata for side-chat children', () => {
     stubSidebarStorage({
-      [EXPANDED_WORKSPACES_STORAGE_KEY]: JSON.stringify(['ws-1']),
       [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: collapseSectionsExcept('workspaces')
     })
 
     const sideChatIdentity = assignAgentIdentityFromSeed('parent-1:reviewer-codex')
-    const html = renderSidebar([
-      makeChat(),
-      makeChat({
-        appChatId: 'reviewer-side-1',
-        provider: 'codex',
-        title: 'Reviewer branch',
-        parentChatId: 'parent-1',
-        parentChatRelation: 'sideChat',
-        sideChatContext: {
+    const html = renderSidebar(
+      [
+        makeChat(),
+        makeChat({
+          appChatId: 'reviewer-side-1',
+          provider: 'codex',
+          title: 'Reviewer branch',
+          parentChatId: 'parent-1',
+          parentChatRelation: 'sideChat',
+          sideChatContext: {
+            createdAt: 2,
+            mode: 'singleProvider',
+            lifecycleState: 'closed',
+            originMessageId: 'message-1',
+            transcriptVisibility: 'selected'
+          },
+          providerMetadata: {
+            sideChatSelectedParticipantId: 'reviewer-codex',
+            sideChatSelectedParticipantRole: 'Reviewer'
+          },
           createdAt: 2,
-          mode: 'singleProvider',
-          lifecycleState: 'closed',
-          originMessageId: 'message-1',
-          transcriptVisibility: 'selected'
-        },
-        providerMetadata: {
-          sideChatSelectedParticipantId: 'reviewer-codex',
-          sideChatSelectedParticipantRole: 'Reviewer'
-        },
-        createdAt: 2,
-        updatedAt: 2
-      })
-    ])
+          updatedAt: 2
+        })
+      ],
+      { initialExpandedSubThreadParentIds: ['parent-1'] }
+    )
 
     expect(html).toContain('Reviewer branch')
     expect(html).toContain('Isolated side chat')
@@ -735,31 +831,33 @@ describe('Sidebar sub-thread collapse', () => {
 
   it('renders plain same-provider side-chat children without a subagent identity', () => {
     stubSidebarStorage({
-      [EXPANDED_WORKSPACES_STORAGE_KEY]: JSON.stringify(['ws-1']),
       [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: collapseSectionsExcept('workspaces')
     })
 
-    const html = renderSidebar([
-      makeChat({
-        provider: 'codex',
-        title: 'Codex parent'
-      }),
-      makeChat({
-        appChatId: 'plain-side-1',
-        provider: 'codex',
-        title: 'Side Codex chat',
-        parentChatId: 'parent-1',
-        parentChatRelation: 'sideChat',
-        sideChatContext: {
+    const html = renderSidebar(
+      [
+        makeChat({
+          provider: 'codex',
+          title: 'Codex parent'
+        }),
+        makeChat({
+          appChatId: 'plain-side-1',
+          provider: 'codex',
+          title: 'Side Codex chat',
+          parentChatId: 'parent-1',
+          parentChatRelation: 'sideChat',
+          sideChatContext: {
+            createdAt: 2,
+            mode: 'singleProvider',
+            lifecycleState: 'closed',
+            transcriptVisibility: 'none'
+          },
           createdAt: 2,
-          mode: 'singleProvider',
-          lifecycleState: 'closed',
-          transcriptVisibility: 'none'
-        },
-        createdAt: 2,
-        updatedAt: 2
-      })
-    ])
+          updatedAt: 2
+        })
+      ],
+      { initialExpandedSubThreadParentIds: ['parent-1'] }
+    )
 
     expect(html).toContain('Side Codex chat')
     expect(html).toContain('Isolated sidecar')
@@ -770,29 +868,31 @@ describe('Sidebar sub-thread collapse', () => {
 
   it('labels run-result seeded side-chat children explicitly', () => {
     stubSidebarStorage({
-      [EXPANDED_WORKSPACES_STORAGE_KEY]: JSON.stringify(['ws-1']),
       [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: collapseSectionsExcept('workspaces')
     })
 
-    const html = renderSidebar([
-      makeChat(),
-      makeChat({
-        appChatId: 'run-seeded-side-1',
-        provider: 'claude',
-        title: 'Run follow-up',
-        parentChatId: 'parent-1',
-        parentChatRelation: 'sideChat',
-        sideChatContext: {
+    const html = renderSidebar(
+      [
+        makeChat(),
+        makeChat({
+          appChatId: 'run-seeded-side-1',
+          provider: 'claude',
+          title: 'Run follow-up',
+          parentChatId: 'parent-1',
+          parentChatRelation: 'sideChat',
+          sideChatContext: {
+            createdAt: 2,
+            mode: 'singleProvider',
+            lifecycleState: 'active',
+            originRunId: 'run-1',
+            transcriptVisibility: 'snapshot'
+          },
           createdAt: 2,
-          mode: 'singleProvider',
-          lifecycleState: 'active',
-          originRunId: 'run-1',
-          transcriptVisibility: 'snapshot'
-        },
-        createdAt: 2,
-        updatedAt: 2
-      })
-    ])
+          updatedAt: 2
+        })
+      ],
+      { initialExpandedSubThreadParentIds: ['parent-1'] }
+    )
 
     expect(html).toContain('Run follow-up')
     expect(html).toContain('Seeded from run result')
@@ -800,38 +900,39 @@ describe('Sidebar sub-thread collapse', () => {
 
   it('labels copied parent snapshots for isolated side-chat children', () => {
     stubSidebarStorage({
-      [EXPANDED_WORKSPACES_STORAGE_KEY]: JSON.stringify(['ws-1']),
       [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: collapseSectionsExcept('workspaces')
     })
 
-    const html = renderSidebar([
-      makeChat(),
-      makeChat({
-        appChatId: 'snapshot-side-1',
-        provider: 'claude',
-        title: 'Snapshot sidecar',
-        parentChatId: 'parent-1',
-        parentChatRelation: 'sideChat',
-        sideChatContext: {
+    const html = renderSidebar(
+      [
+        makeChat(),
+        makeChat({
+          appChatId: 'snapshot-side-1',
+          provider: 'claude',
+          title: 'Snapshot sidecar',
+          parentChatId: 'parent-1',
+          parentChatRelation: 'sideChat',
+          sideChatContext: {
+            createdAt: 2,
+            mode: 'singleProvider',
+            lifecycleState: 'active',
+            transcriptVisibility: 'snapshot'
+          },
           createdAt: 2,
-          mode: 'singleProvider',
-          lifecycleState: 'active',
-          transcriptVisibility: 'snapshot'
-        },
-        createdAt: 2,
-        updatedAt: 2
-      })
-    ])
+          updatedAt: 2
+        })
+      ],
+      { initialExpandedSubThreadParentIds: ['parent-1'] }
+    )
 
     expect(html).toContain('Snapshot sidecar')
     expect(html).toContain('Copied parent snapshot')
     expect(html).not.toContain('Seeded from run result')
   })
 
-  it('hides sub-thread children when the parent is persisted as collapsed', () => {
+  it('hides sub-thread children when the parent branch has not been expanded', () => {
     stubSidebarStorage({
-      [EXPANDED_WORKSPACES_STORAGE_KEY]: JSON.stringify(['ws-1']),
-      [COLLAPSED_SUB_THREAD_PARENTS_STORAGE_KEY]: JSON.stringify(['parent-1'])
+      [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: collapseSectionsExcept('workspaces')
     })
 
     const html = renderSidebar([

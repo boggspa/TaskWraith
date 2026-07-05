@@ -1195,6 +1195,7 @@
   --sidebar-section-row-gap: 10px;
   --sidebar-section-header-height: 28px;
   --sidebar-section-body-gap: 4px;
+  --sidebar-section-action-size: 22px;
   flex: 1;
   min-height: 0;
   overflow-y: auto;
@@ -1204,7 +1205,19 @@
   padding-right: 2px;
 }
 
-.sidebar-hierarchy-scroll > :is(
+#sidebar-threads-panel,
+#sidebar-projects-panel {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sidebar-section-row-gap);
+}
+
+#sidebar-threads-panel > .sidebar-hierarchy-section {
+  margin-bottom: 0;
+}
+
+.sidebar-hierarchy-section > :is(
   .sidebar-hierarchy-section,
   .sidebar-active-runs-section,
   .sidebar-local-servers-section,
@@ -1402,6 +1415,8 @@
   justify-content: space-between;
   gap: 6px;
   margin-bottom: var(--space-sm);
+  width: 100%;
+  min-width: 0;
 }
 
 .sidebar-section-header-with-action {
@@ -1418,6 +1433,7 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  flex: 1 1 auto;
   min-width: 0;
   max-width: 100%;
   padding: 0;
@@ -1461,11 +1477,16 @@
   color: color-mix(in srgb, var(--sidebar-text) 88%, transparent);
 }
 
+.sidebar-section-header > :is(.workspace-add-pointer, .sidebar-new-menu-wrap) {
+  flex: 0 0 var(--sidebar-section-action-size);
+  width: var(--sidebar-section-action-size);
+}
+
 .sidebar-section-header-action {
   display: inline-flex;
-  flex: 0 0 auto;
-  width: 22px;
-  height: 22px;
+  flex: 0 0 var(--sidebar-section-action-size);
+  width: var(--sidebar-section-action-size);
+  height: var(--sidebar-section-action-size);
   align-items: center;
   justify-content: center;
   border: 1px solid color-mix(in srgb, var(--sidebar-border) 34%, transparent);

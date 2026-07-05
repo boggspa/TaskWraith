@@ -3889,6 +3889,11 @@
   -webkit-backdrop-filter: none !important;
 }
 
+.app-sidebar .sidebar-hierarchy-scroll .sidebar-section-header {
+  margin: 0 !important;
+  padding: 0 !important;
+}
+
 .app-sidebar .sidebar-active-runs-section .sidebar-section-title,
 .app-sidebar .sidebar-local-servers-section .sidebar-section-title,
 .app-sidebar .sidebar-workflows-section .sidebar-section-title,

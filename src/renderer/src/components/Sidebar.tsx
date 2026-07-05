@@ -158,6 +158,8 @@ interface SidebarProps {
   activeWorkspaceBoardId?: string | null
   scheduledTasks?: ScheduledTask[]
   collaboratingChatIds?: Set<string>
+  /** Optional initial branch expansions; runtime callers normally omit this so branches start closed. */
+  initialExpandedSubThreadParentIds?: string[]
   /**
    * First-launch onboarding hint visibility. When true AND the
    * workspace list is empty, the sidebar renders a faint card
@@ -390,24 +392,22 @@ const getLinkedChildRouteLabel = (chat: ChatRecord, parentChat: ChatRecord | nul
     : `${parentLabel} side branch to ${childLabel}`
 }
 
-const EXPANDED_WORKSPACES_STORAGE_KEY = 'taskwraith-sidebar-expanded-workspace-ids'
-const COLLAPSED_SUB_THREAD_PARENTS_STORAGE_KEY = 'taskwraith-sidebar-collapsed-sub-thread-parent-ids'
 const SIDEBAR_ACTIVE_TAB_STORAGE_KEY = 'taskwraith-sidebar-active-tab'
 type SidebarActiveTab = 'threads' | 'projects'
 /**
  * Collapsed-section memory for the top-level sidebar lists
  * (Pinned / Recents / Ensembles / Workspaces / Chats). Set semantics: an id
  * present in the set means the user has explicitly collapsed that
- * section. Default is all collapsed for new users.
+ * section. Default is all collapsed except Recents, so reloads start tidy
+ * while keeping the last-active chat shortlist immediately reachable.
  *
- * Independent from `EXPANDED_WORKSPACES_STORAGE_KEY` — that one tracks
- * per-workspace chat-list expansion within the Workspaces section;
+ * Independent from the in-memory workspace/chat branch disclosure state;
  * this one tracks the section header itself.
  */
 const COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY = 'taskwraith-sidebar-collapsed-sections'
 const COLLAPSED_SIDEBAR_SECTIONS_DEFAULT_VERSION_KEY =
   'taskwraith-sidebar-collapsed-sections-default-version'
-const COLLAPSED_SIDEBAR_SECTIONS_DEFAULT_VERSION = 'all-collapsed-v1'
+const COLLAPSED_SIDEBAR_SECTIONS_DEFAULT_VERSION = 'recents-open-v1'
 type SidebarSectionId =
   | 'workflows'
   | 'workspace-boards'
@@ -427,9 +427,33 @@ const SIDEBAR_SECTION_IDS: readonly SidebarSectionId[] = [
   'chats',
   'shared'
 ] as const
+const SIDEBAR_SECTIONS_EXPANDED_BY_DEFAULT = new Set<SidebarSectionId>(['recents'])
 
 function defaultCollapsedSidebarSections(): Set<SidebarSectionId> {
-  return new Set(SIDEBAR_SECTION_IDS)
+  return new Set(
+    SIDEBAR_SECTION_IDS.filter((id) => !SIDEBAR_SECTIONS_EXPANDED_BY_DEFAULT.has(id))
+  )
+}
+
+function defaultExpandedWorkspaceId(
+  workspaces: WorkspaceRecord[],
+  currentWorkspace: WorkspaceRecord | null
+): string | null {
+  if (currentWorkspace && workspaces.some((workspace) => workspace.id === currentWorkspace.id)) {
+    return currentWorkspace.id
+  }
+  const lastOpened = [...workspaces].sort(
+    (a, b) => (b.lastOpenedAt || 0) - (a.lastOpenedAt || 0)
+  )[0]
+  return lastOpened?.id ?? null
+}
+
+function defaultExpandedWorkspaceIds(
+  workspaces: WorkspaceRecord[],
+  currentWorkspace: WorkspaceRecord | null
+): Set<string> {
+  const workspaceId = defaultExpandedWorkspaceId(workspaces, currentWorkspace)
+  return workspaceId ? new Set([workspaceId]) : new Set()
 }
 
 /** Per-list preview cap. Each thread list (a workspace's chats, Ensembles,
@@ -2090,6 +2114,7 @@ export function Sidebar({
   activeWorkspaceBoardId = null,
   scheduledTasks = [],
   collaboratingChatIds = new Set<string>(),
+  initialExpandedSubThreadParentIds = [],
   showOnboardingHint = false,
   onDismissOnboardingHint,
   workspaceAddPointerActive = false,
@@ -2260,33 +2285,18 @@ export function Sidebar({
   )
   const [remoteDeviceConnected, setRemoteDeviceConnected] = useState(false)
   const [pairedDevices, setPairedDevices] = useState<PairedRemoteDeviceSummary[]>([])
-  const [expandedWorkspaceIds, setExpandedWorkspaceIds] = useState<Set<string>>(() => {
-    try {
-      const raw = localStorage.getItem(EXPANDED_WORKSPACES_STORAGE_KEY)
-      if (!raw) return new Set<string>()
-      const parsed = JSON.parse(raw)
-      if (!Array.isArray(parsed)) {
-        return new Set<string>()
-      }
-      return new Set(parsed.filter((value): value is string => typeof value === 'string'))
-    } catch {
-      return new Set<string>()
-    }
-  })
-  const [collapsedSubThreadParentIds, setCollapsedSubThreadParentIds] = useState<Set<string>>(
-    () => {
-      try {
-        const raw = localStorage.getItem(COLLAPSED_SUB_THREAD_PARENTS_STORAGE_KEY)
-        if (!raw) return new Set<string>()
-        const parsed = JSON.parse(raw)
-        if (!Array.isArray(parsed)) {
-          return new Set<string>()
-        }
-        return new Set(parsed.filter((value): value is string => typeof value === 'string'))
-      } catch {
-        return new Set<string>()
-      }
-    }
+  const startupExpandedWorkspaceId = defaultExpandedWorkspaceId(workspaces, currentWorkspace)
+  const [expandedWorkspaceIds, setExpandedWorkspaceIds] = useState<Set<string>>(() =>
+    defaultExpandedWorkspaceIds(workspaces, currentWorkspace)
+  )
+  const expandedWorkspaceStartupSeededRef = useRef(expandedWorkspaceIds.size > 0)
+  const [expandedSubThreadParentIds, setExpandedSubThreadParentIds] = useState<Set<string>>(
+    () =>
+      new Set(
+        initialExpandedSubThreadParentIds.filter(
+          (value): value is string => typeof value === 'string'
+        )
+      )
   )
   // Per-list "show more" expansion, keyed by a stable list id
   // ('recents' | 'chats' | 'ensembles' | 'shared' | `ws:${workspaceId}`).
@@ -2294,10 +2304,10 @@ export function Sidebar({
   // compact preview so no section silently reopens huge on next launch.
   const [expandedSidebarLists, setExpandedSidebarLists] = useState<Set<string>>(() => new Set())
   // Section-level collapse state for the top-level sidebar lists.
-  // Default all collapsed. `isSectionCollapsed` below applies a
-  // search-active override so a filter pass forces every section open
-  // — otherwise a user with all sections collapsed would see no
-  // results despite typing in the search box.
+  // Default all collapsed except Recents. `isSectionCollapsed` below
+  // applies a search-active override so a filter pass forces every
+  // section open — otherwise a user with collapsed sections would see
+  // no results despite typing in the search box.
   const [collapsedSidebarSections, setCollapsedSidebarSections] = useState<Set<SidebarSectionId>>(
     () => {
       try {
@@ -2311,8 +2321,12 @@ export function Sidebar({
           )
         )
         const version = localStorage.getItem(COLLAPSED_SIDEBAR_SECTIONS_DEFAULT_VERSION_KEY)
-        if (version !== COLLAPSED_SIDEBAR_SECTIONS_DEFAULT_VERSION && saved.size === 0) {
-          return defaultCollapsedSidebarSections()
+        if (version !== COLLAPSED_SIDEBAR_SECTIONS_DEFAULT_VERSION) {
+          const migrated = saved.size === 0 ? defaultCollapsedSidebarSections() : new Set(saved)
+          for (const sectionId of SIDEBAR_SECTIONS_EXPANDED_BY_DEFAULT) {
+            migrated.delete(sectionId)
+          }
+          return migrated
         }
         return saved
       } catch {
@@ -2894,6 +2908,15 @@ export function Sidebar({
   }, [focusSearchRequestId])
 
   useEffect(() => {
+    if (expandedWorkspaceStartupSeededRef.current || !startupExpandedWorkspaceId) return
+    expandedWorkspaceStartupSeededRef.current = true
+    setExpandedWorkspaceIds((prev) => {
+      if (prev.size > 0) return prev
+      return new Set([startupExpandedWorkspaceId])
+    })
+  }, [startupExpandedWorkspaceId])
+
+  useEffect(() => {
     const workspaceIds = new Set(workspaces.map((workspace) => workspace.id))
     let cancelled = false
     queueMicrotask(() => {
@@ -2917,23 +2940,12 @@ export function Sidebar({
   }, [workspaces])
 
   useEffect(() => {
-    try {
-      localStorage.setItem(
-        EXPANDED_WORKSPACES_STORAGE_KEY,
-        JSON.stringify([...expandedWorkspaceIds])
-      )
-    } catch {
-      // Ignore persistence errors in constrained environments.
-    }
-  }, [expandedWorkspaceIds])
-
-  useEffect(() => {
     if (chats.length === 0) return
     const parentIds = new Set(subThreadsByParentId.keys())
     let cancelled = false
     queueMicrotask(() => {
       if (cancelled) return
-      setCollapsedSubThreadParentIds((prev) => {
+      setExpandedSubThreadParentIds((prev) => {
         const next = new Set<string>()
         for (const parentId of prev) {
           if (parentIds.has(parentId)) {
@@ -2950,17 +2962,6 @@ export function Sidebar({
       cancelled = true
     }
   }, [chats.length, subThreadsByParentId])
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(
-        COLLAPSED_SUB_THREAD_PARENTS_STORAGE_KEY,
-        JSON.stringify([...collapsedSubThreadParentIds])
-      )
-    } catch {
-      // Ignore persistence errors in constrained environments.
-    }
-  }, [collapsedSubThreadParentIds])
 
   useEffect(() => {
     try {
@@ -3062,66 +3063,6 @@ export function Sidebar({
   }, [])
   const { dragGhost, handleSectionPointerDown, sectionDragClass, sectionOrderStyle } =
     useSidebarHierarchyDrag(sidebarHierarchyOrder, persistSidebarHierarchyOrder)
-
-  // Phase J2: auto-expand a workspace when a fresh sub-thread arrives
-  // inside it. Pairs with the App.tsx onChatUpdated insert-when-not-
-  // found fix so a brand-new sub-thread shows up in the sidebar
-  // within one render frame of being approved — even if the user had
-  // the parent's workspace group collapsed. We diff against a ref of
-  // previously-seen appChatIds so we only react to genuine arrivals
-  // (won't re-expand a workspace the user just deliberately collapsed
-  // while existing sub-threads sit underneath).
-  const seenChatIdsRef = useRef<Set<string>>(new Set())
-  const seenChatIdsSeededRef = useRef(false)
-  useEffect(() => {
-    if (!seenChatIdsSeededRef.current) {
-      seenChatIdsSeededRef.current = true
-      for (const chat of chats) {
-        seenChatIdsRef.current.add(chat.appChatId)
-      }
-      return
-    }
-    const workspaceIdsToExpand = new Set<string>()
-    const parentChatIdsToExpand = new Set<string>()
-    for (const chat of chats) {
-      if (seenChatIdsRef.current.has(chat.appChatId)) continue
-      seenChatIdsRef.current.add(chat.appChatId)
-      if (!isLinkedChildChat(chat) || !chat.parentChatId) continue
-      if (chat.archived) continue
-      parentChatIdsToExpand.add(chat.parentChatId)
-      if (!chat.workspaceId) continue
-      workspaceIdsToExpand.add(chat.workspaceId)
-    }
-    if (workspaceIdsToExpand.size > 0) {
-      queueMicrotask(() => {
-        setExpandedWorkspaceIds((prev) => {
-          let changed = false
-          const next = new Set(prev)
-          for (const id of workspaceIdsToExpand) {
-            if (!next.has(id)) {
-              next.add(id)
-              changed = true
-            }
-          }
-          return changed ? next : prev
-        })
-      })
-    }
-    if (parentChatIdsToExpand.size > 0) {
-      queueMicrotask(() => {
-        setCollapsedSubThreadParentIds((prev) => {
-          let changed = false
-          const next = new Set(prev)
-          for (const id of parentChatIdsToExpand) {
-            if (next.delete(id)) {
-              changed = true
-            }
-          }
-          return changed ? next : prev
-        })
-      })
-    }
-  }, [chats])
 
   const runSidebarPathAction = useCallback((action: SidebarPathAction): void => {
     void action()
@@ -3525,7 +3466,7 @@ export function Sidebar({
   ) => {
     event.preventDefault()
     event.stopPropagation()
-    setCollapsedSubThreadParentIds((prev) => {
+    setExpandedSubThreadParentIds((prev) => {
       const next = new Set(prev)
       if (next.has(parentChatId)) {
         next.delete(parentChatId)
@@ -4596,7 +4537,7 @@ export function Sidebar({
                       const subThreads = subThreadsByParentId.get(chat.appChatId) ?? []
                       const subThreadsExpanded = isSidebarSearchActive
                         ? true
-                        : !collapsedSubThreadParentIds.has(chat.appChatId)
+                        : expandedSubThreadParentIds.has(chat.appChatId)
                       const renameSurfaceId = `ensemble-${chat.appChatId}`
                       const ensembleRowA11y = buildSidebarChatRowA11y({
                         chatId: chat.appChatId,
@@ -4902,7 +4843,7 @@ export function Sidebar({
                               const subThreadCount = subThreads.length
                               const subThreadsExpanded = isSidebarSearchActive
                                 ? true
-                                : !collapsedSubThreadParentIds.has(chat.appChatId)
+                                : expandedSubThreadParentIds.has(chat.appChatId)
                               const liveSubThreadCount = subThreads.reduce(
                                 (count, sub) =>
                                   count + (runningChatIdSet.has(sub.appChatId) ? 1 : 0),
