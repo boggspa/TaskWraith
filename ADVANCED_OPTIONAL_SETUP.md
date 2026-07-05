@@ -86,6 +86,26 @@ CLI login.
 TaskWraith stores these keys through platform secure storage on the Mac. If
 secure storage is unavailable, API-key save controls refuse to store new keys.
 
+### Prompt caching (BYOK)
+
+When you use **Claude API-key mode** or **Kimi API-key mode**, TaskWraith can
+apply a **prompt caching policy** on API/BYOK transports it controls. Open
+**Settings → Providers → Prompt caching** to review guarantee badges
+(Guaranteed / Automatic / Best effort / Unsupported), per-provider modes
+(`off` / `auto` / `explicit`), and recent cache diagnostics when reported.
+
+Important limits:
+
+- **CLI login paths** (Codex, Claude Code, Kimi CLI, Cursor, Grok) are **best
+  effort** — TaskWraith cannot force provider-side caching inside a closed CLI;
+  it only displays cache stats when the CLI emits them.
+- **Automatic** tiers reflect provider-managed implicit caching observed in
+  usage metadata, not TaskWraith-managed breakpoints.
+- Caching affects cost/latency on repeated stable prefixes; it does not replace
+  approval policy or workspace safety.
+
+Full detail: [Session and Workspace — Prompt caching](SESSION_AND_WORKSPACE.md#prompt-caching-byok-and-api-paths).
+
 ## iOS Remote
 
 TaskWraith for iPhone/iPad is a Mac companion, not a standalone AI app. It pairs

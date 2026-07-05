@@ -261,6 +261,30 @@ pauses for approval and you receive a denial / cancellation a moment
 later, the user may simply have been away when the timer fired — surface
 the situation gracefully and offer to retry once the user is back.
 
+## Prompt caching, forks, and worktrees (agents)
+
+TaskWraith exposes **honest guarantee tiers** for prompt caching — do not claim
+uniform provider-side caching on opaque CLI paths. When documenting or verifying
+cache behavior:
+
+- **Guaranteed (API-managed):** only where TaskWraith owns a controllable API/BYOK
+  request (for example Claude or Kimi API-key mode with caching enabled).
+- **Automatic (observed):** provider-managed implicit caching — record stats when
+  usage metadata includes them; do not claim breakpoint control.
+- **Best-effort (opaque CLI):** Codex/Claude Code/Kimi/Cursor/Grok CLI — record
+  cache stats only if the CLI emits them; never assert cache hits you cannot see.
+
+**Fork:** use `/fork` or inspector fork actions. Codex = native fork; other
+providers = **emulated fork** (linked side chat/sub-thread). Label emulated
+forks accurately in user-facing text.
+
+**Worktrees:** when `workspaceMode: worktree` is active, the effective workspace
+path may differ from the sidebar checkout. Do not assume all participants share
+the same working tree unless General routes locked writer lanes with explicit
+write scopes.
+
+User-facing detail: `SESSION_AND_WORKSPACE.md`.
+
 ## MCP
 
 TaskWraith exposes a bundled MCP server (`TaskWraith`) to provider runtimes that

@@ -135,6 +135,47 @@ duplicate-abstraction risk, scope-surface mismatch, and missing validation
 evidence. The gate records no workspace mutations; agents can call it from
 read-only planning or review seats before making completion claims.
 
+## Provider orchestration (caching, forks, worktrees)
+
+User-facing behavior and guarantee language: `SESSION_AND_WORKSPACE.md`.
+
+### Prompt cache policy
+
+- **`PromptCachePolicySettings`** (settings + IPC `prompt-cache:get-policy` /
+  `prompt-cache:save-policy`) stores global enablement and per-provider modes
+  (`off` | `auto` | `explicit`).
+- **`ProviderCacheCapabilitySummary`** (IPC `prompt-cache:get-capabilities`)
+  exposes transport, `guaranteeTier` (`guaranteed` | `automatic-observed` |
+  `best-effort` | `unsupported`), and whether TaskWraith can control caching on
+  that path.
+- Provider run paths apply cache controls only on **controllable** API/BYOK
+  transports. CLI/subscription paths remain best-effort: usage is recorded when
+  providers emit cache token fields (`cache_read_input_tokens`,
+  `cache_creation_input_tokens`).
+- Renderer: `PromptCacheSettingsSection` in Settings → Providers; helpers in
+  `promptCacheUi.ts`. Diagnostics via `prompt-cache:get-diagnostics`.
+
+### Universal fork service
+
+- **Native fork:** Codex `thread/fork` via `fork-agent-thread` IPC (existing
+  handler extended with capability metadata).
+- **Emulated fork:** sibling chat duplication with `ForkCapabilityKind`:
+  `native` | `emulated` | `unsupported` (IPC `fork:get-capability` when
+  available; static fallback in `universalFork.ts`).
+- Renderer: `/fork` slash command and inspector actions call
+  `forkAgentThreadUniversal()` and label **Fork (native)** vs **Fork (emulated)**.
+
+### Git branch / worktree IPC
+
+- Git IPC channels (via preload): `git:list-branches`, `git:checkout-branch`,
+  `git:create-branch`, `git:list-worktrees`, `git:create-worktree`,
+  `git:remove-worktree`, `git:select-worktree`.
+- **`RuntimeProfile.workspaceMode: 'worktree'`** resolves to an effective checkout
+  path and worktree metadata at run launch instead of being stored-only.
+- Renderer: `ComposerBranchWorktreePopover` on the composer above-row branch
+  control; helpers in `gitBranchWorktreeUi.ts`. Dirty-tree guards use
+  `GitRepositorySnapshot` counts before checkout/branch/worktree mutations.
+
 ## Visual Architecture
 
 ### Appearance System

@@ -11,6 +11,30 @@ Entries here are source-ahead only: do not treat them as shipped until a
 matching GitHub tag, release notes, checksums, and platform artifacts are
 published.
 
+### Added
+- **Prompt caching guarantee tiers.** Settings → Providers → Prompt caching shows
+  per-transport posture (Guaranteed / Automatic / Best effort / Unsupported) with
+  optional diagnostics when providers report cache read/creation tokens. Controllable
+  API/BYOK paths honor policy modes (`off` / `auto` / `explicit`); opaque CLI
+  transports remain best-effort only.
+- **Universal forks.** `/fork` and thread fork actions use a provider capability
+  summary: **native fork** on Codex (`thread/fork`), **emulated fork** (isolated
+  sibling chat with duplicated transcript) on other live providers, with clear
+  native vs emulated labeling.
+- **Worktree and branch orchestration.** Runtime profile `workspaceMode:
+  worktree` resolves to git worktree lifecycle at run launch. The composer
+  above-row branch control opens a popover to list branches, create a branch,
+  checkout, and create/select/remove worktrees with dirty-tree guards.
+
+### Changed
+- **Cache usage telemetry.** Model Usage and prompt-cache diagnostics surface
+  cache read/creation tokens when providers report them, including on implicit
+  caching transports TaskWraith observes but does not control.
+
+### Documentation
+- New guide: `SESSION_AND_WORKSPACE.md` (caching tiers, forks, worktrees).
+- Architecture and Advanced Optional Setup cross-links for BYOK caching caveats.
+
 ## 1.7.5 - 2026-07-05
 
 ### Added

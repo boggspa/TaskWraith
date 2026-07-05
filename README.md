@@ -273,5 +273,5 @@ validation, SBOM generation, or platform-specific artifact signing.
 - `scripts`: Build, security, validation, signing, and packaging utilities.
 
 See `CHANGELOG.md` for release history, and `TRUST_AND_SAFETY.md`,
-`ADVANCED_OPTIONAL_SETUP.md`, `COMPOSER_VARIANTS.md`, `ARCHITECTURE.md`,
-`SAFETY.md`, `SECURITY.md`, and `TERMS_NOTES.md` for more detail.
+`ADVANCED_OPTIONAL_SETUP.md`, `SESSION_AND_WORKSPACE.md`, `COMPOSER_VARIANTS.md`,
+`ARCHITECTURE.md`, `SAFETY.md`, `SECURITY.md`, and `TERMS_NOTES.md` for more detail.
