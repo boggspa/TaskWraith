@@ -878,6 +878,93 @@ describe('ActivityStack agent invocation presentation', () => {
     expect(html).not.toContain('>Used callmcptool<')
   })
 
+  it('renders generic MCP wrapper calls as the dancing tool icon easter egg', () => {
+    const html = renderToStaticMarkup(
+      <ActivityStack
+        provider="grok"
+        activities={[
+          makeWriteActivity({
+            id: 'mcp-tool',
+            toolName: 'mcp',
+            displayName: 'MCP',
+            category: 'unknown',
+            parameters: {},
+            resultSummary: ''
+          })
+        ]}
+      />
+    )
+
+    expect(html).toContain('callmcp-tool-easter-egg')
+    expect(html).toContain('callmcp-tool-easter-egg-icon')
+    expect(html).not.toContain('>MCP<')
+  })
+
+  it('renders unknown wrapper calls as the dancing tool icon easter egg', () => {
+    const html = renderToStaticMarkup(
+      <ActivityStack
+        provider="grok"
+        activities={[
+          makeWriteActivity({
+            id: 'unknown-tool',
+            toolName: 'unknown',
+            displayName: 'Used unknown',
+            category: 'unknown',
+            parameters: { mcpToolName: 'workspace_search', server: 'taskwraith' },
+            rawUseEvent: { type: 'mcpToolCall', arguments: { query: 'needle' } },
+            resultSummary: ''
+          })
+        ]}
+      />
+    )
+
+    expect(html).toContain('callmcp-tool-easter-egg')
+    expect(html).toContain('callmcp-tool-easter-egg-icon')
+    expect(html).not.toContain('>Used unknown<')
+  })
+
+  it('does not obscure command-shaped unknown tool calls', () => {
+    const html = renderToStaticMarkup(
+      <ActivityStack
+        provider="grok"
+        activities={[
+          makeWriteActivity({
+            id: 'unknown-shell-tool',
+            toolName: 'unknown',
+            displayName: 'Used unknown',
+            category: 'unknown',
+            parameters: { command: 'rg "needle" src' },
+            resultSummary: ''
+          })
+        ]}
+      />
+    )
+
+    expect(html).not.toContain('callmcp-tool-easter-egg')
+    expect(html).toContain('Used unknown')
+  })
+
+  it('does not obscure command-shaped MCP wrapper calls', () => {
+    const html = renderToStaticMarkup(
+      <ActivityStack
+        provider="grok"
+        activities={[
+          makeWriteActivity({
+            id: 'mcp-shell-tool',
+            toolName: 'mcp',
+            displayName: 'MCP',
+            category: 'unknown',
+            parameters: { command: 'bash ./scripts/check.sh' },
+            resultSummary: ''
+          })
+        ]}
+      />
+    )
+
+    expect(html).not.toContain('callmcp-tool-easter-egg')
+    expect(html).toContain('MCP')
+  })
+
   it('labels provider-native child-agent threads with unified invocation copy', () => {
     const html = renderToStaticMarkup(
       <ActivityStack

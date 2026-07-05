@@ -758,10 +758,92 @@ function getReadableActivityDisplayName(activity: ToolActivity): string {
   return displayLooksRaw ? fallback || displayName || rawToolName : displayName
 }
 
+const CALL_MCP_TOOL_WRAPPER_NAMES = new Set(['callmcptool', 'call_mcp_tool', 'mcp', 'use_tool'])
+
+const CALL_MCP_TOOL_WRAPPER_DISPLAY_NAMES = new Set([
+  'used callmcptool',
+  'used call_mcp_tool',
+  'used mcp',
+  'mcp',
+  'used an mcp tool'
+])
+
+const COMMAND_LIKE_ACTIVITY_KEYS = [
+  'command',
+  'cmd',
+  'script',
+  'bash',
+  'shell',
+  'shell_command',
+  'shellCommand',
+  'terminal_command',
+  'terminalCommand'
+]
+
+function plainRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined
+}
+
+function nestedActivityRecords(value: unknown): Record<string, unknown>[] {
+  const root = plainRecord(value)
+  if (!root) return []
+  const records = [root]
+  for (const key of ['parameters', 'params', 'payload', 'args', 'input', 'arguments']) {
+    const nested = plainRecord(root[key])
+    if (nested) records.push(nested)
+  }
+  return records
+}
+
+function hasCommandLikePayload(activity: ToolActivity): boolean {
+  if (activity.category === 'shell') return true
+  const records = [
+    ...(activity.parameters ? [activity.parameters] : []),
+    ...nestedActivityRecords(activity.rawUseEvent)
+  ]
+  return records.some((record) => Boolean(getStringParam(record, COMMAND_LIKE_ACTIVITY_KEYS)))
+}
+
+function hasMcpWrapperEvidence(activity: ToolActivity): boolean {
+  const records = [
+    ...(activity.parameters ? [activity.parameters] : []),
+    ...nestedActivityRecords(activity.rawUseEvent)
+  ]
+  return records.some((record) => {
+    const transportType = getStringParam(record, ['type', 'kind', 'tool_kind', 'toolKind'])
+    if (transportType?.toLowerCase().includes('mcp')) return true
+    if (
+      getStringParam(record, [
+        'server',
+        'serverName',
+        'server_name',
+        'providerIdentifier',
+        'provider_identifier',
+        'mcpToolName',
+        'mcp_tool_name',
+        'mcpTool',
+        'mcp_tool'
+      ])
+    ) {
+      return true
+    }
+    const wrapper = getStringParam(record, ['tool', 'toolName', 'tool_name', 'name'])
+    return wrapper ? CALL_MCP_TOOL_WRAPPER_NAMES.has(wrapper.toLowerCase()) : false
+  })
+}
+
 function isCallMcpToolActivity(activity: ToolActivity): boolean {
+  if (hasCommandLikePayload(activity)) return false
   const toolName = (activity.toolName || '').trim().toLowerCase()
   const displayName = (activity.displayName || '').trim().toLowerCase()
-  return toolName === 'callmcptool' || displayName === 'used callmcptool'
+  if (CALL_MCP_TOOL_WRAPPER_NAMES.has(toolName)) return true
+  if (CALL_MCP_TOOL_WRAPPER_DISPLAY_NAMES.has(displayName)) return true
+  if (toolName === 'unknown' || displayName === 'used unknown' || displayName === 'unknown') {
+    return hasMcpWrapperEvidence(activity)
+  }
+  return false
 }
 
 function isThinkingTraceActivity(activity: ToolActivity): boolean {
