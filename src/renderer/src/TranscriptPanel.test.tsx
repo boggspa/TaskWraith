@@ -676,6 +676,8 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
     expect(html).not.toContain('title="Preview diff"')
     expect(html).toContain('Diff')
     expect(html).toContain('src/stats-only.ts')
+    expect(html).toContain('file-change-stat file-change-stat-add composer-diff-add')
+    expect(html).toContain('file-change-stat file-change-stat-delete composer-diff-del')
     expect(html).toContain(
       'class="file-change-summary-item file-change-summary-item-interactive has-workbench-link"'
     )

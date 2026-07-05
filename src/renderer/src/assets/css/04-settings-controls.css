@@ -5074,9 +5074,10 @@ input:disabled, select:disabled, textarea:disabled {
 
 .file-change-stat {
   font-variant-numeric: tabular-nums;
-  font-size: 17px;
+  font-feature-settings: 'tnum';
+  font-size: calc(var(--font-size-xs) + 1px);
   line-height: 1;
-  font-weight: 600;
+  font-weight: inherit;
 }
 
 .file-change-summary-stats {
@@ -5084,11 +5085,11 @@ input:disabled, select:disabled, textarea:disabled {
 }
 
 .file-change-stat-add {
-  color: var(--success);
+  color: #2db777;
 }
 
 .file-change-stat-delete {
-  color: var(--danger);
+  color: #ec3d35;
 }
 
 .file-change-stat-divider {

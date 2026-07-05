@@ -3149,11 +3149,11 @@ export const TranscriptPanel = memo(
                     <span>{fileChangeSummaryText}</span>
                     {fileChangeShouldShowStats && (
                       <span className="file-change-summary-stats">
-                        <span className="file-change-stat file-change-stat-add">
+                        <span className="file-change-stat file-change-stat-add composer-diff-add">
                           +{fileChangeDisplayAdds}
                         </span>
                         <span className="file-change-stat-divider">|</span>
-                        <span className="file-change-stat file-change-stat-delete">
+                        <span className="file-change-stat file-change-stat-delete composer-diff-del">
                           -{fileChangeDisplayDels}
                         </span>
                       </span>
@@ -3180,11 +3180,11 @@ export const TranscriptPanel = memo(
                             </span>
                             {(item.additions !== undefined || item.deletions !== undefined) && (
                               <span className="file-change-summary-item-stats">
-                                <span className="file-change-stat file-change-stat-add">
+                                <span className="file-change-stat file-change-stat-add composer-diff-add">
                                   +{item.additions || 0}
                                 </span>
                                 <span className="file-change-stat-divider">|</span>
-                                <span className="file-change-stat file-change-stat-delete">
+                                <span className="file-change-stat file-change-stat-delete composer-diff-del">
                                   -{item.deletions || 0}
                                 </span>
                               </span>
