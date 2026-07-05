@@ -3797,10 +3797,10 @@
   font-size: calc(var(--font-size-md) + 2px);
   resize: none;
   /* 1.0.6 — uniform composer input height across every shell: start at a
-   * SINGLE line, grow with what you type, cap at THREE lines then scroll.
+   * SINGLE line, grow with what you type, cap at eight lines then scroll.
    * `field-sizing: content` auto-sizes the textarea to its content (the
    * `rows` attribute is just the 1-row floor); `min-height` pins the
-   * empty default to one line and `max-height` caps growth at three
+   * empty default to one line and `max-height` caps growth at eight
    * lines before `overflow-y` kicks in. `1.55em` == one line (matches
    * `line-height: 1.55`); `+ 22px` is the top breathing-room padding.
    * `!important` overrides each shell's bespoke min-height (48–66px,
@@ -3808,7 +3808,7 @@
    * place. (Chromium 123+ / Electron 39 supports field-sizing.) */
   field-sizing: content;
   min-height: calc(1.55em + 22px) !important;
-  max-height: calc(1.55em * 3 + 22px) !important;
+  max-height: calc(1.55em * 8 + 22px) !important;
   overflow-y: auto;
   line-height: 1.55;
   padding: 22px 6px 0;
