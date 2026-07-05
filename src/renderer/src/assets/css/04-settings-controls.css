@@ -2306,6 +2306,73 @@
   margin: 0;
 }
 
+.settings-plugin-connector-list {
+  display: grid;
+  gap: 8px;
+}
+
+.settings-plugin-connector-row {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.settings-plugin-connector-row > div:first-child {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.settings-plugin-connector-row > div:first-child span {
+  overflow: hidden;
+  color: var(--text-tertiary);
+  font-size: var(--font-size-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-plugin-connector-secrets {
+  display: grid;
+  gap: 6px;
+}
+
+.settings-plugin-connector-secret-row {
+  display: grid;
+  grid-template-columns: minmax(88px, 0.8fr) minmax(120px, 1.2fr) auto auto;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+}
+
+.settings-plugin-connector-secret-main {
+  display: grid;
+  min-width: 0;
+}
+
+.settings-plugin-connector-secret-main span,
+.settings-plugin-connector-secret-main small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-plugin-connector-secret-main span {
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+}
+
+.settings-plugin-connector-secret-main small {
+  color: var(--text-tertiary);
+  font-size: 0.7rem;
+}
+
+.settings-plugin-connector-secret-input {
+  min-width: 0;
+}
+
 .settings-user-mcp-empty {
   display: grid;
   justify-items: center;

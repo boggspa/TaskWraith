@@ -1,9 +1,14 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
-import type { TaskWraithPluginCatalogEntry } from '../../../shared/plugins/PluginTypes'
+import type {
+  TaskWraithPluginActivatedConnector,
+  TaskWraithPluginCatalogEntry,
+  TaskWraithPluginSecretStatusSnapshot
+} from '../../../shared/plugins/PluginTypes'
 import {
   SETTINGS_TABS,
   getVisibleSettingsTabs,
+  pluginConnectorSecretSummaries,
   pluginMcpPresetServerId,
   pluginSettingsActionState,
   pluginSettingsEntryMatchesQuery,
@@ -220,6 +225,71 @@ describe('Settings Plugins UI helpers', () => {
         fileScopes: ['workspace-read'],
         networkScopes: ['configured-origin'],
         remoteCapabilities: ['viewStatus']
+      }
+    ])
+  })
+
+  it('maps activated connector secret requirements to configured secret rows', () => {
+    const connector: TaskWraithPluginActivatedConnector = {
+      id: 'plugin:design-tools-bundle:connector:figma-like-design-api',
+      plugin: {
+        pluginId: 'design-tools-bundle',
+        publisher: 'taskwraith',
+        version: '1.0.0',
+        source: 'builtin',
+        namespace: 'plugin.taskwraith.design-tools-bundle',
+        manifestHash: 'sha256:design'
+      },
+      connector: {
+        id: 'figma-like-design-api',
+        label: 'Design API connector',
+        kind: 'api-key',
+        requiredSecrets: ['design-api-token'],
+        networkScopes: ['configured-origin']
+      },
+      pluginProvenance: {
+        pluginId: 'design-tools-bundle',
+        publisher: 'taskwraith',
+        version: '1.0.0',
+        source: 'builtin',
+        namespace: 'plugin.taskwraith.design-tools-bundle',
+        manifestHash: 'sha256:design',
+        kind: 'connector',
+        objectId: 'figma-like-design-api',
+        materializedAt: '2026-06-29T12:00:00.000Z'
+      }
+    }
+    const secretStatus: TaskWraithPluginSecretStatusSnapshot = {
+      schemaVersion: 1,
+      generatedAt: '2026-06-29T12:00:00.000Z',
+      encryptionAvailable: true,
+      secrets: [
+        {
+          pluginId: 'design-tools-bundle',
+          secretId: 'design-api-token',
+          label: 'Design API token',
+          required: false,
+          configured: true,
+          installed: true,
+          enabled: true,
+          envVar: 'DESIGN_API_TOKEN',
+          updatedAt: '2026-06-29T12:01:00.000Z'
+        }
+      ]
+    }
+
+    expect(pluginConnectorSecretSummaries(connector, secretStatus)).toEqual([
+      {
+        key: 'design-tools-bundle:design-api-token',
+        pluginId: 'design-tools-bundle',
+        secretId: 'design-api-token',
+        label: 'Design API token',
+        required: false,
+        configured: true,
+        installed: true,
+        enabled: true,
+        envVar: 'DESIGN_API_TOKEN',
+        updatedAt: '2026-06-29T12:01:00.000Z'
       }
     ])
   })

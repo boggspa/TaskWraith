@@ -102,9 +102,11 @@ import { WorkspaceActivityHeatmap } from './WorkspaceActivityHeatmap'
 import { WorkspaceRemoteAccessToggle } from './WorkspaceRemoteAccessToggle'
 import type { RemoteWorkspaceEntry } from '../../../shared/remoteWorkspaceDefaults'
 import type {
+  TaskWraithPluginActivatedConnector,
   TaskWraithPluginCatalogEntry,
   TaskWraithPluginActivationSnapshot,
-  TaskWraithPluginCatalogSnapshot
+  TaskWraithPluginCatalogSnapshot,
+  TaskWraithPluginSecretStatusSnapshot
 } from '../../../shared/plugins/PluginTypes'
 import type { ExtensionSecretRef } from '../../../main/ExtensionSecretStore'
 import { canPersistPlaintextFieldValue } from '../../../main/PlaintextSecretPolicy'
@@ -122,6 +124,48 @@ import {
 type ProviderCliUpgradeState = 'idle' | 'opening' | 'opened' | 'error'
 type ManagedPolicyStatus = Record<string, unknown>
 type AuditBundleExportScope = 'all' | 'workspace' | 'chat' | 'run'
+interface PluginConnectorSecretSummary {
+  key: string
+  pluginId: string
+  secretId: string
+  label: string
+  required: boolean
+  configured: boolean
+  installed: boolean
+  enabled: boolean
+  envVar?: string
+  description?: string
+  updatedAt?: string
+}
+
+export function pluginConnectorSecretSummaries(
+  connector: TaskWraithPluginActivatedConnector,
+  secretStatus: TaskWraithPluginSecretStatusSnapshot | null | undefined
+): PluginConnectorSecretSummary[] {
+  const requiredSecrets = connector.connector.requiredSecrets || []
+  if (requiredSecrets.length === 0) return []
+  const statuses = new Map(
+    (secretStatus?.secrets || [])
+      .filter((secret) => secret.pluginId === connector.plugin.pluginId)
+      .map((secret) => [secret.secretId, secret])
+  )
+  return requiredSecrets.map((secretId) => {
+    const status = statuses.get(secretId)
+    return {
+      key: `${connector.plugin.pluginId}:${secretId}`,
+      pluginId: connector.plugin.pluginId,
+      secretId,
+      label: status?.label || secretId,
+      required: status?.required ?? true,
+      configured: status?.configured ?? false,
+      installed: status?.installed ?? false,
+      enabled: status?.enabled ?? false,
+      ...(status?.envVar ? { envVar: status.envVar } : {}),
+      ...(status?.description ? { description: status.description } : {}),
+      ...(status?.updatedAt ? { updatedAt: status.updatedAt } : {})
+    }
+  })
+}
 
 function managedPolicySettingList(value: unknown): string[] {
   return Array.isArray(value)
@@ -3411,6 +3455,11 @@ export function SettingsPanel({
   const [pluginCatalog, setPluginCatalog] = useState<TaskWraithPluginCatalogSnapshot | null>(null)
   const [pluginActivation, setPluginActivation] =
     useState<TaskWraithPluginActivationSnapshot | null>(null)
+  const [pluginSecretStatus, setPluginSecretStatus] =
+    useState<TaskWraithPluginSecretStatusSnapshot | null>(null)
+  const [pluginSecretInputs, setPluginSecretInputs] = useState<Record<string, string>>({})
+  const [pluginSecretBusyKey, setPluginSecretBusyKey] = useState<string | null>(null)
+  const [pluginSecretError, setPluginSecretError] = useState('')
   const [pluginCatalogError, setPluginCatalogError] = useState('')
   const [pluginBusyId, setPluginBusyId] = useState<string | null>(null)
   const [mcpServerFormMode, setMcpServerFormMode] = useState<'hidden' | 'create' | 'edit'>(
@@ -3547,6 +3596,17 @@ export function SettingsPanel({
       .catch(() => setPluginActivation(null))
   }
 
+  const refreshPluginSecretStatus = (): void => {
+    if (typeof window === 'undefined' || typeof window.api?.getPluginSecretStatus !== 'function') {
+      setPluginSecretStatus(null)
+      return
+    }
+    void window.api
+      .getPluginSecretStatus()
+      .then((snapshot) => setPluginSecretStatus(snapshot ?? null))
+      .catch(() => setPluginSecretStatus(null))
+  }
+
   useEffect(() => {
     if (!showDeleteHistoryConfirm) return
     const handleKeyDown = (event: KeyboardEvent): void => {
@@ -3562,6 +3622,7 @@ export function SettingsPanel({
   useEffect(() => {
     if (activeTab !== 'plugins' && activeTab !== 'mcp') return
     refreshPluginActivation()
+    refreshPluginSecretStatus()
   }, [activeTab])
 
   useEffect(() => {
@@ -3649,6 +3710,7 @@ export function SettingsPanel({
       .then((snapshot) => {
         setPluginCatalog(snapshot)
         refreshPluginActivation()
+        refreshPluginSecretStatus()
         window.dispatchEvent(new Event('taskwraith-plugin-activation-changed'))
       })
       .catch((error) => setPluginCatalogError(String(error)))
@@ -3671,6 +3733,64 @@ export function SettingsPanel({
       return
     }
     runPluginMutation(pluginId, () => window.api.setPluginEnabled(pluginId, enabled))
+  }
+
+  const setPluginSecretInput = (key: string, value: string): void => {
+    setPluginSecretInputs((current) => ({ ...current, [key]: value }))
+  }
+
+  const savePluginConnectorSecret = (pluginId: string, secretId: string): void => {
+    if (typeof window === 'undefined' || typeof window.api?.setPluginSecret !== 'function') {
+      setPluginSecretError('Plugin secret storage is unavailable.')
+      return
+    }
+    const key = `${pluginId}:${secretId}`
+    const value = pluginSecretInputs[key]?.trim() || ''
+    if (!value) {
+      setPluginSecretError('Secret value is required.')
+      return
+    }
+    setPluginSecretBusyKey(key)
+    setPluginSecretError('')
+    void window.api
+      .setPluginSecret(pluginId, secretId, value)
+      .then((result) => {
+        if (!result?.ok) {
+          setPluginSecretError(result?.error || 'Secret could not be stored.')
+          if (result?.snapshot) setPluginSecretStatus(result.snapshot)
+          return
+        }
+        if (result.snapshot) setPluginSecretStatus(result.snapshot)
+        setPluginSecretInputs((current) => ({ ...current, [key]: '' }))
+      })
+      .catch((error) => setPluginSecretError(String(error)))
+      .finally(() => {
+        setPluginSecretBusyKey((current) => (current === key ? null : current))
+      })
+  }
+
+  const clearPluginConnectorSecret = (pluginId: string, secretId: string): void => {
+    if (typeof window === 'undefined' || typeof window.api?.clearPluginSecret !== 'function') {
+      setPluginSecretError('Plugin secret storage is unavailable.')
+      return
+    }
+    const key = `${pluginId}:${secretId}`
+    setPluginSecretBusyKey(key)
+    setPluginSecretError('')
+    void window.api
+      .clearPluginSecret(pluginId, secretId)
+      .then((result) => {
+        if (!result?.ok) {
+          setPluginSecretError(result?.error || 'Secret could not be cleared.')
+          if (result?.snapshot) setPluginSecretStatus(result.snapshot)
+          return
+        }
+        if (result.snapshot) setPluginSecretStatus(result.snapshot)
+      })
+      .catch((error) => setPluginSecretError(String(error)))
+      .finally(() => {
+        setPluginSecretBusyKey((current) => (current === key ? null : current))
+      })
   }
 
   const uninstallPlugin = (pluginId: string): void => {
@@ -7614,13 +7734,109 @@ export function SettingsPanel({
                 </article>
                 <article className="settings-mcp-management-card">
                   <strong>Connectors</strong>
-                  <p>
-                    {activatedConnectors.length > 0
-                      ? activatedConnectors
-                          .map((entry) => `${entry.connector.label} · ${entry.connector.kind}`)
-                          .join(', ')
-                      : 'No plugin connectors are active.'}
-                  </p>
+                  {activatedConnectors.length > 0 ? (
+                    <div className="settings-plugin-connector-list">
+                      {pluginSecretError && (
+                        <div className="settings-user-mcp-readiness settings-user-mcp-readiness-blocked">
+                          <strong>secret</strong>
+                          <span>{pluginSecretError}</span>
+                        </div>
+                      )}
+                      {activatedConnectors.map((entry) => {
+                        const secretRows = pluginConnectorSecretSummaries(
+                          entry,
+                          pluginSecretStatus
+                        )
+                        return (
+                          <div key={entry.id} className="settings-plugin-connector-row">
+                            <div>
+                              <strong>{entry.connector.label}</strong>
+                              <span>
+                                {entry.connector.kind} · {entry.plugin.pluginId}
+                              </span>
+                            </div>
+                            {entry.connector.description && <p>{entry.connector.description}</p>}
+                            <div className="settings-mcp-server-meta">
+                              {(entry.connector.networkScopes || []).map((scope) => (
+                                <span key={scope}>{scope}</span>
+                              ))}
+                              <span>
+                                {secretRows.length > 0
+                                  ? pluralizeCount(secretRows.length, 'secret')
+                                  : 'no secrets required'}
+                              </span>
+                            </div>
+                            {secretRows.length > 0 && (
+                              <div className="settings-plugin-connector-secrets">
+                                {secretRows.map((secret) => {
+                                  const busy = pluginSecretBusyKey === secret.key
+                                  const encryptionAvailable =
+                                    pluginSecretStatus?.encryptionAvailable !== false
+                                  return (
+                                    <div
+                                      key={secret.key}
+                                      className="settings-plugin-connector-secret-row"
+                                    >
+                                      <div className="settings-plugin-connector-secret-main">
+                                        <span>{secret.label}</span>
+                                        <small>
+                                          {secret.configured ? 'configured' : 'not configured'}
+                                          {secret.envVar ? ` · ${secret.envVar}` : ''}
+                                        </small>
+                                      </div>
+                                      <input
+                                        type="password"
+                                        className="settings-select settings-plugin-connector-secret-input"
+                                        value={pluginSecretInputs[secret.key] || ''}
+                                        disabled={busy || !encryptionAvailable || !secret.installed}
+                                        placeholder={
+                                          secret.configured
+                                            ? 'Replace stored secret'
+                                            : 'Paste secret'
+                                        }
+                                        onChange={(event) =>
+                                          setPluginSecretInput(secret.key, event.target.value)
+                                        }
+                                        aria-label={`${secret.label} secret`}
+                                      />
+                                      <button
+                                        type="button"
+                                        className="btn btn-sm"
+                                        disabled={busy || !encryptionAvailable || !secret.installed}
+                                        onClick={() =>
+                                          savePluginConnectorSecret(
+                                            secret.pluginId,
+                                            secret.secretId
+                                          )
+                                        }
+                                      >
+                                        {busy ? 'Saving' : 'Store'}
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="btn btn-sm btn-ghost"
+                                        disabled={busy || !secret.configured}
+                                        onClick={() =>
+                                          clearPluginConnectorSecret(
+                                            secret.pluginId,
+                                            secret.secretId
+                                          )
+                                        }
+                                      >
+                                        Clear
+                                      </button>
+                                    </div>
+                                  )
+                                })}
+                              </div>
+                            )}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  ) : (
+                    <p>No plugin connectors are active.</p>
+                  )}
                 </article>
                 <article className="settings-mcp-management-card">
                   <strong>Local services</strong>
