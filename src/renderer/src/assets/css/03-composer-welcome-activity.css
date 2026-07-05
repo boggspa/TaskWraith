@@ -4604,12 +4604,12 @@
   padding: 0 2px;
 }
 
-/* 1.0.5-EW28 — Anchor the timecodes + Appwatch icon to the left
+/* 1.0.5-EW28 — Anchor the timecode + Appwatch icon to the left
  * when there's no token-tally chip pushing things right.
  *
  * the maintainer noticed: on the welcome screen (and on any chat that
- * hasn't accumulated 1k+ tokens yet), the run timecode +
- * cumulative timecode + Screen Watch icon would spread across
+ * hasn't accumulated 1k+ tokens yet), the timecode + Screen Watch icon
+ * would spread across
  * the full composer width via `justify-content: space-between`.
  * In an active chat with cost data, the tally chip's
  * `margin-left: auto` (line 6291) absorbs the slack and pulls
@@ -4641,7 +4641,7 @@
 /*
  * 1.0.5-AR12c — Workspace switcher relocated from the top inline-
  * pickers row to the bottom telemetry row. Sits spaced between the
- * left cluster (timecodes + Screen Watch) and the right token
+ * left cluster (timecode + Screen Watch) and the right token
  * tally. The `margin-left: auto` here competes with the existing
  * `margin-left: auto` on `.composer-thread-token-tally` — both
  * absorb half the free space, which positions the switcher near
@@ -5634,6 +5634,15 @@
   user-select: none;
 }
 
+button.composer-run-timecode {
+  appearance: none;
+  -webkit-appearance: none;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+}
+
 .composer-run-timecode .composer-control-icon {
   width: 13px;
   height: 13px;
@@ -5645,21 +5654,9 @@
   color: color-mix(in srgb, var(--accent) 72%, var(--text-primary));
 }
 
-/* 1.0.4-AR10 — cumulative session timecode. Renders directly right of
- * the per-run timecode in the telemetry row. Visually muted relative
- * to the primary timecode so the eye anchors on "current run elapsed"
- * first; the cumulative reads as supplemental context. When running,
- * it inherits the accent tint just like the primary so both rows
- * track activity in sync. */
-.composer-run-timecode--cumulative {
-  color: color-mix(in srgb, var(--text-secondary) 55%, transparent);
-  min-width: 94px;
-}
-.composer-run-timecode--cumulative[data-running="true"] {
-  color: color-mix(in srgb, var(--accent) 48%, var(--text-secondary));
-}
-.composer-run-timecode--cumulative .composer-control-icon {
-  opacity: 0.55;
+button.composer-run-timecode:hover,
+button.composer-run-timecode.is-open {
+  color: color-mix(in srgb, var(--accent) 72%, var(--text-primary));
 }
 
 .composer-scheduler-controls {

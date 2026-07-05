@@ -8,7 +8,7 @@ import {
   RunSymbolIcon,
   ScreenWatchSymbolIcon
 } from './AppChromeSymbols'
-import { ComposerCumulativeTimecode, ComposerRunTimecode } from './ComposerTimecodes'
+import { ComposerTimecode } from './ComposerTimecodes'
 import { FONT_STACKS, resolveComposerFontFamily } from '../lib/typefaceOptions'
 import type { ComposerStyle, ProviderId, ThemeAppearance } from '../../../main/store/types'
 import { ProviderBadgeIcon } from './Sidebar'
@@ -427,13 +427,18 @@ export function ComposerShellPreview({
               </div>
             </div>
           </div>
-          {/* Composer telemetry rail (run/cumulative timecodes, Screen-Watch,
+          {/* Composer telemetry rail (coalesced timecode, Screen-Watch,
               goal, copy-transcript, the workspace switcher chip, and the
               token/cost tally) — a sibling of .composer-inner-module inside
               .composer-surface, matching the live composer. Static/inert. */}
           <div className="composer-telemetry-row" data-has-token-tally="true" aria-hidden="true">
-            <ComposerRunTimecode running={false} startedAt={null} />
-            <ComposerCumulativeTimecode running={false} startedAt={null} cumulativeBaseMs={0} />
+            <ComposerTimecode
+              running={false}
+              startedAt={null}
+              cumulativeBaseMs={0}
+              composerStyle={composerStyle}
+              interactive={false}
+            />
             <button
               type="button"
               className="composer-screen-watch-button settings-composer-preview-control"

@@ -9126,6 +9126,43 @@
   white-space: nowrap;
 }
 
+.composer-timecode-popover {
+  width: min(var(--composer-timecode-popover-width, 220px), calc(100vw - 16px));
+  min-width: min(var(--composer-timecode-popover-width, 220px), calc(100vw - 16px));
+}
+
+.composer-timecode-popover-column {
+  width: 100%;
+  min-width: 0;
+}
+
+.composer-timecode-popover-row {
+  cursor: default;
+}
+
+.composer-timecode-popover-row:hover {
+  background: transparent;
+}
+
+.composer-timecode-popover-row.is-selected {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.composer-timecode-popover-label {
+  color: color-mix(in srgb, var(--text-secondary) 78%, transparent);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.composer-timecode-popover-value {
+  flex: 0 0 auto;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+}
+
 .composer-combined-picker-check {
   color: color-mix(in srgb, var(--accent) 86%, var(--text-primary));
   font-size: 11px;

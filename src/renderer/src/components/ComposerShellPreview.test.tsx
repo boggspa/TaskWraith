@@ -67,6 +67,7 @@ describe('ComposerShellPreview — shell parity', () => {
       expect(html).toContain('class="composer-inner-module"')
       expect(html).toContain('class="composer-bottom-controls"')
       expect(html).toContain('class="composer-telemetry-row"')
+      expect(html.match(/composer-run-timecode/g)?.length).toBe(1)
       // The refractive-glass lens the live composer renders as the first child of
       // the surface — previously absent from both replicas.
       expect(html).toContain('class="composer-refraction-lens"')

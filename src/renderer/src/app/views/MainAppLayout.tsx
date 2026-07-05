@@ -73,7 +73,7 @@ import {
   SkyWeatherVisual
 } from '../../components/FxLayers'
 import { CanvasComposerButton } from '../../components/CanvasComposerButton'
-import { ComposerCumulativeTimecode, ComposerRunTimecode } from '../../components/ComposerTimecodes'
+import { ComposerTimecode } from '../../components/ComposerTimecodes'
 import { ComposerPlanPopoverButton } from '../../components/ComposerPlanPopoverButton'
 import { CopyTranscriptButton } from '../../components/CopyTranscriptButton'
 import { LiveThreadTokenTally } from '../../components/LiveThreadTokenTally'
@@ -2429,14 +2429,11 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                 className="composer-telemetry-row side-chat-telemetry-row"
                 data-has-token-tally={sideThreadTokenTallyHasValue ? 'true' : 'false'}
               >
-                <ComposerRunTimecode
-                  running={isSideChatRunning}
-                  startedAt={sideComposerRunTimecodeStartedAt}
-                />
-                <ComposerCumulativeTimecode
+                <ComposerTimecode
                   running={isSideChatRunning}
                   startedAt={sideComposerRunTimecodeStartedAt}
                   cumulativeBaseMs={sideCumulativeRunBaseMs}
+                  composerStyle={appearance.composerStyle}
                 />
                 <ComposerPlanPopoverButton
                   key={sideChat.appChatId}

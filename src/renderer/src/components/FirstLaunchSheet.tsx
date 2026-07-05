@@ -875,8 +875,8 @@ export function FirstLaunchSheet({
             </li>
             <li>
               <strong>Cumulative session timecode.</strong> Composer&apos;s lower-left shows
-              <em> two </em>
-              counters: per-run elapsed time and total wall-time across every run in this chat.
+              the current turn time while active, then total wall-time across every run in this
+              chat when idle. Click it to compare both counters.
             </li>
           </ul>
         </section>

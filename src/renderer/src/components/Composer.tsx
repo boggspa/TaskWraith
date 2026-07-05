@@ -35,7 +35,7 @@ import {
   ComposerTextareaContextMenu,
   useComposerTextareaContextMenu
 } from '../components/ComposerTextareaContextMenu'
-import { ComposerCumulativeTimecode, ComposerRunTimecode } from '../components/ComposerTimecodes'
+import { ComposerTimecode } from '../components/ComposerTimecodes'
 import { ComposerWorkspaceSwitcher } from '../components/ComposerWorkspaceSwitcher'
 import { CopyTranscriptButton } from '../components/CopyTranscriptButton'
 import { EnsembleOrchestrationRow } from '../components/EnsembleOrchestrationRow'
@@ -3184,7 +3184,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                          crowded the approval / provider / model
                          controls on dense windows. Moved to the
                          composer's bottom telemetry row (below) where
-                         it sits spaced between the timecodes / Screen
+                         it sits spaced between the timecode / Screen
                          Watch cluster on the left and the token tally
                          on the right. See the
                          `data-composer-control="workspace"` mount
@@ -4167,14 +4167,11 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                 className="composer-telemetry-row"
                 data-has-token-tally={threadTokenTallyHasValue ? 'true' : 'false'}
               >
-                <ComposerRunTimecode
-                  running={isCurrentChatRunning}
-                  startedAt={composerRunTimecodeStartedAt}
-                />
-                <ComposerCumulativeTimecode
+                <ComposerTimecode
                   running={isCurrentChatRunning}
                   startedAt={composerRunTimecodeStartedAt}
                   cumulativeBaseMs={cumulativeRunBaseMs}
+                  composerStyle={appearance.composerStyle}
                 />
                 <ComposerEnsembleToggleButton
                   enabled={isCurrentEnsembleChat}
@@ -4433,7 +4430,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
 	                    SSRF-guarded openWindow + inline error in the button). */}
 	                <CanvasComposerButton />
 	                {/* 1.0.5-AR12c — Workspace switcher in its new home.
-                     Sits between the timecodes / Screen Watch cluster
+                     Sits between the timecode / Screen Watch cluster
                      on the left and the token tally on the right. The
                      `composer-workspace-button` class gets a
                      telemetry-row scoped CSS override (`margin-left:

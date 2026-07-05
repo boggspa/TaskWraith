@@ -5,7 +5,7 @@ import type { ChatRun } from '../../../main/store/types'
 /*
  * 1.0.4-AR10 — cumulative session timecode coverage.
  *
- * The cumulative timecode in `ComposerCumulativeTimecode` shows the
+ * The cumulative timecode in the composer telemetry readout shows the
  * total wall time spent running this chat: Σ (endedAt - startedAt)
  * across every completed run, plus the live delta from the currently-
  * in-flight run. The base helper here only sums completed runs; the
