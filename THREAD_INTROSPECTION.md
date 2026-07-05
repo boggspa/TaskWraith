@@ -177,7 +177,47 @@ load chats/events/approvals/feedback for window
   → terminal status review_pending
 ```
 
-Callable from tests and (once wired) IPC. No scheduler or apply path.
+Callable from IPC (`run-manual-introspection`) and tests. Scheduled daily
+generation is the next slice; apply path remains out of scope.
+
+## Using Thread Introspection in Settings
+
+Open **Settings → Automation → Thread introspection**.
+
+1. **Run introspection (24h)** — harvests the last 24 hours of persisted
+   threads/runs for the active workspace, generates a **Memory Proposal Pack**,
+   and leaves proposals in `proposed` / `review_pending` state.
+2. **Review proposals** — expand rows to see evidence citations, confidence,
+   and (for `skill_patch`) a diff preview. **Approve** or **Reject** updates
+   proposal status only — no skill files, repo rules, or conventions are
+   mutated.
+3. **Enable daily run** — toggle in Settings (renderer scaffolded). When the
+   schedule IPC is wired, turning this on creates a **read-only** proposal pack
+   each day for review. It does **not** auto-apply lessons or edit skills.
+
+IPC channels (read/review + manual run):
+
+| Preload API | Purpose |
+| --- | --- |
+| `getMemoryProposalPacks(workspaceId?)` | List packs for the review panel |
+| `getMemoryProposalPack(id)` | Fetch one pack |
+| `updateMemoryProposal(packId, proposalId, partial)` | Approve/reject/expire; whitelisted fields only |
+| `runManualIntrospection({ windowStart, windowEnd, workspaceId?, workspacePath? })` | Manual harvest + generate |
+
+Schedule IPC (**in progress** — `@WriteMain` scheduler slice):
+
+| Preload API | Purpose |
+| --- | --- |
+| `getIntrospectionSchedule(workspaceId?)` | Read `{ enabled, workspaceId?, lastRunAt?, nextRunAt? }` |
+| `updateIntrospectionSchedule(partial)` | Enable/disable daily run; optional workspace scope |
+
+When enabled, the backend runs `runManualIntrospection` with
+`trigger: 'scheduled'` on a rolling 24h window (typically once per calendar day
+per workspace). Duplicate timer fires must not create multiple scheduled packs
+for the same day.
+
+Approve/reject **does not apply** lessons — it records review intent for a
+future gated apply layer.
 
 ## Review gates
 
@@ -189,9 +229,51 @@ Callable from tests and (once wired) IPC. No scheduler or apply path.
 
 The **Memory Proposal Review** panel (`MemoryProposalReviewPanel.tsx`) supports
 approve/reject callbacks, evidence expansion, and skill-patch diff preview —
-**no apply path** until a gated apply layer ships. The panel is committed but
-not yet mounted in Settings; it requires IPC/preload handlers
-(`getMemoryProposalPacks`, `updateMemoryProposal`, `runManualIntrospection`).
+**no apply path** until a gated apply layer ships. Mounted in Settings via
+`ThreadIntrospectionSettingsPanel` with IPC wired (`871db3521`).
+
+## Scheduled daily generation (active slice)
+
+Product ordering (blackboard `thread-introspection-next-ordering`): **scheduled
+read-only generation before any apply layer**.
+
+### What it will do (read-only)
+
+- Once per day (24h interval or calendar-day idempotency), harvest the last 24h
+  of persisted threads/runs and create a new **Memory Proposal Pack**.
+- Call `runManualIntrospection` with `trigger: 'scheduled'` (optional
+  `workflowId` when tied to a workflow record).
+- Leave all proposals in `proposed` / `review_pending` — **no auto-approve**,
+  **no skill/rule/repo mutation**.
+
+### What it will not do
+
+- Apply approved proposals to `.codex/skills`, `~/.cursor/skills`, `AGENTS.md`,
+  or `RepoConventionIndex`.
+- Replace human review — daily packs still require Settings approve/reject.
+- Use agent provider dispatch (introspection is a system action, not a Codex
+  prompt in a chat thread).
+
+### Implementation notes
+
+`WorkflowDefinition` templates today require a live chat, provider, and
+prompt — introspection is not an agent turn. Expected approach:
+
+- **Preferred MVP:** dedicated `IntrospectionScheduler` + settings record,
+  piggybacking `emitDueScheduledTasks` / task timer infra (mirror headless loop
+  bypass in `index.ts`).
+- **Alternative:** extend workflows with a system action kind
+  `thread_introspection` and headless dispatch.
+
+Cron triggers are not yet supported on workflow definitions; use
+`intervalMs: 86_400_000` or dedicated scheduler settings.
+
+**Renderer:** `ThreadIntrospectionSettingsPanel` already exposes an **Enable
+daily run** toggle and expects the schedule IPC contract above. Until Main
+lands handlers, the UI shows a graceful “not wired yet” hint.
+
+**Status:** backend scheduler + schedule IPC — **in progress** (`@WriteMain`).
+Docs updated in fan-out lane B; commit with scheduler slice via `@CheckCommit`.
 
 ## Trust and prompt-injection boundary
 
@@ -220,29 +302,45 @@ not yet mounted in Settings; it requires IPC/preload handlers
 
 ## Implementation status
 
-Commits: `37b40c678` (domain/store/generator), `0fd22e9a0` (harvester/run
-service/review UI/docs), `b3429a9ba` (ensemble fixture fix for typecheck).
+Commits:
 
-| Slice | Status | Owner / notes |
+- `37b40c678` — domain/store/generator
+- `0fd22e9a0` — harvester, run service, review UI shell, initial docs
+- `871db3521` — IPC handlers + Settings tab mount
+- `2d07554d9` — doc sync (IPC landed)
+
+| Slice | Status | Notes |
 | --- | --- | --- |
 | Domain model + normalization | **Landed** | `IntrospectionModel.ts` |
 | Pure proposal generator | **Landed** | `IntrospectionProposalGenerator.ts` |
 | AppStore persistence | **Landed** | `introspection-runs.json`, `memory-proposal-packs.json` |
-| Evidence harvester | **Landed** | `IntrospectionEvidenceHarvester.ts` — run events, approvals, feedback, chat heuristics |
-| Manual run service | **Landed** | `IntrospectionRunService.runManualIntrospection()` |
-| Proposal Review UI | **Landed (unwired)** | `MemoryProposalReviewPanel.tsx` — props-driven; needs IPC + Settings tab |
-| IPC + Settings tab | **Pending** | `@WriteMain` — mirror `ApprovalLedgerPanel` preload pattern |
-| Scheduled workflow template | **Pending** | Daily cron via `WorkflowDefinition` |
-| Apply layer | **Pending** | RepoConventionIndex, blackboard, skill patch manager + rollback |
+| Evidence harvester | **Landed** | `IntrospectionEvidenceHarvester.ts` |
+| Manual run service | **Landed** | `runManualIntrospection()` |
+| Proposal Review UI + Settings | **Landed** | `MemoryProposalReviewPanel` + `ThreadIntrospectionSettingsPanel` |
+| IPC + preload | **Landed** | `introspectionHandlers.ts` — read/review only |
+| Scheduled daily generation | **In progress** | `@WriteMain`: scheduler + schedule IPC; toggle UI scaffolded |
+| Apply layer | **Pending** | After scheduler; skill patch manager + rollback |
 | Distillation policy | **Pending** | Auto-approve rules per scope/kind |
 | Decay / supersede | **Pending** | Registry lifecycle after apply |
 | MCP tools | **Pending** | No brokered introspection tools yet |
 
-**Tests:** 29 introspection-focused tests green (harvester, run service, model,
-generator, AppStore, review panel).
+**Tests:** 32+ introspection-focused tests green (handlers, harvester, run
+service, Settings panel, review panel).
 
-**Not yet user-operational:** no Settings entry, no manual “Run introspection”
-button, no scheduled daily pass — backend + review shell only.
+**Operational in dev:** Settings → Thread introspection → manual 24h run →
+approve/reject. **Not yet:** unattended daily packs, apply to skills/rules,
+MCP trigger from chat.
+
+### Pipeline checklist
+
+```text
+Collect → Classify → Persist → Review (manual) → Scheduled → Apply
+  ✅        ✅         ✅         ✅ (871db3521)    🔄 active   ❌ later
+```
+
+Scheduled generation creates **reviewable packs only**. Apply (skill patches,
+repo conventions, memory registry) is a **separate gated slice** after
+scheduler ships.
 
 ## Apply targets (planned)
 

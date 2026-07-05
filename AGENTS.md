@@ -493,14 +493,19 @@ promoted.
 
 Current MVP boundary (see `THREAD_INTROSPECTION.md`):
 
-- **Landed:** domain model, proposal generator, AppStore persistence, evidence
-  harvester, manual run service, proposal review panel (committed `0fd22e9a0`).
-- **Pending:** IPC + Settings mount, scheduled workflow, apply layer, MCP tools.
-- **Not operational yet:** users cannot trigger or review packs from Settings
-  until IPC lands (`@WriteMain` slice in progress).
+- **Landed:** collect → classify → persist → **manual review in Settings**
+  (harvester, run service, IPC, review panel — through `871db3521`).
+- **In progress:** scheduled daily generation (read-only packs only;
+  `getIntrospectionSchedule` / `updateIntrospectionSchedule` + headless daily
+  runner — `@WriteMain`).
+- **Later (gated):** apply layer, skill patch manager, MCP tools, decay/supersede.
+- **Operational in dev:** Settings → Thread introspection → Run introspection
+  (24h) → approve/reject. Approve/reject updates status only — no skill writes.
+- **Daily toggle:** UI scaffolded; backend schedule IPC not wired until scheduler
+  slice lands.
 
-Do not claim introspection is fully operational until collect → propose →
-review (wired) → apply is complete end-to-end.
+Do not claim the full Ryan Brewer loop is complete until **scheduled generation
++ gated apply** ship. Do not edit skills from thread history outside this pipeline.
 
 ---
 

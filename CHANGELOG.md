@@ -17,9 +17,12 @@ published.
   friction, message feedback, correction heuristics), and produces reviewable
   **Memory Proposal Packs** with scoped, cited lessons (preferences, failure
   modes, repo conventions, provider hints, skill patches, bugs, do-not-repeat
-  notes). Includes a manual run service and a Settings-ready proposal review
-  panel (approve/reject only — no skill or rule mutation yet). Distinct from
-  per-run Evidence Packs and ensemble Blackboard. See `THREAD_INTROSPECTION.md`.
+  notes). **Settings → Automation → Thread introspection** supports a manual
+  24h run, proposal review (approve/reject only — no skill or rule mutation),
+  and evidence citations. A daily **Enable** toggle (read-only scheduled packs)
+  is in progress — it will not auto-apply lessons. Full apply-to-skills remains
+  a later gated slice. Distinct from per-run Evidence Packs and ensemble
+  Blackboard. See `THREAD_INTROSPECTION.md`.
 
 ## 1.7.6 - 2026-07-05
 
