@@ -136,6 +136,10 @@
   line-height: 1.38;
 }
 
+.activity-progress-note.is-thinking-trace p {
+  white-space: pre-wrap;
+}
+
 .activity-compact-group {
   width: min(760px, 100%);
   margin: 2px 0;

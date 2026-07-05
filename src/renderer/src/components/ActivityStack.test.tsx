@@ -610,6 +610,61 @@ describe('ActivityStack agent invocation presentation', () => {
     expect(html).not.toContain('class="activity-status success"')
   })
 
+  it('renders named thinking progress note bodies without the raw-events truncation footer', () => {
+    const thinking = [
+      'The user wants the complete trace in the live activity viewport.',
+      ...Array.from(
+        { length: 44 },
+        (_, index) => `Reasoning line ${index + 1}: ${'x'.repeat(24)}`
+      ),
+      'tail sentinel after the old progress-note limit'
+    ].join('\n')
+
+    const html = renderToStaticMarkup(
+      <ActivityStack
+        provider="ollama"
+        activities={[
+          makeWriteActivity({
+            id: 'thinking-full-body',
+            toolName: 'ollama_thinking',
+            displayName: 'Thinking',
+            category: 'task',
+            status: 'success',
+            parameters: {},
+            resultSummary: thinking
+          })
+        ]}
+      />
+    )
+
+    expect(html).toContain('tail sentinel after the old progress-note limit')
+    expect(html).not.toContain('open raw events for full output')
+    expect(html).not.toContain('lines hidden')
+  })
+
+  it('does not truncate display-name-only thinking traces', () => {
+    const thinking = `${'Considering provider-specific activity rows. '.repeat(14)}final display-name sentinel`
+    const html = renderToStaticMarkup(
+      <ActivityStack
+        provider="kimi"
+        activities={[
+          makeWriteActivity({
+            id: 'thinking-display-full-body',
+            toolName: 'Task',
+            displayName: 'Kimi Thinking',
+            category: 'task',
+            status: 'success',
+            parameters: {},
+            resultSummary: thinking
+          })
+        ]}
+      />
+    )
+
+    expect(html).toContain('final display-name sentinel')
+    expect(html).not.toContain('open raw events for full output')
+  })
+
   it('renders Used callmcptool as the dancing tool icon easter egg', () => {
     const html = renderToStaticMarkup(
       <ActivityStack

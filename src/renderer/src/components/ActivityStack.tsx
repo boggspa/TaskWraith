@@ -226,7 +226,10 @@ function truncateText(value: string, optionsOrMaxLength: number | TruncateOption
   return `${prefix}${footerFn(droppedChars, Math.max(0, droppedLines))}`
 }
 
-function cleanProgressText(value: unknown): string | undefined {
+function cleanProgressText(
+  value: unknown,
+  options: { truncate?: boolean } = {}
+): string | undefined {
   if (typeof value !== 'string') return undefined
   const cleaned = value
     .replace(/^[\s#>*![\]A-Z:_-]*(Topic|Summary|Intent|Strategic intent)\s*:\s*/gim, '')
@@ -239,6 +242,7 @@ function cleanProgressText(value: unknown): string | undefined {
     .replace(/\n{3,}/g, '\n\n')
     .trim()
   if (!cleaned || cleaned === '...' || cleaned === '…') return undefined
+  if (options.truncate === false) return cleaned
   return truncateText(cleaned, 360)
 }
 
@@ -796,18 +800,20 @@ function getProgressNote(activity: ToolActivity): { title: string; body?: string
   // title path so the chip render runs.
   if ((activity.toolName || '').toLowerCase().includes('ensemble_yield')) return null
   const parameters = activity.parameters || {}
+  const isThinkingTrace = isThinkingTraceActivity(activity)
+  const progressTextOptions = isThinkingTrace ? { truncate: false } : undefined
   const title =
-    cleanProgressText(parameters.title) ||
-    cleanProgressText(parameters.topic) ||
-    cleanProgressText(activity.displayName) ||
+    cleanProgressText(parameters.title, progressTextOptions) ||
+    cleanProgressText(parameters.topic, progressTextOptions) ||
+    cleanProgressText(activity.displayName, progressTextOptions) ||
     'Progress update'
   const body =
-    cleanProgressText(parameters.strategic_intent) ||
-    cleanProgressText(parameters.intent) ||
-    cleanProgressText(parameters.summary) ||
-    cleanProgressText(parameters.message) ||
-    cleanProgressText(activity.resultSummary) ||
-    cleanProgressText(activity.outputPreview)
+    cleanProgressText(parameters.strategic_intent, progressTextOptions) ||
+    cleanProgressText(parameters.intent, progressTextOptions) ||
+    cleanProgressText(parameters.summary, progressTextOptions) ||
+    cleanProgressText(parameters.message, progressTextOptions) ||
+    cleanProgressText(activity.resultSummary, progressTextOptions) ||
+    cleanProgressText(activity.outputPreview, progressTextOptions)
 
   if (!title && !body) return null
   return {
