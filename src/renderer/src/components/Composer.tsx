@@ -4428,7 +4428,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
 	                />
 	                {/* Opens a standalone floating Canvas window (self-contained;
 	                    SSRF-guarded openWindow + inline error in the button). */}
-	                <CanvasComposerButton />
+	                <CanvasComposerButton chatId={currentChat?.appChatId ?? null} />
 	                {/* 1.0.5-AR12c — Workspace switcher in its new home.
                      Sits between the timecode / Screen Watch cluster
                      on the left and the token tally on the right. The

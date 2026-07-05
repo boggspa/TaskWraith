@@ -61,6 +61,7 @@ button.active { background: #111827; color: #fff; }
 .canvas { width: 100vw; height: 100vh; touch-action: none; user-select: none; background-color: #fafafa; background-image: linear-gradient(rgba(22,24,29,.08) 1px, transparent 1px), linear-gradient(90deg, rgba(22,24,29,.08) 1px, transparent 1px); background-size: 24px 24px; }
 svg text { user-select: none; white-space: pre; }
 .selected-outline { pointer-events: none; fill: none; stroke: #2563eb; stroke-width: 1.5; stroke-dasharray: 5 4; }
+.text-editor { position: fixed; z-index: 3; min-width: 160px; max-width: 360px; border: 1px solid #2563eb; border-radius: 6px; padding: 6px 8px; background: rgba(255,255,255,.96); color: #111827; font: 18px/1.2 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; box-shadow: 0 8px 24px rgba(0,0,0,.18); outline: none; }
 @media (prefers-color-scheme: dark) {
   body { background: #15171c; color: #f4f7fb; }
   .toolbar { background: rgba(23,25,31,.88); border-color: rgba(255,255,255,.14); }
@@ -68,6 +69,7 @@ svg text { user-select: none; white-space: pre; }
   button.active { background: #f4f7fb; color: #111318; }
   .divider { background: rgba(255,255,255,.16); }
   .canvas { background-color: #191c23; background-image: linear-gradient(rgba(255,255,255,.08) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.08) 1px, transparent 1px); }
+  .text-editor { background: rgba(23,25,31,.98); color: #f4f7fb; }
 }
 </style>
 </head>
@@ -101,6 +103,9 @@ svg text { user-select: none; white-space: pre; }
 
   const clone = (value) => JSON.parse(JSON.stringify(value));
   const now = () => new Date().toISOString();
+  const notifyChanged = () => {
+    try { console.info('__TW_SKETCH_CHANGED__'); } catch (e) {}
+  };
   const num = (value, fallback) => {
     const n = Number(value);
     return Number.isFinite(n) ? Math.max(-100000, Math.min(100000, n)) : fallback;
@@ -165,7 +170,10 @@ svg text { user-select: none; white-space: pre; }
   const normalizeMany = (items) => Array.isArray(items)
     ? items.map(normalize).filter(Boolean).slice(0, 400)
     : [];
-  const setUpdated = () => { doc.updatedAt = now(); };
+  const setUpdated = (notify = true) => {
+    doc.updatedAt = now();
+    if (notify) notifyChanged();
+  };
   const pt = (event) => {
     const r = stage.getBoundingClientRect();
     return { x: event.clientX - r.left, y: event.clientY - r.top };
@@ -239,6 +247,45 @@ svg text { user-select: none; white-space: pre; }
     tool = next;
     document.querySelectorAll('[data-tool]').forEach((b) => b.classList.toggle('active', b.dataset.tool === tool));
   };
+  const beginTextEdit = (p) => {
+    const existing = document.querySelector('.text-editor');
+    if (existing) existing.remove();
+    const input = document.createElement('input');
+    input.className = 'text-editor';
+    input.type = 'text';
+    input.placeholder = 'Text';
+    input.style.left = Math.max(8, Math.min(window.innerWidth - 180, p.x)) + 'px';
+    input.style.top = Math.max(48, Math.min(window.innerHeight - 48, p.y - 14)) + 'px';
+    document.body.appendChild(input);
+    let done = false;
+    const commit = () => {
+      if (done) return;
+      done = true;
+      const value = input.value.trim();
+      input.remove();
+      if (!value) return;
+      const fill = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? '#f4f7fb' : '#111827';
+      const element = normalize({ kind: 'text', x: p.x, y: p.y, text: value, fill, fontSize: 18 });
+      if (element) {
+        doc.elements.push(element);
+        selectedId = element.id;
+        setUpdated();
+        render();
+      }
+    };
+    const cancel = () => {
+      if (done) return;
+      done = true;
+      input.remove();
+    };
+    input.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') commit();
+      if (event.key === 'Escape') cancel();
+      event.stopPropagation();
+    });
+    input.addEventListener('blur', commit, { once: true });
+    requestAnimationFrame(() => input.focus());
+  };
   document.querySelectorAll('[data-tool]').forEach((button) => {
     button.addEventListener('click', () => setTool(button.dataset.tool));
   });
@@ -257,12 +304,7 @@ svg text { user-select: none; white-space: pre; }
     }
     const p = pt(event);
     if (tool === 'text') {
-      const text = window.prompt('Text', '');
-      if (text && text.trim()) {
-        doc.elements.push(normalize({ kind: 'text', x: p.x, y: p.y, text: text.trim(), fill: '#111827', fontSize: 18 }));
-        setUpdated();
-        render();
-      }
+      beginTextEdit(p);
       return;
     }
     if (tool === 'pen') draft = normalize({ kind: 'path', points: [p], stroke: '#2563eb', fill: 'none', strokeWidth: 2 });
@@ -292,7 +334,7 @@ svg text { user-select: none; white-space: pre; }
       draft.x2 = p.x;
       draft.y2 = p.y;
     }
-    setUpdated();
+    setUpdated(false);
     render();
   });
   const finish = (event) => {
@@ -315,6 +357,7 @@ svg text { user-select: none; white-space: pre; }
   });
   window.addEventListener('resize', () => {
     doc.viewport = { width: window.innerWidth || doc.viewport.width, height: window.innerHeight || doc.viewport.height };
+    setUpdated();
     render();
   });
   window.__twSketch = {
@@ -359,6 +402,8 @@ svg text { user-select: none; white-space: pre; }
 export interface CanvasSketchDriverDeps {
   createSurface?: (opts: CanvasSurfaceOptions) => CanvasHostSurface
   now?: () => string
+  initialDocument?: CanvasSketchDocument
+  onDocumentChange?: (document: CanvasSketchDocument) => void
 }
 
 function unsupported(verb: string): never {
@@ -541,13 +586,18 @@ export class CanvasSketchDriver implements CanvasDriver {
   private readonly partition: string
   private readonly createSurface: (opts: CanvasSurfaceOptions) => CanvasHostSurface
   private readonly nowFn: () => string
+  private readonly initialDocument?: CanvasSketchDocument
+  private readonly onDocumentChange?: (document: CanvasSketchDocument) => void
   private consoleEntries: CanvasConsoleEntry[] = []
   private lastDocument: CanvasSketchDocument | null = null
+  private persistTimer: ReturnType<typeof setTimeout> | null = null
 
   constructor(sessionId: string, deps: CanvasSketchDriverDeps = {}) {
     this.partition = `canvas-sketch-${sessionId}`
     this.createSurface = deps.createSurface ?? createBrowserWindowSurface
     this.nowFn = deps.now ?? (() => new Date().toISOString())
+    this.initialDocument = deps.initialDocument
+    this.onDocumentChange = deps.onDocumentChange
   }
 
   private requireSurface(): CanvasHostSurface {
@@ -561,6 +611,19 @@ export class CanvasSketchDriver implements CanvasDriver {
     return (await this.requireSurface().webContents.executeJavaScript(source, true)) as T
   }
 
+  private schedulePersist(): void {
+    if (!this.onDocumentChange) return
+    if (this.persistTimer) clearTimeout(this.persistTimer)
+    this.persistTimer = setTimeout(() => {
+      this.persistTimer = null
+      this.sketchDocument()
+        .then((document) => this.onDocumentChange?.(document))
+        .catch(() => {
+          // The window may have closed between the change signal and debounce.
+        })
+    }, 150)
+  }
+
   async open(input: CanvasOpenInput): Promise<CanvasSessionHandle> {
     const viewport = resolveViewport({ width: input.viewport?.width, height: input.viewport?.height })
     const surface = this.createSurface({
@@ -572,9 +635,14 @@ export class CanvasSketchDriver implements CanvasDriver {
     surface.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
     surface.webContents.session.setPermissionRequestHandler((_wc, _permission, callback) => callback(false))
     surface.webContents.on('console-message', (details) => {
+      const message = String((details as { message?: unknown }).message ?? '')
+      if (message === '__TW_SKETCH_CHANGED__') {
+        this.schedulePersist()
+        return
+      }
       this.consoleEntries.push({
         level: 'log',
-        message: String((details as { message?: unknown }).message ?? ''),
+        message,
         line: (details as { lineNumber?: number }).lineNumber,
         sourceId: (details as { sourceId?: string }).sourceId,
         at: this.nowFn()
@@ -586,6 +654,13 @@ export class CanvasSketchDriver implements CanvasDriver {
     })
 
     await waitForLoad(surface, `data:text/html;charset=utf-8,${encodeURIComponent(SKETCH_HTML)}`)
+    if (this.initialDocument) {
+      await this.sketchUpdate({
+        mode: 'replace',
+        title: this.initialDocument.title,
+        elements: this.initialDocument.elements
+      })
+    }
     await this.resize(viewport)
     const document = await this.sketchDocument()
     this.lastDocument = document
@@ -703,6 +778,7 @@ export class CanvasSketchDriver implements CanvasDriver {
       `window.__twSketch.applyUpdate(${JSON.stringify(safeUpdate)})`
     )
     this.lastDocument = document
+    this.onDocumentChange?.(document)
     return document
   }
 
@@ -719,6 +795,17 @@ export class CanvasSketchDriver implements CanvasDriver {
 
   async close(): Promise<void> {
     const surface = this.surface
+    if (this.persistTimer) {
+      clearTimeout(this.persistTimer)
+      this.persistTimer = null
+    }
+    if (surface && !surface.isDestroyed() && this.onDocumentChange) {
+      try {
+        this.onDocumentChange(await this.sketchDocument())
+      } catch {
+        // Surface may already be gone.
+      }
+    }
     this.surface = null
     this.lastDocument = null
     this.consoleEntries = []

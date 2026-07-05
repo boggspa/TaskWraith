@@ -2449,7 +2449,10 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                   resetKey={sideChat.appChatId}
                   onCopy={() => window.api.copyChatMarkdownTranscript(sideChat.appChatId)}
                 />
-                <CanvasComposerButton disabled={!window.api.canvas?.openWindow} />
+                <CanvasComposerButton
+                  disabled={!window.api.canvas?.openWindow}
+                  chatId={sideChat.appChatId}
+                />
                 {sideThreadTokenTallyHasValue && (
                   <LiveThreadTokenTally
                     baseTally={sideChatTokenTally}

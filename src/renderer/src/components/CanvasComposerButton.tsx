@@ -10,6 +10,7 @@ import { CanvasPaneLauncher } from './CanvasPaneLauncher'
 
 export interface CanvasComposerButtonProps {
   disabled?: boolean
+  chatId?: string | null
 }
 
 /** A user-facing hint for the common embed failures (no server / bad url). */
@@ -34,7 +35,7 @@ function sketchBridgeAvailable(): boolean {
   return typeof window === 'undefined' ? true : Boolean(window.api.canvas?.openSketchWindow)
 }
 
-export function CanvasComposerButton({ disabled }: CanvasComposerButtonProps) {
+export function CanvasComposerButton({ disabled, chatId }: CanvasComposerButtonProps) {
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const popoverRef = useRef<HTMLDivElement | null>(null)
   const [open, setOpen] = useState(false)
@@ -54,7 +55,10 @@ export function CanvasComposerButton({ disabled }: CanvasComposerButtonProps) {
     try {
       // A standalone floating window (movable / closable) — not embedded over a
       // pane, so there's no DOM-overlay positioning to get wrong.
-      const result = await window.api.canvas?.openWindow({ url })
+      const result = await window.api.canvas?.openWindow({
+        url,
+        chatId: chatId || undefined
+      })
       if (result?.ok) {
         setOpen(false)
       } else {
@@ -76,7 +80,7 @@ export function CanvasComposerButton({ disabled }: CanvasComposerButtonProps) {
     }
     setBusyMode('sketch')
     try {
-      const result = await openSketchWindow()
+      const result = await openSketchWindow({ chatId: chatId || undefined })
       if (result?.ok) {
         setOpen(false)
       } else {

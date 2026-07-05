@@ -450,6 +450,7 @@ const api = {
     openWindow: (args: {
       url: string
       originAllowlist?: string[]
+      chatId?: string
     }): Promise<
       | {
           ok: true
@@ -463,6 +464,7 @@ const api = {
     openEmbedded: (args: {
       url: string
       originAllowlist?: string[]
+      chatId?: string
     }): Promise<
       | {
           ok: true
@@ -473,7 +475,7 @@ const api = {
         }
       | { ok: false; error: string }
     > => ipcRenderer.invoke('canvas:open-embedded', args),
-    openSketchWindow: (): Promise<
+    openSketchWindow: (args?: { chatId?: string }): Promise<
       | {
           ok: true
           canvasId: string
@@ -482,7 +484,7 @@ const api = {
           viewport: { width: number; height: number }
         }
       | { ok: false; error: string }
-    > => ipcRenderer.invoke('canvas:open-sketch-window'),
+    > => ipcRenderer.invoke('canvas:open-sketch-window', args),
     setBounds: (
       canvasId: string,
       rect: { x: number; y: number; width: number; height: number }

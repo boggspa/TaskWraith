@@ -85,4 +85,26 @@ describe('CanvasStore', () => {
     const [evt] = store.listEvents('a')
     expect(evt.detail).toEqual({ frameHash: 'abc', width: 10, height: 20 })
   })
+
+  it('persists sketch documents by scope until explicitly overwritten', () => {
+    store.upsertSketchDocument('chat:one', {
+      schemaVersion: 1,
+      title: 'Sketch Canvas',
+      viewport: { width: 800, height: 600 },
+      elements: [{ id: 'label', kind: 'text', x: 10, y: 20, text: 'hello' }],
+      updatedAt: '2026-06-21T00:00:00.000Z'
+    })
+    const reopened = new CanvasStore(dir)
+    expect(reopened.getSketchDocument('chat:one')?.elements).toEqual([
+      { id: 'label', kind: 'text', x: 10, y: 20, text: 'hello' }
+    ])
+    reopened.upsertSketchDocument('chat:one', {
+      schemaVersion: 1,
+      title: 'Sketch Canvas',
+      viewport: { width: 800, height: 600 },
+      elements: [],
+      updatedAt: '2026-06-21T00:01:00.000Z'
+    })
+    expect(store.getSketchDocument('chat:one')?.elements).toEqual([])
+  })
 })

@@ -32,6 +32,7 @@ class FakeDriver implements CanvasDriver {
   async open(input: CanvasOpenInput): Promise<CanvasSessionHandle> {
     if (this.failOpen) throw new Error('boom')
     this.opened = true
+    if (input.initialSketchDocument) this.sketchDoc = input.initialSketchDocument
     return {
       url: input.url || 'http://localhost:3000',
       title: 'Fake',
@@ -136,7 +137,10 @@ describe('CanvasService', () => {
     events = []
     let seq = 0
     service = new CanvasService({
-      createDriver: () => fake,
+      createDriver: (_kind, _sessionId, opts) => {
+        if (opts?.initialSketchDocument) fake.sketchDoc = opts.initialSketchDocument
+        return fake
+      },
       store,
       uuid: () => `id-${++seq}`,
       now: () => '2026-06-21T00:00:00.000Z',
@@ -199,6 +203,30 @@ describe('CanvasService', () => {
     expect(document.elements).toHaveLength(1)
     expect(events.map((e) => e.kind)).toContain('sketch.update')
     expect(JSON.stringify(events)).not.toContain('SECRET-LABEL')
+  })
+
+  it('rehydrates sketch documents from the same chat scope on the next sketch open', async () => {
+    const first = await service.open({ driver: 'sketch' }, { chatId: 'chat-a' })
+    await service.sketchUpdate(
+      first.canvasId,
+      {
+        mode: 'append',
+        elements: [{ kind: 'text', id: 'saved-label', x: 10, y: 20, text: 'persisted' }]
+      },
+      { chatId: 'chat-a' }
+    )
+    await service.close(first.canvasId, { chatId: 'chat-a' })
+
+    fake.sketchDoc = {
+      schemaVersion: 1,
+      title: 'Sketch Canvas',
+      viewport: { width: 1280, height: 800 },
+      elements: [],
+      updatedAt: 'fresh'
+    }
+    const second = await service.open({ driver: 'sketch' }, { chatId: 'chat-a' })
+    const document = await service.sketchDocument(second.canvasId, { chatId: 'chat-a' })
+    expect(document.elements).toMatchObject([{ id: 'saved-label', kind: 'text', text: 'persisted' }])
   })
 
   it('snapshot/screenshot emit redacted events — base64 never enters the audit', async () => {

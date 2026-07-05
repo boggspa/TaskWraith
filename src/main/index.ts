@@ -727,7 +727,11 @@ import { CanvasSketchDriver } from './canvas/CanvasSketchDriver'
 import { CanvasEmbedController } from './canvas/CanvasEmbedController'
 import { registerCanvasEmbedIpc } from './canvas/CanvasEmbedIpc'
 import { asEmbedParent, createElectronEmbedView } from './canvas/CanvasEmbedView'
-import type { CanvasDriverKind, CanvasEventRecord } from './canvas/canvasTypes'
+import type {
+  CanvasDriverKind,
+  CanvasEventRecord,
+  CanvasSketchDocument
+} from './canvas/canvasTypes'
 import type { LaunchAttempt } from './launch/types'
 import {
   CANVAS_IMAGE_MAX_DECODE_PIXELS,
@@ -2379,7 +2383,15 @@ const canvasEmbedController = new CanvasEmbedController({
 const offscreenImageEngine = createNativeImageEngine()
 const CANVAS_HTML_RENDER_TIMEOUT_MS = 15_000
 const canvasService = new CanvasService({
-  createDriver: (kind: CanvasDriverKind, sessionId: string, opts?: { embedded?: boolean }) => {
+  createDriver: (
+    kind: CanvasDriverKind,
+    sessionId: string,
+    opts?: {
+      embedded?: boolean
+      initialSketchDocument?: CanvasSketchDocument
+      onSketchDocumentChange?: (document: CanvasSketchDocument) => void
+    }
+  ) => {
     if (kind === 'device') return new CanvasDeviceDriver(sessionId)
     if (kind === 'html') {
       return new CanvasRenderDriver(sessionId, {
@@ -2414,7 +2426,12 @@ const canvasService = new CanvasService({
         }
       })
     }
-    if (kind === 'sketch') return new CanvasSketchDriver(sessionId)
+    if (kind === 'sketch') {
+      return new CanvasSketchDriver(sessionId, {
+        initialDocument: opts?.initialSketchDocument,
+        onDocumentChange: opts?.onSketchDocumentChange
+      })
+    }
     if (kind === 'web') {
       return opts?.embedded
         ? new CanvasWebDriver(sessionId, {

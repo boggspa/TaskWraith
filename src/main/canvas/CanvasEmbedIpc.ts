@@ -17,7 +17,8 @@ export interface CanvasEmbedIpcDeps {
   embed: CanvasEmbedController
 }
 
-type OpenArgs = { url?: string; originAllowlist?: string[] } | undefined
+type OpenArgs = { url?: string; originAllowlist?: string[]; chatId?: string } | undefined
+type OpenSketchArgs = { chatId?: string } | undefined
 type OpenCanvasResult =
   | {
       ok: true
@@ -45,7 +46,7 @@ export function registerCanvasEmbedIpc(ipcMain: IpcMain, deps: CanvasEmbedIpcDep
           originAllowlist: Array.isArray(args?.originAllowlist) ? args.originAllowlist : undefined,
           embed
         },
-        {}
+        { chatId: typeof args?.chatId === 'string' ? args.chatId : undefined }
       )
       return {
         ok: true,
@@ -59,9 +60,12 @@ export function registerCanvasEmbedIpc(ipcMain: IpcMain, deps: CanvasEmbedIpcDep
     }
   }
 
-  const openSketchCanvas = async (): Promise<OpenCanvasResult> => {
+  const openSketchCanvas = async (args: OpenSketchArgs): Promise<OpenCanvasResult> => {
     try {
-      const opened = await deps.controller.open({ driver: 'sketch' }, {})
+      const opened = await deps.controller.open(
+        { driver: 'sketch' },
+        { chatId: typeof args?.chatId === 'string' ? args.chatId : undefined }
+      )
       return {
         ok: true,
         canvasId: opened.canvasId,
@@ -76,7 +80,7 @@ export function registerCanvasEmbedIpc(ipcMain: IpcMain, deps: CanvasEmbedIpcDep
 
   ipcMain.handle('canvas:open-window', (_e, args: OpenArgs) => openCanvas(args, false))
   ipcMain.handle('canvas:open-embedded', (_e, args: OpenArgs) => openCanvas(args, true))
-  ipcMain.handle('canvas:open-sketch-window', () => openSketchCanvas())
+  ipcMain.handle('canvas:open-sketch-window', (_e, args: OpenSketchArgs) => openSketchCanvas(args))
 
   ipcMain.handle('canvas:set-bounds', (_e, canvasId: unknown, rect: unknown) => {
     if (typeof canvasId === 'string') {

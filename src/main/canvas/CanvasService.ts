@@ -52,7 +52,11 @@ export interface CanvasServiceDeps {
   createDriver: (
     kind: CanvasDriverKind,
     sessionId: string,
-    opts?: { embedded?: boolean }
+    opts?: {
+      embedded?: boolean
+      initialSketchDocument?: CanvasSketchDocument
+      onSketchDocumentChange?: (document: CanvasSketchDocument) => void
+    }
   ) => CanvasDriver
   store: CanvasStore
   uuid: () => string
@@ -151,6 +155,20 @@ export class CanvasService implements CanvasController {
     return session
   }
 
+  private sketchScope(ctx: CanvasCallContext): string {
+    if (ctx.chatId) return `chat:${ctx.chatId}`
+    if (ctx.workspacePath) return `workspace:${ctx.workspacePath}`
+    return 'global'
+  }
+
+  private persistSketchDocument(scope: string, document: CanvasSketchDocument): void {
+    try {
+      this.deps.store.upsertSketchDocument(scope, document)
+    } catch (err) {
+      this.deps.logger?.warn?.(`canvas: failed to persist sketch document: ${String(err)}`)
+    }
+  }
+
   async open(
     input: CanvasOpenInput,
     ctx: CanvasCallContext
@@ -223,7 +241,16 @@ export class CanvasService implements CanvasController {
 
     // Embed is web-only and renderer-initiated; the agent's executor never sets it.
     const embedded = driverKind === 'web' && input.embed === true
-    const driver = this.deps.createDriver(driverKind, canvasId, { embedded })
+    const sketchScope = driverKind === 'sketch' ? this.sketchScope(ctx) : undefined
+    const driver = this.deps.createDriver(driverKind, canvasId, {
+      embedded,
+      initialSketchDocument: sketchScope
+        ? this.deps.store.getSketchDocument(sketchScope) ?? undefined
+        : undefined,
+      onSketchDocumentChange: sketchScope
+        ? (document) => this.persistSketchDocument(sketchScope, document)
+        : undefined
+    })
     try {
       const handle = await driver.open(input)
       const record: CanvasSessionRecord = {
@@ -431,6 +458,7 @@ export class CanvasService implements CanvasController {
     const session = this.require(canvasId, ctx)
     this.chargeInteraction(session)
     const document = await session.driver.sketchUpdate(update)
+    this.persistSketchDocument(this.sketchScope(ctx), document)
     session.record = {
       ...session.record,
       title: document.title || session.record.title,

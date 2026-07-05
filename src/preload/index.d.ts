@@ -731,7 +731,7 @@ declare global {
         handler: (state: { enabled: boolean; enabledAt: string | null }) => void
       ) => () => void
       canvas: {
-        openWindow: (args: { url: string; originAllowlist?: string[] }) => Promise<
+        openWindow: (args: { url: string; originAllowlist?: string[]; chatId?: string }) => Promise<
           | {
               ok: true
               canvasId: string
@@ -741,7 +741,11 @@ declare global {
             }
           | { ok: false; error: string }
         >
-        openEmbedded: (args: { url: string; originAllowlist?: string[] }) => Promise<
+        openEmbedded: (args: {
+          url: string
+          originAllowlist?: string[]
+          chatId?: string
+        }) => Promise<
           | {
               ok: true
               canvasId: string
@@ -751,7 +755,7 @@ declare global {
             }
           | { ok: false; error: string }
         >
-        openSketchWindow: () => Promise<
+        openSketchWindow: (args?: { chatId?: string }) => Promise<
           | {
               ok: true
               canvasId: string

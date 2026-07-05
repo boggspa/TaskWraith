@@ -70,6 +70,11 @@ export interface CanvasOpenInput {
   mediaSha256?: string
   /** MIME type of the image asset (e.g. "image/png"). REQUIRED for the `image` driver. */
   mediaMimeType?: string
+  /**
+   * Internal sketch driver bootstrap document. Set by CanvasService from the
+   * persisted per-chat sketch document, never by agent-facing MCP schemas.
+   */
+  initialSketchDocument?: CanvasSketchDocument
 }
 
 export interface CanvasElementNode {

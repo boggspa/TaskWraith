@@ -18,8 +18,8 @@ function fakeIpc() {
 function fakeDeps() {
   const calls: Array<[string, unknown[]]> = []
   const controller = {
-    open: async (input: unknown) => {
-      calls.push(['open', [input]])
+    open: async (input: unknown, ctx: unknown) => {
+      calls.push(['open', [input, ctx]])
       return { canvasId: 'c1', url: 'http://localhost:3000/', title: 'T', viewport: { width: 800, height: 600 } }
     },
     close: async (id: string) => {
@@ -58,10 +58,14 @@ describe('registerCanvasEmbedIpc', () => {
     const ipc = fakeIpc()
     const deps = fakeDeps()
     registerCanvasEmbedIpc(ipc.ipcMain, deps)
-    const result = await ipc.invoke('canvas:open-window', { url: 'http://localhost:5173' })
+    const result = await ipc.invoke('canvas:open-window', {
+      url: 'http://localhost:5173',
+      chatId: 'chat-a'
+    })
     expect(result).toMatchObject({ ok: true, canvasId: 'c1' })
     const openCall = deps.calls.find((c) => c[0] === 'open')!
     expect(openCall[1][0]).toMatchObject({ driver: 'web', embed: false, url: 'http://localhost:5173' })
+    expect(openCall[1][1]).toEqual({ chatId: 'chat-a' })
   })
 
   it('open-embedded forces driver:web + embed:true and returns the handle', async () => {
@@ -84,10 +88,11 @@ describe('registerCanvasEmbedIpc', () => {
     const ipc = fakeIpc()
     const deps = fakeDeps()
     registerCanvasEmbedIpc(ipc.ipcMain, deps)
-    const result = await ipc.invoke('canvas:open-sketch-window')
+    const result = await ipc.invoke('canvas:open-sketch-window', { chatId: 'chat-a' })
     expect(result).toMatchObject({ ok: true, canvasId: 'c1' })
     const openCall = deps.calls.find((c) => c[0] === 'open')!
     expect(openCall[1][0]).toEqual({ driver: 'sketch' })
+    expect(openCall[1][1]).toEqual({ chatId: 'chat-a' })
   })
 
   it('open-embedded returns { ok:false, error } instead of throwing on a failed open', async () => {
