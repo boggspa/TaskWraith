@@ -4,7 +4,10 @@ import * as path from 'path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { PluginHost } from './PluginHost'
 import { PluginSecretStore, type PluginSecretSafeStorage } from './PluginSecretStore'
-import type { TaskWraithPluginManifest } from './PluginManifest'
+import type {
+  TaskWraithPluginActivationSnapshot,
+  TaskWraithPluginManifest
+} from './PluginManifest'
 
 const SECRET_MANIFEST: TaskWraithPluginManifest = {
   schemaVersion: 1,
@@ -27,6 +30,16 @@ const SECRET_MANIFEST: TaskWraithPluginManifest = {
       envVar: 'GITHUB_TOKEN',
       required: true,
       description: 'Token used by materialized connector bindings.'
+    }
+  ],
+  connectors: [
+    {
+      id: 'github',
+      label: 'GitHub',
+      kind: 'api-key',
+      description: 'Scoped GitHub API binding.',
+      requiredSecrets: ['github-token'],
+      networkScopes: ['configured-origin']
     }
   ]
 }
@@ -152,5 +165,59 @@ describe('PluginSecretStore', () => {
     store.setSecret(host.getCatalogSnapshot(), 'secret-bundle', 'github-token', 'super-secret-token')
     expect(store.clearPluginSecrets('secret-bundle')).toBe(1)
     expect(store.loadSecretValue('secret-bundle', 'github-token')).toBeNull()
+  })
+
+  it('builds scoped connector clients with stored secret values', () => {
+    const host = makeHost()
+    host.installPlugin('secret-bundle')
+    host.setPluginEnabled('secret-bundle', true)
+    const store = makeStore()
+    const catalog = host.getCatalogSnapshot()
+
+    store.setSecret(catalog, 'secret-bundle', 'github-token', 'super-secret-token')
+
+    const entry = catalog.plugins[0]!
+    const plugin = {
+      pluginId: entry.manifest.id,
+      publisher: entry.manifest.publisher,
+      version: entry.manifest.version,
+      source: entry.source,
+      namespace: entry.namespace,
+      manifestHash: entry.manifestHash
+    }
+    const activation: Pick<TaskWraithPluginActivationSnapshot, 'connectors'> = {
+      connectors: [
+        {
+          id: 'plugin:secret-bundle:connector:github',
+          plugin,
+          connector: entry.manifest.connectors![0]!,
+          pluginProvenance: {
+            ...plugin,
+            kind: 'connector',
+            objectId: 'github',
+            materializedAt: '2026-06-29T12:00:00.000Z'
+          }
+        }
+      ]
+    }
+
+    const [client] = store.getConnectorClients(catalog, activation)
+
+    expect(client).toMatchObject({
+      id: 'plugin:secret-bundle:connector:github',
+      pluginId: 'secret-bundle',
+      connectorId: 'github',
+      label: 'GitHub',
+      ready: true,
+      unavailableReasons: [],
+      capabilityScope: {
+        pluginId: 'secret-bundle',
+        connectorId: 'github',
+        kind: 'api-key',
+        networkScopes: ['configured-origin']
+      }
+    })
+    expect(client?.getSecretValue('github-token')).toBe('super-secret-token')
+    expect(client?.getSecretValue('not-declared')).toBeNull()
   })
 })

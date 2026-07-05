@@ -1,11 +1,16 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import type {
+  TaskWraithPluginActivationSnapshot,
   TaskWraithPluginCatalogSnapshot,
   TaskWraithPluginSecretMutationResult,
   TaskWraithPluginSecretStatus,
   TaskWraithPluginSecretStatusSnapshot
 } from './PluginManifest'
+import {
+  buildPluginConnectorClients,
+  type PluginConnectorClient
+} from './PluginConnectorClients'
 
 export interface PluginSecretSafeStorage {
   isEncryptionAvailable: () => boolean
@@ -237,6 +242,17 @@ export class PluginSecretStore {
     } catch {
       return null
     }
+  }
+
+  getConnectorClients(
+    catalog: TaskWraithPluginCatalogSnapshot,
+    activation: Pick<TaskWraithPluginActivationSnapshot, 'connectors'>
+  ): PluginConnectorClient[] {
+    return buildPluginConnectorClients({
+      activation,
+      secretStatus: this.getSecretStatusSnapshot(catalog),
+      loadSecretValue: (pluginId, secretId) => this.loadSecretValue(pluginId, secretId)
+    })
   }
 
   private requireSecretSlot(
