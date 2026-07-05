@@ -103,6 +103,8 @@ import { WorkspaceRemoteAccessToggle } from './WorkspaceRemoteAccessToggle'
 import type { RemoteWorkspaceEntry } from '../../../shared/remoteWorkspaceDefaults'
 import type {
   TaskWraithPluginActivatedConnector,
+  TaskWraithPluginCapabilityDiff,
+  TaskWraithPluginCapabilitySnapshot,
   TaskWraithPluginCatalogEntry,
   TaskWraithPluginActivationSnapshot,
   TaskWraithPluginCatalogSnapshot,
@@ -2861,6 +2863,44 @@ export function pluginSettingsEntryMatchesQuery(
   return haystack.includes(normalized)
 }
 
+function pluginSettingsCapabilityName(capability: TaskWraithPluginCapabilitySnapshot): string {
+  return `${capability.kind}: ${capability.label || capability.id}`
+}
+
+export function pluginSettingsCapabilityDiffLines(
+  diff: TaskWraithPluginCapabilityDiff | undefined
+): string[] {
+  if (!diff) return []
+  return [
+    ...diff.added.map((capability) => `Added ${pluginSettingsCapabilityName(capability)}`),
+    ...diff.removed.map((capability) => `Removed ${pluginSettingsCapabilityName(capability)}`),
+    ...diff.changed.map(
+      ({ before, after }) =>
+        `Changed ${pluginSettingsCapabilityName(before)} -> ${pluginSettingsCapabilityName(after)}`
+    )
+  ]
+}
+
+export function pluginSettingsCapabilityDiffSummary(
+  diff: TaskWraithPluginCapabilityDiff | undefined
+): string {
+  if (!diff) return 'No capability-surface changes.'
+  const parts = [
+    diff.added.length ? `${diff.added.length} added` : '',
+    diff.removed.length ? `${diff.removed.length} removed` : '',
+    diff.changed.length ? `${diff.changed.length} changed` : ''
+  ].filter(Boolean)
+  return parts.length > 0 ? parts.join(' · ') : 'No capability-surface changes.'
+}
+
+export function pluginSettingsUpdateReviewMessage(entry: TaskWraithPluginCatalogEntry): string {
+  const update = entry.update
+  const header = `Review plugin update: ${entry.manifest.name}\n${update?.installedVersion || 'installed'} -> ${update?.availableVersion || entry.manifest.version}`
+  const lines = pluginSettingsCapabilityDiffLines(update?.capabilityDiff)
+  if (lines.length === 0) return `${header}\n\nNo capability-surface changes were detected.`
+  return `${header}\n\nCapability changes:\n${lines.map((line) => `- ${line}`).join('\n')}`
+}
+
 export function pluginSettingsProvenancePayload(entry: TaskWraithPluginCatalogEntry): {
   pluginId: string
   publisher: string
@@ -3805,6 +3845,11 @@ export function SettingsPanel({
     if (typeof window === 'undefined' || typeof window.api?.updatePlugin !== 'function') {
       setPluginCatalogError('Plugin update unavailable.')
       return
+    }
+    const entry = pluginEntries.find((candidate) => candidate.manifest.id === pluginId)
+    if (entry?.update?.status === 'available') {
+      const reviewed = window.confirm(pluginSettingsUpdateReviewMessage(entry))
+      if (!reviewed) return
     }
     runPluginMutation(pluginId, () => window.api.updatePlugin(pluginId))
   }
@@ -9121,6 +9166,9 @@ export function SettingsPanel({
                     const tags = entry.manifest.marketplace?.tags || []
                     const updateAvailable = actionState.updateAvailable
                     const capabilityDiff = entry.update?.capabilityDiff
+                    const capabilityDiffSummary =
+                      pluginSettingsCapabilityDiffSummary(capabilityDiff)
+                    const capabilityDiffLines = pluginSettingsCapabilityDiffLines(capabilityDiff)
                     const provenance = pluginSettingsProvenancePayload(entry)
                     return (
                       <article key={pluginId} className="settings-user-mcp-row">
@@ -9202,20 +9250,16 @@ export function SettingsPanel({
                           )}
                           {updateAvailable && capabilityDiff && (
                             <details className="settings-user-mcp-config">
-                              <summary>Capability changes</summary>
-                              <pre>
-                                <code>
-                                  {JSON.stringify(
-                                    {
-                                      added: capabilityDiff.added,
-                                      removed: capabilityDiff.removed,
-                                      changed: capabilityDiff.changed
-                                    },
-                                    null,
-                                    2
-                                  )}
-                                </code>
-                              </pre>
+                              <summary>Review capability changes: {capabilityDiffSummary}</summary>
+                              {capabilityDiffLines.length > 0 ? (
+                                <ul className="settings-plugin-change-list">
+                                  {capabilityDiffLines.map((line) => (
+                                    <li key={line}>{line}</li>
+                                  ))}
+                                </ul>
+                              ) : (
+                                <p className="settings-hint">No capability-surface changes.</p>
+                              )}
                             </details>
                           )}
                           <details className="settings-user-mcp-config">
@@ -9257,7 +9301,7 @@ export function SettingsPanel({
                                   disabled={actionState.updateDisabled}
                                   onClick={() => updatePlugin(pluginId)}
                                 >
-                                  {busy ? 'Updating' : 'Update'}
+                                  {busy ? 'Accepting' : 'Review & accept'}
                                 </button>
                               )}
                               <button

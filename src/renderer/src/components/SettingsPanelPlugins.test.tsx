@@ -9,10 +9,13 @@ import {
   SETTINGS_TABS,
   getVisibleSettingsTabs,
   pluginConnectorSecretSummaries,
+  pluginSettingsCapabilityDiffLines,
+  pluginSettingsCapabilityDiffSummary,
   pluginMcpPresetServerId,
   pluginSettingsActionState,
   pluginSettingsEntryMatchesQuery,
   pluginSettingsProvenancePayload,
+  pluginSettingsUpdateReviewMessage,
   settingsTabMatchesQuery
 } from './SettingsPanel'
 import { SettingsSidebar } from './SettingsSidebar'
@@ -186,6 +189,42 @@ describe('Settings Plugins UI helpers', () => {
     expect(state.enableDisabled).toBe(true)
     expect(state.updateDisabled).toBe(false)
     expect(state.mcpPresets.github.disabled).toBe(true)
+  })
+
+  it('formats plugin update capability diffs for review before acceptance', () => {
+    const entry = makePluginEntry({
+      installed: true,
+      update: {
+        status: 'available',
+        installedVersion: '1.2.2',
+        availableVersion: '1.2.3',
+        installedManifestHash: 'sha256:old',
+        availableManifestHash: 'sha256:abc123',
+        capabilityDiff: {
+          added: [{ id: 'qa', kind: 'workflowTemplates', label: 'QA workflow' }],
+          removed: [{ id: 'old', kind: 'connectors', label: 'Old connector' }],
+          changed: [
+            {
+              before: { id: 'github-mcp', kind: 'mcpServers', label: 'GitHub MCP' },
+              after: { id: 'github-mcp', kind: 'mcpServers', label: 'GitHub MCP Plus' }
+            }
+          ]
+        }
+      }
+    })
+
+    const lines = pluginSettingsCapabilityDiffLines(entry.update?.capabilityDiff)
+
+    expect(pluginSettingsCapabilityDiffSummary(entry.update?.capabilityDiff)).toBe(
+      '1 added · 1 removed · 1 changed'
+    )
+    expect(lines).toEqual([
+      'Added workflowTemplates: QA workflow',
+      'Removed connectors: Old connector',
+      'Changed mcpServers: GitHub MCP -> mcpServers: GitHub MCP Plus'
+    ])
+    expect(pluginSettingsUpdateReviewMessage(entry)).toContain('Review plugin update')
+    expect(pluginSettingsUpdateReviewMessage(entry)).toContain('Capability changes:')
   })
 
   it('marks MCP presets as materialized by provenance-safe server id', () => {

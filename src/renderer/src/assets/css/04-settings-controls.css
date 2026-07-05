@@ -2552,6 +2552,18 @@
   white-space: pre;
 }
 
+.settings-plugin-change-list {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  line-height: 1.4;
+}
+
+.settings-plugin-change-list li + li {
+  margin-top: 3px;
+}
+
 .settings-user-mcp-snippet-list {
   display: grid;
   gap: 10px;
