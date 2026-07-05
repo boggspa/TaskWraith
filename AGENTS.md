@@ -493,14 +493,14 @@ promoted.
 
 Current MVP boundary (see `THREAD_INTROSPECTION.md`):
 
-- **Landed:** domain model, proposal generator, AppStore persistence
-  (`introspection-runs.json`, `memory-proposal-packs.json`).
-- **Pending:** evidence harvester, scheduled workflow, IPC, apply layer, MCP
-  tools.
-- **Review UI:** renderer panel exists; not yet wired to Settings.
+- **Landed:** domain model, proposal generator, AppStore persistence, evidence
+  harvester, manual run service, proposal review panel (committed `0fd22e9a0`).
+- **Pending:** IPC + Settings mount, scheduled workflow, apply layer, MCP tools.
+- **Not operational yet:** users cannot trigger or review packs from Settings
+  until IPC lands (`@WriteMain` slice in progress).
 
 Do not claim introspection is fully operational until collect → propose →
-review → apply is wired end-to-end.
+review (wired) → apply is complete end-to-end.
 
 ---
 

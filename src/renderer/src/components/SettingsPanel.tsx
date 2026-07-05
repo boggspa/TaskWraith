@@ -80,6 +80,7 @@ import { IOS_REMOTE_ENABLED } from '../lib/featureFlags'
 // "Devices" tab) so paired-device QR + workspace allowlist sit
 // together as a single device-management page.
 import { ApprovalLedgerPanel } from './ApprovalLedgerPanel'
+import { ThreadIntrospectionSettingsPanel } from './ThreadIntrospectionSettingsPanel'
 // BridgeNetworkingPanel + ApnsConfigPanel were previously rendered
 // under the "Bridge Networking" tab. They now live inside `PairingPage`
 // (the "Devices" tab) so the iOS pair flow + workspace allowlist +
@@ -2674,6 +2675,7 @@ export type SettingsTab =
   | 'plugins'
   | 'key-commands'
   | 'approval-ledger'
+  | 'thread-introspection'
   | 'safety-privacy'
   | 'pairing'
   | 'shares'
@@ -2782,6 +2784,23 @@ export const SETTINGS_TABS: SettingsTabDefinition[] = [
     group: 'automation',
     description: 'Approval history, durable audit entries, and saved workspace grants.',
     aliases: ['approvals', 'audit', 'ledger', 'grants', 'permissions', 'risk', 'safety'],
+    scope: 'workspace'
+  },
+  {
+    id: 'thread-introspection',
+    label: 'Thread introspection',
+    group: 'automation',
+    description:
+      'Review distilled lessons from recent runs before promoting preferences, conventions, or skill updates.',
+    aliases: [
+      'introspection',
+      'memory promotion',
+      'memory proposals',
+      'retrospective',
+      'agent memory',
+      'skill distillation',
+      'daily introspection'
+    ],
     scope: 'workspace'
   },
   {
@@ -10753,6 +10772,13 @@ export function SettingsPanel({
               onRemoveAgenticWorkspaceGrant?.(grant.provider, grant.workspacePath, grant.service)
             }
             currentWorkspacePath={currentWorkspace?.path ?? null}
+          />
+        )}
+
+        {activeTab === 'thread-introspection' && (
+          <ThreadIntrospectionSettingsPanel
+            workspaceId={currentWorkspace?.id ?? null}
+            workspacePath={currentWorkspace?.path ?? null}
           />
         )}
 

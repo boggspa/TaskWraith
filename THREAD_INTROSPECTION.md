@@ -46,10 +46,11 @@ Daily Thread Introspection (scheduled or manual)
 Until the full pipeline ships, TaskWraith implements **read-only introspection
 + reviewable artifacts only**:
 
-1. Collect recent run/thread evidence (harvester — **pending**).
+1. Collect recent run/thread evidence (harvester — **landed**, `0fd22e9a0`).
 2. Classify patterns into proposal candidates (generator — **landed**).
 3. Persist **Memory Proposal Packs** for review (**landed**).
-4. **Do not** directly edit skills, rules, or repo conventions without an
+4. Review proposals in UI (**landed** in renderer; **IPC + Settings mount pending**).
+5. **Do not** directly edit skills, rules, or repo conventions without an
    approved apply action (**not wired**).
 
 See blackboard decision `thread-introspection-mvp-boundary`.
@@ -149,6 +150,35 @@ values to kinds/scopes. Examples:
 Explicit classifier scope is preserved (e.g. approval friction without a
 provider stays `workspace`, not `provider`).
 
+### Evidence harvester (collect phase)
+
+`IntrospectionEvidenceHarvester` reads persisted substrate for a time window
+and emits normalized `IntrospectionEvidenceItem` records. Sources:
+
+| Source | Signals / heuristics |
+| --- | --- |
+| **Run events** | `approval_denied`, `approval_timeout`, `provider_error`, `tool_failure`, `tool_loop`, `repeated_retry` |
+| **Approval ledger** | User/system denials, timer auto-deny |
+| **Message feedback** | Thumbs-down, correction notes |
+| **Chat messages** | User corrections after assistant replies, repo-convention phrases, skill-candidate heuristics |
+
+Each item carries bounded summaries and optional `⟦recall:…⟧` citation tokens.
+Raw thread prose is never copied into proposals verbatim.
+
+### Manual run service
+
+`IntrospectionRunService.runManualIntrospection()` orchestrates a single pass:
+
+```text
+load chats/events/approvals/feedback for window
+  → harvestIntrospectionEvidence()
+  → generateMemoryProposals()
+  → persist IntrospectionRunRecord + MemoryProposalPack
+  → terminal status review_pending
+```
+
+Callable from tests and (once wired) IPC. No scheduler or apply path.
+
 ## Review gates
 
 `proposalRequiresReview(kind, confidence)`:
@@ -158,8 +188,10 @@ provider stays `workspace`, not `provider`).
 - **Other kinds** — review when confidence < 0.65.
 
 The **Memory Proposal Review** panel (`MemoryProposalReviewPanel.tsx`) supports
-approve/reject callbacks only — **no apply path** until a gated apply layer
-ships.
+approve/reject callbacks, evidence expansion, and skill-patch diff preview —
+**no apply path** until a gated apply layer ships. The panel is committed but
+not yet mounted in Settings; it requires IPC/preload handlers
+(`getMemoryProposalPacks`, `updateMemoryProposal`, `runManualIntrospection`).
 
 ## Trust and prompt-injection boundary
 
@@ -188,19 +220,29 @@ ships.
 
 ## Implementation status
 
+Commits: `37b40c678` (domain/store/generator), `0fd22e9a0` (harvester/run
+service/review UI/docs), `b3429a9ba` (ensemble fixture fix for typecheck).
+
 | Slice | Status | Owner / notes |
 | --- | --- | --- |
-| Domain model + normalization | **Landed** (`37b40c678`) | `src/main/introspection/IntrospectionModel.ts` |
-| Pure proposal generator | **Landed** | `IntrospectionProposalGenerator.ts`, 14 tests |
+| Domain model + normalization | **Landed** | `IntrospectionModel.ts` |
+| Pure proposal generator | **Landed** | `IntrospectionProposalGenerator.ts` |
 | AppStore persistence | **Landed** | `introspection-runs.json`, `memory-proposal-packs.json` |
-| Evidence harvester (24h collect) | **Pending** | Run events, feedback, approvals → evidence items |
+| Evidence harvester | **Landed** | `IntrospectionEvidenceHarvester.ts` — run events, approvals, feedback, chat heuristics |
+| Manual run service | **Landed** | `IntrospectionRunService.runManualIntrospection()` |
+| Proposal Review UI | **Landed (unwired)** | `MemoryProposalReviewPanel.tsx` — props-driven; needs IPC + Settings tab |
+| IPC + Settings tab | **Pending** | `@WriteMain` — mirror `ApprovalLedgerPanel` preload pattern |
 | Scheduled workflow template | **Pending** | Daily cron via `WorkflowDefinition` |
-| IPC + Settings tab | **Pending** | Preload handlers for pack fetch + status updates |
-| Proposal Review UI | **In tree (uncommitted)** | `MemoryProposalReviewPanel.tsx` — props-driven until IPC |
 | Apply layer | **Pending** | RepoConventionIndex, blackboard, skill patch manager + rollback |
 | Distillation policy | **Pending** | Auto-approve rules per scope/kind |
 | Decay / supersede | **Pending** | Registry lifecycle after apply |
 | MCP tools | **Pending** | No brokered introspection tools yet |
+
+**Tests:** 29 introspection-focused tests green (harvester, run service, model,
+generator, AppStore, review panel).
+
+**Not yet user-operational:** no Settings entry, no manual “Run introspection”
+button, no scheduled daily pass — backend + review shell only.
 
 ## Apply targets (planned)
 

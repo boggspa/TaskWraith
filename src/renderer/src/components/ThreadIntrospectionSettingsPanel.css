@@ -1,0 +1,82 @@
+/* ThreadIntrospectionSettingsPanel — Settings tab host for memory promotion review. */
+
+.thread-introspection-settings-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.thread-introspection-settings-toolbar {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--panel-border, var(--surface-border));
+  background: color-mix(in srgb, var(--surface-2, var(--panel-elevated-bg)) 65%, transparent);
+}
+
+.thread-introspection-settings-toolbar-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  flex: 1 1 240px;
+}
+
+.thread-introspection-settings-toolbar-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.thread-introspection-settings-run-button {
+  flex: 0 0 auto;
+  border: 1px solid color-mix(in srgb, var(--accent, #6b7cff) 45%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent, #6b7cff) 14%, transparent);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 8px 14px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.thread-introspection-settings-run-button:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent, #6b7cff) 60%, transparent);
+  background: color-mix(in srgb, var(--accent, #6b7cff) 20%, transparent);
+}
+
+.thread-introspection-settings-run-button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.thread-introspection-settings-ipc-hint,
+.thread-introspection-settings-run-notice {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.thread-introspection-settings-ipc-hint {
+  border: 1px dashed color-mix(in srgb, var(--panel-border) 80%, transparent);
+  background: color-mix(in srgb, var(--surface-2, var(--panel-elevated-bg)) 50%, transparent);
+}
+
+.thread-introspection-settings-run-notice {
+  border: 1px solid color-mix(in srgb, var(--success, #3ecf8e) 35%, transparent);
+  background: color-mix(in srgb, var(--success, #3ecf8e) 10%, transparent);
+  color: color-mix(in srgb, var(--success, #3ecf8e) 88%, var(--text-primary));
+}
+
+.thread-introspection-settings-run-error {
+  padding: 8px 12px;
+  border-radius: 6px;
+}

@@ -1337,6 +1337,18 @@ const api = {
     toMode: string
     tier: number
   }) => ipcRenderer.invoke('record-approval-elevation-ack', input),
+  getMemoryProposalPacks: (workspaceId?: string | null) =>
+    ipcRenderer.invoke('get-memory-proposal-packs', workspaceId),
+  getMemoryProposalPack: (packId: string) =>
+    ipcRenderer.invoke('get-memory-proposal-pack', packId),
+  updateMemoryProposal: (packId: string, proposalId: string, partial: any) =>
+    ipcRenderer.invoke('update-memory-proposal', { packId, proposalId, partial }),
+  runManualIntrospection: (input: {
+    windowStart: string
+    windowEnd: string
+    workspaceId?: string
+    workspacePath?: string
+  }) => ipcRenderer.invoke('run-manual-introspection', input),
   getProductOperationsStatus: () => ipcRenderer.invoke('get-product-operations-status'),
   getProductCrashes: (filter: any = {}) => ipcRenderer.invoke('get-product-crashes', filter),
   recordProductCrash: (input: any) => ipcRenderer.invoke('record-product-crash', input),

@@ -944,6 +944,11 @@ import { registerUsageRatesHandlers } from './ipc/usageRatesHandlers'
 import { registerScheduledWorkflowHandlers } from './ipc/scheduledWorkflowHandlers'
 import { registerRunQueueHandlers } from './ipc/runQueueHandlers'
 import { registerApprovalLedgerHandlers } from './ipc/approvalLedgerHandlers'
+import { registerIntrospectionHandlers } from './ipc/introspectionHandlers'
+import {
+  createIntrospectionRunServiceDeps,
+  runManualIntrospection
+} from './introspection/IntrospectionRunService'
 import {
   createBridgeNetworkingTailscaleStatusGetter,
   registerBridgeAllowlistHandlers
@@ -14586,7 +14591,7 @@ function sendCodexSyntheticToolResult(
   // ±stat evidence riding the result: the timeline tool_use is emitted ONCE
   // per item (often before any patch content exists), so growing patch
   // updates can only reach diff derivation through their results.
-  extras?: { changes?: unknown[]; kind?: string }
+  extras?: { changes?: unknown[]; kind?: string; toolName?: string }
 ) {
   sendAgentCompatLine(
     state.sender,
@@ -14597,6 +14602,7 @@ function sendCodexSyntheticToolResult(
       output,
       status: status === 'running' ? 'warning' : status,
       provider: 'codex',
+      ...(extras?.toolName ? { tool_name: extras.toolName } : {}),
       ...(extras?.changes ? { changes: extras.changes } : {}),
       ...(extras?.kind ? { kind: extras.kind } : {})
     },
@@ -14624,7 +14630,10 @@ function emitCodexReasoningDelta(state: CodexRunState, params: any, label: strin
   ensureCodexTimelineTool(state, itemId, 'codex_reasoning', { title: label, kind: 'reasoning' })
   const next = (state.reasoningTextByItemId.get(itemId) || '') + delta
   state.reasoningTextByItemId.set(itemId, next)
-  sendCodexSyntheticToolResult(state, itemId, next, 'running')
+  sendCodexSyntheticToolResult(state, itemId, next, 'running', {
+    toolName: 'codex_reasoning',
+    kind: 'reasoning'
+  })
 }
 
 function emitCodexProviderMediaRefs(state: CodexRunState, raw: unknown): void {
@@ -15822,7 +15831,8 @@ function handleCodexNotification(message: any) {
           state,
           itemId,
           text,
-          item.status === 'failed' ? 'error' : 'success'
+          item.status === 'failed' ? 'error' : 'success',
+          { toolName: 'codex_reasoning', kind: 'reasoning' }
         )
       return
     }
@@ -29058,6 +29068,25 @@ if (isGeminiMcpBridgeProcess) {
       recordApprovalLedgerDecision,
       randomUUID,
       getNowIso: () => new Date().toISOString()
+    })
+    registerIntrospectionHandlers({
+      getMemoryProposalPacks: (workspaceId) => AppStore.getMemoryProposalPacks(workspaceId),
+      getMemoryProposalPack: (id) => AppStore.getMemoryProposalPack(id),
+      updateMemoryProposal: (packId, proposalId, partial) =>
+        AppStore.updateMemoryProposal(packId, proposalId, partial),
+      runManualIntrospection: (input) =>
+        runManualIntrospection(
+          createIntrospectionRunServiceDeps({
+            getChats: (workspaceId) => AppStore.getChats(workspaceId),
+            getRunEvents: (filter) => AppStore.getRunEvents(filter),
+            getApprovalLedger: (filter) => AppStore.getApprovalLedger(filter),
+            getMessageFeedbackReceipts: (filter) => AppStore.getMessageFeedbackReceipts(filter),
+            createIntrospectionRun: (record) => AppStore.createIntrospectionRun(record),
+            updateIntrospectionRun: (id, partial) => AppStore.updateIntrospectionRun(id, partial),
+            saveMemoryProposalPack: (pack) => AppStore.saveMemoryProposalPack(pack)
+          }),
+          input
+        )
     })
 
     registerDiagnosticsHandlers({

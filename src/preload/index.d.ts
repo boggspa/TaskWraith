@@ -69,7 +69,9 @@ import {
   PermissionOverrides,
   PooledAgentStatsSummary,
   PromptCacheCapability,
-  PromptCacheSettings
+  PromptCacheSettings,
+  MemoryProposal,
+  MemoryProposalPack
 } from '../main/store/types'
 import type {
   WorkflowRunSummary,
@@ -1686,6 +1688,23 @@ declare global {
         toMode: string
         tier: number
       }) => Promise<void>
+      getMemoryProposalPacks: (workspaceId?: string | null) => Promise<MemoryProposalPack[]>
+      getMemoryProposalPack: (packId: string) => Promise<MemoryProposalPack | null>
+      updateMemoryProposal: (
+        packId: string,
+        proposalId: string,
+        partial: Partial<MemoryProposal>
+      ) => Promise<MemoryProposalPack | null>
+      runManualIntrospection: (input: {
+        windowStart: string
+        windowEnd: string
+        workspaceId?: string
+        workspacePath?: string
+      }) => Promise<{
+        pack: MemoryProposalPack
+        evidenceCount: number
+        proposalCount: number
+      }>
       getProductOperationsStatus: () => Promise<ProductOperationsStatus>
       getProductCrashes: (filter?: ProductCrashFilter) => Promise<ProductCrashRecord[]>
       recordProductCrash: (input: ProductCrashInput) => Promise<ProductCrashRecord>
