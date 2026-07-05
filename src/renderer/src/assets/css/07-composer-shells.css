@@ -521,9 +521,9 @@
   gap: 6px;
   flex: 1;
 }
-[data-composer-style="claude"] [data-composer-control="permission"] { order: 0; }
+[data-composer-style="claude"] [data-composer-control="permission"] { order: -1; }
 [data-composer-style="claude"] [data-composer-control="voice"] { order: 0; }
-[data-composer-style="claude"] [data-composer-control="attach"]    { order: -1; }
+[data-composer-style="claude"] [data-composer-control="attach"]    { order: 0; }
 [data-composer-style="claude"] [data-composer-control="schedule"] { order: 1; }
 /* Provider sits in the gap between `+` (attach) and the right-aligned model
  * picker — replaces the previous satellite footer chip. */
