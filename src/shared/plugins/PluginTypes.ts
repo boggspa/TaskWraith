@@ -388,10 +388,12 @@ export interface TaskWraithPluginContributionProvenance {
 
 export type TaskWraithPluginResourceKind =
   | 'mcpServer'
+  | 'toolBundle'
   | 'workflowTemplate'
   | 'runtimeProfile'
   | 'connector'
   | 'localService'
+  | 'providerSetup'
   | 'remoteProjection'
 
 export interface TaskWraithPluginResourceProvenance
@@ -501,6 +503,77 @@ export interface TaskWraithPluginContributionSnapshot {
     taskwraithToolBundles: number
     workflowTemplates: number
     runtimeProfiles: number
+    connectors: number
+    localServices: number
+    providerSetup: number
+    mobileRemoteProjection: number
+  }
+}
+
+export interface TaskWraithPluginActivatedToolBundle {
+  id: string
+  plugin: TaskWraithPluginContributionProvenance
+  bundle: TaskWraithPluginToolBundle
+  pluginProvenance: TaskWraithPluginResourceProvenance
+}
+
+export interface TaskWraithPluginActivatedWorkflowTemplate {
+  id: string
+  plugin: TaskWraithPluginContributionProvenance
+  template: TaskWraithPluginWorkflowTemplate
+  pluginProvenance: TaskWraithPluginResourceProvenance
+}
+
+export interface TaskWraithPluginActivatedConnector {
+  id: string
+  plugin: TaskWraithPluginContributionProvenance
+  connector: TaskWraithPluginConnectorBinding
+  pluginProvenance: TaskWraithPluginResourceProvenance
+}
+
+export interface TaskWraithPluginActivatedLocalService {
+  id: string
+  plugin: TaskWraithPluginContributionProvenance
+  service: TaskWraithPluginLocalServiceDefinition
+  pluginProvenance: TaskWraithPluginResourceProvenance
+  enabled: boolean
+  running: boolean
+  managedByTaskWraith: boolean
+}
+
+export interface TaskWraithPluginActivatedProviderSetup {
+  id: string
+  plugin: TaskWraithPluginContributionProvenance
+  setup: TaskWraithPluginProviderSetupMetadata
+  pluginProvenance: TaskWraithPluginResourceProvenance
+}
+
+export interface TaskWraithPluginActivatedMobileProjection {
+  id: string
+  plugin: TaskWraithPluginContributionProvenance
+  projection: TaskWraithPluginMobileProjectionMetadata
+  pluginProvenance: TaskWraithPluginResourceProvenance
+  enabled: boolean
+}
+
+export interface TaskWraithPluginActivationSnapshot {
+  schemaVersion: 1
+  generatedAt: string
+  mcpServers: TaskWraithPluginUserMcpServerConfig[]
+  runtimeProfileIds: string[]
+  taskwraithToolBundles: TaskWraithPluginActivatedToolBundle[]
+  workflowTemplates: TaskWraithPluginActivatedWorkflowTemplate[]
+  connectors: TaskWraithPluginActivatedConnector[]
+  localServices: TaskWraithPluginActivatedLocalService[]
+  providerSetup: TaskWraithPluginActivatedProviderSetup[]
+  mobileRemoteProjection: TaskWraithPluginActivatedMobileProjection[]
+  materializedResources: TaskWraithPluginMaterializedResourceRef[]
+  counts: {
+    enabledPlugins: number
+    mcpServers: number
+    runtimeProfiles: number
+    taskwraithToolBundles: number
+    workflowTemplates: number
     connectors: number
     localServices: number
     providerSetup: number

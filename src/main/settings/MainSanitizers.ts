@@ -338,10 +338,12 @@ function sanitizePluginResourceProvenance(value: unknown): TaskWraithPluginResou
       : undefined
   const kind =
     value.kind === 'mcpServer' ||
+    value.kind === 'toolBundle' ||
     value.kind === 'workflowTemplate' ||
     value.kind === 'runtimeProfile' ||
     value.kind === 'connector' ||
     value.kind === 'localService' ||
+    value.kind === 'providerSetup' ||
     value.kind === 'remoteProjection'
       ? value.kind
       : undefined

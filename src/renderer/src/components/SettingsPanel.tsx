@@ -2775,6 +2775,14 @@ export function pluginMcpPresetServerId(pluginId: string, presetId: string): str
   return `plugin:${pluginId}:mcp:${presetId}`
 }
 
+function runtimeProfileReadOnlyReason(profile: RuntimeProfile): string | null {
+  if (profile.builtin) return 'Built-in runtime profiles are read-only. Create a custom profile instead.'
+  if (profile.pluginProvenance) {
+    return 'Plugin runtime profiles are read-only. Disable the contributing plugin to remove this profile.'
+  }
+  return null
+}
+
 export function pluginSettingsEntryMatchesQuery(
   entry: TaskWraithPluginCatalogEntry,
   query: string
@@ -3493,7 +3501,9 @@ export function SettingsPanel({
   )
 
   const runtimeProfiles = runtimeProfilesProp ?? runtimeProfileRecords
-  const editableRuntimeProfileCount = runtimeProfiles.filter((profile) => !profile.builtin).length
+  const editableRuntimeProfileCount = runtimeProfiles.filter(
+    (profile) => !runtimeProfileReadOnlyReason(profile)
+  ).length
   const runtimeProfileSecretRefCount = runtimeProfiles.reduce(
     (total, profile) => total + (profile.secretRefs?.env?.length ?? 0),
     0
@@ -3985,8 +3995,9 @@ export function SettingsPanel({
   }
 
   const startEditRuntimeProfile = (profile: RuntimeProfile): void => {
-    if (profile.builtin) {
-      setRuntimeProfileError('Built-in runtime profiles are read-only. Create a custom profile instead.')
+    const readOnlyReason = runtimeProfileReadOnlyReason(profile)
+    if (readOnlyReason) {
+      setRuntimeProfileError(readOnlyReason)
       return
     }
     setRuntimeProfileFormMode('edit')
@@ -3996,8 +4007,9 @@ export function SettingsPanel({
   }
 
   const deleteRuntimeProfile = async (profile: RuntimeProfile): Promise<void> => {
-    if (profile.builtin) {
-      setRuntimeProfileError('Built-in runtime profiles cannot be deleted.')
+    const readOnlyReason = runtimeProfileReadOnlyReason(profile)
+    if (readOnlyReason) {
+      setRuntimeProfileError(readOnlyReason)
       return
     }
     if (typeof window === 'undefined' || typeof window.api?.deleteRuntimeProfile !== 'function') {
@@ -8385,49 +8397,57 @@ export function SettingsPanel({
                 </div>
               ) : (
                 <div className="settings-user-mcp-list">
-                  {runtimeProfiles.map((profile) => (
-                    <article key={profile.id} className="settings-user-mcp-row">
-                      <div className="settings-user-mcp-main">
-                        <strong>{profile.name}</strong>
-                        <span>
-                          {SETTINGS_PROVIDER_LABELS[profile.provider]} · {profile.scope} ·{' '}
-                          {profile.workspaceMode}
-                        </span>
-                        <div className="settings-mcp-server-meta">
-                          <span>{profile.builtin ? 'builtin' : 'custom'}</span>
-                          <span>{profile.networkPolicy} network</span>
-                          <span>{profile.persistence}</span>
-                          {profile.binaryPath && <span>binary override</span>}
-                          {Object.keys(profile.env ?? {}).length > 0 && (
-                            <span>{pluralizeCount(Object.keys(profile.env).length, 'env var')}</span>
-                          )}
-                          {profile.secretRefs?.env && profile.secretRefs.env.length > 0 && (
-                            <span>
-                              {pluralizeCount(profile.secretRefs.env.length, 'encrypted env var')}
-                            </span>
-                          )}
+                  {runtimeProfiles.map((profile) => {
+                    const readOnlyReason = runtimeProfileReadOnlyReason(profile)
+                    const profileSource = profile.builtin
+                      ? 'builtin'
+                      : profile.pluginProvenance
+                        ? `plugin: ${profile.pluginProvenance.pluginId}`
+                        : 'custom'
+                    return (
+                      <article key={profile.id} className="settings-user-mcp-row">
+                        <div className="settings-user-mcp-main">
+                          <strong>{profile.name}</strong>
+                          <span>
+                            {SETTINGS_PROVIDER_LABELS[profile.provider]} · {profile.scope} ·{' '}
+                            {profile.workspaceMode}
+                          </span>
+                          <div className="settings-mcp-server-meta">
+                            <span>{profileSource}</span>
+                            <span>{profile.networkPolicy} network</span>
+                            <span>{profile.persistence}</span>
+                            {profile.binaryPath && <span>binary override</span>}
+                            {Object.keys(profile.env ?? {}).length > 0 && (
+                              <span>{pluralizeCount(Object.keys(profile.env).length, 'env var')}</span>
+                            )}
+                            {profile.secretRefs?.env && profile.secretRefs.env.length > 0 && (
+                              <span>
+                                {pluralizeCount(profile.secretRefs.env.length, 'encrypted env var')}
+                              </span>
+                            )}
+                          </div>
                         </div>
-                      </div>
-                      <div className="settings-user-mcp-actions">
-                        <button
-                          type="button"
-                          className="btn btn-sm btn-ghost"
-                          onClick={() => startEditRuntimeProfile(profile)}
-                          disabled={profile.builtin}
-                        >
-                          Edit
-                        </button>
-                        <button
-                          type="button"
-                          className="btn btn-sm btn-ghost"
-                          onClick={() => void deleteRuntimeProfile(profile)}
-                          disabled={profile.builtin}
-                        >
-                          Delete
-                        </button>
-                      </div>
-                    </article>
-                  ))}
+                        <div className="settings-user-mcp-actions">
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-ghost"
+                            onClick={() => startEditRuntimeProfile(profile)}
+                            disabled={Boolean(readOnlyReason)}
+                          >
+                            Edit
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-ghost"
+                            onClick={() => void deleteRuntimeProfile(profile)}
+                            disabled={Boolean(readOnlyReason)}
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </article>
+                    )
+                  })}
                 </div>
               )}
             </div>
@@ -8647,8 +8667,8 @@ export function SettingsPanel({
                   </div>
                   <p className="settings-hint">
                     Capability bundles declare TaskWraith-owned presets, templates, metadata, and
-                    permission requests. Install and enable state is stored separately from app
-                    settings.
+                    permission requests. Enabled trusted bundles activate provenance-stamped
+                    resources in TaskWraith registries.
                   </p>
                 </div>
               </div>
@@ -8665,9 +8685,9 @@ export function SettingsPanel({
                   <small>state records</small>
                 </article>
                 <article className="settings-mcp-summary-card">
-                  <span>Enabled</span>
+                  <span>Activated</span>
                   <strong>{enabledPluginCount}</strong>
-                  <small>still inert in V1</small>
+                  <small>contributing resources</small>
                 </article>
                 <article className="settings-mcp-summary-card">
                   <span>Repairable</span>
@@ -8698,8 +8718,8 @@ export function SettingsPanel({
                   Catalog
                 </h4>
                 <p className="settings-hint">
-                  V1 plugins never run install scripts, register Electron code, or mutate provider
-                  configuration directly.
+                  Plugins never run install scripts, register Electron code, or mutate provider
+                  configuration directly; activation is limited to TaskWraith-owned registries.
                 </p>
               </div>
               <div className="settings-audit-toolbar">
@@ -8861,7 +8881,7 @@ export function SettingsPanel({
                         <div className="settings-user-mcp-actions">
                           {entry.installed && (
                             <label className="settings-user-mcp-toggle">
-                              <span className="sr-only">Enable {entry.manifest.name}</span>
+                              <span className="sr-only">Activate {entry.manifest.name}</span>
                               <input
                                 type="checkbox"
                                 checked={entry.enabled}

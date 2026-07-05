@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ipcMain } from 'electron'
 import { registerPluginHandlers } from './pluginHandlers'
 import type {
+  TaskWraithPluginActivationSnapshot,
   TaskWraithPluginCatalogSnapshot,
   TaskWraithPluginContributionSnapshot,
   TaskWraithPluginSecretStatusSnapshot
@@ -73,6 +74,33 @@ function contributions(): TaskWraithPluginContributionSnapshot {
   }
 }
 
+function activation(): TaskWraithPluginActivationSnapshot {
+  return {
+    schemaVersion: 1,
+    generatedAt: '2026-06-29T12:00:00.000Z',
+    mcpServers: [],
+    runtimeProfileIds: [],
+    taskwraithToolBundles: [],
+    workflowTemplates: [],
+    connectors: [],
+    localServices: [],
+    providerSetup: [],
+    mobileRemoteProjection: [],
+    materializedResources: [],
+    counts: {
+      enabledPlugins: 0,
+      mcpServers: 0,
+      runtimeProfiles: 0,
+      taskwraithToolBundles: 0,
+      workflowTemplates: 0,
+      connectors: 0,
+      localServices: 0,
+      providerSetup: 0,
+      mobileRemoteProjection: 0
+    }
+  }
+}
+
 function secretStatus(): TaskWraithPluginSecretStatusSnapshot {
   return {
     schemaVersion: 1,
@@ -96,6 +124,7 @@ describe('registerPluginHandlers', () => {
   it('registers read and lifecycle handlers against the plugin host', () => {
     const catalog = snapshot()
     const contributionSnapshot = contributions()
+    const activationSnapshot = activation()
     const secretSnapshot = secretStatus()
     const installed = snapshot({ counts: { ...catalog.counts, installed: 1 } })
     const enabled = snapshot({ counts: { ...catalog.counts, enabled: 1, installed: 1 } })
@@ -137,6 +166,10 @@ describe('registerPluginHandlers', () => {
         clearSecret: vi.fn(() => ({ ok: true, snapshot: secretSnapshot })),
         clearPluginSecrets: vi.fn(() => 1)
       },
+      pluginContributionManager: {
+        sync: vi.fn(() => activationSnapshot),
+        getActivationSnapshot: vi.fn(() => activationSnapshot)
+      },
       requireNonEmptyString: vi.fn((value: unknown) => String(value))
     }
 
@@ -144,6 +177,7 @@ describe('registerPluginHandlers', () => {
 
     expect(handlerFor('plugins:get-catalog')({})).toBe(catalog)
     expect(handlerFor('plugins:get-contributions')({})).toBe(contributionSnapshot)
+    expect(handlerFor('plugins:get-activation')({})).toBe(activationSnapshot)
     expect(handlerFor('plugins:get-secret-status')({})).toBe(secretSnapshot)
     expect(deps.pluginSecretStore.getSecretStatusSnapshot).toHaveBeenCalledWith(catalog)
     expect(handlerFor('plugins:set-secret')({}, 'demo-bundle', 'token', 'secret-value')).toEqual({
@@ -189,15 +223,19 @@ describe('registerPluginHandlers', () => {
     expect(handlerFor('plugins:install')({}, 'demo-bundle')).toBe(installed)
     expect(deps.requireNonEmptyString).toHaveBeenCalledWith('demo-bundle', 'Plugin id')
     expect(deps.pluginHost.installPlugin).toHaveBeenCalledWith('demo-bundle')
+    expect(deps.pluginContributionManager.sync).toHaveBeenCalledTimes(1)
 
     expect(handlerFor('plugins:set-enabled')({}, 'demo-bundle', 1)).toBe(enabled)
     expect(deps.pluginHost.setPluginEnabled).toHaveBeenCalledWith('demo-bundle', true)
+    expect(deps.pluginContributionManager.sync).toHaveBeenCalledTimes(2)
 
     expect(handlerFor('plugins:update')({}, 'demo-bundle')).toBe(updated)
     expect(deps.pluginHost.updatePlugin).toHaveBeenCalledWith('demo-bundle')
+    expect(deps.pluginContributionManager.sync).toHaveBeenCalledTimes(3)
 
     expect(handlerFor('plugins:uninstall')({}, 'demo-bundle')).toBe(uninstalled)
     expect(deps.pluginHost.uninstallPlugin).toHaveBeenCalledWith('demo-bundle')
     expect(deps.pluginSecretStore.clearPluginSecrets).toHaveBeenCalledWith('demo-bundle')
+    expect(deps.pluginContributionManager.sync).toHaveBeenCalledTimes(4)
   })
 })

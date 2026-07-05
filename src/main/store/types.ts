@@ -1502,7 +1502,7 @@ export interface RuntimeProfile {
   secretRefs?: RuntimeProfileSecretRefs
   mcpProfileId?: string
   approvalMode?: string
-  agenticServices?: AgenticServicesSettings
+  agenticServices?: Partial<AgenticServicesSettings>
   networkPolicy: RuntimeNetworkPolicy
   persistence: RuntimePersistence
   containerConfig?: {
@@ -1511,6 +1511,7 @@ export interface RuntimeProfile {
     mounts?: Array<{ source: string; target: string; access: 'read' | 'write' }>
   }
   builtin?: boolean
+  pluginProvenance?: TaskWraithPluginResourceProvenance
   createdAt: string
   updatedAt: string
 }

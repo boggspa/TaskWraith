@@ -1151,10 +1151,12 @@ function normalizePluginResourceProvenance(
       : undefined
   const kind =
     record.kind === 'mcpServer' ||
+    record.kind === 'toolBundle' ||
     record.kind === 'workflowTemplate' ||
     record.kind === 'runtimeProfile' ||
     record.kind === 'connector' ||
     record.kind === 'localService' ||
+    record.kind === 'providerSetup' ||
     record.kind === 'remoteProjection'
       ? record.kind
       : undefined
@@ -2059,6 +2061,7 @@ export class AppStore {
       networkPolicy: input.networkPolicy || 'inherit',
       persistence: input.persistence || 'reusable',
       containerConfig: input.containerConfig,
+      pluginProvenance: input.pluginProvenance,
       createdAt: existing?.createdAt || now,
       updatedAt: now
     }

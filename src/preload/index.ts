@@ -40,6 +40,7 @@ import type {
 } from '../main/services/RunLifecycleCoordinator'
 import type {
   TaskWraithPluginCatalogSnapshot,
+  TaskWraithPluginActivationSnapshot,
   TaskWraithPluginContributionSnapshot,
   TaskWraithPluginMcpPresetMaterializationResult,
   TaskWraithPluginSecretMutationResult,
@@ -889,6 +890,8 @@ const api = {
     ipcRenderer.invoke(
       'plugins:get-contributions'
     ) as Promise<TaskWraithPluginContributionSnapshot>,
+  getPluginActivation: () =>
+    ipcRenderer.invoke('plugins:get-activation') as Promise<TaskWraithPluginActivationSnapshot>,
   getPluginSecretStatus: () =>
     ipcRenderer.invoke('plugins:get-secret-status') as Promise<TaskWraithPluginSecretStatusSnapshot>,
   setPluginSecret: (pluginId: string, secretId: string, value: string) =>

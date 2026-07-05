@@ -8,10 +8,12 @@ import type {
 
 const RESOURCE_KIND_ID_SEGMENTS: Record<TaskWraithPluginResourceKind, string> = {
   mcpServer: 'mcp',
+  toolBundle: 'tool',
   workflowTemplate: 'workflow',
   runtimeProfile: 'runtime',
   connector: 'connector',
   localService: 'service',
+  providerSetup: 'setup',
   remoteProjection: 'remote'
 }
 

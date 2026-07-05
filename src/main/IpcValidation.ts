@@ -198,6 +198,7 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'providerRates:probe': [],
   'plugins:get-catalog': [],
   'plugins:get-contributions': [],
+  'plugins:get-activation': [],
   'plugins:get-secret-status': [],
   'plugins:set-secret': ['nonEmptyString', 'nonEmptyString', 'string'],
   'plugins:clear-secret': ['nonEmptyString', 'nonEmptyString'],

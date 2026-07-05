@@ -39,6 +39,13 @@ export type {
   TaskWraithPluginMaterializedResourceRef,
   TaskWraithPluginMcpServerContribution,
   TaskWraithPluginMcpPresetMaterializationResult,
+  TaskWraithPluginActivatedToolBundle,
+  TaskWraithPluginActivatedWorkflowTemplate,
+  TaskWraithPluginActivatedConnector,
+  TaskWraithPluginActivatedLocalService,
+  TaskWraithPluginActivatedProviderSetup,
+  TaskWraithPluginActivatedMobileProjection,
+  TaskWraithPluginActivationSnapshot,
   TaskWraithPluginContributionSnapshot,
   TaskWraithPluginSource,
   TaskWraithPluginUserMcpServerConfig
