@@ -3650,6 +3650,304 @@ Next action:
     expect(harness.dispatched).toHaveLength(1)
   })
 
+  it('lets Boss explicitly re-summon an answered worker in Continuous mode', async () => {
+    const initialChat = makeChat()
+    initialChat.ensemble!.orchestrationMode = 'continuous'
+    initialChat.ensemble!.bossmanParticipantId = 'claude'
+    initialChat.activeGoal = { ...buildActiveGoal('goal-x'), status: 'completed' }
+    const harness = makeHarness({ initialChat })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Plan and execute.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    expect(
+      harness.orchestrator.markYielded(
+        harness.dispatched[0].appRunId!,
+        'Worker should take the implementation first.',
+        'Worker'
+      )
+    ).toBe(true)
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+
+    harness.orchestrator.handleProviderOutput(
+      'codex',
+      { appRunId: harness.dispatched[1].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'content', text: 'Implemented most of it.' }
+    )
+    harness.orchestrator.handleProviderOutput(
+      'codex',
+      { appRunId: harness.dispatched[1].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'result', status: 'success' }
+    )
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
+    expect(harness.dispatched[2].provider).toBe('claude')
+
+    const result = await harness.orchestrator.bossmanControlForRun(
+      harness.dispatched[2].appRunId,
+      {
+        action: 'summon_participant',
+        roundId: harness.chat.ensemble?.activeRound?.roundId,
+        targetParticipantId: 'codex',
+        reason: 'Finish the implementation handoff.'
+      }
+    )
+
+    expect(result).toMatchObject({
+      ok: true,
+      action: 'summon_participant',
+      participantId: 'codex'
+    })
+    expect(harness.chat.ensemble?.activeRound?.continuationHops).toBe(2)
+    expect(
+      harness.chat.messages.some((message) =>
+        (message.content || '').includes(
+          'Boss re-summoned Worker (codex). Reason: Finish the implementation handoff. Continuous handoff 2/'
+        )
+      )
+    ).toBe(true)
+
+    harness.orchestrator.handleProviderOutput(
+      'claude',
+      { appRunId: harness.dispatched[2].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'result', status: 'success' }
+    )
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(4))
+    expect(harness.dispatched[3].provider).toBe('codex')
+  })
+
+  it('does not let a Boss @mention re-summon an already answered worker', async () => {
+    const initialChat = makeChat()
+    initialChat.ensemble!.orchestrationMode = 'continuous'
+    initialChat.ensemble!.bossmanParticipantId = 'claude'
+    initialChat.activeGoal = { ...buildActiveGoal('goal-x'), status: 'completed' }
+    const harness = makeHarness({ initialChat })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Plan and execute.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    harness.orchestrator.markYielded(
+      harness.dispatched[0].appRunId!,
+      'Worker should take this.',
+      'Worker'
+    )
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    harness.orchestrator.handleProviderOutput(
+      'codex',
+      { appRunId: harness.dispatched[1].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'content', text: 'Initial worker answer.' }
+    )
+    harness.orchestrator.handleProviderOutput(
+      'codex',
+      { appRunId: harness.dispatched[1].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'result', status: 'success' }
+    )
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
+
+    harness.orchestrator.handleProviderOutput(
+      'claude',
+      { appRunId: harness.dispatched[2].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'content', text: '@Worker still needs to finish this.' }
+    )
+    harness.orchestrator.handleProviderOutput(
+      'claude',
+      { appRunId: harness.dispatched[2].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'result', status: 'success' }
+    )
+
+    await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('completed'))
+    expect(harness.dispatched).toHaveLength(3)
+  })
+
+  it('rejects Boss summon outside Continuous mode', async () => {
+    const initialChat = makeChat()
+    initialChat.ensemble!.bossmanParticipantId = 'claude'
+    const harness = makeHarness({ initialChat })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Plan and execute.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    const result = await harness.orchestrator.bossmanControlForRun(
+      harness.dispatched[0].appRunId,
+      {
+        action: 'summon_participant',
+        roundId: harness.chat.ensemble?.activeRound?.roundId,
+        targetParticipantId: 'codex',
+        reason: 'Needs another turn.'
+      }
+    )
+
+    expect(result.ok).toBe(false)
+    expect(result.error).toBe('summon_not_continuous')
+  })
+
+  it('rejects Boss summon when the target is already pending', async () => {
+    const initialChat = makeChat()
+    initialChat.ensemble!.orchestrationMode = 'continuous'
+    initialChat.ensemble!.bossmanParticipantId = 'claude'
+    const harness = makeHarness({ initialChat })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Plan and execute.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    const result = await harness.orchestrator.bossmanControlForRun(
+      harness.dispatched[0].appRunId,
+      {
+        action: 'summon_participant',
+        roundId: harness.chat.ensemble?.activeRound?.roundId,
+        targetParticipantId: 'codex',
+        reason: 'Move worker now.'
+      }
+    )
+
+    expect(result.ok).toBe(false)
+    expect(result.error).toBe('summon_target_pending')
+    expect(harness.dispatched).toHaveLength(1)
+  })
+
+  it('rejects Boss summon when the target participant is disabled', async () => {
+    const initialChat = makeChat()
+    initialChat.ensemble!.orchestrationMode = 'continuous'
+    initialChat.ensemble!.bossmanParticipantId = 'claude'
+    const harness = makeHarness({ initialChat })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Plan and execute.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    harness.chat.ensemble!.participants.find((participant) => participant.id === 'codex')!.enabled =
+      false
+
+    const result = await harness.orchestrator.bossmanControlForRun(
+      harness.dispatched[0].appRunId,
+      {
+        action: 'summon_participant',
+        roundId: harness.chat.ensemble?.activeRound?.roundId,
+        targetParticipantId: 'codex',
+        reason: 'Try a disabled target.'
+      }
+    )
+
+    expect(result.ok).toBe(false)
+    expect(result.error).toBe('summon_target_disabled')
+  })
+
+  it('rejects Boss summon after the per-target round cap', async () => {
+    const initialChat = makeChat()
+    initialChat.ensemble!.orchestrationMode = 'continuous'
+    initialChat.ensemble!.bossmanParticipantId = 'claude'
+    initialChat.activeGoal = { ...buildActiveGoal('goal-x'), status: 'completed' }
+    const harness = makeHarness({ initialChat })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Plan and execute.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    harness.orchestrator.markYielded(
+      harness.dispatched[0].appRunId!,
+      'Worker should take this.',
+      'Worker'
+    )
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    harness.orchestrator.handleProviderOutput(
+      'codex',
+      { appRunId: harness.dispatched[1].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'content', text: 'Initial worker answer.' }
+    )
+    harness.orchestrator.handleProviderOutput(
+      'codex',
+      { appRunId: harness.dispatched[1].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'result', status: 'success' }
+    )
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
+
+    const runtime = (
+      harness.orchestrator as unknown as {
+        roundsByChatId: Map<
+          string,
+          { bossmanSummonCountsByParticipantId?: Map<string, number> }
+        >
+      }
+    ).roundsByChatId.get('ensemble-chat')!
+    runtime.bossmanSummonCountsByParticipantId = new Map([['codex', 3]])
+
+    const result = await harness.orchestrator.bossmanControlForRun(
+      harness.dispatched[2].appRunId,
+      {
+        action: 'summon_participant',
+        roundId: harness.chat.ensemble?.activeRound?.roundId,
+        targetParticipantId: 'codex',
+        reason: 'Try again.'
+      }
+    )
+
+    expect(result.ok).toBe(false)
+    expect(result.error).toBe('summon_limit')
+    expect(harness.chat.ensemble?.activeRound?.continuationHops).toBe(1)
+  })
+
+  it('rejects Boss summon when the continuation hop budget is exhausted', async () => {
+    const initialChat = makeChat()
+    initialChat.ensemble!.orchestrationMode = 'continuous'
+    initialChat.ensemble!.bossmanParticipantId = 'claude'
+    initialChat.ensemble!.maxContinuationHops = 1
+    initialChat.activeGoal = { ...buildActiveGoal('goal-x'), status: 'completed' }
+    const harness = makeHarness({ initialChat })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Plan and execute.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    harness.orchestrator.markYielded(
+      harness.dispatched[0].appRunId!,
+      'Worker should take this.',
+      'Worker'
+    )
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    harness.orchestrator.handleProviderOutput(
+      'codex',
+      { appRunId: harness.dispatched[1].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'content', text: 'Initial worker answer.' }
+    )
+    harness.orchestrator.handleProviderOutput(
+      'codex',
+      { appRunId: harness.dispatched[1].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'result', status: 'success' }
+    )
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
+
+    const result = await harness.orchestrator.bossmanControlForRun(
+      harness.dispatched[2].appRunId,
+      {
+        action: 'summon_participant',
+        roundId: harness.chat.ensemble?.activeRound?.roundId,
+        targetParticipantId: 'codex',
+        reason: 'Need one more pass.'
+      }
+    )
+
+    expect(result.ok).toBe(false)
+    expect(result.error).toBe('summon_hop_limit')
+    expect(harness.dispatched).toHaveLength(3)
+    expect(
+      harness.chat.messages.map((message) => message.content)
+    ).toContain('Continuous handoff limit reached (1/1); returning control to the user.')
+  })
+
   it('rejects Boss control from non-Boss callers and stale round ids', async () => {
     const initialChat = makeChat()
     initialChat.ensemble!.bossmanParticipantId = 'claude'

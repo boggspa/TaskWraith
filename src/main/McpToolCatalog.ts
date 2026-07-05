@@ -2224,7 +2224,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
     {
       name: 'ensemble_bossman_control',
       description:
-        'In Ensemble Mode, allows the assigned Boss participant, or Captain only after Boss is unavailable, to make event-bound orchestration decisions: skip/stop participants, replace a participant after provider health checks, reorder the remaining queue with cooldown, queue a follow-up, or pause/complete a managed Work Session. Non-authority callers and stale round/run/participant ids are rejected and audited.',
+        'In Ensemble Mode, allows the assigned Boss participant, or Captain only after Boss is unavailable, to make event-bound orchestration decisions: skip/stop participants, explicitly re-summon an already-answered participant in Continuous mode, replace a participant after provider health checks, reorder the remaining queue with cooldown, queue a follow-up, or pause/complete a managed Work Session. Non-authority callers and stale round/run/participant ids are rejected and audited.',
       annotations: {
         readOnlyHint: false,
         destructiveHint: false,
@@ -2238,6 +2238,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
             type: 'string',
             enum: [
               'skip_participant',
+              'summon_participant',
               'stop_round',
               'replace_participant',
               'reorder_remaining',
@@ -2253,7 +2254,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
           targetParticipantId: {
             type: 'string',
             description:
-              'Required for skip/replace unless targetRunId identifies the active target.'
+              'Required for skip/summon/replace unless targetRunId identifies the active target.'
           },
           targetRunId: {
             type: 'string',
@@ -2271,7 +2272,8 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
           },
           reason: {
             type: 'string',
-            description: 'Human-readable rationale recorded into the transcript/status metadata.'
+            description:
+              'Human-readable rationale recorded into the transcript/status metadata. Required in practice for summon_participant so the transcript states why the directed continuation was needed.'
           },
           replacement: {
             type: 'object',

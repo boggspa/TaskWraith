@@ -187,6 +187,7 @@ const ENSEMBLE_GLOBAL_USAGE_WORKSPACE_ID = '__taskwraith_global_chats__'
 const MAX_ENSEMBLE_FANOUT_TARGETS = 20
 
 const DEFAULT_CONTINUATION_HOP_LIMIT = 6
+const MAX_BOSSMAN_SUMMONS_PER_PARTICIPANT_PER_ROUND = 3
 const MAX_CONTINUATION_HOP_LIMIT = 500
 const ENSEMBLE_IMAGE_ATTACHMENT_EXT = /\.(png|jpe?g|gif|webp|bmp|heic|avif|tiff|tif|svg|jfif)(\?.*)?$/i
 
@@ -578,6 +579,7 @@ export interface EnsembleFanoutResult {
 
 export type EnsembleBossmanControlAction =
   | 'skip_participant'
+  | 'summon_participant'
   | 'stop_round'
   | 'replace_participant'
   | 'reorder_remaining'
@@ -620,6 +622,14 @@ export interface EnsembleBossmanControlResult {
     | 'permission_ceiling'
     | 'replacement_unreachable'
     | 'reorder_cooldown'
+    | 'summon_blocked_status'
+    | 'summon_hop_limit'
+    | 'summon_limit'
+    | 'summon_not_continuous'
+    | 'summon_target_active'
+    | 'summon_target_disabled'
+    | 'summon_target_pending'
+    | 'summon_self_target'
     | 'queue_failed'
     | 'no_active_work_session'
     | 'baseline_exceeded'
@@ -2242,6 +2252,7 @@ interface ActiveRoundRuntime {
   continuationHops: number
   maxContinuationHops: number
   continuationLimitNotified?: boolean
+  bossmanSummonCountsByParticipantId?: Map<string, number>
   /**
    * Slice C extension (1.0.3) — when a participant calls
    * `ensemble_yield` with an explicit `target` argument, the
@@ -3220,6 +3231,10 @@ export class EnsembleOrchestrator {
 
     if (action === 'skip_participant') {
       return this.skipParticipantByBossman(runtime, input, targetRun)
+    }
+
+    if (action === 'summon_participant') {
+      return this.summonParticipantByBossman(runtime, input, caller.participant, authority.role)
     }
 
     if (action === 'reorder_remaining') {
@@ -4478,6 +4493,152 @@ export class EnsembleOrchestrator {
       roundId: runtime.roundId,
       participantId: participant.id,
       message: `Boss skipped pending participant ${participant.role || participant.provider}.`
+    }
+  }
+
+  private summonParticipantByBossman(
+    runtime: ActiveRoundRuntime,
+    input: EnsembleBossmanControlInput,
+    caller: EnsembleParticipant,
+    authorityRole: 'boss' | 'second_in_command'
+  ): EnsembleBossmanControlResult {
+    const authorityLabel = authorityRole === 'second_in_command' ? 'Captain' : 'Boss'
+    const targetParticipantId = input.targetParticipantId
+    if (!targetParticipantId) {
+      return {
+        ok: false,
+        tool: 'ensemble_bossman_control',
+        action: 'summon_participant',
+        roundId: runtime.roundId,
+        message: `${authorityLabel} summon requires targetParticipantId.`,
+        error: 'stale_target'
+      }
+    }
+    if (targetParticipantId === caller.id) {
+      return {
+        ok: false,
+        tool: 'ensemble_bossman_control',
+        action: 'summon_participant',
+        roundId: runtime.roundId,
+        participantId: targetParticipantId,
+        message: `${authorityLabel} summon rejected: the controlling participant cannot summon itself.`,
+        error: 'summon_self_target'
+      }
+    }
+    if (runtime.orchestrationMode !== 'continuous') {
+      return {
+        ok: false,
+        tool: 'ensemble_bossman_control',
+        action: 'summon_participant',
+        roundId: runtime.roundId,
+        participantId: targetParticipantId,
+        message: `${authorityLabel} summon rejected: directed continuations require Continuous mode.`,
+        error: 'summon_not_continuous'
+      }
+    }
+    const chat = this.deps.getChat(runtime.chatId)
+    const target = chat?.ensemble?.participants.find(
+      (participant) => participant.id === targetParticipantId
+    )
+    if (!chat?.ensemble || !target) {
+      return {
+        ok: false,
+        tool: 'ensemble_bossman_control',
+        action: 'summon_participant',
+        roundId: runtime.roundId,
+        participantId: targetParticipantId,
+        message: `${authorityLabel} summon rejected: target participant is no longer on the roster.`,
+        error: 'stale_target'
+      }
+    }
+    if (!target.enabled) {
+      return {
+        ok: false,
+        tool: 'ensemble_bossman_control',
+        action: 'summon_participant',
+        roundId: runtime.roundId,
+        participantId: targetParticipantId,
+        message: `${authorityLabel} summon rejected: ${target.role || target.provider} is disabled.`,
+        error: 'summon_target_disabled'
+      }
+    }
+    const activeRun = runtime.activeRunId ? this.runsByRunId.get(runtime.activeRunId) : undefined
+    const activeScoutRun = [...(runtime.activeScoutRunIds || [])]
+      .map((runId) => this.runsByRunId.get(runId))
+      .find((run) => run?.participant.id === target.id)
+    if (
+      activeRun?.participant.id === target.id ||
+      activeScoutRun ||
+      this.activeRoundParticipantStatus(runtime, target.id) === 'running'
+    ) {
+      return {
+        ok: false,
+        tool: 'ensemble_bossman_control',
+        action: 'summon_participant',
+        roundId: runtime.roundId,
+        participantId: target.id,
+        message: `${authorityLabel} summon rejected: ${target.role || target.provider} is already active.`,
+        error: 'summon_target_active'
+      }
+    }
+    const remaining = runtime.remainingParticipants ?? (runtime.remainingParticipants = [])
+    if (remaining.some((participant) => participant.id === target.id)) {
+      return {
+        ok: false,
+        tool: 'ensemble_bossman_control',
+        action: 'summon_participant',
+        roundId: runtime.roundId,
+        participantId: target.id,
+        message: `${authorityLabel} summon rejected: ${target.role || target.provider} is already pending; use reorder_remaining or ensemble_yield for pending participants.`,
+        error: 'summon_target_pending'
+      }
+    }
+    runtime.bossmanSummonCountsByParticipantId ??= new Map()
+    const previousSummonCount = runtime.bossmanSummonCountsByParticipantId.get(target.id) || 0
+    if (previousSummonCount >= MAX_BOSSMAN_SUMMONS_PER_PARTICIPANT_PER_ROUND) {
+      return {
+        ok: false,
+        tool: 'ensemble_bossman_control',
+        action: 'summon_participant',
+        roundId: runtime.roundId,
+        participantId: target.id,
+        message: `${authorityLabel} summon rejected: ${target.role || target.provider} has already been re-summoned ${MAX_BOSSMAN_SUMMONS_PER_PARTICIPANT_PER_ROUND} times this round.`,
+        error: 'summon_limit'
+      }
+    }
+
+    const reason = (input.reason || 'Directed continuation requested.').trim()
+    const continuation = this.tryAppendContinuationTurn(
+      runtime,
+      remaining,
+      target,
+      `${authorityLabel} re-summoned ${target.role || target.provider} (${target.provider}). Reason: ${reason}`,
+      { allowAnsweredParticipant: true, allowYieldedParticipant: true }
+    )
+    if (!continuation.appended) {
+      return {
+        ok: false,
+        tool: 'ensemble_bossman_control',
+        action: 'summon_participant',
+        roundId: runtime.roundId,
+        participantId: target.id,
+        message: `${authorityLabel} summon rejected: ${target.role || target.provider} cannot be re-summoned because ${this.describeContinuationDecline(continuation)}.`,
+        error:
+          continuation.reason === 'hop_limit'
+            ? 'summon_hop_limit'
+            : continuation.reason === 'not_continuous'
+              ? 'summon_not_continuous'
+              : 'summon_blocked_status'
+      }
+    }
+    runtime.bossmanSummonCountsByParticipantId.set(target.id, previousSummonCount + 1)
+    return {
+      ok: true,
+      tool: 'ensemble_bossman_control',
+      action: 'summon_participant',
+      roundId: runtime.roundId,
+      participantId: target.id,
+      message: `${authorityLabel} re-summoned ${target.role || target.provider} for another turn.`
     }
   }
 
@@ -8456,8 +8617,9 @@ export class EnsembleOrchestrator {
     statusMessage: string,
     // `allowYieldedParticipant` re-summons a participant who explicitly yielded
     // (yield-return). `allowAnsweredParticipant` re-summons one who already
-    // answered normally — used ONLY for a Boss/Captain priority @-mention so a
-    // directed tag to the authority actually routes. Neither bypasses
+    // answered normally — used only by explicit authority continuations:
+    // Boss/Captain priority @-mentions back to the authority, and
+    // ensemble_bossman_control({ action: 'summon_participant' }). Neither bypasses
     // 'skipped'/'failed'/'cancelled'/'unreachable' (those mean the participant
     // errored out or was removed — re-summoning is a different, riskier concern).
     options: { allowYieldedParticipant?: boolean; allowAnsweredParticipant?: boolean } = {}
