@@ -10375,13 +10375,14 @@ function updateCliProviderSession(
   return true
 }
 
-function claudeProgrammaticUsageWarning(runtime: 'sdk' | 'cli-print', usesApiKey: boolean): string {
+function claudeProgrammaticUsageWarning(
+  runtime: 'sdk' | 'cli-print',
+  usesApiKey: boolean
+): string | null {
   const runtimeLabel =
     runtime === 'sdk' ? 'Claude Agent SDK' : 'Claude Code CLI print mode (`claude -p`)'
-  if (usesApiKey) {
-    return `${runtimeLabel} is a programmatic Claude path. TaskWraith is using the saved Anthropic API key for this run, so usage is billed through API/PAYG rather than normal interactive Claude Code subscription limits.`
-  }
-  return `${runtimeLabel} is a programmatic Claude path. Anthropic says programmatic Claude usage uses separate Agent SDK credit from 2026-06-15, not the normal interactive Claude Code subscription limit. Use interactive Claude in a terminal when you need native Claude Code subscription-limit behavior.`
+  if (!usesApiKey) return null
+  return `${runtimeLabel} is using the saved Anthropic API key for this run, so usage is billed through API/PAYG rather than the Claude Code login session.`
 }
 
 // Recover a single tool-call identifier from a bridge tool payload, regardless
@@ -11800,19 +11801,22 @@ async function tryRunClaudeSdk(
     },
     state
   )
-  sendAgentCompatLine(
-    event.sender,
-    'claude',
-    {
-      type: 'provider_warning',
-      provider: 'claude',
-      message: claudeProgrammaticUsageWarning('sdk', Boolean(claudeApiKey)),
-      runtime: 'agent-sdk',
-      billingMode: claudeApiKey ? 'api-key-payg' : 'agent-sdk-credit',
-      fallback: false
-    },
-    state
-  )
+  const claudeUsageWarning = claudeProgrammaticUsageWarning('sdk', Boolean(claudeApiKey))
+  if (claudeUsageWarning) {
+    sendAgentCompatLine(
+      event.sender,
+      'claude',
+      {
+        type: 'provider_warning',
+        provider: 'claude',
+        message: claudeUsageWarning,
+        runtime: 'agent-sdk',
+        billingMode: 'api-key-payg',
+        fallback: false
+      },
+      state
+    )
+  }
 
   const claudeSdkEffort = normalizeClaudeEffortFlagForModel(payload.claudeReasoningEffort, model)
   const claudeSdkThinking = claudeSdkThinkingConfigForEffort(claudeSdkEffort)
@@ -12070,11 +12074,15 @@ async function runClaudeProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
     TASKWRAITH_CHAT_ID: route.appChatId || '',
     ...(claudeKey ? { ANTHROPIC_API_KEY: claudeKey } : {})
   }
+  const claudeUsageWarning = claudeProgrammaticUsageWarning('cli-print', Boolean(claudeKey))
+  const claudeFallbackWarning = sdk
+    ? 'Using Claude Code CLI fallback for this run.'
+    : 'Claude Agent SDK is not bundled in this app build; using Claude Code CLI stream-json fallback for this run.'
   runCliProviderProcess(event, 'claude', resolved.binaryPath, args, payload, {
     fallback: true,
-    warning: sdk
-      ? `Using Claude Code CLI fallback for this run. ${claudeProgrammaticUsageWarning('cli-print', Boolean(claudeKey))}`
-      : `Claude Agent SDK is not bundled in this app build; using Claude Code CLI stream-json fallback for this run. ${claudeProgrammaticUsageWarning('cli-print', Boolean(claudeKey))}`,
+    warning: claudeUsageWarning
+      ? `${claudeFallbackWarning} ${claudeUsageWarning}`
+      : claudeFallbackWarning,
     extraEnv: claudeProcessExtraEnv,
     onComplete: mcpConfigPath
       ? async () => {

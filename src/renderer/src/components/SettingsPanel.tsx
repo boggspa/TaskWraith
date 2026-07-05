@@ -7340,14 +7340,6 @@ export function SettingsPanel({
                     )}
                   </div>
                 )}
-                <p className="settings-hint">
-                  Claude runs inside TaskWraith use Agent SDK / <code>claude -p</code> programmatic
-                  paths. From 2026-06-15 Anthropic says these use separate Agent SDK credit, not
-                  normal interactive Claude Code subscription limits. Use Claude in an interactive
-                  terminal when you specifically need native Claude Code subscription-limit
-                  behavior.
-                </p>
-
                 <label className="settings-label">Anthropic API key</label>
                 <div
                   style={{
