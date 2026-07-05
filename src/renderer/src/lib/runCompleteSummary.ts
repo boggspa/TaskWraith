@@ -33,7 +33,8 @@ export type RunCompleteTokenParticipant = {
   provider?: ProviderId
   providerClass: string
   label: string
-  orderLabel: string
+  isBossman: boolean
+  isCaptain: boolean
   inputTokens: number
   outputTokens: number
   totalTokens: number
@@ -400,7 +401,8 @@ export const buildRunCompleteTokenDetails = (
     provider: run.provider,
     providerClass,
     label,
-    orderLabel: 'P1',
+    isBossman: false,
+    isCaptain: false,
     ...counts,
     tokensLabel: compactTokenLabel(counts.totalTokens),
     title: tokenTitle(label, counts.inputTokens, counts.outputTokens, counts.totalTokens)
@@ -422,6 +424,8 @@ export const buildEnsembleRoundTokenDetails = (
   const roundRuns = (chat?.runs || []).filter((run) => run.ensembleRoundId === round.roundId)
   const configuredParticipants = chat?.ensemble?.participants || []
   const configuredById = new Map(configuredParticipants.map((participant) => [participant.id, participant]))
+  const bossmanParticipantId = chat?.ensemble?.bossmanParticipantId
+  const secondInCommandParticipantId = chat?.ensemble?.secondInCommandParticipantId
   const consumedRunIds = new Set<string>()
   const sortedParticipants = [...(round.participants || [])].sort((a, b) => a.order - b.order)
 
@@ -436,7 +440,7 @@ export const buildEnsembleRoundTokenDetails = (
           status: 'answered' as const
         }))
 
-  const participants = sourceParticipants.map((participant, index) => {
+  const participants = sourceParticipants.map((participant) => {
     let participantRuns = roundRuns.filter(
       (run) => run.ensembleParticipantId === participant.participantId
     )
@@ -459,17 +463,15 @@ export const buildEnsembleRoundTokenDetails = (
       model,
       model ? humaniseModelId(participant.provider, model) : undefined
     )
-    const orderNumber =
-      typeof participant.order === 'number' && Number.isFinite(participant.order)
-        ? participant.order + 1
-        : index + 1
-
     return {
       id: participant.participantId,
       provider: participant.provider,
       providerClass,
       label,
-      orderLabel: `P${orderNumber}`,
+      isBossman: participant.participantId === bossmanParticipantId,
+      isCaptain:
+        participant.participantId === secondInCommandParticipantId &&
+        participant.participantId !== bossmanParticipantId,
       ...counts,
       tokensLabel: compactTokenLabel(counts.totalTokens),
       title: tokenTitle(label, counts.inputTokens, counts.outputTokens, counts.totalTokens)

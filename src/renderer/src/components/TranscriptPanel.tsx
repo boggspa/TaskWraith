@@ -157,6 +157,43 @@ function ContextCompactionProgressRow({
   )
 }
 
+function RunDetailsBossIcon(): ReactElement {
+  return (
+    <svg viewBox="0 0 24 24" width="12" height="12" aria-hidden focusable="false">
+      <path
+        d="M4.7 17.8h14.6l1.2-9.1-4.8 3.4-3.7-6-3.7 6-4.8-3.4 1.2 9.1Z"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinejoin="round"
+      />
+      <path d="M5.4 20h13.2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+    </svg>
+  )
+}
+
+function RunDetailsCaptainIcon(): ReactElement {
+  return (
+    <svg viewBox="0 0 24 24" width="12" height="12" aria-hidden focusable="false">
+      <path
+        d="M5.2 15.8c2.3 1.2 11.3 1.2 13.6 0"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.9"
+        strokeLinecap="round"
+      />
+      <path
+        d="M6.8 14.8 8 9.7c.3-1.1 1.2-1.8 2.3-1.8h3.4c1.1 0 2 .7 2.3 1.8l1.2 5.1"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.9"
+        strokeLinejoin="round"
+      />
+      <path d="M9.3 9.2c1.2 1 4.2 1 5.4 0" fill="none" stroke="currentColor" strokeWidth="1.5" />
+    </svg>
+  )
+}
+
 export type TranscriptPanelProps = {
   scrollRef: React.RefObject<HTMLDivElement | null>
   /**
@@ -3466,7 +3503,16 @@ export const TranscriptPanel = memo(
                           />
                         </span>
                         <span className="run-complete-token-name">
-                          <span className="run-complete-token-order">{participant.orderLabel}</span>
+                          {participant.isBossman && (
+                            <span className="run-complete-token-authority is-boss" title="Boss">
+                              <RunDetailsBossIcon />
+                            </span>
+                          )}
+                          {participant.isCaptain && (
+                            <span className="run-complete-token-authority is-captain" title="Captain">
+                              <RunDetailsCaptainIcon />
+                            </span>
+                          )}
                           <span className="run-complete-token-role">{participant.label}</span>
                         </span>
                       </div>

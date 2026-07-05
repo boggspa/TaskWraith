@@ -4870,11 +4870,8 @@ input:disabled, select:disabled, textarea:disabled {
   flex: 0 0 auto;
   display: inline-grid;
   place-items: center;
-  width: 17px;
-  height: 17px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--run-complete-token-accent) 12%, transparent);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--run-complete-token-accent) 24%, transparent);
+  width: 14px;
+  height: 14px;
 }
 
 .run-complete-token-icon .provider-glyph {
@@ -4885,11 +4882,30 @@ input:disabled, select:disabled, textarea:disabled {
 .run-complete-token-name {
   display: inline-flex;
   align-items: baseline;
-  gap: 4px;
+  gap: 3px;
+  flex: 1 1 auto;
   min-width: 0;
+  overflow: hidden;
 }
 
-.run-complete-token-name > span:last-child {
+.run-complete-token-authority {
+  flex: 0 0 auto;
+  display: inline-grid;
+  place-items: center;
+  width: 12px;
+  height: 12px;
+}
+
+.run-complete-token-authority.is-boss {
+  color: color-mix(in srgb, #f6c34a 86%, var(--run-complete-token-accent));
+}
+
+.run-complete-token-authority.is-captain {
+  color: color-mix(in srgb, #cfd5df 74%, var(--run-complete-token-accent));
+}
+
+.run-complete-token-role {
+  display: block;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -4899,18 +4915,6 @@ input:disabled, select:disabled, textarea:disabled {
   justify-content: center;
   gap: 5px;
   padding-inline: 8px;
-}
-
-.run-complete-token-table.is-dense .run-complete-token-role {
-  display: none;
-}
-
-.run-complete-token-order {
-  color: color-mix(in srgb, var(--run-complete-token-accent) 72%, var(--text-muted));
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
 }
 
 .run-complete-token-total-label {

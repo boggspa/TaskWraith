@@ -137,7 +137,7 @@ describe('buildEnsembleRoundSummaryRows', () => {
 })
 
 describe('buildEnsembleRoundTokenDetails', () => {
-  it('maps round participants to P-order token cells and a round total', () => {
+  it('maps round participants to role token cells and a round total', () => {
     const chat = {
       chatKind: 'ensemble',
       runs: [
@@ -154,6 +154,8 @@ describe('buildEnsembleRoundTokenDetails', () => {
         })
       ],
       ensemble: {
+        bossmanParticipantId: 'scout',
+        secondInCommandParticipantId: 'worker',
         participants: [
           { id: 'worker', provider: 'codex', role: 'Worker', order: 1 },
           {
@@ -194,15 +196,21 @@ describe('buildEnsembleRoundTokenDetails', () => {
     } as unknown as ChatRecord
 
     const details = buildEnsembleRoundTokenDetails(chat)
-    expect(details?.participants.map((participant) => participant.orderLabel)).toEqual([
-      'P1',
-      'P2',
-      'P3'
-    ])
     expect(details?.participants.map((participant) => participant.label)).toEqual([
       'Scout',
       'Worker',
       'Reviewer'
+    ])
+    expect(
+      details?.participants.map((participant) => ({
+        label: participant.label,
+        isBossman: participant.isBossman,
+        isCaptain: participant.isCaptain
+      }))
+    ).toEqual([
+      { label: 'Scout', isBossman: true, isCaptain: false },
+      { label: 'Worker', isBossman: false, isCaptain: true },
+      { label: 'Reviewer', isBossman: false, isCaptain: false }
     ])
     expect(details?.participants[0].providerClass).toBe('poolside')
     expect(details?.participants[0].totalTokens).toBe(350)
@@ -252,7 +260,7 @@ describe('buildRunCompleteSummaryRows', () => {
 })
 
 describe('buildRunCompleteTokenDetails', () => {
-  it('builds a single P1 token cell for solo runs', () => {
+  it('builds a single provider token cell for solo runs', () => {
     const details = buildRunCompleteTokenDetails(
       run({
         provider: 'claude',
@@ -264,7 +272,8 @@ describe('buildRunCompleteTokenDetails', () => {
       provider: 'claude',
       providerClass: 'claude',
       label: 'Claude',
-      orderLabel: 'P1',
+      isBossman: false,
+      isCaptain: false,
       totalTokens: 1500
     })
     expect(details?.totalTokens).toBe(1500)
