@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { isChatBusyForDispatch, isEnsembleActiveRoundDispatchLive } from './chatBusyState'
+import {
+  isChatBusyForDispatch,
+  isEnsembleActiveRoundDispatchLive,
+  shouldQueueRunBeforeDispatch
+} from './chatBusyState'
 import type { ChatRecord } from '../../../main/store/types'
 
 type EnsembleRound = NonNullable<NonNullable<ChatRecord['ensemble']>['activeRound']>
@@ -48,6 +52,20 @@ describe('isChatBusyForDispatch', () => {
         ignoreQueueRunId: 'run-1'
       })
     ).toBe(true)
+  })
+})
+
+describe('shouldQueueRunBeforeDispatch', () => {
+  it('pre-queues busy solo chats through the desktop run queue', () => {
+    expect(shouldQueueRunBeforeDispatch({ chatKind: 'single', busy: true })).toBe(true)
+  })
+
+  it('lets busy ensemble chats reach the ensemble orchestrator queue', () => {
+    expect(shouldQueueRunBeforeDispatch({ chatKind: 'ensemble', busy: true })).toBe(false)
+  })
+
+  it('does not queue idle chats before dispatch', () => {
+    expect(shouldQueueRunBeforeDispatch({ chatKind: 'single', busy: false })).toBe(false)
   })
 })
 

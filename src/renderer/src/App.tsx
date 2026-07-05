@@ -444,7 +444,8 @@ import {
 import {
   ACTIVE_RUN_QUEUE_STATUSES,
   isChatBusyForDispatch,
-  isEnsembleActiveRoundDispatchLive
+  isEnsembleActiveRoundDispatchLive,
+  shouldQueueRunBeforeDispatch
 } from './lib/chatBusyState'
 import { applyRecoveryRecordsToEnsembleRounds } from './lib/recoverEnsembleRoundTerminals'
 import {
@@ -10410,7 +10411,13 @@ function App(): React.JSX.Element {
 
     clearImagePermissions()
 
-    if (isChatBusy(request.chatRecord?.appChatId || currentChat?.appChatId)) {
+    const permissionTargetChat = request.chatRecord || currentChat
+    if (
+      shouldQueueRunBeforeDispatch({
+        chatKind: permissionTargetChat?.chatKind,
+        busy: isChatBusy(permissionTargetChat?.appChatId || currentChat?.appChatId)
+      })
+    ) {
       queueRunRequest(
         request,
         `Permission retry is waiting for this chat's active ${getProviderLabel(request.provider)} task to exit.`
@@ -11971,7 +11978,12 @@ function App(): React.JSX.Element {
         chatRecord: currentChat
       }
 
-      if (isChatBusy(reviewRequest.chatRecord?.appChatId)) {
+      if (
+        shouldQueueRunBeforeDispatch({
+          chatKind: reviewRequest.chatRecord?.chatKind,
+          busy: isChatBusy(reviewRequest.chatRecord?.appChatId)
+        })
+      ) {
         queueRunRequest(
           reviewRequest,
           `Diff review is waiting for this chat's active ${getProviderLabel(reviewRequest.provider)} task to exit.`
@@ -12086,12 +12098,19 @@ function App(): React.JSX.Element {
     ) {
       relockMainTranscriptToLatest()
     }
-    if (isChatBusy(request.chatRecord?.appChatId || currentChat?.appChatId)) {
+    const targetChat = request.chatRecord || currentChat
+    const targetChatId = targetChat?.appChatId || currentChat?.appChatId
+    if (
+      shouldQueueRunBeforeDispatch({
+        chatKind: targetChat?.chatKind,
+        busy: isChatBusy(targetChatId)
+      })
+    ) {
       queueRunRequest(request)
       clearComposerAttachmentsForSubmittedRequest(request)
       if (!request.existingPrompt) {
         setChatPromptDraft(
-          request.chatRecord?.appChatId || currentChatIdRef.current || currentChat?.appChatId,
+          targetChatId || currentChatIdRef.current || currentChat?.appChatId,
           ''
         )
       }
@@ -12673,7 +12692,12 @@ function App(): React.JSX.Element {
         updatedAt: Date.now()
       }))
     }
-    if (isChatBusy(sideChat.appChatId)) {
+    if (
+      shouldQueueRunBeforeDispatch({
+        chatKind: sideChat.chatKind,
+        busy: isChatBusy(sideChat.appChatId)
+      })
+    ) {
       queueRunRequest(request)
       clearComposerAttachmentsForSubmittedRequest(request)
       setChatPromptDraft(sideChat.appChatId, '')
@@ -13967,7 +13991,12 @@ function App(): React.JSX.Element {
       workspaceRecord: getChatScope(chat) === 'global' ? undefined : workspace,
       chatRecord: chat
     }
-    if (isChatBusy(chat.appChatId)) {
+    if (
+      shouldQueueRunBeforeDispatch({
+        chatKind: chat.chatKind,
+        busy: isChatBusy(chat.appChatId)
+      })
+    ) {
       queueRunRequest(
         request,
         `Retry is waiting for this chat's active ${getProviderLabel(provider)} task to exit.`
@@ -14776,12 +14805,19 @@ function App(): React.JSX.Element {
     if (!runRequestHasContent(request)) return
 
     setPendingPlanImport(null)
-    if (isChatBusy(request.chatRecord?.appChatId || currentChat?.appChatId)) {
+    const targetChat = request.chatRecord || currentChat
+    const targetChatId = targetChat?.appChatId || currentChat?.appChatId
+    if (
+      shouldQueueRunBeforeDispatch({
+        chatKind: targetChat?.chatKind,
+        busy: isChatBusy(targetChatId)
+      })
+    ) {
       queueRunRequest(request)
       clearComposerAttachmentsForSubmittedRequest(request)
       if (!request.existingPrompt) {
         setChatPromptDraft(
-          request.chatRecord?.appChatId || currentChatIdRef.current || currentChat?.appChatId,
+          targetChatId || currentChatIdRef.current || currentChat?.appChatId,
           ''
         )
       }
@@ -15829,7 +15865,12 @@ function App(): React.JSX.Element {
     const nowMs = Date.now()
     const nextIndex = findNextRunnableQueueIndex(
       queuedRequests,
-      (job) => isQueuedRunReadyToDispatch(job, nowMs) && !isChatBusy(job.chatRecord?.appChatId)
+      (job) =>
+        isQueuedRunReadyToDispatch(job, nowMs) &&
+        !shouldQueueRunBeforeDispatch({
+          chatKind: job.chatRecord?.chatKind,
+          busy: isChatBusy(job.chatRecord?.appChatId)
+        })
     )
     if (nextIndex < 0) return
 
@@ -21448,7 +21489,12 @@ function App(): React.JSX.Element {
         prompt: panePrompt,
         imageAttachments: paneAttachments
       })
-      if (isChatBusy(chatId)) {
+      if (
+        shouldQueueRunBeforeDispatch({
+          chatKind: paneChat.chatKind,
+          busy: isChatBusy(chatId)
+        })
+      ) {
         queueRunRequestRef.current(
           request,
           `This ${getProviderLabel(request.provider)} chat already has an in-flight run; TaskWraith will dispatch this pane prompt when the chat's previous turn finishes.`
@@ -21606,7 +21652,12 @@ function App(): React.JSX.Element {
             chat.chatKind !== 'ensemble' &&
             Boolean(chat.linkedProviderSessionId)
         }
-        if (isChatBusy(chat.appChatId)) {
+        if (
+          shouldQueueRunBeforeDispatch({
+            chatKind: chat.chatKind,
+            busy: isChatBusy(chat.appChatId)
+          })
+        ) {
           queueRunRequestRef.current(
             request,
             `Diff review is waiting for this chat's active ${getProviderLabel(provider)} task to exit.`

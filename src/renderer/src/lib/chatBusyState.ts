@@ -1,4 +1,4 @@
-import type { RunQueueJobStatus } from '../../../main/store/types'
+import type { ChatRecord, RunQueueJobStatus } from '../../../main/store/types'
 export {
   isEnsembleRoundDispatchLive as isEnsembleActiveRoundDispatchLive
 } from '../../../shared/ensembleRoundLifecycle'
@@ -48,4 +48,12 @@ export function isChatBusyForDispatch(input: IsChatBusyForDispatchInput): boolea
   }
 
   return false
+}
+
+export function shouldQueueRunBeforeDispatch(input: {
+  chatKind?: ChatRecord['chatKind'] | null
+  busy: boolean
+}): boolean {
+  if (!input.busy) return false
+  return input.chatKind !== 'ensemble'
 }
