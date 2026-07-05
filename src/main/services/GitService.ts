@@ -925,6 +925,22 @@ function sanitizeRepoPaths(
   return sanitized
 }
 
+function hasAsciiControlChar(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index)
+    if (code <= 0x1f || code === 0x7f) return true
+  }
+  return false
+}
+
+function branchNameHasInvalidChars(branch: string): boolean {
+  if (hasAsciiControlChar(branch)) return true
+  for (const char of branch) {
+    if (/\s/.test(char) || '~^:?*[\\'.includes(char)) return true
+  }
+  return false
+}
+
 function sanitizeBranchName(value: string): string {
   const branch = String(value || '').trim()
   if (!branch) throw new Error('Branch name is required.')
@@ -937,7 +953,7 @@ function sanitizeBranchName(value: string): string {
     branch.endsWith('/') ||
     branch.endsWith('.') ||
     branch.endsWith('.lock') ||
-    /[\u0000-\u001f\u007f\s~^:?*\[\\]/.test(branch)
+    branchNameHasInvalidChars(branch)
   ) {
     throw new Error('Branch name contains characters Git will not accept.')
   }
@@ -947,7 +963,7 @@ function sanitizeBranchName(value: string): string {
 function sanitizeStartPoint(value?: string): string | undefined {
   const startPoint = String(value || '').trim()
   if (!startPoint) return undefined
-  if (startPoint.startsWith('-') || /[\u0000-\u001f\u007f]/.test(startPoint)) {
+  if (startPoint.startsWith('-') || hasAsciiControlChar(startPoint)) {
     throw new Error('Branch start point is invalid.')
   }
   return startPoint
