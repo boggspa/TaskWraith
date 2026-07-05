@@ -77,7 +77,10 @@ import {
   AuditRetentionPurgeResult,
   AuditRetentionSettings,
   AuditRetentionSurface,
-  AuditRetentionSurfacePurgeCounts
+  AuditRetentionSurfacePurgeCounts,
+  IntrospectionRunRecord,
+  MemoryProposalPack,
+  MemoryProposal
 } from './types'
 import { canonicalizeExternalPathGrantMetadata } from './ExternalPathGrants'
 import { createDefaultEnsembleConfig } from '../EnsembleDefaults'
@@ -155,6 +158,10 @@ import {
   AUDIT_RESTART_INTERRUPTION_ERROR,
   type StaleAuditRun
 } from '../audit/AuditReconciler'
+import {
+  normalizeIntrospectionRunRecord,
+  normalizeMemoryProposalPack
+} from '../introspection/IntrospectionModel'
 import {
   capApprovalLedgerRecords,
   createApprovalLedgerRecord,
@@ -280,6 +287,8 @@ const chatsDir = path.join(userDataPath, 'chats')
 const chatListIndexPath = path.join(userDataPath, 'chat-list-index.json')
 const CHAT_LIST_INDEX_VOLATILE_REFRESH_INTERVAL_MS = 2000
 const auditRunsPath = path.join(userDataPath, 'audit-runs.json')
+const introspectionRunsPath = path.join(userDataPath, 'introspection-runs.json')
+const memoryProposalPacksPath = path.join(userDataPath, 'memory-proposal-packs.json')
 const runEventsDir = path.join(userDataPath, 'run-events')
 const runArtifactsDir = path.join(userDataPath, 'run-artifacts')
 const runEventSequenceCache = new Map<string, number>()
@@ -302,6 +311,8 @@ const WORKFLOW_HISTORY_LIMIT = 50
 // Newest-N audit runs kept on disk. Each run holds its own findings/verdicts;
 // the per-run JSONL ledger (run-events) carries the replayable detail.
 const AUDIT_RUN_HISTORY_LIMIT = 100
+const INTROSPECTION_RUN_HISTORY_LIMIT = 100
+const MEMORY_PROPOSAL_PACK_HISTORY_LIMIT = 200
 // 1.0.6-CRUX27 — grok + cursor are first-class providers; seed their built-in
 // runtime profiles too (local + global per provider, see getDefaultRuntimeProfiles)
 // so their global chats have a usable runtime out of the box. Unconditional:
@@ -4071,6 +4082,135 @@ export class AppStore {
       })
     }
     return stale
+  }
+
+  // ── Thread introspection / memory promotion ─────────────────────────────
+  // Read-only retrospective runs + reviewable proposal packs. Apply/mutation is
+  // intentionally NOT implemented here — proposals stay proposed until reviewed.
+
+  static getIntrospectionRuns(workspaceId?: string): IntrospectionRunRecord[] {
+    return readJson<unknown[]>(introspectionRunsPath, [])
+      .map((item) => normalizeIntrospectionRunRecord(item))
+      .filter((item): item is IntrospectionRunRecord => Boolean(item))
+      .filter((run) => !workspaceId || run.workspaceId === workspaceId)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+  }
+
+  static getIntrospectionRun(id: string): IntrospectionRunRecord | null {
+    return this.getIntrospectionRuns().find((run) => run.id === id) || null
+  }
+
+  static createIntrospectionRun(
+    input: Omit<
+      IntrospectionRunRecord,
+      'schemaVersion' | 'id' | 'createdAt' | 'updatedAt' | 'evidenceItems'
+    > &
+      Partial<Pick<IntrospectionRunRecord, 'id' | 'evidenceItems'>>
+  ): IntrospectionRunRecord {
+    const nowIso = new Date().toISOString()
+    const record = normalizeIntrospectionRunRecord({
+      ...input,
+      id: input.id || randomUUID(),
+      evidenceItems: input.evidenceItems || [],
+      createdAt: nowIso,
+      updatedAt: nowIso
+    })
+    if (!record) throw new Error('Introspection run is invalid.')
+    const runs = [record, ...this.getIntrospectionRuns().filter((r) => r.id !== record.id)].slice(
+      0,
+      INTROSPECTION_RUN_HISTORY_LIMIT
+    )
+    writeJson(introspectionRunsPath, runs)
+    return record
+  }
+
+  static updateIntrospectionRun(
+    id: string,
+    partial: Partial<IntrospectionRunRecord>
+  ): IntrospectionRunRecord | null {
+    const runs = this.getIntrospectionRuns()
+    const index = runs.findIndex((run) => run.id === id)
+    if (index < 0) return null
+    const merged = normalizeIntrospectionRunRecord({
+      ...runs[index],
+      ...partial,
+      id,
+      updatedAt: new Date().toISOString()
+    })
+    if (!merged) return null
+    runs[index] = merged
+    writeJson(introspectionRunsPath, runs)
+    return merged
+  }
+
+  static deleteIntrospectionRun(id: string): void {
+    writeJson(
+      introspectionRunsPath,
+      this.getIntrospectionRuns().filter((run) => run.id !== id)
+    )
+  }
+
+  static getMemoryProposalPacks(workspaceId?: string): MemoryProposalPack[] {
+    return readJson<unknown[]>(memoryProposalPacksPath, [])
+      .map((item) => normalizeMemoryProposalPack(item))
+      .filter((item): item is MemoryProposalPack => Boolean(item))
+      .filter((pack) => !workspaceId || pack.workspaceId === workspaceId)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+  }
+
+  static getMemoryProposalPack(id: string): MemoryProposalPack | null {
+    return this.getMemoryProposalPacks().find((pack) => pack.id === id) || null
+  }
+
+  static saveMemoryProposalPack(pack: Partial<MemoryProposalPack>): MemoryProposalPack {
+    const packs = this.getMemoryProposalPacks()
+    const nowIso = new Date().toISOString()
+    const normalized = normalizeMemoryProposalPack({
+      ...pack,
+      id: pack.id || randomUUID(),
+      schemaVersion: 1,
+      introspectionRunId: pack.introspectionRunId || '',
+      windowStart: pack.windowStart || nowIso,
+      windowEnd: pack.windowEnd || nowIso,
+      proposals: pack.proposals || [],
+      evidenceItemCount: pack.evidenceItemCount ?? 0,
+      createdAt: pack.createdAt || nowIso,
+      updatedAt: nowIso
+    })
+    if (!normalized) throw new Error('Memory proposal pack is invalid.')
+    const next = [normalized, ...packs.filter((item) => item.id !== normalized.id)].slice(
+      0,
+      MEMORY_PROPOSAL_PACK_HISTORY_LIMIT
+    )
+    writeJson(memoryProposalPacksPath, next)
+    return normalized
+  }
+
+  static updateMemoryProposal(
+    packId: string,
+    proposalId: string,
+    partial: Partial<MemoryProposal>
+  ): MemoryProposalPack | null {
+    const pack = this.getMemoryProposalPack(packId)
+    if (!pack) return null
+    const proposals = pack.proposals.map((proposal) =>
+      proposal.id === proposalId
+        ? {
+            ...proposal,
+            ...partial,
+            id: proposalId,
+            updatedAt: new Date().toISOString()
+          }
+        : proposal
+    )
+    return this.saveMemoryProposalPack({ ...pack, proposals })
+  }
+
+  static deleteMemoryProposalPack(id: string): void {
+    writeJson(
+      memoryProposalPacksPath,
+      this.getMemoryProposalPacks().filter((pack) => pack.id !== id)
+    )
   }
 
   static getAuditRetentionPurgeReceipts(): AuditRetentionPurgeReceipt[] {

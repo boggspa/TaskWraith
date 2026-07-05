@@ -4286,6 +4286,140 @@ export interface AuditOrchestrationSettings {
   budgetMaxTokens?: number
 }
 
+// ── Thread introspection / memory promotion ─────────────────────────────────
+// Read-only retrospective runs distill recent thread/run evidence into reviewable
+// Memory Proposal Packs. Distinct from EvidencePackRecord (per-run capability
+// verification) and ensemble Blackboard (ephemeral round scratchpad).
+
+export type MemoryProposalKind =
+  | 'preference'
+  | 'failure_mode'
+  | 'repo_convention'
+  | 'provider_hint'
+  | 'skill_patch'
+  | 'bug'
+  | 'do_not_repeat'
+
+export type MemoryProposalScope = 'user' | 'workspace' | 'provider' | 'skill' | 'bug'
+
+export type MemoryProposalStatus =
+  | 'proposed'
+  | 'approved'
+  | 'applied'
+  | 'rejected'
+  | 'superseded'
+  | 'expired'
+
+export type IntrospectionRunStatus =
+  | 'collecting'
+  | 'analyzing'
+  | 'review_pending'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+
+export type IntrospectionRunTrigger = 'manual' | 'scheduled' | 'workflow'
+
+export type IntrospectionEvidenceSource =
+  | 'run_event'
+  | 'message_feedback'
+  | 'approval_ledger'
+  | 'chat_message'
+  | 'blackboard'
+
+/** Citation back to a specific thread/run/message/event. Thread content is
+ * untrusted evidence — only distilled lessons may be promoted. */
+export interface IntrospectionEvidenceRef {
+  chatId: string
+  runId?: string
+  messageId?: string
+  eventId?: string
+  timestamp: string
+  /** Short human summary of what this ref supports. */
+  summary: string
+  /** Recall-style token when served via tw_recall_* (⟦recall:…⟧). */
+  citationToken?: string
+  /** Bounded quote from untrusted thread content — never promoted verbatim. */
+  quote?: string
+}
+
+/** Normalized signal harvested during the collect phase. */
+export interface IntrospectionEvidenceItem {
+  id: string
+  source: IntrospectionEvidenceSource
+  /** Stable classifier key, e.g. approval_denied, tool_failure, feedback_down. */
+  signal: string
+  chatId: string
+  runId?: string
+  provider?: ProviderId
+  workspaceId?: string
+  timestamp: string
+  summary: string
+  detail?: string
+}
+
+export interface MemoryProposal {
+  id: string
+  kind: MemoryProposalKind
+  scope: MemoryProposalScope
+  status: MemoryProposalStatus
+  /** Short headline for review UI. */
+  title: string
+  /** Distilled lesson — not raw thread prose. */
+  lesson: string
+  confidence: number
+  evidenceRefs: IntrospectionEvidenceRef[]
+  /** Where an approved proposal would land (RepoConventionIndex, skill path, etc.). */
+  suggestedApplyTarget?: string
+  /** Only for kind=skill_patch — proposed diff, applied only after review. */
+  skillPatchDiff?: string
+  providerId?: ProviderId
+  expiresAt?: string
+  supersedesId?: string
+  supersededById?: string
+  dedupKey: string
+  requiresReview: boolean
+  reviewNote?: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface MemoryProposalPack {
+  schemaVersion: 1
+  id: string
+  introspectionRunId: string
+  workspaceId?: string
+  workspacePath?: string
+  windowStart: string
+  windowEnd: string
+  proposals: MemoryProposal[]
+  /** Optional human-readable report (markdown). */
+  summary?: string
+  evidenceItemCount: number
+  createdAt: string
+  updatedAt: string
+}
+
+export interface IntrospectionRunRecord {
+  schemaVersion: 1
+  id: string
+  status: IntrospectionRunStatus
+  trigger: IntrospectionRunTrigger
+  workflowId?: string
+  chatId?: string
+  workspaceId?: string
+  workspacePath?: string
+  windowStart: string
+  windowEnd: string
+  evidenceItems: IntrospectionEvidenceItem[]
+  proposalPackId?: string
+  error?: string
+  createdAt: string
+  updatedAt: string
+  startedAt?: string
+  endedAt?: string
+}
+
 export type RunQueueJobStatus =
   | 'queued'
   | 'steer_promoting'
