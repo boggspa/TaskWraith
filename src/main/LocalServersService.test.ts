@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { LocalServersService } from './LocalServersService'
+import { LocalServersService, probeDeclaredLocalServiceHealth } from './LocalServersService'
 import type {
   LocalServerDetector,
   LocalServerDetectorContext,
@@ -159,6 +159,45 @@ describe('LocalServersService', () => {
       }
     ])
     service.stop()
+  })
+
+  it('marks plugin-declared local services running when their health check passes', async () => {
+    const detector = new FakeDetector()
+    const healthProbe = vi.fn(async () => true)
+    const service = new LocalServersService({
+      getWorkspaces: () => [],
+      getDeclaredServices: () => [
+        {
+          id: 'plugin:web-qa:service:browser',
+          label: 'Browser QA service',
+          ports: [4173],
+          healthCheck: { url: 'http://localhost:4173/health' },
+          managedByTaskWraith: true,
+          status: 'unknown'
+        }
+      ],
+      probeDeclaredServiceHealth: healthProbe,
+      detector,
+      pollIntervalMs: 1000
+    })
+    service.start()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(healthProbe).toHaveBeenCalledOnce()
+    expect(service.snapshot().declaredServices?.[0]?.status).toBe('running')
+    service.stop()
+  })
+
+  it('does not probe non-loopback declared service health URLs', async () => {
+    await expect(
+      probeDeclaredLocalServiceHealth({
+        id: 'plugin:web-qa:service:external',
+        label: 'External service',
+        ports: [443],
+        healthCheck: { url: 'https://example.com/health' },
+        managedByTaskWraith: false,
+        status: 'unknown'
+      })
+    ).resolves.toBe(false)
   })
 
   it('stopServer refuses a pid not in the snapshot and never builds a controller', async () => {

@@ -6,6 +6,8 @@
  * land in Phase B.
  */
 
+import * as http from 'http'
+import * as https from 'https'
 import { createDetectorForPlatform } from './localServers/detector'
 import {
   createUnixKillController,
@@ -24,14 +26,17 @@ import type {
 
 /** Servers are long-lived; a 5s cadence is plenty and cheap. */
 export const LOCAL_SERVERS_POLL_INTERVAL_MS = 5_000
+const DECLARED_SERVICE_HEALTH_TIMEOUT_MS = 750
 
 type Listener = (snapshot: LocalServersSnapshot) => void
+type DeclaredServiceHealthProbe = (service: DeclaredLocalService) => Promise<boolean>
 
 export interface LocalServersServiceOptions {
   getWorkspaces: () => LocalServerWorkspace[]
   /** Processes TaskWraith spawned (Phase C). Defaults to none. */
   getTracked?: () => TrackedSpawn[]
   getDeclaredServices?: () => DeclaredLocalService[]
+  probeDeclaredServiceHealth?: DeclaredServiceHealthProbe
   platform?: NodeJS.Platform
   detector?: LocalServerDetector
   log?: (line: string) => void
@@ -45,6 +50,7 @@ export class LocalServersService {
   private getWorkspaces: () => LocalServerWorkspace[]
   private getTracked: () => TrackedSpawn[]
   private getDeclaredServices: () => DeclaredLocalService[]
+  private probeDeclaredServiceHealth: DeclaredServiceHealthProbe
   private log: (line: string) => void
   private pollIntervalMs: number
   private listeners = new Set<Listener>()
@@ -60,6 +66,8 @@ export class LocalServersService {
     this.getWorkspaces = options.getWorkspaces
     this.getTracked = options.getTracked || (() => [])
     this.getDeclaredServices = options.getDeclaredServices || (() => [])
+    this.probeDeclaredServiceHealth =
+      options.probeDeclaredServiceHealth || probeDeclaredLocalServiceHealth
     this.log = options.log ?? (() => {})
     this.pollIntervalMs = options.pollIntervalMs ?? LOCAL_SERVERS_POLL_INTERVAL_MS
     this.createController =
@@ -110,9 +118,10 @@ export class LocalServersService {
         workspaces: this.getWorkspaces(),
         tracked: this.getTracked()
       })
-      const declaredServices = decorateDeclaredServices(
+      const declaredServices = await decorateDeclaredServices(
         this.getDeclaredServices(),
-        next.servers
+        next.servers,
+        this.probeDeclaredServiceHealth
       )
       if (declaredServices.length > 0) next.declaredServices = declaredServices
       const signature = signatureOf(next.servers, next.declaredServices || [])
@@ -196,19 +205,79 @@ function signatureOf(
     .sort()
     .join('|')
   const declaredSignature = declaredServices
-    .map((service) => `${service.id}:${service.status}:${service.ports.join(',')}`)
+    .map(
+      (service) =>
+        `${service.id}:${service.status}:${service.ports.join(',')}:${service.healthCheck?.url || ''}:${service.healthCheck?.commandHint || ''}`
+    )
     .sort()
     .join('|')
   return `${runningSignature}#${declaredSignature}`
 }
 
-function decorateDeclaredServices(
+async function decorateDeclaredServices(
   services: DeclaredLocalService[],
-  servers: LocalServerEntry[]
-): DeclaredLocalService[] {
+  servers: LocalServerEntry[],
+  probeHealth: DeclaredServiceHealthProbe
+): Promise<DeclaredLocalService[]> {
   const runningPorts = new Set(servers.flatMap((server) => server.ports))
-  return services.map((service) => ({
-    ...service,
-    status: service.ports.some((port) => runningPorts.has(port)) ? 'running' : 'unknown'
-  }))
+  return Promise.all(
+    services.map(async (service) => {
+      const portRunning = service.ports.some((port) => runningPorts.has(port))
+      const healthRunning = portRunning ? false : await probeHealth(service).catch(() => false)
+      return {
+        ...service,
+        status: portRunning || healthRunning ? 'running' : 'unknown'
+      }
+    })
+  )
+}
+
+export async function probeDeclaredLocalServiceHealth(
+  service: DeclaredLocalService
+): Promise<boolean> {
+  const rawUrl = service.healthCheck?.url?.trim()
+  if (!rawUrl) return false
+  const resolvedUrl = rawUrl.replace(/<port>/g, String(service.ports[0] ?? ''))
+  let url: URL
+  try {
+    url = new URL(resolvedUrl)
+  } catch {
+    return false
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return false
+  if (!isLoopbackHost(url.hostname)) return false
+  return requestHealth(url)
+}
+
+function isLoopbackHost(hostname: string): boolean {
+  const host = hostname.toLowerCase()
+  return (
+    host === 'localhost' ||
+    host === '127.0.0.1' ||
+    host === '::1' ||
+    host === '[::1]' ||
+    host.startsWith('127.')
+  )
+}
+
+function requestHealth(url: URL): Promise<boolean> {
+  const client = url.protocol === 'https:' ? https : http
+  return new Promise((resolve) => {
+    let settled = false
+    const finish = (ok: boolean): void => {
+      if (settled) return
+      settled = true
+      resolve(ok)
+    }
+    const req = client.request(url, { method: 'GET' }, (res) => {
+      res.resume()
+      finish((res.statusCode || 0) < 500)
+    })
+    req.setTimeout(DECLARED_SERVICE_HEALTH_TIMEOUT_MS, () => {
+      req.destroy()
+      finish(false)
+    })
+    req.on('error', () => finish(false))
+    req.end()
+  })
 }
