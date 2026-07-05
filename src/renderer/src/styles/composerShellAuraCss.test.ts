@@ -27,10 +27,10 @@ describe('composer shell row aura CSS', () => {
     const css = readCss()
     const block = cssBlockStartingAt(css, 'Shell sign-off')
 
-    for (const style of ['gemini', 'kimi', 'modular', 'terminal', 'stub', 'obsidian']) {
+    for (const style of ['gemini', 'kimi', 'cursor', 'modular', 'terminal', 'stub', 'obsidian']) {
       expect(block).toContain(`[data-composer-style="${style}"]`)
     }
-    for (const preserved of ['codex', 'claude', 'cursor', 'grok', 'satellite', 'alabaster']) {
+    for (const preserved of ['codex', 'claude', 'grok', 'satellite', 'alabaster']) {
       expect(block).not.toContain(`[data-composer-style="${preserved}"]`)
     }
 
@@ -45,6 +45,33 @@ describe('composer shell row aura CSS', () => {
       expect(block).toContain(row)
     }
     expect(block).toContain(')::after')
+    for (const declaration of [
+      'display: none !important',
+      'content: none !important',
+      'background: none !important',
+      'box-shadow: none !important',
+      'animation: none !important',
+      'opacity: 0 !important'
+    ]) {
+      expect(block).toContain(declaration)
+    }
+  })
+
+  it('suppresses Cursor composer aura pseudos while preserving its shell chrome', () => {
+    const css = readCss()
+    const block = cssBlockStartingAt(css, "Cursor's composer shell")
+
+    expect(block).toContain('[data-composer-style="cursor"]')
+    expect(block).toContain(':is(.composer-surface, .composer-above-bar-stack).fx-agent-aura::after')
+    expect(block).toContain(
+      ':is(.composer-surface, .composer-above-bar-stack).fx-agent-aura.fx-status-running::after'
+    )
+    expect(block).toContain(
+      ':is(.composer-surface, .composer-above-bar-stack).fx-agent-aura.fx-status-approval::after'
+    )
+    expect(block).toContain(
+      ':is(.composer-surface, .composer-above-bar-stack).fx-agent-aura.fx-status-failed::after'
+    )
     for (const declaration of [
       'display: none !important',
       'content: none !important',

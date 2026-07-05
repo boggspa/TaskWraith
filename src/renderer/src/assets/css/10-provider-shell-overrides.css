@@ -3819,6 +3819,7 @@
 :is(
     [data-composer-style="gemini"],
     [data-composer-style="kimi"],
+    [data-composer-style="cursor"],
     [data-composer-style="modular"],
     [data-composer-style="terminal"],
     [data-composer-style="stub"],
@@ -3833,6 +3834,28 @@
     .composer-create-pr-row,
     .ensemble-roster-preset-picker.is-compact
   )::after {
+  display: none !important;
+  content: none !important;
+  background: none !important;
+  box-shadow: none !important;
+  animation: none !important;
+  opacity: 0 !important;
+}
+
+/* Cursor's composer shell keeps its own neutral-gray frame, but should not
+ * inherit provider-tinted composer agent aura pseudo layers. */
+[data-composer-style="cursor"]
+  .app-transcript
+  :is(.composer-surface, .composer-above-bar-stack).fx-agent-aura::after,
+[data-composer-style="cursor"]
+  .app-transcript
+  :is(.composer-surface, .composer-above-bar-stack).fx-agent-aura.fx-status-running::after,
+[data-composer-style="cursor"]
+  .app-transcript
+  :is(.composer-surface, .composer-above-bar-stack).fx-agent-aura.fx-status-approval::after,
+[data-composer-style="cursor"]
+  .app-transcript
+  :is(.composer-surface, .composer-above-bar-stack).fx-agent-aura.fx-status-failed::after {
   display: none !important;
   content: none !important;
   background: none !important;
