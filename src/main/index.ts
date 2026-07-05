@@ -945,6 +945,7 @@ import { registerScheduledWorkflowHandlers } from './ipc/scheduledWorkflowHandle
 import { registerRunQueueHandlers } from './ipc/runQueueHandlers'
 import { registerApprovalLedgerHandlers } from './ipc/approvalLedgerHandlers'
 import { registerIntrospectionHandlers } from './ipc/introspectionHandlers'
+import { applyMemoryProposal } from './introspection/IntrospectionApplyService'
 import {
   createIntrospectionRunServiceDeps,
   runManualIntrospection
@@ -29104,6 +29105,22 @@ if (isGeminiMcpBridgeProcess) {
       getMemoryProposalPack: (id) => AppStore.getMemoryProposalPack(id),
       updateMemoryProposal: (packId, proposalId, partial) =>
         AppStore.updateMemoryProposal(packId, proposalId, partial),
+      applyMemoryProposal: (packId, proposalId) =>
+        applyMemoryProposal(
+          {
+            store: {
+              getMemoryProposalPack: (id) => AppStore.getMemoryProposalPack(id),
+              updateMemoryProposal: (pid, propId, partial) =>
+                AppStore.updateMemoryProposal(pid, propId, partial),
+              getRepoConventionIndexes: (workspaceId) =>
+                AppStore.getRepoConventionIndexes(workspaceId),
+              saveRepoConventionIndex: (snapshot) => AppStore.saveRepoConventionIndex(snapshot)
+            },
+            now: () => new Date().toISOString()
+          },
+          packId,
+          proposalId
+        ),
       runManualIntrospection: (input) =>
         runManualIntrospection(
           createIntrospectionRunServiceDeps({
@@ -30116,6 +30133,7 @@ if (isGeminiMcpBridgeProcess) {
       awaitPendingSeatCompaction: (participantId) => pendingSeatCompactions.get(participantId),
       compactSeatContext: ({ chatId, participantId, provider, trigger }) =>
         compactProviderContextForRequest({ chatId, provider, participantId, trigger }),
+      onContextCompactionProgress: broadcastContextCompactionProgress,
       getProviderUsageSnapshot: (provider) => AppStore.getProviderUsageSnapshot(provider),
       scheduleWakeupTimer: (wakeup) => wakeupTimerServiceRef?.schedule(wakeup),
       cancelWakeupTimer: (wakeupId) => wakeupTimerServiceRef?.cancel(wakeupId),

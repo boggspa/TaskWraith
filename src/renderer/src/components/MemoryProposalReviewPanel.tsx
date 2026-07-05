@@ -10,10 +10,13 @@ import {
   MEMORY_PROPOSAL_KINDS,
   MEMORY_PROPOSAL_SCOPES,
   MEMORY_PROPOSAL_STATUSES,
+  canApplyMemoryProposal,
   canReviewMemoryProposal,
   filterMemoryProposals,
+  formatApplyMemoryProposalBlocked,
   formatMemoryProposalConfidence,
   formatMemoryProposalWindow,
+  memoryProposalApplyHint,
   memoryProposalConfidenceClass,
   memoryProposalKindBadgeClass,
   memoryProposalKindLabel,
@@ -50,6 +53,17 @@ export interface MemoryProposalReviewPanelProps {
     proposalId: string,
     status: Extract<MemoryProposalStatus, 'approved' | 'rejected'>
   ) => void | Promise<void>
+  onApplyMemoryProposal?: (
+    packId: string,
+    proposalId: string
+  ) => Promise<{
+    ok: boolean
+    blocked?: string
+    pack?: MemoryProposalPack
+    conventionEntryId?: string
+  }>
+  /** Test/SSR helper — expands a proposal row on first render. */
+  initialExpandedProposalId?: string | null
 }
 
 function sortPacksNewestFirst(packs: MemoryProposalPack[]): MemoryProposalPack[] {
@@ -67,14 +81,19 @@ export function MemoryProposalReviewPanel({
   workspaceId = null,
   onRefresh,
   fetchPacks,
-  onUpdateProposalStatus
+  onUpdateProposalStatus,
+  onApplyMemoryProposal,
+  initialExpandedProposalId = null
 }: MemoryProposalReviewPanelProps): React.JSX.Element {
   const [fetchedPacks, setFetchedPacks] = useState<MemoryProposalPack[]>([])
   const [fetchLoading, setFetchLoading] = useState(false)
   const [fetchError, setFetchError] = useState<string | null>(null)
   const [selectedPackId, setSelectedPackId] = useState<string | null>(null)
-  const [expandedProposalId, setExpandedProposalId] = useState<string | null>(null)
+  const [expandedProposalId, setExpandedProposalId] = useState<string | null>(
+    initialExpandedProposalId
+  )
   const [actionError, setActionError] = useState<string | null>(null)
+  const [applyNotice, setApplyNotice] = useState<string | null>(null)
   const [actingProposalId, setActingProposalId] = useState<string | null>(null)
   const [kindFilter, setKindFilter] = useState<Set<MemoryProposalKind>>(new Set(MEMORY_PROPOSAL_KINDS))
   const [scopeFilter, setScopeFilter] = useState<Set<MemoryProposalScope>>(new Set(MEMORY_PROPOSAL_SCOPES))
@@ -217,6 +236,10 @@ export function MemoryProposalReviewPanel({
     URL.revokeObjectURL(url)
   }, [kindFilter, scopeFilter, search, selectedPack, statusFilter, visibleProposals])
 
+  const mergePackUpdate = useCallback((pack: MemoryProposalPack) => {
+    setFetchedPacks((prev) => prev.map((item) => (item.id === pack.id ? pack : item)))
+  }, [])
+
   const handleReviewAction = useCallback(
     async (
       proposal: MemoryProposal,
@@ -225,6 +248,7 @@ export function MemoryProposalReviewPanel({
       if (!selectedPack || !onUpdateProposalStatus) return
       try {
         setActionError(null)
+        setApplyNotice(null)
         setActingProposalId(proposal.id)
         await onUpdateProposalStatus(selectedPack.id, proposal.id, status)
       } catch (err) {
@@ -234,6 +258,43 @@ export function MemoryProposalReviewPanel({
       }
     },
     [onUpdateProposalStatus, selectedPack]
+  )
+
+  const handleApplyAction = useCallback(
+    async (proposal: MemoryProposal): Promise<void> => {
+      if (!selectedPack || !onApplyMemoryProposal || !canApplyMemoryProposal(proposal)) return
+      try {
+        setActionError(null)
+        setApplyNotice(null)
+        setActingProposalId(proposal.id)
+        const result = await onApplyMemoryProposal(selectedPack.id, proposal.id)
+        if (!result.ok) {
+          const message = result.blocked
+            ? formatApplyMemoryProposalBlocked(result.blocked)
+            : 'Apply failed.'
+          setActionError(message)
+          return
+        }
+        if (result.pack) {
+          mergePackUpdate(result.pack)
+        } else {
+          await refresh()
+        }
+        const entryId = result.conventionEntryId ?? result.pack?.proposals.find(
+          (item) => item.id === proposal.id
+        )?.applyReceipt?.conventionEntryId
+        setApplyNotice(
+          entryId
+            ? `Applied to repo conventions (${entryId}).`
+            : 'Applied to repo conventions.'
+        )
+      } catch (err) {
+        setActionError(err instanceof Error ? err.message : String(err))
+      } finally {
+        setActingProposalId(null)
+      }
+    },
+    [mergePackUpdate, onApplyMemoryProposal, refresh, selectedPack]
   )
 
   const pendingCount = selectedPack ? countPendingReview(selectedPack.proposals) : 0
@@ -278,6 +339,11 @@ export function MemoryProposalReviewPanel({
 
       {error && <div className="settings-error memory-proposal-review-error">{error}</div>}
       {actionError && <div className="settings-error memory-proposal-review-error">{actionError}</div>}
+      {applyNotice && (
+        <div className="memory-proposal-review-apply-notice" role="status">
+          {applyNotice}
+        </div>
+      )}
 
       <div className="memory-proposal-review-filters">
         <div className="memory-proposal-review-filter-group">
@@ -511,15 +577,24 @@ export function MemoryProposalReviewPanel({
                                 >
                                   Reject
                                 </button>
-                                {proposal.requiresReview ? (
-                                  <span className="memory-proposal-review-action-hint">
-                                    Requires review before apply
-                                  </span>
-                                ) : (
-                                  <span className="memory-proposal-review-action-hint">
-                                    Low-risk scope — apply path not wired yet
-                                  </span>
+                                {canApplyMemoryProposal(proposal) && (
+                                  <button
+                                    type="button"
+                                    className="memory-proposal-review-action-button memory-proposal-review-action-button--apply"
+                                    disabled={
+                                      !onApplyMemoryProposal || actingProposalId === proposal.id
+                                    }
+                                    onClick={(event) => {
+                                      event.stopPropagation()
+                                      void handleApplyAction(proposal)
+                                    }}
+                                  >
+                                    Apply
+                                  </button>
                                 )}
+                                <span className="memory-proposal-review-action-hint">
+                                  {memoryProposalApplyHint(proposal)}
+                                </span>
                               </div>
                             </div>
                           </div>

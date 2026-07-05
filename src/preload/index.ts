@@ -1343,6 +1343,8 @@ const api = {
     ipcRenderer.invoke('get-memory-proposal-pack', packId),
   updateMemoryProposal: (packId: string, proposalId: string, partial: any) =>
     ipcRenderer.invoke('update-memory-proposal', { packId, proposalId, partial }),
+  applyMemoryProposal: (packId: string, proposalId: string) =>
+    ipcRenderer.invoke('apply-memory-proposal', { packId, proposalId }),
   runManualIntrospection: (input: {
     windowStart: string
     windowEnd: string

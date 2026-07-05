@@ -1695,6 +1695,15 @@ declare global {
         proposalId: string,
         partial: Partial<MemoryProposal>
       ) => Promise<MemoryProposalPack | null>
+      applyMemoryProposal: (
+        packId: string,
+        proposalId: string
+      ) => Promise<{
+        ok: boolean
+        blocked?: string
+        pack?: MemoryProposalPack
+        conventionEntryId?: string
+      }>
       runManualIntrospection: (input: {
         windowStart: string
         windowEnd: string

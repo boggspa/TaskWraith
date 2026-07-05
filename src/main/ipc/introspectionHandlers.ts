@@ -5,6 +5,7 @@ import type {
   MemoryProposalPack,
   MemoryProposalStatus
 } from '../store/types'
+import type { ApplyMemoryProposalResult } from '../introspection/IntrospectionApplyService'
 import type {
   RunManualIntrospectionInput,
   RunManualIntrospectionResult
@@ -20,6 +21,7 @@ export interface IntrospectionHandlersDeps {
     proposalId: string,
     partial: Partial<MemoryProposal>
   ) => MemoryProposalPack | null
+  applyMemoryProposal: (packId: string, proposalId: string) => ApplyMemoryProposalResult
   runManualIntrospection: (input: RunManualIntrospectionInput) => RunManualIntrospectionResult
   getIntrospectionSchedule: (workspaceId?: string) => IntrospectionScheduleSettings
   updateIntrospectionSchedule: (
@@ -32,6 +34,11 @@ export interface UpdateMemoryProposalInput {
   packId: string
   proposalId: string
   partial?: Partial<MemoryProposal>
+}
+
+export interface ApplyMemoryProposalInput {
+  packId: string
+  proposalId: string
 }
 
 function text(value: unknown, max = 240): string {
@@ -163,6 +170,15 @@ export function registerIntrospectionHandlers(deps: IntrospectionHandlersDeps): 
       throw new Error('At least one reviewable proposal field is required.')
     }
     return deps.updateMemoryProposal(packId, proposalId, patch)
+  })
+
+  ipcMain.handle('apply-memory-proposal', (_, input: ApplyMemoryProposalInput) => {
+    const packId = text(input?.packId, 120)
+    const proposalId = text(input?.proposalId, 120)
+    if (!packId || !proposalId) {
+      throw new Error('packId and proposalId are required.')
+    }
+    return deps.applyMemoryProposal(packId, proposalId)
   })
 
   ipcMain.handle('run-manual-introspection', (_, input: unknown) => {

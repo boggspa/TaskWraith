@@ -4162,7 +4162,7 @@ export interface RepoConventionIndexEntry {
   description?: string
   paths?: string[]
   evidenceRefs?: AuditEvidenceRef[]
-  provenance: 'scan' | 'blackboard' | 'evidence_pack' | 'user'
+  provenance: 'scan' | 'blackboard' | 'evidence_pack' | 'user' | 'introspection'
   updatedAt: string
 }
 
@@ -4362,6 +4362,15 @@ export interface IntrospectionEvidenceItem {
   citationToken?: string
 }
 
+/** Receipt written when a reviewed proposal is applied to a durable target. */
+export interface MemoryProposalApplyReceipt {
+  appliedAt: string
+  target: 'RepoConventionIndex'
+  conventionEntryId: string
+  packId: string
+  proposalId: string
+}
+
 export interface MemoryProposal {
   id: string
   kind: MemoryProposalKind
@@ -4384,6 +4393,9 @@ export interface MemoryProposal {
   dedupKey: string
   requiresReview: boolean
   reviewNote?: string
+  /** Set when status transitions to applied via the gated apply layer. */
+  appliedAt?: string
+  applyReceipt?: MemoryProposalApplyReceipt
   createdAt: string
   updatedAt: string
 }

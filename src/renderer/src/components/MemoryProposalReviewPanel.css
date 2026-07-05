@@ -326,6 +326,21 @@
   color: color-mix(in srgb, var(--danger, #e2554f) 92%, var(--text-primary));
 }
 
+.memory-proposal-review-action-button--apply {
+  border: 1px solid color-mix(in srgb, var(--accent, #6b7cff) 45%, transparent);
+  background: color-mix(in srgb, var(--accent, #6b7cff) 16%, transparent);
+  color: color-mix(in srgb, var(--accent, #6b7cff) 92%, var(--text-primary));
+}
+
+.memory-proposal-review-apply-notice {
+  padding: 8px 12px;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, var(--success, #3ecf8e) 35%, transparent);
+  background: color-mix(in srgb, var(--success, #3ecf8e) 12%, transparent);
+  color: color-mix(in srgb, var(--success, #3ecf8e) 92%, var(--text-primary));
+  font-size: 12px;
+}
+
 .memory-proposal-review-action-button:disabled {
   opacity: 0.5;
   cursor: default;

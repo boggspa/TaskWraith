@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import fs from 'fs'
 import { AppStore } from './store'
 import { buildMemoryProposalPackInput } from './introspection/IntrospectionProposalGenerator'
+import { applyMemoryProposal } from './introspection/IntrospectionApplyService'
 import {
   createIntrospectionRunServiceDeps,
   runManualIntrospection
@@ -167,6 +168,94 @@ describe('AppStore thread introspection', () => {
     })
     expect(disabledAgain.enabled).toBe(false)
     expect(disabledAgain.nextRunAt).toBeNull()
+  })
+
+  it('applies approved repo_convention proposals into RepoConventionIndex', () => {
+    const run = AppStore.createIntrospectionRun({
+      status: 'review_pending',
+      trigger: 'manual',
+      windowStart: '2026-07-04T00:00:00.000Z',
+      windowEnd: '2026-07-05T00:00:00.000Z',
+      workspaceId: 'ws-1',
+      workspacePath: '/repo'
+    })
+    const pack = AppStore.saveMemoryProposalPack({
+      introspectionRunId: run.id,
+      workspaceId: 'ws-1',
+      workspacePath: '/repo',
+      windowStart: run.windowStart,
+      windowEnd: run.windowEnd,
+      proposals: [
+        {
+          id: 'prop-apply',
+          kind: 'repo_convention',
+          scope: 'workspace',
+          status: 'approved',
+          title: 'No repo-wide Prettier',
+          lesson: 'Do not run repo-wide Prettier.',
+          confidence: 0.9,
+          evidenceRefs: [
+            {
+              chatId: 'chat-1',
+              timestamp: '2026-07-05T12:00:00.000Z',
+              summary: 'User correction'
+            }
+          ],
+          dedupKey: 'no-prettier',
+          requiresReview: false,
+          createdAt: '2026-07-05T12:00:00.000Z',
+          updatedAt: '2026-07-05T12:00:00.000Z'
+        }
+      ],
+      evidenceItemCount: 1
+    })
+
+    const result = applyMemoryProposal(
+      {
+        store: {
+          getMemoryProposalPack: (id) => AppStore.getMemoryProposalPack(id),
+          updateMemoryProposal: (packId, proposalId, partial) =>
+            AppStore.updateMemoryProposal(packId, proposalId, partial),
+          getRepoConventionIndexes: (workspaceId) => AppStore.getRepoConventionIndexes(workspaceId),
+          saveRepoConventionIndex: (snapshot) => AppStore.saveRepoConventionIndex(snapshot)
+        },
+        now: () => '2026-07-05T18:00:00.000Z'
+      },
+      pack.id,
+      'prop-apply'
+    )
+
+    expect(result.ok).toBe(true)
+    expect(result.conventionEntryId).toBe('intro-prop-apply')
+    const indexes = AppStore.getRepoConventionIndexes('ws-1')
+    expect(indexes[0]?.entries).toEqual([
+      expect.objectContaining({
+        id: 'intro-prop-apply',
+        kind: 'decision',
+        provenance: 'introspection',
+        title: 'No repo-wide Prettier'
+      })
+    ])
+    const updated = AppStore.getMemoryProposalPack(pack.id)
+    expect(updated?.proposals[0]?.status).toBe('applied')
+    expect(updated?.proposals[0]?.applyReceipt?.conventionEntryId).toBe('intro-prop-apply')
+
+    const again = applyMemoryProposal(
+      {
+        store: {
+          getMemoryProposalPack: (id) => AppStore.getMemoryProposalPack(id),
+          updateMemoryProposal: (packId, proposalId, partial) =>
+            AppStore.updateMemoryProposal(packId, proposalId, partial),
+          getRepoConventionIndexes: (workspaceId) => AppStore.getRepoConventionIndexes(workspaceId),
+          saveRepoConventionIndex: (snapshot) => AppStore.saveRepoConventionIndex(snapshot)
+        },
+        now: () => '2026-07-05T19:00:00.000Z'
+      },
+      pack.id,
+      'prop-apply'
+    )
+    expect(again.ok).toBe(true)
+    expect(AppStore.getRepoConventionIndexes('ws-1')[0]?.entries).toHaveLength(1)
   })
 
   it('filters by workspace', () => {

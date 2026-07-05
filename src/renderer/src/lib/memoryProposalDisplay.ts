@@ -94,8 +94,55 @@ export function memoryProposalConfidenceClass(confidence: number): string {
   return 'memory-proposal-confidence memory-proposal-confidence--low'
 }
 
+const PHASE1_APPLYABLE_KINDS = new Set<MemoryProposalKind>(['repo_convention', 'do_not_repeat'])
+
+export function isPhase1ApplyableKind(kind: MemoryProposalKind): boolean {
+  return PHASE1_APPLYABLE_KINDS.has(kind)
+}
+
 export function canReviewMemoryProposal(proposal: MemoryProposal): boolean {
   return proposal.status === 'proposed' && proposal.requiresReview
+}
+
+export function canApplyMemoryProposal(proposal: MemoryProposal): boolean {
+  return proposal.status === 'approved' && isPhase1ApplyableKind(proposal.kind)
+}
+
+const APPLY_BLOCKED_LABELS: Record<string, string> = {
+  pack_not_found: 'Proposal pack not found.',
+  proposal_not_found: 'Proposal not found.',
+  proposal_not_approved: 'Proposal must be approved before apply.',
+  workspace_required: 'Pack must be scoped to a workspace before apply.',
+  kind_not_supported_phase1: 'This proposal kind cannot be applied in phase 1.',
+  skill_patch_not_supported_phase1:
+    'Skill patches remain review-only until the Skill Patch Manager ships.',
+  bug_not_supported_phase1: 'Bug proposals cannot be applied in phase 1.',
+  preference_not_supported_phase1: 'User preferences cannot be applied in phase 1.',
+  provider_hint_not_supported_phase1: 'Provider hints cannot be applied in phase 1.',
+  failure_mode_not_supported_phase1: 'Failure-mode proposals cannot be applied in phase 1.'
+}
+
+export function formatApplyMemoryProposalBlocked(blocked: string): string {
+  return APPLY_BLOCKED_LABELS[blocked] ?? `Apply blocked: ${blocked}`
+}
+
+export function memoryProposalApplyHint(proposal: MemoryProposal): string {
+  if (proposal.status === 'applied') {
+    const entryId = proposal.applyReceipt?.conventionEntryId
+    return entryId
+      ? `Applied to repo conventions (${entryId}).`
+      : 'Applied to repo conventions.'
+  }
+  if (canApplyMemoryProposal(proposal)) {
+    return 'Approved — ready to apply to repo conventions.'
+  }
+  if (proposal.status === 'approved' && !isPhase1ApplyableKind(proposal.kind)) {
+    return 'Apply is not available for this kind in phase 1.'
+  }
+  if (proposal.requiresReview) {
+    return 'Requires review before apply.'
+  }
+  return 'Approve before apply.'
 }
 
 export function formatMemoryProposalWindow(start: string, end: string): string {

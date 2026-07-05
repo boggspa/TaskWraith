@@ -626,7 +626,8 @@ export function normalizeRepoConventionIndexSnapshot(
               raw.provenance === 'scan' ||
               raw.provenance === 'blackboard' ||
               raw.provenance === 'evidence_pack' ||
-              raw.provenance === 'user'
+              raw.provenance === 'user' ||
+              raw.provenance === 'introspection'
                 ? raw.provenance
                 : 'scan',
             updatedAt: isoOrNow(raw.updatedAt, now.toISOString())

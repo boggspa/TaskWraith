@@ -43,17 +43,21 @@ Daily Thread Introspection (scheduled or manual)
 
 ### MVP safety boundary (current)
 
-Until the full pipeline ships, TaskWraith implements **read-only introspection
-+ reviewable artifacts only**:
+TaskWraith ships **read-only introspection + reviewable artifacts**, with a
+**narrow phase-1 apply path** for workspace repo conventions only:
 
 1. Collect recent run/thread evidence (harvester — **landed**, `0fd22e9a0`).
 2. Classify patterns into proposal candidates (generator — **landed**).
 3. Persist **Memory Proposal Packs** for review (**landed**).
 4. Review proposals in Settings → Thread introspection (**landed** — IPC + mount wired).
-5. **Do not** directly edit skills, rules, or repo conventions without an
-   approved apply action (**not wired**).
+5. **Apply phase 1 (landed):** user-approved `repo_convention` and
+   `do_not_repeat` proposals can be applied to the workspace
+   **RepoConventionIndex** via Settings (see [Apply phase 1](#apply-phase-1-repo-conventions-only)).
+6. **Still blocked:** skill/instruction file writes, preferences, provider hints,
+   failure modes, bugs, and any apply without explicit human approval.
 
-See blackboard decision `thread-introspection-mvp-boundary`.
+See blackboard decisions `thread-introspection-mvp-boundary` and
+`thread-introspection-apply-phase1-boundary`.
 
 ## How this differs from nearby concepts
 
@@ -178,7 +182,8 @@ load chats/events/approvals/feedback for window
 ```
 
 Callable from IPC (`run-manual-introspection`) and tests. Scheduled daily
-generation is the next slice; apply path remains out of scope.
+generation is the next slice. Apply is a separate explicit action (phase 1:
+repo conventions only — see [Apply phase 1](#apply-phase-1-repo-conventions-only)).
 
 ## Using Thread Introspection in Settings
 
@@ -188,20 +193,22 @@ Open **Settings → Automation → Thread introspection**.
    threads/runs for the active workspace, generates a **Memory Proposal Pack**,
    and leaves proposals in `proposed` / `review_pending` state.
 2. **Review proposals** — expand rows to see evidence citations, confidence,
-   and (for `skill_patch`) a diff preview. **Approve** or **Reject** updates
-   proposal status only — no skill files, repo rules, or conventions are
-   mutated.
+   and (for `skill_patch`) a diff preview. **Approve** or **Reject** records
+   review intent only. **Apply** (when shown) writes eligible approved
+   `repo_convention` / `do_not_repeat` lessons to **RepoConventionIndex**;
+   skill patches and other kinds stay review-only in phase 1.
 3. **Enable daily run** — toggle in Settings (renderer scaffolded). When the
    schedule IPC is wired, turning this on creates a **read-only** proposal pack
    each day for review. It does **not** auto-apply lessons or edit skills.
 
-IPC channels (read/review + manual run):
+IPC channels (read/review/apply + manual run):
 
 | Preload API | Purpose |
 | --- | --- |
 | `getMemoryProposalPacks(workspaceId?)` | List packs for the review panel |
 | `getMemoryProposalPack(id)` | Fetch one pack |
 | `updateMemoryProposal(packId, proposalId, partial)` | Approve/reject/expire; whitelisted fields only |
+| `applyMemoryProposal(packId, proposalId)` | Phase-1 apply to `RepoConventionIndex` (eligible kinds only) |
 | `runManualIntrospection({ windowStart, windowEnd, workspaceId?, workspacePath? })` | Manual harvest + generate |
 
 Schedule IPC (**in progress** — `@WriteMain` scheduler slice):
@@ -216,8 +223,8 @@ When enabled, the backend runs `runManualIntrospection` with
 per workspace). Duplicate timer fires must not create multiple scheduled packs
 for the same day.
 
-Approve/reject **does not apply** lessons — it records review intent for a
-future gated apply layer.
+Approve/reject records review intent. **Apply** (phase 1) is a separate explicit
+action for eligible approved proposals only — see [Apply phase 1](#apply-phase-1-repo-conventions-only).
 
 ## Review gates
 
@@ -228,9 +235,11 @@ future gated apply layer.
 - **Other kinds** — review when confidence < 0.65.
 
 The **Memory Proposal Review** panel (`MemoryProposalReviewPanel.tsx`) supports
-approve/reject callbacks, evidence expansion, and skill-patch diff preview —
-**no apply path** until a gated apply layer ships. Mounted in Settings via
-`ThreadIntrospectionSettingsPanel` with IPC wired (`871db3521`).
+approve/reject, evidence expansion, and skill-patch diff preview. For
+**approved** `repo_convention` / `do_not_repeat` proposals it exposes an
+**Apply** affordance that calls `applyMemoryProposal` and refreshes the pack.
+Other kinds remain review-only in phase 1 (no Apply button; blocked if invoked
+via IPC). Mounted in Settings via `ThreadIntrospectionSettingsPanel`.
 
 ## Scheduled daily generation (active slice)
 
@@ -248,9 +257,14 @@ read-only generation before any apply layer**.
 
 ### What it will not do
 
-- Apply approved proposals to `.codex/skills`, `~/.cursor/skills`, `AGENTS.md`,
-  or `RepoConventionIndex`.
-- Replace human review — daily packs still require Settings approve/reject.
+- Auto-apply lessons (scheduled runs create packs only; apply stays a separate
+  explicit user action in Settings).
+- Write `.codex/skills`, `~/.cursor/skills`, `AGENTS.md`, or provider instruction
+  files (skill patches stay review-only until Skill Patch Manager ships).
+- Apply non-convention proposal kinds in phase 1 (`preference`, `failure_mode`,
+  `provider_hint`, `bug`, `skill_patch`).
+- Replace human review — daily packs still require Settings approve/reject before
+  any apply.
 - Use agent provider dispatch (introspection is a system action, not a Codex
   prompt in a chat thread).
 
@@ -317,9 +331,11 @@ Commits:
 | Evidence harvester | **Landed** | `IntrospectionEvidenceHarvester.ts` |
 | Manual run service | **Landed** | `runManualIntrospection()` |
 | Proposal Review UI + Settings | **Landed** | `MemoryProposalReviewPanel` + `ThreadIntrospectionSettingsPanel` |
-| IPC + preload | **Landed** | `introspectionHandlers.ts` — read/review only |
+| IPC + preload | **Landed** | `introspectionHandlers.ts` — read/review/apply |
+| Apply layer (phase 1) | **Landed** | `IntrospectionApplyService.ts` — `RepoConventionIndex` only |
+| Apply UI (phase 1) | **In progress** | `@WriteRender`: Apply affordance in review panel |
 | Scheduled daily generation | **In progress** | `@WriteMain`: scheduler + schedule IPC; toggle UI scaffolded |
-| Apply layer | **Pending** | After scheduler; skill patch manager + rollback |
+| Apply layer (skills, prefs, bugs) | **Pending** | Skill Patch Manager + rollback; other kinds blocked in phase 1 |
 | Distillation policy | **Pending** | Auto-approve rules per scope/kind |
 | Decay / supersede | **Pending** | Registry lifecycle after apply |
 | MCP tools | **Pending** | No brokered introspection tools yet |
@@ -328,35 +344,89 @@ Commits:
 service, Settings panel, review panel).
 
 **Operational in dev:** Settings → Thread introspection → manual 24h run →
-approve/reject. **Not yet:** unattended daily packs, apply to skills/rules,
-MCP trigger from chat.
+approve/reject → **Apply** (repo convention / do-not-repeat only). **Not yet:**
+unattended daily packs, skill/instruction file apply, MCP trigger from chat.
 
 ### Pipeline checklist
 
 ```text
-Collect → Classify → Persist → Review (manual) → Scheduled → Apply
-  ✅        ✅         ✅         ✅ (871db3521)    🔄 active   ❌ later
+Collect → Classify → Persist → Review → Apply (phase 1) → Scheduled → Apply (full)
+  ✅        ✅         ✅         ✅        ✅ conventions   🔄 active      ❌ later
 ```
 
-Scheduled generation creates **reviewable packs only**. Apply (skill patches,
-repo conventions, memory registry) is a **separate gated slice** after
-scheduler ships.
+Scheduled generation creates **reviewable packs only** (no auto-apply). Phase-1
+apply targets **RepoConventionIndex** only; skill patches and other kinds remain
+blocked until later gated slices ship.
 
-## Apply targets (planned)
+## Apply phase 1 (repo conventions only)
 
-When the apply layer ships, approved proposals route by kind/scope:
+Phase 1 is intentionally narrow: **controlled TaskWraith storage only**, after
+explicit human approval in Settings. Implementation:
+`IntrospectionApplyService.applyMemoryProposal()` (`apply-memory-proposal` IPC).
 
-| Target | Proposal kinds |
+### Eligible proposals
+
+| Requirement | Detail |
 | --- | --- |
-| User rules / global preferences | `preference` (`scope: user`) |
-| `RepoConventionIndex` | `repo_convention`, `do_not_repeat` |
-| Ensemble blackboard (durable export) | high-confidence `do_not_repeat` notes |
-| Provider runtime hints | `provider_hint`, provider-scoped `failure_mode` |
-| Skill Patch Manager | `skill_patch` (diff preview, approval ledger, rollback) |
-| Issue tracker / workspace board | `bug` |
+| **Kinds** | `repo_convention`, `do_not_repeat` only |
+| **Status** | Must be `approved` (not merely `proposed`) |
+| **Pack scope** | Pack must carry a `workspaceId` (workspace-scoped introspection run) |
 
-All apply actions should write an **audit ledger entry** and support
-**supersede** rather than append forever.
+### What apply does
+
+1. Upserts a **RepoConventionIndex** entry for the pack's workspace:
+   - Entry id: `intro-{proposalId}` (stable; re-apply updates in place)
+   - Kind: `decision` for `repo_convention`, `do_not_repeat` for `do_not_repeat`
+   - Title/lesson from the proposal; `provenance: 'introspection'`
+2. Sets proposal `status` → `applied`, stamps `appliedAt`, and records
+   `applyReceipt` (`target: 'RepoConventionIndex'`, `conventionEntryId`, pack/proposal ids).
+3. Re-invoking apply on an already-`applied` proposal is **idempotent** (`ok: true`,
+   returns existing receipt).
+
+### Blocked in phase 1 (explicit `blocked` reasons)
+
+| Kind / condition | Block reason (representative) |
+| --- | --- |
+| Not `approved` | `proposal_not_approved` |
+| `skill_patch` | `skill_patch_not_supported_phase1` |
+| `bug` | `bug_not_supported_phase1` |
+| `preference` | `preference_not_supported_phase1` |
+| `provider_hint` | `provider_hint_not_supported_phase1` |
+| `failure_mode` | `failure_mode_not_supported_phase1` |
+| Pack missing workspace | `workspace_required` |
+| Unknown pack/proposal | `pack_not_found` / `proposal_not_found` |
+
+Skill patches remain **review-only**: the review panel may show a diff preview, but
+there is no unattended or one-click path to mutate `.codex/skills`, `~/.cursor/skills`,
+or other instruction files. A later **Skill Patch Manager** slice will add diff preview,
+approval ledger entries, and rollback before any skill file write.
+
+### Preload contract
+
+```typescript
+applyMemoryProposal(packId, proposalId) => {
+  ok: boolean
+  blocked?: ApplyMemoryProposalBlockReason
+  pack?: MemoryProposalPack      // updated pack when ok
+  conventionEntryId?: string     // RepoConventionIndex entry id when ok
+}
+```
+
+## Apply targets (full pipeline — later phases)
+
+Beyond phase 1, approved proposals will route by kind/scope:
+
+| Target | Proposal kinds | Phase |
+| --- | --- | --- |
+| `RepoConventionIndex` | `repo_convention`, `do_not_repeat` | **Phase 1 (landed)** |
+| User rules / global preferences | `preference` (`scope: user`) | Later |
+| Ensemble blackboard (durable export) | high-confidence `do_not_repeat` notes | Later |
+| Provider runtime hints | `provider_hint`, provider-scoped `failure_mode` | Later |
+| Skill Patch Manager | `skill_patch` (diff preview, approval ledger, rollback) | Later |
+| Issue tracker / workspace board | `bug` | Later |
+
+Future apply actions should write **audit ledger entries** and support **supersede**
+rather than append forever (decay/supersede slice pending).
 
 ## For agents operating in TaskWraith
 

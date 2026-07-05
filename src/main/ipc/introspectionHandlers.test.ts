@@ -60,6 +60,11 @@ function createDeps() {
     getMemoryProposalPacks: vi.fn((workspaceId?: string) => [samplePack(workspaceId || 'all')]),
     getMemoryProposalPack: vi.fn((id: string) => (id === 'pack-1' ? samplePack(id) : null)),
     updateMemoryProposal: vi.fn(() => samplePack('pack-1')),
+    applyMemoryProposal: vi.fn(() => ({
+      ok: true,
+      conventionEntryId: 'intro-prop-1',
+      pack: samplePack('pack-1')
+    })),
     runManualIntrospection: vi.fn(() => ({
       run: sampleRun(),
       pack: samplePack('pack-2'),
@@ -88,6 +93,7 @@ describe('registerIntrospectionHandlers', () => {
     expect(handlerFor('get-memory-proposal-packs')).toBeTypeOf('function')
     expect(handlerFor('get-memory-proposal-pack')).toBeTypeOf('function')
     expect(handlerFor('update-memory-proposal')).toBeTypeOf('function')
+    expect(handlerFor('apply-memory-proposal')).toBeTypeOf('function')
     expect(handlerFor('run-manual-introspection')).toBeTypeOf('function')
     expect(handlerFor('get-introspection-schedule')).toBeTypeOf('function')
     expect(handlerFor('update-introspection-schedule')).toBeTypeOf('function')
@@ -146,6 +152,31 @@ describe('registerIntrospectionHandlers', () => {
         partial: { lesson: 'nope' }
       })
     ).toThrow(/At least one reviewable proposal field/)
+  })
+
+  it('routes apply requests through deps with trimmed ids', () => {
+    const deps = createDeps()
+    registerIntrospectionHandlers(deps)
+
+    const response = handlerFor('apply-memory-proposal')({}, {
+      packId: ' pack-1 ',
+      proposalId: ' prop-1 '
+    })
+
+    expect(deps.applyMemoryProposal).toHaveBeenCalledWith('pack-1', 'prop-1')
+    expect(response).toEqual({
+      ok: true,
+      conventionEntryId: 'intro-prop-1',
+      pack: samplePack('pack-1')
+    })
+  })
+
+  it('rejects apply requests without ids', () => {
+    registerIntrospectionHandlers(createDeps())
+
+    expect(() => handlerFor('apply-memory-proposal')({}, { packId: '', proposalId: 'prop-1' })).toThrow(
+      /packId and proposalId are required/
+    )
   })
 
   it('runs manual introspection with normalized window input', () => {

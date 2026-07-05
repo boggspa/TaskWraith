@@ -42,6 +42,14 @@ export {
 } from './IntrospectionRunService'
 
 export {
+  applyMemoryProposal,
+  type ApplyMemoryProposalBlockReason,
+  type ApplyMemoryProposalResult,
+  type IntrospectionApplyServiceDeps,
+  type IntrospectionApplyServiceStore
+} from './IntrospectionApplyService'
+
+export {
   INTROSPECTION_SCHEDULE_INTERVAL_MS,
   buildRolling24hWindow,
   calendarDayKey,

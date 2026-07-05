@@ -14,6 +14,7 @@ import type {
   IntrospectionRunStatus,
   IntrospectionRunTrigger,
   MemoryProposal,
+  MemoryProposalApplyReceipt,
   MemoryProposalKind,
   MemoryProposalPack,
   MemoryProposalScope,
@@ -138,6 +139,26 @@ export function proposalRequiresReview(kind: MemoryProposalKind, confidence: num
   return confidence < 0.65
 }
 
+export function normalizeMemoryProposalApplyReceipt(
+  value: unknown
+): MemoryProposalApplyReceipt | null {
+  if (!value || typeof value !== 'object') return null
+  const input = value as Partial<MemoryProposalApplyReceipt>
+  const appliedAt = text(input.appliedAt, 64)
+  const conventionEntryId = text(input.conventionEntryId, 120)
+  const packId = text(input.packId, 120)
+  const proposalId = text(input.proposalId, 120)
+  if (!appliedAt || !conventionEntryId || !packId || !proposalId) return null
+  if (input.target !== 'RepoConventionIndex') return null
+  return {
+    appliedAt,
+    target: 'RepoConventionIndex',
+    conventionEntryId,
+    packId,
+    proposalId
+  }
+}
+
 export function normalizeIntrospectionEvidenceRef(value: unknown): IntrospectionEvidenceRef | null {
   if (!value || typeof value !== 'object') return null
   const input = value as Partial<IntrospectionEvidenceRef>
@@ -208,6 +229,7 @@ export function normalizeMemoryProposal(value: unknown): MemoryProposal | null {
     .filter((ref): ref is IntrospectionEvidenceRef => Boolean(ref))
     .slice(0, MAX_EVIDENCE_REFS)
   if (evidenceRefs.length === 0) return null
+  const applyReceipt = normalizeMemoryProposalApplyReceipt(input.applyReceipt)
   return {
     id,
     kind,
@@ -234,7 +256,9 @@ export function normalizeMemoryProposal(value: unknown): MemoryProposal | null {
     ...(text(input.expiresAt, 64) ? { expiresAt: text(input.expiresAt, 64) } : {}),
     ...(text(input.supersedesId, 120) ? { supersedesId: text(input.supersedesId, 120) } : {}),
     ...(text(input.supersededById, 120) ? { supersededById: text(input.supersededById, 120) } : {}),
-    ...(text(input.reviewNote, MAX_SUMMARY) ? { reviewNote: text(input.reviewNote, MAX_SUMMARY) } : {})
+    ...(text(input.reviewNote, MAX_SUMMARY) ? { reviewNote: text(input.reviewNote, MAX_SUMMARY) } : {}),
+    ...(text(input.appliedAt, 64) ? { appliedAt: text(input.appliedAt, 64) } : {}),
+    ...(applyReceipt ? { applyReceipt } : {})
   }
 }
 

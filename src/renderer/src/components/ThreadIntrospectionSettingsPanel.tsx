@@ -39,6 +39,15 @@ interface ThreadIntrospectionApi {
     proposalId: string,
     partial: Partial<MemoryProposal>
   ) => Promise<MemoryProposalPack | null>
+  applyMemoryProposal?: (
+    packId: string,
+    proposalId: string
+  ) => Promise<{
+    ok: boolean
+    blocked?: string
+    pack?: MemoryProposalPack
+    conventionEntryId?: string
+  }>
   runManualIntrospection?: (
     input: RunManualIntrospectionRequest
   ) => Promise<RunManualIntrospectionResponse>
@@ -67,6 +76,10 @@ function hasIntrospectionIpc(api: ThreadIntrospectionApi | undefined): boolean {
   )
 }
 
+function hasApplyMemoryProposalIpc(api: ThreadIntrospectionApi | undefined): boolean {
+  return typeof api?.applyMemoryProposal === 'function'
+}
+
 function last24hWindow(): { windowStart: string; windowEnd: string } {
   const windowEnd = new Date()
   const windowStart = new Date(windowEnd.getTime() - 24 * 60 * 60 * 1000)
@@ -82,6 +95,7 @@ export function ThreadIntrospectionSettingsPanel({
 }: ThreadIntrospectionSettingsPanelProps): React.JSX.Element {
   const api = useMemo(() => introspectionApi(), [])
   const ipcReady = hasIntrospectionIpc(api)
+  const applyIpcReady = hasApplyMemoryProposalIpc(api)
   const canRun = typeof api?.runManualIntrospection === 'function'
   const scheduleApiReady = introspectionScheduleApiReady(api)
 
@@ -121,6 +135,16 @@ export function ThreadIntrospectionSettingsPanel({
       if (!updated) {
         throw new Error('Proposal update failed — pack or proposal not found.')
       }
+    },
+    [api]
+  )
+
+  const onApplyMemoryProposal = useCallback(
+    async (packId: string, proposalId: string) => {
+      if (!api?.applyMemoryProposal) {
+        throw new Error('Thread Introspection apply IPC is not wired yet.')
+      }
+      return api.applyMemoryProposal(packId, proposalId)
     },
     [api]
   )
@@ -307,6 +331,7 @@ export function ThreadIntrospectionSettingsPanel({
         workspaceId={workspaceId}
         fetchPacks={ipcReady ? fetchPacks : undefined}
         onUpdateProposalStatus={ipcReady ? onUpdateProposalStatus : undefined}
+        onApplyMemoryProposal={ipcReady && applyIpcReady ? onApplyMemoryProposal : undefined}
         onRefresh={ipcReady ? bumpRefresh : undefined}
         error={ipcReady ? null : 'Thread Introspection IPC is not wired yet.'}
       />

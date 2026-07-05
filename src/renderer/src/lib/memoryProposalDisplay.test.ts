@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import {
+  canApplyMemoryProposal,
   canReviewMemoryProposal,
   filterMemoryProposals,
+  formatApplyMemoryProposalBlocked,
   formatMemoryProposalConfidence,
+  memoryProposalApplyHint,
   memoryProposalKindLabel,
   memoryProposalStatusLabel
 } from './memoryProposalDisplay'
@@ -36,6 +39,48 @@ describe('memoryProposalDisplay', () => {
     expect(canReviewMemoryProposal(proposal())).toBe(true)
     expect(canReviewMemoryProposal(proposal({ status: 'approved' }))).toBe(false)
     expect(canReviewMemoryProposal(proposal({ requiresReview: false }))).toBe(false)
+  })
+
+  it('detects phase-1 applyable proposals and formats blocked reasons', () => {
+    expect(canApplyMemoryProposal(proposal({ status: 'approved', kind: 'repo_convention' }))).toBe(
+      true
+    )
+    expect(canApplyMemoryProposal(proposal({ status: 'approved', kind: 'do_not_repeat' }))).toBe(
+      true
+    )
+    expect(canApplyMemoryProposal(proposal({ status: 'approved', kind: 'skill_patch' }))).toBe(
+      false
+    )
+    expect(canApplyMemoryProposal(proposal({ status: 'proposed', kind: 'repo_convention' }))).toBe(
+      false
+    )
+    expect(formatApplyMemoryProposalBlocked('skill_patch_not_supported_phase1')).toContain(
+      'Skill Patch Manager'
+    )
+  })
+
+  it('renders apply hints by status and kind', () => {
+    expect(memoryProposalApplyHint(proposal({ status: 'approved', kind: 'repo_convention' }))).toBe(
+      'Approved — ready to apply to repo conventions.'
+    )
+    expect(memoryProposalApplyHint(proposal({ status: 'approved', kind: 'skill_patch' }))).toBe(
+      'Apply is not available for this kind in phase 1.'
+    )
+    expect(
+      memoryProposalApplyHint(
+        proposal({
+          status: 'applied',
+          kind: 'repo_convention',
+          applyReceipt: {
+            appliedAt: '2026-07-05T20:10:00.000Z',
+            target: 'RepoConventionIndex',
+            conventionEntryId: 'intro-prop-1',
+            packId: 'pack-1',
+            proposalId: 'p1'
+          }
+        })
+      )
+    ).toContain('intro-prop-1')
   })
 
   it('filters proposals by kind, scope, status, and search', () => {
