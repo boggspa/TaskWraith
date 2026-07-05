@@ -18,6 +18,7 @@ import { mergeTranscriptMediaRefs } from './lib/transcriptMediaRefs'
 import { shouldPreferLiveAssistantContent } from './lib/chatUpdatedAssistantMerge'
 import { readComposerDrafts, writeComposerDrafts } from './lib/composerDraftStore'
 import { resolveSessionLinkRouting } from './lib/participantSessionLink'
+import { fetchForkCapability, forkAgentThreadUniversal } from './lib/universalFork'
 import { resolveRuntimePickerScope } from './lib/participantRuntimeProfile'
 import { resolveSlashParticipantForChat } from './lib/resolveSlashParticipant'
 import { buildHumanCollaborationInvitePayload } from './lib/humanCollaborationInvitePayload'
@@ -312,6 +313,12 @@ import {
   type ExternalPathGrantGap
 } from './lib/externalPathGrantPreflight'
 import type { GitPrSummary, GitRepositorySnapshot } from '../../main/services/GitService'
+import {
+  buildComposerRuntimeWorktreeIntent,
+  normalizeWorkspacePath,
+  worktreeSelectionRequiredWarning,
+  type ComposerWorktreeSelection
+} from './lib/composerWorktreeSelection'
 import {
   type SharedChatCreateVariant,
   type WorkspaceBoardCreateInput
@@ -2021,6 +2028,9 @@ function App(): React.JSX.Element {
   // tool-derived diff counts. Null until the menu opens (lazy fetch) or
   // the repo read fails.
   const [primaryGitSnapshot, setPrimaryGitSnapshot] = useState<GitRepositorySnapshot | null>(null)
+  const [composerWorktreeByWorkspace, setComposerWorktreeByWorkspace] = useState<
+    Record<string, ComposerWorktreeSelection | null>
+  >({})
   // PR check rollup for the current workspace, lifted alongside the snapshot so
   // the unified workspace line shows CI without a separate git-status row.
   const [primaryPr, setPrimaryPr] = useState<GitPrSummary | null>(null)
@@ -2039,6 +2049,19 @@ function App(): React.JSX.Element {
     Record<string, GitRepositorySnapshot | null>
   >({})
   const currentWorkspacePath = currentWorkspace?.path
+  const currentComposerWorktreeSelection = currentWorkspacePath
+    ? composerWorktreeByWorkspace[normalizeWorkspacePath(currentWorkspacePath)] || null
+    : null
+  const handleComposerWorktreeChange = useCallback(
+    (selection: ComposerWorktreeSelection | null, snapshot: GitRepositorySnapshot | null) => {
+      const basePath =
+        selection?.baseWorkspacePath || snapshot?.repoRoot || currentWorkspacePath || ''
+      const key = normalizeWorkspacePath(basePath)
+      if (!key) return
+      setComposerWorktreeByWorkspace((prev) => ({ ...prev, [key]: selection }))
+    },
+    [currentWorkspacePath]
+  )
   // Set of (workspace|provider) keys whose Tier-1 "raise to Default Approval"
   // elevation notice has already been acknowledged, derived from the persisted
   // `approvalModeElevationAcknowledgements` settings Record. Fed into
@@ -5907,25 +5930,84 @@ function App(): React.JSX.Element {
     await linkCodexThreadToCurrentChat(threadId)
   }
 
-  const handleForkCodexThread = async (threadId: string) => {
-    if (!threadId || typeof window.api.forkAgentThread !== 'function') return
-    try {
-      const response = await window.api.forkAgentThread('codex', threadId, {
-        cwd: currentWorkspace?.path || undefined,
-        model: isCodexModelId(selectedModelType) ? selectedModelType : CODEX_DEFAULT_MODEL,
-        excludeTurns: true
-      })
-      const forkedThreadId = response?.thread?.id
-      if (forkedThreadId) {
-        await linkCodexThreadToCurrentChat(forkedThreadId)
-        await refreshCodexThreads()
-      }
-    } catch (error) {
+  const handleForkAgentThread = async (
+    provider: ProviderId,
+    threadId?: string,
+    options?: { chatId?: string }
+  ) => {
+    const capability = await fetchForkCapability(provider)
+    if (capability.kind === 'unsupported') {
       setRawLogs((prev) => [
         ...prev,
-        { type: 'stderr', content: `Failed to fork Codex thread: ${redactLog(String(error))}` }
+        { type: 'stderr', content: `Fork unavailable for ${getProviderLabel(provider)}: ${capability.detail}` }
       ])
+      return
     }
+    const effectiveThreadId =
+      threadId ||
+      (isCurrentEnsembleChat && selectedParticipant?.provider === provider
+        ? selectedParticipant.linkedProviderSessionId
+        : currentChat?.linkedProviderSessionId) ||
+      undefined
+    if (capability.requiresLinkedSession && !effectiveThreadId) {
+      openInspectorTab('capabilities')
+      if (provider === 'codex') void refreshCodexThreads()
+      setRawLogs((prev) => [
+        ...prev,
+        {
+          type: 'info',
+          content: `Link a ${getProviderLabel(provider)} session before forking (native fork requires a thread id).`
+        }
+      ])
+      return
+    }
+    const result = await forkAgentThreadUniversal({
+      provider,
+      threadId: effectiveThreadId,
+      chatId: options?.chatId || currentComposerChatId || undefined,
+      cwd: currentWorkspace?.path || undefined,
+      model:
+        provider === 'codex' && isCodexModelId(selectedModelType)
+          ? selectedModelType
+          : provider === 'codex'
+            ? CODEX_DEFAULT_MODEL
+            : undefined
+    })
+    if (!result.ok) {
+      setRawLogs((prev) => [
+        ...prev,
+        {
+          type: 'stderr',
+          content: `Failed to fork ${getProviderLabel(provider)} session: ${redactLog(result.error || 'unknown error')}`
+        }
+      ])
+      return
+    }
+    const forkKind = result.kind || capability.kind
+    if (provider === 'codex' && result.forkedSessionId) {
+      await linkCodexThreadToCurrentChat(result.forkedSessionId)
+      await refreshCodexThreads()
+    }
+    if (result.chatId && result.chatId !== currentComposerChatId) {
+      const forkedChat = chatByIdRef.current?.[result.chatId]
+      if (forkedChat) {
+        void handleSelectChatRef.current?.(forkedChat)
+      }
+    }
+    setRawLogs((prev) => [
+      ...prev,
+      {
+        type: 'info',
+        content:
+          forkKind === 'native'
+            ? `Forked native ${getProviderLabel(provider)} session${result.forkedSessionId ? `: ${result.forkedSessionId}` : ''}.`
+            : `Created emulated fork for ${getProviderLabel(provider)}${result.chatId ? ` (chat ${result.chatId})` : ''}.`
+      }
+    ])
+  }
+
+  const handleForkCodexThread = async (threadId: string) => {
+    await handleForkAgentThread('codex', threadId)
   }
 
   const handleSelectExistingWorkspace = async (
@@ -10821,10 +10903,55 @@ function App(): React.JSX.Element {
             )
           : undefined
       const runDiffUnavailable = !isGlobalRun && isGeminiWorktreeDiffUnavailable(runWorktree)
-      const runDiffWorkspacePath =
+      let runDiffWorkspacePath =
         !isGlobalRun && runWorkspace && !runDiffUnavailable
           ? getDiffWorkspacePath(runWorkspace, runWorktree)
           : undefined
+      const composerWorktreeSelection =
+        !isGlobalRun && runWorkspace
+          ? composerWorktreeByWorkspace[normalizeWorkspacePath(runWorkspace.path)] || null
+          : null
+      const runRuntimeProfile = request.runtimeProfileId
+        ? runtimeProfiles.find((profile) => profile.id === request.runtimeProfileId) || null
+        : null
+      const runtimeWorktreeIntent =
+        !isGlobalRun && runWorkspace
+          ? buildComposerRuntimeWorktreeIntent({
+              baseWorkspacePath: runWorkspace.path,
+              selection: composerWorktreeSelection,
+              runtimeProfile: runRuntimeProfile
+            })
+          : undefined
+      const worktreeRequiredMessage = worktreeSelectionRequiredWarning(runtimeWorktreeIntent)
+      if (worktreeRequiredMessage) {
+        updateRunQueueJobStatus(
+          currentRunId,
+          'failed',
+          'Worktree selection required.',
+          worktreeRequiredMessage
+        )
+        appendThreadRawLog(runChat.appChatId, { type: 'stderr', content: worktreeRequiredMessage })
+        updateChatById(runChat.appChatId, (source) => ({
+          ...source,
+          messages: [
+            ...source.messages,
+            {
+              id: createMessageId(),
+              role: 'error',
+              content: worktreeRequiredMessage,
+              timestamp: new Date().toISOString()
+            }
+          ]
+        }))
+        return
+      }
+      const composerEffectiveWorkspacePath =
+        runtimeWorktreeIntent?.status === 'selected'
+          ? runtimeWorktreeIntent.effectiveWorkspacePath
+          : undefined
+      if (composerEffectiveWorkspacePath) {
+        runDiffWorkspacePath = composerEffectiveWorkspacePath
+      }
       const finalPrompt = composerMetadata.finalPrompt
       const discordContextReads =
         composerMetadata.discordContextReads?.length
@@ -11030,6 +11157,14 @@ function App(): React.JSX.Element {
               {
                 type: 'info' as const,
                 content: `Gemini worktree: ${runWorktree.name || 'enabled'}${runDiffWorkspacePath ? ` (diff path: ${runDiffWorkspacePath})` : ' (effective path unknown; Diff Studio disabled)'}`
+              }
+            ]
+          : []),
+        ...(runtimeWorktreeIntent?.status === 'selected'
+          ? [
+              {
+                type: 'info' as const,
+                content: `Composer worktree: ${runtimeWorktreeIntent.effectiveWorkspacePath || 'selected'}`
               }
             ]
           : [])
@@ -11883,11 +12018,15 @@ function App(): React.JSX.Element {
           // all three were inert for solo scheduled runs. scheduledTaskId is not
           // part of the signed posture context, so this cannot affect the clamp.
           dispatchAccepted = true
-          await window.api.runAgent(
-            request.scheduledTaskId
-              ? ({ ...composedPayload, scheduledTaskId: request.scheduledTaskId } as typeof composedPayload)
-              : composedPayload
-          )
+          const dispatchPayload = {
+            ...composedPayload,
+            ...(runtimeWorktreeIntent ? { runtimeWorktree: runtimeWorktreeIntent } : {}),
+            ...(composerEffectiveWorkspacePath
+              ? { effectiveWorkspacePath: composerEffectiveWorkspacePath }
+              : {}),
+            ...(request.scheduledTaskId ? { scheduledTaskId: request.scheduledTaskId } : {})
+          } as typeof composedPayload
+          await window.api.runAgent(dispatchPayload)
         }
       } catch (error) {
         clearActiveRunContext(runContext)
@@ -14597,21 +14736,11 @@ function App(): React.JSX.Element {
           rememberCurrentChatComposerSelection({ codexServiceTier: nextTier })
         }
       } else if (item.command === '/fork') {
-        // 1.0.4-AT1 + AT6 — fork sources from the selected
-        // participant's `linkedProviderSessionId` in ensemble (the
-        // AT1 routing helper handles the chat-vs-participant write
-        // direction; here we just pick the right source thread to
-        // fork against).
         const threadId =
-          isCurrentEnsembleChat && selectedParticipant?.provider === 'codex'
+          isCurrentEnsembleChat && selectedParticipant?.provider === currentProvider
             ? selectedParticipant.linkedProviderSessionId
             : currentChat?.linkedProviderSessionId
-        if (threadId) {
-          void handleForkCodexThread(threadId)
-        } else {
-          openInspectorTab('capabilities')
-          void refreshCodexThreads()
-        }
+        void handleForkAgentThread(currentProvider, threadId || undefined)
       }
       return
     }
@@ -14635,6 +14764,12 @@ function App(): React.JSX.Element {
         openInspectorTab('diff')
       } else if (item.command === '/review') {
         void handleReviewCurrentDiff()
+      } else if (item.command === '/fork') {
+        const threadId =
+          isCurrentEnsembleChat && selectedParticipant?.provider === slashTargetProvider
+            ? selectedParticipant.linkedProviderSessionId
+            : currentChat?.linkedProviderSessionId
+        void handleForkAgentThread(slashTargetProvider, threadId || undefined)
       }
       return
     }
@@ -21821,8 +21956,12 @@ function App(): React.JSX.Element {
           }))
         } else if (item.command === '/fork') {
           focusPane()
-          openInspectorTab('capabilities')
-          void refreshCodexThreads()
+          const threadId =
+            chat.chatKind === 'ensemble'
+              ? chat.ensemble?.participants.find((p) => p.provider === provider)
+                  ?.linkedProviderSessionId
+              : chat.linkedProviderSessionId
+          void handleForkAgentThread(provider, threadId || undefined, { chatId: chat.appChatId })
         }
         return
       }
@@ -21851,6 +21990,14 @@ function App(): React.JSX.Element {
           }
         } else if (item.command === '/review') {
           void handleReviewDiffForChat(chat, provider, workspace)
+        } else if (item.command === '/fork') {
+          focusPane()
+          const threadId =
+            chat.chatKind === 'ensemble'
+              ? chat.ensemble?.participants.find((p) => p.provider === provider)
+                  ?.linkedProviderSessionId
+              : chat.linkedProviderSessionId
+          void handleForkAgentThread(provider, threadId || undefined, { chatId: chat.appChatId })
         }
         return
       }
@@ -22739,6 +22886,10 @@ function App(): React.JSX.Element {
       // read THIS pane's snapshot (was hard-null, which dropped ahead/behind + merge
       // for panes). Branch label still falls back to currentWorkspace.branch if absent.
       primaryGitSnapshot: gitSnapshotByWorkspace[viewerWorkspace?.path ?? ''] ?? null,
+      composerWorktreeSelection: viewerWorkspace?.path
+        ? composerWorktreeByWorkspace[normalizeWorkspacePath(viewerWorkspace.path)] || null
+        : null,
+      onComposerWorktreeChange: handleComposerWorktreeChange,
       // Pane PR/CI rollup stays focused-only for now (no per-pane gh fetch).
       primaryPr: null,
       pendingPlanImport: null,
@@ -23836,6 +23987,10 @@ function App(): React.JSX.Element {
         // read THIS pane's snapshot (was hard-null, which dropped ahead/behind + merge
         // for panes). Branch label still falls back to currentWorkspace.branch if absent.
         primaryGitSnapshot: gitSnapshotByWorkspace[viewerWorkspace?.path ?? ''] ?? null,
+        composerWorktreeSelection: viewerWorkspace?.path
+          ? composerWorktreeByWorkspace[normalizeWorkspacePath(viewerWorkspace.path)] || null
+          : null,
+        onComposerWorktreeChange: handleComposerWorktreeChange,
         // Pane PR/CI rollup stays focused-only for now (no per-pane gh fetch).
         primaryPr: null,
         pendingPlanImport: null,
@@ -24006,6 +24161,8 @@ function App(): React.JSX.Element {
     permissionRequestSource,
     permissionRequestTitle,
     primaryGitSnapshot,
+    composerWorktreeSelection: currentComposerWorktreeSelection,
+    onComposerWorktreeChange: handleComposerWorktreeChange,
     primaryPr,
     queuedMessagesAboveRowEntries,
     runtimeProfileControl,
@@ -24198,6 +24355,7 @@ function App(): React.JSX.Element {
     handleEndCurrentLinkedMainChat,
     handleEndSidePanelChat,
     handleForkCodexThread,
+    handleForkAgentThread,
     handleGeminiTerminalSubmit,
     handleImportCodexUsageCredential,
     handleJumpToLatest,

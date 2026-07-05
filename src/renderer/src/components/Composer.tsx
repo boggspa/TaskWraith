@@ -47,7 +47,8 @@ import { FileTypeIcon } from '../components/FileTypeIcon'
 import { GhostCompanion } from '../components/FxLayers'
 import { NotificationZone } from '../components/NotificationZone'
 import { GitCommitControls } from '../components/GitCommitControls'
-import { GitCiChip, GitMergeBadge, GitSyncChip, branchTone } from '../components/GitStatusChips'
+import { ComposerBranchWorktreePopover } from '../components/ComposerBranchWorktreePopover'
+import { GitCiChip, GitMergeBadge, GitSyncChip } from '../components/GitStatusChips'
 import { LiveThreadTokenTally } from '../components/LiveThreadTokenTally'
 import { MultiviewLayoutPicker } from '../components/MultiviewLayoutPicker'
 import { CanvasComposerButton } from '../components/CanvasComposerButton'
@@ -339,6 +340,8 @@ export interface ComposerProps {
   planImportGroundingBusy: any
   planImportGroundingDisabledReason: any
   primaryGitSnapshot: any
+  composerWorktreeSelection?: any
+  onComposerWorktreeChange?: any
   primaryModifierLabel: any
   primaryPr: any
   providerRates: any
@@ -614,6 +617,8 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     planImportGroundingBusy,
     planImportGroundingDisabledReason,
     primaryGitSnapshot,
+    composerWorktreeSelection,
+    onComposerWorktreeChange,
     primaryModifierLabel,
     primaryPr,
     providerRates,
@@ -1781,20 +1786,15 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             remoteUrl: primaryGitSnapshot?.remoteUrl
                           })}
                           {' · '}
-                          <em
-                            className={`composer-above-bar-secondary-branch git-tone-${branchTone(
-                              primaryGitSnapshot?.detached
-                                ? undefined
-                                : (primaryGitSnapshot?.branch ?? currentWorkspace?.branch),
-                              primaryGitSnapshot?.detached ?? false
-                            )}`}
-                          >
-                            {primaryGitSnapshot
-                              ? primaryGitSnapshot.detached
-                                ? 'detached HEAD'
-                                : primaryGitSnapshot.branch || 'detached'
-                              : currentWorkspace?.branch || 'detached'}
-                          </em>
+                          <ComposerBranchWorktreePopover
+                            workspacePath={currentWorkspace?.path}
+                            gitSnapshot={primaryGitSnapshot}
+                            fallbackBranch={currentWorkspace?.branch}
+                            detached={primaryGitSnapshot?.detached ?? false}
+                            composerWorktreeSelection={composerWorktreeSelection}
+                            onSnapshotRefresh={setPrimaryGitSnapshot}
+                            onWorktreeSelectionChange={onComposerWorktreeChange}
+                          />
                         </span>
                       </span>
                       {primaryGitSnapshot && <GitMergeBadge snapshot={primaryGitSnapshot} />}

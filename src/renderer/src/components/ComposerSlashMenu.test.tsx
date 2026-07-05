@@ -64,7 +64,7 @@ describe('ComposerSlashMenu helpers', () => {
 
     expect(
       resolveComposerSlashCommandIcon({
-        id: 'codex-fork',
+        id: 'universal-fork',
         command: '/fork',
         label: 'Fork thread',
         description: 'Fork the linked Codex thread.',

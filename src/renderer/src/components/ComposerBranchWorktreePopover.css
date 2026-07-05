@@ -1,0 +1,147 @@
+.composer-branch-trigger {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-style: italic;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+  text-decoration: underline dotted transparent;
+  transition: text-decoration-color 120ms ease;
+}
+
+.composer-branch-trigger:hover:not(:disabled) {
+  text-decoration-color: currentColor;
+}
+
+.composer-branch-trigger:disabled {
+  cursor: default;
+  opacity: 0.65;
+}
+
+.composer-branch-trigger.is-linked-worktree {
+  font-style: normal;
+  font-weight: 600;
+}
+
+.composer-branch-popover {
+  position: fixed;
+  z-index: 1200;
+  min-width: 16rem;
+  max-width: min(24rem, calc(100vw - 1.5rem));
+  max-height: min(22rem, calc(100vh - 2rem));
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--popover-bg, var(--bg-elevated, var(--bg-secondary)));
+  box-shadow: var(--shadow-lg, 0 12px 32px rgba(0, 0, 0, 0.28));
+  overflow: hidden;
+}
+
+.composer-branch-popover-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  padding: 0.55rem 0.7rem;
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+}
+
+.composer-branch-popover-body {
+  overflow: auto;
+  padding: 0.35rem;
+}
+
+.composer-branch-popover-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.25rem 0;
+}
+
+.composer-branch-popover-section + .composer-branch-popover-section {
+  border-top: 1px solid var(--border-subtle);
+  margin-top: 0.25rem;
+  padding-top: 0.45rem;
+}
+
+.composer-branch-popover-section-title {
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: var(--text-tertiary);
+  padding: 0.15rem 0.45rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.composer-branch-popover-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  width: 100%;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  padding: 0.4rem 0.45rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.composer-branch-popover-item:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.composer-branch-popover-item.is-current {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  font-weight: 600;
+}
+
+.composer-branch-popover-item:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.composer-branch-popover-create {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0.35rem 0.45rem 0.5rem;
+}
+
+.composer-branch-popover-create input {
+  width: 100%;
+}
+
+.composer-branch-popover-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.35rem;
+  padding: 0.45rem 0.55rem;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.composer-branch-popover-status {
+  flex: 1;
+  font-size: var(--font-size-xs);
+  color: var(--text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-branch-popover-status.is-error {
+  color: var(--danger, #c44);
+}
+
+.composer-branch-popover-status.is-warning {
+  color: #9a6b16;
+}

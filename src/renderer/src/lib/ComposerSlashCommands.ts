@@ -101,10 +101,10 @@ export const CODEX_PALETTE_CORE: CommandPaletteItem[] = [
     source: 'core'
   },
   {
-    id: 'codex-fork',
+    id: 'universal-fork',
     command: '/fork',
-    label: 'Fork thread',
-    description: 'Fork the linked Codex thread and link this chat to the fork.',
+    label: 'Fork session',
+    description: 'Fork the linked provider session (native on Codex; emulated elsewhere — no Gemini).',
     group: 'Discovery',
     source: 'core'
   },
@@ -157,6 +157,14 @@ export const CLI_PROVIDER_PALETTE_CORE: CommandPaletteItem[] = [
     label: 'Permissions',
     description: 'Show provider permission and approval mode controls.',
     group: 'Core',
+    source: 'core'
+  },
+  {
+    id: 'cli-universal-fork',
+    command: '/fork',
+    label: 'Fork session',
+    description: 'Fork this chat session (emulated — duplicates transcript into an isolated sibling).',
+    group: 'Discovery',
     source: 'core'
   }
 ]

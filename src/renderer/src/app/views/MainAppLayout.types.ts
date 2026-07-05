@@ -290,6 +290,7 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   handleEndCurrentLinkedMainChat: any
   handleEndSidePanelChat: any
   handleForkCodexThread: any
+  handleForkAgentThread: any
   handleGeminiTerminalSubmit: any
   handleImportCodexUsageCredential: any
   handleJumpToLatest: any

@@ -239,6 +239,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   handleEndCurrentLinkedMainChat,
   handleEndSidePanelChat,
   handleForkCodexThread,
+  handleForkAgentThread,
   handleGeminiTerminalSubmit,
   handleImportCodexUsageCredential,
   handleJumpToLatest,
@@ -2631,6 +2632,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
               onRefreshCodexThreads={refreshCodexThreads}
               onResumeCodexThread={handleResumeCodexThread}
               onForkCodexThread={handleForkCodexThread}
+              onForkAgentThread={handleForkAgentThread}
               onRollbackCodexThread={handleRollbackCodexThread}
               onImportCodexUsageCredential={handleImportCodexUsageCredential}
               onClearCodexUsageCredential={handleClearCodexUsageCredential}

@@ -470,7 +470,7 @@ describe('ComposerSlashCommands', () => {
         'codex-mcp',
         'codex-review',
         'codex-resume',
-        'codex-fork',
+        'universal-fork',
         'codex-permissions'
       ])
     })
@@ -482,7 +482,8 @@ describe('ComposerSlashCommands', () => {
         'cli-provider-model',
         'cli-provider-diff',
         'cli-provider-review',
-        'cli-provider-permissions'
+        'cli-provider-permissions',
+        'cli-universal-fork'
       ])
     })
   })

@@ -1,0 +1,139 @@
+.prompt-cache-settings {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.prompt-cache-settings-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-md);
+}
+
+.prompt-cache-settings-header h4 {
+  margin: 0;
+}
+
+.prompt-cache-settings-note {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  max-width: 52rem;
+}
+
+.prompt-cache-settings-global {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  font-size: var(--font-size-sm);
+}
+
+.prompt-cache-table-section {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background: var(--surface-elevated, var(--bg-secondary));
+}
+
+.prompt-cache-table-scroll {
+  overflow-x: auto;
+}
+
+.prompt-cache-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--font-size-sm);
+}
+
+.prompt-cache-table th,
+.prompt-cache-table td {
+  padding: 0.55rem 0.75rem;
+  text-align: left;
+  border-bottom: 1px solid var(--border-subtle);
+  vertical-align: top;
+}
+
+.prompt-cache-table th {
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--bg-secondary) 88%, transparent);
+}
+
+.prompt-cache-table tr:last-child td {
+  border-bottom: none;
+}
+
+.prompt-cache-provider-cell {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-width: 7rem;
+}
+
+.prompt-cache-guarantee {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+
+.prompt-cache-guarantee--guaranteed {
+  color: #0d7a4d;
+  background: color-mix(in srgb, #0d7a4d 12%, transparent);
+  border-color: color-mix(in srgb, #0d7a4d 28%, transparent);
+}
+
+.prompt-cache-guarantee--automatic-observed {
+  color: #1a6fb0;
+  background: color-mix(in srgb, #1a6fb0 12%, transparent);
+  border-color: color-mix(in srgb, #1a6fb0 28%, transparent);
+}
+
+.prompt-cache-guarantee--best-effort {
+  color: #9a6b16;
+  background: color-mix(in srgb, #9a6b16 12%, transparent);
+  border-color: color-mix(in srgb, #9a6b16 28%, transparent);
+}
+
+.prompt-cache-guarantee--unsupported {
+  color: var(--text-tertiary);
+  background: color-mix(in srgb, var(--text-tertiary) 10%, transparent);
+  border-color: color-mix(in srgb, var(--text-tertiary) 22%, transparent);
+}
+
+.prompt-cache-detail {
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  line-height: 1.35;
+  max-width: 22rem;
+}
+
+.prompt-cache-diagnostics {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  white-space: nowrap;
+}
+
+.prompt-cache-mode-select {
+  min-width: 6.5rem;
+}
+
+.prompt-cache-settings-error {
+  color: var(--danger, #c44);
+  font-size: var(--font-size-sm);
+}
+
+.prompt-cache-settings-footnote {
+  margin: 0;
+  font-size: var(--font-size-xs);
+  color: var(--text-tertiary);
+  line-height: 1.4;
+}

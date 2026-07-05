@@ -96,6 +96,7 @@ import { PinnedMessagesSettingsPage } from './PinnedMessagesSettingsPage'
 import { UpdateStatusPane } from './UpdateStatusPane'
 import { ModelUsageCard } from './ModelUsageCard'
 import { ModelUsageSettingsTable, ProviderApiRatesSettingsTable, ModelContextLengthsSettingsTable } from './ModelUsageSettingsTable'
+import { PromptCacheSettingsSection } from './PromptCacheSettingsSection'
 import { TokenUsageChart } from './TokenUsageChart'
 import { UsageHeatmap } from './UsageHeatmap'
 import { WorkspaceActivityHeatmap } from './WorkspaceActivityHeatmap'
@@ -6844,6 +6845,8 @@ export function SettingsPanel({
                   </SettingsProviderAuthCard>
                 </div>
               </div>
+
+              <PromptCacheSettingsSection />
 
               <div className="settings-group span-all">
                 <h4 className="sidebar-section-title" style={{ margin: 0 }}>

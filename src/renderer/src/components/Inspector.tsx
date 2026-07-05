@@ -147,6 +147,7 @@ interface InspectorProps {
   onRefreshCodexThreads?: () => void
   onResumeCodexThread?: (threadId: string) => void
   onForkCodexThread?: (threadId: string) => void
+  onForkAgentThread?: (provider: ProviderId, threadId?: string) => void
   onRollbackCodexThread?: (threadId: string) => void
   onImportCodexUsageCredential?: () => void
   onClearCodexUsageCredential?: () => void
@@ -2143,8 +2144,9 @@ function CapabilitiesTab(props: InspectorProps) {
                     <button
                       className="btn btn-sm btn-ghost"
                       onClick={() => props.onForkCodexThread?.(thread.id)}
+                      title="Native Codex thread/fork"
                     >
-                      Fork
+                      Fork (native)
                     </button>
                     <button
                       className="btn btn-sm btn-ghost"
@@ -2212,10 +2214,19 @@ function CapabilitiesTab(props: InspectorProps) {
         ))}
         <div className="safety-card">
           <h4>Sessions and review</h4>
-          <p style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-secondary)', margin: 0 }}>
-            Resume/fork/rollback controls stay disabled until {label} exposes stable structured
-            session IDs and rollback semantics. Diff Studio remains shared for file changes.
+          <p style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-secondary)', margin: '0 0 var(--space-sm) 0' }}>
+            Native provider forks are unavailable on {label}. TaskWraith can still create an
+            emulated fork that duplicates this chat transcript into an isolated sibling chat.
+            Rollback stays disabled until {label} exposes stable structured session IDs. Diff
+            Studio remains shared for file changes.
           </p>
+          <button
+            className="btn btn-sm"
+            onClick={() => props.onForkAgentThread?.(props.provider)}
+            disabled={!props.onForkAgentThread}
+          >
+            Fork (emulated)
+          </button>
         </div>
       </div>
     )
