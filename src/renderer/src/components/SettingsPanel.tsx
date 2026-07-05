@@ -103,6 +103,7 @@ import { WorkspaceRemoteAccessToggle } from './WorkspaceRemoteAccessToggle'
 import type { RemoteWorkspaceEntry } from '../../../shared/remoteWorkspaceDefaults'
 import type {
   TaskWraithPluginCatalogEntry,
+  TaskWraithPluginActivationSnapshot,
   TaskWraithPluginCatalogSnapshot
 } from '../../../shared/plugins/PluginTypes'
 import type { ExtensionSecretRef } from '../../../main/ExtensionSecretStore'
@@ -3408,6 +3409,8 @@ export function SettingsPanel({
   const [auditReceiptQuery, setAuditReceiptQuery] = useState('')
   const [pluginQuery, setPluginQuery] = useState('')
   const [pluginCatalog, setPluginCatalog] = useState<TaskWraithPluginCatalogSnapshot | null>(null)
+  const [pluginActivation, setPluginActivation] =
+    useState<TaskWraithPluginActivationSnapshot | null>(null)
   const [pluginCatalogError, setPluginCatalogError] = useState('')
   const [pluginBusyId, setPluginBusyId] = useState<string | null>(null)
   const [mcpServerFormMode, setMcpServerFormMode] = useState<'hidden' | 'create' | 'edit'>(
@@ -3533,6 +3536,17 @@ export function SettingsPanel({
     refreshRuntimeProfiles()
   }, [activeTab, runtimeProfilesProp])
 
+  const refreshPluginActivation = (): void => {
+    if (typeof window === 'undefined' || typeof window.api?.getPluginActivation !== 'function') {
+      setPluginActivation(null)
+      return
+    }
+    void window.api
+      .getPluginActivation()
+      .then((snapshot) => setPluginActivation(snapshot ?? null))
+      .catch(() => setPluginActivation(null))
+  }
+
   useEffect(() => {
     if (!showDeleteHistoryConfirm) return
     const handleKeyDown = (event: KeyboardEvent): void => {
@@ -3544,6 +3558,11 @@ export function SettingsPanel({
     window.addEventListener('keydown', handleKeyDown, true)
     return () => window.removeEventListener('keydown', handleKeyDown, true)
   }, [deleteHistoryPending, showDeleteHistoryConfirm])
+
+  useEffect(() => {
+    if (activeTab !== 'plugins' && activeTab !== 'mcp') return
+    refreshPluginActivation()
+  }, [activeTab])
 
   useEffect(() => {
     if (activeTab !== 'plugins') return
@@ -3627,7 +3646,11 @@ export function SettingsPanel({
     setPluginBusyId(pluginId)
     setPluginCatalogError('')
     void mutate()
-      .then((snapshot) => setPluginCatalog(snapshot))
+      .then((snapshot) => {
+        setPluginCatalog(snapshot)
+        refreshPluginActivation()
+        window.dispatchEvent(new Event('taskwraith-plugin-activation-changed'))
+      })
       .catch((error) => setPluginCatalogError(String(error)))
       .finally(() => {
         setPluginBusyId((current) => (current === pluginId ? null : current))
@@ -4357,6 +4380,13 @@ export function SettingsPanel({
   const pluginUpdateCount = pluginEntries.filter(
     (entry) => entry.update?.status === 'available'
   ).length
+  const pluginActivatedResourceCount = pluginActivation?.materializedResources.length ?? 0
+  const activatedToolBundles = pluginActivation?.taskwraithToolBundles ?? []
+  const activatedWorkflowTemplates = pluginActivation?.workflowTemplates ?? []
+  const activatedConnectors = pluginActivation?.connectors ?? []
+  const activatedLocalServices = pluginActivation?.localServices ?? []
+  const activatedProviderSetup = pluginActivation?.providerSetup ?? []
+  const activatedMobileProjection = pluginActivation?.mobileRemoteProjection ?? []
   const mcpToolSearch = mcpToolQuery.trim().toLowerCase()
   const filteredMcpToolCatalog = MCP_TOOL_CATALOG.filter((tool) => {
     if (!mcpToolSearch) return true
@@ -7553,6 +7583,89 @@ export function SettingsPanel({
             <div className="settings-group span-all">
               <div className="settings-mcp-section-title">
                 <h4 className="sidebar-section-title" style={{ margin: 0 }}>
+                  Plugin capability packages
+                </h4>
+                <p className="settings-hint">
+                  Enabled trusted plugins contribute metadata and policy-scoped references here.
+                  Executable behavior remains limited to existing TaskWraith tools or separately
+                  configured MCP servers.
+                </p>
+              </div>
+              <div className="settings-mcp-management-grid">
+                <article className="settings-mcp-management-card">
+                  <strong>Tool bundles</strong>
+                  <p>
+                    {activatedToolBundles.length > 0
+                      ? activatedToolBundles
+                          .map((entry) => `${entry.bundle.label} (${entry.bundle.tools.length})`)
+                          .join(', ')
+                      : 'No plugin tool bundles are active.'}
+                  </p>
+                </article>
+                <article className="settings-mcp-management-card">
+                  <strong>Workflow templates</strong>
+                  <p>
+                    {activatedWorkflowTemplates.length > 0
+                      ? activatedWorkflowTemplates
+                          .map((entry) => `${entry.template.name} (${entry.plugin.pluginId})`)
+                          .join(', ')
+                      : 'No plugin workflow templates are active.'}
+                  </p>
+                </article>
+                <article className="settings-mcp-management-card">
+                  <strong>Connectors</strong>
+                  <p>
+                    {activatedConnectors.length > 0
+                      ? activatedConnectors
+                          .map((entry) => `${entry.connector.label} · ${entry.connector.kind}`)
+                          .join(', ')
+                      : 'No plugin connectors are active.'}
+                  </p>
+                </article>
+                <article className="settings-mcp-management-card">
+                  <strong>Local services</strong>
+                  <p>
+                    {activatedLocalServices.length > 0
+                      ? activatedLocalServices
+                          .map((entry) => {
+                            const ports = entry.service.ports?.length
+                              ? `:${entry.service.ports.join('/')}`
+                              : ''
+                            return `${entry.service.label}${ports}`
+                          })
+                          .join(', ')
+                      : 'No plugin local service definitions are active.'}
+                  </p>
+                </article>
+                <article className="settings-mcp-management-card">
+                  <strong>Provider setup</strong>
+                  <p>
+                    {activatedProviderSetup.length > 0
+                      ? activatedProviderSetup
+                          .map((entry) => entry.setup.label || SETTINGS_PROVIDER_LABELS[entry.setup.provider])
+                          .join(', ')
+                      : 'No plugin provider setup metadata is active.'}
+                  </p>
+                </article>
+                <article className="settings-mcp-management-card">
+                  <strong>iOS projection</strong>
+                  <p>
+                    {activatedMobileProjection.length > 0
+                      ? activatedMobileProjection
+                          .map(
+                            (entry) =>
+                              `${entry.projection.label} (${entry.projection.remoteCapabilities.join(', ')})`
+                          )
+                          .join(', ')
+                      : 'No plugin mobile projection cards are active.'}
+                  </p>
+                </article>
+              </div>
+            </div>
+
+            <div className="settings-group span-all">
+              <div className="settings-mcp-section-title">
+                <h4 className="sidebar-section-title" style={{ margin: 0 }}>
                   Extensions, skills, and connectors
                 </h4>
                 <p className="settings-hint">
@@ -7582,13 +7695,6 @@ export function SettingsPanel({
                   </p>
                   <button type="button" className="btn btn-sm btn-ghost" disabled>
                     Audit surface planned
-                  </button>
-                </article>
-                <article className="settings-mcp-management-card">
-                  <strong>Connectors</strong>
-                  <p>Connector availability should be listed beside the MCP tools they expose.</p>
-                  <button type="button" className="btn btn-sm btn-ghost" disabled>
-                    Connector registry planned
                   </button>
                 </article>
               </div>
@@ -8688,6 +8794,11 @@ export function SettingsPanel({
                   <span>Activated</span>
                   <strong>{enabledPluginCount}</strong>
                   <small>contributing resources</small>
+                </article>
+                <article className="settings-mcp-summary-card">
+                  <span>Resources</span>
+                  <strong>{pluginActivatedResourceCount}</strong>
+                  <small>materialized or exposed</small>
                 </article>
                 <article className="settings-mcp-summary-card">
                   <span>Repairable</span>

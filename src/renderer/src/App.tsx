@@ -46,6 +46,7 @@ import {
   formatContextCompactionSummary,
   type ContextCompactionProgressEvent
 } from '../../shared/contextCompaction'
+import type { TaskWraithPluginActivationSnapshot } from '../../shared/plugins/PluginTypes'
 import {
   buildOllamaPullCommand,
   isOllamaModelInstalled,
@@ -1460,11 +1461,35 @@ function App(): React.JSX.Element {
   const [runQueueJobs, setRunQueueJobs] = useState<RunQueueJob[]>([])
   const [scheduledQueueWakeTick, setScheduledQueueWakeTick] = useState(0)
   const [runtimeProfiles, setRuntimeProfiles] = useState<RuntimeProfile[]>([])
+  const [pluginActivation, setPluginActivation] = useState<TaskWraithPluginActivationSnapshot | null>(
+    null
+  )
   const [selectedRuntimeProfileByChatId, setSelectedRuntimeProfileByChatId] = useState<
     Record<string, string>
   >({})
   const [handoffCards, setHandoffCards] = useState<HandoffCard[]>([])
   const [showCockpit, setShowCockpit] = useState(false)
+
+  const refreshPluginActivation = useCallback(async (): Promise<void> => {
+    if (typeof window.api?.getPluginActivation !== 'function') return
+    try {
+      setPluginActivation(await window.api.getPluginActivation())
+    } catch {
+      setPluginActivation(null)
+    }
+  }, [])
+
+  useEffect(() => {
+    const handlePluginActivationChanged = (): void => {
+      void refreshPluginActivation()
+    }
+    window.addEventListener('taskwraith-plugin-activation-changed', handlePluginActivationChanged)
+    return () =>
+      window.removeEventListener(
+        'taskwraith-plugin-activation-changed',
+        handlePluginActivationChanged
+      )
+  }, [refreshPluginActivation])
 
   // Model & Mode Selectors
   // Seed the user-facing default to a live provider; sticky last-used (persisted
@@ -4996,7 +5021,13 @@ function App(): React.JSX.Element {
     // `handleSelectWorkspace` re-fetched and all "previously loaded"
     // workspaces suddenly appeared. Use `Promise.allSettled` so each
     // load is independent, then apply whatever resolved.
-    const [wsResult, chatsResult, profilesResult, handoffsResult] = await Promise.allSettled([
+    const [
+      wsResult,
+      chatsResult,
+      profilesResult,
+      handoffsResult,
+      pluginActivationResult
+    ] = await Promise.allSettled([
       window.api.getWorkspaces(),
       loadChatList(),
       typeof window.api.getRuntimeProfiles === 'function'
@@ -5004,12 +5035,17 @@ function App(): React.JSX.Element {
         : Promise.resolve([]),
       typeof window.api.getHandoffCards === 'function'
         ? window.api.getHandoffCards()
-        : Promise.resolve([])
+        : Promise.resolve([]),
+      typeof window.api.getPluginActivation === 'function'
+        ? window.api.getPluginActivation()
+        : Promise.resolve(null)
     ])
     const wsList = wsResult.status === 'fulfilled' ? wsResult.value : []
     const allChats = chatsResult.status === 'fulfilled' ? chatsResult.value : []
     const profiles = profilesResult.status === 'fulfilled' ? profilesResult.value : []
     const handoffs = handoffsResult.status === 'fulfilled' ? handoffsResult.value : []
+    const activation =
+      pluginActivationResult.status === 'fulfilled' ? pluginActivationResult.value : null
     if (wsResult.status === 'rejected') {
       console.error('[loadInitialData] getWorkspaces failed:', wsResult.reason)
     }
@@ -5022,7 +5058,14 @@ function App(): React.JSX.Element {
     if (handoffsResult.status === 'rejected') {
       console.error('[loadInitialData] getHandoffCards failed:', handoffsResult.reason)
     }
+    if (pluginActivationResult.status === 'rejected') {
+      console.error(
+        '[loadInitialData] getPluginActivation failed:',
+        pluginActivationResult.reason
+      )
+    }
     setRuntimeProfiles(profiles)
+    setPluginActivation(activation)
     setHandoffCards(handoffs)
     setChats(allChats)
     setWorkspaces(wsList)
@@ -20381,6 +20424,34 @@ function App(): React.JSX.Element {
     void window.api.cancelEnsembleRound(chat.appChatId).catch(() => {})
     updateChatById(chat.appChatId, (source) => cancelWorkSessionOnChat(source))
   }
+  const pluginSlashTokenSegment = (value: string): string =>
+    value
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 48) || 'template'
+  const pluginWorkflowTemplateSlashCommands = (provider: ProviderId): ComposerSlashCommand[] =>
+    (pluginActivation?.workflowTemplates ?? [])
+      .filter((entry) => !entry.template.provider || entry.template.provider === provider)
+      .map((entry) => {
+        const pluginSegment = pluginSlashTokenSegment(entry.plugin.pluginId)
+        const templateSegment = pluginSlashTokenSegment(entry.template.id)
+        const templateText = entry.template.prompt.endsWith('\n')
+          ? entry.template.prompt
+          : `${entry.template.prompt}\n\n`
+        return {
+          kind: 'prompt-template' as const,
+          id: entry.id,
+          command: `/plugin-${pluginSegment}-${templateSegment}`,
+          label: entry.template.name,
+          description:
+            entry.template.description ||
+            `Insert the ${entry.plugin.pluginId} plugin workflow template.`,
+          group: 'Custom' as const,
+          template: templateText
+        }
+      })
   const buildScopedComposerSlashExtraCommands = ({
     chat,
     provider,
@@ -21283,7 +21354,8 @@ function App(): React.JSX.Element {
       group: 'Custom',
       template:
         'Review the unstaged changes in this workspace. Flag anything that looks risky, inconsistent with surrounding code, or under-tested.\n\n'
-    }
+    },
+    ...pluginWorkflowTemplateSlashCommands(provider)
   ]
   const composerSlashExtraCommands = buildScopedComposerSlashExtraCommands({
     chat: currentChat,
