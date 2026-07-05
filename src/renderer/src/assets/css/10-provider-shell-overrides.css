@@ -3814,8 +3814,8 @@
 }
 
 /* Shell sign-off: these shells own their above-row chrome. Suppress only the
- * row-level agent-aura pseudo glow so the composer surface aura and each shell's
- * native row background/rim remain intact across light and dark themes. */
+ * row-level agent-aura pseudo glow so each shell's native row background/rim
+ * remains intact across light and dark themes. */
 :is(
     [data-composer-style="gemini"],
     [data-composer-style="kimi"],
@@ -3842,18 +3842,19 @@
   opacity: 0 !important;
 }
 
-/* Cursor's composer shell keeps its own neutral-gray frame, but should not
- * inherit provider-tinted composer agent aura pseudo layers. */
-[data-composer-style="cursor"]
+/* Gemini/Cursor render their actual input chrome on the capsule, while the
+ * `.composer-surface` is an invisible layout shell. Do not let the active-round
+ * composer aura draw a pulsing rectangle around that shell. */
+:is([data-composer-style="gemini"], [data-composer-style="cursor"])
   .app-transcript
   :is(.composer-surface, .composer-above-bar-stack).fx-agent-aura::after,
-[data-composer-style="cursor"]
+:is([data-composer-style="gemini"], [data-composer-style="cursor"])
   .app-transcript
   :is(.composer-surface, .composer-above-bar-stack).fx-agent-aura.fx-status-running::after,
-[data-composer-style="cursor"]
+:is([data-composer-style="gemini"], [data-composer-style="cursor"])
   .app-transcript
   :is(.composer-surface, .composer-above-bar-stack).fx-agent-aura.fx-status-approval::after,
-[data-composer-style="cursor"]
+:is([data-composer-style="gemini"], [data-composer-style="cursor"])
   .app-transcript
   :is(.composer-surface, .composer-above-bar-stack).fx-agent-aura.fx-status-failed::after {
   display: none !important;

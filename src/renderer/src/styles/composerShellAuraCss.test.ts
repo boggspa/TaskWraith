@@ -57,10 +57,11 @@ describe('composer shell row aura CSS', () => {
     }
   })
 
-  it('suppresses Cursor composer aura pseudos while preserving its shell chrome', () => {
+  it('suppresses Gemini/Cursor composer aura pseudos while preserving shell chrome', () => {
     const css = readCss()
-    const block = cssBlockStartingAt(css, "Cursor's composer shell")
+    const block = cssBlockStartingAt(css, 'Gemini/Cursor render')
 
+    expect(block).toContain('[data-composer-style="gemini"]')
     expect(block).toContain('[data-composer-style="cursor"]')
     expect(block).toContain(':is(.composer-surface, .composer-above-bar-stack).fx-agent-aura::after')
     expect(block).toContain(
