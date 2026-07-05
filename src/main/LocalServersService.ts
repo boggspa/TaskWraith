@@ -14,6 +14,7 @@ import {
   type KillController
 } from './localServers/killer'
 import type {
+  DeclaredLocalService,
   LocalServerDetector,
   LocalServerEntry,
   LocalServersSnapshot,
@@ -30,6 +31,7 @@ export interface LocalServersServiceOptions {
   getWorkspaces: () => LocalServerWorkspace[]
   /** Processes TaskWraith spawned (Phase C). Defaults to none. */
   getTracked?: () => TrackedSpawn[]
+  getDeclaredServices?: () => DeclaredLocalService[]
   platform?: NodeJS.Platform
   detector?: LocalServerDetector
   log?: (line: string) => void
@@ -42,6 +44,7 @@ export class LocalServersService {
   private detector: LocalServerDetector
   private getWorkspaces: () => LocalServerWorkspace[]
   private getTracked: () => TrackedSpawn[]
+  private getDeclaredServices: () => DeclaredLocalService[]
   private log: (line: string) => void
   private pollIntervalMs: number
   private listeners = new Set<Listener>()
@@ -56,6 +59,7 @@ export class LocalServersService {
     this.detector = options.detector || createDetectorForPlatform(platform)
     this.getWorkspaces = options.getWorkspaces
     this.getTracked = options.getTracked || (() => [])
+    this.getDeclaredServices = options.getDeclaredServices || (() => [])
     this.log = options.log ?? (() => {})
     this.pollIntervalMs = options.pollIntervalMs ?? LOCAL_SERVERS_POLL_INTERVAL_MS
     this.createController =
@@ -106,7 +110,12 @@ export class LocalServersService {
         workspaces: this.getWorkspaces(),
         tracked: this.getTracked()
       })
-      const signature = signatureOf(next.servers)
+      const declaredServices = decorateDeclaredServices(
+        this.getDeclaredServices(),
+        next.servers
+      )
+      if (declaredServices.length > 0) next.declaredServices = declaredServices
+      const signature = signatureOf(next.servers, next.declaredServices || [])
       const changed = signature !== this.lastSignature
       this.current = next
       if (changed) {
@@ -178,9 +187,28 @@ export class LocalServersService {
 }
 
 /** Stable signature of the surfaced set so we only broadcast on real change. */
-function signatureOf(servers: LocalServerEntry[]): string {
-  return servers
+function signatureOf(
+  servers: LocalServerEntry[],
+  declaredServices: DeclaredLocalService[] = []
+): string {
+  const runningSignature = servers
     .map((s) => `${s.pid}:${s.ports.join(',')}:${s.origin}`)
     .sort()
     .join('|')
+  const declaredSignature = declaredServices
+    .map((service) => `${service.id}:${service.status}:${service.ports.join(',')}`)
+    .sort()
+    .join('|')
+  return `${runningSignature}#${declaredSignature}`
+}
+
+function decorateDeclaredServices(
+  services: DeclaredLocalService[],
+  servers: LocalServerEntry[]
+): DeclaredLocalService[] {
+  const runningPorts = new Set(servers.flatMap((server) => server.ports))
+  return services.map((service) => ({
+    ...service,
+    status: service.ports.some((port) => runningPorts.has(port)) ? 'running' : 'unknown'
+  }))
 }

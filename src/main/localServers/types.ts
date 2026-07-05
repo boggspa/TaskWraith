@@ -6,6 +6,8 @@
  * user stop them. See `LocalServersService` + the platform detectors.
  */
 
+import type { TaskWraithPluginResourceProvenance } from '../../shared/plugins/PluginTypes'
+
 /** A raw process row from platform detection, before workspace matching. */
 export interface ProcessSnapshotRow {
   pid: number
@@ -49,9 +51,24 @@ export interface LocalServerEntry {
   startedAt?: string
 }
 
+export interface DeclaredLocalService {
+  id: string
+  label: string
+  description?: string
+  ports: number[]
+  healthCheck?: {
+    url?: string
+    commandHint?: string
+  }
+  managedByTaskWraith: boolean
+  pluginProvenance?: TaskWraithPluginResourceProvenance
+  status: 'unknown' | 'running'
+}
+
 export interface LocalServersSnapshot {
   sampledAt: string
   servers: LocalServerEntry[]
+  declaredServices?: DeclaredLocalService[]
   platform: NodeJS.Platform
   /**
    * False when the platform detector can't enumerate (e.g. `lsof` missing,

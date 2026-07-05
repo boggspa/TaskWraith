@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type JSX } from 'react'
 import { localServerWorkspaceLabel } from '../../../shared/localServerWorkspaceLabel'
 import { useLocalServers } from '../hooks/useLocalServers'
-import type { LocalServerEntry } from '../../../main/localServers/types'
+import type { DeclaredLocalService, LocalServerEntry } from '../../../main/localServers/types'
 
 interface WorkspaceGroup {
   key: string
@@ -52,6 +52,7 @@ export function LocalServersSettingsPanel(): JSX.Element {
     setStopOnQuit(next)
     void window.api.updateSettings({ localServersStopOnQuit: next }).catch(() => {})
   }
+  const declaredServices: DeclaredLocalService[] = snapshot?.declaredServices || []
 
   return (
     <div className="settings-local-servers">
@@ -157,6 +158,33 @@ export function LocalServersSettingsPanel(): JSX.Element {
             ))}
           </div>
         ))
+      )}
+
+      {declaredServices.length > 0 && (
+        <div className="settings-local-servers-group">
+          <h4 className="settings-local-servers-group-title">Plugin service declarations</h4>
+          {declaredServices.map((service) => (
+            <div key={service.id} className="settings-local-server-row">
+              <span className="settings-local-server-name">{service.label}</span>
+              <span className="settings-local-server-badge">{service.status}</span>
+              <span className="settings-local-server-cmd" title={service.description || service.id}>
+                {service.pluginProvenance?.pluginId || 'plugin'} ·{' '}
+                {service.healthCheck?.url || service.healthCheck?.commandHint || 'health metadata'}
+              </span>
+              {service.ports[0] != null && (
+                <button
+                  type="button"
+                  className="settings-local-server-port"
+                  onClick={() =>
+                    void window.api.openExternalOrPath(`http://localhost:${service.ports[0]}`)
+                  }
+                >
+                  :{service.ports[0]}
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
       )}
     </div>
   )

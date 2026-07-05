@@ -1951,6 +1951,7 @@ let managedPolicySnapshotForDiagnostics: (() => Record<string, unknown> | undefi
 let managedUserMcpLaunchAllowlistPolicy: (() => UserMcpLaunchAllowlistPolicy | undefined) | null =
   null
 let pluginHostRef: PluginHost | null = null
+let pluginContributionManagerRef: PluginContributionManager | null = null
 let localServersServiceRef: LocalServersService | null = null
 /** Processes TaskWraith spawns for agent tool calls — tracked so the Local
  * Servers panel can attribute them and group-kill them cleanly. */
@@ -21293,7 +21294,31 @@ function brokerRequest(socketPath: string, request: unknown): Promise<unknown> {
 }
 
 function mcpToolDefinitions() {
-  return createTaskWraithMcpToolDefinitions()
+  const definitions = createTaskWraithMcpToolDefinitions()
+  const activation = pluginContributionManagerRef?.getActivationSnapshot()
+  if (!activation?.taskwraithToolBundles.length) return definitions
+  const bundlesByTool = new Map<string, string[]>()
+  for (const entry of activation.taskwraithToolBundles) {
+    for (const tool of entry.bundle.tools) {
+      const labels = bundlesByTool.get(tool) || []
+      labels.push(`${entry.bundle.label} (${entry.plugin.pluginId})`)
+      bundlesByTool.set(tool, labels)
+    }
+  }
+  return definitions.map((definition) => {
+    const bundles = bundlesByTool.get(definition.name)
+    if (!bundles?.length) return definition
+    return {
+      ...definition,
+      description: definition.description
+        ? `${definition.description}\n\nPlugin bundles: ${bundles.join(', ')}.`
+        : `Plugin bundles: ${bundles.join(', ')}.`,
+      annotations: {
+        ...(definition.annotations || {}),
+        taskwraithPluginBundles: bundles
+      }
+    }
+  })
 }
 
 function startGeminiMcpBridgeProcess(): void {
@@ -26886,6 +26911,19 @@ if (isGeminiMcpBridgeProcess) {
           displayName: workspace.displayName
         })),
       getTracked: () => spawnRegistry.list(),
+      getDeclaredServices: () =>
+        (pluginContributionManagerRef?.getActivationSnapshot().localServices || []).map(
+          (entry) => ({
+            id: entry.id,
+            label: entry.service.label,
+            ...(entry.service.description ? { description: entry.service.description } : {}),
+            ports: entry.service.ports || [],
+            ...(entry.service.healthCheck ? { healthCheck: entry.service.healthCheck } : {}),
+            managedByTaskWraith: entry.managedByTaskWraith,
+            pluginProvenance: entry.pluginProvenance,
+            status: 'unknown' as const
+          })
+        ),
       platform: process.platform,
       log: (line) => console.log(line)
     })
@@ -26918,6 +26956,7 @@ if (isGeminiMcpBridgeProcess) {
       deleteRuntimeProfile: (id) => AppStore.deleteRuntimeProfile(id),
       log: (line) => console.log(line)
     })
+    pluginContributionManagerRef = pluginContributionManager
     pluginContributionManager.sync()
     registerPluginHandlers({
       pluginHost,

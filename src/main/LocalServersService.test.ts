@@ -128,6 +128,39 @@ describe('LocalServersService', () => {
     service.stop()
   })
 
+  it('surfaces plugin-declared local services and marks matching ports as running', async () => {
+    const detector = new FakeDetector()
+    detector.servers = [entry(100, [4173])]
+    const service = new LocalServersService({
+      getWorkspaces: () => [],
+      getDeclaredServices: () => [
+        {
+          id: 'plugin:web-qa:service:browser',
+          label: 'Browser QA service',
+          ports: [4173],
+          healthCheck: { url: 'http://localhost:4173' },
+          managedByTaskWraith: true,
+          status: 'unknown'
+        }
+      ],
+      detector,
+      pollIntervalMs: 1000
+    })
+    service.start()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(service.snapshot().declaredServices).toEqual([
+      {
+        id: 'plugin:web-qa:service:browser',
+        label: 'Browser QA service',
+        ports: [4173],
+        healthCheck: { url: 'http://localhost:4173' },
+        managedByTaskWraith: true,
+        status: 'running'
+      }
+    ])
+    service.stop()
+  })
+
   it('stopServer refuses a pid not in the snapshot and never builds a controller', async () => {
     const detector = new FakeDetector()
     detector.servers = [entry(100, [3000])]
