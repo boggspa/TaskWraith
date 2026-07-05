@@ -68,13 +68,86 @@ export interface GitPrSummary {
   state?: string
   isDraft?: boolean
   headRefName?: string
+  headRefOid?: string
   baseRefName?: string
+  mergeStateStatus?: string
   checks?: Array<{
     name?: string
     status?: string
     conclusion?: string
     url?: string
   }>
+}
+
+export type GitCiStatusKind = 'passed' | 'failed' | 'pending' | 'blocked' | 'unknown'
+
+export interface GitCiRunSummary {
+  id: number
+  name?: string
+  workflowName?: string
+  status?: string
+  conclusion?: string
+  headSha?: string
+  event?: string
+  url?: string
+  createdAt?: string
+  updatedAt?: string
+}
+
+export interface GitCiFailedLog {
+  runId: number
+  name?: string
+  exitCode: number
+  timedOut: boolean
+  log: string
+  hints: string[]
+  stderr?: string
+}
+
+export interface GitCiLocalVerification {
+  recommendedCommands: string[]
+  source: 'package_json' | 'swift_package' | 'generic'
+}
+
+export interface GitCiStatusInput {
+  repoPath: string
+  pr?: string | number
+  branch?: string
+  commitSha?: string
+  includeFailedLogs?: boolean
+  maxRuns?: number
+  maxFailedLogs?: number
+  maxLogChars?: number
+  repairAttempt?: number
+  maxRepairPushes?: number
+}
+
+export interface GitCiStatusSummary {
+  status: GitCiStatusKind
+  binding: {
+    pr?: GitPrSummary
+    branch?: string
+    commitSha?: string
+    currentBranch?: string
+    currentHeadSha?: string
+  }
+  checks: NonNullable<GitPrSummary['checks']>
+  runs: GitCiRunSummary[]
+  failedLogs: GitCiFailedLog[]
+  localVerification: GitCiLocalVerification
+  repairLoop: {
+    repairAttempt: number
+    maxRepairPushes: number
+    shouldStop: boolean
+    requireLocalVerification: boolean
+    nextSuggestedAction:
+      | 'done'
+      | 'wait_for_ci'
+      | 'repair_and_test_before_push'
+      | 'inspect'
+      | 'ask_user'
+  }
+  warnings: string[]
 }
 
 export interface GitPrReadiness {
@@ -469,6 +542,126 @@ export class GitService {
     }
   }
 
+  async ciStatus(input: GitCiStatusInput): Promise<GitResult<GitCiStatusSummary>> {
+    try {
+      const repo = await this.resolveRepository(input.repoPath)
+      const snapshot = await this.buildSnapshot(repo.repoRoot)
+      const maxRuns = clampInteger(input.maxRuns, 10, 1, 50)
+      const maxFailedLogs = clampInteger(input.maxFailedLogs, 2, 0, 10)
+      const maxLogChars = clampInteger(input.maxLogChars, 20_000, 1_000, 100_000)
+      const repairAttempt = clampInteger(input.repairAttempt, 0, 0, 1_000)
+      const maxRepairPushes = clampInteger(input.maxRepairPushes, 3, 1, 20)
+
+      const auth = await this.runGh(['auth', 'status'], repo.repoRoot)
+      if (auth.code !== 0) {
+        return {
+          ok: true,
+          data: {
+            status: 'blocked',
+            binding: {
+              branch: snapshot.branch,
+              commitSha: snapshot.commit,
+              currentBranch: snapshot.branch,
+              currentHeadSha: snapshot.commit
+            },
+            checks: [],
+            runs: [],
+            failedLogs: [],
+            localVerification: await detectCiLocalVerification(repo.repoRoot),
+            repairLoop: ciRepairLoop('blocked', repairAttempt, maxRepairPushes),
+            warnings: [
+              auth.stderr.trim() ||
+                auth.stdout.trim() ||
+                'GitHub CLI is not authenticated or is unavailable.'
+            ]
+          }
+        }
+      }
+
+      const requestedBranch = input.branch?.trim()
+      const branch = requestedBranch ? await this.assertBranchName(repo.repoRoot, requestedBranch) : snapshot.branch
+      const currentHeadSha = await this.readHeadSha(repo.repoRoot)
+      const requestedSha = sanitizeCommitSha(input.commitSha)
+      const prSelector = sanitizeGhSelector(input.pr)
+      const prResult = await this.readPullRequestSummary(
+        repo.repoRoot,
+        prSelector || branch || undefined
+      )
+      const pr = prResult.ok ? prResult.summary : undefined
+      const effectiveBranch = branch || pr?.headRefName
+      const effectiveSha = requestedSha || pr?.headRefOid || currentHeadSha
+      const runArgs = [
+        'run',
+        'list',
+        '--limit',
+        String(maxRuns),
+        '--json',
+        'databaseId,displayTitle,status,conclusion,workflowName,headSha,event,url,createdAt,updatedAt'
+      ]
+      if (effectiveBranch) runArgs.push('--branch', effectiveBranch)
+      if (effectiveSha) runArgs.push('--commit', effectiveSha)
+      const runResult = await this.runGh(runArgs, repo.repoRoot)
+      if (runResult.code !== 0) {
+        return {
+          ok: true,
+          data: {
+            status: 'blocked',
+            binding: {
+              ...(pr ? { pr } : {}),
+              branch: effectiveBranch,
+              commitSha: effectiveSha,
+              currentBranch: snapshot.branch,
+              currentHeadSha
+            },
+            checks: pr?.checks ?? [],
+            runs: [],
+            failedLogs: [],
+            localVerification: await detectCiLocalVerification(repo.repoRoot),
+            repairLoop: ciRepairLoop('blocked', repairAttempt, maxRepairPushes),
+            warnings: [
+              runResult.stderr.trim() || runResult.stdout.trim() || '`gh run list` failed.'
+            ]
+          }
+        }
+      }
+
+      const runs = parseGhRunList(runResult.stdout)
+      const failedRuns = runs.filter(isFailedCiRun)
+      const failedLogs =
+        input.includeFailedLogs && maxFailedLogs > 0
+          ? await this.readFailedCiLogs(repo.repoRoot, failedRuns.slice(0, maxFailedLogs), maxLogChars)
+          : []
+      const checks = pr?.checks ?? []
+      const status = classifyCiStatus(runs, checks, repairAttempt, maxRepairPushes)
+      const warnings: string[] = []
+      if (!pr && prResult.ok) warnings.push('No pull request found for the selected branch.')
+      if (!prResult.ok) warnings.push(prResult.error)
+      if (runs.length === 0) warnings.push('No GitHub Actions runs matched the selected branch/SHA.')
+
+      return {
+        ok: true,
+        data: {
+          status,
+          binding: {
+            ...(pr ? { pr } : {}),
+            branch: effectiveBranch,
+            commitSha: effectiveSha,
+            currentBranch: snapshot.branch,
+            currentHeadSha
+          },
+          checks,
+          runs,
+          failedLogs,
+          localVerification: await detectCiLocalVerification(repo.repoRoot),
+          repairLoop: ciRepairLoop(status, repairAttempt, maxRepairPushes),
+          warnings
+        }
+      }
+    } catch (error) {
+      return failure(error)
+    }
+  }
+
   async pullRequestReadiness(inputPath: string): Promise<GitResult<GitPrReadiness>> {
     try {
       const snapshot = await this.buildSnapshot(inputPath)
@@ -535,7 +728,7 @@ export class GitService {
     }
   }
 
-  private async readPullRequestSummary(repoRoot: string): Promise<
+  private async readPullRequestSummary(repoRoot: string, selector?: string): Promise<
     | { ok: true; summary?: GitPrSummary }
     | { ok: false; error: string; stderr?: string; notFound?: boolean }
   > {
@@ -543,8 +736,9 @@ export class GitService {
       [
         'pr',
         'view',
+        ...(selector ? [selector] : []),
         '--json',
-        'number,url,state,isDraft,headRefName,baseRefName,statusCheckRollup'
+        'number,url,state,isDraft,headRefName,headRefOid,baseRefName,mergeStateStatus,statusCheckRollup'
       ],
       repoRoot
     )
@@ -562,6 +756,36 @@ export class GitService {
       }
     }
     return { ok: true, summary: parsePullRequestSummary(result.stdout) }
+  }
+
+  private async readHeadSha(repoRoot: string): Promise<string | undefined> {
+    const result = await this.run('git', ['rev-parse', 'HEAD'], {
+      cwd: repoRoot,
+      timeoutMs: this.timeoutMs
+    })
+    return result.code === 0 ? result.stdout.trim() || undefined : undefined
+  }
+
+  private async readFailedCiLogs(
+    repoRoot: string,
+    runs: GitCiRunSummary[],
+    maxLogChars: number
+  ): Promise<GitCiFailedLog[]> {
+    const logs: GitCiFailedLog[] = []
+    for (const run of runs) {
+      const result = await this.runGh(['run', 'view', String(run.id), '--log-failed'], repoRoot)
+      const redacted = redactCiSecrets(result.stdout)
+      logs.push({
+        runId: run.id,
+        name: run.name || run.workflowName,
+        exitCode: result.code,
+        timedOut: result.code === -1,
+        log: truncateText(redacted, maxLogChars),
+        hints: summarizeCiFailureHints(redacted),
+        ...(result.stderr.trim() ? { stderr: truncateText(redactCiSecrets(result.stderr.trim()), 8_000) } : {})
+      })
+    }
+    return logs
   }
 
   private async runGh(args: string[], cwd: string): Promise<GitCommandResult> {
@@ -1014,6 +1238,174 @@ function expandHomePath(value?: string | null): string {
   return raw
 }
 
+function clampInteger(value: unknown, fallback: number, min: number, max: number): number {
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed)) return fallback
+  return Math.max(min, Math.min(max, Math.trunc(parsed)))
+}
+
+function truncateText(value: string, max: number): string {
+  return value.length <= max ? value : `${value.slice(0, max)}\n...truncated ${value.length - max} chars`
+}
+
+function sanitizeCommitSha(value: unknown): string | undefined {
+  const sha = String(value || '').trim()
+  if (!sha) return undefined
+  if (!/^[A-Fa-f0-9]{7,64}$/.test(sha)) {
+    throw new Error('Commit SHA must be 7-64 hexadecimal characters.')
+  }
+  return sha
+}
+
+function sanitizeGhSelector(value: unknown): string | undefined {
+  if (typeof value !== 'string' && typeof value !== 'number') return undefined
+  const selector = String(value).trim()
+  if (!selector) return undefined
+  if (selector.startsWith('-') || hasAsciiControlChar(selector) || /\s/.test(selector)) {
+    throw new Error('GitHub PR selector must be a PR number, URL, or branch name.')
+  }
+  return selector.slice(0, 240)
+}
+
+function parseGhRunList(output: string): GitCiRunSummary[] {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(output || '[]')
+  } catch {
+    return []
+  }
+  if (!Array.isArray(parsed)) return []
+  return parsed
+    .map((item): GitCiRunSummary | null => {
+      if (!isRecord(item)) return null
+      const id = Number(item.databaseId)
+      if (!Number.isFinite(id) || id <= 0) return null
+      return {
+        id,
+        name: stringField(item.displayTitle),
+        workflowName: stringField(item.workflowName),
+        status: stringField(item.status),
+        conclusion: stringField(item.conclusion),
+        headSha: stringField(item.headSha),
+        event: stringField(item.event),
+        url: stringField(item.url),
+        createdAt: stringField(item.createdAt),
+        updatedAt: stringField(item.updatedAt)
+      }
+    })
+    .filter((item): item is GitCiRunSummary => Boolean(item))
+}
+
+function isFailedCiRun(run: GitCiRunSummary): boolean {
+  return ['failure', 'timed_out', 'startup_failure', 'action_required', 'cancelled'].includes(
+    String(run.conclusion || '').toLowerCase()
+  )
+}
+
+function isPendingCiRun(run: GitCiRunSummary): boolean {
+  const status = String(run.status || '').toLowerCase()
+  return Boolean(status && status !== 'completed')
+}
+
+function classifyCiStatus(
+  runs: GitCiRunSummary[],
+  checks: NonNullable<GitPrSummary['checks']>,
+  repairAttempt: number,
+  maxRepairPushes: number
+): GitCiStatusKind {
+  if (repairAttempt >= maxRepairPushes) return 'blocked'
+  if (runs.some(isFailedCiRun)) return 'failed'
+  if (runs.some(isPendingCiRun)) return 'pending'
+  const failedChecks = checks.filter((check) =>
+    ['failure', 'timed_out', 'startup_failure', 'action_required', 'cancelled'].includes(
+      String(check.conclusion || '').toLowerCase()
+    )
+  )
+  if (failedChecks.length > 0) return 'failed'
+  const pendingChecks = checks.filter((check) => {
+    const status = String(check.status || '').toLowerCase()
+    return status && status !== 'completed'
+  })
+  if (pendingChecks.length > 0) return 'pending'
+  if (runs.length > 0 || checks.length > 0) return 'passed'
+  return 'unknown'
+}
+
+function ciRepairLoop(
+  status: GitCiStatusKind,
+  repairAttempt: number,
+  maxRepairPushes: number
+): GitCiStatusSummary['repairLoop'] {
+  const shouldStop = repairAttempt >= maxRepairPushes
+  return {
+    repairAttempt,
+    maxRepairPushes,
+    shouldStop,
+    requireLocalVerification: true,
+    nextSuggestedAction: shouldStop
+      ? 'ask_user'
+      : status === 'passed'
+        ? 'done'
+        : status === 'pending'
+          ? 'wait_for_ci'
+          : status === 'failed'
+            ? 'repair_and_test_before_push'
+            : status === 'blocked'
+              ? 'ask_user'
+              : 'inspect'
+  }
+}
+
+function redactCiSecrets(value: string): string {
+  return value
+    .replace(/\bgh[pousr]_[A-Za-z0-9_]{20,}\b/g, '[redacted-github-token]')
+    .replace(/\bgithub_pat_[A-Za-z0-9_]{20,}\b/g, '[redacted-github-token]')
+    .replace(/\bsk-[A-Za-z0-9_-]{20,}\b/g, '[redacted-api-key]')
+    .replace(/(Authorization:\s*Bearer\s+)[^\s]+/gi, '$1[redacted]')
+    .replace(/((?:TOKEN|SECRET|PASSWORD|API_KEY|ACCESS_KEY)\s*=\s*)[^\s]+/gi, '$1[redacted]')
+}
+
+function summarizeCiFailureHints(log: string): string[] {
+  const hints: string[] = []
+  const seen = new Set<string>()
+  for (const rawLine of log.split(/\r?\n/)) {
+    const line = rawLine.trim()
+    if (!line || line.length > 500) continue
+    if (!/\b(error|fail|failed|failure|fatal|assert|exception|timed out|npm err|exit code)\b/i.test(line)) {
+      continue
+    }
+    const redacted = redactCiSecrets(line)
+    if (seen.has(redacted)) continue
+    seen.add(redacted)
+    hints.push(redacted)
+    if (hints.length >= 20) break
+  }
+  return hints
+}
+
+async function detectCiLocalVerification(repoRoot: string): Promise<GitCiLocalVerification> {
+  const packagePath = join(repoRoot, 'package.json')
+  try {
+    const parsed = JSON.parse(await fs.readFile(packagePath, 'utf8')) as Record<string, unknown>
+    const scripts = isRecord(parsed.scripts) ? parsed.scripts : {}
+    const commands: string[] = []
+    if (typeof scripts.ci === 'string') commands.push('npm run ci')
+    if (typeof scripts['lint:errors'] === 'string') commands.push('npm run lint:errors')
+    else if (typeof scripts.lint === 'string') commands.push('npm run lint')
+    if (typeof scripts.typecheck === 'string') commands.push('npm run typecheck')
+    if (typeof scripts.test === 'string') commands.push('npm run test')
+    if (commands.length > 0) return { recommendedCommands: commands, source: 'package_json' }
+  } catch {
+    // Fall through to other project detectors.
+  }
+  try {
+    await fs.access(join(repoRoot, 'Package.swift'))
+    return { recommendedCommands: ['swift test'], source: 'swift_package' }
+  } catch {
+    return { recommendedCommands: ['Run the project CI-equivalent test command locally before pushing.'], source: 'generic' }
+  }
+}
+
 function parsePullRequestSummary(output: string): GitPrSummary {
   const parsed = JSON.parse(output || '{}') as Record<string, unknown>
   const checks = Array.isArray(parsed.statusCheckRollup)
@@ -1033,7 +1425,9 @@ function parsePullRequestSummary(output: string): GitPrSummary {
     state: stringField(parsed.state),
     isDraft: typeof parsed.isDraft === 'boolean' ? parsed.isDraft : undefined,
     headRefName: stringField(parsed.headRefName),
+    headRefOid: stringField(parsed.headRefOid),
     baseRefName: stringField(parsed.baseRefName),
+    mergeStateStatus: stringField(parsed.mergeStateStatus),
     checks
   }
 }

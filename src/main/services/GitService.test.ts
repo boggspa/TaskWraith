@@ -444,6 +444,140 @@ describe('GitService', () => {
     expect(result.data.reason).toBe('This branch already has a pull request.')
   })
 
+  it('reads CI status through gh, redacts failed logs, and returns repair guardrails', async () => {
+    writeFileSync(
+      join(repo, 'package.json'),
+      JSON.stringify({ scripts: { ci: 'npm run test', test: 'vitest run' } })
+    )
+    const calls: Array<{ command: string; args: string[]; cwd: string; env?: Record<string, string> }> = []
+    const runner: GitCommandRunner = async (command, args, options) => {
+      calls.push({ command, args, cwd: options.cwd, env: options.env })
+      if (command === 'gh') {
+        if (args.join(' ') === 'auth status') {
+          return { stdout: 'Logged in to github.com\n', stderr: '', code: 0 }
+        }
+        if (args[0] === 'pr' && args[1] === 'view') {
+          return {
+            stdout: JSON.stringify({
+              number: 42,
+              url: 'https://github.com/boggspa/TaskWraith/pull/42',
+              state: 'OPEN',
+              isDraft: false,
+              headRefName: 'main',
+              headRefOid: '0123456789abcdef0123456789abcdef01234567',
+              baseRefName: 'master',
+              mergeStateStatus: 'BLOCKED',
+              statusCheckRollup: [
+                {
+                  name: 'test',
+                  status: 'COMPLETED',
+                  conclusion: 'FAILURE',
+                  detailsUrl: 'https://github.com/boggspa/TaskWraith/actions/runs/99'
+                }
+              ]
+            }),
+            stderr: '',
+            code: 0
+          }
+        }
+        if (args[0] === 'run' && args[1] === 'list') {
+          return {
+            stdout: JSON.stringify([
+              {
+                databaseId: 99,
+                displayTitle: 'CI',
+                workflowName: 'Test',
+                status: 'completed',
+                conclusion: 'failure',
+                headSha: '0123456789abcdef0123456789abcdef01234567',
+                event: 'pull_request',
+                url: 'https://github.com/boggspa/TaskWraith/actions/runs/99',
+                createdAt: '2026-07-05T18:00:00Z',
+                updatedAt: '2026-07-05T18:03:00Z'
+              }
+            ]),
+            stderr: '',
+            code: 0
+          }
+        }
+        if (args[0] === 'run' && args[1] === 'view') {
+          return {
+            stdout:
+              'test\tFAIL src/main/example.test.ts\nAuthorization: Bearer ghp_abcdefghijklmnopqrstuvwxyz123456\nError: expected true to be false\n',
+            stderr: '',
+            code: 0
+          }
+        }
+      }
+      const git = spawnSync(command, args, {
+        cwd: options.cwd,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe']
+      })
+      return {
+        stdout: git.stdout || '',
+        stderr: git.stderr || '',
+        code: git.status ?? 0
+      }
+    }
+
+    const result = await new GitService({ run: runner }).ciStatus({
+      repoPath: repo,
+      includeFailedLogs: true,
+      repairAttempt: 1,
+      maxRepairPushes: 3
+    })
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.data.status).toBe('failed')
+    expect(result.data.binding.pr?.number).toBe(42)
+    expect(result.data.runs[0]).toMatchObject({ id: 99, conclusion: 'failure' })
+    expect(result.data.failedLogs[0]?.log).toContain('[redacted]')
+    expect(result.data.failedLogs[0]?.log).not.toContain('ghp_abcdefghijklmnopqrstuvwxyz123456')
+    expect(result.data.failedLogs[0]?.hints).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('FAIL src/main/example.test.ts'),
+        'Error: expected true to be false'
+      ])
+    )
+    expect(result.data.localVerification.recommendedCommands).toEqual(['npm run ci', 'npm run test'])
+    expect(result.data.repairLoop).toMatchObject({
+      repairAttempt: 1,
+      maxRepairPushes: 3,
+      shouldStop: false,
+      requireLocalVerification: true,
+      nextSuggestedAction: 'repair_and_test_before_push'
+    })
+    expect(calls.find((call) => call.command === 'gh')?.env).toEqual({ GH_PROMPT_DISABLED: '1' })
+  })
+
+  it('returns a blocked CI status when gh is not authenticated', async () => {
+    const result = await new GitService({
+      run: async (command, args, options) => {
+        if (command === 'gh') {
+          return { stdout: '', stderr: 'You are not logged into any GitHub hosts', code: 1 }
+        }
+        const git = spawnSync(command, args, {
+          cwd: options.cwd,
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'pipe']
+        })
+        return {
+          stdout: git.stdout || '',
+          stderr: git.stderr || '',
+          code: git.status ?? 0
+        }
+      }
+    }).ciStatus({ repoPath: repo })
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.data.status).toBe('blocked')
+    expect(result.data.warnings[0]).toContain('not logged')
+    expect(result.data.repairLoop.nextSuggestedAction).toBe('ask_user')
+  })
+
   it('refuses PR creation before the current branch is pushed', async () => {
     addBareRemote()
     writeFileSync(join(repo, 'ahead-pr.txt'), 'ahead\n')
