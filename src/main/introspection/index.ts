@@ -50,6 +50,19 @@ export {
 } from './IntrospectionApplyService'
 
 export {
+  expireDueMemoryProposals,
+  supersedeMemoryProposal,
+  type ExpireDueMemoryProposalsInput,
+  type ExpireDueMemoryProposalsResult,
+  type IntrospectionLifecycleServiceDeps,
+  type IntrospectionLifecycleServiceStore,
+  type MemoryProposalPatch,
+  type SupersedeMemoryProposalBlockReason,
+  type SupersedeMemoryProposalInput,
+  type SupersedeMemoryProposalResult
+} from './IntrospectionLifecycleService'
+
+export {
   INTROSPECTION_SCHEDULE_INTERVAL_MS,
   buildRolling24hWindow,
   calendarDayKey,

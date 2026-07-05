@@ -4,6 +4,10 @@ import { AppStore } from './store'
 import { buildMemoryProposalPackInput } from './introspection/IntrospectionProposalGenerator'
 import { applyMemoryProposal } from './introspection/IntrospectionApplyService'
 import {
+  expireDueMemoryProposals,
+  supersedeMemoryProposal
+} from './introspection/IntrospectionLifecycleService'
+import {
   createIntrospectionRunServiceDeps,
   runManualIntrospection
 } from './introspection/IntrospectionRunService'
@@ -256,6 +260,128 @@ describe('AppStore thread introspection', () => {
     )
     expect(again.ok).toBe(true)
     expect(AppStore.getRepoConventionIndexes('ws-1')[0]?.entries).toHaveLength(1)
+  })
+
+  it('supersedes and expires proposals through the lifecycle service', () => {
+    const run = AppStore.createIntrospectionRun({
+      status: 'review_pending',
+      trigger: 'manual',
+      windowStart: '2026-07-04T00:00:00.000Z',
+      windowEnd: '2026-07-05T00:00:00.000Z',
+      workspaceId: 'ws-1'
+    })
+    const oldPack = AppStore.saveMemoryProposalPack({
+      introspectionRunId: run.id,
+      workspaceId: 'ws-1',
+      windowStart: run.windowStart,
+      windowEnd: run.windowEnd,
+      proposals: [
+        {
+          id: 'prop-old',
+          kind: 'repo_convention',
+          scope: 'workspace',
+          status: 'proposed',
+          title: 'Old lesson',
+          lesson: 'Old wording.',
+          confidence: 0.8,
+          evidenceRefs: [
+            {
+              chatId: 'chat-1',
+              timestamp: '2026-07-05T12:00:00.000Z',
+              summary: 'evidence'
+            }
+          ],
+          dedupKey: 'lesson-a',
+          requiresReview: false,
+          createdAt: '2026-07-05T12:00:00.000Z',
+          updatedAt: '2026-07-05T12:00:00.000Z'
+        }
+      ],
+      evidenceItemCount: 1
+    })
+    const newPack = AppStore.saveMemoryProposalPack({
+      introspectionRunId: run.id,
+      workspaceId: 'ws-1',
+      windowStart: run.windowStart,
+      windowEnd: run.windowEnd,
+      proposals: [
+        {
+          id: 'prop-new',
+          kind: 'repo_convention',
+          scope: 'workspace',
+          status: 'proposed',
+          title: 'New lesson',
+          lesson: 'Refined wording.',
+          confidence: 0.85,
+          evidenceRefs: [
+            {
+              chatId: 'chat-2',
+              timestamp: '2026-07-05T13:00:00.000Z',
+              summary: 'new evidence'
+            }
+          ],
+          dedupKey: 'lesson-a',
+          requiresReview: false,
+          createdAt: '2026-07-05T13:00:00.000Z',
+          updatedAt: '2026-07-05T13:00:00.000Z'
+        },
+        {
+          id: 'prop-stale',
+          kind: 'preference',
+          scope: 'user',
+          status: 'proposed',
+          title: 'Stale preference',
+          lesson: 'Expired lesson.',
+          confidence: 0.7,
+          evidenceRefs: [
+            {
+              chatId: 'chat-3',
+              timestamp: '2026-07-05T10:00:00.000Z',
+              summary: 'old preference'
+            }
+          ],
+          dedupKey: 'pref-stale',
+          requiresReview: true,
+          expiresAt: '2026-07-05T12:00:00.000Z',
+          createdAt: '2026-07-05T10:00:00.000Z',
+          updatedAt: '2026-07-05T10:00:00.000Z'
+        }
+      ],
+      evidenceItemCount: 2
+    })
+
+    const lifecycleStore = {
+      getMemoryProposalPacks: (workspaceId?: string) => AppStore.getMemoryProposalPacks(workspaceId),
+      getMemoryProposalPack: (id: string) => AppStore.getMemoryProposalPack(id),
+      applyMemoryProposalPatches: (patches) => AppStore.applyMemoryProposalPatches(patches)
+    }
+
+    const supersedeResult = supersedeMemoryProposal(
+      { store: lifecycleStore, now: () => '2026-07-05T18:00:00.000Z' },
+      {
+        successorPackId: newPack.id,
+        successorProposalId: 'prop-new',
+        predecessorProposalId: 'prop-old'
+      }
+    )
+    expect(supersedeResult.ok).toBe(true)
+    expect(AppStore.getMemoryProposalPack(oldPack.id)?.proposals[0]).toMatchObject({
+      status: 'superseded',
+      supersededById: 'prop-new'
+    })
+    expect(AppStore.getMemoryProposalPack(newPack.id)?.proposals[0]).toMatchObject({
+      supersedesId: 'prop-old'
+    })
+
+    const expireResult = expireDueMemoryProposals(
+      { store: lifecycleStore, now: () => '2026-07-05T18:00:00.000Z' },
+      { workspaceId: 'ws-1' }
+    )
+    expect(expireResult.expiredCount).toBe(1)
+    expect(
+      AppStore.getMemoryProposalPack(newPack.id)?.proposals.find((item) => item.id === 'prop-stale')
+        ?.status
+    ).toBe('expired')
   })
 
   it('filters by workspace', () => {

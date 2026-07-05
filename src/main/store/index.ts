@@ -4201,19 +4201,51 @@ export class AppStore {
     proposalId: string,
     partial: Partial<MemoryProposal>
   ): MemoryProposalPack | null {
-    const pack = this.getMemoryProposalPack(packId)
-    if (!pack) return null
-    const proposals = pack.proposals.map((proposal) =>
-      proposal.id === proposalId
-        ? {
-            ...proposal,
-            ...partial,
-            id: proposalId,
-            updatedAt: new Date().toISOString()
-          }
-        : proposal
-    )
-    return this.saveMemoryProposalPack({ ...pack, proposals })
+    const result = this.applyMemoryProposalPatches([{ packId, proposalId, partial }])
+    return result?.[0] ?? null
+  }
+
+  /** Apply multiple proposal patches in one persist — all patches must resolve or none apply. */
+  static applyMemoryProposalPatches(
+    patches: Array<{ packId: string; proposalId: string; partial: Partial<MemoryProposal> }>
+  ): MemoryProposalPack[] | null {
+    if (patches.length === 0) return []
+    const packs = this.getMemoryProposalPacks()
+    const packIndexById = new Map(packs.map((item, index) => [item.id, index]))
+    const nextPacks = packs.map((item) => ({
+      ...item,
+      proposals: [...item.proposals]
+    }))
+    const touchedPackIds = new Set<string>()
+    const nowIso = new Date().toISOString()
+
+    for (const patch of patches) {
+      const packIndex = packIndexById.get(patch.packId)
+      if (packIndex === undefined) return null
+      const pack = nextPacks[packIndex]!
+      const proposalIndex = pack.proposals.findIndex((item) => item.id === patch.proposalId)
+      if (proposalIndex < 0) return null
+      pack.proposals[proposalIndex] = {
+        ...pack.proposals[proposalIndex]!,
+        ...patch.partial,
+        id: patch.proposalId,
+        updatedAt: patch.partial.updatedAt || nowIso
+      }
+      touchedPackIds.add(patch.packId)
+    }
+
+    const normalized = nextPacks
+      .map((item) =>
+        touchedPackIds.has(item.id)
+          ? normalizeMemoryProposalPack({ ...item, updatedAt: nowIso })
+          : item
+      )
+      .filter((item): item is MemoryProposalPack => Boolean(item))
+
+    if (normalized.length !== nextPacks.length) return null
+
+    writeJson(memoryProposalPacksPath, normalized)
+    return normalized.filter((item) => touchedPackIds.has(item.id))
   }
 
   static deleteMemoryProposalPack(id: string): void {
