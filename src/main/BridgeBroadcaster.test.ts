@@ -128,10 +128,21 @@ describe('chatRecordToSummary', () => {
       title: 'Plan refactor',
       workspaceId: 'workspace-1',
       provider: 'claude',
+      chatKind: 'single',
       status: 'idle',
       pinned: false,
       lastMessageAt: new Date(chat.updatedAt).toISOString()
     })
+  })
+
+  it('reports ensemble chatKind when the record is an Ensemble chat', () => {
+    const chat = makeChat({ chatKind: 'ensemble' })
+    expect(chatRecordToSummary(chat).chatKind).toBe('ensemble')
+  })
+
+  it('defaults missing chatKind to single', () => {
+    const chat = makeChat({ chatKind: undefined })
+    expect(chatRecordToSummary(chat).chatKind).toBe('single')
   })
 
   it('reports running status when any run is still running', () => {

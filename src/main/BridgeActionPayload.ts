@@ -509,6 +509,39 @@ export interface BridgeSetThreadTitleAction extends BridgeActionMetadata {
   title: string
 }
 
+/** Solo→Ensemble seed participant for `setChatKind`. Mirrors the desktop
+ * composer's `buildEnsembleSeedParticipantFromChat` output — the Mac's
+ * `AppStore.setChatKind` requires the full participant core fields. */
+export interface BridgeSetChatKindSeedParticipant {
+  id: string
+  provider: string
+  enabled: boolean
+  role: string
+  instructions: string
+  order: number
+  model?: string
+  runtimeProfileId?: string
+  geminiAuthProfileId?: string | null
+  permissionPresetId?: string
+  reasoningEffort?: string
+  fastModeEnabled?: boolean
+  thinkingEnabled?: boolean
+  serviceTier?: string
+}
+
+/** In-place mid-thread ensemble toggle — mirrors desktop `setChatKind` IPC. */
+export interface BridgeSetChatKindAction extends BridgeActionMetadata {
+  kind: 'setChatKind'
+  workspaceId: string
+  threadId: string
+  targetKind: 'single' | 'ensemble'
+  /** Solo→Ensemble: single seed participant (required unless roster restore applies). */
+  seedParticipant?: BridgeSetChatKindSeedParticipant
+  /** Ensemble→Solo: canonical provider chosen by the user. */
+  canonicalProvider?: string
+  canonicalProviderMetadata?: Record<string, unknown>
+}
+
 export type BridgeGoalUpdateOperation =
   | 'set'
   | 'edit'
@@ -687,6 +720,7 @@ export type BridgeActionPayload =
   | BridgeCreateSideChatAction
   | BridgeSetThreadNotesAction
   | BridgeSetThreadTitleAction
+  | BridgeSetChatKindAction
   | BridgeGoalUpdateAction
   | BridgeToggleMessagePinAction
   | BridgeProposedPlanDecisionAction
@@ -815,6 +849,7 @@ export function workspaceIdFromPayload(payload: BridgeActionPayload): string | n
     case 'createSideChat':
     case 'setThreadNotes':
     case 'setThreadTitle':
+    case 'setChatKind':
     case 'goalUpdate':
     case 'toggleMessagePin':
     case 'proposedPlanDecision':
@@ -884,6 +919,7 @@ export function payloadRequiresWorkspaceGating(payload: BridgeActionPayload): bo
     case 'createSideChat':
     case 'setThreadNotes':
     case 'setThreadTitle':
+    case 'setChatKind':
     case 'goalUpdate':
     case 'toggleMessagePin':
     case 'proposedPlanDecision':
@@ -957,6 +993,7 @@ export function payloadIsMutating(payload: BridgeActionPayload): boolean {
     case 'createSideChat':
     case 'setThreadNotes':
     case 'setThreadTitle':
+    case 'setChatKind':
     case 'goalUpdate':
     case 'toggleMessagePin':
     case 'proposedPlanDecision':
@@ -1148,6 +1185,10 @@ function coerceToPayload(parsed: unknown): BridgeActionPayload {
       return isSetThreadTitle(parsed)
         ? (parsed as unknown as BridgeSetThreadTitleAction)
         : { kind: 'unknown', rawKind: 'setThreadTitle', raw: parsed }
+    case 'setChatKind':
+      return isSetChatKind(parsed)
+        ? (parsed as unknown as BridgeSetChatKindAction)
+        : { kind: 'unknown', rawKind: 'setChatKind', raw: parsed }
     case 'goalUpdate':
       return isGoalUpdate(parsed)
         ? (parsed as unknown as BridgeGoalUpdateAction)
@@ -1598,6 +1639,74 @@ function isSetThreadTitle(v: Record<string, unknown>): boolean {
     v.title.trim().length > 0 &&
     v.title.length <= THREAD_TITLE_MAX_CHARS
   )
+}
+
+function isSetChatKindSeedParticipant(value: unknown): boolean {
+  if (!isRecord(value)) return false
+  if (typeof value.id !== 'string' || value.id.trim().length === 0) return false
+  if (typeof value.provider !== 'string' || value.provider.trim().length === 0) return false
+  if (typeof value.enabled !== 'boolean') return false
+  if (typeof value.role !== 'string' || value.role.length > 120) return false
+  if (typeof value.instructions !== 'string' || value.instructions.length > 2000) return false
+  if (
+    typeof value.order !== 'number' ||
+    !Number.isInteger(value.order) ||
+    value.order < 0 ||
+    value.order > 100
+  ) {
+    return false
+  }
+  if (value.model !== undefined && typeof value.model !== 'string') return false
+  if (value.runtimeProfileId !== undefined && typeof value.runtimeProfileId !== 'string') {
+    return false
+  }
+  if (
+    value.geminiAuthProfileId !== undefined &&
+    value.geminiAuthProfileId !== null &&
+    typeof value.geminiAuthProfileId !== 'string'
+  ) {
+    return false
+  }
+  if (value.permissionPresetId !== undefined && typeof value.permissionPresetId !== 'string') {
+    return false
+  }
+  if (value.reasoningEffort !== undefined && typeof value.reasoningEffort !== 'string') {
+    return false
+  }
+  if (value.fastModeEnabled !== undefined && typeof value.fastModeEnabled !== 'boolean') {
+    return false
+  }
+  if (value.thinkingEnabled !== undefined && typeof value.thinkingEnabled !== 'boolean') {
+    return false
+  }
+  if (value.serviceTier !== undefined && typeof value.serviceTier !== 'string') return false
+  return true
+}
+
+function isSetChatKind(v: Record<string, unknown>): boolean {
+  const targetKind = v.targetKind
+  if (
+    !isWorkspaceThreadAction(v) ||
+    (targetKind !== 'single' && targetKind !== 'ensemble')
+  ) {
+    return false
+  }
+  if (v.seedParticipant !== undefined && !isSetChatKindSeedParticipant(v.seedParticipant)) {
+    return false
+  }
+  if (
+    v.canonicalProvider !== undefined &&
+    (typeof v.canonicalProvider !== 'string' || v.canonicalProvider.trim().length === 0)
+  ) {
+    return false
+  }
+  if (
+    v.canonicalProviderMetadata !== undefined &&
+    (!isRecord(v.canonicalProviderMetadata) || Array.isArray(v.canonicalProviderMetadata))
+  ) {
+    return false
+  }
+  return true
 }
 
 function isGoalUpdate(v: Record<string, unknown>): boolean {

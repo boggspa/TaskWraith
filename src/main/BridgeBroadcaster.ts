@@ -68,6 +68,8 @@ export interface ThreadSummary {
   /** Null for global (non-workspace) chats. */
   workspaceId: string | null
   provider: ProviderId
+  /** Solo vs Ensemble classification — mirrors desktop `chatKind`. */
+  chatKind: 'single' | 'ensemble'
   status: ThreadSummaryStatus
   /** ISO8601. Omitted when AppStore has no timestamp. */
   lastMessageAt?: string
@@ -204,6 +206,7 @@ export function chatRecordToSummary(chat: ChatRecord): ThreadSummary {
     title: normalizeThreadTitle(chat.title, 'Untitled chat'),
     workspaceId,
     provider,
+    chatKind: chat.chatKind === 'ensemble' ? 'ensemble' : 'single',
     status,
     pinned: Boolean(chat.pinned)
   }

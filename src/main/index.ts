@@ -23593,6 +23593,54 @@ if (isGeminiMcpBridgeProcess) {
           bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
           return { ok: true, title }
         },
+        setChatKindFn: async (action) => {
+          const chat = AppStore.getChat(action.threadId)
+          if (!chat) return { ok: false, error: 'Thread not found' }
+          if (chat.parentChatId) {
+            return { ok: false, error: 'Cannot change chat mode on a linked child thread' }
+          }
+          const canonicalActionWs =
+            action.workspaceId === 'global'
+              ? 'global'
+              : canonicalRemoteWorkspaceId(action.workspaceId) ?? action.workspaceId
+          const chatWs =
+            chat.scope === 'global'
+              ? 'global'
+              : canonicalRemoteWorkspaceId(chat.workspaceId) ?? chat.workspaceId
+          if (chat.scope !== 'global' && chatWs && chatWs !== canonicalActionWs) {
+            return {
+              ok: false,
+              error: `Thread does not belong to workspace "${action.workspaceId}"`
+            }
+          }
+          if (action.targetKind === 'ensemble' && AppStore.getSettings().ensembleModeEnabled === false) {
+            return { ok: false, error: 'Ensemble mode is disabled on your Mac.' }
+          }
+          try {
+            const updated = chatService.setChatKind({
+              chatId: action.threadId,
+              targetKind: action.targetKind,
+              seedParticipant: action.seedParticipant as EnsembleParticipant | undefined,
+              canonicalProvider:
+                action.canonicalProvider === undefined
+                  ? undefined
+                  : assertProviderId(action.canonicalProvider),
+              canonicalProviderMetadata: action.canonicalProviderMetadata
+            })
+            broadcastChatUpdated(updated)
+            broadcastThreadUpdate(updated.appChatId)
+            broadcastThreadList()
+            pushRemoteTaskCardDelta(updated.appChatId)
+            bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
+            return {
+              ok: true,
+              threadId: updated.appChatId,
+              chatKind: updated.chatKind === 'ensemble' ? 'ensemble' : 'single'
+            }
+          } catch (err) {
+            return { ok: false, error: err instanceof Error ? err.message : String(err) }
+          }
+        },
         goalUpdateFn: async (action) => {
           const chat = AppStore.getChat(action.threadId)
           if (!chat) return { ok: false, reason: 'Thread not found' }

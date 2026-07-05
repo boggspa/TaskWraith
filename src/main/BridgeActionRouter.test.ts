@@ -259,6 +259,10 @@ function makeStubExecutor(
       executed: true,
       message: 'setThreadTitle done'
     }),
+    executeSetChatKind: make('executeSetChatKind', {
+      executed: true,
+      message: 'setChatKind done'
+    }),
     executeGoalUpdate: make('executeGoalUpdate', {
       executed: true,
       message: 'goalUpdate done'
@@ -1433,6 +1437,34 @@ describe('BridgeActionRouter', () => {
       expect(result.accepted).toBe(true)
       expect(result.message).toBe('setThreadTitle done')
       expect(calls[0].method).toBe('executeSetThreadTitle')
+    })
+
+    it('dispatches setChatKind to executor.executeSetChatKind', async () => {
+      const { executor, calls } = makeStubExecutor()
+      const router = new BridgeActionRouter({ allowlist: seedAllowlist(), executor })
+      const wire = Buffer.from(
+        JSON.stringify(withReplayMeta({
+          kind: 'setChatKind',
+          workspaceId: 'ws-allowed',
+          threadId: 'thread-1',
+          targetKind: 'ensemble',
+          seedParticipant: {
+            id: 'seed-1',
+            provider: 'claude',
+            enabled: true,
+            role: 'Claude',
+            instructions: '',
+            order: 1
+          }
+        })),
+        'utf-8'
+      ).toString('base64')
+      const result = (await router.route('bridge.requestActionAck', {
+        payloadBase64: wire
+      })) as { accepted: boolean; message?: string }
+      expect(result.accepted).toBe(true)
+      expect(result.message).toBe('setChatKind done')
+      expect(calls[0].method).toBe('executeSetChatKind')
     })
 
     it('dispatches togglePinChat to executor.executeTogglePinChat', async () => {

@@ -34,6 +34,7 @@ import type {
   BridgeGithubCreatePrAction,
   BridgeGoalUpdateAction,
   BridgeSetThreadTitleAction,
+  BridgeSetChatKindAction,
   BridgeProposedPlanDecisionAction,
   BridgeCanvasActionAction,
   BridgeTogglePinChatAction,
@@ -163,6 +164,20 @@ const sample = {
     threadId: 't-1',
     title: 'Readable chat title'
   } satisfies BridgeSetThreadTitleAction,
+  setChatKind: {
+    kind: 'setChatKind',
+    workspaceId: 'ws-1',
+    threadId: 't-1',
+    targetKind: 'ensemble',
+    seedParticipant: {
+      id: 'seed-1',
+      provider: 'claude',
+      enabled: true,
+      role: 'Claude',
+      instructions: '',
+      order: 1
+    }
+  } satisfies BridgeSetChatKindAction,
   proposedPlanDecision: {
     kind: 'proposedPlanDecision',
     workspaceId: 'ws-1',
@@ -288,7 +303,8 @@ describe('NoopActionExecutor', () => {
       executor.executeWorkspaceDiff(sample.workspaceDiff),
       executor.executeThreadMediaFetch(sample.threadMediaFetch),
       executor.executeDiscoverTailnetHosts(sample.discoverTailnetHosts),
-      executor.executeSetThreadTitle(sample.setThreadTitle)
+      executor.executeSetThreadTitle(sample.setThreadTitle),
+      executor.executeSetChatKind(sample.setChatKind)
     ])
     for (const r of results) {
       expect(r.executed).toBe(false)
@@ -806,6 +822,30 @@ describe('MainProcessActionExecutor session and pin controls', () => {
     const result = await executor.executeSetThreadTitle(sample.setThreadTitle)
     expect(result.executed).toBe(false)
     expect(result.message).toBe('Rename was not applied: thread missing')
+  })
+
+  it('converts chat mode through setChatKindFn', async () => {
+    const setChatKindFn = vi.fn().mockResolvedValue({ ok: true, chatKind: 'ensemble' })
+    const executor = new MainProcessActionExecutor({ cancelRunFn, setChatKindFn })
+    const result = await executor.executeSetChatKind(sample.setChatKind)
+    expect(setChatKindFn).toHaveBeenCalledWith(sample.setChatKind)
+    expect(result).toMatchObject({
+      executed: true,
+      message: 'Converted chat to Ensemble.',
+      data: { threadId: 't-1', chatKind: 'ensemble' }
+    })
+  })
+
+  it('surfaces setChatKindFn decline reasons', async () => {
+    const setChatKindFn = vi
+      .fn()
+      .mockResolvedValue({ ok: false, error: 'Cannot change chat mode while a turn is active' })
+    const executor = new MainProcessActionExecutor({ cancelRunFn, setChatKindFn })
+    const result = await executor.executeSetChatKind(sample.setChatKind)
+    expect(result.executed).toBe(false)
+    expect(result.message).toBe(
+      'Chat mode was not changed: Cannot change chat mode while a turn is active'
+    )
   })
 
   it('flips a proposed plan status through proposedPlanDecisionFn', async () => {

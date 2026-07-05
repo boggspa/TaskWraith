@@ -629,6 +629,8 @@ export class BridgeActionRouter {
         return this.executor.executeSetThreadNotes(payload)
       case 'setThreadTitle':
         return this.executor.executeSetThreadTitle(payload)
+      case 'setChatKind':
+        return this.executor.executeSetChatKind(payload)
       case 'goalUpdate':
         return this.executor.executeGoalUpdate(payload)
       case 'toggleMessagePin':
@@ -1216,6 +1218,7 @@ function capabilityForPayload(payload: BridgeActionPayload): RemoteWorkspaceCapa
     // read-write entry covers them.
     case 'setThreadNotes':
     case 'setThreadTitle':
+    case 'setChatKind':
     case 'goalUpdate':
     case 'toggleMessagePin':
     case 'proposedPlanDecision':

@@ -33,6 +33,7 @@ import type {
   BridgeCreateSideChatAction,
   BridgeSetThreadNotesAction,
   BridgeSetThreadTitleAction,
+  BridgeSetChatKindAction,
   BridgeGoalUpdateAction,
   BridgeToggleMessagePinAction,
   BridgeProposedPlanDecisionAction,
@@ -169,6 +170,7 @@ export interface BridgeActionExecutor {
   ): Promise<BridgeActionExecutionResult>
   executeSetThreadNotes(action: BridgeSetThreadNotesAction): Promise<BridgeActionExecutionResult>
   executeSetThreadTitle(action: BridgeSetThreadTitleAction): Promise<BridgeActionExecutionResult>
+  executeSetChatKind(action: BridgeSetChatKindAction): Promise<BridgeActionExecutionResult>
   executeGoalUpdate(action: BridgeGoalUpdateAction): Promise<BridgeActionExecutionResult>
   executeToggleMessagePin(
     action: BridgeToggleMessagePinAction
@@ -375,6 +377,11 @@ export class NoopActionExecutor implements BridgeActionExecutor {
     action: BridgeSetThreadTitleAction
   ): Promise<BridgeActionExecutionResult> {
     return notWired('setThreadTitle', action.threadId)
+  }
+  async executeSetChatKind(
+    action: BridgeSetChatKindAction
+  ): Promise<BridgeActionExecutionResult> {
+    return notWired('setChatKind', action.threadId)
   }
   async executeGoalUpdate(action: BridgeGoalUpdateAction): Promise<BridgeActionExecutionResult> {
     return notWired('goalUpdate', action.threadId)
@@ -654,6 +661,7 @@ export interface MainProcessActionExecutorDependencies {
   createSideChatFn?: (action: BridgeCreateSideChatAction) => Promise<unknown>
   setThreadNotesFn?: (action: BridgeSetThreadNotesAction) => Promise<unknown>
   setThreadTitleFn?: (action: BridgeSetThreadTitleAction) => Promise<unknown>
+  setChatKindFn?: (action: BridgeSetChatKindAction) => Promise<unknown>
   goalUpdateFn?: (action: BridgeGoalUpdateAction) => Promise<{
     ok: boolean
     goal?: unknown
@@ -1512,6 +1520,48 @@ export class MainProcessActionExecutor implements BridgeActionExecutor {
       const errMessage = err instanceof Error ? err.message : String(err)
       this.log(`[BridgeActionExecutor] setThreadTitle failed: ${errMessage}`)
       return { executed: false, message: `Rename failed: ${errMessage}` }
+    }
+  }
+
+  async executeSetChatKind(
+    action: BridgeSetChatKindAction
+  ): Promise<BridgeActionExecutionResult> {
+    if (!this.deps.setChatKindFn) {
+      this.log(
+        `[BridgeActionExecutor] setChatKind has no setChatKindFn — threadId=${action.threadId}`
+      )
+      return notWired('setChatKind', action.threadId)
+    }
+    try {
+      const result = await this.deps.setChatKindFn(action)
+      const resultRecord = isRecord(result) ? result : null
+      const ok = typeof resultRecord?.ok === 'boolean' ? resultRecord.ok : Boolean(result)
+      const reason =
+        typeof resultRecord?.error === 'string'
+          ? resultRecord.error
+          : typeof resultRecord?.reason === 'string'
+            ? resultRecord.reason
+            : undefined
+      if (!ok) {
+        return {
+          executed: false,
+          message: `Chat mode was not changed${reason ? `: ${reason}` : ''}`
+        }
+      }
+      const chatKind =
+        resultRecord?.chatKind === 'ensemble' || resultRecord?.chatKind === 'single'
+          ? resultRecord.chatKind
+          : action.targetKind
+      return {
+        executed: true,
+        message:
+          chatKind === 'ensemble' ? 'Converted chat to Ensemble.' : 'Converted chat to solo.',
+        data: { threadId: action.threadId, chatKind }
+      }
+    } catch (err) {
+      const errMessage = err instanceof Error ? err.message : String(err)
+      this.log(`[BridgeActionExecutor] setChatKind failed: ${errMessage}`)
+      return { executed: false, message: `Chat mode change failed: ${errMessage}` }
     }
   }
 

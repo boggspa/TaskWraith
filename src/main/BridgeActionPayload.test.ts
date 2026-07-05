@@ -1224,6 +1224,20 @@ describe('decodeBridgeActionPayload', () => {
         },
         { kind: 'setYoloMode', workspaceId: 'ws-1', enabled: true },
         { kind: 'setThreadTitle', workspaceId: 'ws-1', threadId: 't-1', title: 'Rename me' },
+        {
+          kind: 'setChatKind',
+          workspaceId: 'ws-1',
+          threadId: 't-1',
+          targetKind: 'ensemble',
+          seedParticipant: {
+            id: 'seed-1',
+            provider: 'claude',
+            enabled: true,
+            role: 'Claude',
+            instructions: '',
+            order: 1
+          }
+        },
         { kind: 'togglePinChat', workspaceId: 'ws-1', appChatId: 'chat-1', pinned: true },
         { kind: 'togglePinWorkspace', workspaceId: 'ws-1', pinned: true },
         {
@@ -1424,6 +1438,44 @@ describe('decodeBridgeActionPayload', () => {
       expect(workspaceIdFromPayload(payload)).toBe('ws-1')
       expect(payloadRequiresWorkspaceGating(payload)).toBe(true)
       expect(payloadIsMutating(payload)).toBe(true)
+    })
+
+    it('decodes setChatKind as a workspace-bound chat control', () => {
+      const { payload } = decodeBridgeActionPayload(
+        encode({
+          kind: 'setChatKind',
+          actionId: 'toggle-1',
+          workspaceId: 'ws-1',
+          threadId: 'thread-1',
+          targetKind: 'single',
+          canonicalProvider: 'codex'
+        })
+      )
+      expect(payload.kind).toBe('setChatKind')
+      if (payload.kind !== 'setChatKind') throw new Error('expected setChatKind')
+      expect(payload.targetKind).toBe('single')
+      expect(payload.canonicalProvider).toBe('codex')
+      expect(workspaceIdFromPayload(payload)).toBe('ws-1')
+      expect(payloadRequiresWorkspaceGating(payload)).toBe(true)
+      expect(payloadIsMutating(payload)).toBe(true)
+    })
+
+    it('rejects malformed setChatKind payloads', () => {
+      for (const variant of [
+        { kind: 'setChatKind', workspaceId: 'ws-1', threadId: 't-1', targetKind: 'maybe' },
+        {
+          kind: 'setChatKind',
+          workspaceId: 'ws-1',
+          threadId: 't-1',
+          targetKind: 'ensemble',
+          seedParticipant: { provider: 'claude' }
+        },
+        { kind: 'setChatKind', workspaceId: 'ws-1', targetKind: 'single' }
+      ]) {
+        const { payload } = decodeBridgeActionPayload(encode(variant))
+        expect(payload.kind).toBe('unknown')
+        if (payload.kind === 'unknown') expect(payload.rawKind).toBe('setChatKind')
+      }
     })
 
     it('rejects malformed setThreadTitle payloads', () => {
@@ -1665,6 +1717,16 @@ describe('workspaceIdFromPayload', () => {
         expected: 'ws-title'
       },
       {
+        payload: {
+          kind: 'setChatKind',
+          workspaceId: 'ws-kind',
+          threadId: 't',
+          targetKind: 'single',
+          canonicalProvider: 'codex'
+        },
+        expected: 'ws-kind'
+      },
+      {
         payload: { kind: 'togglePinChat', workspaceId: 'ws-f', appChatId: 'chat-1', pinned: true },
         expected: 'ws-f'
       },
@@ -1765,6 +1827,20 @@ describe('payloadRequiresWorkspaceGating', () => {
       { kind: 'cancelRun', workspaceId: 'w', threadId: 't', provider: 'gemini', runId: 'r' },
       { kind: 'setYoloMode', workspaceId: 'w', enabled: false },
       { kind: 'setThreadTitle', workspaceId: 'w', threadId: 't', title: 'Rename' },
+      {
+        kind: 'setChatKind',
+        workspaceId: 'w',
+        threadId: 't',
+        targetKind: 'ensemble',
+        seedParticipant: {
+          id: 'seed-1',
+          provider: 'claude',
+          enabled: true,
+          role: 'Claude',
+          instructions: '',
+          order: 1
+        }
+      },
       { kind: 'goalUpdate', workspaceId: 'w', threadId: 't', op: 'pause' },
       { kind: 'togglePinChat', workspaceId: 'w', appChatId: 'chat', pinned: true },
       { kind: 'togglePinWorkspace', workspaceId: 'w', pinned: true },
@@ -1854,6 +1930,15 @@ describe('payloadIsMutating', () => {
         workspaceId: 'w',
         threadId: 't',
         title: 'Rename'
+      })
+    ).toBe(true)
+    expect(
+      payloadIsMutating({
+        kind: 'setChatKind',
+        workspaceId: 'w',
+        threadId: 't',
+        targetKind: 'single',
+        canonicalProvider: 'codex'
       })
     ).toBe(true)
     expect(
