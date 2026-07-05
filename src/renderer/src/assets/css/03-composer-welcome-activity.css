@@ -146,6 +146,24 @@
   min-height: 0;
 }
 
+.app-transcript.welcome-mode .composer-area:has(> .notification-zone) {
+  flex: 1 1 auto;
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+.app-transcript.welcome-mode .composer-area > .notification-zone {
+  margin: clamp(16px, 2.5vh, 28px) auto 0;
+}
+
+.app-transcript.welcome-mode .composer-area > .welcome-standalone-heatmaps:has(+ .notification-zone) {
+  margin-bottom: 0;
+}
+
+.app-transcript.welcome-mode .composer-area > .welcome-standalone-heatmaps + .notification-zone {
+  margin-top: auto;
+}
+
 .app-transcript.welcome-mode.welcome-dashboard-hidden-by-fit {
   padding-top: clamp(48px, 7vh, 72px);
 }
