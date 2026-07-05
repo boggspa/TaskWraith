@@ -39,6 +39,13 @@ export function composerHighlightScrollTransform(scrollLeft: number, scrollTop: 
   return `translate3d(${x}px, ${y}px, 0)`
 }
 
+export function syncComposerHighlightScroll(
+  textarea: Pick<HTMLTextAreaElement, 'scrollLeft' | 'scrollTop'>,
+  content: Pick<HTMLDivElement, 'style'>
+): void {
+  content.style.transform = composerHighlightScrollTransform(textarea.scrollLeft, textarea.scrollTop)
+}
+
 /**
  * Visual layer that sits OVER the composer textarea and renders
  * the same prompt text, except `@Token` mentions that resolve to a
@@ -109,46 +116,64 @@ export function ComposerHighlightOverlay({
    * changes when the text content changes.
    */
   useLayoutEffect(() => {
-    const textarea = textareaRef.current
-    const content = contentRef.current
-    if (!textarea || !content) return
+    let textarea: HTMLTextAreaElement | null = null
+    let rafId: number | null = null
+    let disposed = false
 
     const syncScroll = (): void => {
-      content.style.transform = composerHighlightScrollTransform(
-        textarea.scrollLeft,
-        textarea.scrollTop
-      )
+      const content = contentRef.current
+      if (!textarea || !content) return
+      syncComposerHighlightScroll(textarea, content)
     }
 
-    let rafId: number | null = null
     const scheduleSync = (): void => {
       if (rafId !== null) return
       rafId = requestAnimationFrame(() => {
         rafId = null
+        if (disposed) return
         syncScroll()
       })
     }
 
-    syncScroll()
-    textarea.addEventListener('scroll', syncScroll, { passive: true })
-    // Input listener catches the input-driven auto-scroll-to-caret
-    // that Chromium folds into the input dispatch without firing a
-    // separate scroll event. The rAF defers the read until after
-    // the browser has finished any post-input layout adjustments.
-    textarea.addEventListener('input', scheduleSync, { passive: true })
+    const scheduleAttach = (): void => {
+      if (rafId !== null) return
+      rafId = requestAnimationFrame(() => {
+        rafId = null
+        if (disposed) return
+        attach()
+      })
+    }
+
+    const attach = (): void => {
+      const nextTextarea = textareaRef.current
+      if (!nextTextarea || !contentRef.current) {
+        scheduleAttach()
+        return
+      }
+      textarea = nextTextarea
+      syncScroll()
+      textarea.addEventListener('scroll', syncScroll, { passive: true })
+      // Input listener catches the input-driven auto-scroll-to-caret
+      // that Chromium folds into the input dispatch without firing a
+      // separate scroll event. The rAF defers the read until after
+      // the browser has finished any post-input layout adjustments.
+      textarea.addEventListener('input', scheduleSync, { passive: true })
+    }
+
+    attach()
 
     return () => {
-      textarea.removeEventListener('scroll', syncScroll)
-      textarea.removeEventListener('input', scheduleSync)
+      disposed = true
+      textarea?.removeEventListener('scroll', syncScroll)
+      textarea?.removeEventListener('input', scheduleSync)
       if (rafId !== null) cancelAnimationFrame(rafId)
     }
-  }, [textareaRef])
+  }, [textareaRef, syncEpoch])
 
   useLayoutEffect(() => {
-    const textarea = textareaRef.current
-    const overlay = overlayRef.current
-    const content = contentRef.current
-    if (!textarea || !overlay || !content) return
+    let rafId: number | null = null
+    let observer: ResizeObserver | null = null
+    let disposed = false
 
     /**
      * Copy the textarea's computed glyph-positioning properties
@@ -169,6 +194,13 @@ export function ComposerHighlightOverlay({
      * pixels as the textarea's (border-box accounting).
      */
     const syncStyles = (): void => {
+      const textarea = textareaRef.current
+      const overlay = overlayRef.current
+      const content = contentRef.current
+      if (!textarea || !overlay || !content) {
+        scheduleStyleSync()
+        return
+      }
       const cs = getComputedStyle(textarea)
       content.style.fontFamily = cs.fontFamily
       content.style.fontSize = cs.fontSize
@@ -192,6 +224,26 @@ export function ComposerHighlightOverlay({
       content.style.borderStyle = 'solid'
       content.style.borderColor = 'transparent'
       content.style.minHeight = `${Math.max(textarea.scrollHeight, textarea.clientHeight)}px`
+      syncComposerHighlightScroll(textarea, content)
+    }
+
+    const scheduleStyleSync = (): void => {
+      if (rafId !== null) return
+      rafId = requestAnimationFrame(() => {
+        rafId = null
+        if (disposed) return
+        syncStyles()
+        observeTextarea()
+      })
+    }
+
+    const observeTextarea = (): void => {
+      const textarea = textareaRef.current
+      if (!textarea || typeof ResizeObserver === 'undefined' || observer) return
+      observer = new ResizeObserver(() => {
+        syncStyles()
+      })
+      observer.observe(textarea)
     }
 
     // Initial style sync + an immediate scroll mirror so the
@@ -199,10 +251,6 @@ export function ComposerHighlightOverlay({
     // scroll position the textarea is already at (e.g. restoring a
     // long draft from cache).
     syncStyles()
-    content.style.transform = composerHighlightScrollTransform(
-      textarea.scrollLeft,
-      textarea.scrollTop
-    )
 
     // Catch any subsequent style change that affects the textarea's
     // size. `ResizeObserver` fires when content-box / border-box
@@ -210,19 +258,11 @@ export function ComposerHighlightOverlay({
     // swaps, and most font-family swaps (different glyph widths
     // change the intrinsic size). For pure-styling changes that
     // don't resize (rare), the `syncEpoch` dep below handles it.
-    const observer =
-      typeof ResizeObserver === 'undefined'
-        ? null
-        : new ResizeObserver(() => {
-            syncStyles()
-            content.style.transform = composerHighlightScrollTransform(
-              textarea.scrollLeft,
-              textarea.scrollTop
-            )
-          })
-    observer?.observe(textarea)
+    observeTextarea()
     return () => {
+      disposed = true
       observer?.disconnect()
+      if (rafId !== null) cancelAnimationFrame(rafId)
     }
   }, [textareaRef, syncEpoch, value])
 

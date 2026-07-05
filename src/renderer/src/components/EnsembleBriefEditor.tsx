@@ -173,14 +173,6 @@ export function EnsembleBriefEditor({
         </div>
       </div>
       <div className="ensemble-brief-textarea-wrap">
-        {hasMentionOverlay && (
-          <ComposerHighlightOverlay
-            value={value}
-            participants={participants}
-            textareaRef={resolvedTextareaRef}
-            syncEpoch={syncEpoch}
-          />
-        )}
         <textarea
           ref={resolvedTextareaRef}
           className={`${textareaClassName} ensemble-brief-textarea${
@@ -198,6 +190,14 @@ export function EnsembleBriefEditor({
           onContextMenu={onContextMenu}
           placeholder={placeholder}
         />
+        {hasMentionOverlay && (
+          <ComposerHighlightOverlay
+            value={value}
+            participants={participants}
+            textareaRef={resolvedTextareaRef}
+            syncEpoch={syncEpoch}
+          />
+        )}
       </div>
     </div>
   )

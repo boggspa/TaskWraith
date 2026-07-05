@@ -4,7 +4,8 @@ import { describe, expect, it } from 'vitest'
 import type { EnsembleParticipant } from '../../../main/store/types'
 import {
   ComposerHighlightOverlay,
-  composerHighlightScrollTransform
+  composerHighlightScrollTransform,
+  syncComposerHighlightScroll
 } from './ComposerHighlightOverlay'
 
 const textareaRef = { current: null } as RefObject<HTMLTextAreaElement | null>
@@ -27,6 +28,14 @@ describe('ComposerHighlightOverlay', () => {
   it('mirrors textarea scroll offsets with negative inner-content translation', () => {
     expect(composerHighlightScrollTransform(12, 96)).toBe('translate3d(-12px, -96px, 0)')
     expect(composerHighlightScrollTransform(0, 0)).toBe('translate3d(0px, 0px, 0)')
+  })
+
+  it('applies textarea scroll offsets to the overlay content style', () => {
+    const content = { style: { transform: '' } } as unknown as Pick<HTMLDivElement, 'style'>
+
+    syncComposerHighlightScroll({ scrollLeft: 18, scrollTop: 42 }, content)
+
+    expect(content.style.transform).toBe('translate3d(-18px, -42px, 0)')
   })
 
   it('renders a clipping shell and translated content layer for mention text', () => {
