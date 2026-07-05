@@ -79,6 +79,30 @@ function samePersistedResource(a: unknown, b: unknown): boolean {
   return stableJson(a) === stableJson(b)
 }
 
+function pluginMcpReviewState(
+  plugin: TaskWraithPluginContributionProvenance,
+  existing: UserMcpServerConfig | undefined,
+  sameManifest: boolean,
+  materializedAt: string
+): UserMcpServerConfig['pluginReview'] {
+  if (sameManifest && existing?.enabled) {
+    return {
+      status: 'accepted',
+      reason: 'user-enabled-reviewed-resource',
+      manifestHash: plugin.manifestHash,
+      reviewedAt: existing.pluginReview?.reviewedAt || materializedAt
+    }
+  }
+  if (sameManifest && existing?.pluginReview?.manifestHash === plugin.manifestHash) {
+    return existing.pluginReview
+  }
+  return {
+    status: 'pending',
+    reason: existing?.pluginProvenance ? 'manifest-update' : 'new-plugin-resource',
+    manifestHash: plugin.manifestHash
+  }
+}
+
 function pluginResourceBelongsTo(
   provenance: TaskWraithPluginResourceProvenance | undefined,
   plugin: TaskWraithPluginContributionProvenance,
@@ -202,6 +226,7 @@ export class PluginContributionManager {
         ...base,
         enabled: sameManifest ? Boolean(existing?.enabled) : false,
         pluginProvenance: provenanceFor(plugin, 'mcpServer', preset.id, materializedAt),
+        pluginReview: pluginMcpReviewState(plugin, existing, sameManifest, materializedAt),
         createdAt: existing?.createdAt || materializedAt,
         updatedAt: materializedAt
       }

@@ -25,7 +25,10 @@ import type {
   WorkflowTrigger,
   WorkspaceRecord
 } from '../store/types'
-import type { TaskWraithPluginResourceProvenance } from '../../shared/plugins/PluginTypes'
+import type {
+  TaskWraithPluginResourceProvenance,
+  TaskWraithPluginReviewState
+} from '../../shared/plugins/PluginTypes'
 import { WORKSPACE_BOARD_CARD_LINK_KINDS } from '../store/types'
 import { sanitizeProviderRunPauses } from '../ProviderRunPause'
 import { coerceLiveProvider, isRetiredProvider } from '../../shared/retiredProviders'
@@ -293,6 +296,7 @@ function sanitizeUserMcpServers(value: unknown): UserMcpServerConfig[] {
     const createdAt = optionalString(record.createdAt)?.trim()
     const updatedAt = optionalString(record.updatedAt)?.trim()
     const pluginProvenance = sanitizePluginResourceProvenance(record.pluginProvenance)
+    const pluginReview = sanitizePluginReviewState(record.pluginReview)
     const canEnable = transport === 'stdio' ? Boolean(command) : Boolean(url)
     const sanitized: UserMcpServerConfig = {
       id,
@@ -316,6 +320,7 @@ function sanitizeUserMcpServers(value: unknown): UserMcpServerConfig[] {
     }
     if (description) sanitized.description = description
     if (pluginProvenance) sanitized.pluginProvenance = pluginProvenance
+    if (pluginReview) sanitized.pluginReview = pluginReview
     if (createdAt) sanitized.createdAt = createdAt
     if (updatedAt) sanitized.updatedAt = updatedAt
     servers.push(sanitized)
@@ -361,6 +366,27 @@ function sanitizePluginResourceProvenance(value: unknown): TaskWraithPluginResou
     return undefined
   }
   return { pluginId, publisher, version, source, namespace, manifestHash, kind, objectId, materializedAt }
+}
+
+function sanitizePluginReviewState(value: unknown): TaskWraithPluginReviewState | undefined {
+  if (!isRecord(value)) return undefined
+  const status =
+    value.status === 'pending' || value.status === 'accepted' ? value.status : undefined
+  const reason =
+    value.reason === 'new-plugin-resource' ||
+    value.reason === 'manifest-update' ||
+    value.reason === 'user-enabled-reviewed-resource'
+      ? value.reason
+      : undefined
+  const manifestHash = optionalString(value.manifestHash)?.trim()
+  const reviewedAt = optionalString(value.reviewedAt)?.trim()
+  if (!status || !reason || !manifestHash) return undefined
+  return {
+    status,
+    reason,
+    manifestHash,
+    ...(reviewedAt ? { reviewedAt } : {})
+  }
 }
 
 export function imageAttachmentSnapshots(

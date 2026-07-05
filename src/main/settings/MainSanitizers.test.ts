@@ -557,6 +557,12 @@ describe('MainSanitizers settings patches', () => {
             kind: 'mcpServer',
             objectId: 'filesystem',
             materializedAt: '2026-06-29T12:00:00.000Z'
+          },
+          pluginReview: {
+            status: 'accepted',
+            reason: 'user-enabled-reviewed-resource',
+            manifestHash: 'abc123',
+            reviewedAt: '2026-06-29T12:05:00.000Z'
           }
         },
         {
@@ -623,6 +629,12 @@ describe('MainSanitizers settings patches', () => {
           kind: 'mcpServer',
           objectId: 'filesystem',
           materializedAt: '2026-06-29T12:00:00.000Z'
+        },
+        pluginReview: {
+          status: 'accepted',
+          reason: 'user-enabled-reviewed-resource',
+          manifestHash: 'abc123',
+          reviewedAt: '2026-06-29T12:05:00.000Z'
         }
       },
       {

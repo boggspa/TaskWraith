@@ -3,7 +3,10 @@ import type { AppIconVariant } from '../../shared/iconVariants'
 import type { ClaudeWorkflowTelemetry } from '../../shared/claudeWorkflow'
 import type { CodexReviewTelemetry } from '../../shared/codexReview'
 import type { UnattendedElevationAck } from '../UnattendedPostureGate'
-import type { TaskWraithPluginResourceProvenance } from '../../shared/plugins/PluginTypes'
+import type {
+  TaskWraithPluginResourceProvenance,
+  TaskWraithPluginReviewState
+} from '../../shared/plugins/PluginTypes'
 
 export type AppearanceMode = 'solid' | 'soft_glass' | 'native_glass'
 export type VisualEffectStyle = 'auto' | 'liquid_glass' | 'thin_material' | 'classic'
@@ -1541,6 +1544,7 @@ export interface UserMcpServerConfig {
   bearerTokenEnvVar?: string
   description?: string
   pluginProvenance?: TaskWraithPluginResourceProvenance
+  pluginReview?: TaskWraithPluginReviewState
   createdAt?: string
   updatedAt?: string
 }

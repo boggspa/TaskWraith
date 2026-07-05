@@ -231,6 +231,11 @@ describe('PluginHost', () => {
         objectId: 'docs-stdio',
         materializedAt: '2026-06-29T12:00:00.000Z'
       },
+      pluginReview: {
+        status: 'pending',
+        reason: 'new-plugin-resource',
+        manifestHash: result.plugin.manifestHash
+      },
       createdAt: '2026-06-29T12:00:00.000Z',
       updatedAt: '2026-06-29T12:00:00.000Z'
     })

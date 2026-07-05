@@ -1193,6 +1193,28 @@ function normalizePluginResourceProvenance(
   }
 }
 
+function normalizePluginReviewState(value: unknown): UserMcpServerConfig['pluginReview'] {
+  const record = objectOrUndefined(value as Record<string, unknown> | null | undefined)
+  if (!record) return undefined
+  const status =
+    record.status === 'pending' || record.status === 'accepted' ? record.status : undefined
+  const reason =
+    record.reason === 'new-plugin-resource' ||
+    record.reason === 'manifest-update' ||
+    record.reason === 'user-enabled-reviewed-resource'
+      ? record.reason
+      : undefined
+  const manifestHash = typeof record.manifestHash === 'string' ? record.manifestHash.trim() : ''
+  const reviewedAt = typeof record.reviewedAt === 'string' ? record.reviewedAt.trim() : ''
+  if (!status || !reason || !manifestHash) return undefined
+  return {
+    status,
+    reason,
+    manifestHash,
+    ...(reviewedAt ? { reviewedAt } : {})
+  }
+}
+
 function normalizeUserMcpServers(value: unknown): UserMcpServerConfig[] {
   if (!Array.isArray(value)) return []
   const seen = new Set<string>()
@@ -1267,6 +1289,7 @@ function normalizeUserMcpServers(value: unknown): UserMcpServerConfig[] {
         ? record.bearerTokenEnvVar.trim()
         : ''
     const pluginProvenance = normalizePluginResourceProvenance(record.pluginProvenance)
+    const pluginReview = normalizePluginReviewState(record.pluginReview)
     const canEnable = transport === 'stdio' ? Boolean(command) : Boolean(url)
     const normalized: UserMcpServerConfig = {
       id,
@@ -1290,6 +1313,7 @@ function normalizeUserMcpServers(value: unknown): UserMcpServerConfig[] {
       normalized.description = record.description.trim()
     }
     if (pluginProvenance) normalized.pluginProvenance = pluginProvenance
+    if (pluginReview) normalized.pluginReview = pluginReview
     if (typeof record.createdAt === 'string' && record.createdAt.trim()) {
       normalized.createdAt = record.createdAt.trim()
     }

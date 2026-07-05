@@ -292,6 +292,11 @@ describe('PluginContributionManager', () => {
       command: 'node',
       args: ['server.js'],
       secretRefs: { env: ['DEMO_TOKEN'] },
+      pluginReview: {
+        status: 'pending',
+        reason: 'new-plugin-resource',
+        manifestHash: 'sha256:abc'
+      },
       pluginProvenance: {
         pluginId: 'demo-bundle',
         kind: 'mcpServer',
@@ -343,7 +348,45 @@ describe('PluginContributionManager', () => {
 
     expect(harness.getSettings().userMcpServers).toHaveLength(1)
     expect(harness.getSettings().userMcpServers?.[0]?.enabled).toBe(true)
+    expect(harness.getSettings().userMcpServers?.[0]?.pluginReview).toMatchObject({
+      status: 'accepted',
+      reason: 'user-enabled-reviewed-resource',
+      manifestHash: 'sha256:abc',
+      reviewedAt: materializedAt
+    })
     expect(harness.getRuntimeProfiles()).toHaveLength(1)
+  })
+
+  it('marks changed plugin MCP server manifests as pending review and disables them', () => {
+    const harness = makeHarness()
+    harness.manager.sync()
+    const existing = (harness.getSettings().userMcpServers || [])[0] as UserMcpServerConfig
+    harness.setSettings({
+      ...harness.getSettings(),
+      userMcpServers: [{ ...existing, enabled: true }]
+    })
+    harness.manager.sync()
+
+    const nextContributions = contributions()
+    const plugin = nextContributions.mcpServers[0]?.plugin
+    if (!plugin) throw new Error('missing fixture plugin')
+    plugin.version = '1.1.0'
+    plugin.manifestHash = 'sha256:def'
+    const changedHarness = makeHarness(nextContributions)
+    changedHarness.setSettings(harness.getSettings())
+    changedHarness.setRuntimeProfiles(harness.getRuntimeProfiles())
+
+    changedHarness.manager.sync()
+
+    expect(changedHarness.getSettings().userMcpServers?.[0]).toMatchObject({
+      id: 'plugin:demo-bundle:mcp:docs',
+      enabled: false,
+      pluginReview: {
+        status: 'pending',
+        reason: 'manifest-update',
+        manifestHash: 'sha256:def'
+      }
+    })
   })
 
   it('disables stale plugin MCP servers and removes stale plugin runtime profiles', () => {

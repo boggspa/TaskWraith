@@ -204,6 +204,11 @@ describe('AppStore settings defaults', () => {
             kind: 'mcpServer',
             objectId: 'docs',
             materializedAt: '2026-06-29T12:00:00.000Z'
+          },
+          pluginReview: {
+            status: 'pending',
+            reason: 'manifest-update',
+            manifestHash: 'abc123'
           }
         },
         {
@@ -237,6 +242,11 @@ describe('AppStore settings defaults', () => {
           kind: 'mcpServer',
           objectId: 'docs',
           materializedAt: '2026-06-29T12:00:00.000Z'
+        },
+        pluginReview: {
+          status: 'pending',
+          reason: 'manifest-update',
+          manifestHash: 'abc123'
         }
       },
       {

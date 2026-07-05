@@ -409,6 +409,19 @@ export interface TaskWraithPluginResourceProvenance
   materializedAt: string
 }
 
+export type TaskWraithPluginReviewStatus = 'pending' | 'accepted'
+export type TaskWraithPluginReviewReason =
+  | 'new-plugin-resource'
+  | 'manifest-update'
+  | 'user-enabled-reviewed-resource'
+
+export interface TaskWraithPluginReviewState {
+  status: TaskWraithPluginReviewStatus
+  reason: TaskWraithPluginReviewReason
+  manifestHash: string
+  reviewedAt?: string
+}
+
 export interface TaskWraithPluginMaterializedResourceRef {
   id: string
   kind: TaskWraithPluginResourceKind
@@ -452,6 +465,7 @@ export interface TaskWraithPluginUserMcpServerConfig {
   bearerTokenEnvVar?: string
   description?: string
   pluginProvenance?: TaskWraithPluginResourceProvenance
+  pluginReview?: TaskWraithPluginReviewState
   createdAt?: string
   updatedAt?: string
 }

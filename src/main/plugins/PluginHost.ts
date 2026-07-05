@@ -934,6 +934,11 @@ export class PluginHost {
         materializedAt
       }
     )
+    userMcpServerConfig.pluginReview = {
+      status: 'pending',
+      reason: 'new-plugin-resource',
+      manifestHash: entry.manifestHash
+    }
     userMcpServerConfig.createdAt = materializedAt
     userMcpServerConfig.updatedAt = materializedAt
     const state = this.readState()
