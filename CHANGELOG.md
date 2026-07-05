@@ -9,9 +9,76 @@ history, and workspace state stay on your machine throughout.
 This section is reserved for changes committed after the latest tagged release.
 Entries here are source-ahead only: do not treat them as shipped until a
 matching GitHub tag, release notes, checksums, and platform artifacts are
-published. The repository is currently ahead of the latest tagged release, and the
-next semver bump (with curated Unreleased/source-ahead notes) must happen before
-shipping these commits.
+published.
+
+## 1.7.5 - 2026-07-05
+
+### Added
+- **Agent Pool icon colour controls.** Hue and brightness sliders stay visible for
+  seed, asset, and named icons — not only after Shuffle — with editable Hex and
+  RGB fields for precise picks. When **Tint icon** is on, your chosen colour
+  overrides pre-baked asset hues; when off, the preview stays monochrome while
+  the colour fields still show your last pick.
+- **Agent Pool leaderboard.** Settings → Agent Pool now includes a sortable
+  leaderboard table (styled like Model Usage) ranking pooled agents by runs,
+  threads, tokens, tool calls, edits, work time, ensemble stage/role, and last
+  active. Stats accumulate forward from saved ensemble runs.
+- **Transcript participant filter rail.** Ensemble transcripts gain a compact
+  filter rail so you can focus on one participant's messages without losing
+  round context.
+- **Add selection to composer prompt.** Highlight transcript text and send it
+  straight into the composer as quoted context.
+- **Composer voice input.** Pick a microphone source and dictate locally into
+  the composer; on-device transcription fills the prompt without sending audio
+  off-machine.
+- **Ensemble brief presets.** Edit reusable brief presets from Settings and
+  update them mid-round via a new `ensemble_brief` MCP tool.
+- **Stacked fan-out working indicators.** Parallel fan-out lanes now show a
+  clearer stacked busy state while seats are running.
+- **Plugin contributions surface.** Activated plugin capabilities, tool bundles,
+  local services, workflow templates, connector secret setup, health probes, and
+  launch runners are wired into Settings and the new-workflow menu, with review
+  gates before risky activations.
+- **Sketch canvas tooling.** Agents can open a persisted sketch canvas for
+  lightweight markup workflows.
+- **Poolside Laguna (Ollama).** A new local-model preset joins the Ollama catalog.
+- **Full thinking traces.** Extended reasoning traces are surfaced where the
+  provider exposes them.
+- **Compact collapsed model-usage grid.** With the sidebar collapsed, model usage
+  condenses into a tighter grid layout.
+
+### Changed
+- **Fan-out transcript grouping.** Parallel fan-out activity rolls up into grouped
+  cards instead of scattering individual lane messages through the thread.
+- **Ensemble send queueing.** Sends issued while the orchestrator is busy route
+  through the ensemble queue instead of racing the active turn.
+- **Solo assistant labels.** Single-provider chats label assistant turns with
+  provider identities rather than generic placeholders.
+- **Workspace board creator.** Creating a board opens from a main-pane sheet
+  instead of a sidebar-only flow.
+- **Sidebar rhythm and composer tabs.** Section spacing is normalized; tucked
+  composer tabs cap at 850px so wide monitors do not sprawl.
+- **Ensemble chars slider polish.** Glass styling refinements and removal of
+  noisy warning hints on the orchestration row.
+- **Ollama branding.** Mentions, health cards, and iOS working labels carry
+  consistent Ollama identity.
+- **Provider tools catalog.** The tools reference is reorganized for easier
+  discovery.
+
+### Fixed
+- **Agent Pool tint precedence.** Legacy baked accents no longer win over user
+  hue/brightness when tinting is enabled.
+- **Settings roster brief editor width.** The ensemble brief editor no longer
+  overflows its panel.
+- **Workflow quick-create from general chats.** Quick workflow creation works
+  from non-workspace threads again.
+- **Participant filter rail alignment.** Underfilled filter rails bottom-align
+  cleanly against the transcript edge.
+- **Completion-claim warnings retired.** Stale completion-claim transcript
+  warnings are removed in favour of the current evidence-pack flow.
+- **Active run provider labels.** In-flight runs show the correct provider name.
+- **Ollama health card brand fallback.** Missing brand metadata no longer leaves
+  a blank card.
 
 ## 1.7.4 - 2026-07-04
 
