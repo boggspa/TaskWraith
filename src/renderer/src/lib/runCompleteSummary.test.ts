@@ -3,7 +3,9 @@ import type { ChatRecord, ChatRun } from '../../../main/store/types'
 import {
   buildEnsembleRoundCostRow,
   buildEnsembleRoundSummaryRows,
+  buildEnsembleRoundTokenDetails,
   buildRunCompleteSummaryRows,
+  buildRunCompleteTokenDetails,
   buildEscalationChips,
   buildRoundOutcomeRows
 } from './runCompleteSummary'
@@ -134,6 +136,86 @@ describe('buildEnsembleRoundSummaryRows', () => {
   })
 })
 
+describe('buildEnsembleRoundTokenDetails', () => {
+  it('maps round participants to P-order token cells and a round total', () => {
+    const chat = {
+      chatKind: 'ensemble',
+      runs: [
+        run({
+          provider: 'codex',
+          ensembleParticipantId: 'worker',
+          stats: { input_tokens: 1000, output_tokens: 200 }
+        }),
+        run({
+          provider: 'ollama',
+          ensembleParticipantId: 'scout',
+          requestedModel: 'laguna-xs-2.1:q8_0',
+          stats: { input_tokens: 300, output_tokens: 50 }
+        })
+      ],
+      ensemble: {
+        participants: [
+          { id: 'worker', provider: 'codex', role: 'Worker', order: 1 },
+          {
+            id: 'scout',
+            provider: 'ollama',
+            role: 'Scout',
+            order: 0,
+            model: 'laguna-xs-2.1:q8_0'
+          }
+        ],
+        activeRound: {
+          roundId: 'r1',
+          participants: [
+            {
+              participantId: 'worker',
+              provider: 'codex',
+              role: 'Worker',
+              order: 1,
+              status: 'answered'
+            },
+            {
+              participantId: 'scout',
+              provider: 'ollama',
+              role: 'Scout',
+              order: 0,
+              status: 'answered'
+            },
+            {
+              participantId: 'reviewer',
+              provider: 'claude',
+              role: 'Reviewer',
+              order: 2,
+              status: 'skipped'
+            }
+          ]
+        }
+      }
+    } as unknown as ChatRecord
+
+    const details = buildEnsembleRoundTokenDetails(chat)
+    expect(details?.participants.map((participant) => participant.orderLabel)).toEqual([
+      'P1',
+      'P2',
+      'P3'
+    ])
+    expect(details?.participants.map((participant) => participant.label)).toEqual([
+      'Scout',
+      'Worker',
+      'Reviewer'
+    ])
+    expect(details?.participants[0].providerClass).toBe('poolside')
+    expect(details?.participants[0].totalTokens).toBe(350)
+    expect(details?.participants[2].tokensLabel).toBe('-')
+    expect(details?.totalTokens).toBe(1550)
+  })
+
+  it('returns null when the round has no token data', () => {
+    const chat = chatWithParticipants([{ role: 'Scout', provider: 'gemini', status: 'answered' }])
+    expect(buildEnsembleRoundTokenDetails(chat)).toBeNull()
+  })
+})
+
 describe('buildRunCompleteSummaryRows', () => {
   it('distinguishes Plan workflow from read-only posture even though both use provider plan mode', () => {
     expect(
@@ -166,6 +248,26 @@ describe('buildRunCompleteSummaryRows', () => {
     expect(rows).toContainEqual({ label: 'Model', value: 'Qwen 3.5 (9B Param)' })
     expect(rows).toContainEqual({ label: 'Tokens', value: '100 in / 25 out' })
     expect(rows).toContainEqual({ label: 'RAM', value: '2.4 GB llama-server peak, 3 samples' })
+  })
+})
+
+describe('buildRunCompleteTokenDetails', () => {
+  it('builds a single P1 token cell for solo runs', () => {
+    const details = buildRunCompleteTokenDetails(
+      run({
+        provider: 'claude',
+        stats: { input_tokens: 1200, output_tokens: 300 }
+      })
+    )
+    expect(details?.participants).toHaveLength(1)
+    expect(details?.participants[0]).toMatchObject({
+      provider: 'claude',
+      providerClass: 'claude',
+      label: 'Claude',
+      orderLabel: 'P1',
+      totalTokens: 1500
+    })
+    expect(details?.totalTokens).toBe(1500)
   })
 })
 

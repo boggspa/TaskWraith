@@ -4,11 +4,14 @@ import type {
   ComplexityEscalationAction,
   ComplexityEscalationKind,
   ComplexityEscalationSignal,
-  EnsembleRoundParticipantState
+  EnsembleRoundParticipantState,
+  ProviderId
 } from '../../../main/store/types'
 import { formatContextTokens } from './contextWindows'
 import { formatCostAlwaysOn, type DisplayCurrency } from './formatCost'
 import { humaniseModelId } from './modelDisplayName'
+import { resolveProviderBrandLabel, resolveProviderHueClass } from './ollamaDisplayBrand'
+import { getProviderLabel } from './providerLabels'
 import { estimateRunCostUsd, type RendererProviderRates } from './providerRateEstimate'
 import {
   extractOllamaPeakRssGb,
@@ -23,6 +26,28 @@ import {
 export type RunCompleteSummaryRow = {
   label: string
   value: string
+}
+
+export type RunCompleteTokenParticipant = {
+  id: string
+  provider?: ProviderId
+  providerClass: string
+  label: string
+  orderLabel: string
+  inputTokens: number
+  outputTokens: number
+  totalTokens: number
+  tokensLabel: string
+  title: string
+}
+
+export type RunCompleteTokenDetails = {
+  participants: RunCompleteTokenParticipant[]
+  inputTokens: number
+  outputTokens: number
+  totalTokens: number
+  totalLabel: string
+  totalTitle: string
 }
 
 /**
@@ -316,6 +341,159 @@ export const buildRunCompleteSummaryRows = (run?: ChatRun | null): RunCompleteSu
   if (ramRow) rows.push(ramRow)
 
   return rows
+}
+
+const compactTokenLabel = (count: number): string => (count > 0 ? formatContextTokens(count) : '-')
+
+const tokenTitle = (label: string, inputTokens: number, outputTokens: number, totalTokens: number): string =>
+  `${label}: ${formatContextTokens(inputTokens)} in / ${formatContextTokens(outputTokens)} out / ${formatContextTokens(totalTokens)} total`
+
+const participantDisplayLabel = (
+  provider: ProviderId | undefined,
+  role: string | undefined,
+  model: string | undefined
+): string => {
+  const trimmedRole = role?.trim()
+  if (trimmedRole) return trimmedRole
+  return (
+    resolveProviderBrandLabel(provider, model, model ? humaniseModelId(provider, model) : undefined) ||
+    (provider ? getProviderLabel(provider) : 'Run')
+  )
+}
+
+const modelFromRuns = (runs: ChatRun[], fallback?: string): string | undefined => {
+  for (let index = runs.length - 1; index >= 0; index -= 1) {
+    const model = runs[index].actualModel || runs[index].requestedModel
+    if (model) return model
+  }
+  return fallback
+}
+
+const sumRunTokens = (runs: ChatRun[]): { inputTokens: number; outputTokens: number; totalTokens: number } =>
+  runs.reduce(
+    (total, run) => {
+      const counts = extractUsageCountsFromCandidate(run.stats)
+      total.inputTokens += counts.inputTokens
+      total.outputTokens += counts.outputTokens
+      total.totalTokens += counts.totalTokens
+      return total
+    },
+    { inputTokens: 0, outputTokens: 0, totalTokens: 0 }
+  )
+
+export const buildRunCompleteTokenDetails = (
+  run?: ChatRun | null
+): RunCompleteTokenDetails | null => {
+  if (!run) return null
+  const counts = extractUsageCountsFromCandidate(run.stats)
+  if (counts.totalTokens <= 0) return null
+
+  const model = run.actualModel || run.requestedModel
+  const label = participantDisplayLabel(run.provider, run.ensembleRole, model)
+  const providerClass = resolveProviderHueClass(
+    run.provider,
+    model,
+    model ? humaniseModelId(run.provider, model) : undefined
+  )
+  const participant: RunCompleteTokenParticipant = {
+    id: run.ensembleParticipantId || run.runId,
+    provider: run.provider,
+    providerClass,
+    label,
+    orderLabel: 'P1',
+    ...counts,
+    tokensLabel: compactTokenLabel(counts.totalTokens),
+    title: tokenTitle(label, counts.inputTokens, counts.outputTokens, counts.totalTokens)
+  }
+
+  return {
+    participants: [participant],
+    ...counts,
+    totalLabel: compactTokenLabel(counts.totalTokens),
+    totalTitle: tokenTitle('Round total', counts.inputTokens, counts.outputTokens, counts.totalTokens)
+  }
+}
+
+export const buildEnsembleRoundTokenDetails = (
+  chat: ChatRecord | null
+): RunCompleteTokenDetails | null => {
+  const round = chat?.ensemble?.activeRound
+  if (!round) return null
+  const roundRuns = (chat?.runs || []).filter((run) => run.ensembleRoundId === round.roundId)
+  const configuredParticipants = chat?.ensemble?.participants || []
+  const configuredById = new Map(configuredParticipants.map((participant) => [participant.id, participant]))
+  const consumedRunIds = new Set<string>()
+  const sortedParticipants = [...(round.participants || [])].sort((a, b) => a.order - b.order)
+
+  const sourceParticipants =
+    sortedParticipants.length > 0
+      ? sortedParticipants
+      : roundRuns.map((run, index) => ({
+          participantId: run.ensembleParticipantId || run.runId,
+          provider: run.provider || 'gemini',
+          role: run.ensembleRole || '',
+          order: typeof run.ensembleOrder === 'number' ? run.ensembleOrder : index,
+          status: 'answered' as const
+        }))
+
+  const participants = sourceParticipants.map((participant, index) => {
+    let participantRuns = roundRuns.filter(
+      (run) => run.ensembleParticipantId === participant.participantId
+    )
+    if (participantRuns.length === 0) {
+      participantRuns = roundRuns.filter(
+        (run) =>
+          !consumedRunIds.has(run.runId) &&
+          run.provider === participant.provider &&
+          (run.ensembleOrder === participant.order || run.ensembleRole === participant.role)
+      )
+    }
+    participantRuns.forEach((run) => consumedRunIds.add(run.runId))
+
+    const configured = configuredById.get(participant.participantId)
+    const model = modelFromRuns(participantRuns, configured?.model)
+    const counts = sumRunTokens(participantRuns)
+    const label = participantDisplayLabel(participant.provider, participant.role, model)
+    const providerClass = resolveProviderHueClass(
+      participant.provider,
+      model,
+      model ? humaniseModelId(participant.provider, model) : undefined
+    )
+    const orderNumber =
+      typeof participant.order === 'number' && Number.isFinite(participant.order)
+        ? participant.order + 1
+        : index + 1
+
+    return {
+      id: participant.participantId,
+      provider: participant.provider,
+      providerClass,
+      label,
+      orderLabel: `P${orderNumber}`,
+      ...counts,
+      tokensLabel: compactTokenLabel(counts.totalTokens),
+      title: tokenTitle(label, counts.inputTokens, counts.outputTokens, counts.totalTokens)
+    }
+  })
+
+  const totals = participants.reduce(
+    (total, participant) => {
+      total.inputTokens += participant.inputTokens
+      total.outputTokens += participant.outputTokens
+      total.totalTokens += participant.totalTokens
+      return total
+    },
+    { inputTokens: 0, outputTokens: 0, totalTokens: 0 }
+  )
+
+  if (participants.length === 0 || totals.totalTokens <= 0) return null
+
+  return {
+    participants,
+    ...totals,
+    totalLabel: compactTokenLabel(totals.totalTokens),
+    totalTitle: tokenTitle('Round total', totals.inputTokens, totals.outputTokens, totals.totalTokens)
+  }
 }
 
 /**

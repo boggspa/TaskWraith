@@ -17,9 +17,9 @@ import { shouldSurfaceProposedPlanCard } from '../lib/ensemblePlanPolicy'
 import { deriveParticipantRenameContinuity } from '../lib/sessionActivityLedger'
 import { shouldCollapseUserMessage, truncateUserMessagePreview } from '../lib/UserMessageCollapse'
 import {
-  buildEnsembleRoundSummaryRows,
+  buildEnsembleRoundTokenDetails,
   buildEscalationChips,
-  buildRunCompleteSummaryRows
+  buildRunCompleteTokenDetails
 } from '../lib/runCompleteSummary'
 import { decideMeasurePass, MAX_MEASURE_REWRITE_PASSES } from '../lib/transcriptMeasureConvergence'
 import { deriveQueuedLifecycleProjection } from '../lib/queuedMessageRows'
@@ -105,6 +105,7 @@ import { collectInlineImageRefIds } from '../lib/resolveMarkdownImageRef'
 import { FileTypeIcon } from './FileTypeIcon'
 import { RunCard } from './RunCard'
 import { PooledAgentIcon } from './icons/PooledAgentIcon'
+import { ProviderGlyph } from './icons/ProviderGlyph'
 import { ThinkingIndicator } from './AppChromeSymbols'
 import {
   humanCollaboratorMetadata,
@@ -329,9 +330,9 @@ export type TranscriptPanelProps = {
    */
   onProgrammaticScrollWrite?: (landedScrollTop: number) => void
   /**
-   * 1.0.7 — display currency + conservative-overestimate bias (Settings →
-   * General), threaded in so the ensemble run-complete card's Cost row routes
-   * through `formatCost`. Defaults to USD / 0 when omitted.
+   * Legacy run-details cost formatting inputs. The current compact card is
+   * token-only, but upstream panes still pass these props while cost displays
+   * remain available elsewhere in the app.
    */
   currency?: DisplayCurrency
   currencyOverestimatePercent?: number
@@ -348,10 +349,8 @@ export type TranscriptPanelProps = {
    */
   userMessageGutterEnabled?: boolean
   /**
-   * 1.0.7 — per-provider rate table (USD per 1M tokens) from the
-   * `providerRates:get` IPC. Used ONLY to project a clearly-badged
-   * API-equivalent cost for subscription/credit seats that emit no
-   * `cost_usd` (Codex / Grok / Cursor). Absent → no estimate.
+   * Legacy run-details provider rate table. Kept on the public prop surface
+   * while the surrounding panes still pass provider rate data through.
    */
   providerRates?: RendererProviderRates
 }
@@ -458,6 +457,21 @@ function workingAccentStyle(presentation: WorkingIndicatorPresentation): CSSProp
   return {
     '--message-working-accent': `var(--provider-${providerClass}-color, var(--accent))`
   } as CSSProperties
+}
+
+function runDetailsAccentStyle(providerClass: string): CSSProperties | undefined {
+  const safeProviderClass = providerClass.replace(/[^a-z0-9-]/gi, '')
+  if (!safeProviderClass) return undefined
+  return {
+    '--run-complete-token-accent': `var(--provider-${safeProviderClass}-color, var(--accent))`
+  } as CSSProperties
+}
+
+function runDetailsGridTemplate(participantCount: number): string {
+  const dense = participantCount >= 6
+  const participantTrack = dense ? 'minmax(64px, 1fr)' : 'minmax(92px, 1fr)'
+  const totalTrack = dense ? 'minmax(86px, auto)' : 'minmax(92px, auto)'
+  return `repeat(${participantCount}, ${participantTrack}) ${totalTrack}`
 }
 
 function TranscriptMessageFooter({
@@ -1151,13 +1165,10 @@ export const TranscriptPanel = memo(
     virtualize,
     autoFollowRef,
     onProgrammaticScrollWrite,
-    currency,
-    currencyOverestimatePercent,
     showRunCompleteSummary,
     collapseOlderRounds,
     userMessageGutterEnabled,
-    isGlobal,
-    providerRates
+    isGlobal
   }: TranscriptPanelProps) {
     const visibleMessages = useMemo(() => {
       const source = isWelcomeChat ? EMPTY_CHAT_MESSAGES : messages
@@ -1361,27 +1372,15 @@ export const TranscriptPanel = memo(
     }, [messageContextMenu, visibleMessages])
     const shouldShowRunCompleteNotice =
       Boolean(runCompleteNotice && !isWelcomeChat && !shouldSuppressRunCompleteSummary(runCompleteNotice))
-    const runCompleteSummaryRows = useMemo(() => {
-      // Ensemble chats: aggregate across every participant in the
-      // round so the user sees ALL contributing models (not just the
-      // last speaker's), round-envelope duration, and summed tokens.
-      // Solo chats: the original single-run summary.
+    const runCompleteTokenDetails = useMemo(() => {
+      // Keep the run-complete card focused on turn token usage. Ensemble
+      // chats render participants in P-order; solo chats render the single
+      // provider as P1.
       if (currentChat?.chatKind === 'ensemble' && currentChat.ensemble?.activeRound) {
-        return buildEnsembleRoundSummaryRows(currentChat, runCompleteNotice?.exitCode !== 0, {
-          currency,
-          overestimatePercent: currencyOverestimatePercent,
-          providerRates
-        })
+        return buildEnsembleRoundTokenDetails(currentChat)
       }
-      return buildRunCompleteSummaryRows(currentRun)
-    }, [
-      currentChat,
-      currentRun,
-      runCompleteNotice?.exitCode,
-      currency,
-      currencyOverestimatePercent,
-      providerRates
-    ])
+      return buildRunCompleteTokenDetails(currentRun)
+    }, [currentChat, currentRun])
     // 1.0.7 (M5 surfacing) — advisory chips for the dark-shipped escalation
     // signals on the current round. Read-only: the orchestrator persists
     // these; we just surface label + recommended action.
@@ -3110,18 +3109,63 @@ export const TranscriptPanel = memo(
                   )}
                 </div>
               </div>
-              {!isGlobal && runCompleteSummaryRows.length > 0 && (
+              {!isGlobal && runCompleteTokenDetails && (
                 <div className="run-complete-summary-card">
                   <div className="run-complete-summary-header">
                     <strong>Run details</strong>
                   </div>
-                  <div className="run-complete-summary-grid">
-                    {runCompleteSummaryRows.map((row) => (
-                      <div key={row.label} className="run-complete-summary-item">
-                        <span>{row.label}</span>
-                        <strong title={row.value}>{row.value}</strong>
+                  <div
+                    className={`run-complete-token-table${
+                      runCompleteTokenDetails.participants.length >= 6 ? ' is-dense' : ''
+                    }`}
+                    role="table"
+                    aria-label="Run token usage by participant"
+                    style={{
+                      gridTemplateColumns: runDetailsGridTemplate(
+                        runCompleteTokenDetails.participants.length
+                      )
+                    }}
+                  >
+                    {runCompleteTokenDetails.participants.map((participant, index) => (
+                      <div
+                        key={participant.id}
+                        className={`run-complete-token-participant${index === 0 ? ' is-row-start' : ''}`}
+                        role="columnheader"
+                        title={participant.title}
+                        style={runDetailsAccentStyle(participant.providerClass)}
+                      >
+                        <span className="run-complete-token-icon" aria-hidden="true">
+                          <ProviderGlyph
+                            provider={participant.provider}
+                            accentProvider={participant.providerClass}
+                          />
+                        </span>
+                        <span className="run-complete-token-name">
+                          <span className="run-complete-token-order">{participant.orderLabel}</span>
+                          <span className="run-complete-token-role">{participant.label}</span>
+                        </span>
                       </div>
                     ))}
+                    <div className="run-complete-token-total-label" role="columnheader">
+                      Round total
+                    </div>
+                    {runCompleteTokenDetails.participants.map((participant, index) => (
+                      <div
+                        key={`${participant.id}-tokens`}
+                        className={`run-complete-token-value${index === 0 ? ' is-row-start' : ''}`}
+                        role="cell"
+                        title={participant.title}
+                      >
+                        {participant.tokensLabel}
+                      </div>
+                    ))}
+                    <div
+                      className="run-complete-token-value run-complete-token-total-value"
+                      role="cell"
+                      title={runCompleteTokenDetails.totalTitle}
+                    >
+                      {runCompleteTokenDetails.totalLabel}
+                    </div>
                   </div>
                 </div>
               )}

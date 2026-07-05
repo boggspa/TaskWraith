@@ -4833,58 +4833,111 @@ input:disabled, select:disabled, textarea:disabled {
   font-weight: 600;
 }
 
-/* Run details — ROW list mirroring the File-changes layout: each metric
- * is a [LABEL  value] row with alternating stripes + hairline separators,
- * instead of the old multi-column grid. Same stripe idiom as
- * .file-change-summary-item so the two sections read as one card. */
-.run-complete-summary-grid {
-  display: flex;
-  flex-direction: column;
+/* Run details — compact token table. The header stays unchanged; the body is
+ * only participant identity + per-turn token totals to avoid noisy metadata. */
+.run-complete-token-table {
+  display: grid;
+  overflow-x: auto;
 }
 
-.run-complete-summary-item {
+.run-complete-token-participant,
+.run-complete-token-total-label,
+.run-complete-token-value {
   min-width: 0;
+  min-height: 34px;
+  padding: 7px 10px;
+  border-left: 1px solid rgba(255, 255, 255, 0.055);
+}
+
+.run-complete-token-participant.is-row-start,
+.run-complete-token-value.is-row-start {
+  border-left: none;
+}
+
+.run-complete-token-participant {
+  --run-complete-token-accent: var(--accent);
   display: flex;
   align-items: center;
-  gap: 12px;
-  min-height: 36px;
-  padding: 7px var(--space-md);
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
-  background: rgba(255, 255, 255, 0.015);
-  color: var(--text-secondary);
-}
-
-.run-complete-summary-item:first-child {
-  border-top: none;
-}
-
-.run-complete-summary-item:nth-child(odd) {
-  background: rgba(255, 255, 255, 0.01);
-}
-
-.run-complete-summary-item:nth-child(even) {
-  background: rgba(255, 255, 255, 0.03);
-}
-
-.run-complete-summary-item span {
-  flex: 0 0 auto;
-  width: 120px;
-  color: var(--text-tertiary);
-  font-size: 10.5px;
+  gap: 7px;
+  color: var(--run-complete-token-accent);
+  font-size: var(--font-size-xs);
   font-weight: 700;
-  letter-spacing: 0.08em;
+  white-space: nowrap;
+  background: rgba(255, 255, 255, 0.012);
+}
+
+.run-complete-token-icon {
+  flex: 0 0 auto;
+  display: inline-grid;
+  place-items: center;
+  width: 17px;
+  height: 17px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--run-complete-token-accent) 12%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--run-complete-token-accent) 24%, transparent);
+}
+
+.run-complete-token-icon .provider-glyph {
+  width: 12px;
+  height: 12px;
+}
+
+.run-complete-token-name {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  min-width: 0;
+}
+
+.run-complete-token-name > span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.run-complete-token-table.is-dense .run-complete-token-participant {
+  justify-content: center;
+  gap: 5px;
+  padding-inline: 8px;
+}
+
+.run-complete-token-table.is-dense .run-complete-token-role {
+  display: none;
+}
+
+.run-complete-token-order {
+  color: color-mix(in srgb, var(--run-complete-token-accent) 72%, var(--text-muted));
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
   text-transform: uppercase;
 }
 
-.run-complete-summary-item strong {
-  flex: 1 1 auto;
-  min-width: 0;
-  color: var(--text-primary);
-  font-size: var(--font-size-xs);
-  font-variant-numeric: tabular-nums;
-  font-weight: 650;
+.run-complete-token-total-label {
+  color: var(--text-tertiary);
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
   text-align: right;
-  overflow-wrap: anywhere;
+  text-transform: uppercase;
+  white-space: nowrap;
+  background: rgba(255, 255, 255, 0.012);
+}
+
+.run-complete-token-value {
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+  text-align: center;
+  white-space: nowrap;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.028);
+}
+
+.run-complete-token-total-value {
+  color: var(--text-primary);
+  text-align: right;
 }
 
 .file-change-summary-card {
