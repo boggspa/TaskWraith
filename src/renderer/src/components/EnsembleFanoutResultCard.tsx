@@ -13,8 +13,12 @@ import { MarkdownMessage } from './MarkdownMessage'
 import { ChatMessageMediaStrip, collectMessageMediaRefs, type ChatMediaRef } from './ChatMediaPanel'
 import {
   ensembleFanoutLaneIntent,
+  type EnsembleFanoutTranscriptPart,
   readEnsembleFanoutTranscriptParts
 } from './EnsembleFanoutResultCardModel'
+
+const COLLAPSED_FANOUT_PART_LIMIT = 24
+const COLLAPSED_FANOUT_ACTIVITY_LIMIT = 80
 
 interface EnsembleFanoutResultCardProps {
   message: ChatMessage
@@ -45,6 +49,41 @@ function laneLabel(message: ChatMessage): string {
   if (intent === 'write') return 'Writer fan-out'
   if (intent === 'read') return 'Reader fan-out'
   return 'Fan-out lane'
+}
+
+function fanoutRevisionToken(input: {
+  messageId: string
+  content: string
+  mediaCount: number
+  transcriptParts: readonly EnsembleFanoutTranscriptPart[]
+  activities: readonly NonNullable<ChatMessage['toolActivities']>[number][]
+}): string {
+  let hash = 2166136261
+  const add = (token: string): void => {
+    for (let i = 0; i < token.length; i += 1) {
+      hash ^= token.charCodeAt(i)
+      hash = Math.imul(hash, 16777619)
+    }
+  }
+  add(`${input.messageId}:${input.content.length}:${input.mediaCount}`)
+  for (const part of input.transcriptParts) {
+    if (part.kind === 'content') {
+      add(`c:${part.id}:${part.content.length}`)
+      continue
+    }
+    add(`t:${part.id}:${part.toolActivities.length}`)
+    for (const activity of part.toolActivities) {
+      add(
+        `${activity.id}:${activity.status || ''}:${(activity.resultSummary || activity.outputPreview || '').length}`
+      )
+    }
+  }
+  for (const activity of input.activities) {
+    add(
+      `${activity.id}:${activity.status || ''}:${(activity.resultSummary || activity.outputPreview || '').length}`
+    )
+  }
+  return `${input.transcriptParts.length}:${input.activities.length}:${(hash >>> 0).toString(36)}`
 }
 
 export function EnsembleFanoutResultCard({
@@ -78,25 +117,13 @@ export function EnsembleFanoutResultCard({
   const stripRefs = inlineImageIds.size
     ? mediaRefs.filter((ref) => !inlineImageIds.has(ref.id))
     : mediaRefs
-  const revisionParts = transcriptParts
-    .map((part) =>
-      part.kind === 'content'
-        ? `${part.id}:c:${part.content.length}`
-        : `${part.id}:t:${part.toolActivities.length}:${part.toolActivities
-            .map(
-              (activity) =>
-                `${activity.id}:${activity.status}:${(activity.resultSummary || activity.outputPreview || '').length}`
-            )
-            .join(',')}`
-    )
-    .join('|')
-  const activityRevision = activities
-    .map(
-      (activity) =>
-        `${activity.id}:${activity.status}:${(activity.resultSummary || activity.outputPreview || '').length}`
-    )
-    .join(',')
-  const revision = `${message.id}:${content.length}:${mediaRefs.length}:${revisionParts}:${activityRevision}`
+  const revision = fanoutRevisionToken({
+    messageId: message.id,
+    content,
+    mediaCount: mediaRefs.length,
+    transcriptParts,
+    activities
+  })
   const hasTranscriptParts = transcriptParts.length > 0
   const hasDisplayableParts = hasTranscriptParts
     ? transcriptParts.some(
@@ -105,6 +132,17 @@ export function EnsembleFanoutResultCard({
           (part.kind === 'tools' && part.toolActivities.length > 0)
       )
     : Boolean(content || activities.length > 0)
+  const expandedResult = Boolean(expanded)
+  const renderedTranscriptParts =
+    hasTranscriptParts && !expandedResult && transcriptParts.length > COLLAPSED_FANOUT_PART_LIMIT
+      ? transcriptParts.slice(-COLLAPSED_FANOUT_PART_LIMIT)
+      : transcriptParts
+  const hiddenTranscriptPartCount = transcriptParts.length - renderedTranscriptParts.length
+  const renderedActivities =
+    !hasTranscriptParts && !expandedResult && activities.length > COLLAPSED_FANOUT_ACTIVITY_LIMIT
+      ? activities.slice(-COLLAPSED_FANOUT_ACTIVITY_LIMIT)
+      : activities
+  const hiddenActivityCount = activities.length - renderedActivities.length
 
   return (
     <article className={`ensemble-fanout-result-card provider-${provider || 'unknown'}`}>
@@ -149,7 +187,12 @@ export function EnsembleFanoutResultCard({
           <div className="ensemble-fanout-result-body-inner">
             {hasTranscriptParts ? (
               <>
-                {transcriptParts.map((part) =>
+                {hiddenTranscriptPartCount > 0 && (
+                  <div className="ensemble-fanout-result-truncated" aria-hidden="true">
+                    {hiddenTranscriptPartCount} earlier parts hidden while collapsed.
+                  </div>
+                )}
+                {renderedTranscriptParts.map((part) =>
                   part.kind === 'content' && part.content.trim() ? (
                     <div key={part.id} className="ensemble-fanout-result-part">
                       <MarkdownMessage
@@ -167,7 +210,12 @@ export function EnsembleFanoutResultCard({
                       className="ensemble-fanout-result-part ensemble-fanout-result-tools"
                     >
                       <ActivityStack
-                        activities={part.toolActivities}
+                        activities={
+                          !expandedResult &&
+                          part.toolActivities.length > COLLAPSED_FANOUT_ACTIVITY_LIMIT
+                            ? part.toolActivities.slice(-COLLAPSED_FANOUT_ACTIVITY_LIMIT)
+                            : part.toolActivities
+                        }
                         workspacePath={workspacePath}
                         provider={provider}
                         chatId={chat?.appChatId}
@@ -200,8 +248,13 @@ export function EnsembleFanoutResultCard({
               </div>
             ) : activities.length > 0 ? (
               <div className="ensemble-fanout-result-part ensemble-fanout-result-tools">
+                {hiddenActivityCount > 0 && (
+                  <div className="ensemble-fanout-result-truncated" aria-hidden="true">
+                    {hiddenActivityCount} earlier tool events hidden while collapsed.
+                  </div>
+                )}
                 <ActivityStack
-                  activities={activities}
+                  activities={renderedActivities}
                   workspacePath={workspacePath}
                   provider={provider}
                   chatId={chat?.appChatId}

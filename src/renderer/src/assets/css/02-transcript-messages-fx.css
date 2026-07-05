@@ -5647,6 +5647,14 @@ html:has(.chat-split-region.chat-split-hidden-for-settings) .transcript-user-gut
   min-width: 0;
 }
 
+.ensemble-fanout-result-truncated {
+  padding: 4px 0 8px;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--text-tertiary);
+  border-bottom: 1px solid color-mix(in srgb, var(--border-muted) 65%, transparent);
+}
+
 .ensemble-fanout-result-tools .activity-timeline {
   margin: 0;
   padding-left: 14px;

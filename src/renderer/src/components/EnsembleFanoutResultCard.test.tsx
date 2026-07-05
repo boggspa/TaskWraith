@@ -129,4 +129,29 @@ describe('EnsembleFanoutResultCard', () => {
     expect(html).toContain('First note.')
     expect(html).toContain('Second note.')
   })
+
+  it('bounds collapsed grouped fan-out parts to the latest entries', () => {
+    const parts = Array.from({ length: 40 }, (_, index) => ({
+      kind: 'content' as const,
+      id: `content-${index}`,
+      messageIds: [`content-${index}`],
+      content: `Fanout note ${index}`
+    }))
+    const message = fanoutMessage({
+      content: parts.map((part) => part.content).join('\n\n'),
+      metadata: {
+        ...fanoutMessage().metadata,
+        groupedFanoutMessageIds: parts.map((part) => part.id),
+        ensembleFanoutTranscriptParts: parts
+      }
+    })
+
+    const html = renderToStaticMarkup(
+      <EnsembleFanoutResultCard message={message} onPreviewImage={() => {}} />
+    )
+
+    expect(html).toContain('16 earlier parts hidden while collapsed.')
+    expect(html).not.toContain('Fanout note 0')
+    expect(html).toContain('Fanout note 39')
+  })
 })

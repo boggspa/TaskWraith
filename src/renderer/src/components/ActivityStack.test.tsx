@@ -420,6 +420,27 @@ describe('ActivityStack live activity viewport', () => {
     expect(html).toContain('message-actions-chip-button--delete')
   })
 
+  it('bounds collapsed live viewport rendering to the latest activity items', () => {
+    const activities = Array.from({ length: 120 }, (_, index) =>
+      makeWriteActivity({
+        id: `tool-write-${index}`,
+        status: 'running',
+        endedAt: undefined,
+        durationMs: undefined,
+        parameters: { file_path: `/repo/src/file-${index}.ts`, content: 'hello' },
+        resultSummary: `wrote file ${index}`
+      })
+    )
+
+    const html = renderToStaticMarkup(
+      <ActivityStack activities={activities} provider="codex" liveActivityViewport />
+    )
+
+    expect(html).toContain('40 earlier events hidden while collapsed.')
+    expect(html).not.toContain('/repo/src/file-0.ts')
+    expect(html).toContain('/repo/src/file-119.ts')
+  })
+
   it('keeps thinking traces as progress notes in compact density so actions are not nested in compact rows', () => {
     const html = renderToStaticMarkup(
       <ActivityStack

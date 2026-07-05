@@ -1983,10 +1983,29 @@ export function activitiesHaveLiveWork(activities: readonly ToolActivity[]): boo
 /** Cheap signature that changes whenever streamed content grows, so the
  * viewport re-pins to the live edge as reasoning text / tool results stream in. */
 export function liveActivityRevision(activities: readonly ToolActivity[]): string {
+  let hash = 2166136261
+  let outputLen = 0
+  for (const activity of activities) {
+    const outputLength = (activity.resultSummary || activity.outputPreview || '').length
+    const token = [
+      activity.id,
+      activity.toolName || '',
+      activity.category || '',
+      activity.status || '',
+      outputLength
+    ].join(':')
+    outputLen += activity.resultSummary?.length || activity.outputPreview?.length || 0
+    for (let i = 0; i < token.length; i += 1) {
+      hash ^= token.charCodeAt(i)
+      hash = Math.imul(hash, 16777619)
+    }
+  }
   const last = activities[activities.length - 1]
-  const tail = last ? `${last.id}:${(last.resultSummary || last.outputPreview || '').length}` : ''
-  return `${activities.length}|${tail}`
+  const tail = last ? `${last.id}:${last.status || ''}` : ''
+  return `${activities.length}|${outputLen}|${(hash >>> 0).toString(36)}|${tail}`
 }
+
+const COLLAPSED_LIVE_ACTIVITY_ITEM_LIMIT = 80
 
 export function ActivityStack({
   activities,
@@ -2096,6 +2115,7 @@ export function ActivityStack({
     }
   }
   const allowMultiOpen = !compactDensity
+  const [liveViewportExpanded, setLiveViewportExpanded] = useState(false)
 
   if (!activities || activities.length === 0) return null
   // 1.0.74 — same-tool grouping is unified across single + ensemble
@@ -2103,6 +2123,13 @@ export function ActivityStack({
   // activities fold into one expandable compact group.
   const timelineItems = buildTimelineItems(topLevelActivities)
   const liveViewportEnabled = Boolean(liveActivityViewport && topLevelActivities.length > 0)
+  const renderedTimelineItems =
+    liveViewportEnabled &&
+    !liveViewportExpanded &&
+    timelineItems.length > COLLAPSED_LIVE_ACTIVITY_ITEM_LIMIT
+      ? timelineItems.slice(-COLLAPSED_LIVE_ACTIVITY_ITEM_LIMIT)
+      : timelineItems
+  const hiddenTimelineItemCount = timelineItems.length - renderedTimelineItems.length
 
   const resolveThreadActivities = (thread: ChildAgentThread): ToolActivity[] => {
     return thread.toolActivityIds
@@ -2126,7 +2153,7 @@ export function ActivityStack({
       return next
     })
   }
-  const timelineNodes = timelineItems.map((item) => {
+  const timelineNodes = renderedTimelineItems.map((item) => {
     if (item.type === 'compact-group') {
       return (
         <ActivityCompactGroup
@@ -2222,6 +2249,8 @@ export function ActivityStack({
         <LiveActivityViewport
           active={activitiesHaveLiveWork(activities)}
           revision={liveActivityRevision(topLevelActivities)}
+          expanded={liveViewportExpanded}
+          onExpandedChange={setLiveViewportExpanded}
         >
           {planLanes.length > 1 ? (
             <div className="plan-rail-lanes">
@@ -2239,7 +2268,14 @@ export function ActivityStack({
               <TodoChecklistCard todos={latestMergedTodos} variant="pinned" />
             )
           )}
-          <div className="activity-timeline-live-inner">{timelineNodes}</div>
+          <div className="activity-timeline-live-inner">
+            {hiddenTimelineItemCount > 0 && (
+              <div className="activity-timeline-live-truncated" aria-hidden="true">
+                {hiddenTimelineItemCount} earlier events hidden while collapsed.
+              </div>
+            )}
+            {timelineNodes}
+          </div>
         </LiveActivityViewport>
       </div>
     )
