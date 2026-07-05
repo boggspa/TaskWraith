@@ -1,5 +1,5 @@
 import type { NormalizedEvent } from './GeminiAdapter'
-import { isToolResultEvent, isToolUseEvent } from './ToolParser'
+import { isReasoningToolName, isToolResultEvent, isToolUseEvent } from './ToolParser'
 
 export type UsageModelEntry = {
   model: string
@@ -40,6 +40,7 @@ export const isProviderExecutionToolEvent = (event: NormalizedEvent): boolean =>
   const name = String(
     event.name || event.data?.tool_name || event.data?.toolName || event.data?.type || ''
   ).toLowerCase()
+  if (isReasoningToolName(name)) return false
   if (NON_EXECUTION_TOOL_EVENT_NAMES.has(name)) return false
   return (
     event.isUse || event.isResult || isToolUseEvent(event.data) || isToolResultEvent(event.data)

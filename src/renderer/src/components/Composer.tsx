@@ -1340,6 +1340,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
               providerShellCapabilityChips computation kept for any
               future use but the row no longer mounts in any shell.
             */}
+            <div className="composer-primary-stack">
             {isWelcomeChat &&
               isCurrentEnsembleChat &&
               !isWorkflowChatWelcome &&
@@ -4552,6 +4553,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                 }
               />
             )}
+            </div>
             {shouldShowWelcomeStandaloneHeatmaps && (
               <WelcomeHeatmaps slots={welcomeHeatmapSlots} layout="single" />
             )}

@@ -51,15 +51,32 @@ function bridgeToolKindCategory(kind: string): ToolActivity['category'] | undefi
     case 'execute':
       return 'shell'
     case 'think':
+    case 'thinking':
+    case 'reasoning':
       return 'task'
     default:
       return undefined
   }
 }
 
+function isBridgeReasoningToolName(name: string): boolean {
+  const normalized = name
+    .trim()
+    .toLowerCase()
+    .replace(/^mcp__[^_]+__/i, '')
+    .replace(/^mcp_(?:taskwraith-broker|taskwraith)[_-]/i, '')
+    .replace(/^taskwraith(?:-broker|_broker)?__/i, '')
+  return (
+    normalized === 'thinking' ||
+    normalized === 'reasoning' ||
+    /(?:^|[_\s-])(?:thinking|reasoning)$/.test(normalized)
+  )
+}
+
 export function bridgeToolCategory(name: string, kind = ''): ToolActivity['category'] {
   const kindCategory = bridgeToolKindCategory(kind)
   if (kindCategory) return kindCategory
+  if (isBridgeReasoningToolName(name)) return 'task'
   for (const rule of BRIDGE_TOOL_CATEGORY_RULES) {
     if (rule.pattern.test(name)) return rule.category
   }

@@ -5569,6 +5569,57 @@ Next action:
     })
   })
 
+  it('categorizes ensemble thinking pseudo-tools as task activities without truncating results', async () => {
+    const harness = makeHarness()
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Think through the next step.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    const route = {
+      appRunId: harness.dispatched[0].appRunId,
+      appChatId: 'ensemble-chat'
+    }
+    const trace = `${'reasoning trace '.repeat(120)}tail sentinel`
+    harness.orchestrator.handleProviderOutput('claude', route, {
+      type: 'tool_use',
+      tool_id: 'thinking-1',
+      tool_name: 'grok_thinking',
+      parameters: { kind: 'reasoning' }
+    })
+    harness.orchestrator.handleProviderOutput('claude', route, {
+      type: 'tool_result',
+      tool_id: 'thinking-1',
+      tool_name: 'grok_thinking',
+      output: trace
+    })
+    harness.orchestrator.handleProviderOutput('claude', route, {
+      type: 'result',
+      status: 'success',
+      stats: { total_tokens: 10 }
+    })
+
+    await vi.waitFor(() =>
+      expect(
+        harness.chat.messages.filter(
+          (message) => message.role === 'tool' && message.metadata?.ensembleProvider === 'claude'
+        )
+      ).toHaveLength(1)
+    )
+    const activity = harness.chat.messages.find((message) => message.role === 'tool')
+      ?.toolActivities?.[0]
+    expect(activity).toMatchObject({
+      toolName: 'grok_thinking',
+      category: 'task',
+      status: 'success',
+      resultSummary: trace
+    })
+    expect(activity?.resultSummary).toContain('tail sentinel')
+    expect(activity?.resultSummary).not.toMatch(/\.\.\.$/)
+  })
+
   it('derives result-side diffs for plain ensemble Edit tool activities', async () => {
     const harness = makeHarness()
     harness.orchestrator.startRound({

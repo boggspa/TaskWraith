@@ -19798,21 +19798,27 @@ function App(): React.JSX.Element {
       return Number.isFinite(value) ? value : 0
     }
     const measureComposerContentHeight = (): number => {
-      const composerRect = composer.getBoundingClientRect()
-      let bottom = 0
+      let visibleChildCount = 0
+      let childrenHeight = 0
       for (const child of Array.from(composer.children)) {
         if (!(child instanceof HTMLElement)) continue
         const childStyle = window.getComputedStyle(child)
         if (childStyle.display === 'none' || childStyle.visibility === 'hidden') continue
         const childRect = child.getBoundingClientRect()
         if (childRect.width <= 0 && childRect.height <= 0) continue
-        bottom = Math.max(
-          bottom,
-          childRect.bottom - composerRect.top + readPx(childStyle.marginBottom)
-        )
+        visibleChildCount += 1
+        childrenHeight +=
+          childRect.height + readPx(childStyle.marginTop) + readPx(childStyle.marginBottom)
       }
       const composerStyle = window.getComputedStyle(composer)
-      return Math.max(composer.scrollHeight, bottom + readPx(composerStyle.paddingBottom))
+      const gap = readPx(composerStyle.rowGap === 'normal' ? '0' : composerStyle.rowGap)
+      const gapHeight = Math.max(0, visibleChildCount - 1) * gap
+      return (
+        readPx(composerStyle.paddingTop) +
+        childrenHeight +
+        gapHeight +
+        readPx(composerStyle.paddingBottom)
+      )
     }
 
     let frame: number | null = null
@@ -19849,19 +19855,41 @@ function App(): React.JSX.Element {
       typeof window.ResizeObserver === 'function'
         ? new window.ResizeObserver(scheduleMeasure)
         : null
+    const observedComposerChildren = new Set<HTMLElement>()
+    const observeComposerChildren = () => {
+      if (!resizeObserver) return
+      for (const child of Array.from(composer.children)) {
+        if (!(child instanceof HTMLElement) || observedComposerChildren.has(child)) continue
+        observedComposerChildren.add(child)
+        resizeObserver.observe(child)
+      }
+      for (const child of Array.from(observedComposerChildren)) {
+        if (child.parentElement === composer) continue
+        resizeObserver.unobserve(child)
+        observedComposerChildren.delete(child)
+      }
+    }
     if (resizeObserver) {
       resizeObserver.observe(transcript)
       resizeObserver.observe(composer)
       const dashboard = welcomeDashboardRegionRef.current
       if (dashboard) resizeObserver.observe(dashboard)
-      const heatmaps = composer.querySelector<HTMLElement>('.welcome-standalone-heatmaps')
-      if (heatmaps) resizeObserver.observe(heatmaps)
+      observeComposerChildren()
     }
+    const mutationObserver =
+      typeof window.MutationObserver === 'function'
+        ? new window.MutationObserver(() => {
+            observeComposerChildren()
+            scheduleMeasure()
+          })
+        : null
+    mutationObserver?.observe(composer, { childList: true })
     window.addEventListener('resize', scheduleMeasure)
     scheduleMeasure()
 
     return () => {
       if (frame !== null) window.cancelAnimationFrame(frame)
+      mutationObserver?.disconnect()
       resizeObserver?.disconnect()
       window.removeEventListener('resize', scheduleMeasure)
     }

@@ -306,6 +306,10 @@ function buildSanitizedDetail(
   const command = getStringParam(parameters, COMMAND_PARAM_KEYS)
   const query = getStringParam(parameters, SEARCH_PARAM_KEYS)
 
+  if (isThinkingTraceActivity(activity)) {
+    return { rows, previews }
+  }
+
   if (activityFilePath) {
     rows.push({ label: 'File', value: activityFilePath })
   }
@@ -762,6 +766,13 @@ function isCallMcpToolActivity(activity: ToolActivity): boolean {
 
 function isThinkingTraceActivity(activity: ToolActivity): boolean {
   if (isReasoningToolName(activity.toolName || '')) return true
+  const kind = activity.parameters?.kind
+  if (
+    typeof kind === 'string' &&
+    ['thinking', 'reasoning'].includes(kind.trim().toLowerCase())
+  ) {
+    return true
+  }
   const displayName = (activity.displayName || '').trim().toLowerCase()
   return (
     displayName === 'thinking' ||
@@ -811,7 +822,8 @@ function CallMcpToolEasterEgg() {
 }
 
 function getProgressNote(activity: ToolActivity): { title: string; body?: string } | null {
-  if (activity.category !== 'task') return null
+  const isThinkingTrace = isThinkingTraceActivity(activity)
+  if (activity.category !== 'task' && !isThinkingTrace) return null
   // 1.4.2 — todo_write / update_todo_list render as checklist cards.
   if (isTodoToolName(activity.toolName)) return null
   // ensemble_yield is a `task`-category tool but has its own structured
@@ -822,7 +834,6 @@ function getProgressNote(activity: ToolActivity): { title: string; body?: string
   // title path so the chip render runs.
   if ((activity.toolName || '').toLowerCase().includes('ensemble_yield')) return null
   const parameters = activity.parameters || {}
-  const isThinkingTrace = isThinkingTraceActivity(activity)
   const progressTextOptions = isThinkingTrace ? { truncate: false } : undefined
   const title =
     cleanProgressText(parameters.title, progressTextOptions) ||

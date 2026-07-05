@@ -680,6 +680,44 @@ describe('ActivityStack agent invocation presentation', () => {
     expect(html).not.toContain('class="activity-status success"')
   })
 
+  it('routes provider reasoning names through the same live activity viewport', () => {
+    const cases = [
+      ['codex', 'codex_reasoning'],
+      ['claude', 'mcp__TaskWraith__claude_reasoning'],
+      ['grok', 'grok_thinking'],
+      ['cursor', 'cursor_thinking'],
+      ['ollama', 'ollama_thinking'],
+      ['kimi', 'kimi_thinking']
+    ] as const
+
+    for (const [provider, toolName] of cases) {
+      const html = renderToStaticMarkup(
+        <ActivityStack
+          provider={provider}
+          liveActivityViewport
+          activities={[
+            makeWriteActivity({
+              id: `${provider}-thinking-viewport`,
+              toolName,
+              displayName: 'Reasoning',
+              category: 'task',
+              status: 'success',
+              parameters: { title: 'Thinking', kind: 'reasoning' },
+              resultSummary: `${provider} full reasoning trace`
+            })
+          ]}
+        />
+      )
+
+      expect(html).toContain('live-activity-viewport')
+      expect(html).toContain('activity-progress-note')
+      expect(html).toContain('is-thinking-trace')
+      expect(html).toContain(`${provider} full reasoning trace`)
+      expect(html).not.toContain('activity-row')
+      expect(html).not.toContain('activity-detail-section-title')
+    }
+  })
+
   it('uses the thinking bulb when only the progress displayName identifies the trace', () => {
     const html = renderToStaticMarkup(
       <ActivityStack
@@ -732,6 +770,43 @@ describe('ActivityStack agent invocation presentation', () => {
     )
 
     expect(html).toContain('tail sentinel after the old progress-note limit')
+    expect(html).not.toContain('open raw events for full output')
+    expect(html).not.toContain('lines hidden')
+  })
+
+  it('does not fall back to a truncated result card for mis-categorized reasoning rows', () => {
+    const thinking = [
+      'Considering commit updates',
+      ...Array.from(
+        { length: 650 },
+        (_, index) => `Reasoning line ${index + 1}: ${'x'.repeat(72)}`
+      ),
+      'tail sentinel after the old sanitized-detail limit'
+    ].join('\n')
+
+    const html = renderToStaticMarkup(
+      <ActivityStack
+        provider="codex"
+        liveActivityViewport
+        activities={[
+          makeWriteActivity({
+            id: 'codex-reasoning-unknown-category',
+            toolName: 'codex_reasoning',
+            displayName: 'Codex Reasoning',
+            category: 'unknown',
+            status: 'success',
+            parameters: { title: 'Considering commit updates', kind: 'reasoning' },
+            resultSummary: thinking
+          })
+        ]}
+      />
+    )
+
+    expect(html).toContain('live-activity-viewport')
+    expect(html).toContain('is-thinking-trace')
+    expect(html).toContain('tail sentinel after the old sanitized-detail limit')
+    expect(html).not.toContain('activity-row')
+    expect(html).not.toContain('activity-detail-section-title')
     expect(html).not.toContain('open raw events for full output')
     expect(html).not.toContain('lines hidden')
   })

@@ -83,6 +83,31 @@ describe('BridgeTranscriptActivity', () => {
     expect(activity.metadata).toEqual({ provider: 'ollama' })
   })
 
+  it('categorizes bridge thinking and reasoning pseudo-tools as task activities', () => {
+    const thinking = buildBridgeToolActivity({
+      provider: 'cursor',
+      activityIndex: 0,
+      nowIso: () => '2026-06-13T00:00:00.000Z',
+      payload: {
+        tool_id: 'thinking-1',
+        tool_name: 'cursor_thinking',
+        parameters: { kind: 'reasoning' }
+      }
+    })
+    const namespacedReasoning = buildBridgeToolActivity({
+      provider: 'grok',
+      activityIndex: 1,
+      nowIso: () => '2026-06-13T00:00:00.000Z',
+      payload: {
+        tool_id: 'reasoning-1',
+        tool_name: 'mcp__TaskWraith__claude_reasoning'
+      }
+    })
+
+    expect(thinking.category).toBe('task')
+    expect(namespacedReasoning.category).toBe('task')
+  })
+
   it('parses stringified bridge tool arguments', () => {
     const activity = buildBridgeToolActivity({
       provider: 'codex',

@@ -1689,16 +1689,29 @@ function mapEnsembleToolKindToCategory(kind: string): ToolActivity['category'] |
     case 'execute':
       return 'shell'
     case 'think':
+    case 'thinking':
+    case 'reasoning':
       return 'task'
     default:
       return undefined
   }
 }
 
+function isEnsembleReasoningToolName(toolName: string): boolean {
+  const name = stripToolNamespace(toolName)
+  return (
+    name === 'thinking' ||
+    name === 'reasoning' ||
+    name.endsWith('_thinking') ||
+    name.endsWith('_reasoning')
+  )
+}
+
 function getEnsembleToolCategory(toolName: string, toolKind = ''): ToolActivity['category'] {
   const kindCategory = mapEnsembleToolKindToCategory(toolKind)
   if (kindCategory) return kindCategory
   const name = stripToolNamespace(toolName)
+  if (isEnsembleReasoningToolName(name)) return 'task'
   if (
     name === 'ensemble_yield' ||
     name === 'update_topic' ||

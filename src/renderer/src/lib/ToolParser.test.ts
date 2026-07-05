@@ -126,7 +126,10 @@ describe('ToolParser', () => {
       expect(isReasoningToolName('codex_reasoning')).toBe(true)
       expect(isReasoningToolName('kimi_thinking')).toBe(true)
       expect(isReasoningToolName('ollama_thinking')).toBe(true)
+      expect(isReasoningToolName('cursor_thinking')).toBe(true)
+      expect(isReasoningToolName('grok_reasoning')).toBe(true)
       expect(isReasoningToolName('thinking')).toBe(true)
+      expect(isReasoningToolName('mcp__taskwraith__claude_reasoning')).toBe(true)
       expect(isReasoningToolName('mcp__taskwraith__gemini_reasoning')).toBe(true)
     })
 
@@ -149,6 +152,7 @@ describe('ToolParser', () => {
       expect(getToolCategory('kimi_thinking')).toBe('task')
       expect(getToolCategory('ollama_thinking')).toBe('task')
       expect(getToolCategory('grok_thinking')).toBe('task')
+      expect(getToolCategory('cursor_thinking')).toBe('task')
       expect(getToolCategory('mcp__taskwraith__claude_reasoning')).toBe('task')
       expect(getToolDisplayName('kimi_thinking', {})).toBe('Kimi thinking')
     })
@@ -629,6 +633,10 @@ describe('ToolParser', () => {
       ).toBeUndefined()
       // Even without the reasoning hint, a *_thinking pseudo-tool never diffs.
       expect(deriveToolDiffSummary('kimi_thinking', {}, thinking)).toBeUndefined()
+      expect(deriveToolDiffSummary('codex_reasoning', {}, thinking)).toBeUndefined()
+      expect(
+        deriveToolDiffSummary('mcp__taskwraith__claude_reasoning', {}, thinking)
+      ).toBeUndefined()
       // And a non-thinking tool whose result is plain prose is also clean now.
       expect(deriveToolDiffSummary('some_tool', {}, thinking)).toBeUndefined()
     })

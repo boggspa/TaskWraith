@@ -983,7 +983,7 @@ export function deriveToolDiffSummary(
   // free-form prose as their "result", never a file edit. Never derive a diff for them
   // — otherwise a markdown bullet in the reasoning trace is miscounted as a deletion.
   const lowerTool = (toolName || '').toLowerCase()
-  if (lowerTool.endsWith('_thinking') || lowerTool === 'thinking') return undefined
+  if (isReasoningToolName(lowerTool)) return undefined
   if (typeof parameters?.kind === 'string' && parameters.kind.toLowerCase() === 'reasoning') {
     return undefined
   }

@@ -384,7 +384,7 @@ export function brokerRequest(socketPath: string, request: unknown): Promise<unk
     )
     socket.setEncoding('utf8')
     socket.on('connect', () => {
-      socket.write(`${JSON.stringify(request)}\n`)
+      safeMcpStreamWrite(socket, `${JSON.stringify(request)}\n`)
     })
     socket.on('data', (chunk: string) => {
       buffer += chunk
@@ -425,9 +425,35 @@ export function parseBridgeTokenArg(argv: string[] = process.argv): string {
   return index >= 0 && argv[index + 1] ? argv[index + 1] : ''
 }
 
+type SafeWritable = {
+  write(chunk: string, callback?: (error?: Error | null) => void): unknown
+}
+
+function isWritableClosed(stream: unknown): boolean {
+  const record = stream && typeof stream === 'object' ? (stream as Record<string, unknown>) : {}
+  return (
+    record.destroyed === true ||
+    record.closed === true ||
+    record.writableEnded === true ||
+    record.writableDestroyed === true
+  )
+}
+
+export function safeMcpStreamWrite(stream: SafeWritable | null | undefined, chunk: string): void {
+  if (!stream || isWritableClosed(stream)) return
+  try {
+    stream.write(chunk, () => {
+      // Best-effort protocol write. EPIPE / write-after-end is expected when a
+      // provider closes stdio during bridge shutdown or self-test teardown.
+    })
+  } catch {
+    // Best-effort: the peer has gone away or the stream is already terminal.
+  }
+}
+
 export function writeMcpFrame(payload: unknown, stdout: NodeJS.WriteStream = process.stdout): void {
   const body = JSON.stringify(payload)
-  stdout.write(`Content-Length: ${Buffer.byteLength(body, 'utf8')}\r\n\r\n${body}`)
+  safeMcpStreamWrite(stdout, `Content-Length: ${Buffer.byteLength(body, 'utf8')}\r\n\r\n${body}`)
 }
 
 export function writeMcpPayload(
@@ -436,7 +462,7 @@ export function writeMcpPayload(
   stdout: NodeJS.WriteStream = process.stdout
 ): void {
   if (transport === 'line') {
-    stdout.write(`${JSON.stringify(payload)}\n`)
+    safeMcpStreamWrite(stdout, `${JSON.stringify(payload)}\n`)
     return
   }
   writeMcpFrame(payload, stdout)
@@ -865,6 +891,9 @@ export class McpBridgeRuntime {
       const server = createServer((socket: Socket) => {
         let buffer = ''
         socket.setEncoding('utf8')
+        socket.on('error', () => {
+          // Broker clients may disconnect while a response is being written.
+        })
         socket.on('data', (chunk: string) => {
           buffer += chunk
           const lines = buffer.split(/\r?\n/)
@@ -876,7 +905,8 @@ export class McpBridgeRuntime {
             try {
               parsed = JSON.parse(trimmed)
             } catch (error) {
-              socket.write(
+              safeMcpStreamWrite(
+                socket,
                 `${JSON.stringify({ ok: false, error: error instanceof Error ? error.message : String(error) })}\n`
               )
               continue
@@ -884,10 +914,14 @@ export class McpBridgeRuntime {
             const parsedRecord = isRecord(parsed) ? parsed : {}
             this.handleGeminiMcpBrokerRequest(parsed)
               .then((result) =>
-                socket.write(`${JSON.stringify({ id: parsedRecord.id, ...coerceRecord(result) })}\n`)
+                safeMcpStreamWrite(
+                  socket,
+                  `${JSON.stringify({ id: parsedRecord.id, ...coerceRecord(result) })}\n`
+                )
               )
               .catch((error) =>
-                socket.write(
+                safeMcpStreamWrite(
+                  socket,
                   `${JSON.stringify({ id: parsedRecord.id, ok: false, error: error instanceof Error ? error.message : String(error) })}\n`
                 )
               )
@@ -1036,7 +1070,10 @@ export class McpBridgeRuntime {
               return
             }
             initialized = true
-            proc?.stdin?.write(`${JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'ping' })}\n`)
+            safeMcpStreamWrite(
+              proc?.stdin,
+              `${JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'ping' })}\n`
+            )
             continue
           }
           if (messageRecord.id === 2) {
@@ -1049,7 +1086,8 @@ export class McpBridgeRuntime {
               })
               return
             }
-            proc?.stdin?.write(
+            safeMcpStreamWrite(
+              proc?.stdin,
               `${JSON.stringify({ jsonrpc: '2.0', id: 3, method: 'tools/list' })}\n`
             )
             continue
@@ -1085,6 +1123,10 @@ export class McpBridgeRuntime {
         }
       })
 
+      proc.stdin?.on('error', () => {
+        // The self-test bridge can exit between status writes; the close handler
+        // or timeout will produce the structured status result.
+      })
       proc.on('error', (error) => finish({ ok: false, error: error.message }))
       proc.on('close', (code) => {
         if (!settled) {
@@ -1097,7 +1139,8 @@ export class McpBridgeRuntime {
         }
       })
 
-      proc.stdin?.write(
+      safeMcpStreamWrite(
+        proc.stdin,
         `${JSON.stringify({
           jsonrpc: '2.0',
           id: 1,

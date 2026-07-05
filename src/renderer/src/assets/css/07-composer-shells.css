@@ -3692,7 +3692,8 @@
    highlight; the roster-preset / ensemble / queued rows keep the framed stack.
    Tweak knobs: border-radius (bubble roundness), the codex tint % in background,
    the top-rim alpha + glow in box-shadow, and margin-block (detach gap). */
-[data-composer-style="codex"] .composer-area > .composer-above-bar--cursor-lead {
+[data-composer-style="codex"] .composer-area > .composer-above-bar--cursor-lead,
+[data-composer-style="codex"] .composer-primary-stack > .composer-above-bar--cursor-lead {
   align-self: center;
   width: -moz-fit-content;
   width: fit-content;

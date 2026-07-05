@@ -105,6 +105,25 @@ describe('RunItemEventCompatMapper', () => {
     })
   })
 
+  it('preserves Codex reasoning names on synthetic tool results', () => {
+    const mapper = new RunItemEventCompatMapper()
+    const result = mapper.createEvents(identity, {
+      type: 'tool_result',
+      tool_id: 'reasoning-1',
+      tool_name: 'codex_reasoning',
+      status: 'success',
+      output: 'full reasoning summary'
+    })
+
+    expect(result.map((event) => event.kind)).toEqual(['item/started', 'tool/outputDelta'])
+    expect(result[1]).toMatchObject({
+      itemId: 'reasoning-1',
+      toolCallId: 'reasoning-1',
+      toolName: 'codex_reasoning',
+      delta: 'full reasoning summary'
+    })
+  })
+
   it('pairs id-less tool results with the most recent matching id-less tool use', () => {
     const mapper = new RunItemEventCompatMapper()
     const use = mapper.createEvents(identity, {

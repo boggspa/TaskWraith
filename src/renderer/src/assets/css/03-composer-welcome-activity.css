@@ -57,7 +57,11 @@
 .composer-area > .provider-shell-status-row,
 .composer-area > .composer-above-bar,
 .composer-area > .composer-header-row,
-.composer-area > .scheduled-task-strip {
+.composer-area > .scheduled-task-strip,
+.composer-primary-stack > .provider-shell-status-row,
+.composer-primary-stack > .composer-above-bar,
+.composer-primary-stack > .composer-header-row,
+.composer-primary-stack > .scheduled-task-strip {
   width: 100%;
   max-width: min(100%, var(--composer-content-max-width));
 }
@@ -146,22 +150,78 @@
   min-height: 0;
 }
 
-.app-transcript.welcome-mode .composer-area:has(> .notification-zone) {
+.composer-primary-stack {
+  display: contents;
+}
+
+.app-transcript.welcome-mode:not(.multiview-pane-transcript)
+  .composer-area:has(> .notification-zone) {
   flex: 1 1 auto;
+  margin-top: 0;
+  margin-bottom: 0;
+  display: grid;
+  grid-template-rows:
+    minmax(clamp(18px, 3vh, 48px), 1fr)
+    auto
+    minmax(clamp(18px, 3vh, 44px), 0.45fr)
+    auto
+    minmax(clamp(24px, 4vh, 64px), 1fr)
+    auto;
+  align-content: stretch;
+  justify-items: center;
+}
+
+.app-transcript.welcome-mode:not(.multiview-pane-transcript) .composer-primary-stack {
+  grid-row: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-sm);
+  width: 100%;
+  min-height: 0;
+}
+
+.app-transcript.welcome-mode:not(.multiview-pane-transcript)
+  .composer-area
+  > .welcome-standalone-heatmaps:has(+ .notification-zone) {
+  grid-row: 4;
+  align-self: start;
   margin-top: 0;
   margin-bottom: 0;
 }
 
-.app-transcript.welcome-mode .composer-area > .notification-zone {
+.app-transcript.welcome-mode:not(.multiview-pane-transcript)
+  .composer-area
+  > :is(.welcome-standalone-heatmaps, .composer-primary-stack)
+  + .notification-zone {
+  grid-row: 6;
+  align-self: end;
+  width: 100%;
+  max-width: min(100%, var(--composer-content-max-width));
   margin: clamp(16px, 2.5vh, 28px) auto 0;
 }
 
-.app-transcript.welcome-mode .composer-area > .welcome-standalone-heatmaps:has(+ .notification-zone) {
-  margin-bottom: 0;
+.app-transcript.welcome-mode:not(.multiview-pane-transcript)
+  .composer-area
+  > :is(.welcome-standalone-heatmaps, .composer-primary-stack)
+  + .notification-zone.is-swipe-enabled {
+  --notification-nav-gutter: 32px;
+  width: min(
+    calc(100% + var(--notification-nav-gutter) + var(--notification-nav-gutter)),
+    calc(
+      var(--composer-content-max-width) + var(--notification-nav-gutter) +
+        var(--notification-nav-gutter)
+    )
+  );
+  max-width: none;
 }
 
-.app-transcript.welcome-mode .composer-area > .welcome-standalone-heatmaps + .notification-zone {
-  margin-top: auto;
+.app-transcript.welcome-mode:not(.multiview-pane-transcript)
+  .composer-area
+  > :is(.welcome-standalone-heatmaps, .composer-primary-stack)
+  + .notification-zone
+  .notification-zone--rotating {
+  padding-inline: var(--notification-nav-gutter, 32px);
 }
 
 .app-transcript.welcome-mode.welcome-dashboard-hidden-by-fit {

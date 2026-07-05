@@ -2990,7 +2990,8 @@
 
 /* Secondary workspace rows — reuse `.composer-above-bar--cursor-lead`
  * (set in JSX) for detached satellite pills above the merged stack. */
-[data-composer-style="cursor"] .composer-area > .composer-above-bar--cursor-lead.composer-above-bar-secondary {
+[data-composer-style="cursor"] .composer-area > .composer-above-bar--cursor-lead.composer-above-bar-secondary,
+[data-composer-style="cursor"] .composer-primary-stack > .composer-above-bar--cursor-lead.composer-above-bar-secondary {
   margin-bottom: 6px !important;
 }
 [data-composer-style="cursor"] .composer-above-bar-secondary .composer-above-bar-pill--git {
