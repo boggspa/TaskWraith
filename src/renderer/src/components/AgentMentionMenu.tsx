@@ -14,6 +14,7 @@ import { deriveChildAgentThreads } from '../lib/ChildAgentThreads'
 import { getProviderName } from './Sidebar'
 import type { ComposerMentionTriggerKind } from '../lib/ComposerMentionTrigger'
 import { AgentIdentityIcon } from './icons/AgentIdentityIcon'
+import { resolveProviderHueClass } from '../lib/ollamaDisplayBrand'
 
 export type ComposerMentionKind =
   | 'agent'
@@ -101,6 +102,13 @@ export function filterComposerMentionCandidates(
       })
     : candidates
   return filtered.slice(0, limit)
+}
+
+export function composerMentionParticipantColor(
+  participant: Pick<EnsembleParticipant, 'provider' | 'model'>
+): string {
+  const providerClass = resolveProviderHueClass(participant.provider, participant.model)
+  return `var(--provider-${providerClass}-color, var(--accent))`
 }
 
 function nameFromPath(path: string): string {
@@ -252,7 +260,7 @@ export function AgentMentionMenu({
             // Resolve to the theme's `--provider-{name}-color` CSS
             // variable at popover-render time. Falls back to the
             // accent if the var isn't defined.
-            color: `var(--provider-${participant.provider}-color, var(--accent))`
+            color: composerMentionParticipantColor(participant)
           }
         })
     }

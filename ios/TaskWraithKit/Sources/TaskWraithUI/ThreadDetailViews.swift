@@ -198,35 +198,47 @@ struct ThreadDetailView: View {
     }
     private var snapshot: RemoteThreadSnapshot? { model.threadSnapshots[taskId] }
     private var showsRunCompleteSummary: Bool { snapshot?.showRunCompleteSummary != false }
-    private var thinkingProvider: String? {
-        if let state = model.ensembleStates[taskId],
+    private var activeParticipant: RemoteEnsembleState.Participant? {
+        guard let state = model.ensembleStates[taskId],
             let activeId = state.activeParticipantId
-        {
-            if let provider = state.participants?.first(where: { $0.participantId == activeId })?.provider,
-                !provider.isEmpty
-            {
-                return provider
-            }
-            if let provider = state.roster?.first(where: { $0.id == activeId })?.provider,
-                !provider.isEmpty
-            {
-                return provider
-            }
+        else { return nil }
+        return state.displayParticipants.first(where: { $0.participantId == activeId })
+            ?? state.participants?.first(where: { $0.participantId == activeId })
+    }
+    private var activeRosterEntry: RemoteEnsembleState.RosterEntry? {
+        guard let state = model.ensembleStates[taskId],
+            let activeId = state.activeParticipantId
+        else { return nil }
+        return state.roster?.first(where: { $0.id == activeId })
+    }
+    private var thinkingProvider: String? {
+        if let provider = activeParticipant?.provider, !provider.isEmpty {
+            return provider
+        }
+        if let provider = activeRosterEntry?.provider, !provider.isEmpty {
+            return provider
         }
         return snapshot?.runSummary?.provider ?? card?.provider
     }
+    private var thinkingRole: String? {
+        let role = (activeParticipant?.role ?? activeRosterEntry?.role)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return role?.isEmpty == false ? role : nil
+    }
     private var thinkingModel: String? {
-        guard let state = model.ensembleStates[taskId],
-            let activeId = state.activeParticipantId,
-            let model = state.roster?.first(where: { $0.id == activeId })?.model,
-            !model.isEmpty
-        else {
-            return snapshot?.runSummary?.model
+        if let model = activeParticipant?.model, !model.isEmpty {
+            return model
         }
-        return model
+        if let model = activeRosterEntry?.model, !model.isEmpty {
+            return model
+        }
+        return snapshot?.runSummary?.model
     }
     private var liveProvider: String? {
         model.streamingProviders[taskId] ?? thinkingProvider
+    }
+    private var liveRole: String? {
+        liveProvider == thinkingProvider ? thinkingRole : nil
     }
     private var liveModel: String? {
         if liveProvider == thinkingProvider { return thinkingModel }
@@ -1066,6 +1078,7 @@ struct ThreadDetailView: View {
                     StreamingLiveHeader(
                         provider: liveProvider,
                         model: liveModel,
+                        role: liveRole,
                         agentIdentity: threadAgentIdentity)
                         .listRowInsets(EdgeInsets(top: 2, leading: 12, bottom: 2, trailing: 12))
                         .listRowBackground(Color.clear)
@@ -1129,6 +1142,7 @@ struct ThreadDetailView: View {
                     ThinkingRow(
                         provider: thinkingProvider,
                         model: thinkingModel,
+                        role: thinkingRole,
                         agentIdentity: threadAgentIdentity)
                         .listRowInsets(EdgeInsets(top: 2, leading: 12, bottom: 2, trailing: 12))
                         .listRowBackground(Color.clear)
@@ -3473,6 +3487,7 @@ struct StreamingRowView: View {
     let text: String
     let provider: String?
     var model: String? = nil
+    var role: String? = nil
     var agentIdentity: ThreadAgentIdentity? = nil
 
     private var accent: Color {
@@ -3516,8 +3531,7 @@ struct StreamingRowView: View {
         if let agentIdentity {
             return agentIdentity.name
         }
-        return model.map { "\(TWTheme.providerLabel(provider, modelId: $0, modelLabel: $0)) · \($0)" }
-            ?? TWTheme.providerLabel(provider)
+        return twWorkingParticipantLabel(provider: provider, role: role, model: model)
     }
 }
 
@@ -3528,6 +3542,7 @@ struct StreamingRowView: View {
 struct StreamingLiveHeader: View {
     let provider: String?
     var model: String? = nil
+    var role: String? = nil
     var agentIdentity: ThreadAgentIdentity? = nil
 
     private var accent: Color {
@@ -3561,13 +3576,11 @@ struct StreamingLiveHeader: View {
 
     private var headerLabel: String {
         agentIdentity?.name
-            ?? model.map { "\(TWTheme.providerLabel(provider, modelId: $0, modelLabel: $0)) · \($0)" }
-            ?? TWTheme.providerLabel(provider)
+            ?? twWorkingParticipantLabel(provider: provider, role: role, model: model)
     }
 
     private var providerModelLabel: String {
-        model.map { "\(TWTheme.providerLabel(provider, modelId: $0, modelLabel: $0)) · \($0)" }
-            ?? TWTheme.providerLabel(provider)
+        twWorkingParticipantLabel(provider: provider, model: model)
     }
 }
 
@@ -3720,6 +3733,7 @@ private struct ShimmerWorkingLabel: View {
 struct ThinkingRow: View {
     let provider: String?
     var model: String? = nil
+    var role: String? = nil
     var agentIdentity: ThreadAgentIdentity? = nil
 
     private var accent: Color {
@@ -3734,14 +3748,12 @@ struct ThinkingRow: View {
                 hidden: false)
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
-                    Text(
-                        agentIdentity?.name
-                            ?? TWTheme.providerLabel(provider, modelId: model, modelLabel: model)
-                    )
+                    Text(agentIdentity?.name ?? headerLabel)
                     .font(.caption2.weight(.semibold))
+                    .lineLimit(1)
                     .foregroundStyle(accent)
-                    if let model, !model.isEmpty {
-                        Text(model)
+                    if agentIdentity != nil {
+                        Text(providerModelLabel)
                             .font(.caption2.weight(.semibold))
                             .lineLimit(1)
                             .foregroundStyle(TWTheme.textTertiary)
@@ -3756,6 +3768,14 @@ struct ThinkingRow: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, 5)
+    }
+
+    private var headerLabel: String {
+        twWorkingParticipantLabel(provider: provider, role: role, model: model)
+    }
+
+    private var providerModelLabel: String {
+        twWorkingParticipantLabel(provider: provider, model: model)
     }
 }
 

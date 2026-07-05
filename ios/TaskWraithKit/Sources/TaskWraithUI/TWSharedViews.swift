@@ -2161,8 +2161,12 @@ public struct MentionCandidate: Identifiable {
 }
 
 @MainActor private func twMentionAccent(for participant: RemoteEnsembleState.Participant) -> Color {
-    TWTheme.providerAccent(
-        participant.provider, modelId: participant.model, modelLabel: participant.model)
+    TWTheme.providerAccent(twMentionHueClass(for: participant))
+}
+
+public func twMentionHueClass(for participant: RemoteEnsembleState.Participant) -> String {
+    OllamaDisplayBrands.providerHueClass(
+        provider: participant.provider, modelId: participant.model, modelLabel: participant.model)
 }
 
 private func twMentionProviderLabel(_ participant: RemoteEnsembleState.Participant) -> String {
@@ -2836,6 +2840,48 @@ public struct TWMentionRange {
         }
     }
     return out
+}
+
+public func twModelVariantLabel(provider: String?, model: String?) -> String? {
+    let trimmed = (model ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return nil }
+    let providerKey = (provider ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    let groups = ModelContextLengths.buildGroups(includeOllama: true)
+    if let exact = groups
+        .first(where: { $0.provider.lowercased() == providerKey })?
+        .models
+        .first(where: { $0.modelId.caseInsensitiveCompare(trimmed) == .orderedSame })
+    {
+        return exact.label
+    }
+    if let exact = groups
+        .flatMap(\.models)
+        .first(where: { $0.modelId.caseInsensitiveCompare(trimmed) == .orderedSame })
+    {
+        return exact.label
+    }
+    if providerKey == "ollama",
+        let brand = OllamaDisplayBrands.resolve(modelId: trimmed, modelLabel: nil)
+    {
+        return brand.modelLabel
+    }
+    return trimmed
+}
+
+public func twWorkingParticipantLabel(
+    provider: String?, role: String? = nil, model: String?
+) -> String {
+    let modelLabel = twModelVariantLabel(provider: provider, model: model)
+    let providerLabel = TWTheme.providerLabel(provider, modelId: model, modelLabel: modelLabel)
+    let roleLabel = (role ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    var parts = [providerLabel]
+    if !roleLabel.isEmpty && roleLabel.caseInsensitiveCompare(providerLabel) != .orderedSame {
+        parts.append(roleLabel)
+    }
+    if let modelLabel, !modelLabel.isEmpty {
+        parts.append(modelLabel)
+    }
+    return parts.joined(separator: " · ")
 }
 
 /// Desktop ActivityStack parity: one card per tool call — tool-family icon,

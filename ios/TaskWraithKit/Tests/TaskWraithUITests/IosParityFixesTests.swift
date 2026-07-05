@@ -174,6 +174,42 @@ struct IosParityFixesTests {
     }
 
     @MainActor
+    @Test func mentionHueClassUsesSpoofBrandColoursForOllamaParticipants() throws {
+        let state = try decode(
+            RemoteEnsembleState.self,
+            """
+            {
+              "threadId":"thread-1",
+              "participants":[
+                {"participantId":"p-qwen","provider":"ollama","role":"Qwen35","order":1,"status":"running"},
+                {"participantId":"p-laguna","provider":"ollama","role":"Laguna","order":2,"status":"running"}
+              ],
+              "roster":[
+                {"id":"p-qwen","provider":"ollama","role":"Qwen35","enabled":true,"order":1,"model":"qwen3.5:9b"},
+                {"id":"p-laguna","provider":"ollama","role":"Laguna","enabled":true,"order":2,"model":"laguna-xs-2.1:q8_0"}
+              ]
+            }
+            """)
+
+        let participants = state.displayParticipants
+        #expect(twMentionHueClass(for: participants[0]) == "alibaba")
+        #expect(twMentionHueClass(for: participants[1]) == "poolside")
+    }
+
+    @MainActor
+    @Test func workingParticipantLabelUsesProviderRoleAndHumanModelVariant() {
+        #expect(
+            twWorkingParticipantLabel(provider: "ollama", role: "Qwen35", model: "qwen3.5:9b")
+                == "Alibaba · Qwen35 · Qwen 3.5 (9B Param)")
+        #expect(
+            twWorkingParticipantLabel(provider: "ollama", model: "laguna-xs-2.1:q8_0")
+                == "Poolside · Laguna XS 2.1 (33B-A3B Q8)")
+        #expect(
+            twWorkingParticipantLabel(provider: "codex", role: "Builder", model: "gpt-5.5")
+                == "Codex · Builder · GPT-5.5")
+    }
+
+    @MainActor
     @Test func subThreadReturnRowsDuringLiveRunRenderAfterLiveBlock() throws {
         let row = try decode(
             RemoteThreadSnapshot.Row.self,

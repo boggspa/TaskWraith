@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { filterComposerMentionCandidates, type ComposerMentionCandidate } from './AgentMentionMenu'
+import {
+  composerMentionParticipantColor,
+  filterComposerMentionCandidates,
+  type ComposerMentionCandidate
+} from './AgentMentionMenu'
 
 const candidates: ComposerMentionCandidate[] = [
   {
@@ -72,5 +76,25 @@ describe('filterComposerMentionCandidates', () => {
     ])
     expect(matches[0].name).toBe('Brodex')
     expect(matches[1].name).toBe('Chodex #2')
+  })
+})
+
+describe('composerMentionParticipantColor', () => {
+  it('uses spoofed Ollama branding colors for ensemble mention rows', () => {
+    expect(composerMentionParticipantColor({ provider: 'ollama', model: 'qwen3.5:9b' })).toBe(
+      'var(--provider-alibaba-color, var(--accent))'
+    )
+    expect(composerMentionParticipantColor({ provider: 'ollama', model: 'ornith:35b' })).toBe(
+      'var(--provider-deep-reinforce-color, var(--accent))'
+    )
+    expect(
+      composerMentionParticipantColor({ provider: 'ollama', model: 'laguna-xs-2.1:q8_0' })
+    ).toBe('var(--provider-poolside-color, var(--accent))')
+  })
+
+  it('keeps non-Ollama participants on their provider color', () => {
+    expect(composerMentionParticipantColor({ provider: 'codex', model: 'gpt-5.5' })).toBe(
+      'var(--provider-codex-color, var(--accent))'
+    )
   })
 })
