@@ -1371,9 +1371,9 @@ struct ThreadDetailView: View {
                                 attachedTop: (detached || tuckedTab)
                                     ? false
                                     : hasAboveContent,
-                                // Idle (rail hidden) → round the composer's bottom;
-                                // focused (rail present) → flatten to fuse the rail.
-                                attachedBottom: composerFocused,
+                                // Electron keeps the telemetry row (incl. Ensemble
+                                // toggle) visible even when the keyboard is down.
+                                attachedBottom: true,
                                 extraWorkspaceIds: extraWorkspaceIdsForSend(card: card),
                                 allowsProviderChange: allowsIdleProviderChange,
                                 onFocusChange: { focused in
@@ -1387,47 +1387,38 @@ struct ThreadDetailView: View {
                                         composerFocused = focused
                                     }
                                 },
-                                // Every chat (incl. ensemble) collapses to one line
-                                // when the keyboard drops — above rows + telemetry
-                                // follow focus, not draft/queue presence.
+                                // Above rows still follow focus; telemetry rail stays
+                                // visible so the Ensemble toggle matches desktop.
                                 forcesExpanded: false,
                                 text: $followUp)
-                            if composerFocused {
-                                // Group so the hairline + rail transition as one
-                                // unit; Group is layout-transparent inside a VStack
-                                // (spacing applies across it identically).
-                                Group {
-                                    if !bareTelemetry {
-                                        Rectangle().fill(TWTheme.border).frame(height: 1)
-                                    }
-                                    TelemetryFooterRail(
-                                        run: snapshot?.runSummary,
-                                        conversationCostText: snapshot?.conversationCostText,
-                                        workspaceName: model.workspaceName(for: card.workspaceId),
-                                        workspaceOptions: model.workspaces.map {
-                                            (id: $0.id, name: $0.displayName)
-                                        },
-                                        primaryWorkspaceId: card.workspaceId,
-                                        secondaryWorkspaceId: secondaryWorkspaceBinding,
-                                        ensembleToggleEnabled: card.isEnsemble,
-                                        ensembleToggleVisible: showsComposerEnsembleToggle,
-                                        ensembleToggleDisabled: isRunning,
-                                        ensembleToggleTitle: ensembleToggleTitle,
-                                        onEnsembleToggle: { enabled in
-                                            handleComposerEnsembleToggle(
-                                                for: card, enabled: enabled,
-                                                composerProvider: card.provider)
-                                        },
-                                        activeGoal: card.activeGoal,
-                                        onGoalUpdate: { op, objective, reason in
-                                            model.updateGoal(
-                                                card, op: op, objective: objective, reason: reason)
-                                        },
-                                        planLanes: card.todoLanes ?? [])
+                            Group {
+                                if !bareTelemetry {
+                                    Rectangle().fill(TWTheme.border).frame(height: 1)
                                 }
-                                // Drops down from behind the composer's bottom edge
-                                // on focus; opacity-only on blur.
-                                .transition(ComposerMotion.telemetryTransition(reduceMotion: reduceMotion))
+                                TelemetryFooterRail(
+                                    run: snapshot?.runSummary,
+                                    conversationCostText: snapshot?.conversationCostText,
+                                    workspaceName: model.workspaceName(for: card.workspaceId),
+                                    workspaceOptions: model.workspaces.map {
+                                        (id: $0.id, name: $0.displayName)
+                                    },
+                                    primaryWorkspaceId: card.workspaceId,
+                                    secondaryWorkspaceId: secondaryWorkspaceBinding,
+                                    ensembleToggleEnabled: card.isEnsemble,
+                                    ensembleToggleVisible: showsComposerEnsembleToggle,
+                                    ensembleToggleDisabled: isRunning,
+                                    ensembleToggleTitle: ensembleToggleTitle,
+                                    onEnsembleToggle: { enabled in
+                                        handleComposerEnsembleToggle(
+                                            for: card, enabled: enabled,
+                                            composerProvider: card.provider)
+                                    },
+                                    activeGoal: card.activeGoal,
+                                    onGoalUpdate: { op, objective, reason in
+                                        model.updateGoal(
+                                            card, op: op, objective: objective, reason: reason)
+                                    },
+                                    planLanes: card.todoLanes ?? [])
                             }
                         }
                         .composerShellIf((detached && !inputOwnsSurface) || tuckedShell, resolved)

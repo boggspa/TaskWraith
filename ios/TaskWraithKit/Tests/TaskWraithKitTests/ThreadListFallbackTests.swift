@@ -128,4 +128,98 @@ struct ThreadListFallbackTests {
         #expect(merged.cards[1].id == "b")
         #expect(merged.fallbackCardIds == Set(["b"]))
     }
+
+    @Test("mergeTaskCards repairs missing chatKind on authoritative cards")
+    func mergeRepairsChatKind() {
+        let authoritative = RemoteTaskCard(
+            id: "a",
+            title: "Rich card",
+            status: "running",
+            provider: "claude",
+            selectedModelType: nil,
+            customModel: nil,
+            codexReasoningEffort: nil,
+            claudeReasoningEffort: nil,
+            pendingProviderChange: nil,
+            workspaceId: "ws1",
+            threadId: "a",
+            parentChatId: nil,
+            createdAt: nil,
+            updatedAt: nil,
+            parentChatRelation: nil,
+            pinned: nil,
+            agentName: nil,
+            agentAccent: nil,
+            agentSlug: nil,
+            sideChatMode: nil,
+            sideChatLifecycleState: nil,
+            chatKind: nil,
+            isDraft: nil,
+            draftVariant: nil,
+            isShared: nil,
+            sharedMode: nil,
+            archived: nil,
+            runId: nil,
+            preview: "preview text",
+            pendingApprovalCount: nil,
+            pendingQuestionCount: nil,
+            activeGoal: nil,
+            todoLanes: nil,
+            canvasPreviews: nil,
+            capabilities: nil,
+            additionalWorkspaces: nil,
+            queuedComposerPrompts: nil)
+        let merged = ThreadListFallback.mergeTaskCards(
+            existing: [authoritative],
+            fallbackCardIds: [],
+            threads: [summary(chatId: "a", chatKind: "ensemble")])
+        #expect(merged.cards[0].chatKind == "ensemble")
+        #expect(merged.cards[0].isEnsemble == true)
+    }
+
+    @Test("mergeTaskCards does not overwrite authoritative chatKind")
+    func mergePreservesAuthoritativeChatKind() {
+        let authoritative = RemoteTaskCard(
+            id: "a",
+            title: "Rich card",
+            status: "idle",
+            provider: "claude",
+            selectedModelType: nil,
+            customModel: nil,
+            codexReasoningEffort: nil,
+            claudeReasoningEffort: nil,
+            pendingProviderChange: nil,
+            workspaceId: "ws1",
+            threadId: "a",
+            parentChatId: nil,
+            createdAt: nil,
+            updatedAt: nil,
+            parentChatRelation: nil,
+            pinned: nil,
+            agentName: nil,
+            agentAccent: nil,
+            agentSlug: nil,
+            sideChatMode: nil,
+            sideChatLifecycleState: nil,
+            chatKind: "single",
+            isDraft: nil,
+            draftVariant: nil,
+            isShared: nil,
+            sharedMode: nil,
+            archived: nil,
+            runId: nil,
+            preview: nil,
+            pendingApprovalCount: nil,
+            pendingQuestionCount: nil,
+            activeGoal: nil,
+            todoLanes: nil,
+            canvasPreviews: nil,
+            capabilities: nil,
+            additionalWorkspaces: nil,
+            queuedComposerPrompts: nil)
+        let repaired = ThreadListFallback.repairChatKind(
+            from: summary(chatId: "a", chatKind: "ensemble"), onto: authoritative)
+        #expect(repaired.chatKind == "single")
+        #expect(repaired.isEnsemble == false)
+    }
 }

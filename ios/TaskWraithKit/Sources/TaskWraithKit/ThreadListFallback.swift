@@ -36,13 +36,18 @@ public enum ThreadListFallback {
 
     /// Merge thread-list fallbacks with any authoritative projection cards.
     /// Returns the merged card list and the ids that remain fallback-only.
+    /// When a summary carries `chatKind` and an authoritative card for the same
+    /// chat still has nil/empty `chatKind`, patch classification in place.
     public static func mergeTaskCards(
         existing: [RemoteTaskCard],
         fallbackCardIds: Set<String>,
         threads: [ThreadSummary]
     ) -> (cards: [RemoteTaskCard], fallbackCardIds: Set<String>) {
+        let summaryById = Dictionary(uniqueKeysWithValues: threads.map { ($0.chatId, $0) })
         let fallbackCards = threads.map(taskCard(from:))
-        let authoritative = existing.filter { !fallbackCardIds.contains($0.id) }
+        let authoritative = existing
+            .filter { !fallbackCardIds.contains($0.id) }
+            .map { repairChatKind(from: summaryById[$0.id], onto: $0) }
 
         if authoritative.isEmpty {
             let ids = Set(fallbackCards.map(\.id))
@@ -52,6 +57,20 @@ public enum ThreadListFallback {
         let authoritativeIds = Set(authoritative.map(\.id))
         let supplemental = fallbackCards.filter { !authoritativeIds.contains($0.id) }
         return (authoritative + supplemental, Set(supplemental.map(\.id)))
+    }
+
+    /// Fill in missing solo/ensemble classification from a thread-list summary.
+    /// Never overwrites a non-empty authoritative `chatKind`.
+    public static func repairChatKind(
+        from summary: ThreadSummary?, onto card: RemoteTaskCard
+    ) -> RemoteTaskCard {
+        guard let summary else { return card }
+        let existing = card.chatKind?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !existing.isEmpty { return card }
+        guard let repair = summary.chatKind?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !repair.isEmpty
+        else { return card }
+        return card.withChatKind(repair)
     }
 }
 
@@ -96,5 +115,47 @@ extension RemoteTaskCard {
             capabilities: nil,
             additionalWorkspaces: nil,
             queuedComposerPrompts: nil)
+    }
+
+    /// Returns a copy with an updated `chatKind` (used by thread-list merge repair).
+    func withChatKind(_ chatKind: String) -> RemoteTaskCard {
+        RemoteTaskCard(
+            id: id,
+            title: title,
+            status: status,
+            provider: provider,
+            selectedModelType: selectedModelType,
+            customModel: customModel,
+            codexReasoningEffort: codexReasoningEffort,
+            claudeReasoningEffort: claudeReasoningEffort,
+            pendingProviderChange: pendingProviderChange,
+            workspaceId: workspaceId,
+            threadId: threadId,
+            parentChatId: parentChatId,
+            createdAt: createdAt,
+            updatedAt: updatedAt,
+            parentChatRelation: parentChatRelation,
+            pinned: pinned,
+            agentName: agentName,
+            agentAccent: agentAccent,
+            agentSlug: agentSlug,
+            sideChatMode: sideChatMode,
+            sideChatLifecycleState: sideChatLifecycleState,
+            chatKind: chatKind,
+            isDraft: isDraft,
+            draftVariant: draftVariant,
+            isShared: isShared,
+            sharedMode: sharedMode,
+            archived: archived,
+            runId: runId,
+            preview: preview,
+            pendingApprovalCount: pendingApprovalCount,
+            pendingQuestionCount: pendingQuestionCount,
+            activeGoal: activeGoal,
+            todoLanes: todoLanes,
+            canvasPreviews: canvasPreviews,
+            capabilities: capabilities,
+            additionalWorkspaces: additionalWorkspaces,
+            queuedComposerPrompts: queuedComposerPrompts)
     }
 }
