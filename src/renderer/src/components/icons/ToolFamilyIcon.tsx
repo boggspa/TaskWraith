@@ -254,6 +254,7 @@ export function toolNameToFamily(name: string | undefined | null): ToolFamily | 
   if (normalised.startsWith('git_') || normalised === 'git' || normalised === 'github_ci_status') return 'git'
   if (normalised.startsWith('browser_') || normalised.startsWith('canvas_')) return 'browser'
   if (normalised.startsWith('tw_recall_')) return 'search'
+  if (normalised.startsWith('tw_introspection_')) return 'diagnostic'
   if (normalised.startsWith('workspace_board_')) return 'plan'
   if (normalised.startsWith('appwatch_')) return 'window-context'
   if (normalised.startsWith('ensemble_') || normalised === 'list_ensemble_participants') {

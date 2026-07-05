@@ -161,6 +161,8 @@ describe('toolNameToFamily', () => {
     expect(toolNameToFamily('creative_timeline_validate')).toBe('diagnostic')
     expect(toolNameToFamily('creative_timeline_ir')).toBe('diagnostic')
     expect(toolNameToFamily('creative_timeline_diff')).toBe('diagnostic')
+    expect(toolNameToFamily('tw_introspection_run')).toBe('diagnostic')
+    expect(toolNameToFamily('tw_introspection_review')).toBe('diagnostic')
   })
 
   it('maps thinking/reasoning traces and codex_plan to their dedicated families', () => {
