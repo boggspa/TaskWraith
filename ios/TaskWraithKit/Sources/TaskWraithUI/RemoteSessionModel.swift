@@ -1637,21 +1637,21 @@ public final class RemoteSessionModel: ObservableObject {
         onCreated: ((String?) -> Void)?
     ) {
         let newId = "demo-new-" + UUID().uuidString.prefix(8).lowercased()
-        let isEnsemble = variant == "ensemble"
-        let isGlobal = variant == "global"
-        let isWorkflow = variant == "workflow"
+        let effectiveVariant = variant == "ensemble" ? "workspace" : variant
+        let isGlobal = effectiveVariant == "global"
+        let isWorkflow = effectiveVariant == "workflow"
         let prov = provider ?? "claude"
         let ws = isGlobal ? "global" : workspaceId
 
         var cardDict: [String: Any] = [
             "id": newId, "title": title, "workspaceId": ws, "threadId": newId,
-            "status": "idle", "chatKind": isEnsemble ? "ensemble" : "single",
+            "status": "idle", "chatKind": "single",
         ]
         if isWorkflow {
             cardDict["isDraft"] = true
             cardDict["draftVariant"] = "workflow"
         }
-        if !isEnsemble { cardDict["provider"] = prov }
+        cardDict["provider"] = prov
         let snapDict: [String: Any] = [
             "threadId": newId, "workspaceId": ws, "provider": prov,
             "totalRows": 0, "rows": [],
@@ -1667,28 +1667,6 @@ public final class RemoteSessionModel: ObservableObject {
         }
         taskCards.append(card)
         threadSnapshots[newId] = snap
-        if isEnsemble {
-            let ensDict: [String: Any] = [
-                "threadId": newId, "status": "idle",
-                "participants": [
-                    ["participantId": "p-claude", "provider": "claude", "role": "Architect",
-                        "order": 1, "status": "idle"],
-                    ["participantId": "p-codex", "provider": "codex", "role": "Implementer",
-                        "order": 2, "status": "idle"],
-                ],
-                "roster": [
-                    ["id": "p-claude", "provider": "claude", "role": "Architect", "enabled": true,
-                        "order": 1, "model": "cli-default"],
-                    ["id": "p-codex", "provider": "codex", "role": "Implementer", "enabled": true,
-                        "order": 2, "model": "cli-default"],
-                ],
-            ]
-            if let ensData = try? JSONSerialization.data(withJSONObject: ensDict),
-                let ensState = try? JSONDecoder().decode(RemoteEnsembleState.self, from: ensData)
-            {
-                ensembleStates[newId] = ensState
-            }
-        }
         rememberThreadWorkspace(newId, workspaceId: ws)
         lastActionMessage = "Chat created."
         onCreated?(newId)
@@ -4461,15 +4439,20 @@ public final class RemoteSessionModel: ObservableObject {
         threadId: String? = nil, title: String = "New Chat", onCreated: ((String?) -> Void)? = nil
     ) {
         let normalizedTitle = Self.normalizedThreadTitle(title, fallback: "New Chat")
+        // Desktop parity: ensemble is toggled in-place after a solo workspace chat
+        // exists — never created exclusively via `variant: ensemble`.
+        let normalizedVariant = variant == "ensemble" ? "workspace" : variant
         if isDemo {
             createDemoThread(
-                workspaceId: workspaceId, variant: variant, provider: provider, title: normalizedTitle,
+                workspaceId: workspaceId, variant: normalizedVariant, provider: provider,
+                title: normalizedTitle,
                 onCreated: onCreated)
             return
         }
         send(
             BridgeAction.createThread(
-                workspaceId: workspaceId, variant: variant, threadId: threadId, provider: provider,
+                workspaceId: workspaceId, variant: normalizedVariant, threadId: threadId,
+                provider: provider,
                 title: normalizedTitle),
             timeoutMs: 12_000,
             successLabel: "Chat created.",
@@ -4506,33 +4489,44 @@ public final class RemoteSessionModel: ObservableObject {
         }
     }
 
+    /// Create a workspace chat, toggle ensemble in-place, then steer the first round.
+    /// Desktop parity: solo-first creation + composer-rail toggle semantics.
     public func startEnsemble(
         workspaceId: String, prompt: String,
         participants: [EnsembleDraftParticipant]? = nil
     ) {
         let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        let roster: [[String: Any]]? = participants?.map { entry in
-            var record: [String: Any] = ["provider": entry.provider]
-            if let model = entry.model, !model.isEmpty, model != "cli-default" {
-                record["model"] = model
-            }
-            return record
-        }
+        let primary = participants?.first
+        let provider = (primary?.provider ?? "claude").lowercased()
+        let title = Self.normalizedThreadTitle(trimmed, fallback: "New Chat")
+        let seed = ChatKindBridge.buildSeedParticipant(
+            provider: provider, model: primary?.model)
         send(
             BridgeAction.createThread(
-                workspaceId: workspaceId, variant: "ensemble", participants: roster),
+                workspaceId: workspaceId, variant: "workspace", provider: provider,
+                title: title),
             timeoutMs: 12_000,
-            successLabel: "Ensemble created."
+            successLabel: "Chat created.",
+            navigateOnAck: false
         ) { [weak self] threadId in
             guard let self, let threadId else { return }
             self.navigationTarget = threadId
             self.rememberThreadWorkspace(threadId, workspaceId: workspaceId)
             self.send(
-                BridgeAction.ensembleSteer(
-                    workspaceId: workspaceId, threadId: threadId, text: trimmed),
-                successLabel: "Round started.")
-            self.scheduleThreadRefresh(threadId)
+                BridgeAction.setChatKind(
+                    workspaceId: workspaceId, threadId: threadId, targetKind: "ensemble",
+                    seedParticipant: seed),
+                successLabel: "Ensemble enabled.",
+                navigateOnAck: false,
+                onAck: { [weak self] accepted in
+                    guard let self, accepted else { return }
+                    self.send(
+                        BridgeAction.ensembleSteer(
+                            workspaceId: workspaceId, threadId: threadId, text: trimmed),
+                        successLabel: "Round started.")
+                    self.scheduleThreadRefresh(threadId)
+                })
         }
     }
 

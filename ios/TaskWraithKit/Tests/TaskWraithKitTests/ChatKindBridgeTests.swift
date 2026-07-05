@@ -59,6 +59,13 @@ struct ChatKindBridgeTests {
         #expect((seed["id"] as? String)?.hasPrefix("ensemble-seed-codex-") == true)
     }
 
+    @Test("buildSeedParticipant works without a task card")
+    func seedParticipantWithoutCard() {
+        let seed = ChatKindBridge.buildSeedParticipant(provider: "claude", model: "sonnet")
+        #expect(seed["provider"] as? String == "claude")
+        #expect(seed["model"] as? String == "sonnet")
+    }
+
     @Test("isLinkedChild detects sub-threads and side chats")
     func linkedChild() {
         #expect(ChatKindBridge.isLinkedChild(card(parentChatRelation: "subThread", parentChatId: "p")) == true)

@@ -368,11 +368,9 @@ struct ConnectedShell: View {
                         NavigationStack {
                             NewChatBootstrapView(
                                 model: model,
-                                mode: taskId.hasPrefix("new-ensemble")
-                                    ? .ensemble
-                                    : taskId.hasPrefix("new-global")
-                                        ? .global
-                                        : taskId.hasPrefix("new-workflow") ? .workflow : .workspace,
+                                mode: taskId.hasPrefix("new-global")
+                                    ? .global
+                                    : taskId.hasPrefix("new-workflow") ? .workflow : .workspace,
                                 initialWorkspaceId: taskId.split(separator: ":").count > 1
                                     ? String(taskId.split(separator: ":")[1]) : nil)
                         }
@@ -530,7 +528,6 @@ private extension View {
 
 enum ComposeMode: String, Identifiable {
     case workspace
-    case ensemble
     case global
     case workflow
 

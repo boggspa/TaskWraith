@@ -10,20 +10,25 @@ public enum ChatKindBridge {
         model: String? = nil,
         permissionPresetId: String = "default"
     ) -> [String: Any] {
+        buildSeedParticipant(
+            provider: provider,
+            model: model ?? card.customModel ?? card.selectedModelType,
+            codexReasoningEffort: card.codexReasoningEffort,
+            claudeReasoningEffort: card.claudeReasoningEffort,
+            permissionPresetId: permissionPresetId)
+    }
+
+    public static func buildSeedParticipant(
+        provider: String,
+        model: String? = nil,
+        codexReasoningEffort: String? = nil,
+        claudeReasoningEffort: String? = nil,
+        permissionPresetId: String = "default"
+    ) -> [String: Any] {
         let normalizedProvider = provider.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let resolvedModel: String = {
             if let model, !model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 return model.trimmingCharacters(in: .whitespacesAndNewlines)
-            }
-            if let custom = card.customModel?.trimmingCharacters(in: .whitespacesAndNewlines),
-                !custom.isEmpty
-            {
-                return custom
-            }
-            if let selected = card.selectedModelType?.trimmingCharacters(in: .whitespacesAndNewlines),
-                !selected.isEmpty
-            {
-                return selected
             }
             return "cli-default"
         }()
@@ -37,10 +42,10 @@ public enum ChatKindBridge {
             "model": resolvedModel,
             "permissionPresetId": permissionPresetId,
         ]
-        if normalizedProvider == "codex", let effort = card.codexReasoningEffort {
+        if normalizedProvider == "codex", let effort = codexReasoningEffort {
             seed["reasoningEffort"] = effort
         }
-        if normalizedProvider == "claude", let effort = card.claudeReasoningEffort {
+        if normalizedProvider == "claude", let effort = claudeReasoningEffort {
             seed["reasoningEffort"] = effort
         }
         return seed

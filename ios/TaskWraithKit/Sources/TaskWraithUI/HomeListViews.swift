@@ -205,6 +205,8 @@ struct HomeView: View {
                     // turns to plan mode. "New workspace chat" is the
                     // write-capable, workspace-scoped variant (the phone's
                     // only chat-creation surface, so it's kept here).
+                    // Ensemble is NOT created exclusively — turn it on from the
+                    // person.3 glyph in the composer bottom row (desktop parity).
                     Button("New chat") { openCanvas(.global) }
                     // Workspace-scoped + ensemble creation need a workspace;
                     // a General chat ("New chat") does not, so it stays
@@ -212,8 +214,6 @@ struct HomeView: View {
                     Button("New workspace chat") { openCanvas(.workspace) }
                         .disabled(model.workspaces.isEmpty)
                     Button("New workflow") { openCanvas(.workflow) }
-                        .disabled(model.workspaces.isEmpty)
-                    Button("New ensemble") { openCanvas(.ensemble) }
                         .disabled(model.workspaces.isEmpty)
                 } label: {
                     ToolbarIconPillLabel("New", systemImage: "square.and.pencil")

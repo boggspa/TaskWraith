@@ -18,7 +18,7 @@ struct NewChatBootstrapView: View {
         switch mode {
         case .global:
             return "global"
-        case .workspace, .ensemble, .workflow:
+        case .workspace, .workflow:
             if let initialWorkspaceId, !initialWorkspaceId.isEmpty {
                 return initialWorkspaceId
             }
@@ -29,7 +29,6 @@ struct NewChatBootstrapView: View {
     private var variant: String {
         switch mode {
         case .workspace: return "workspace"
-        case .ensemble: return "ensemble"
         case .global: return "global"
         case .workflow: return "workflow"
         }
@@ -82,9 +81,6 @@ struct NewChatBootstrapView: View {
         case .workspace:
             return targetWorkspaceId == nil
                 ? "Syncing workspaces from your Mac…" : "Creating chat…"
-        case .ensemble:
-            return targetWorkspaceId == nil
-                ? "Syncing workspaces from your Mac…" : "Creating ensemble…"
         case .global:
             return "Creating general chat…"
         case .workflow:
@@ -126,7 +122,6 @@ struct NewChatBootstrapView: View {
     private var failureTitle: String {
         switch mode {
         case .workspace: return "Couldn't start this chat"
-        case .ensemble: return "Couldn't start this ensemble"
         case .global: return "Couldn't start a general chat"
         case .workflow: return "Couldn't start this workflow"
         }
