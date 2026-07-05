@@ -2112,51 +2112,45 @@ const AUDIT_ARTIFACT_PROVIDER_OPTIONS: Array<{
 
 type McpToolGroup =
   | 'workspace'
-  | 'files'
   | 'git'
   | 'runtime'
-  | 'subthreads'
   | 'web'
-  | 'browser'
-  | 'appwatch'
+  | 'canvas'
+  | 'ensemble'
+  | 'goals'
+  | 'memory'
+  | 'media'
   | 'creative'
   | 'ide'
-  | 'auth'
-  | 'ensemble'
-  | 'diagnostics'
 
 type McpToolPolicyKey = keyof AgenticServicesSettings
 
 const MCP_TOOL_GROUP_LABELS: Record<McpToolGroup, string> = {
-  workspace: 'Workspace intelligence',
-  files: 'Files and diffs',
+  workspace: 'Workspace files and search',
   git: 'Git',
-  runtime: 'Runtime and tasks',
-  subthreads: 'Sub-threads',
-  web: 'Web',
-  browser: 'Browser and screenshots',
-  appwatch: 'Appwatch',
+  runtime: 'Runtime and diagnostics',
+  web: 'Web and window context',
+  canvas: 'Canvas and launches',
+  ensemble: 'Ensemble and collaboration',
+  goals: 'Goals and evidence',
+  memory: 'Recall and wakeups',
+  media: 'Media tools',
   creative: 'Creative apps',
-  ide: 'IDE handoff',
-  auth: 'Auth and approvals',
-  ensemble: 'Ensemble',
-  diagnostics: 'Diagnostics'
+  ide: 'IDE and provider status'
 }
 
 const MCP_TOOL_GROUP_ORDER: McpToolGroup[] = [
   'workspace',
-  'files',
   'git',
   'runtime',
-  'subthreads',
   'web',
-  'browser',
-  'appwatch',
-  'creative',
-  'ide',
-  'auth',
+  'canvas',
   'ensemble',
-  'diagnostics'
+  'goals',
+  'memory',
+  'media',
+  'creative',
+  'ide'
 ]
 
 const MCP_TOOL_OVERRIDES: Partial<
@@ -2183,7 +2177,7 @@ const MCP_TOOL_OVERRIDES: Partial<
   write_file: {
     label: 'Write file',
     transcript: 'Wrote file',
-    group: 'files',
+    group: 'workspace',
     iconRef: 'tool:file-write',
     policyKey: 'fileChanges',
     description: 'Writes a workspace file and records the resulting change summary.'
@@ -2191,7 +2185,7 @@ const MCP_TOOL_OVERRIDES: Partial<
   replace: {
     label: 'Replace text',
     transcript: 'Edited file',
-    group: 'files',
+    group: 'workspace',
     iconRef: 'tool:replace',
     policyKey: 'fileChanges',
     description: 'Applies a targeted replacement inside a workspace file.'
@@ -2199,7 +2193,7 @@ const MCP_TOOL_OVERRIDES: Partial<
   create_directory: {
     label: 'Create directory',
     transcript: 'Created directory',
-    group: 'files',
+    group: 'workspace',
     iconRef: 'tool:folder',
     policyKey: 'fileChanges',
     description: 'Creates a workspace directory after file-change approval.'
@@ -2207,7 +2201,7 @@ const MCP_TOOL_OVERRIDES: Partial<
   delete_path: {
     label: 'Delete path',
     transcript: 'Deleted path',
-    group: 'files',
+    group: 'workspace',
     iconRef: 'tool:file-write',
     policyKey: 'fileChanges',
     description: 'Deletes a workspace file or empty directory after approval.'
@@ -2215,7 +2209,7 @@ const MCP_TOOL_OVERRIDES: Partial<
   move_path: {
     label: 'Move path',
     transcript: 'Moved path',
-    group: 'files',
+    group: 'workspace',
     iconRef: 'tool:file-write',
     policyKey: 'fileChanges',
     description: 'Moves a workspace file or directory after approval.'
@@ -2223,7 +2217,7 @@ const MCP_TOOL_OVERRIDES: Partial<
   rename_path: {
     label: 'Rename path',
     transcript: 'Renamed path',
-    group: 'files',
+    group: 'workspace',
     iconRef: 'tool:file-write',
     policyKey: 'fileChanges',
     description: 'Renames a workspace file or directory after approval.'
@@ -2231,7 +2225,7 @@ const MCP_TOOL_OVERRIDES: Partial<
   read_file: {
     label: 'Read file',
     transcript: 'Read file',
-    group: 'files',
+    group: 'workspace',
     iconRef: 'tool:file-read',
     policyKey: 'mcpTools',
     description: 'Reads a workspace file for provider context.'
@@ -2271,7 +2265,7 @@ const MCP_TOOL_OVERRIDES: Partial<
   apply_patch: {
     label: 'Apply patch',
     transcript: 'Applied patch',
-    group: 'files',
+    group: 'workspace',
     iconRef: 'tool:patch',
     policyKey: 'fileChanges',
     description: 'Applies a structured patch with file-change audit output.'
@@ -2279,7 +2273,7 @@ const MCP_TOOL_OVERRIDES: Partial<
   delegate_to_subthread: {
     label: 'Delegate to sub-thread',
     transcript: 'Delegated sub-thread',
-    group: 'subthreads',
+    group: 'ensemble',
     iconRef: 'tool:delegate',
     policyKey: 'subThreadDelegation',
     description: 'Starts or continues a linked provider sub-thread after policy checks.'
@@ -2295,7 +2289,7 @@ const MCP_TOOL_OVERRIDES: Partial<
   appwatch_latest_frame: {
     label: 'Latest Appwatch frame',
     transcript: 'Captured latest frame',
-    group: 'appwatch',
+    group: 'web',
     iconRef: 'tool:image',
     policyKey: 'mcpTools',
     description: 'Returns metadata plus the newest attached-window image frame.'
@@ -2303,7 +2297,7 @@ const MCP_TOOL_OVERRIDES: Partial<
   appwatch_frames: {
     label: 'Appwatch frame batch',
     transcript: 'Captured frame batch',
-    group: 'appwatch',
+    group: 'web',
     iconRef: 'tool:frames',
     policyKey: 'mcpTools',
     description: 'Returns a bounded batch of recent attached-window frames.'
@@ -2311,7 +2305,7 @@ const MCP_TOOL_OVERRIDES: Partial<
   get_diagnostics: {
     label: 'Get diagnostics',
     transcript: 'Checked diagnostics',
-    group: 'diagnostics',
+    group: 'runtime',
     iconRef: 'tool:diagnostics',
     policyKey: 'shellCommands',
     description: 'Runs fixed workspace diagnostic tools and returns structured problems.'
@@ -2331,39 +2325,204 @@ function pluralizeCount(count: number, singular: string, plural = `${singular}s`
   return `${count} ${count === 1 ? singular : plural}`
 }
 
+const MCP_TOOL_GROUPED_NAMES: Record<McpToolGroup, readonly TaskWraithMcpToolName[]> = {
+  workspace: [
+    'read_file',
+    'list_directory',
+    'find_files',
+    'workspace_search',
+    'workspace_symbols',
+    'list_chat_attachments',
+    'inspect_chat_attachment',
+    'open_workspace_file',
+    'write_file',
+    'replace',
+    'create_directory',
+    'delete_path',
+    'move_path',
+    'rename_path',
+    'apply_patch'
+  ],
+  git: [
+    'git_status',
+    'git_diff',
+    'git_log',
+    'git_show',
+    'git_blame',
+    'git_stage',
+    'git_commit',
+    'git_push',
+    'git_create_pr'
+  ],
+  runtime: [
+    'run_shell_command',
+    'run_task',
+    'start_background_process',
+    'list_background_processes',
+    'read_background_process',
+    'kill_background_process',
+    'get_diagnostics',
+    'list_active_runs',
+    'cancel_active_run',
+    'test_result_summary',
+    'run_timeline',
+    'raw_provider_events'
+  ],
+  web: [
+    'web_search',
+    'web_fetch',
+    'browser_open',
+    'browser_click',
+    'browser_screenshot',
+    'browser_console',
+    'attached_window_capture',
+    'attached_window_status',
+    'appwatch_start',
+    'appwatch_stop',
+    'appwatch_status',
+    'appwatch_latest_frame',
+    'appwatch_frames'
+  ],
+  canvas: [
+    'launch_list_targets',
+    'launch_start',
+    'launch_stop',
+    'launch_status',
+    'canvas_open',
+    'canvas_render_html',
+    'canvas_open_attachment',
+    'canvas_open_launch',
+    'canvas_sketch_open',
+    'canvas_sketch_get',
+    'canvas_sketch_update',
+    'canvas_list',
+    'canvas_status',
+    'canvas_snapshot',
+    'canvas_screenshot',
+    'canvas_inspect',
+    'canvas_network',
+    'canvas_console',
+    'canvas_resize',
+    'canvas_click',
+    'canvas_fill',
+    'canvas_annotate',
+    'canvas_eval',
+    'canvas_close'
+  ],
+  ensemble: [
+    'delegate_to_subthread',
+    'list_subthreads',
+    'read_subthread_result',
+    'cancel_subthread',
+    'ensemble_yield',
+    'ensemble_send',
+    'ensemble_fanout',
+    'ensemble_bossman_control',
+    'ensemble_roster_edit',
+    'ensemble_brief_update',
+    'list_ensemble_participants',
+    'ensemble_continue',
+    'scout_brief',
+    'blackboard_post',
+    'blackboard_read',
+    'blackboard_delete',
+    'ask_user_question'
+  ],
+  goals: [
+    'goal_read',
+    'goal_update',
+    'update_goal',
+    'goal_complete',
+    'goal_blocked',
+    'todo_write',
+    'workspace_board_snapshot',
+    'workspace_board_preview_plan',
+    'workspace_board_apply_plan',
+    'prompt_task_normalize',
+    'scope_radar',
+    'repo_convention_scan',
+    'coherence_gate_check',
+    'evidence_pack_write',
+    'completion_claim_check'
+  ],
+  memory: [
+    'schedule_wakeup',
+    'cancel_wakeup',
+    'tw_recall_find',
+    'tw_recall_read',
+    'tw_recall_read_events'
+  ],
+  media: [
+    'image_edit',
+    'svg_rasterize',
+    'image_generate',
+    'audio_render_wav',
+    'audio_analyze',
+    'inspect_audio_segment',
+    'video_probe',
+    'video_thumbnail',
+    'video_decode_frame',
+    'inspect_video_frames',
+    'video_encode_clip',
+    'video_concat_clips',
+    'audio_extract',
+    'transcode_audio',
+    'audio_mix',
+    'transcribe_audio',
+    'transcode_video'
+  ],
+  creative: [
+    'creative_app_status',
+    'creative_app_capabilities',
+    'creative_project_snapshot',
+    'creative_timeline_validate',
+    'creative_timeline_ir',
+    'creative_timeline_diff',
+    'creative_timeline_import',
+    'creative_applescript_dispatch',
+    'creative_blender_python',
+    'creative_midi_dispatch'
+  ],
+  ide: [
+    'approval_status',
+    'provider_auth_status',
+    'provider_usage_status',
+    'open_in_ide',
+    'open_in_ide_at_position',
+    'reveal_in_finder',
+    'ide_app_status',
+    'ide_app_capabilities',
+    'list_running_ides',
+    'create_handoff_card',
+    'switch_auth_profile',
+    'agent_delegation_role'
+  ]
+}
+
+const MCP_TOOL_GROUP_LOOKUP = new Map<TaskWraithMcpToolName, McpToolGroup>(
+  Object.entries(MCP_TOOL_GROUPED_NAMES).flatMap(([group, tools]) =>
+    tools.map((tool) => [tool, group as McpToolGroup])
+  )
+)
+
+export function uncategorizedMcpToolsForSettings(): TaskWraithMcpToolName[] {
+  return TASKWRAITH_MCP_TOOLS.filter((tool) => !MCP_TOOL_GROUP_LOOKUP.has(tool))
+}
+
 function inferMcpToolGroup(tool: TaskWraithMcpToolName): McpToolGroup {
-  if (tool.startsWith('git_')) return 'git'
-  if (
-    tool.includes('file') ||
-    tool === 'replace' ||
-    tool === 'apply_patch' ||
-    tool === 'open_workspace_file'
-  ) {
-    return 'files'
-  }
-  if (tool.startsWith('workspace_') || tool === 'list_directory') return 'workspace'
-  if (tool.startsWith('web_')) return 'web'
-  if (tool.includes('subthread') || tool === 'delegate_to_subthread') return 'subthreads'
-  if (tool.startsWith('browser_') || tool.startsWith('attached_window_')) return 'browser'
-  if (tool.startsWith('appwatch_')) return 'appwatch'
-  if (tool.startsWith('creative_')) return 'creative'
-  if (tool.includes('ide') || tool === 'reveal_in_finder' || tool === 'create_handoff_card') {
-    return 'ide'
-  }
-  if (tool.includes('auth') || tool.startsWith('approval_') || tool === 'agent_delegation_role') {
-    return 'auth'
-  }
-  if (tool.startsWith('run_') || tool.includes('timeline') || tool.includes('events')) {
-    return 'runtime'
-  }
-  if (tool.includes('summary') || tool.includes('status') || tool.includes('capabilities')) {
-    return 'diagnostics'
-  }
-  return 'workspace'
+  return MCP_TOOL_GROUP_LOOKUP.get(tool) ?? 'workspace'
 }
 
 function inferMcpPolicyKey(tool: TaskWraithMcpToolName): McpToolPolicyKey {
-  if (tool === 'run_shell_command' || tool === 'run_task' || tool === 'get_diagnostics') {
+  if (
+    tool === 'run_shell_command' ||
+    tool === 'run_task' ||
+    tool === 'start_background_process' ||
+    tool === 'kill_background_process' ||
+    tool === 'get_diagnostics' ||
+    tool === 'launch_start' ||
+    tool === 'launch_stop'
+  ) {
     return 'shellCommands'
   }
   if (tool === 'git_push' || tool === 'git_create_pr') return 'externalPublish'
@@ -2387,9 +2546,15 @@ function inferMcpPolicyKey(tool: TaskWraithMcpToolName): McpToolPolicyKey {
   ) {
     return 'fileChanges'
   }
-  if (tool.includes('subthread') || tool === 'delegate_to_subthread') return 'subThreadDelegation'
+  if (tool === 'delegate_to_subthread' || tool === 'cancel_subthread') {
+    return 'subThreadDelegation'
+  }
   if (tool === 'canvas_click' || tool === 'canvas_fill' || tool === 'canvas_sketch_update') {
     return 'canvasInteraction'
+  }
+  if (tool === 'canvas_eval') return 'canvasEval'
+  if (tool === 'tw_recall_find' || tool === 'tw_recall_read' || tool === 'tw_recall_read_events') {
+    return 'crossThreadRead'
   }
   return 'mcpTools'
 }
@@ -2418,6 +2583,7 @@ function getMcpToolMeta(tool: TaskWraithMcpToolName): {
 const MCP_ICON_REF_FAMILIES: Record<string, ToolFamily> = {
   'tool:auth': 'diagnostic',
   'tool:browser': 'browser',
+  'tool:canvas': 'browser',
   'tool:creative': 'diagnostic',
   'tool:delegate': 'delegate',
   'tool:diagnostics': 'diagnostic',
@@ -2428,8 +2594,11 @@ const MCP_ICON_REF_FAMILIES: Record<string, ToolFamily> = {
   'tool:folder': 'file',
   'tool:frames': 'window-context',
   'tool:git': 'git',
+  'tool:goals': 'plan',
   'tool:ide': 'handoff',
   'tool:image': 'window-context',
+  'tool:media': 'edit',
+  'tool:memory': 'search',
   'tool:patch': 'edit',
   'tool:replace': 'edit',
   'tool:runtime': 'task',

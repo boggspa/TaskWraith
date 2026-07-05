@@ -18,7 +18,8 @@ import {
   userMcpServerReadiness,
   userMcpServerProviderExportLabels,
   userMcpServerMatchesQuery,
-  userMcpServerStatusLabel
+  userMcpServerStatusLabel,
+  uncategorizedMcpToolsForSettings
 } from './SettingsPanel'
 import { DEFAULT_AGENTIC_SERVICES } from '../lib/agenticServicesDefaults'
 import { TASKWRAITH_MCP_TOOLS } from '../../../main/TaskWraithMcpTools'
@@ -216,6 +217,45 @@ describe('SettingsPanel provider cards', () => {
     expect(html).not.toContain('>WO</span>')
     expect(html).not.toContain('>ID</span>')
     expect(html).toContain('<code>tool:workspace</code>')
+  })
+
+  it('renders every canonical TaskWraith MCP tool in Provider Tools', () => {
+    const html = renderToStaticMarkup(
+      <SettingsPanel {...makeSettingsProps({ activeTab: 'mcp' })} />
+    )
+
+    expect(uncategorizedMcpToolsForSettings()).toEqual([])
+    expect(html).toContain(`${TASKWRAITH_MCP_TOOLS.length} of ${TASKWRAITH_MCP_TOOLS.length} tools`)
+    for (const tool of TASKWRAITH_MCP_TOOLS) {
+      expect(html).toContain(`<code>TaskWraith__${tool}</code>`)
+    }
+  })
+
+  it('groups recent MCP tool families under their product headers', () => {
+    const html = renderToStaticMarkup(
+      <SettingsPanel {...makeSettingsProps({ activeTab: 'mcp' })} />
+    )
+    const groupSlice = (label: string, nextLabel: string) => {
+      const start = html.indexOf(`<strong>${label}</strong>`)
+      const end = html.indexOf(`<strong>${nextLabel}</strong>`, start + 1)
+      expect(start).toBeGreaterThanOrEqual(0)
+      expect(end).toBeGreaterThan(start)
+      return html.slice(start, end)
+    }
+
+    expect(groupSlice('Canvas and launches', 'Ensemble and collaboration')).toContain(
+      '<strong>Canvas Sketch Get</strong>'
+    )
+    expect(groupSlice('Ensemble and collaboration', 'Goals and evidence')).toContain(
+      '<strong>Ensemble Fanout</strong>'
+    )
+    expect(groupSlice('Goals and evidence', 'Recall and wakeups')).toContain(
+      '<strong>Workspace Board Snapshot</strong>'
+    )
+    expect(groupSlice('Recall and wakeups', 'Media tools')).toContain(
+      '<strong>Tw Recall Find</strong>'
+    )
+    expect(groupSlice('Media tools', 'Creative apps')).toContain('<strong>Audio Mix</strong>')
   })
 
   it('shows Codex TaskWraith bridge tools separately from app-server MCP inventory', () => {
