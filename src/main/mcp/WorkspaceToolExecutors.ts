@@ -23,6 +23,7 @@ import {
   isTranscriptThumbnailMime,
   sniffImageMime
 } from '../services/TranscriptMediaService'
+import { GitService, type GitCiStatusInput } from '../services/GitService'
 import {
   TRANSCRIPT_MEDIA_MAX_FULL_IMAGE_BYTES,
   type TranscriptMediaAssetReadResult
@@ -133,6 +134,7 @@ export interface WorkspaceToolExecutorDependencies {
   store: WorkspaceToolStoreDependencies
   runs: WorkspaceToolRunDependencies
   externalPublishReceipts?: Pick<ExternalPublishReceiptWriter, 'begin' | 'complete'>
+  gitService?: Pick<GitService, 'ciStatus'>
   media?: {
     readTranscriptMediaAsset: (input: {
       sha256: string
@@ -211,6 +213,7 @@ export const WORKSPACE_MCP_TOOL_NAMES = [
   'git_commit',
   'git_push',
   'git_create_pr',
+  'github_ci_status',
   'run_task',
   'start_background_process',
   'list_background_processes',
@@ -296,6 +299,7 @@ export interface WorkspaceToolExecutors {
   executeGitCommit: (args: Record<string, any>, cwd: string) => Promise<unknown>
   executeGitPush: (args: Record<string, any>, cwd: string) => Promise<unknown>
   executeGitCreatePr: (args: Record<string, any>, cwd: string) => Promise<unknown>
+  executeGithubCiStatus: (args: Record<string, any>, cwd: string) => Promise<unknown>
   executeRunTask: (args: Record<string, any>, cwd: string) => Promise<unknown>
   executeStartBackgroundProcess: (
     args: Record<string, any>,
@@ -515,6 +519,7 @@ export function createWorkspaceToolExecutors(
     executeGitCommit: (args, cwd) => executeGitCommit(deps, args, cwd),
     executeGitPush: (args, cwd) => executeGitPush(deps, args, cwd),
     executeGitCreatePr: (args, cwd) => executeGitCreatePr(deps, args, cwd),
+    executeGithubCiStatus: (args, cwd) => executeGithubCiStatus(deps, args, cwd),
     executeRunTask: (args, cwd) => executeRunTask(deps, args, cwd),
     executeStartBackgroundProcess: (args, context, cwd) =>
       executeStartBackgroundProcess(deps, args, context, cwd),
@@ -621,6 +626,10 @@ export async function executeWorkspaceMcpTool(
       result,
       isError: result.ok === false || result.exitCode !== 0 || result.timedOut === true
     }
+  }
+  if (toolName === 'github_ci_status') {
+    const result = await executeGithubCiStatus(deps, args, cwd)
+    return { result, isError: result.ok === false }
   }
   if (toolName === 'run_task') {
     const result = await executeRunTask(deps, args, cwd, {
@@ -1336,6 +1345,37 @@ export async function executeGitCreatePr(
     stderr: truncateText(result.stderr, 20_000),
     error: result.error
   }
+}
+
+export async function executeGithubCiStatus(
+  deps: WorkspaceToolExecutorDependencies,
+  args: Record<string, any>,
+  cwd: string
+) {
+  const pr = args.pr ?? args.pullRequest ?? args.pullRequestNumber
+  const input: GitCiStatusInput = {
+    repoPath: cwd,
+    pr: typeof pr === 'number' ? pr : optionalString(pr),
+    branch: optionalString(args.branch || args.headBranch || args.head),
+    commitSha: optionalString(args.commitSha || args.sha || args.headSha),
+    includeFailedLogs: args.includeFailedLogs === true || args.failedLogs === true,
+    maxRuns: args.maxRuns ?? args.limit,
+    maxFailedLogs: args.maxFailedLogs,
+    maxLogChars: args.maxLogChars,
+    repairAttempt: args.repairAttempt ?? args.attempt,
+    maxRepairPushes: args.maxRepairPushes
+  }
+  const service = deps.gitService || new GitService()
+  const result = await service.ciStatus(input)
+  if (!result.ok) {
+    return {
+      ok: false,
+      status: 'blocked',
+      error: result.error,
+      stderr: result.stderr
+    }
+  }
+  return { ok: true, ...result.data }
 }
 
 export async function executeRunTask(

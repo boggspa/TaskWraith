@@ -9014,16 +9014,20 @@ function previewForGeminiMcpTool(
     }
   }
 
-  if (toolName === 'web_search' || toolName === 'web_fetch') {
+  if (toolName === 'web_search' || toolName === 'web_fetch' || toolName === 'github_ci_status') {
     const queryOrUrl =
       toolName === 'web_search'
         ? String(args.query || args.q || '')
-        : String(args.url || args.uri || '')
+        : toolName === 'web_fetch'
+          ? String(args.url || args.uri || '')
+          : String(args.pr || args.branch || args.commitSha || 'current PR/branch')
     return {
       title:
         toolName === 'web_search'
           ? `Approve ${providerName} web search`
-          : `Approve ${providerName} web fetch`,
+          : toolName === 'web_fetch'
+            ? `Approve ${providerName} web fetch`
+            : `Approve ${providerName} GitHub CI status check`,
       body: queryOrUrl,
       service: 'mcpTools' as AgenticServiceId,
       preview: {

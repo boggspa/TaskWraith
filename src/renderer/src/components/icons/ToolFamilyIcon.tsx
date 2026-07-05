@@ -251,7 +251,7 @@ export function toolNameToFamily(name: string | undefined | null): ToolFamily | 
 
   // Pattern buckets — order matters (more-specific patterns first).
   if (normalised.endsWith('_thinking') || normalised.endsWith('_reasoning')) return 'reasoning'
-  if (normalised.startsWith('git_') || normalised === 'git') return 'git'
+  if (normalised.startsWith('git_') || normalised === 'git' || normalised === 'github_ci_status') return 'git'
   if (normalised.startsWith('browser_') || normalised.startsWith('canvas_')) return 'browser'
   if (normalised.startsWith('tw_recall_')) return 'search'
   if (normalised.startsWith('workspace_board_')) return 'plan'

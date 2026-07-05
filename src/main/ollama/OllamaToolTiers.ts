@@ -14,6 +14,7 @@ export const OLLAMA_READ_TOOL_NAMES = [
   'git_log',
   'git_show',
   'git_blame',
+  'github_ci_status',
   'test_result_summary',
   'list_active_runs',
   'web_search',
@@ -31,7 +32,11 @@ export const OLLAMA_READ_TOOL_NAMES = [
   'tw_recall_read_events'
 ] as const satisfies readonly OllamaToolName[]
 
-const OLLAMA_NETWORK_TOOL_NAMES = new Set<OllamaToolName>(['web_search', 'web_fetch'])
+const OLLAMA_NETWORK_TOOL_NAMES = new Set<OllamaToolName>([
+  'web_search',
+  'web_fetch',
+  'github_ci_status'
+])
 
 export const OLLAMA_FILE_EDIT_TOOL_NAMES = [
   'write_file',
@@ -117,6 +122,7 @@ export const OLLAMA_ADVERTISED_TOOL_NAMES = [
   // Web (read-only)
   'web_search',
   'web_fetch',
+  'github_ci_status',
   // Coordination
   'todo_write',
   'ask_user_question',

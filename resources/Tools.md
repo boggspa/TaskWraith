@@ -11,7 +11,7 @@ Local Ollama models call any tool by emitting exactly one JSON object per turn:
 {"taskwraith_tool":{"name":"<tool>","arguments":{ ... }}}
 ```
 
-The 149 tools below are the full TaskWraith surface, generated from the tool catalog so this reference cannot drift from what the app actually grants. Every mutating tool (file edits, shell, publishing) is gated by your run's permission role, and paths must stay inside the active workspace.
+The 150 tools below are the full TaskWraith surface, generated from the tool catalog so this reference cannot drift from what the app actually grants. Every mutating tool (file edits, shell, publishing) is gated by your run's permission role, and paths must stay inside the active workspace.
 
 ## run_shell_command
 
@@ -213,6 +213,15 @@ Create a GitHub pull request for the active workspace branch using gh.
 - Required args: none
 - Optional args: title, body, draft, base, head, fill
 - Example: `{"taskwraith_tool":{"name":"git_create_pr","arguments":{"title":"text"}}}`
+
+## github_ci_status
+
+Read GitHub Actions / pull request check state for the active workspace using gh. This is an observational CI-state primitive, not a push loop: it confirms gh auth, binds the query to a PR/branch/commit SHA when supplied, can fetch bounded failed job logs, and returns repair-loop guardrails for local test-before-push workflows.
+
+- Access: read-only (no approval needed)
+- Required args: none
+- Optional args: pr, branch, commitSha, includeFailedLogs, maxRuns, maxFailedLogs, maxLogChars, repairAttempt, maxRepairPushes
+- Example: `{"taskwraith_tool":{"name":"github_ci_status","arguments":{"pr":"text"}}}`
 
 ## run_task
 

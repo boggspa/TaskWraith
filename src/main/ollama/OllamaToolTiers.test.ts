@@ -36,6 +36,7 @@ describe('Ollama tool surface governance', () => {
       'read_file',
       'web_search',
       'web_fetch',
+      'github_ci_status',
       'write_file',
       'apply_patch',
       'run_shell_command',
@@ -54,6 +55,7 @@ describe('Ollama tool surface governance', () => {
     expect(names).toContain('run_shell_command')
     expect(names).not.toContain('web_search')
     expect(names).not.toContain('web_fetch')
+    expect(names).not.toContain('github_ci_status')
   })
 
   it('still requires explicit intent for mutating or publishing tools', () => {

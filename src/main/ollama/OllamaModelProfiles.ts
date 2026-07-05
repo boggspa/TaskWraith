@@ -178,6 +178,9 @@ function describeTool(toolName: OllamaToolName): string | null {
   if (toolName === 'git_create_pr') {
     return '- git_create_pr: {"title":"Short title","body":"Summary","draft":true,"intent":"open review PR"} — create a GitHub PR through TaskWraith approval policy.'
   }
+  if (toolName === 'github_ci_status') {
+    return '- github_ci_status: {"includeFailedLogs":true,"maxRepairPushes":3} — inspect GitHub CI state for the current PR/branch before deciding whether to repair and push.'
+  }
   if (toolName === 'web_search') {
     return '- web_search: {"query":"current information to search for"} — returns a ranked list of result titles and URLs from the live web.'
   }

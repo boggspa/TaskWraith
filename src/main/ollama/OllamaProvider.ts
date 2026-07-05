@@ -1360,6 +1360,22 @@ function ollamaNativeToolParameters(
         },
         required: ['intent']
       }
+    case 'github_ci_status':
+      return {
+        description: compact
+          ? 'Read GitHub CI status.'
+          : 'Read GitHub Actions / PR check state for this repo through the shared Git service. Optionally fetch bounded failed logs for repair planning.',
+        properties: {
+          pr: { ...STRING, description: 'Optional PR number, URL, or branch selector.' },
+          branch: { ...STRING, description: 'Optional branch. Defaults to the current branch.' },
+          commitSha: { ...STRING, description: 'Optional commit SHA to bind checks.' },
+          includeFailedLogs: { type: 'boolean', description: 'Fetch bounded failed job logs.' },
+          maxRuns: { type: 'number', description: 'Maximum workflow runs to inspect.' },
+          repairAttempt: { type: 'number', description: 'Current repair attempt count.' },
+          maxRepairPushes: { type: 'number', description: 'Stop after this many repair pushes.' }
+        },
+        required: []
+      }
     case 'write_file':
       return {
         description: compact ? 'Write workspace file (intent required).' : 'Create or overwrite a workspace file. Requires a short intent.',

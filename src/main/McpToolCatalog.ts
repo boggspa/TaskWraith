@@ -549,6 +549,64 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
       }
     },
     {
+      name: 'github_ci_status',
+      description:
+        'Read GitHub Actions / pull request check state for the active workspace using gh. ' +
+        'This is an observational CI-state primitive, not a push loop: it confirms gh auth, ' +
+        'binds the query to a PR/branch/commit SHA when supplied, can fetch bounded failed ' +
+        'job logs, and returns repair-loop guardrails for local test-before-push workflows.',
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          pr: {
+            type: 'string',
+            description: 'Optional PR number, PR URL, or head branch selector.'
+          },
+          branch: {
+            type: 'string',
+            description: 'Optional branch to monitor. Defaults to the current branch or PR head.'
+          },
+          commitSha: {
+            type: 'string',
+            description:
+              'Optional commit SHA to bind the check query. Defaults to the PR head SHA or local HEAD.'
+          },
+          includeFailedLogs: {
+            type: 'boolean',
+            description: 'Fetch failed job logs with gh run view --log-failed.'
+          },
+          maxRuns: {
+            type: 'number',
+            description: 'Maximum recent workflow runs to inspect. Defaults to 10.'
+          },
+          maxFailedLogs: {
+            type: 'number',
+            description: 'Maximum failed workflow runs to fetch logs for. Defaults to 2.'
+          },
+          maxLogChars: {
+            type: 'number',
+            description: 'Maximum characters kept per failed log after redaction. Defaults to 20000.'
+          },
+          repairAttempt: {
+            type: 'number',
+            description:
+              'Current repair/push attempt count for loop guardrails. Defaults to 0.'
+          },
+          maxRepairPushes: {
+            type: 'number',
+            description:
+              'Maximum repair pushes before the loop should stop and ask the user. Defaults to 3.'
+          }
+        }
+      }
+    },
+    {
       name: 'run_task',
       description:
         'Run a known project task such as test, typecheck, lint, or build and return structured output.',

@@ -22,6 +22,7 @@ export const TASKWRAITH_MCP_TOOLS = [
   'git_commit',
   'git_push',
   'git_create_pr',
+  'github_ci_status',
   'run_task',
   'start_background_process',
   'list_background_processes',

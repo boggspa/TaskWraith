@@ -109,7 +109,7 @@ export const DEFAULT_PERMISSION_PRESETS: Record<PermissionPresetId, PermissionPr
     label: 'Read only',
     approvalMode: 'plan',
     agenticServices: READ_ONLY_AGENTIC_SERVICES,
-    // Web reads (web_search/web_fetch) are non-mutating retrospection — a
+    // Web reads (web_search/web_fetch/github_ci_status) are non-mutating retrospection — a
     // Read-Only/Recon seat may reach the live web. networkAccess gates ONLY the
     // web_read tool class (isNetworkAccessBlockedTool); it never touches the
     // file/shell/mcp approval gates, so this is a pure read-capability

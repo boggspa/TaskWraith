@@ -89,7 +89,7 @@ describe('resolveEffectiveRunPermissions', () => {
       expect(resolved.presetId).toBe(presetId)
       expect(resolved.approvalMode).toBe('plan')
       expect(resolved.readOnly).toBe(true)
-      // Web-read allowance (2026-07): web_search/web_fetch are non-mutating and
+      // Web-read allowance (2026-07): web_search/web_fetch/github_ci_status are non-mutating and
       // permitted under Read-Only/Plan for ALL providers. networkAccess gates only
       // the web_read tool class, never file/shell — the write/shell floor below is
       // untouched. The global-deny kill switch and preview-risk models still force

@@ -10,6 +10,7 @@ import {
   executeGetDiagnostics,
   executeGitBlame,
   executeGitCreatePr,
+  executeGithubCiStatus,
   executeGitLog,
   executeGitPush,
   executeGitShow,
@@ -1521,5 +1522,70 @@ describe('git history workspace tools', () => {
         }
       }
     ])
+  })
+
+  it('routes github_ci_status through the shared GitService adapter', async () => {
+    const workspace = resolve('/tmp/taskwraith-workspace-tools')
+    const calls: unknown[] = []
+    const deps = makeDeps(async () => commandResult('should not run host command\n'))
+    deps.gitService = {
+      ciStatus: async (input) => {
+        calls.push(input)
+        return {
+          ok: true,
+          data: {
+            status: 'pending',
+            binding: { branch: 'feature/ci', commitSha: 'abc1234' },
+            checks: [],
+            runs: [],
+            failedLogs: [],
+            localVerification: {
+              recommendedCommands: ['npm run ci'],
+              source: 'package_json'
+            },
+            repairLoop: {
+              repairAttempt: 2,
+              maxRepairPushes: 3,
+              shouldStop: false,
+              requireLocalVerification: true,
+              nextSuggestedAction: 'wait_for_ci'
+            },
+            warnings: []
+          }
+        }
+      }
+    }
+
+    const result = await executeGithubCiStatus(
+      deps,
+      {
+        pr: '42',
+        branch: 'feature/ci',
+        includeFailedLogs: true,
+        repairAttempt: 2,
+        maxRepairPushes: 3
+      },
+      workspace
+    )
+
+    expect(calls).toEqual([
+      {
+        repoPath: workspace,
+        pr: '42',
+        branch: 'feature/ci',
+        commitSha: undefined,
+        includeFailedLogs: true,
+        maxRuns: undefined,
+        maxFailedLogs: undefined,
+        maxLogChars: undefined,
+        repairAttempt: 2,
+        maxRepairPushes: 3
+      }
+    ])
+    expect(result).toMatchObject({
+      ok: true,
+      status: 'pending',
+      repairLoop: { nextSuggestedAction: 'wait_for_ci' }
+    })
   })
 })

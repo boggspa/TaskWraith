@@ -28,6 +28,7 @@ describe('classifyTool', () => {
     expect(classifyTool('read_background_process')).toBe('orchestration')
     expect(classifyTool('web_search')).toBe('web_read')
     expect(classifyTool('web_fetch')).toBe('web_read')
+    expect(classifyTool('github_ci_status')).toBe('web_read')
     expect(classifyTool('ask_user_question')).toBe('ui_elicitation')
     expect(classifyTool('ensemble_yield')).toBe('orchestration')
     expect(classifyTool('provider_usage_status')).toBe('orchestration')
@@ -184,6 +185,7 @@ describe('workspace_write is exactly the read-only deny set', () => {
       'inspect_chat_attachment',
       'web_search',
       'web_fetch',
+      'github_ci_status',
       'git_status',
       'git_diff',
       'git_log',

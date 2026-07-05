@@ -410,6 +410,7 @@ describe('ToolParser', () => {
       expect(getToolDisplayName('delegate_to_subthread', {})).toBe('Delegated to sub-thread')
       expect(getToolDisplayName('git_push', {})).toBe('Git push')
       expect(getToolDisplayName('mcp__TaskWraith__git_create_pr', {})).toBe('Git create PR')
+      expect(getToolDisplayName('github_ci_status', {})).toBe('GitHub CI status')
     })
     it('uses the dictionary through provider namespace prefixes', () => {
       expect(getToolDisplayName('mcp__TaskWraith__delegate_to_subthread', {})).toBe(

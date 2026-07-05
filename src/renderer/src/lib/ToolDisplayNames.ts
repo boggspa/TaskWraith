@@ -43,6 +43,7 @@ export const TOOL_DISPLAY_NAMES: Record<string, string> = {
   git_commit: 'Git commit',
   git_push: 'Git push',
   git_create_pr: 'Git create PR',
+  github_ci_status: 'GitHub CI status',
   git_log: 'Git log',
   git_show: 'Git show',
   git_branch: 'Git branch',

@@ -65,6 +65,7 @@ describe('MCP_AUTO_ALLOWED_TOOLS', () => {
       'ensemble_brief_update',
       'web_search',
       'web_fetch',
+      'github_ci_status',
       'workspace_board_apply_plan',
       ...MCP_APP_STATE_MUTATION_TOOLS
     ]) {
@@ -126,6 +127,7 @@ describe('READ_ONLY_MCP_ADVERTISE_TOOLS', () => {
       'cancel_active_run',
       'web_search',
       'web_fetch',
+      'github_ci_status',
       'workspace_board_apply_plan',
       ...MCP_APP_STATE_MUTATION_TOOLS
     ]) {
@@ -206,6 +208,7 @@ describe('isReadOnlyAdvertisedTool (bridge scope guard)', () => {
       'workspace_board_apply_plan',
       'web_search',
       'web_fetch',
+      'github_ci_status',
       'totally_unknown_future_tool'
     ]) {
       expect(isReadOnlyAdvertisedTool(tool)).toBe(false)

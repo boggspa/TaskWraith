@@ -2823,6 +2823,7 @@ describe('ollamaNativeToolDefinitions', () => {
       'workspace_search',
       'web_search',
       'web_fetch',
+      'github_ci_status',
       'write_file',
       'run_shell_command'
     ]) {
@@ -2840,6 +2841,7 @@ describe('ollamaNativeToolDefinitions', () => {
     expect(names).toContain('read_file')
     expect(names).not.toContain('web_search')
     expect(names).not.toContain('web_fetch')
+    expect(names).not.toContain('github_ci_status')
   })
 
   it('expands with the tier and marks mutating tool intents as required', () => {

@@ -2353,7 +2353,8 @@ const MCP_TOOL_GROUPED_NAMES: Record<McpToolGroup, readonly TaskWraithMcpToolNam
     'git_stage',
     'git_commit',
     'git_push',
-    'git_create_pr'
+    'git_create_pr',
+    'github_ci_status'
   ],
   runtime: [
     'run_shell_command',

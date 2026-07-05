@@ -4,7 +4,7 @@
  *
  *   - workspace_read   non-mutating file / code reads (read_file, grep, …)
  *   - workspace_write  mutating tools (write_file, apply_patch, run_shell, …)
- *   - web_read         read-only network lookups (web_search, web_fetch)
+ *   - web_read         read-only network lookups (web_search, web_fetch, github_ci_status)
  *   - orchestration    non-mutating control / status / focus (status reads,
  *                      ensemble yield, scheduling, open-in-IDE focus changes)
  *   - ui_elicitation   asking the user (ask_user_question)
@@ -115,7 +115,7 @@ const WORKSPACE_READ_TOOLS = new Set<string>([
 
 const UI_ELICITATION_TOOLS = new Set<string>(['ask_user_question'])
 
-const WEB_READ_TOOLS = new Set<string>(['web_search', 'web_fetch'])
+const WEB_READ_TOOLS = new Set<string>(['web_search', 'web_fetch', 'github_ci_status'])
 
 const ORCHESTRATION_TOOLS = new Set<string>([
   'approval_status',

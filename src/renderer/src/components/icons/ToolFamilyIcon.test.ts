@@ -82,6 +82,7 @@ describe('toolNameToFamily', () => {
     expect(toolNameToFamily('git_commit')).toBe('git')
     expect(toolNameToFamily('git_push')).toBe('git')
     expect(toolNameToFamily('git_create_pr')).toBe('git')
+    expect(toolNameToFamily('github_ci_status')).toBe('git')
   })
 
   it('maps shell-execution tools to the shell family', () => {

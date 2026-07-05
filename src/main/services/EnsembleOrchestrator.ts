@@ -1715,6 +1715,7 @@ function getEnsembleToolCategory(toolName: string, toolKind = ''): ToolActivity[
     return 'search'
   if (name === 'run_shell_command' || name === 'shell' || name === 'get_diagnostics') return 'shell'
   if (name === 'git_push' || name === 'git_create_pr') return 'shell'
+  if (name === 'github_ci_status') return 'search'
   return 'unknown'
 }
 
@@ -1771,6 +1772,7 @@ function getEnsembleToolDisplayName(
   if (name === 'get_diagnostics') return 'Checked diagnostics'
   if (name === 'git_push') return 'Git push'
   if (name === 'git_create_pr') return 'Git create PR'
+  if (name === 'github_ci_status') return 'GitHub CI status'
   if (name === 'run_shell_command' || name === 'shell') return 'Shell command'
   return titleCaseToolName(name) || toolName || 'Used tool'
 }

@@ -140,12 +140,14 @@ describe('Ollama role governance (tier retired) — web read matrix', () => {
       expect(perms.networkAccess).toBe('allow')
       expect(isNetworkAccessBlockedTool('web_search', perms, settings)).toBe(false)
       expect(isNetworkAccessBlockedTool('web_fetch', perms, settings)).toBe(false)
+      expect(isNetworkAccessBlockedTool('github_ci_status', perms, settings)).toBe(false)
     }
   })
 
   it('permits web reads on a default/auto_edit run (undefined effectivePermissions)', () => {
     expect(isNetworkAccessBlockedTool('web_search', undefined, settings)).toBe(false)
     expect(isNetworkAccessBlockedTool('web_fetch', undefined, settings)).toBe(false)
+    expect(isNetworkAccessBlockedTool('github_ci_status', undefined, settings)).toBe(false)
   })
 
   it('a global network kill switch still denies web reads even under read_only', () => {
@@ -159,6 +161,7 @@ describe('Ollama role governance (tier retired) — web read matrix', () => {
     // Global 'deny' wins over the preset's 'allow'.
     expect(perms.networkAccess).toBe('deny')
     expect(isNetworkAccessBlockedTool('web_search', perms, denied)).toBe(true)
+    expect(isNetworkAccessBlockedTool('github_ci_status', perms, denied)).toBe(true)
   })
 
   it('a preview-risk model stays offline under read_only regardless of the preset flip', () => {
