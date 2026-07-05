@@ -87,7 +87,11 @@ describe('toolNameToFamily', () => {
 
   it('maps shell-execution tools to the shell family', () => {
     expect(toolNameToFamily('run_shell_command')).toBe('shell')
+    expect(toolNameToFamily('runshellcommand')).toBe('shell')
     expect(toolNameToFamily('shell')).toBe('shell')
+    expect(toolNameToFamily('bash')).toBe('shell')
+    expect(toolNameToFamily('run_terminal_command')).toBe('shell')
+    expect(toolNameToFamily('terminal')).toBe('shell')
     expect(toolNameToFamily('start_background_process')).toBe('shell')
     expect(toolNameToFamily('read_background_process')).toBe('shell')
   })
@@ -98,10 +102,15 @@ describe('toolNameToFamily', () => {
   })
 
   it('maps workspace search/symbols to the search family', () => {
+    expect(toolNameToFamily('grep')).toBe('search')
+    expect(toolNameToFamily('rg')).toBe('search')
+    expect(toolNameToFamily('glob')).toBe('search')
+    expect(toolNameToFamily('grep_search')).toBe('search')
     expect(toolNameToFamily('find_files')).toBe('search')
     expect(toolNameToFamily('findfiles')).toBe('search')
     expect(toolNameToFamily('workspace_search')).toBe('search')
     expect(toolNameToFamily('workspace_symbols')).toBe('search')
+    expect(toolNameToFamily('file_search')).toBe('search')
   })
 
   it('maps task/test tools to the task family', () => {

@@ -259,7 +259,37 @@ export function toolNameToFamily(name: string | undefined | null): ToolFamily | 
   if (normalised.startsWith('ensemble_') || normalised === 'list_ensemble_participants') {
     return 'yield'
   }
-  if (normalised === 'run_shell_command' || normalised === 'shell') return 'shell'
+  if (
+    normalised === 'run_shell_command' ||
+    normalised === 'runshellcommand' ||
+    normalised === 'shell' ||
+    normalised === 'bash' ||
+    normalised === 'run_terminal_command' ||
+    normalised === 'runterminalcommand' ||
+    normalised === 'terminal'
+  ) {
+    return 'shell'
+  }
+  if (
+    normalised === 'grep_search' ||
+    normalised === 'grepsearch' ||
+    normalised === 'glob' ||
+    normalised === 'search' ||
+    normalised === 'grep' ||
+    normalised === 'rg' ||
+    normalised === 'google_web_search' ||
+    normalised === 'googlewebsearch' ||
+    normalised === 'web_search' ||
+    normalised === 'websearch' ||
+    normalised === 'workspace_search' ||
+    normalised === 'file_search' ||
+    normalised === 'tw_recall_find' ||
+    normalised === 'workspace_symbols' ||
+    normalised === 'find_files' ||
+    normalised === 'findfiles'
+  ) {
+    return 'search'
+  }
   if (
     // 1.0.4-AA — handle no-separator variants alongside snake_case
     // canonicals. Kimi + some MCP wrappers strip underscores so
