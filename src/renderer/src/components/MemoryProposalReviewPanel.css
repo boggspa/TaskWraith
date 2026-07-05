@@ -1,0 +1,411 @@
+/* MemoryProposalReviewPanel — Thread Introspection proposal review UI.
+ * Co-located styles mirroring ModelUsageSettingsTable / ApprovalLedgerPanel chrome. */
+
+.memory-proposal-review-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.memory-proposal-review-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.memory-proposal-review-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.memory-proposal-review-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.memory-proposal-review-subtitle {
+  font-size: 11.5px;
+  color: var(--text-tertiary, var(--text-secondary));
+  max-width: 52ch;
+}
+
+.memory-proposal-review-header-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.memory-proposal-review-refresh-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 32px;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--panel-border, var(--surface-border));
+  border-radius: var(--radius-sm, 8px);
+  background: var(--surface-2, var(--panel-elevated-bg));
+  color: var(--text-secondary);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.memory-proposal-review-refresh-button:hover:not(:disabled) {
+  color: var(--text-primary);
+  border-color: color-mix(in srgb, var(--accent, #6b7cff) 35%, var(--panel-border, var(--surface-border)));
+}
+
+.memory-proposal-review-refresh-button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.memory-proposal-review-safety-note {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--accent, #6b7cff) 24%, transparent);
+  background: color-mix(in srgb, var(--accent, #6b7cff) 8%, transparent);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.memory-proposal-review-error {
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: rgba(220, 80, 80, 0.14);
+  color: rgba(255, 200, 200, 0.95);
+}
+
+.memory-proposal-review-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  align-items: flex-end;
+}
+
+.memory-proposal-review-filter-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.memory-proposal-review-filter-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-tertiary, var(--text-secondary));
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.memory-proposal-review-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.memory-proposal-review-chip {
+  border: 1px solid var(--panel-border, var(--surface-border));
+  border-radius: 999px;
+  background: var(--surface-2, var(--panel-elevated-bg));
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+.memory-proposal-review-chip.is-active {
+  color: var(--text-primary);
+  border-color: color-mix(in srgb, var(--accent, #6b7cff) 45%, var(--panel-border, var(--surface-border)));
+  background: color-mix(in srgb, var(--accent, #6b7cff) 14%, transparent);
+}
+
+.memory-proposal-review-search {
+  flex: 1 1 180px;
+  min-width: 160px;
+}
+
+.memory-proposal-review-search input {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--panel-border, var(--surface-border));
+  border-radius: var(--radius-sm, 8px);
+  background: var(--surface-2, var(--panel-elevated-bg));
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+  padding: 7px 10px;
+}
+
+.memory-proposal-review-pack-picker {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.memory-proposal-review-pack-picker select {
+  min-width: 220px;
+  border: 1px solid var(--panel-border, var(--surface-border));
+  border-radius: var(--radius-sm, 8px);
+  background: var(--surface-2, var(--panel-elevated-bg));
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+  padding: 7px 10px;
+}
+
+.memory-proposal-review-pack-meta {
+  font-size: 11.5px;
+  color: var(--text-tertiary, var(--text-secondary));
+}
+
+.memory-proposal-review-empty {
+  padding: 18px 14px;
+  border-radius: 10px;
+  border: 1px dashed color-mix(in srgb, var(--panel-border) 80%, transparent);
+  color: var(--text-secondary);
+  font-size: 12.5px;
+}
+
+.memory-proposal-review-table-wrap {
+  overflow: auto;
+  border: 1px solid var(--panel-border, var(--surface-border));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--panel-elevated-bg, var(--surface-1)) 55%, transparent);
+}
+
+.memory-proposal-review-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.memory-proposal-review-table th,
+.memory-proposal-review-table td {
+  padding: 10px 12px;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid color-mix(in srgb, var(--panel-border) 65%, transparent);
+}
+
+.memory-proposal-review-table th {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-tertiary, var(--text-secondary));
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: color-mix(in srgb, var(--surface-2, var(--panel-elevated-bg)) 80%, transparent);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.memory-proposal-review-row {
+  cursor: pointer;
+}
+
+.memory-proposal-review-row:hover td {
+  background: color-mix(in srgb, var(--accent, #6b7cff) 6%, transparent);
+}
+
+.memory-proposal-review-row.is-expanded td {
+  background: color-mix(in srgb, var(--accent, #6b7cff) 10%, transparent);
+}
+
+.memory-proposal-review-lesson {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.memory-proposal-review-detail-row td {
+  padding-top: 0;
+  border-bottom-width: 2px;
+}
+
+.memory-proposal-review-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 4px 0 10px;
+}
+
+.memory-proposal-review-detail-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.memory-proposal-review-detail-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-tertiary, var(--text-secondary));
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.memory-proposal-review-evidence-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.memory-proposal-review-evidence-item {
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--panel-border) 70%, transparent);
+  background: color-mix(in srgb, var(--surface-2, var(--panel-elevated-bg)) 70%, transparent);
+  font-size: 11.5px;
+  color: var(--text-secondary);
+}
+
+.memory-proposal-review-evidence-summary {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.memory-proposal-review-evidence-meta {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--text-tertiary, var(--text-secondary));
+}
+
+.memory-proposal-review-diff {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--panel-border) 70%, transparent);
+  background: color-mix(in srgb, var(--surface-2, var(--panel-elevated-bg)) 85%, transparent);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 240px;
+  overflow: auto;
+}
+
+.memory-proposal-review-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.memory-proposal-review-action-button {
+  border-radius: 8px;
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+
+.memory-proposal-review-action-button--approve {
+  border: 1px solid color-mix(in srgb, var(--success, #3ecf8e) 45%, transparent);
+  background: color-mix(in srgb, var(--success, #3ecf8e) 14%, transparent);
+  color: color-mix(in srgb, var(--success, #3ecf8e) 92%, var(--text-primary));
+}
+
+.memory-proposal-review-action-button--reject {
+  border: 1px solid color-mix(in srgb, var(--danger, #e2554f) 45%, transparent);
+  background: color-mix(in srgb, var(--danger, #e2554f) 12%, transparent);
+  color: color-mix(in srgb, var(--danger, #e2554f) 92%, var(--text-primary));
+}
+
+.memory-proposal-review-action-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.memory-proposal-review-action-hint {
+  font-size: 11px;
+  color: var(--text-tertiary, var(--text-secondary));
+}
+
+.memory-proposal-kind,
+.memory-proposal-scope,
+.memory-proposal-status,
+.memory-proposal-confidence {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 1.3;
+  white-space: nowrap;
+}
+
+.memory-proposal-kind {
+  border: 1px solid color-mix(in srgb, var(--accent, #6b7cff) 30%, transparent);
+  background: color-mix(in srgb, var(--accent, #6b7cff) 10%, transparent);
+  color: var(--text-primary);
+}
+
+.memory-proposal-kind--skill-patch {
+  border-color: color-mix(in srgb, #c77dff 35%, transparent);
+  background: color-mix(in srgb, #c77dff 12%, transparent);
+}
+
+.memory-proposal-kind--bug {
+  border-color: color-mix(in srgb, var(--danger, #e2554f) 35%, transparent);
+  background: color-mix(in srgb, var(--danger, #e2554f) 12%, transparent);
+}
+
+.memory-proposal-scope {
+  border: 1px solid color-mix(in srgb, var(--panel-border) 80%, transparent);
+  background: color-mix(in srgb, var(--surface-2, var(--panel-elevated-bg)) 80%, transparent);
+  color: var(--text-secondary);
+}
+
+.memory-proposal-status--proposed {
+  border-color: color-mix(in srgb, #f5a623 40%, transparent);
+  background: color-mix(in srgb, #f5a623 14%, transparent);
+  color: color-mix(in srgb, #f5a623 90%, var(--text-primary));
+}
+
+.memory-proposal-status--approved,
+.memory-proposal-status--applied {
+  border-color: color-mix(in srgb, var(--success, #3ecf8e) 40%, transparent);
+  background: color-mix(in srgb, var(--success, #3ecf8e) 14%, transparent);
+  color: color-mix(in srgb, var(--success, #3ecf8e) 90%, var(--text-primary));
+}
+
+.memory-proposal-status--rejected,
+.memory-proposal-status--expired {
+  border-color: color-mix(in srgb, var(--danger, #e2554f) 40%, transparent);
+  background: color-mix(in srgb, var(--danger, #e2554f) 12%, transparent);
+  color: color-mix(in srgb, var(--danger, #e2554f) 90%, var(--text-primary));
+}
+
+.memory-proposal-status--superseded {
+  border-color: color-mix(in srgb, var(--panel-border) 80%, transparent);
+  background: color-mix(in srgb, var(--surface-2, var(--panel-elevated-bg)) 80%, transparent);
+  color: var(--text-tertiary, var(--text-secondary));
+}
+
+.memory-proposal-confidence--high {
+  color: color-mix(in srgb, var(--success, #3ecf8e) 90%, var(--text-primary));
+}
+
+.memory-proposal-confidence--medium {
+  color: color-mix(in srgb, #f5a623 90%, var(--text-primary));
+}
+
+.memory-proposal-confidence--low {
+  color: color-mix(in srgb, var(--danger, #e2554f) 90%, var(--text-primary));
+}

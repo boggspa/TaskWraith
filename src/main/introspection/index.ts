@@ -20,3 +20,23 @@ export {
   type EvidenceSignalClassification,
   type GenerateProposalsOptions
 } from './IntrospectionProposalGenerator'
+
+export {
+  chatTouchesWindow,
+  harvestIntrospectionEvidence,
+  isTimestampInWindow,
+  timestampMs,
+  type HarvestEvidenceOptions,
+  type IntrospectionHarvestSubstrate,
+  type IntrospectionHarvestWindow
+} from './IntrospectionEvidenceHarvester'
+
+export {
+  createIntrospectionRunServiceDeps,
+  loadIntrospectionSubstrate,
+  runManualIntrospection,
+  type IntrospectionRunServiceDeps,
+  type IntrospectionRunServiceStore,
+  type RunManualIntrospectionInput,
+  type RunManualIntrospectionResult
+} from './IntrospectionRunService'

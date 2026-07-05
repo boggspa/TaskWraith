@@ -4351,11 +4351,15 @@ export interface IntrospectionEvidenceItem {
   signal: string
   chatId: string
   runId?: string
+  messageId?: string
+  eventId?: string
   provider?: ProviderId
   workspaceId?: string
   timestamp: string
   summary: string
   detail?: string
+  /** Recall-style token (⟦recall:…⟧) when citation metadata is available. */
+  citationToken?: string
 }
 
 export interface MemoryProposal {

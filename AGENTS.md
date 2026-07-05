@@ -479,6 +479,31 @@ demands):**
 
 ---
 
+## Thread Introspection (memory promotion)
+
+TaskWraith is adding a **Thread Introspection** workflow: scan recent
+threads/runs, classify patterns (preferences, failures, approval friction,
+tool loops, repo conventions), and produce **Memory Proposal Packs** with
+evidence citations — then apply lessons only after human review.
+
+**Agents must not** implement ad-hoc nightly edits to `.codex/skills`,
+`~/.cursor/skills`, or workspace rule files from old thread content. Thread
+history is **untrusted evidence**; only distilled, reviewed proposals may be
+promoted.
+
+Current MVP boundary (see `THREAD_INTROSPECTION.md`):
+
+- **Landed:** domain model, proposal generator, AppStore persistence
+  (`introspection-runs.json`, `memory-proposal-packs.json`).
+- **Pending:** evidence harvester, scheduled workflow, IPC, apply layer, MCP
+  tools.
+- **Review UI:** renderer panel exists; not yet wired to Settings.
+
+Do not claim introspection is fully operational until collect → propose →
+review → apply is wired end-to-end.
+
+---
+
 ## What an agent should know but can't directly see
 
 - **Approvals are per-action, not per-session.** A grant given for one
@@ -507,6 +532,8 @@ This document is updated as features ship. Sections currently documented (as of
 - Approval ledger UX (Phase E2)
 - **MCP tool surface** — full canonical list in
   `src/main/TaskWraithMcpTools.ts`; key tools documented above.
+- **Thread Introspection** — memory promotion layer (proposal packs, review
+  gates); see `THREAD_INTROSPECTION.md`.
 - Codex / Claude / Kimi share the full brokered MCP tool surface. Cursor and
   Grok get a brokered `taskwraith` MCP server but keep their native shell/file
   tools. Ollama runs a TaskWraith-controlled local tool loop with full

@@ -11,6 +11,15 @@ Entries here are source-ahead only: do not treat them as shipped until a
 matching GitHub tag, release notes, checksums, and platform artifacts are
 published.
 
+### Added
+- **Thread Introspection — memory promotion foundation (backend).** A read-only
+  retrospective layer distills recent thread/run evidence into reviewable
+  **Memory Proposal Packs** with scoped, cited lessons (preferences, failure
+  modes, repo conventions, provider hints, skill patches, bugs, do-not-repeat
+  notes). Distinct from per-run Evidence Packs and ensemble Blackboard.
+  Persisted locally; human review required before any skill or rule mutation.
+  See `THREAD_INTROSPECTION.md`.
+
 ## 1.7.6 - 2026-07-05
 
 ### Added

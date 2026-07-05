@@ -176,9 +176,12 @@ export function normalizeIntrospectionEvidenceItem(value: unknown): Introspectio
     timestamp,
     summary,
     ...(text(input.runId, 120) ? { runId: text(input.runId, 120) } : {}),
+    ...(text(input.messageId, 120) ? { messageId: text(input.messageId, 120) } : {}),
+    ...(text(input.eventId, 120) ? { eventId: text(input.eventId, 120) } : {}),
     ...(provider(input.provider) ? { provider: provider(input.provider) } : {}),
     ...(text(input.workspaceId, 120) ? { workspaceId: text(input.workspaceId, 120) } : {}),
-    ...(text(input.detail, MAX_TEXT) ? { detail: text(input.detail, MAX_TEXT) } : {})
+    ...(text(input.detail, MAX_TEXT) ? { detail: text(input.detail, MAX_TEXT) } : {}),
+    ...(text(input.citationToken, 160) ? { citationToken: text(input.citationToken, 160) } : {})
   }
 }
 
@@ -343,6 +346,9 @@ export function evidenceItemToRef(item: IntrospectionEvidenceItem): Introspectio
     runId: item.runId,
     timestamp: item.timestamp,
     summary: item.summary,
+    ...(item.messageId ? { messageId: item.messageId } : {}),
+    ...(item.eventId ? { eventId: item.eventId } : {}),
+    ...(item.citationToken ? { citationToken: item.citationToken } : {}),
     ...(item.detail ? { quote: item.detail.slice(0, MAX_QUOTE) } : {})
   }
 }

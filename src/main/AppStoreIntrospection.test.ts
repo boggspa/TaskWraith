@@ -2,6 +2,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import fs from 'fs'
 import { AppStore } from './store'
 import { buildMemoryProposalPackInput } from './introspection/IntrospectionProposalGenerator'
+import {
+  createIntrospectionRunServiceDeps,
+  runManualIntrospection
+} from './introspection/IntrospectionRunService'
 import type { IntrospectionEvidenceItem } from './store/types'
 
 const userDataPath = vi.hoisted(() => `/tmp/taskwraith-introspection-test-${process.pid}`)
@@ -75,6 +79,70 @@ describe('AppStore thread introspection', () => {
       proposalPackId: pack.id
     })
     expect(AppStore.getIntrospectionRun(run.id)?.proposalPackId).toBe(pack.id)
+  })
+
+  it('runs manual introspection from persisted substrate', () => {
+    AppStore.saveChat({
+      appChatId: 'chat-intro',
+      title: 'Intro chat',
+      workspaceId: 'ws-1',
+      workspacePath: '/repo',
+      provider: 'cursor',
+      createdAt: Date.parse('2026-07-04T00:00:00.000Z'),
+      updatedAt: Date.parse('2026-07-05T12:00:00.000Z'),
+      archived: false,
+      messages: [
+        {
+          id: 'msg-a',
+          role: 'assistant',
+          content: 'Done.',
+          timestamp: '2026-07-05T11:59:00.000Z'
+        },
+        {
+          id: 'msg-u',
+          role: 'user',
+          content: 'No — do not run repo-wide Prettier.',
+          timestamp: '2026-07-05T12:00:00.000Z'
+        }
+      ],
+      runs: []
+    })
+
+    AppStore.appendRunEvent({
+      runId: 'run-intro',
+      chatId: 'chat-intro',
+      workspaceId: 'ws-1',
+      kind: 'approval_response',
+      phase: 'control',
+      source: 'main',
+      summary: 'Approval response: decline',
+      payload: { requestId: 'apr-intro', action: 'decline' }
+    })
+
+    const result = runManualIntrospection(
+      createIntrospectionRunServiceDeps({
+        getChats: (workspaceId) => AppStore.getChats(workspaceId),
+        getRunEvents: (filter) => AppStore.getRunEvents(filter),
+        getApprovalLedger: (filter) => AppStore.getApprovalLedger(filter),
+        getMessageFeedbackReceipts: (filter) => AppStore.getMessageFeedbackReceipts(filter),
+        createIntrospectionRun: (record) => AppStore.createIntrospectionRun(record),
+        updateIntrospectionRun: (id, partial) => AppStore.updateIntrospectionRun(id, partial),
+        saveMemoryProposalPack: (pack) => AppStore.saveMemoryProposalPack(pack)
+      }),
+      {
+        windowStart: '2026-07-05T00:00:00.000Z',
+        windowEnd: '2026-07-05T23:59:59.999Z',
+        workspaceId: 'ws-1',
+        workspacePath: '/repo'
+      }
+    )
+
+    expect(result.evidenceCount).toBeGreaterThanOrEqual(2)
+    expect(result.proposalCount).toBeGreaterThanOrEqual(1)
+    expect(AppStore.getIntrospectionRun(result.run.id)?.proposalPackId).toBe(result.pack.id)
+    expect(AppStore.getMemoryProposalPack(result.pack.id)?.proposals.length).toBe(
+      result.proposalCount
+    )
   })
 
   it('filters by workspace', () => {
