@@ -149,6 +149,9 @@ public final class RemoteSessionModel: ObservableObject {
     /// Allowlist-visible workspaces (the compose surface). Empty until the Mac
     /// has at least one entry in Settings → Devices → workspace access.
     @Published public private(set) var workspaces: [WorkspaceSummary] = []
+    /// Task-card ids currently synthesized from `bridge.broadcastThreadList`.
+    /// Cleared when an authoritative projection snapshot replaces them.
+    private var fallbackThreadListCardIds: Set<String> = []
     /// Scheduled / recurring workflows projected from the Mac (sidebar
     /// "Workflows" section). Read-only on the phone — tapping opens the
     /// workflow's chat. One `workflows` envelope per workflow, like `taskCard`.
@@ -2200,6 +2203,13 @@ public final class RemoteSessionModel: ObservableObject {
                 workspaces = message.workspaces
             }
             if !message.workspaces.isEmpty { projectionHydrated = true }
+        case "bridge.broadcastThreadList":
+            guard let message = try? JSONDecoder().decode(ThreadListMessage.self, from: params)
+            else {
+                print("[tw] DECODE FAILED: thread list")
+                return
+            }
+            applyThreadList(message)
         case "bridge.broadcastModelUsage":
             guard let message = try? JSONDecoder().decode(ModelUsageMessage.self, from: params)
             else {
@@ -3805,6 +3815,22 @@ public final class RemoteSessionModel: ObservableObject {
         }
     }
 
+    private func applyThreadList(_ message: ThreadListMessage) {
+        if message.threads.isEmpty, !taskCards.isEmpty {
+            print("[tw] ignoring empty thread list (have \(taskCards.count) cards)")
+            return
+        }
+        let merged = ThreadListFallback.mergeTaskCards(
+            existing: taskCards,
+            fallbackCardIds: fallbackThreadListCardIds,
+            threads: message.threads)
+        taskCards = merged.cards
+        fallbackThreadListCardIds = merged.fallbackCardIds
+        if !merged.cards.isEmpty {
+            projectionHydrated = true
+        }
+    }
+
     private func applySnapshot(_ snapshot: RemoteProjectionSnapshot) {
         var tasks: [RemoteTaskCard] = []
         var approvalCards: [MobileApprovalCard] = []
@@ -3883,6 +3909,9 @@ public final class RemoteSessionModel: ObservableObject {
             print("[tw] ignoring empty snapshot (have \(taskCards.count) cards)")
         } else {
             taskCards = tasks
+            if !tasks.isEmpty {
+                fallbackThreadListCardIds.removeAll()
+            }
         }
         // Non-destructive empty guard for workflows — but only treat an empty
         // workflow set as "settling" when the WHOLE snapshot is empty (no task
