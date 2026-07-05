@@ -104,6 +104,7 @@ export const MCP_AUTO_ALLOWED_TOOLS = new Set<TaskWraithMcpToolName>([
   'canvas_status',
   'canvas_snapshot',
   'canvas_inspect',
+  'canvas_sketch_get',
   'canvas_network',
   'canvas_console'
 ])
@@ -158,7 +159,11 @@ export function isReadOnlyAdvertisedTool(name: string): boolean {
  */
 export const PLAN_INSTRUMENT_ADVERTISE_TOOLS: ReadonlyArray<TaskWraithMcpToolName> = Object.freeze(
   TASKWRAITH_MCP_TOOLS.filter(
-    (tool) => tool === 'canvas_click' || tool === 'canvas_fill' || MEDIA_EDITING_TOOLS.has(tool)
+    (tool) =>
+      tool === 'canvas_click' ||
+      tool === 'canvas_fill' ||
+      tool === 'canvas_sketch_update' ||
+      MEDIA_EDITING_TOOLS.has(tool)
   )
 )
 

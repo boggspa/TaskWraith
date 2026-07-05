@@ -93,9 +93,11 @@ describe('taskWraithToolServiceIfKnown', () => {
 })
 
 describe('taskWraithToolAgenticService — canvas interaction bucket', () => {
-  it('routes canvas_click/canvas_fill to canvasInteraction, leaves reads on mcpTools', () => {
+  it('routes canvas app/sketch mutations to canvasInteraction, leaves reads on mcpTools', () => {
     expect(taskWraithToolAgenticService('canvas_click')).toBe('canvasInteraction')
     expect(taskWraithToolAgenticService('canvas_fill')).toBe('canvasInteraction')
+    expect(taskWraithToolAgenticService('canvas_sketch_update')).toBe('canvasInteraction')
+    expect(taskWraithToolAgenticService('canvas_sketch_get')).toBe('mcpTools')
     expect(taskWraithToolAgenticService('canvas_snapshot')).toBe('mcpTools')
     expect(taskWraithToolAgenticService('canvas_open_launch')).toBe('mcpTools')
   })

@@ -473,6 +473,16 @@ const api = {
         }
       | { ok: false; error: string }
     > => ipcRenderer.invoke('canvas:open-embedded', args),
+    openSketchWindow: (): Promise<
+      | {
+          ok: true
+          canvasId: string
+          url: string
+          title: string
+          viewport: { width: number; height: number }
+        }
+      | { ok: false; error: string }
+    > => ipcRenderer.invoke('canvas:open-sketch-window'),
     setBounds: (
       canvasId: string,
       rect: { x: number; y: number; width: number; height: number }

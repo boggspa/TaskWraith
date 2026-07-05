@@ -4,15 +4,22 @@ import {
   createCanvasToolExecutors,
   isCanvasMcpToolName
 } from './CanvasToolExecutors'
-import type { CanvasController } from '../canvas/canvasTypes'
+import type { CanvasController, CanvasSketchDocument } from '../canvas/canvasTypes'
 import type { LaunchAttempt } from '../launch/types'
 
 function fakeController(over: Partial<CanvasController> = {}): CanvasController {
+  const sketchDoc: CanvasSketchDocument = {
+    schemaVersion: 1,
+    title: 'Sketch Canvas',
+    viewport: { width: 1280, height: 800 },
+    elements: [],
+    updatedAt: 'x'
+  }
   return {
     open: async (input) => ({
       canvasId: 'c1',
-      url: input.url || '',
-      title: 'T',
+      url: input.driver === 'sketch' ? 'sketch://c1' : input.url || '',
+      title: input.driver === 'sketch' ? 'Sketch Canvas' : 'T',
       viewport: { width: 1280, height: 800 }
     }),
     list: () => [],
@@ -66,6 +73,18 @@ function fakeController(over: Partial<CanvasController> = {}): CanvasController 
       marks,
       author: 'agent',
       createdAt: 'x'
+    }),
+    sketchDocument: async () => sketchDoc,
+    sketchUpdate: async (_id, update) => ({
+      ...sketchDoc,
+      title: update.title || sketchDoc.title,
+      elements:
+        update.mode === 'replace'
+          ? update.elements || []
+          : update.mode === 'clear'
+            ? []
+            : [...sketchDoc.elements, ...(update.elements || [])],
+      updatedAt: 'x2'
     }),
     evaluate: async (_id, args) => ({
       ok: true,
@@ -442,6 +461,75 @@ describe('executeCanvasTool', () => {
       device: { udid: 'AAAAAAAA-1111-2222-3333-444444444444' },
       viewport: { width: 1280, height: 800 }
     })
+  })
+
+  it('canvas_sketch_open opens a sketch-driver canvas and returns the document', async () => {
+    let seen: unknown = null
+    const controller = fakeController({
+      open: async (input) => {
+        seen = input
+        return {
+          canvasId: 'sk1',
+          url: 'sketch://sk1',
+          title: 'Sketch Canvas',
+          viewport: { width: 900, height: 700 }
+        }
+      },
+      sketchDocument: async () => ({
+        schemaVersion: 1,
+        title: 'Sketch Canvas',
+        viewport: { width: 900, height: 700 },
+        elements: [],
+        updatedAt: 'x'
+      })
+    })
+    const { executeCanvasTool } = createCanvasToolExecutors({ controller })
+    const result = await executeCanvasTool(
+      'canvas_sketch_open',
+      { width: 900, height: 700 },
+      ctx,
+      'claude'
+    )
+    expect(result.isError).toBeFalsy()
+    expect(seen).toMatchObject({ driver: 'sketch', viewport: { width: 900, height: 700 } })
+    expect(result.structuredContent?.canvasId).toBe('sk1')
+    expect(result.structuredContent?.document).toMatchObject({ title: 'Sketch Canvas' })
+  })
+
+  it('canvas_sketch_update routes structured primitives and rejects empty edits', async () => {
+    let seen: unknown = null
+    const controller = fakeController({
+      sketchUpdate: async (_id, update) => {
+        seen = update
+        return {
+          schemaVersion: 1,
+          title: 'Flow',
+          viewport: { width: 1280, height: 800 },
+          elements: update.elements || [],
+          updatedAt: 'x'
+        }
+      }
+    })
+    const { executeCanvasTool } = createCanvasToolExecutors({ controller })
+    const empty = await executeCanvasTool('canvas_sketch_update', { canvasId: 'c1' }, ctx, 'claude')
+    expect(empty.isError).toBe(true)
+    const result = await executeCanvasTool(
+      'canvas_sketch_update',
+      {
+        canvasId: 'c1',
+        title: 'Flow',
+        elements: [{ kind: 'arrow', id: 'a1', x1: 10, y1: 20, x2: 200, y2: 80 }]
+      },
+      ctx,
+      'claude'
+    )
+    expect(result.isError).toBeFalsy()
+    expect(seen).toEqual({
+      mode: 'append',
+      title: 'Flow',
+      elements: [{ kind: 'arrow', id: 'a1', x1: 10, y1: 20, x2: 200, y2: 80 }]
+    })
+    expect(result.structuredContent?.elementCount).toBe(1)
   })
 
   it('canvas_screenshot returns an image block and keeps base64 out of structuredContent', async () => {

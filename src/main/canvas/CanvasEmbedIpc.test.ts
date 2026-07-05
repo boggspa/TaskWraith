@@ -44,6 +44,7 @@ describe('registerCanvasEmbedIpc', () => {
     for (const ch of [
       'canvas:open-window',
       'canvas:open-embedded',
+      'canvas:open-sketch-window',
       'canvas:set-bounds',
       'canvas:set-visible',
       'canvas:close',
@@ -77,6 +78,16 @@ describe('registerCanvasEmbedIpc', () => {
     })
     const openCall = deps.calls.find((c) => c[0] === 'open')!
     expect(openCall[1][0]).toMatchObject({ driver: 'web', embed: true, url: 'http://localhost:3000' })
+  })
+
+  it('open-sketch-window opens a standalone sketch canvas', async () => {
+    const ipc = fakeIpc()
+    const deps = fakeDeps()
+    registerCanvasEmbedIpc(ipc.ipcMain, deps)
+    const result = await ipc.invoke('canvas:open-sketch-window')
+    expect(result).toMatchObject({ ok: true, canvasId: 'c1' })
+    const openCall = deps.calls.find((c) => c[0] === 'open')!
+    expect(openCall[1][0]).toEqual({ driver: 'sketch' })
   })
 
   it('open-embedded returns { ok:false, error } instead of throwing on a failed open', async () => {

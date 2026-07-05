@@ -12,7 +12,13 @@
  * close) flow through the host approval gate like browser_open.
  */
 import type { McpToolContentBlock, McpToolExecutionResult } from './McpBridgeRuntime'
-import type { CanvasCallContext, CanvasController, CanvasMark } from '../canvas/canvasTypes'
+import type {
+  CanvasCallContext,
+  CanvasController,
+  CanvasMark,
+  CanvasSketchElement,
+  CanvasSketchUpdateInput
+} from '../canvas/canvasTypes'
 import {
   resolveViewport,
   validateCanvasHtml,
@@ -26,6 +32,9 @@ export const CANVAS_MCP_TOOL_NAMES = [
   'canvas_render_html',
   'canvas_open_attachment',
   'canvas_open_launch',
+  'canvas_sketch_open',
+  'canvas_sketch_get',
+  'canvas_sketch_update',
   'canvas_list',
   'canvas_status',
   'canvas_snapshot',
@@ -120,6 +129,34 @@ function parseMarks(value: unknown): CanvasMark[] {
     if (mark.ref || mark.bbox) marks.push(mark)
   }
   return marks
+}
+
+function parseSketchElements(value: unknown): CanvasSketchElement[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is CanvasSketchElement => Boolean(item) && typeof item === 'object')
+        .filter((item) =>
+          ['rect', 'ellipse', 'line', 'arrow', 'text', 'path'].includes(
+            String((item as { kind?: unknown }).kind || '')
+          )
+        )
+    : []
+}
+
+function parseSketchUpdate(args: Record<string, unknown>): CanvasSketchUpdateInput {
+  const rawMode = asOptString(args.mode)
+  const mode =
+    rawMode === 'replace' || rawMode === 'clear' || rawMode === 'delete'
+      ? rawMode
+      : 'append'
+  const update: CanvasSketchUpdateInput = { mode }
+  const title = asOptString(args.title)
+  if (title) update.title = title
+  if (mode === 'delete') {
+    update.elementIds = asStringArray(args.elementIds)
+  } else if (mode !== 'clear') {
+    update.elements = parseSketchElements(args.elements)
+  }
+  return update
 }
 
 function jsonResult(
@@ -393,6 +430,46 @@ export function createCanvasToolExecutors(deps: CanvasToolExecutorDeps): CanvasT
             },
             [{ type: 'image', mimeType: frame.mimeType, data: frame.data }]
           )
+        }
+        case 'canvas_sketch_open': {
+          const viewport = resolveViewport({ width: args.width, height: args.height })
+          const opened = await controller.open({ driver: 'sketch', viewport }, ctx)
+          const document = await controller.sketchDocument(opened.canvasId, ctx)
+          return jsonResult({
+            ok: true,
+            tool: toolName,
+            canvasId: opened.canvasId,
+            url: opened.url,
+            title: opened.title,
+            viewport: opened.viewport,
+            document
+          })
+        }
+        case 'canvas_sketch_get': {
+          const document = await controller.sketchDocument(needsId(), ctx)
+          return jsonResult({ ok: true, tool: toolName, canvasId, document })
+        }
+        case 'canvas_sketch_update': {
+          const update = parseSketchUpdate(args)
+          if (update.mode === 'delete' && (!update.elementIds || update.elementIds.length === 0)) {
+            return fail(toolName, '`elementIds` is required when mode is "delete".')
+          }
+          if (
+            (update.mode === 'append' || update.mode === 'replace') &&
+            (!update.elements || update.elements.length === 0) &&
+            !update.title
+          ) {
+            return fail(toolName, '`elements` or `title` is required for sketch updates.')
+          }
+          const document = await controller.sketchUpdate(needsId(), update, ctx)
+          return jsonResult({
+            ok: true,
+            tool: toolName,
+            canvasId,
+            mode: update.mode,
+            elementCount: document.elements.length,
+            document
+          })
         }
         case 'canvas_list': {
           return jsonResult({ ok: true, tool: toolName, sessions: controller.list(ctx) })

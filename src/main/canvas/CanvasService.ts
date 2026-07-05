@@ -34,6 +34,8 @@ import type {
   CanvasSessionHandle,
   CanvasSessionRecord,
   CanvasSessionSummary,
+  CanvasSketchDocument,
+  CanvasSketchUpdateInput,
   CanvasViewport
 } from './canvasTypes'
 import {
@@ -73,6 +75,7 @@ const SUPPORTED_DRIVERS: ReadonlySet<CanvasDriverKind> = new Set([
   'web',
   'html',
   'image',
+  'sketch',
   'device'
 ])
 // Defence-in-depth cap so a hijacked agent (or a session-granted approval)
@@ -184,6 +187,9 @@ export class CanvasService implements CanvasController {
       if (!verdict.ok) throw new Error(verdict.reason || 'Invalid image attachment.')
       // The content hash IS the safe, secret-free id for the audit record.
       recordUrl = `image://${sha256}`
+      eventHost = undefined
+    } else if (driverKind === 'sketch') {
+      recordUrl = 'sketch://new'
       eventHost = undefined
     } else {
       const verdict = validateCanvasUrl((input.url || '').trim(), input.originAllowlist ?? [])
@@ -408,6 +414,35 @@ export class CanvasService implements CanvasController {
     this.deps.store.appendAnnotation(annotation)
     this.emit(canvasId, 'annotation', ctx, { annotationId: annotation.id, count: marks.length })
     return annotation
+  }
+
+  async sketchDocument(canvasId: string, ctx: CanvasCallContext): Promise<CanvasSketchDocument> {
+    const { driver } = this.require(canvasId, ctx)
+    const document = await driver.sketchDocument()
+    this.emit(canvasId, 'sketch.read', ctx, { elementCount: document.elements.length })
+    return document
+  }
+
+  async sketchUpdate(
+    canvasId: string,
+    update: CanvasSketchUpdateInput,
+    ctx: CanvasCallContext
+  ): Promise<CanvasSketchDocument> {
+    const session = this.require(canvasId, ctx)
+    this.chargeInteraction(session)
+    const document = await session.driver.sketchUpdate(update)
+    session.record = {
+      ...session.record,
+      title: document.title || session.record.title,
+      viewport: document.viewport,
+      updatedAt: this.deps.now()
+    }
+    this.deps.store.upsertSession(session.record)
+    this.emit(canvasId, 'sketch.update', ctx, {
+      mode: update.mode ?? 'append',
+      elementCount: document.elements.length
+    })
+    return document
   }
 
   async evaluate(

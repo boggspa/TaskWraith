@@ -3011,6 +3011,95 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
       }
     },
     {
+      name: 'canvas_sketch_open',
+      description:
+        'Open a bidirectional Sketch Canvas for quick visual communication between the human and agent. It is a lightweight drawing surface for rectangles, ellipses, lines/arrows, freehand paths, SVG-style path data, and text. Use canvas_sketch_update to add/replace/delete structured primitives and canvas_sketch_get to read what the human drew. Gated like canvas_open.',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          width: { type: 'number', description: 'Viewport width in CSS pixels (default 1280).' },
+          height: { type: 'number', description: 'Viewport height in CSS pixels (default 800).' }
+        }
+      }
+    },
+    {
+      name: 'canvas_sketch_get',
+      description:
+        'Return the current Sketch Canvas document: title, viewport, and structured shape/text/path elements. Read-only; use this after the human sketches or after canvas_sketch_update.',
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: { canvasId: { type: 'string' } },
+        required: ['canvasId']
+      }
+    },
+    {
+      name: 'canvas_sketch_update',
+      description:
+        'Edit a Sketch Canvas using structured primitives, not arbitrary JavaScript. Modes: append (default) adds elements, replace swaps the whole element list, clear removes all elements, delete removes ids. Element kinds: rect/ellipse with x,y,width,height; line/arrow with x1,y1,x2,y2; path with points or SVG path `d`; text with x,y,text,fontSize. Supports fill, stroke, strokeWidth, opacity. Gated via canvasInteraction and denied under read-only.',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          canvasId: { type: 'string' },
+          mode: { type: 'string', enum: ['append', 'replace', 'clear', 'delete'] },
+          title: { type: 'string' },
+          elementIds: { type: 'array', items: { type: 'string' } },
+          elements: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                id: { type: 'string' },
+                kind: { type: 'string', enum: ['rect', 'ellipse', 'line', 'arrow', 'text', 'path'] },
+                x: { type: 'number' },
+                y: { type: 'number' },
+                width: { type: 'number' },
+                height: { type: 'number' },
+                x1: { type: 'number' },
+                y1: { type: 'number' },
+                x2: { type: 'number' },
+                y2: { type: 'number' },
+                points: {
+                  type: 'array',
+                  items: {
+                    type: 'object',
+                    properties: { x: { type: 'number' }, y: { type: 'number' } },
+                    required: ['x', 'y']
+                  }
+                },
+                d: { type: 'string' },
+                text: { type: 'string' },
+                fill: { type: 'string' },
+                stroke: { type: 'string' },
+                strokeWidth: { type: 'number' },
+                fontSize: { type: 'number' },
+                opacity: { type: 'number' }
+              },
+              required: ['kind']
+            }
+          }
+        },
+        required: ['canvasId']
+      }
+    },
+    {
       name: 'canvas_list',
       description:
         'List currently open Canvas sessions (canvasId, driver, url, status). Read-only; carries no pixels.',

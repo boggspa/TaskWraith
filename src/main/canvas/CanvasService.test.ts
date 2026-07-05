@@ -18,6 +18,8 @@ import type {
   CanvasNetworkEntry,
   CanvasOpenInput,
   CanvasSessionHandle,
+  CanvasSketchDocument,
+  CanvasSketchUpdateInput,
   CanvasViewport
 } from './canvasTypes'
 
@@ -81,6 +83,30 @@ class FakeDriver implements CanvasDriver {
   }
   async annotate(marks: CanvasMark[]): Promise<{ count: number }> {
     return { count: marks.length }
+  }
+  sketchDoc: CanvasSketchDocument = {
+    schemaVersion: 1,
+    title: 'Sketch Canvas',
+    viewport: { width: 1280, height: 800 },
+    elements: [],
+    updatedAt: 'x'
+  }
+  async sketchDocument(): Promise<CanvasSketchDocument> {
+    return this.sketchDoc
+  }
+  async sketchUpdate(update: CanvasSketchUpdateInput): Promise<CanvasSketchDocument> {
+    this.sketchDoc = {
+      ...this.sketchDoc,
+      title: update.title || this.sketchDoc.title,
+      elements:
+        update.mode === 'clear'
+          ? []
+          : update.mode === 'replace'
+            ? update.elements || []
+            : [...this.sketchDoc.elements, ...(update.elements || [])],
+      updatedAt: 'x2'
+    }
+    return this.sketchDoc
   }
   lastScript?: string
   async evaluate(args: { script: string }): Promise<CanvasEvalResult> {
@@ -157,6 +183,22 @@ describe('CanvasService', () => {
     expect(opened.canvasId).toBeTruthy()
     expect(fake.opened).toBe(true)
     expect(service.status(opened.canvasId, {})?.driver).toBe('device')
+  })
+
+  it('sketch open records the sketch driver and sketch updates emit redacted metadata', async () => {
+    const opened = await service.open({ driver: 'sketch' }, { provider: 'codex' })
+    expect(service.status(opened.canvasId, {})?.driver).toBe('sketch')
+    const document = await service.sketchUpdate(
+      opened.canvasId,
+      {
+        mode: 'append',
+        elements: [{ kind: 'text', id: 'label1', x: 10, y: 20, text: 'SECRET-LABEL' }]
+      },
+      { provider: 'codex' }
+    )
+    expect(document.elements).toHaveLength(1)
+    expect(events.map((e) => e.kind)).toContain('sketch.update')
+    expect(JSON.stringify(events)).not.toContain('SECRET-LABEL')
   })
 
   it('snapshot/screenshot emit redacted events — base64 never enters the audit', async () => {

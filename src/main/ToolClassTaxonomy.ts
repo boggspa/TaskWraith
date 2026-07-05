@@ -214,6 +214,7 @@ const ORCHESTRATION_TOOLS = new Set<string>([
   'canvas_status',
   'canvas_snapshot',
   'canvas_inspect',
+  'canvas_sketch_get',
   'canvas_network',
   'canvas_console',
   'canvas_screenshot',

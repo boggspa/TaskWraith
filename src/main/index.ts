@@ -723,6 +723,7 @@ import { CanvasWebDriver } from './canvas/CanvasWebDriver'
 import { CanvasDeviceDriver } from './canvas/CanvasDeviceDriver'
 import { CanvasRenderDriver } from './canvas/CanvasRenderDriver'
 import { CanvasImageDriver } from './canvas/CanvasImageDriver'
+import { CanvasSketchDriver } from './canvas/CanvasSketchDriver'
 import { CanvasEmbedController } from './canvas/CanvasEmbedController'
 import { registerCanvasEmbedIpc } from './canvas/CanvasEmbedIpc'
 import { asEmbedParent, createElectronEmbedView } from './canvas/CanvasEmbedView'
@@ -2413,6 +2414,7 @@ const canvasService = new CanvasService({
         }
       })
     }
+    if (kind === 'sketch') return new CanvasSketchDriver(sessionId)
     if (kind === 'web') {
       return opts?.embedded
         ? new CanvasWebDriver(sessionId, {
@@ -8984,7 +8986,11 @@ function previewForGeminiMcpTool(
   // `canvasInteraction` grant service so a prior `mcpTools` session/workspace
   // grant can't silently auto-allow them (and so the read-only preset denies
   // them via canvasInteraction:'deny').
-  if (toolName === 'canvas_click' || toolName === 'canvas_fill') {
+  if (
+    toolName === 'canvas_click' ||
+    toolName === 'canvas_fill' ||
+    toolName === 'canvas_sketch_update'
+  ) {
     return {
       title: `Approve ${providerName} canvas interaction`,
       body: toolName,
@@ -11230,7 +11236,11 @@ function claudeAgenticServiceForTool(toolName: string): AgenticServiceId | null 
   // Canvas click/fill get the dedicated grant bucket on the Claude canUseTool
   // gate too (it fires before previewForGeminiMcpTool), so a prior mcpTools
   // grant can't silently auto-allow app-mutating canvas interactions.
-  if (normalized.includes('canvas_click') || normalized.includes('canvas_fill')) {
+  if (
+    normalized.includes('canvas_click') ||
+    normalized.includes('canvas_fill') ||
+    normalized.includes('canvas_sketch_update')
+  ) {
     return 'canvasInteraction'
   }
   // Arbitrary eval (RCE) gets its own signed-elevated bucket on the Claude gate

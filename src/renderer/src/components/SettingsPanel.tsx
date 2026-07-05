@@ -2388,7 +2388,9 @@ function inferMcpPolicyKey(tool: TaskWraithMcpToolName): McpToolPolicyKey {
     return 'fileChanges'
   }
   if (tool.includes('subthread') || tool === 'delegate_to_subthread') return 'subThreadDelegation'
-  if (tool === 'canvas_click' || tool === 'canvas_fill') return 'canvasInteraction'
+  if (tool === 'canvas_click' || tool === 'canvas_fill' || tool === 'canvas_sketch_update') {
+    return 'canvasInteraction'
+  }
   return 'mcpTools'
 }
 

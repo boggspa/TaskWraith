@@ -18,6 +18,15 @@ export interface CanvasEmbedIpcDeps {
 }
 
 type OpenArgs = { url?: string; originAllowlist?: string[] } | undefined
+type OpenCanvasResult =
+  | {
+      ok: true
+      canvasId: string
+      url: string
+      title: string
+      viewport: { width: number; height: number }
+    }
+  | { ok: false; error: string }
 
 export function registerCanvasEmbedIpc(ipcMain: IpcMain, deps: CanvasEmbedIpcDeps): void {
   // A bad/unreachable url (e.g. no dev server) is a normal outcome, NOT an
@@ -27,10 +36,7 @@ export function registerCanvasEmbedIpc(ipcMain: IpcMain, deps: CanvasEmbedIpcDep
   const openCanvas = async (
     args: OpenArgs,
     embed: boolean
-  ): Promise<
-    | { ok: true; canvasId: string; url: string; title: string; viewport: { width: number; height: number } }
-    | { ok: false; error: string }
-  > => {
+  ): Promise<OpenCanvasResult> => {
     try {
       const opened = await deps.controller.open(
         {
@@ -53,8 +59,24 @@ export function registerCanvasEmbedIpc(ipcMain: IpcMain, deps: CanvasEmbedIpcDep
     }
   }
 
+  const openSketchCanvas = async (): Promise<OpenCanvasResult> => {
+    try {
+      const opened = await deps.controller.open({ driver: 'sketch' }, {})
+      return {
+        ok: true,
+        canvasId: opened.canvasId,
+        url: opened.url,
+        title: opened.title,
+        viewport: opened.viewport
+      }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  }
+
   ipcMain.handle('canvas:open-window', (_e, args: OpenArgs) => openCanvas(args, false))
   ipcMain.handle('canvas:open-embedded', (_e, args: OpenArgs) => openCanvas(args, true))
+  ipcMain.handle('canvas:open-sketch-window', () => openSketchCanvas())
 
   ipcMain.handle('canvas:set-bounds', (_e, canvasId: unknown, rect: unknown) => {
     if (typeof canvasId === 'string') {

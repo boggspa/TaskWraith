@@ -24,6 +24,8 @@ import type {
   CanvasNetworkEntry,
   CanvasOpenInput,
   CanvasSessionHandle,
+  CanvasSketchDocument,
+  CanvasSketchUpdateInput,
   CanvasViewport
 } from './canvasTypes'
 import { readPngDimensions, validateCanvasImageRef } from './canvasTypes'
@@ -109,6 +111,12 @@ export class CanvasImageDriver implements CanvasDriver {
   }
   async annotate(_marks: CanvasMark[]): Promise<{ count: number }> {
     return unsupported('annotate')
+  }
+  async sketchDocument(): Promise<CanvasSketchDocument> {
+    return unsupported('sketch_get')
+  }
+  async sketchUpdate(_update: CanvasSketchUpdateInput): Promise<CanvasSketchDocument> {
+    return unsupported('sketch_update')
   }
   async evaluate(_args: { script: string }): Promise<CanvasEvalResult> {
     return unsupported('eval')

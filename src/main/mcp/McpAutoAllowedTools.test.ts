@@ -23,6 +23,7 @@ describe('MCP_AUTO_ALLOWED_TOOLS', () => {
       'inspect_chat_attachment',
       'workspace_board_snapshot',
       'workspace_board_preview_plan',
+      'canvas_sketch_get',
       'list_background_processes',
       'read_background_process',
       'list_active_runs',
@@ -215,6 +216,7 @@ describe('isReadOnlyAdvertisedTool (bridge scope guard)', () => {
     // canvas actuation + media are the plan tier — a read_only seat must not see them.
     expect(isReadOnlyAdvertisedTool('canvas_click')).toBe(false)
     expect(isReadOnlyAdvertisedTool('canvas_fill')).toBe(false)
+    expect(isReadOnlyAdvertisedTool('canvas_sketch_update')).toBe(false)
     for (const tool of MEDIA_EDITING_TOOLS) {
       expect(isReadOnlyAdvertisedTool(tool)).toBe(false)
     }
@@ -227,6 +229,7 @@ describe('PLAN_MCP_ADVERTISE_TOOLS / isPlanAdvertisedTool (plan-seat bridge scop
   it('advertises canvas actuation + every media-editing tool to a plan seat', () => {
     expect(isPlanAdvertisedTool('canvas_click')).toBe(true)
     expect(isPlanAdvertisedTool('canvas_fill')).toBe(true)
+    expect(isPlanAdvertisedTool('canvas_sketch_update')).toBe(true)
     for (const tool of MEDIA_EDITING_TOOLS) {
       expect(isPlanAdvertisedTool(tool)).toBe(true)
     }

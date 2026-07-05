@@ -39,6 +39,8 @@ import type {
   CanvasNetworkEntry,
   CanvasOpenInput,
   CanvasSessionHandle,
+  CanvasSketchDocument,
+  CanvasSketchUpdateInput,
   CanvasViewport
 } from './canvasTypes'
 import {
@@ -606,6 +608,14 @@ export class CanvasWebDriver implements CanvasDriver {
     return (await wc.executeJavaScript(annotateScript(marks), true)) as {
       count: number
     }
+  }
+
+  async sketchDocument(): Promise<CanvasSketchDocument> {
+    throw new Error('canvas_sketch_get is only available for the sketch driver.')
+  }
+
+  async sketchUpdate(_update: CanvasSketchUpdateInput): Promise<CanvasSketchDocument> {
+    throw new Error('canvas_sketch_update is only available for the sketch driver.')
   }
 
   async evaluate(args: { script: string }): Promise<CanvasEvalResult> {

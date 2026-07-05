@@ -204,7 +204,12 @@ export function taskWraithToolAgenticService(toolName: string): AgenticServiceId
     return 'subThreadDelegation'
   // Dedicated grant bucket (Codex path): keep app-mutating canvas interactions
   // out of the generic mcpTools session/workspace grant.
-  if (toolName === 'canvas_click' || toolName === 'canvas_fill') return 'canvasInteraction'
+  if (
+    toolName === 'canvas_click' ||
+    toolName === 'canvas_fill' ||
+    toolName === 'canvas_sketch_update'
+  )
+    return 'canvasInteraction'
   // Arbitrary eval gets its OWN, stricter bucket (non-grantable / never-YOLO).
   if (toolName === 'canvas_eval') return 'canvasEval'
   // Cross-thread retrospection reads route to crossThreadRead (grantable) so a

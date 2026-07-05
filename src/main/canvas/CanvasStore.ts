@@ -15,6 +15,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 import type {
   CanvasAnnotation,
+  CanvasDriverKind,
   CanvasEventRecord,
   CanvasMark,
   CanvasSessionRecord,
@@ -24,6 +25,14 @@ import type {
 const SESSION_HISTORY_LIMIT = 100
 const EVENT_HISTORY_LIMIT = 2000
 const ANNOTATION_HISTORY_LIMIT = 500
+const CANVAS_DRIVER_KINDS: ReadonlySet<CanvasDriverKind> = new Set([
+  'web',
+  'html',
+  'image',
+  'sketch',
+  'window',
+  'device'
+])
 
 function readJson<T>(filePath: string, defaultData: T): T {
   try {
@@ -107,7 +116,10 @@ function normalizeSessionRecord(value: unknown): CanvasSessionRecord | null {
   return {
     schemaVersion: 1,
     id: input.id,
-    driver: input.driver === 'window' || input.driver === 'device' ? input.driver : 'web',
+    driver:
+      typeof input.driver === 'string' && CANVAS_DRIVER_KINDS.has(input.driver)
+        ? input.driver
+        : 'web',
     url: asString(input.url),
     title: asString(input.title),
     viewport: asViewport(input.viewport),

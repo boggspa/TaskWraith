@@ -58,6 +58,15 @@ describe('CanvasStore', () => {
     expect(reopened.getSession('a')?.url).toBe('http://localhost:3000')
   })
 
+  it('preserves non-web canvas driver kinds', () => {
+    store.upsertSession(session('html', { driver: 'html' }))
+    store.upsertSession(session('image', { driver: 'image' }))
+    store.upsertSession(session('sketch', { driver: 'sketch' }))
+    expect(store.getSession('html')?.driver).toBe('html')
+    expect(store.getSession('image')?.driver).toBe('image')
+    expect(store.getSession('sketch')?.driver).toBe('sketch')
+  })
+
   it('rejects records without an id', () => {
     expect(() => store.upsertSession(session(''))).toThrow()
   })

@@ -1,11 +1,9 @@
-// Composer telemetry-row button that opens a web Canvas in a standalone floating
+// Composer telemetry-row button that opens Canvas surfaces in standalone floating
 // window (the one-click entry point — vs. the multiview empty-pane launcher, or
 // asking an agent to canvas_open). It mirrors the other footer icons (Multiview /
 // Screen Watch / Goal): a bare icon-only trigger (composer-canvas-trigger) with a
-// hover/focus hint pill (composer-hint-pill + data-hint-label), and a portaled URL
-// popover (so the composer-surface's overflow:hidden can't clip it). On submit the
-// host opens the canvas as a movable/closable window (window.api.canvas.openWindow)
-// — self-contained, with no in-pane DOM-overlay positioning to get wrong.
+// hover/focus hint pill (composer-hint-pill + data-hint-label), and a portaled
+// picker popover (so the composer-surface's overflow:hidden can't clip it).
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { CanvasPaneLauncher } from './CanvasPaneLauncher'
@@ -38,7 +36,7 @@ export function CanvasComposerButton({ disabled }: CanvasComposerButtonProps) {
   const [open, setOpen] = useState(false)
   const [position, setPosition] = useState<{ left: number; top: number } | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [busy, setBusy] = useState(false)
+  const [busyMode, setBusyMode] = useState<'web' | 'sketch' | null>(null)
 
   // Clear any stale error when the popover closes, so reopening starts fresh.
   useEffect(() => {
@@ -47,7 +45,7 @@ export function CanvasComposerButton({ disabled }: CanvasComposerButtonProps) {
 
   const handleOpen = async (url: string): Promise<void> => {
     setError(null)
-    setBusy(true)
+    setBusyMode('web')
     try {
       // A standalone floating window (movable / closable) — not embedded over a
       // pane, so there's no DOM-overlay positioning to get wrong.
@@ -60,7 +58,24 @@ export function CanvasComposerButton({ disabled }: CanvasComposerButtonProps) {
     } catch (err) {
       setError(friendlyCanvasError(err instanceof Error ? err.message : String(err)))
     } finally {
-      setBusy(false)
+      setBusyMode(null)
+    }
+  }
+
+  const handleOpenSketch = async (): Promise<void> => {
+    setError(null)
+    setBusyMode('sketch')
+    try {
+      const result = await window.api.canvas?.openSketchWindow?.()
+      if (result?.ok) {
+        setOpen(false)
+      } else {
+        setError(friendlyCanvasError(result?.error))
+      }
+    } catch (err) {
+      setError(friendlyCanvasError(err instanceof Error ? err.message : String(err)))
+    } finally {
+      setBusyMode(null)
     }
   }
 
@@ -112,7 +127,7 @@ export function CanvasComposerButton({ disabled }: CanvasComposerButtonProps) {
             // content is a vertical form, not the pickers' multi-column grid.
             className="composer-combined-picker-popover composer-plus-picker-popover canvas-composer-popover"
             role="dialog"
-            aria-label="Open a web canvas"
+            aria-label="Open Canvas"
             style={{
               position: 'fixed',
               left: `${position.left}px`,
@@ -120,14 +135,62 @@ export function CanvasComposerButton({ disabled }: CanvasComposerButtonProps) {
               transform: 'translateY(-100%)',
               flexDirection: 'column',
               gap: 8,
-              minWidth: 290,
+              minWidth: 320,
               padding: 10
             }}
           >
-            <div style={{ font: '11px/1.4 system-ui, sans-serif', opacity: 0.7, marginBottom: 6 }}>
-              Open a running app (e.g. a dev server) in a Canvas pane
+            <div style={{ font: '12px/1.35 system-ui, sans-serif', fontWeight: 600 }}>
+              Canvas
             </div>
-            <CanvasPaneLauncher onOpen={(url) => void handleOpen(url)} />
+            <div style={{ display: 'grid', gap: 8 }}>
+              <div
+                style={{
+                  display: 'grid',
+                  gap: 6,
+                  paddingTop: 2
+                }}
+              >
+                <div style={{ font: '11px/1.35 system-ui, sans-serif', opacity: 0.74 }}>
+                  Web Canvas
+                </div>
+                <div style={{ font: '11px/1.35 system-ui, sans-serif', opacity: 0.58 }}>
+                  Open a running app or dev server.
+                </div>
+                <CanvasPaneLauncher onOpen={(url) => void handleOpen(url)} />
+              </div>
+              <div
+                style={{
+                  height: 1,
+                  background: 'var(--border-subtle, rgba(127,127,127,0.22))'
+                }}
+              />
+              <div style={{ display: 'grid', gap: 6 }}>
+                <div style={{ font: '11px/1.35 system-ui, sans-serif', opacity: 0.74 }}>
+                  Sketch Canvas
+                </div>
+                <div style={{ font: '11px/1.35 system-ui, sans-serif', opacity: 0.58 }}>
+                  Quick shapes, freehand marks, arrows, and text.
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void handleOpenSketch()}
+                  disabled={busyMode !== null}
+                  style={{
+                    width: '100%',
+                    border: '1px solid var(--border-subtle, rgba(127,127,127,0.32))',
+                    borderRadius: 6,
+                    background: 'var(--button-bg, rgba(127,127,127,0.12))',
+                    color: 'inherit',
+                    padding: '7px 10px',
+                    font: '12px/1.2 system-ui, sans-serif',
+                    textAlign: 'left',
+                    cursor: busyMode ? 'default' : 'pointer'
+                  }}
+                >
+                  Open sketch canvas
+                </button>
+              </div>
+            </div>
             {error ? (
               <div
                 role="alert"
@@ -139,7 +202,7 @@ export function CanvasComposerButton({ disabled }: CanvasComposerButtonProps) {
               >
                 {error}
               </div>
-            ) : busy ? (
+            ) : busyMode ? (
               <div style={{ marginTop: 6, font: '11px/1.35 system-ui, sans-serif', opacity: 0.6 }}>
                 Opening…
               </div>
@@ -157,10 +220,10 @@ export function CanvasComposerButton({ disabled }: CanvasComposerButtonProps) {
         className="composer-canvas-trigger composer-hint-pill composer-hint-pill--left"
         onClick={() => setOpen((v) => !v)}
         disabled={disabled}
-        aria-label="Open a web canvas"
+        aria-label="Open Canvas"
         aria-haspopup="dialog"
         aria-expanded={open}
-        data-hint-label="Web canvas"
+        data-hint-label="Canvas"
         data-composer-control="canvas"
       >
         <span className="composer-control-icon" aria-hidden="true">

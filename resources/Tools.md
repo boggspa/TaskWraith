@@ -11,7 +11,7 @@ Local Ollama models call any tool by emitting exactly one JSON object per turn:
 {"taskwraith_tool":{"name":"<tool>","arguments":{ ... }}}
 ```
 
-The 146 tools below are the full TaskWraith surface, generated from the tool catalog so this reference cannot drift from what the app actually grants. Every mutating tool (file edits, shell, publishing) is gated by your run's permission role, and paths must stay inside the active workspace.
+The 149 tools below are the full TaskWraith surface, generated from the tool catalog so this reference cannot drift from what the app actually grants. Every mutating tool (file edits, shell, publishing) is gated by your run's permission role, and paths must stay inside the active workspace.
 
 ## run_shell_command
 
@@ -1004,6 +1004,32 @@ Open an existing Run-Button launch attempt in TaskWraith Canvas. Pass an `attemp
 - Required args: attemptId
 - Optional args: width, height
 - Example: `{"taskwraith_tool":{"name":"canvas_open_launch","arguments":{"attemptId":"text"}}}`
+
+## canvas_sketch_open
+
+Open a bidirectional Sketch Canvas for quick visual communication between the human and agent. It is a lightweight drawing surface for rectangles, ellipses, lines/arrows, freehand paths, SVG-style path data, and text. Use canvas_sketch_update to add/replace/delete structured primitives and canvas_sketch_get to read what the human drew. Gated like canvas_open.
+
+- Access: governed by your run permission role
+- Required args: none
+- Optional args: width, height
+- Example: `{"taskwraith_tool":{"name":"canvas_sketch_open","arguments":{"width":0}}}`
+
+## canvas_sketch_get
+
+Return the current Sketch Canvas document: title, viewport, and structured shape/text/path elements. Read-only; use this after the human sketches or after canvas_sketch_update.
+
+- Access: read-only (no approval needed)
+- Required args: canvasId
+- Example: `{"taskwraith_tool":{"name":"canvas_sketch_get","arguments":{"canvasId":"text"}}}`
+
+## canvas_sketch_update
+
+Edit a Sketch Canvas using structured primitives, not arbitrary JavaScript. Modes: append (default) adds elements, replace swaps the whole element list, clear removes all elements, delete removes ids. Element kinds: rect/ellipse with x,y,width,height; line/arrow with x1,y1,x2,y2; path with points or SVG path `d`; text with x,y,text,fontSize. Supports fill, stroke, strokeWidth, opacity. Gated via canvasInteraction and denied under read-only.
+
+- Access: governed by your run permission role
+- Required args: canvasId
+- Optional args: mode, title, elementIds, elements
+- Example: `{"taskwraith_tool":{"name":"canvas_sketch_update","arguments":{"canvasId":"text"}}}`
 
 ## canvas_list
 

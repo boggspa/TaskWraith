@@ -11,7 +11,7 @@
  * `annotate` verbs, are deferred — the contracts below leave room for them.
  */
 
-export type CanvasDriverKind = 'web' | 'html' | 'image' | 'window' | 'device'
+export type CanvasDriverKind = 'web' | 'html' | 'image' | 'sketch' | 'window' | 'device'
 
 export type CanvasSessionStatus = 'opening' | 'active' | 'error' | 'closed'
 
@@ -179,6 +179,51 @@ export interface CanvasMark {
   severity?: 'info' | 'warn' | 'error'
 }
 
+export type CanvasSketchElementKind = 'rect' | 'ellipse' | 'line' | 'arrow' | 'text' | 'path'
+
+export interface CanvasSketchPoint {
+  x: number
+  y: number
+}
+
+export interface CanvasSketchElement {
+  id?: string
+  kind: CanvasSketchElementKind
+  x?: number
+  y?: number
+  width?: number
+  height?: number
+  x1?: number
+  y1?: number
+  x2?: number
+  y2?: number
+  points?: CanvasSketchPoint[]
+  d?: string
+  text?: string
+  fill?: string
+  stroke?: string
+  strokeWidth?: number
+  fontSize?: number
+  opacity?: number
+}
+
+export interface CanvasSketchDocument {
+  schemaVersion: 1
+  title: string
+  viewport: CanvasViewport
+  elements: CanvasSketchElement[]
+  updatedAt: string
+}
+
+export type CanvasSketchUpdateMode = 'replace' | 'append' | 'clear' | 'delete'
+
+export interface CanvasSketchUpdateInput {
+  mode?: CanvasSketchUpdateMode
+  title?: string
+  elements?: CanvasSketchElement[]
+  elementIds?: string[]
+}
+
 export interface CanvasAnnotation {
   schemaVersion: 1
   id: string
@@ -234,6 +279,8 @@ export interface CanvasDriver {
   // P1 interaction + annotation.
   act(action: CanvasActionInput): Promise<CanvasActResult>
   annotate(marks: CanvasMark[]): Promise<{ count: number }>
+  sketchDocument(): Promise<CanvasSketchDocument>
+  sketchUpdate(update: CanvasSketchUpdateInput): Promise<CanvasSketchDocument>
   // P2 arbitrary eval (RCE). The driver MUST cut the page's network egress while
   // the script runs so eval cannot be used as an exfiltration channel.
   evaluate(args: { script: string }): Promise<CanvasEvalResult>
@@ -285,6 +332,8 @@ export type CanvasEventKind =
   | 'resize'
   | 'interaction'
   | 'annotation'
+  | 'sketch.read'
+  | 'sketch.update'
   | 'eval'
   | 'reload'
 
@@ -342,6 +391,12 @@ export interface CanvasController {
     marks: CanvasMark[],
     ctx: CanvasCallContext
   ): Promise<CanvasAnnotation>
+  sketchDocument(canvasId: string, ctx: CanvasCallContext): Promise<CanvasSketchDocument>
+  sketchUpdate(
+    canvasId: string,
+    update: CanvasSketchUpdateInput,
+    ctx: CanvasCallContext
+  ): Promise<CanvasSketchDocument>
   evaluate(
     canvasId: string,
     args: { script: string },

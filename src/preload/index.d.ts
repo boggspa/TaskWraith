@@ -751,6 +751,16 @@ declare global {
             }
           | { ok: false; error: string }
         >
+        openSketchWindow: () => Promise<
+          | {
+              ok: true
+              canvasId: string
+              url: string
+              title: string
+              viewport: { width: number; height: number }
+            }
+          | { ok: false; error: string }
+        >
         setBounds: (
           canvasId: string,
           rect: { x: number; y: number; width: number; height: number }

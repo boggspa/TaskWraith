@@ -5,11 +5,11 @@ import { CanvasComposerButton } from './CanvasComposerButton'
 describe('CanvasComposerButton (static render)', () => {
   it('renders a bare hint-pill trigger consistent with the other footer icons', () => {
     const html = renderToStaticMarkup(<CanvasComposerButton />)
-    expect(html).toContain('aria-label="Open a web canvas"')
+    expect(html).toContain('aria-label="Open Canvas"')
     // Same affordances as Multiview/Goal: bare trigger + hover hint pill.
     expect(html).toContain('composer-canvas-trigger')
     expect(html).toContain('composer-hint-pill')
-    expect(html).toContain('data-hint-label="Web canvas"')
+    expect(html).toContain('data-hint-label="Canvas"')
     expect(html).toContain('aria-haspopup="dialog"')
     expect(html).toContain('aria-expanded="false"')
     // No block wrapper "box", and the popover (CanvasPaneLauncher) is collapsed.
