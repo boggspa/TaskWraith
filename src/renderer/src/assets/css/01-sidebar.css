@@ -623,6 +623,12 @@
   opacity: 0.72;
 }
 
+.sidebar-active-run-row {
+  min-height: 30px;
+  padding: 4px 8px;
+  gap: 6px;
+}
+
 .sidebar-active-run-board-action {
   appearance: none;
   -webkit-appearance: none;
@@ -648,41 +654,44 @@
 
 .sidebar-active-run-provider {
   flex: 0 0 auto;
-  padding: 2px 6px;
+  max-width: 92px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 1px 5px;
   border-radius: 999px;
-  font-size: 10px;
+  font-size: 9.5px;
   font-weight: 760;
   line-height: 1.2;
-  color: var(--text-primary);
-  background: color-mix(in srgb, var(--accent) 13%, transparent);
-  border: 1px solid color-mix(in srgb, var(--accent) 20%, transparent);
+  color: var(--active-run-provider-color, var(--text-primary));
+  background: color-mix(in srgb, var(--active-run-provider-color, var(--accent)) 13%, transparent);
+  border: 1px solid color-mix(in srgb, var(--active-run-provider-color, var(--accent)) 22%, transparent);
 }
-
-.sidebar-active-run-provider.provider-gemini { color: #8eb1ff; }
-.sidebar-active-run-provider.provider-codex { color: #aaa0ff; }
-.sidebar-active-run-provider.provider-claude { color: #ffad64; }
-.sidebar-active-run-provider.provider-kimi { color: #bbcf66; }
-.sidebar-active-run-provider.provider-grok { color: var(--provider-grok-color); }
-.sidebar-active-run-provider.provider-cursor { color: var(--provider-cursor-color); }
 
 .sidebar-active-run-copy {
   flex: 1;
   min-width: 0;
   display: flex;
-  flex-direction: column;
-  gap: 1px;
+  align-items: baseline;
+  gap: 5px;
 }
 
 .sidebar-active-run-workspace {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  color: var(--sidebar-text);
+  font-size: var(--sidebar-thread-title-font-size);
+  font-weight: 610;
+  line-height: 1.16;
 }
 
 .sidebar-active-run-elapsed {
+  flex: 0 0 auto;
   color: var(--text-muted);
   font-size: 10px;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .sidebar-workflow-block {

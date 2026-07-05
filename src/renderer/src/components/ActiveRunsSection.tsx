@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type JSX } from 'react'
+import { useCallback, useEffect, useMemo, useState, type CSSProperties, type JSX } from 'react'
 import { MascotGhost } from './AppChromeSymbols'
 import type {
   ChatRecord,
@@ -6,6 +6,8 @@ import type {
   RunQueueJob,
   RunQueueJobStatus
 } from '../../../main/store/types'
+import { resolveOllamaDisplayBrand } from '../lib/ollamaDisplayBrand'
+import { getProviderLabel } from '../lib/providerLabels'
 import { isRunQueueJobVisibleForChat } from '../lib/runningChatVisibility'
 
 type ActiveRunQueueStatus = RunQueueJobStatus | 'promoting' | 'steer_promoting'
@@ -20,6 +22,18 @@ const ACTIVE_STATUSES: ActiveRunQueueStatus[] = [
 
 const isActiveQueueStatus = (status: string): status is ActiveRunQueueStatus =>
   (ACTIVE_STATUSES as readonly string[]).includes(status)
+
+type ActiveRunProviderStyle = CSSProperties & {
+  '--active-run-provider-color'?: string
+  '--chat-provider-accent'?: string
+}
+
+interface ActiveRunProviderDisplay {
+  provider: ProviderId | null
+  label: string
+  providerClass: string
+  style: ActiveRunProviderStyle
+}
 
 /** Right-chevron matching the other sidebar section headers (rotates when
  * expanded). Inlined to avoid a Sidebar ↔ ActiveRunsSection import cycle. */
@@ -145,6 +159,7 @@ export function ActiveRunsSection({
           {visibleJobs.map((job) => {
             const chat = job.chatId ? chatById.get(job.chatId) || null : null
             const isCurrent = Boolean(chat && currentChat?.appChatId === chat.appChatId)
+            const providerDisplay = resolveActiveRunProviderDisplay(job, chat)
             return (
               <div
                 key={job.id || job.runId}
@@ -152,7 +167,8 @@ export function ActiveRunsSection({
               >
                 <button
                   type="button"
-                  className={`sidebar-active-run-row provider-${job.provider || 'gemini'} ${isCurrent ? 'active' : ''}`}
+                  className={`sidebar-active-run-row provider-${providerDisplay.providerClass} ${isCurrent ? 'active' : ''}`}
+                  style={providerDisplay.style}
                   onClick={() => {
                     // Open the chat THREAD (transcript), not the Run Inspector.
                     if (chat) onSelectChat(chat)
@@ -161,9 +177,9 @@ export function ActiveRunsSection({
                   title={chat ? chat.title : job.promptPreview || job.runId}
                 >
                   <span
-                    className={`sidebar-active-run-provider provider-${job.provider || 'gemini'}`}
+                    className={`sidebar-active-run-provider provider-${providerDisplay.providerClass}`}
                   >
-                    {getProviderLabel(job.provider)}
+                    {providerDisplay.label}
                   </span>
                   <span className="sidebar-active-run-copy">
                     <span className="sidebar-active-run-workspace">
@@ -241,11 +257,49 @@ function statusTone(
   return 'muted'
 }
 
-function getProviderLabel(provider?: ProviderId): string {
-  if (provider === 'codex') return 'Codex'
-  if (provider === 'claude') return 'Claude'
-  if (provider === 'kimi') return 'Kimi'
-  if (provider === 'grok') return 'Grok'
-  if (provider === 'cursor') return 'Cursor'
-  return 'Gemini'
+export function resolveActiveRunProviderDisplay(
+  job: Pick<RunQueueJob, 'provider' | 'request' | 'runId' | 'id'>,
+  chat: ChatRecord | null
+): ActiveRunProviderDisplay {
+  const provider = resolveActiveRunProvider(job.provider, chat?.provider)
+  const modelId = resolveActiveRunModelId(job, chat)
+  const brand = provider === 'ollama' ? resolveOllamaDisplayBrand(modelId) : null
+  const providerClass = brand?.providerClass || provider || 'unknown'
+  const providerColor = provider
+    ? `var(--provider-${providerClass}-color, var(--provider-${provider}-color, var(--accent)))`
+    : 'var(--accent)'
+
+  return {
+    provider,
+    label: brand?.providerLabel || (provider ? getProviderLabel(provider) : 'Run'),
+    providerClass,
+    style: {
+      '--active-run-provider-color': providerColor,
+      '--chat-provider-accent': providerColor
+    }
+  }
+}
+
+function resolveActiveRunProvider(
+  jobProvider: ProviderId | undefined,
+  chatProvider: ProviderId | undefined
+): ProviderId | null {
+  if (jobProvider && jobProvider !== 'gemini') return jobProvider
+  if (chatProvider && chatProvider !== jobProvider) return chatProvider
+  return jobProvider || chatProvider || null
+}
+
+function resolveActiveRunModelId(
+  job: Pick<RunQueueJob, 'request' | 'runId' | 'id'>,
+  chat: ChatRecord | null
+): string {
+  const matchingRun = (chat?.runs || []).find(
+    (run) => run.runId === job.runId || run.runId === job.id
+  )
+  const runModel = matchingRun?.actualModel || matchingRun?.requestedModel
+  if (runModel) return runModel
+  const request = job.request
+  if (!request) return ''
+  if (request.selectedModelType === 'custom') return request.customModel || ''
+  return request.selectedModelType || request.customModel || ''
 }
