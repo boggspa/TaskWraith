@@ -89,6 +89,41 @@ function createDeps() {
         ok: true,
         data: input as any
       })),
+      listBranches: vi.fn<GitHandlersDeps['gitService']['listBranches']>(async (path: string) => ({
+        ok: true,
+        data: {
+          repoRoot: path,
+          currentBranch: 'main',
+          branches: [{ name: 'main', isCurrent: true }]
+        }
+      })),
+      checkoutBranch: vi.fn<GitHandlersDeps['gitService']['checkoutBranch']>(async (input) => ({
+        ok: true,
+        data: input as any
+      })),
+      createBranch: vi.fn<GitHandlersDeps['gitService']['createBranch']>(async (input) => ({
+        ok: true,
+        data: input as any
+      })),
+      listWorktrees: vi.fn<GitHandlersDeps['gitService']['listWorktrees']>(async (path: string) => ({
+        ok: true,
+        data: {
+          repoRoot: path,
+          worktrees: [{ path, branch: 'main', isCurrent: true }]
+        }
+      })),
+      createWorktree: vi.fn<GitHandlersDeps['gitService']['createWorktree']>(async (input) => ({
+        ok: true,
+        data: input as any
+      })),
+      removeWorktree: vi.fn<GitHandlersDeps['gitService']['removeWorktree']>(async (input) => ({
+        ok: true,
+        data: input as any
+      })),
+      selectWorktree: vi.fn<GitHandlersDeps['gitService']['selectWorktree']>(async (input) => ({
+        ok: true,
+        data: input as any
+      })),
       pullRequestStatus: vi.fn<GitHandlersDeps['gitService']['pullRequestStatus']>(
         async (path: string) => ({ ok: true, data: { url: `status:${path}` } })
       ),
@@ -139,6 +174,13 @@ describe('registerGitHandlers', () => {
     expect(handlerFor('git:unstage')).toBeTypeOf('function')
     expect(handlerFor('git:commit')).toBeTypeOf('function')
     expect(handlerFor('git:push')).toBeTypeOf('function')
+    expect(handlerFor('git:list-branches')).toBeTypeOf('function')
+    expect(handlerFor('git:checkout-branch')).toBeTypeOf('function')
+    expect(handlerFor('git:create-branch')).toBeTypeOf('function')
+    expect(handlerFor('git:list-worktrees')).toBeTypeOf('function')
+    expect(handlerFor('git:create-worktree')).toBeTypeOf('function')
+    expect(handlerFor('git:remove-worktree')).toBeTypeOf('function')
+    expect(handlerFor('git:select-worktree')).toBeTypeOf('function')
     expect(handlerFor('github:pr-status')).toBeTypeOf('function')
     expect(handlerFor('github:pr-readiness')).toBeTypeOf('function')
     expect(handlerFor('create-github-pr')).toBeTypeOf('function')
@@ -192,6 +234,72 @@ describe('registerGitHandlers', () => {
       expect.objectContaining({ repoPath: '/repo' }),
       'git-action'
     )
+  })
+
+  it('exposes branch list and registered branch mutations', async () => {
+    const { deps } = createDeps()
+    deps.findRegisteredWorkspace.mockReturnValue({ id: 'ws-1' })
+    registerGitHandlers(deps)
+
+    await expect(handlerFor('git:list-branches')({}, { workspacePath: '/repo' })).resolves.toEqual({
+      ok: true,
+      branches: [{ name: 'main', isCurrent: true }],
+      currentBranch: 'main'
+    })
+    await expect(
+      handlerFor('git:create-branch')({}, { workspacePath: '/repo', branch: 'feature/new', from: 'main' })
+    ).resolves.toEqual({
+      ok: true,
+      snapshot: { repoPath: '/repo', branch: 'feature/new', from: 'main' }
+    })
+    await expect(
+      handlerFor('git:checkout-branch')({}, { workspacePath: '/repo', branch: 'feature/new' })
+    ).resolves.toEqual({
+      ok: true,
+      snapshot: { repoPath: '/repo', branch: 'feature/new' }
+    })
+    expect(deps.gitService.createBranch).toHaveBeenCalledWith({
+      repoPath: '/repo',
+      branch: 'feature/new',
+      from: 'main'
+    })
+    expect(deps.gitSnapshotPublisher.publishSnapshot).toHaveBeenCalledWith(
+      expect.objectContaining({ branch: 'feature/new' }),
+      'git-action'
+    )
+  })
+
+  it('selects only linked worktrees for a registered repository', async () => {
+    const { deps } = createDeps()
+    deps.findRegisteredWorkspace.mockReturnValue({ id: 'ws-1' })
+    deps.gitService.listWorktrees.mockResolvedValue({
+      ok: true,
+      data: {
+        repoRoot: '/repo',
+        worktrees: [
+          { path: '/repo', branch: 'main', isCurrent: true },
+          { path: '/repo-worktrees/feature', branch: 'feature', isCurrent: false }
+        ]
+      }
+    })
+    registerGitHandlers(deps)
+
+    await expect(
+      handlerFor('git:select-worktree')({}, {
+        workspacePath: '/repo',
+        path: '/repo-worktrees/feature'
+      })
+    ).resolves.toEqual({
+      ok: true,
+      snapshot: { repoPath: '/repo', path: '/repo-worktrees/feature' }
+    })
+    await expect(
+      handlerFor('git:select-worktree')({}, { workspacePath: '/repo', path: '/tmp/not-linked' })
+    ).resolves.toEqual({
+      ok: false,
+      error: 'Selected path is not a linked worktree for this repository.'
+    })
+    expect(deps.gitService.selectWorktree).toHaveBeenCalledTimes(1)
   })
 
   it('subscribes and invalidates live snapshots through the same read scope', async () => {

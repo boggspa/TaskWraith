@@ -20,6 +20,16 @@ export interface AgentRunRoute {
   appChatId?: string
 }
 
+export interface RuntimeWorktreeIntent {
+  requested: boolean
+  source: 'runtimeProfile' | 'composer'
+  profileId?: string
+  profileName?: string
+  baseWorkspacePath?: string
+  effectiveWorkspacePath?: string
+  status: 'selection-required' | 'selected'
+}
+
 export interface AgentRunPayload {
   provider: ProviderId
   providerReroute?: ProviderRunReroute
@@ -55,6 +65,7 @@ export interface AgentRunPayload {
    */
   failoverHopCount?: number
   runtimeProfile?: RuntimeProfile
+  runtimeWorktree?: RuntimeWorktreeIntent
   effectivePermissions?: EffectiveRunPermissions
   /**
    * HMAC over the run's permission posture (`approvalMode` +

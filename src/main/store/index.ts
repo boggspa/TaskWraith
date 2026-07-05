@@ -85,6 +85,10 @@ import { isEnsembleRoundDispatchLive } from '../../shared/ensembleRoundLifecycle
 import { createHash, randomUUID } from 'crypto'
 import { buildRunQueueDispatchReceipt } from '../RunQueueDispatchReceipt'
 import {
+  DEFAULT_PROMPT_CACHE_SETTINGS,
+  normalizePromptCacheSettings
+} from '../PromptCachePolicy'
+import {
   capRunQueueJobs,
   createRunQueueJob,
   filterRunQueueJobs,
@@ -947,6 +951,7 @@ const defaultSettings: AppSettings = {
   defaultGeminiAuthProfileId: null,
   geminiAuthProfiles: [],
   geminiApiRuntime: 'auto',
+  promptCache: DEFAULT_PROMPT_CACHE_SETTINGS,
   userMcpServers: [],
   storeLocalChatHistory: true,
   storeRawEvents: false,
@@ -1919,6 +1924,10 @@ export class AppStore {
         stored.geminiApiRuntime === 'never'
           ? stored.geminiApiRuntime
           : defaultSettings.geminiApiRuntime,
+      promptCache: normalizePromptCacheSettings(
+        stored.promptCache,
+        defaultSettings.promptCache
+      ),
       agenticServices: {
         ...defaultSettings.agenticServices,
         ...(stored.agenticServices || {})

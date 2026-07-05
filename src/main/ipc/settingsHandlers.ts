@@ -9,6 +9,8 @@ import type {
   AppSettings,
   HandoffCard,
   HandoffCardFilter,
+  PromptCacheCapability,
+  PromptCacheSettings,
   ProviderId,
   RuntimeProfile
 } from '../store/types'
@@ -21,6 +23,8 @@ const runtimeProfileEnvNamePattern = /^[A-Za-z_][A-Za-z0-9_]*$/
 
 export interface SettingsHandlerDeps {
   settingsService: Pick<SettingsService, 'getSettings' | 'updateSettings'>
+  getPromptCacheCapabilities?: () => PromptCacheCapability[]
+  getPromptCacheDiagnostics?: () => unknown[]
   setBridgeDaemonEnabled: (enabled: boolean) => Promise<unknown>
   getRuntimeProfiles: (provider?: ProviderId) => RuntimeProfile[]
   saveRuntimeProfile: (
@@ -133,6 +137,15 @@ export function registerSettingsHandlers(deps: SettingsHandlerDeps): void {
   ipcMain.handle('update-settings', (_event, partial: Partial<AppSettings>) =>
     deps.settingsService.updateSettings(partial)
   )
+  ipcMain.handle('prompt-cache:get-policy', () => {
+    return deps.settingsService.getSettings().promptCache || { enabled: true, providers: {} }
+  })
+  ipcMain.handle('prompt-cache:save-policy', (_event, policy: PromptCacheSettings) => {
+    deps.settingsService.updateSettings({ promptCache: policy })
+    return { ok: true }
+  })
+  ipcMain.handle('prompt-cache:get-capabilities', () => deps.getPromptCacheCapabilities?.() || [])
+  ipcMain.handle('prompt-cache:get-diagnostics', () => deps.getPromptCacheDiagnostics?.() || [])
   ipcMain.handle('set-bridge-daemon-enabled', (_event, enabled: boolean) =>
     deps.setBridgeDaemonEnabled(Boolean(enabled))
   )

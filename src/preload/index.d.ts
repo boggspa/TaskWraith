@@ -67,7 +67,9 @@ import {
   WorkspaceBoardDefinition,
   EnsembleFanoutPolicy,
   PermissionOverrides,
-  PooledAgentStatsSummary
+  PooledAgentStatsSummary,
+  PromptCacheCapability,
+  PromptCacheSettings
 } from '../main/store/types'
 import type {
   WorkflowRunSummary,
@@ -132,7 +134,9 @@ import type {
 import type {
   GitPrReadiness,
   GitPrSummary,
+  GitBranchInfo,
   GitRepositorySnapshot,
+  GitWorktreeInfo,
   GitResult
 } from '../main/services/GitService'
 import type {
@@ -237,6 +241,15 @@ interface AgentRunPayload {
   sessionTrust?: boolean
   geminiWorktree?: GeminiWorktreeLaunchOption
   runtimeProfileId?: string
+  runtimeWorktree?: {
+    requested: boolean
+    source: 'runtimeProfile' | 'composer'
+    profileId?: string
+    profileName?: string
+    baseWorkspacePath?: string
+    effectiveWorkspacePath?: string
+    status: 'selection-required' | 'selected'
+  }
   geminiAuthProfileId?: string | null
   handoffSourceRunId?: string
   effectivePermissions?: EffectiveRunPermissions
@@ -577,6 +590,43 @@ declare global {
         setUpstream?: boolean
         remote?: string
       }) => Promise<GitResult<GitRepositorySnapshot>>
+      'git:list-branches': (payload: {
+        workspacePath?: string
+        repoPath?: string
+      }) => Promise<{ ok: boolean; branches: GitBranchInfo[]; currentBranch?: string; error?: string }>
+      'git:checkout-branch': (payload: {
+        workspacePath?: string
+        repoPath?: string
+        branch?: string
+      }) => Promise<{ ok: boolean; snapshot?: GitRepositorySnapshot; error?: string }>
+      'git:create-branch': (payload: {
+        workspacePath?: string
+        repoPath?: string
+        branch?: string
+        from?: string
+      }) => Promise<{ ok: boolean; snapshot?: GitRepositorySnapshot; error?: string }>
+      'git:list-worktrees': (payload: {
+        workspacePath?: string
+        repoPath?: string
+      }) => Promise<{ ok: boolean; worktrees: GitWorktreeInfo[]; error?: string }>
+      'git:create-worktree': (payload: {
+        workspacePath?: string
+        repoPath?: string
+        name?: string
+        branch?: string
+        path?: string
+      }) => Promise<{ ok: boolean; snapshot?: GitRepositorySnapshot; error?: string }>
+      'git:remove-worktree': (payload: {
+        workspacePath?: string
+        repoPath?: string
+        path?: string
+        force?: boolean
+      }) => Promise<{ ok: boolean; snapshot?: GitRepositorySnapshot; error?: string }>
+      'git:select-worktree': (payload: {
+        workspacePath?: string
+        repoPath?: string
+        path?: string
+      }) => Promise<{ ok: boolean; snapshot?: GitRepositorySnapshot; error?: string }>
       githubPrStatus: (payload: {
         workspacePath?: string
         repoPath?: string
@@ -636,6 +686,7 @@ declare global {
       cancelGeminiOAuthLogin: (profileId?: string | null) => Promise<GeminiOAuthLoginStatus | null>
       getAgentMcpStatus: (provider: ProviderId) => Promise<any>
       listAgentThreads: (provider: ProviderId, params?: any) => Promise<any>
+      'fork:get-capability': (provider: ProviderId) => Promise<any>
       forkAgentThread: (provider: ProviderId, threadId: string, params?: any) => Promise<any>
       rollbackAgentThread: (
         provider: ProviderId,
@@ -1186,6 +1237,12 @@ declare global {
 
       getSettings: () => Promise<AppSettings>
       updateSettings: (partial: Partial<AppSettings>) => Promise<void>
+      'prompt-cache:get-policy': () => Promise<PromptCacheSettings>
+      'prompt-cache:save-policy': (
+        policy: PromptCacheSettings
+      ) => Promise<{ ok: boolean; error?: string }>
+      'prompt-cache:get-capabilities': () => Promise<PromptCacheCapability[]>
+      'prompt-cache:get-diagnostics': () => Promise<unknown[]>
       upsertAgenticWorkspaceGrant: (
         provider: ProviderId,
         workspacePath: string,

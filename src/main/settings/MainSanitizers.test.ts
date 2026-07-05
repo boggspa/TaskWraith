@@ -495,6 +495,37 @@ describe('MainSanitizers settings patches', () => {
     ).toBe(false)
   })
 
+  it('persists and normalizes prompt cache settings', () => {
+    const settings = makeSettings({
+      promptCache: {
+        enabled: true,
+        providers: {
+          claude: { mode: 'auto' },
+          kimi: { mode: 'off' }
+        }
+      }
+    })
+    const { sanitizeSettingsPatch } = makeSanitizers(settings)
+
+    expect(
+      sanitizeSettingsPatch({
+        promptCache: {
+          enabled: false,
+          providers: {
+            claude: { mode: 'explicit', minStablePrefixTokens: 2048.5 },
+            kimi: { mode: 'bogus' as 'auto' }
+          }
+        }
+      }).promptCache
+    ).toMatchObject({
+      enabled: false,
+      providers: {
+        claude: { mode: 'explicit', minStablePrefixTokens: 2048 },
+        kimi: { mode: 'off' }
+      }
+    })
+  })
+
   it('preserves the General auto-update checkbox setting', () => {
     const settings = makeSettings()
     const { sanitizeSettingsPatch } = makeSanitizers(settings)

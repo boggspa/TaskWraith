@@ -100,6 +100,59 @@ describe('applyRuntimeProfileToPayload — read-only is a safety floor', () => {
     )
     expect(out.approvalMode).toBe('plan')
   })
+
+  it('stamps worktree runtime intent for workspace-scoped worktree profiles', () => {
+    const out = applyRuntimeProfileToPayload(
+      payload({
+        runtimeProfileId: 'profile-worktree',
+        workspace: '/repo',
+        approvalMode: 'default'
+      }),
+      depsWith(
+        makeProfile({
+          id: 'profile-worktree',
+          name: 'Grok worktree',
+          workspaceMode: 'worktree'
+        })
+      )
+    )
+
+    expect(out.runtimeWorktree).toEqual({
+      requested: true,
+      source: 'runtimeProfile',
+      profileId: 'profile-worktree',
+      profileName: 'Grok worktree',
+      baseWorkspacePath: '/repo',
+      effectiveWorkspacePath: undefined,
+      status: 'selection-required'
+    })
+  })
+
+  it('preserves an already selected composer worktree path while adding profile provenance', () => {
+    const out = applyRuntimeProfileToPayload(
+      payload({
+        runtimeProfileId: 'profile-worktree',
+        workspace: '/repo',
+        runtimeWorktree: {
+          requested: true,
+          source: 'composer',
+          baseWorkspacePath: '/repo',
+          effectiveWorkspacePath: '/repo-worktrees/task',
+          status: 'selected'
+        }
+      }),
+      depsWith(makeProfile({ id: 'profile-worktree', workspaceMode: 'worktree' }))
+    )
+
+    expect(out.runtimeWorktree).toMatchObject({
+      requested: true,
+      source: 'composer',
+      profileId: 'profile-worktree',
+      baseWorkspacePath: '/repo',
+      effectiveWorkspacePath: '/repo-worktrees/task',
+      status: 'selected'
+    })
+  })
 })
 
 describe('runtimeSettings', () => {

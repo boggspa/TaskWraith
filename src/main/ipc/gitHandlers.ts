@@ -2,15 +2,20 @@ import { ipcMain, type IpcMainInvokeEvent } from 'electron'
 import type { ChatRecord, ExternalPathGrant } from '../store/types'
 import type {
   GitCommitInput,
+  GitCreateBranchInput,
   GitCreatePrInput,
+  GitCreateWorktreeInput,
   GitPushInput,
+  GitRemoveWorktreeInput,
   GitResult,
   GitPrReadiness,
   GitPrSummary,
   GitRepositorySnapshot,
+  GitSelectWorktreeInput,
   GitService,
   GitStageInput,
-  GitUnstageInput
+  GitUnstageInput,
+  GitWorktreeList
 } from '../services/GitService'
 import type {
   GitSnapshotInvalidationReason,
@@ -51,6 +56,13 @@ export interface GitHandlersDeps {
     | 'unstage'
     | 'commit'
     | 'push'
+    | 'listBranches'
+    | 'checkoutBranch'
+    | 'createBranch'
+    | 'listWorktrees'
+    | 'createWorktree'
+    | 'removeWorktree'
+    | 'selectWorktree'
     | 'pullRequestStatus'
     | 'pullRequestReadiness'
     | 'createPullRequest'
@@ -179,6 +191,12 @@ async function completeExternalPublishReceipt(
   }
 }
 
+function worktreeListContainsPath(list: GitWorktreeList, targetPath: string): boolean {
+  const target = targetPath.trim().replace(/\/+$/, '')
+  if (!target) return false
+  return list.worktrees.some((worktree) => worktree.path.replace(/\/+$/, '') === target)
+}
+
 export function registerGitHandlers(deps: GitHandlersDeps): void {
   const subscriptionCleanups = new Map<string, () => void>()
 
@@ -251,6 +269,118 @@ export function registerGitHandlers(deps: GitHandlersDeps): void {
     deps.gitSnapshotPublisher?.invalidatePath(repo.path, gitSnapshotInvalidationReason(payload?.reason))
     return { ok: true }
   })
+
+  ipcMain.handle('git:list-branches', async (_event, payload?: GitIpcPayload) => {
+    const repo = gitPayloadPath(deps, payload, 'registered-or-granted-read')
+    if (!repo.ok) return { ok: false, branches: [], error: repo.error }
+    const result = await deps.gitService.listBranches(repo.path)
+    return result.ok
+      ? { ok: true, branches: result.data.branches, currentBranch: result.data.currentBranch }
+      : { ok: false, branches: [], error: result.error }
+  })
+
+  ipcMain.handle(
+    'git:checkout-branch',
+    async (
+      _event,
+      payload?: GitIpcPayload & Pick<GitCreateBranchInput, 'branch'>
+    ): Promise<{ ok: boolean; snapshot?: GitRepositorySnapshot; error?: string }> => {
+      const repo = gitPayloadPath(deps, payload, 'registered-workspace')
+      if (!repo.ok) return { ok: false, error: repo.error }
+      const result = await deps.gitService.checkoutBranch({
+        repoPath: repo.path,
+        branch: payload?.branch || ''
+      })
+      if (result.ok) deps.gitSnapshotPublisher?.publishSnapshot(result.data, 'git-action')
+      return result.ok ? { ok: true, snapshot: result.data } : { ok: false, error: result.error }
+    }
+  )
+
+  ipcMain.handle(
+    'git:create-branch',
+    async (
+      _event,
+      payload?: GitIpcPayload & Pick<GitCreateBranchInput, 'branch' | 'from'>
+    ): Promise<{ ok: boolean; snapshot?: GitRepositorySnapshot; error?: string }> => {
+      const repo = gitPayloadPath(deps, payload, 'registered-workspace')
+      if (!repo.ok) return { ok: false, error: repo.error }
+      const result = await deps.gitService.createBranch({
+        repoPath: repo.path,
+        branch: payload?.branch || '',
+        from: payload?.from
+      })
+      if (result.ok) deps.gitSnapshotPublisher?.publishSnapshot(result.data, 'git-action')
+      return result.ok ? { ok: true, snapshot: result.data } : { ok: false, error: result.error }
+    }
+  )
+
+  ipcMain.handle('git:list-worktrees', async (_event, payload?: GitIpcPayload) => {
+    const repo = gitPayloadPath(deps, payload, 'registered-or-granted-read')
+    if (!repo.ok) return { ok: false, worktrees: [], error: repo.error }
+    const result = await deps.gitService.listWorktrees(repo.path)
+    return result.ok
+      ? { ok: true, worktrees: result.data.worktrees }
+      : { ok: false, worktrees: [], error: result.error }
+  })
+
+  ipcMain.handle(
+    'git:create-worktree',
+    async (
+      _event,
+      payload?: GitIpcPayload & Pick<GitCreateWorktreeInput, 'name' | 'branch' | 'path'>
+    ): Promise<{ ok: boolean; snapshot?: GitRepositorySnapshot; error?: string }> => {
+      const repo = gitPayloadPath(deps, payload, 'registered-workspace')
+      if (!repo.ok) return { ok: false, error: repo.error }
+      const result = await deps.gitService.createWorktree({
+        repoPath: repo.path,
+        name: payload?.name,
+        branch: payload?.branch,
+        path: payload?.path
+      })
+      if (result.ok) deps.gitSnapshotPublisher?.publishSnapshot(result.data, 'git-action')
+      return result.ok ? { ok: true, snapshot: result.data } : { ok: false, error: result.error }
+    }
+  )
+
+  ipcMain.handle(
+    'git:remove-worktree',
+    async (
+      _event,
+      payload?: GitIpcPayload & Pick<GitRemoveWorktreeInput, 'path' | 'force'>
+    ): Promise<{ ok: boolean; snapshot?: GitRepositorySnapshot; error?: string }> => {
+      const repo = gitPayloadPath(deps, payload, 'registered-workspace')
+      if (!repo.ok) return { ok: false, error: repo.error }
+      const result = await deps.gitService.removeWorktree({
+        repoPath: repo.path,
+        path: payload?.path || '',
+        force: payload?.force
+      })
+      if (result.ok) deps.gitSnapshotPublisher?.publishSnapshot(result.data, 'git-action')
+      return result.ok ? { ok: true, snapshot: result.data } : { ok: false, error: result.error }
+    }
+  )
+
+  ipcMain.handle(
+    'git:select-worktree',
+    async (
+      _event,
+      payload?: GitIpcPayload & Pick<GitSelectWorktreeInput, 'path'>
+    ): Promise<{ ok: boolean; snapshot?: GitRepositorySnapshot; error?: string }> => {
+      const repo = gitPayloadPath(deps, payload, 'registered-or-granted-read')
+      if (!repo.ok) return { ok: false, error: repo.error }
+      const worktrees = await deps.gitService.listWorktrees(repo.path)
+      if (!worktrees.ok) return { ok: false, error: worktrees.error }
+      const target = String(payload?.path || '').trim()
+      if (!worktreeListContainsPath(worktrees.data, target)) {
+        return { ok: false, error: 'Selected path is not a linked worktree for this repository.' }
+      }
+      const result = await deps.gitService.selectWorktree({
+        repoPath: repo.path,
+        path: target
+      })
+      return result.ok ? { ok: true, snapshot: result.data } : { ok: false, error: result.error }
+    }
+  )
 
   ipcMain.handle(
     'git:stage',

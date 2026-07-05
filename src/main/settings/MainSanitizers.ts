@@ -31,6 +31,7 @@ import type {
 } from '../../shared/plugins/PluginTypes'
 import { WORKSPACE_BOARD_CARD_LINK_KINDS } from '../store/types'
 import { sanitizeProviderRunPauses } from '../ProviderRunPause'
+import { normalizePromptCacheSettings } from '../PromptCachePolicy'
 import { coerceLiveProvider, isRetiredProvider } from '../../shared/retiredProviders'
 import { isAppIconVariant, isWwdc26IconAvailable } from '../../shared/iconVariants'
 import { canPersistPlaintextFieldValue } from '../PlaintextSecretPolicy'
@@ -113,6 +114,7 @@ const SETTINGS_PATCH_KEYS = new Set<keyof AppSettings>([
   'kimiClassifierEnabled',
   'agenticServices',
   'nativeSubAgentRequests',
+  'promptCache',
   'geminiApiRuntime',
   'userMcpServers',
   'geminiMcpBridgeEnabled',
@@ -1542,6 +1544,12 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
       if (value !== 'auto' && value !== 'always' && value !== 'never') {
         delete sanitized.geminiApiRuntime
       }
+    }
+    if ('promptCache' in sanitized) {
+      sanitized.promptCache = normalizePromptCacheSettings(
+        sanitized.promptCache,
+        deps.getSettings().promptCache
+      )
     }
     if ('nativeSubAgentRequests' in sanitized) {
       sanitized.nativeSubAgentRequests =

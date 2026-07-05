@@ -42,7 +42,8 @@ function createDeps() {
   const deps = {
     getCodexClient: vi.fn(() => client),
     getAppVersion: vi.fn(() => '1.2.3'),
-    providerDisplayName: vi.fn((provider: string) => provider.toUpperCase())
+    providerDisplayName: vi.fn((provider: string) => provider.toUpperCase()),
+    createEmulatedFork: undefined as CodexThreadHandlersDeps['createEmulatedFork']
   } satisfies CodexThreadHandlersDeps
   return { deps, calls, client }
 }
@@ -52,8 +53,29 @@ describe('registerCodexThreadHandlers', () => {
     registerCodexThreadHandlers(createDeps().deps)
 
     expect(handlerFor('list-agent-threads')).toBeTypeOf('function')
+    expect(handlerFor('fork:get-capability')).toBeTypeOf('function')
     expect(handlerFor('fork-agent-thread')).toBeTypeOf('function')
     expect(handlerFor('rollback-agent-thread')).toBeTypeOf('function')
+  })
+
+  it('reports native, emulated, and unsupported fork capabilities', async () => {
+    const { deps } = createDeps()
+    registerCodexThreadHandlers(deps)
+
+    await expect(handlerFor('fork:get-capability')({}, 'codex')).resolves.toMatchObject({
+      provider: 'codex',
+      kind: 'native',
+      requiresLinkedSession: true
+    })
+    await expect(handlerFor('fork:get-capability')({}, 'claude')).resolves.toMatchObject({
+      provider: 'claude',
+      kind: 'emulated',
+      requiresLinkedSession: false
+    })
+    await expect(handlerFor('fork:get-capability')({}, 'gemini')).resolves.toMatchObject({
+      provider: 'gemini',
+      kind: 'unsupported'
+    })
   })
 
   it('returns an empty page for non-codex list requests without touching the client', async () => {
@@ -87,16 +109,50 @@ describe('registerCodexThreadHandlers', () => {
     expect(calls).toEqual(['ensure:1.2.3', 'request:thread/list:20000'])
   })
 
-  it('fork and rollback throw exact providerDisplayName-based errors for non-codex', async () => {
+  it('fork reports emulated fallback requirements while rollback stays codex-only', async () => {
     const { deps } = createDeps()
     registerCodexThreadHandlers(deps)
 
     await expect(handlerFor('fork-agent-thread')({}, 'kimi', 'thread-1')).rejects.toThrow(
-      'Thread fork is not available for KIMI in this version.'
+      'No provider-native fork is available on this transport.'
     )
     await expect(handlerFor('rollback-agent-thread')({}, 'kimi', 'thread-1')).rejects.toThrow(
       'Thread rollback is not available for KIMI in this version. File rollback still belongs to Diff Studio/git workflow.'
     )
+  })
+
+  it('creates an emulated fork through the injected chat fallback for non-codex providers', async () => {
+    const { deps } = createDeps()
+    deps.createEmulatedFork = vi.fn(() => ({
+      appChatId: 'fork-chat-1',
+      title: 'Forked',
+      parentChatId: 'chat-1'
+    }) as any)
+    registerCodexThreadHandlers(deps)
+
+    await expect(
+      handlerFor('fork-agent-thread')({}, 'claude', 'provider-thread-1', {
+        chatId: 'chat-1',
+        model: 'sonnet'
+      })
+    ).resolves.toEqual({
+      ok: true,
+      provider: 'claude',
+      kind: 'emulated',
+      chatId: 'fork-chat-1',
+      forkedChatId: 'fork-chat-1',
+      title: 'Forked',
+      parentChatId: 'chat-1',
+      caveats: [
+        'CLAUDE does not expose a TaskWraith-native thread/fork primitive; TaskWraith copies the transcript into an isolated sibling chat.'
+      ]
+    })
+    expect(deps.createEmulatedFork).toHaveBeenCalledWith({
+      provider: 'claude',
+      chatId: 'chat-1',
+      sourceProviderThreadId: 'provider-thread-1',
+      sourceModel: 'sonnet'
+    })
   })
 
   it('fork preserves payload shape, excludeTurns coercion, optional cwd/model, and timeout', async () => {
@@ -109,8 +165,11 @@ describe('registerCodexThreadHandlers', () => {
         cwd: '/repo',
         model: 'gpt-5'
       })
-    ).resolves.toEqual({
+    ).resolves.toMatchObject({
       method: 'thread/fork',
+      ok: true,
+      provider: 'codex',
+      kind: 'native',
       payload: {
         threadId: 'thread-1',
         excludeTurns: true,
@@ -131,8 +190,11 @@ describe('registerCodexThreadHandlers', () => {
       handlerFor('fork-agent-thread')({}, 'codex', 'thread-1', {
         excludeTurns: 0
       })
-    ).resolves.toEqual({
+    ).resolves.toMatchObject({
       method: 'thread/fork',
+      ok: true,
+      provider: 'codex',
+      kind: 'native',
       payload: {
         threadId: 'thread-1',
         excludeTurns: false,

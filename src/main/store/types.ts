@@ -198,6 +198,81 @@ export interface ProviderRunPauseState {
   reroute?: ProviderReroutePlan | null
   updatedAt?: string
 }
+
+export type PromptCacheMode = 'off' | 'auto' | 'explicit'
+export type PromptCacheGuaranteeTier =
+  | 'guaranteed'
+  | 'automatic-observed'
+  | 'best-effort'
+  | 'unsupported'
+export type PromptCacheTransport = 'api-byok' | 'api-managed' | 'cli-opaque' | 'local'
+
+export interface PromptCacheProviderSettings {
+  mode?: PromptCacheMode
+  minStablePrefixTokens?: number
+  diagnosticsEnabled?: boolean
+}
+
+export interface PromptCacheSettings {
+  enabled?: boolean
+  providers?: Partial<Record<ProviderId, PromptCacheProviderSettings>>
+}
+
+export interface PromptCacheCapability {
+  provider: ProviderId
+  label: string
+  transport: PromptCacheTransport
+  guaranteeTier: PromptCacheGuaranteeTier
+  guaranteeLabel: string
+  detail: string
+  defaultMode: PromptCacheMode
+  controllable: boolean
+  supportsModeControl: boolean
+  retired?: boolean
+}
+
+export interface PromptCacheCapabilitySummary {
+  generatedAt: string
+  settings: PromptCacheSettings
+  capabilities: PromptCacheCapability[]
+}
+
+export type AgentThreadForkCapabilityKind = 'native' | 'emulated' | 'unsupported'
+export type AgentThreadForkKind = 'native' | 'emulated'
+
+export interface ChatForkContext {
+  kind: AgentThreadForkKind
+  createdAt: number
+  sourceChatId?: string
+  sourceProvider?: ProviderId
+  sourceProviderThreadId?: string
+  sourceModel?: string
+  note?: string
+}
+
+export interface AgentThreadForkCapability {
+  provider: ProviderId
+  label: string
+  kind: AgentThreadForkCapabilityKind
+  nativeThreadTools: boolean
+  caveats: string[]
+}
+
+export interface AgentThreadForkCapabilitySummary {
+  generatedAt: string
+  capabilities: AgentThreadForkCapability[]
+}
+
+export interface AgentThreadForkResult {
+  ok: true
+  provider: ProviderId
+  kind: AgentThreadForkKind
+  native?: unknown
+  chatId?: string
+  title?: string
+  parentChatId?: string
+  caveats?: string[]
+}
 export type ActiveGoalStatus = 'active' | 'paused' | 'blocked' | 'completed'
 export type ActiveGoalMode =
   | 'codex_native'
@@ -1695,6 +1770,10 @@ export interface AppSettings {
    * `'never'` forces CLI. Step 1 persists this field but does not yet
    * consume it — wiring lands in Phase M1 Step 2. */
   geminiApiRuntime?: GeminiApiRuntimeMode
+  /** Provider prompt-cache posture. This is an honest policy surface: it can
+   * request cache behavior only on transports TaskWraith owns and otherwise
+   * records the provider/CLI-reported cache usage when available. */
+  promptCache?: PromptCacheSettings
   userMcpServers?: UserMcpServerConfig[]
   codexUsageCredential?: {
     encryptedAccessToken?: string
@@ -2952,6 +3031,7 @@ export interface ChatRecord {
     originRunId?: string
     transcriptVisibility?: 'none' | 'summary' | 'selected' | 'snapshot'
   }
+  forkContext?: ChatForkContext
   /** Phase F1 — delegation metadata, present only when `parentChatId`
    * is set for a `parentChatRelation: 'subThread'` record. Records WHY
    * this sub-thread exists so the audit trail + future auto-orchestration

@@ -20,6 +20,7 @@ import type {
   ProviderId,
   RuntimeProfile
 } from '../store/types'
+import type { RuntimeWorktreeIntent } from '../run/AgentRunTypes'
 
 export const GEMINI_MCP_SERVER_NAME = 'TaskWraith' as const
 
@@ -59,8 +60,10 @@ export interface CliProviderRuntimeDependencies {
 export interface RuntimeProfilePayload {
   provider: ProviderId
   scope: ChatScope
+  workspace?: string
   runtimeProfileId?: string
   runtimeProfile?: RuntimeProfile
+  runtimeWorktree?: RuntimeWorktreeIntent
   approvalMode?: string
 }
 
@@ -347,6 +350,19 @@ export function applyRuntimeProfileToPayload(
   const profile = resolveRuntimeProfileForPayload(payload, deps)
   if (!profile) return payload
   payload.runtimeProfile = profile
+  if (profile.workspaceMode === 'worktree' && payload.scope === 'workspace') {
+    const existing = payload.runtimeWorktree
+    const selectedPath = existing?.effectiveWorkspacePath
+    payload.runtimeWorktree = {
+      requested: true,
+      source: existing?.source || 'runtimeProfile',
+      profileId: profile.id,
+      profileName: profile.name,
+      baseWorkspacePath: existing?.baseWorkspacePath || payload.workspace,
+      effectiveWorkspacePath: selectedPath,
+      status: selectedPath ? 'selected' : 'selection-required'
+    }
+  }
   if (profile.approvalMode) {
     // SAFETY: a runtime profile must NOT silently LOOSEN an explicit read-only
     // ('plan') seat to write-capable. The builtin profiles carry

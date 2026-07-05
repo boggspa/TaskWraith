@@ -201,10 +201,17 @@ export function geminiUsageMetadataToStats(
   options: { alreadyRecorded?: boolean } = {}
 ): Record<string, unknown> {
   const raw = usage || {}
+  const cachedContentTokenCount = canonicalUsageCount(raw, 'cachedContentTokenCount')
   return normalizeProviderUsage('gemini', {
     ...raw,
     input_tokens: canonicalUsageCount(raw, 'promptTokenCount'),
     output_tokens: canonicalUsageCount(raw, 'candidatesTokenCount'),
+    ...(cachedContentTokenCount > 0
+      ? {
+          cache_read_input_tokens: cachedContentTokenCount,
+          _taskwraith_input_includes_cache: true
+        }
+      : {}),
     total_tokens:
       canonicalUsageCount(raw, 'totalTokenCount') ||
       canonicalUsageCount(raw, 'promptTokenCount') +

@@ -930,6 +930,10 @@ import { registerWorkspaceDiffSnapshotHandlers } from './ipc/workspaceDiffSnapsh
 import { registerTrustHandlers } from './ipc/trustHandlers'
 import { registerUpdateHandlers } from './ipc/updateHandlers'
 import { registerSettingsHandlers } from './ipc/settingsHandlers'
+import {
+  aggregatePromptCacheDiagnosticsFromChats,
+  buildPromptCacheCapabilitySummary
+} from './PromptCachePolicy'
 import { registerPluginHandlers } from './ipc/pluginHandlers'
 import { registerShellHandlers } from './ipc/shellHandlers'
 import { registerAuditHandlers } from './ipc/auditHandlers'
@@ -4541,6 +4545,24 @@ function runPostureContextFromPayload(payload: {
   }
 }
 
+function normalizeRuntimeWorktreeIntent(value: unknown): AgentRunPayload['runtimeWorktree'] {
+  if (!isRecord(value)) return undefined
+  const effectiveWorkspacePath = optionalString(value.effectiveWorkspacePath)
+  const baseWorkspacePath = optionalString(value.baseWorkspacePath)
+  const status =
+    value.status === 'selected' && effectiveWorkspacePath ? 'selected' : 'selection-required'
+  const source = value.source === 'composer' ? 'composer' : 'runtimeProfile'
+  return {
+    requested: value.requested !== false,
+    source,
+    profileId: optionalString(value.profileId),
+    profileName: optionalString(value.profileName),
+    baseWorkspacePath,
+    effectiveWorkspacePath: status === 'selected' ? effectiveWorkspacePath : undefined,
+    status
+  }
+}
+
 function permissionPostureSnapshotFromSession(
   session:
     | {
@@ -4750,6 +4772,7 @@ function normalizeAgentRunPayload(rawPayload: unknown): AgentRunPayload {
       typeof payload.failoverHopCount === 'number' && Number.isFinite(payload.failoverHopCount)
         ? payload.failoverHopCount
         : undefined,
+    runtimeWorktree: normalizeRuntimeWorktreeIntent(payload.runtimeWorktree),
     effectivePermissions: clampedPosture.effectivePermissions,
     effectivePermissionsSignature: clampedPosture.signature,
     ensembleRun: normalizeEnsembleRunIdentity(payload.ensembleRun),
@@ -4779,8 +4802,10 @@ async function ensureProviderRunPreflight(
     }
   } else {
     try {
-      payload.workspace = requireRegisteredWorkspace(payload.workspace || '')
-      validateChatWorkspaceIdentity(payload.appChatId, findRegisteredWorkspace(payload.workspace))
+      const registeredWorkspace = requireRegisteredWorkspace(payload.workspace || '')
+      const workspaceRecord = findRegisteredWorkspace(registeredWorkspace)
+      validateChatWorkspaceIdentity(payload.appChatId, workspaceRecord)
+      payload.workspace = await resolveRuntimeWorktreeWorkspace(payload, registeredWorkspace)
     } catch (error) {
       sendAgentCompatError(
         sender,
@@ -4819,6 +4844,42 @@ async function ensureProviderRunPreflight(
   sendAgentCompatError(sender, payload.provider, preflight.reason, route)
   sendAgentCompatExit(sender, payload.provider, -1, route)
   return false
+}
+
+async function resolveRuntimeWorktreeWorkspace(
+  payload: AgentRunPayload,
+  registeredWorkspace: string
+): Promise<string> {
+  const intent = payload.runtimeWorktree
+  if (!intent?.requested) return registeredWorkspace
+  if (intent.status !== 'selected' || !intent.effectiveWorkspacePath) {
+    const profile = intent.profileName ? ` (${intent.profileName})` : ''
+    throw new Error(
+      `Runtime profile${profile} requires an isolated worktree. Create or select one from Branch & worktree before running.`
+    )
+  }
+  const baseWorkspace = requireRegisteredWorkspace(
+    intent.baseWorkspacePath || registeredWorkspace,
+    'Base workspace'
+  )
+  const targetPath = canonicalPath(requireNonEmptyString(intent.effectiveWorkspacePath, 'Worktree'))
+  const list = await new GitService().listWorktrees(baseWorkspace)
+  if (!list.ok) {
+    throw new Error(list.error || 'Could not list linked git worktrees.')
+  }
+  const linked = list.data.worktrees.some(
+    (worktree) => canonicalPath(worktree.path) === targetPath
+  )
+  if (!linked) {
+    throw new Error('Selected worktree is not linked to the registered workspace repository.')
+  }
+  payload.runtimeWorktree = {
+    ...intent,
+    baseWorkspacePath: baseWorkspace,
+    effectiveWorkspacePath: targetPath,
+    status: 'selected'
+  }
+  return targetPath
 }
 
 async function previewModelAccessProvenForPayload(payload: AgentRunPayload): Promise<boolean> {
@@ -28040,6 +28101,10 @@ if (isGeminiMcpBridgeProcess) {
     // Settings
     registerSettingsHandlers({
       settingsService,
+      getPromptCacheCapabilities: () =>
+        buildPromptCacheCapabilitySummary(AppStore.getSettings()).capabilities,
+      getPromptCacheDiagnostics: () =>
+        aggregatePromptCacheDiagnosticsFromChats(AppStore.getChats()),
       setBridgeDaemonEnabled: async (enabled) => {
         settingsService.updateSettings({ bridgeDaemonEnabled: Boolean(enabled) })
         return {
@@ -29493,7 +29558,14 @@ if (isGeminiMcpBridgeProcess) {
     registerCodexThreadHandlers({
       getCodexClient: () => getCodexClient(),
       getAppVersion: () => app.getVersion(),
-      providerDisplayName
+      providerDisplayName,
+      createEmulatedFork: (input) =>
+        chatService.createForkChat({
+          parentChatId: input.chatId,
+          provider: input.provider,
+          sourceProviderThreadId: input.sourceProviderThreadId,
+          sourceModel: input.sourceModel
+        })
     })
 
     ipcMain.handle(

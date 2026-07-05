@@ -67,6 +67,20 @@ function createDeps(overrides: Partial<Parameters<typeof registerSettingsHandler
       getSettings: vi.fn(() => settings),
       updateSettings: vi.fn()
     },
+    getPromptCacheCapabilities: vi.fn(() => [
+      {
+        provider: 'claude' as ProviderId,
+        label: 'Claude',
+        transport: 'cli-opaque' as const,
+        guaranteeTier: 'best-effort' as const,
+        guaranteeLabel: 'Best effort',
+        detail: 'Opaque transport',
+        defaultMode: 'auto' as const,
+        controllable: false,
+        supportsModeControl: true
+      }
+    ]),
+    getPromptCacheDiagnostics: vi.fn(() => [{ provider: 'claude', cacheReadInputTokens: 12 }]),
     setBridgeDaemonEnabled: vi.fn(async () => ({
       lan: { enabled: true },
       tailscale: { available: true }
@@ -138,6 +152,42 @@ describe('registerSettingsHandlers', () => {
       tailscale: { available: true }
     })
     expect(deps.setBridgeDaemonEnabled).toHaveBeenCalledWith(true)
+  })
+
+  it('exposes prompt cache policy and summary IPC', async () => {
+    const settings = {
+      promptCache: {
+        enabled: true,
+        providers: { claude: { mode: 'auto' as const } }
+      }
+    } as AppSettings
+    const deps = createDeps({
+      settingsService: {
+        getSettings: vi.fn(() => settings),
+        updateSettings: vi.fn()
+      }
+    })
+    registerSettingsHandlers(deps)
+
+    expect(handlerFor('prompt-cache:get-policy')({} as any)).toEqual(settings.promptCache)
+    expect(
+      handlerFor('prompt-cache:save-policy')({} as any, {
+        enabled: false,
+        providers: { claude: { mode: 'explicit' } }
+      })
+    ).toEqual({ ok: true })
+    expect(deps.settingsService.updateSettings).toHaveBeenCalledWith({
+      promptCache: {
+        enabled: false,
+        providers: { claude: { mode: 'explicit' } }
+      }
+    })
+    expect(handlerFor('prompt-cache:get-capabilities')({} as any)).toEqual([
+      expect.objectContaining({ provider: 'claude', guaranteeTier: 'best-effort' })
+    ])
+    expect(handlerFor('prompt-cache:get-diagnostics')({} as any)).toEqual([
+      { provider: 'claude', cacheReadInputTokens: 12 }
+    ])
   })
 
   it('sanitizes provider filters and runtime profile mutations', () => {

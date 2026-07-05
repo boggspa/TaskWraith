@@ -289,6 +289,33 @@ const api = {
     setUpstream?: boolean
     remote?: string
   }) => ipcRenderer.invoke('git:push', payload) as Promise<GitResult<GitRepositorySnapshot>>,
+  'git:list-branches': (payload: { workspacePath?: string; repoPath?: string }) =>
+    ipcRenderer.invoke('git:list-branches', payload),
+  'git:checkout-branch': (payload: { workspacePath?: string; repoPath?: string; branch?: string }) =>
+    ipcRenderer.invoke('git:checkout-branch', payload),
+  'git:create-branch': (payload: {
+    workspacePath?: string
+    repoPath?: string
+    branch?: string
+    from?: string
+  }) => ipcRenderer.invoke('git:create-branch', payload),
+  'git:list-worktrees': (payload: { workspacePath?: string; repoPath?: string }) =>
+    ipcRenderer.invoke('git:list-worktrees', payload),
+  'git:create-worktree': (payload: {
+    workspacePath?: string
+    repoPath?: string
+    name?: string
+    branch?: string
+    path?: string
+  }) => ipcRenderer.invoke('git:create-worktree', payload),
+  'git:remove-worktree': (payload: {
+    workspacePath?: string
+    repoPath?: string
+    path?: string
+    force?: boolean
+  }) => ipcRenderer.invoke('git:remove-worktree', payload),
+  'git:select-worktree': (payload: { workspacePath?: string; repoPath?: string; path?: string }) =>
+    ipcRenderer.invoke('git:select-worktree', payload),
   githubPrStatus: (payload: { workspacePath?: string; repoPath?: string }) =>
     ipcRenderer.invoke('github:pr-status', payload) as Promise<GitResult<GitPrSummary>>,
   githubPrReadiness: (payload: { workspacePath?: string; repoPath?: string }) =>
@@ -324,6 +351,7 @@ const api = {
   getAgentMcpStatus: (provider: ProviderId) => ipcRenderer.invoke('get-agent-mcp-status', provider),
   listAgentThreads: (provider: ProviderId, params: any = {}) =>
     ipcRenderer.invoke('list-agent-threads', provider, params),
+  'fork:get-capability': (provider: ProviderId) => ipcRenderer.invoke('fork:get-capability', provider),
   forkAgentThread: (provider: ProviderId, threadId: string, params: any = {}) =>
     ipcRenderer.invoke('fork-agent-thread', provider, threadId, params),
   rollbackAgentThread: (provider: ProviderId, threadId: string, numTurns: number = 1) =>
@@ -877,6 +905,11 @@ const api = {
   // Store APIs
   getSettings: () => ipcRenderer.invoke('get-settings'),
   updateSettings: (partial: any) => ipcRenderer.invoke('update-settings', partial),
+  'prompt-cache:get-policy': () => ipcRenderer.invoke('prompt-cache:get-policy'),
+  'prompt-cache:save-policy': (policy: any) =>
+    ipcRenderer.invoke('prompt-cache:save-policy', policy),
+  'prompt-cache:get-capabilities': () => ipcRenderer.invoke('prompt-cache:get-capabilities'),
+  'prompt-cache:get-diagnostics': () => ipcRenderer.invoke('prompt-cache:get-diagnostics'),
   upsertAgenticWorkspaceGrant: (provider: ProviderId, workspacePath: string, service: string) =>
     ipcRenderer.invoke('upsert-agentic-workspace-grant', provider, workspacePath, service),
   removeAgenticWorkspaceGrant: (provider: ProviderId, workspacePath: string, service: string) =>

@@ -140,4 +140,21 @@ describe('ProviderRunStats', () => {
       _taskwraith_usage_recorded: true
     })
   })
+
+  it('maps legacy cached content metadata into cache read stats without double-counting input', () => {
+    expect(
+      geminiUsageMetadataToStats({
+        promptTokenCount: 100,
+        cachedContentTokenCount: 40,
+        candidatesTokenCount: 10,
+        totalTokenCount: 110
+      })
+    ).toMatchObject({
+      input_tokens: 100,
+      output_tokens: 10,
+      total_tokens: 110,
+      cache_read_input_tokens: 40,
+      _taskwraith_input_includes_cache: true
+    })
+  })
 })

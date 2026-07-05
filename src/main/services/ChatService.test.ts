@@ -337,6 +337,58 @@ describe('ChatService', () => {
     })
   })
 
+  it('creates emulated fork chats with copied transcript and fork metadata', () => {
+    const parentMessage = {
+      id: 'msg-1',
+      role: 'user' as const,
+      content: 'Original prompt',
+      timestamp: '2026-07-05T12:00:00.000Z'
+    }
+    const { deps, store } = makeDeps({
+      appStore: makeStore({
+        getChat: vi.fn(() =>
+          makeChat({
+            appChatId: 'chat-1',
+            provider: 'claude',
+            title: 'Main task',
+            messages: [parentMessage],
+            linkedProviderSessionId: 'session-1'
+          })
+        )
+      })
+    })
+    const service = new ChatService(deps)
+
+    const fork = service.createForkChat({
+      parentChatId: 'chat-1',
+      provider: 'kimi',
+      sourceProviderThreadId: 'provider-thread-1',
+      sourceModel: 'kimi-k2'
+    })
+
+    expect(store.createSideChat).toHaveBeenCalledWith(
+      expect.objectContaining({
+        parentChatId: 'chat-1',
+        provider: 'kimi',
+        sideChatMode: 'singleProvider'
+      })
+    )
+    expect(fork.messages).toEqual([parentMessage])
+    expect(fork.runs).toEqual([])
+    expect(fork.linkedProviderSessionId).toBeUndefined()
+    expect(fork.forkContext).toMatchObject({
+      kind: 'emulated',
+      sourceChatId: 'chat-1',
+      sourceProvider: 'claude',
+      sourceProviderThreadId: 'provider-thread-1',
+      sourceModel: 'kimi-k2'
+    })
+    expect(store.saveChat).toHaveBeenCalledWith(expect.objectContaining({
+      appChatId: 'side-chat-1',
+      forkContext: expect.objectContaining({ kind: 'emulated' })
+    }))
+  })
+
   it('lets AppStore max-depth validation errors propagate without auditing', () => {
     const maxDepthError = new Error(
       'Cannot create sub-thread: parent chat-1 is itself a sub-thread (max depth 1 in v1)'

@@ -1,7 +1,7 @@
 import { spawn } from 'child_process'
 import { promises as fs } from 'fs'
 import { homedir } from 'os'
-import { dirname, isAbsolute, join, normalize, relative, resolve, sep } from 'path'
+import { basename, dirname, isAbsolute, join, normalize, relative, resolve, sep } from 'path'
 import { scrubCliEnv } from '../CliEnvSecurity'
 
 const DEFAULT_TIMEOUT_MS = 30_000
@@ -88,6 +88,34 @@ export interface GitPrReadiness {
 
 export type GitResult<T> = { ok: true; data: T } | { ok: false; error: string; stderr?: string }
 
+export interface GitBranchInfo {
+  name: string
+  isCurrent: boolean
+  isRemote?: boolean
+  upstream?: string
+  worktreePath?: string
+}
+
+export interface GitBranchList {
+  repoRoot: string
+  currentBranch?: string
+  branches: GitBranchInfo[]
+}
+
+export interface GitWorktreeInfo {
+  path: string
+  branch?: string
+  head?: string
+  isCurrent: boolean
+  isBare?: boolean
+  detached?: boolean
+}
+
+export interface GitWorktreeList {
+  repoRoot: string
+  worktrees: GitWorktreeInfo[]
+}
+
 export interface GitStageInput {
   repoPath: string
   paths?: string[]
@@ -117,6 +145,33 @@ export interface GitCreatePrInput {
   title?: string
   body?: string
   draft?: boolean
+}
+
+export interface GitBranchInput {
+  repoPath: string
+  branch: string
+}
+
+export interface GitCreateBranchInput extends GitBranchInput {
+  from?: string
+}
+
+export interface GitCreateWorktreeInput {
+  repoPath: string
+  name?: string
+  branch?: string
+  path?: string
+}
+
+export interface GitRemoveWorktreeInput {
+  repoPath: string
+  path: string
+  force?: boolean
+}
+
+export interface GitSelectWorktreeInput {
+  repoPath: string
+  path: string
 }
 
 export class GitService {
@@ -219,6 +274,132 @@ export class GitService {
     } catch (error) {
       return failure(error)
     }
+  }
+
+  async listBranches(inputPath: string): Promise<GitResult<GitBranchList>> {
+    try {
+      const repo = await this.resolveRepository(inputPath)
+      const current = await this.run('git', ['symbolic-ref', '--quiet', '--short', 'HEAD'], {
+        cwd: repo.repoRoot,
+        timeoutMs: this.timeoutMs
+      })
+      const result = await this.mustRun(
+        'git',
+        ['for-each-ref', '--format=%(refname:short)%09%(upstream:short)%09%(worktreepath)', 'refs/heads'],
+        repo.repoRoot
+      )
+      const currentBranch = current.code === 0 ? current.stdout.trim() : undefined
+      return {
+        ok: true,
+        data: {
+          repoRoot: repo.repoRoot,
+          currentBranch,
+          branches: parseBranchList(result.stdout, currentBranch)
+        }
+      }
+    } catch (error) {
+      return failure(error)
+    }
+  }
+
+  async createBranch(input: GitCreateBranchInput): Promise<GitResult<GitRepositorySnapshot>> {
+    try {
+      const repo = await this.resolveRepository(input.repoPath)
+      const branch = await this.assertBranchName(repo.repoRoot, input.branch)
+      const from = sanitizeStartPoint(input.from)
+      await this.mustRun('git', ['branch', branch, ...(from ? [from] : [])], repo.repoRoot)
+      return { ok: true, data: await this.buildSnapshot(repo.repoRoot) }
+    } catch (error) {
+      return failure(error)
+    }
+  }
+
+  async checkoutBranch(input: GitBranchInput): Promise<GitResult<GitRepositorySnapshot>> {
+    try {
+      const snapshot = await this.buildSnapshot(input.repoPath)
+      if (!snapshot.clean) {
+        return {
+          ok: false,
+          error: 'Commit, stash, or discard current changes before checking out another branch.'
+        }
+      }
+      const branch = await this.assertBranchName(snapshot.repoRoot, input.branch)
+      await this.mustRun('git', ['checkout', branch], snapshot.repoRoot)
+      return { ok: true, data: await this.buildSnapshot(snapshot.repoRoot) }
+    } catch (error) {
+      return failure(error)
+    }
+  }
+
+  async listWorktrees(inputPath: string): Promise<GitResult<GitWorktreeList>> {
+    try {
+      const repo = await this.resolveRepository(inputPath)
+      const result = await this.mustRun('git', ['worktree', 'list', '--porcelain'], repo.repoRoot)
+      return {
+        ok: true,
+        data: {
+          repoRoot: repo.repoRoot,
+          worktrees: parseWorktreeList(result.stdout, repo.repoRoot)
+        }
+      }
+    } catch (error) {
+      return failure(error)
+    }
+  }
+
+  async createWorktree(input: GitCreateWorktreeInput): Promise<GitResult<GitRepositorySnapshot>> {
+    try {
+      const repo = await this.resolveRepository(input.repoPath)
+      const branch = input.branch?.trim()
+        ? await this.assertBranchName(repo.repoRoot, input.branch)
+        : undefined
+      const targetPath = resolveWorktreeTargetPath(repo.repoRoot, input)
+      const args = ['worktree', 'add']
+      if (branch) {
+        const exists = await this.branchExists(repo.repoRoot, branch)
+        if (!exists) args.push('-b', branch)
+        args.push(targetPath, exists ? branch : 'HEAD')
+      } else {
+        args.push(targetPath)
+      }
+      await this.mustRun('git', args, repo.repoRoot)
+      return { ok: true, data: await this.buildSnapshot(targetPath) }
+    } catch (error) {
+      return failure(error)
+    }
+  }
+
+  async removeWorktree(input: GitRemoveWorktreeInput): Promise<GitResult<GitRepositorySnapshot>> {
+    try {
+      const repo = await this.resolveRepository(input.repoPath)
+      const rawPath = String(input.path || '').trim()
+      if (!rawPath) return { ok: false, error: 'Worktree path is required.' }
+      const targetPath = resolve(rawPath)
+      if (targetPath === repo.repoRoot) {
+        return { ok: false, error: 'The primary repository worktree cannot be removed here.' }
+      }
+      if (!input.force) {
+        const targetSnapshot = await this.snapshot(targetPath)
+        if (targetSnapshot.ok && !targetSnapshot.data.clean) {
+          return {
+            ok: false,
+            error: 'Worktree has local changes. Commit, stash, or pass force=true before removing it.'
+          }
+        }
+      }
+      await this.mustRun(
+        'git',
+        ['worktree', 'remove', ...(input.force ? ['--force'] : []), targetPath],
+        repo.repoRoot
+      )
+      return { ok: true, data: await this.buildSnapshot(repo.repoRoot) }
+    } catch (error) {
+      return failure(error)
+    }
+  }
+
+  async selectWorktree(input: GitSelectWorktreeInput): Promise<GitResult<GitRepositorySnapshot>> {
+    return this.snapshot(input.path)
   }
 
   async createPullRequest(input: GitCreatePrInput): Promise<GitResult<GitPrSummary>> {
@@ -537,6 +718,20 @@ export class GitService {
     }
     return result
   }
+
+  private async assertBranchName(repoRoot: string, value: string): Promise<string> {
+    const branch = sanitizeBranchName(value)
+    await this.mustRun('git', ['check-ref-format', '--branch', branch], repoRoot)
+    return branch
+  }
+
+  private async branchExists(repoRoot: string, branch: string): Promise<boolean> {
+    const result = await this.run('git', ['show-ref', '--verify', '--quiet', `refs/heads/${branch}`], {
+      cwd: repoRoot,
+      timeoutMs: this.timeoutMs
+    })
+    return result.code === 0
+  }
 }
 
 export function parseStatusPorcelainZ(output: string): GitFileStatus[] {
@@ -570,6 +765,64 @@ export function parseStatusPorcelainZ(output: string): GitFileStatus[] {
     })
   }
   return entries
+}
+
+export function parseBranchList(output: string, currentBranch?: string): GitBranchInfo[] {
+  return output
+    .split('\n')
+    .map((line) => line.trimEnd())
+    .filter(Boolean)
+    .map((line) => {
+      const [name = '', upstream = '', worktreePath = ''] = line.split('\t')
+      return {
+        name,
+        isCurrent: Boolean(currentBranch && name === currentBranch),
+        isRemote: false,
+        ...(upstream ? { upstream } : {}),
+        ...(worktreePath ? { worktreePath } : {})
+      }
+    })
+    .filter((branch) => Boolean(branch.name))
+}
+
+export function parseWorktreeList(output: string, currentRepoRoot?: string): GitWorktreeInfo[] {
+  const worktrees: GitWorktreeInfo[] = []
+  let current: Partial<GitWorktreeInfo> | null = null
+  const finish = (): void => {
+    if (!current?.path) return
+    worktrees.push({
+      path: current.path,
+      branch: current.branch,
+      head: current.head,
+      isCurrent: pathsEqual(current.path, currentRepoRoot),
+      isBare: current.isBare,
+      detached: current.detached
+    })
+  }
+  for (const line of output.split('\n')) {
+    const row = line.trim()
+    if (!row) {
+      finish()
+      current = null
+      continue
+    }
+    const [key, ...rest] = row.split(' ')
+    const value = rest.join(' ')
+    if (key === 'worktree') {
+      finish()
+      current = { path: value }
+    } else if (current && key === 'HEAD') {
+      current.head = value
+    } else if (current && key === 'branch') {
+      current.branch = value.replace(/^refs\/heads\//, '')
+    } else if (current && key === 'bare') {
+      current.isBare = true
+    } else if (current && key === 'detached') {
+      current.detached = true
+    }
+  }
+  finish()
+  return worktrees
 }
 
 async function runCommand(
@@ -670,6 +923,71 @@ function sanitizeRepoPaths(
     sanitized.push(relativePath)
   }
   return sanitized
+}
+
+function sanitizeBranchName(value: string): string {
+  const branch = String(value || '').trim()
+  if (!branch) throw new Error('Branch name is required.')
+  if (branch.startsWith('-')) throw new Error('Branch name cannot start with a dash.')
+  if (
+    branch.includes('..') ||
+    branch.includes('@{') ||
+    branch.includes('\\') ||
+    branch.includes('//') ||
+    branch.endsWith('/') ||
+    branch.endsWith('.') ||
+    branch.endsWith('.lock') ||
+    /[\u0000-\u001f\u007f\s~^:?*\[\\]/.test(branch)
+  ) {
+    throw new Error('Branch name contains characters Git will not accept.')
+  }
+  return branch
+}
+
+function sanitizeStartPoint(value?: string): string | undefined {
+  const startPoint = String(value || '').trim()
+  if (!startPoint) return undefined
+  if (startPoint.startsWith('-') || /[\u0000-\u001f\u007f]/.test(startPoint)) {
+    throw new Error('Branch start point is invalid.')
+  }
+  return startPoint
+}
+
+function resolveWorktreeTargetPath(
+  repoRoot: string,
+  input: Pick<GitCreateWorktreeInput, 'name' | 'path' | 'branch'>
+): string {
+  const rawPath = String(input.path || '').trim()
+  const targetPath = rawPath
+    ? resolve(rawPath)
+    : join(
+        dirname(repoRoot),
+        '.taskwraith-worktrees',
+        safePathSegment(basename(repoRoot)),
+        safePathSegment(input.name || input.branch || 'worktree')
+      )
+  if (pathsEqual(targetPath, repoRoot)) {
+    throw new Error('Worktree path must be separate from the primary repository.')
+  }
+  const relativeToRepo = relative(repoRoot, targetPath)
+  if (relativeToRepo && !relativeToRepo.startsWith(`..${sep}`) && relativeToRepo !== '..' && !isAbsolute(relativeToRepo)) {
+    throw new Error('Worktree path must not be nested inside the primary repository.')
+  }
+  return targetPath
+}
+
+function safePathSegment(value: string): string {
+  const segment = String(value || '')
+    .trim()
+    .replace(/[^A-Za-z0-9._-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 80)
+  return segment && segment !== '.' && segment !== '..' ? segment : 'worktree'
+}
+
+function pathsEqual(a?: string, b?: string): boolean {
+  if (!a || !b) return false
+  return resolve(a) === resolve(b)
 }
 
 function expandHomePath(value?: string | null): string {

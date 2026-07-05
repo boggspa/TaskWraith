@@ -62,6 +62,14 @@ export interface CreateSideChatInput {
   claudeReasoningEffort?: string | null
 }
 
+export interface CreateForkChatInput {
+  parentChatId: string
+  provider?: ProviderId
+  title?: string
+  sourceProviderThreadId?: string
+  sourceModel?: string
+}
+
 /** Slice C — in-place mid-thread ensemble toggle. */
 export interface SetChatKindInput {
   chatId: string
@@ -251,6 +259,51 @@ export class ChatService {
     }
 
     return sideChat
+  }
+
+  createForkChat(args: CreateForkChatInput | undefined): ChatRecord {
+    const parentChatId = requireSafeChatId(args?.parentChatId, 'Parent chat id')
+    const parent = this.deps.appStore.getChat(parentChatId)
+    if (!parent || parent.archived) throw new Error('Parent chat is not available for forking.')
+    const provider = args?.provider === undefined ? parent.provider : assertProviderId(args.provider)
+    const title =
+      optionalString(args?.title) ||
+      `Fork of ${parent.title && parent.title !== 'New Chat' ? parent.title : 'chat'}`
+    const sideChat = this.createSideChat({
+      parentChatId,
+      chatKind: parent.chatKind === 'ensemble' ? 'ensemble' : 'single',
+      provider,
+      title,
+      sideChatMode: parent.chatKind === 'ensemble' ? 'ensembleClone' : 'singleProvider'
+    })
+    const now = Date.now()
+    const forked: ChatRecord = {
+      ...sideChat,
+      title,
+      messages: parent.messages.map((message) => ({ ...message })),
+      runs: [],
+      linkedProviderSessionId: undefined,
+      linkedGeminiSessionId: undefined,
+      forkContext: {
+        kind: 'emulated',
+        createdAt: now,
+        sourceChatId: parent.appChatId,
+        sourceProvider: parent.provider,
+        sourceProviderThreadId: optionalString(args?.sourceProviderThreadId),
+        sourceModel: optionalString(args?.sourceModel),
+        note: 'TaskWraith emulated fork: transcript copied into an isolated sibling chat.'
+      },
+      providerMetadata: {
+        ...(sideChat.providerMetadata || {}),
+        taskwraithForkKind: 'emulated',
+        taskwraithForkSourceChatId: parent.appChatId,
+        ...(args?.sourceProviderThreadId
+          ? { taskwraithForkSourceProviderThreadId: args.sourceProviderThreadId }
+          : {})
+      },
+      updatedAt: now
+    }
+    return this.saveChat(forked)
   }
 
   /** Slice C — in-place mid-thread ensemble toggle. Validates + delegates to

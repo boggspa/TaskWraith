@@ -3,7 +3,13 @@ import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { GitService, parseStatusPorcelainZ, type GitCommandRunner } from './GitService'
+import {
+  GitService,
+  parseBranchList,
+  parseStatusPorcelainZ,
+  parseWorktreeList,
+  type GitCommandRunner
+} from './GitService'
 
 function runGit(cwd: string, args: string[]): string {
   return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
@@ -66,6 +72,41 @@ describe('GitService', () => {
     ])
   })
 
+  it('parses branch and worktree porcelain for picker UI', () => {
+    expect(
+      parseBranchList('main\torigin/main\t/repo\nfeature/new\t\t/repo-worktrees/feature\n', 'main')
+    ).toEqual([
+      {
+        name: 'main',
+        isCurrent: true,
+        isRemote: false,
+        upstream: 'origin/main',
+        worktreePath: '/repo'
+      },
+      {
+        name: 'feature/new',
+        isCurrent: false,
+        isRemote: false,
+        worktreePath: '/repo-worktrees/feature'
+      }
+    ])
+
+    expect(
+      parseWorktreeList(
+        'worktree /repo\nHEAD abc123\nbranch refs/heads/main\n\nworktree /repo-worktrees/feature\nHEAD def456\nbranch refs/heads/feature/new\n',
+        '/repo'
+      )
+    ).toEqual([
+      { path: '/repo', branch: 'main', head: 'abc123', isCurrent: true },
+      {
+        path: '/repo-worktrees/feature',
+        branch: 'feature/new',
+        head: 'def456',
+        isCurrent: false
+      }
+    ])
+  })
+
   it('resolves the repository root from a nested directory', async () => {
     const nested = join(repo, 'src', 'feature')
     mkdirSync(nested, { recursive: true })
@@ -111,6 +152,74 @@ describe('GitService', () => {
         expect.objectContaining({ path: 'two.txt', kind: 'untracked', staged: false })
       ])
     )
+  })
+
+  it('lists, creates, and checks out local branches with a dirty checkout guard', async () => {
+    const service = new GitService()
+
+    const created = await service.createBranch({
+      repoPath: repo,
+      branch: 'feature/task',
+      from: 'main'
+    })
+    expect(created.ok).toBe(true)
+
+    const branches = await service.listBranches(repo)
+    expect(branches.ok).toBe(true)
+    if (!branches.ok) return
+    expect(branches.data.branches).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: 'main', isCurrent: true }),
+        expect.objectContaining({ name: 'feature/task', isCurrent: false })
+      ])
+    )
+
+    writeFileSync(join(repo, 'dirty.txt'), 'dirty\n')
+    await expect(service.checkoutBranch({ repoPath: repo, branch: 'feature/task' })).resolves.toEqual({
+      ok: false,
+      error: 'Commit, stash, or discard current changes before checking out another branch.'
+    })
+    rmSync(join(repo, 'dirty.txt'), { force: true })
+
+    const checkout = await service.checkoutBranch({ repoPath: repo, branch: 'feature/task' })
+    expect(checkout.ok).toBe(true)
+    if (!checkout.ok) return
+    expect(checkout.data.branch).toBe('feature/task')
+  })
+
+  it('creates, lists, selects, and removes an isolated worktree', async () => {
+    const service = new GitService()
+    const target = join(tmpdir(), `taskwraith-worktree-${Date.now()}-${Math.random().toString(36).slice(2)}`)
+    extraTempPaths.push(target)
+
+    const created = await service.createWorktree({
+      repoPath: repo,
+      path: target,
+      branch: 'feature/isolated'
+    })
+    expect(created.ok).toBe(true)
+    if (!created.ok) return
+    const realTarget = realpathSync(target)
+    expect(created.data.repoRoot).toBe(realTarget)
+    expect(created.data.branch).toBe('feature/isolated')
+
+    const listed = await service.listWorktrees(repo)
+    expect(listed.ok).toBe(true)
+    if (!listed.ok) return
+    expect(listed.data.worktrees).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ path: repo, branch: 'main', isCurrent: true }),
+        expect.objectContaining({ path: realTarget, branch: 'feature/isolated', isCurrent: false })
+      ])
+    )
+
+    const selected = await service.selectWorktree({ repoPath: repo, path: realTarget })
+    expect(selected.ok).toBe(true)
+    if (!selected.ok) return
+    expect(selected.data.branch).toBe('feature/isolated')
+
+    const removed = await service.removeWorktree({ repoPath: repo, path: realTarget })
+    expect(removed.ok).toBe(true)
   })
 
   it('stages selected paths relative to the requested workspace subdirectory', async () => {
