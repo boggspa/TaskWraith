@@ -31,6 +31,7 @@ import type {
   ToolIconAccent,
   ApprovalLedgerRecord
 } from '../../../main/store/types'
+import type { TaskWraithPluginActivatedWorkflowTemplate } from '../../../shared/plugins/PluginTypes'
 import { getProviderLabel } from '../lib/providerLabels'
 import { selectRecentChats } from '../lib/recentChatsList'
 import { isContentlessRemoteDraftChat } from '../../../main/remote/RemoteDraftChats'
@@ -150,6 +151,7 @@ interface SidebarProps {
     }>
   }>
   runningChatIds?: string[]
+  pluginWorkflowTemplates?: TaskWraithPluginActivatedWorkflowTemplate[]
   workflows?: WorkflowDefinition[]
   workspaceBoards?: WorkspaceBoardDefinition[]
   workspaceBoardCards?: WorkspaceBoardCard[]
@@ -235,6 +237,10 @@ interface SidebarProps {
    * "Active runs" sidebar section navigates to the chat AND opens
    * the Run Inspector for that runId. */
   onInspectRun?: (runId: string, chatId: string | undefined) => void
+  onCreateWorkflowFromPluginTemplate?: (
+    templateId: string,
+    workspace?: WorkspaceRecord
+  ) => void
   onCreateWorkflow?: (workspace?: WorkspaceRecord) => void
   onCreateWorkspaceBoard?: (input?: WorkspaceBoardCreateInput) => void
   onOpenWorkspaceBoard?: (board: WorkspaceBoardDefinition) => void
@@ -2077,6 +2083,7 @@ export function Sidebar({
   searchShortcutHint = '⇧⌘F',
   usageSummary,
   runningChatIds = [],
+  pluginWorkflowTemplates = [],
   workflows = [],
   workspaceBoards = [],
   workspaceBoardCards = [],
@@ -2112,6 +2119,7 @@ export function Sidebar({
   onDeleteChat,
   onRenameChat,
   onInspectRun,
+  onCreateWorkflowFromPluginTemplate,
   onCreateWorkflow,
   onCreateWorkspaceBoard,
   onOpenWorkspaceBoard,
@@ -2144,6 +2152,7 @@ export function Sidebar({
   const [hoveredWorkspace, setHoveredWorkspace] = useState<string | null>(null)
   const [newMenuOpen, setNewMenuOpen] = useState(false)
   const [newMenuSharedOpen, setNewMenuSharedOpen] = useState(false)
+  const [newMenuWorkflowTemplatesOpen, setNewMenuWorkflowTemplatesOpen] = useState(false)
   const [sharedCreateMenuOpen, setSharedCreateMenuOpen] = useState(false)
   const [settingsMenuOpen, setSettingsMenuOpen] = useState(false)
   const [settingsMenuPane, setSettingsMenuPane] = useState<SidebarSettingsMenuPane>('root')
@@ -2681,17 +2690,20 @@ export function Sidebar({
   const handlePrimaryNewChat = () => {
     setNewMenuOpen(false)
     setNewMenuSharedOpen(false)
+    setNewMenuWorkflowTemplatesOpen(false)
     onNewGlobalChat()
   }
   const handleNewWorkspaceChat = () => {
     if (!defaultWorkspaceForNewChat) return
     setNewMenuOpen(false)
     setNewMenuSharedOpen(false)
+    setNewMenuWorkflowTemplatesOpen(false)
     onNewChat(defaultWorkspaceForNewChat.id, defaultWorkspaceForNewChat.path)
   }
   const handleNewEnsemble = () => {
     setNewMenuOpen(false)
     setNewMenuSharedOpen(false)
+    setNewMenuWorkflowTemplatesOpen(false)
     expandSidebarSection('ensembles')
     onNewEnsemble()
   }
@@ -2699,13 +2711,23 @@ export function Sidebar({
     if (!defaultWorkflowWorkspace) return
     setNewMenuOpen(false)
     setNewMenuSharedOpen(false)
+    setNewMenuWorkflowTemplatesOpen(false)
     expandSidebarSection('workflows')
     onCreateWorkflow?.(defaultWorkflowWorkspace)
+  }
+  const handleNewWorkflowFromTemplate = (templateId: string) => {
+    if (!defaultWorkflowWorkspace) return
+    setNewMenuOpen(false)
+    setNewMenuSharedOpen(false)
+    setNewMenuWorkflowTemplatesOpen(false)
+    expandSidebarSection('workflows')
+    onCreateWorkflowFromPluginTemplate?.(templateId, defaultWorkflowWorkspace)
   }
   const openWorkspaceBoardCreator = () => {
     if (!onCreateWorkspaceBoard || workspaces.length === 0) return
     setNewMenuOpen(false)
     setSharedCreateMenuOpen(false)
+    setNewMenuWorkflowTemplatesOpen(false)
     expandSidebarSection('workspace-boards')
     onCreateWorkspaceBoard()
   }
@@ -2719,6 +2741,7 @@ export function Sidebar({
   const handleCreateSharedChat = (variant: SharedChatCreateVariant) => {
     setNewMenuOpen(false)
     setNewMenuSharedOpen(false)
+    setNewMenuWorkflowTemplatesOpen(false)
     setSharedCreateMenuOpen(false)
     expandSidebarSection('shared')
     onCreateSharedChat?.(variant)
@@ -3586,7 +3609,10 @@ export function Sidebar({
                 setSharedCreateMenuOpen(false)
                 setNewMenuOpen((current) => {
                   const next = !current
-                  if (next) setNewMenuSharedOpen(false)
+                  if (next) {
+                    setNewMenuSharedOpen(false)
+                    setNewMenuWorkflowTemplatesOpen(false)
+                  }
                   return next
                 })
               }}
@@ -3642,6 +3668,52 @@ export function Sidebar({
                     <span className="sidebar-new-menu-item-label">New Workflow</span>
                   </button>
                 )}
+                {onCreateWorkflowFromPluginTemplate && pluginWorkflowTemplates.length > 0 && (
+                  <>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="sidebar-new-menu-item sidebar-new-menu-shared-toggle"
+                      onClick={() => {
+                        setNewMenuSharedOpen(false)
+                        setNewMenuWorkflowTemplatesOpen((current) => !current)
+                      }}
+                      aria-expanded={newMenuWorkflowTemplatesOpen}
+                      disabled={!defaultWorkflowWorkspace}
+                      title={
+                        defaultWorkflowWorkspace
+                          ? 'Start from an active plugin workflow template'
+                          : 'Open a workspace first — workflows run inside a workspace'
+                      }
+                    >
+                      <WorkflowGlyphIcon />
+                      <span className="sidebar-new-menu-item-label">Workflow Templates...</span>
+                      <span className="sidebar-new-menu-chevron" aria-hidden>
+                        <ChevronSymbolIcon isExpanded={newMenuWorkflowTemplatesOpen} />
+                      </span>
+                    </button>
+                    {newMenuWorkflowTemplatesOpen &&
+                      pluginWorkflowTemplates.slice(0, 8).map((entry) => (
+                        <button
+                          type="button"
+                          role="menuitem"
+                          key={entry.id}
+                          className="sidebar-new-menu-item sidebar-new-menu-subitem"
+                          onClick={() => handleNewWorkflowFromTemplate(entry.id)}
+                          disabled={!defaultWorkflowWorkspace}
+                          title={
+                            entry.template.description ||
+                            `${entry.plugin.pluginId} workflow template`
+                          }
+                        >
+                          <WorkflowGlyphIcon />
+                          <span className="sidebar-new-menu-item-label">
+                            {entry.template.name}
+                          </span>
+                        </button>
+                      ))}
+                  </>
+                )}
                 {onCreateWorkspaceBoard && (
                   <button
                     type="button"
@@ -3665,7 +3737,10 @@ export function Sidebar({
                       type="button"
                       role="menuitem"
                       className="sidebar-new-menu-item sidebar-new-menu-shared-toggle"
-                      onClick={() => setNewMenuSharedOpen((current) => !current)}
+                      onClick={() => {
+                        setNewMenuWorkflowTemplatesOpen(false)
+                        setNewMenuSharedOpen((current) => !current)
+                      }}
                       aria-expanded={newMenuSharedOpen}
                       title="Show shared chat options"
                     >
@@ -3699,6 +3774,7 @@ export function Sidebar({
                     onClick={() => {
                       setNewMenuOpen(false)
                       setNewMenuSharedOpen(false)
+                      setNewMenuWorkflowTemplatesOpen(false)
                       onJoinSharedChat()
                     }}
                     title="Join a shared chat — paste an invite to follow along"

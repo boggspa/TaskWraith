@@ -259,6 +259,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   handleOpenSideChatFromRunResult,
   handleOpenSideChatFromSelectedMessage,
   handleOpenSideChatFromSummary,
+  handleOpenPluginWorkflowTemplate,
   handleOpenWorkflowCompose,
   handleOpenWorkspaceBoard,
   handlePersistRunAnalysis,
@@ -538,6 +539,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   visibleAuditRunNotice,
   visibleGeminiTerminalLogs,
   visibleRunCompleteNotice,
+  pluginWorkflowTemplates,
   welcomeDashboardCardEnabled,
   welcomeDashboardHiddenByFit,
   welcomeDashboardRegionRef,
@@ -610,6 +612,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                   refreshing: manualUsageRefreshInFlight
                 }}
                 runningChatIds={runningChatIdsArray}
+                pluginWorkflowTemplates={pluginWorkflowTemplates}
                 workflows={workflowDefinitions}
                 workspaceBoards={workspaceBoardApiReady ? workspaceBoards : []}
                 workspaceBoardCards={workspaceBoardApiReady ? workspaceBoardCards : []}
@@ -653,6 +656,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                 onToggleArchiveChat={handleToggleArchiveChat}
                 onDeleteChat={handleDeleteChat}
                 onRenameChat={handleRenameChat}
+                onCreateWorkflowFromPluginTemplate={handleOpenPluginWorkflowTemplate}
                 onCreateWorkflow={handleOpenWorkflowCompose}
                 onCreateWorkspaceBoard={workspaceBoardApiReady ? handleCreateWorkspaceBoard : undefined}
                 onOpenWorkspaceBoard={workspaceBoardApiReady ? handleOpenWorkspaceBoard : undefined}

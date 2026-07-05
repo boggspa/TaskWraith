@@ -80,6 +80,7 @@ type MainAppLayoutSidebarProps = {
   handleOpenChangelogSheet: NonNullable<SidebarProps['onOpenChangelog']>
   handleOpenInMultiview: NonNullable<SidebarProps['onOpenInMultiview']>
   handleOpenLinkedChatInSidePanelFromSidebar: NonNullable<SidebarProps['onOpenChatInSidePanel']>
+  handleOpenPluginWorkflowTemplate: NonNullable<SidebarProps['onCreateWorkflowFromPluginTemplate']>
   handleOpenWorkflowCompose: NonNullable<SidebarProps['onCreateWorkflow']>
   handleOpenWorkspaceBoard: NonNullable<SidebarProps['onOpenWorkspaceBoard']>
   handleRemoveWorkspace: SidebarProps['onRemoveWorkspace']
@@ -123,6 +124,7 @@ type MainAppLayoutSidebarProps = {
   updateStatus: UpdateStatusState
   usageRefreshTick: SidebarModelUsageApiSpend['refreshKey']
   usageSummary: SidebarProps['usageSummary']
+  pluginWorkflowTemplates: NonNullable<SidebarProps['pluginWorkflowTemplates']>
   workflowDefinitions: NonNullable<SidebarProps['workflows']>
   workspaceAddPointerActive: SidebarProps['workspaceAddPointerActive']
   workspaceBoardApiReady: boolean
@@ -309,6 +311,7 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   handleOpenSideChatFromRunResult: any
   handleOpenSideChatFromSelectedMessage: any
   handleOpenSideChatFromSummary: any
+  handleOpenPluginWorkflowTemplate: MainAppLayoutSidebarProps['handleOpenPluginWorkflowTemplate']
   handleOpenWorkflowCompose: MainAppLayoutSidebarProps['handleOpenWorkflowCompose']
   handleOpenWorkspaceBoard: MainAppLayoutSidebarProps['handleOpenWorkspaceBoard']
   handlePersistRunAnalysis: any
@@ -596,6 +599,7 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   visibleAuditRunNotice: any
   visibleGeminiTerminalLogs: any
   visibleRunCompleteNotice: any
+  pluginWorkflowTemplates: MainAppLayoutSidebarProps['pluginWorkflowTemplates']
   welcomeDashboardCardEnabled: any
   welcomeDashboardHiddenByFit: any
   welcomeDashboardRegionRef: any

@@ -13262,7 +13262,10 @@ function App(): React.JSX.Element {
   // First-class workflow compose: the Workflows "+" opens a fresh chat in
   // workflow-compose mode (welcome screen with the workflow controls) instead of
   // the old modal. The WorkflowDefinition is saved on first send.
-  const handleOpenWorkflowCompose = async (workspaceOverride?: WorkspaceRecord) => {
+  const handleOpenWorkflowCompose = async (
+    workspaceOverride?: WorkspaceRecord,
+    seed?: { prompt?: string; provider?: ProviderId }
+  ) => {
     const workflowWorkspace =
       workspaceOverride ||
       currentWorkspace ||
@@ -13273,6 +13276,8 @@ function App(): React.JSX.Element {
     const chat = await handleNewDefaultWorkspaceChat(workflowWorkspace.id, workflowWorkspace.path)
     const chatId = chat?.appChatId || currentChatIdRef.current
     if (!chatId) return
+    if (chat && seed?.provider) applyChatComposerSelection(chat, seed.provider)
+    if (seed?.prompt?.trim()) setChatPromptDraft(chatId, seed.prompt)
     setWorkflowDraft({
       chatId,
       cadence: 'manual',
@@ -13280,6 +13285,18 @@ function App(): React.JSX.Element {
       maxRunsPerDay: 24,
       ensembleEnabled: chat?.chatKind === 'ensemble',
       unattendedLevel: 'safe'
+    })
+  }
+
+  const handleOpenPluginWorkflowTemplate = async (
+    templateId: string,
+    workspaceOverride?: WorkspaceRecord
+  ) => {
+    const entry = pluginActivation?.workflowTemplates.find((template) => template.id === templateId)
+    if (!entry) return
+    await handleOpenWorkflowCompose(workspaceOverride, {
+      prompt: entry.template.prompt,
+      provider: entry.template.provider
     })
   }
 
@@ -24202,6 +24219,7 @@ function App(): React.JSX.Element {
     handleOpenSideChatFromRunResult,
     handleOpenSideChatFromSelectedMessage,
     handleOpenSideChatFromSummary,
+    handleOpenPluginWorkflowTemplate,
     handleOpenWorkflowCompose,
     handleOpenWorkspaceBoard,
     handlePersistRunAnalysis,
@@ -24497,6 +24515,7 @@ function App(): React.JSX.Element {
     welcomeDashboardRegionRef,
     welcomeUsageDashboardData,
     welcomeUsageTab,
+    pluginWorkflowTemplates: pluginActivation?.workflowTemplates ?? [],
     workflowDefinitions,
     workspaceAddPointerActive,
     workspaceBoardApiReady,
