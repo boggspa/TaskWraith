@@ -20,7 +20,8 @@ import {
   buildRemoteProjectionEnvelope,
   buildRemoteShellAppearance,
   buildRemoteTaskCard,
-  buildRemoteTaskFeedSnapshot
+  buildRemoteTaskFeedSnapshot,
+  projectChatKind
 } from './RemoteTaskProjection'
 import type { CanvasSessionSummary } from './canvas/canvasTypes'
 import { buildRemoteDraftChat } from './remote/RemoteDraftChats'
@@ -744,6 +745,39 @@ describe('RemoteTaskProjection', () => {
     expect(summary?.truncated).toBe(true)
     expect(summary?.files.some((projected) => projected.path === 'src/first-47.ts')).toBe(false)
     expect(summary?.files.some((projected) => projected.path === 'src/second-00.ts')).toBe(false)
+  })
+
+  it('projectChatKind keeps claude provider on ensemble chats and infers legacy roster data', () => {
+    expect(
+      projectChatKind(
+        chat({
+          chatKind: 'ensemble',
+          provider: 'claude'
+        })
+      )
+    ).toBe('ensemble')
+    expect(
+      projectChatKind(
+        chat({
+          provider: 'claude',
+          ensemble: {
+            enabled: true,
+            maxParticipants: 2,
+            participants: [
+              { id: 'p1', provider: 'claude', role: 'Planner', order: 0, enabled: true }
+            ]
+          }
+        })
+      )
+    ).toBe('ensemble')
+    expect(projectChatKind(chat({ provider: 'claude' }))).toBe('single')
+  })
+
+  it('always emits chatKind on task cards (no omitted classification)', () => {
+    expect(buildRemoteTaskCard(chat({ provider: 'claude' })).chatKind).toBe('single')
+    expect(buildRemoteTaskCard(chat({ chatKind: 'ensemble', provider: 'claude' })).chatKind).toBe(
+      'ensemble'
+    )
   })
 
   it('projects active ensemble state compactly', () => {

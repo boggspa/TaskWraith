@@ -6,7 +6,7 @@ import {
   workspaceRecordToSummary,
   type BridgeBroadcasterAppStore
 } from './BridgeBroadcaster'
-import { buildRemoteProjectionEnvelope } from './RemoteTaskProjection'
+import { buildRemoteProjectionEnvelope, buildRemoteTaskCard } from './RemoteTaskProjection'
 import { RemoteWorkspaceAllowlist } from './RemoteWorkspaceAllowlist'
 import type { ChatRecord, WorkspaceRecord } from './store/types'
 
@@ -140,12 +140,34 @@ describe('chatRecordToSummary', () => {
     expect(chatRecordToSummary(chat).chatKind).toBe('ensemble')
   })
 
-  it('defaults missing chatKind to single', () => {
+  it('keeps ensemble chatKind for canonical provider claude (not provider=ensemble)', () => {
+    const chat = makeChat({ chatKind: 'ensemble', provider: 'claude' })
+    const summary = chatRecordToSummary(chat)
+    expect(summary.chatKind).toBe('ensemble')
+    expect(summary.provider).toBe('claude')
+  })
+
+  it('infers ensemble chatKind from legacy ensemble config when chatKind is missing', () => {
+    const chat = makeChat({
+      chatKind: undefined,
+      provider: 'claude',
+      ensemble: {
+        enabled: true,
+        maxParticipants: 2,
+        participants: [
+          { id: 'p1', provider: 'claude', role: 'Planner', order: 0, enabled: true }
+        ]
+      }
+    })
+    expect(chatRecordToSummary(chat).chatKind).toBe('ensemble')
+  })
+
+  it('defaults missing chatKind to single when no ensemble config exists', () => {
     const chat = makeChat({ chatKind: undefined })
     expect(chatRecordToSummary(chat).chatKind).toBe('single')
   })
 
-  it('reports running status when any run is still running', () => {
+  it('reports running status when the latest run is still running', () => {
     const chat = makeChat({
       runs: [
         { runId: 'r1', startedAt: '2026-05-15T11:00:00Z', status: 'success' },
@@ -153,6 +175,97 @@ describe('chatRecordToSummary', () => {
       ]
     })
     expect(chatRecordToSummary(chat).status).toBe('running')
+  })
+
+  it('does not pin running when only an older orphan run is still marked running', () => {
+    const chat = makeChat({
+      runs: [
+        { runId: 'stale', startedAt: '2026-05-10T11:00:00Z', status: 'running' },
+        { runId: 'latest', startedAt: '2026-05-15T12:00:00Z', status: 'success' }
+      ]
+    })
+    const summary = chatRecordToSummary(chat)
+    const card = buildRemoteTaskCard(chat)
+    expect(summary.status).toBe('success')
+    expect(card.status).toBe('success')
+  })
+
+  it('keeps ensemble thread-list status running while the round is live', () => {
+    const chat = makeChat({
+      chatKind: 'ensemble',
+      provider: 'claude',
+      runs: [
+        { runId: 'p1-run', startedAt: '2026-05-30T12:00:00.000Z', status: 'success' }
+      ],
+      ensemble: {
+        enabled: true,
+        maxParticipants: 2,
+        participants: [],
+        activeRound: {
+          roundId: 'round-1',
+          status: 'running',
+          prompt: 'Coordinate',
+          startedAt: '2026-05-30T12:00:00.000Z',
+          activeParticipantId: 'p2',
+          participants: [
+            {
+              participantId: 'p1',
+              provider: 'codex',
+              role: 'Implementer',
+              order: 1,
+              status: 'answered',
+              runId: 'p1-run'
+            },
+            {
+              participantId: 'p2',
+              provider: 'claude',
+              role: 'Reviewer',
+              order: 2,
+              status: 'idle'
+            }
+          ]
+        }
+      }
+    })
+    const summary = chatRecordToSummary(chat)
+    const card = buildRemoteTaskCard(chat)
+    expect(summary.chatKind).toBe('ensemble')
+    expect(summary.status).toBe('running')
+    expect(card.status).toBe('running')
+  })
+
+  it('reports success for a stale inactive ensemble round instead of orphan running', () => {
+    const chat = makeChat({
+      chatKind: 'ensemble',
+      runs: [{ runId: 'run-1', startedAt: '2026-05-30T12:00:00.000Z', status: 'success' }],
+      ensemble: {
+        enabled: true,
+        maxParticipants: 2,
+        participants: [],
+        activeRound: {
+          roundId: 'round-1',
+          status: 'running',
+          prompt: 'Coordinate',
+          startedAt: '2026-05-30T12:00:00.000Z',
+          activeParticipantId: 'p1',
+          participants: [
+            {
+              participantId: 'p1',
+              provider: 'codex',
+              role: 'Implementer',
+              order: 1,
+              status: 'answered',
+              runId: 'run-1',
+              endedAt: '2026-05-30T12:00:00.000Z'
+            }
+          ]
+        }
+      }
+    })
+    const summary = chatRecordToSummary(chat)
+    const card = buildRemoteTaskCard(chat)
+    expect(summary.status).toBe('success')
+    expect(card.status).toBe('success')
   })
 
   it('includes the latest running run id and stable start time', () => {

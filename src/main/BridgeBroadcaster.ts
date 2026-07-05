@@ -5,7 +5,12 @@ import {
   capabilitiesForRemoteWorkspaceEntry,
   GLOBAL_REMOTE_SCOPE
 } from './RemoteWorkspaceAllowlist'
-import type { RemoteProjectionEnvelope, RemoteTaskCapabilities } from './RemoteTaskProjection'
+import type { RemoteProjectionEnvelope, RemoteTaskCapabilities, RemoteTaskStatus } from './RemoteTaskProjection'
+import {
+  deriveRemoteTaskStatusForChat,
+  latestChatRun,
+  projectChatKind
+} from './RemoteTaskProjection'
 
 /**
  * BridgeBroadcaster — pushes workspace + thread summaries from the
@@ -195,7 +200,8 @@ export function workspaceRecordToSummary(
 export function chatRecordToSummary(chat: ChatRecord): ThreadSummary {
   const provider: ProviderId = chat.provider ?? 'gemini'
   const status = deriveThreadStatus(chat)
-  const runningRun = latestRunningRun(chat)
+  const runningRun =
+    status === 'running' ? latestRunningRun(chat) ?? latestChatRun(chat) : undefined
   const lastMessageAt = msToIsoOrUndefined(chat.updatedAt)
   // `scope: 'global'` is the canonical signal but for the iOS contract
   // we collapse "no workspace id" → null regardless, which catches both
@@ -206,7 +212,7 @@ export function chatRecordToSummary(chat: ChatRecord): ThreadSummary {
     title: normalizeThreadTitle(chat.title, 'Untitled chat'),
     workspaceId,
     provider,
-    chatKind: chat.chatKind === 'ensemble' ? 'ensemble' : 'single',
+    chatKind: projectChatKind(chat),
     status,
     pinned: Boolean(chat.pinned)
   }
@@ -226,31 +232,23 @@ export function chatRecordToSummary(chat: ChatRecord): ThreadSummary {
   return summary
 }
 
-/** Status derivation rules:
- *   - If any run on the chat is still `running` → `running`.
- *   - Else, if the most recently started run is `failed` or `cancelled`
- *     → `failed`.
- *   - Else, if the most recently started run is `success` or
- *     `success_with_warnings` → `success`.
- *   - Else (no runs, or an unrecognized status string) → `idle`. */
+/** Mirrors `deriveRemoteTaskStatusForChat` / task-card projection so thread-list
+ * summaries and fallback cards agree with authoritative remote task cards. */
 function deriveThreadStatus(chat: ChatRecord): ThreadSummaryStatus {
-  const runs = chat.runs ?? []
-  if (runs.length === 0) return 'idle'
-  if (runs.some((run) => run.status === 'running')) return 'running'
-  // Pick the run with the most recent startedAt as the canonical
-  // "latest". `runs` is loosely ordered (appended on each new run)
-  // but we don't rely on append order.
-  const latest = runs.slice().sort((a, b) => {
-    const aTime = Date.parse(a.startedAt || '') || 0
-    const bTime = Date.parse(b.startedAt || '') || 0
-    return bTime - aTime
-  })[0]
-  switch (latest.status) {
+  return threadSummaryStatusFromRemoteTaskStatus(deriveRemoteTaskStatusForChat(chat))
+}
+
+function threadSummaryStatusFromRemoteTaskStatus(status: RemoteTaskStatus): ThreadSummaryStatus {
+  switch (status) {
+    case 'running':
+    case 'queued':
+    case 'awaitingApproval':
+    case 'awaitingQuestion':
+      return 'running'
     case 'failed':
     case 'cancelled':
       return 'failed'
     case 'success':
-    case 'success_with_warnings':
       return 'success'
     default:
       return 'idle'
@@ -258,7 +256,7 @@ function deriveThreadStatus(chat: ChatRecord): ThreadSummaryStatus {
 }
 
 function isChatRunning(chat: ChatRecord): boolean {
-  return (chat.runs ?? []).some((run) => run.status === 'running')
+  return deriveThreadStatus(chat) === 'running'
 }
 
 function latestRunningRun(chat: ChatRecord): ChatRecord['runs'][number] | undefined {

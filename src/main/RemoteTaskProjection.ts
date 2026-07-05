@@ -1058,6 +1058,38 @@ function buildRemoteAdditionalWorkspaces(chat: ChatRecord): RemoteAdditionalWork
     }))
 }
 
+/** Canonical solo vs ensemble classification for remote projections. */
+export function projectChatKind(chat: ChatRecord): 'single' | 'ensemble' {
+  if (chat.chatKind === 'ensemble') return 'ensemble'
+  const ensemble = chat.ensemble
+  if (ensemble?.enabled || (ensemble?.participants?.length ?? 0) > 0) {
+    return 'ensemble'
+  }
+  return 'single'
+}
+
+export interface DeriveRemoteTaskStatusOptions {
+  pendingApprovalCount?: number
+  pendingQuestionCount?: number
+  hasQueuedFollowup?: boolean
+}
+
+/** Task-card status derivation for a whole chat — shared with BridgeBroadcaster. */
+export function deriveRemoteTaskStatusForChat(
+  chat: ChatRecord,
+  options: DeriveRemoteTaskStatusOptions = {}
+): RemoteTaskStatus {
+  return deriveTaskStatus(
+    latestChatRun(chat),
+    Math.max(0, Math.floor(options.pendingApprovalCount ?? 0)),
+    Math.max(0, Math.floor(options.pendingQuestionCount ?? 0)),
+    {
+      ensembleRound: chat.ensemble?.activeRound,
+      hasQueuedFollowup: options.hasQueuedFollowup
+    }
+  )
+}
+
 export function buildRemoteTaskCard(
   chat: ChatRecord,
   options: BuildRemoteTaskCardOptions = {}
@@ -1081,7 +1113,7 @@ export function buildRemoteTaskCard(
     ...(chat.sideChatContext?.lifecycleState
       ? { sideChatLifecycleState: chat.sideChatContext.lifecycleState }
       : {}),
-    ...(chat.chatKind ? { chatKind: chat.chatKind } : {}),
+    chatKind: projectChatKind(chat),
     ...(isContentlessRemoteDraftChat(chat) ? { isDraft: true } : {}),
     ...(draftVariant ? { draftVariant } : {}),
     ...(options.isShared ? { isShared: true } : {}),
@@ -1479,7 +1511,7 @@ function deriveTaskStatus(
   return 'idle'
 }
 
-function latestChatRun(chat: ChatRecord): ChatRun | undefined {
+export function latestChatRun(chat: ChatRecord): ChatRun | undefined {
   const runs = chat.runs ?? []
   return [...runs].sort((a, b) => {
     const aTime = Date.parse(a.startedAt || '') || 0
