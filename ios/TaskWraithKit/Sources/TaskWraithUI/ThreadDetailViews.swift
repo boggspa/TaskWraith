@@ -157,6 +157,9 @@ struct ThreadDetailView: View {
     /// composer is idle — i.e. the compact one-line composer.
     @State private var composerFocused = false
     @State private var renameSheetContext: ThreadRenameSheetContext?
+    @State private var ensembleDisablePickerPresented = false
+    @State private var ensembleDisableCard: RemoteTaskCard?
+    @State private var ensembleSoloProviderChoices: [String] = []
     @StateObject private var composerDiffSheetState = MobileDiffStudioState()
     @State private var composerDiffSheetPresented = false
     /// Follow the transcript tail as content streams in. Driven by the bottom
@@ -395,6 +398,36 @@ struct ThreadDetailView: View {
         guard card != nil, !isRunning else { return false }
         guard let snapshot else { return false }
         return (snapshot.rows ?? []).isEmpty && (snapshot.totalRows ?? 0) == 0
+    }
+    /// Mirrors desktop `ComposerEnsembleToggleButton` visibility — top-level chats
+    /// only; linked children cannot change kind in place.
+    private var showsComposerEnsembleToggle: Bool {
+        guard let card else { return false }
+        return !ChatKindBridge.isLinkedChild(card)
+    }
+    private var ensembleToggleTitle: String {
+        if isRunning { return "Finish the current turn first to change chat mode." }
+        return card?.isEnsemble == true ? "Ensemble on" : "Ensemble off"
+    }
+
+    private func handleComposerEnsembleToggle(
+        for card: RemoteTaskCard, enabled: Bool, composerProvider: String?, composerModel: String? = nil
+    ) {
+        if enabled {
+            model.toggleChatKind(
+                card, enabled: true, composerProvider: composerProvider, composerModel: composerModel)
+            return
+        }
+        let providers = model.ensembleToSoloProviders(for: card)
+        if providers.count <= 1 {
+            model.setChatKind(
+                card, targetKind: "single",
+                canonicalProvider: providers.first ?? composerProvider ?? card.provider)
+            return
+        }
+        ensembleDisableCard = card
+        ensembleSoloProviderChoices = providers
+        ensembleDisablePickerPresented = true
     }
 
     /// While the live block streams a run, hide that run's in-flight
@@ -1376,6 +1409,15 @@ struct ThreadDetailView: View {
                                         },
                                         primaryWorkspaceId: card.workspaceId,
                                         secondaryWorkspaceId: secondaryWorkspaceBinding,
+                                        ensembleToggleEnabled: card.isEnsemble,
+                                        ensembleToggleVisible: showsComposerEnsembleToggle,
+                                        ensembleToggleDisabled: isRunning,
+                                        ensembleToggleTitle: ensembleToggleTitle,
+                                        onEnsembleToggle: { enabled in
+                                            handleComposerEnsembleToggle(
+                                                for: card, enabled: enabled,
+                                                composerProvider: card.provider)
+                                        },
                                         activeGoal: card.activeGoal,
                                         onGoalUpdate: { op, objective, reason in
                                             model.updateGoal(
@@ -1748,6 +1790,28 @@ struct ThreadDetailView: View {
             }
             .composerDiffSheetChrome()
         }
+        .confirmationDialog(
+            "Keep which provider?",
+            isPresented: $ensembleDisablePickerPresented,
+            titleVisibility: .visible
+        ) {
+            ForEach(ensembleSoloProviderChoices, id: \.self) { provider in
+                Button(TWTheme.providerLabel(provider)) {
+                    if let card = ensembleDisableCard {
+                        model.setChatKind(
+                            card, targetKind: "single", canonicalProvider: provider)
+                    }
+                    ensembleDisableCard = nil
+                    ensembleSoloProviderChoices = []
+                }
+            }
+            Button("Cancel", role: .cancel) {
+                ensembleDisableCard = nil
+                ensembleSoloProviderChoices = []
+            }
+        } message: {
+            Text("Ensemble will turn off and this chat will continue as a solo thread.")
+        }
 
     }
 }
@@ -1785,6 +1849,8 @@ struct ThreadEmptyWelcomeCanvas: View {
     let card: RemoteTaskCard
     @Binding var draft: String
     @State private var draftProvider = ""
+    @State private var ensembleDisablePickerPresented = false
+    @State private var ensembleSoloProviderChoices: [String] = []
     /// 1.275x the .title3 base (~20pt) for the General-chat greeting heading
     /// only; @ScaledMetric keeps it responsive to the user's Dynamic Type setting.
     @ScaledMetric(relativeTo: .title3) private var globalGreetingFontSize: CGFloat = 25.5
@@ -1824,6 +1890,33 @@ struct ThreadEmptyWelcomeCanvas: View {
         let provider = draftProvider.trimmingCharacters(in: .whitespacesAndNewlines)
         return provider.isEmpty ? card.provider : provider
     }
+    private var showsComposerEnsembleToggle: Bool {
+        !ChatKindBridge.isLinkedChild(card)
+    }
+    private var welcomeIsRunning: Bool { card.status == "running" }
+    private var ensembleToggleTitle: String {
+        if welcomeIsRunning { return "Finish the current turn first to change chat mode." }
+        return card.isEnsemble ? "Ensemble on" : "Ensemble off"
+    }
+
+    private func handleComposerEnsembleToggle(enabled: Bool) {
+        if enabled {
+            model.toggleChatKind(
+                card, enabled: true,
+                composerProvider: currentDraftProvider,
+                composerModel: card.customModel ?? card.selectedModelType)
+            return
+        }
+        let providers = model.ensembleToSoloProviders(for: card)
+        if providers.count <= 1 {
+            model.setChatKind(
+                card, targetKind: "single",
+                canonicalProvider: providers.first ?? currentDraftProvider ?? card.provider)
+            return
+        }
+        ensembleSoloProviderChoices = providers
+        ensembleDisablePickerPresented = true
+    }
 
     var body: some View {
         ScrollView {
@@ -1850,6 +1943,23 @@ struct ThreadEmptyWelcomeCanvas: View {
             .frame(minHeight: 560)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .confirmationDialog(
+            "Keep which provider?",
+            isPresented: $ensembleDisablePickerPresented,
+            titleVisibility: .visible
+        ) {
+            ForEach(ensembleSoloProviderChoices, id: \.self) { provider in
+                Button(TWTheme.providerLabel(provider)) {
+                    model.setChatKind(card, targetKind: "single", canonicalProvider: provider)
+                    ensembleSoloProviderChoices = []
+                }
+            }
+            Button("Cancel", role: .cancel) {
+                ensembleSoloProviderChoices = []
+            }
+        } message: {
+            Text("Ensemble will turn off and this chat will continue as a solo thread.")
+        }
     }
 
     private var hero: some View {
@@ -1989,6 +2099,11 @@ struct ThreadEmptyWelcomeCanvas: View {
                 primaryWorkspaceId: card.workspaceId,
                 onPrimaryWorkspaceSelect: canSwitchPrimaryWorkspace
                     ? { workspaceId in switchPrimaryWorkspace(to: workspaceId) } : nil,
+                ensembleToggleEnabled: card.isEnsemble,
+                ensembleToggleVisible: showsComposerEnsembleToggle,
+                ensembleToggleDisabled: welcomeIsRunning,
+                ensembleToggleTitle: ensembleToggleTitle,
+                onEnsembleToggle: handleComposerEnsembleToggle,
                 activeGoal: card.activeGoal,
                 onGoalUpdate: { op, objective, reason in
                     model.updateGoal(card, op: op, objective: objective, reason: reason)

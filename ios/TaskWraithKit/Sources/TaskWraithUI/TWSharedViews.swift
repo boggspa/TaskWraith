@@ -3706,6 +3706,41 @@ public struct ChangesAttachedRow: View {
 /// Bottom telemetry rail — flat top, rounded bottom corners. One RUN
 /// timecode (ticking while running, frozen at the final duration),
 /// workspace name center, token/cost telemetry right.
+private struct ComposerEnsembleToggleControl: View {
+    let enabled: Bool
+    let disabled: Bool
+    let title: String
+    let onSelect: (Bool) -> Void
+
+    @State private var presented = false
+
+    var body: some View {
+        Menu {
+            Button {
+                onSelect(true)
+            } label: {
+                Label("Ensemble on", systemImage: enabled ? "checkmark" : "")
+            }
+            Button {
+                onSelect(false)
+            } label: {
+                Label("Ensemble off", systemImage: enabled ? "" : "checkmark")
+            }
+        } label: {
+            Image(systemName: enabled ? "person.3.fill" : "person.3")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(enabled ? TWTheme.chroma2 : TWTheme.textTertiary)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 4)
+                .background(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(enabled ? TWTheme.chroma2.opacity(0.14) : Color.clear))
+        }
+        .disabled(disabled)
+        .accessibilityLabel(title)
+    }
+}
+
 public struct TelemetryFooterRail: View {
     let run: RemoteThreadSnapshot.RunSummary?
     let conversationCostText: String?
@@ -3721,6 +3756,11 @@ public struct TelemetryFooterRail: View {
     var primaryWorkspaceId: String? = nil
     var secondaryWorkspaceId: Binding<String?>? = nil
     var onPrimaryWorkspaceSelect: ((String) -> Void)? = nil
+    var ensembleToggleEnabled: Bool = false
+    var ensembleToggleVisible: Bool = false
+    var ensembleToggleDisabled: Bool = false
+    var ensembleToggleTitle: String = "Ensemble"
+    var onEnsembleToggle: ((Bool) -> Void)? = nil
     @State private var compactTelemetryShowsCost = false
     @State private var railWidth: CGFloat = 0
 
@@ -3731,6 +3771,11 @@ public struct TelemetryFooterRail: View {
         primaryWorkspaceId: String? = nil,
         secondaryWorkspaceId: Binding<String?>? = nil,
         onPrimaryWorkspaceSelect: ((String) -> Void)? = nil,
+        ensembleToggleEnabled: Bool = false,
+        ensembleToggleVisible: Bool = false,
+        ensembleToggleDisabled: Bool = false,
+        ensembleToggleTitle: String = "Ensemble",
+        onEnsembleToggle: ((Bool) -> Void)? = nil,
         activeGoal: RemoteActiveGoal? = nil,
         onGoalUpdate: ((String, String?, String?) -> Void)? = nil,
         planLanes: [RemoteTodoLane] = []
@@ -3745,6 +3790,11 @@ public struct TelemetryFooterRail: View {
         self.primaryWorkspaceId = primaryWorkspaceId
         self.secondaryWorkspaceId = secondaryWorkspaceId
         self.onPrimaryWorkspaceSelect = onPrimaryWorkspaceSelect
+        self.ensembleToggleEnabled = ensembleToggleEnabled
+        self.ensembleToggleVisible = ensembleToggleVisible
+        self.ensembleToggleDisabled = ensembleToggleDisabled
+        self.ensembleToggleTitle = ensembleToggleTitle
+        self.onEnsembleToggle = onEnsembleToggle
     }
 
     private var isRunning: Bool { run?.status == "running" }
@@ -3944,6 +3994,13 @@ public struct TelemetryFooterRail: View {
                         .font(.system(size: 11, design: .monospaced))
                 }
                 .foregroundStyle(isRunning ? TWTheme.chroma1 : TWTheme.textTertiary)
+                if ensembleToggleVisible, let onEnsembleToggle {
+                    ComposerEnsembleToggleControl(
+                        enabled: ensembleToggleEnabled,
+                        disabled: ensembleToggleDisabled,
+                        title: ensembleToggleTitle,
+                        onSelect: onEnsembleToggle)
+                }
                 if let onGoalUpdate {
                     GoalRailControl(goal: activeGoal, onUpdate: onGoalUpdate)
                 }

@@ -1896,6 +1896,27 @@ public enum BridgeAction {
         return encode(payload)
     }
 
+    /// In-place mid-thread ensemble toggle — mirrors desktop `setChatKind` IPC.
+    public static func setChatKind(
+        workspaceId: String, threadId: String, targetKind: String,
+        seedParticipant: [String: Any]? = nil,
+        canonicalProvider: String? = nil,
+        canonicalProviderMetadata: [String: Any]? = nil,
+        actionId: String = UUID().uuidString
+    ) -> [String: Any] {
+        var payload: [String: Any] = [
+            "kind": "setChatKind", "actionId": actionId,
+            "workspaceId": workspaceId, "threadId": threadId,
+            "targetKind": targetKind,
+        ]
+        if let seedParticipant { payload["seedParticipant"] = seedParticipant }
+        if let canonicalProvider { payload["canonicalProvider"] = canonicalProvider }
+        if let canonicalProviderMetadata {
+            payload["canonicalProviderMetadata"] = canonicalProviderMetadata
+        }
+        return encode(payload)
+    }
+
     /// Save the current roster as a named preset (GLOBAL; the host forwards it
     /// to the renderer's localStorage store, which re-syncs to all devices).
     public static func ensemblePresetSave(

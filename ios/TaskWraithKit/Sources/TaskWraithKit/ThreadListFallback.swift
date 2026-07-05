@@ -21,6 +21,8 @@ public struct ThreadSummary: Codable, Sendable, Identifiable, Hashable {
     public let pinned: Bool?
     public let runId: String?
     public let runStartedAt: String?
+    /// Solo vs ensemble classification — mirrors desktop `chatKind`.
+    public let chatKind: String?
 
     public var id: String { chatId }
 }
@@ -78,7 +80,7 @@ extension RemoteTaskCard {
             agentSlug: nil,
             sideChatMode: nil,
             sideChatLifecycleState: nil,
-            chatKind: nil,
+            chatKind: summary.chatKind ?? "single",
             isDraft: false,
             draftVariant: nil,
             isShared: nil,

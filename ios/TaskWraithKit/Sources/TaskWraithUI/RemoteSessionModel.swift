@@ -3496,6 +3496,73 @@ public final class RemoteSessionModel: ObservableObject {
         scheduleThreadRefresh(threadId)
     }
 
+    /// Providers the user can pick when converting ensemble → solo.
+    public func ensembleToSoloProviders(for card: RemoteTaskCard) -> [String] {
+        let threadId = card.threadId ?? card.id
+        if let roster = ensembleStates[threadId]?.roster {
+            let fromRoster = roster.compactMap { entry -> String? in
+                guard entry.enabled != false else { return nil }
+                let provider = (entry.provider ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                return provider.isEmpty ? nil : provider.lowercased()
+            }
+            if !fromRoster.isEmpty {
+                return Array(Set(fromRoster)).sorted {
+                    TWTheme.providerLabel($0) < TWTheme.providerLabel($1)
+                }
+            }
+        }
+        if let provider = card.provider?.lowercased(), !provider.isEmpty {
+            return [provider]
+        }
+        return ["claude"]
+    }
+
+    /// In-place solo ↔ ensemble toggle — mirrors desktop Slice C.
+    public func setChatKind(
+        _ card: RemoteTaskCard,
+        targetKind: String,
+        seedParticipant: [String: Any]? = nil,
+        canonicalProvider: String? = nil
+    ) {
+        guard let thread = card.threadId else { return }
+        if ChatKindBridge.isLinkedChild(card) {
+            lastActionMessage = "Cannot change chat mode on a linked child thread."
+            return
+        }
+        if card.status == "running" || snapshotIsRunning(thread) {
+            lastActionMessage = "Finish the current turn first to change chat mode."
+            return
+        }
+        let ws = card.isGlobalScope ? "global" : (card.workspaceId ?? "global")
+        let label = targetKind == "ensemble" ? "Ensemble enabled." : "Ensemble disabled."
+        send(
+            BridgeAction.setChatKind(
+                workspaceId: ws, threadId: thread, targetKind: targetKind,
+                seedParticipant: seedParticipant, canonicalProvider: canonicalProvider),
+            successLabel: label,
+            onAck: { [weak self] accepted in
+                if accepted { self?.scheduleThreadRefresh(thread) }
+            })
+    }
+
+    public func toggleChatKind(
+        _ card: RemoteTaskCard, enabled: Bool,
+        composerProvider: String?, composerModel: String? = nil
+    ) {
+        if enabled {
+            let provider = (composerProvider ?? card.provider ?? "claude").lowercased()
+            let seed = ChatKindBridge.buildSeedParticipant(
+                from: card, provider: provider, model: composerModel)
+            setChatKind(card, targetKind: "ensemble", seedParticipant: seed)
+        } else {
+            setChatKind(card, targetKind: "single", canonicalProvider: composerProvider)
+        }
+    }
+
+    private func snapshotIsRunning(_ threadId: String) -> Bool {
+        threadSnapshots[threadId]?.runSummary?.status == "running"
+    }
+
     /// Save a roster (draft entries) as a named preset. GLOBAL — the host
     /// forwards it to the renderer's preset store, which re-syncs to all
     /// devices (the new preset shows up in `ensemblePresets`).

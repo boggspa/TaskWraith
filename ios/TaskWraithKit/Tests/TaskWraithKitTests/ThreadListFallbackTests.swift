@@ -14,7 +14,8 @@ struct ThreadListFallbackTests {
         workspaceId: String? = "ws-agbench",
         provider: String = "cursor",
         status: String = "idle",
-        parentChatId: String? = nil
+        parentChatId: String? = nil,
+        chatKind: String? = nil
     ) -> ThreadSummary {
         ThreadSummary(
             chatId: chatId,
@@ -26,18 +27,30 @@ struct ThreadListFallbackTests {
             parentChatId: parentChatId,
             pinned: false,
             runId: nil,
-            runStartedAt: nil)
+            runStartedAt: nil,
+            chatKind: chatKind)
     }
 
     @Test("ThreadListMessage decodes Mac broadcast shape")
     func decodeThreadListMessage() throws {
         let json = """
-        {"threads":[{"chatId":"c1","title":"Hello","workspaceId":"ws1","provider":"codex","status":"running","lastMessageAt":"2026-07-05T18:00:00Z","pinned":true}]}
+        {"threads":[{"chatId":"c1","title":"Hello","workspaceId":"ws1","provider":"codex","status":"running","lastMessageAt":"2026-07-05T18:00:00Z","pinned":true,"chatKind":"ensemble"}]}
         """
         let message = try JSONDecoder().decode(ThreadListMessage.self, from: Data(json.utf8))
         #expect(message.threads.count == 1)
         #expect(message.threads[0].chatId == "c1")
         #expect(message.threads[0].pinned == true)
+        #expect(message.threads[0].chatKind == "ensemble")
+    }
+
+    @Test("taskCard maps chatKind for ensemble classification")
+    func taskCardMapsChatKind() {
+        let ensemble = ThreadListFallback.taskCard(from: summary(chatKind: "ensemble"))
+        #expect(ensemble.isEnsemble == true)
+        #expect(ensemble.chatKind == "ensemble")
+        let solo = ThreadListFallback.taskCard(from: summary(chatKind: nil))
+        #expect(solo.isEnsemble == false)
+        #expect(solo.chatKind == "single")
     }
 
     @Test("taskCard maps summary fields for list rendering")
