@@ -11,6 +11,8 @@ Entries here are source-ahead only: do not treat them as shipped until a
 matching GitHub tag, release notes, checksums, and platform artifacts are
 published.
 
+## 1.7.6 - 2026-07-05
+
 ### Added
 - **Prompt caching guarantee tiers.** Settings → Providers → Prompt caching shows
   per-transport posture (Guaranteed / Automatic / Best effort / Unsupported) with
@@ -25,11 +27,35 @@ published.
   worktree` resolves to git worktree lifecycle at run launch. The composer
   above-row branch control opens a popover to list branches, create a branch,
   checkout, and create/select/remove worktrees with dirty-tree guards.
+- **Thinking trace actions.** Reasoning traces in the activity stack gain
+  copy-friendly actions consistent with other tool cards.
+- **Provider thinking summaries.** Assistant turns can surface compact thinking
+  summaries where the provider exposes reasoning metadata.
 
 ### Changed
 - **Cache usage telemetry.** Model Usage and prompt-cache diagnostics surface
   cache read/creation tokens when providers report them, including on implicit
   caching transports TaskWraith observes but does not control.
+- **Run summary diff stats.** Diff stat chips align with the current evidence-pack
+  presentation.
+- **Composer shell polish.** Mic affordance and provider-row aura refinements on
+  the composer chrome.
+- **Sidebar workspace hierarchy.** Startup layout for nested workspace trees is
+  tidier and less jumpy on first paint.
+- **iOS run details token table.** Token summary layout simplified on the companion
+  run-details screen.
+
+### Fixed
+- **Branch popover readability and placement.** The composer branch/worktree
+  popover reuses the Model/Reasoning picker frosted-glass chrome and opens above
+  the trigger by default so it no longer overlaps the picker row below.
+- **Grok and Cursor thinking traces.** Incremental thinking deltas preserve
+  whitespace and word boundaries instead of trimming each chunk before append.
+- **Brief mention overlay scroll sync.** Ensemble brief @-mention overlays stay
+  aligned while the transcript scrolls.
+- **Release-class shell commands.** Approved release workflows (`git push`,
+  `git_create_pr`, and related host commands) bypass redundant shell blocks after
+  explicit user approval.
 
 ### Documentation
 - New guide: `SESSION_AND_WORKSPACE.md` (caching tiers, forks, worktrees).
