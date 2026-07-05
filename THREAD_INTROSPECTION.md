@@ -322,6 +322,10 @@ Commits:
 - `0fd22e9a0` — harvester, run service, review UI shell, initial docs
 - `871db3521` — IPC handlers + Settings tab mount
 - `2d07554d9` — doc sync (IPC landed)
+- `770ae3ff3` — daily schedule store, scheduler, and IPC
+- `b4c55f6f1` — Settings daily schedule toggle
+- `44077e6da` — phase-1 apply for low-risk repo-convention proposals
+- `673a1eb11` — `tw_introspection_*` MCP tools for run/list/read/review
 
 | Slice | Status | Notes |
 | --- | --- | --- |
@@ -333,30 +337,34 @@ Commits:
 | Proposal Review UI + Settings | **Landed** | `MemoryProposalReviewPanel` + `ThreadIntrospectionSettingsPanel` |
 | IPC + preload | **Landed** | `introspectionHandlers.ts` — read/review/apply |
 | Apply layer (phase 1) | **Landed** | `IntrospectionApplyService.ts` — `RepoConventionIndex` only |
-| Apply UI (phase 1) | **In progress** | `@WriteRender`: Apply affordance in review panel |
-| Scheduled daily generation | **In progress** | `@WriteMain`: scheduler + schedule IPC; toggle UI scaffolded |
+| Apply UI (phase 1) | **Landed** | Apply affordance for approved `repo_convention` / `do_not_repeat` proposals |
+| Scheduled daily generation | **Landed** | `IntrospectionScheduler.ts` + schedule IPC/toggle |
+| MCP tools | **Landed** | `tw_introspection_run`, `tw_introspection_list`, `tw_introspection_read`, `tw_introspection_review`; no MCP apply tool |
 | Apply layer (skills, prefs, bugs) | **Pending** | Skill Patch Manager + rollback; other kinds blocked in phase 1 |
 | Distillation policy | **Pending** | Auto-approve rules per scope/kind |
 | Decay / supersede | **Pending** | Registry lifecycle after apply |
-| MCP tools | **Pending** | No brokered introspection tools yet |
 
-**Tests:** 32+ introspection-focused tests green (handlers, harvester, run
-service, Settings panel, review panel).
+**Tests:** focused introspection suites are green across handlers, harvester,
+run service, scheduler, apply service, MCP executors, Settings panel, and review
+panel.
 
 **Operational in dev:** Settings → Thread introspection → manual 24h run →
-approve/reject → **Apply** (repo convention / do-not-repeat only). **Not yet:**
-unattended daily packs, skill/instruction file apply, MCP trigger from chat.
+approve/reject → **Apply** (repo convention / do-not-repeat only). Daily
+read-only generation can create reviewable packs, and MCP agents can
+run/list/read/review packs through `tw_introspection_*`. **Not yet:**
+skill/instruction file apply, MCP apply, full memory registry, decay/supersede.
 
 ### Pipeline checklist
 
 ```text
-Collect → Classify → Persist → Review → Apply (phase 1) → Scheduled → Apply (full)
-  ✅        ✅         ✅         ✅        ✅ conventions   🔄 active      ❌ later
+Collect → Classify → Persist → Review → Scheduled → Apply (phase 1) → MCP → Decay/supersede
+  ✅        ✅         ✅         ✅        ✅             ✅ conventions   ✅      ❌ pending
 ```
 
 Scheduled generation creates **reviewable packs only** (no auto-apply). Phase-1
 apply targets **RepoConventionIndex** only; skill patches and other kinds remain
-blocked until later gated slices ship.
+blocked until later gated slices ship. MCP tools intentionally stop at
+run/list/read/review; applying proposals remains outside the MCP surface.
 
 ## Apply phase 1 (repo conventions only)
 

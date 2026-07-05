@@ -495,23 +495,26 @@ Current MVP boundary (see `THREAD_INTROSPECTION.md`):
 
 - **Landed:** collect → classify → persist → **manual review in Settings**
   (harvester, run service, IPC, review panel — through `871db3521`).
+- **Landed:** scheduled daily generation creates read-only proposal packs for
+  review (`getIntrospectionSchedule` / `updateIntrospectionSchedule` + headless
+  daily runner).
 - **Landed (phase 1 apply):** approved `repo_convention` / `do_not_repeat`
   proposals can be applied to the workspace **RepoConventionIndex** via Settings
   (`applyMemoryProposal` IPC). Skill patches, preferences, bugs, and other kinds
   remain blocked; no `.codex/.cursor` skill file writes.
-- **In progress:** scheduled daily generation (read-only packs only;
-  `getIntrospectionSchedule` / `updateIntrospectionSchedule` + headless daily
-  runner — `@WriteMain`); Apply button in review panel (`@WriteRender`).
+- **Landed:** MCP agents can use `tw_introspection_run`,
+  `tw_introspection_list`, `tw_introspection_read`, and
+  `tw_introspection_review` for safe trigger/list/read/review workflows.
+  There is intentionally **no MCP apply tool**.
 - **Later (gated):** Skill Patch Manager (diff/rollback), other apply targets,
-  MCP tools, decay/supersede.
+  decay/supersede.
 - **Operational in dev:** Settings → Thread introspection → Run introspection
   (24h) → approve/reject → Apply (conventions only). Skill patches: review-only.
-- **Daily toggle:** UI scaffolded; backend schedule IPC not wired until scheduler
-  slice lands.
+- **Daily toggle:** wired for read-only scheduled generation.
 
-Do not claim the full Ryan Brewer loop is complete until **scheduled generation
-+ skill/instruction apply with rollback** ship. Do not edit skills from thread
-history outside this pipeline.
+Do not claim the full Ryan Brewer loop is complete until **decay/supersede,
+Skill Patch Manager, and skill/instruction apply with rollback** ship. Do not
+edit skills from thread history outside this pipeline.
 
 ---
 

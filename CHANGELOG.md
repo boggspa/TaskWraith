@@ -18,11 +18,22 @@ published.
   **Memory Proposal Packs** with scoped, cited lessons (preferences, failure
   modes, repo conventions, provider hints, skill patches, bugs, do-not-repeat
   notes). **Settings → Automation → Thread introspection** supports a manual
-  24h run, proposal review (approve/reject only — no skill or rule mutation),
-  and evidence citations. A daily **Enable** toggle (read-only scheduled packs)
-  is in progress — it will not auto-apply lessons. Full apply-to-skills remains
-  a later gated slice. Distinct from per-run Evidence Packs and ensemble
-  Blackboard. See `THREAD_INTROSPECTION.md`.
+  24h run, proposal review (approve/reject), evidence citations, and a daily
+  **Enable** toggle for read-only scheduled packs. Distinct from per-run
+  Evidence Packs and ensemble Blackboard. See `THREAD_INTROSPECTION.md`.
+- **Thread Introspection — apply phase 1 (repo conventions).** After explicit
+  approve in Settings, eligible `repo_convention` and `do_not_repeat` proposals
+  can be applied to the workspace **RepoConventionIndex** via
+  `applyMemoryProposal` (stable `intro-{proposalId}` entries, apply receipt on
+  the proposal). **Blocked in phase 1:** skill/instruction file writes,
+  `skill_patch`, `bug`, `preference`, `provider_hint`, and `failure_mode`.
+  Skill patches remain review-only until a later Skill Patch Manager with diff
+  preview and rollback. See `THREAD_INTROSPECTION.md`.
+- **Thread Introspection — MCP trigger and review tools.** Agents can now use
+  `tw_introspection_run`, `tw_introspection_list`, `tw_introspection_read`, and
+  `tw_introspection_review` to create, inspect, and review proposal packs from
+  chat. The MCP surface intentionally has **no apply tool**; applying approved
+  proposals remains gated through the Settings/API flow.
 
 ## 1.7.6 - 2026-07-05
 
