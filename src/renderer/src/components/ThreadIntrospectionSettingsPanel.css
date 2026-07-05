@@ -80,3 +80,102 @@
   padding: 8px 12px;
   border-radius: 6px;
 }
+
+.thread-introspection-settings-schedule {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--panel-border, var(--surface-border));
+  background: color-mix(in srgb, var(--surface-2, var(--panel-elevated-bg)) 45%, transparent);
+}
+
+.thread-introspection-settings-schedule--enabled {
+  border-color: color-mix(in srgb, var(--success, #3ecf8e) 28%, var(--panel-border, var(--surface-border)));
+  background: color-mix(in srgb, var(--success, #3ecf8e) 6%, var(--surface-2, var(--panel-elevated-bg)));
+}
+
+.thread-introspection-settings-schedule-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.thread-introspection-settings-schedule-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.thread-introspection-settings-schedule-badge {
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border-radius: 999px;
+  color: color-mix(in srgb, var(--success, #3ecf8e) 90%, var(--text-primary));
+  border: 1px solid color-mix(in srgb, var(--success, #3ecf8e) 35%, transparent);
+  background: color-mix(in srgb, var(--success, #3ecf8e) 12%, transparent);
+}
+
+.thread-introspection-settings-schedule-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
+}
+
+.thread-introspection-settings-schedule-toggle--disabled {
+  cursor: default;
+}
+
+.thread-introspection-settings-schedule-toggle input {
+  margin-top: 2px;
+  flex: 0 0 auto;
+}
+
+.thread-introspection-settings-schedule-toggle > span {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.thread-introspection-settings-schedule-toggle strong {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.thread-introspection-settings-schedule-hint {
+  font-size: 11.5px;
+  color: var(--text-tertiary, var(--text-secondary));
+  max-width: 58ch;
+}
+
+.thread-introspection-settings-schedule-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  padding-left: 26px;
+  font-size: 11.5px;
+  color: var(--text-tertiary, var(--text-secondary));
+}
+
+.thread-introspection-settings-schedule-meta > span {
+  padding: 3px 8px;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, var(--panel-border) 70%, transparent);
+  background: color-mix(in srgb, var(--surface-2, var(--panel-elevated-bg)) 55%, transparent);
+}
+
+.thread-introspection-settings-schedule-pending {
+  margin: 0;
+  padding-left: 26px;
+  font-size: 11.5px;
+  color: var(--text-tertiary, var(--text-secondary));
+}
