@@ -145,6 +145,30 @@ describe('AppStore thread introspection', () => {
     )
   })
 
+  it('persists per-workspace introspection schedules', () => {
+    const disabled = AppStore.getIntrospectionSchedule('ws-1')
+    expect(disabled.enabled).toBe(false)
+    expect(disabled.workspaceId).toBe('ws-1')
+
+    const enabled = AppStore.updateIntrospectionSchedule({
+      workspaceId: 'ws-1',
+      enabled: true
+    })
+    expect(enabled.enabled).toBe(true)
+    expect(enabled.nextRunAt).toBeTypeOf('string')
+
+    const loaded = AppStore.getIntrospectionSchedule('ws-1')
+    expect(loaded.enabled).toBe(true)
+    expect(loaded.nextRunAt).toBe(enabled.nextRunAt)
+
+    const disabledAgain = AppStore.updateIntrospectionSchedule({
+      workspaceId: 'ws-1',
+      enabled: false
+    })
+    expect(disabledAgain.enabled).toBe(false)
+    expect(disabledAgain.nextRunAt).toBeNull()
+  })
+
   it('filters by workspace', () => {
     AppStore.createIntrospectionRun({
       status: 'collecting',

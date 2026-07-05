@@ -40,3 +40,20 @@ export {
   type RunManualIntrospectionInput,
   type RunManualIntrospectionResult
 } from './IntrospectionRunService'
+
+export {
+  INTROSPECTION_SCHEDULE_INTERVAL_MS,
+  buildRolling24hWindow,
+  calendarDayKey,
+  computeNextIntrospectionRunAt,
+  dispatchDueIntrospectionSchedules,
+  getNextIntrospectionScheduleRunAtMs,
+  hasScheduledIntrospectionForDay,
+  isIntrospectionScheduleDue,
+  mergeIntrospectionScheduleUpdate,
+  normalizeIntrospectionScheduleRecord,
+  scheduleWorkspaceKey,
+  toIntrospectionScheduleSettings,
+  type DispatchDueIntrospectionSchedulesResult,
+  type IntrospectionSchedulerStore
+} from './IntrospectionScheduler'

@@ -2,8 +2,8 @@
  * Manual Thread Introspection run service.
  *
  * Harvests recent substrate, generates proposal candidates, and persists a
- * read-only IntrospectionRunRecord + MemoryProposalPack. No scheduler, IPC,
- * or apply/mutation paths — review-gated promotion only.
+ * read-only IntrospectionRunRecord + MemoryProposalPack. Scheduling is handled
+ * by IntrospectionScheduler; apply/mutation paths remain review-gated only.
  */
 
 import { randomUUID } from 'crypto'

@@ -55,4 +55,16 @@ describe('getNextScheduledTaskRunAtMs', () => {
       })
     ).toBe(null)
   })
+
+  it('includes introspection schedule candidates in the next timer tick', () => {
+    const nowMs = 1_000_000_000_000
+    expect(
+      getNextScheduledTaskRunAtMs({
+        nowMs,
+        tasks: [task({ status: 'completed' })],
+        nextWorkflowRunAtMs: null,
+        nextIntrospectionRunAtMs: nowMs + 5000
+      })
+    ).toBe(nowMs + 5000)
+  })
 })

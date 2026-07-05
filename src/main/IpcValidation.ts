@@ -184,6 +184,8 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'get-memory-proposal-pack': ['nonEmptyString'],
   'update-memory-proposal': ['object'],
   'run-manual-introspection': ['object'],
+  'get-introspection-schedule': ['optionalString'],
+  'update-introspection-schedule': ['object'],
   'get-product-operations-status': [],
   'get-product-crashes': ['optionalObject'],
   'record-product-crash': ['object'],

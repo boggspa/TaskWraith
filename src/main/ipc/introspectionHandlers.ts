@@ -1,5 +1,10 @@
 import { ipcMain } from 'electron'
-import type { MemoryProposal, MemoryProposalPack, MemoryProposalStatus } from '../store/types'
+import type {
+  IntrospectionScheduleSettings,
+  MemoryProposal,
+  MemoryProposalPack,
+  MemoryProposalStatus
+} from '../store/types'
 import type {
   RunManualIntrospectionInput,
   RunManualIntrospectionResult
@@ -16,6 +21,11 @@ export interface IntrospectionHandlersDeps {
     partial: Partial<MemoryProposal>
   ) => MemoryProposalPack | null
   runManualIntrospection: (input: RunManualIntrospectionInput) => RunManualIntrospectionResult
+  getIntrospectionSchedule: (workspaceId?: string) => IntrospectionScheduleSettings
+  updateIntrospectionSchedule: (
+    partial: Partial<IntrospectionScheduleSettings> & { workspaceId?: string | null }
+  ) => IntrospectionScheduleSettings
+  scheduleNextTaskTimer?: () => void
 }
 
 export interface UpdateMemoryProposalInput {
@@ -56,6 +66,41 @@ function sanitizeProposalPatch(partial: unknown): Partial<MemoryProposal> {
 
   const expiresAt = parseIsoWindow(input.expiresAt)
   if (expiresAt) patch.expiresAt = expiresAt
+
+  return patch
+}
+
+function sanitizeIntrospectionSchedulePatch(
+  input: unknown
+): Partial<IntrospectionScheduleSettings> & { workspaceId?: string | null } {
+  if (!input || typeof input !== 'object') return {}
+  const raw = input as Partial<IntrospectionScheduleSettings> & { workspaceId?: string | null }
+  const patch: Partial<IntrospectionScheduleSettings> & { workspaceId?: string | null } = {}
+
+  if (typeof raw.enabled === 'boolean') {
+    patch.enabled = raw.enabled
+  }
+
+  const workspaceId = optionalText(raw.workspaceId, 120)
+  if (workspaceId !== undefined) {
+    patch.workspaceId = workspaceId
+  } else if (raw.workspaceId === null) {
+    patch.workspaceId = null
+  }
+
+  if (raw.lastRunAt === null) {
+    patch.lastRunAt = null
+  } else {
+    const lastRunAt = parseIsoWindow(raw.lastRunAt)
+    if (lastRunAt) patch.lastRunAt = lastRunAt
+  }
+
+  if (raw.nextRunAt === null) {
+    patch.nextRunAt = null
+  } else {
+    const nextRunAt = parseIsoWindow(raw.nextRunAt)
+    if (nextRunAt) patch.nextRunAt = nextRunAt
+  }
 
   return patch
 }
@@ -128,5 +173,20 @@ export function registerIntrospectionHandlers(deps: IntrospectionHandlersDeps): 
       evidenceCount: result.evidenceCount,
       proposalCount: result.proposalCount
     }
+  })
+
+  ipcMain.handle('get-introspection-schedule', (_, workspaceId?: string | null) => {
+    const scoped = optionalText(workspaceId, 120)
+    return deps.getIntrospectionSchedule(scoped)
+  })
+
+  ipcMain.handle('update-introspection-schedule', (_, input: unknown) => {
+    const patch = sanitizeIntrospectionSchedulePatch(input)
+    if (typeof patch.enabled !== 'boolean' && patch.workspaceId === undefined) {
+      throw new Error('At least one schedule field is required.')
+    }
+    const updated = deps.updateIntrospectionSchedule(patch)
+    deps.scheduleNextTaskTimer?.()
+    return updated
   })
 }

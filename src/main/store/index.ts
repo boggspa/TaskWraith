@@ -79,6 +79,8 @@ import {
   AuditRetentionSurface,
   AuditRetentionSurfacePurgeCounts,
   IntrospectionRunRecord,
+  IntrospectionScheduleRecord,
+  IntrospectionScheduleSettings,
   MemoryProposalPack,
   MemoryProposal
 } from './types'
@@ -162,6 +164,13 @@ import {
   normalizeIntrospectionRunRecord,
   normalizeMemoryProposalPack
 } from '../introspection/IntrospectionModel'
+import {
+  getNextIntrospectionScheduleRunAtMs,
+  mergeIntrospectionScheduleUpdate,
+  normalizeIntrospectionScheduleRecord,
+  scheduleWorkspaceKey,
+  toIntrospectionScheduleSettings
+} from '../introspection/IntrospectionScheduler'
 import {
   capApprovalLedgerRecords,
   createApprovalLedgerRecord,
@@ -289,6 +298,7 @@ const CHAT_LIST_INDEX_VOLATILE_REFRESH_INTERVAL_MS = 2000
 const auditRunsPath = path.join(userDataPath, 'audit-runs.json')
 const introspectionRunsPath = path.join(userDataPath, 'introspection-runs.json')
 const memoryProposalPacksPath = path.join(userDataPath, 'memory-proposal-packs.json')
+const introspectionSchedulePath = path.join(userDataPath, 'introspection-schedule.json')
 const runEventsDir = path.join(userDataPath, 'run-events')
 const runArtifactsDir = path.join(userDataPath, 'run-artifacts')
 const runEventSequenceCache = new Map<string, number>()
@@ -4211,6 +4221,40 @@ export class AppStore {
       memoryProposalPacksPath,
       this.getMemoryProposalPacks().filter((pack) => pack.id !== id)
     )
+  }
+
+  static getIntrospectionScheduleRecords(): IntrospectionScheduleRecord[] {
+    return readJson<unknown[]>(introspectionSchedulePath, [])
+      .map((item) => normalizeIntrospectionScheduleRecord(item))
+      .filter((item): item is IntrospectionScheduleRecord => Boolean(item))
+  }
+
+  static getIntrospectionSchedule(workspaceId?: string): IntrospectionScheduleSettings {
+    const key = scheduleWorkspaceKey(workspaceId)
+    const record =
+      this.getIntrospectionScheduleRecords().find((item) => item.workspaceId === key) || null
+    return toIntrospectionScheduleSettings(record, workspaceId)
+  }
+
+  static updateIntrospectionSchedule(
+    partial: Partial<IntrospectionScheduleSettings> & { workspaceId?: string | null }
+  ): IntrospectionScheduleSettings {
+    const nowIso = new Date().toISOString()
+    const key = scheduleWorkspaceKey(partial.workspaceId)
+    const records = this.getIntrospectionScheduleRecords()
+    const index = records.findIndex((item) => item.workspaceId === key)
+    const existing = index >= 0 ? records[index]! : null
+    const merged = mergeIntrospectionScheduleUpdate(existing, partial, nowIso)
+    const next =
+      index >= 0
+        ? records.map((item, itemIndex) => (itemIndex === index ? merged : item))
+        : [merged, ...records]
+    writeJson(introspectionSchedulePath, next)
+    return toIntrospectionScheduleSettings(merged, partial.workspaceId)
+  }
+
+  static getNextIntrospectionScheduleRunAtMs(nowMs = Date.now()): number | null {
+    return getNextIntrospectionScheduleRunAtMs(this.getIntrospectionScheduleRecords(), nowMs)
   }
 
   static getAuditRetentionPurgeReceipts(): AuditRetentionPurgeReceipt[] {

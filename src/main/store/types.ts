@@ -4404,6 +4404,25 @@ export interface MemoryProposalPack {
   updatedAt: string
 }
 
+/** Per-workspace daily introspection schedule (read-only generation only). */
+export interface IntrospectionScheduleSettings {
+  enabled: boolean
+  workspaceId?: string | null
+  lastRunAt?: string | null
+  nextRunAt?: string | null
+}
+
+/** Persisted schedule row keyed by workspaceId (empty string = global scope). */
+export interface IntrospectionScheduleRecord {
+  schemaVersion: 1
+  workspaceId: string
+  enabled: boolean
+  lastRunAt?: string
+  nextRunAt?: string
+  createdAt: string
+  updatedAt: string
+}
+
 export interface IntrospectionRunRecord {
   schemaVersion: 1
   id: string

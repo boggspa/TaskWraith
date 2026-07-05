@@ -1349,6 +1349,14 @@ const api = {
     workspaceId?: string
     workspacePath?: string
   }) => ipcRenderer.invoke('run-manual-introspection', input),
+  getIntrospectionSchedule: (workspaceId?: string | null) =>
+    ipcRenderer.invoke('get-introspection-schedule', workspaceId),
+  updateIntrospectionSchedule: (partial: {
+    enabled?: boolean
+    workspaceId?: string | null
+    lastRunAt?: string | null
+    nextRunAt?: string | null
+  }) => ipcRenderer.invoke('update-introspection-schedule', partial),
   getProductOperationsStatus: () => ipcRenderer.invoke('get-product-operations-status'),
   getProductCrashes: (filter: any = {}) => ipcRenderer.invoke('get-product-crashes', filter),
   recordProductCrash: (input: any) => ipcRenderer.invoke('record-product-crash', input),

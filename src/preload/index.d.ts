@@ -1705,6 +1705,23 @@ declare global {
         evidenceCount: number
         proposalCount: number
       }>
+      getIntrospectionSchedule: (workspaceId?: string | null) => Promise<{
+        enabled: boolean
+        workspaceId?: string | null
+        lastRunAt?: string | null
+        nextRunAt?: string | null
+      }>
+      updateIntrospectionSchedule: (partial: {
+        enabled?: boolean
+        workspaceId?: string | null
+        lastRunAt?: string | null
+        nextRunAt?: string | null
+      }) => Promise<{
+        enabled: boolean
+        workspaceId?: string | null
+        lastRunAt?: string | null
+        nextRunAt?: string | null
+      }>
       getProductOperationsStatus: () => Promise<ProductOperationsStatus>
       getProductCrashes: (filter?: ProductCrashFilter) => Promise<ProductCrashRecord[]>
       recordProductCrash: (input: ProductCrashInput) => Promise<ProductCrashRecord>

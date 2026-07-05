@@ -65,6 +65,18 @@ function createDeps() {
       pack: samplePack('pack-2'),
       evidenceCount: 3,
       proposalCount: 2
+    })),
+    getIntrospectionSchedule: vi.fn((workspaceId?: string) => ({
+      enabled: false,
+      workspaceId: workspaceId ?? null,
+      lastRunAt: null,
+      nextRunAt: null
+    })),
+    updateIntrospectionSchedule: vi.fn(() => ({
+      enabled: true,
+      workspaceId: 'ws-1',
+      lastRunAt: null,
+      nextRunAt: '2026-07-06T12:00:00.000Z'
     }))
   }
 }
@@ -77,6 +89,8 @@ describe('registerIntrospectionHandlers', () => {
     expect(handlerFor('get-memory-proposal-pack')).toBeTypeOf('function')
     expect(handlerFor('update-memory-proposal')).toBeTypeOf('function')
     expect(handlerFor('run-manual-introspection')).toBeTypeOf('function')
+    expect(handlerFor('get-introspection-schedule')).toBeTypeOf('function')
+    expect(handlerFor('update-introspection-schedule')).toBeTypeOf('function')
   })
 
   it('routes pack listing through deps with optional workspace filter', () => {
@@ -162,6 +176,47 @@ describe('registerIntrospectionHandlers', () => {
       evidenceCount: 3,
       proposalCount: 2
     })
+  })
+
+  it('routes schedule reads and updates through deps', () => {
+    const scheduleNextTaskTimer = vi.fn()
+    const deps = { ...createDeps(), scheduleNextTaskTimer }
+    registerIntrospectionHandlers(deps)
+
+    const read = handlerFor('get-introspection-schedule')
+    expect(read({}, ' ws-1 ')).toEqual({
+      enabled: false,
+      workspaceId: 'ws-1',
+      lastRunAt: null,
+      nextRunAt: null
+    })
+    expect(deps.getIntrospectionSchedule).toHaveBeenCalledWith('ws-1')
+
+    const write = handlerFor('update-introspection-schedule')
+    expect(
+      write({}, {
+        enabled: true,
+        workspaceId: ' ws-1 '
+      })
+    ).toEqual({
+      enabled: true,
+      workspaceId: 'ws-1',
+      lastRunAt: null,
+      nextRunAt: '2026-07-06T12:00:00.000Z'
+    })
+    expect(deps.updateIntrospectionSchedule).toHaveBeenCalledWith({
+      enabled: true,
+      workspaceId: 'ws-1'
+    })
+    expect(scheduleNextTaskTimer).toHaveBeenCalledTimes(1)
+  })
+
+  it('rejects empty schedule update patches', () => {
+    registerIntrospectionHandlers(createDeps())
+
+    expect(() => handlerFor('update-introspection-schedule')({}, {})).toThrow(
+      /At least one schedule field/
+    )
   })
 
   it('rejects invalid introspection windows', () => {

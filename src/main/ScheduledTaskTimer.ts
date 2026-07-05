@@ -5,6 +5,7 @@ type NowProvider = { nowMs?: number }
 interface ScheduledTaskTimerInputs extends NowProvider {
   tasks: readonly ScheduledTask[]
   nextWorkflowRunAtMs: number | null | undefined
+  nextIntrospectionRunAtMs?: number | null | undefined
 }
 
 function parseRunAtMs(runAt: string): number {
@@ -18,6 +19,7 @@ function parseRunAtMs(runAt: string): number {
 export function getNextScheduledTaskRunAtMs({
   tasks,
   nextWorkflowRunAtMs,
+  nextIntrospectionRunAtMs,
   nowMs = Date.now()
 }: ScheduledTaskTimerInputs): number | null {
   const candidates: number[] = []
@@ -34,6 +36,10 @@ export function getNextScheduledTaskRunAtMs({
 
   if (typeof nextWorkflowRunAtMs === 'number' && Number.isFinite(nextWorkflowRunAtMs)) {
     candidates.push(nextWorkflowRunAtMs)
+  }
+
+  if (typeof nextIntrospectionRunAtMs === 'number' && Number.isFinite(nextIntrospectionRunAtMs)) {
+    candidates.push(nextIntrospectionRunAtMs)
   }
 
   if (candidates.length === 0) return null

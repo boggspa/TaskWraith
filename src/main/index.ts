@@ -949,6 +949,7 @@ import {
   createIntrospectionRunServiceDeps,
   runManualIntrospection
 } from './introspection/IntrospectionRunService'
+import { dispatchDueIntrospectionSchedules } from './introspection/IntrospectionScheduler'
 import {
   createBridgeNetworkingTailscaleStatusGetter,
   registerBridgeAllowlistHandlers
@@ -9938,7 +9939,35 @@ function emitDueScheduledTasks() {
   }
   // Universal wedge backstop, piggybacked on every materialize tick.
   reconcileStalledScheduledTasks()
+  emitDueIntrospectionSchedules()
   scheduleNextTaskTimer()
+}
+
+function emitDueIntrospectionSchedules(): void {
+  try {
+    dispatchDueIntrospectionSchedules({
+      getIntrospectionScheduleRecords: () => AppStore.getIntrospectionScheduleRecords(),
+      updateIntrospectionScheduleRecord: (partial) => AppStore.updateIntrospectionSchedule(partial),
+      getIntrospectionRuns: (workspaceId) => AppStore.getIntrospectionRuns(workspaceId),
+      getWorkspacePath: (workspaceId) =>
+        AppStore.getWorkspaces().find((workspace) => workspace.id === workspaceId)?.path,
+      runManualIntrospection: (input) =>
+        runManualIntrospection(
+          createIntrospectionRunServiceDeps({
+            getChats: (workspaceId) => AppStore.getChats(workspaceId),
+            getRunEvents: (filter) => AppStore.getRunEvents(filter),
+            getApprovalLedger: (filter) => AppStore.getApprovalLedger(filter),
+            getMessageFeedbackReceipts: (filter) => AppStore.getMessageFeedbackReceipts(filter),
+            createIntrospectionRun: (record) => AppStore.createIntrospectionRun(record),
+            updateIntrospectionRun: (id, partial) => AppStore.updateIntrospectionRun(id, partial),
+            saveMemoryProposalPack: (pack) => AppStore.saveMemoryProposalPack(pack)
+          }),
+          input
+        )
+    })
+  } catch {
+    // Scheduler failures must not wedge workflow timers.
+  }
 }
 
 /**
@@ -10020,6 +10049,7 @@ function scheduleNextTaskTimer() {
   const nextRunAtMs = getNextScheduledTaskRunAtMs({
     tasks: AppStore.getScheduledTasks(),
     nextWorkflowRunAtMs: AppStore.getNextWorkflowRunAtMs(),
+    nextIntrospectionRunAtMs: AppStore.getNextIntrospectionScheduleRunAtMs(nowMs),
     nowMs
   })
   if (nextRunAtMs === null) {
@@ -29086,7 +29116,10 @@ if (isGeminiMcpBridgeProcess) {
             saveMemoryProposalPack: (pack) => AppStore.saveMemoryProposalPack(pack)
           }),
           input
-        )
+        ),
+      getIntrospectionSchedule: (workspaceId) => AppStore.getIntrospectionSchedule(workspaceId),
+      updateIntrospectionSchedule: (partial) => AppStore.updateIntrospectionSchedule(partial),
+      scheduleNextTaskTimer
     })
 
     registerDiagnosticsHandlers({
