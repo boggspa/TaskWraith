@@ -69,6 +69,10 @@ export interface RemoteCostDisplayOptions {
 export const REMOTE_IOS_PREVIEW_MAX = 2400
 /** Upper bound when the phone explicitly expands a clipped row. */
 export const REMOTE_IOS_ROW_EXPAND_MAX = 32000
+/** Per-run summaries carried for mobile completion cards. Needs to cover a
+ * full 20-seat ensemble round plus nearby runs without making snapshots
+ * unbounded. */
+export const REMOTE_RUN_SUMMARY_MAX = 48
 
 const PROVIDER_LABELS: Record<ProviderId, string> = {
   gemini: 'Gemini',
@@ -598,6 +602,10 @@ export interface RemoteRunSummary {
    * to render one completion card at the round boundary instead of one after
    * every participant turn. */
   ensembleRoundId?: string
+  /** Ensemble participant identity for per-round token tables. */
+  ensembleParticipantId?: string
+  ensembleRole?: string
+  ensembleOrder?: number
   provider?: string
   model?: string
   status?: string
@@ -1455,6 +1463,11 @@ export function summarizeRun(
   if (!run || typeof run.runId !== 'string') return undefined
   const summary: RemoteRunSummary = { runId: run.runId }
   if (run.ensembleRoundId) summary.ensembleRoundId = run.ensembleRoundId
+  if (run.ensembleParticipantId) summary.ensembleParticipantId = run.ensembleParticipantId
+  if (run.ensembleRole) summary.ensembleRole = run.ensembleRole
+  if (typeof run.ensembleOrder === 'number' && Number.isFinite(run.ensembleOrder)) {
+    summary.ensembleOrder = run.ensembleOrder
+  }
   if (run.provider) summary.provider = run.provider
   const model = run.actualModel || run.requestedModel
   if (model) summary.model = model
@@ -2142,7 +2155,7 @@ export function projectRemoteThread(
   const runSummary = buildRunSummary(runs, opts.costDisplay, all)
   const conversationCost = buildConversationCostSummary(runs, opts.costDisplay)
   const runSummaries = (runs ?? [])
-    .slice(-12)
+    .slice(-REMOTE_RUN_SUMMARY_MAX)
     .map((run) => summarizeRun(run, opts.costDisplay, all))
     .filter((entry): entry is RemoteRunSummary => Boolean(entry))
   const blackboardEntries = projectBlackboardEntries(opts.blackboardEntries)

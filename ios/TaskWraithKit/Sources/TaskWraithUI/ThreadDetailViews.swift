@@ -863,7 +863,9 @@ struct ThreadDetailView: View {
                         TaskCompleteCard(
                             run: runCard,
                             diff: model.diffSummaries[taskId]?.runId == runCard.runId
-                                ? model.diffSummaries[taskId] : nil
+                                ? model.diffSummaries[taskId] : nil,
+                            runSummaries: runSummaries,
+                            participants: transcriptParticipants
                         )
                         .listRowInsets(
                             EdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12))
@@ -927,7 +929,9 @@ struct ThreadDetailView: View {
                             TaskCompleteCard(
                                 run: runCard,
                                 diff: model.diffSummaries[taskId]?.runId == runCard.runId
-                                    ? model.diffSummaries[taskId] : nil
+                                    ? model.diffSummaries[taskId] : nil,
+                                runSummaries: runSummaries,
+                                participants: transcriptParticipants
                             )
                             .listRowInsets(
                                 EdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12))
@@ -973,7 +977,9 @@ struct ThreadDetailView: View {
                     TaskCompleteCard(
                         run: run,
                         diff: model.diffSummaries[taskId]?.runId == run.runId
-                            ? model.diffSummaries[taskId] : nil
+                            ? model.diffSummaries[taskId] : nil,
+                        runSummaries: runSummaries,
+                        participants: transcriptParticipants
                     )
                     .listRowBackground(Color.clear)
                     .listRowSeparator(.hidden)

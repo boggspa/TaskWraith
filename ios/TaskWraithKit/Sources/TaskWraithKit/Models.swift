@@ -1426,6 +1426,9 @@ public struct RemoteThreadSnapshot: Codable, Sendable {
         public let runId: String?
         /// Ensemble round this participant run belongs to, when present.
         public let ensembleRoundId: String?
+        public let ensembleParticipantId: String?
+        public let ensembleRole: String?
+        public let ensembleOrder: Int?
         public let provider: String?
         public let model: String?
         public let status: String?

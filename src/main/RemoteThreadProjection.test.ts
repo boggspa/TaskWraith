@@ -8,6 +8,7 @@ import {
   soloSpeakerForMessage,
   REMOTE_IOS_PREVIEW_MAX,
   REMOTE_IOS_ROW_EXPAND_MAX,
+  REMOTE_RUN_SUMMARY_MAX,
   type RemoteThreadSnapshot
 } from './RemoteThreadProjection'
 
@@ -358,6 +359,51 @@ describe('RemoteThreadProjection', () => {
         'round-1',
         'round-1'
       ])
+    })
+
+    it('projects ensemble participant identity for mobile run detail tables', () => {
+      const runs = [
+        {
+          runId: 'run-reviewer',
+          provider: 'codex',
+          requestedModel: 'gpt-5.5-codex',
+          status: 'completed',
+          startedAt: FIXED,
+          endedAt: FIXED,
+          ensembleRoundId: 'round-tokens',
+          ensembleParticipantId: 'participant-reviewer',
+          ensembleRole: 'Reviewer',
+          ensembleOrder: 2,
+          stats: { inputTokens: 11_000, outputTokens: 900, totalTokens: 11_900 }
+        } as unknown as ChatRun
+      ]
+
+      const snap = project({ kind: 'latestN', n: 10 }, MESSAGES, runs)
+
+      expect(snap.runSummaries?.[0]).toMatchObject({
+        runId: 'run-reviewer',
+        ensembleRoundId: 'round-tokens',
+        ensembleParticipantId: 'participant-reviewer',
+        ensembleRole: 'Reviewer',
+        ensembleOrder: 2,
+        totalTokens: 11_900
+      })
+    })
+
+    it('keeps enough recent run summaries for full ensemble rounds', () => {
+      const runs = Array.from({ length: REMOTE_RUN_SUMMARY_MAX + 5 }, (_, index) => ({
+        runId: `run-${index}`,
+        provider: 'codex',
+        status: 'completed',
+        startedAt: FIXED,
+        endedAt: FIXED
+      })) as unknown as ChatRun[]
+
+      const snap = project({ kind: 'latestN', n: 10 }, MESSAGES, runs)
+
+      expect(snap.runSummaries).toHaveLength(REMOTE_RUN_SUMMARY_MAX)
+      expect(snap.runSummaries?.[0]?.runId).toBe('run-5')
+      expect(snap.runSummaries?.at(-1)?.runId).toBe(`run-${REMOTE_RUN_SUMMARY_MAX + 4}`)
     })
 
     it('projects structured participant health cards for iOS', () => {

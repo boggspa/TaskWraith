@@ -43,6 +43,12 @@ struct TaskCompleteCard: View {
     /// Legacy file-change lane: the latest run's diffSummary envelope.
     /// `run.fileChanges` (per-run, every card) wins when the Mac sends it.
     var diff: MobileDiffSummary? = nil
+    /// Recent per-run summaries from the Mac snapshot. Ensemble cards use this
+    /// to fold every participant in the completed round into one token table.
+    var runSummaries: [RemoteThreadSnapshot.RunSummary] = []
+    /// Current ensemble roster, already enriched with model ids by the session
+    /// model so provider glyphs and Ollama spoof branding stay accurate.
+    var participants: [RemoteEnsembleState.Participant] = []
 
     private var failed: Bool { run.status == "failed" || run.status == "error" }
 
@@ -53,6 +59,20 @@ struct TaskCompleteCard: View {
         let additions: Int?
         let deletions: Int?
         var id: String { path }
+    }
+
+    private struct IndexedRun {
+        let index: Int
+        let summary: RemoteThreadSnapshot.RunSummary
+    }
+
+    private struct TokenParticipant: Identifiable {
+        let id: String
+        let provider: String?
+        let model: String?
+        let numberLabel: String
+        let roleLabel: String
+        let tokens: Int?
     }
 
     private var fileRows: [ChangedFileRow] {
@@ -102,20 +122,255 @@ struct TaskCompleteCard: View {
         return formatter.string(from: date)
     }
 
-    private var tokensText: String? {
-        if let tin = run.tokensIn, let tout = run.tokensOut, tin + tout > 0 {
-            return "\(compact(tin)) in / \(compact(tout)) out"
-        }
-        return nil
-    }
-
     private func compact(_ value: Int) -> String {
         if value >= 1_000_000 { return String(format: "%.1fM", Double(value) / 1_000_000) }
         if value >= 1_000 { return String(format: "%.0fk", Double(value) / 1_000) }
         return "\(value)"
     }
 
+    private func clean(_ value: String?) -> String? {
+        guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !value.isEmpty
+        else { return nil }
+        return value
+    }
+
+    private func normalized(_ value: String?) -> String {
+        clean(value)?.lowercased() ?? ""
+    }
+
+    private var relatedRuns: [RemoteThreadSnapshot.RunSummary] {
+        guard let roundId = clean(run.ensembleRoundId) else { return [run] }
+        let matches = runSummaries.filter { clean($0.ensembleRoundId) == roundId }
+        return matches.isEmpty ? [run] : matches
+    }
+
+    private func tokenCount(_ summary: RemoteThreadSnapshot.RunSummary) -> Int? {
+        let total = summary.totalTokens ?? ((summary.tokensIn ?? 0) + (summary.tokensOut ?? 0))
+        return total > 0 ? total : nil
+    }
+
+    private var roundTotalTokens: Int? {
+        let related = relatedRuns
+        let summed = related.compactMap(tokenCount).reduce(0, +)
+        if related.count > 1, summed > 0 { return summed }
+        return tokenCount(run) ?? (summed > 0 ? summed : nil)
+    }
+
+    private var sortedParticipants: [RemoteEnsembleState.Participant] {
+        participants.sorted {
+            let leftOrder = $0.order ?? Int.max
+            let rightOrder = $1.order ?? Int.max
+            if leftOrder != rightOrder { return leftOrder < rightOrder }
+            return $0.participantId < $1.participantId
+        }
+    }
+
+    private func participantNumber(order: Int?, fallbackIndex: Int) -> String {
+        if let order, order > 0 { return "P\(order)" }
+        return "P\(fallbackIndex + 1)"
+    }
+
+    private func participantRoleLabel(
+        provider: String?, model: String?, role: String?
+    ) -> String {
+        if let role = clean(role) { return role }
+        return TWTheme.providerLabel(provider, modelId: model, modelLabel: model)
+    }
+
+    private func matches(
+        _ summary: RemoteThreadSnapshot.RunSummary, participant: RemoteEnsembleState.Participant
+    ) -> Bool {
+        guard normalized(summary.provider) == normalized(participant.provider) else { return false }
+        let summaryModel = normalized(summary.model)
+        let participantModel = normalized(participant.model)
+        if !summaryModel.isEmpty, !participantModel.isEmpty {
+            return summaryModel == participantModel
+        }
+        return true
+    }
+
+    private func tokenSum(_ runs: [IndexedRun]) -> Int? {
+        let total = runs.compactMap { tokenCount($0.summary) }.reduce(0, +)
+        return total > 0 ? total : nil
+    }
+
+    private func cell(
+        for participant: RemoteEnsembleState.Participant,
+        assignedRuns: [IndexedRun],
+        fallbackIndex: Int
+    ) -> TokenParticipant {
+        let representative = assignedRuns.first?.summary
+        let provider = clean(participant.provider) ?? clean(representative?.provider)
+        let model = clean(participant.model) ?? clean(representative?.model)
+        let role = clean(participant.role) ?? clean(representative?.ensembleRole)
+        return TokenParticipant(
+            id: participant.participantId,
+            provider: provider,
+            model: model,
+            numberLabel: participantNumber(order: participant.order, fallbackIndex: fallbackIndex),
+            roleLabel: participantRoleLabel(provider: provider, model: model, role: role),
+            tokens: tokenSum(assignedRuns))
+    }
+
+    private func derivedCell(for indexed: IndexedRun, fallbackIndex: Int) -> TokenParticipant {
+        let summary = indexed.summary
+        let provider = clean(summary.provider)
+        let model = clean(summary.model)
+        let role = clean(summary.ensembleRole)
+        return TokenParticipant(
+            id: clean(summary.ensembleParticipantId) ?? clean(summary.runId) ?? "run-\(indexed.index)",
+            provider: provider,
+            model: model,
+            numberLabel: participantNumber(order: summary.ensembleOrder, fallbackIndex: fallbackIndex),
+            roleLabel: participantRoleLabel(provider: provider, model: model, role: role),
+            tokens: tokenCount(summary))
+    }
+
+    private var tokenParticipants: [TokenParticipant] {
+        let indexedRuns = relatedRuns.enumerated().map { IndexedRun(index: $0.offset, summary: $0.element) }
+        guard !sortedParticipants.isEmpty else {
+            return indexedRuns.enumerated().map { offset, indexed in
+                derivedCell(for: indexed, fallbackIndex: offset)
+            }
+        }
+
+        var runsByParticipant: [String: [IndexedRun]] = [:]
+        for indexed in indexedRuns {
+            if let participantId = clean(indexed.summary.ensembleParticipantId) {
+                runsByParticipant[participantId, default: []].append(indexed)
+            }
+        }
+
+        var consumed = Set<Int>()
+        var cells: [TokenParticipant] = []
+        for (index, participant) in sortedParticipants.enumerated() {
+            var assigned = runsByParticipant[participant.participantId] ?? []
+            if assigned.isEmpty,
+                let fallback = indexedRuns.first(where: {
+                    !consumed.contains($0.index)
+                        && clean($0.summary.ensembleParticipantId) == nil
+                        && matches($0.summary, participant: participant)
+                })
+            {
+                assigned = [fallback]
+            }
+            for item in assigned { consumed.insert(item.index) }
+            cells.append(cell(for: participant, assignedRuns: assigned, fallbackIndex: index))
+        }
+
+        for indexed in indexedRuns where !consumed.contains(indexed.index) {
+            cells.append(derivedCell(for: indexed, fallbackIndex: cells.count))
+        }
+        return cells
+    }
+
+    private func accent(for cell: TokenParticipant) -> Color {
+        TWTheme.providerAccent(cell.provider, modelId: cell.model, modelLabel: cell.model)
+    }
+
+    private func participantColumnWidth(available: CGFloat, count: Int, dense: Bool) -> CGFloat {
+        let totalWidth: CGFloat = dense ? 78 : 92
+        let minWidth: CGFloat = dense ? 64 : 112
+        let fill = (available - totalWidth) / CGFloat(max(count, 1))
+        return max(minWidth, fill.rounded(.down))
+    }
+
+    private func tokenHeaderCell(_ cell: TokenParticipant, dense: Bool) -> some View {
+        let accent = accent(for: cell)
+        return HStack(spacing: 5) {
+            ZStack {
+                Circle()
+                    .fill(accent.opacity(0.16))
+                    .frame(width: 18, height: 18)
+                Circle()
+                    .strokeBorder(accent.opacity(0.28), lineWidth: 0.75)
+                    .frame(width: 18, height: 18)
+                ProviderGlyphIcon(provider: cell.provider, modelId: cell.model, size: 11)
+            }
+            Text(dense ? cell.numberLabel : "\(cell.numberLabel) \(cell.roleLabel)")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(accent)
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+        }
+        .padding(.horizontal, 8)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        .overlay(alignment: .trailing) {
+            Rectangle().fill(TWTheme.border).frame(width: 0.5)
+        }
+    }
+
+    private func tokenValueCell(_ cell: TokenParticipant) -> some View {
+        Text(cell.tokens.map(compact) ?? "-")
+            .font(.caption.monospacedDigit())
+            .foregroundStyle(cell.tokens == nil ? TWTheme.textMuted : TWTheme.textPrimary)
+            .lineLimit(1)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+            .overlay(alignment: .top) {
+                Rectangle().fill(TWTheme.border).frame(height: 0.5)
+            }
+            .overlay(alignment: .trailing) {
+                Rectangle().fill(TWTheme.border).frame(width: 0.5)
+            }
+    }
+
+    private func roundTotalHeaderCell() -> some View {
+        Text("ROUND TOTAL")
+            .font(.system(size: 9, weight: .semibold))
+            .foregroundStyle(TWTheme.textMuted)
+            .lineLimit(1)
+            .minimumScaleFactor(0.72)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+    }
+
+    private func roundTotalValueCell(_ total: Int?) -> some View {
+        Text(total.map(compact) ?? "-")
+            .font(.caption.monospacedDigit())
+            .foregroundStyle(total == nil ? TWTheme.textMuted : TWTheme.textPrimary)
+            .lineLimit(1)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+            .overlay(alignment: .top) {
+                Rectangle().fill(TWTheme.border).frame(height: 0.5)
+            }
+    }
+
+    private func runDetailsTokenTable(
+        cells: [TokenParticipant], roundTotal: Int?, dense: Bool
+    ) -> some View {
+        GeometryReader { proxy in
+            let totalWidth: CGFloat = dense ? 78 : 92
+            let participantWidth = participantColumnWidth(
+                available: proxy.size.width, count: cells.count, dense: dense)
+            let tableWidth = participantWidth * CGFloat(max(cells.count, 1)) + totalWidth
+            ScrollView(.horizontal, showsIndicators: false) {
+                Grid(horizontalSpacing: 0, verticalSpacing: 0) {
+                    GridRow {
+                        ForEach(cells) { cell in
+                            tokenHeaderCell(cell, dense: dense)
+                                .frame(width: participantWidth, height: dense ? 30 : 34)
+                        }
+                        roundTotalHeaderCell()
+                            .frame(width: totalWidth, height: dense ? 30 : 34)
+                    }
+                    GridRow {
+                        ForEach(cells) { cell in
+                            tokenValueCell(cell)
+                                .frame(width: participantWidth, height: 32)
+                        }
+                        roundTotalValueCell(roundTotal)
+                            .frame(width: totalWidth, height: 32)
+                    }
+                }
+                .frame(width: max(proxy.size.width, tableWidth), alignment: .leading)
+            }
+        }
+        .frame(height: dense ? 62 : 66)
+    }
+
     var body: some View {
+        let cells = tokenParticipants
+        let dense = cells.count >= 6
         VStack(alignment: .leading, spacing: 8) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
@@ -143,16 +398,7 @@ struct TaskCompleteCard: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 6)
-                detailRow("MODEL", run.model ?? run.provider ?? "—")
-                detailRow("STATUS", (run.status ?? "—").capitalized)
-                if let workedFor {
-                    detailRow("DURATION", workedFor.replacingOccurrences(of: "Worked for ", with: ""))
-                }
-                if let tokensText { detailRow("TOKENS", tokensText) }
-                if let total = run.totalTokens, total > 0 {
-                    detailRow("TOTAL", "\(compact(total)) tokens")
-                }
-                if let cost = run.costText { detailRow("COST", cost) }
+                runDetailsTokenTable(cells: cells, roundTotal: roundTotalTokens, dense: dense)
             }
             .background(TWTheme.surface1, in: RoundedRectangle(cornerRadius: 10))
             .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(TWTheme.border))
@@ -236,23 +482,5 @@ struct TaskCompleteCard: View {
         .padding(10)
         .background(TWTheme.appBg.opacity(0.6), in: RoundedRectangle(cornerRadius: 14))
         .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(TWTheme.border))
-    }
-
-    private func detailRow(_ label: String, _ value: String) -> some View {
-        HStack {
-            Text(label)
-                .font(.caption2.weight(.medium))
-                .foregroundStyle(TWTheme.textMuted)
-            Spacer()
-            Text(value)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(TWTheme.textPrimary)
-                .multilineTextAlignment(.trailing)
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 5)
-        .overlay(alignment: .top) {
-            Rectangle().fill(TWTheme.border).frame(height: 0.5)
-        }
     }
 }
