@@ -654,6 +654,32 @@ describe('ActivityStack agent invocation presentation', () => {
     expect(html).not.toContain('class="activity-status success"')
   })
 
+  it('renders cursor thinking progress notes with a provider-tinted bulb instead of a status check', () => {
+    const html = renderToStaticMarkup(
+      <ActivityStack
+        provider="cursor"
+        activities={[
+          makeWriteActivity({
+            id: 'cursor-thinking-1',
+            toolName: 'cursor_thinking',
+            displayName: 'Thinking',
+            category: 'task',
+            status: 'success',
+            parameters: {},
+            resultSummary: 'Tracing the stream-json delta path.'
+          })
+        ]}
+      />
+    )
+
+    expect(html).toContain('activity-progress-note')
+    expect(html).toContain('is-thinking-trace')
+    expect(html).toContain('data-provider="cursor"')
+    expect(html).toContain('activity-progress-note-thinking-icon')
+    expect(html).toContain('Cursor thinking trace')
+    expect(html).not.toContain('class="activity-status success"')
+  })
+
   it('uses the thinking bulb when only the progress displayName identifies the trace', () => {
     const html = renderToStaticMarkup(
       <ActivityStack

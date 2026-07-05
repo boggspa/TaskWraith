@@ -158,6 +158,7 @@ describe('toolNameToFamily', () => {
     expect(toolNameToFamily('thinking')).toBe('reasoning')
     expect(toolNameToFamily('kimi_thinking')).toBe('reasoning')
     expect(toolNameToFamily('grok_thinking')).toBe('reasoning')
+    expect(toolNameToFamily('cursor_thinking')).toBe('reasoning')
     expect(toolNameToFamily('mcp__TaskWraith__gemini_reasoning')).toBe('reasoning')
     expect(toolNameToFamily('codex_plan')).toBe('plan')
   })
