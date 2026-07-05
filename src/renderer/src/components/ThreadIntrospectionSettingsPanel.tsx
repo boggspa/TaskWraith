@@ -9,8 +9,8 @@ import './ThreadIntrospectionSettingsPanel.css'
 
 /**
  * Settings host for Thread Introspection — wires MemoryProposalReviewPanel
- * to the preload IPC surface once @WriteMain lands handlers. Until then,
- * surfaces a clear "IPC not wired" hint instead of failing silently.
+ * to the preload IPC surface. Falls back to a clear hint when api methods
+ * are absent (e.g. static test render).
  */
 
 export interface RunManualIntrospectionRequest {
@@ -161,8 +161,8 @@ export function ThreadIntrospectionSettingsPanel({
 
       {!ipcReady && (
         <p className="thread-introspection-settings-ipc-hint" role="status">
-          Review UI is ready, but the desktop API for listing and approving proposals is not wired
-          yet. This tab will load packs once the backend IPC channels land.
+          Thread Introspection API methods are unavailable in this context. Reload the app or check
+          that preload exposed getMemoryProposalPacks and updateMemoryProposal.
         </p>
       )}
 

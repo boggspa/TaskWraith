@@ -49,7 +49,7 @@ Until the full pipeline ships, TaskWraith implements **read-only introspection
 1. Collect recent run/thread evidence (harvester — **landed**, `0fd22e9a0`).
 2. Classify patterns into proposal candidates (generator — **landed**).
 3. Persist **Memory Proposal Packs** for review (**landed**).
-4. Review proposals in UI (**landed** in renderer; **IPC + Settings mount pending**).
+4. Review proposals in Settings → Thread introspection (**landed** — IPC + mount wired).
 5. **Do not** directly edit skills, rules, or repo conventions without an
    approved apply action (**not wired**).
 
