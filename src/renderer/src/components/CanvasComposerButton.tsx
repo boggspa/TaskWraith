@@ -30,6 +30,10 @@ function CanvasGlyph() {
   )
 }
 
+function sketchBridgeAvailable(): boolean {
+  return typeof window === 'undefined' ? true : Boolean(window.api.canvas?.openSketchWindow)
+}
+
 export function CanvasComposerButton({ disabled }: CanvasComposerButtonProps) {
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const popoverRef = useRef<HTMLDivElement | null>(null)
@@ -37,6 +41,7 @@ export function CanvasComposerButton({ disabled }: CanvasComposerButtonProps) {
   const [position, setPosition] = useState<{ left: number; top: number } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busyMode, setBusyMode] = useState<'web' | 'sketch' | null>(null)
+  const canOpenSketch = sketchBridgeAvailable()
 
   // Clear any stale error when the popover closes, so reopening starts fresh.
   useEffect(() => {
@@ -64,9 +69,14 @@ export function CanvasComposerButton({ disabled }: CanvasComposerButtonProps) {
 
   const handleOpenSketch = async (): Promise<void> => {
     setError(null)
+    const openSketchWindow = window.api.canvas?.openSketchWindow
+    if (!openSketchWindow) {
+      setError('Sketch Canvas needs the updated preload bridge. Restart TaskWraith and try again.')
+      return
+    }
     setBusyMode('sketch')
     try {
-      const result = await window.api.canvas?.openSketchWindow?.()
+      const result = await openSketchWindow()
       if (result?.ok) {
         setOpen(false)
       } else {
@@ -169,12 +179,14 @@ export function CanvasComposerButton({ disabled }: CanvasComposerButtonProps) {
                   Sketch Canvas
                 </div>
                 <div style={{ font: '11px/1.35 system-ui, sans-serif', opacity: 0.58 }}>
-                  Quick shapes, freehand marks, arrows, and text.
+                  {canOpenSketch
+                    ? 'Quick shapes, freehand marks, arrows, and text.'
+                    : 'Restart TaskWraith to load the Sketch Canvas bridge.'}
                 </div>
                 <button
                   type="button"
                   onClick={() => void handleOpenSketch()}
-                  disabled={busyMode !== null}
+                  disabled={busyMode !== null || !canOpenSketch}
                   style={{
                     width: '100%',
                     border: '1px solid var(--border-subtle, rgba(127,127,127,0.32))',
@@ -184,7 +196,8 @@ export function CanvasComposerButton({ disabled }: CanvasComposerButtonProps) {
                     padding: '7px 10px',
                     font: '12px/1.2 system-ui, sans-serif',
                     textAlign: 'left',
-                    cursor: busyMode ? 'default' : 'pointer'
+                    cursor: busyMode || !canOpenSketch ? 'default' : 'pointer',
+                    opacity: canOpenSketch ? 1 : 0.58
                   }}
                 >
                   Open sketch canvas
