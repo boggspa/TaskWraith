@@ -14,6 +14,7 @@ import {
   buildRemoteCanvasPreviews,
   combinedQueuedPrompts,
   buildRemoteEnsembleState,
+  buildRemotePluginCapabilityCards,
   buildRemoteWorkspaceBoard,
   buildRemoteQueuedComposerPrompts,
   buildRemoteProjectionEnvelope,
@@ -23,6 +24,7 @@ import {
 } from './RemoteTaskProjection'
 import type { CanvasSessionSummary } from './canvas/canvasTypes'
 import { buildRemoteDraftChat } from './remote/RemoteDraftChats'
+import type { TaskWraithPluginActivatedMobileProjection } from '../shared/plugins/PluginTypes'
 
 const NOW = Date.UTC(2026, 4, 30, 12, 0, 0)
 const ISO = new Date(NOW).toISOString()
@@ -200,6 +202,53 @@ describe('RemoteTaskProjection', () => {
       threadId: 'chat-1',
       runId: 'run-1',
       payload
+    })
+  })
+
+  it('projects activated plugin mobile capabilities as bridge cards', () => {
+    const projection: TaskWraithPluginActivatedMobileProjection = {
+      id: 'plugin.taskwraith.ios-remote-bundle:remoteProjection:ios-safe-remote',
+      plugin: {
+        pluginId: 'ios-remote-bundle',
+        publisher: 'taskwraith',
+        version: '1.0.0',
+        source: 'builtin',
+        namespace: 'plugin.taskwraith.ios-remote-bundle',
+        manifestHash: 'sha256:ios'
+      },
+      projection: {
+        id: 'ios-safe-remote',
+        label: 'Safe iOS remote controls',
+        description: 'Remote approval and status cards.',
+        remoteCapabilities: ['startTurn', 'viewStatus', 'approve', 'cancelRun']
+      },
+      pluginProvenance: {
+        pluginId: 'ios-remote-bundle',
+        publisher: 'taskwraith',
+        version: '1.0.0',
+        source: 'builtin',
+        namespace: 'plugin.taskwraith.ios-remote-bundle',
+        manifestHash: 'sha256:ios',
+        kind: 'remoteProjection',
+        objectId: 'ios-safe-remote',
+        materializedAt: ISO
+      },
+      enabled: true
+    }
+
+    expect(buildRemotePluginCapabilityCards([projection])).toEqual({
+      schemaVersion: 1,
+      cards: [
+        {
+          id: 'plugin.taskwraith.ios-remote-bundle:remoteProjection:ios-safe-remote',
+          pluginId: 'ios-remote-bundle',
+          publisher: 'taskwraith',
+          label: 'Safe iOS remote controls',
+          description: 'Remote approval and status cards.',
+          remoteCapabilities: ['startTurn', 'viewStatus', 'approve', 'cancelRun'],
+          enabled: true
+        }
+      ]
     })
   })
 

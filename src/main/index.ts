@@ -233,6 +233,7 @@ import {
   buildMobileApprovalCard,
   buildMobileQuestionCard,
   buildRemoteEnsembleState,
+  buildRemotePluginCapabilityCards,
   buildRemoteProjectionEnvelope,
   buildRemoteShellAppearance,
   buildRemoteWorkspaceBoard,
@@ -25605,6 +25606,19 @@ if (isGeminiMcpBridgeProcess) {
           envelopeId: 'remote-shell-appearance:global'
         })
       )
+      const pluginCapabilityCards = buildRemotePluginCapabilityCards(
+        pluginContributionManagerRef?.getActivationSnapshot().mobileRemoteProjection || []
+      )
+      if (pluginCapabilityCards.cards.length > 0) {
+        envelopes.push(
+          buildRemoteProjectionEnvelope({
+            kind: 'pluginCapabilityCards',
+            payload: pluginCapabilityCards,
+            generatedAt,
+            envelopeId: 'remote-plugin-capability-cards:global'
+          })
+        )
+      }
       const sortedChats = [...chats].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
       const visibleWorkspaceIds = new Set(
         sortedChats
@@ -26962,6 +26976,11 @@ if (isGeminiMcpBridgeProcess) {
       pluginHost,
       pluginSecretStore,
       pluginContributionManager,
+      onActivationChanged: () => {
+        bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
+        remoteFirstLaunchStateTrigger?.()
+        void localServersService.refreshNow()
+      },
       requireNonEmptyString
     })
     const launchManager = new LaunchManager({

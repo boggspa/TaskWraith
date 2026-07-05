@@ -170,6 +170,7 @@ describe('registerPluginHandlers', () => {
         sync: vi.fn(() => activationSnapshot),
         getActivationSnapshot: vi.fn(() => activationSnapshot)
       },
+      onActivationChanged: vi.fn(),
       requireNonEmptyString: vi.fn((value: unknown) => String(value))
     }
 
@@ -224,18 +225,23 @@ describe('registerPluginHandlers', () => {
     expect(deps.requireNonEmptyString).toHaveBeenCalledWith('demo-bundle', 'Plugin id')
     expect(deps.pluginHost.installPlugin).toHaveBeenCalledWith('demo-bundle')
     expect(deps.pluginContributionManager.sync).toHaveBeenCalledTimes(1)
+    expect(deps.onActivationChanged).toHaveBeenLastCalledWith(activationSnapshot)
 
     expect(handlerFor('plugins:set-enabled')({}, 'demo-bundle', 1)).toBe(enabled)
     expect(deps.pluginHost.setPluginEnabled).toHaveBeenCalledWith('demo-bundle', true)
     expect(deps.pluginContributionManager.sync).toHaveBeenCalledTimes(2)
+    expect(deps.onActivationChanged).toHaveBeenLastCalledWith(activationSnapshot)
 
     expect(handlerFor('plugins:update')({}, 'demo-bundle')).toBe(updated)
     expect(deps.pluginHost.updatePlugin).toHaveBeenCalledWith('demo-bundle')
     expect(deps.pluginContributionManager.sync).toHaveBeenCalledTimes(3)
+    expect(deps.onActivationChanged).toHaveBeenLastCalledWith(activationSnapshot)
 
     expect(handlerFor('plugins:uninstall')({}, 'demo-bundle')).toBe(uninstalled)
     expect(deps.pluginHost.uninstallPlugin).toHaveBeenCalledWith('demo-bundle')
     expect(deps.pluginSecretStore.clearPluginSecrets).toHaveBeenCalledWith('demo-bundle')
     expect(deps.pluginContributionManager.sync).toHaveBeenCalledTimes(4)
+    expect(deps.onActivationChanged).toHaveBeenCalledTimes(4)
+    expect(deps.onActivationChanged).toHaveBeenLastCalledWith(activationSnapshot)
   })
 })

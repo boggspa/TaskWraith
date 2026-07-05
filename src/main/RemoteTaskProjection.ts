@@ -26,6 +26,10 @@ import type {
 } from './store/types'
 import { normalizeThreadTitle } from '../shared/threadTitles'
 import { isEnsembleRoundDispatchLive } from '../shared/ensembleRoundLifecycle'
+import type {
+  TaskWraithPluginActivatedMobileProjection,
+  TaskWraithPluginRemoteCapability
+} from '../shared/plugins/PluginTypes'
 import { collectExternalPathGrantsFromMetadata } from './store/ExternalPathGrants'
 import { readPendingProviderChange } from './providerChangeQueue'
 import { isContentlessRemoteDraftChat, remoteDraftVariant } from './remote/RemoteDraftChats'
@@ -48,6 +52,7 @@ export type RemoteProjectionKind =
   | 'workflows'
   | 'workspaceBoards'
   | 'ensemblePresets'
+  | 'pluginCapabilityCards'
 
 /**
  * A workflow projected to paired devices (iOS Workflows tab). Flattened from a
@@ -99,6 +104,21 @@ export interface RemoteWorkspaceBoardCard {
   runId?: string
   archived?: boolean
   updatedAt: string
+}
+
+export interface RemotePluginCapabilityCard {
+  id: string
+  pluginId: string
+  publisher: string
+  label: string
+  description?: string
+  remoteCapabilities: TaskWraithPluginRemoteCapability[]
+  enabled: boolean
+}
+
+export interface RemotePluginCapabilityCards {
+  schemaVersion: 1
+  cards: RemotePluginCapabilityCard[]
 }
 
 /**
@@ -599,6 +619,23 @@ export interface BuildRemoteProjectionEnvelopeInput<TPayload> {
   threadId?: string
   runId?: string
   envelopeId?: string
+}
+
+export function buildRemotePluginCapabilityCards(
+  projections: readonly TaskWraithPluginActivatedMobileProjection[]
+): RemotePluginCapabilityCards {
+  return {
+    schemaVersion: 1,
+    cards: projections.map((entry) => ({
+      id: entry.id,
+      pluginId: entry.plugin.pluginId,
+      publisher: entry.plugin.publisher,
+      label: entry.projection.label,
+      ...(entry.projection.description ? { description: entry.projection.description } : {}),
+      remoteCapabilities: [...entry.projection.remoteCapabilities],
+      enabled: entry.enabled
+    }))
+  }
 }
 
 export interface BuildRemoteTaskCardOptions {

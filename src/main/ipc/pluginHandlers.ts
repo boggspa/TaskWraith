@@ -2,6 +2,7 @@ import { ipcMain } from 'electron'
 import type { PluginHost } from '../plugins/PluginHost'
 import type { PluginSecretStore } from '../plugins/PluginSecretStore'
 import type { PluginContributionManager } from '../plugins/PluginContributionManager'
+import type { TaskWraithPluginActivationSnapshot } from '../../shared/plugins/PluginTypes'
 
 export interface PluginHandlerDeps {
   pluginHost: Pick<
@@ -22,12 +23,14 @@ export interface PluginHandlerDeps {
     PluginContributionManager,
     'sync' | 'getActivationSnapshot'
   >
+  onActivationChanged?: (snapshot: TaskWraithPluginActivationSnapshot) => void
   requireNonEmptyString: (value: unknown, label: string) => string
 }
 
 function syncPlugins<T>(deps: PluginHandlerDeps, mutate: () => T): T {
   const result = mutate()
-  deps.pluginContributionManager?.sync()
+  const snapshot = deps.pluginContributionManager?.sync()
+  if (snapshot) deps.onActivationChanged?.(snapshot)
   return result
 }
 
