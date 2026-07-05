@@ -2311,6 +2311,64 @@
   gap: 8px;
 }
 
+.settings-plugin-tool-bundle-list {
+  display: grid;
+  gap: 8px;
+}
+
+.settings-plugin-tool-bundle-row {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.settings-plugin-tool-bundle-row > div:first-child {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.settings-plugin-tool-bundle-row > div:first-child span {
+  overflow: hidden;
+  color: var(--text-tertiary);
+  font-size: var(--font-size-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-plugin-tool-bundle-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.settings-plugin-tool-bundle-tool {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-primary) 7%, transparent);
+  color: var(--text-tertiary);
+  font-size: 0.72rem;
+}
+
+.settings-plugin-tool-bundle-tool code {
+  overflow: hidden;
+  max-width: 170px;
+  color: var(--text-secondary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-plugin-tool-bundle-tool small {
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+
 .settings-plugin-connector-row {
   display: grid;
   gap: 6px;

@@ -7714,13 +7714,33 @@ export function SettingsPanel({
               <div className="settings-mcp-management-grid">
                 <article className="settings-mcp-management-card">
                   <strong>Tool bundles</strong>
-                  <p>
-                    {activatedToolBundles.length > 0
-                      ? activatedToolBundles
-                          .map((entry) => `${entry.bundle.label} (${entry.bundle.tools.length})`)
-                          .join(', ')
-                      : 'No plugin tool bundles are active.'}
-                  </p>
+                  {activatedToolBundles.length > 0 ? (
+                    <div className="settings-plugin-tool-bundle-list">
+                      {activatedToolBundles.map((entry) => (
+                        <div key={entry.id} className="settings-plugin-tool-bundle-row">
+                          <div>
+                            <strong>{entry.bundle.label}</strong>
+                            <span>{entry.plugin.pluginId}</span>
+                          </div>
+                          {entry.bundle.description && <p>{entry.bundle.description}</p>}
+                          <div className="settings-plugin-tool-bundle-tools">
+                            {entry.bundle.tools.map((tool) => {
+                              const toolName = tool as TaskWraithMcpToolName
+                              const meta = getMcpToolMeta(toolName)
+                              return (
+                                <span key={tool} className="settings-plugin-tool-bundle-tool">
+                                  <code>{tool}</code>
+                                  <small>{getMcpPolicyLabel(agenticServices, meta.policyKey)}</small>
+                                </span>
+                              )
+                            })}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p>No plugin tool bundles are active.</p>
+                  )}
                 </article>
                 <article className="settings-mcp-management-card">
                   <strong>Workflow templates</strong>
