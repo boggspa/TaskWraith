@@ -47,7 +47,7 @@ public enum ThreadListFallback {
         let fallbackCards = threads.map(taskCard(from:))
         let authoritative = existing
             .filter { !fallbackCardIds.contains($0.id) }
-            .map { repairChatKind(from: summaryById[$0.id], onto: $0) }
+            .map { repairFromThreadListSummary(from: summaryById[$0.id], onto: $0) }
 
         if authoritative.isEmpty {
             let ids = Set(fallbackCards.map(\.id))
@@ -59,18 +59,42 @@ public enum ThreadListFallback {
         return (authoritative + supplemental, Set(supplemental.map(\.id)))
     }
 
-    /// Fill in missing solo/ensemble classification from a thread-list summary.
-    /// Never overwrites a non-empty authoritative `chatKind`.
-    public static func repairChatKind(
+    /// Sync authoritative task-card classification + status from a thread-list
+    /// summary. Mac now derives both fields from the same projection helpers as
+    /// full task cards, so thread-list broadcasts can repair stale cards.
+    public static func repairFromThreadListSummary(
         from summary: ThreadSummary?, onto card: RemoteTaskCard
     ) -> RemoteTaskCard {
         guard let summary else { return card }
-        let existing = card.chatKind?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if !existing.isEmpty { return card }
-        guard let repair = summary.chatKind?.trimmingCharacters(in: .whitespacesAndNewlines),
-            !repair.isEmpty
-        else { return card }
-        return card.withChatKind(repair)
+        var repaired = card
+
+        if let summaryKind = normalized(summary.chatKind) {
+            let existingKind = normalized(card.chatKind) ?? "single"
+            if existingKind != summaryKind {
+                repaired = repaired.withChatKind(summaryKind)
+            }
+        }
+
+        let summaryStatus = summary.status
+        let existingStatus = card.status ?? "idle"
+        if existingStatus != summaryStatus {
+            repaired = repaired.withStatus(summaryStatus)
+        }
+
+        return repaired
+    }
+
+    /// Back-compat alias for older call sites/tests.
+    public static func repairChatKind(
+        from summary: ThreadSummary?, onto card: RemoteTaskCard
+    ) -> RemoteTaskCard {
+        repairFromThreadListSummary(from: summary, onto: card)
+    }
+
+    private static func normalized(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 }
 
@@ -119,6 +143,47 @@ extension RemoteTaskCard {
 
     /// Returns a copy with an updated `chatKind` (used by thread-list merge repair).
     func withChatKind(_ chatKind: String) -> RemoteTaskCard {
+        RemoteTaskCard(
+            id: id,
+            title: title,
+            status: status,
+            provider: provider,
+            selectedModelType: selectedModelType,
+            customModel: customModel,
+            codexReasoningEffort: codexReasoningEffort,
+            claudeReasoningEffort: claudeReasoningEffort,
+            pendingProviderChange: pendingProviderChange,
+            workspaceId: workspaceId,
+            threadId: threadId,
+            parentChatId: parentChatId,
+            createdAt: createdAt,
+            updatedAt: updatedAt,
+            parentChatRelation: parentChatRelation,
+            pinned: pinned,
+            agentName: agentName,
+            agentAccent: agentAccent,
+            agentSlug: agentSlug,
+            sideChatMode: sideChatMode,
+            sideChatLifecycleState: sideChatLifecycleState,
+            chatKind: chatKind,
+            isDraft: isDraft,
+            draftVariant: draftVariant,
+            isShared: isShared,
+            sharedMode: sharedMode,
+            archived: archived,
+            runId: runId,
+            preview: preview,
+            pendingApprovalCount: pendingApprovalCount,
+            pendingQuestionCount: pendingQuestionCount,
+            activeGoal: activeGoal,
+            todoLanes: todoLanes,
+            canvasPreviews: canvasPreviews,
+            capabilities: capabilities,
+            additionalWorkspaces: additionalWorkspaces,
+            queuedComposerPrompts: queuedComposerPrompts)
+    }
+
+    func withStatus(_ status: String) -> RemoteTaskCard {
         RemoteTaskCard(
             id: id,
             title: title,

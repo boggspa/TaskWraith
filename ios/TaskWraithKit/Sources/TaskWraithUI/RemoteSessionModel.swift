@@ -2538,6 +2538,9 @@ public final class RemoteSessionModel: ObservableObject {
 
         let currentRows = filteredCurrent.rows ?? []
         if incomingRows.isEmpty {
+            threadSnapshots[key] = ThreadSnapshotMerge.applyingMetadata(
+                from: filteredIncoming, onto: filteredCurrent)
+            reconcileStreamingState(against: filteredIncoming, key: key)
             return
         }
         guard !currentRows.isEmpty else {

@@ -177,8 +177,8 @@ struct ThreadListFallbackTests {
         #expect(merged.cards[0].isEnsemble == true)
     }
 
-    @Test("mergeTaskCards does not overwrite authoritative chatKind")
-    func mergePreservesAuthoritativeChatKind() {
+    @Test("mergeTaskCards syncs chatKind from aligned thread-list summaries")
+    func mergeSyncsChatKindFromThreadList() {
         let authoritative = RemoteTaskCard(
             id: "a",
             title: "Rich card",
@@ -217,9 +217,56 @@ struct ThreadListFallbackTests {
             capabilities: nil,
             additionalWorkspaces: nil,
             queuedComposerPrompts: nil)
-        let repaired = ThreadListFallback.repairChatKind(
+        let repaired = ThreadListFallback.repairFromThreadListSummary(
             from: summary(chatId: "a", chatKind: "ensemble"), onto: authoritative)
-        #expect(repaired.chatKind == "single")
-        #expect(repaired.isEnsemble == false)
+        #expect(repaired.chatKind == "ensemble")
+        #expect(repaired.isEnsemble == true)
+        #expect(repaired.provider == "claude")
+    }
+
+    @Test("mergeTaskCards clears stale running status from thread-list summaries")
+    func mergeClearsStaleRunningStatus() {
+        let authoritative = RemoteTaskCard(
+            id: "a",
+            title: "Rich card",
+            status: "running",
+            provider: "claude",
+            selectedModelType: nil,
+            customModel: nil,
+            codexReasoningEffort: nil,
+            claudeReasoningEffort: nil,
+            pendingProviderChange: nil,
+            workspaceId: "ws1",
+            threadId: "a",
+            parentChatId: nil,
+            createdAt: nil,
+            updatedAt: nil,
+            parentChatRelation: nil,
+            pinned: nil,
+            agentName: nil,
+            agentAccent: nil,
+            agentSlug: nil,
+            sideChatMode: nil,
+            sideChatLifecycleState: nil,
+            chatKind: "ensemble",
+            isDraft: nil,
+            draftVariant: nil,
+            isShared: nil,
+            sharedMode: nil,
+            archived: nil,
+            runId: nil,
+            preview: nil,
+            pendingApprovalCount: nil,
+            pendingQuestionCount: nil,
+            activeGoal: nil,
+            todoLanes: nil,
+            canvasPreviews: nil,
+            capabilities: nil,
+            additionalWorkspaces: nil,
+            queuedComposerPrompts: nil)
+        let repaired = ThreadListFallback.repairFromThreadListSummary(
+            from: summary(chatId: "a", status: "idle", chatKind: "ensemble"), onto: authoritative)
+        #expect(repaired.status == "idle")
+        #expect(repaired.isEnsemble == true)
     }
 }
