@@ -6246,7 +6246,7 @@ export function SettingsPanel({
                     Run one in your terminal, then sign in below. (npm commands need Node 20+; the
                     curl installers are self-contained.)
                   </p>
-                  <ProviderInstallCommands />
+                  <ProviderInstallCommands providerSetup={activatedProviderSetup} />
                 </details>
                 <div className="settings-provider-auth-grid">
                   <SettingsProviderAuthCard

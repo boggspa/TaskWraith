@@ -3,6 +3,7 @@ import { buildRemoteFirstLaunchState } from './RemoteFirstLaunchState'
 import { resolveAppNotifications } from '../shared/appNotifications'
 import type { ProviderUsageSummary } from './ProviderUsageStatus'
 import type { ProviderCapabilityContract, ProviderId } from './store/types'
+import type { TaskWraithPluginActivatedProviderSetup } from '../shared/plugins/PluginTypes'
 
 function contract(
   provider: ProviderId,
@@ -116,6 +117,62 @@ describe('buildRemoteFirstLaunchState', () => {
       'Not observable'
     )
     expect(state.providerCards.find((card) => card.id === 'ollama')?.statusKind).toBe('localReady')
+  })
+
+  it('includes activated plugin provider setup hints in remote provider cards', () => {
+    const providerSetup: TaskWraithPluginActivatedProviderSetup[] = [
+      {
+        id: 'plugin.taskwraith.provider-setup-bundle:providerSetup:codex',
+        plugin: {
+          pluginId: 'provider-setup-bundle',
+          publisher: 'taskwraith',
+          version: '1.0.0',
+          source: 'builtin',
+          namespace: 'plugin.taskwraith.provider-setup-bundle',
+          manifestHash: 'sha256:setup'
+        },
+        setup: {
+          provider: 'codex',
+          label: 'Codex CLI',
+          installHint: 'Install Codex through the plugin setup recipe.',
+          authHint: 'Run codex login.',
+          preflightChecks: ['binary', 'auth', 'mcp']
+        },
+        pluginProvenance: {
+          pluginId: 'provider-setup-bundle',
+          publisher: 'taskwraith',
+          version: '1.0.0',
+          source: 'builtin',
+          namespace: 'plugin.taskwraith.provider-setup-bundle',
+          manifestHash: 'sha256:setup',
+          kind: 'providerSetup',
+          objectId: 'codex',
+          materializedAt: '2026-06-21T18:02:00.000Z'
+        }
+      }
+    ]
+    const state = buildRemoteFirstLaunchState({
+      generatedAt: '2026-06-21T18:02:00.000Z',
+      workspace,
+      providers: {},
+      usage: {},
+      notifications: [],
+      providerSetup
+    })
+
+    const codex = state.providerCards.find((card) => card.id === 'codex')
+    expect(codex?.pluginSetupHints).toEqual([
+      {
+        id: 'plugin.taskwraith.provider-setup-bundle:providerSetup:codex',
+        pluginId: 'provider-setup-bundle',
+        label: 'Codex CLI',
+        installHint: 'Install Codex through the plugin setup recipe.',
+        authHint: 'Run codex login.',
+        preflightChecks: ['binary', 'auth', 'mcp']
+      }
+    ])
+    expect(codex?.setupHint).toContain('Plugin setup: Codex CLI')
+    expect(codex?.setupHint).toContain('Checks: binary, auth, mcp.')
   })
 
   it('keeps the payload redacted to labels, coarse statuses, setup hints, and usage windows', () => {

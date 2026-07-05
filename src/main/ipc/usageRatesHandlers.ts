@@ -17,6 +17,7 @@ import type { ProviderUsageSummary } from '../ProviderUsageStatus'
 import { summarizeProviderUsage } from '../ProviderUsageStatus'
 import { buildExternalUsageRollup } from '../ExternalProviderActivity'
 import type { RemoteWorkspaceCapability } from '../RemoteWorkspaceAllowlist'
+import type { TaskWraithPluginActivationSnapshot } from '../../shared/plugins/PluginTypes'
 
 type UsageWorkspaceSummary = {
   id: string
@@ -65,6 +66,7 @@ export interface UsageRatesHandlerDeps {
   fetchKimiUsageSnapshot: UsageSnapshotFetcher
   fetchCursorUsageSnapshot: UsageSnapshotFetcher
   getProviderCapabilityContract: (provider: ProviderId) => Promise<ProviderCapabilityContract>
+  getPluginActivationSnapshot?: () => TaskWraithPluginActivationSnapshot
   getCurrentFxRates: () => unknown
   refreshFxRates: (force: boolean) => Promise<unknown>
   getCurrentProviderRates: () => unknown
@@ -279,7 +281,8 @@ export function registerUsageRatesHandlers(deps: UsageRatesHandlerDeps): void {
           generatedAt,
           providers,
           usage,
-          workspace: buildFirstLaunchWorkspaceSummary()
+          workspace: buildFirstLaunchWorkspaceSummary(),
+          providerSetup: deps.getPluginActivationSnapshot?.().providerSetup ?? []
         })
       })
     })().catch((err) => {

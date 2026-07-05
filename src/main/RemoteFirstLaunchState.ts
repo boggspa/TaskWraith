@@ -12,6 +12,7 @@ import {
   PROVIDER_INSTALL_COMMANDS,
   type ProviderInstallEntry
 } from '../shared/providerSetupCatalog'
+import type { TaskWraithPluginActivatedProviderSetup } from '../shared/plugins/PluginTypes'
 import type { ProviderUsageSummary, ProviderUsageWindowSummary } from './ProviderUsageStatus'
 import type { ProviderCapabilityContract, ProviderId } from './store/types'
 
@@ -44,6 +45,15 @@ export interface RemoteFirstLaunchUsageWindow {
   resetAt?: string
 }
 
+export interface RemoteFirstLaunchProviderSetupHint {
+  id: string
+  pluginId: string
+  label: string
+  installHint?: string
+  authHint?: string
+  preflightChecks: string[]
+}
+
 export interface RemoteFirstLaunchProviderCard {
   id: ProviderId
   label: string
@@ -55,6 +65,7 @@ export interface RemoteFirstLaunchProviderCard {
   setupCommands: Array<
     Pick<ProviderInstallEntry, 'id' | 'label' | 'command' | 'source' | 'platform'>
   >
+  pluginSetupHints: RemoteFirstLaunchProviderSetupHint[]
   usageWindows: RemoteFirstLaunchUsageWindow[]
   usageGeneratedAt?: string
 }
@@ -94,6 +105,7 @@ export interface RemoteFirstLaunchStateInput {
   usage: Partial<Record<ProviderId, ProviderUsageSummary | null | undefined>>
   workspace: RemoteFirstLaunchWorkspaceSummary
   notifications?: readonly AppNotification[]
+  providerSetup?: readonly TaskWraithPluginActivatedProviderSetup[]
 }
 
 const PROVIDER_ORDER: ProviderId[] = ['codex', 'claude', 'kimi', 'cursor', 'grok', 'ollama']
@@ -140,7 +152,8 @@ export function buildRemoteFirstLaunchState(
           contract: input.providers[provider] ?? null,
           usage: input.usage[provider] ?? null,
           generatedAt,
-          setupCommands
+          setupCommands,
+          providerSetup: input.providerSetup ?? []
         })
     ),
     setupCommands,
@@ -184,9 +197,11 @@ function buildProviderCard(args: {
   usage: ProviderUsageSummary | null
   generatedAt: string
   setupCommands: ReturnType<typeof providerSetupCommands>
+  providerSetup: readonly TaskWraithPluginActivatedProviderSetup[]
 }): RemoteFirstLaunchProviderCard {
   const usageWindows = usageWindowsForCard(args.usage)
   const status = deriveProviderStatus(args.provider, args.contract, args.usage)
+  const pluginSetupHints = providerSetupHintsForProvider(args.provider, args.providerSetup)
   return {
     id: args.provider,
     label: providerLabel(args.provider),
@@ -194,8 +209,9 @@ function buildProviderCard(args: {
     statusKind: status.kind,
     statusText: status.text,
     detail: status.detail || PROVIDER_DESCRIPTIONS[args.provider],
-    setupHint: SETUP_HINTS[args.provider],
+    setupHint: setupHintForProvider(args.provider, pluginSetupHints),
     setupCommands: setupCommandsForProvider(args.provider, args.setupCommands),
+    pluginSetupHints,
     usageWindows,
     ...(args.usage?.fetchedAt ? { usageGeneratedAt: args.usage.fetchedAt } : {})
   }
@@ -313,6 +329,42 @@ function setupCommandsForProvider(
       ? entry.id === 'ollama' || entry.id === 'ollama-windows'
       : entry.id === provider
   )
+}
+
+function setupHintForProvider(
+  provider: ProviderId,
+  pluginSetupHints: RemoteFirstLaunchProviderSetupHint[]
+): string {
+  const base = SETUP_HINTS[provider]
+  if (pluginSetupHints.length === 0) return base
+  const pluginHints = pluginSetupHints
+    .map((hint) => {
+      const detail = [hint.installHint, hint.authHint]
+        .filter((line): line is string => Boolean(line?.trim()))
+        .join(' ')
+      const checks = hint.preflightChecks.length
+        ? ` Checks: ${hint.preflightChecks.join(', ')}.`
+        : ''
+      return `${hint.label}: ${detail || 'Plugin setup metadata is active.'}${checks}`
+    })
+    .join(' ')
+  return `${base} Plugin setup: ${pluginHints}`
+}
+
+function providerSetupHintsForProvider(
+  provider: ProviderId,
+  providerSetup: readonly TaskWraithPluginActivatedProviderSetup[]
+): RemoteFirstLaunchProviderSetupHint[] {
+  return providerSetup
+    .filter((entry) => entry.setup.provider === provider)
+    .map((entry) => ({
+      id: entry.id,
+      pluginId: entry.plugin.pluginId,
+      label: entry.setup.label || providerLabel(provider),
+      ...(entry.setup.installHint ? { installHint: entry.setup.installHint } : {}),
+      ...(entry.setup.authHint ? { authHint: entry.setup.authHint } : {}),
+      preflightChecks: entry.setup.preflightChecks || []
+    }))
 }
 
 function providerLabel(provider: ProviderId): string {

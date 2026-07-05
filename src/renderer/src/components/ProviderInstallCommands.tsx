@@ -1,9 +1,13 @@
-import { useState, type ReactElement } from 'react'
+import { useEffect, useState, type ReactElement } from 'react'
 import { isRetiredProvider } from '../../../shared/retiredProviders'
 import {
   OLLAMA_MODEL_COMMANDS,
   PROVIDER_INSTALL_COMMANDS
 } from '../../../shared/providerSetupCatalog'
+import type {
+  TaskWraithPluginActivatedProviderSetup,
+  TaskWraithPluginActivationSnapshot
+} from '../../../shared/plugins/PluginTypes'
 
 /**
  * Official, copy-pasteable CLI install commands — one per provider, each
@@ -26,8 +30,39 @@ import {
  * clipboard; the host decides whether to wrap it in a <details> (we do
  * in both call sites to keep the surfaces tidy by default).
  */
-export function ProviderInstallCommands(): ReactElement {
+interface ProviderInstallCommandsProps {
+  providerSetup?: TaskWraithPluginActivatedProviderSetup[]
+}
+
+export function ProviderInstallCommands({
+  providerSetup
+}: ProviderInstallCommandsProps = {}): ReactElement {
   const [copiedId, setCopiedId] = useState<string | null>(null)
+  const [loadedActivation, setLoadedActivation] =
+    useState<TaskWraithPluginActivationSnapshot | null>(null)
+
+  useEffect(() => {
+    if (providerSetup !== undefined) return
+    if (typeof window === 'undefined' || typeof window.api?.getPluginActivation !== 'function') {
+      return
+    }
+    let cancelled = false
+    void window.api
+      .getPluginActivation()
+      .then((snapshot) => {
+        if (!cancelled) setLoadedActivation(snapshot)
+      })
+      .catch(() => {
+        if (!cancelled) setLoadedActivation(null)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [providerSetup])
+
+  const activeProviderSetup = (providerSetup ?? loadedActivation?.providerSetup ?? []).filter(
+    (entry) => !isRetiredProvider(entry.setup.provider)
+  )
 
   const copy = (rowId: string, command: string): void => {
     void navigator.clipboard?.writeText(command)
@@ -67,6 +102,40 @@ export function ProviderInstallCommands(): ReactElement {
           </div>
         )
       })}
+      {activeProviderSetup.length > 0 && (
+        <>
+          <div className="provider-install-subhead">
+            Plugin setup recipes — activated capability packages
+          </div>
+          {activeProviderSetup.map((entry) => {
+            const label = entry.setup.label || entry.setup.provider
+            const detail = [entry.setup.installHint, entry.setup.authHint]
+              .filter((hint): hint is string => Boolean(hint?.trim()))
+              .join(' ')
+            const checks = entry.setup.preflightChecks?.length
+              ? `checks: ${entry.setup.preflightChecks.join(', ')}`
+              : 'setup metadata'
+            return (
+              <div
+                key={entry.id}
+                className="provider-install-row is-model"
+                data-provider={entry.setup.provider}
+              >
+                <span className="provider-install-label">{label}</span>
+                <span
+                  className="provider-install-cmd"
+                  title={`${entry.plugin.pluginId} · ${checks}`}
+                >
+                  {detail || `${entry.plugin.pluginId} · ${checks}`}
+                </span>
+                <span className="provider-install-copy" title={entry.plugin.publisher}>
+                  {entry.plugin.pluginId}
+                </span>
+              </div>
+            )
+          })}
+        </>
+      )}
       {/* Ollama is local: after the runtime is installed, each model has to
           be pulled separately. These rows pull + run the exact tags
           TaskWraith allows so the model picker lights up with a working
