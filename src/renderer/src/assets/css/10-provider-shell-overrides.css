@@ -3840,3 +3840,25 @@
   animation: none !important;
   opacity: 0 !important;
 }
+
+/* Gemini ensemble rows have an extra `::before` participant-tint overlay from
+ * shard 09. Suppress that late layer only on detached above-row stack children;
+ * the composer surface keeps its own Gemini chrome and running aura. */
+[data-composer-style="gemini"]
+  .app-transcript
+  .composer-above-bar-stack.fx-agent-aura
+  > :is(
+    .composer-above-bar,
+    .ensemble-above-row,
+    .queued-messages-above-row,
+    .composer-create-pr-row,
+    .ensemble-roster-preset-picker.is-compact
+  )::before {
+  display: none !important;
+  content: none !important;
+  background: none !important;
+  background-image: none !important;
+  box-shadow: none !important;
+  animation: none !important;
+  opacity: 0 !important;
+}

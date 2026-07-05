@@ -8,6 +8,12 @@ const readCss = (): string =>
     'utf8'
   ).replace(/\r\n/g, '\n')
 
+const readMainCss = (): string =>
+  readFileSync(join(process.cwd(), 'src/renderer/src/assets/main.css'), 'utf8').replace(
+    /\r\n/g,
+    '\n'
+  )
+
 const cssBlockStartingAt = (source: string, marker: string): string => {
   const start = source.indexOf(marker)
   expect(start, `Missing marker: ${marker}`).toBeGreaterThanOrEqual(0)
@@ -29,10 +35,70 @@ describe('composer shell row aura CSS', () => {
     }
 
     expect(block).toContain('.composer-above-bar-stack.fx-agent-aura')
-    expect(block).toContain('.ensemble-roster-preset-picker.is-compact')
+    for (const row of [
+      '.composer-above-bar',
+      '.ensemble-above-row',
+      '.queued-messages-above-row',
+      '.composer-create-pr-row',
+      '.ensemble-roster-preset-picker.is-compact'
+    ]) {
+      expect(block).toContain(row)
+    }
     expect(block).toContain(')::after')
-    expect(block).toContain('display: none !important')
-    expect(block).toContain('box-shadow: none !important')
-    expect(block).toContain('background: none !important')
+    for (const declaration of [
+      'display: none !important',
+      'content: none !important',
+      'background: none !important',
+      'box-shadow: none !important',
+      'animation: none !important',
+      'opacity: 0 !important'
+    ]) {
+      expect(block).toContain(declaration)
+    }
+  })
+
+  it('suppresses the Gemini ensemble row tint overlay without broadening to other shells', () => {
+    const css = readCss()
+    const block = cssBlockStartingAt(css, 'Gemini ensemble rows')
+
+    expect(block).toContain('[data-composer-style="gemini"]')
+    expect(block).not.toContain('[data-composer-style="kimi"]')
+    expect(block).not.toContain('[data-interface-style="gemini"]')
+    expect(block).toContain('.composer-above-bar-stack.fx-agent-aura')
+    for (const row of [
+      '.composer-above-bar',
+      '.ensemble-above-row',
+      '.queued-messages-above-row',
+      '.composer-create-pr-row',
+      '.ensemble-roster-preset-picker.is-compact'
+    ]) {
+      expect(block).toContain(row)
+    }
+    expect(block).toContain(')::before')
+    for (const declaration of [
+      'display: none !important',
+      'content: none !important',
+      'background: none !important',
+      'background-image: none !important',
+      'box-shadow: none !important',
+      'animation: none !important',
+      'opacity: 0 !important'
+    ]) {
+      expect(block).toContain(declaration)
+    }
+  })
+
+  it('loads provider shell overrides after the shell and ensemble shards', () => {
+    const main = readMainCss()
+
+    const polish = main.indexOf("@import url('./css/05-polish-fx-layouts.css');")
+    const shells = main.indexOf("@import url('./css/07-composer-shells.css');")
+    const ensemble = main.indexOf("@import url('./css/09-ensemble-work-session.css');")
+    const overrides = main.indexOf("@import url('./css/10-provider-shell-overrides.css');")
+
+    expect(polish).toBeGreaterThanOrEqual(0)
+    expect(shells).toBeGreaterThan(polish)
+    expect(ensemble).toBeGreaterThan(shells)
+    expect(overrides).toBeGreaterThan(ensemble)
   })
 })
