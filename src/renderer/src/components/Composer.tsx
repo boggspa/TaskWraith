@@ -127,9 +127,6 @@ import { createPortal } from 'react-dom'
  */
 export interface ComposerProps {
   prompt: string
-  /** True when multiview is split (>1 pane). Hides the welcome starter cards —
-   * in a short split cell they overlap/clip the floating composer. */
-  isMultiviewSplit: boolean
   PLAN_IMPORT_CHIP_LABELS: any
   PLAN_IMPORT_RISK_LABELS: any
   PLAN_IMPORT_RUN_CONSTRAINT_LABELS: any
@@ -281,7 +278,6 @@ export interface ComposerProps {
   handleStopWorkSession: any
   handleToggleWelcomeEnsemble: any
   handleTrustWorkspaceClick: any
-  handleWelcomeSuggestion: any
   imageAttachments: any
   intentNote: any
   interfaceStyle: any
@@ -423,7 +419,6 @@ const normalizeComposerWorkflowMode = (value: unknown): ChatWorkflowMode | null 
 function ComposerInner(props: ComposerProps): React.JSX.Element {
   const {
     prompt,
-    isMultiviewSplit,
     PLAN_IMPORT_CHIP_LABELS,
     PLAN_IMPORT_RISK_LABELS,
     PLAN_IMPORT_RUN_CONSTRAINT_LABELS,
@@ -565,7 +560,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     handleStopWorkSession,
     handleToggleWelcomeEnsemble,
     handleTrustWorkspaceClick,
-    handleWelcomeSuggestion,
     imageAttachments,
     intentNote,
     interfaceStyle,
@@ -1360,9 +1354,8 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                 not the full roster. The user can still drag the chip
                 strip below to reorder.
 
-                Per the maintainer's ship-night call: no starter cards on the
-                ensemble welcome. Just hierarchy + textarea + the
-                editable chip strip in the composer above-row.
+                Ensemble welcome is hierarchy + textarea + the editable chip
+                strip in the composer above-row.
 
                 1.0.3 polish — provider-theme-aware shell. The
                 ordered-enabled participant list drives the orchestration
@@ -4559,37 +4552,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                   setWorkflowDraft((prev) => (prev ? { ...prev, unattendedLevel } : prev))
                 }
               />
-            )}
-            {isWelcomeChat &&
-              !isCurrentEnsembleChat &&
-              !isWorkflowChatWelcome &&
-              !isCurrentGlobalChat &&
-              !isMultiviewSplit && (
-              /*
-                Solo-provider starter cards. Hidden when multiview is split (a
-                short split cell can't fit the hero + starters + composer, so
-                the cards overlap/clip the floating composer — the user types
-                their own prompt instead). Also hidden on ensemble chats per the
-                maintainer's 1.0.3 ship-night call: the hierarchy chain in the
-                ensemble welcome hero teaches the orchestration model, and the
-                user types their own prompt rather than picking from solo-shaped
-                templates.
-              */
-              <div className="welcome-suggestions">
-                {welcomeCopy.starters.map((starter) => (
-                  <button
-                    key={starter.id}
-                    className="welcome-suggestion-btn"
-                    type="button"
-                    data-intent={starter.intent}
-                    aria-label={`${starter.label}: ${starter.description}`}
-                    onClick={() => handleWelcomeSuggestion(starter.prompt)}
-                  >
-                    <span className="welcome-suggestion-label">{starter.label}</span>
-                    <span className="welcome-suggestion-description">{starter.description}</span>
-                  </button>
-                ))}
-              </div>
             )}
             {shouldShowWelcomeStandaloneHeatmaps && (
               <WelcomeHeatmaps slots={welcomeHeatmapSlots} layout="single" />

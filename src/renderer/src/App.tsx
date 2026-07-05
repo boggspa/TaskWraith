@@ -2319,9 +2319,9 @@ function App(): React.JSX.Element {
     },
     [multiview]
   )
-  // True when the central pane is split (>1 multiview cell). Welcome-state
-  // dashboard/heatmaps/starter cards are suppressed when split — a short cell
-  // can't fit them and they overlap/clip the composer.
+  // True when the central pane is split (>1 multiview cell). Some welcome-state
+  // dashboard and heatmap surfaces are suppressed when split because short cells
+  // cannot fit them above the composer.
   const isMultiviewSplit = multiview.paneChatIds.length > 1
 
   // Error handling
@@ -7269,10 +7269,6 @@ function App(): React.JSX.Element {
         requireActiveShare: false
       })
     }
-  }
-
-  const handleWelcomeSuggestion = (suggestion: string) => {
-    setPrompt(suggestion)
   }
 
   // Phase F1: navigate to a freshly-spawned sub-thread and pre-fill its
@@ -21604,12 +21600,6 @@ function App(): React.JSX.Element {
   // the shared <Composer>'s own internal wrappers (driven by `paneComposerCtx`
   // — see renderMultiviewPaneCell), which persist via
   // `rememberMultiviewPaneComposerSelection` / `setChatPromptDraft`.
-  const handleMultiviewPaneWelcomeSuggestion = useCallback(
-    (_paneIndex: number, chatId: string, suggestion: string) => {
-      setChatPromptDraft(chatId, suggestion)
-    },
-    [setChatPromptDraft]
-  )
   const handleMultiviewPanePickAttachments = useCallback(
     async (_paneIndex: number, chatId: string) => {
       const selected = await window.api.selectImageFiles()
@@ -22722,9 +22712,6 @@ function App(): React.JSX.Element {
       compactableParticipantIds: undefined,
       // ── per-chat identity / display ──
       prompt: composerDraftsByChatId[viewerChatId] || '',
-      // Non-focused panes only exist when multiview is split, so always hide the
-      // welcome starter cards here (they'd overlap the composer in a short cell).
-      isMultiviewSplit: true,
       // Per-pane ghost: this pane's EFFECTIVE ghost flag (its override, else the
       // global). The inherited `composerCtx.shouldShowGhostCompanion` is the
       // FOCUSED pane's flag, so override it with THIS pane's.
@@ -22844,8 +22831,6 @@ function App(): React.JSX.Element {
         handleMultiviewPanePickWorkspace(viewerPaneIndex, viewerChatId, workspace),
       handleSelectWorkspace: () => handleMultiviewPaneAddWorkspace(viewerPaneIndex, viewerChatId),
       handleNewGlobalChat: () => handleMultiviewPaneSelectNoWorkspace(viewerPaneIndex, viewerChatId),
-      handleWelcomeSuggestion: (suggestion: string) =>
-        handleMultiviewPaneWelcomeSuggestion(viewerPaneIndex, viewerChatId, suggestion),
       // setState setters (focused-only) → no-op for panes; persistence routed
       // through rememberCurrentChatComposerSelection (overridden above). Each
       // matching display field above keeps the picker's selection accurate.
@@ -23061,7 +23046,6 @@ function App(): React.JSX.Element {
     handleSteer,
     handleToggleWelcomeEnsemble,
     handleTrustWorkspaceClick,
-    handleWelcomeSuggestion,
     markCurrentGoalBlocked,
     markPersistentSessionRestartNeeded,
     openDiscordContextPicker,
@@ -23793,9 +23777,6 @@ function App(): React.JSX.Element {
         compactableParticipantIds: undefined,
         // ── per-chat identity / display ──
         prompt: composerDraftsByChatId[viewerChatId] || '',
-        // Non-focused panes only exist when multiview is split, so always hide the
-        // welcome starter cards here (they'd overlap the composer in a short cell).
-        isMultiviewSplit: true,
         // Per-pane ghost: this pane's EFFECTIVE ghost flag (its override, else the
         // global). The inherited `composerCtx.shouldShowGhostCompanion` is the
         // FOCUSED pane's flag, so override it with THIS pane's.
@@ -23945,8 +23926,6 @@ function App(): React.JSX.Element {
           handleMultiviewPanePickWorkspace(viewerPaneIndex, viewerChatId, workspace),
         handleSelectWorkspace: () => handleMultiviewPaneAddWorkspace(viewerPaneIndex, viewerChatId),
         handleNewGlobalChat: () => handleMultiviewPaneSelectNoWorkspace(viewerPaneIndex, viewerChatId),
-        handleWelcomeSuggestion: (suggestion: string) =>
-          handleMultiviewPaneWelcomeSuggestion(viewerPaneIndex, viewerChatId, suggestion),
         // setState setters (focused-only) → no-op for panes; persistence routed
         // through rememberCurrentChatComposerSelection (overridden above). Each
         // matching display field above keeps the picker's selection accurate.
@@ -24037,7 +24016,6 @@ function App(): React.JSX.Element {
       handleMultiviewPaneRemoveAttachment,
       handleMultiviewPaneSelectNoWorkspace,
       handleMultiviewPaneToggleGrant,
-      handleMultiviewPaneWelcomeSuggestion,
       handleRunMultiviewPane,
       humanCollaborationInviteHealthByChatId,
       imageAttachmentsByChatId,
@@ -24076,10 +24054,6 @@ function App(): React.JSX.Element {
     // Slice H: shared stable base (handlers + chat-independent props).
     ...composerStableBase,
     prompt,
-    // Hide welcome starter cards when multiview is split (they overlap the
-    // composer in short cells). The focused cell uses this ctx in both single
-    // and split layouts.
-    isMultiviewSplit,
     approvalMode,
     attachedWindow,
     claudeFastMode,
