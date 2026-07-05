@@ -1088,6 +1088,133 @@ export interface ComplexityEscalationSignal {
   createdAt: string
 }
 
+export type EnsembleBossmanAssignmentDue =
+  | 'next_turn'
+  | 'this_round'
+  | 'next_round'
+  | 'fanout'
+  | 'session'
+export type EnsembleBossmanAssignmentStatus =
+  | 'open'
+  | 'in_progress'
+  | 'done'
+  | 'blocked'
+  | 'cancelled'
+
+export interface EnsembleBossmanWorkAssignment {
+  id: string
+  participantId: string
+  objective: string
+  acceptanceCriteria?: string
+  due?: EnsembleBossmanAssignmentDue
+  status: EnsembleBossmanAssignmentStatus
+  reason?: string
+  createdAt: string
+  updatedAt: string
+  createdByParticipantId?: string
+}
+
+export interface EnsembleBossmanRoundPlan {
+  goal: string
+  phase?: string
+  ownerParticipantIds?: string[]
+  blockers?: string[]
+  doneCriteria?: string
+  updatedAt: string
+  updatedByParticipantId?: string
+}
+
+export interface EnsembleBossmanDecision {
+  id: string
+  decision: string
+  rationale?: string
+  reopenCriteria?: string
+  createdAt: string
+  createdByParticipantId?: string
+}
+
+export type EnsembleBossmanReviewGateStatus = 'required' | 'passed' | 'failed' | 'waived'
+
+export interface EnsembleBossmanReviewGate {
+  id: string
+  reviewerParticipantId: string
+  scope: string
+  criteria?: string
+  status: EnsembleBossmanReviewGateStatus
+  reason?: string
+  createdAt: string
+  updatedAt: string
+  createdByParticipantId?: string
+}
+
+export type EnsembleBossmanQuarantineCategory =
+  | 'noisy'
+  | 'unavailable'
+  | 'looping'
+  | 'low_confidence'
+  | 'quota'
+  | 'other'
+export type EnsembleBossmanControlScope = 'round' | 'session'
+
+export interface EnsembleBossmanQuarantine {
+  participantId: string
+  roundId?: string
+  category: EnsembleBossmanQuarantineCategory
+  scope: EnsembleBossmanControlScope
+  reason: string
+  active: boolean
+  createdAt: string
+  updatedAt: string
+  createdByParticipantId?: string
+}
+
+export interface EnsembleBossmanBudget {
+  id: string
+  participantId?: string
+  phase?: string
+  maxExtraTurns?: number
+  maxFanoutCalls?: number
+  maxDurationSeconds?: number
+  maxTokens?: number
+  reason?: string
+  createdAt: string
+  updatedAt: string
+  createdByParticipantId?: string
+}
+
+export type EnsembleBossmanPollStatus = 'open' | 'closed' | 'expired'
+
+export interface EnsembleBossmanPollVote {
+  voterParticipantId?: string
+  voterLabel?: string
+  choice: string
+  rationale?: string
+  votedAt: string
+}
+
+export interface EnsembleBossmanPoll {
+  id: string
+  question: string
+  options: string[]
+  targetParticipantIds?: string[]
+  includeUser?: boolean
+  timeoutAt?: string
+  status: EnsembleBossmanPollStatus
+  votes: EnsembleBossmanPollVote[]
+  createdAt: string
+  createdByParticipantId?: string
+}
+
+export interface EnsembleBossmanStatusRequest {
+  id: string
+  targetParticipantIds?: string[]
+  prompt: string
+  reason?: string
+  status: 'open' | 'closed'
+  createdAt: string
+  createdByParticipantId?: string
+}
+
 export interface EnsembleConfig {
   enabled: boolean
   maxParticipants: number
@@ -1134,6 +1261,14 @@ export interface EnsembleConfig {
   bossmanControlState?: {
     completedRoundCount?: number
     lastReorderAtCompletedRound?: number
+    roundPlan?: EnsembleBossmanRoundPlan
+    assignments?: EnsembleBossmanWorkAssignment[]
+    statusRequests?: EnsembleBossmanStatusRequest[]
+    decisions?: EnsembleBossmanDecision[]
+    reviewGates?: EnsembleBossmanReviewGate[]
+    quarantines?: EnsembleBossmanQuarantine[]
+    budgets?: EnsembleBossmanBudget[]
+    polls?: EnsembleBossmanPoll[]
   }
   sessionActivityLedger?: SessionActivityLedgerEntry[]
   activeRound?: EnsembleRoundState

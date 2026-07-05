@@ -500,6 +500,134 @@ function formatWorkSessionStanza(
     .join('\n')
 }
 
+function formatBossmanControlStanza(
+  config: EnsembleConfig,
+  orderedParticipants: EnsembleParticipant[]
+): string {
+  const state = config.bossmanControlState
+  if (!state) return ''
+  const participantName = (id: string): string => {
+    const participant = orderedParticipants.find((candidate) => candidate.id === id)
+    return participant ? formatParticipantScopeName(participant) : id
+  }
+  const lines: string[] = []
+  if (state.roundPlan) {
+    lines.push(
+      `Plan: ${sanitizeText(state.roundPlan.goal)}`,
+      ...(state.roundPlan.phase ? [`Phase: ${sanitizeText(state.roundPlan.phase)}`] : []),
+      ...(state.roundPlan.ownerParticipantIds?.length
+        ? [`Owners: ${state.roundPlan.ownerParticipantIds.map(participantName).join(', ')}`]
+        : []),
+      ...(state.roundPlan.blockers?.length
+        ? [`Blockers: ${state.roundPlan.blockers.map(sanitizeText).join('; ')}`]
+        : []),
+      ...(state.roundPlan.doneCriteria
+        ? [`Done criteria: ${sanitizeText(state.roundPlan.doneCriteria)}`]
+        : [])
+    )
+  }
+  const openAssignments = (state.assignments || [])
+    .filter((assignment) => assignment.status !== 'done' && assignment.status !== 'cancelled')
+    .slice(-8)
+  if (openAssignments.length) {
+    lines.push(
+      'Assignments:',
+      ...openAssignments.map(
+        (assignment) =>
+          `- ${participantName(assignment.participantId)}: ${sanitizeText(assignment.objective)}${
+            assignment.acceptanceCriteria
+              ? ` (acceptance: ${sanitizeText(assignment.acceptanceCriteria)})`
+              : ''
+          }${assignment.due ? ` [due: ${assignment.due}]` : ''}`
+      )
+    )
+  }
+  const openStatusRequests = (state.statusRequests || [])
+    .filter((request) => request.status === 'open')
+    .slice(-4)
+  if (openStatusRequests.length) {
+    lines.push(
+      'Status requests:',
+      ...openStatusRequests.map((request) => {
+        const targets = request.targetParticipantIds?.length
+          ? ` for ${request.targetParticipantIds.map(participantName).join(', ')}`
+          : ''
+        return `-${targets}: ${sanitizeText(request.prompt)}`
+      })
+    )
+  }
+  const decisions = (state.decisions || []).slice(-6)
+  if (decisions.length) {
+    lines.push(
+      'Decisions:',
+      ...decisions.map(
+        (decision) =>
+          `- ${sanitizeText(decision.decision)}${
+            decision.reopenCriteria
+              ? ` (reopen only if: ${sanitizeText(decision.reopenCriteria)})`
+              : ''
+          }`
+      )
+    )
+  }
+  const activeGates = (state.reviewGates || [])
+    .filter((gate) => gate.status === 'required' || gate.status === 'failed')
+    .slice(-6)
+  if (activeGates.length) {
+    lines.push(
+      'Review gates:',
+      ...activeGates.map(
+        (gate) =>
+          `- ${participantName(gate.reviewerParticipantId)} must review ${sanitizeText(gate.scope)}${
+            gate.criteria ? ` (${sanitizeText(gate.criteria)})` : ''
+          } [${gate.status}]`
+      )
+    )
+  }
+  const activeQuarantines = (state.quarantines || [])
+    .filter((quarantine) => quarantine.active)
+    .slice(-6)
+  if (activeQuarantines.length) {
+    lines.push(
+      'Quarantines:',
+      ...activeQuarantines.map(
+        (quarantine) =>
+          `- ${participantName(quarantine.participantId)}: ${sanitizeText(quarantine.reason)} [${quarantine.scope}/${quarantine.category}]`
+      )
+    )
+  }
+  const budgets = (state.budgets || []).slice(-6)
+  if (budgets.length) {
+    lines.push(
+      'Budgets:',
+      ...budgets.map((budget) => {
+        const owner = budget.participantId ? `${participantName(budget.participantId)} ` : ''
+        const parts = [
+          budget.maxExtraTurns !== undefined ? `${budget.maxExtraTurns} extra turns` : '',
+          budget.maxFanoutCalls !== undefined ? `${budget.maxFanoutCalls} fanouts` : '',
+          budget.maxDurationSeconds !== undefined ? `${budget.maxDurationSeconds}s` : '',
+          budget.maxTokens !== undefined ? `${budget.maxTokens} tokens` : ''
+        ].filter(Boolean)
+        return `- ${owner}${budget.phase ? `${sanitizeText(budget.phase)}: ` : ''}${parts.join(', ')}`
+      })
+    )
+  }
+  const openPolls = (state.polls || []).filter((poll) => poll.status === 'open').slice(-4)
+  if (openPolls.length) {
+    lines.push(
+      'Open polls:',
+      ...openPolls.map((poll) => {
+        const targets = poll.targetParticipantIds?.length
+          ? ` for ${poll.targetParticipantIds.map(participantName).join(', ')}`
+          : ''
+        return `- ${poll.id}${targets}: ${sanitizeText(poll.question)} Options: ${poll.options.map(sanitizeText).join(' / ')}`
+      })
+    )
+  }
+  if (!lines.length) return ''
+  return ['Boss/Captain control state:', ...lines].join('\n')
+}
+
 export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput): string {
   const orderedParticipants = getOrderedEnsembleParticipants(input.config, input.currentPrompt)
   const isOllamaParticipant = input.participant.provider === 'ollama'
@@ -661,6 +789,7 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
   const hasWorkspaceStanza = workspaceStanza !== null
   const sessionEventsStanza = formatSessionEventsStanza(input.config)
   const workSessionStanza = formatWorkSessionStanza(input.config, orderedParticipants)
+  const bossmanControlStanza = formatBossmanControlStanza(input.config, orderedParticipants)
   const activeGoal = resolveActiveGoalForEnsemble(input.chat.activeGoal)
   const activeGoalStanza = shouldInjectActiveGoal(activeGoal)
     ? formatActiveGoalPromptBlock(activeGoal)
@@ -838,6 +967,7 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
     ...(workspaceStanza ? [workspaceStanza] : []),
     ...(sessionEventsStanza ? [sessionEventsStanza] : []),
     ...(workSessionStanza ? [workSessionStanza] : []),
+    ...(bossmanControlStanza ? [bossmanControlStanza] : []),
     ...(activeGoalStanza ? [activeGoalStanza] : []),
     '',
     'Participant roster:',
@@ -902,7 +1032,7 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
     '- Address participants by their **participant (role) name** (e.g. `@Farmer`, `@Merchant`) or **model name** (e.g. `@Sonnet 4.6`, `@Flash Lite`) exactly as shown in the roster — these route deterministically to the participant you mean. Do NOT address peers by bare provider name (`@gemini`, `@claude`) unless that provider has exactly one participant on this panel: with same-provider peers a provider tag resolves non-deterministically and your message may reach the wrong panelist.',
     '- If another participant should handle this turn, call ensemble_yield with a short reason and optional target.',
     '- Use ensemble_fanout when multiple peers should work in parallel. Default read_only fan-out only targets read-only participants; locked_writers fan-out is feature-gated, requires the assigned Boss (or active Captain after Boss unavailability) as caller with explicit writeScopes for writer targets, and relies on workspace write locks. Set targetStage to all, scouts, workers, or reviewers for selective stage fan-out; targetStage=all excludes untyped Any roles. When no Boss is assigned, automatic writer fan-out is host-mediated by user-enabled write-scope claim + matrix-ack preflight rather than peer tool calls.',
-    '- If you are the assigned Boss, or the Captain after Boss is unavailable, use ensemble_bossman_control({ action: "summon_participant", targetParticipantId, reason }) in Continuous mode when one specific participant who already answered needs another immediate turn. Do not merely narrate that @Worker still has work and wait for the rotation; use ensemble_fanout for parallel work, summon_participant or ensemble_yield for direct continuation, and roster/seat changes for provider/model mismatch.',
+    '- If you are the assigned Boss, or the Captain after Boss is unavailable, use ensemble_bossman_control for bounded orchestration state: assign_work, set_round_plan, request_status, declare_decision, set_review_gate, quarantine_participant, allocate_budget, create_poll, adjust_hops, ensemble_scheduled_wakeup, check_quota_resets, and summon_participant. Do not merely narrate that @Worker still has work and wait for the rotation; use ensemble_fanout for parallel work, summon_participant or ensemble_yield for direct continuation, and roster/seat changes for provider/model mismatch.',
     '- If you are the assigned Boss, or the Captain after Boss is unavailable, and Boss/Captain Auto Approvals are enabled, use list_ensemble_participants before ensemble_roster_edit to inspect participant ids, available providers/models, model context windows, and coarse provider quota bands; then you may swap a non-active participant seat provider/model/reasoning/permissions when quota walls, weak output, or agreed role changes warrant it. Use ensemble_brief_update for another participant\'s Brief / Goal changes; you cannot change your own brief.',
     '- Use blackboard_post only for durable shared facts, decisions, risks, or do-not-repeat notes. Do not use the blackboard for conversational side messages. Read the board on demand with blackboard_read (bounded: pass keys/category/first/last — a bare call returns the newest entries, so small-context seats can read specific posts a peer points them at). Retire stale or superseded entries with blackboard_delete so the board stays current.',
     '- In Continuous mode the round auto-continues each pass until the goal/tasks are marked complete or the hop budget runs out — when the work is genuinely finished, mark the active goal/tasks complete (e.g. call goal_complete) instead of restating "done", and use @mention/ensemble_yield only to route a specific next actor.',

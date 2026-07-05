@@ -24,6 +24,13 @@ import type {
   ConcurrentLaneWriteScope,
   EffectiveRunPermissions,
   EnsembleConfig,
+  EnsembleBossmanAssignmentDue,
+  EnsembleBossmanAssignmentStatus,
+  EnsembleBossmanControlScope,
+  EnsembleBossmanPollVote,
+  EnsembleBossmanQuarantine,
+  EnsembleBossmanQuarantineCategory,
+  EnsembleBossmanReviewGateStatus,
   EnsembleFanoutPolicy,
   EnsembleOrchestrationMode,
   EnsembleParticipant,
@@ -190,6 +197,8 @@ const MAX_ENSEMBLE_FANOUT_TARGETS = 20
 const DEFAULT_CONTINUATION_HOP_LIMIT = 6
 const MAX_BOSSMAN_SUMMONS_PER_PARTICIPANT_PER_ROUND = 3
 const MAX_CONTINUATION_HOP_LIMIT = 500
+const MAX_BOSSMAN_CONTROL_ITEMS = 40
+const MAX_BOSSMAN_POLL_OPTIONS = 6
 const ENSEMBLE_IMAGE_ATTACHMENT_EXT = /\.(png|jpe?g|gif|webp|bmp|heic|avif|tiff|tif|svg|jfif)(\?.*)?$/i
 
 export interface EnsembleDispatchEvent {
@@ -588,6 +597,18 @@ export type EnsembleBossmanControlAction =
   | 'queue_followup'
   | 'pause_work_session'
   | 'complete_work_session'
+  | 'assign_work'
+  | 'set_round_plan'
+  | 'request_status'
+  | 'declare_decision'
+  | 'set_review_gate'
+  | 'quarantine_participant'
+  | 'allocate_budget'
+  | 'create_poll'
+  | 'clear_goal'
+  | 'adjust_hops'
+  | 'ensemble_scheduled_wakeup'
+  | 'check_quota_resets'
 
 export interface EnsembleBossmanControlInput {
   action?: EnsembleBossmanControlAction
@@ -597,7 +618,53 @@ export interface EnsembleBossmanControlInput {
   participantIds?: string[]
   prompt?: string
   reason?: string
+  objective?: string
+  acceptanceCriteria?: string
+  due?: EnsembleBossmanAssignmentDue
+  assignmentStatus?: EnsembleBossmanAssignmentStatus
+  assignmentId?: string
+  gateId?: string
+  pollId?: string
+  budgetId?: string
+  goal?: string
+  phase?: string
+  blockers?: string[]
+  doneCriteria?: string
+  decision?: string
+  rationale?: string
+  reopenCriteria?: string
+  scope?: string
+  reviewStatus?: EnsembleBossmanReviewGateStatus
+  category?: EnsembleBossmanQuarantineCategory
+  quarantineScope?: EnsembleBossmanControlScope
+  clear?: boolean
+  maxExtraTurns?: number
+  maxFanoutCalls?: number
+  maxDurationSeconds?: number
+  maxTokens?: number
+  question?: string
+  options?: string[]
+  includeUser?: boolean
+  timeoutSeconds?: number
+  hopDelta?: number
+  maxContinuationHops?: number
+  delaySeconds?: number
+  provider?: ProviderId
   replacement?: Partial<EnsembleParticipant> & { provider?: ProviderId }
+}
+
+export interface EnsemblePollResponseInput {
+  pollId?: string
+  choice?: string
+  rationale?: string
+}
+
+export interface EnsemblePollResponseResult {
+  ok: boolean
+  tool: 'ensemble_poll_response'
+  pollId?: string
+  message: string
+  error?: 'no_active_run' | 'not_ensemble' | 'no_active_round' | 'poll_not_found' | 'poll_closed' | 'invalid_choice'
 }
 
 export interface EnsembleBossmanControlResult {
@@ -632,6 +699,11 @@ export interface EnsembleBossmanControlResult {
     | 'summon_target_disabled'
     | 'summon_target_pending'
     | 'summon_self_target'
+    | 'missing_required_field'
+    | 'invalid_target'
+    | 'invalid_state'
+    | 'quota_unavailable'
+    | 'wakeup_failed'
     | 'queue_failed'
     | 'no_active_work_session'
     | 'baseline_exceeded'
@@ -1362,6 +1434,38 @@ function writeScopeExecutionPrompt(matrixSummary: string): string {
 
 function participantDisplayName(participant: EnsembleParticipant): string {
   return participant.role || providerLabel(participant.provider)
+}
+
+function normalizeBossmanText(value: unknown, maxChars: number): string {
+  if (typeof value !== 'string') return ''
+  const normalized = value.trim().replace(/\s+/g, ' ')
+  if (!normalized) return ''
+  return normalized.length > maxChars ? `${normalized.slice(0, maxChars - 1)}…` : normalized
+}
+
+function normalizeBossmanTextArray(
+  value: unknown,
+  maxItems: number,
+  maxCharsPerItem: number
+): string[] {
+  if (!Array.isArray(value)) return []
+  return value
+    .map((entry) => normalizeBossmanText(entry, maxCharsPerItem))
+    .filter(Boolean)
+    .slice(0, maxItems)
+}
+
+function capBossmanItems<T>(items: T[]): T[] {
+  return items.slice(-MAX_BOSSMAN_CONTROL_ITEMS)
+}
+
+function clampOptionalInteger(
+  value: unknown,
+  min: number,
+  max: number
+): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return undefined
+  return Math.max(min, Math.min(max, Math.floor(value)))
 }
 
 function participantProviderGroupLabel(participants: EnsembleParticipant[]): string {
@@ -3275,6 +3379,23 @@ export class EnsembleOrchestrator {
       return this.transitionWorkSessionByBossman(runtime, action, input.reason)
     }
 
+    if (
+      action === 'assign_work' ||
+      action === 'set_round_plan' ||
+      action === 'request_status' ||
+      action === 'declare_decision' ||
+      action === 'set_review_gate' ||
+      action === 'quarantine_participant' ||
+      action === 'allocate_budget' ||
+      action === 'create_poll' ||
+      action === 'clear_goal' ||
+      action === 'adjust_hops' ||
+      action === 'ensemble_scheduled_wakeup' ||
+      action === 'check_quota_resets'
+    ) {
+      return this.structuredBossmanControl(runtime, input, caller.participant, authority.role)
+    }
+
     if (action === 'replace_participant') {
       return this.replaceParticipantByBossman(runtime, input, targetRun)
     }
@@ -4641,6 +4762,688 @@ export class EnsembleOrchestrator {
       roundId: runtime.roundId,
       participantId: target.id,
       message: `${authorityLabel} re-summoned ${target.role || target.provider} for another turn.`
+    }
+  }
+
+  private structuredBossmanControl(
+    runtime: ActiveRoundRuntime,
+    input: EnsembleBossmanControlInput,
+    caller: EnsembleParticipant,
+    authorityRole: 'boss' | 'second_in_command'
+  ): EnsembleBossmanControlResult {
+    const action = input.action
+    const authorityLabel = authorityRole === 'second_in_command' ? 'Captain' : 'Boss'
+    if (!action) {
+      return {
+        ok: false,
+        tool: 'ensemble_bossman_control',
+        message: 'Boss control rejected: action is required.',
+        error: 'invalid_action'
+      }
+    }
+
+    if (action === 'check_quota_resets') {
+      const provider = input.provider
+      if (provider && !selectableProviderIds().includes(provider)) {
+        return {
+          ok: false,
+          tool: 'ensemble_bossman_control',
+          action,
+          roundId: runtime.roundId,
+          message: 'Boss quota check rejected: provider is not recognized.',
+          error: 'invalid_target'
+        }
+      }
+      const snapshot = provider ? this.deps.getProviderUsageSnapshot?.(provider) : null
+      const message = provider
+        ? snapshot
+          ? `${authorityLabel} checked ${providerLabel(provider)} quota/reset status.`
+          : `${authorityLabel} checked ${providerLabel(provider)} quota/reset status; no usage snapshot is available.`
+        : `${authorityLabel} requested provider quota/reset status. Use provider_usage_status for the full read-only snapshot.`
+      this.appendRoundStatus(runtime.chatId, runtime.roundId, message)
+      return {
+        ok: Boolean(!provider || snapshot),
+        tool: 'ensemble_bossman_control',
+        action,
+        roundId: runtime.roundId,
+        message,
+        ...(provider && !snapshot ? { error: 'quota_unavailable' as const } : {})
+      }
+    }
+
+    if (action === 'clear_goal') {
+      const chat = this.deps.getChat(runtime.chatId)
+      if (!chat?.activeGoal) {
+        return {
+          ok: false,
+          tool: 'ensemble_bossman_control',
+          action,
+          roundId: runtime.roundId,
+          message: 'Boss clear_goal rejected: no active TaskWraith goal is set.',
+          error: 'invalid_state'
+        }
+      }
+      const goal = chat.activeGoal
+      if (goal.status === 'active' && !input.reason?.trim()) {
+        return {
+          ok: false,
+          tool: 'ensemble_bossman_control',
+          action,
+          roundId: runtime.roundId,
+          message: 'Boss clear_goal rejected: clearing an active goal requires a reason.',
+          error: 'missing_required_field'
+        }
+      }
+      const reason = normalizeBossmanText(input.reason, 500) || 'Cleared by Boss/Captain control.'
+      this.saveChatWithCheckpoint(
+        {
+          ...chat,
+          activeGoal: undefined,
+          updatedAt: this.deps.now()
+        },
+        'round-updated'
+      )
+      this.appendRoundStatus(
+        runtime.chatId,
+        runtime.roundId,
+        `${authorityLabel} cleared the TaskWraith goal "${goal.objective}". ${reason}`
+      )
+      return {
+        ok: true,
+        tool: 'ensemble_bossman_control',
+        action,
+        roundId: runtime.roundId,
+        message: `${authorityLabel} cleared the active TaskWraith goal.`
+      }
+    }
+
+    if (action === 'adjust_hops') {
+      const requested =
+        typeof input.maxContinuationHops === 'number'
+          ? input.maxContinuationHops
+          : typeof input.hopDelta === 'number'
+            ? runtime.maxContinuationHops + input.hopDelta
+            : NaN
+      if (!Number.isFinite(requested)) {
+        return {
+          ok: false,
+          tool: 'ensemble_bossman_control',
+          action,
+          roundId: runtime.roundId,
+          message: 'Boss adjust_hops requires maxContinuationHops or hopDelta.',
+          error: 'missing_required_field'
+        }
+      }
+      const nextMax = Math.max(1, Math.min(MAX_CONTINUATION_HOP_LIMIT, Math.floor(requested)))
+      runtime.maxContinuationHops = nextMax
+      runtime.continuationLimitNotified = false
+      this.updateChatRound(runtime.chatId, (round) =>
+        round?.roundId === runtime.roundId
+          ? { ...round, maxContinuationHops: nextMax, continuationHops: runtime.continuationHops }
+          : round
+      )
+      const chat = this.deps.getChat(runtime.chatId)
+      if (chat?.ensemble) {
+        this.saveChatWithCheckpoint(
+          {
+            ...chat,
+            ensemble: {
+              ...chat.ensemble,
+              maxContinuationHops: nextMax,
+              updatedAt: this.deps.nowIso()
+            },
+            updatedAt: this.deps.now()
+          },
+          'round-updated'
+        )
+      }
+      const reason = normalizeBossmanText(input.reason, 300)
+      this.appendRoundStatus(
+        runtime.chatId,
+        runtime.roundId,
+        `${authorityLabel} adjusted the continuous handoff budget to ${runtime.continuationHops}/${nextMax}.${reason ? ` Reason: ${reason}` : ''}`
+      )
+      return {
+        ok: true,
+        tool: 'ensemble_bossman_control',
+        action,
+        roundId: runtime.roundId,
+        message: `${authorityLabel} adjusted maxContinuationHops to ${nextMax}.`
+      }
+    }
+
+    if (action === 'ensemble_scheduled_wakeup') {
+      const delaySeconds =
+        typeof input.delaySeconds === 'number' && Number.isFinite(input.delaySeconds)
+          ? Math.floor(input.delaySeconds)
+          : NaN
+      if (!Number.isFinite(delaySeconds) || delaySeconds < 60) {
+        return {
+          ok: false,
+          tool: 'ensemble_bossman_control',
+          action,
+          roundId: runtime.roundId,
+          message: 'Boss ensemble_scheduled_wakeup requires delaySeconds >= 60.',
+          error: 'missing_required_field'
+        }
+      }
+      const reason =
+        normalizeBossmanText(input.reason, 500) || 'Whole ensemble scheduled wake-up.'
+      const result = this.scheduleWakeupForRun(runtime.activeRunId, {
+        delaySeconds,
+        reason,
+        cancelOnUserInput: false
+      })
+      if (!result.ok) {
+        return {
+          ok: false,
+          tool: 'ensemble_bossman_control',
+          action,
+          roundId: runtime.roundId,
+          message: `Boss ensemble_scheduled_wakeup failed: ${result.error || 'unknown error'}`,
+          error: 'wakeup_failed'
+        }
+      }
+      runtime.remainingParticipants?.splice(0)
+      return {
+        ok: true,
+        tool: 'ensemble_bossman_control',
+        action,
+        roundId: runtime.roundId,
+        message: `${authorityLabel} scheduled an ensemble wake-up in ${delaySeconds} seconds.`
+      }
+    }
+
+    const nowIso = this.deps.nowIso()
+    const callerId = caller.id
+    const participantIds = this.resolveBossmanTargetParticipantIds(runtime, input)
+    const targetLabel = this.formatBossmanTargetLabels(runtime, participantIds)
+
+    if (action === 'assign_work') {
+      const objective = normalizeBossmanText(input.objective || input.prompt, 1000)
+      if (!input.targetParticipantId || !objective) {
+        return this.missingBossmanField(action, runtime.roundId, 'assign_work requires targetParticipantId and objective.')
+      }
+      const participant = this.findRuntimeParticipant(runtime, input.targetParticipantId)
+      if (!participant) return this.invalidBossmanTarget(action, runtime.roundId)
+      const assignment = {
+        id: input.assignmentId || this.nextBossmanControlId('assign'),
+        participantId: participant.id,
+        objective,
+        acceptanceCriteria: normalizeBossmanText(input.acceptanceCriteria, 1000) || undefined,
+        due: input.due || 'this_round',
+        status: input.assignmentStatus || 'open',
+        reason: normalizeBossmanText(input.reason, 500) || undefined,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+        createdByParticipantId: callerId
+      }
+      this.updateBossmanControlState(runtime, (state) => ({
+        ...state,
+        assignments: capBossmanItems([
+          ...(state.assignments || []).filter((entry) => entry.id !== assignment.id),
+          assignment
+        ])
+      }))
+      this.appendRoundStatus(
+        runtime.chatId,
+        runtime.roundId,
+        `${authorityLabel} assigned ${participantDisplayName(participant)}: ${objective}`
+      )
+      return {
+        ok: true,
+        tool: 'ensemble_bossman_control',
+        action,
+        roundId: runtime.roundId,
+        participantId: participant.id,
+        message: `${authorityLabel} assigned work to ${participantDisplayName(participant)}.`
+      }
+    }
+
+    if (action === 'set_round_plan') {
+      const goal = normalizeBossmanText(input.goal || input.objective || input.prompt, 1200)
+      if (!goal) return this.missingBossmanField(action, runtime.roundId, 'set_round_plan requires goal.')
+      const plan = {
+        goal,
+        phase: normalizeBossmanText(input.phase, 240) || undefined,
+        ownerParticipantIds: participantIds.length ? participantIds : undefined,
+        blockers: normalizeBossmanTextArray(input.blockers, 8, 240),
+        doneCriteria: normalizeBossmanText(input.doneCriteria || input.acceptanceCriteria, 1000) || undefined,
+        updatedAt: nowIso,
+        updatedByParticipantId: callerId
+      }
+      this.updateBossmanControlState(runtime, (state) => ({ ...state, roundPlan: plan }))
+      this.appendRoundStatus(
+        runtime.chatId,
+        runtime.roundId,
+        `${authorityLabel} set the round plan: ${goal}`
+      )
+      return { ok: true, tool: 'ensemble_bossman_control', action, roundId: runtime.roundId, message: `${authorityLabel} set the round plan.` }
+    }
+
+    if (action === 'request_status') {
+      const prompt = normalizeBossmanText(input.question || input.prompt || input.reason, 800)
+      if (!prompt) return this.missingBossmanField(action, runtime.roundId, 'request_status requires prompt or question.')
+      const request = {
+        id: this.nextBossmanControlId('status'),
+        targetParticipantIds: participantIds.length ? participantIds : undefined,
+        prompt,
+        reason: normalizeBossmanText(input.reason, 400) || undefined,
+        status: 'open' as const,
+        createdAt: nowIso,
+        createdByParticipantId: callerId
+      }
+      this.updateBossmanControlState(runtime, (state) => ({
+        ...state,
+        statusRequests: capBossmanItems([...(state.statusRequests || []), request])
+      }))
+      this.appendRoundStatus(
+        runtime.chatId,
+        runtime.roundId,
+        `${authorityLabel} requested status${targetLabel ? ` from ${targetLabel}` : ''}: ${prompt}`
+      )
+      return { ok: true, tool: 'ensemble_bossman_control', action, roundId: runtime.roundId, message: `${authorityLabel} requested status.` }
+    }
+
+    if (action === 'declare_decision') {
+      const decision = normalizeBossmanText(input.decision || input.prompt, 1000)
+      if (!decision) return this.missingBossmanField(action, runtime.roundId, 'declare_decision requires decision.')
+      const record = {
+        id: this.nextBossmanControlId('decision'),
+        decision,
+        rationale: normalizeBossmanText(input.rationale || input.reason, 1000) || undefined,
+        reopenCriteria: normalizeBossmanText(input.reopenCriteria, 800) || undefined,
+        createdAt: nowIso,
+        createdByParticipantId: callerId
+      }
+      this.updateBossmanControlState(runtime, (state) => ({
+        ...state,
+        decisions: capBossmanItems([...(state.decisions || []), record])
+      }))
+      this.appendRoundStatus(runtime.chatId, runtime.roundId, `${authorityLabel} declared decision: ${decision}`)
+      return { ok: true, tool: 'ensemble_bossman_control', action, roundId: runtime.roundId, message: `${authorityLabel} recorded a decision.` }
+    }
+
+    if (action === 'set_review_gate') {
+      const reviewerId = input.targetParticipantId || participantIds[0]
+      const reviewer = reviewerId ? this.findRuntimeParticipant(runtime, reviewerId) : null
+      const scope = normalizeBossmanText(input.scope || input.prompt, 800)
+      if (!reviewer || !scope) return this.missingBossmanField(action, runtime.roundId, 'set_review_gate requires targetParticipantId and scope.')
+      const gate = {
+        id: input.gateId || this.nextBossmanControlId('gate'),
+        reviewerParticipantId: reviewer.id,
+        scope,
+        criteria: normalizeBossmanText(input.acceptanceCriteria, 1000) || undefined,
+        status: input.reviewStatus || 'required',
+        reason: normalizeBossmanText(input.reason, 500) || undefined,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+        createdByParticipantId: callerId
+      }
+      this.updateBossmanControlState(runtime, (state) => ({
+        ...state,
+        reviewGates: capBossmanItems([
+          ...(state.reviewGates || []).filter((entry) => entry.id !== gate.id),
+          gate
+        ])
+      }))
+      this.appendRoundStatus(
+        runtime.chatId,
+        runtime.roundId,
+        `${authorityLabel} set review gate for ${participantDisplayName(reviewer)}: ${scope}`
+      )
+      return { ok: true, tool: 'ensemble_bossman_control', action, roundId: runtime.roundId, participantId: reviewer.id, message: `${authorityLabel} set a review gate.` }
+    }
+
+    if (action === 'quarantine_participant') {
+      const participantId = input.targetParticipantId
+      const participant = participantId ? this.findRuntimeParticipant(runtime, participantId) : null
+      if (!participant) return this.missingBossmanField(action, runtime.roundId, 'quarantine_participant requires targetParticipantId.')
+      const reason = normalizeBossmanText(input.reason, 500)
+      if (!input.clear && !reason) return this.missingBossmanField(action, runtime.roundId, 'quarantine_participant requires reason unless clear=true.')
+      const quarantine = {
+        participantId: participant.id,
+        roundId: runtime.roundId,
+        category: input.category || 'other',
+        scope: input.quarantineScope || 'round',
+        reason: reason || 'Cleared by Boss/Captain.',
+        active: input.clear !== true,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+        createdByParticipantId: callerId
+      }
+      this.updateBossmanControlState(runtime, (state) => ({
+        ...state,
+        quarantines: capBossmanItems([
+          ...(state.quarantines || []).filter((entry) => entry.participantId !== participant.id),
+          quarantine
+        ])
+      }))
+      if (quarantine.active) {
+        const remaining = runtime.remainingParticipants || []
+        const index = remaining.findIndex((entry) => entry.id === participant.id)
+        if (index >= 0) remaining.splice(index, 1)
+        this.updateParticipantState(runtime.chatId, runtime.roundId, participant.id, 'skipped', `Quarantined: ${quarantine.reason}`)
+      }
+      this.appendRoundStatus(
+        runtime.chatId,
+        runtime.roundId,
+        quarantine.active
+          ? `${authorityLabel} quarantined ${participantDisplayName(participant)} (${quarantine.category}): ${quarantine.reason}`
+          : `${authorityLabel} cleared quarantine for ${participantDisplayName(participant)}.`
+      )
+      return { ok: true, tool: 'ensemble_bossman_control', action, roundId: runtime.roundId, participantId: participant.id, message: quarantine.active ? `${authorityLabel} quarantined ${participantDisplayName(participant)}.` : `${authorityLabel} cleared quarantine.` }
+    }
+
+    if (action === 'allocate_budget') {
+      const budget = {
+        id: input.budgetId || this.nextBossmanControlId('budget'),
+        participantId: input.targetParticipantId || undefined,
+        phase: normalizeBossmanText(input.phase, 240) || undefined,
+        maxExtraTurns: clampOptionalInteger(input.maxExtraTurns, 0, 50),
+        maxFanoutCalls: clampOptionalInteger(input.maxFanoutCalls, 0, 50),
+        maxDurationSeconds: clampOptionalInteger(input.maxDurationSeconds, 0, 7 * 24 * 60 * 60),
+        maxTokens: clampOptionalInteger(input.maxTokens, 0, 10_000_000),
+        reason: normalizeBossmanText(input.reason, 500) || undefined,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+        createdByParticipantId: callerId
+      }
+      if (
+        budget.maxExtraTurns === undefined &&
+        budget.maxFanoutCalls === undefined &&
+        budget.maxDurationSeconds === undefined &&
+        budget.maxTokens === undefined
+      ) {
+        return this.missingBossmanField(action, runtime.roundId, 'allocate_budget requires at least one max* budget field.')
+      }
+      this.updateBossmanControlState(runtime, (state) => ({
+        ...state,
+        budgets: capBossmanItems([
+          ...(state.budgets || []).filter((entry) => entry.id !== budget.id),
+          budget
+        ])
+      }))
+      this.appendRoundStatus(
+        runtime.chatId,
+        runtime.roundId,
+        `${authorityLabel} allocated budget${targetLabel ? ` for ${targetLabel}` : ''}.`
+      )
+      return { ok: true, tool: 'ensemble_bossman_control', action, roundId: runtime.roundId, participantId: budget.participantId, message: `${authorityLabel} allocated a bounded budget.` }
+    }
+
+    if (action === 'create_poll') {
+      const question = normalizeBossmanText(input.question || input.prompt, 800)
+      const options = normalizeBossmanTextArray(input.options, MAX_BOSSMAN_POLL_OPTIONS, 160)
+      if (!question || options.length < 2) return this.missingBossmanField(action, runtime.roundId, 'create_poll requires question and at least two options.')
+      const timeoutSeconds = clampOptionalInteger(input.timeoutSeconds, 30, 24 * 60 * 60)
+      const poll = {
+        id: input.pollId || this.nextBossmanControlId('poll'),
+        question,
+        options,
+        targetParticipantIds: participantIds.length ? participantIds : undefined,
+        includeUser: input.includeUser === true,
+        timeoutAt: timeoutSeconds
+          ? new Date(this.deps.now() + timeoutSeconds * 1000).toISOString()
+          : undefined,
+        status: 'open' as const,
+        votes: [] as EnsembleBossmanPollVote[],
+        createdAt: nowIso,
+        createdByParticipantId: callerId
+      }
+      this.updateBossmanControlState(runtime, (state) => ({
+        ...state,
+        polls: capBossmanItems([...(state.polls || []).filter((entry) => entry.id !== poll.id), poll])
+      }))
+      this.appendRoundStatus(
+        runtime.chatId,
+        runtime.roundId,
+        `${authorityLabel} opened poll ${poll.id}: ${question} Options: ${options.join(' / ')}`
+      )
+      return { ok: true, tool: 'ensemble_bossman_control', action, roundId: runtime.roundId, message: `${authorityLabel} opened poll ${poll.id}.` }
+    }
+
+    return {
+      ok: false,
+      tool: 'ensemble_bossman_control',
+      action,
+      roundId: runtime.roundId,
+      message: `ensemble_bossman_control: unsupported action "${action}".`,
+      error: 'invalid_action'
+    }
+  }
+
+  pollResponseForRun(
+    runId: string | undefined,
+    input: EnsemblePollResponseInput
+  ): EnsemblePollResponseResult {
+    if (!runId) {
+      return {
+        ok: false,
+        tool: 'ensemble_poll_response',
+        message: 'ensemble_poll_response requires an active Ensemble participant run.',
+        error: 'no_active_run'
+      }
+    }
+    const run = this.runsByRunId.get(runId)
+    if (!run) {
+      return {
+        ok: false,
+        tool: 'ensemble_poll_response',
+        message: 'No active Ensemble participant run matches this poll response.',
+        error: 'no_active_run'
+      }
+    }
+    const runtime = this.roundsByChatId.get(run.chatId)
+    if (!runtime || runtime.roundId !== run.roundId || runtime.cancelled) {
+      return {
+        ok: false,
+        tool: 'ensemble_poll_response',
+        message: 'No active Ensemble round is available for this poll response.',
+        error: 'no_active_round'
+      }
+    }
+    const pollId = normalizeBossmanText(input.pollId, 120)
+    const choice = normalizeBossmanText(input.choice, 160)
+    if (!pollId || !choice) {
+      return {
+        ok: false,
+        tool: 'ensemble_poll_response',
+        message: 'ensemble_poll_response requires pollId and choice.',
+        error: 'invalid_choice'
+      }
+    }
+    let response: EnsemblePollResponseResult = {
+      ok: false,
+      tool: 'ensemble_poll_response',
+      pollId,
+      message: 'Poll response failed.',
+      error: 'poll_not_found'
+    }
+    const nowIso = this.deps.nowIso()
+    this.updateBossmanControlState(runtime, (state) => {
+      const polls = state.polls || []
+      const index = polls.findIndex((poll) => poll.id === pollId)
+      if (index < 0) {
+        response = {
+          ok: false,
+          tool: 'ensemble_poll_response',
+          pollId,
+          message: `Poll ${pollId} was not found.`,
+          error: 'poll_not_found'
+        }
+        return state
+      }
+      const poll = polls[index]
+      if (poll.status !== 'open') {
+        response = {
+          ok: false,
+          tool: 'ensemble_poll_response',
+          pollId,
+          message: `Poll ${pollId} is ${poll.status}.`,
+          error: 'poll_closed'
+        }
+        return state
+      }
+      if (poll.timeoutAt && new Date(poll.timeoutAt).getTime() <= this.deps.now()) {
+        const nextPoll = { ...poll, status: 'expired' as const }
+        response = {
+          ok: false,
+          tool: 'ensemble_poll_response',
+          pollId,
+          message: `Poll ${pollId} expired at ${poll.timeoutAt}.`,
+          error: 'poll_closed'
+        }
+        return { ...state, polls: [...polls.slice(0, index), nextPoll, ...polls.slice(index + 1)] }
+      }
+      if (!poll.options.includes(choice)) {
+        response = {
+          ok: false,
+          tool: 'ensemble_poll_response',
+          pollId,
+          message: `Poll ${pollId} choice must be one of: ${poll.options.join(', ')}.`,
+          error: 'invalid_choice'
+        }
+        return state
+      }
+      if (
+        poll.targetParticipantIds?.length &&
+        !poll.targetParticipantIds.includes(run.participant.id)
+      ) {
+        response = {
+          ok: false,
+          tool: 'ensemble_poll_response',
+          pollId,
+          message: `Poll ${pollId} is not targeted to this participant.`,
+          error: 'invalid_choice'
+        }
+        return state
+      }
+      const vote: EnsembleBossmanPollVote = {
+        voterParticipantId: run.participant.id,
+        voterLabel: participantDisplayName(run.participant),
+        choice,
+        rationale: normalizeBossmanText(input.rationale, 500) || undefined,
+        votedAt: nowIso
+      }
+      const nextPoll = {
+        ...poll,
+        votes: [...poll.votes.filter((entry) => entry.voterParticipantId !== run.participant.id), vote]
+      }
+      response = {
+        ok: true,
+        tool: 'ensemble_poll_response',
+        pollId,
+        message: `${participantDisplayName(run.participant)} voted "${choice}" in poll ${pollId}.`
+      }
+      return { ...state, polls: [...polls.slice(0, index), nextPoll, ...polls.slice(index + 1)] }
+    })
+    if (response.ok) {
+      this.appendRoundStatus(runtime.chatId, runtime.roundId, response.message)
+    }
+    return response
+  }
+
+  private updateBossmanControlState(
+    runtime: ActiveRoundRuntime,
+    update: (
+      state: NonNullable<EnsembleConfig['bossmanControlState']>
+    ) => NonNullable<EnsembleConfig['bossmanControlState']>
+  ): void {
+    const chat = this.deps.getChat(runtime.chatId)
+    if (!chat?.ensemble) return
+    const nextState = update({ ...(chat.ensemble.bossmanControlState || {}) })
+    this.saveChatWithCheckpoint(
+      {
+        ...chat,
+        ensemble: {
+          ...chat.ensemble,
+          bossmanControlState: nextState,
+          updatedAt: this.deps.nowIso()
+        },
+        updatedAt: this.deps.now()
+      },
+      'round-updated'
+    )
+  }
+
+  private resolveBossmanTargetParticipantIds(
+    runtime: ActiveRoundRuntime,
+    input: EnsembleBossmanControlInput
+  ): string[] {
+    const ids = [
+      ...(input.targetParticipantId ? [input.targetParticipantId] : []),
+      ...(input.participantIds || [])
+    ]
+    const seen = new Set<string>()
+    return ids.filter((id) => {
+      if (!id || seen.has(id)) return false
+      seen.add(id)
+      return Boolean(this.findRuntimeParticipant(runtime, id))
+    })
+  }
+
+  private findRuntimeParticipant(
+    runtime: ActiveRoundRuntime,
+    participantId: string
+  ): EnsembleParticipant | null {
+    const chat = this.deps.getChat(runtime.chatId)
+    return chat?.ensemble?.participants.find((participant) => participant.id === participantId) || null
+  }
+
+  private formatBossmanTargetLabels(runtime: ActiveRoundRuntime, participantIds: string[]): string {
+    return participantIds
+      .map((id) => this.findRuntimeParticipant(runtime, id))
+      .filter((participant): participant is EnsembleParticipant => Boolean(participant))
+      .map(participantDisplayName)
+      .join(', ')
+  }
+
+  private activeBossmanQuarantine(
+    chat: ChatRecord,
+    roundId: string,
+    participantId: string
+  ): EnsembleBossmanQuarantine | null {
+    const quarantines = chat.ensemble?.bossmanControlState?.quarantines || []
+    for (let index = quarantines.length - 1; index >= 0; index -= 1) {
+      const quarantine = quarantines[index]
+      if (quarantine.participantId !== participantId || !quarantine.active) continue
+      if (quarantine.scope === 'session') return quarantine
+      if (quarantine.roundId === roundId) return quarantine
+    }
+    return null
+  }
+
+  private nextBossmanControlId(prefix: string): string {
+    return `${prefix}-${this.deps.now()}-${Math.random().toString(36).slice(2)}`
+  }
+
+  private missingBossmanField(
+    action: EnsembleBossmanControlAction,
+    roundId: string,
+    message: string
+  ): EnsembleBossmanControlResult {
+    return {
+      ok: false,
+      tool: 'ensemble_bossman_control',
+      action,
+      roundId,
+      message,
+      error: 'missing_required_field'
+    }
+  }
+
+  private invalidBossmanTarget(
+    action: EnsembleBossmanControlAction,
+    roundId: string
+  ): EnsembleBossmanControlResult {
+    return {
+      ok: false,
+      tool: 'ensemble_bossman_control',
+      action,
+      roundId,
+      message: 'Boss control rejected: target participant is not available.',
+      error: 'invalid_target'
     }
   }
 
@@ -7273,6 +8076,24 @@ export class EnsembleOrchestrator {
       if (runtime.cancelled) break
       const chat = this.deps.getChat(runtime.chatId)
       if (!chat?.ensemble) break
+      const nextParticipant = remaining[0]
+      const quarantine = this.activeBossmanQuarantine(chat, runtime.roundId, nextParticipant.id)
+      if (quarantine) {
+        remaining.shift()
+        this.updateParticipantState(
+          runtime.chatId,
+          runtime.roundId,
+          nextParticipant.id,
+          'skipped',
+          `Quarantined: ${quarantine.reason}`
+        )
+        this.appendRoundStatus(
+          runtime.chatId,
+          runtime.roundId,
+          `${participantDisplayName(nextParticipant)} skipped by active Boss/Captain quarantine: ${quarantine.reason}`
+        )
+        continue
+      }
       // Spike 4 — closing review wave: once only stage-role reviewers (and
       // leftovers already dispatched via mid-round ensemble_fanout) remain,
       // run the read-only-eligible reviewers as ONE parallel pass — the
@@ -8762,7 +9583,9 @@ export class EnsembleOrchestrator {
     if (!chat.ensemble) return null
     const roster = getOrderedEnsembleParticipants(chat.ensemble, runtime.prompt).filter(
       (participant) =>
-        participant.enabled && !runtime.unreachableParticipantIds?.has(participant.id)
+        participant.enabled &&
+        !runtime.unreachableParticipantIds?.has(participant.id) &&
+        !this.activeBossmanQuarantine(chat, runtime.roundId, participant.id)
     )
     if (roster.length === 0) return null
     const fresh: EnsembleParticipant[] = []
