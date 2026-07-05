@@ -155,7 +155,7 @@ describe('chatRecordToSummary', () => {
         enabled: true,
         maxParticipants: 2,
         participants: [
-          { id: 'p1', provider: 'claude', role: 'Planner', order: 0, enabled: true }
+          { id: 'p1', provider: 'claude', role: 'Planner', order: 0, enabled: true, instructions: '' }
         ]
       }
     })
