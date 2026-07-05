@@ -28,8 +28,8 @@ import './MemoryProposalReviewPanel.css'
  * MemoryProposalReviewPanel — Thread Introspection review UI (slice 3).
  *
  * Surfaces read-only Memory Proposal Packs for human review before any
- * durable memory/skill mutation. Props-driven for MVP: the host wires
- * `fetchPacks` / `onUpdateProposalStatus` once IPC lands in main.
+ * durable memory/skill mutation. Props-driven: the host wires
+ * `fetchPacks` / `onUpdateProposalStatus` via preload IPC.
  *
  * Mirrors ApprovalLedgerPanel patterns: filters, expandable rows, export,
  * refresh-on-focus. Skill patches render as a bounded diff preview only —
