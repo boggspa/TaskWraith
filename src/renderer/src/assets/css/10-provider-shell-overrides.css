@@ -3812,3 +3812,31 @@
   font-size: 11px;
   font-weight: 800;
 }
+
+/* Shell sign-off: these shells own their above-row chrome. Suppress only the
+ * row-level agent-aura pseudo glow so the composer surface aura and each shell's
+ * native row background/rim remain intact across light and dark themes. */
+:is(
+    [data-composer-style="gemini"],
+    [data-composer-style="kimi"],
+    [data-composer-style="modular"],
+    [data-composer-style="terminal"],
+    [data-composer-style="stub"],
+    [data-composer-style="obsidian"]
+  )
+  .app-transcript
+  .composer-above-bar-stack.fx-agent-aura
+  > :is(
+    .composer-above-bar,
+    .ensemble-above-row,
+    .queued-messages-above-row,
+    .composer-create-pr-row,
+    .ensemble-roster-preset-picker.is-compact
+  )::after {
+  display: none !important;
+  content: none !important;
+  background: none !important;
+  box-shadow: none !important;
+  animation: none !important;
+  opacity: 0 !important;
+}

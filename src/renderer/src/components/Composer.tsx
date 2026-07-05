@@ -109,6 +109,7 @@ import {
   resolveClaudeDefaultReasoningEffort
 } from '../lib/providerModelDefaults'
 import { codexReasoningDisplayLabel, claudeReasoningDisplayLabel } from '../lib/composerChipFormat'
+import { composerVoicePlacementForStyle } from '../lib/composerVoicePlacement'
 import { composerPermissionOptions } from '../lib/planModeLabels'
 import { WORKSPACE_POLICY_SERVICES } from '../lib/workspacePolicyServices'
 import { createPortal } from 'react-dom'
@@ -854,13 +855,10 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
   const latestComposerChatIdRef = useRef(currentComposerChatId)
   const voicePickerProvider: ProviderId =
     isCurrentEnsembleChat && selectedParticipant ? selectedParticipant.provider : currentProvider
-  const voiceButtonLivesWithPermissions =
-    appearance.composerStyle === 'claude' ||
-    appearance.composerStyle === 'gemini' ||
-    appearance.composerStyle === 'cursor' ||
-    appearance.composerStyle === 'modular' ||
-    appearance.composerStyle === 'obsidian' ||
-    appearance.composerStyle === 'alabaster'
+  const voicePlacement = composerVoicePlacementForStyle(appearance.composerStyle)
+  const voiceButtonLivesWithPermissions = voicePlacement === 'permissions'
+  const voiceButtonLivesInActionRow = voicePlacement === 'action-row'
+  const voiceButtonLivesInSendCluster = voicePlacement === 'send-cluster'
   const imageDragCounterRef = useRef(0)
   const sendConfirmationTimeoutRef = useRef<number | null>(null)
   const sendConfirmationRafRef = useRef<number | null>(null)
@@ -3952,6 +3950,19 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                           onOpenRemoteSetup={onOpenHumanCollaborationRemoteSetup}
                           onRefreshHealth={onRefreshHumanCollaborationInviteHealth}
                         />
+                        {voiceButtonLivesInActionRow && (
+                          <ComposerVoiceInputButton
+                            composerStyle={appearance.composerStyle}
+                            disabled={
+                              isCurrentComposerLocked ||
+                              !currentChat ||
+                              (!isCurrentGlobalChat && !currentWorkspace)
+                            }
+                            onCaptureStateChange={setVoiceCaptureState}
+                            onTranscript={handleVoiceTranscript}
+                            provider={voicePickerProvider}
+                          />
+                        )}
                         {/*
                         1.0.6-EW70 — the run/queue/steer/stop buttons are
                         wrapped in `.composer-send-cluster` (display:contents
@@ -3962,7 +3973,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                         shells keep it here at the right of the control row.
                       */}
                         <span className="composer-send-cluster">
-                          {appearance.composerStyle === 'codex' && (
+                          {voiceButtonLivesInSendCluster && (
                             <ComposerVoiceInputButton
                               composerStyle={appearance.composerStyle}
                               disabled={
