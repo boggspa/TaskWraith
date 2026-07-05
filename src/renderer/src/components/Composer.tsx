@@ -1791,6 +1791,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             gitSnapshot={primaryGitSnapshot}
                             fallbackBranch={currentWorkspace?.branch}
                             detached={primaryGitSnapshot?.detached ?? false}
+                            composerStyle={appearance.composerStyle}
                             composerWorktreeSelection={composerWorktreeSelection}
                             onSnapshotRefresh={setPrimaryGitSnapshot}
                             onWorktreeSelectionChange={onComposerWorktreeChange}

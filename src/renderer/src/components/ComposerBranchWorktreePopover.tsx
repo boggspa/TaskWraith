@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import type { ComposerStyle } from '../../../main/store/types'
 import type { GitRepositorySnapshot } from '../../../main/services/GitService'
 import { branchTone } from './GitStatusChips'
 import {
@@ -26,6 +27,7 @@ export interface ComposerBranchWorktreePopoverProps {
   gitSnapshot: GitRepositorySnapshot | null | undefined
   fallbackBranch?: string
   detached?: boolean
+  composerStyle: ComposerStyle
   composerWorktreeSelection?: ComposerWorktreeSelection | null
   onSnapshotRefresh?: (snapshot: GitRepositorySnapshot | null) => void
   onWorktreeSelectionChange?: (
@@ -34,10 +36,12 @@ export interface ComposerBranchWorktreePopoverProps {
   ) => void
 }
 
+type PopoverPlacement = 'above' | 'below'
+
 function computePopoverPosition(
   rect: DOMRect,
   popoverSize: { width: number; height: number }
-): { left: number; top: number } {
+): { left: number; top: number; placement: PopoverPlacement } {
   const margin = 8
   const width = Math.min(popoverSize.width, window.innerWidth - margin * 2)
   const height = Math.min(popoverSize.height, window.innerHeight - margin * 2)
@@ -45,13 +49,19 @@ function computePopoverPosition(
     Math.max(rect.left, margin),
     Math.max(margin, window.innerWidth - width - margin)
   )
-  const belowTop = rect.bottom + 6
-  const aboveTop = rect.top - height - 6
-  const top =
-    belowTop + height <= window.innerHeight - margin
-      ? belowTop
-      : Math.max(margin, aboveTop)
-  return { left, top }
+  const aboveAnchorTop = rect.top - 8
+  if (aboveAnchorTop - height >= margin) {
+    return { left, top: aboveAnchorTop, placement: 'above' }
+  }
+  const belowTop = rect.bottom + 8
+  if (belowTop + height <= window.innerHeight - margin) {
+    return { left, top: belowTop, placement: 'below' }
+  }
+  return {
+    left,
+    top: Math.max(margin + height, aboveAnchorTop),
+    placement: 'above'
+  }
 }
 
 export function ComposerBranchWorktreePopover({
@@ -59,12 +69,17 @@ export function ComposerBranchWorktreePopover({
   gitSnapshot,
   fallbackBranch,
   detached = false,
+  composerStyle,
   composerWorktreeSelection,
   onSnapshotRefresh,
   onWorktreeSelectionChange
 }: ComposerBranchWorktreePopoverProps): React.JSX.Element {
   const [open, setOpen] = useState(false)
-  const [position, setPosition] = useState<{ left: number; top: number } | null>(null)
+  const [position, setPosition] = useState<{
+    left: number
+    top: number
+    placement: PopoverPlacement
+  } | null>(null)
   const [branches, setBranches] = useState<GitBranchEntry[]>([])
   const [worktrees, setWorktrees] = useState<GitWorktreeEntry[]>([])
   const [loading, setLoading] = useState(false)
@@ -212,8 +227,12 @@ export function ComposerBranchWorktreePopover({
       ? createPortal(
           <div
             ref={popoverRef}
-            className="composer-branch-popover"
-            style={{ left: position.left, top: position.top }}
+            className={`composer-combined-picker-popover composer-branch-popover shell-${composerStyle}`}
+            style={{
+              left: position.left,
+              top: position.top,
+              transform: position.placement === 'above' ? 'translateY(-100%)' : undefined
+            }}
             role="dialog"
             aria-label="Branch and worktree"
           >

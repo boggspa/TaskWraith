@@ -26,7 +26,8 @@
   font-weight: 600;
 }
 
-.composer-branch-popover {
+/* Layout-only overrides; frosted chrome comes from .composer-combined-picker-popover. */
+.composer-combined-picker-popover.composer-branch-popover {
   position: fixed;
   z-index: 1200;
   min-width: 16rem;
@@ -34,10 +35,8 @@
   max-height: min(22rem, calc(100vh - 2rem));
   display: flex;
   flex-direction: column;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  background: var(--popover-bg, var(--bg-elevated, var(--bg-secondary)));
-  box-shadow: var(--shadow-lg, 0 12px 32px rgba(0, 0, 0, 0.28));
+  gap: 0;
+  padding: 0;
   overflow: hidden;
 }
 
