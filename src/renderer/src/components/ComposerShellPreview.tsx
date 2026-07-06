@@ -299,7 +299,7 @@ export function ComposerShellPreview({
                 </svg>
                 <span>
                   Preview workspace ·{' '}
-                  <em className="composer-above-bar-secondary-branch git-tone-main">main</em>
+                  <span className="composer-above-bar-secondary-branch git-tone-main">main</span>
                 </span>
               </span>
             </div>

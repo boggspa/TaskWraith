@@ -401,14 +401,14 @@ export function ExternalPathAboveRow({
             {descriptor.isRepo && (snapshot?.branch || descriptor.branch) ? (
               <>
                 {' · '}
-                <em
+                <span
                   className={`composer-above-bar-secondary-branch git-tone-${branchTone(
                     snapshot?.detached ? undefined : (snapshot?.branch ?? descriptor.branch),
                     snapshot?.detached ?? false
                   )}`}
                 >
                   {snapshot?.detached ? 'detached HEAD' : snapshot?.branch || descriptor.branch}
-                </em>
+                </span>
               </>
             ) : null}
           </span>

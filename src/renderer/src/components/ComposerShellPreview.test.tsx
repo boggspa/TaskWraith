@@ -133,6 +133,13 @@ describe('ComposerShellPreview — per-shell send glyph', () => {
     expect(render('default')).toContain('Review changes')
   })
 
+  it('renders the above-row branch label without italic emphasis markup', () => {
+    const html = render('codex')
+
+    expect(html).toContain('<span class="composer-above-bar-secondary-branch git-tone-main">main</span>')
+    expect(html).not.toContain('<em class="composer-above-bar-secondary-branch')
+  })
+
   it('places the context donut beside the model picker only for the Codex shell', () => {
     const codex = render('codex')
     const codexContext = codex.indexOf('data-composer-control="context"')
