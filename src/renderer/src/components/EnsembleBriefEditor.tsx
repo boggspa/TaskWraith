@@ -25,6 +25,9 @@ interface EnsembleBriefEditorProps {
   textareaRef?: RefObject<HTMLTextAreaElement | null>
   spellCheck?: boolean
   syncEpoch?: string | number
+  commitLabel?: string
+  commitTitle?: string
+  onCommit?: () => void
   onChange: (value: string) => void
   onBlur?: () => void
   onContextMenu?: (event: MouseEvent<HTMLTextAreaElement>) => void
@@ -66,6 +69,9 @@ export function EnsembleBriefEditor({
   textareaRef,
   spellCheck = true,
   syncEpoch = 'ensemble-brief-editor',
+  commitLabel = 'Save',
+  commitTitle = 'Save changes',
+  onCommit,
   onChange,
   onBlur,
   onContextMenu
@@ -123,6 +129,17 @@ export function EnsembleBriefEditor({
       <div className="ensemble-brief-editor-head">
         <span className={labelClassName || 'ensemble-brief-editor-label'}>{label}</span>
         <div className="ensemble-brief-preset-controls">
+          {onCommit ? (
+            <button
+              type="button"
+              className="ensemble-brief-preset-action ensemble-brief-commit-action"
+              disabled={disabled}
+              onClick={onCommit}
+              title={commitTitle}
+            >
+              {commitLabel}
+            </button>
+          ) : null}
           <select
             className="ensemble-brief-preset-select"
             value={selectedPresetId}
@@ -153,9 +170,9 @@ export function EnsembleBriefEditor({
             className="ensemble-brief-preset-action"
             disabled={disabled || !value.trim()}
             onClick={handleSavePreset}
-            title="Save this brief for reuse"
+            title="Save this brief as a reusable preset"
           >
-            Save
+            Save preset
           </button>
           <button
             type="button"

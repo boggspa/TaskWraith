@@ -277,6 +277,14 @@ function RosterParticipantRow({
           </button>
           <button
             type="button"
+            className="settings-roster-save-changes"
+            onClick={onFlush}
+            title="Save this participant's current role and brief to the roster preset"
+          >
+            Save changes
+          </button>
+          <button
+            type="button"
             className={`settings-roster-save-pool${isLinkedToPool ? ' is-linked' : ''}`}
             onClick={() => onSaveToPool(participant.id)}
             title={
@@ -373,6 +381,9 @@ function RosterParticipantRow({
           textareaClassName="settings-roster-textarea"
           syncEpoch={`${participant.id}:${mentionParticipants.length}`}
           placeholder="What should this participant focus on each turn?"
+          commitLabel="Save"
+          commitTitle="Save this participant's role and brief to the roster preset"
+          onCommit={onFlush}
           onChange={(value) => onPatch(participant.id, { instructions: value }, false)}
           onBlur={onFlush}
         />

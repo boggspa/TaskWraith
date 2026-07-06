@@ -1599,6 +1599,12 @@
   border-color: color-mix(in srgb, var(--accent) 36%, transparent);
 }
 
+.ensemble-brief-commit-action {
+  border-color: color-mix(in srgb, var(--accent) 38%, transparent);
+  color: color-mix(in srgb, var(--accent) 88%, var(--text-primary));
+  font-weight: 700;
+}
+
 .ensemble-brief-textarea-wrap {
   position: relative;
   width: 100%;

@@ -111,6 +111,13 @@ export function savedRosterPresetForEnsemble(
   return presets.find((preset) => rosterPresetComparableKey(preset) === currentKey) ?? null
 }
 
+export function defaultRosterOverwritePreset(
+  ensemble: EnsembleConfig | null | undefined,
+  presets: readonly EnsembleRosterPreset[]
+): EnsembleRosterPreset | null {
+  return savedRosterPresetForEnsemble(ensemble, presets)
+}
+
 export function rosterPresetTriggerLabel(name: string | null | undefined): string {
   const trimmed = name?.trim() ?? ''
   if (!trimmed) return ROSTER_TRIGGER_FALLBACK_LABEL
@@ -227,7 +234,8 @@ export function EnsembleRosterPresetPicker({
 
   const canSave = Boolean(ensemble) && !disabled
   const activePreset = savedRosterPresetForEnsemble(ensemble, presets)
-  const defaultOverwritePreset = activePreset || presets[0]
+  const defaultOverwritePreset = defaultRosterOverwritePreset(ensemble, presets)
+  const canOverwriteActivePreset = canSave && Boolean(defaultOverwritePreset)
   const triggerLabel = rosterPresetTriggerLabel(activePreset?.name)
 
   const handleSaveAsCurrent = (): void => {
@@ -238,7 +246,7 @@ export function EnsembleRosterPresetPicker({
 
   const handleOverwritePreset = (preset?: EnsembleRosterPreset): void => {
     if (!ensemble || disabled) return
-    const target = preset || activePreset || presets[0]
+    const target = preset || defaultOverwritePreset
     if (!target) {
       handleSaveAsCurrent()
       return
@@ -353,12 +361,12 @@ export function EnsembleRosterPresetPicker({
                 <button
                   type="button"
                   className="composer-combined-picker-row ensemble-roster-preset-popover-action-row"
-                  disabled={!canSave}
+                  disabled={!canOverwriteActivePreset}
                   onClick={() => handleOverwritePreset()}
                   title={
                     defaultOverwritePreset
                       ? `Overwrite "${defaultOverwritePreset.name}" with the current roster`
-                      : 'No saved roster yet; use Save As'
+                      : 'Current roster differs from saved presets; use Save As or a row Save target'
                   }
                 >
                   <span className="composer-combined-picker-row-label">Save</span>

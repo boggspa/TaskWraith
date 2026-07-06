@@ -6933,7 +6933,8 @@ input:disabled, select:disabled, textarea:disabled {
   cursor: default;
 }
 
-/* ── Save-to-pool pill (per participant row) ─────────────────────────────── */
+/* ── Per-participant save pills ──────────────────────────────────────────── */
+.settings-roster-save-changes,
 .settings-roster-save-pool {
   flex: 0 0 auto;
   border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border-color));
@@ -6947,6 +6948,12 @@ input:disabled, select:disabled, textarea:disabled {
   white-space: nowrap;
 }
 
+.settings-roster-save-changes {
+  border-color: color-mix(in srgb, var(--accent) 42%, transparent);
+  color: color-mix(in srgb, var(--accent) 88%, var(--text-primary));
+}
+
+.settings-roster-save-changes:hover,
 .settings-roster-save-pool:hover {
   background: color-mix(in srgb, var(--accent) 12%, transparent);
   color: color-mix(in srgb, var(--accent) 86%, var(--text-primary));

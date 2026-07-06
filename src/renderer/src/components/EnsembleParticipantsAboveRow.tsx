@@ -1788,6 +1788,8 @@ export function EnsembleParticipantOverflowPopover({
   // the popover closes via outside-click / Escape / unmount WITHOUT blurring.
   const onPatchRef = useRef(onPatch)
   onPatchRef.current = onPatch
+  const lockedRef = useRef(locked)
+  lockedRef.current = locked
   const roleDraftRef = useRef(roleDraft)
   roleDraftRef.current = roleDraft
   const instructionsDraftRef = useRef(instructionsDraft)
@@ -1796,6 +1798,7 @@ export function EnsembleParticipantOverflowPopover({
   committedRef.current = { role: participant.role, instructions: participant.instructions }
 
   const commitDrafts = useCallback((): void => {
+    if (lockedRef.current) return
     const patch: Partial<EnsembleParticipant> = {}
     if (roleDraftRef.current !== committedRef.current.role) patch.role = roleDraftRef.current
     if (instructionsDraftRef.current !== committedRef.current.instructions) {
@@ -2006,6 +2009,9 @@ export function EnsembleParticipantOverflowPopover({
         textareaClassName="ensemble-above-overflow-instructions-field"
         textareaRef={instructionsTextareaRef}
         syncEpoch={`${participant.id}:${mentionParticipants.length}`}
+        commitLabel="Save"
+        commitTitle="Save this role and brief to the active chat"
+        onCommit={commitDrafts}
         onChange={setInstructionsDraft}
         onContextMenu={instructionsContextMenu.handleContextMenu}
         onBlur={commitDrafts}

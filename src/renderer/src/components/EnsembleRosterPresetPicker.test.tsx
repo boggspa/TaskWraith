@@ -5,6 +5,7 @@ import {
   type EnsembleRosterPreset
 } from '../lib/ensembleRosterPresets'
 import {
+  defaultRosterOverwritePreset,
   rosterPresetMenuMeta,
   rosterPresetTriggerLabel,
   savedRosterPresetForEnsemble
@@ -96,5 +97,20 @@ describe('EnsembleRosterPresetPicker', () => {
         [saved]
       )
     ).toBeNull()
+  })
+
+  it('does not pick a fallback overwrite target once the live roster has drifted', () => {
+    const current = ensemble()
+    const saved = buildEnsembleRosterPresetFromConfig('Visual UI Architect', current, 1)
+    const other = { ...preset(1), id: 'preset-2', name: 'Most recent', updatedAt: 2 }
+    const drifted = {
+      ...current,
+      participants: current.participants.map((participant, index) =>
+        index === 0 ? { ...participant, instructions: 'Different live goal.' } : participant
+      )
+    }
+
+    expect(defaultRosterOverwritePreset(drifted, [other, saved])).toBeNull()
+    expect(defaultRosterOverwritePreset(current, [other, saved])?.id).toBe(saved.id)
   })
 })
