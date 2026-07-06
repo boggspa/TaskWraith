@@ -12593,14 +12593,16 @@ button.diff-file-row {
   will-change: transform;
 }
 .notification-zone-pane.is-incoming.from-right {
-  animation-name: notification-zone-swipe-in-right;
+  animation: notification-zone-swipe-in-right 320ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
+  will-change: transform;
 }
 .notification-zone-pane.is-outgoing.to-right {
   animation: notification-zone-swipe-out-right 320ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
   will-change: transform;
 }
 .notification-zone-pane.is-outgoing.to-left {
-  animation-name: notification-zone-swipe-out-left;
+  animation: notification-zone-swipe-out-left 320ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
+  will-change: transform;
 }
 /* Mirrors the welcome-heatmap swipe keyframes (02-transcript-messages-fx.css)
    for a consistent feel; kept independent so neither effect couples to the other. */
