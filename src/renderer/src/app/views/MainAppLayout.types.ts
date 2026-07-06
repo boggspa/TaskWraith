@@ -25,6 +25,7 @@ type MainAppLayoutSettingsTakeoverAppearanceProps = Pick<
   | 'themeCornerStyle'
   | 'themeAccentStyle'
   | 'toolIconAccent'
+  | 'diffStatColors'
   | 'appIconVariant'
   | 'userBubbleColor'
   | 'promptSurfaceStyle'
