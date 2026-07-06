@@ -40,6 +40,134 @@ function stableJson(value: unknown): string {
   }
 }
 
+const MESSAGE_SIGNATURE_SAMPLE_CHARS = 384
+
+function sampledTextSignature(value: unknown): string {
+  if (typeof value !== 'string' || value.length === 0) return ''
+  const sample =
+    value.length > MESSAGE_SIGNATURE_SAMPLE_CHARS * 2
+      ? `${value.slice(0, MESSAGE_SIGNATURE_SAMPLE_CHARS)}\u0000${value.slice(-MESSAGE_SIGNATURE_SAMPLE_CHARS)}`
+      : value
+  let hash = 2166136261
+  let newlines = 0
+  for (let index = 0; index < sample.length; index += 1) {
+    const code = sample.charCodeAt(index)
+    hash ^= code
+    hash = Math.imul(hash, 16777619)
+    if (code === 10) newlines += 1
+  }
+  return `${value.length}:${newlines}:${(hash >>> 0).toString(36)}`
+}
+
+function primitiveSignature(value: unknown): string {
+  if (value === undefined || value === null) return ''
+  if (typeof value === 'string') return sampledTextSignature(value)
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value)
+  return sampledTextSignature(stableJson(value).slice(0, MESSAGE_SIGNATURE_SAMPLE_CHARS * 2))
+}
+
+function metadataRenderSignature(message: ChatMessage): string {
+  const metadata = message.metadata
+  if (!metadata) return ''
+  const pooledIdentity = metadata.pooledAgentIdentity as
+    | { agentId?: unknown; nickname?: unknown; iconKind?: unknown; hue?: unknown }
+    | undefined
+  return [
+    metadata.kind,
+    metadata.subThreadId,
+    metadata.subThreadProvider,
+    metadata.subThreadTitle,
+    metadata.parentProvider,
+    metadata.delegationPromptPreview,
+    primitiveSignature(metadata.delegationPrompt),
+    metadata.returnResultToParent,
+    metadata.ensembleLaneId,
+    metadata.ensembleLaneIntent,
+    metadata.ensembleProvider,
+    metadata.ensembleRole,
+    metadata.ensembleModel,
+    metadata.ensembleOrder,
+    metadata.guestChatId,
+    metadata.guestProvider,
+    metadata.guestModel,
+    metadata.guestRole,
+    metadata.parentChatId,
+    metadata.pinnedAt,
+    metadata.feedback?.vote,
+    metadata.feedback?.reason,
+    primitiveSignature(metadata.feedback?.note),
+    metadata.proposedPlan?.title,
+    primitiveSignature(metadata.proposedPlan?.body),
+    metadata.proposedPlan?.status,
+    metadata.proposedPlan?.artifactPath,
+    metadata.pollId,
+    metadata.pooledAgentId,
+    pooledIdentity?.agentId,
+    pooledIdentity?.nickname,
+    pooledIdentity?.iconKind,
+    pooledIdentity?.hue,
+    Array.isArray(metadata.groupedFanoutMessageIds) ? metadata.groupedFanoutMessageIds.length : '',
+    Array.isArray(metadata.groupedToolMessageIds) ? metadata.groupedToolMessageIds.length : '',
+    Array.isArray(metadata.ensembleFanoutTranscriptParts)
+      ? metadata.ensembleFanoutTranscriptParts.length
+      : '',
+    Array.isArray(metadata.mediaRefs)
+      ? metadata.mediaRefs
+          .map(
+            (ref: any) =>
+              `${ref?.id || ''}:${ref?.mimeType || ''}:${ref?.width || ''}:${ref?.height || ''}`
+          )
+          .join('|')
+      : '',
+    Array.isArray(metadata.imagePaths) ? metadata.imagePaths.join('|') : '',
+    Array.isArray(metadata.imageThumbnails)
+      ? metadata.imageThumbnails
+          .map((thumb: any) => `${thumb?.mimeType || ''}:${thumb?.dataBase64?.length || 0}`)
+          .join('|')
+      : ''
+  ].join('\u0001')
+}
+
+function diffSummarySignature(diffSummary: any): string {
+  if (!diffSummary || typeof diffSummary !== 'object') return ''
+  const files = Array.isArray(diffSummary.files) ? diffSummary.files : []
+  return [
+    diffSummary.additions,
+    diffSummary.deletions,
+    files.length,
+    files
+      .slice(0, 16)
+      .map(
+        (file: any) =>
+          `${file?.path || ''}:${file?.status || ''}:${file?.additions ?? ''}:${file?.deletions ?? ''}`
+      )
+      .join('|')
+  ].join(':')
+}
+
+function toolActivitySignature(
+  activity: NonNullable<ChatMessage['toolActivities']>[number]
+): string {
+  return [
+    activity.id,
+    activity.toolName,
+    activity.displayName,
+    activity.category,
+    activity.status,
+    activity.startedAt,
+    activity.endedAt,
+    activity.durationMs,
+    primitiveSignature(activity.resultSummary),
+    primitiveSignature(activity.outputPreview),
+    diffSummarySignature(activity.diffSummary),
+    primitiveSignature(activity.parameters),
+    activity.workflowSummary ? primitiveSignature(activity.workflowSummary) : '',
+    activity.reviewSummary ? primitiveSignature(activity.reviewSummary) : '',
+    activity.rawUseEvent ? 'raw-use' : '',
+    activity.rawResultEvent ? 'raw-result' : ''
+  ].join('\u0002')
+}
+
 export function transcriptChatRenderSignature(chat: ChatRecord | null | undefined): string {
   if (!chat) return ''
   const participants =
@@ -65,7 +193,17 @@ export function transcriptChatRenderSignature(chat: ChatRecord | null | undefine
 }
 
 export function transcriptMessageRenderSignature(message: ChatMessage): string {
-  return stableJson(message)
+  const activities = message.toolActivities || []
+  return [
+    message.id,
+    message.role,
+    message.timestamp,
+    message.runId,
+    sampledTextSignature(message.content),
+    metadataRenderSignature(message),
+    activities.length,
+    activities.map(toolActivitySignature).join('\u0003')
+  ].join('\u0001')
 }
 
 export function transcriptRowRenderSignatureEqual(

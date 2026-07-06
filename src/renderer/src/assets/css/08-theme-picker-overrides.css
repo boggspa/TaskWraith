@@ -650,6 +650,9 @@
   padding: 8px 10px;
   font-weight: 600;
 }
+.trusted-session-modal .approval-elevation-caution {
+  border-left: 0;
+}
 .approval-elevation-ack {
   display: flex;
   gap: 8px;

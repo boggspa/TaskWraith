@@ -158,6 +158,35 @@ describe('EnsembleFanoutResultCard', () => {
     expect(html).toContain('Fanout note 39')
   })
 
+  it('keeps huge collapsed fan-out markdown as a cheap preview until expanded', () => {
+    const hugeContent = `START\n${'x'.repeat(8_000)}\nUNRENDERED_FANOUT_TAIL`
+    const message = fanoutMessage({ content: hugeContent })
+
+    const collapsedHtml = renderToStaticMarkup(
+      <EnsembleFanoutResultCard
+        message={message}
+        expanded={false}
+        onExpandedChange={() => {}}
+        onPreviewImage={() => {}}
+      />
+    )
+
+    expect(collapsedHtml).toContain('Collapsed fan-out result preview')
+    expect(collapsedHtml).toContain('Full lane output is rendered when expanded.')
+    expect(collapsedHtml).not.toContain('UNRENDERED_FANOUT_TAIL')
+
+    const expandedHtml = renderToStaticMarkup(
+      <EnsembleFanoutResultCard
+        message={message}
+        expanded
+        onExpandedChange={() => {}}
+        onPreviewImage={() => {}}
+      />
+    )
+
+    expect(expandedHtml).toContain('UNRENDERED_FANOUT_TAIL')
+  })
+
   it('nests and bounds tool-heavy fan-out transcript parts', () => {
     const activities = Array.from({ length: 120 }, (_, index) =>
       toolActivity({

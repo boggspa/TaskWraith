@@ -2447,19 +2447,27 @@ export function ActivityStack({
     [controlledLiveViewportExpanded, onLiveActivityViewportExpandedChange]
   )
 
-  if (!activities || activities.length === 0) return null
   // 1.0.74 — same-tool grouping is unified across single + ensemble
   // (no per-mode split): runs of 2+ consecutive same-family terminal
   // activities fold into one expandable compact group.
-  const timelineItems = buildTimelineItems(topLevelActivities)
+  const timelineItems = useMemo(() => buildTimelineItems(topLevelActivities), [topLevelActivities])
   const liveViewportEnabled = Boolean(liveActivityViewport && topLevelActivities.length > 0)
-  const renderedTimelineItems =
-    liveViewportEnabled &&
-    !liveViewportExpanded &&
-    timelineItems.length > COLLAPSED_LIVE_ACTIVITY_ITEM_LIMIT
-      ? timelineItems.slice(-COLLAPSED_LIVE_ACTIVITY_ITEM_LIMIT)
-      : timelineItems
+  const renderedTimelineItems = useMemo(
+    () =>
+      liveViewportEnabled &&
+      !liveViewportExpanded &&
+      timelineItems.length > COLLAPSED_LIVE_ACTIVITY_ITEM_LIMIT
+        ? timelineItems.slice(-COLLAPSED_LIVE_ACTIVITY_ITEM_LIMIT)
+        : timelineItems,
+    [liveViewportEnabled, liveViewportExpanded, timelineItems]
+  )
   const hiddenTimelineItemCount = timelineItems.length - renderedTimelineItems.length
+  const timelineSegments = useMemo(
+    () => (liveViewportEnabled ? buildTimelineSegments(renderedTimelineItems) : []),
+    [liveViewportEnabled, renderedTimelineItems]
+  )
+
+  if (!activities || activities.length === 0) return null
 
   const resolveThreadActivities = (thread: ChildAgentThread): ToolActivity[] => {
     return thread.toolActivityIds
@@ -2593,7 +2601,6 @@ export function ActivityStack({
   // tool result cannot swallow the model's reasoning trace. The child-agent
   // spawn header stays above because it is navigational chrome, not stream detail.
   if (liveViewportEnabled) {
-    const timelineSegments = buildTimelineSegments(renderedTimelineItems)
     return (
       <div className="activity-timeline">
         {header}

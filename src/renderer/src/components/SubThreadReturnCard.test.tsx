@@ -75,6 +75,35 @@ describe('SubThreadReturnCard', () => {
     expect(html).toContain('Collapse result')
   })
 
+  it('keeps huge collapsed return bodies as a cheap preview until expanded', () => {
+    const hugeBody = `START\n${'x'.repeat(8_000)}\nUNRENDERED_TAIL`
+    const collapsedHtml = renderToStaticMarkup(
+      <SubThreadReturnCard
+        message={subThreadMessage({
+          content: `↩ Result from Codex sub-thread (Build agent):\n\n${hugeBody}`
+        })}
+        resultExpanded={false}
+        onResultExpandedChange={() => {}}
+      />
+    )
+
+    expect(collapsedHtml).toContain('Collapsed sub-thread result preview')
+    expect(collapsedHtml).toContain('Full result is rendered when expanded.')
+    expect(collapsedHtml).not.toContain('UNRENDERED_TAIL')
+
+    const expandedHtml = renderToStaticMarkup(
+      <SubThreadReturnCard
+        message={subThreadMessage({
+          content: `↩ Result from Codex sub-thread (Build agent):\n\n${hugeBody}`
+        })}
+        resultExpanded
+        onResultExpandedChange={() => {}}
+      />
+    )
+
+    expect(expandedHtml).toContain('UNRENDERED_TAIL')
+  })
+
   it('renders transcript message actions when handlers are provided', () => {
     const html = renderToStaticMarkup(
       <SubThreadReturnCard

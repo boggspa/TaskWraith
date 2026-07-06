@@ -5539,6 +5539,30 @@ html:has(.chat-split-region.chat-split-hidden-for-settings) .transcript-user-gut
   color: var(--text-primary);
 }
 
+.subthread-return-preview,
+.ensemble-fanout-result-preview {
+  display: grid;
+  gap: 0.45rem;
+  min-width: 0;
+}
+
+.subthread-return-preview pre,
+.ensemble-fanout-result-preview pre {
+  max-width: 100%;
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+  color: color-mix(in srgb, var(--text-primary) 92%, transparent);
+}
+
+.subthread-return-preview-note,
+.ensemble-fanout-result-preview-note {
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--text-tertiary);
+}
+
 .ensemble-fanout-result-message {
   width: 100%;
 }

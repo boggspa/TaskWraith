@@ -28,6 +28,9 @@ interface SubThreadReturnCardProps {
   onResultExpandedChange?: (expanded: boolean) => void
 }
 
+const COLLAPSED_RESULT_MARKDOWN_LIMIT = 6_000
+const COLLAPSED_RESULT_PREVIEW_CHARS = 2_400
+
 function textValue(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined
 }
@@ -57,11 +60,18 @@ export function SubThreadReturnCard({
   // delegation timeline). Seeded by the sub-thread chat id.
   const agentIdentity = subThreadId ? assignAgentIdentityFromSeed(subThreadId) : null
   const body = subThreadReturnBody(message.content)
+  const renderFullBody = Boolean(resultExpanded) || body.length <= COLLAPSED_RESULT_MARKDOWN_LIMIT
+  const previewBody =
+    body.length > COLLAPSED_RESULT_PREVIEW_CHARS
+      ? `${body.slice(0, COLLAPSED_RESULT_PREVIEW_CHARS).trimEnd()}\n...`
+      : body
 
   return (
     <article
       className="subthread-return-card"
-      style={agentIdentity ? ({ ['--agent-rim']: agentIdentity.accent } as CSSProperties) : undefined}
+      style={
+        agentIdentity ? ({ ['--agent-rim']: agentIdentity.accent } as CSSProperties) : undefined
+      }
     >
       <header className="subthread-return-header">
         <div className="subthread-return-heading">
@@ -136,7 +146,19 @@ export function SubThreadReturnCard({
           jumpLabel="Jump to latest result"
         >
           <div className="subthread-return-body-inner">
-            <MarkdownMessage content={body} chat={chat} />
+            {renderFullBody ? (
+              <MarkdownMessage content={body} chat={chat} />
+            ) : (
+              <div
+                className="subthread-return-preview"
+                aria-label="Collapsed sub-thread result preview"
+              >
+                <pre>{previewBody}</pre>
+                <div className="subthread-return-preview-note">
+                  Full result is rendered when expanded.
+                </div>
+              </div>
+            )}
           </div>
         </LiveActivityViewport>
       </div>

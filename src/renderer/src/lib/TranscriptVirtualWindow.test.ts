@@ -272,8 +272,9 @@ describe('TranscriptVirtualWindow', () => {
       expect(estimatedHeightFor('assistant', false, 100000)).toBe(CONTENT_SCALE_CAP_PX)
     })
 
-    it('1.0.7 — does NOT scale tool rows (height is activity-driven, not text-length)', () => {
-      expect(estimatedHeightFor('tool', false, 5000)).toBe(ESTIMATED_ROW_HEIGHT_PX.tool)
+    it('sizes dense viewport rows above the flat estimate from a coarse content signal', () => {
+      expect(estimatedHeightFor('tool', false, 5000)).toBe(CONTENT_SCALE_CAP_PX)
+      expect(estimatedHeightFor('return', false, 2000)).toBe(Math.round(2000 * CONTENT_PX_PER_CHAR))
     })
 
     it('1.0.7 — adds the run-boundary band on top of a scaled estimate', () => {

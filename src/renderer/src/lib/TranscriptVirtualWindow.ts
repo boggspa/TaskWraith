@@ -252,8 +252,14 @@ const CONTENT_SCALED_TYPES: ReadonlySet<VirtualRowType> = new Set([
   'assistant',
   'user',
   'system',
-  'error'
+  'error',
+  'tool',
+  'return',
+  'fanoutResult',
+  'guestReply',
+  'collaborator'
 ])
+const TOOL_ACTIVITY_ESTIMATE_CHARS = 180
 
 export function estimatedHeightFor(
   rowType: VirtualRowType,
@@ -262,7 +268,10 @@ export function estimatedHeightFor(
 ): number {
   const base = ESTIMATED_ROW_HEIGHT_PX[rowType]
   const scaled = CONTENT_SCALED_TYPES.has(rowType)
-    ? Math.min(CONTENT_SCALE_CAP_PX, Math.max(base, Math.round(contentLength * CONTENT_PX_PER_CHAR)))
+    ? Math.min(
+        CONTENT_SCALE_CAP_PX,
+        Math.max(base, Math.round(contentLength * CONTENT_PX_PER_CHAR))
+      )
     : base
   return scaled + (hasRunBoundary ? RUN_BOUNDARY_HEIGHT_PX : 0)
 }
@@ -299,9 +308,21 @@ export function projectRow(
   if (!message || typeof message.id !== 'string') return null
   const rowType = classifyRowType(message)
   const hasRunBoundary = runBoundaryIds ? runBoundaryIds.has(message.id) : false
-  // Tool rows size by activity count, not text length, so they keep the flat
-  // estimate (contentLength 0); text rows scale with their content length.
-  const contentLength = message.role === 'tool' ? 0 : (message.content || '').length
+  // Tool/fan-out/sub-thread rows can hide a lot of content inside bounded
+  // viewports. Feed the virtualizer a coarse size signal so it does not begin
+  // from a tiny spacer and then spend extra passes correcting when the row
+  // enters view.
+  const activityEstimate =
+    (message.toolActivities?.length || 0) * TOOL_ACTIVITY_ESTIMATE_CHARS +
+    (message.toolActivities || []).reduce(
+      (total, activity) =>
+        total + (activity.resultSummary?.length || activity.outputPreview?.length || 0),
+      0
+    )
+  const contentLength =
+    rowType === 'tool'
+      ? activityEstimate
+      : Math.max((message.content || '').length, activityEstimate)
   return {
     id: message.id,
     rowKey: `${message.id}#${index}`,

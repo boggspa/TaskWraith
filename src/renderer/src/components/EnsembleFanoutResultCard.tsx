@@ -1,3 +1,4 @@
+import { useMemo } from 'react'
 import type {
   ChatMessage,
   ChatRecord,
@@ -19,6 +20,8 @@ import {
 
 const COLLAPSED_FANOUT_PART_LIMIT = 24
 const COLLAPSED_FANOUT_TOOL_VIEWPORT_HEIGHT = 184
+const COLLAPSED_FANOUT_MARKDOWN_LIMIT = 6_000
+const COLLAPSED_FANOUT_PREVIEW_CHARS = 2_400
 
 interface EnsembleFanoutResultCardProps {
   message: ChatMessage
@@ -86,6 +89,50 @@ function fanoutRevisionToken(input: {
   return `${input.transcriptParts.length}:${input.activities.length}:${(hash >>> 0).toString(36)}`
 }
 
+function FanoutContentPart({
+  content,
+  collapsed,
+  chat,
+  mediaRefs,
+  workspacePath,
+  onPreviewImage,
+  streamRunId
+}: {
+  content: string
+  collapsed: boolean
+  chat?: ChatRecord
+  mediaRefs: readonly ChatMediaRef[]
+  workspacePath?: string
+  onPreviewImage: (ref: ChatMediaRef) => void
+  streamRunId?: string
+}) {
+  if (!collapsed || content.length <= COLLAPSED_FANOUT_MARKDOWN_LIMIT) {
+    return (
+      <MarkdownMessage
+        content={content}
+        chat={chat}
+        mediaRefs={mediaRefs}
+        workspacePath={workspacePath}
+        onPreviewImage={onPreviewImage}
+        streamRunId={streamRunId}
+      />
+    )
+  }
+
+  const preview =
+    content.length > COLLAPSED_FANOUT_PREVIEW_CHARS
+      ? `${content.slice(0, COLLAPSED_FANOUT_PREVIEW_CHARS).trimEnd()}\n...`
+      : content
+  return (
+    <div className="ensemble-fanout-result-preview" aria-label="Collapsed fan-out result preview">
+      <pre>{preview}</pre>
+      <div className="ensemble-fanout-result-preview-note">
+        Full lane output is rendered when expanded.
+      </div>
+    </div>
+  )
+}
+
 export function EnsembleFanoutResultCard({
   message,
   chat,
@@ -110,20 +157,29 @@ export function EnsembleFanoutResultCard({
   const laneId = textValue(metadata.ensembleLaneId)
   const order = numberValue(metadata.ensembleOrder)
   const content = message.content || ''
-  const transcriptParts = readEnsembleFanoutTranscriptParts(message)
-  const activities = message.toolActivities || []
-  const mediaRefs = collectMessageMediaRefs(message)
-  const inlineImageIds = collectInlineImageRefIds(content, mediaRefs, workspacePath)
-  const stripRefs = inlineImageIds.size
-    ? mediaRefs.filter((ref) => !inlineImageIds.has(ref.id))
-    : mediaRefs
-  const revision = fanoutRevisionToken({
-    messageId: message.id,
-    content,
-    mediaCount: mediaRefs.length,
-    transcriptParts,
-    activities
-  })
+  const transcriptParts = useMemo(() => readEnsembleFanoutTranscriptParts(message), [message])
+  const activities = useMemo(() => message.toolActivities || [], [message.toolActivities])
+  const mediaRefs = useMemo(() => collectMessageMediaRefs(message), [message])
+  const inlineImageIds = useMemo(
+    () => collectInlineImageRefIds(content, mediaRefs, workspacePath),
+    [content, mediaRefs, workspacePath]
+  )
+  const stripRefs = useMemo(
+    () =>
+      inlineImageIds.size ? mediaRefs.filter((ref) => !inlineImageIds.has(ref.id)) : mediaRefs,
+    [inlineImageIds, mediaRefs]
+  )
+  const revision = useMemo(
+    () =>
+      fanoutRevisionToken({
+        messageId: message.id,
+        content,
+        mediaCount: mediaRefs.length,
+        transcriptParts,
+        activities
+      }),
+    [activities, content, mediaRefs.length, message.id, transcriptParts]
+  )
   const hasTranscriptParts = transcriptParts.length > 0
   const hasDisplayableParts = hasTranscriptParts
     ? transcriptParts.some(
@@ -140,6 +196,7 @@ export function EnsembleFanoutResultCard({
   const hiddenTranscriptPartCount = transcriptParts.length - renderedTranscriptParts.length
   const toolViewportLabel = `${role} fan-out tool calls`
   const controlledToolViewportExpanded = onExpandedChange ? expandedResult : undefined
+  const collapsedResult = !expandedResult
 
   return (
     <article className={`ensemble-fanout-result-card provider-${provider || 'unknown'}`}>
@@ -192,8 +249,9 @@ export function EnsembleFanoutResultCard({
                 {renderedTranscriptParts.map((part) =>
                   part.kind === 'content' && part.content.trim() ? (
                     <div key={part.id} className="ensemble-fanout-result-part">
-                      <MarkdownMessage
+                      <FanoutContentPart
                         content={part.content}
+                        collapsed={collapsedResult}
                         chat={chat}
                         mediaRefs={mediaRefs}
                         workspacePath={workspacePath}
@@ -216,7 +274,9 @@ export function EnsembleFanoutResultCard({
                         compactDensity={compactDensity}
                         liveActivityViewport
                         liveActivityViewportClassName="ensemble-fanout-tools-viewport"
-                        liveActivityViewportCollapsedMaxHeight={COLLAPSED_FANOUT_TOOL_VIEWPORT_HEIGHT}
+                        liveActivityViewportCollapsedMaxHeight={
+                          COLLAPSED_FANOUT_TOOL_VIEWPORT_HEIGHT
+                        }
                         liveActivityViewportLabel={toolViewportLabel}
                         liveActivityViewportExpandLabel="Expand tool calls"
                         liveActivityViewportCollapseLabel="Collapse tool calls"
@@ -237,8 +297,9 @@ export function EnsembleFanoutResultCard({
               </>
             ) : content ? (
               <div className="ensemble-fanout-result-part">
-                <MarkdownMessage
+                <FanoutContentPart
                   content={content}
+                  collapsed={collapsedResult}
                   chat={chat}
                   mediaRefs={mediaRefs}
                   workspacePath={workspacePath}
