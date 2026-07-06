@@ -327,6 +327,121 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
     expect(html).toContain('provider-alibaba')
   })
 
+  it('prepends participant-style headers to live tool-call viewports', () => {
+    const participant = ensembleParticipant({
+      id: 'codex-reviewer',
+      provider: 'codex',
+      role: 'Reviewer',
+      model: 'gpt-5.5',
+      reasoningEffort: 'xhigh'
+    })
+    const html = renderToStaticMarkup(
+      <TranscriptPanel
+        {...makeProps({
+          virtualize: false,
+          liveActivityViewport: true,
+          currentChat: activeEnsembleChat(participant),
+          currentProviderLabel: 'Ensemble',
+          currentProvider: 'codex',
+          messages: [
+            {
+              id: 'tool-codex-reviewer',
+              role: 'tool',
+              content: '',
+              timestamp: '2026-07-04T12:00:00.000Z',
+              runId: 'run-codex-reviewer',
+              metadata: {
+                kind: 'ensembleParticipantTools',
+                ensembleRoundId: 'round-1',
+                ensembleParticipantId: participant.id,
+                ensembleProvider: participant.provider
+              },
+              toolActivities: [
+                {
+                  id: 'tool-read-reviewer',
+                  toolName: 'read_file',
+                  displayName: 'Read README.md',
+                  category: 'read',
+                  status: 'success',
+                  metadata: {
+                    provider: 'codex',
+                    ensembleProvider: 'codex',
+                    ensembleParticipantId: participant.id
+                  }
+                } as ToolActivity
+              ]
+            } as ChatMessage
+          ]
+        })}
+      />
+    )
+
+    expect(html).toContain('activity-stack-speaker-header')
+    expect(html).toContain('message-meta provider-codex')
+    expect(html).toContain('Codex / Reviewer')
+    expect(html).toContain('5.5 Extra High')
+    expect(html).toContain('activity-tool-call-viewport')
+    expect(html).toContain('live-activity-viewport')
+    expect(html).not.toContain('run-card')
+  })
+
+  it('prepends participant-style headers to thinking trace viewports', () => {
+    const participant = ensembleParticipant({
+      id: 'codex-captain',
+      provider: 'codex',
+      role: 'Captain',
+      model: 'gpt-5.5',
+      reasoningEffort: 'xhigh'
+    })
+    const html = renderToStaticMarkup(
+      <TranscriptPanel
+        {...makeProps({
+          virtualize: false,
+          liveActivityViewport: true,
+          currentChat: activeEnsembleChat(participant),
+          currentProviderLabel: 'Ensemble',
+          currentProvider: 'codex',
+          messages: [
+            {
+              id: 'thinking-codex-captain',
+              role: 'tool',
+              content: '',
+              timestamp: '2026-07-04T12:00:00.000Z',
+              runId: 'run-codex-captain',
+              metadata: {
+                kind: 'ensembleParticipantTools',
+                ensembleRoundId: 'round-1',
+                ensembleParticipantId: participant.id,
+                ensembleProvider: participant.provider
+              },
+              toolActivities: [
+                {
+                  id: 'tool-thinking-captain',
+                  toolName: 'codex_reasoning',
+                  displayName: 'Codex thinking',
+                  category: 'task',
+                  status: 'success',
+                  resultSummary: 'Thinking through the task.',
+                  metadata: {
+                    provider: 'codex',
+                    ensembleProvider: 'codex',
+                    ensembleParticipantId: participant.id
+                  }
+                } as ToolActivity
+              ]
+            } as ChatMessage
+          ]
+        })}
+      />
+    )
+
+    expect(html).toContain('activity-stack-speaker-header')
+    expect(html).toContain('Codex / Captain')
+    expect(html).toContain('activity-thinking-trace-viewport')
+    expect(html).toContain('live-activity-viewport')
+    expect(html).not.toContain('run-card')
+  })
+
   it('renders fan-out lane assistant output as a fixed-height result card', () => {
     const html = renderToStaticMarkup(
       <TranscriptPanel
@@ -1069,7 +1184,7 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
     expect(html).toContain('Qwen 3.5 (9B Param)')
   })
 
-	  it('renders Ollama run cards with the local model label instead of Gemini fallback', () => {
+  it('renders local-model tool stack headers with the branded model label', () => {
     const html = renderToStaticMarkup(
       <TranscriptPanel
         {...makeProps({
@@ -1078,11 +1193,21 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
           currentProvider: 'ollama',
           messages: [
             {
-              id: 'm-run-ollama',
-              role: 'user',
-              content: 'Run this locally',
+              id: 'tool-run-ollama',
+              role: 'tool',
+              content: '',
               timestamp: '2026-01-01T00:00:00.000Z',
-              runId: 'run-ollama'
+              runId: 'run-ollama',
+              toolActivities: [
+                {
+                  id: 'activity-run-ollama',
+                  toolName: 'read_file',
+                  displayName: 'Read package.json',
+                  category: 'read',
+                  status: 'success',
+                  metadata: { provider: 'ollama' }
+                } as ToolActivity
+              ]
             }
           ],
           currentChat: {
@@ -1105,60 +1230,62 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
       />
     )
 
-    expect(html).toContain('run-card-provider provider-openai')
+    expect(html).toContain('activity-stack-speaker-header')
+    expect(html).toContain('message-meta provider-openai')
     expect(html).toContain('GPT OSS (20B Param)')
-    expect(html).not.toContain('run-card-provider provider-ollama">Gemini')
-	  })
+    expect(html).not.toContain('run-card')
+    expect(html).not.toContain('run-card-provider provider-ollama&quot;&gt;Gemini')
+  })
 
-	  it('renders multiple pending agent questions in one transcript', () => {
-	    const html = renderToStaticMarkup(
-	      <TranscriptPanel
-	        {...makeProps({
-	          virtualize: false,
-	          messages: [
-	            {
-	              id: 'agent-question-q1',
-	              role: 'system',
-	              content: 'Codex asked a question:',
-	              timestamp: '2026-01-01T00:00:00.000Z',
-	              metadata: { kind: 'agentQuestion', questionId: 'q1' }
-	            },
-	            {
-	              id: 'agent-question-q2',
-	              role: 'system',
-	              content: 'Claude asked a question:',
-	              timestamp: '2026-01-01T00:00:01.000Z',
-	              metadata: { kind: 'agentQuestion', questionId: 'q2' }
-	            }
-	          ],
-	          pendingAgentQuestions: [
-	            {
-	              questionId: 'q1',
-	              appRunId: 'run-1',
-	              messageId: 'agent-question-q1',
-	              provider: 'codex',
-	              question: 'Which path should Codex take?',
-	              options: ['A', 'B'],
-	              askedAt: 1
-	            },
-	            {
-	              questionId: 'q2',
-	              appRunId: 'run-2',
-	              messageId: 'agent-question-q2',
-	              provider: 'claude',
-	              question: 'Should Claude continue?',
-	              askedAt: 2
-	            }
-	          ]
-	        })}
-	      />
-	    )
+  it('renders multiple pending agent questions in one transcript', () => {
+    const html = renderToStaticMarkup(
+      <TranscriptPanel
+        {...makeProps({
+          virtualize: false,
+          messages: [
+            {
+              id: 'agent-question-q1',
+              role: 'system',
+              content: 'Codex asked a question:',
+              timestamp: '2026-01-01T00:00:00.000Z',
+              metadata: { kind: 'agentQuestion', questionId: 'q1' }
+            },
+            {
+              id: 'agent-question-q2',
+              role: 'system',
+              content: 'Claude asked a question:',
+              timestamp: '2026-01-01T00:00:01.000Z',
+              metadata: { kind: 'agentQuestion', questionId: 'q2' }
+            }
+          ],
+          pendingAgentQuestions: [
+            {
+              questionId: 'q1',
+              appRunId: 'run-1',
+              messageId: 'agent-question-q1',
+              provider: 'codex',
+              question: 'Which path should Codex take?',
+              options: ['A', 'B'],
+              askedAt: 1
+            },
+            {
+              questionId: 'q2',
+              appRunId: 'run-2',
+              messageId: 'agent-question-q2',
+              provider: 'claude',
+              question: 'Should Claude continue?',
+              askedAt: 2
+            }
+          ]
+        })}
+      />
+    )
 
-	    expect(html).toContain('Which path should Codex take?')
-	    expect(html).toContain('Should Claude continue?')
-	  })
+    expect(html).toContain('Which path should Codex take?')
+    expect(html).toContain('Should Claude continue?')
+  })
 
-  it('renders a run-result side chat action on historical run boundary cards', () => {
+  it('does not render historical run boundary cards in the transcript', () => {
     const html = renderToStaticMarkup(
       <TranscriptPanel
         {...makeProps({
@@ -1191,8 +1318,9 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
       />
     )
 
-    expect(html).toContain('Open side chat from this run result')
-    expect(html).toContain('Side chat')
+    expect(html).not.toContain('run-card')
+    expect(html).not.toContain('Open side chat from this run result')
+    expect(html).not.toContain('Side chat')
   })
 
   it('marks the selected side-chat seed message in the transcript', () => {

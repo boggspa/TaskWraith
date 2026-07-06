@@ -22,15 +22,23 @@ const TOOL_ATTRIBUTION_BOUNDARY_KEYS = [
   'ensembleProvider',
   'ensembleParticipantId',
   'ensembleRole',
+  'ensembleModel',
+  'ensembleReasoningEffort',
+  'ensembleThinkingEnabled',
+  'ensembleOrder',
   'ensembleRoundId',
   'ensembleLaneId',
+  'pooledAgentId',
   'guestProvider',
   'subThreadProvider'
 ]
 
 function metadataValue(message: ChatMessage, key: string): string {
   const value = message.metadata?.[key]
-  return typeof value === 'string' ? value : ''
+  if (typeof value === 'string') return value
+  if (typeof value === 'boolean') return value ? 'true' : 'false'
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value)
+  return ''
 }
 
 function activityProviderSignature(message: ChatMessage): string {

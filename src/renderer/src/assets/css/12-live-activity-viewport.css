@@ -14,6 +14,32 @@
   --live-activity-edge-fade-size: 52px;
 }
 
+.activity-stack-speaker-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 4px;
+  padding-left: 2px;
+  width: min(100%, 760px);
+}
+
+.activity-stack-speaker-header::after {
+  content: '';
+  flex: 1 1 auto;
+  min-width: 32px;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--border-muted, rgba(190, 196, 210, 0.35)) 82%, transparent),
+    transparent
+  );
+  opacity: 0.62;
+}
+
+.activity-stack-speaker-header .message-meta {
+  flex: 0 0 auto;
+}
+
 /* Left rail — subtle by default, animated pulse while the run is live. */
 .live-activity-viewport-rail {
   position: absolute;

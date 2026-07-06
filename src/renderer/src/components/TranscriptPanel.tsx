@@ -113,7 +113,6 @@ import {
 import { ChatMessageMediaStrip, collectMessageMediaRefs, type ChatMediaRef } from './ChatMediaPanel'
 import { collectInlineImageRefIds } from '../lib/resolveMarkdownImageRef'
 import { FileTypeIcon } from './FileTypeIcon'
-import { RunCard } from './RunCard'
 import { PooledAgentIcon } from './icons/PooledAgentIcon'
 import { ProviderGlyph } from './icons/ProviderGlyph'
 import { ThinkingIndicator } from './AppChromeSymbols'
@@ -154,6 +153,123 @@ function ContextCompactionProgressRow({
         <span className="message-meta-label">{label}</span>
       </div>
       <ThinkingIndicator label="Compacting context" ariaLabel={`${label} compacting context`} />
+    </div>
+  )
+}
+
+function providerIdFromUnknown(value: unknown): ProviderId | undefined {
+  switch (value) {
+    case 'gemini':
+    case 'codex':
+    case 'claude':
+    case 'kimi':
+    case 'grok':
+    case 'cursor':
+    case 'ollama':
+      return value
+    default:
+      return undefined
+  }
+}
+
+function stringFromUnknown(value: unknown): string {
+  return typeof value === 'string' && value.trim() ? value.trim() : ''
+}
+
+function activitySpeakerMessage(message: ChatMessage, chat: ChatRecord | null): ChatMessage {
+  const metadata: Record<string, unknown> = { ...(message.metadata || {}) }
+  const firstActivityWithMetadata = message.toolActivities?.find((activity) => activity.metadata)
+  const activityMetadata = firstActivityWithMetadata?.metadata
+  const participantId =
+    stringFromUnknown(metadata.ensembleParticipantId) ||
+    stringFromUnknown(activityMetadata?.ensembleParticipantId)
+  const participant = participantId
+    ? chat?.ensemble?.participants?.find((item) => item.id === participantId)
+    : undefined
+  const ensembleProvider =
+    providerIdFromUnknown(metadata.ensembleProvider) ||
+    providerIdFromUnknown(activityMetadata?.ensembleProvider) ||
+    participant?.provider
+
+  if (chat?.chatKind === 'ensemble' && ensembleProvider) {
+    metadata.ensembleProvider = ensembleProvider
+    if (participantId) metadata.ensembleParticipantId = participantId
+    if (!metadata.ensembleRole && participant?.role) metadata.ensembleRole = participant.role
+    if (!metadata.ensembleModel && participant?.model) metadata.ensembleModel = participant.model
+    if (!metadata.ensembleReasoningEffort && participant?.reasoningEffort) {
+      metadata.ensembleReasoningEffort = participant.reasoningEffort
+    }
+    if (
+      typeof metadata.ensembleThinkingEnabled !== 'boolean' &&
+      typeof participant?.thinkingEnabled === 'boolean'
+    ) {
+      metadata.ensembleThinkingEnabled = participant.thinkingEnabled
+    }
+  }
+
+  return {
+    ...message,
+    role: 'assistant',
+    metadata
+  }
+}
+
+function ActivityStackSpeakerHeader({
+  message,
+  chat,
+  run,
+  fallbackProvider,
+  fallbackProviderLabel
+}: {
+  message: ChatMessage
+  chat: ChatRecord | null
+  run?: ChatRun | null
+  fallbackProvider: ProviderId
+  fallbackProviderLabel: string
+}): ReactElement {
+  const firstActivityWithMetadata = message.toolActivities?.find((activity) => activity.metadata)
+  const activityProvider = providerIdFromUnknown(firstActivityWithMetadata?.metadata?.provider)
+  const labelProvider = providerIdFromUnknown(run?.provider) || activityProvider || fallbackProvider
+  const {
+    label,
+    provider,
+    providerClass,
+    modelBadge,
+    pooledAgentIdentity
+  } = formatAssistantMessageLabel(
+    activitySpeakerMessage(message, chat),
+    labelProvider ? getProviderLabel(labelProvider) : fallbackProviderLabel,
+    labelProvider,
+    {
+      isEnsembleChat: chat?.chatKind === 'ensemble',
+      soloModelId: run?.actualModel || run?.requestedModel || null
+    }
+  )
+  const providerHook = providerClass || provider
+
+  return (
+    <div className="activity-stack-speaker-header" aria-label={`Activity from ${label}`}>
+      <div className={`message-meta${providerHook ? ` provider-${providerHook}` : ''}`}>
+        <span className="message-meta-label">
+          {pooledAgentIdentity && (
+            <PooledAgentIcon
+              identity={pooledAgentIdentity}
+              size={14}
+              className="message-meta-agent-icon"
+            />
+          )}
+          {label}
+        </span>
+        {modelBadge && (
+          <span
+            className="message-meta-model-badge"
+            title={`Model: ${modelBadge}`}
+            aria-label={`Model ${modelBadge}`}
+          >
+            {modelBadge}
+          </span>
+        )}
+      </div>
     </div>
   )
 }
@@ -2147,11 +2263,7 @@ export const TranscriptPanel = memo(
       return map
     }, [displayMessages, runBoundaryByMessageId])
 
-    const displayRunBoundaryIds = useMemo(
-      () => new Set(displayRunBoundaryByMessageId.keys()),
-      [displayRunBoundaryByMessageId]
-    )
-    const projectedRows = useProjectedTranscriptRows(displayMessages, displayRunBoundaryIds)
+    const projectedRows = useProjectedTranscriptRows(displayMessages, null)
     const projectedRowLookup = useMemo(() => {
       const byRowKey = new Map<string, VirtualRow>()
       const byMessageId = new Map<string, VirtualRow>()
@@ -2750,6 +2862,15 @@ export const TranscriptPanel = memo(
                   ? currentRun
                   : null
             const assistantRunModel = assistantRun?.actualModel || assistantRun?.requestedModel || null
+            const activityStackHeader = isToolActivityStack ? (
+              <ActivityStackSpeakerHeader
+                message={msg}
+                chat={currentChat}
+                run={boundaryRun || assistantRun}
+                fallbackProvider={currentProvider}
+                fallbackProviderLabel={currentProviderLabel}
+              />
+            ) : null
             const assistantRunModelKey =
               msg.role === 'assistant' || isGuestReply
                 ? `${assistantRun?.runId || ''}:${assistantRunModel || ''}`
@@ -2840,14 +2961,6 @@ export const TranscriptPanel = memo(
                 onFocus={() => onMessageSelectionCandidate?.(msg)}
                 ref={virtualizeEnabled ? virtualBlockRef : undefined}
               >
-                {boundaryRun && (
-                  <RunCard
-                    run={boundaryRun}
-                    fallbackProvider={getChatProvider(currentChat)}
-                    onInspect={onInspectRun}
-                    onOpenSideChat={onOpenSideChatFromRun}
-                  />
-                )}
                 {isRoundHeader ? (
                   <EnsembleRoundCardHeader
                     key={msg.id}
@@ -2940,6 +3053,7 @@ export const TranscriptPanel = memo(
                   <ActivityStack
                     key={msg.id}
                     activities={msg.toolActivities || []}
+                    header={activityStackHeader}
                     workspacePath={currentWorkspacePath}
                     provider={getChatProvider(currentChat)}
                     chatId={currentChat?.appChatId}

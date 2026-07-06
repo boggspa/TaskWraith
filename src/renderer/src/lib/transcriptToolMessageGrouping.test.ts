@@ -185,6 +185,8 @@ describe('groupAdjacentToolMessages', () => {
       ensembleProvider: 'claude',
       ensembleParticipantId: 'participant-claude',
       ensembleRole: 'Reviewer',
+      ensembleModel: 'claude-sonnet-5',
+      ensembleReasoningEffort: 'high',
       ensembleRoundId: 'round-1'
     }
     const grouped = groupAdjacentToolMessages([
@@ -196,6 +198,35 @@ describe('groupAdjacentToolMessages', () => {
     expect(grouped[0].toolActivities?.map((entry) => entry.id)).toEqual(['a1', 'a2'])
     expect(grouped[0].metadata?.ensembleProvider).toBe('claude')
     expect(grouped[0].metadata?.groupedToolMessageIds).toEqual(['t1', 't2'])
+  })
+
+  it('does not group same-participant tools when model or reasoning metadata differs', () => {
+    const baseMetadata = {
+      kind: 'ensembleParticipantTools',
+      ensembleProvider: 'codex',
+      ensembleParticipantId: 'participant-codex',
+      ensembleRole: 'Reviewer',
+      ensembleRoundId: 'round-1'
+    }
+    const first = toolMessage('t1', [activity('a1')], {
+      metadata: {
+        ...baseMetadata,
+        ensembleModel: 'gpt-5.5',
+        ensembleReasoningEffort: 'xhigh'
+      }
+    })
+    const second = toolMessage('t2', [activity('a2')], {
+      metadata: {
+        ...baseMetadata,
+        ensembleModel: 'gpt-5.4',
+        ensembleReasoningEffort: 'high'
+      }
+    })
+
+    expect(groupAdjacentToolMessages([first, second]).map((message) => message.id)).toEqual([
+      't1',
+      't2'
+    ])
   })
 
   it('does not group ensemble tools from different participants or providers', () => {

@@ -79,6 +79,7 @@ import { TranscriptFileTarget } from './TranscriptFileTarget'
 
 interface ActivityStackProps {
   activities: ToolActivity[]
+  header?: ReactNode
   workspacePath?: string
   provider?: ProviderId
   chatId?: string
@@ -2319,6 +2320,7 @@ const COLLAPSED_LIVE_ACTIVITY_ITEM_LIMIT = 80
 
 export function ActivityStack({
   activities,
+  header,
   workspacePath,
   provider,
   chatId,
@@ -2594,6 +2596,7 @@ export function ActivityStack({
     const timelineSegments = buildTimelineSegments(renderedTimelineItems)
     return (
       <div className="activity-timeline">
+        {header}
         {childThreads.length >= 2 && <ChildAgentSpawnBlock threads={childThreads} />}
         {timelineSegments.map((segment, index) => {
           const isThinkingSegment = segment.kind === 'thinking'
@@ -2639,6 +2642,7 @@ export function ActivityStack({
 
   return (
     <div className="activity-timeline">
+      {header}
       {childThreads.length >= 2 && <ChildAgentSpawnBlock threads={childThreads} />}
       {timelineNodes}
     </div>
