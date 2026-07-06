@@ -509,6 +509,14 @@ function readMetadataString(record: unknown, key: string): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined
 }
 
+function readMetadataNumber(record: unknown, key: string): number | undefined {
+  if (!record || typeof record !== 'object' || Array.isArray(record)) return undefined
+  const value = (record as Record<string, unknown>)[key]
+  const numeric =
+    typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : NaN
+  return Number.isFinite(numeric) ? Math.trunc(numeric) : undefined
+}
+
 function ownerFromActivity(
   message: ChatMessage,
   activity: ToolActivity
@@ -527,16 +535,23 @@ function ownerFromActivity(
     readMetadataString(messageMetadata, 'ensembleRole') ||
     readMetadataString(messageMetadata, 'role') ||
     readMetadataString(messageMetadata, 'guestRole')
-  if (!provider && !participantId && !role) return null
+  const order = readMetadataNumber(messageMetadata, 'ensembleOrder')
+  if (!provider && !participantId && !role && order === undefined) return null
   return {
     ...(provider ? { provider: provider as DiffFileSummaryOwner['provider'] } : {}),
     ...(participantId ? { participantId } : {}),
-    ...(role ? { role } : {})
+    ...(role ? { role } : {}),
+    ...(order !== undefined ? { order } : {})
   }
 }
 
 function ownerKey(owner: DiffFileSummaryOwner): string {
-  return [owner.participantId || '', owner.provider || '', owner.role || ''].join('|')
+  return [
+    owner.participantId || '',
+    owner.provider || '',
+    owner.role || '',
+    owner.order ?? ''
+  ].join('|')
 }
 
 function mergeOwners(

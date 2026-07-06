@@ -5125,6 +5125,7 @@ export interface DiffFileSummaryOwner {
   provider?: ProviderId
   participantId?: string
   role?: string
+  order?: number
 }
 
 export interface WorkspaceSnapshot {

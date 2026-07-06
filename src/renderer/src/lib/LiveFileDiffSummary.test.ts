@@ -388,7 +388,8 @@ describe('LiveFileDiffSummary', () => {
           {
             ensembleProvider: 'codex',
             ensembleParticipantId: 'codex-worker',
-            ensembleRole: 'Worker'
+            ensembleRole: 'Worker',
+            ensembleOrder: 2
           }
         ),
         messageWith(
@@ -406,15 +407,16 @@ describe('LiveFileDiffSummary', () => {
           {
             ensembleProvider: 'claude',
             ensembleParticipantId: 'claude-reviewer',
-            ensembleRole: 'Reviewer'
+            ensembleRole: 'Reviewer',
+            ensembleOrder: 5
           }
         )
       ])
 
       expect(summaries).toHaveLength(1)
       expect(summaries[0].owners).toEqual([
-        { provider: 'codex', participantId: 'codex-worker', role: 'Worker' },
-        { provider: 'claude', participantId: 'claude-reviewer', role: 'Reviewer' }
+        { provider: 'codex', participantId: 'codex-worker', role: 'Worker', order: 2 },
+        { provider: 'claude', participantId: 'claude-reviewer', role: 'Reviewer', order: 5 }
       ])
     })
 

@@ -647,12 +647,12 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
               previewKind: 'git_diff',
               diffText: ['@@ -1,1 +1,1 @@', '-old', '+new'].join('\n'),
               owners: [
-                { provider: 'codex', participantId: 'codex-worker', role: 'Worker' },
-                { provider: 'claude', participantId: 'claude-reviewer', role: 'Reviewer' }
+                { provider: 'codex', participantId: 'codex-worker', role: 'Worker', order: 2 },
+                { provider: 'claude', participantId: 'claude-reviewer', role: 'Reviewer', order: 5 }
               ]
             },
             {
-              path: 'src/stats-only.ts',
+              path: '/Users/example/project/src/components/stats-only.ts',
               status: 'modified',
               additions: 2,
               deletions: 0,
@@ -681,18 +681,22 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
     expect(html).toContain('aria-label="Preview diff for src/example.ts"')
     expect(html).not.toContain('title="Preview diff"')
     expect(html).toContain('Diff')
-    expect(html).toContain('src/stats-only.ts')
+    expect(html).toContain('.../components/stats-only.ts')
     expect(html).toContain('file-change-summary-owner is-multiple')
-    expect(html).toContain('Multiple')
-    expect(html).toContain('Codex / Worker')
-    expect(html).toContain('Claude / Reviewer')
+    expect(html).toContain('file-change-summary-owner-chip')
+    expect(html).toContain('#2')
+    expect(html).toContain('#5')
+    expect(html).not.toContain('file-change-summary-owner-popover')
+    expect(html).not.toContain('Multiple')
     expect(html).not.toContain('file-change-stat-divider')
     expect(html).toContain('file-change-stat file-change-stat-add composer-diff-add')
     expect(html).toContain('file-change-stat file-change-stat-delete composer-diff-del')
     expect(html).toContain(
       'class="file-change-summary-item file-change-summary-item-interactive has-workbench-link"'
     )
-    expect(html).toContain('aria-label="Open Workbench diff for src/stats-only.ts"')
+    expect(html).toContain(
+      'aria-label="Open Workbench diff for /Users/example/project/src/components/stats-only.ts"'
+    )
   })
 
   it('renders run-complete summary for plain stop/cancel when not suppressed', () => {

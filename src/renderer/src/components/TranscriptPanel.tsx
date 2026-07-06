@@ -706,11 +706,11 @@ function fileChangeOwnerLabel(owner: DiffFileSummaryOwner): string {
   return 'Agent'
 }
 
-function fileChangeOwnerTitle(owner: DiffFileSummaryOwner): string {
+function fileChangeOwnerTitle(owner: DiffFileSummaryOwner, order?: number): string {
   const provider = owner.provider ? getProviderLabel(owner.provider) : ''
   const role = owner.role || ''
-  if (provider && role) return `${provider} / ${role}`
-  return role || provider || 'Agent'
+  const label = provider && role ? `${provider} / ${role}` : role || provider || 'Agent'
+  return order ? `#${order} ${label}` : label
 }
 
 function normalizeFileChangeOwners(
@@ -739,23 +739,51 @@ function FileChangeOwnerCell({ owners }: { owners?: DiffFileSummary['owners'] })
     )
   }
   return (
-    <span className="file-change-summary-owner is-multiple" tabIndex={0}>
-      <span className="file-change-summary-owner-label">Multiple</span>
-      <span className="file-change-summary-owner-popover" role="tooltip">
-        {normalizedOwners.map((owner, index) => (
-          <span key={`${owner.participantId || owner.provider || owner.role || 'owner'}-${index}`}>
+    <span className="file-change-summary-owner is-multiple" aria-label="File editors">
+      {normalizedOwners.map((owner, index) => {
+        const order = owner.order ?? index + 1
+        return (
+          <span
+            className="file-change-summary-owner-chip"
+            key={`${owner.participantId || owner.provider || owner.role || 'owner'}-${index}`}
+            title={fileChangeOwnerTitle(owner, order)}
+          >
             {owner.provider && (
-              <span
-                className={`file-change-summary-owner-icon provider-${owner.provider}`}
-                aria-hidden
-              >
+              <span className={`file-change-summary-owner-icon provider-${owner.provider}`} aria-hidden>
                 <ProviderGlyph provider={owner.provider} />
               </span>
             )}
-            <span>{fileChangeOwnerTitle(owner)}</span>
+            <span className="file-change-summary-owner-index">#{order}</span>
           </span>
-        ))}
+        )
+      })}
+    </span>
+  )
+}
+
+const FILE_CHANGE_PATH_LABEL_MAX = 44
+
+function truncateFilePathFromHead(path: string): string {
+  if (path.length <= FILE_CHANGE_PATH_LABEL_MAX) return path
+  return `...${path.slice(-(FILE_CHANGE_PATH_LABEL_MAX - 3))}`
+}
+
+function filePathTailSegments(path: string): string {
+  const raw = typeof path === 'string' ? path : ''
+  if (!raw) return ''
+  const normalized = raw.replace(/\\/g, '/')
+  const segments = normalized.split('/').filter(Boolean)
+  if (segments.length <= 2) return truncateFilePathFromHead(raw)
+  return truncateFilePathFromHead(`.../${segments.slice(-2).join('/')}`)
+}
+
+function FileChangePathCell({ path }: { path: string }): ReactElement {
+  return (
+    <span className="file-change-summary-path" title={path}>
+      <span className="file-change-summary-path-head" aria-hidden="true">
+        {path}
       </span>
+      <span className="file-change-summary-path-tail">{filePathTailSegments(path)}</span>
     </span>
   )
 }
@@ -3710,9 +3738,7 @@ export const TranscriptPanel = memo(
                               className="file-change-summary-type-icon"
                               workspacePath={currentWorkspacePath}
                             />
-                            <span className="file-change-summary-path" title={item.path}>
-                              {item.path}
-                            </span>
+                            <FileChangePathCell path={item.path} />
                             <FileChangeOwnerCell owners={item.owners} />
                             {(item.additions !== undefined || item.deletions !== undefined) && (
                               <span className="file-change-summary-item-stats">
