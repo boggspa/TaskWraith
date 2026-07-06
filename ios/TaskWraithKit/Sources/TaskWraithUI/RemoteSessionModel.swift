@@ -2409,25 +2409,25 @@ public final class RemoteSessionModel: ObservableObject {
     }
 
     /// Merge one pushed envelope into the published state.
-    private func merge(envelope: RemoteProjectionEnvelope) {
+    func merge(envelope: RemoteProjectionEnvelope) {
         switch envelope.kind {
         case "threadSnapshot":
             if let thread = envelope.decodePayload(RemoteThreadSnapshot.self),
-                let key = thread.taskId ?? thread.threadId
+                let key = thread.taskId ?? thread.threadId ?? envelope.threadId
             {
                 mergeThreadSnapshot(thread, key: key)
             }
         case "ensembleState":
-            if let state = envelope.decodePayload(RemoteEnsembleState.self),
-                let key = state.taskId ?? state.threadId ?? envelope.threadId
-            {
-                ensembleStates[key] = state
+            if let state = envelope.decodePayload(RemoteEnsembleState.self) {
+                for key in keys(for: state, envelopeThreadId: envelope.threadId) {
+                    ensembleStates[key] = state
+                }
             }
         case "diffSummary":
-            if let diff = envelope.decodePayload(MobileDiffSummary.self),
-                let key = diff.taskId ?? diff.threadId ?? envelope.threadId
-            {
-                diffSummaries[key] = diff
+            if let diff = envelope.decodePayload(MobileDiffSummary.self) {
+                for key in keys(for: diff, envelopeThreadId: envelope.threadId) {
+                    diffSummaries[key] = diff
+                }
             }
         case "gitSnapshot":
             if let git = envelope.decodePayload(GitWorkspaceSnapshot.self),
@@ -2446,11 +2446,16 @@ public final class RemoteSessionModel: ObservableObject {
         case "taskCard":
             if let card = envelope.decodePayload(RemoteTaskCard.self) {
                 let card = cardResolvingPendingThreadTitle(card)
-                if let index = taskCards.firstIndex(where: { $0.id == card.id }) {
+                let cardKeys = Set(keys(for: card))
+                if let index = taskCards.firstIndex(where: {
+                    !cardKeys.isDisjoint(with: keys(for: $0))
+                }) {
                     taskCards[index] = card
                 } else {
                     taskCards.insert(card, at: 0)
                 }
+                rememberWorkspace(for: card)
+                publishEmbeddedTaskCardMetadata(envelope: envelope, card: card)
                 // C.iOS: an incremental card that is no longer an ensemble (e.g.
                 // an ensemble→solo collapse) must not keep a stale ensembleState —
                 // otherwise the composer's @-mention chips linger until the next
@@ -2459,7 +2464,9 @@ public final class RemoteSessionModel: ObservableObject {
                 // (`ensembleStates[card.id]`), and equals threadId on the
                 // top-level threads where the ensemble toggle is allowed.
                 if !card.isEnsemble {
-                    ensembleStates[card.id] = nil
+                    for key in keys(for: card) {
+                        ensembleStates[key] = nil
+                    }
                 }
             }
         case "workflows":
@@ -2516,6 +2523,22 @@ public final class RemoteSessionModel: ObservableObject {
     }
 
     private func mergeThreadSnapshot(_ incoming: RemoteThreadSnapshot, key: String) {
+        let aliasKeys = keys(for: incoming, fallbackKey: key)
+        guard let primaryKey = aliasKeys.first else { return }
+        mergeThreadSnapshotSingle(incoming, key: primaryKey)
+        guard let merged = threadSnapshots[primaryKey] else { return }
+        for alias in aliasKeys.dropFirst() {
+            threadSnapshots[alias] = merged
+        }
+        for alias in aliasKeys {
+            if let workspaceId = incoming.workspaceId, !workspaceId.isEmpty {
+                rememberThreadWorkspace(alias, workspaceId: workspaceId)
+            }
+            reconcileStreamingState(against: incoming, key: alias)
+        }
+    }
+
+    private func mergeThreadSnapshotSingle(_ incoming: RemoteThreadSnapshot, key: String) {
         let filteredIncoming = snapshotFilteringHiddenRunSummaries(incoming, key: key)
         let incomingRows = filteredIncoming.rows ?? []
         // Recover a backgrounded-missed completion: if this snapshot shows the
@@ -2932,15 +2955,98 @@ public final class RemoteSessionModel: ObservableObject {
         }
     }
 
+    private func projectionKeys(_ candidates: String?...) -> [String] {
+        var seen: Set<String> = []
+        var keys: [String] = []
+        for candidate in candidates {
+            guard let key = candidate?.trimmingCharacters(in: .whitespacesAndNewlines),
+                !key.isEmpty, !seen.contains(key)
+            else { continue }
+            seen.insert(key)
+            keys.append(key)
+        }
+        return keys
+    }
+
+    private func keys(for card: RemoteTaskCard) -> [String] {
+        projectionKeys(card.id, card.threadId)
+    }
+
+    private func keys(for snapshot: RemoteThreadSnapshot, fallbackKey: String?) -> [String] {
+        projectionKeys(fallbackKey, snapshot.taskId, snapshot.threadId)
+    }
+
+    private func keys(
+        for state: RemoteEnsembleState, envelopeThreadId: String? = nil, fallbackKey: String? = nil
+    ) -> [String] {
+        projectionKeys(fallbackKey, state.taskId, state.threadId, envelopeThreadId)
+    }
+
+    private func keys(
+        for diff: MobileDiffSummary, envelopeThreadId: String? = nil, fallbackKey: String? = nil
+    ) -> [String] {
+        projectionKeys(fallbackKey, diff.taskId, diff.threadId, envelopeThreadId)
+    }
+
+    private func rememberWorkspace(for card: RemoteTaskCard) {
+        let workspaceId = card.workspaceId?.isEmpty == false ? card.workspaceId! : "global"
+        for key in keys(for: card) {
+            rememberThreadWorkspace(key, workspaceId: workspaceId)
+        }
+    }
+
+    private func publishEmbeddedTaskCardMetadata(
+        envelope: RemoteProjectionEnvelope,
+        card: RemoteTaskCard,
+        intoEnsembleSnapshots ensembleSnapshots: inout [String: RemoteEnsembleState],
+        intoDiffSnapshots diffSnapshots: inout [String: MobileDiffSummary]
+    ) {
+        guard let embedded = envelope.decodePayload(EmbeddedTaskCardMetadata.self) else { return }
+        if let state = embedded.ensembleState {
+            for key in keys(for: state, envelopeThreadId: envelope.threadId, fallbackKey: card.id) {
+                ensembleSnapshots[key] = state
+            }
+        }
+        if let diff = embedded.diffSummary {
+            for key in keys(for: diff, envelopeThreadId: envelope.threadId, fallbackKey: card.id) {
+                diffSnapshots[key] = diff
+            }
+        }
+    }
+
+    private func publishEmbeddedTaskCardMetadata(envelope: RemoteProjectionEnvelope, card: RemoteTaskCard) {
+        var ensembleSnapshots: [String: RemoteEnsembleState] = [:]
+        var diffSnapshots: [String: MobileDiffSummary] = [:]
+        publishEmbeddedTaskCardMetadata(
+            envelope: envelope,
+            card: card,
+            intoEnsembleSnapshots: &ensembleSnapshots,
+            intoDiffSnapshots: &diffSnapshots)
+        for (key, state) in ensembleSnapshots {
+            ensembleStates[key] = state
+        }
+        for (key, diff) in diffSnapshots {
+            diffSummaries[key] = diff
+        }
+    }
+
+    private struct EmbeddedTaskCardMetadata: Decodable {
+        let ensembleState: RemoteEnsembleState?
+        let diffSummary: MobileDiffSummary?
+    }
+
     /// The workspace scope an action presents for this thread: the chat's
     /// workspace id, or the reserved "global" sentinel for scope-global
     /// chats (no bound workspace). Global chats keep the full composer on
     /// the phone (T72) — they are NOT view-only; the Mac clamps phone-origin
     /// turns to plan mode (no file mutation) since there's no workspace bound.
     public func remoteScopeForThread(_ threadId: String) -> String? {
-        if let card = taskCards.first(where: { $0.id == threadId }) {
+        if let card = taskCards.first(where: { $0.id == threadId || $0.threadId == threadId }) {
             if let workspaceId = card.workspaceId, !workspaceId.isEmpty { return workspaceId }
             return "global"
+        }
+        if let snapshot = threadSnapshots[threadId], let workspaceId = snapshot.workspaceId {
+            return workspaceId.isEmpty ? "global" : workspaceId
         }
         return threadWorkspaceHints[threadId]
     }
@@ -3813,7 +3919,7 @@ public final class RemoteSessionModel: ObservableObject {
             do {
                 let actionAck = try await self.requestFileAction(params)
                 if let thread = actionAck.data?.thread {
-                    self.mergeThreadSnapshot(thread, key: thread.taskId ?? thread.threadId ?? threadId)
+                    self.mergeThreadSnapshot(thread, key: threadId)
                 }
             } catch {
                 // Mirror the send() guard (line ~4241): a background snapshot ack can time out
@@ -3845,7 +3951,7 @@ public final class RemoteSessionModel: ObservableObject {
             do {
                 let actionAck = try await self.requestFileAction(params)
                 if let thread = actionAck.data?.thread {
-                    self.mergeThreadSnapshot(thread, key: thread.taskId ?? thread.threadId ?? threadId)
+                    self.mergeThreadSnapshot(thread, key: threadId)
                 }
             } catch {
                 // Same phase guard as requestThreadSnapshot and send(): a "load older messages"
@@ -3874,12 +3980,15 @@ public final class RemoteSessionModel: ObservableObject {
             threads: message.threads)
         taskCards = merged.cards
         fallbackThreadListCardIds = merged.fallbackCardIds
+        for card in merged.cards {
+            rememberWorkspace(for: card)
+        }
         if !merged.cards.isEmpty {
             projectionHydrated = true
         }
     }
 
-    private func applySnapshot(_ snapshot: RemoteProjectionSnapshot) {
+    func applySnapshot(_ snapshot: RemoteProjectionSnapshot) {
         var tasks: [RemoteTaskCard] = []
         var approvalCards: [MobileApprovalCard] = []
         var questionCards: [MobileQuestionCard] = []
@@ -3894,7 +4003,13 @@ public final class RemoteSessionModel: ObservableObject {
             switch envelope.kind {
             case "taskCard":
                 if let card = envelope.decodePayload(RemoteTaskCard.self) {
-                    tasks.append(cardResolvingPendingThreadTitle(card))
+                    let card = cardResolvingPendingThreadTitle(card)
+                    tasks.append(card)
+                    publishEmbeddedTaskCardMetadata(
+                        envelope: envelope,
+                        card: card,
+                        intoEnsembleSnapshots: &ensembleSnapshots,
+                        intoDiffSnapshots: &diffSnapshots)
                 }
             case "workflows":
                 if let workflow = envelope.decodePayload(RemoteWorkflow.self) {
@@ -3918,21 +4033,23 @@ public final class RemoteSessionModel: ObservableObject {
                 }
             case "threadSnapshot":
                 if let thread = envelope.decodePayload(RemoteThreadSnapshot.self),
-                    let key = thread.taskId ?? thread.threadId
+                    let key = thread.taskId ?? thread.threadId ?? envelope.threadId
                 {
-                    snapshots[key] = thread
+                    for alias in keys(for: thread, fallbackKey: key) {
+                        snapshots[alias] = thread
+                    }
                 }
             case "ensembleState":
-                if let state = envelope.decodePayload(RemoteEnsembleState.self),
-                    let key = state.taskId ?? state.threadId ?? envelope.threadId
-                {
-                    ensembleSnapshots[key] = state
+                if let state = envelope.decodePayload(RemoteEnsembleState.self) {
+                    for key in keys(for: state, envelopeThreadId: envelope.threadId) {
+                        ensembleSnapshots[key] = state
+                    }
                 }
             case "diffSummary":
-                if let diff = envelope.decodePayload(MobileDiffSummary.self),
-                    let key = diff.taskId ?? diff.threadId ?? envelope.threadId
-                {
-                    diffSnapshots[key] = diff
+                if let diff = envelope.decodePayload(MobileDiffSummary.self) {
+                    for key in keys(for: diff, envelopeThreadId: envelope.threadId) {
+                        diffSnapshots[key] = diff
+                    }
                 }
             case "gitSnapshot":
                 if let git = envelope.decodePayload(GitWorkspaceSnapshot.self),
@@ -3957,6 +4074,9 @@ public final class RemoteSessionModel: ObservableObject {
             print("[tw] ignoring empty snapshot (have \(taskCards.count) cards)")
         } else {
             taskCards = tasks
+            for card in tasks {
+                rememberWorkspace(for: card)
+            }
             if !tasks.isEmpty {
                 fallbackThreadListCardIds.removeAll()
             }

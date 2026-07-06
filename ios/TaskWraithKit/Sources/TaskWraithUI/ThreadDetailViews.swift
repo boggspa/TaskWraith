@@ -182,7 +182,32 @@ struct ThreadDetailView: View {
     @SceneStorage("taskwraith.secondaryWorkspaceSelections")
     private var secondaryWorkspaceSelectionStore = "{}"
 
-    private var card: RemoteTaskCard? { model.taskCards.first { $0.id == taskId } }
+    private var card: RemoteTaskCard? {
+        model.taskCards.first { $0.id == taskId || $0.threadId == taskId }
+    }
+    private var resolvedThreadKeys: [String] {
+        var seen: Set<String> = []
+        var keys: [String] = []
+        func append(_ key: String?) {
+            guard let key = key?.trimmingCharacters(in: .whitespacesAndNewlines),
+                !key.isEmpty, !seen.contains(key)
+            else { return }
+            seen.insert(key)
+            keys.append(key)
+        }
+        append(taskId)
+        append(card?.id)
+        append(card?.threadId)
+        append(model.threadSnapshots[taskId]?.taskId)
+        append(model.threadSnapshots[taskId]?.threadId)
+        return keys
+    }
+    private func threadValue<T>(_ values: [String: T]) -> T? {
+        for key in resolvedThreadKeys {
+            if let value = values[key] { return value }
+        }
+        return nil
+    }
     private var filesToolbarWorkspaceId: String? {
         guard let workspaceId = card?.workspaceId, model.workspaceCanEditFiles(workspaceId) else {
             return nil
@@ -198,19 +223,17 @@ struct ThreadDetailView: View {
     private var showsRosterToolbarButton: Bool {
         card?.isEnsemble == true && card?.workspaceId != nil
     }
-    private var snapshot: RemoteThreadSnapshot? { model.threadSnapshots[taskId] }
+    private var snapshot: RemoteThreadSnapshot? { threadValue(model.threadSnapshots) }
+    private var ensembleState: RemoteEnsembleState? { threadValue(model.ensembleStates) }
+    private var diffSummary: MobileDiffSummary? { threadValue(model.diffSummaries) }
     private var showsRunCompleteSummary: Bool { snapshot?.showRunCompleteSummary != false }
     private var activeParticipant: RemoteEnsembleState.Participant? {
-        guard let state = model.ensembleStates[taskId],
-            let activeId = state.activeParticipantId
-        else { return nil }
+        guard let state = ensembleState, let activeId = state.activeParticipantId else { return nil }
         return state.displayParticipants.first(where: { $0.participantId == activeId })
             ?? state.participants?.first(where: { $0.participantId == activeId })
     }
     private var activeRosterEntry: RemoteEnsembleState.RosterEntry? {
-        guard let state = model.ensembleStates[taskId],
-            let activeId = state.activeParticipantId
-        else { return nil }
+        guard let state = ensembleState, let activeId = state.activeParticipantId else { return nil }
         return state.roster?.first(where: { $0.id == activeId })
     }
     private var thinkingProvider: String? {
@@ -237,7 +260,7 @@ struct ThreadDetailView: View {
         return snapshot?.runSummary?.model
     }
     private var liveProvider: String? {
-        model.streamingProviders[taskId] ?? thinkingProvider
+        threadValue(model.streamingProviders) ?? thinkingProvider
     }
     private var liveRole: String? {
         liveProvider == thinkingProvider ? thinkingRole : nil
@@ -248,7 +271,7 @@ struct ThreadDetailView: View {
         return nil
     }
     private var transcriptParticipants: [RemoteEnsembleState.Participant] {
-        model.ensembleStates[taskId]?.displayParticipants ?? []
+        ensembleState?.displayParticipants ?? []
     }
     private var liveAccent: Color {
         threadAgentIdentity?.accent
@@ -378,8 +401,8 @@ struct ThreadDetailView: View {
     }
     /// The run currently streaming into the live block (nil when idle).
     private var liveRunId: String? {
-        guard let live = model.streamingTexts[taskId], !live.isEmpty else { return nil }
-        return model.streamingRunIds[taskId]
+        guard let live = threadValue(model.streamingTexts), !live.isEmpty else { return nil }
+        return threadValue(model.streamingRunIds)
     }
     private var threadAgentIdentity: ThreadAgentIdentity? {
         ThreadAgentIdentity(card: card)
@@ -534,7 +557,7 @@ struct ThreadDetailView: View {
     /// shows the same order the finished transcript will.
     private var liveElements: [LiveElement] {
         guard let liveRunId else { return [] }
-        let segments = model.streamingSegments[taskId] ?? [model.streamingTexts[taskId] ?? ""]
+        let segments = threadValue(model.streamingSegments) ?? [threadValue(model.streamingTexts) ?? ""]
         let rows = liveToolRows
         let counts = rows.map {
             max(1, $0.toolSummary?.activityCount ?? $0.toolSummary?.tools?.count ?? 1)
@@ -679,7 +702,7 @@ struct ThreadDetailView: View {
     }
 
     private func ensembleRoundIsActive(_ roundId: String) -> Bool {
-        guard let state = model.ensembleStates[taskId], state.roundId == roundId else {
+        guard let state = ensembleState, state.roundId == roundId else {
             return false
         }
         let status = state.status ?? ""
@@ -757,7 +780,10 @@ struct ThreadDetailView: View {
     }
 
     private var threadApprovals: [MobileApprovalCard] {
-        model.approvals.filter { $0.threadId == taskId }
+        let keys = Set(resolvedThreadKeys)
+        return model.approvals.filter { approval in
+            approval.threadId.map(keys.contains) ?? false
+        }
     }
     private var threadQuestions: [MobileQuestionCard] {
         // Suppress a question from the TOP banner when its asking row is loaded
@@ -770,10 +796,12 @@ struct ThreadDetailView: View {
         // that coupling if you ever change which rows are filtered from the list,
         // or a question could end up shown in NEITHER place.
         let inlinePromptIds = Set(
-            (model.threadSnapshots[taskId]?.rows ?? [])
+            (snapshot?.rows ?? [])
                 .compactMap { $0.agentQuestion?.promptId })
+        let keys = Set(resolvedThreadKeys)
         return model.questions.filter {
-            $0.threadId == taskId && !($0.resolvedId.map(inlinePromptIds.contains) ?? false)
+            ($0.threadId.map(keys.contains) ?? false)
+                && !($0.resolvedId.map(inlinePromptIds.contains) ?? false)
         }
     }
 
@@ -895,8 +923,7 @@ struct ThreadDetailView: View {
                         // the snapshot) is the primary source either way.
                         TaskCompleteCard(
                             run: runCard,
-                            diff: model.diffSummaries[taskId]?.runId == runCard.runId
-                                ? model.diffSummaries[taskId] : nil,
+                            diff: diffSummary?.runId == runCard.runId ? diffSummary : nil,
                             runSummaries: runSummaries,
                             participants: transcriptParticipants
                         )
@@ -961,8 +988,7 @@ struct ThreadDetailView: View {
                         if showsRunCompleteSummary, let runCard = runCardSummary(after: item.lastRow) {
                             TaskCompleteCard(
                                 run: runCard,
-                                diff: model.diffSummaries[taskId]?.runId == runCard.runId
-                                    ? model.diffSummaries[taskId] : nil,
+                                diff: diffSummary?.runId == runCard.runId ? diffSummary : nil,
                                 runSummaries: runSummaries,
                                 participants: transcriptParticipants
                             )
@@ -988,7 +1014,7 @@ struct ThreadDetailView: View {
                         .listRowBackground(Color.clear)
                         .listRowSeparator(.hidden)
                 } else if (snapshot?.rows ?? []).isEmpty, card != nil {
-                    if (snapshot?.totalRows ?? 0) > 0 {
+                    if snapshot == nil || (snapshot?.totalRows ?? 0) > 0 {
                         // History exists on the Mac — the window just hasn't
                         // arrived. A welcome card here masquerades an old
                         // chat as new; show the fetch state instead.
@@ -1009,8 +1035,7 @@ struct ThreadDetailView: View {
                 if showsRunCompleteSummary, let run = unanchoredRunCardSummary {
                     TaskCompleteCard(
                         run: run,
-                        diff: model.diffSummaries[taskId]?.runId == run.runId
-                            ? model.diffSummaries[taskId] : nil,
+                        diff: diffSummary?.runId == run.runId ? diffSummary : nil,
                         runSummaries: runSummaries,
                         participants: transcriptParticipants
                     )
@@ -1136,7 +1161,7 @@ struct ThreadDetailView: View {
                     // T72 — global chats keep the full composer: the Mac
                     // clamps phone-origin turns to plan mode (no file
                     // mutation), and the composer pins its picker to match.
-                    let diff = model.diffSummaries[taskId]
+                    let diff = diffSummary
                     let primaryWorkspaceId = card.workspaceId
                     let primaryGitSnapshot = primaryWorkspaceId.flatMap { model.gitSnapshots[$0] }
                     let secondaryGitSnapshot = secondaryWorkspaceId.flatMap {
@@ -1448,7 +1473,7 @@ struct ThreadDetailView: View {
         suppressFill: Bool, resolved: ResolvedComposerShell
     ) -> some View {
         if card.isEnsemble,
-            let queued = model.ensembleStates[taskId]?.queuedPrompts,
+            let queued = ensembleState?.queuedPrompts,
             !queued.isEmpty
         {
             // Stacked queued prompts (desktop parity) — one shared Mac-side
@@ -1485,7 +1510,7 @@ struct ThreadDetailView: View {
                 model: model, threadId: taskId, workspaceId: wsId,
                 attached: true,
                 isShellTop: !hasAttachedRows
-                    && (model.ensembleStates[taskId]?.queuedPrompts ?? [])
+                    && (ensembleState?.queuedPrompts ?? [])
                         .isEmpty,
                 onOwnCard: suppressFill)
             .composerShellIf(onOwnCards, resolved)
@@ -1567,7 +1592,7 @@ struct ThreadDetailView: View {
             guard autoFollow else { return }
             requestFollowPin(proxy, force: true)
         }
-        .onChange(of: model.streamingTexts[taskId] ?? "") { _, _ in
+        .onChange(of: threadValue(model.streamingTexts) ?? "") { _, _ in
             guard autoFollow else { return }
             requestFollowPin(proxy, force: true)
         }

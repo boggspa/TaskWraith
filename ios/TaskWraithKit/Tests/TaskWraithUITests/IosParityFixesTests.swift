@@ -100,6 +100,102 @@ struct IosParityFixesTests {
     }
 
     @MainActor
+    @Test func taskCardProjectionPublishesEmbeddedComposerMetadataUnderBothIds() throws {
+        let model = makeRemoteSessionModel()
+        let snapshot = try decode(
+            RemoteProjectionSnapshot.self,
+            """
+            {
+              "projections":[
+                {
+                  "schemaVersion":1,
+                  "source":"mac",
+                  "kind":"taskCard",
+                  "envelopeId":"task-card:task-1",
+                  "workspaceId":"ws-1",
+                  "threadId":"thread-1",
+                  "payload":{
+                    "id":"task-1",
+                    "threadId":"thread-1",
+                    "title":"Ensemble run",
+                    "status":"idle",
+                    "provider":"claude",
+                    "workspaceId":"ws-1",
+                    "chatKind":"ensemble",
+                    "ensembleState":{
+                      "taskId":"task-1",
+                      "threadId":"thread-1",
+                      "status":"idle",
+                      "participants":[
+                        {"participantId":"p-codex","provider":"codex","role":"Builder","order":1,"status":"idle"}
+                      ],
+                      "roster":[
+                        {"id":"p-codex","provider":"codex","role":"Builder","enabled":true,"order":1,"model":"gpt-5.5"}
+                      ],
+                      "queuedPrompts":[{"index":0,"text":"Run the focused tests"}]
+                    },
+                    "diffSummary":{
+                      "taskId":"task-1",
+                      "threadId":"thread-1",
+                      "runId":"run-1",
+                      "filesChanged":2,
+                      "additions":14,
+                      "deletions":3
+                    }
+                  }
+                }
+              ]
+            }
+            """)
+
+        model.applySnapshot(snapshot)
+
+        #expect(model.remoteScopeForThread("task-1") == "ws-1")
+        #expect(model.remoteScopeForThread("thread-1") == "ws-1")
+        #expect(model.ensembleStates["task-1"]?.displayParticipants.first?.model == "gpt-5.5")
+        #expect(model.ensembleStates["thread-1"]?.queuedPrompts?.first?.text == "Run the focused tests")
+        #expect(model.diffSummaries["task-1"]?.filesChanged == 2)
+        #expect(model.diffSummaries["thread-1"]?.additions == 14)
+    }
+
+    @MainActor
+    @Test func threadSnapshotProjectionAliasesTaskAndThreadIds() throws {
+        let model = makeRemoteSessionModel()
+        let snapshot = try decode(
+            RemoteProjectionSnapshot.self,
+            """
+            {
+              "projections":[
+                {
+                  "schemaVersion":1,
+                  "source":"mac",
+                  "kind":"threadSnapshot",
+                  "envelopeId":"thread:thread-1",
+                  "workspaceId":"ws-1",
+                  "threadId":"thread-1",
+                  "payload":{
+                    "taskId":"task-1",
+                    "threadId":"thread-1",
+                    "workspaceId":"ws-1",
+                    "provider":"codex",
+                    "totalRows":1,
+                    "rows":[
+                      {"id":"row-1","role":"user","kind":"message","preview":"Fix the blank transcript"}
+                    ]
+                  }
+                }
+              ]
+            }
+            """)
+
+        model.applySnapshot(snapshot)
+
+        #expect(model.threadSnapshots["task-1"]?.rows?.first?.id == "row-1")
+        #expect(model.threadSnapshots["thread-1"]?.rows?.first?.preview == "Fix the blank transcript")
+        #expect(model.remoteScopeForThread("thread-1") == "ws-1")
+    }
+
+    @MainActor
     @Test func questionAnsweringRequiresExplicitThreadCapability() throws {
         let canAnswer = try remoteTaskCard(
             #"{"id":"card-1","threadId":"thread-1","capabilities":{"answer":true}}"#)
@@ -252,5 +348,19 @@ struct IosParityFixesTests {
 
     private func decode<T: Decodable>(_ type: T.Type, _ json: String) throws -> T {
         try JSONDecoder().decode(T.self, from: Data(json.utf8))
+    }
+
+    @MainActor
+    private func makeRemoteSessionModel() -> RemoteSessionModel {
+        let defaults = UserDefaults(suiteName: "TaskWraithUITests.\(UUID().uuidString)")!
+        return RemoteSessionModel(
+            identityStore: StaticIdentitySeedStore(),
+            pairingStore: UserDefaultsPairedHostStore(defaults: defaults))
+    }
+
+    private struct StaticIdentitySeedStore: IdentitySeedStore {
+        func loadOrCreateSeed() throws -> Data {
+            Data(repeating: 7, count: 32)
+        }
     }
 }
