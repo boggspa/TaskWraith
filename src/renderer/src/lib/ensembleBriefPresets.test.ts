@@ -39,6 +39,15 @@ describe('ensembleBriefPresets', () => {
   it('exposes a built-in brief for each role preset', () => {
     expect(BUILT_IN_ENSEMBLE_BRIEF_PRESETS).toHaveLength(ENSEMBLE_ROLE_PRESETS.length)
     expect(listEnsembleBriefPresets().map((preset) => preset.name)).toContain('Reviewer')
+    expect(listEnsembleBriefPresets()).toContainEqual(
+      expect.objectContaining({
+        id: 'role:designer',
+        name: 'Designer',
+        rolePresetId: 'designer',
+        source: 'role',
+        brief: expect.stringContaining('Protect UI/UX quality')
+      })
+    )
     expect(
       listEnsembleBriefPresets().every((preset) => preset.source === 'role')
     ).toBe(true)
@@ -69,4 +78,3 @@ describe('ensembleBriefPresets', () => {
     expect(listUserEnsembleBriefPresets()[0].name).toBe('New name')
   })
 })
-

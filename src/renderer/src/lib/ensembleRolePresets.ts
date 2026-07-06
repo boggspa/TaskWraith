@@ -9,6 +9,12 @@ export const ENSEMBLE_ROLE_PRESET_CUSTOM = 'custom'
 export const ENSEMBLE_ROLE_PRESETS: EnsembleRolePreset[] = [
   { id: 'explorer', label: 'Explorer', description: 'Map the problem, constraints, and safest path' },
   { id: 'architect', label: 'Architect', description: 'Shape structure, interfaces, and tradeoffs' },
+  {
+    id: 'designer',
+    label: 'Designer',
+    description:
+      'Protect UI/UX quality: extend existing chrome, hierarchy, and interaction patterns while making clear design calls'
+  },
   { id: 'planner', label: 'Planner', description: 'Break work into ordered, reviewable steps' },
   { id: 'worker', label: 'Worker', description: 'Execute implementation and concrete changes' },
   { id: 'implementer', label: 'Implementer', description: 'Land the patch with tight, tested diffs' },
