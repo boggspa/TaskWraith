@@ -43,6 +43,14 @@ describe('RosterSettingsPanel', () => {
     expect(html).toContain('No presets yet')
   })
 
+  it('renders JSON import/export controls', () => {
+    const html = renderToStaticMarkup(<RosterSettingsPanel />)
+    expect(html).toContain('Import JSON')
+    expect(html).toContain('Export JSON')
+    expect(html).toContain('type="file"')
+    expect(html).toContain('accept=".json,application/json"')
+  })
+
   it('lists an existing preset in the left pane', () => {
     createEmptyEnsembleRosterPreset('Panel A')
     const html = renderToStaticMarkup(<RosterSettingsPanel />)

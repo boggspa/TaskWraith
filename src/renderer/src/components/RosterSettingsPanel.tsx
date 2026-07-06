@@ -4,6 +4,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ChangeEvent as ReactChangeEvent,
   type DragEvent as ReactDragEvent,
   type JSX
 } from 'react'
@@ -21,8 +22,10 @@ import {
   deleteEnsembleRosterPreset,
   duplicateEnsembleRosterPreset,
   getEnsembleRosterPreset,
+  importEnsembleRosterPresetsFromJson,
   listEnsembleRosterPresets,
   materializeParticipantsFromPresetWithBossman,
+  serializeEnsembleRosterPresetsForExport,
   snapshotParticipantsForPreset,
   subscribeEnsembleRosterPresets,
   upsertEnsembleRosterPreset,
@@ -106,6 +109,11 @@ function formatTimestamp(ms: number): string {
   } catch {
     return ''
   }
+}
+
+function rosterExportFileName(): string {
+  const day = new Date().toISOString().slice(0, 10)
+  return `taskwraith-roster-presets-${day}.json`
 }
 
 function freshWorkingId(existing: EnsembleParticipant[]): string {
@@ -410,7 +418,9 @@ export function RosterSettingsPanel({
   const [editing, setEditing] = useState<RosterEditing | null>(null)
   const [nameDraft, setNameDraft] = useState('')
   const [maxDraft, setMaxDraft] = useState('')
+  const [transferStatus, setTransferStatus] = useState('')
   const nameInputRef = useRef<HTMLInputElement | null>(null)
+  const importInputRef = useRef<HTMLInputElement | null>(null)
 
   // Always-latest editing snapshot for the flush-on-switch safety net below.
   // Kept in sync during render AND synchronously inside commit/patch so a
@@ -537,6 +547,54 @@ export function RosterSettingsPanel({
     deleteEnsembleRosterPreset(preset.id)
     setPresets(loadPresets())
   }, [])
+
+  const handleExport = useCallback((): void => {
+    if (dirtyRef.current && editingRef.current) commit(editingRef.current)
+    const currentPresets = loadPresets()
+    if (currentPresets.length === 0) {
+      setTransferStatus('No roster presets to export.')
+      return
+    }
+    const blob = new Blob([serializeEnsembleRosterPresetsForExport(currentPresets)], {
+      type: 'application/json'
+    })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = rosterExportFileName()
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    URL.revokeObjectURL(url)
+    setTransferStatus(
+      `Exported ${currentPresets.length} roster preset${currentPresets.length === 1 ? '' : 's'}.`
+    )
+  }, [commit])
+
+  const handleImportFile = useCallback(
+    async (event: ReactChangeEvent<HTMLInputElement>): Promise<void> => {
+      const file = event.currentTarget.files?.[0]
+      event.currentTarget.value = ''
+      if (!file) return
+      if (dirtyRef.current && editingRef.current) commit(editingRef.current)
+      try {
+        const result = importEnsembleRosterPresetsFromJson(await file.text())
+        const nextPresets = loadPresets()
+        setPresets(nextPresets)
+        setSelectedId(result.presets[0]?.id ?? nextPresets[0]?.id ?? null)
+        setTransferStatus(
+          `Imported ${result.importedCount} roster preset${
+            result.importedCount === 1 ? '' : 's'
+          }${result.skippedCount > 0 ? `; skipped ${result.skippedCount} invalid item${result.skippedCount === 1 ? '' : 's'}` : ''}.`
+        )
+      } catch (error) {
+        setTransferStatus(
+          error instanceof Error ? error.message : 'Could not import roster presets.'
+        )
+      }
+    },
+    [commit]
+  )
 
   const commitName = useCallback((): void => {
     if (!editing) return
@@ -820,7 +878,39 @@ export function RosterSettingsPanel({
             apply to any ensemble chat. The composer keeps its compact editor; this is the roomy one.
           </p>
         </div>
+        <div className="settings-roster-transfer-actions">
+          <button
+            type="button"
+            className="settings-roster-action"
+            onClick={() => importInputRef.current?.click()}
+          >
+            Import JSON
+          </button>
+          <button
+            type="button"
+            className="settings-roster-action"
+            onClick={handleExport}
+            disabled={presets.length === 0}
+          >
+            Export JSON
+          </button>
+          <input
+            ref={importInputRef}
+            className="settings-roster-import-input"
+            type="file"
+            accept=".json,application/json"
+            onChange={(event) => {
+              void handleImportFile(event)
+            }}
+            aria-label="Import roster preset JSON"
+          />
+        </div>
       </div>
+      {transferStatus && (
+        <p className="settings-roster-transfer-status" role="status">
+          {transferStatus}
+        </p>
+      )}
 
       <div className="settings-roster-body">
         {/* Left: preset list ------------------------------------------------ */}

@@ -6409,10 +6409,18 @@ input:disabled, select:disabled, textarea:disabled {
   min-height: 0;
 }
 
+.settings-roster-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
 .settings-roster-header-copy {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  min-width: 0;
 }
 
 .settings-roster-title {
@@ -6427,6 +6435,25 @@ input:disabled, select:disabled, textarea:disabled {
   font-size: var(--font-size-sm, 13px);
   color: var(--text-secondary);
   line-height: 1.5;
+}
+
+.settings-roster-transfer-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.settings-roster-import-input {
+  display: none;
+}
+
+.settings-roster-transfer-status {
+  margin: -6px 0 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm, 13px);
 }
 
 .settings-roster-body {
@@ -6613,6 +6640,15 @@ input:disabled, select:disabled, textarea:disabled {
 
 .settings-roster-action:hover {
   background: color-mix(in srgb, var(--text-primary) 7%, transparent);
+}
+
+.settings-roster-action:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.settings-roster-action:disabled:hover {
+  background: transparent;
 }
 
 .settings-roster-action.is-danger {

@@ -13,6 +13,8 @@ import { getDefaultEnsembleParticipantConfig } from './ensembleProviderDefaults'
 import { getProviderLabel } from './providerLabels'
 
 const STORAGE_KEY = 'taskwraith-ensemble-roster-presets'
+const EXPORT_FORMAT = 'taskwraith.ensembleRosterPresets'
+const EXPORT_VERSION = 1
 const ENSEMBLE_FANOUT_POLICIES = new Set<EnsembleFanoutPolicy>([
   'off',
   'read_only',
@@ -78,6 +80,19 @@ export type EnsembleRosterPreset = {
   concurrentModeEnabled?: boolean
   ensembleContextChars?: number
   participants: EnsembleRosterParticipantSnapshot[]
+}
+
+export type EnsembleRosterPresetsExportPayload = {
+  format: typeof EXPORT_FORMAT
+  version: typeof EXPORT_VERSION
+  exportedAt: string
+  presets: EnsembleRosterPreset[]
+}
+
+export type EnsembleRosterPresetsImportResult = {
+  importedCount: number
+  skippedCount: number
+  presets: EnsembleRosterPreset[]
 }
 
 export function clonePermissionOverrides(
@@ -170,6 +185,65 @@ function normalizeRosterFanoutPolicy(
 function writeRawPresets(presets: EnsembleRosterPreset[]): void {
   if (typeof window === 'undefined') return
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(presets))
+}
+
+function importPresetCandidates(value: unknown): unknown[] {
+  if (Array.isArray(value)) return value
+  if (!value || typeof value !== 'object') return []
+  const record = value as { presets?: unknown; rosters?: unknown }
+  if (Array.isArray(record.presets)) return record.presets
+  if (Array.isArray(record.rosters)) return record.rosters
+  return []
+}
+
+function cloneRosterPreset(preset: EnsembleRosterPreset): EnsembleRosterPreset {
+  return {
+    ...preset,
+    participants: preset.participants.map(cloneSnapshot)
+  }
+}
+
+function uniqueImportedRosterName(name: string, usedNames: Set<string>): string {
+  const base = name.trim() || 'Imported roster'
+  if (!usedNames.has(base)) return base
+  const importedBase = `${base} imported`
+  if (!usedNames.has(importedBase)) return importedBase
+  for (let n = 2; n < 1000; n += 1) {
+    const candidate = `${importedBase} ${n}`
+    if (!usedNames.has(candidate)) return candidate
+  }
+  return `${importedBase} ${usedNames.size + 1}`
+}
+
+function uniqueImportedRosterId(now: number, usedIds: Set<string>): string {
+  for (let attempt = 0; attempt < 32; attempt += 1) {
+    const id = newPresetId(now + attempt)
+    if (!usedIds.has(id)) {
+      usedIds.add(id)
+      return id
+    }
+  }
+  const fallback = `ensemble-roster-import-${now.toString(36)}-${usedIds.size}`
+  usedIds.add(fallback)
+  return fallback
+}
+
+function importedRosterPreset(
+  preset: EnsembleRosterPreset,
+  now: number,
+  usedNames: Set<string>,
+  usedIds: Set<string>
+): EnsembleRosterPreset {
+  const next = cloneRosterPreset(preset)
+  const name = uniqueImportedRosterName(next.name, usedNames)
+  usedNames.add(name)
+  return {
+    ...next,
+    id: uniqueImportedRosterId(now, usedIds),
+    name,
+    createdAt: now,
+    updatedAt: now
+  }
 }
 
 /*
@@ -633,4 +707,59 @@ export function upsertEnsembleRosterPreset(preset: EnsembleRosterPreset): Ensemb
   writeRawPresets(presets)
   notifyPresetListeners()
   return preset
+}
+
+export function serializeEnsembleRosterPresetsForExport(
+  presets = listEnsembleRosterPresets()
+): string {
+  const payload: EnsembleRosterPresetsExportPayload = {
+    format: EXPORT_FORMAT,
+    version: EXPORT_VERSION,
+    exportedAt: new Date().toISOString(),
+    presets: presets.map(cloneRosterPreset)
+  }
+  return `${JSON.stringify(payload, null, 2)}\n`
+}
+
+export function importEnsembleRosterPresetsFromJson(
+  json: string,
+  now = Date.now()
+): EnsembleRosterPresetsImportResult {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(json)
+  } catch {
+    throw new Error('Roster preset import must be valid JSON.')
+  }
+
+  const candidates = importPresetCandidates(parsed)
+  if (candidates.length === 0) {
+    throw new Error('No roster presets were found in that JSON file.')
+  }
+
+  const existing = readRawPresets()
+  const usedNames = new Set(existing.map((preset) => preset.name))
+  const usedIds = new Set(existing.map((preset) => preset.id))
+  const imported: EnsembleRosterPreset[] = []
+  let skippedCount = 0
+
+  for (const candidate of candidates) {
+    if (!isEnsembleRosterPreset(candidate)) {
+      skippedCount += 1
+      continue
+    }
+    imported.push(importedRosterPreset(candidate, now - imported.length, usedNames, usedIds))
+  }
+
+  if (imported.length === 0) {
+    throw new Error('No valid roster presets were found in that JSON file.')
+  }
+
+  writeRawPresets([...imported, ...existing])
+  notifyPresetListeners()
+  return {
+    importedCount: imported.length,
+    skippedCount,
+    presets: imported
+  }
 }

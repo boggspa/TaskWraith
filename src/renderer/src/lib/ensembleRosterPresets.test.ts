@@ -39,10 +39,12 @@ import {
   createEmptyEnsembleRosterPreset,
   duplicateEnsembleRosterPreset,
   getEnsembleRosterPreset,
+  importEnsembleRosterPresetsFromJson,
   listEnsembleRosterPresets,
   materializeParticipantsFromPreset,
   materializeParticipantsFromPresetWithBossman,
   saveEnsembleRosterPresetFromParticipants,
+  serializeEnsembleRosterPresetsForExport,
   snapshotParticipantsForPreset,
   subscribeEnsembleRosterPresets,
   upsertEnsembleRosterPreset,
@@ -348,6 +350,66 @@ describe('ensembleRosterPresets — editor primitives', () => {
         participants: []
       })
     ).toThrow()
+  })
+})
+
+describe('ensembleRosterPresets — import/export', () => {
+  it('serializes roster presets in a versioned JSON envelope', () => {
+    const preset = upsertEnsembleRosterPreset(
+      buildEnsembleRosterPresetFromConfig('Portable panel', sampleEnsemble(), 1)
+    )
+    const exported = JSON.parse(serializeEnsembleRosterPresetsForExport([preset])) as {
+      format?: unknown
+      version?: unknown
+      presets?: unknown[]
+    }
+    expect(exported.format).toBe('taskwraith.ensembleRosterPresets')
+    expect(exported.version).toBe(1)
+    expect(exported.presets).toHaveLength(1)
+    expect(exported.presets?.[0]).toMatchObject({
+      id: preset.id,
+      name: 'Portable panel',
+      participants: [
+        { provider: 'codex', role: 'Builder' },
+        { provider: 'claude', role: 'Planner' }
+      ]
+    })
+  })
+
+  it('imports as fresh presets so existing saved presets are never overwritten', () => {
+    const existing = upsertEnsembleRosterPreset(
+      buildEnsembleRosterPresetFromConfig('Base panel', sampleEnsemble(), 1)
+    )
+    const payload = serializeEnsembleRosterPresetsForExport([existing])
+    const result = importEnsembleRosterPresetsFromJson(payload, 10_000)
+
+    expect(result.importedCount).toBe(1)
+    expect(result.skippedCount).toBe(0)
+    expect(result.presets[0].id).not.toBe(existing.id)
+    expect(result.presets[0].name).toBe('Base panel imported')
+    expect(getEnsembleRosterPreset(existing.id)?.name).toBe('Base panel')
+    expect(listEnsembleRosterPresets()).toHaveLength(2)
+  })
+
+  it('accepts raw preset arrays and skips invalid entries without aborting valid imports', () => {
+    const valid = buildEnsembleRosterPresetFromConfig('Valid panel', sampleEnsemble(), 1)
+    const result = importEnsembleRosterPresetsFromJson(
+      JSON.stringify([{ id: 'bad' }, valid]),
+      20_000
+    )
+
+    expect(result.importedCount).toBe(1)
+    expect(result.skippedCount).toBe(1)
+    expect(result.presets[0].name).toBe('Valid panel')
+    expect(listEnsembleRosterPresets()).toHaveLength(1)
+  })
+
+  it('rejects JSON that contains no valid roster presets', () => {
+    upsertEnsembleRosterPreset(buildEnsembleRosterPresetFromConfig('Existing', sampleEnsemble(), 1))
+    expect(() =>
+      importEnsembleRosterPresetsFromJson(JSON.stringify({ presets: [{ id: 'bad' }] }), 30_000)
+    ).toThrow('No valid roster presets')
+    expect(listEnsembleRosterPresets()).toHaveLength(1)
   })
 })
 
