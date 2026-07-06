@@ -3676,6 +3676,9 @@
 
 [data-composer-style="default"]
   .app-transcript
+  .composer-surface.composer-surface--native-no-above-rows,
+[data-composer-style="default"]
+  .app-transcript
   .composer-area
   > .composer-above-bar-stack:empty
   + .composer-surface,
@@ -3688,7 +3691,7 @@
   border-top-left-radius: calc(var(--radius-lg) * 2.45);
   border-top-right-radius: calc(var(--radius-lg) * 2.45);
   border-top: 1px solid var(--native-instrument-glass-border);
-  padding-top: 22px;
+  padding-top: 14px;
 }
 
 /* Corner fix (single + ensemble) — the TOP segment of the merged frame
@@ -8419,6 +8422,13 @@ button.composer-run-timecode.is-open {
 [data-composer-style="default"] .app-transcript .composer-surface:has(.composer-top-toggles) {
   padding-top: 0;
   gap: 0;
+}
+
+[data-composer-style="default"]
+  .app-transcript
+  .composer-surface.composer-surface--native-no-above-rows {
+  padding-top: 14px;
+  gap: var(--space-sm);
 }
 
 [data-composer-style="default"] .app-transcript .composer-top-toggles {

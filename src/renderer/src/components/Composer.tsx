@@ -1423,6 +1423,22 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     return false
   }
 
+  const canRenderComposerAboveRowStack = Boolean(
+    (!isCurrentGlobalChat &&
+      currentWorkspace &&
+      (!isWelcomeChat || isCurrentEnsembleChat)) ||
+      (isCurrentGlobalChat && isCurrentEnsembleChat)
+  )
+  const hasComposerAboveRows =
+    canRenderComposerAboveRowStack &&
+    ((!isWelcomeChat && Boolean(currentWorkspace)) ||
+      isCurrentEnsembleChat ||
+      queuedMessagesAboveRowEntries.length > 0)
+  const nativeNoAboveRowsClass =
+    appearance.composerStyle === 'default' && !hasComposerAboveRows
+      ? ' composer-surface--native-no-above-rows'
+      : ''
+
   return (
           <div className={`composer-area interface-${interfaceStyle}`} ref={composerAreaRef}>
             {shouldShowGhostCompanion && <GhostCompanion />}
@@ -2201,7 +2217,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                 )
               })()}
             <div
-              className={`composer-surface ${isComposerDragOver ? 'is-drag-over' : ''} ${composerAgentAuraClass}`}
+              className={`composer-surface ${isComposerDragOver ? 'is-drag-over' : ''} ${composerAgentAuraClass}${nativeNoAboveRowsClass}`}
               onDragEnter={handleComposerDragEnter}
               onDragOver={handleComposerDragOver}
               onDragLeave={handleComposerDragLeave}
