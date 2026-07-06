@@ -156,4 +156,16 @@ describe('ComposerPlanPopoverButton helpers', () => {
     expect(position.placement).toBe('above')
     expect(position.top).toBeGreaterThanOrEqual(368)
   })
+
+  it('tracks the composer surface width when a surface rect is supplied', () => {
+    const position = computeComposerPlanPopoverPosition(
+      { left: 132, width: 20, top: 640, bottom: 658 },
+      { width: 900, height: 700 },
+      { width: 356, height: 360 },
+      { left: 100, width: 620 }
+    )
+
+    expect(position.left).toBe(108)
+    expect(position.width).toBe(604)
+  })
 })

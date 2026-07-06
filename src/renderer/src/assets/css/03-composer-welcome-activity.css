@@ -5250,9 +5250,10 @@
 .composer-goal-popover {
   position: fixed;
   z-index: 12000;
-  width: min(356px, calc(100vw - 16px));
+  width: min(680px, calc(100vw - 16px));
   max-height: min(360px, calc(100vh - 16px));
   overflow: auto;
+  box-sizing: border-box;
   padding: 10px;
   border: 1px solid color-mix(in srgb, var(--panel-border) 90%, transparent);
   border-radius: var(--radius-md, 10px);
@@ -5537,11 +5538,12 @@
 .composer-plan-popover {
   position: fixed;
   z-index: 12000;
-  width: min(356px, calc(100vw - 16px));
+  width: min(680px, calc(100vw - 16px));
   max-height: min(400px, calc(100vh - 16px));
   overflow: hidden;
+  box-sizing: border-box;
   padding: 10px;
-  transform: translate(-50%, -100%);
+  transform: translateY(-100%);
   border: 1px solid color-mix(in srgb, var(--panel-border) 90%, transparent);
   border-radius: var(--radius-md, 10px);
   background: color-mix(in srgb, var(--panel-elevated-bg) 96%, transparent);
@@ -5557,7 +5559,7 @@
 }
 
 .composer-plan-popover.is-below {
-  transform: translate(-50%, 0);
+  transform: none;
 }
 
 .composer-plan-popover-header {

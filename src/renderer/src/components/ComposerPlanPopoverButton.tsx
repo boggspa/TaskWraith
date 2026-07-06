@@ -23,6 +23,7 @@ export interface ComposerPlanPopoverPosition {
   left: number
   top: number
   placement: 'above' | 'below'
+  width: number
 }
 
 interface ComposerPlanPopoverButtonProps {
@@ -124,13 +125,27 @@ export function buildComposerPlanLanes(chat?: ChatRecord | null): ComposerPlanLa
 export function computeComposerPlanPopoverPosition(
   rect: Pick<DOMRect, 'left' | 'width' | 'top' | 'bottom'>,
   viewport: { width: number; height: number },
-  popoverSize: { width: number; height: number } = { width: 356, height: 400 }
+  popoverSize: { width: number; height: number } = { width: 356, height: 400 },
+  surfaceRect?: Pick<DOMRect, 'left' | 'width'>
 ): ComposerPlanPopoverPosition {
   const edgePadding = 8
   const gap = 8
-  const minLeft = edgePadding + popoverSize.width / 2
-  const maxLeft = Math.max(minLeft, viewport.width - edgePadding - popoverSize.width / 2)
-  const left = Math.min(Math.max(rect.left + rect.width / 2, minLeft), maxLeft)
+  const availableWidth = Math.max(0, viewport.width - edgePadding * 2)
+  let width = Math.min(popoverSize.width, availableWidth)
+  let left: number
+  if (surfaceRect) {
+    const horizontalInset = 16
+    const desiredWidth = Math.max(0, surfaceRect.width - horizontalInset)
+    const widthFloor = Math.min(popoverSize.width, availableWidth)
+    width = Math.min(Math.max(desiredWidth, widthFloor), availableWidth)
+    const preferredLeft = surfaceRect.left + horizontalInset / 2
+    const maxLeft = Math.max(edgePadding, viewport.width - edgePadding - width)
+    left = Math.min(Math.max(preferredLeft, edgePadding), maxLeft)
+  } else {
+    const minLeft = edgePadding + width / 2
+    const maxLeft = Math.max(minLeft, viewport.width - edgePadding - width / 2)
+    left = Math.min(Math.max(rect.left + rect.width / 2, minLeft), maxLeft)
+  }
   const spaceAbove = Math.max(0, rect.top - edgePadding - gap)
   const spaceBelow = Math.max(0, viewport.height - rect.bottom - edgePadding - gap)
   const placement =
@@ -141,14 +156,16 @@ export function computeComposerPlanPopoverPosition(
     return {
       left,
       top: Math.min(Math.max(unclampedTop, edgePadding), maxTop),
-      placement
+      placement,
+      width
     }
   }
   const unclampedTop = rect.top - gap
   return {
     left,
     top: Math.max(edgePadding + popoverSize.height, Math.min(unclampedTop, viewport.height - edgePadding)),
-    placement
+    placement,
+    width
   }
 }
 
@@ -180,12 +197,15 @@ export function ComposerPlanPopoverButton({
       return
     }
     const rect = trigger.getBoundingClientRect()
+    const surface = trigger.closest('.composer-surface') as HTMLElement | null
+    const surfaceRect = surface?.getBoundingClientRect()
     const popoverHeight = popoverRef.current?.offsetHeight || 400
     setPosition(
       computeComposerPlanPopoverPosition(
         rect,
         { width: window.innerWidth, height: window.innerHeight },
-        { width: 356, height: popoverHeight }
+        { width: 356, height: popoverHeight },
+        surfaceRect ? { left: surfaceRect.left, width: surfaceRect.width } : undefined
       )
     )
   }, [])
@@ -241,7 +261,7 @@ export function ComposerPlanPopoverButton({
             aria-label="Plan"
             style={
               position
-                ? { left: `${position.left}px`, top: `${position.top}px` }
+                ? { left: `${position.left}px`, top: `${position.top}px`, width: `${position.width}px` }
                 : { left: '0px', top: '0px', visibility: 'hidden' }
             }
           >

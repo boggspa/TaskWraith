@@ -4332,6 +4332,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
 	                      style={{
 	                        left: goalPopoverPosition ? `${goalPopoverPosition.left}px` : '0px',
 	                        top: goalPopoverPosition ? `${goalPopoverPosition.top}px` : '0px',
+	                        width: goalPopoverPosition ? `${goalPopoverPosition.width}px` : undefined,
 	                        visibility: goalPopoverPosition ? 'visible' : 'hidden'
 	                      }}
 	                      role="dialog"

@@ -2617,6 +2617,7 @@ function App(): React.JSX.Element {
   const [goalPopoverPosition, setGoalPopoverPosition] = useState<{
     left: number
     top: number
+    width: number
   } | null>(null)
   const adapterRef = useRef<GeminiStreamAdapter | null>(null)
   const activeRunsRef = useRef<Map<string, ActiveRunContext>>(new Map())
@@ -15188,15 +15189,18 @@ function App(): React.JSX.Element {
     const margin = 8
     const gap = 8
     const rect = trigger.getBoundingClientRect()
+    const surface = trigger.closest('.composer-surface') as HTMLElement | null
+    const surfaceRect = surface?.getBoundingClientRect() ?? rect
     const popover = goalPopoverRef.current
-    const fallbackWidth = Math.min(340, Math.max(240, window.innerWidth - margin * 2))
-    const width = Math.min(popover?.offsetWidth || fallbackWidth, window.innerWidth - margin * 2)
+    const horizontalInset = 16
+    const availableWidth = Math.max(0, window.innerWidth - margin * 2)
+    const desiredWidth = Math.max(0, surfaceRect.width - horizontalInset)
+    const widthFloor = Math.min(320, availableWidth)
+    const width = Math.min(Math.max(desiredWidth, widthFloor), availableWidth)
     const height = Math.min(popover?.offsetHeight || 240, window.innerHeight - margin * 2)
-    let left = rect.left
-    if (left + width + margin > window.innerWidth) {
-      left = window.innerWidth - width - margin
-    }
-    left = Math.max(margin, left)
+    const preferredLeft = surfaceRect.left + horizontalInset / 2
+    const maxLeft = Math.max(margin, window.innerWidth - width - margin)
+    const left = Math.min(Math.max(preferredLeft, margin), maxLeft)
 
     let top = rect.top - height - gap
     if (top < margin) {
@@ -15208,7 +15212,8 @@ function App(): React.JSX.Element {
 
     setGoalPopoverPosition({
       left: Math.round(left),
-      top: Math.round(top)
+      top: Math.round(top),
+      width: Math.round(width)
     })
   }, [])
 

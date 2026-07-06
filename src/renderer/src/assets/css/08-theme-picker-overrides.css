@@ -8864,7 +8864,8 @@
  * pseudo-element inherits the rounded clip via inset:0 + inherit. */
 .composer-combined-picker-popover::after,
 .composer-diff-action-menu::after,
-.composer-goal-popover::after {
+.composer-goal-popover::after,
+.composer-plan-popover::after {
   content: "";
   position: absolute;
   inset: 0;
@@ -8883,7 +8884,8 @@
  * backdrop repaint, NO animation of the filter or its inputs. */
 :root[data-advanced-fx-refraction="true"] .composer-combined-picker-popover::before,
 :root[data-advanced-fx-refraction="true"] .composer-diff-action-menu::before,
-:root[data-advanced-fx-refraction="true"] .composer-goal-popover::before {
+:root[data-advanced-fx-refraction="true"] .composer-goal-popover::before,
+:root[data-advanced-fx-refraction="true"] .composer-plan-popover::before {
   content: "";
   position: absolute;
   inset: 0;
@@ -8915,12 +8917,12 @@
  * stronger intensity tiers. At `subtle` the sheen renders flat (CSS
  * rim + gradient only, no SVG). Reserve the strongest warp for epic. */
 :root[data-advanced-fx-refraction="true"][data-advanced-fx-intensity="cinematic"]
-  :is(.composer-combined-picker-popover, .composer-diff-action-menu, .composer-goal-popover)::before {
+  :is(.composer-combined-picker-popover, .composer-diff-action-menu, .composer-goal-popover, .composer-plan-popover)::before {
   filter: url(#tw-glass-refract);
   opacity: 0.85;
 }
 :root[data-advanced-fx-refraction="true"][data-advanced-fx-intensity="epic"]
-  :is(.composer-combined-picker-popover, .composer-diff-action-menu, .composer-goal-popover)::before {
+  :is(.composer-combined-picker-popover, .composer-diff-action-menu, .composer-goal-popover, .composer-plan-popover)::before {
   filter: url(#tw-glass-refract);
   opacity: 1;
 }
@@ -8931,7 +8933,7 @@
  * diagonal so the bright frosted surface never blows out. */
 :root[data-advanced-fx-refraction="true"]
   :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
-  :is(.composer-combined-picker-popover, .composer-diff-action-menu, .composer-goal-popover)::before {
+  :is(.composer-combined-picker-popover, .composer-diff-action-menu, .composer-goal-popover, .composer-plan-popover)::before {
   mix-blend-mode: screen;
   opacity: 0.7;
 }
@@ -8942,19 +8944,19 @@
  *     real a11y gap regardless of the refraction attr. High specificity
  *     (:root + class) beats the base rule's `backdrop-filter`. */
 :root[data-reduce-transparency="true"]
-  :is(.composer-combined-picker-popover, .composer-diff-action-menu, .composer-goal-popover) {
+  :is(.composer-combined-picker-popover, .composer-diff-action-menu, .composer-goal-popover, .composer-plan-popover) {
   background: var(--tw-glass-solid, var(--panel-bg-solid, #0f1830));
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
 :root[data-reduce-transparency="true"]
-  :is(.composer-combined-picker-popover, .composer-diff-action-menu, .composer-goal-popover)::before {
+  :is(.composer-combined-picker-popover, .composer-diff-action-menu, .composer-goal-popover, .composer-plan-popover)::before {
   display: none;
   filter: none;
 }
 :root[data-reduce-transparency="true"]
   :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
-  :is(.composer-combined-picker-popover, .composer-diff-action-menu, .composer-goal-popover) {
+  :is(.composer-combined-picker-popover, .composer-diff-action-menu, .composer-goal-popover, .composer-plan-popover) {
   background: var(--tw-glass-solid, var(--surface-1, #f4f6fb));
   color: var(--surface-text);
 }
@@ -8963,16 +8965,16 @@
  *     pattern at 03-composer-welcome-activity.css:3215. Also neutralise
  *     the sheen filter so a non-supporting engine never tries url(). */
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  :is(.composer-combined-picker-popover, .composer-diff-action-menu, .composer-goal-popover) {
+  :is(.composer-combined-picker-popover, .composer-diff-action-menu, .composer-goal-popover, .composer-plan-popover) {
     background: var(--tw-glass-solid, var(--panel-bg-solid, #0f1830));
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
   }
-  :is(.composer-combined-picker-popover, .composer-diff-action-menu, .composer-goal-popover)::before {
+  :is(.composer-combined-picker-popover, .composer-diff-action-menu, .composer-goal-popover, .composer-plan-popover)::before {
     filter: none;
   }
   :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
-    :is(.composer-combined-picker-popover, .composer-diff-action-menu, .composer-goal-popover) {
+    :is(.composer-combined-picker-popover, .composer-diff-action-menu, .composer-goal-popover, .composer-plan-popover) {
     background: var(--tw-glass-solid, var(--surface-1, #f4f6fb));
     color: var(--surface-text);
   }
