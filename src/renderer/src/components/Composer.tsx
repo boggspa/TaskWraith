@@ -1979,6 +1979,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               workspacePath: group.path
                             })
                           }
+                          composerStyle={appearance.composerStyle}
                           cursorLeadDetached={aboveRowsFloatAboveStack}
                         />
                       ))

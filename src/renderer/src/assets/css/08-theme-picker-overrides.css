@@ -9972,6 +9972,8 @@
    * represent attached grants, not the main workspace identity. */
   opacity: 0.92;
   font-size: calc(var(--font-size-xs) + 0.5px);
+  min-height: 34px;
+  box-sizing: border-box;
 }
 
 .composer-above-bar-secondary-branch {
@@ -10032,6 +10034,10 @@
   margin-right: 8px;
   padding: 2px 9px;
   font-size: calc(var(--font-size-xs) - 0.5px);
+}
+
+.composer-above-bar-secondary .composer-above-bar-action--git-commit-icon {
+  padding: 0;
 }
 
 /* ============================================================

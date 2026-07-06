@@ -17,9 +17,10 @@
  * primary row and any number of these secondary rows back-to-back.
  */
 
-import type { ExternalPathGrant } from '../../../main/store/types'
+import type { ComposerStyle, ExternalPathGrant } from '../../../main/store/types'
 import type { ExternalPathGitMetadata } from '../lib/ExternalPathRepoDetect'
 import { describeExternalPath } from '../lib/ExternalPathRepoDetect'
+import { getPoolIconAsset, preparePoolIconSvg } from '../lib/agentPoolIconAssets'
 import { getProviderName } from './Sidebar'
 import { useState } from 'react'
 import { branchTone, GitMergeBadge, GitPrLifecycleChip, GitSyncChip } from './GitStatusChips'
@@ -125,6 +126,22 @@ interface ExternalPathAboveRowProps {
   onReviewChanges?: () => void
   /** Cursor shell — detached satellite pills above the merged stack. */
   cursorLeadDetached?: boolean
+  composerStyle?: ComposerStyle
+}
+
+const gitCommitTriggerAsset = getPoolIconAsset('pool:glyph-git-commit')
+const gitCommitTriggerSvg = gitCommitTriggerAsset
+  ? preparePoolIconSvg(gitCommitTriggerAsset, 22, 'currentColor')
+  : ''
+
+function GitCommitTriggerIcon(): React.JSX.Element {
+  return (
+    <span
+      className="composer-git-commit-trigger-icon"
+      aria-hidden="true"
+      dangerouslySetInnerHTML={{ __html: gitCommitTriggerSvg }}
+    />
+  )
 }
 
 function BranchGlyph(): React.JSX.Element {
@@ -235,7 +252,8 @@ export function ExternalPathAboveRow({
   createPrState,
   onCreatePr,
   onReviewChanges,
-  cursorLeadDetached = false
+  cursorLeadDetached = false,
+  composerStyle
 }: ExternalPathAboveRowProps): React.JSX.Element {
   const descriptor = describeExternalPath(grant.path, { gitMetadata: repoMetadata })
   // Union access (write if ANY provider for this path can write) drives the
@@ -282,6 +300,9 @@ export function ExternalPathAboveRow({
         ? 'Publish branch'
         : 'Push'
       : createPrLabel
+  const useGitIconAction = composerStyle === 'codex' && Boolean(gitCommitTriggerSvg)
+  const actionTitle =
+    createPrState?.message || `Review, commit, push, or open a PR for ${descriptor.basename}`
   // 1.0.5-EW42b — Build a rich tooltip that explains what created
   // this grant (composer-proactive vs. agent-approval vs. legacy
   // manual picker), which provider it's scoped to, and when it
@@ -336,19 +357,17 @@ export function ExternalPathAboveRow({
         <span className="composer-diff-action-menu-wrap">
           <button
             type="button"
-            className={`composer-above-bar-action ${prStatus === 'pending' ? 'is-pending' : ''} ${
+            className={`composer-above-bar-action ${useGitIconAction ? 'composer-above-bar-action--git-commit-icon' : ''} ${prStatus === 'pending' ? 'is-pending' : ''} ${
               prStatus === 'error' ? 'is-error' : ''
             } ${prStatus === 'success' ? 'is-success' : ''}`}
             onClick={() => setDiffMenuOpen((open) => !open)}
             disabled={prStatus === 'pending'}
             aria-haspopup="menu"
             aria-expanded={diffMenuOpen}
-            title={
-              createPrState?.message ||
-              `Review, commit, push, or open a PR for ${descriptor.basename}`
-            }
+            aria-label={useGitIconAction ? `${actionLabel}. ${actionTitle}` : undefined}
+            title={actionTitle}
           >
-            {actionLabel}
+            {useGitIconAction ? <GitCommitTriggerIcon /> : actionLabel}
           </button>
           {diffMenuOpen && (
             <div className="composer-diff-action-menu" role="menu">
