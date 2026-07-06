@@ -192,6 +192,15 @@ export type ActivityTimelineItem =
   | { type: 'activity'; activity: ToolActivity }
   | { type: 'compact-group'; id: string; activities: ToolActivity[] }
 
+export type ActivityTimelineSegmentKind = 'thinking' | 'tools'
+
+export interface ActivityTimelineSegment {
+  id: string
+  kind: ActivityTimelineSegmentKind
+  items: ActivityTimelineItem[]
+  activities: ToolActivity[]
+}
+
 export interface CompactGroupTargetChip {
   key: string
   label: string
@@ -1463,6 +1472,37 @@ export function buildTimelineItems(activities: ToolActivity[]): ActivityTimeline
   return items
 }
 
+function timelineItemKind(item: ActivityTimelineItem): ActivityTimelineSegmentKind {
+  return item.type === 'activity' && isThinkingTraceActivity(item.activity) ? 'thinking' : 'tools'
+}
+
+function timelineItemActivities(item: ActivityTimelineItem): ToolActivity[] {
+  return item.type === 'compact-group' ? item.activities : [item.activity]
+}
+
+export function buildTimelineSegments(items: ActivityTimelineItem[]): ActivityTimelineSegment[] {
+  const segments: ActivityTimelineSegment[] = []
+  for (const item of items) {
+    const kind = timelineItemKind(item)
+    const activities = timelineItemActivities(item)
+    const current = segments[segments.length - 1]
+    if (current && current.kind === kind) {
+      current.items.push(item)
+      current.activities.push(...activities)
+      continue
+    }
+
+    const firstActivity = activities[0]
+    segments.push({
+      id: `${kind}-${firstActivity?.id || segments.length}`,
+      kind,
+      items: [item],
+      activities: [...activities]
+    })
+  }
+  return segments
+}
+
 function thinkingTraceActionContent(note: { title: string; body?: string }): string {
   return (note.body || note.title).trim()
 }
@@ -2441,7 +2481,7 @@ export function ActivityStack({
       return next
     })
   }
-  const timelineNodes = renderedTimelineItems.map((item) => {
+  const renderTimelineItem = (item: ActivityTimelineItem): ReactNode => {
     if (item.type === 'compact-group') {
       return (
         <ActivityCompactGroup
@@ -2525,52 +2565,74 @@ export function ActivityStack({
         thinkingTraceActions={thinkingTraceActions}
       />
     )
-  })
+  }
+  const timelineNodes = renderedTimelineItems.map(renderTimelineItem)
+  const pinnedLiveContent =
+    planLanes.length > 1 ? (
+      <div className="plan-rail-lanes">
+        {planLanes.map((lane) => (
+          <TodoChecklistCard
+            key={lane.lane}
+            todos={lane.todos}
+            variant="pinned"
+            laneLabel={lane.label}
+          />
+        ))}
+      </div>
+    ) : (
+      latestMergedTodos.length > 0 && (
+        <TodoChecklistCard todos={latestMergedTodos} variant="pinned" />
+      )
+    )
 
-  // Keep every tool burst inside the same bounded viewport so provider timing
-  // differences don't change the transcript layout. The child-agent spawn
-  // header stays above it because it is navigational chrome, not stream detail.
+  // Keep every live burst inside bounded viewports so provider timing
+  // differences don't change the transcript layout. Thinking traces and tool
+  // calls intentionally get separate viewports, even when interleaved, so a tall
+  // tool result cannot swallow the model's reasoning trace. The child-agent
+  // spawn header stays above because it is navigational chrome, not stream detail.
   if (liveViewportEnabled) {
+    const timelineSegments = buildTimelineSegments(renderedTimelineItems)
     return (
       <div className="activity-timeline">
         {childThreads.length >= 2 && <ChildAgentSpawnBlock threads={childThreads} />}
-        <LiveActivityViewport
-          className={liveActivityViewportClassName}
-          active={activitiesHaveLiveWork(activities)}
-          revision={liveActivityRevision(topLevelActivities)}
-          collapsedMaxHeight={liveActivityViewportCollapsedMaxHeight}
-          expanded={liveViewportExpanded}
-          onExpandedChange={setLiveViewportExpanded}
-          label={liveActivityViewportLabel}
-          expandLabel={liveActivityViewportExpandLabel}
-          collapseLabel={liveActivityViewportCollapseLabel}
-          jumpLabel={liveActivityViewportJumpLabel}
-        >
-          {planLanes.length > 1 ? (
-            <div className="plan-rail-lanes">
-              {planLanes.map((lane) => (
-                <TodoChecklistCard
-                  key={lane.lane}
-                  todos={lane.todos}
-                  variant="pinned"
-                  laneLabel={lane.label}
-                />
-              ))}
-            </div>
-          ) : (
-            latestMergedTodos.length > 0 && (
-              <TodoChecklistCard todos={latestMergedTodos} variant="pinned" />
-            )
-          )}
-          <div className="activity-timeline-live-inner">
-            {hiddenTimelineItemCount > 0 && (
-              <div className="activity-timeline-live-truncated">
-                {hiddenTimelineItemCount} earlier events hidden while collapsed.
+        {timelineSegments.map((segment, index) => {
+          const isThinkingSegment = segment.kind === 'thinking'
+          const className = [
+            liveActivityViewportClassName,
+            isThinkingSegment ? 'activity-thinking-trace-viewport' : 'activity-tool-call-viewport'
+          ]
+            .filter(Boolean)
+            .join(' ')
+          return (
+            <LiveActivityViewport
+              key={segment.id}
+              className={className}
+              active={activitiesHaveLiveWork(segment.activities)}
+              revision={liveActivityRevision(segment.activities)}
+              collapsedMaxHeight={liveActivityViewportCollapsedMaxHeight}
+              expanded={liveViewportExpanded}
+              onExpandedChange={setLiveViewportExpanded}
+              label={isThinkingSegment ? 'Thinking traces' : liveActivityViewportLabel}
+              expandLabel={
+                isThinkingSegment ? 'Expand thinking traces' : liveActivityViewportExpandLabel
+              }
+              collapseLabel={
+                isThinkingSegment ? 'Collapse thinking traces' : liveActivityViewportCollapseLabel
+              }
+              jumpLabel={isThinkingSegment ? 'Jump to latest thinking' : liveActivityViewportJumpLabel}
+            >
+              {index === 0 && pinnedLiveContent}
+              <div className="activity-timeline-live-inner">
+                {index === 0 && hiddenTimelineItemCount > 0 && (
+                  <div className="activity-timeline-live-truncated">
+                    {hiddenTimelineItemCount} earlier events hidden while collapsed.
+                  </div>
+                )}
+                {segment.items.map(renderTimelineItem)}
               </div>
-            )}
-            {timelineNodes}
-          </div>
-        </LiveActivityViewport>
+            </LiveActivityViewport>
+          )
+        })}
       </div>
     )
   }

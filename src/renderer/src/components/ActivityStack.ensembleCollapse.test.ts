@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   buildCompactGroupLabel,
   buildCompactGroupTargetSummary,
+  buildTimelineSegments,
   buildTimelineItems
 } from './ActivityStack'
 import type { ToolActivity } from '../../../main/store/types'
@@ -223,6 +224,37 @@ describe('buildTimelineItems — same-tool grouping (unified single + ensemble)'
     const items = buildTimelineItems(acts)
     expect(items.map((i) => i.type)).toEqual(['compact-group', 'activity', 'compact-group'])
     if (items[1].type === 'activity') expect(items[1].activity.id).toBe('think')
+  })
+
+  it('splits interleaved thinking traces into separate viewport segments', () => {
+    const items = buildTimelineItems([
+      activity({ id: 't1', category: 'task', toolName: 'plan' }),
+      activity({ id: 't2', category: 'task', toolName: 'plan' }),
+      activity({ id: 'think', category: 'task', toolName: 'codex_thinking', displayName: 'Thinking' }),
+      activity({ id: 't3', category: 'task', toolName: 'plan' }),
+      activity({ id: 't4', category: 'task', toolName: 'plan' })
+    ])
+    const segments = buildTimelineSegments(items)
+
+    expect(segments.map((segment) => segment.kind)).toEqual(['tools', 'thinking', 'tools'])
+    expect(segments.map((segment) => segment.activities.map((a) => a.id))).toEqual([
+      ['t1', 't2'],
+      ['think'],
+      ['t3', 't4']
+    ])
+  })
+
+  it('keeps consecutive thinking traces together but separate from tools', () => {
+    const items = buildTimelineItems([
+      activity({ id: 'read-1', category: 'read', toolName: 'read_file' }),
+      activity({ id: 'read-2', category: 'read', toolName: 'read_file' }),
+      activity({ id: 'think-1', category: 'task', toolName: 'codex_thinking', displayName: 'Thinking' }),
+      activity({ id: 'think-2', category: 'task', toolName: 'kimi_reasoning', displayName: 'Reasoning' })
+    ])
+    const segments = buildTimelineSegments(items)
+
+    expect(segments.map((segment) => segment.kind)).toEqual(['tools', 'thinking'])
+    expect(segments[1].activities.map((activity) => activity.id)).toEqual(['think-1', 'think-2'])
   })
 })
 
