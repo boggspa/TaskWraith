@@ -4125,6 +4125,90 @@ Next action:
     expect(harness.dispatched[1].prompt).toContain('Open polls:')
   })
 
+  it('lets Boss replace and reopen a completed TaskWraith goal', async () => {
+    const initialChat = makeChat()
+    initialChat.ensemble!.bossmanParticipantId = 'claude'
+    initialChat.activeGoal = {
+      ...buildActiveGoal('goal-old'),
+      status: 'completed',
+      completedAt: '2026-05-24T01:00:00.000Z',
+      completedSummary: 'Earlier run finished.'
+    }
+    const harness = makeHarness({ initialChat, nowIso: () => '2026-05-24T02:00:00.000Z' })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Plan and execute.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    const result = await harness.orchestrator.bossmanControlForRun(
+      harness.dispatched[0].appRunId,
+      {
+        action: 'set_goal',
+        roundId: harness.chat.ensemble?.activeRound?.roundId,
+        goal: 'Ship the next corrected slice',
+        reason: 'Previous goal was closed too early.'
+      }
+    )
+
+    expect(result.ok).toBe(true)
+    expect(result.goal).toMatchObject({
+      id: 'goal-old',
+      objective: 'Ship the next corrected slice',
+      status: 'active',
+      mode: 'taskwraith_steered',
+      provider: 'claude'
+    })
+    expect(harness.chat.activeGoal?.completedAt).toBeUndefined()
+    expect(harness.chat.activeGoal?.completedSummary).toBeUndefined()
+  })
+
+  it('lets Captain reopen a blocked goal when Boss is unavailable', async () => {
+    const initialChat = makeChat()
+    initialChat.ensemble!.participants = [
+      { ...initialChat.ensemble!.participants[0], enabled: false },
+      initialChat.ensemble!.participants[1]
+    ]
+    initialChat.ensemble!.bossmanParticipantId = 'claude'
+    initialChat.ensemble!.secondInCommandParticipantId = 'codex'
+    initialChat.activeGoal = {
+      ...buildActiveGoal('goal-blocked'),
+      status: 'blocked',
+      blockedAt: '2026-05-24T01:00:00.000Z',
+      blockedReason: 'Waiting for local credentials.'
+    }
+    const harness = makeHarness({ initialChat, nowIso: () => '2026-05-24T02:00:00.000Z' })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Continue.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    expect(harness.dispatched[0].ensembleRun?.participantId).toBe('codex')
+
+    const result = await harness.orchestrator.bossmanControlForRun(
+      harness.dispatched[0].appRunId,
+      {
+        action: 'update_goal',
+        roundId: harness.chat.ensemble?.activeRound?.roundId,
+        goalStatus: 'active',
+        reason: 'Credentials are now visible to the release shell.'
+      }
+    )
+
+    expect(result.ok).toBe(true)
+    expect(result.goal).toMatchObject({
+      id: 'goal-blocked',
+      status: 'active'
+    })
+    expect(harness.chat.activeGoal?.blockedAt).toBeUndefined()
+    expect(harness.chat.activeGoal?.blockedReason).toBeUndefined()
+    expect(harness.chat.activeGoal?.lastStatusReason).toBe(
+      'Credentials are now visible to the release shell.'
+    )
+  })
+
   it('lets Boss quarantine a pending participant so routing skips them', async () => {
     const initialChat = makeChat()
     initialChat.ensemble!.bossmanParticipantId = 'claude'
@@ -4305,6 +4389,41 @@ Next action:
     )
     expect(completed.ok).toBe(true)
     expect(harness.chat.ensemble?.workSession?.status).toBe('completed')
+  })
+
+  it('blocks Boss goal completion while review gates are still required', async () => {
+    const initialChat = makeChat()
+    initialChat.ensemble!.bossmanParticipantId = 'claude'
+    initialChat.activeGoal = buildActiveGoal('goal-final')
+    const harness = makeHarness({ initialChat })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Plan and execute.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    await harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+      action: 'set_review_gate',
+      roundId: harness.chat.ensemble?.activeRound?.roundId,
+      gateId: 'gate-final-review',
+      targetParticipantId: 'codex',
+      scope: 'final diff',
+      acceptanceCriteria: 'Reviewer must approve before completion.'
+    })
+    const blocked = await harness.orchestrator.bossmanControlForRun(
+      harness.dispatched[0].appRunId,
+      {
+        action: 'update_goal',
+        roundId: harness.chat.ensemble?.activeRound?.roundId,
+        goalStatus: 'completed',
+        reason: 'Looks done.'
+      }
+    )
+
+    expect(blocked.ok).toBe(false)
+    expect(blocked.error).toBe('review_gate_blocked')
+    expect(harness.chat.activeGoal?.status).toBe('active')
   })
 
   it('enforces Boss extra-turn budgets on directed participant summons', async () => {

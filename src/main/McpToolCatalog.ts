@@ -2224,7 +2224,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
     {
       name: 'ensemble_bossman_control',
       description:
-        'In Ensemble Mode, allows the assigned Boss participant, or Captain only after Boss is unavailable, to make bounded event-bound orchestration decisions: assign work, set the round plan, request status, declare decisions, set review gates, quarantine noisy/unavailable participants, allocate budgets, create polls, adjust hops, schedule wakeups, check quota reset status, skip/stop participants, explicitly re-summon an already-answered participant in Continuous mode, replace a participant after provider health checks, reorder the remaining queue with cooldown, queue a follow-up, or pause/complete a managed Work Session. Non-authority callers and stale round/run/participant ids are rejected and audited.',
+        'In Ensemble Mode, allows the assigned Boss participant, or Captain only after Boss is unavailable, to make bounded event-bound orchestration decisions: assign work, set the round plan, request status, declare decisions, set review gates, quarantine noisy/unavailable participants, allocate budgets, create polls, set/update/clear the TaskWraith goal, adjust hops, schedule wakeups, check quota reset status, skip/stop participants, explicitly re-summon an already-answered participant in Continuous mode, replace a participant after provider health checks, reorder the remaining queue with cooldown, queue a follow-up, or pause/complete a managed Work Session. Non-authority callers and stale round/run/participant ids are rejected and audited.',
       annotations: {
         readOnlyHint: false,
         destructiveHint: false,
@@ -2253,6 +2253,8 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
               'quarantine_participant',
               'allocate_budget',
               'create_poll',
+              'set_goal',
+              'update_goal',
               'clear_goal',
               'adjust_hops',
               'ensemble_scheduled_wakeup',
@@ -2306,7 +2308,21 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
           gateId: { type: 'string' },
           pollId: { type: 'string' },
           budgetId: { type: 'string' },
-          goal: { type: 'string', description: 'For set_round_plan: active strategy goal.' },
+          goal: {
+            type: 'string',
+            description: 'For set_round_plan: active strategy goal. For set_goal: TaskWraith goal objective.'
+          },
+          goalStatus: {
+            type: 'string',
+            enum: ['active', 'paused', 'blocked', 'completed'],
+            description:
+              'For update_goal: lifecycle status for the active TaskWraith goal. Use active to reopen a completed goal, unblock it, or mark it incomplete.'
+          },
+          status: {
+            type: 'string',
+            enum: ['active', 'paused', 'blocked', 'completed'],
+            description: 'Compatibility alias for goalStatus on update_goal.'
+          },
           phase: { type: 'string', description: 'For set_round_plan/allocate_budget.' },
           blockers: {
             type: 'array',

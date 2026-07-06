@@ -17,6 +17,8 @@ import {
   providerLabel
 } from '../EnsemblePrompt'
 import type {
+  ActiveGoal,
+  ActiveGoalStatus,
   AppSettings,
   ChatMessage,
   ChatRecord,
@@ -77,7 +79,7 @@ import {
   type ContextPressureSeverity
 } from '../../shared/contextCompaction'
 import type { ScoutBriefRecord } from '../ScoutBrief'
-import { updateActiveGoalLifecycle } from '../GoalState'
+import { createActiveGoal, normalizeActiveGoalObjective, updateActiveGoalLifecycle } from '../GoalState'
 import { findTerminalSynthesizerRoundSummary } from '../EnsembleRoundSummary'
 import { mergeTranscriptMediaRefs } from './TranscriptMediaService'
 import { sanitizeRawProviderMediaRefs } from '../../shared/transcriptMediaRefSanitize'
@@ -610,6 +612,8 @@ export type EnsembleBossmanControlAction =
   | 'quarantine_participant'
   | 'allocate_budget'
   | 'create_poll'
+  | 'set_goal'
+  | 'update_goal'
   | 'clear_goal'
   | 'adjust_hops'
   | 'ensemble_scheduled_wakeup'
@@ -632,6 +636,8 @@ export interface EnsembleBossmanControlInput {
   pollId?: string
   budgetId?: string
   goal?: string
+  goalStatus?: ActiveGoalStatus
+  status?: ActiveGoalStatus
   phase?: string
   blockers?: string[]
   doneCriteria?: string
@@ -679,6 +685,7 @@ export interface EnsembleBossmanControlResult {
   message: string
   roundId?: string
   participantId?: string
+  goal?: ActiveGoal
   usage?: ProviderUsageSummary
   providers?: Partial<Record<ProviderId, ProviderUsageSummary>>
   error?:
@@ -3398,6 +3405,8 @@ export class EnsembleOrchestrator {
       action === 'quarantine_participant' ||
       action === 'allocate_budget' ||
       action === 'create_poll' ||
+      action === 'set_goal' ||
+      action === 'update_goal' ||
       action === 'clear_goal' ||
       action === 'adjust_hops' ||
       action === 'ensemble_scheduled_wakeup' ||
@@ -4892,6 +4901,152 @@ export class EnsembleOrchestrator {
         action,
         roundId: runtime.roundId,
         message: `${authorityLabel} cleared the active TaskWraith goal.`
+      }
+    }
+
+    if (action === 'set_goal') {
+      const chat = this.deps.getChat(runtime.chatId)
+      if (!chat) {
+        return {
+          ok: false,
+          tool: 'ensemble_bossman_control',
+          action,
+          roundId: runtime.roundId,
+          message: `${authorityLabel} set_goal rejected: chat is no longer available.`,
+          error: 'invalid_state'
+        }
+      }
+      const objective = normalizeActiveGoalObjective(input.goal || input.objective || input.prompt)
+      if (!objective) {
+        return {
+          ok: false,
+          tool: 'ensemble_bossman_control',
+          action,
+          roundId: runtime.roundId,
+          message: `${authorityLabel} set_goal rejected: goal/objective/prompt is required.`,
+          error: 'missing_required_field'
+        }
+      }
+      const nowIso = this.deps.nowIso()
+      const nextGoal = chat.activeGoal
+        ? updateActiveGoalLifecycle(
+            {
+              ...chat.activeGoal,
+              objective,
+              provider: caller.provider,
+              mode: 'taskwraith_steered'
+            },
+            'active',
+            input.reason,
+            new Date(nowIso)
+          )
+        : createActiveGoal(caller.provider, objective, {
+            now: new Date(nowIso),
+            allowProviderNative: false
+          })
+      this.saveChatWithCheckpoint(
+        {
+          ...chat,
+          activeGoal: nextGoal,
+          updatedAt: this.deps.now()
+        },
+        'round-updated'
+      )
+      this.appendRoundStatus(
+        runtime.chatId,
+        runtime.roundId,
+        `${authorityLabel} set the TaskWraith goal "${nextGoal.objective}".`
+      )
+      return {
+        ok: true,
+        tool: 'ensemble_bossman_control',
+        action,
+        roundId: runtime.roundId,
+        goal: nextGoal,
+        message: `${authorityLabel} set the active TaskWraith goal.`
+      }
+    }
+
+    if (action === 'update_goal') {
+      const chat = this.deps.getChat(runtime.chatId)
+      if (!chat?.activeGoal) {
+        return {
+          ok: false,
+          tool: 'ensemble_bossman_control',
+          action,
+          roundId: runtime.roundId,
+          message: `${authorityLabel} update_goal rejected: no active TaskWraith goal is set.`,
+          error: 'invalid_state'
+        }
+      }
+      const status = input.goalStatus || input.status
+      if (
+        status !== 'active' &&
+        status !== 'paused' &&
+        status !== 'blocked' &&
+        status !== 'completed'
+      ) {
+        return {
+          ok: false,
+          tool: 'ensemble_bossman_control',
+          action,
+          roundId: runtime.roundId,
+          message: `${authorityLabel} update_goal rejected: goalStatus must be active, paused, blocked, or completed.`,
+          error: 'missing_required_field'
+        }
+      }
+      if (status === 'blocked' && !input.reason?.trim()) {
+        return {
+          ok: false,
+          tool: 'ensemble_bossman_control',
+          action,
+          roundId: runtime.roundId,
+          message: `${authorityLabel} update_goal rejected: blocking a goal requires a reason.`,
+          error: 'missing_required_field'
+        }
+      }
+      if (status === 'completed') {
+        const blockingGates = this.activeBossmanReviewGateBlocks(chat)
+        if (blockingGates.length > 0) {
+          const message = `${authorityLabel} goal completion blocked by review gate(s): ${blockingGates.join('; ')}.`
+          this.appendRoundStatus(runtime.chatId, runtime.roundId, message)
+          return {
+            ok: false,
+            tool: 'ensemble_bossman_control',
+            action,
+            roundId: runtime.roundId,
+            message,
+            error: 'review_gate_blocked'
+          }
+        }
+      }
+      const nextGoal = updateActiveGoalLifecycle(
+        chat.activeGoal,
+        status,
+        input.reason,
+        new Date(this.deps.nowIso())
+      )
+      this.saveChatWithCheckpoint(
+        {
+          ...chat,
+          activeGoal: nextGoal,
+          updatedAt: this.deps.now()
+        },
+        'round-updated'
+      )
+      const reason = normalizeBossmanText(input.reason, 500)
+      this.appendRoundStatus(
+        runtime.chatId,
+        runtime.roundId,
+        `${authorityLabel} marked the TaskWraith goal ${status}.${reason ? ` ${reason}` : ''}`
+      )
+      return {
+        ok: true,
+        tool: 'ensemble_bossman_control',
+        action,
+        roundId: runtime.roundId,
+        goal: nextGoal,
+        message: `${authorityLabel} updated the active TaskWraith goal.`
       }
     }
 

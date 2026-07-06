@@ -20396,6 +20396,8 @@ async function executeGeminiMcpTool(
           args.action === 'quarantine_participant' ||
           args.action === 'allocate_budget' ||
           args.action === 'create_poll' ||
+          args.action === 'set_goal' ||
+          args.action === 'update_goal' ||
           args.action === 'clear_goal' ||
           args.action === 'adjust_hops' ||
           args.action === 'ensemble_scheduled_wakeup' ||
@@ -20423,6 +20425,8 @@ async function executeGeminiMcpTool(
         pollId: optionalString(args.pollId || args.poll_id),
         budgetId: optionalString(args.budgetId || args.budget_id),
         goal: optionalString(args.goal),
+        goalStatus: optionalString(args.goalStatus || args.goal_status) as any,
+        status: optionalString(args.status) as any,
         phase: optionalString(args.phase),
         blockers: Array.isArray(args.blockers)
           ? args.blockers.filter((item: unknown): item is string => typeof item === 'string')

@@ -42,6 +42,8 @@ describe('TaskWraith MCP tool registry', () => {
         'quarantine_participant',
         'allocate_budget',
         'create_poll',
+        'set_goal',
+        'update_goal',
         'clear_goal',
         'adjust_hops',
         'ensemble_scheduled_wakeup',
