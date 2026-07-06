@@ -8862,7 +8862,9 @@
 /* (1) Always-on CSS-fake rim — no SVG, survives every fallback. The
  * popover already sets isolation:isolate + border-radius, so the
  * pseudo-element inherits the rounded clip via inset:0 + inherit. */
-.composer-combined-picker-popover::after {
+.composer-combined-picker-popover::after,
+.composer-diff-action-menu::after,
+.composer-goal-popover::after {
   content: "";
   position: absolute;
   inset: 0;
@@ -8879,7 +8881,9 @@
  * Emitted ONLY when refraction is enabled; absent attr ⇒ untouched
  * plain frosted popover. Perf: own cached layer, decoupled from the
  * backdrop repaint, NO animation of the filter or its inputs. */
-:root[data-advanced-fx-refraction="true"] .composer-combined-picker-popover::before {
+:root[data-advanced-fx-refraction="true"] .composer-combined-picker-popover::before,
+:root[data-advanced-fx-refraction="true"] .composer-diff-action-menu::before,
+:root[data-advanced-fx-refraction="true"] .composer-goal-popover::before {
   content: "";
   position: absolute;
   inset: 0;
@@ -8911,12 +8915,12 @@
  * stronger intensity tiers. At `subtle` the sheen renders flat (CSS
  * rim + gradient only, no SVG). Reserve the strongest warp for epic. */
 :root[data-advanced-fx-refraction="true"][data-advanced-fx-intensity="cinematic"]
-  .composer-combined-picker-popover::before {
+  :is(.composer-combined-picker-popover, .composer-diff-action-menu, .composer-goal-popover)::before {
   filter: url(#tw-glass-refract);
   opacity: 0.85;
 }
 :root[data-advanced-fx-refraction="true"][data-advanced-fx-intensity="epic"]
-  .composer-combined-picker-popover::before {
+  :is(.composer-combined-picker-popover, .composer-diff-action-menu, .composer-goal-popover)::before {
   filter: url(#tw-glass-refract);
   opacity: 1;
 }
@@ -8927,7 +8931,7 @@
  * diagonal so the bright frosted surface never blows out. */
 :root[data-advanced-fx-refraction="true"]
   :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
-  .composer-combined-picker-popover::before {
+  :is(.composer-combined-picker-popover, .composer-diff-action-menu, .composer-goal-popover)::before {
   mix-blend-mode: screen;
   opacity: 0.7;
 }
@@ -8937,18 +8941,20 @@
  *     The base popover blurs UNCONDITIONALLY today — this closes that
  *     real a11y gap regardless of the refraction attr. High specificity
  *     (:root + class) beats the base rule's `backdrop-filter`. */
-:root[data-reduce-transparency="true"] .composer-combined-picker-popover {
+:root[data-reduce-transparency="true"]
+  :is(.composer-combined-picker-popover, .composer-diff-action-menu, .composer-goal-popover) {
   background: var(--tw-glass-solid, var(--panel-bg-solid, #0f1830));
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
-:root[data-reduce-transparency="true"] .composer-combined-picker-popover::before {
+:root[data-reduce-transparency="true"]
+  :is(.composer-combined-picker-popover, .composer-diff-action-menu, .composer-goal-popover)::before {
   display: none;
   filter: none;
 }
 :root[data-reduce-transparency="true"]
   :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
-  .composer-combined-picker-popover {
+  :is(.composer-combined-picker-popover, .composer-diff-action-menu, .composer-goal-popover) {
   background: var(--tw-glass-solid, var(--surface-1, #f4f6fb));
   color: var(--surface-text);
 }
@@ -8957,15 +8963,16 @@
  *     pattern at 03-composer-welcome-activity.css:3215. Also neutralise
  *     the sheen filter so a non-supporting engine never tries url(). */
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  .composer-combined-picker-popover {
+  :is(.composer-combined-picker-popover, .composer-diff-action-menu, .composer-goal-popover) {
     background: var(--tw-glass-solid, var(--panel-bg-solid, #0f1830));
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
   }
-  .composer-combined-picker-popover::before {
+  :is(.composer-combined-picker-popover, .composer-diff-action-menu, .composer-goal-popover)::before {
     filter: none;
   }
-  :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .composer-combined-picker-popover {
+  :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
+    :is(.composer-combined-picker-popover, .composer-diff-action-menu, .composer-goal-popover) {
     background: var(--tw-glass-solid, var(--surface-1, #f4f6fb));
     color: var(--surface-text);
   }
@@ -9485,7 +9492,8 @@
 .composer-combined-picker-popover.shell-obsidian,
 .composer-slash-menu.shell-obsidian,
 .agent-mention-menu.shell-obsidian,
-.composer-workspace-popover.shell-obsidian {
+.composer-workspace-popover.shell-obsidian,
+.composer-goal-popover.shell-obsidian {
   --text-primary: rgba(255, 255, 255, 0.92);
   --text-secondary: rgba(255, 255, 255, 0.64);
   --text-tertiary: rgba(255, 255, 255, 0.48);
@@ -9508,7 +9516,8 @@
 .composer-combined-picker-popover.shell-alabaster,
 .composer-slash-menu.shell-alabaster,
 .agent-mention-menu.shell-alabaster,
-.composer-workspace-popover.shell-alabaster {
+.composer-workspace-popover.shell-alabaster,
+.composer-goal-popover.shell-alabaster {
   --text-primary: rgba(18, 21, 27, 0.92);
   --text-secondary: rgba(18, 21, 27, 0.64);
   --text-tertiary: rgba(18, 21, 27, 0.5);
@@ -9567,7 +9576,8 @@
     .composer-workspace-popover,
     .composer-slash-menu,
     .agent-mention-menu,
-    .composer-diff-action-menu
+    .composer-diff-action-menu,
+    .composer-goal-popover
   ) {
   --text-primary: rgba(18, 21, 27, 0.92);
   --text-secondary: rgba(18, 21, 27, 0.64);
@@ -9597,7 +9607,8 @@
     .composer-workspace-popover,
     .composer-slash-menu,
     .agent-mention-menu,
-    .composer-diff-action-menu
+    .composer-diff-action-menu,
+    .composer-goal-popover
   ) {
   --text-primary: rgba(255, 255, 255, 0.92);
   --text-secondary: rgba(255, 255, 255, 0.64);

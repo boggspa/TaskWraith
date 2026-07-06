@@ -1109,6 +1109,27 @@
   background: rgba(255, 255, 255, 0.1) !important;
 }
 
+[data-composer-style="codex"]
+  .composer-above-bar
+  .composer-above-bar-action--git-commit-icon,
+[data-theme="alabaster"][data-composer-style="codex"]
+  .composer-above-bar
+  .composer-above-bar-action--git-commit-icon:not(.is-success):not(.is-error) {
+  border-color: transparent !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+[data-composer-style="codex"]
+  .composer-above-bar
+  .composer-above-bar-action--git-commit-icon:hover:not(:disabled),
+[data-composer-style="codex"]
+  .composer-above-bar
+  .composer-above-bar-action--git-commit-icon:focus-visible:not(:disabled) {
+  border-color: transparent !important;
+  background: transparent !important;
+}
+
 [data-theme="alabaster"]:is(
     [data-composer-style="codex"],
     [data-composer-style="claude"],
@@ -2241,7 +2262,8 @@
 .composer-plus-picker-popover.shell-grok,
 .composer-workspace-popover.shell-grok,
 .composer-slash-menu.shell-grok,
-.agent-mention-menu.shell-grok {
+.agent-mention-menu.shell-grok,
+.composer-goal-popover.shell-grok {
   --text-primary: var(--grok-fg);
   --text-secondary: var(--grok-muted);
   --text-tertiary: var(--grok-faint);
@@ -3187,7 +3209,8 @@
 .composer-plus-picker-popover.shell-cursor,
 .composer-workspace-popover.shell-cursor,
 .composer-slash-menu.shell-cursor,
-.agent-mention-menu.shell-cursor {
+.agent-mention-menu.shell-cursor,
+.composer-goal-popover.shell-cursor {
   --text-primary: var(--cursor-shell-fg);
   --text-secondary: var(--cursor-shell-muted);
   --text-tertiary: var(--cursor-shell-faint);

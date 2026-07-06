@@ -74,6 +74,7 @@ import { lastRetryableEnsembleUserPrompt } from '../lib/ensembleRetryPrompt'
 import { renderAgentApprovalPreview } from '../lib/agentApprovalPreview'
 import { isNativeSubAgentPreferenceApproval } from '../lib/agentApprovalTypes'
 import { decideApprovalElevation } from '../lib/approvalElevation'
+import { getPoolIconAsset, preparePoolIconSvg } from '../lib/agentPoolIconAssets'
 import { formatScheduledRunTime } from '../lib/dateTimeFormat'
 import { formatScheduledTaskCountdown } from '../lib/scheduledCountdown'
 import { resolveEnsembleParticipantSeatMutationState } from '../lib/ensembleParticipantSeatLock'
@@ -114,6 +115,24 @@ import { composerVoicePlacementForStyle } from '../lib/composerVoicePlacement'
 import { composerPermissionOptions } from '../lib/planModeLabels'
 import { WORKSPACE_POLICY_SERVICES } from '../lib/workspacePolicyServices'
 import { createPortal } from 'react-dom'
+
+const gitCommitTriggerAsset = getPoolIconAsset('pool:glyph-git-commit')
+const gitCommitTriggerSvg = gitCommitTriggerAsset
+  ? preparePoolIconSvg(gitCommitTriggerAsset, 22, 'currentColor')
+  : ''
+
+function CodexGitCommitTriggerIcon(): React.JSX.Element {
+  if (!gitCommitTriggerSvg) {
+    return <ReviewSymbolIcon />
+  }
+  return (
+    <span
+      className="composer-git-commit-trigger-icon"
+      aria-hidden="true"
+      dangerouslySetInnerHTML={{ __html: gitCommitTriggerSvg }}
+    />
+  )
+}
 
 /**
  * Composer — the chat composer, lifted verbatim from App.tsx's inline
@@ -1875,7 +1894,11 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                   ? 'Publish branch'
                                   : 'Push'
                                 : createPrLabel
-                        const actionClassName = `composer-above-bar-action ${primaryPrState.status === 'pending' ? 'is-pending' : ''} ${primaryPrState.status === 'error' ? 'is-error' : ''} ${primaryPrState.status === 'success' ? 'is-success' : ''}`
+                        const isCodexGitActionTrigger = appearance.composerStyle === 'codex'
+                        const actionClassName = `composer-above-bar-action ${isCodexGitActionTrigger ? 'composer-above-bar-action--git-commit-icon' : ''} ${primaryPrState.status === 'pending' ? 'is-pending' : ''} ${primaryPrState.status === 'error' ? 'is-error' : ''} ${primaryPrState.status === 'success' ? 'is-success' : ''}`
+                        const actionTitle =
+                          primaryPrState.message ||
+                          'Review, commit, push, or open a PR for the current workspace'
                         return (
                           <span className="composer-diff-action-menu-wrap">
                             <button
@@ -1885,12 +1908,14 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               disabled={primaryPrState.status === 'pending'}
                               aria-haspopup="menu"
                               aria-expanded={diffActionMenuOpen}
-                              title={
-                                primaryPrState.message ||
-                                'Review, commit, push, or open a PR for the current workspace'
+                              aria-label={
+                                isCodexGitActionTrigger
+                                  ? `${primaryLabel}. ${actionTitle}`
+                                  : undefined
                               }
+                              title={actionTitle}
                             >
-                              {primaryLabel}
+                              {isCodexGitActionTrigger ? <CodexGitCommitTriggerIcon /> : primaryLabel}
                             </button>
                             {diffActionMenuOpen && (
                               <div className="composer-diff-action-menu" role="menu">

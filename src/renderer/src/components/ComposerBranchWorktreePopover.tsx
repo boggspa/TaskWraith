@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { ComposerStyle } from '../../../main/store/types'
 import type { GitRepositorySnapshot } from '../../../main/services/GitService'
+import { XSymbolIcon } from './AppChromeSymbols'
 import { branchTone } from './GitStatusChips'
 import {
   checkoutGitBranch,
@@ -145,6 +146,7 @@ export function ComposerBranchWorktreePopover({
     if (!open) return
     void refreshLists()
     updatePosition()
+    const repositionFrame = window.requestAnimationFrame(updatePosition)
     const onKey = (event: KeyboardEvent): void => {
       if (event.key === 'Escape') closePopover()
     }
@@ -161,6 +163,7 @@ export function ComposerBranchWorktreePopover({
     window.addEventListener('resize', onReposition)
     window.addEventListener('scroll', onReposition, true)
     return () => {
+      window.cancelAnimationFrame(repositionFrame)
       window.removeEventListener('keydown', onKey)
       window.removeEventListener('mousedown', onPointer)
       window.removeEventListener('resize', onReposition)
@@ -238,8 +241,14 @@ export function ComposerBranchWorktreePopover({
           >
             <div className="composer-branch-popover-header">
               <span>Branch & worktree</span>
-              <button type="button" className="btn btn-sm btn-ghost" onClick={closePopover}>
-                Close
+              <button
+                type="button"
+                className="composer-branch-popover-close"
+                onClick={closePopover}
+                title="Close branch and worktree"
+                aria-label="Close branch and worktree"
+              >
+                <XSymbolIcon />
               </button>
             </div>
             <div className="composer-branch-popover-body">
@@ -274,7 +283,7 @@ export function ComposerBranchWorktreePopover({
                 <div className="composer-branch-popover-section-title">Create branch</div>
                 <div className="composer-branch-popover-create">
                   <input
-                    className="settings-select"
+                    className="composer-branch-popover-input"
                     value={newBranchName}
                     placeholder="feature/my-branch"
                     disabled={working || Boolean(disabledReason)}
@@ -282,7 +291,7 @@ export function ComposerBranchWorktreePopover({
                   />
                   <button
                     type="button"
-                    className="btn btn-sm"
+                    className="composer-branch-popover-create-button"
                     disabled={working || !newBranchName.trim() || Boolean(disabledReason)}
                     onClick={() =>
                       void runAction(
@@ -320,7 +329,7 @@ export function ComposerBranchWorktreePopover({
                   ))}
                   <div className="composer-branch-popover-create">
                     <input
-                      className="settings-select"
+                      className="composer-branch-popover-input"
                       value={newWorktreeName}
                       placeholder="task-isolation"
                       disabled={working || Boolean(disabledReason)}
@@ -328,7 +337,7 @@ export function ComposerBranchWorktreePopover({
                     />
                     <button
                       type="button"
-                      className="btn btn-sm"
+                      className="composer-branch-popover-create-button"
                       disabled={working || !newWorktreeName.trim() || Boolean(disabledReason)}
                       onClick={() =>
                         void runAction(

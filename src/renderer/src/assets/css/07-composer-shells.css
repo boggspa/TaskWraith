@@ -1492,6 +1492,35 @@
   margin-left: 0;
 }
 
+.composer-above-bar-action--git-commit-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  padding: 0;
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+  color: color-mix(in srgb, #8fb7ff 88%, #ffffff 12%);
+}
+
+.composer-above-bar-action--git-commit-icon:hover:not(:disabled),
+.composer-above-bar-action--git-commit-icon:focus-visible:not(:disabled) {
+  background: transparent;
+  border-color: transparent;
+  color: #ffffff;
+  outline: none;
+}
+
+.composer-git-commit-trigger-icon,
+.composer-git-commit-trigger-icon .agent-pool-asset-svg {
+  display: block;
+  width: 22px;
+  height: 22px;
+}
+
 .composer-diff-action-menu {
   position: absolute;
   bottom: calc(100% + 8px);
@@ -1500,18 +1529,19 @@
   width: min(294px, calc(100vw - 28px));
   min-width: min(248px, calc(100vw - 28px));
   padding: 8px;
-  border: 1px solid color-mix(in srgb, var(--composer-border) 86%, var(--text-primary) 10%);
+  border: 1px solid color-mix(in srgb, var(--panel-border) 90%, transparent);
   border-radius: 12px;
-  background:
-    radial-gradient(circle at 14% 0%, color-mix(in srgb, var(--accent) 16%, transparent), transparent 42%),
-    color-mix(in srgb, var(--composer-bg-solid) 94%, #05070c 6%);
+  background: color-mix(in srgb, var(--panel-elevated-bg) 96%, transparent);
   box-shadow:
     inset 0 1px 0 color-mix(in srgb, var(--text-primary) 10%, transparent),
     0 16px 38px rgba(0, 0, 0, 0.36);
-  color: color-mix(in srgb, #ffffff 88%, transparent);
+  color: var(--text-primary);
   display: grid;
   gap: 7px;
   overflow: hidden;
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  isolation: isolate;
   z-index: 30;
 }
 
@@ -1545,9 +1575,7 @@
 
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .composer-diff-action-menu {
   border-color: var(--surface-border);
-  background:
-    radial-gradient(circle at 14% 0%, color-mix(in srgb, var(--accent) 12%, transparent), transparent 42%),
-    color-mix(in srgb, var(--surface-1) 94%, #ffffff 6%);
+  background: color-mix(in srgb, var(--surface-1) 78%, transparent);
   color: rgba(29, 29, 31, 0.88);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.8),

@@ -5371,8 +5371,8 @@
   max-height: 180px;
   padding: 7px 8px;
   border-radius: 7px;
-  border: 1px solid color-mix(in srgb, var(--panel-border) 70%, transparent);
-  background: color-mix(in srgb, var(--surface-base) 92%, transparent);
+  border: 1px solid color-mix(in srgb, var(--text-primary) 13%, transparent);
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
   color: var(--text-primary);
   font: inherit;
   font-size: var(--font-size-sm);
@@ -5381,8 +5381,8 @@
 
 .composer-goal-textarea:focus {
   outline: none;
-  border-color: color-mix(in srgb, var(--accent) 48%, transparent);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 14%, transparent);
+  border-color: color-mix(in srgb, var(--text-primary) 24%, transparent);
+  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
 }
 
 .composer-goal-popover-actions {
@@ -5420,18 +5420,18 @@
 }
 
 .composer-goal-action.primary {
-  color: color-mix(in srgb, var(--accent) 88%, var(--text-primary));
-  background: color-mix(in srgb, var(--accent) 15%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 26%, transparent);
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text-primary) 14%, transparent);
 }
 
 .composer-goal-action.primary:hover,
 .composer-goal-action.primary:focus-visible {
-  color: color-mix(in srgb, var(--accent) 96%, var(--text-primary));
-  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--text-primary) 11%, transparent);
   box-shadow:
-    inset 0 0 0 1px color-mix(in srgb, var(--accent) 34%, transparent),
-    0 0 0 2px color-mix(in srgb, var(--accent) 10%, transparent);
+    inset 0 0 0 1px color-mix(in srgb, var(--text-primary) 20%, transparent),
+    0 0 0 2px color-mix(in srgb, var(--text-primary) 7%, transparent);
 }
 
 .composer-goal-action.danger {

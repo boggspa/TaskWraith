@@ -45,15 +45,44 @@
   align-items: center;
   justify-content: space-between;
   gap: var(--space-sm);
-  padding: 0.55rem 0.7rem;
-  border-bottom: 1px solid var(--border-subtle);
+  padding: 0.55rem 0.6rem 0.45rem 0.7rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--text-primary) 9%, transparent);
   font-size: var(--font-size-xs);
   color: var(--text-secondary);
 }
 
+.composer-branch-popover-close {
+  appearance: none;
+  -webkit-appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: color-mix(in srgb, var(--text-primary) 70%, transparent);
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.composer-branch-popover-close:hover,
+.composer-branch-popover-close:focus-visible {
+  outline: none;
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+}
+
+.composer-branch-popover-close .sf-symbol-icon {
+  width: 14px;
+  height: 14px;
+}
+
 .composer-branch-popover-body {
   overflow: auto;
-  padding: 0.35rem;
+  padding: 0.4rem;
 }
 
 .composer-branch-popover-section {
@@ -64,7 +93,7 @@
 }
 
 .composer-branch-popover-section + .composer-branch-popover-section {
-  border-top: 1px solid var(--border-subtle);
+  border-top: 1px solid color-mix(in srgb, var(--text-primary) 8%, transparent);
   margin-top: 0.25rem;
   padding-top: 0.45rem;
 }
@@ -95,11 +124,11 @@
 }
 
 .composer-branch-popover-item:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
 }
 
 .composer-branch-popover-item.is-current {
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  background: color-mix(in srgb, var(--text-primary) 11%, transparent);
   font-weight: 600;
 }
 
@@ -115,8 +144,65 @@
   padding: 0.35rem 0.45rem 0.5rem;
 }
 
-.composer-branch-popover-create input {
+.composer-branch-popover-input {
+  box-sizing: border-box;
   width: 100%;
+  appearance: none;
+  -webkit-appearance: none;
+  border: 1px solid color-mix(in srgb, var(--text-primary) 13%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  padding: 6px 8px;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+
+.composer-branch-popover-input::placeholder {
+  color: color-mix(in srgb, var(--text-secondary) 68%, transparent);
+}
+
+.composer-branch-popover-input:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--text-primary) 24%, transparent);
+  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+}
+
+.composer-branch-popover-input:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.composer-branch-popover-create-button {
+  appearance: none;
+  -webkit-appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 26px;
+  border: 1px solid color-mix(in srgb, var(--text-primary) 13%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+  color: color-mix(in srgb, var(--text-primary) 86%, transparent);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  font-weight: 650;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+.composer-branch-popover-create-button:hover:not(:disabled),
+.composer-branch-popover-create-button:focus-visible:not(:disabled) {
+  outline: none;
+  color: var(--text-primary);
+  border-color: color-mix(in srgb, var(--text-primary) 20%, transparent);
+  background: color-mix(in srgb, var(--text-primary) 11%, transparent);
+}
+
+.composer-branch-popover-create-button:disabled {
+  opacity: 0.46;
+  cursor: not-allowed;
 }
 
 .composer-branch-popover-footer {
@@ -125,7 +211,7 @@
   justify-content: flex-end;
   gap: 0.35rem;
   padding: 0.45rem 0.55rem;
-  border-top: 1px solid var(--border-subtle);
+  border-top: 1px solid color-mix(in srgb, var(--text-primary) 8%, transparent);
 }
 
 .composer-branch-popover-status {
