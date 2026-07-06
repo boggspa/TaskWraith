@@ -226,6 +226,25 @@ struct ThreadDetailView: View {
     private var snapshot: RemoteThreadSnapshot? { threadValue(model.threadSnapshots) }
     private var ensembleState: RemoteEnsembleState? { threadValue(model.ensembleStates) }
     private var diffSummary: MobileDiffSummary? { threadValue(model.diffSummaries) }
+    private func requestSnapshotIfNeeded() {
+        guard snapshot == nil else { return }
+        model.requestThreadSnapshot(taskId)
+    }
+    private var snapshotRequestTrigger: String {
+        let phaseKey: String
+        if case .connected = model.phase {
+            phaseKey = "connected"
+        } else {
+            phaseKey = "pending"
+        }
+        return [
+            taskId,
+            card?.id ?? "",
+            card?.threadId ?? "",
+            card?.workspaceId ?? "",
+            phaseKey,
+        ].joined(separator: "|")
+    }
     private var showsRunCompleteSummary: Bool { snapshot?.showRunCompleteSummary != false }
     private var activeParticipant: RemoteEnsembleState.Participant? {
         guard let state = ensembleState, let activeId = state.activeParticipantId else { return nil }
@@ -1573,10 +1592,13 @@ struct ThreadDetailView: View {
             // stale ack banner from the previously-open thread.
             model.clearActionMessage()
             model.visibleThreadId = taskId
-            model.requestThreadSnapshot(taskId)
+            requestSnapshotIfNeeded()
             autoFollow = true
             try? await Task.sleep(nanoseconds: 350_000_000)
             requestFollowPin(proxy, force: true)
+        }
+        .task(id: snapshotRequestTrigger) {
+            requestSnapshotIfNeeded()
         }
         .onDisappear {
             if model.visibleThreadId == taskId { model.visibleThreadId = nil }

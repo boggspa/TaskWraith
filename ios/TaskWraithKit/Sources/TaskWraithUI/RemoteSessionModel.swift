@@ -120,7 +120,10 @@ public final class RemoteSessionModel: ObservableObject {
     @Published public private(set) var isDemo = false
     @Published public private(set) var macDisplayName: String = ""
     @Published public private(set) var taskCards: [RemoteTaskCard] = [] {
-        didSet { handleTaskCardCompletionTransitions(previous: oldValue) }
+        didSet {
+            handleTaskCardCompletionTransitions(previous: oldValue)
+            flushPendingThreadSnapshotRequests()
+        }
     }
     @Published public private(set) var approvals: [MobileApprovalCard] = []
     @Published public private(set) var questions: [MobileQuestionCard] = []
@@ -2945,6 +2948,8 @@ public final class RemoteSessionModel: ObservableObject {
     }
 
     private var pendingThreadRefresh: [String: Task<Void, Never>] = [:]
+    private var pendingThreadSnapshotScopeWait: Set<String> = []
+    private var loadingThreadSnapshots: Set<String> = []
 
     private func scheduleThreadRefresh(_ threadId: String, debounceMs: UInt64 = 450_000_000) {
         pendingThreadRefresh[threadId]?.cancel()
@@ -2952,6 +2957,15 @@ public final class RemoteSessionModel: ObservableObject {
             try? await Task.sleep(nanoseconds: debounceMs)
             guard !Task.isCancelled else { return }
             await MainActor.run { self?.requestThreadSnapshot(threadId) }
+        }
+    }
+
+    private func flushPendingThreadSnapshotRequests() {
+        guard !pendingThreadSnapshotScopeWait.isEmpty else { return }
+        let ready = pendingThreadSnapshotScopeWait.filter { remoteScopeForThread($0) != nil }
+        for threadId in ready {
+            pendingThreadSnapshotScopeWait.remove(threadId)
+            requestThreadSnapshot(threadId)
         }
     }
 
@@ -3911,11 +3925,25 @@ public final class RemoteSessionModel: ObservableObject {
 
     public func requestThreadSnapshot(_ threadId: String, limit: Int = 40, beforeRowId: String? = nil) {
         guard !isDemo else { return }  // demo snapshots are pre-seeded; never hit the wire
-        guard let workspaceId = remoteScopeForThread(threadId)
-        else { return }
+        guard let workspaceId = remoteScopeForThread(threadId) else {
+            if beforeRowId == nil {
+                pendingThreadSnapshotScopeWait.insert(threadId)
+            }
+            return
+        }
+        pendingThreadSnapshotScopeWait.remove(threadId)
+        if beforeRowId == nil {
+            guard !loadingThreadSnapshots.contains(threadId) else { return }
+            loadingThreadSnapshots.insert(threadId)
+        }
         let params = BridgeAction.threadSnapshotRequest(
             workspaceId: workspaceId, threadId: threadId, limit: limit, beforeRowId: beforeRowId)
         Task {
+            defer {
+                if beforeRowId == nil {
+                    loadingThreadSnapshots.remove(threadId)
+                }
+            }
             do {
                 let actionAck = try await self.requestFileAction(params)
                 if let thread = actionAck.data?.thread {

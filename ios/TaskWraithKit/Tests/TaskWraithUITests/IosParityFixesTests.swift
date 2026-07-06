@@ -196,6 +196,48 @@ struct IosParityFixesTests {
     }
 
     @MainActor
+    @Test func threadSnapshotRequestWaitsForTaskCardScope() async throws {
+        let model = makeRemoteSessionModel()
+
+        model.requestThreadSnapshot("thread-1")
+        #expect(model.lastActionMessage == nil)
+
+        let snapshot = try decode(
+            RemoteProjectionSnapshot.self,
+            """
+            {
+              "projections":[
+                {
+                  "schemaVersion":1,
+                  "source":"mac",
+                  "kind":"taskCard",
+                  "envelopeId":"task-card:thread-1",
+                  "workspaceId":"ws-1",
+                  "threadId":"thread-1",
+                  "payload":{
+                    "id":"thread-1",
+                    "threadId":"thread-1",
+                    "title":"Late card",
+                    "status":"idle",
+                    "provider":"cursor",
+                    "workspaceId":"ws-1"
+                  }
+                }
+              ]
+            }
+            """)
+
+        model.applySnapshot(snapshot)
+        for _ in 0..<5 {
+            if model.lastActionMessage != nil { break }
+            await Task.yield()
+        }
+
+        #expect(model.remoteScopeForThread("thread-1") == "ws-1")
+        #expect(model.lastActionMessage != nil)
+    }
+
+    @MainActor
     @Test func questionAnsweringRequiresExplicitThreadCapability() throws {
         let canAnswer = try remoteTaskCard(
             #"{"id":"card-1","threadId":"thread-1","capabilities":{"answer":true}}"#)
