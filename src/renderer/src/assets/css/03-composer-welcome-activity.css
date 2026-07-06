@@ -5151,7 +5151,8 @@
   line-height: 1;
 }
 
-.composer-copy-transcript-popover {
+.composer-copy-transcript-popover,
+.composer-combined-picker-popover.composer-copy-transcript-popover {
   position: fixed;
   z-index: 12000;
   width: min(680px, calc(100vw - 16px));
@@ -5159,7 +5160,13 @@
   box-sizing: border-box;
   transform: translateY(-100%);
   display: grid;
-  gap: 10px;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  grid-template-areas:
+    "header header"
+    "body action"
+    "feedback feedback";
+  align-items: center;
+  gap: 8px 12px;
   padding: 12px;
   border: 1px solid color-mix(in srgb, var(--panel-border, var(--border)) 88%, var(--text-primary) 12%);
   border-radius: 10px;
@@ -5169,17 +5176,20 @@
 }
 
 .composer-copy-transcript-popover-header {
+  grid-area: header;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
+  min-width: 0;
   font-size: var(--font-size-sm);
   font-weight: 650;
 }
 
 .composer-copy-transcript-close {
   border: 0;
-  padding: 2px 0;
+  padding: 3px 6px;
+  border-radius: 6px;
   background: transparent;
   color: var(--text-secondary);
   cursor: pointer;
@@ -5193,13 +5203,18 @@
 }
 
 .composer-copy-transcript-popover p {
+  grid-area: body;
   margin: 0;
   color: var(--text-secondary);
   font-size: var(--font-size-xs);
   line-height: 1.4;
+  min-width: 0;
 }
 
 .composer-copy-transcript-primary {
+  grid-area: action;
+  align-self: center;
+  min-height: 34px;
   border: 1px solid color-mix(in srgb, var(--accent) 38%, transparent);
   border-radius: 8px;
   padding: 7px 10px;
@@ -5209,6 +5224,7 @@
   font: inherit;
   font-size: var(--font-size-xs);
   font-weight: 650;
+  white-space: nowrap;
 }
 
 .composer-copy-transcript-primary:disabled {
@@ -5218,10 +5234,12 @@
 
 .composer-copy-transcript-status,
 .composer-copy-transcript-error {
+  grid-area: feedback;
   padding: 8px 9px;
   border-radius: 8px;
   font-size: var(--font-size-xs);
   line-height: 1.4;
+  overflow-wrap: anywhere;
 }
 
 .composer-copy-transcript-status {
@@ -5232,6 +5250,21 @@
 .composer-copy-transcript-error {
   color: color-mix(in srgb, var(--danger) 88%, var(--text-primary));
   background: color-mix(in srgb, var(--danger) 10%, transparent);
+}
+
+@media (max-width: 520px) {
+  .composer-combined-picker-popover.composer-copy-transcript-popover {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "header"
+      "body"
+      "action"
+      "feedback";
+  }
+
+  .composer-copy-transcript-primary {
+    width: 100%;
+  }
 }
 
 @keyframes composer-goal-complete-flash {
