@@ -3617,6 +3617,183 @@
 }
 
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]):is(
+    [data-interface-style="obsidian"],
+    [data-composer-style="obsidian"]
+  )
+  .app-transcript.welcome-mode
+  .ensemble-hierarchy-tile {
+  background: rgba(255, 255, 255, 0.68) !important;
+  border-color: color-mix(in srgb, var(--panel-border) 58%, rgba(29, 29, 31, 0.14)) !important;
+  color: rgba(29, 29, 31, 0.86) !important;
+  box-shadow: 0 5px 16px rgba(60, 70, 110, 0.06) !important;
+}
+
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]):is(
+    [data-interface-style="obsidian"],
+    [data-composer-style="obsidian"]
+  )
+  .app-transcript.welcome-mode
+  .ensemble-hierarchy-tile:hover {
+  background: rgba(255, 255, 255, 0.86) !important;
+  border-color: color-mix(in srgb, var(--accent) 30%, rgba(29, 29, 31, 0.14)) !important;
+}
+
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]):is(
+    [data-interface-style="obsidian"],
+    [data-composer-style="obsidian"]
+  )
+  .app-transcript.welcome-mode
+  :is(.ensemble-hierarchy-tile-role, .ensemble-hierarchy-tile-provider) {
+  color: inherit !important;
+  -webkit-text-fill-color: inherit !important;
+}
+
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]):is(
+    [data-interface-style="obsidian"],
+    [data-composer-style="obsidian"]
+  )
+  .app-transcript.welcome-mode
+  .ensemble-hierarchy-tile-provider {
+  color: rgba(29, 29, 31, 0.5) !important;
+  -webkit-text-fill-color: rgba(29, 29, 31, 0.5) !important;
+}
+
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]):is(
+    [data-interface-style="obsidian"],
+    [data-composer-style="obsidian"]
+  )
+  .app-transcript.welcome-mode
+  .ensemble-hierarchy-arrow {
+  color: rgba(29, 29, 31, 0.24) !important;
+}
+
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]):is(
+    [data-interface-style="obsidian"],
+    [data-composer-style="obsidian"]
+  )
+  .app-transcript.welcome-mode
+  .welcome-workspace-picker-label {
+  color: rgba(29, 29, 31, 0.48) !important;
+}
+
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]):is(
+    [data-interface-style="obsidian"],
+    [data-composer-style="obsidian"]
+  )
+  .app-transcript.welcome-mode
+  .welcome-workspace-picker-chip {
+  background: rgba(255, 255, 255, 0.64) !important;
+  border-color: rgba(29, 29, 31, 0.09) !important;
+  color: rgba(29, 29, 31, 0.72) !important;
+  -webkit-text-fill-color: rgba(29, 29, 31, 0.72) !important;
+}
+
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]):is(
+    [data-interface-style="obsidian"],
+    [data-composer-style="obsidian"]
+  )
+  .app-transcript.welcome-mode
+  .welcome-workspace-picker-chip:hover,
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]):is(
+    [data-interface-style="obsidian"],
+    [data-composer-style="obsidian"]
+  )
+  .app-transcript.welcome-mode
+  .welcome-workspace-picker-chip.is-active {
+  background: rgba(255, 255, 255, 0.86) !important;
+  color: rgba(29, 29, 31, 0.9) !important;
+  -webkit-text-fill-color: rgba(29, 29, 31, 0.9) !important;
+}
+
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]):is(
+    [data-interface-style="obsidian"],
+    [data-composer-style="obsidian"]
+  )
+  .app-transcript.welcome-mode
+  .welcome-workspace-picker-browse {
+  background: rgba(255, 255, 255, 0.7) !important;
+  border-color: color-mix(in srgb, var(--accent) 22%, rgba(29, 29, 31, 0.08)) !important;
+  color: color-mix(in srgb, var(--accent) 82%, #1d1d1f 18%) !important;
+  -webkit-text-fill-color: color-mix(in srgb, var(--accent) 82%, #1d1d1f 18%) !important;
+}
+
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]):is(
+    [data-interface-style="obsidian"],
+    [data-composer-style="obsidian"]
+  )
+  .app-transcript.welcome-mode
+  .usage-heatmap--welcome-standalone
+  .usage-heatmap-title {
+  color: rgba(29, 29, 31, 0.5) !important;
+}
+
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]):is(
+    [data-interface-style="obsidian"],
+    [data-composer-style="obsidian"]
+  )
+  .app-transcript.welcome-mode
+  .usage-heatmap--welcome-standalone
+  .usage-heatmap-time-labels {
+  color: rgba(29, 29, 31, 0.34) !important;
+}
+
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]):is(
+    [data-interface-style="obsidian"],
+    [data-composer-style="obsidian"]
+  )
+  .app-transcript.welcome-mode
+  .usage-heatmap--welcome-standalone
+  .usage-heatmap-chip {
+  background: rgba(29, 29, 31, 0.055) !important;
+  color: rgba(29, 29, 31, 0.46) !important;
+  -webkit-text-fill-color: rgba(29, 29, 31, 0.46) !important;
+}
+
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]):is(
+    [data-interface-style="obsidian"],
+    [data-composer-style="obsidian"]
+  )
+  .app-transcript.welcome-mode
+  .usage-heatmap--welcome-standalone
+  .usage-heatmap-chip
+  strong {
+  color: rgba(29, 29, 31, 0.66) !important;
+  -webkit-text-fill-color: rgba(29, 29, 31, 0.66) !important;
+}
+
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]):is(
+    [data-interface-style="obsidian"],
+    [data-composer-style="obsidian"]
+  )
+  .app-transcript.welcome-mode
+  .usage-heatmap--welcome-standalone
+  .usage-heatmap-provider-filter-tab {
+  color: rgba(29, 29, 31, 0.4) !important;
+  -webkit-text-fill-color: rgba(29, 29, 31, 0.4) !important;
+}
+
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]):is(
+    [data-interface-style="obsidian"],
+    [data-composer-style="obsidian"]
+  )
+  .app-transcript.welcome-mode
+  .usage-heatmap--welcome-standalone
+  .usage-heatmap-provider-filter-tab[data-active="true"] {
+  color: rgba(29, 29, 31, 0.72) !important;
+  -webkit-text-fill-color: rgba(29, 29, 31, 0.72) !important;
+}
+
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]):is(
+    [data-interface-style="obsidian"],
+    [data-composer-style="obsidian"]
+  )
+  .app-transcript.welcome-mode
+  .usage-heatmap--welcome-standalone
+  .usage-heatmap-cell[data-empty="true"] {
+  background: rgba(29, 29, 31, 0.065) !important;
+}
+
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]):is(
     [data-composer-style="codex"],
     [data-composer-style="claude"],
     [data-composer-style="gemini"]
@@ -3774,6 +3951,68 @@
   background: rgba(29, 29, 31, 0.06) !important;
   color: rgba(29, 29, 31, 0.9) !important;
   -webkit-text-fill-color: rgba(29, 29, 31, 0.9) !important;
+}
+
+[data-composer-style="alabaster"]:not(
+    :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"])
+  )
+  .app-transcript
+  .composer-telemetry-row {
+  border-top-color: rgba(255, 255, 255, 0.12) !important;
+  color: rgba(255, 255, 255, 0.68) !important;
+  -webkit-text-fill-color: rgba(255, 255, 255, 0.68) !important;
+}
+
+[data-composer-style="alabaster"]:not(
+    :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"])
+  )
+  .app-transcript
+  .composer-telemetry-row
+  :is(
+    .composer-run-timecode,
+    .composer-screen-watch-button,
+    .composer-ensemble-toggle-button,
+    .composer-goal-button,
+    .composer-plan-button,
+    .composer-copy-transcript-button,
+    .composer-workspace-button,
+    .composer-thread-token-tally,
+    [data-composer-control]
+  ) {
+  color: rgba(255, 255, 255, 0.68) !important;
+  -webkit-text-fill-color: rgba(255, 255, 255, 0.68) !important;
+}
+
+[data-composer-style="alabaster"]:not(
+    :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"])
+  )
+  .app-transcript
+  .composer-telemetry-row
+  :is(.composer-control-icon, .sf-symbol-icon, .sf-symbol-icon svg, svg) {
+  color: inherit !important;
+  -webkit-text-fill-color: inherit !important;
+}
+
+[data-composer-style="alabaster"]:not(
+    :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"])
+  )
+  .app-transcript
+  .composer-telemetry-row
+  :is(
+    .composer-screen-watch-button:hover,
+    .composer-ensemble-toggle-button:hover,
+    .composer-ensemble-toggle-button.is-open,
+    .composer-goal-button:hover,
+    .composer-goal-button.is-open,
+    .composer-plan-button:hover,
+    .composer-plan-button.is-open,
+    .composer-copy-transcript-button:hover,
+    .composer-copy-transcript-button.is-open,
+    .composer-workspace-button:hover
+  ) {
+  background: rgba(255, 255, 255, 0.08) !important;
+  color: rgba(255, 255, 255, 0.92) !important;
+  -webkit-text-fill-color: rgba(255, 255, 255, 0.92) !important;
 }
 
 /* Alabaster is a light extreme theme. Keep Obsidian's dark provider
