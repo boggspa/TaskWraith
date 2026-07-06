@@ -1459,13 +1459,14 @@ function useTranscriptVirtualization(params: {
           // recognises the resulting scroll event as our own and skips the
           // re-baseline/bump (Fix 4), keeping the restore one-shot.
           anchorWriteRef.current = true
+          // Arm the PARENT scroll evaluator BEFORE the write — setting
+          // `scrollTop` dispatches a synchronous scroll event, and without a
+          // pre-arm the App-level auto-follow listener can hit the 2px engage
+          // band (movedDown, no gesture) and re-lock follow before the guard
+          // exists. Refresh after the write with the browser-clamped landed
+          // position so overshoot-to-bottom remains matched.
+          onProgrammaticScrollWrite?.(target)
           scroller.scrollTop = target
-          // Arm the PARENT scroll evaluator too — `anchorWriteRef` is private
-          // to this component, so without this the App-level auto-follow
-          // listener sees an un-owned scroll and can re-engage follow when the
-          // write lands at the live edge. Pass the browser-clamped landed
-          // position (a target that overshoots to the bottom is the exact
-          // re-engage trigger otherwise).
           onProgrammaticScrollWrite?.(scroller.scrollTop)
         }
         anchor.aboveHeight = aboveHeight

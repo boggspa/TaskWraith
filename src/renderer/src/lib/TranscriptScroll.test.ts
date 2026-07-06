@@ -321,6 +321,35 @@ describe('TranscriptScroll', () => {
       ).toBe(false)
     })
 
+    it('re-engages on anchor-correction-like downward movement when guard is not pre-armed', () => {
+      // Virtual-window Phase-1 anchor correction can move scrollTop down toward
+      // the live edge while the user is reading history. Without a pre-armed
+      // programmatic guard the synchronous scroll event trips the 2px band.
+      expect(
+        shouldReengageAutoFollowAfterScroll({
+          distanceFromBottom: STICK_ENGAGE_PX,
+          userScrolledAwayInThisFrame: true,
+          previousScrollTop: 2600,
+          nextScrollTop: 5198,
+          isProgrammatic: false,
+          recentDownwardIntent: false
+        })
+      ).toBe(true)
+    })
+
+    it('does not re-engage anchor-correction writes when guard is pre-armed before scrollTop write', () => {
+      expect(
+        shouldReengageAutoFollowAfterScroll({
+          distanceFromBottom: STICK_ENGAGE_PX,
+          userScrolledAwayInThisFrame: true,
+          previousScrollTop: 2600,
+          nextScrollTop: 5198,
+          isProgrammatic: true,
+          recentDownwardIntent: false
+        })
+      ).toBe(false)
+    })
+
     describe('downward re-engage band (STICK_REENGAGE_DOWNWARD_PX)', () => {
       it('re-engages a deliberate downward return that lands near the moving live edge', () => {
         // Streaming growth keeps the exact bottom out of reach of a drag —
