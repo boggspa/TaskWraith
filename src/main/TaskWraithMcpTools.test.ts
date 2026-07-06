@@ -21,6 +21,32 @@ describe('TaskWraith MCP tool registry', () => {
     expect(description).toContain('a recoverable error')
   })
 
+  it('advertises the full Boss/Captain control action surface', () => {
+    const bossmanControl = createTaskWraithMcpToolDefinitions().find(
+      (tool) => tool.name === 'ensemble_bossman_control'
+    )
+    const actionEnum = bossmanControl?.inputSchema.properties?.action?.enum
+
+    expect(actionEnum).toEqual(
+      expect.arrayContaining([
+        'summon_participant',
+        'assign_work',
+        'set_round_plan',
+        'request_status',
+        'declare_decision',
+        'set_review_gate',
+        'quarantine_participant',
+        'allocate_budget',
+        'create_poll',
+        'clear_goal',
+        'adjust_hops',
+        'ensemble_scheduled_wakeup',
+        'check_quota_resets'
+      ])
+    )
+    expect(TASKWRAITH_MCP_TOOLS).toContain('ensemble_poll_response')
+  })
+
   it('does not expose a Session Activity Ledger write path to agents', () => {
     expect(TASKWRAITH_MCP_TOOLS).not.toContain('session_activity_append' as never)
     expect(TASKWRAITH_MCP_TOOLS).not.toContain('session_activity_write' as never)
