@@ -3857,6 +3857,39 @@
   margin-right: 0 !important;
 }
 
+/* Grok tucked workspace rows need more left-column budget than the symmetric
+ * Codex grid: the git pill also carries the sync chip, so equal side columns
+ * make the workspace/branch label collapse before the center stats need to. */
+[data-composer-style="grok"]
+  .composer-above-bar-stack
+  > .composer-above-bar.style-unified {
+  grid-template-columns: minmax(0, 1.35fr) max-content minmax(max-content, 0.65fr);
+}
+
+[data-composer-style="grok"]
+  .composer-above-bar-stack
+  > .composer-above-bar.style-unified
+  > .composer-above-bar-pill--git {
+  max-width: none;
+}
+
+[data-composer-style="grok"]
+  .composer-above-bar-stack
+  > .composer-above-bar.style-unified
+  > .composer-above-bar-pill--git
+  .composer-above-bar-branch {
+  flex: 1 1 auto;
+}
+
+[data-composer-style="grok"]
+  .composer-above-bar-stack
+  > .composer-above-bar.style-unified
+  > .composer-above-bar-pill--git
+  .git-status-push {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
 /* Ensemble composer turn/fan-out control keeps the larger neutral affordance
  * across shells. This sits after shell-specific exceptions so the outer
  * capsule remains visible instead of collapsing to a tiny text token. */
