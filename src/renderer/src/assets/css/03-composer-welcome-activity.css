@@ -12077,14 +12077,15 @@ button.diff-file-row {
   font-weight: 600;
 }
 
-/* Theme-aware diff hues (NOT the fixed --success/--danger, which wash out on
- * light themes) so the inline +N / -M counter stays legible everywhere. */
+/* Match the Create-PR above-row diff palette: darker, more saturated than the
+ * expanded diff text tokens, so compact tool-call +N / -M counters do not glow
+ * brighter than the surrounding transcript chrome. */
 .activity-line-stat-add {
-  color: var(--diff-add-text);
+  color: #2db777;
 }
 
 .activity-line-stat-delete {
-  color: var(--diff-del-text);
+  color: #ec3d35;
 }
 
 .activity-line-stat-divider {

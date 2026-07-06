@@ -192,6 +192,19 @@ export type ActivityTimelineItem =
   | { type: 'activity'; activity: ToolActivity }
   | { type: 'compact-group'; id: string; activities: ToolActivity[] }
 
+export interface CompactGroupTargetChip {
+  key: string
+  label: string
+  repeatCount: number
+}
+
+export interface CompactGroupTargetSummary {
+  label: string
+  chips: CompactGroupTargetChip[]
+  hasRepeatTargets: boolean
+  overflowCount: number
+}
+
 interface SanitizedDetail {
   rows: Array<{ label: string; value: string }>
   previews: Array<{
@@ -582,10 +595,6 @@ export const buildActivityWorkbenchDiffSummary = ({
     previewKind: diffText ? 'git_diff' : 'none',
     diffText
   }
-}
-
-function getBaseName(path: string): string {
-  return path.split(/[/\\]/).filter(Boolean).pop() || path
 }
 
 function getFileActionLabel(activity: ToolActivity): string {
@@ -1149,6 +1158,10 @@ function getActivityDurationTotal(activities: ToolActivity[]): number | undefine
   return total > 0 ? total : undefined
 }
 
+function getBaseName(path: string): string {
+  return path.split(/[/\\]/).filter(Boolean).pop() || path
+}
+
 /**
  * 1.0.4-AS2b — extracted so the label-generation logic can be
  * unit-tested without instantiating the full
@@ -1198,6 +1211,162 @@ export function buildCompactGroupLabel(activities: readonly ToolActivity[]): str
   const remainder = activities.length - dominantCount
   if (remainder <= 0) return dominantLabel
   return `${dominantLabel} (+${remainder} more)`
+}
+
+type CompactGroupTargetKind = 'read-file' | 'write-file' | 'shell-command'
+
+function rawStringParam(parameters: Record<string, unknown>, key: string): string | undefined {
+  const value = parameters[key]
+  return typeof value === 'string' && value.trim() ? value : undefined
+}
+
+function safeFileTargetForCoalescing(activity: ToolActivity): string | undefined {
+  const toolName = (activity.toolName || '').toLowerCase()
+  if (toolName.includes('move') || toolName.includes('rename')) return undefined
+
+  const parameters = activity.parameters || {}
+  const candidateFields = ['file_path', 'filePath', 'path', 'target_file', 'target_file_path']
+  for (const field of candidateFields) {
+    const value = rawStringParam(parameters, field)
+    if (value) return value.trim()
+  }
+  if (activity.filePath && activity.filePath.trim()) return activity.filePath.trim()
+  if (activity.affectedFilePath && activity.affectedFilePath.trim()) {
+    return activity.affectedFilePath.trim()
+  }
+  return undefined
+}
+
+function truncateTargetChipLabel(value: string): string {
+  const collapsed = value.replace(/\s+/g, ' ').trim()
+  if (collapsed.length <= 48) return collapsed
+  return `${collapsed.slice(0, 45)}...`
+}
+
+function coalescibleActivityTarget(activity: ToolActivity):
+  | { key: string; label: string; kind: CompactGroupTargetKind }
+  | undefined {
+  const actor = activity.metadata?.ensembleProvider ?? activity.metadata?.provider ?? ''
+  if (activity.category === 'read' && !isSearchActivity(activity)) {
+    const filePath = safeFileTargetForCoalescing(activity)
+    if (!filePath) return undefined
+    return {
+      key: `${actor}|read-file|${filePath}`,
+      label: getBaseName(filePath),
+      kind: 'read-file'
+    }
+  }
+
+  if (activity.category === 'write' || isWriteLikeToolName(activity.toolName || '')) {
+    const filePath = safeFileTargetForCoalescing(activity)
+    if (!filePath) return undefined
+    return {
+      key: `${actor}|write-file|${filePath}`,
+      label: getBaseName(filePath),
+      kind: 'write-file'
+    }
+  }
+
+  if (isShellActivity(activity)) {
+    const command = rawStringParam(activity.parameters || {}, 'command')
+    if (!command) return undefined
+    const cwd = rawStringParam(activity.parameters || {}, 'cwd') ?? ''
+    return {
+      key: `${actor}|shell-command|${cwd}\u0000${command}`,
+      label: truncateTargetChipLabel(command),
+      kind: 'shell-command'
+    }
+  }
+
+  return undefined
+}
+
+function buildDefaultCompactGroupChips(
+  activities: readonly ToolActivity[]
+): CompactGroupTargetChip[] {
+  return activities
+    .map((activity, index) => {
+      const label =
+        getFilePathFromActivity(activity) ||
+        getStringParam(activity.parameters || {}, SEARCH_PARAM_KEYS)
+      return label
+        ? {
+            key: `${activity.id || index}:${label}`,
+            label: getBaseName(label),
+            repeatCount: 1
+          }
+        : undefined
+    })
+    .filter((value): value is CompactGroupTargetChip => Boolean(value))
+    .slice(0, 6)
+}
+
+function targetVerb(kind: CompactGroupTargetKind): string {
+  if (kind === 'read-file') return 'Read'
+  if (kind === 'write-file') return 'Edited'
+  return 'Ran'
+}
+
+export function buildCompactGroupTargetSummary(
+  activities: readonly ToolActivity[]
+): CompactGroupTargetSummary {
+  const fallbackChips = buildDefaultCompactGroupChips(activities)
+  const fallback = {
+    label: buildCompactGroupLabel(activities),
+    chips: fallbackChips,
+    hasRepeatTargets: false,
+    overflowCount: Math.max(0, activities.length - fallbackChips.length)
+  }
+
+  const targets: Array<CompactGroupTargetChip & { kind: CompactGroupTargetKind }> = []
+  const byKey = new Map<string, CompactGroupTargetChip & { kind: CompactGroupTargetKind }>()
+  let targetedActivityCount = 0
+
+  for (const activity of activities) {
+    const target = coalescibleActivityTarget(activity)
+    if (!target) continue
+    targetedActivityCount += 1
+    const existing = byKey.get(target.key)
+    if (existing) {
+      existing.repeatCount += 1
+    } else {
+      const entry = {
+        key: target.key,
+        label: target.label,
+        repeatCount: 1,
+        kind: target.kind
+      }
+      byKey.set(target.key, entry)
+      targets.push(entry)
+    }
+  }
+
+  if (targetedActivityCount !== activities.length) return fallback
+  if (!targets.some((target) => target.repeatCount > 1)) return fallback
+
+  const firstKind = targets[0]?.kind
+  const sameKind = Boolean(firstKind && targets.every((target) => target.kind === firstKind))
+  if (!firstKind || !sameKind) return fallback
+
+  const total = activities.length
+  const unique = targets.length
+  let label = fallback.label
+  if (unique === 1 && targets[0].repeatCount === total) {
+    label = `${targetVerb(firstKind)} ${targets[0].label}`
+  } else if (firstKind === 'shell-command') {
+    label = `Ran ${total} ${total === 1 ? 'command' : 'commands'} (${unique} unique)`
+  } else if (firstKind === 'read-file') {
+    label = `Read ${total} times across ${unique} ${unique === 1 ? 'file' : 'files'}`
+  } else if (firstKind === 'write-file') {
+    label = `Edited ${total} times across ${unique} ${unique === 1 ? 'file' : 'files'}`
+  }
+
+  return {
+    label,
+    chips: targets.slice(0, 6),
+    hasRepeatTargets: true,
+    overflowCount: Math.max(0, targets.length - 6)
+  }
 }
 
 /** Grouping key for same-tool folding — a run folds only when consecutive
@@ -1283,7 +1452,7 @@ export function buildTimelineItems(activities: ToolActivity[]): ActivityTimeline
     }
 
     if (group.length >= minGroupSize) {
-      items.push({ type: 'compact-group', id: `${group[0].id}-${group.length}`, activities: group })
+      items.push({ type: 'compact-group', id: `compact-${group[0].id}`, activities: group })
     } else {
       for (const groupedActivity of group) {
         items.push({ type: 'activity', activity: groupedActivity })
@@ -1429,17 +1598,11 @@ function ActivityCompactGroup({
   // 1.0.4-AS2b — label generation extracted to a pure helper
   // (`buildCompactGroupLabel`) for unit testing. See its docstring
   // for the dominant-category phrasing rules.
-  const label = buildCompactGroupLabel(activities)
+  const targetSummary = buildCompactGroupTargetSummary(activities)
+  const label = targetSummary.label
   const primaryCategory: 'search' | 'read' =
     otherCount === 0 && searchCount > readCount ? 'search' : 'read'
-  const chips = activities
-    .map(
-      (activity) =>
-        getFilePathFromActivity(activity) ||
-        getStringParam(activity.parameters || {}, SEARCH_PARAM_KEYS)
-    )
-    .filter((value): value is string => Boolean(value))
-    .slice(0, 6)
+  const chips = targetSummary.chips
 
   // Phase L3 slice 7 — intelligent group iconography. Compute the
   // distinct tool families present in this group; show ONE icon if
@@ -1518,7 +1681,16 @@ function ActivityCompactGroup({
           {durationLabel(durationMs) && (
             <span className="activity-compact-group-duration">{durationLabel(durationMs)}</span>
           )}
-          <span className="activity-count-badge">{activities.length}</span>
+          <span
+            className="activity-count-badge"
+            title={`${activities.length} raw tool ${activities.length === 1 ? 'call' : 'calls'}`}
+          >
+            <span aria-hidden>×</span>
+            <DigitOdometer
+              value={activities.length}
+              ariaLabel={`${activities.length} raw tool ${activities.length === 1 ? 'call' : 'calls'}`}
+            />
+          </span>
         </span>
         <span className="activity-compact-group-caret">
           <svg
@@ -1538,21 +1710,29 @@ function ActivityCompactGroup({
       </button>
       {!expanded && chips.length > 0 && (
         <div className="activity-compact-group-chips">
-          {chips.map((chip, index) => (
-            <span key={`${chip}-${index}`} className="activity-compact-chip">
-              {getBaseName(chip)}
+          {chips.map((chip) => (
+            <span key={chip.key} className="activity-compact-chip">
+              <span>{chip.label}</span>
+              {chip.repeatCount > 1 && (
+                <span
+                  className="activity-compact-chip-repeat"
+                  aria-label={`${chip.repeatCount} calls`}
+                >
+                  ×{chip.repeatCount}
+                </span>
+              )}
             </span>
           ))}
-          {activities.length > chips.length && (
-            <span className="activity-compact-chip muted">+{activities.length - chips.length}</span>
+          {targetSummary.overflowCount > 0 && (
+            <span className="activity-compact-chip muted">+{targetSummary.overflowCount}</span>
           )}
         </div>
       )}
       {expanded && (
         <div className="activity-compact-group-list">
-          {activities.map((activity) => (
+          {activities.map((activity, index) => (
             <ActivityRow
-              key={activity.id}
+              key={`${activity.id}-${index}`}
               activity={activity}
               workspacePath={workspacePath}
               forceCompact

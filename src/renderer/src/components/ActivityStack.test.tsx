@@ -499,6 +499,26 @@ describe('ActivityStack compact tool groups', () => {
     expect(html).toContain('Read 2 files')
     expect(html).toContain('class="activity-category-icon" width="27.2" height="27.2"')
   })
+
+  it('summarizes repeated file targets with repeat chips and an odometer count badge', () => {
+    const html = renderToStaticMarkup(
+      <ActivityStack
+        activities={[
+          makeReadActivity({ id: 'tool-read-1', parameters: { file_path: '/repo/src/foo.ts' } }),
+          makeReadActivity({ id: 'tool-read-2', parameters: { file_path: '/repo/src/foo.ts' } })
+        ]}
+        provider="codex"
+      />
+    )
+
+    expect(html).toContain('Read foo.ts')
+    expect(html).toContain('activity-compact-chip-repeat')
+    expect(html).toContain('×2')
+    expect(html).toContain('activity-count-badge')
+    expect(html).toContain('digit-odometer')
+    expect(html).toContain('2 raw tool calls')
+    expect(html).not.toContain('activity-compact-chip muted')
+  })
 })
 
 describe('ActivityStack compactDensity routing', () => {

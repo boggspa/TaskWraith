@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { buildCompactGroupLabel, buildTimelineItems } from './ActivityStack'
+import {
+  buildCompactGroupLabel,
+  buildCompactGroupTargetSummary,
+  buildTimelineItems
+} from './ActivityStack'
 import type { ToolActivity } from '../../../main/store/types'
 
 /*
@@ -36,6 +40,21 @@ describe('buildTimelineItems — same-tool grouping (unified single + ensemble)'
     const items = buildTimelineItems(acts)
     expect(items.length).toBe(1)
     expect(items[0].type).toBe('compact-group')
+  })
+
+  it('keeps compact-group identity stable when a same-family run appends another call', () => {
+    const firstPair = buildTimelineItems([
+      activity({ id: 'r1', category: 'read', toolName: 'read_file' }),
+      activity({ id: 'r2', category: 'read', toolName: 'read_file' })
+    ])
+    const appended = buildTimelineItems([
+      activity({ id: 'r1', category: 'read', toolName: 'read_file' }),
+      activity({ id: 'r2', category: 'read', toolName: 'read_file' }),
+      activity({ id: 'r3', category: 'read', toolName: 'read_file' })
+    ])
+
+    expect(firstPair[0]).toMatchObject({ type: 'compact-group', id: 'compact-r1' })
+    expect(appended[0]).toMatchObject({ type: 'compact-group', id: 'compact-r1' })
   })
 
   it('now groups consecutive writes too (consistent with reads — were inline before)', () => {
@@ -296,5 +315,179 @@ describe('buildCompactGroupLabel', () => {
         activity({ id: 's1', category: 'shell', toolName: 'bash' })
       ])
     ).toBe('Read 3 files (+3 more)')
+  })
+})
+
+describe('buildCompactGroupTargetSummary', () => {
+  it('labels repeated reads of the same file as one updated target', () => {
+    const summary = buildCompactGroupTargetSummary([
+      activity({
+        id: 'r1',
+        category: 'read',
+        toolName: 'read_file',
+        parameters: { file_path: '/repo/src/App.tsx' }
+      }),
+      activity({
+        id: 'r2',
+        category: 'read',
+        toolName: 'read_file',
+        parameters: { file_path: '/repo/src/App.tsx' }
+      }),
+      activity({
+        id: 'r3',
+        category: 'read',
+        toolName: 'read_file',
+        parameters: { file_path: '/repo/src/App.tsx' }
+      })
+    ])
+
+    expect(summary).toMatchObject({
+      label: 'Read App.tsx',
+      hasRepeatTargets: true,
+      overflowCount: 0,
+      chips: [{ label: 'App.tsx', repeatCount: 3 }]
+    })
+  })
+
+  it('summarizes repeated reads across multiple files without reordering activities', () => {
+    const summary = buildCompactGroupTargetSummary([
+      activity({
+        id: 'r1',
+        category: 'read',
+        toolName: 'read_file',
+        parameters: { file_path: '/repo/src/App.tsx' }
+      }),
+      activity({
+        id: 'r2',
+        category: 'read',
+        toolName: 'read_file',
+        parameters: { file_path: '/repo/src/App.tsx' }
+      }),
+      activity({
+        id: 'r3',
+        category: 'read',
+        toolName: 'read_file',
+        parameters: { file_path: '/repo/src/Composer.tsx' }
+      }),
+      activity({
+        id: 'r4',
+        category: 'read',
+        toolName: 'read_file',
+        parameters: { file_path: '/repo/src/Composer.tsx' }
+      })
+    ])
+
+    expect(summary.label).toBe('Read 4 times across 2 files')
+    expect(summary.overflowCount).toBe(0)
+    expect(summary.chips.map((chip) => [chip.label, chip.repeatCount])).toEqual([
+      ['App.tsx', 2],
+      ['Composer.tsx', 2]
+    ])
+  })
+
+  it('labels repeated edits of the same file as one updated target', () => {
+    const summary = buildCompactGroupTargetSummary([
+      activity({
+        id: 'w1',
+        category: 'write',
+        toolName: 'edit_file',
+        parameters: { file_path: '/repo/src/ActivityStack.tsx' }
+      }),
+      activity({
+        id: 'w2',
+        category: 'write',
+        toolName: 'edit_file',
+        parameters: { file_path: '/repo/src/ActivityStack.tsx' }
+      })
+    ])
+
+    expect(summary.label).toBe('Edited ActivityStack.tsx')
+    expect(summary.chips).toMatchObject([{ label: 'ActivityStack.tsx', repeatCount: 2 }])
+  })
+
+  it('does not coalesce move or rename path roles into a fake single file target', () => {
+    const summary = buildCompactGroupTargetSummary([
+      activity({
+        id: 'm1',
+        category: 'write',
+        toolName: 'move_path',
+        parameters: { source: '/repo/src/a.ts', target: '/repo/src/b.ts' }
+      }),
+      activity({
+        id: 'm2',
+        category: 'write',
+        toolName: 'move_path',
+        parameters: { source: '/repo/src/b.ts', target: '/repo/src/a.ts' }
+      })
+    ])
+
+    expect(summary.hasRepeatTargets).toBe(false)
+    expect(summary.label).toBe('Edited 2 files')
+  })
+
+  it('does not coalesce a partial target set into a misleading repeated-file label', () => {
+    const summary = buildCompactGroupTargetSummary([
+      activity({
+        id: 'r1',
+        category: 'read',
+        toolName: 'read_file',
+        parameters: { file_path: '/repo/src/App.tsx' }
+      }),
+      activity({
+        id: 'r2',
+        category: 'read',
+        toolName: 'read_file',
+        parameters: { file_path: '/repo/src/App.tsx' }
+      }),
+      activity({
+        id: 'r3',
+        category: 'read',
+        toolName: 'list_directory',
+        parameters: { directory: '/repo/src' }
+      })
+    ])
+
+    expect(summary.hasRepeatTargets).toBe(false)
+    expect(summary.label).toBe('Read 3 files')
+  })
+
+  it('treats identical shell commands in different working directories as distinct', () => {
+    const summary = buildCompactGroupTargetSummary([
+      activity({
+        id: 's1',
+        category: 'shell',
+        toolName: 'run_shell_command',
+        parameters: { command: 'npm test', cwd: '/repo/a' }
+      }),
+      activity({
+        id: 's2',
+        category: 'shell',
+        toolName: 'run_shell_command',
+        parameters: { command: 'npm test', cwd: '/repo/b' }
+      })
+    ])
+
+    expect(summary.hasRepeatTargets).toBe(false)
+    expect(summary.label).toBe('Ran 2 commands')
+  })
+
+  it('coalesces exact repeated shell commands in the same working directory', () => {
+    const summary = buildCompactGroupTargetSummary([
+      activity({
+        id: 's1',
+        category: 'shell',
+        toolName: 'run_shell_command',
+        parameters: { command: 'npm test', cwd: '/repo' }
+      }),
+      activity({
+        id: 's2',
+        category: 'shell',
+        toolName: 'run_shell_command',
+        parameters: { command: 'npm test', cwd: '/repo' }
+      })
+    ])
+
+    expect(summary.label).toBe('Ran npm test')
+    expect(summary.chips).toMatchObject([{ label: 'npm test', repeatCount: 2 }])
   })
 })

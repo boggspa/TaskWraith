@@ -225,6 +225,9 @@
 }
 
 .activity-count-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
   flex-shrink: 0;
   font-size: 0.65rem;
   font-weight: 600;
@@ -281,6 +284,9 @@
 }
 
 .activity-compact-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   max-width: 160px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -291,6 +297,19 @@
   background: color-mix(in srgb, var(--surface-elevated) 52%, transparent);
   border: 1px solid color-mix(in srgb, var(--border-subtle) 70%, transparent);
   font-size: 0.68rem;
+}
+
+.activity-compact-chip > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.activity-compact-chip-repeat {
+  flex-shrink: 0;
+  color: color-mix(in srgb, var(--accent) 72%, var(--text-tertiary));
+  font-weight: 700;
 }
 
 .activity-compact-chip.muted {
