@@ -603,10 +603,18 @@ function formatBossmanControlStanza(
       ...budgets.map((budget) => {
         const owner = budget.participantId ? `${participantName(budget.participantId)} ` : ''
         const parts = [
-          budget.maxExtraTurns !== undefined ? `${budget.maxExtraTurns} extra turns` : '',
-          budget.maxFanoutCalls !== undefined ? `${budget.maxFanoutCalls} fanouts` : '',
-          budget.maxDurationSeconds !== undefined ? `${budget.maxDurationSeconds}s` : '',
-          budget.maxTokens !== undefined ? `${budget.maxTokens} tokens` : ''
+          budget.maxExtraTurns !== undefined
+            ? `${budget.extraTurnsUsed || 0}/${budget.maxExtraTurns} extra turns`
+            : '',
+          budget.maxFanoutCalls !== undefined
+            ? `${budget.fanoutCallsUsed || 0}/${budget.maxFanoutCalls} fanouts`
+            : '',
+          budget.maxDurationSeconds !== undefined
+            ? `${budget.durationSecondsUsed || 0}/${budget.maxDurationSeconds}s`
+            : '',
+          budget.maxTokens !== undefined
+            ? `${budget.tokensUsed || 0}/${budget.maxTokens} tokens`
+            : ''
         ].filter(Boolean)
         return `- ${owner}${budget.phase ? `${sanitizeText(budget.phase)}: ` : ''}${parts.join(', ')}`
       })

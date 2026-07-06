@@ -5761,6 +5761,18 @@ export class EnsembleOrchestrator {
           return `fan-out budget exhausted (${used}/${budget.maxFanoutCalls})`
         }
       }
+      if (budget.maxDurationSeconds !== undefined) {
+        const used = budget.durationSecondsUsed || 0
+        if (used >= budget.maxDurationSeconds) {
+          return `duration budget exhausted (${used}/${budget.maxDurationSeconds}s)`
+        }
+      }
+      if (budget.maxTokens !== undefined) {
+        const used = budget.tokensUsed || 0
+        if (used >= budget.maxTokens) {
+          return `token budget exhausted (${used}/${budget.maxTokens})`
+        }
+      }
     }
     return null
   }
@@ -5768,9 +5780,17 @@ export class EnsembleOrchestrator {
   private incrementBossmanBudgetUsage(
     runtime: ActiveRoundRuntime,
     participantIds: string[],
-    usage: { extraTurns?: number; fanoutCalls?: number }
+    usage: { extraTurns?: number; fanoutCalls?: number; durationSeconds?: number; tokens?: number }
   ): void {
-    if ((!usage.extraTurns && !usage.fanoutCalls) || participantIds.length === 0) return
+    if (
+      !usage.extraTurns &&
+      !usage.fanoutCalls &&
+      !usage.durationSeconds &&
+      !usage.tokens
+    ) {
+      return
+    }
+    if (participantIds.length === 0) return
     const targetIds = new Set(participantIds)
     const chat = this.deps.getChat(runtime.chatId)
     const activeBudgets = chat?.ensemble?.bossmanControlState?.budgets || []
@@ -5778,21 +5798,37 @@ export class EnsembleOrchestrator {
       (budget) =>
         (!budget.participantId || targetIds.has(budget.participantId)) &&
         ((usage.extraTurns && budget.maxExtraTurns !== undefined) ||
-          (usage.fanoutCalls && budget.maxFanoutCalls !== undefined))
+          (usage.fanoutCalls && budget.maxFanoutCalls !== undefined) ||
+          (usage.durationSeconds && budget.maxDurationSeconds !== undefined) ||
+          (usage.tokens && budget.maxTokens !== undefined))
     )
     if (!hasRelevantBudget) return
+    const updatedAt = this.deps.nowIso()
     this.updateBossmanControlState(runtime, (state) => {
       const budgets = state.budgets || []
       let changed = false
       const nextBudgets = budgets.map((budget): EnsembleBossmanBudget => {
         if (budget.participantId && !targetIds.has(budget.participantId)) return budget
         const next = { ...budget }
+        let budgetChanged = false
         if (usage.extraTurns && budget.maxExtraTurns !== undefined) {
           next.extraTurnsUsed = (budget.extraTurnsUsed || 0) + usage.extraTurns
-          changed = true
+          budgetChanged = true
         }
         if (usage.fanoutCalls && budget.maxFanoutCalls !== undefined) {
           next.fanoutCallsUsed = (budget.fanoutCallsUsed || 0) + usage.fanoutCalls
+          budgetChanged = true
+        }
+        if (usage.durationSeconds && budget.maxDurationSeconds !== undefined) {
+          next.durationSecondsUsed = (budget.durationSecondsUsed || 0) + usage.durationSeconds
+          budgetChanged = true
+        }
+        if (usage.tokens && budget.maxTokens !== undefined) {
+          next.tokensUsed = (budget.tokensUsed || 0) + usage.tokens
+          budgetChanged = true
+        }
+        if (budgetChanged) {
+          next.updatedAt = updatedAt
           changed = true
         }
         return next
@@ -10235,12 +10271,44 @@ export class EnsembleOrchestrator {
     }
   }
 
+  private bossmanRunBudgetUsage(run: ActiveParticipantRun): {
+    durationSeconds?: number
+    tokens?: number
+  } {
+    const stats =
+      run.stats && typeof run.stats === 'object' && !Array.isArray(run.stats)
+        ? (run.stats as Record<string, unknown>)
+        : {}
+    const inputTokens = numericRunStat(stats, 'input_tokens', 'inputTokens')
+    const outputTokens = numericRunStat(stats, 'output_tokens', 'outputTokens')
+    const totalTokens =
+      numericRunStat(stats, 'total_tokens', 'totalTokens') || inputTokens + outputTokens
+    const statsDurationMs = numericRunStat(stats, 'duration_ms', 'durationMs')
+    const startedAtMs = Date.parse(run.startedAt || '')
+    const fallbackDurationMs = Number.isFinite(startedAtMs)
+      ? Math.max(0, this.deps.now() - startedAtMs)
+      : 0
+    const durationMs = statsDurationMs || fallbackDurationMs
+    return {
+      ...(durationMs > 0 ? { durationSeconds: Math.ceil(durationMs / 1000) } : {}),
+      ...(totalTokens > 0 ? { tokens: totalTokens } : {})
+    }
+  }
+
   private finalizeRun(
     run: ActiveParticipantRun,
     status: EnsembleParticipantStatus,
     reason?: string
   ): void {
     run.status = status
+    const runtime = this.roundsByChatId.get(run.chatId)
+    if (runtime?.roundId === run.roundId) {
+      this.incrementBossmanBudgetUsage(
+        runtime,
+        [run.participant.id],
+        this.bossmanRunBudgetUsage(run)
+      )
+    }
     this.flushRun(run, true, reason)
     this.reconcileBossmanControlAfterRun(run, status)
     this.transitionParticipantRunQueueJob(run, status, reason)

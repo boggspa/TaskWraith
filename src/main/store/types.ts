@@ -1178,6 +1178,8 @@ export interface EnsembleBossmanBudget {
   maxTokens?: number
   extraTurnsUsed?: number
   fanoutCallsUsed?: number
+  durationSecondsUsed?: number
+  tokensUsed?: number
   reason?: string
   createdAt: string
   updatedAt: string

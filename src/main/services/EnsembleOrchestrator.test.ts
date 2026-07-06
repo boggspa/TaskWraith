@@ -4347,6 +4347,67 @@ Next action:
     expect(harness.dispatched).toHaveLength(3)
   })
 
+  it('counts completed run usage against Boss budgets before later summons', async () => {
+    const initialChat = makeChat()
+    initialChat.ensemble!.orchestrationMode = 'continuous'
+    initialChat.ensemble!.bossmanParticipantId = 'claude'
+    initialChat.activeGoal = { ...buildActiveGoal('goal-x'), status: 'completed' }
+    const harness = makeHarness({ initialChat })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Plan and execute.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    await harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+      action: 'allocate_budget',
+      roundId: harness.chat.ensemble?.activeRound?.roundId,
+      targetParticipantId: 'codex',
+      maxDurationSeconds: 90,
+      maxTokens: 100,
+      reason: 'Worker gets one small pass.'
+    })
+    harness.orchestrator.markYielded(
+      harness.dispatched[0].appRunId!,
+      'Worker should take this.',
+      'Worker'
+    )
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    harness.orchestrator.handleProviderOutput(
+      'codex',
+      { appRunId: harness.dispatched[1].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'content', text: 'Initial worker answer.' }
+    )
+    harness.orchestrator.handleProviderOutput(
+      'codex',
+      { appRunId: harness.dispatched[1].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'result', status: 'success', stats: { duration_ms: 91_000, total_tokens: 120 } }
+    )
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
+
+    expect(harness.chat.ensemble?.bossmanControlState?.budgets?.[0]).toMatchObject({
+      participantId: 'codex',
+      maxDurationSeconds: 90,
+      maxTokens: 100,
+      durationSecondsUsed: 91,
+      tokensUsed: 120
+    })
+
+    const result = await harness.orchestrator.bossmanControlForRun(
+      harness.dispatched[2].appRunId,
+      {
+        action: 'summon_participant',
+        roundId: harness.chat.ensemble?.activeRound?.roundId,
+        targetParticipantId: 'codex',
+        reason: 'Need another pass.'
+      }
+    )
+
+    expect(result.ok).toBe(false)
+    expect(result.error).toBe('budget_exhausted')
+    expect(harness.dispatched).toHaveLength(3)
+  })
+
   it('routes Boss-created polls to targeted voters before the natural order', async () => {
     const initialChat = makeChat()
     initialChat.ensemble!.bossmanParticipantId = 'claude'
