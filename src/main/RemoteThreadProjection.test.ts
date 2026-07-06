@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import type { ChatMessage, ChatRun, ToolActivity } from './store/types'
 import {
+  fitRemoteThreadSnapshotToByteBudget,
   projectRemoteThread,
   sanitizePreview,
   classifyRemoteKind,
@@ -38,6 +39,10 @@ const MESSAGES: ChatMessage[] = Array.from({ length: 10 }, (_, i) => msg(i))
 const PNG_1X1_BASE64 =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII='
 
+function jsonBytes(value: unknown): number {
+  return Buffer.byteLength(JSON.stringify(value), 'utf8')
+}
+
 function project(
   mode: Parameters<typeof projectRemoteThread>[2]['mode'],
   messages: ChatMessage[] = MESSAGES,
@@ -61,6 +66,43 @@ describe('RemoteThreadProjection', () => {
       expect(snap.mode).toEqual({ kind: 'latestN', n: 3 })
       expect(snap.totalRows).toBe(10)
       expect(snap.generatedAt).toBe(FIXED)
+    })
+
+    it('fits oversized snapshots by keeping a latest-row window under budget', () => {
+      const messages = Array.from({ length: 18 }, (_, i) =>
+        msg(i, {
+          role: i % 2 === 0 ? 'user' : 'assistant',
+          content: `message ${i} ${'x'.repeat(12_000)}`
+        })
+      )
+      const snap = project({ kind: 'latestN', n: 18 }, messages, [], {
+        previewMaxChars: REMOTE_IOS_PREVIEW_MAX,
+        notes: 'n'.repeat(20_000),
+        blackboardEntries: [
+          {
+            id: 'b1',
+            chatId: THREAD,
+            roundId: 'round-1',
+            participantId: 'participant-1',
+            key: 'large',
+            value: 'b'.repeat(20_000),
+            category: 'note',
+            scope: 'session',
+            createdAt: '2026-01-01T00:00:00.000Z'
+          }
+        ]
+      })
+
+      const fitted = fitRemoteThreadSnapshotToByteBudget(snap, 8_000)
+
+      expect(jsonBytes(fitted)).toBeLessThanOrEqual(8_000)
+      expect(fitted.rows.length).toBeGreaterThan(0)
+      expect(fitted.rows.length).toBeLessThan(snap.rows.length)
+      expect(fitted.rows[fitted.rows.length - 1]?.id).toBe(snap.rows[snap.rows.length - 1]?.id)
+      expect(fitted.hasMoreAbove).toBe(true)
+      expect(fitted.windowStartIndex).toBeGreaterThan(snap.windowStartIndex)
+      expect(fitted.notes).toBeUndefined()
+      expect(fitted.blackboardEntries).toBeUndefined()
     })
 
     it('projects bounded blackboard entries separately from transcript rows', () => {

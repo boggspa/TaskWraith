@@ -73,6 +73,9 @@ export const REMOTE_IOS_ROW_EXPAND_MAX = 32000
  * full 20-seat ensemble round plus nearby runs without making snapshots
  * unbounded. */
 export const REMOTE_RUN_SUMMARY_MAX = 48
+/** Keep individual thread-snapshot payloads well below the relay's 1 MB
+ * WebSocket frame cap once JSON-RPC/envelope overhead is added. */
+export const REMOTE_THREAD_SNAPSHOT_WIRE_MAX_BYTES = 600_000
 
 const PROVIDER_LABELS: Record<ProviderId, string> = {
   gemini: 'Gemini',
@@ -778,6 +781,115 @@ function capRowThumbnails(
     }
   }
   return rows
+}
+
+function jsonByteLength(value: unknown): number {
+  return Buffer.byteLength(JSON.stringify(value), 'utf8')
+}
+
+function rowWithTransportLeanFields(row: RemoteThreadRow, previewMax: number): RemoteThreadRow {
+  const { imageThumbnails: _imageThumbnails, media, toolSummary, preview, truncated, ...rest } = row
+  const clipped = preview.length > previewMax
+  const lean: RemoteThreadRow = {
+    ...rest,
+    preview: clipped ? preview.slice(0, previewMax).trimEnd() : preview,
+    truncated: truncated || clipped
+  }
+  if (media?.length) {
+    lean.media = media.map(({ thumbnail: _thumbnail, ...item }) => item)
+  }
+  if (toolSummary) {
+    const { tools: _tools, ...summary } = toolSummary
+    lean.toolSummary = summary
+  }
+  return lean
+}
+
+function rowWithTransportSkeleton(row: RemoteThreadRow): RemoteThreadRow {
+  const preview = row.preview.length > 240 ? row.preview.slice(0, 240).trimEnd() : row.preview
+  return {
+    id: row.id,
+    ...(row.runId ? { runId: row.runId } : {}),
+    ...(row.ensembleRoundId ? { ensembleRoundId: row.ensembleRoundId } : {}),
+    role: row.role,
+    kind: row.kind,
+    ...(row.speaker ? { speaker: row.speaker } : {}),
+    ...(row.imageAttachmentCount ? { imageAttachmentCount: row.imageAttachmentCount } : {}),
+    preview,
+    truncated: row.truncated || preview.length < row.preview.length,
+    timestamp: row.timestamp
+  }
+}
+
+function trimOldestRowsForTransport<T extends RemoteThreadSnapshot>(
+  snapshot: T,
+  keepCount: number
+): T {
+  const rows = snapshot.rows.slice(-keepCount)
+  const dropped = snapshot.rows.length - rows.length
+  return {
+    ...snapshot,
+    rows,
+    windowStartIndex: snapshot.windowStartIndex + Math.max(0, dropped),
+    hasMoreAbove: snapshot.hasMoreAbove || dropped > 0
+  }
+}
+
+export function fitRemoteThreadSnapshotToByteBudget<T extends RemoteThreadSnapshot>(
+  snapshot: T,
+  maxBytes = REMOTE_THREAD_SNAPSHOT_WIRE_MAX_BYTES
+): T {
+  if (jsonByteLength(snapshot) <= maxBytes) return snapshot
+
+  const {
+    notes: _notes,
+    pinnedRows: _pinnedRows,
+    blackboardEntries: _blackboardEntries,
+    runSummaries: _runSummaries,
+    ...withoutSidePanels
+  } = snapshot
+  let candidate = withoutSidePanels as T
+  if (jsonByteLength(candidate) <= maxBytes) return candidate
+
+  candidate = {
+    ...candidate,
+    rows: candidate.rows.map((row) => rowWithTransportLeanFields(row, 1200))
+  }
+  if (jsonByteLength(candidate) <= maxBytes) return candidate
+
+  candidate = {
+    ...candidate,
+    rows: candidate.rows.map((row) => rowWithTransportLeanFields(row, 400))
+  }
+  while (candidate.rows.length > 1 && jsonByteLength(candidate) > maxBytes) {
+    const keepCount = Math.max(1, Math.ceil(candidate.rows.length / 2))
+    candidate = trimOldestRowsForTransport(candidate, keepCount)
+  }
+  if (jsonByteLength(candidate) <= maxBytes) return candidate
+
+  const {
+    runSummary: _runSummary,
+    conversationCostText: _conversationCostText,
+    conversationCostUsd: _conversationCostUsd,
+    ...withoutSummary
+  } = candidate
+  candidate = {
+    ...withoutSummary,
+    rows: candidate.rows.map(rowWithTransportSkeleton)
+  } as T
+  while (candidate.rows.length > 1 && jsonByteLength(candidate) > maxBytes) {
+    const keepCount = Math.max(1, Math.ceil(candidate.rows.length / 2))
+    candidate = trimOldestRowsForTransport(candidate, keepCount)
+  }
+  if (jsonByteLength(candidate) <= maxBytes) return candidate
+
+  return {
+    ...withoutSummary,
+    rows: [],
+    windowStartIndex: snapshot.totalRows,
+    hasMoreAbove: snapshot.totalRows > 0,
+    hasMoreBelow: false
+  } as unknown as T
 }
 const BLACKBOARD_CATEGORY_RANK: Record<BlackboardCategory, number> = {
   decision: 0,

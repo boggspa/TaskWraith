@@ -650,6 +650,27 @@ describe('BridgeBroadcaster', () => {
     expect(notify).toHaveBeenCalledWith(BRIDGE_BROADCAST_METHODS.remoteProjection, { envelope })
   })
 
+  it('skips a single remote projection envelope over the byte budget', () => {
+    const notify = vi.fn()
+    const store = makeFakeStore([makeWorkspace()], [makeChat()])
+    const broadcaster = new BridgeBroadcaster({
+      daemon: { notify },
+      appStore: store,
+      remoteProjectionEnvelopeMaxBytes: 1,
+      now: () => 1000
+    })
+    const envelope = buildRemoteProjectionEnvelope({
+      kind: 'questionCard',
+      payload: { promptId: 'q1' },
+      generatedAt: '2026-05-30T12:00:00.000Z',
+      envelopeId: 'env-q1'
+    })
+
+    expect(broadcaster.broadcastRemoteProjection(envelope)).toBe(false)
+
+    expect(notify).not.toHaveBeenCalled()
+  })
+
   it('broadcastSnapshot includes remote projection snapshots when a source is configured', () => {
     const notify = vi.fn()
     const store = makeFakeStore([makeWorkspace()], [makeChat()])
@@ -677,6 +698,47 @@ describe('BridgeBroadcaster', () => {
     ])
     expect(notify).toHaveBeenLastCalledWith(BRIDGE_BROADCAST_METHODS.remoteProjectionSnapshot, {
       projections: [envelope]
+    })
+  })
+
+  it('fans out oversized remote projection snapshots as single envelopes', () => {
+    const notify = vi.fn()
+    const store = makeFakeStore([makeWorkspace()], [makeChat()])
+    const first = buildRemoteProjectionEnvelope({
+      kind: 'questionCard',
+      payload: { promptId: 'q1' },
+      generatedAt: '2026-05-30T12:00:00.000Z',
+      envelopeId: 'env-q1'
+    })
+    const second = buildRemoteProjectionEnvelope({
+      kind: 'approvalCard',
+      payload: { requestId: 'a1' },
+      generatedAt: '2026-05-30T12:00:01.000Z',
+      envelopeId: 'env-a1'
+    })
+    const broadcaster = new BridgeBroadcaster({
+      daemon: { notify },
+      appStore: store,
+      projectionSource: {
+        listRemoteProjectionEnvelopes: () => [first, second]
+      },
+      remoteProjectionSnapshotMaxBytes: 1,
+      now: () => 1000
+    })
+
+    broadcaster.broadcastSnapshot()
+
+    expect(notify.mock.calls.map((call) => call[0])).toEqual([
+      BRIDGE_BROADCAST_METHODS.workspaceList,
+      BRIDGE_BROADCAST_METHODS.threadList,
+      BRIDGE_BROADCAST_METHODS.remoteProjection,
+      BRIDGE_BROADCAST_METHODS.remoteProjection
+    ])
+    expect(notify).toHaveBeenNthCalledWith(3, BRIDGE_BROADCAST_METHODS.remoteProjection, {
+      envelope: first
+    })
+    expect(notify).toHaveBeenNthCalledWith(4, BRIDGE_BROADCAST_METHODS.remoteProjection, {
+      envelope: second
     })
   })
 

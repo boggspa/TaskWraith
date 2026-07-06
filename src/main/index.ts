@@ -249,12 +249,14 @@ import {
   type RemoteWorkspaceBoard
 } from './RemoteTaskProjection'
 import {
+  fitRemoteThreadSnapshotToByteBudget,
   projectRemoteThread,
   REMOTE_IOS_PREVIEW_MAX,
   REMOTE_IOS_ROW_EXPAND_MAX,
   remoteSpeakerForMessage,
   type RemoteCostDisplayOptions,
-  type RemoteProjectionMode
+  type RemoteProjectionMode,
+  type RemoteThreadSnapshot
 } from './RemoteThreadProjection'
 import { ensembleSpeakerForMessage } from './EnsemblePrompt'
 import { extractThreadId } from './BridgeRunEventSink'
@@ -22956,15 +22958,20 @@ if (isGeminiMcpBridgeProcess) {
             : undefined
         )
       })
+      const payload = fitRemoteThreadSnapshotToByteBudget({
+        ...threadSnapshot,
+        taskId: chat.appChatId,
+        workspaceId: canonical,
+        provider: chat.provider
+      } as RemoteThreadSnapshot & {
+        taskId: string
+        workspaceId: string
+        provider?: string
+      })
       return {
         canonical,
         generatedAt,
-        payload: {
-          ...threadSnapshot,
-          taskId: chat.appChatId,
-          workspaceId: canonical,
-          provider: chat.provider
-        } as unknown as Record<string, unknown>,
+        payload: payload as unknown as Record<string, unknown>,
         runId: threadSnapshot.runSummary?.runId
       }
     }
@@ -26193,17 +26200,22 @@ if (isGeminiMcpBridgeProcess) {
               chat.ensemble?.enabled
                 ? ensembleSpeakerForMessage(chat.ensemble.participants)
                 : undefined
-            )
+              )
+          })
+          const threadPayload = fitRemoteThreadSnapshotToByteBudget({
+            ...threadSnapshot,
+            taskId: chat.appChatId,
+            workspaceId: chat.workspaceId ?? null,
+            provider: chat.provider
+          } as RemoteThreadSnapshot & {
+            taskId: string
+            workspaceId: string | null
+            provider?: string
           })
           envelopes.push(
             buildRemoteProjectionEnvelope({
               kind: 'threadSnapshot',
-              payload: {
-                ...threadSnapshot,
-                taskId: chat.appChatId,
-                workspaceId: chat.workspaceId ?? null,
-                provider: chat.provider
-              },
+              payload: threadPayload,
               generatedAt,
               workspaceId: chat.workspaceId ?? null,
               workspacePath: chat.workspacePath,

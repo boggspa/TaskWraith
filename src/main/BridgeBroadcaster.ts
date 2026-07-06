@@ -12,6 +12,9 @@ import {
   projectChatKind
 } from './RemoteTaskProjection'
 
+const DEFAULT_REMOTE_PROJECTION_SNAPSHOT_MAX_BYTES = 700_000
+const DEFAULT_REMOTE_PROJECTION_ENVELOPE_MAX_BYTES = 700_000
+
 /**
  * BridgeBroadcaster — pushes workspace + thread summaries from the
  * Electron main process to the TaskWraithBridge daemon over JSON-RPC,
@@ -125,6 +128,15 @@ export interface BridgeBroadcasterOptions {
    * when unresolvable (the chat keeps its raw id and stays invisible).
    */
   canonicalChatWorkspaceId?: (workspaceId: string | null | undefined) => string | null
+  /**
+   * Maximum UTF-8 JSON bytes for one bulk remote projection snapshot.
+   * Larger snapshots are fanned out as single projection envelopes so
+   * mobile clients still hydrate when the full workspace projection is
+   * near the relay frame budget.
+   */
+  remoteProjectionSnapshotMaxBytes?: number
+  /** Maximum UTF-8 JSON bytes for one single-envelope remote projection. */
+  remoteProjectionEnvelopeMaxBytes?: number
 }
 
 export interface ProviderModelOption {
@@ -294,6 +306,8 @@ export class BridgeBroadcaster {
   private readonly log?: (line: string) => void
   private readonly throttleMs: number
   private readonly now: () => number
+  private readonly remoteProjectionSnapshotMaxBytes: number
+  private readonly remoteProjectionEnvelopeMaxBytes: number
   private readonly canonicalChatWorkspaceId?: (
     workspaceId: string | null | undefined
   ) => string | null
@@ -310,6 +324,10 @@ export class BridgeBroadcaster {
     this.log = options.log
     this.throttleMs = options.throttleMs ?? 1000
     this.now = options.now ?? Date.now
+    this.remoteProjectionSnapshotMaxBytes =
+      options.remoteProjectionSnapshotMaxBytes ?? DEFAULT_REMOTE_PROJECTION_SNAPSHOT_MAX_BYTES
+    this.remoteProjectionEnvelopeMaxBytes =
+      options.remoteProjectionEnvelopeMaxBytes ?? DEFAULT_REMOTE_PROJECTION_ENVELOPE_MAX_BYTES
     this.canonicalChatWorkspaceId = options.canonicalChatWorkspaceId
   }
 
@@ -459,8 +477,18 @@ export class BridgeBroadcaster {
   /** Emit one Mac-authored remote projection envelope. This is used for
    * low-latency question/approval card changes without requiring the
    * daemon to infer state from raw run events. */
-  broadcastRemoteProjection(envelope: RemoteProjectionEnvelope): void {
-    this.sendNotify(BRIDGE_BROADCAST_METHODS.remoteProjection, { envelope })
+  broadcastRemoteProjection(envelope: RemoteProjectionEnvelope): boolean {
+    const method = BRIDGE_BROADCAST_METHODS.remoteProjection
+    const params = { envelope }
+    const bytes = Buffer.byteLength(JSON.stringify(params), 'utf8')
+    if (bytes > this.remoteProjectionEnvelopeMaxBytes) {
+      this.log?.(
+        `[BridgeBroadcaster] ${method} ${bytes}B exceeds ${this.remoteProjectionEnvelopeMaxBytes}B; skipped ${envelope.kind} envelope ${envelope.envelopeId}`
+      )
+      return false
+    }
+    this.sendNotify(method, params)
+    return true
   }
 
   /** Emit a current set of remote projection envelopes. Called on
@@ -478,7 +506,20 @@ export class BridgeBroadcaster {
       this.logErr(`failed to load remote projections for ${method}`, err)
       return
     }
-    this.sendNotify(method, { projections })
+    const params = { projections }
+    const maxBytes = this.remoteProjectionSnapshotMaxBytes
+    const bytes = Buffer.byteLength(JSON.stringify(params), 'utf8')
+    if (bytes <= maxBytes) {
+      this.sendNotify(method, params)
+      return
+    }
+
+    this.log?.(
+      `[BridgeBroadcaster] ${method} ${bytes}B exceeds ${maxBytes}B; sending ${projections.length} single projection envelopes`
+    )
+    for (const envelope of projections) {
+      this.broadcastRemoteProjection(envelope)
+    }
   }
 
   /** Fire both full-list broadcasts. Called when a new iOS client
