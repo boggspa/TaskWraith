@@ -7850,6 +7850,20 @@ function networkAccessBlockedToolName(
     : null
 }
 
+function isMcpAutoAllowedForRun(
+  toolName: string | null | undefined,
+  effectivePermissions?: EffectiveRunPermissions
+): boolean {
+  const raw = String(toolName || '').trim()
+  if (!raw) return false
+  const canonical = canonicalTaskWraithToolName(raw) || raw
+  return (
+    isTaskWraithMcpToolName(canonical) &&
+    MCP_AUTO_ALLOWED_TOOLS.has(canonical as TaskWraithMcpToolName) &&
+    !networkAccessBlockedToolName(canonical, effectivePermissions)
+  )
+}
+
 function networkAccessBlockedMessage(toolName: string): string {
   return `${toolName} was denied because network access is disabled for this run.`
 }
@@ -11765,10 +11779,7 @@ async function canUseClaudeSdkTool(
   const unprefixedToolName = toolName
     .replace(/^mcp__/, '')
     .replace(/^taskwraith__/, '')
-  if (
-    isTaskWraithMcpToolName(unprefixedToolName) &&
-    MCP_AUTO_ALLOWED_TOOLS.has(unprefixedToolName as TaskWraithMcpToolName)
-  ) {
+  if (isMcpAutoAllowedForRun(unprefixedToolName, payload.effectivePermissions)) {
     return { behavior: 'allow', updatedInput }
   }
   const service = claudeAgenticServiceForTool(toolName)
@@ -13455,13 +13466,11 @@ async function runKimiWireProvider(
               // circuit, the user gets prompted to approve harmless
               // signals like `ensemble_yield` (which only tells the
               // orchestrator the participant is passing their turn —
-              // no files, no shell, no network). Reuses the same
-              // `MCP_AUTO_ALLOWED_TOOLS` set so the two layers stay in
-              // sync as we expand or contract the allowlist.
-              if (
-                isTaskWraithMcpToolName(kimiCanonicalToolName) &&
-                MCP_AUTO_ALLOWED_TOOLS.has(kimiCanonicalToolName as TaskWraithMcpToolName)
-              ) {
+              // no files, no shell; web reads are network-gated before
+              // this fast path). Reuses the same `MCP_AUTO_ALLOWED_TOOLS`
+              // set so the two layers stay in sync as we expand or
+              // contract the allowlist.
+              if (isMcpAutoAllowedForRun(kimiCanonicalToolName, state.effectivePermissions)) {
                 respondToKimiWireRequest(child, message.id, {
                   request_id: message.params?.payload?.id || message.id,
                   response: 'approve'
@@ -16317,21 +16326,18 @@ function handleCodexServerRequest(message: any) {
                   'string'
                 ? ((formatted.preview as Record<string, unknown>).toolName as string)
                 : ''
-	  const codexCanonicalToolName = canonicalTaskWraithToolName(probedToolName)
-	  if (
-	    codexCanonicalToolName &&
-	    MCP_AUTO_ALLOWED_TOOLS.has(codexCanonicalToolName as TaskWraithMcpToolName)
-	  ) {
-	    if (method === 'mcpServer/elicitation/request' || method === 'mcp/elicitation/request') {
-	      codexClient.respond(message.id, { action: 'accept', content: null, _meta: null })
-	    } else if (method === 'tool/requestUserInput') {
-	      codexClient.respond(message.id, { answers: {} })
-	    } else {
-	      codexClient.respond(message.id, { decision: 'accept' })
-	    }
-	    return
-	  }
-	  let externalPathDetection: PendingExternalPathDetection | undefined
+  const codexCanonicalToolName = canonicalTaskWraithToolName(probedToolName)
+  if (isMcpAutoAllowedForRun(codexCanonicalToolName, state.effectivePermissions)) {
+    if (method === 'mcpServer/elicitation/request' || method === 'mcp/elicitation/request') {
+      codexClient.respond(message.id, { action: 'accept', content: null, _meta: null })
+    } else if (method === 'tool/requestUserInput') {
+      codexClient.respond(message.id, { answers: {} })
+    } else {
+      codexClient.respond(message.id, { decision: 'accept' })
+    }
+    return
+  }
+  let externalPathDetection: PendingExternalPathDetection | undefined
   try {
     const detection = detectExternalPathForProviderApproval({
       provider: 'codex',
@@ -19949,7 +19955,7 @@ async function executeGeminiMcpTool(
   const skipGenericApproval =
     toolName === 'delegate_to_subthread' ||
     isRecallMcpToolName(toolName) ||
-    MCP_AUTO_ALLOWED_TOOLS.has(toolName)
+    isMcpAutoAllowedForRun(toolName, context.effectivePermissions)
   // 1.0.72 — read-only hard-deny for side-effecting fall-through tools. The host
   // gate denies file/shell under read_only, but a mutating tool that classifies
   // as the generic mcpTools service (creative_blender_python, browser_open/click,

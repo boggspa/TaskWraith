@@ -66,6 +66,11 @@ export const READ_ONLY_TOOL_PRESET: ReadonlyArray<string> = Object.freeze([
   'inspect_chat_attachment',
   'grep',
   'glob',
+  'workspace_search',
+  'workspace_symbols',
+  'web_search',
+  'web_fetch',
+  'github_ci_status',
   'attached_window_status',
   'appwatch_status',
   'ide_app_status',
@@ -91,6 +96,7 @@ export const READ_ONLY_TOOL_PRESET: ReadonlyArray<string> = Object.freeze([
   'goal_blocked',
   // 1.4.2 — read-only runs may publish goal-step checklists.
   'todo_write',
+  'blackboard_post',
   'blackboard_read'
 ])
 

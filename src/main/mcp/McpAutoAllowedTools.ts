@@ -7,12 +7,16 @@ import {
 /**
  * MCP tools that skip the per-call approval modal (auto-allowed).
  *
- * ⚠️ SAFETY INVARIANT — this set may contain ONLY host-safe non-mutating tools.
+ * ⚠️ SAFETY INVARIANT — this set may contain ONLY host-safe non-mutating tools
+ * plus explicit chat-local coordination updates (`todo_write`, goal lifecycle
+ * updates, and `blackboard_post`).
  * Being a member makes a tool SKIP the host-side approval gate
  * (`requestAgenticServiceApproval`), so any mutating tool added here would
  * execute even under the `read_only` preset. Writes / shell / patch tools and
- * app-state mutation tools MUST stay out — they remain gated and are denied
- * under read_only. The invariant is enforced by
+ * destructive app-state mutation tools MUST stay out — they remain gated and are
+ * denied under read_only. Web reads are listed here but every provider preflight
+ * checks `networkAccess` before auto-allowing them, so the global/run network
+ * kill switch still wins. The invariant is enforced by
  * `McpAutoAllowedTools.test.ts`; do not weaken it.
  *
  * Historically this held only status / focus tools (state the user already
@@ -24,8 +28,8 @@ import {
  * (symlink/traversal-proof) in workspace chats. NOTE: in *global-scope* chats
  * the workspace path guard is bypassed by design, so auto-allowing reads there
  * means individual reads are no longer prompted — acceptable (reads only;
- * writes / shell / network stay gated), but worth knowing if global-scope
- * per-read prompting is ever wanted back.
+ * writes / shell stay gated; web reads still obey the network gate), but worth
+ * knowing if global-scope per-read prompting is ever wanted back.
  */
 export const MCP_AUTO_ALLOWED_TOOLS = new Set<TaskWraithMcpToolName>([
   'approval_status',
@@ -70,6 +74,9 @@ export const MCP_AUTO_ALLOWED_TOOLS = new Set<TaskWraithMcpToolName>([
   'goal_blocked',
   // 1.4.2 — goal-step checklist updates are non-mutating run coordination.
   'todo_write',
+  // Shared blackboard posts are coordination state, like todo_write. Deletion
+  // remains a destructive app-state mutation and is not auto-allowed.
+  'blackboard_post',
   // Blackboard reads are bounded, chat-local, and only mutate the per-entry
   // seenBy marker for the calling participant so slim prompts can omit it.
   'blackboard_read',
@@ -95,6 +102,12 @@ export const MCP_AUTO_ALLOWED_TOOLS = new Set<TaskWraithMcpToolName>([
   'inspect_chat_attachment',
   'workspace_board_snapshot',
   'workspace_board_preview_plan',
+  // Web reads are non-mutating and are available in every permission posture.
+  // NetworkAccess is enforced before the auto-allow fast path in the provider
+  // preflight/shared dispatcher, so global/run offline policies still deny.
+  'web_search',
+  'web_fetch',
+  'github_ci_status',
   // TaskWraith Canvas read-only verbs. No pixels, no mutation: list/status are
   // metadata the user already sees; snapshot/inspect run FIXED inspection
   // scripts (not agent-supplied JS); network/console are read-only buffers.
@@ -121,7 +134,6 @@ export const MCP_APP_STATE_MUTATION_TOOLS = new Set<TaskWraithMcpToolName>([
   'ensemble_brief_update',
   'schedule_wakeup',
   'cancel_wakeup',
-  'blackboard_post',
   'blackboard_delete',
   'workspace_board_apply_plan',
   'tw_introspection_run',
@@ -130,13 +142,13 @@ export const MCP_APP_STATE_MUTATION_TOOLS = new Set<TaskWraithMcpToolName>([
 
 /**
  * Tools advertised to a READ-ONLY / plan seat: TASKWRAITH_MCP_TOOLS ∩
- * MCP_AUTO_ALLOWED_TOOLS — the advertised universe narrowed to the gate-skip
- * safe set. Single source of truth (DERIVED, never hand-listed), so a mutating
- * tool can never appear here unless it is also wrongly added to
- * MCP_AUTO_ALLOWED_TOOLS — which the SAFETY INVARIANT test forbids. The Gemini
- * read-only --allowed-tools allowlist and the Grok read-only mcpServers
- * safe-subset are both built from this set, so all three providers advertise an
- * identical, provably non-mutating surface in read-only.
+ * MCP_AUTO_ALLOWED_TOOLS — the advertised universe narrowed to read/search plus
+ * coordination-state updates. Single source of truth (DERIVED, never
+ * hand-listed), so a mutating workspace/shell/destructive app tool can never
+ * appear here unless it is also wrongly added to MCP_AUTO_ALLOWED_TOOLS — which
+ * the SAFETY INVARIANT test forbids. The Gemini read-only --allowed-tools
+ * allowlist and the Grok read-only mcpServers safe-subset are both built from
+ * this set, so all three providers advertise an identical surface in read-only.
  */
 export const READ_ONLY_MCP_ADVERTISE_TOOLS: ReadonlyArray<TaskWraithMcpToolName> = Object.freeze(
   TASKWRAITH_MCP_TOOLS.filter((tool) => MCP_AUTO_ALLOWED_TOOLS.has(tool))

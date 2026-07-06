@@ -24,8 +24,9 @@ export const GEMINI_MCP_ALLOWED_TOOL_NAMES = [
 
 // 1.0.72 — read-only safe subset for the flagged read-only MCP advertise path
 // (TASKWRAITH_GEMINI_READONLY_MCP). Derived from READ_ONLY_MCP_ADVERTISE_TOOLS
-// (= TASKWRAITH_MCP_TOOLS ∩ MCP_AUTO_ALLOWED_TOOLS, floor-tested non-mutating),
-// in bare + TaskWraith__-prefixed forms — the mutating floor is never present.
+// (= TASKWRAITH_MCP_TOOLS ∩ MCP_AUTO_ALLOWED_TOOLS, floor-tested read/search +
+// coordination tools), in bare + TaskWraith__-prefixed forms — the mutating
+// workspace/shell/destructive-app floor is never present.
 export const GEMINI_MCP_READ_ONLY_TOOL_NAMES = [
   ...READ_ONLY_MCP_ADVERTISE_TOOLS,
   ...READ_ONLY_MCP_ADVERTISE_TOOLS.map((tool) => `${GEMINI_MCP_SERVER_NAME}__${tool}`)
