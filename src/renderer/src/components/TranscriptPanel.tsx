@@ -3640,7 +3640,7 @@ export const TranscriptPanel = memo(
                     <>
                       {fileChangeSummaryWindow.items.map((item) => {
                         const rowContent = (
-                          <>
+                          <span className="file-change-summary-row-content">
                             <span className={`file-change-summary-status status-${item.status}`}>
                               {item.status === 'modified' ? 'edited' : item.status}
                             </span>
@@ -3664,7 +3664,7 @@ export const TranscriptPanel = memo(
                                 </span>
                               </span>
                             )}
-                          </>
+                          </span>
                         )
                         if (!item.diffText && !onOpenFileChangeInWorkbench) {
                           return (
