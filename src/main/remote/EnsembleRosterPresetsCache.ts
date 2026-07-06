@@ -27,6 +27,20 @@ const LIVE_PROVIDERS: ReadonlySet<string> = new Set([
   'ollama'
 ])
 
+function safeRosterPermissionPresetId(value: unknown): string | undefined {
+  if (
+    value === 'read_only' ||
+    value === 'plan' ||
+    value === 'default' ||
+    value === 'workspace_write' ||
+    value === 'custom'
+  ) {
+    return value
+  }
+  if (value === 'full_access') return 'workspace_write'
+  return undefined
+}
+
 let cached: RemoteEnsemblePreset[] = []
 
 /** Projection-shaped snapshot of the renderer's roster presets (iOS-facing). */
@@ -82,6 +96,7 @@ function mapSnapshot(
     typeof entry.instructions === 'string' && entry.instructions
       ? entry.instructions.slice(0, 500)
       : undefined
+  const permissionPresetId = safeRosterPermissionPresetId(entry.permissionPresetId)
   return {
     // Preset participants are id-less; synthesize a stable per-preset id so the
     // iOS list has identity. Apply (slice B2) replays these as a fresh roster,
@@ -95,9 +110,7 @@ function mapSnapshot(
     ...(entry.isSecondInCommand === true ? { isSecondInCommand: true } : {}),
     ...(typeof entry.model === 'string' ? { model: entry.model } : {}),
     ...(brief !== undefined ? { brief } : {}),
-    ...(typeof entry.permissionPresetId === 'string'
-      ? { permissionPresetId: entry.permissionPresetId }
-      : {}),
+    ...(permissionPresetId ? { permissionPresetId } : {}),
     ...(typeof entry.reasoningEffort === 'string'
       ? { reasoningEffort: entry.reasoningEffort }
       : {}),

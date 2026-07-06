@@ -34,6 +34,21 @@ export const MIN_ROSTER_PRESET_PARTICIPANTS = 1
 export const MAX_ROSTER_PRESET_PARTICIPANTS = 20
 const DEFAULT_ROSTER_PRESET_MAX_PARTICIPANTS = 6
 
+function safeRosterPermissionPresetId(value: unknown): PermissionPresetId | undefined {
+  if (
+    value === 'read_only' ||
+    value === 'plan' ||
+    value === 'default' ||
+    value === 'workspace_write' ||
+    value === 'custom'
+  ) {
+    return value
+  }
+  // Trusted Session is live lane authority, not portable roster configuration.
+  if (value === 'full_access') return 'workspace_write'
+  return undefined
+}
+
 function newPresetId(now: number): string {
   return `ensemble-roster-${now.toString(36)}-${Math.random().toString(36).slice(2, 8)}`
 }
@@ -420,8 +435,8 @@ function snapshotParticipant(
     ...(participant.geminiAuthProfileId != null
       ? { geminiAuthProfileId: participant.geminiAuthProfileId }
       : {}),
-    ...(participant.permissionPresetId
-      ? { permissionPresetId: participant.permissionPresetId }
+    ...(safeRosterPermissionPresetId(participant.permissionPresetId)
+      ? { permissionPresetId: safeRosterPermissionPresetId(participant.permissionPresetId) }
       : {}),
     ...(participant.permissionOverrides
       ? { permissionOverrides: clonePermissionOverrides(participant.permissionOverrides) }
@@ -491,8 +506,8 @@ export function materializeParticipantsFromPresetWithBossman(
       ...(snapshot.runtimeProfileId ? { runtimeProfileId: snapshot.runtimeProfileId } : {}),
       geminiAuthProfileId:
         snapshot.provider === 'gemini' ? (snapshot.geminiAuthProfileId ?? null) : null,
-      ...(snapshot.permissionPresetId
-        ? { permissionPresetId: snapshot.permissionPresetId }
+      ...(safeRosterPermissionPresetId(snapshot.permissionPresetId)
+        ? { permissionPresetId: safeRosterPermissionPresetId(snapshot.permissionPresetId) }
         : {}),
       ...(snapshot.permissionOverrides
         ? { permissionOverrides: clonePermissionOverrides(snapshot.permissionOverrides) }
@@ -600,8 +615,8 @@ export function saveEnsembleRosterPresetFromParticipants(
       ...(index === bossmanIndex ? { isBossman: true } : {}),
       ...(index === secondInCommandIndex ? { isSecondInCommand: true } : {}),
       ...(participant.model ? { model: participant.model } : {}),
-      ...(participant.permissionPresetId
-        ? { permissionPresetId: participant.permissionPresetId as PermissionPresetId }
+      ...(safeRosterPermissionPresetId(participant.permissionPresetId)
+        ? { permissionPresetId: safeRosterPermissionPresetId(participant.permissionPresetId) }
         : {}),
       ...(participant.reasoningEffort ? { reasoningEffort: participant.reasoningEffort } : {}),
       ...(typeof participant.fastModeEnabled === 'boolean'
