@@ -42,6 +42,9 @@ export function registerWorkspaceFileEditorHandlers(
       return listWorkspaceFiles(deps.requireRegisteredWorkspace(workspace), {
         path: optionalString(request.path),
         query: optionalString(request.query),
+        ...(typeof request.includeDirectories === 'boolean'
+          ? { includeDirectories: request.includeDirectories }
+          : {}),
         ...(limit !== undefined ? { limit } : {})
       })
     }

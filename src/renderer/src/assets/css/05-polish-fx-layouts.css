@@ -778,6 +778,14 @@
   color: var(--text-muted);
 }
 
+.app-file-editor .file-editor-row.directory {
+  color: color-mix(in srgb, var(--text-primary) 78%, var(--text-muted));
+}
+
+.app-file-editor .file-editor-row.directory .file-editor-file-name {
+  font-weight: 650;
+}
+
 .app-file-editor .file-editor-row.directory:hover:not(:disabled),
 .app-file-editor .file-editor-row.file:hover:not(:disabled) {
   background: color-mix(in srgb, var(--text-primary) 6%, transparent);

@@ -1844,7 +1844,7 @@
   font-weight: 600;
 }
 .git-status-push.git-status-synced {
-  color: #6ddfa8;
+  color: var(--diff-stat-add-color, #2db777);
   font-weight: 650;
 }
 .git-status-sync-glyph {
@@ -1873,7 +1873,7 @@
 }
 :is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"])
   .git-status-push.git-status-synced {
-  color: #138a59;
+  color: var(--diff-stat-add-color, #2db777);
 }
 .git-status-push {
   display: inline-flex;

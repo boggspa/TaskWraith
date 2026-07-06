@@ -274,10 +274,10 @@ export function WorkspaceFileTree({
       </div>
       <input
         className="file-editor-filter"
-        aria-label="Filter workspace files"
+        aria-label="Search all workspace files"
         value={filter}
         onChange={(event) => onFilterChange(event.target.value)}
-        placeholder="Filter files"
+        placeholder="Search all files"
         disabled={!workspacePath}
       />
       <div className="file-editor-list-status" role="status" aria-live="polite">
@@ -344,6 +344,7 @@ export function WorkspaceFileTree({
                   </span>
                   <FileTypeIcon
                     path={entry.path}
+                    isDirectory={entry.isDirectory}
                     size={14}
                     className="file-editor-file-icon"
                     workspacePath={workspacePath}

@@ -401,7 +401,7 @@ const api = {
   listWorkspaceFiles: (workspace: string) => ipcRenderer.invoke('list-workspace-files', workspace),
   listWorkspaceFilesForEditor: (
     workspace: string,
-    options?: { path?: string; query?: string; limit?: number }
+    options?: { path?: string; query?: string; includeDirectories?: boolean; limit?: number }
   ) => ipcRenderer.invoke('list-workspace-files-for-editor', workspace, options),
   readWorkspaceFile: (workspace: string, path: string) =>
     ipcRenderer.invoke('read-workspace-file', workspace, path),

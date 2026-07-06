@@ -98,12 +98,14 @@ describe('registerWorkspaceFileEditorHandlers', () => {
       handlerFor('list-workspace-files-for-editor')({} as any, '/repo', {
         path: 'src',
         query: 'App',
+        includeDirectories: false,
         limit: 25
       })
     ).resolves.toBe(result)
     expect(mockedListWorkspaceFiles).toHaveBeenCalledWith('/repo/real', {
       path: 'src',
       query: 'App',
+      includeDirectories: false,
       limit: 25
     })
   })

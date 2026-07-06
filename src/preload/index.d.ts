@@ -394,6 +394,7 @@ interface SpellcheckContextMenuPayload {
 interface WorkspaceFileListOptions {
   path?: string
   query?: string
+  includeDirectories?: boolean
   limit?: number
 }
 

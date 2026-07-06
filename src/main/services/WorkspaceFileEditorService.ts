@@ -27,6 +27,8 @@ export interface WorkspaceFileListOptions {
   path?: string
   /** Optional server-side path search. When present, `path` is ignored. */
   query?: string
+  /** Whether search results may include matching directories. Defaults to true. */
+  includeDirectories?: boolean
   /** Returned entry cap. Legacy flat lists keep MAX_EDITOR_FILES. */
   limit?: number
 }
@@ -92,7 +94,7 @@ export async function listWorkspaceFiles(
 ): Promise<WorkspaceFileListResult> {
   const query = options.query?.trim()
   if (query) {
-    return searchWorkspaceFiles(workspacePath, query, options.limit)
+    return searchWorkspaceFiles(workspacePath, query, options.limit, options.includeDirectories)
   }
   if (options.path !== undefined || options.limit !== undefined) {
     return listWorkspaceDirectory(workspacePath, options.path ?? '', options.limit)
@@ -228,7 +230,8 @@ async function listWorkspaceDirectory(
 async function searchWorkspaceFiles(
   workspacePath: string,
   query: string,
-  limit = SEARCH_LIST_LIMIT_DEFAULT
+  limit = SEARCH_LIST_LIMIT_DEFAULT,
+  includeDirectories = true
 ): Promise<WorkspaceFileListResult> {
   const workspaceRoot = resolve(workspacePath)
   const maxEntries = clampListLimit(limit)
@@ -278,7 +281,7 @@ async function searchWorkspaceFiles(
         }
       }
 
-      if (matches) {
+      if (matches && (includeDirectories || !isDirectory)) {
         entries.push({
           path: relPath,
           name: dirent.name,

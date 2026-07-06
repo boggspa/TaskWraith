@@ -132,6 +132,7 @@ function FileTypeLogo({ kind }: { kind: FileTypeMeta['kind'] }) {
 
 interface FileTypeIconProps {
   path: string
+  isDirectory?: boolean
   size?: number
   className?: string
   workspacePath?: string
@@ -139,6 +140,7 @@ interface FileTypeIconProps {
 
 export function FileTypeIcon({
   path,
+  isDirectory = false,
   size = 14,
   className = '',
   workspacePath
@@ -149,7 +151,7 @@ export function FileTypeIcon({
     () => getIconPathCandidates(path, workspacePath),
     [path, workspacePath]
   )
-  const usesNativeIcon = meta.kind === 'generic'
+  const usesNativeIcon = !isDirectory && meta.kind === 'generic'
 
   useEffect(() => {
     let cancelled = false
@@ -192,6 +194,36 @@ export function FileTypeIcon({
       cancelled = true
     }
   }, [candidates, usesNativeIcon])
+
+  if (isDirectory) {
+    const folderName = getFileBaseName(path)
+    return (
+      <span
+        className={`file-type-icon file-type-icon-folder ${className}`.trim()}
+        style={{
+          width: size,
+          height: size,
+          minWidth: size,
+          minHeight: size,
+          fontSize: Math.max(9, Math.round(size * 0.57))
+        }}
+        title={`Folder${folderName ? ` • ${folderName}` : ''}`}
+        aria-label="Folder icon"
+      >
+        <svg className="file-type-icon-folder-svg" viewBox="0 0 24 24" aria-hidden="true">
+          <path
+            fill="currentColor"
+            opacity=".72"
+            d="M3.7 6.6c0-1 .8-1.8 1.8-1.8h4.4c.6 0 1.2.3 1.5.8l.9 1.2h6.2c1 0 1.8.8 1.8 1.8v1.2H3.7V6.6z"
+          />
+          <path
+            fill="currentColor"
+            d="M3.7 9.2h16.6v8.2c0 1-.8 1.8-1.8 1.8h-13c-1 0-1.8-.8-1.8-1.8V9.2z"
+          />
+        </svg>
+      </span>
+    )
+  }
 
   return (
     <span

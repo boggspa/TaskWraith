@@ -9110,7 +9110,11 @@ button.composer-run-timecode.is-open {
 
 .file-editor-row.directory {
   cursor: pointer;
-  color: var(--text-muted);
+  color: var(--text-secondary);
+}
+
+.file-editor-row.directory .file-editor-file-name {
+  font-weight: 650;
 }
 
 .file-editor-disclosure {

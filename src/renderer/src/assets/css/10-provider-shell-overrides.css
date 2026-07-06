@@ -1042,7 +1042,10 @@
 
 [data-theme="alabaster"][data-composer-style="codex"]
   .composer-above-bar
-  .git-status-push.git-status-synced,
+  .git-status-push.git-status-synced {
+  color: var(--diff-stat-add-color, #2db777) !important;
+}
+
 [data-theme="alabaster"][data-composer-style="codex"]
   .composer-above-bar
   .git-status-pr.git-pr-ready,
@@ -3059,6 +3062,9 @@
   padding: 0 !important;
   color: var(--cursor-shell-muted) !important;
   box-shadow: none !important;
+}
+[data-composer-style="cursor"] .composer-above-bar-pill .git-status-push.git-status-synced {
+  color: var(--diff-stat-add-color, #2db777) !important;
 }
 [data-composer-style="cursor"] .composer-above-bar-pill .composer-diff-action-menu-wrap {
   display: inline-flex;

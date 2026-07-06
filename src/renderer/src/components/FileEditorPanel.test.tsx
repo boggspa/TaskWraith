@@ -237,6 +237,7 @@ describe('WorkspaceFileTree', () => {
     )
 
     expect(html).toContain('aria-label="Workspace file navigator"')
+    expect(html).toContain('aria-label="Search all workspace files"')
     expect(html).toContain('role="tree"')
     expect(html).toContain('role="treeitem"')
     expect(html).toContain('role="presentation"')
@@ -247,6 +248,8 @@ describe('WorkspaceFileTree', () => {
     expect(html).toContain('aria-current="true"')
     expect(html).toContain('aria-haspopup="menu"')
     expect(html).toContain('aria-keyshortcuts="ContextMenu Shift+F10"')
+    expect(html).toContain('file-type-icon-folder')
+    expect(html).toContain('aria-label="Folder icon"')
     expect(html).toContain('App.tsx')
     expect(html).toContain('2 KB')
   })

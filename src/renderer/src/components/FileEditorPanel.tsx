@@ -124,6 +124,7 @@ export interface FileEditorCommandRequest {
 interface WorkspaceFileListOptions {
   path?: string
   query?: string
+  includeDirectories?: boolean
   limit?: number
 }
 
@@ -777,7 +778,7 @@ export function FileEditorPanel({
       if (listMessage) return listMessage
       if (isListLoading) return `Searching "${trimmedFilter}"...`
       if (searchFiles.length === 0) return `No matches for "${trimmedFilter}"`
-      return `${searchFiles.length} ${searchFiles.length === 1 ? 'match' : 'matches'}${
+      return `${searchFiles.length} file ${searchFiles.length === 1 ? 'match' : 'matches'}${
         searchTruncated ? ' · keep typing to narrow' : ''
       }`
     }
@@ -785,7 +786,7 @@ export function FileEditorPanel({
     const rootEntries = childrenByDirectory[ROOT_DIR_KEY] ?? []
     if (isListLoading && rootEntries.length === 0) return 'Loading files...'
     return `${rootEntries.length} ${rootEntries.length === 1 ? 'item' : 'items'} in root${
-      truncatedDirectories[ROOT_DIR_KEY] ? ' · folder truncated; filter searches workspace' : ''
+      truncatedDirectories[ROOT_DIR_KEY] ? ' · folder truncated; search checks all files' : ''
     }`
   }, [
     childrenByDirectory,
@@ -969,6 +970,7 @@ export function FileEditorPanel({
         if (filterQuery) {
           const search = await editorApi.listFiles(workspacePath, {
             query: filterQuery,
+            includeDirectories: false,
             limit: FILE_EDITOR_SEARCH_LIMIT
           })
           if (!isCurrentRefresh()) return false
@@ -1080,6 +1082,7 @@ export function FileEditorPanel({
       editorApi
         .listFiles(workspacePath, {
           query: trimmedFilter,
+          includeDirectories: false,
           limit: FILE_EDITOR_SEARCH_LIMIT
         })
         .then((result) => {
@@ -1133,11 +1136,12 @@ export function FileEditorPanel({
       editorApi
         .listFiles(workspacePath, {
           query: quickOpenTrimmedQuery,
+          includeDirectories: false,
           limit: FILE_EDITOR_SEARCH_LIMIT
         })
         .then((result) => {
           if (cancelled) return
-          setQuickOpenResults(result.entries.filter((entry) => !entry.isDirectory))
+          setQuickOpenResults(result.entries)
           setQuickOpenTruncated(result.truncated)
         })
         .catch((error) => {

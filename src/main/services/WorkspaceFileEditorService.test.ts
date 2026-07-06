@@ -64,6 +64,14 @@ describe('WorkspaceFileEditorService', () => {
     const search = await listWorkspaceFiles(workspace, { query: 'button', limit: 20 })
     expect(search.entries.map((entry) => entry.path)).toEqual(['src/components/Button.tsx'])
     expect(search.entries[0]).not.toHaveProperty('content')
+
+    const fileOnlySearch = await listWorkspaceFiles(workspace, {
+      query: 'components',
+      includeDirectories: false,
+      limit: 20
+    })
+    expect(fileOnlySearch.entries.map((entry) => entry.path)).toEqual(['src/components/Button.tsx'])
+    expect(fileOnlySearch.entries.every((entry) => !entry.isDirectory)).toBe(true)
   })
 
   it('finds source files through directory listing and search when the flat list truncates early', async () => {
