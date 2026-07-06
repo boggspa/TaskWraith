@@ -3661,6 +3661,36 @@
   border-top: 1px solid color-mix(in srgb, var(--text-primary) 12%, transparent);
 }
 
+/* Native default, no above rows — active general chats can render an
+ * intentionally empty above-row stack. Do not let that empty stack put
+ * the composer into merged-frame mode: hide it, restore the standalone
+ * rounded surface, and give the outer glass frame a little extra top
+ * breathing room above the textarea panel. */
+[data-composer-style="default"] .app-transcript .composer-area > .composer-above-bar-stack:empty,
+[data-composer-style="default"]
+  .app-transcript
+  .composer-primary-stack
+  > .composer-above-bar-stack:empty {
+  display: none;
+}
+
+[data-composer-style="default"]
+  .app-transcript
+  .composer-area
+  > .composer-above-bar-stack:empty
+  + .composer-surface,
+[data-composer-style="default"]
+  .app-transcript
+  .composer-primary-stack
+  > .composer-above-bar-stack:empty
+  + .composer-surface {
+  margin-top: 0;
+  border-top-left-radius: calc(var(--radius-lg) * 2.45);
+  border-top-right-radius: calc(var(--radius-lg) * 2.45);
+  border-top: 1px solid var(--native-instrument-glass-border);
+  padding-top: 22px;
+}
+
 /* Corner fix (single + ensemble) — the TOP segment of the merged frame
  * showed HARD top corners that poked past the stack's rounded top
  * (dark + light, BOTH shells). The first row sits flush at the frame
@@ -8384,7 +8414,7 @@ button.composer-run-timecode.is-open {
  * rail but kept the same padded gap). */
 [data-composer-style="default"]
   .app-transcript
-  .composer-area:has(.composer-above-bar-stack)
+  .composer-area:has(.composer-above-bar-stack:not(:empty))
   .composer-surface,
 [data-composer-style="default"] .app-transcript .composer-surface:has(.composer-top-toggles) {
   padding-top: 0;
