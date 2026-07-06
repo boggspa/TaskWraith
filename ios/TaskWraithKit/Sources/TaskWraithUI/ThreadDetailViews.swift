@@ -1426,9 +1426,9 @@ struct ThreadDetailView: View {
                                 attachedTop: (detached || tuckedTab)
                                     ? false
                                     : hasAboveContent,
-                                // Electron keeps the telemetry row (incl. Ensemble
-                                // toggle) visible even when the keyboard is down.
-                                attachedBottom: true,
+                                // Idle (rail hidden) rounds the composer's bottom;
+                                // focused (rail present) flattens it to fuse the rail.
+                                attachedBottom: composerFocused,
                                 extraWorkspaceIds: extraWorkspaceIdsForSend(card: card),
                                 allowsProviderChange: allowsIdleProviderChange,
                                 onFocusChange: { focused in
@@ -1442,38 +1442,42 @@ struct ThreadDetailView: View {
                                         composerFocused = focused
                                     }
                                 },
-                                // Above rows still follow focus; telemetry rail stays
-                                // visible so the Ensemble toggle matches desktop.
+                                // Every chat (incl. ensemble) collapses to one line
+                                // when the keyboard drops. Above rows and telemetry
+                                // follow focus, not draft/queue presence.
                                 forcesExpanded: false,
                                 text: $followUp)
-                            Group {
-                                if !bareTelemetry {
-                                    Rectangle().fill(TWTheme.border).frame(height: 1)
+                            if composerFocused {
+                                Group {
+                                    if !bareTelemetry {
+                                        Rectangle().fill(TWTheme.border).frame(height: 1)
+                                    }
+                                    TelemetryFooterRail(
+                                        run: snapshot?.runSummary,
+                                        conversationCostText: snapshot?.conversationCostText,
+                                        workspaceName: model.workspaceName(for: card.workspaceId),
+                                        workspaceOptions: model.workspaces.map {
+                                            (id: $0.id, name: $0.displayName)
+                                        },
+                                        primaryWorkspaceId: card.workspaceId,
+                                        secondaryWorkspaceId: secondaryWorkspaceBinding,
+                                        ensembleToggleEnabled: card.isEnsemble,
+                                        ensembleToggleVisible: showsComposerEnsembleToggle,
+                                        ensembleToggleDisabled: isRunning,
+                                        ensembleToggleTitle: ensembleToggleTitle,
+                                        onEnsembleToggle: { enabled in
+                                            handleComposerEnsembleToggle(
+                                                for: card, enabled: enabled,
+                                                composerProvider: card.provider)
+                                        },
+                                        activeGoal: card.activeGoal,
+                                        onGoalUpdate: { op, objective, reason in
+                                            model.updateGoal(
+                                                card, op: op, objective: objective, reason: reason)
+                                        },
+                                        planLanes: card.todoLanes ?? [])
                                 }
-                                TelemetryFooterRail(
-                                    run: snapshot?.runSummary,
-                                    conversationCostText: snapshot?.conversationCostText,
-                                    workspaceName: model.workspaceName(for: card.workspaceId),
-                                    workspaceOptions: model.workspaces.map {
-                                        (id: $0.id, name: $0.displayName)
-                                    },
-                                    primaryWorkspaceId: card.workspaceId,
-                                    secondaryWorkspaceId: secondaryWorkspaceBinding,
-                                    ensembleToggleEnabled: card.isEnsemble,
-                                    ensembleToggleVisible: showsComposerEnsembleToggle,
-                                    ensembleToggleDisabled: isRunning,
-                                    ensembleToggleTitle: ensembleToggleTitle,
-                                    onEnsembleToggle: { enabled in
-                                        handleComposerEnsembleToggle(
-                                            for: card, enabled: enabled,
-                                            composerProvider: card.provider)
-                                    },
-                                    activeGoal: card.activeGoal,
-                                    onGoalUpdate: { op, objective, reason in
-                                        model.updateGoal(
-                                            card, op: op, objective: objective, reason: reason)
-                                    },
-                                    planLanes: card.todoLanes ?? [])
+                                .transition(ComposerMotion.telemetryTransition(reduceMotion: reduceMotion))
                             }
                         }
                         .composerShellIf((detached && !inputOwnsSurface) || tuckedShell, resolved)
