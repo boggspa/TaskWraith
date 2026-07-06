@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-glyph-diff-nice-title agent-pool-icon-glyph-diff-nice-desc" data-agent-name="Diff Nice" data-agent-accent="#22C55E" data-agent-hue="142">
+  <title id="agent-pool-icon-glyph-diff-nice-title">Diff Nice</title>
+  <desc id="agent-pool-icon-glyph-diff-nice-desc">Fixed-colour joke diff icon showing +69 and -420.</desc>
+  <style>
+    .frame{fill:#171A20;stroke:#E5E7EB;stroke-width:18;stroke-linecap:round;stroke-linejoin:round}
+    .rule{fill:none;stroke:#E5E7EB;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.42}
+    .add-bg{fill:#22C55E;opacity:.16}
+    .del-bg{fill:#EF4444;opacity:.16}
+    .add{fill:#22C55E;font:800 92px ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono",monospace;letter-spacing:-4px}
+    .del{fill:#EF4444;font:800 92px ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono",monospace;letter-spacing:-6px}
+    .gutter{fill:#8B949E;font:700 50px ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono",monospace}
+  </style>
+  <rect class="frame" x="86" y="72" width="428" height="456" rx="44"/>
+  <path class="rule" d="M134 158h332M134 430h332"/>
+  <rect class="add-bg" x="126" y="188" width="348" height="104" rx="24"/>
+  <rect class="del-bg" x="126" y="314" width="348" height="104" rx="24"/>
+  <text class="gutter" x="152" y="256">1</text>
+  <text class="gutter" x="152" y="382">2</text>
+  <text class="add" x="214" y="262">+69</text>
+  <text class="del" x="212" y="388">-420</text>
+</svg>

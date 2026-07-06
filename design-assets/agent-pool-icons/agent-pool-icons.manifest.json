@@ -1090,5 +1090,12 @@
     "file": "icons/glyph-orbit.svg",
     "accent": "#06B6D4",
     "hue": 189
+  },
+  {
+    "name": "Diff Nice",
+    "slug": "glyph-diff-nice",
+    "file": "icons/glyph-diff-nice.svg",
+    "accent": "#22C55E",
+    "hue": 142
   }
 ]
