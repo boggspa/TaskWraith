@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import type { ComposerStyle, ProviderId } from '../../../main/store/types'
 import { ClockSymbolIcon } from '../components/AppChromeSymbols'
 import { formatScheduledRunTime, toDateTimeLocalValue } from '../lib/dateTimeFormat'
+import { resolveComposerSurfacePopoverPosition } from '../lib/composerSurfacePopover'
 import { formatScheduleCountdown } from '../lib/scheduledCountdown'
 
 interface ComposerScheduleButtonProps {
@@ -50,7 +51,7 @@ export function ComposerScheduleButton({
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const popoverRef = useRef<HTMLDivElement | null>(null)
   const [open, setOpen] = useState(false)
-  const [position, setPosition] = useState<{ left: number; top: number } | null>(null)
+  const [position, setPosition] = useState<{ left: number; top: number; width: number } | null>(null)
   const [nowMs, setNowMs] = useState(() => Date.now())
   const [busy, setBusy] = useState(false)
 
@@ -68,10 +69,15 @@ export function ComposerScheduleButton({
     const trigger = triggerRef.current
     if (!trigger) return
     const rect = trigger.getBoundingClientRect()
-    setPosition({
-      left: Math.max(8, Math.min(rect.left, window.innerWidth - 348)),
-      top: rect.top - 8
-    })
+    const surface = trigger.closest('.composer-surface') as HTMLElement | null
+    const surfaceRect = surface?.getBoundingClientRect() ?? rect
+    setPosition(
+      resolveComposerSurfacePopoverPosition({
+        triggerRect: rect,
+        surfaceRect,
+        viewportWidth: window.innerWidth
+      })
+    )
   }, [open])
 
   useEffect(() => {
@@ -145,6 +151,8 @@ export function ComposerScheduleButton({
               position: 'fixed',
               left: `${position.left}px`,
               top: `${position.top}px`,
+              width: `${position.width}px`,
+              maxWidth: 'calc(100vw - 16px)',
               transform: 'translateY(-100%)'
             }}
           >

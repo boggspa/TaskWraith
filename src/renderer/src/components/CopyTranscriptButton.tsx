@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { resolveComposerSurfacePopoverPosition } from '../lib/composerSurfacePopover'
 import { CopyResponseIcon } from './AppChromeSymbols'
 
 export type CopyTranscriptResult =
@@ -22,6 +23,7 @@ interface CopyTranscriptButtonProps {
   defaultOpen?: boolean
   initialCopied?: boolean
   resetKey?: string | null
+  composerStyle?: string
   onCopy: () => Promise<CopyTranscriptResult>
 }
 
@@ -38,6 +40,7 @@ export function CopyTranscriptButton({
   defaultOpen = false,
   initialCopied = false,
   resetKey = null,
+  composerStyle = 'default',
   onCopy
 }: CopyTranscriptButtonProps) {
   const [open, setOpen] = useState(defaultOpen)
@@ -45,7 +48,7 @@ export function CopyTranscriptButton({
   const [copied, setCopied] = useState(initialCopied)
   const [error, setError] = useState<string | null>(null)
   const [summary, setSummary] = useState<Extract<CopyTranscriptResult, { ok: true }> | null>(null)
-  const [position, setPosition] = useState<{ left: number; top: number } | null>(null)
+  const [position, setPosition] = useState<{ left: number; top: number; width: number } | null>(null)
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const popoverRef = useRef<HTMLDivElement | null>(null)
   const primaryRef = useRef<HTMLButtonElement | null>(null)
@@ -63,13 +66,15 @@ export function CopyTranscriptButton({
       return
     }
     const rect = trigger.getBoundingClientRect()
-    const popoverWidth = 300
-    const edgePadding = 16
-    const minLeft = edgePadding + popoverWidth / 2
-    const maxLeft = Math.max(minLeft, window.innerWidth - edgePadding - popoverWidth / 2)
-    const left = Math.min(Math.max(rect.left + rect.width / 2, minLeft), maxLeft)
-    const top = Math.max(edgePadding, rect.top - 8)
-    setPosition({ left, top })
+    const surface = trigger.closest('.composer-surface') as HTMLElement | null
+    const surfaceRect = surface?.getBoundingClientRect() ?? rect
+    setPosition(
+      resolveComposerSurfacePopoverPosition({
+        triggerRect: rect,
+        surfaceRect,
+        viewportWidth: window.innerWidth
+      })
+    )
   }, [])
 
   const closePopover = useCallback(
@@ -158,10 +163,19 @@ export function CopyTranscriptButton({
   const popover = open ? (
     <div
       ref={popoverRef}
-      className="composer-copy-transcript-popover"
+      className={`composer-combined-picker-popover composer-copy-transcript-popover shell-${composerStyle}`}
       role="dialog"
       aria-label="Copy transcript"
-      style={position ? { left: `${position.left}px`, top: `${position.top}px` } : undefined}
+      style={
+        position
+          ? {
+              left: `${position.left}px`,
+              top: `${position.top}px`,
+              width: `${position.width}px`,
+              maxWidth: 'calc(100vw - 16px)'
+            }
+          : undefined
+      }
     >
       <div className="composer-copy-transcript-popover-header">
         <span>Copy transcript</span>

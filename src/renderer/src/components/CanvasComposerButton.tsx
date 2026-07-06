@@ -6,11 +6,13 @@
 // picker popover (so the composer-surface's overflow:hidden can't clip it).
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { resolveComposerSurfacePopoverPosition } from '../lib/composerSurfacePopover'
 import { CanvasPaneLauncher } from './CanvasPaneLauncher'
 
 export interface CanvasComposerButtonProps {
   disabled?: boolean
   chatId?: string | null
+  composerStyle?: string
 }
 
 /** A user-facing hint for the common embed failures (no server / bad url). */
@@ -35,11 +37,15 @@ function sketchBridgeAvailable(): boolean {
   return typeof window === 'undefined' ? true : Boolean(window.api.canvas?.openSketchWindow)
 }
 
-export function CanvasComposerButton({ disabled, chatId }: CanvasComposerButtonProps) {
+export function CanvasComposerButton({
+  disabled,
+  chatId,
+  composerStyle = 'default'
+}: CanvasComposerButtonProps) {
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const popoverRef = useRef<HTMLDivElement | null>(null)
   const [open, setOpen] = useState(false)
-  const [position, setPosition] = useState<{ left: number; top: number } | null>(null)
+  const [position, setPosition] = useState<{ left: number; top: number; width: number } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busyMode, setBusyMode] = useState<'web' | 'sketch' | null>(null)
   const canOpenSketch = sketchBridgeAvailable()
@@ -103,10 +109,15 @@ export function CanvasComposerButton({ disabled, chatId }: CanvasComposerButtonP
     const trigger = triggerRef.current
     if (!trigger) return
     const rect = trigger.getBoundingClientRect()
-    setPosition({
-      left: Math.max(8, Math.min(rect.left, window.innerWidth - 332)),
-      top: rect.top - 8
-    })
+    const surface = trigger.closest('.composer-surface') as HTMLElement | null
+    const surfaceRect = surface?.getBoundingClientRect() ?? rect
+    setPosition(
+      resolveComposerSurfacePopoverPosition({
+        triggerRect: rect,
+        surfaceRect,
+        viewportWidth: window.innerWidth
+      })
+    )
   }, [open])
 
   useEffect(() => {
@@ -139,17 +150,19 @@ export function CanvasComposerButton({ disabled, chatId }: CanvasComposerButtonP
             // (opaque panel-elevated bg + backdrop blur, light-theme variant
             // included) so it's readable; override only its row layout — our
             // content is a vertical form, not the pickers' multi-column grid.
-            className="composer-combined-picker-popover composer-plus-picker-popover canvas-composer-popover"
+            className={`composer-combined-picker-popover composer-plus-picker-popover canvas-composer-popover shell-${composerStyle}`}
             role="dialog"
             aria-label="Open Canvas"
             style={{
               position: 'fixed',
               left: `${position.left}px`,
               top: `${position.top}px`,
+              width: `${position.width}px`,
+              maxWidth: 'calc(100vw - 16px)',
               transform: 'translateY(-100%)',
               flexDirection: 'column',
               gap: 8,
-              minWidth: 320,
+              minWidth: 0,
               padding: 10
             }}
           >

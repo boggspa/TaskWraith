@@ -5153,9 +5153,11 @@
 
 .composer-copy-transcript-popover {
   position: fixed;
-  z-index: 9120;
-  width: min(300px, calc(100vw - 32px));
-  transform: translate(-50%, -100%);
+  z-index: 12000;
+  width: min(680px, calc(100vw - 16px));
+  max-width: calc(100vw - 16px);
+  box-sizing: border-box;
+  transform: translateY(-100%);
   display: grid;
   gap: 10px;
   padding: 12px;
@@ -5845,13 +5847,19 @@ button.composer-run-timecode.is-open {
 }
 
 .composer-schedule-popover {
-  min-width: 320px;
-  max-width: min(340px, calc(100vw - 16px));
+  min-width: 0;
+  max-width: calc(100vw - 16px);
+  box-sizing: border-box;
   display: flex;
   flex-direction: column;
   gap: 10px;
   padding: 12px;
   pointer-events: auto;
+}
+
+.canvas-composer-popover {
+  max-width: calc(100vw - 16px);
+  box-sizing: border-box;
 }
 
 .composer-schedule-popover-header,

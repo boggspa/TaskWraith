@@ -4457,6 +4457,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
 	                <CopyTranscriptButton
 	                  disabled={!currentChat || currentChat.archived || currentChat.messages.length === 0}
 	                  resetKey={currentChat?.appChatId || null}
+	                  composerStyle={appearance.composerStyle}
 	                  onCopy={handleCopyCurrentTranscript}
 	                />
 	                <MultiviewLayoutPicker
@@ -4467,7 +4468,10 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
 	                />
 	                {/* Opens a standalone floating Canvas window (self-contained;
 	                    SSRF-guarded openWindow + inline error in the button). */}
-	                <CanvasComposerButton chatId={currentChat?.appChatId ?? null} />
+	                <CanvasComposerButton
+	                  chatId={currentChat?.appChatId ?? null}
+	                  composerStyle={appearance.composerStyle}
+	                />
 	                {/* 1.0.5-AR12c — Workspace switcher in its new home.
                      Sits between the timecode / Screen Watch cluster
                      on the left and the token tally on the right. The
