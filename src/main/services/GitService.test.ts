@@ -15,6 +15,11 @@ function runGit(cwd: string, args: string[]): string {
   return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
 }
 
+function comparablePath(filePath: string): string {
+  const normalized = filePath.replace(/\\/g, '/')
+  return process.platform === 'win32' ? normalized.toLowerCase() : normalized
+}
+
 function createRepo(): string {
   const repo = realpathSync(mkdtempSync(join(tmpdir(), 'taskwraith-git-service-')))
   runGit(repo, ['init', '-b', 'main'])
@@ -199,26 +204,34 @@ describe('GitService', () => {
     })
     expect(created.ok).toBe(true)
     if (!created.ok) return
-    const realTarget = realpathSync(target)
-    expect(created.data.repoRoot).toBe(realTarget)
+    const gitTargetRoot = runGit(target, ['rev-parse', '--show-toplevel']).trim()
+    expect(comparablePath(created.data.repoRoot)).toBe(comparablePath(gitTargetRoot))
     expect(created.data.branch).toBe('feature/isolated')
 
     const listed = await service.listWorktrees(repo)
     expect(listed.ok).toBe(true)
     if (!listed.ok) return
-    expect(listed.data.worktrees).toEqual(
+    const comparableWorktrees = listed.data.worktrees.map((worktree) => ({
+      ...worktree,
+      path: comparablePath(worktree.path)
+    }))
+    expect(comparableWorktrees).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ path: repo, branch: 'main', isCurrent: true }),
-        expect.objectContaining({ path: realTarget, branch: 'feature/isolated', isCurrent: false })
+        expect.objectContaining({ path: comparablePath(repo), branch: 'main', isCurrent: true }),
+        expect.objectContaining({
+          path: comparablePath(gitTargetRoot),
+          branch: 'feature/isolated',
+          isCurrent: false
+        })
       ])
     )
 
-    const selected = await service.selectWorktree({ repoPath: repo, path: realTarget })
+    const selected = await service.selectWorktree({ repoPath: repo, path: gitTargetRoot })
     expect(selected.ok).toBe(true)
     if (!selected.ok) return
     expect(selected.data.branch).toBe('feature/isolated')
 
-    const removed = await service.removeWorktree({ repoPath: repo, path: realTarget })
+    const removed = await service.removeWorktree({ repoPath: repo, path: gitTargetRoot })
     expect(removed.ok).toBe(true)
   })
 

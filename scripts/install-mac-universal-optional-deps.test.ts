@@ -114,8 +114,12 @@ describe('install-mac-universal-optional-deps script', () => {
 
       expect(ensureDarwinNodePtyPrebuilds(repoRoot)).toEqual(DARWIN_NODE_PTY_PREBUILDS)
       for (const relativePath of DARWIN_NODE_PTY_EXECUTABLE_PREBUILDS) {
-        const mode = fs.statSync(path.join(nodePtyDir, relativePath)).mode & 0o777
-        expect(mode & 0o111).toBe(0o111)
+        const helperPath = path.join(nodePtyDir, relativePath)
+        expect(fs.existsSync(helperPath)).toBe(true)
+        if (process.platform !== 'win32') {
+          const mode = fs.statSync(helperPath).mode & 0o777
+          expect(mode & 0o111).toBe(0o111)
+        }
       }
     } finally {
       fs.rmSync(repoRoot, { recursive: true, force: true })
