@@ -27,7 +27,7 @@
     "security:audit": "npm audit --omit=dev --audit-level=high",
     "security:deps": "npm run security:supply-chain && npm run security:signatures && npm run security:audit",
     "security:sbom": "mkdir -p dist && npm sbom --sbom-format=cyclonedx --omit=dev > dist/sbom.cdx.json",
-    "prerelease:verify": "npm ci && npm run security:deps",
+    "prerelease:verify": "node scripts/run-npm-ci.cjs && npm run security:deps",
     "ci": "npm run security:deps && npm run lint:errors && npm run typecheck && npm run test && npm run guard:no-bundled-secrets && npm run smoke:node-pty",
     "start": "electron-vite preview",
     "dev": "electron-vite dev",
