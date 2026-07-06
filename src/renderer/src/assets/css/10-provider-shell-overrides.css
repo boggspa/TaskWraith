@@ -1444,6 +1444,23 @@
   border-color: rgba(255, 255, 255, 0.1) !important;
 }
 
+[data-composer-style="kimi"]:where(
+    :not(:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"]))
+  )
+  .app-transcript.chat-kind-ensemble
+  :is(.composer-above-bar, .ensemble-above-row, .queued-messages-above-row, .composer-create-pr-row),
+[data-composer-style="kimi"]:where(
+    :not(:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"]))
+  )
+  .app-transcript.chat-kind-ensemble
+  .composer-above-bar-stack
+  > .ensemble-roster-preset-picker.is-compact {
+  background: #24262a !important;
+  background-image: none !important;
+  border-color: rgba(255, 255, 255, 0.14) !important;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.24) !important;
+}
+
 /* ============================================================
  * 1.0.6-EW79 — Claude shell on Alabaster / Obsidian system themes:
  * the two residual control outliers + the invisible branch label.
@@ -3477,6 +3494,286 @@
   :is(.composer-provider-button-label, .composer-workspace-button-label, .composer-control-icon, svg) {
   color: inherit !important;
   -webkit-text-fill-color: inherit !important;
+}
+
+/* Final composer sign-off contrast pass.
+ *
+ * Keep this late and shell-scoped: Gemini/Kimi welcome copy and the
+ * Codex/Claude/Gemini mic buttons were still carrying dark-shell white ink
+ * after the light transcript/surface had correctly flipped to light tokens.
+ */
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]):is(
+    [data-interface-style="gemini"],
+    [data-interface-style="kimi"],
+    [data-composer-style="gemini"],
+    [data-composer-style="kimi"]
+  )
+  .app-transcript.welcome-mode
+  .welcome-hero
+  h1 {
+  color: var(--text-primary) !important;
+  text-shadow: none !important;
+}
+
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]):is(
+    [data-interface-style="gemini"],
+    [data-interface-style="kimi"],
+    [data-composer-style="gemini"],
+    [data-composer-style="kimi"]
+  )
+  .app-transcript.welcome-mode
+  .welcome-hero
+  p {
+  color: var(--text-secondary) !important;
+  text-shadow: none !important;
+}
+
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-interface-style="gemini"]
+  .app-transcript.welcome-mode
+  .welcome-hero
+  h1
+  strong:not(.workspace-name-glow),
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="gemini"]
+  .app-transcript.welcome-mode
+  .welcome-hero
+  h1
+  strong:not(.workspace-name-glow) {
+  color: color-mix(in srgb, #5a8cff 72%, #1d1d1f 28%) !important;
+  text-shadow: 0 0 14px color-mix(in srgb, #5a8cff 16%, transparent) !important;
+}
+
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-interface-style="kimi"]
+  .app-transcript.welcome-mode
+  .welcome-hero
+  h1
+  strong:not(.workspace-name-glow),
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="kimi"]
+  .app-transcript.welcome-mode
+  .welcome-hero
+  h1
+  strong:not(.workspace-name-glow) {
+  color: color-mix(in srgb, #84a33b 66%, #1d1d1f 34%) !important;
+  text-shadow: 0 0 14px color-mix(in srgb, #84a33b 14%, transparent) !important;
+}
+
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]):is(
+    [data-interface-style="gemini"],
+    [data-interface-style="kimi"],
+    [data-composer-style="gemini"],
+    [data-composer-style="kimi"]
+  )
+  .app-transcript.welcome-mode
+  .welcome-hero
+  h1
+  strong.workspace-name-glow-ensemble {
+  color: color-mix(in srgb, var(--text-primary) 92%, #ffffff 8%) !important;
+  text-shadow:
+    0 0 8px color-mix(in srgb, var(--text-primary) 10%, transparent),
+    0 0 18px color-mix(in srgb, var(--accent) 10%, transparent) !important;
+}
+
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]):is(
+    [data-interface-style="obsidian"],
+    [data-composer-style="obsidian"]
+  )
+  .app-transcript.welcome-mode
+  .welcome-hero
+  h1 {
+  color: rgba(29, 29, 31, 0.9) !important;
+  text-shadow: none !important;
+}
+
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]):is(
+    [data-interface-style="obsidian"],
+    [data-composer-style="obsidian"]
+  )
+  .app-transcript.welcome-mode
+  .welcome-hero
+  p {
+  color: rgba(29, 29, 31, 0.62) !important;
+  text-shadow: none !important;
+}
+
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]):is(
+    [data-interface-style="obsidian"],
+    [data-composer-style="obsidian"]
+  )
+  .app-transcript.welcome-mode
+  .welcome-hero
+  h1
+  strong.workspace-name-glow,
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]):is(
+    [data-interface-style="obsidian"],
+    [data-composer-style="obsidian"]
+  )
+  .app-transcript.welcome-mode
+  .welcome-hero
+  h1
+  strong.workspace-name-glow-ensemble {
+  color: color-mix(in srgb, var(--workspace-name-glow-color, var(--accent)) 64%, #1d1d1f 36%) !important;
+  text-shadow:
+    0 0 8px color-mix(in srgb, var(--workspace-name-glow-color, var(--accent)) 18%, transparent),
+    0 0 18px color-mix(in srgb, var(--workspace-name-glow-color, var(--accent)) 10%, transparent) !important;
+}
+
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]):is(
+    [data-composer-style="codex"],
+    [data-composer-style="claude"],
+    [data-composer-style="gemini"]
+  )
+  .composer-action-btn.voice-btn,
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]):is(
+    [data-composer-style="codex"],
+    [data-composer-style="claude"],
+    [data-composer-style="gemini"]
+  )
+  .composer-voice-chevron {
+  background: transparent !important;
+  color: rgba(29, 29, 31, 0.62) !important;
+  box-shadow: none !important;
+}
+
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]):is(
+    [data-composer-style="codex"],
+    [data-composer-style="claude"],
+    [data-composer-style="gemini"]
+  )
+  .composer-action-btn.voice-btn:hover:not(:disabled),
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]):is(
+    [data-composer-style="codex"],
+    [data-composer-style="claude"],
+    [data-composer-style="gemini"]
+  )
+  .composer-action-btn.voice-btn.is-recording,
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]):is(
+    [data-composer-style="codex"],
+    [data-composer-style="claude"],
+    [data-composer-style="gemini"]
+  )
+  .composer-voice-chevron:hover:not(:disabled),
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]):is(
+    [data-composer-style="codex"],
+    [data-composer-style="claude"],
+    [data-composer-style="gemini"]
+  )
+  .composer-voice-control.is-menu-open
+  .composer-voice-chevron {
+  background: rgba(29, 29, 31, 0.08) !important;
+  color: rgba(29, 29, 31, 0.9) !important;
+}
+
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]):is(
+    [data-composer-style="codex"],
+    [data-composer-style="claude"],
+    [data-composer-style="gemini"]
+  )
+  .composer-action-btn.voice-btn
+  :is(.sf-symbol-icon, .sf-symbol-icon svg),
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]):is(
+    [data-composer-style="codex"],
+    [data-composer-style="claude"],
+    [data-composer-style="gemini"]
+  )
+  .composer-voice-chevron
+  :is(.sf-symbol-icon, .sf-symbol-icon svg) {
+  color: inherit !important;
+  -webkit-text-fill-color: inherit !important;
+}
+
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"])[data-composer-style="kimi"]
+  .app-transcript.chat-kind-ensemble
+  .composer-above-bar-stack
+  > .ensemble-roster-preset-picker.is-compact {
+  background: var(--unified-soft-surface-bg) !important;
+  border-color: var(--unified-soft-surface-border) !important;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.08) !important;
+  color: var(--text-primary) !important;
+}
+
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"])[data-composer-style="kimi"]
+  .app-transcript.chat-kind-ensemble
+  .composer-above-bar-stack:has(.ensemble-above-row)
+  > :is(
+    .composer-above-bar,
+    .ensemble-above-row,
+    .queued-messages-above-row,
+    .composer-create-pr-row,
+    .ensemble-roster-preset-picker.is-compact
+  )::before,
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"])[data-composer-style="kimi"]
+  .app-transcript.chat-kind-ensemble
+  .composer-above-bar-stack.fx-agent-aura:has(.ensemble-above-row)
+  > :is(
+    .composer-above-bar,
+    .ensemble-above-row,
+    .queued-messages-above-row,
+    .composer-create-pr-row,
+    .ensemble-roster-preset-picker.is-compact
+  )::after,
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="obsidian"]
+  .app-transcript.chat-kind-ensemble
+  .composer-above-bar-stack.fx-agent-aura
+  > :is(.ensemble-above-row, .ensemble-roster-preset-picker.is-compact)::after {
+  display: none !important;
+  content: none !important;
+  background: none !important;
+  background-image: none !important;
+  box-shadow: none !important;
+  animation: none !important;
+}
+
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="obsidian"]
+  .app-transcript
+  .composer-telemetry-row {
+  border-top-color: rgba(29, 29, 31, 0.08) !important;
+  color: rgba(29, 29, 31, 0.62) !important;
+  -webkit-text-fill-color: rgba(29, 29, 31, 0.62) !important;
+}
+
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="obsidian"]
+  .app-transcript
+  .composer-telemetry-row
+  :is(
+    .composer-run-timecode,
+    .composer-screen-watch-button,
+    .composer-ensemble-toggle-button,
+    .composer-goal-button,
+    .composer-plan-button,
+    .composer-copy-transcript-button,
+    .composer-workspace-button,
+    .composer-thread-token-tally,
+    [data-composer-control]
+  ) {
+  color: rgba(29, 29, 31, 0.62) !important;
+  -webkit-text-fill-color: rgba(29, 29, 31, 0.62) !important;
+}
+
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="obsidian"]
+  .app-transcript
+  .composer-telemetry-row
+  :is(.composer-control-icon, .sf-symbol-icon, .sf-symbol-icon svg, svg) {
+  color: inherit !important;
+  -webkit-text-fill-color: inherit !important;
+}
+
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="obsidian"]
+  .app-transcript
+  .composer-telemetry-row
+  :is(
+    .composer-screen-watch-button:hover,
+    .composer-ensemble-toggle-button:hover,
+    .composer-ensemble-toggle-button.is-open,
+    .composer-goal-button:hover,
+    .composer-goal-button.is-open,
+    .composer-plan-button:hover,
+    .composer-plan-button.is-open,
+    .composer-copy-transcript-button:hover,
+    .composer-copy-transcript-button.is-open,
+    .composer-workspace-button:hover
+  ) {
+  background: rgba(29, 29, 31, 0.06) !important;
+  color: rgba(29, 29, 31, 0.9) !important;
+  -webkit-text-fill-color: rgba(29, 29, 31, 0.9) !important;
 }
 
 /* Alabaster is a light extreme theme. Keep Obsidian's dark provider

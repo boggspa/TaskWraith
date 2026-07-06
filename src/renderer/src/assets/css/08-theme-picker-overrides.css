@@ -5735,6 +5735,27 @@
   border-radius: 2px;
   color: #ccffe4;
 }
+[data-composer-style="terminal"] .composer-action-btn.voice-btn,
+[data-composer-style="terminal"] .composer-voice-chevron {
+  background: transparent;
+  border: 0;
+  border-radius: 2px;
+  color: color-mix(in srgb, #ccffe4 78%, transparent);
+  box-shadow: none;
+}
+[data-composer-style="terminal"] .composer-action-btn.voice-btn:hover:not(:disabled),
+[data-composer-style="terminal"] .composer-action-btn.voice-btn.is-recording,
+[data-composer-style="terminal"] .composer-voice-chevron:hover:not(:disabled),
+[data-composer-style="terminal"] .composer-voice-control.is-menu-open .composer-voice-chevron {
+  background: color-mix(in srgb, #00ff88 8%, transparent);
+  color: #ccffe4;
+}
+[data-composer-style="terminal"]
+  :is(.composer-action-btn.run-btn, .composer-action-btn.stop-btn, .composer-action-btn.voice-btn)
+  :is(.sf-symbol-icon, .sf-symbol-icon svg),
+[data-composer-style="terminal"] .composer-voice-chevron :is(.sf-symbol-icon, .sf-symbol-icon svg) {
+  color: inherit;
+}
 
 /* 1.0.6-CRUX44 — the terminal shell is a TERMINAL: keep its dark dark-mode look
  * in light mode too. The earlier lighter #0d1b14 surface dropped contrast for the
@@ -5844,11 +5865,65 @@
 /* 1.0.6-CRUX44 — these sit on the (now dark) terminal surface, so the earlier
  * dark-green light-mode text was unreadable. Light terminal-green, like dark mode. */
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="terminal"] .composer-run-timecode {
-  color: color-mix(in srgb, #ccffe4 56%, transparent);
+  color: color-mix(in srgb, #ccffe4 78%, transparent);
 }
 
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="terminal"] .composer-telemetry-row {
-  color: color-mix(in srgb, #ccffe4 60%, transparent);
+  color: color-mix(in srgb, #ccffe4 74%, transparent);
+}
+
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="terminal"]
+  .composer-telemetry-row
+  :is(
+    .composer-run-timecode,
+    .composer-screen-watch-button,
+    .composer-ensemble-toggle-button,
+    .composer-goal-button,
+    .composer-plan-button,
+    .composer-copy-transcript-button,
+    .composer-workspace-button,
+    .composer-thread-token-tally
+  ) {
+  color: color-mix(in srgb, #ccffe4 74%, transparent) !important;
+  -webkit-text-fill-color: color-mix(in srgb, #ccffe4 74%, transparent) !important;
+}
+
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="terminal"]
+  .composer-telemetry-row
+  :is(
+    .composer-screen-watch-button:hover,
+    .composer-ensemble-toggle-button:hover,
+    .composer-ensemble-toggle-button.is-open,
+    .composer-goal-button:hover,
+    .composer-goal-button.is-open,
+    .composer-plan-button:hover,
+    .composer-plan-button.is-open,
+    .composer-copy-transcript-button:hover,
+    .composer-copy-transcript-button.is-open,
+    .composer-workspace-button:hover
+  ) {
+  background: color-mix(in srgb, #00ff88 8%, transparent) !important;
+  color: #ccffe4 !important;
+  -webkit-text-fill-color: #ccffe4 !important;
+}
+
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="terminal"]
+  .composer-telemetry-row
+  :is(.composer-control-icon, .sf-symbol-icon, .sf-symbol-icon svg) {
+  color: inherit !important;
+  -webkit-text-fill-color: inherit !important;
+}
+
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="terminal"]
+  :is(.composer-action-btn.run-btn, .composer-action-btn.stop-btn, .composer-action-btn.voice-btn, .composer-voice-chevron) {
+  color: #ccffe4 !important;
+}
+
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="terminal"]
+  :is(.composer-action-btn.run-btn, .composer-action-btn.stop-btn, .composer-action-btn.voice-btn, .composer-voice-chevron)
+  :is(.sf-symbol-icon, .sf-symbol-icon svg) {
+  color: inherit !important;
+  -webkit-text-fill-color: inherit !important;
 }
 
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="terminal"] .composer-run-timecode[data-running="true"] {

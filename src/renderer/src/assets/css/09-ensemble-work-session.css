@@ -2648,6 +2648,24 @@
   border-color: color-mix(in srgb, #00ff88 22%, transparent);
   font-family: var(--font-mono);
 }
+[data-composer-style="terminal"]
+  .composer-above-bar-stack
+  > .ensemble-roster-preset-picker.is-compact
+  .ensemble-roster-preset-picker-browse,
+[data-composer-style="terminal"] .composer-ensemble-orchestration-row,
+[data-composer-style="terminal"]
+  .composer-ensemble-orchestration-row
+  :is(
+    .composer-orchestration-cell-label,
+    .composer-ensemble-mode-trigger,
+    .composer-ensemble-mode-button,
+    .composer-ensemble-context-value,
+    .composer-ensemble-hop-meter,
+    .composer-fanout-label
+  ) {
+  color: color-mix(in srgb, #ccffe4 84%, transparent) !important;
+  font-family: var(--font-mono);
+}
 [data-composer-style="terminal"] .ensemble-above-chip.is-selected {
   border-color: color-mix(in srgb, #00ff88 65%, transparent);
   background: color-mix(in srgb, #00ff88 14%, transparent);
