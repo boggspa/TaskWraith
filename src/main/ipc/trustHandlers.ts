@@ -1,5 +1,9 @@
 import { ipcMain } from 'electron'
 import type { TrustStatusResult, TrustWriteResult } from '../store/types'
+import type {
+  TrustedSessionScope,
+  TrustedSessionSetResult
+} from '../TrustedSessionGrants'
 
 export interface SessionYoloModeState {
   enabled: boolean
@@ -13,6 +17,11 @@ export interface TrustHandlerDeps {
   trustWorkspace: (workspacePath: string) => TrustWriteResult
   getSessionYoloMode: () => SessionYoloModeState
   setSessionYoloMode: (enabled: boolean) => SessionYoloModeState | void
+  getTrustedSession: (scope: TrustedSessionScope) => TrustedSessionSetResult
+  setTrustedSession: (
+    scope: TrustedSessionScope,
+    enabled: boolean
+  ) => TrustedSessionSetResult
 }
 
 export function registerTrustHandlers(deps: TrustHandlerDeps): void {
@@ -32,4 +41,13 @@ export function registerTrustHandlers(deps: TrustHandlerDeps): void {
   ipcMain.handle('agentic-yolo-set', (_event, enabled: boolean) => {
     return deps.setSessionYoloMode(Boolean(enabled)) || deps.getSessionYoloMode()
   })
+
+  ipcMain.handle('trusted-session-get', (_event, scope: TrustedSessionScope) =>
+    deps.getTrustedSession(scope)
+  )
+  ipcMain.handle(
+    'trusted-session-set',
+    (_event, scope: TrustedSessionScope, enabled: boolean) =>
+      deps.setTrustedSession(scope, Boolean(enabled))
+  )
 }

@@ -78,6 +78,13 @@ export function buildRemoteComposerQueueDispatchAction(
 ): RemoteComposerQueueDispatchActionContract | null {
   if (job.source !== 'remote' || !job.request?.remoteComposer) return null
   const remote = job.request.remoteComposer
+  const frozenPreset = job.permissionPosture?.presetId
+  const dispatchPermissionPresetId =
+    frozenPreset === 'full_access' || frozenPreset === 'workspace_write'
+      ? frozenPreset
+      : remote.permissionPresetId === 'full_access'
+        ? 'workspace_write'
+        : undefined
   return {
     queueRunId: job.runId,
     appRunId: job.runId,
@@ -90,9 +97,7 @@ export function buildRemoteComposerQueueDispatchAction(
       text: remote.text,
       ...(remote.approvalMode ? { approvalMode: remote.approvalMode } : {}),
       ...(remote.workflowMode ? { workflowMode: remote.workflowMode } : {}),
-      ...(remote.permissionPresetId === 'full_access'
-        ? { permissionPresetId: remote.permissionPresetId }
-        : {}),
+      ...(dispatchPermissionPresetId ? { permissionPresetId: dispatchPermissionPresetId } : {}),
       ...(remote.model ? { model: remote.model } : {}),
       ...(remote.reasoningEffort !== undefined ? { reasoningEffort: remote.reasoningEffort } : {}),
       ...(remote.claudeReasoningEffort !== undefined

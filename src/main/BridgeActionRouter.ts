@@ -1113,15 +1113,15 @@ export const AUTO_EDIT_TIER_PRESET_IDS: ReadonlySet<string> = new Set([
 ])
 
 export function approvalModeFromPayload(payload: BridgeActionPayload): string | undefined {
-  // A composer "Full access" run carries permissionPresetId:'full_access' and
-  // resolves to auto_edit on the Mac. Gate it as auto_edit here so it can't slip
-  // past the workspace allowlist (allowedApprovalModes) by riding a lower
-  // approvalMode such as 'default'. (The composer only honors full_access — a
-  // top-level workspace_write falls through to its raw approvalMode, so it is
-  // deliberately NOT included in this top-level check.)
+  // A composer auto-edit-tier run may carry permissionPresetId:'workspace_write'
+  // or :'full_access' and resolves to auto_edit on the Mac. Gate it as auto_edit
+  // here so it can't slip past the workspace allowlist (allowedApprovalModes) by
+  // riding a lower approvalMode such as 'default'. Downstream, full_access still
+  // needs a scoped Trusted Session receipt before host sandboxing is dropped.
   if (
     'permissionPresetId' in payload &&
-    (payload as { permissionPresetId?: unknown }).permissionPresetId === 'full_access'
+    typeof (payload as { permissionPresetId?: unknown }).permissionPresetId === 'string' &&
+    AUTO_EDIT_TIER_PRESET_IDS.has((payload as { permissionPresetId: string }).permissionPresetId)
   ) {
     return 'auto_edit'
   }

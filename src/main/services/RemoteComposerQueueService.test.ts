@@ -144,6 +144,35 @@ describe('buildRemoteComposerQueueDispatchAction', () => {
     expect('appRunId' in dispatch!.action).toBe(false)
   })
 
+  it('uses the frozen permission posture instead of re-inflating stale full_access requests', () => {
+    const job = makeJob({
+      permissionPosture: {
+        schemaVersion: 1,
+        approvalMode: 'auto_edit',
+        workflowMode: 'normal',
+        presetId: 'workspace_write',
+        readOnly: false,
+        externalPathGrantCount: 0,
+        postureHash: 'a'.repeat(64),
+        signaturePresent: true,
+        signature: 'b'.repeat(64)
+      },
+      request: {
+        ...makeJob().request!,
+        approvalMode: 'auto_edit',
+        remoteComposer: {
+          ...makeJob().request!.remoteComposer!,
+          approvalMode: 'auto_edit',
+          permissionPresetId: 'full_access'
+        }
+      }
+    })
+
+    expect(buildRemoteComposerQueueDispatchAction(job)?.action.permissionPresetId).toBe(
+      'workspace_write'
+    )
+  })
+
   it('returns null for non-remote jobs', () => {
     expect(buildRemoteComposerQueueDispatchAction(makeJob({ source: 'manual' }))).toBeNull()
   })

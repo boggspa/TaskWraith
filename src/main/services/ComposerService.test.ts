@@ -908,9 +908,59 @@ describe('composeRun effectivePermissions (single-run read-only enforcement)', (
     expect(payload.effectivePermissions?.agenticServices.fileChanges).toBe('deny')
   })
 
-  it('leaves effectivePermissions undefined for a non-read-only run (unchanged behavior)', () => {
-    expect(compose({}, { approvalMode: 'default' }).effectivePermissions).toBeUndefined()
-    expect(compose({}, { approvalMode: 'auto_edit' }).effectivePermissions).toBeUndefined()
+  it('populates signed effectivePermissions for non-read-only runs', () => {
+    const defaultPayload = compose({}, { approvalMode: 'default' })
+    expect(defaultPayload.effectivePermissions?.readOnly).toBe(false)
+    expect(defaultPayload.effectivePermissions?.presetId).toBe('default')
+
+    const workspaceWritePayload = compose(
+      { providerMetadata: { approvalMode: 'auto_edit' } },
+      { approvalMode: 'auto_edit', appRunId: 'run-workspace-write' }
+    )
+    expect(workspaceWritePayload.effectivePermissions?.readOnly).toBe(false)
+    expect(workspaceWritePayload.effectivePermissions?.presetId).toBe('workspace_write')
+
+    const staleFullAccessPayload = compose(
+      { providerMetadata: { approvalMode: 'auto_edit' } },
+      {
+        approvalMode: 'auto_edit',
+        permissionPresetId: 'full_access',
+        appRunId: 'run-full-access'
+      }
+    )
+    expect(staleFullAccessPayload.effectivePermissions?.readOnly).toBe(false)
+    expect(staleFullAccessPayload.effectivePermissions?.presetId).toBe('workspace_write')
+    expect(staleFullAccessPayload.effectivePermissions?.agenticServices.shellCommands).toBe(
+      'workspace'
+    )
+
+    const trustedChat = makeChat({ providerMetadata: { approvalMode: 'auto_edit' } })
+    const { deps } = makeDeps(trustedChat)
+    const trusted = vi.fn(() => true)
+    const trustedService = new ComposerService({
+      ...deps,
+      isTrustedSessionGranted: trusted
+    })
+    const fullAccessPayload = trustedService.composeRun({
+      chatId: trustedChat.appChatId,
+      provider: trustedChat.provider as ProviderId,
+      workspace: trustedChat.workspacePath,
+      userInput: 'Do the thing',
+      selectedModelType: 'flash-lite',
+      approvalMode: 'auto_edit',
+      permissionPresetId: 'full_access',
+      appRunId: 'run-full-access'
+    })
+    expect(fullAccessPayload.effectivePermissions?.readOnly).toBe(false)
+    expect(fullAccessPayload.effectivePermissions?.presetId).toBe('full_access')
+    expect(fullAccessPayload.effectivePermissions?.agenticServices.shellCommands).toBe('allow')
+    expect(trusted).toHaveBeenCalledWith(
+      expect.objectContaining({
+        chatId: trustedChat.appChatId,
+        provider: 'gemini',
+        workspacePath: trustedChat.workspacePath
+      })
+    )
   })
 
   it('forces preview-risk interactive runs down to prompt-first permissions', () => {
@@ -1024,26 +1074,25 @@ describe('composeRun ↔ normalize posture clamp contract', () => {
     expect(clamped.effectivePermissions).toEqual(payload.effectivePermissions)
   })
 
-  it('binds approvalMode even when effectivePermissions is undefined (non-plan run)', () => {
+  it('binds approvalMode and effectivePermissions for non-plan runs', () => {
     const payload = composeSigned(
       { approvalMode: 'auto_edit' },
       { providerMetadata: { approvalMode: 'auto_edit' } }
     )
-    expect(payload.effectivePermissions).toBeUndefined()
+    expect(payload.effectivePermissions?.presetId).toBe('workspace_write')
     expect(payload.effectivePermissionsSignature).toBeTruthy()
-    // Untampered: clamp trusts the signed auto_edit posture.
-    expect(
-      clampUntrustedRunPosture(
-        {
-          scope: 'workspace',
-          approvalMode: payload.approvalMode,
-          effectivePermissions: payload.effectivePermissions,
-          signature: payload.effectivePermissionsSignature,
-          context: payloadContext(payload)
-        },
-        clampDeps
-      ).approvalMode
-    ).toBe('auto_edit')
+    const clamped = clampUntrustedRunPosture(
+      {
+        scope: 'workspace',
+        approvalMode: payload.approvalMode,
+        effectivePermissions: payload.effectivePermissions,
+        signature: payload.effectivePermissionsSignature,
+        context: payloadContext(payload)
+      },
+      clampDeps
+    )
+    expect(clamped.approvalMode).toBe('auto_edit')
+    expect(clamped.effectivePermissions).toEqual(payload.effectivePermissions)
   })
 
   it('binds workflowMode so a read-only recon payload cannot be flipped into plan', () => {
@@ -1092,7 +1141,7 @@ describe('composeRun ↔ normalize posture clamp contract', () => {
   it('caps renderer-requested auto_edit to the trusted persisted chat posture before signing', () => {
     const payload = composeSigned({ approvalMode: 'auto_edit' })
     expect(payload.approvalMode).toBe('default')
-    expect(payload.effectivePermissions).toBeUndefined()
+    expect(payload.effectivePermissions?.presetId).toBe('default')
     expect(payload.effectivePermissionsSignature).toBeTruthy()
     const clamped = clampUntrustedRunPosture(
       {

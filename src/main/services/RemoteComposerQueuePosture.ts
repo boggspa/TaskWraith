@@ -23,6 +23,7 @@ export interface RemoteComposerQueuePostureInput {
   approvalMode?: string | null
   workflowMode?: ChatWorkflowMode | null
   permissionPresetId?: string | null
+  trustedSessionGranted?: boolean
   settings: Pick<AppSettings, 'agenticServices' | 'agenticWorkspaceGrants'>
   signRunPermissionPosture: (
     approvalMode: string | null | undefined,
@@ -44,7 +45,8 @@ export function buildRemoteComposerQueuePermissionPosture(
   const permissionPresetId = remoteComposerQueuePermissionPresetId(
     approvalMode,
     workflowMode,
-    input.permissionPresetId
+    input.permissionPresetId,
+    input.trustedSessionGranted === true
   )
   const effectivePermissions = permissionPresetId
     ? resolveEffectiveRunPermissions({
@@ -75,13 +77,17 @@ export function buildRemoteComposerQueuePermissionPosture(
 function remoteComposerQueuePermissionPresetId(
   approvalMode: string,
   workflowMode: ChatWorkflowMode,
-  permissionPresetId?: string | null
+  permissionPresetId?: string | null,
+  trustedSessionGranted = false
 ): PermissionPresetId | undefined {
   if (workflowMode === 'plan') return 'plan'
   if (approvalMode === 'plan') return 'read_only'
-  // Single-provider composer "Full access" — only this exact preset is honored,
-  // matching the immediate-send bridge compose + approvalModeFromPayload gating.
-  if (permissionPresetId === 'full_access') return 'full_access'
+  // Trusted Session is a live, main-owned host-trust receipt. A queued remote
+  // prompt may carry the old `full_access` value, but it cannot freeze host
+  // access unless the desktop has an active scoped receipt at queue time.
+  if (permissionPresetId === 'full_access') {
+    return trustedSessionGranted ? 'full_access' : 'workspace_write'
+  }
   return undefined
 }
 

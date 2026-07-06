@@ -420,6 +420,11 @@ import {
   remoteComposerChatIsBusy as remoteComposerQueueJobIsBusy
 } from './services/RemoteComposerQueueService'
 import { buildRemoteComposerQueuePermissionPosture } from './services/RemoteComposerQueuePosture'
+import {
+  TrustedSessionGrantStore,
+  type TrustedSessionScope,
+  type TrustedSessionSetResult
+} from './TrustedSessionGrants'
 import { buildScheduledTaskPermissionPosture } from './services/ScheduledTaskPosture'
 import { SettingsService } from './services/SettingsService'
 import { WorkspaceService } from './services/WorkspaceService'
@@ -1451,15 +1456,11 @@ const mcpBrowserConsoleBuffer: Array<{
 
 
 
-// Phase J3: session-scoped YOLO mode. When the user clicks "Trust this
-// session" on any approval modal, every subsequent `requestAgenticServiceApproval`
-// auto-allows AND every Codex MCP elicitation auto-accepts — until the
-// user disables it explicitly OR the app restarts. NEVER persisted: a
-// process exit always returns to the default `ask` policies. Global
-// `deny` policies still win (defense in depth — if the user has
-// explicitly opted out of a service category, YOLO doesn't override
-// that). The audit trail records every YOLO bypass with reason
-// `session_yolo` so the user can review what got auto-allowed.
+// Legacy process-wide YOLO state. New user-facing Trusted Session is
+// lane-scoped and backed by `trustedSessionGrants`; enabling this global switch
+// now fails closed in setSessionYoloMode(true). We keep the state/read/disable
+// path so older windows or remote-control clients can observe/stop a leftover
+// global bypass if one ever exists inside this process.
 const sessionYoloState: {
   enabled: boolean
   enabledAt: string | null
@@ -1467,6 +1468,7 @@ const sessionYoloState: {
   enabled: false,
   enabledAt: null
 }
+const trustedSessionGrants = new TrustedSessionGrantStore()
 
 function managedPolicyBlocksSessionYolo(): boolean {
   const snapshot = managedPolicySnapshotForDiagnostics?.()
@@ -1503,14 +1505,18 @@ function setSessionYoloMode(enabled: boolean): {
   managedBlocked?: boolean
   managedReason?: string
 } {
-  const managedReason = enabled ? sessionYoloManagedReason() : undefined
-  if (managedReason) {
+  if (enabled) {
     if (sessionYoloState.enabled) {
       sessionYoloState.enabled = false
       sessionYoloState.enabledAt = null
       broadcastSessionYoloState()
     }
-    return { ...getSessionYoloMode(), managedBlocked: true, managedReason }
+    return {
+      ...getSessionYoloMode(),
+      managedBlocked: true,
+      managedReason:
+        'Process-wide YOLO has been replaced by lane-scoped Trusted Session. Start Trusted Session from the permission picker for the specific chat or participant.'
+    }
   }
   if (sessionYoloState.enabled === enabled) return getSessionYoloMode()
   sessionYoloState.enabled = enabled
@@ -1532,6 +1538,81 @@ function getSessionYoloMode(): {
     enabledAt: managedReason ? null : sessionYoloState.enabledAt,
     ...(managedReason ? { managedBlocked: true, managedReason } : {})
   }
+}
+
+function resolveTrustedSessionScope(
+  rawScope: TrustedSessionScope
+): { ok: true; scope: TrustedSessionScope } | { ok: false; error: string } {
+  const chatId =
+    typeof rawScope?.chatId === 'string' && rawScope.chatId.trim()
+      ? rawScope.chatId.trim()
+      : ''
+  if (!chatId) return { ok: false, error: 'Trusted Session needs a chat id.' }
+  const chat = AppStore.getChat(chatId)
+  if (!chat) return { ok: false, error: 'Trusted Session chat was not found.' }
+  if (chat.scope === 'global' || !chat.workspacePath) {
+    return { ok: false, error: 'Trusted Session is only available for workspace chats.' }
+  }
+
+  const requestedParticipantId =
+    typeof rawScope?.ensembleParticipantId === 'string' &&
+    rawScope.ensembleParticipantId.trim()
+      ? rawScope.ensembleParticipantId.trim()
+      : ''
+  const participant = requestedParticipantId
+    ? chat.ensemble?.participants.find((entry) => entry.id === requestedParticipantId)
+    : undefined
+  if (requestedParticipantId && !participant) {
+    return { ok: false, error: 'Trusted Session participant was not found.' }
+  }
+
+  let provider: ProviderId
+  try {
+    provider = participant
+      ? participant.provider
+      : assertLiveProviderId(rawScope?.provider || chat.provider || DEFAULT_PROVIDER)
+  } catch {
+    return { ok: false, error: 'Trusted Session provider is not available.' }
+  }
+  if (rawScope?.provider && rawScope.provider !== provider) {
+    return { ok: false, error: 'Trusted Session provider does not match this lane.' }
+  }
+
+  return {
+    ok: true,
+    scope: {
+      chatId,
+      provider,
+      workspacePath: chat.workspacePath,
+      ensembleParticipantId: participant ? participant.id : null,
+      ensembleLaneId:
+        typeof rawScope?.ensembleLaneId === 'string' && rawScope.ensembleLaneId.trim()
+          ? rawScope.ensembleLaneId.trim()
+          : null,
+      runtimeProfileId: participant
+        ? participant.runtimeProfileId || null
+        : typeof rawScope?.runtimeProfileId === 'string' && rawScope.runtimeProfileId.trim()
+          ? rawScope.runtimeProfileId.trim()
+          : null
+    }
+  }
+}
+
+function getTrustedSession(scope: TrustedSessionScope): TrustedSessionSetResult {
+  const resolved = resolveTrustedSessionScope(scope)
+  if (!resolved.ok) return { enabled: false, error: resolved.error }
+  return trustedSessionGrants.get(resolved.scope)
+}
+
+function setTrustedSession(
+  scope: TrustedSessionScope,
+  enabled: boolean
+): TrustedSessionSetResult {
+  const resolved = resolveTrustedSessionScope(scope)
+  if (!resolved.ok) return { enabled: false, error: resolved.error }
+  return enabled
+    ? trustedSessionGrants.grant(resolved.scope)
+    : trustedSessionGrants.revoke(resolved.scope)
 }
 
 const NATIVE_GLASS_VIBRANCY: BrowserWindowConstructorOptions['vibrancy'] = 'sidebar'
@@ -4584,7 +4665,9 @@ function runPostureContextFromPayload(payload: {
   prompt?: unknown
   workflowMode?: unknown
   runtimeProfileId?: unknown
+  ensembleRun?: unknown
 }): RunPermissionPostureContext {
+  const ensembleRun = isRecord(payload.ensembleRun) ? payload.ensembleRun : null
   return {
     provider: optionalString(payload.provider),
     scope: optionalString(payload.scope),
@@ -4592,7 +4675,9 @@ function runPostureContextFromPayload(payload: {
     appChatId: optionalString(payload.appChatId),
     prompt: typeof payload.prompt === 'string' ? payload.prompt : String(payload.prompt ?? ''),
     workflowMode: payload.workflowMode === 'plan' ? 'plan' : 'normal',
-    runtimeProfileId: optionalString(payload.runtimeProfileId)
+    runtimeProfileId: optionalString(payload.runtimeProfileId),
+    ensembleParticipantId: ensembleRun ? optionalString(ensembleRun.participantId) : null,
+    ensembleLaneId: ensembleRun ? optionalString(ensembleRun.laneId) : null
   }
 }
 
@@ -4636,6 +4721,7 @@ function permissionPostureSnapshotFromSession(
     appRunId?: unknown
     appChatId?: unknown
     prompt?: unknown
+    ensembleRun?: unknown
   }
   const effectivePermissions = isRecord(record.effectivePermissions)
     ? (record.effectivePermissions as unknown as EffectiveRunPermissions)
@@ -4654,7 +4740,13 @@ function permissionPostureSnapshotFromSession(
       appChatId: optionalString(record.appChatId) || optionalString(session.appChatId),
       prompt: typeof record.prompt === 'string' ? record.prompt : null,
       workflowMode: record.workflowMode === 'plan' ? 'plan' : 'normal',
-      runtimeProfileId: optionalString(record.runtimeProfileId)
+      runtimeProfileId: optionalString(record.runtimeProfileId),
+      ensembleParticipantId: isRecord(record.ensembleRun)
+        ? optionalString(record.ensembleRun.participantId)
+        : null,
+      ensembleLaneId: isRecord(record.ensembleRun)
+        ? optionalString(record.ensembleRun.laneId)
+        : null
     }
   })
 }
@@ -4768,7 +4860,8 @@ function normalizeAgentRunPayload(rawPayload: unknown): AgentRunPayload {
         appChatId,
         prompt: typeof payload.prompt === 'string' ? payload.prompt : String(payload.prompt ?? ''),
         workflowMode: requestedWorkflowMode,
-        runtimeProfileId: optionalString(payload.runtimeProfileId)
+        runtimeProfileId: optionalString(payload.runtimeProfileId),
+        ensembleRun: payload.ensembleRun
       })
     },
     {
@@ -14571,7 +14664,8 @@ function codexSandboxPolicyForMode(
   workspace: string,
   externalPathGrants?: ExternalPathGrant[],
   settings: AppSettings = AppStore.getSettings(),
-  scope: ChatScope = 'workspace'
+  scope: ChatScope = 'workspace',
+  fullAccessGranted = false
 ) {
   const grants = normalizeExternalPathGrants(externalPathGrants)
   const workspaceRoot = resolve(workspace)
@@ -14592,6 +14686,12 @@ function codexSandboxPolicyForMode(
         ])
   if (approvalMode === 'plan') {
     return { type: 'readOnly', readableRoots, networkAccess: false }
+  }
+  if (fullAccessGranted) {
+    return {
+      type: 'dangerFullAccess',
+      networkAccess: settings.agenticServices?.networkAccess !== 'deny'
+    }
   }
   return {
     type: 'workspaceWrite',
@@ -16894,10 +16994,8 @@ async function runCodexAppServer(event: Electron.IpcMainInvokeEvent, payload: Ag
     payload.scope === 'global'
       ? 'on-request'
       : codexApprovalPolicyForMode(payload.approvalMode, settings)
-  const sandbox = codexSandboxForMode(
-    payload.approvalMode,
-    isFullShellAccessGranted(payload.effectivePermissions)
-  )
+  const fullAccessGranted = isFullShellAccessGranted(payload.effectivePermissions)
+  const sandbox = codexSandboxForMode(payload.approvalMode, fullAccessGranted)
   const startOrResumeParams = {
     cwd: payload.workspace!,
     model,
@@ -17011,7 +17109,8 @@ async function runCodexAppServer(event: Electron.IpcMainInvokeEvent, payload: Ag
         payload.workspace!,
         payload.externalPathGrants,
         settings,
-        payload.scope
+        payload.scope,
+        fullAccessGranted
       ),
       model,
       ...(payload.reasoningEffort ? { effort: payload.reasoningEffort } : {}),
@@ -19984,12 +20083,7 @@ async function executeGeminiMcpTool(
         })
         return { text: lock.text, isError: true }
       }
-      const result = await runHostCommand(command, cwd, {
-        releaseApproval: {
-          allowReleaseCommand: true,
-          approvalSource: 'approvedMcpShell'
-        }
-      })
+      const result = await runHostCommand(command, cwd)
       text = formatHostCommandResult(result)
       const isError = Boolean(
         result.error || result.timedOut || (result.exitCode !== null && result.exitCode !== 0)
@@ -23430,9 +23524,9 @@ if (isGeminiMcpBridgeProcess) {
               text,
               ...(action.approvalMode ? { approvalMode: action.approvalMode } : {}),
               ...(workflowMode === 'plan' ? { workflowMode } : {}),
-              // Only the exact 'full_access' preset survives into the queued job —
-              // mirrors the immediate-send honoring so a queued Full-access prompt
-              // isn't silently downgraded on drain.
+              // Preserve the user's top-tier request for audit/projection; the
+              // signed permissionPosture above clamps it to workspace_write unless
+              // a live Trusted Session receipt exists at queue time.
               ...(action.permissionPresetId === 'full_access'
                 ? { permissionPresetId: action.permissionPresetId }
                 : {}),
@@ -25431,17 +25525,27 @@ if (isGeminiMcpBridgeProcess) {
               `[bridge-run] composed ${composed.contextTurnsApplied} context turns for run=${runId}`
             )
           }
+          const bridgeTrustedSessionGranted =
+            action.permissionPresetId === 'full_access' &&
+            !isGlobalScope &&
+            trustedSessionGrants.isGranted({
+              chatId: chat.appChatId,
+              provider,
+              workspacePath: workspaceRecord?.path,
+              runtimeProfileId: resolvedProfileId
+            })
           const bridgePermissionPresetId =
             effectiveWorkflowMode === 'plan'
               ? 'plan'
               : effectiveApprovalMode === 'plan'
                 ? 'read_only'
-                : // Single-provider composer "Full access": honored strictly (only
-                  // this exact value), re-derived + signed below, and never for a
-                  // global-scope run (effectiveApprovalMode is forced to 'plan' there).
-                  action.permissionPresetId === 'full_access'
-                  ? 'full_access'
-                  : undefined
+                : action.permissionPresetId === 'full_access'
+                  ? bridgeTrustedSessionGranted
+                    ? 'full_access'
+                    : 'workspace_write'
+                  : action.permissionPresetId === 'workspace_write'
+                    ? 'workspace_write'
+                    : undefined
           const bridgeEffectivePermissions =
             bridgePermissionPresetId
               ? resolveEffectiveRunPermissions({
@@ -25464,12 +25568,15 @@ if (isGeminiMcpBridgeProcess) {
             ...(resumeSessionId ? { providerSessionId: resumeSessionId } : {}),
             appChatId: chat.appChatId,
             appRunId: runId,
-            // Full access resolves to auto_edit — keep the payload's approvalMode
-            // consistent with the signed full_access preset (otherwise the posture
+            // Auto-edit presets resolve to auto_edit — keep the payload's approvalMode
+            // consistent with the signed auto-edit preset (otherwise the posture
             // signs an inconsistent approvalMode/effectivePermissions pair). Only
-            // full_access changes here; plan / read_only / default are unchanged.
+            // workspace_write/full_access change here; plan / read_only / default are unchanged.
             approvalMode:
-              bridgePermissionPresetId === 'full_access' ? 'auto_edit' : effectiveApprovalMode,
+              bridgePermissionPresetId === 'full_access' ||
+              bridgePermissionPresetId === 'workspace_write'
+                ? 'auto_edit'
+                : effectiveApprovalMode,
             workflowMode: effectiveWorkflowMode,
             ...(bridgeEffectivePermissions
               ? { effectivePermissions: bridgeEffectivePermissions }
@@ -27541,7 +27648,8 @@ if (isGeminiMcpBridgeProcess) {
       appStore: AppStore,
       getSettings: () => AppStore.getSettings(),
       signRunPermissionPosture: signRunPosture,
-      resolveUnattendedElevation
+      resolveUnattendedElevation,
+      isTrustedSessionGranted: (scope) => trustedSessionGrants.isGranted(scope)
     })
     const discordContextConfig = resolveDiscordContextConfig({
       userDataPath: app.getPath('userData'),
@@ -30324,6 +30432,7 @@ if (isGeminiMcpBridgeProcess) {
       saveChat: saveAndBroadcastChat,
       getSettings: () => AppStore.getSettings(),
       signRunPermissionPosture: signRunPosture,
+      isTrustedSessionGranted: (scope) => trustedSessionGrants.isGranted(scope),
       dispatch: (payload, event) => dispatchRunWithProviderPause(payload, event),
       cancelRun: (provider, runId) => providerAdapters.require(provider).cancel(runId),
       createRunId: createFallbackRunId,
@@ -31554,7 +31663,9 @@ if (isGeminiMcpBridgeProcess) {
       checkTrust: (workspacePath) => workspaceService.checkTrust(workspacePath),
       trustWorkspace: (workspacePath) => TrustStatusService.trustWorkspace(workspacePath),
       getSessionYoloMode,
-      setSessionYoloMode
+      setSessionYoloMode,
+      getTrustedSession,
+      setTrustedSession
     })
 
     // Outbound shell / URL bridges (shell:open-link, shell:reveal-in-finder,

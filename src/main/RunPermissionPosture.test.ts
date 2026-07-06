@@ -163,11 +163,13 @@ describe('canonical posture + sign/verify', () => {
       provider: 'codex',
       scope: 'workspace',
       appRunId: 'run-1',
-      appChatId: 'chat-1',
-      prompt: 'Do the thing',
-      workflowMode: 'normal',
-      runtimeProfileId: 'builtin:codex:local'
-    }
+	      appChatId: 'chat-1',
+	      prompt: 'Do the thing',
+	      workflowMode: 'normal',
+	      runtimeProfileId: 'builtin:codex:local',
+	      ensembleParticipantId: 'participant-a',
+	      ensembleLaneId: 'lane-a'
+	    }
     const sig = signRunPermissionPosture(SECRET, 'default', undefined, context)
     expect(verifyRunPermissionPosture(SECRET, 'default', undefined, sig, context)).toBe(true)
     expect(
@@ -185,10 +187,22 @@ describe('canonical posture + sign/verify', () => {
     expect(
       verifyRunPermissionPosture(SECRET, 'default', undefined, sig, {
         ...context,
-        runtimeProfileId: 'custom:codex:auto'
-      })
-    ).toBe(false)
-  })
+	        runtimeProfileId: 'custom:codex:auto'
+	      })
+	    ).toBe(false)
+	    expect(
+	      verifyRunPermissionPosture(SECRET, 'default', undefined, sig, {
+	        ...context,
+	        ensembleParticipantId: 'participant-b'
+	      })
+	    ).toBe(false)
+	    expect(
+	      verifyRunPermissionPosture(SECRET, 'default', undefined, sig, {
+	        ...context,
+	        ensembleLaneId: 'lane-b'
+	      })
+	    ).toBe(false)
+	  })
 
   it('signs even when effectivePermissions is undefined (binds approvalMode)', () => {
     const sig = signRunPermissionPosture(SECRET, 'auto_edit', undefined)
@@ -242,11 +256,13 @@ describe('canonical posture + sign/verify', () => {
       provider: 'codex',
       scope: 'workspace',
       appRunId: 'run-1',
-      appChatId: 'chat-1',
-      prompt: 'Sensitive user prompt',
-      workflowMode: 'normal',
-      runtimeProfileId: 'builtin:codex:local'
-    }
+	      appChatId: 'chat-1',
+	      prompt: 'Sensitive user prompt',
+	      workflowMode: 'normal',
+	      runtimeProfileId: 'builtin:codex:local',
+	      ensembleParticipantId: 'participant-a',
+	      ensembleLaneId: 'lane-a'
+	    }
     const signature = signRunPermissionPosture(SECRET, 'auto_edit', perms, context)
     const snapshot = buildRunPermissionPostureSnapshot({
       approvalMode: 'auto_edit',
@@ -271,11 +287,13 @@ describe('canonical posture + sign/verify', () => {
         provider: 'codex',
         scope: 'workspace',
         appRunId: 'run-1',
-        appChatId: 'chat-1',
-        workflowMode: 'normal',
-        runtimeProfileId: 'builtin:codex:local'
-      }
-    })
+	        appChatId: 'chat-1',
+	        workflowMode: 'normal',
+	        runtimeProfileId: 'builtin:codex:local',
+	        ensembleParticipantId: 'participant-a',
+	        ensembleLaneId: 'lane-a'
+	      }
+	    })
     expect(snapshot.postureHash).toHaveLength(64)
     expect(snapshot.externalPathGrantHash).toHaveLength(64)
     expect(snapshot.context?.promptHash).toHaveLength(64)

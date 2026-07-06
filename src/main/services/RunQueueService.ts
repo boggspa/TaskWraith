@@ -375,6 +375,7 @@ export class RunQueueService {
       selectedModelType: optionalString(value.selectedModelType) || 'cli-default',
       customModel: typeof value.customModel === 'string' ? value.customModel : '',
       approvalMode: optionalString(value.approvalMode) || 'default',
+      permissionPresetId: sanitizePermissionPresetId(value.permissionPresetId),
       ...(workflowMode ? { workflowMode } : {}),
       sessionTrust: Boolean(value.sessionTrust),
       imageAttachments,

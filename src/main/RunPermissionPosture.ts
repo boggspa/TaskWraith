@@ -147,6 +147,8 @@ export interface RunPermissionPostureContext {
   prompt?: string | null
   workflowMode?: string | null
   runtimeProfileId?: string | null
+  ensembleParticipantId?: string | null
+  ensembleLaneId?: string | null
 }
 
 export interface UntrustedRunPosture {
@@ -257,7 +259,9 @@ function normalizeRunPermissionPostureContext(
     appChatId: normalizeContextString(context.appChatId),
     prompt: normalizeContextString(context.prompt),
     workflowMode: normalizeContextString(context.workflowMode),
-    runtimeProfileId: normalizeContextString(context.runtimeProfileId)
+    runtimeProfileId: normalizeContextString(context.runtimeProfileId),
+    ensembleParticipantId: normalizeContextString(context.ensembleParticipantId),
+    ensembleLaneId: normalizeContextString(context.ensembleLaneId)
   }
 }
 
@@ -277,6 +281,10 @@ function snapshotContext(
     ...(context.appChatId ? { appChatId: context.appChatId } : {}),
     ...(context.workflowMode ? { workflowMode: context.workflowMode } : {}),
     ...(context.runtimeProfileId ? { runtimeProfileId: context.runtimeProfileId } : {}),
+    ...(context.ensembleParticipantId
+      ? { ensembleParticipantId: context.ensembleParticipantId }
+      : {}),
+    ...(context.ensembleLaneId ? { ensembleLaneId: context.ensembleLaneId } : {}),
     ...(promptHash ? { promptHash } : {})
   }
   return Object.keys(snapshot).length > 0 ? snapshot : undefined

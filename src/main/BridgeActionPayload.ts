@@ -110,11 +110,11 @@ export interface BridgeComposerPromptAction extends BridgeActionMetadata {
    * the legacy/safe read-only floor; `workflowMode:"plan"` means the real Plan
    * workflow with approval-gated instruments. */
   workflowMode?: 'normal' | 'plan'
-  /** Optional permission-preset override for single-provider composer runs. Only
-   * `'full_access'` is honored (the iOS composer's coalesced top tier) — the Mac
-   * re-derives + signs the posture, so it is a user-intent grant, not an unsigned
-   * escalation. Any other value falls through to the approvalMode/workflowMode
-   * derived preset. Mirrors how a paired device sets a participant's
+  /** Optional permission-preset override for single-provider composer runs.
+   * `workspace_write` is workspace-bounded auto-edit; `full_access` is honored
+   * only when the Mac already has a scoped Trusted Session receipt. The Mac
+   * re-derives + signs the posture, so it is a user-intent grant, not an
+   * unsigned escalation. Mirrors how a paired device sets a participant's
    * permissionPresetId on the ensemble roster. */
   permissionPresetId?: string
   /** Optional model override (provider-specific). */

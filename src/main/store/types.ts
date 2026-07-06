@@ -546,6 +546,8 @@ export interface RunPermissionPostureSnapshot {
     appChatId?: string
     workflowMode?: string
     runtimeProfileId?: string
+    ensembleParticipantId?: string
+    ensembleLaneId?: string
     promptHash?: string
   }
 }
@@ -3702,6 +3704,7 @@ export interface ScheduledTask {
   selectedModelType: string
   customModel: string
   approvalMode: string
+  permissionPresetId?: PermissionPresetId
   workflowMode?: ChatWorkflowMode
   sessionTrust: boolean
   imageAttachments: Array<{
@@ -4641,6 +4644,7 @@ export interface RunQueueRequestSnapshot {
   selectedModelType: string
   customModel: string
   approvalMode: string
+  permissionPresetId?: PermissionPresetId
   workflowMode?: ChatWorkflowMode
   sessionTrust: boolean
   imageAttachments: RunQueueImageAttachmentSnapshot[]

@@ -52,7 +52,7 @@ membership against `IPC_ARGUMENT_SCHEMAS` at extraction time.
 
 | Proposed module | Domain | Channels (indicative) |
 | --- | --- | --- |
-| `trustHandlers.ts` | Workspace trust + session YOLO | `check-trust`, `trust-workspace`, `agentic-yolo-get`, `agentic-yolo-set` |
+| `trustHandlers.ts` | Workspace trust + legacy session YOLO + scoped Trusted Session | `check-trust`, `trust-workspace`, `agentic-yolo-get`, `agentic-yolo-set`, `trusted-session-get`, `trusted-session-set` |
 | `localServersHandlers.ts` | Dev-server detection | `local-servers-snapshot`/`-refresh`/`-stop`/`-stop-all` |
 | `updateHandlers.ts` | Auto-update + changelog | `update-snapshot`, `check-for-updates`, `download-update`, `install-update-on-quit`, `install-update-now`, `changelog-snapshot`, `mark-changelog-seen` |
 | `checkpointHandlers.ts` | Session checkpoints | `session-checkpoints:latest`/`:accept`/`:dismiss` |

@@ -502,6 +502,15 @@ describe('IpcValidation', () => {
     expect(() => validateIpcArgs('agentic-yolo-get', [])).not.toThrow()
     expect(() => validateIpcArgs('agentic-yolo-set', [true])).not.toThrow()
     expect(() => validateIpcArgs('agentic-yolo-set', ['true'])).toThrow(/boolean/)
+    expect(() =>
+      validateIpcArgs('trusted-session-get', [{ chatId: 'chat-1', provider: 'codex' }])
+    ).not.toThrow()
+    expect(() =>
+      validateIpcArgs('trusted-session-set', [{ chatId: 'chat-1', provider: 'codex' }, true])
+    ).not.toThrow()
+    expect(() =>
+      validateIpcArgs('trusted-session-set', [{ chatId: 'chat-1', provider: 'codex' }, 'true'])
+    ).toThrow(/boolean/)
     expect(() => validateIpcArgs('get-runtime-profiles', ['codex'])).not.toThrow()
     expect(() => validateIpcArgs('get-runtime-profiles', ['bad-provider'])).toThrow(
       /known provider/

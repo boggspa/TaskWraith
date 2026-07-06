@@ -632,20 +632,14 @@ export async function executeWorkspaceMcpTool(
     return { result, isError: result.ok === false }
   }
   if (toolName === 'run_task') {
-    const result = await executeRunTask(deps, args, cwd, {
-      allowReleaseCommand: true,
-      approvalSource: 'approvedMcpTask'
-    })
+    const result = await executeRunTask(deps, args, cwd)
     return {
       result,
       isError: (result.exitCode !== null && result.exitCode !== 0) || result.timedOut === true
     }
   }
   if (toolName === 'start_background_process') {
-    const result = await executeStartBackgroundProcess(deps, args, context, cwd, {
-      allowReleaseCommand: true,
-      approvalSource: 'approvedBackgroundProcess'
-    })
+    const result = await executeStartBackgroundProcess(deps, args, context, cwd)
     return { result, isError: result.ok === false }
   }
   if (toolName === 'list_background_processes') {

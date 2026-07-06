@@ -523,6 +523,7 @@ export class RunLifecycleCoordinator {
       selectedModelType: this.normalizeString(request?.selectedModelType, 'cli-default'),
       customModel: this.normalizeOptionalString(request?.customModel) || '',
       approvalMode: this.normalizeString(request?.approvalMode, 'default'),
+      permissionPresetId: this.normalizePermissionPresetId(request?.permissionPresetId),
       workflowMode: this.normalizeWorkflowMode(request?.workflowMode),
       sessionTrust: typeof request?.sessionTrust === 'boolean' ? request.sessionTrust : false,
       imageAttachments: Array.isArray(request?.imageAttachments)
@@ -590,6 +591,17 @@ export class RunLifecycleCoordinator {
 
   private normalizeWorkflowMode(value: unknown): RunQueueRequestSnapshot['workflowMode'] {
     return value === 'plan' || value === 'normal' ? value : undefined
+  }
+
+  private normalizePermissionPresetId(value: unknown): RunQueueRequestSnapshot['permissionPresetId'] {
+    return value === 'read_only' ||
+      value === 'plan' ||
+      value === 'default' ||
+      value === 'workspace_write' ||
+      value === 'full_access' ||
+      value === 'custom'
+      ? value
+      : undefined
   }
 
   private normalizeDiscordSelection(

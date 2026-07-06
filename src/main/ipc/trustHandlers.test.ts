@@ -34,6 +34,8 @@ function createDeps(overrides: Partial<Parameters<typeof registerTrustHandlers>[
       enabledAt: null
     })),
     setSessionYoloMode: vi.fn(),
+    getTrustedSession: vi.fn(() => ({ enabled: false })),
+    setTrustedSession: vi.fn((_scope, enabled) => ({ enabled })),
     ...overrides
   }
 }
@@ -119,5 +121,42 @@ describe('registerTrustHandlers', () => {
     })
     expect(deps.setSessionYoloMode).toHaveBeenCalledWith(true)
     expect(deps.getSessionYoloMode).not.toHaveBeenCalled()
+  })
+
+  it('delegates scoped Trusted Session reads and writes', async () => {
+    const deps = createDeps({
+      getTrustedSession: vi.fn(() => ({
+        enabled: true,
+        grant: {
+          chatId: 'chat-1',
+          provider: 'codex' as const,
+          workspacePath: '/repo',
+          ensembleParticipantId: 'participant-1',
+          grantedAt: '2026-07-06T09:00:00.000Z'
+        }
+      })),
+      setTrustedSession: vi.fn((_scope, enabled) => ({ enabled }))
+    })
+    registerTrustHandlers(deps)
+    const scope = {
+      chatId: 'chat-1',
+      provider: 'codex' as const,
+      workspacePath: '/repo',
+      ensembleParticipantId: 'participant-1'
+    }
+
+    expect(handlerFor('trusted-session-get')({} as any, scope)).toMatchObject({
+      enabled: true,
+      grant: {
+        chatId: 'chat-1',
+        provider: 'codex',
+        ensembleParticipantId: 'participant-1'
+      }
+    })
+    expect(handlerFor('trusted-session-set')({} as any, scope, false)).toEqual({
+      enabled: false
+    })
+    expect(deps.getTrustedSession).toHaveBeenCalledWith(scope)
+    expect(deps.setTrustedSession).toHaveBeenCalledWith(scope, false)
   })
 })

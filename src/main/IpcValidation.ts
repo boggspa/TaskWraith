@@ -283,6 +283,8 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'create-github-pr': ['optionalObject'],
   'agentic-yolo-get': [],
   'agentic-yolo-set': ['boolean'],
+  'trusted-session-get': ['object'],
+  'trusted-session-set': ['object', 'boolean'],
   'get-file-icon': ['string'],
   'get-gemini-version': [],
   'get-gemini-capabilities': ['optionalString'],

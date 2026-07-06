@@ -449,8 +449,8 @@ const api = {
   // One-click persistent workspace trust — writes ~/.gemini/trustedFolders.json (#272).
   trustWorkspace: (workspacePath: string) => ipcRenderer.invoke('trust-workspace', workspacePath),
 
-  // Phase J3: session-scoped YOLO mode (auto-allow every approval).
-  // Never persisted — every process start defaults to disabled.
+  // Legacy process-wide YOLO state. Enabling is blocked in main; the read/stop
+  // surface remains for old windows and remote-control compatibility.
   agenticYoloGet: () =>
     ipcRenderer.invoke('agentic-yolo-get') as Promise<{
       enabled: boolean
@@ -469,6 +469,25 @@ const api = {
     ipcRenderer.on('agentic-yolo-state', wrapped)
     return () => ipcRenderer.removeListener('agentic-yolo-state', wrapped)
   },
+  trustedSessionGet: (scope: {
+    chatId: string
+    provider: ProviderId
+    workspacePath?: string | null
+    ensembleParticipantId?: string | null
+    ensembleLaneId?: string | null
+    runtimeProfileId?: string | null
+  }) => ipcRenderer.invoke('trusted-session-get', scope),
+  trustedSessionSet: (
+    scope: {
+      chatId: string
+      provider: ProviderId
+      workspacePath?: string | null
+      ensembleParticipantId?: string | null
+      ensembleLaneId?: string | null
+      runtimeProfileId?: string | null
+    },
+    enabled: boolean
+  ) => ipcRenderer.invoke('trusted-session-set', scope, enabled),
 
   // TaskWraith Canvas renderer-pane (live-embed). The renderer opens an embedded
   // web canvas (a WebContentsView floated over its pane), streams the pane rect

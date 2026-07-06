@@ -277,6 +277,7 @@ interface ComposerRunInput {
   customModel?: string
   overrideModel?: string
   approvalMode?: string
+  permissionPresetId?: PermissionPresetId | string
   workflowMode?: ChatWorkflowMode
   sessionTrust?: boolean
   attachments?: ComposerImageAttachment[]
@@ -783,6 +784,49 @@ declare global {
       onAgenticYoloState: (
         handler: (state: { enabled: boolean; enabledAt: string | null }) => void
       ) => () => void
+      trustedSessionGet: (scope: {
+        chatId: string
+        provider: ProviderId
+        workspacePath?: string | null
+        ensembleParticipantId?: string | null
+        ensembleLaneId?: string | null
+        runtimeProfileId?: string | null
+      }) => Promise<{
+        enabled: boolean
+        grant?: {
+          chatId: string
+          provider: ProviderId
+          workspacePath?: string | null
+          ensembleParticipantId?: string | null
+          ensembleLaneId?: string | null
+          runtimeProfileId?: string | null
+          grantedAt: string
+        }
+        error?: string
+      }>
+      trustedSessionSet: (
+        scope: {
+          chatId: string
+          provider: ProviderId
+          workspacePath?: string | null
+          ensembleParticipantId?: string | null
+          ensembleLaneId?: string | null
+          runtimeProfileId?: string | null
+        },
+        enabled: boolean
+      ) => Promise<{
+        enabled: boolean
+        grant?: {
+          chatId: string
+          provider: ProviderId
+          workspacePath?: string | null
+          ensembleParticipantId?: string | null
+          ensembleLaneId?: string | null
+          runtimeProfileId?: string | null
+          grantedAt: string
+        }
+        error?: string
+      }>
       canvas: {
         openWindow: (args: { url: string; originAllowlist?: string[]; chatId?: string }) => Promise<
           | {

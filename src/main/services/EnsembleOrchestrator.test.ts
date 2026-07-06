@@ -20,6 +20,7 @@ import type {
   EnsembleWakeupRecord,
   EffectiveRunPermissions,
   ExternalPathGrant,
+  ProviderId,
   RunQueueJobStatus,
   TranscriptMediaRef,
   UsageRecord,
@@ -263,6 +264,14 @@ function makeHarness(
       effectivePermissions: EffectiveRunPermissions | null | undefined,
       context?: RunPermissionPostureContext | null
     ) => string
+    isTrustedSessionGranted?: (scope: {
+      chatId: string
+      provider: ProviderId
+      workspacePath?: string | null
+      ensembleParticipantId?: string | null
+      ensembleLaneId?: string | null
+      runtimeProfileId?: string | null
+    }) => boolean
     persistSessionCheckpoint?: (chat: ChatRecord, reason: string) => void
     completeSessionCheckpoint?: (chatId: string, roundId: string, status: string) => void
     transitionRunQueueJob?: (
@@ -322,6 +331,9 @@ function makeHarness(
     nowIso: options.nowIso ?? (() => `2026-05-24T00:00:0${counter}.000Z`),
     ...(options.signRunPermissionPosture
       ? { signRunPermissionPosture: options.signRunPermissionPosture }
+      : {}),
+    ...(options.isTrustedSessionGranted
+      ? { isTrustedSessionGranted: options.isTrustedSessionGranted }
       : {}),
     ...(options.getProviderUsageSnapshot
       ? { getProviderUsageSnapshot: options.getProviderUsageSnapshot }
@@ -8985,7 +8997,8 @@ Next action:
   it('1.0.4-AK3: overrides per-participant permission preset with workSession preset when active', async () => {
     const harness = makeHarness()
     // Claude participant is read_only, Codex is workspace_write.
-    // Setting workSession to full_access should override BOTH.
+    // Setting workSession to full_access without a live Trusted Session receipt
+    // must not become hidden host access; it downgrades to workspace_write.
     harness.chat.ensemble!.workSession = {
       enabled: true,
       status: 'active',
@@ -9006,10 +9019,41 @@ Next action:
       event: { sender: {} as Electron.WebContents }
     })
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
-    // First dispatched payload is Claude — pre-fix it would have
-    // arrived with permissionPresetId 'read_only' (the participant
-    // preset). Now it should carry 'full_access' from the session.
+    expect(harness.dispatched[0].effectivePermissions?.presetId).toBe('workspace_write')
+  })
+
+  it('1.0.4-AK3: honors full_access workSession only with a scoped Trusted Session receipt', async () => {
+    const isTrustedSessionGranted = vi.fn(() => true)
+    const harness = makeHarness({ isTrustedSessionGranted })
+    harness.chat.ensemble!.workSession = {
+      enabled: true,
+      status: 'active',
+      objective: 'Test override',
+      acceptanceCriteria: 'Permissions correct',
+      allowedParticipantIds: null,
+      permissionPresetId: 'full_access',
+      maxRoundsPerProvider: 38,
+      maxDurationMs: 6 * 60 * 60 * 1000,
+      enableScoutPass: false,
+      startedAt: new Date().toISOString(),
+      roundsUsed: { codex: 0, claude: 0, gemini: 0, kimi: 0, grok: 0, cursor: 0, ollama: 0 },
+      totalRoundsUsed: 0
+    }
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Start work.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
     expect(harness.dispatched[0].effectivePermissions?.presetId).toBe('full_access')
+    expect(isTrustedSessionGranted).toHaveBeenCalledWith(
+      expect.objectContaining({
+        chatId: 'ensemble-chat',
+        provider: 'claude',
+        workspacePath: '/repo',
+        ensembleParticipantId: 'claude'
+      })
+    )
   })
 
   it('1.0.4-AK3: reverts to per-participant preset when workSession is not active', async () => {

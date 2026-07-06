@@ -27,6 +27,7 @@ import {
   coalesceExternalPathGrants,
   stripExternalPathGrantOrder
 } from '../store/ExternalPathGrants'
+import type { TrustedSessionScope } from '../TrustedSessionGrants'
 import type {
   AppSettings,
   ChatRecord,
@@ -36,6 +37,7 @@ import type {
   EffectiveRunPermissions,
   ExternalPathGrant,
   GeminiWorktreeLaunchOption,
+  PermissionPresetId,
   ProviderRunReroute,
   ProviderId
 } from '../store/types'
@@ -67,6 +69,7 @@ export interface ComposerInput {
   customModel?: string
   overrideModel?: string
   approvalMode?: string
+  permissionPresetId?: PermissionPresetId | string
   workflowMode?: ChatWorkflowMode
   sessionTrust?: boolean
   attachments?: ComposerImageAttachment[]
@@ -149,6 +152,12 @@ export interface ComposerServiceDeps {
   resolveUnattendedElevation?: (
     scheduledTaskId: string
   ) => { ack: UnattendedElevationAck; templateApprovalMode: string } | null
+  /**
+   * In-memory, main-owned host-trust receipt. A renderer-selected
+   * `permissionPresetId: 'full_access'` is only honored when this says the
+   * current chat/lane has an active Trusted Session.
+   */
+  isTrustedSessionGranted?: (scope: TrustedSessionScope) => boolean
 }
 
 export class ComposerService {
@@ -274,6 +283,26 @@ export class ComposerService {
     if (previewRiskModel && approvalMode !== 'plan') {
       approvalMode = 'default'
     }
+    const runtimeProfileId = optionalString(effectiveInput.runtimeProfileId)
+    const requestedTrustedSession =
+      effectiveInput.permissionPresetId === 'full_access' && scope !== 'global'
+    const trustedSessionGranted =
+      requestedTrustedSession &&
+      this.deps.isTrustedSessionGranted?.({
+        chatId,
+        provider,
+        workspacePath: effectiveInput.workspace || chat.workspacePath,
+        runtimeProfileId
+      }) === true
+    const interactivePermissionPresetId =
+      unattended
+        ? undefined
+        : resolveInteractivePermissionPresetId(
+            approvalMode,
+            workflowMode,
+            effectiveInput.permissionPresetId,
+            trustedSessionGranted
+          )
     const externalPathGrants =
       scope !== 'global' && !(unattended && approvalMode === 'plan')
         ? normalizeComposerExternalPathGrants(effectiveInput.externalPathGrants || [], provider)
@@ -355,12 +384,13 @@ export class ComposerService {
     }
     const providerMetadataPatch =
       Object.keys(providerMetadataPatchData).length > 0 ? providerMetadataPatchData : undefined
-    // 1.0.72 — populate the canonical read-only permissions for the SINGLE-run
-    // path. Previously only EnsembleOrchestrator called resolveEffectiveRunPermissions,
-    // so a regular plan-mode run carried `effectivePermissions: undefined` — which
-    // left isReadOnlyBlockedTool() (the fall-through-mutator hard-deny) AND the YOLO
-    // read-only suppression INERT for non-ensemble runs. Only populated for a
-    // read-only (plan) run, so non-read-only runs are byte-for-byte unchanged.
+    // Populate canonical permissions for the SINGLE-run path. Previously only
+    // read-only runs carried effectivePermissions; write-capable solo runs had a
+    // signed approvalMode but no signed preset. That made a selected Full Access
+    // lane unable to prove `full_access` at the main trust boundary, so provider
+    // adapters could not safely drop their own sandbox/deny-list posture. Solo
+    // runs now mirror ensemble participants: the user-selected permission preset
+    // is resolved in main and HMAC-signed with the run.
     // P2 — an ELEVATED unattended run (approvalMode lifted above 'plan' by a
     // verified ack) must ALSO carry real permissions so the SIGNED posture is
     // honest (not undefined → the normalize clamp would re-derive read-only). Map
@@ -408,8 +438,15 @@ export class ComposerService {
                 settings,
                 presetId: 'default'
               })
-          : undefined
-    const runtimeProfileId = optionalString(effectiveInput.runtimeProfileId)
+          : scope === 'global'
+            ? undefined
+            : resolveEffectiveRunPermissions({
+                provider,
+                workspacePath: effectiveInput.workspace || chat.workspacePath,
+                model: requestedModel,
+                settings,
+                presetId: interactivePermissionPresetId || 'default'
+              })
     const payload: ComposerRunPayload = {
       provider,
       scope,
@@ -589,6 +626,33 @@ function resolveComposerWorkflowMode(
 
 function normalizeComposerWorkflowMode(value: unknown): ChatWorkflowMode | undefined {
   return value === 'plan' || value === 'normal' ? value : undefined
+}
+
+function normalizePermissionPresetId(value: unknown): PermissionPresetId | undefined {
+  return value === 'read_only' ||
+    value === 'plan' ||
+    value === 'default' ||
+    value === 'workspace_write' ||
+    value === 'full_access' ||
+    value === 'custom'
+    ? value
+    : undefined
+}
+
+function resolveInteractivePermissionPresetId(
+  approvalMode: string,
+  workflowMode: ChatWorkflowMode,
+  requested: unknown,
+  trustedSessionGranted = false
+): PermissionPresetId {
+  if (approvalMode === 'plan') return workflowMode === 'plan' ? 'plan' : 'read_only'
+  const requestedPreset = normalizePermissionPresetId(requested)
+  if (approvalMode === 'auto_edit') {
+    return requestedPreset === 'full_access' && trustedSessionGranted
+      ? 'full_access'
+      : 'workspace_write'
+  }
+  return 'default'
 }
 
 function assertProviderId(value: unknown): ProviderId {

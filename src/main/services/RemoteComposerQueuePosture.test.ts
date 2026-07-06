@@ -85,7 +85,7 @@ describe('buildRemoteComposerQueuePermissionPosture', () => {
     )
   })
 
-  it('freezes a signed full_access posture for a queued Full-access composer prompt', () => {
+  it('downgrades a queued Full-access composer prompt without Trusted Session', () => {
     const signRunPermissionPosture = vi.fn(() => 'd'.repeat(64))
 
     const snapshot = buildRemoteComposerQueuePermissionPosture({
@@ -102,6 +102,35 @@ describe('buildRemoteComposerQueuePermissionPosture', () => {
       signRunPermissionPosture
     })
 
+    expect(snapshot.presetId).toBe('workspace_write')
+    expect(snapshot.readOnly).toBe(false)
+    expect(snapshot.approvalMode).toBe('auto_edit')
+    expect(snapshot.signaturePresent).toBe(true)
+    expect(signRunPermissionPosture).toHaveBeenCalledWith(
+      'auto_edit',
+      expect.objectContaining({ presetId: 'workspace_write', readOnly: false }),
+      expect.objectContaining({ workflowMode: 'normal' })
+    )
+  })
+
+  it('freezes a signed full_access posture only with Trusted Session', () => {
+    const signRunPermissionPosture = vi.fn(() => 'd'.repeat(64))
+
+    const snapshot = buildRemoteComposerQueuePermissionPosture({
+      provider: 'codex',
+      scope: 'workspace',
+      workspacePath: '/repo',
+      chatId: 'chat-1',
+      runId: 'remote-queue-fa',
+      text: 'Ship it',
+      approvalMode: 'auto_edit',
+      workflowMode: 'normal',
+      permissionPresetId: 'full_access',
+      trustedSessionGranted: true,
+      settings,
+      signRunPermissionPosture
+    })
+
     expect(snapshot.presetId).toBe('full_access')
     expect(snapshot.readOnly).toBe(false)
     expect(snapshot.approvalMode).toBe('auto_edit')
@@ -113,7 +142,7 @@ describe('buildRemoteComposerQueuePermissionPosture', () => {
     )
   })
 
-  it('ignores a non-full_access permissionPresetId (only full_access is honored)', () => {
+  it('ignores non-top-tier permissionPresetIds from queued remote prompts', () => {
     const signRunPermissionPosture = vi.fn(() => 'e'.repeat(64))
 
     const snapshot = buildRemoteComposerQueuePermissionPosture({

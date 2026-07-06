@@ -9,6 +9,7 @@ import {
   buildRunPermissionPostureSnapshot,
   type RunPermissionPostureContext
 } from '../RunPermissionPosture'
+import type { TrustedSessionScope } from '../TrustedSessionGrants'
 import {
   buildEnsembleParticipantPrompt,
   computeEnsemblePromptShellStamp,
@@ -257,6 +258,7 @@ export interface EnsembleOrchestratorDeps {
     effectivePermissions: EffectiveRunPermissions | null | undefined,
     context?: RunPermissionPostureContext | null
   ) => string
+  isTrustedSessionGranted?: (scope: TrustedSessionScope) => boolean
   dispatch: (
     payload: AgentRunPayload,
     event: EnsembleDispatchEvent
@@ -7780,7 +7782,8 @@ export class EnsembleOrchestrator {
     const permissions = this.resolveParticipantPermissions(
       chat,
       run.participant,
-      runtime.externalPathGrants
+      runtime.externalPathGrants,
+      { ensembleLaneId: run.laneId }
     )
     const workflowMode = chat.workflowMode === 'plan' ? 'plan' : 'normal'
     const context: RunPermissionPostureContext = {
@@ -7790,7 +7793,9 @@ export class EnsembleOrchestrator {
       appChatId: wakeup.chatId,
       prompt: runtime.prompt,
       workflowMode,
-      runtimeProfileId: run.participant.runtimeProfileId
+      runtimeProfileId: run.participant.runtimeProfileId,
+      ensembleParticipantId: run.participant.id,
+      ensembleLaneId: run.laneId
     }
     return buildRunPermissionPostureSnapshot({
       approvalMode: permissions.approvalMode,
@@ -8766,7 +8771,8 @@ export class EnsembleOrchestrator {
       const permissions = this.resolveParticipantPermissions(
         chat,
         participant,
-        runtime.externalPathGrants
+        runtime.externalPathGrants,
+        { ensembleLaneId: run.laneId }
       )
       // 1.0.4-AF — merge the round-scoped `selfReflective` flag (set
       // by `/discuss` at startRound) into the config so the prompt
@@ -8883,7 +8889,8 @@ export class EnsembleOrchestrator {
                   appChatId: chat.appChatId,
                   prompt: promptWithDiscordContext,
                   workflowMode: chat.workflowMode === 'plan' ? 'plan' : 'normal',
-                  runtimeProfileId: participant.runtimeProfileId
+                  runtimeProfileId: participant.runtimeProfileId,
+                  ensembleParticipantId: participant.id
                 }
               )
             }
@@ -9788,7 +9795,9 @@ export class EnsembleOrchestrator {
                   appChatId: chat.appChatId,
                   prompt: promptWithDiscordContext,
                   workflowMode: chat.workflowMode === 'plan' ? 'plan' : 'normal',
-                  runtimeProfileId: participant.runtimeProfileId
+                  runtimeProfileId: participant.runtimeProfileId,
+                  ensembleParticipantId: participant.id,
+                  ensembleLaneId: run.laneId
                 }
               )
             }
@@ -11330,6 +11339,7 @@ export class EnsembleOrchestrator {
       ignoreWorkSessionOverride?: boolean
       ignoreOverrides?: boolean
       presetId?: string | null
+      ensembleLaneId?: string | null
     } = {}
   ): EffectiveRunPermissions {
     // P1b — unattended (scheduled/workflow) ensemble clamp. A scheduled
@@ -11391,7 +11401,22 @@ export class EnsembleOrchestrator {
       workSession?.status === 'active' &&
       !options.ignoreWorkSessionOverride &&
       !options.presetId
-    const presetId = options.presetId || (sessionActive ? workSession.permissionPresetId : participant.permissionPresetId)
+    const requestedPresetId =
+      options.presetId || (sessionActive ? workSession.permissionPresetId : participant.permissionPresetId)
+    const trustedSessionGranted =
+      requestedPresetId === 'full_access' &&
+      this.deps.isTrustedSessionGranted?.({
+        chatId: chat.appChatId,
+        provider: participant.provider,
+        workspacePath: chat.scope === 'global' ? undefined : chat.workspacePath,
+        ensembleParticipantId: participant.id,
+        ensembleLaneId: options.ensembleLaneId,
+        runtimeProfileId: participant.runtimeProfileId
+      }) === true
+    const presetId =
+      requestedPresetId === 'full_access' && !trustedSessionGranted
+        ? 'workspace_write'
+        : requestedPresetId
     return resolveEffectiveRunPermissions({
       provider: participant.provider,
       workspacePath: chat.scope === 'global' ? undefined : chat.workspacePath,

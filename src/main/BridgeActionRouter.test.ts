@@ -14,7 +14,7 @@ import type {
 } from './remote/RemoteDeviceAuditLedger'
 import type { BridgeActionPayload } from './BridgeActionPayload'
 
-describe('approvalModeFromPayload — Full-access allowlist gating', () => {
+describe('approvalModeFromPayload — auto-edit preset allowlist gating', () => {
   const payload = (extra: Record<string, unknown>): BridgeActionPayload =>
     ({
       kind: 'composerPrompt',
@@ -25,21 +25,24 @@ describe('approvalModeFromPayload — Full-access allowlist gating', () => {
       ...extra
     }) as unknown as BridgeActionPayload
 
-  it('normalizes a full_access preset to auto_edit regardless of approvalMode', () => {
-    // Escalation-prevention: a low approvalMode must NOT let full_access slip past
+  it('normalizes top-level auto-edit presets to auto_edit regardless of approvalMode', () => {
+    // Escalation-prevention: a low approvalMode must NOT let auto-edit slip past
     // the workspace allowlist (allowedApprovalModes) — it is gated as auto_edit.
     expect(
       approvalModeFromPayload(payload({ approvalMode: 'default', permissionPresetId: 'full_access' }))
     ).toBe('auto_edit')
     expect(approvalModeFromPayload(payload({ permissionPresetId: 'full_access' }))).toBe('auto_edit')
-  })
-
-  it('passes through the raw approvalMode when the preset is not full_access', () => {
     expect(
       approvalModeFromPayload(
         payload({ approvalMode: 'default', permissionPresetId: 'workspace_write' })
       )
-    ).toBe('default')
+    ).toBe('auto_edit')
+  })
+
+  it('passes through the raw approvalMode when the preset is not auto-edit tier', () => {
+    expect(approvalModeFromPayload(payload({ approvalMode: 'default', permissionPresetId: 'default' }))).toBe(
+      'default'
+    )
     expect(approvalModeFromPayload(payload({ approvalMode: 'plan' }))).toBe('plan')
     expect(approvalModeFromPayload(payload({}))).toBeUndefined()
   })
@@ -72,9 +75,8 @@ describe('approvalModeFromPayload — Full-access allowlist gating', () => {
   })
 
   it('also gates workspace_write roster seats as auto_edit (the roster honors it)', () => {
-    // The composer drops a top-level workspace_write to its raw approvalMode
-    // (only full_access is honored there), but the roster HONORS workspace_write —
-    // it auto-edits (sandbox-contained), so it must clear the same auto_edit gate.
+    // workspace_write auto-edits (sandbox-contained), so it must clear the same
+    // auto_edit gate as full_access even though it does not drop host sandboxing.
     expect(
       approvalModeFromPayload(roster([{ provider: 'codex', permissionPresetId: 'workspace_write' }]))
     ).toBe('auto_edit')
