@@ -29,6 +29,7 @@ import { ComposerPlusPicker } from '../components/ComposerPlusPicker'
 import type { ComposerPlusPickerSection } from '../components/ComposerPlusPicker'
 import { ComposerProviderPicker } from '../components/ComposerProviderPicker'
 import { ComposerSlashMenu } from '../components/ComposerSlashMenu'
+import { TrustedSessionConfirmSheet } from '../components/TrustedSessionConfirmSheet'
 import { AnimatedDiffNumber } from '../components/AnimatedDiffNumber'
 import { HumanCollaborationInviteComposerControl } from './HumanCollaborationInviteComposerControl'
 import {
@@ -374,6 +375,7 @@ export interface ComposerProps {
   screenWatchUnavailableReason: any
   selectedComposerModelType: any
   selectedModelType: any
+  selectedRuntimeProfileId?: string | null
   selectedParticipant: any
   sessionRestartReason: any
   sessionTrust: any
@@ -661,6 +663,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     screenWatchUnavailableReason,
     selectedComposerModelType,
     selectedModelType,
+    selectedRuntimeProfileId,
     selectedParticipant,
     sessionRestartReason,
     sessionTrust,
@@ -783,9 +786,62 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
   const agentApprovalCardRef = useRef<HTMLDivElement | null>(null)
   const agentApprovalAppearedAtRef = useRef<number | null>(null)
   const [agentApprovalCountdownMs, setAgentApprovalCountdownMs] = useState<number | null>(null)
+  const [trustedSessionConfirmOpen, setTrustedSessionConfirmOpen] = useState(false)
+  const [trustedSessionApprovalId, setTrustedSessionApprovalId] = useState<string | null>(null)
   const agentApprovalTimeoutMs = pendingAgentApproval
     ? resolveApprovalTimeoutMs(pendingAgentApproval, approvalTimeouts)
     : null
+
+  const confirmTrustedSessionForLane = async (): Promise<void> => {
+    const approvalId = trustedSessionApprovalId
+    const approvalParticipantId =
+      approvalId && pendingAgentApproval?.id === approvalId
+        ? pendingAgentApproval.preview?.ensembleParticipant?.participantId
+        : null
+    const approvalParticipant =
+      approvalParticipantId && currentChat?.ensemble
+        ? currentChat.ensemble.participants.find((participant) => participant.id === approvalParticipantId)
+        : null
+    const targetParticipant =
+      approvalParticipant || (isCurrentEnsembleChat && selectedParticipant ? selectedParticipant : null)
+    if (!currentChat?.appChatId) {
+      setTrustedSessionConfirmOpen(false)
+      setTrustedSessionApprovalId(null)
+      return
+    }
+    const grantResult = await window.api.trustedSessionSet(
+      {
+        chatId: currentChat.appChatId,
+        provider: targetParticipant?.provider || currentProvider,
+        workspacePath: currentWorkspacePath || currentChat.workspacePath || null,
+        ensembleParticipantId: targetParticipant?.id || null,
+        runtimeProfileId:
+          targetParticipant?.runtimeProfileId || selectedRuntimeProfileId || null
+      },
+      true
+    )
+    if (!grantResult?.enabled) {
+      window.alert(grantResult?.error || 'Trusted Session could not be started for this lane.')
+      return
+    }
+    setTrustedSessionConfirmOpen(false)
+    setTrustedSessionApprovalId(null)
+    if (approvalParticipantId && currentChat?.ensemble) {
+      patchEnsembleParticipantById(approvalParticipantId, { permissionPresetId: 'full_access' })
+    } else if (isCurrentEnsembleChat && selectedParticipant) {
+      updateSelectedParticipant({ permissionPresetId: 'full_access' })
+    } else {
+      setApprovalMode('auto_edit')
+      rememberCurrentChatComposerSelection({
+        approvalMode: 'auto_edit',
+        workflowMode: 'normal',
+        permissionPresetId: 'full_access'
+      })
+    }
+    if (approvalId) {
+      await handleAgentApprovalAction(approvalId, 'accept')
+    }
+  }
 
   useEffect(() => {
     if (!pendingAgentApproval) {
@@ -2872,31 +2928,25 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               Allow for session
                             </button>
                           )}
-                          {/* Phase J3: "Trust this run" — accept the current modal AND enable
-                            session-wide YOLO so every subsequent approval auto-allows for
-                            the rest of the process lifetime. Never persisted to disk.
-                            Global `deny` policies still win. */}
+                          {/* Trusted Session is lane-scoped: the current ensemble participant or solo
+                            chat receives the signed full_access preset, then this request is
+                            accepted once. It deliberately does not enable process-wide YOLO or
+                            mint a hidden matching-service session grant via acceptForSession. */}
                           {!isNativeSubAgentPreferenceApproval(pendingAgentApproval) &&
-                            pendingAgentApproval.preview?.requestOnly !== true && (
-                            <button
-                              className="btn btn-sm btn-ghost"
-                              type="button"
-                              title="Auto-allow every approval prompt for the rest of this session. Restart the app to revert. Doesn't override globally-denied services."
-                              onClick={async () => {
-                                try {
-                                  await window.api.agenticYoloSet(true)
-                                } catch (error) {
-                                  console.error('Failed to enable YOLO session mode', error)
-                                }
-                                await handleAgentApprovalAction(
-                                  pendingAgentApproval.id,
-                                  'acceptForSession'
-                                )
-                              }}
-                            >
-                              Trust this session
-                            </button>
-                          )}
+                            pendingAgentApproval.preview?.requestOnly !== true &&
+                            !pendingAgentApproval.preview?.externalPathDetection && (
+                              <button
+                                className="btn btn-sm btn-ghost"
+                                type="button"
+                                title="Raise only this chat or selected participant to Trusted Session, then approve this request once. Other lanes are unchanged."
+                                onClick={() => {
+                                  setTrustedSessionApprovalId(pendingAgentApproval.id)
+                                  setTrustedSessionConfirmOpen(true)
+                                }}
+                              >
+                                Start Trusted Session...
+                              </button>
+                            )}
                           {(pendingAgentApproval.actions || ['decline']).includes('decline') && (
                             <button
                               className="btn btn-sm btn-ghost"
@@ -3716,19 +3766,28 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               : null
                           const effectiveProvider: ProviderId =
                             ensembleBinding?.provider ?? currentProvider
-                          const presetToMode = (preset: string | undefined): string => {
+                          const presetForSelection = (
+                            preset: string | undefined
+                          ): PermissionPresetId => {
                             if (preset === 'plan') return 'plan'
                             if (preset === 'read_only') return 'read_only'
-                            if (preset === 'workspace_write') return 'auto_edit'
-                            if (preset === 'full_access') return 'auto_edit'
+                            if (preset === 'workspace_write') return 'workspace_write'
+                            if (preset === 'full_access') return 'full_access'
                             return 'default'
                           }
-                          const modeToPreset = (mode: string): PermissionPresetId => {
-                            if (mode === 'plan') return 'plan'
-                            if (mode === 'read_only') return 'read_only'
-                            if (mode === 'auto_edit') return 'workspace_write'
+                          const selectionToPreset = (value: string): PermissionPresetId => {
+                            if (value === 'plan') return 'plan'
+                            if (value === 'read_only') return 'read_only'
+                            if (value === 'workspace_write') return 'workspace_write'
+                            if (value === 'full_access') return 'full_access'
                             return 'default'
                           }
+                          const presetToApprovalMode = (preset: PermissionPresetId): string =>
+                            preset === 'plan' || preset === 'read_only'
+                              ? 'plan'
+                              : preset === 'workspace_write' || preset === 'full_access'
+                                ? 'auto_edit'
+                                : 'default'
                           const effectiveWorkflowMode =
                             normalizeComposerWorkflowMode(workflowMode) ||
                             normalizeComposerWorkflowMode(
@@ -3737,20 +3796,39 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             normalizeComposerWorkflowMode(currentChat?.workflowMode) ||
                             'normal'
                           const effectiveSelectedPermission = ensembleBinding
-                            ? presetToMode(ensembleBinding.permissionPresetId)
-                            : approvalMode === 'plan'
-                              ? effectiveWorkflowMode === 'plan'
-                                ? 'plan'
-                                : 'read_only'
-                              : approvalMode
+                            ? presetForSelection(ensembleBinding.permissionPresetId)
+                            : presetForSelection(
+                                typeof currentChat?.providerMetadata?.permissionPresetId === 'string'
+                                  ? currentChat.providerMetadata.permissionPresetId
+                                  : approvalMode === 'plan'
+                                    ? effectiveWorkflowMode === 'plan'
+                                      ? 'plan'
+                                      : 'read_only'
+                                    : approvalMode === 'auto_edit'
+                                      ? 'workspace_write'
+                                      : 'default'
+                              )
                           // Solo AND ensemble share one option list (single source
-                          // of truth). Full Workspace Access is a user-only
-                          // elevation — agents can't self-elevate — so it's offered
-                          // in the ensemble picker too; `handlePermissionSelection`
-                          // maps its `auto_edit` value to the `workspace_write`
-                          // preset via `modeToPreset` for the participant.
+                          // of truth). Values are real PermissionPresetIds so
+                          // workspace_write and full_access stay distinct when
+                          // persisted and signed for the selected lane.
                           const permissionPickerOptions: PermissionOption[] =
-                            composerPermissionOptions()
+                            composerPermissionOptions().map((option) => {
+                              if (option.value === 'workspace_write') {
+                                return {
+                                  ...option,
+                                  description: 'Workspace files; no per-action edit prompts.'
+                                }
+                              }
+                              if (option.value === 'full_access') {
+                                return {
+                                  ...option,
+                                  description: 'This chat/lane only; host-level tools when supported.',
+                                  danger: true
+                                }
+                              }
+                              return option
+                            })
                           const normalizedWorkspacePath = (currentWorkspace?.path || '').replace(
                             /\/+$/,
                             ''
@@ -3781,25 +3859,29 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               ? WORKSPACE_POLICY_SERVICES
                               : []
                           const handlePermissionSelection = (nextPermissionMode: string): void => {
+                            const nextPermissionPreset = selectionToPreset(nextPermissionMode)
+                            if (nextPermissionPreset === 'full_access') {
+                              setTrustedSessionApprovalId(null)
+                              setTrustedSessionConfirmOpen(true)
+                              return
+                            }
                             if (ensembleBinding) {
                               updateSelectedParticipant({
-                                permissionPresetId: modeToPreset(nextPermissionMode)
+                                permissionPresetId: nextPermissionPreset
                               })
                               return
                             }
-                            const nextApprovalMode =
-                              nextPermissionMode === 'plan' || nextPermissionMode === 'read_only'
-                                ? 'plan'
-                                : nextPermissionMode
+                            const nextApprovalMode = presetToApprovalMode(nextPermissionPreset)
                             const nextWorkflowMode: ChatWorkflowMode =
-                              nextPermissionMode === 'plan' ? 'plan' : 'normal'
+                              nextPermissionPreset === 'plan' ? 'plan' : 'normal'
                             // The actual mode change, deferred so an
                             // elevation warning can gate it (see below).
                             const applyMainSelection = (): void => {
                               setApprovalMode(nextApprovalMode)
                               rememberCurrentChatComposerSelection({
                                 approvalMode: nextApprovalMode,
-                                workflowMode: nextWorkflowMode
+                                workflowMode: nextWorkflowMode,
+                                permissionPresetId: nextPermissionPreset
                               })
                               if (
                                 currentProvider === 'gemini' &&
@@ -3828,6 +3910,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               ackKey: elevation.ackKey,
                               persistAck: elevation.persistAckOnConfirm,
                               toMode: nextApprovalMode,
+                              permissionPresetId: nextPermissionPreset,
                               apply: applyMainSelection
                             })
                           }
@@ -3844,9 +3927,39 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             void handleSetAgenticWorkspaceGrant(service, enabled, effectiveProvider)
                           }
                           const applyAllParticipants =
-                            ensembleBinding && (currentChat?.ensemble?.participants.length || 0) > 1
+                            ensembleBinding &&
+                            effectiveSelectedPermission !== 'full_access' &&
+                            (currentChat?.ensemble?.participants.length || 0) > 1
                               ? applyEnsemblePermissionsToAllParticipants
                               : undefined
+                          const stopTrustedSessionForPicker = (): void => {
+                            if (currentChat?.appChatId) {
+                              void window.api.trustedSessionSet(
+                                {
+                                  chatId: currentChat.appChatId,
+                                  provider: effectiveProvider,
+                                  workspacePath:
+                                    currentWorkspacePath || currentChat.workspacePath || null,
+                                  ensembleParticipantId: ensembleBinding?.id || null,
+                                  runtimeProfileId:
+                                    ensembleBinding?.runtimeProfileId ||
+                                    selectedRuntimeProfileId ||
+                                    null
+                                },
+                                false
+                              )
+                            }
+                            if (ensembleBinding) {
+                              updateSelectedParticipant({ permissionPresetId: 'workspace_write' })
+                              return
+                            }
+                            setApprovalMode('auto_edit')
+                            rememberCurrentChatComposerSelection({
+                              approvalMode: 'auto_edit',
+                              workflowMode: 'normal',
+                              permissionPresetId: 'workspace_write'
+                            })
+                          }
                           const pickerDisabled =
                             isCurrentComposerLocked ||
                             (effectiveProvider === 'gemini' && !geminiWorkspaceTrustReady)
@@ -3866,6 +3979,11 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               onToggleGrant={handleToggleGrantForPicker}
                               grantScopeLabel={ensembleBinding ? 'participant' : 'workspace'}
                               onApplyToAllParticipants={applyAllParticipants}
+                              onStartTrustedSession={() => {
+                                setTrustedSessionApprovalId(null)
+                                setTrustedSessionConfirmOpen(true)
+                              }}
+                              onStopTrustedSession={stopTrustedSessionForPicker}
                               disabled={pickerDisabled}
                             />
                           )
@@ -3884,9 +4002,9 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                           />
                         )}
 
-                        {/* Session-scoped YOLO indicator. Kept compact so
-                          trust mode reads as an active permission posture,
-                          not as an error or warning banner. */}
+                        {/* Legacy process-wide auto-approval indicator. New Trusted Session
+                          elevation is lane-scoped and does not enable this switch, but
+                          the stop chip remains visible if an older/remote path turned it on. */}
                         {sessionYoloMode.enabled && (
                           <button
                             type="button"
@@ -3899,13 +4017,13 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                 console.error('Failed to disable YOLO session mode', error)
                               }
                             }}
-                            title="YOLO trust mode is active: approval prompts auto-allow for this app session unless a global deny policy applies. Click to turn it off."
-                            aria-label="YOLO trust mode active. Click to turn it off."
+                            title="Legacy global auto-approval is active across this TaskWraith session. Click to stop."
+                            aria-label="Global auto-approval active. Click to turn it off."
                           >
                             <span className="composer-yolo-chip-icon" aria-hidden>
                               ⚠
                             </span>
-                            <span className="composer-yolo-chip-label">YOLO</span>
+                            <span className="composer-yolo-chip-label">Global auto-approval</span>
                           </button>
                         )}
                         {currentProvider === 'gemini' && !isCurrentGlobalChat && (
@@ -4596,6 +4714,26 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
               <WelcomeHeatmaps slots={welcomeHeatmapSlots} layout="single" />
             )}
             {isWelcomeChat && <NotificationZone />}
+            {trustedSessionConfirmOpen && (
+              <TrustedSessionConfirmSheet
+                subjectLabel={
+                  trustedSessionApprovalId &&
+                  pendingAgentApproval?.id === trustedSessionApprovalId &&
+                  pendingAgentApproval.preview?.ensembleParticipant?.role
+                    ? pendingAgentApproval.preview.ensembleParticipant.role
+                    : isCurrentEnsembleChat && selectedParticipant
+                      ? selectedParticipant.role || getProviderLabel(selectedParticipant.provider)
+                      : getProviderLabel(currentProvider)
+                }
+                onCancel={() => {
+                  setTrustedSessionConfirmOpen(false)
+                  setTrustedSessionApprovalId(null)
+                }}
+                onConfirm={() => {
+                  void confirmTrustedSessionForLane()
+                }}
+              />
+            )}
           </div>
   )
 }

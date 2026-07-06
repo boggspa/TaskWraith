@@ -8340,13 +8340,13 @@
 .composer-combined-picker-trigger[data-permission-value="read_only"] {
   border-color: color-mix(in srgb, #6fb6ff 36%, var(--composer-border));
 }
-.composer-combined-picker-trigger[data-permission-value="auto_edit"],
-.composer-combined-picker-trigger[data-permission-value="auto_edit"]
+.composer-combined-picker-trigger[data-permission-value="workspace_write"],
+.composer-combined-picker-trigger[data-permission-value="workspace_write"]
   .composer-combined-picker-trigger-primary {
-  color: #ef4444 !important;
+  color: #f59e0b !important;
 }
-.composer-combined-picker-trigger[data-permission-value="auto_edit"] {
-  border-color: color-mix(in srgb, #ef4444 36%, var(--composer-border));
+.composer-combined-picker-trigger[data-permission-value="workspace_write"] {
+  border-color: color-mix(in srgb, #f59e0b 42%, var(--composer-border));
 }
 /* `default` intentionally has no override — it inherits the
  * neutral chip palette, matching real Codex's untinted
@@ -8363,9 +8363,19 @@
   .composer-combined-picker-row-label {
   color: #6fb6ff;
 }
-.composer-combined-picker-row[data-permission-value="auto_edit"]
+.composer-combined-picker-row[data-permission-value="workspace_write"]
   .composer-combined-picker-row-label {
-  color: #ef4444;
+  color: #f59e0b;
+}
+.composer-combined-picker-trigger[data-permission-value="full_access"],
+.composer-combined-picker-trigger[data-permission-value="full_access"]
+  .composer-combined-picker-trigger-primary,
+.composer-combined-picker-row[data-permission-value="full_access"]
+  .composer-combined-picker-row-label {
+  color: #dc2626 !important;
+}
+.composer-combined-picker-trigger[data-permission-value="full_access"] {
+  border-color: color-mix(in srgb, #dc2626 48%, var(--composer-border));
 }
 
 /* Selected-row checkmark adopts the same tint so the active
@@ -8381,9 +8391,13 @@
   .composer-combined-picker-check {
   color: #6fb6ff;
 }
-.composer-combined-picker-row[data-permission-value="auto_edit"].is-selected
+.composer-combined-picker-row[data-permission-value="workspace_write"].is-selected
   .composer-combined-picker-check {
-  color: #ef4444;
+  color: #f59e0b;
+}
+.composer-combined-picker-row[data-permission-value="full_access"].is-selected
+  .composer-combined-picker-check {
+  color: #dc2626;
 }
 
 /*
@@ -8400,42 +8414,42 @@
  * carries `!important` for cascade reasons documented above.
  */
 [data-composer-style="codex"]
-  .composer-combined-picker-trigger[data-permission-value="auto_edit"],
+  .composer-combined-picker-trigger[data-permission-value="workspace_write"],
 [data-composer-style="codex"]
-  .composer-combined-picker-trigger[data-permission-value="auto_edit"]
+  .composer-combined-picker-trigger[data-permission-value="workspace_write"]
   .composer-combined-picker-trigger-primary {
   color: #ffa45c !important;
 }
 [data-composer-style="codex"]
-  .composer-combined-picker-trigger[data-permission-value="auto_edit"] {
+  .composer-combined-picker-trigger[data-permission-value="workspace_write"] {
   border-color: color-mix(in srgb, #ffa45c 36%, var(--composer-border));
 }
 [data-composer-style="codex"]
-  .composer-combined-picker-row[data-permission-value="auto_edit"]
+  .composer-combined-picker-row[data-permission-value="workspace_write"]
   .composer-combined-picker-row-label {
   color: #ffa45c;
 }
 [data-composer-style="codex"]
-  .composer-combined-picker-row[data-permission-value="auto_edit"].is-selected
+  .composer-combined-picker-row[data-permission-value="workspace_write"].is-selected
   .composer-combined-picker-check {
   color: #ffa45c;
 }
 
 /* Codex shell, light theme — saturated orange variant. */
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"]
-  .composer-combined-picker-trigger[data-permission-value="auto_edit"],
+  .composer-combined-picker-trigger[data-permission-value="workspace_write"],
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"]
-  .composer-combined-picker-trigger[data-permission-value="auto_edit"]
+  .composer-combined-picker-trigger[data-permission-value="workspace_write"]
   .composer-combined-picker-trigger-primary {
   color: #d97706 !important;
 }
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"]
-  .composer-combined-picker-row[data-permission-value="auto_edit"]
+  .composer-combined-picker-row[data-permission-value="workspace_write"]
   .composer-combined-picker-row-label {
   color: #d97706;
 }
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"]
-  .composer-combined-picker-row[data-permission-value="auto_edit"].is-selected
+  .composer-combined-picker-row[data-permission-value="workspace_write"].is-selected
   .composer-combined-picker-check {
   color: #d97706;
 }
@@ -9697,11 +9711,18 @@
   color: #1976d2 !important;
 }
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
-  .composer-combined-picker-trigger[data-permission-value="auto_edit"],
+  .composer-combined-picker-trigger[data-permission-value="workspace_write"],
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
-  .composer-combined-picker-trigger[data-permission-value="auto_edit"]
+  .composer-combined-picker-trigger[data-permission-value="workspace_write"]
   .composer-combined-picker-trigger-primary {
-  color: #b91c1c !important;
+  color: #d97706 !important;
+}
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
+  .composer-combined-picker-trigger[data-permission-value="full_access"],
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
+  .composer-combined-picker-trigger[data-permission-value="full_access"]
+  .composer-combined-picker-trigger-primary {
+  color: #991b1b !important;
 }
 /* Popover row labels — same light-theme saturation. */
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
@@ -9715,9 +9736,14 @@
   color: #1976d2;
 }
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
-  .composer-combined-picker-row[data-permission-value="auto_edit"]
+  .composer-combined-picker-row[data-permission-value="workspace_write"]
   .composer-combined-picker-row-label {
-  color: #b91c1c;
+  color: #d97706;
+}
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
+  .composer-combined-picker-row[data-permission-value="full_access"]
+  .composer-combined-picker-row-label {
+  color: #991b1b;
 }
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
   .composer-combined-picker-row[data-permission-value="plan"].is-selected
@@ -9730,9 +9756,14 @@
   color: #1976d2;
 }
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
-  .composer-combined-picker-row[data-permission-value="auto_edit"].is-selected
+  .composer-combined-picker-row[data-permission-value="workspace_write"].is-selected
   .composer-combined-picker-check {
-  color: #b91c1c;
+  color: #d97706;
+}
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
+  .composer-combined-picker-row[data-permission-value="full_access"].is-selected
+  .composer-combined-picker-check {
+  color: #991b1b;
 }
 
 /* Codex bottom-row controls: model/permission/provider chip
@@ -9764,7 +9795,9 @@
   color: rgba(25, 118, 210, 0.72) !important;
 }
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"]
-  [data-composer-control="permission"][data-permission-value="auto_edit"]::after {
+  [data-composer-control="permission"][data-permission-value="workspace_write"]::after,
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"]
+  [data-composer-control="permission"][data-permission-value="full_access"]::after {
   color: rgba(185, 28, 28, 0.72) !important;
 }
 

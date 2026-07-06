@@ -294,7 +294,9 @@
   color: color-mix(in srgb, #6fb6ff 72%, transparent);
 }
 [data-composer-style="codex"]
-  [data-composer-control="permission"][data-permission-value="auto_edit"]::after {
+  [data-composer-control="permission"][data-permission-value="workspace_write"]::after,
+[data-composer-style="codex"]
+  [data-composer-control="permission"][data-permission-value="full_access"]::after {
   color: color-mix(in srgb, #ef4444 72%, transparent);
 }
 
@@ -4270,7 +4272,7 @@
 
 /* Closed-state chip — rim + faint amber tint + amber border. */
 [data-composer-style="default"][data-composer-style="default"][data-composer-style="default"]
-  .composer-combined-picker-trigger[data-permission-value="auto_edit"] {
+  .composer-combined-picker-trigger[data-permission-value="workspace_write"] {
   color: color-mix(in srgb, #f0a93f 72%, var(--text-primary)) !important;
   border-color: color-mix(in srgb, #f0a93f 50%, var(--composer-border)) !important;
   background: color-mix(in srgb, #f0a93f 8%, transparent);
@@ -4281,14 +4283,14 @@
  * 08), so tint it directly — one class deeper than the trigger
  * selector above to clear shard 08's `-primary !important` rule. */
 [data-composer-style="default"][data-composer-style="default"][data-composer-style="default"]
-  .composer-combined-picker-trigger[data-permission-value="auto_edit"]
+  .composer-combined-picker-trigger[data-permission-value="workspace_write"]
   .composer-combined-picker-trigger-primary {
   color: color-mix(in srgb, #f0a93f 72%, var(--text-primary)) !important;
 }
 
 /* Hover — slightly firmer amber rim, still calm. */
 [data-composer-style="default"][data-composer-style="default"][data-composer-style="default"]
-  .composer-combined-picker-trigger[data-permission-value="auto_edit"]:hover:not(:disabled) {
+  .composer-combined-picker-trigger[data-permission-value="workspace_write"]:hover:not(:disabled) {
   border-color: color-mix(in srgb, #f0a93f 62%, var(--composer-border)) !important;
   background: color-mix(in srgb, #f0a93f 12%, transparent);
 }
@@ -4299,12 +4301,12 @@
  * lives on <html>, so the descendant selector still scopes it to
  * the native shell. */
 [data-composer-style="default"][data-composer-style="default"][data-composer-style="default"]
-  .composer-combined-picker-row[data-permission-value="auto_edit"]
+  .composer-combined-picker-row[data-permission-value="workspace_write"]
   .composer-combined-picker-row-label {
   color: color-mix(in srgb, #f0a93f 72%, var(--text-primary));
 }
 [data-composer-style="default"][data-composer-style="default"][data-composer-style="default"]
-  .composer-combined-picker-row[data-permission-value="auto_edit"].is-selected
+  .composer-combined-picker-row[data-permission-value="workspace_write"].is-selected
   .composer-combined-picker-check {
   color: color-mix(in srgb, #f0a93f 72%, var(--text-primary));
 }

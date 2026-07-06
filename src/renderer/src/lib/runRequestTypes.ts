@@ -12,6 +12,7 @@ import type {
   ChatWorkflowMode,
   ExternalPathGrant,
   GeminiWorktreeConfig,
+  PermissionPresetId,
   ProviderRunReroute,
   RunWarning
 } from '../../../main/store/types'
@@ -28,6 +29,7 @@ export interface QueuedRunRequest {
   selectedModelType: string
   customModel: string
   approvalMode: string
+  permissionPresetId?: PermissionPresetId
   workflowMode?: ChatWorkflowMode
   sessionTrust: boolean
   imageAttachments: ImageAttachment[]

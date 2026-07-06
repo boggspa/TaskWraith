@@ -21,7 +21,7 @@
  * permission picker.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type {
   AgenticServiceId,
@@ -32,10 +32,14 @@ import type {
 import type { WorkspacePolicyService } from '../lib/workspacePolicyServices'
 
 export interface PermissionOption {
-  /** Internal token (e.g. 'plan' | 'default' | 'auto_edit'). */
+  /** Internal token, usually a PermissionPresetId. */
   value: string
   /** Human-readable label as it appears in the popover row + chip. */
   label: string
+  /** Optional explanatory copy under the row label. */
+  description?: string
+  /** Render this row as a high-risk permission action. */
+  danger?: boolean
 }
 
 interface CombinedPermissionsPickerProps {
@@ -59,6 +63,14 @@ interface CombinedPermissionsPickerProps {
   /** Ensemble-only: copy the current permission preset + grants to every participant. */
   onApplyToAllParticipants?: () => void
   /**
+   * Special high-authority lane elevation. When present, selecting the
+   * `full_access` row opens the caller-owned confirmation flow instead of
+   * directly writing the preset.
+   */
+  onStartTrustedSession?: () => void
+  /** Downgrade the selected lane out of Trusted Session. */
+  onStopTrustedSession?: () => void
+  /**
    * When true, the open popover re-anchors to the trigger on scroll/resize.
    * Default false keeps the composer's behaviour byte-identical; Settings →
    * Roster passes true because its pickers live inside a scrolling list.
@@ -79,6 +91,8 @@ export function CombinedPermissionsPicker({
   grantScopeLabel = 'workspace',
   disabled,
   onApplyToAllParticipants,
+  onStartTrustedSession,
+  onStopTrustedSession,
   repositionOnScroll
 }: CombinedPermissionsPickerProps): React.JSX.Element {
   const triggerRef = useRef<HTMLButtonElement | null>(null)
@@ -181,6 +195,21 @@ export function CombinedPermissionsPicker({
   }, [open])
 
   // Arrow navigation.
+  const choosePermissionOption = useCallback((option: PermissionOption | undefined): void => {
+    if (!option) return
+    if (option.value === 'full_access' && onStartTrustedSession) {
+      if (selectedPermission === 'full_access' && onStopTrustedSession) {
+        onStopTrustedSession()
+      } else if (selectedPermission !== 'full_access') {
+        onStartTrustedSession()
+      }
+      setOpen(false)
+      return
+    }
+    onSelectPermission(option.value)
+    setOpen(false)
+  }, [onSelectPermission, onStartTrustedSession, onStopTrustedSession, selectedPermission])
+
   useEffect(() => {
     if (!open) return
     const handleArrowKey = (event: KeyboardEvent) => {
@@ -207,8 +236,7 @@ export function CombinedPermissionsPicker({
       } else if (event.key === 'Enter' || event.key === ' ') {
         event.preventDefault()
         if (focusedColumn === 'permission') {
-          const option = permissionOptions[permissionHighlight]
-          if (option) onSelectPermission(option.value)
+          choosePermissionOption(permissionOptions[permissionHighlight])
         } else {
           const service = grantServices[grantHighlight]
           if (service) {
@@ -230,7 +258,7 @@ export function CombinedPermissionsPicker({
     permissionHighlight,
     grantHighlight,
     enabledGrantIds,
-    onSelectPermission,
+    choosePermissionOption,
     onToggleGrant
   ])
 
@@ -251,37 +279,54 @@ export function CombinedPermissionsPicker({
         className={`composer-combined-picker-column composer-combined-picker-permissions ${focusedColumn === 'permission' ? 'is-focused' : ''}`}
       >
         <div className="composer-combined-picker-column-header">Permissions</div>
-        {permissionOptions.map((option, idx) => (
-          <button
-            key={option.value}
-            type="button"
-            data-permission-value={option.value}
-            className={`composer-combined-picker-row ${option.value === selectedPermission ? 'is-selected' : ''} ${idx === permissionHighlight && focusedColumn === 'permission' ? 'is-highlighted' : ''}`}
-            onMouseEnter={() => {
-              setFocusedColumn('permission')
-              setPermissionHighlight(idx)
-            }}
-            onClick={() => onSelectPermission(option.value)}
-          >
-            <span className="composer-combined-picker-row-label">{option.label}</span>
-            {option.value === selectedPermission && (
-              <span className="composer-combined-picker-check" aria-hidden>
-                ✓
+        {permissionOptions.map((option, idx) => {
+          const isTrustedSession = option.value === 'full_access'
+          return (
+            <button
+              key={option.value}
+              type="button"
+              data-permission-value={option.value}
+              data-danger={option.danger || isTrustedSession ? 'true' : undefined}
+              className={`composer-combined-picker-row ${option.value === selectedPermission ? 'is-selected' : ''} ${idx === permissionHighlight && focusedColumn === 'permission' ? 'is-highlighted' : ''}`}
+              onMouseEnter={() => {
+                setFocusedColumn('permission')
+                setPermissionHighlight(idx)
+              }}
+              onClick={() => choosePermissionOption(option)}
+            >
+              <span className="composer-combined-picker-row-body">
+                <span className="composer-combined-picker-row-label">{option.label}</span>
+                {option.description && (
+                  <span className="composer-combined-picker-row-sub">{option.description}</span>
+                )}
               </span>
-            )}
-          </button>
-        ))}
+              {option.value === selectedPermission && (
+                <span className="composer-combined-picker-check" aria-hidden>
+                  ✓
+                </span>
+              )}
+            </button>
+          )
+        })}
         {onApplyToAllParticipants ? (
           <button
             type="button"
             className="composer-combined-picker-apply-all"
             onClick={() => {
+              if (selectedPermission === 'full_access') return
               onApplyToAllParticipants()
               setOpen(false)
             }}
-            title="Copy this participant's permission mode and tool grants to every ensemble participant"
+            disabled={selectedPermission === 'full_access'}
+            title={
+              selectedPermission === 'full_access'
+                ? 'Trusted Session must be enabled per participant.'
+                : "Copy this participant's permission mode and tool grants to every ensemble participant"
+            }
           >
-            Apply to all participants
+            {selectedPermission === 'full_access'
+              ? 'Apply to all disabled for Trusted Session'
+              : 'Apply to all participants'}
           </button>
         ) : null}
       </div>

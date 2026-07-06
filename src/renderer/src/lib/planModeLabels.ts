@@ -1,16 +1,18 @@
 export const READ_ONLY_RECON_LABEL = 'Read-Only/Recon'
 export const PLAN_LABEL = 'Plan'
 export const DEFAULT_APPROVAL_LABEL = 'Default Approval'
-export const FULL_WORKSPACE_ACCESS_LABEL = 'Full Workspace Access'
+export const WORKSPACE_WRITE_LABEL = 'Workspace Write'
+export const TRUSTED_SESSION_LABEL = 'Trusted Session'
 
 /**
  * Permission preset options offered by the composer's permission picker — used
- * for BOTH the solo composer and every ensemble participant. Full Workspace
- * Access (`auto_edit`) is a USER-ONLY elevation (agents can't self-elevate to
- * it), so it is safe — and intended — to offer in the ensemble picker too.
+ * for BOTH the solo composer and every ensemble participant. These values are
+ * real PermissionPresetIds, not provider approval-mode aliases, so
+ * `workspace_write` and `full_access` survive a round-trip to the signed run
+ * posture instead of collapsing into the same `auto_edit` value.
  *
  * Single source of truth on purpose: the solo and ensemble lists used to be
- * duplicated inline and drifted, silently dropping Full Workspace Access from
+ * duplicated inline and drifted, silently dropping the elevated presets from
  * the ensemble picker. Keep both pickers reading from here so it can't recur.
  */
 export function composerPermissionOptions(): Array<{ value: string; label: string }> {
@@ -18,7 +20,8 @@ export function composerPermissionOptions(): Array<{ value: string; label: strin
     { value: 'plan', label: PLAN_LABEL },
     { value: 'read_only', label: READ_ONLY_RECON_LABEL },
     { value: 'default', label: DEFAULT_APPROVAL_LABEL },
-    { value: 'auto_edit', label: FULL_WORKSPACE_ACCESS_LABEL }
+    { value: 'workspace_write', label: WORKSPACE_WRITE_LABEL },
+    { value: 'full_access', label: TRUSTED_SESSION_LABEL }
   ]
 }
 

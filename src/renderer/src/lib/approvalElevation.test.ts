@@ -25,7 +25,7 @@ describe('isApprovalElevation', () => {
 describe('decideApprovalElevation', () => {
   const empty: ReadonlySet<string> = new Set<string>()
 
-  it('Tier 2 every time when raising to Full Workspace Access (auto_edit)', () => {
+  it('Tier 2 every time when raising to a write-capable provider mode (auto_edit)', () => {
     const d = decideApprovalElevation({
       from: 'default',
       to: 'auto_edit',

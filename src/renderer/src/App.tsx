@@ -191,7 +191,12 @@ import {
 } from './lib/ensembleFanoutPolicy'
 import { removeChatFromAllProjects } from './lib/projectsStore'
 import { createWorkspaceBoardProvenance } from './lib/workspaceBoardProvenance'
-import { PLAN_LABEL, READ_ONLY_RECON_LABEL } from './lib/planModeLabels'
+import {
+  PLAN_LABEL,
+  READ_ONLY_RECON_LABEL,
+  TRUSTED_SESSION_LABEL,
+  WORKSPACE_WRITE_LABEL
+} from './lib/planModeLabels'
 import {
   GLOBAL_USAGE_WORKSPACE_ID,
   getChatProvider,
@@ -841,6 +846,17 @@ function approvalModeToPermissionPreset(
   return 'default'
 }
 
+function isPermissionPresetId(value: unknown): value is PermissionPresetId {
+  return (
+    value === 'read_only' ||
+    value === 'plan' ||
+    value === 'default' ||
+    value === 'workspace_write' ||
+    value === 'full_access' ||
+    value === 'custom'
+  )
+}
+
 function scheduleAfterPaint(callback: () => void, timeout = 700): () => void {
   if (typeof window === 'undefined') return () => {}
   const win = window as Window & {
@@ -998,9 +1014,9 @@ function App(): React.JSX.Element {
     return grouped
   }, [contextCompactionProgressByKey])
   const [activeSidebarChatId, setActiveSidebarChatId] = useState<string | null>(null)
-  // Phase J3: session-scoped YOLO mode visibility. Driven by main's
-  // `agentic-yolo-state` broadcasts so an indicator badge can show the
-  // user that approvals are being auto-allowed for the rest of the run.
+  // Legacy process-wide YOLO visibility. New Trusted Session is lane-scoped;
+  // this state only lets the composer show/stop an old global auto-approval
+  // switch if one is active inside the current process.
   const [sessionYoloMode, setSessionYoloModeState] = useState<{
     enabled: boolean
     enabledAt: string | null
@@ -1586,7 +1602,7 @@ function App(): React.JSX.Element {
   const [approvalMode, setApprovalMode] = useState<string>('default')
   // Permission-mode ELEVATION warning sheet. When a picker raise needs a
   // failsafe (Tier 1 → Default Approval, shown once per workspace+provider;
-  // Tier 2 → Full Workspace Access, shown every time), we defer the original
+  // Tier 2 → write/full access, shown every time), we defer the original
   // apply into `apply()` and stash the decision here; the sheet's confirm runs
   // `apply()` (and records the Tier-1 ack), cancel drops it (mode never raised).
   // Decision logic lives in `lib/approvalElevation.ts`.
@@ -1597,6 +1613,7 @@ function App(): React.JSX.Element {
     ackKey: string
     persistAck: boolean
     toMode: string
+    permissionPresetId?: PermissionPresetId | string
     apply: () => void
   } | null>(null)
   const [claudeBinaryPath, setClaudeBinaryPath] = useState('')
@@ -4422,6 +4439,7 @@ function App(): React.JSX.Element {
       metadata.workflowMode === 'plan' || metadata.workflowMode === 'normal'
         ? metadata.workflowMode
         : undefined
+    const workflowMode = metadataWorkflowMode || chat.workflowMode || 'normal'
     const runModel = getLastRequestedModelForProvider(chat, provider)
     const selected = isValidModelForProvider(provider, metadataModel)
       ? metadataModel
@@ -4449,15 +4467,24 @@ function App(): React.JSX.Element {
       typeof metadata.approvalMode === 'string'
         ? metadata.approvalMode
         : chat.settingsSnapshot?.approvalMode || approvalMode
+    const derivedPermissionPresetId = approvalModeToPermissionPreset(
+      resolvedApprovalMode,
+      workflowMode
+    )
+    const storedPermissionPresetId = isPermissionPresetId(metadata.permissionPresetId)
+      ? metadata.permissionPresetId
+      : undefined
+    const resolvedPermissionPresetId =
+      storedPermissionPresetId === 'full_access' && resolvedApprovalMode !== 'auto_edit'
+        ? derivedPermissionPresetId
+        : storedPermissionPresetId || derivedPermissionPresetId
     return {
       provider,
       selectedModelType: selected,
       customModel: typeof metadata.customModel === 'string' ? metadata.customModel : '',
       approvalMode: resolvedApprovalMode,
-      workflowMode:
-        metadataWorkflowMode ||
-        chat.workflowMode ||
-        'normal',
+      permissionPresetId: resolvedPermissionPresetId,
+      workflowMode,
       codexReasoningEffort:
         typeof metadata.codexReasoningEffort === 'string'
           ? metadata.codexReasoningEffort
@@ -4513,10 +4540,7 @@ function App(): React.JSX.Element {
       selection.selectedModelType === 'custom' && selection.customModel.trim()
         ? selection.customModel.trim()
         : selection.selectedModelType || defaults.model
-    const permissionPresetId: PermissionPresetId = approvalModeToPermissionPreset(
-      selection.approvalMode,
-      selection.workflowMode
-    )
+    const permissionPresetId: PermissionPresetId = selection.permissionPresetId
     const runtimeProfileId = getRuntimeProfileIdForChat(chat, provider)
     return {
       id: `ensemble-seed-${provider}-${globalThis.crypto?.randomUUID?.() || Date.now()}`,
@@ -9683,11 +9707,9 @@ function App(): React.JSX.Element {
       })
     }
 
-    // Phase J3: subscribe to YOLO state broadcasts + fetch the initial
-    // value at mount. Main resets `enabled: false` on every process
-    // start so any previous YOLO session is gone after an app restart;
-    // we still read the current value in case multiple windows are
-    // attached to the same main process.
+    // Legacy global auto-approval indicator. Main refuses new enable requests,
+    // but we still read the current value in case multiple windows are attached
+    // to a process with an older/global bypass already active.
     let yoloUnsubscribe: (() => void) | null = null
     if (typeof window.api.agenticYoloGet === 'function') {
       window.api
@@ -10065,6 +10087,7 @@ function App(): React.JSX.Element {
     selectedModelType: request.selectedModelType,
     customModel: request.customModel,
     approvalMode: request.approvalMode,
+    ...(request.permissionPresetId ? { permissionPresetId: request.permissionPresetId } : {}),
     ...(request.workflowMode ? { workflowMode: request.workflowMode } : {}),
     sessionTrust: request.sessionTrust,
     imageAttachments: request.imageAttachments.map((attachment) => ({
@@ -10194,6 +10217,7 @@ function App(): React.JSX.Element {
       selectedModelType: selectedModel,
       customModel: queuedProviderSelection?.customModel ?? request.customModel,
       approvalMode: queuedProviderSelection?.approvalMode ?? request.approvalMode,
+      permissionPresetId: queuedProviderSelection?.permissionPresetId ?? request.permissionPresetId,
       workflowMode: queuedProviderSelection?.workflowMode ?? request.workflowMode,
       sessionTrust: request.sessionTrust,
       imageAttachments: request.imageAttachments.map((attachment, index) => ({
@@ -10437,6 +10461,10 @@ function App(): React.JSX.Element {
       composerSelection?.workflowMode ??
       selectedChat?.workflowMode ??
       'normal'
+    const basePermissionPresetId =
+      composerSelection?.permissionPresetId ||
+      approvalModeToPermissionPreset(requestApprovalMode, requestWorkflowMode)
+    const requestPermissionPresetId: PermissionPresetId = basePermissionPresetId
     const requestReasoningEffort =
       provider === 'codex'
         ? composerSelection?.codexReasoningEffort || codexReasoningEffort
@@ -10485,6 +10513,7 @@ function App(): React.JSX.Element {
       selectedModelType: requestModel,
       customModel: requestCustomModel,
       approvalMode: requestApprovalMode,
+      permissionPresetId: requestPermissionPresetId,
       workflowMode: requestWorkflowMode,
       sessionTrust,
       imageAttachments: target?.imageAttachments ?? imageAttachments,
@@ -10969,6 +10998,7 @@ function App(): React.JSX.Element {
           customModel: request.customModel,
           overrideModel: request.overrideModel,
           approvalMode: request.approvalMode,
+          permissionPresetId: request.permissionPresetId,
           workflowMode: request.workflowMode,
           sessionTrust: request.sessionTrust,
           imageAttachments: request.imageAttachments,
@@ -15664,7 +15694,11 @@ function App(): React.JSX.Element {
     // main-side posture cap is downgrade-only, so a sticky 'plan' pill would
     // otherwise outrank the per-dispatch 'default' override and silently keep
     // the implement run read-only. This makes the trusted posture 'default'.
-    rememberCurrentChatComposerSelection({ approvalMode: 'default', workflowMode: 'normal' })
+    rememberCurrentChatComposerSelection({
+      approvalMode: 'default',
+      workflowMode: 'normal',
+      permissionPresetId: 'default'
+    })
     setApprovalMode('default')
     setCurrentChat((prev) => {
       if (!prev) return prev
@@ -17801,7 +17835,17 @@ function App(): React.JSX.Element {
     { value: 'plan', label: PLAN_LABEL },
     { value: 'read_only', label: READ_ONLY_RECON_LABEL },
     { value: 'default', label: 'Default Approval' },
-    { value: 'auto_edit', label: 'Full Workspace Access' }
+    {
+      value: 'workspace_write',
+      label: WORKSPACE_WRITE_LABEL,
+      description: 'Workspace files; no per-action edit prompts.'
+    },
+    {
+      value: 'full_access',
+      label: TRUSTED_SESSION_LABEL,
+      description: 'This chat only; host-level tools when supported.',
+      danger: true
+    }
   ]
   const sideSelectedApprovalMode = sideComposerSelection?.approvalMode || 'default'
   const sideComposerWorkflowMode =
@@ -17809,11 +17853,8 @@ function App(): React.JSX.Element {
     sideChat?.workflowMode ||
     (sideSelectedApprovalMode === 'plan' ? 'plan' : 'normal')
   const sideSelectedPermission =
-    sideSelectedApprovalMode === 'plan'
-      ? sideComposerWorkflowMode === 'normal'
-        ? 'read_only'
-        : 'plan'
-      : sideSelectedApprovalMode
+    sideComposerSelection?.permissionPresetId ||
+    approvalModeToPermissionPreset(sideSelectedApprovalMode, sideComposerWorkflowMode)
   const sideIsGlobalChat = sideChat ? isGlobalChat(sideChat) : false
   const sideGrantWorkspacePath = sideWorkspace?.path || ''
   const sideEnabledGrantIds = new Set(
@@ -23075,6 +23116,10 @@ function App(): React.JSX.Element {
       // model + reasoning + fast-mode selection (display)
       selectedModelType: viewerSelectedModel,
       selectedComposerModelType: viewerSelectedModel,
+      selectedRuntimeProfileId:
+        paneSlashParticipant?.runtimeProfileId ||
+        getRuntimeProfileIdForChat(viewerChat, viewerProvider) ||
+        null,
       customModel: paneViewerSelection.customModel || '',
       codexReasoningEffort: viewerCodexReasoning,
       codexReasoningOptions: viewerCodexReasoningOptionsRaw,
@@ -24173,6 +24218,10 @@ function App(): React.JSX.Element {
         // model + reasoning + fast-mode selection (display)
         selectedModelType: viewerSelectedModel,
         selectedComposerModelType: viewerSelectedModel,
+        selectedRuntimeProfileId:
+          paneSlashParticipant?.runtimeProfileId ||
+          getRuntimeProfileIdForChat(viewerChat, viewerProvider) ||
+          null,
         customModel: paneViewerSelection.customModel || '',
         codexReasoningEffort: viewerCodexReasoning,
         codexReasoningOptions: viewerCodexReasoningOptionsRaw,
@@ -24449,6 +24498,7 @@ function App(): React.JSX.Element {
     scheduleControls,
     selectedComposerModelType,
     selectedModelType,
+    selectedRuntimeProfileId,
     setApprovalMode,
     setClaudeFastMode,
     setClaudeReasoningEffort,
@@ -25398,6 +25448,7 @@ function App(): React.JSX.Element {
           tier={pendingElevation.tier}
           provider={pendingElevation.provider}
           workspaceLabel={pendingElevation.workspaceLabel}
+          permissionPresetId={pendingElevation.permissionPresetId}
           // Cancel = stay at the lower, safer mode; the deferred apply never runs.
           onCancel={() => setPendingElevation(null)}
           onConfirm={() => {

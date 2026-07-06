@@ -16,7 +16,11 @@ import {
   buildParticipantToolGrantPatch,
   getParticipantToolGrantIds
 } from '../lib/ensembleParticipantToolGrants'
-import { READ_ONLY_RECON_LABEL } from '../lib/planModeLabels'
+import {
+  READ_ONLY_RECON_LABEL,
+  TRUSTED_SESSION_LABEL,
+  WORKSPACE_WRITE_LABEL
+} from '../lib/planModeLabels'
 import { WORKSPACE_POLICY_SERVICES } from '../lib/workspacePolicyServices'
 import { CombinedModelPicker, type CombinedModelPickerModelOption } from './CombinedModelPicker'
 import { CombinedPermissionsPicker, type PermissionOption } from './CombinedPermissionsPicker'
@@ -28,8 +32,7 @@ import { ComposerProviderPicker } from './ComposerProviderPicker'
 export const PERMISSION_PRESET_OPTIONS: PermissionOption[] = [
   { value: 'read_only', label: READ_ONLY_RECON_LABEL },
   { value: 'default', label: 'Default approval' },
-  { value: 'workspace_write', label: 'Full workspace access' },
-  { value: 'full_access', label: 'Full access' }
+  { value: 'workspace_write', label: WORKSPACE_WRITE_LABEL }
 ]
 
 interface ParticipantPickerClusterProps {
@@ -70,7 +73,6 @@ export function ParticipantPickerCluster({
   // sub-labels). Avoids a runtime crash without coupling a literal default to
   // the churning AgenticServicesSettings shape.
   const services = agenticServices ?? ({} as AgenticServicesSettings)
-
   const modelOptions: CombinedModelPickerModelOption[] = defaults.modelOptions
   // Display the participant's model, mapping the agnostic 'cli-default' seed to
   // the provider's preferred id so the chip reads cleanly. The stored value is
@@ -134,6 +136,16 @@ export function ParticipantPickerCluster({
 
   const permissionOptions: PermissionOption[] = [
     ...PERMISSION_PRESET_OPTIONS,
+    ...(resolved.permissionPresetId === 'full_access'
+      ? [
+          {
+            value: 'full_access',
+            label: TRUSTED_SESSION_LABEL,
+            description: 'Active for this participant only; lower the permission to revoke.',
+            danger: true
+          }
+        ]
+      : []),
     ...(resolved.permissionPresetId === 'custom' ? [{ value: 'custom', label: 'Custom' }] : [])
   ]
   const enabledGrantIds = getParticipantToolGrantIds(participant)
@@ -175,7 +187,9 @@ export function ParticipantPickerCluster({
         permissionOptions={permissionOptions}
         selectedPermission={resolved.permissionPresetId}
         onSelectPermission={(value) =>
-          onPatch({ permissionPresetId: value as PermissionPresetId })
+          value === 'full_access'
+            ? undefined
+            : onPatch({ permissionPresetId: value as PermissionPresetId })
         }
         grantServices={WORKSPACE_POLICY_SERVICES}
         enabledGrantIds={enabledGrantIds}

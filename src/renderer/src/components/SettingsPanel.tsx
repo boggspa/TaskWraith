@@ -3434,7 +3434,7 @@ function SettingsProviderPauseControls({
                   <option value="default">Default Approval</option>
                   <option value="plan">Plan</option>
                   <option value="auto_edit">Auto Edit</option>
-                  <option value="full_access">Full Access</option>
+                  <option value="full_access">Trusted Session</option>
                 </select>
               </label>
             </>

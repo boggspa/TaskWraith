@@ -2327,23 +2327,39 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                               permissionOptions={sidePermissionOptions}
                               selectedPermission={sideSelectedPermission}
                               onSelectPermission={(nextPermissionValue) => {
+                                if (nextPermissionValue === 'full_access') return
+                                const nextPermissionPreset =
+                                  nextPermissionValue === 'plan' ||
+                                  nextPermissionValue === 'read_only' ||
+                                  nextPermissionValue === 'workspace_write'
+                                    ? nextPermissionValue
+                                    : 'default'
                                 const nextApprovalMode =
-                                  nextPermissionValue === 'read_only'
+                                  nextPermissionPreset === 'plan' ||
+                                  nextPermissionPreset === 'read_only'
                                     ? 'plan'
-                                    : nextPermissionValue
+                                    : nextPermissionPreset === 'workspace_write'
+                                      ? 'auto_edit'
+                                      : 'default'
                                 const nextWorkflowMode =
-                                  nextPermissionValue === 'plan' ? 'plan' : 'normal'
+                                  nextPermissionPreset === 'plan' ? 'plan' : 'normal'
                                 const applySideSelection = (): void => {
                                   rememberSideChatComposerSelection({
                                     approvalMode: nextApprovalMode,
-                                    workflowMode: nextWorkflowMode
+                                    workflowMode: nextWorkflowMode,
+                                    permissionPresetId: nextPermissionPreset
                                   })
                                 }
+                                const currentApprovalMode =
+                                  sideSelectedPermission === 'plan' ||
+                                  sideSelectedPermission === 'read_only'
+                                    ? 'plan'
+                                    : sideSelectedPermission === 'workspace_write' ||
+                                        sideSelectedPermission === 'full_access'
+                                      ? 'auto_edit'
+                                      : 'default'
                                 const elevation = decideApprovalElevation({
-                                  from:
-                                    sideSelectedPermission === 'read_only'
-                                      ? 'plan'
-                                      : sideSelectedPermission,
+                                  from: currentApprovalMode,
                                   to: nextApprovalMode,
                                   provider: sideComposerProvider,
                                   workspacePath: currentWorkspacePath,
@@ -2360,6 +2376,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                                   ackKey: elevation.ackKey,
                                   persistAck: elevation.persistAckOnConfirm,
                                   toMode: nextApprovalMode,
+                                  permissionPresetId: nextPermissionPreset,
                                   apply: applySideSelection
                                 })
                               }}
@@ -2369,6 +2386,63 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                               onToggleGrant={(service, enabled) =>
                                 void handleSetSideAgenticWorkspaceGrant(service, enabled)
                               }
+                              onStartTrustedSession={() => {
+                                const applySideTrustedSession = (): void => {
+                                  void window.api
+                                    .trustedSessionSet(
+                                      {
+                                        chatId: sideChat.appChatId,
+                                        provider: sideComposerProvider,
+                                        workspacePath:
+                                          sideWorkspace?.path || sideChat.workspacePath || null,
+                                        runtimeProfileId:
+                                          sideComposerSelection?.runtimeProfileId || null
+                                      },
+                                      true
+                                    )
+                                    .then((result) => {
+                                      if (!result?.enabled) {
+                                        window.alert(
+                                          result?.error ||
+                                            'Trusted Session could not be started for this side chat.'
+                                        )
+                                        return
+                                      }
+                                      rememberSideChatComposerSelection({
+                                        approvalMode: 'auto_edit',
+                                        workflowMode: 'normal',
+                                        permissionPresetId: 'full_access'
+                                      })
+                                    })
+                                }
+                                setPendingElevation({
+                                  tier: 2,
+                                  provider: sideComposerProvider,
+                                  workspaceLabel: currentWorkspace?.displayName ?? null,
+                                  ackKey: `${currentWorkspacePath || '__global__'}|${sideComposerProvider}`,
+                                  persistAck: false,
+                                  toMode: 'auto_edit',
+                                  permissionPresetId: 'full_access',
+                                  apply: applySideTrustedSession
+                                })
+                              }}
+                              onStopTrustedSession={() => {
+                                void window.api.trustedSessionSet(
+                                  {
+                                    chatId: sideChat.appChatId,
+                                    provider: sideComposerProvider,
+                                    workspacePath: sideWorkspace?.path || sideChat.workspacePath || null,
+                                    runtimeProfileId:
+                                      sideComposerSelection?.runtimeProfileId || null
+                                  },
+                                  false
+                                )
+                                rememberSideChatComposerSelection({
+                                  approvalMode: 'auto_edit',
+                                  workflowMode: 'normal',
+                                  permissionPresetId: 'workspace_write'
+                                })
+                              }}
                               disabled={isSideComposerLocked}
                             />
                           </>

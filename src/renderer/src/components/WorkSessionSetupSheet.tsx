@@ -43,13 +43,14 @@ const PERMISSION_PRESET_OPTIONS: { value: PermissionPresetId; label: string; hin
     value: 'workspace_write',
     label: 'Workspace write',
     hint: 'Read + write workspace files. Approval gates remain.'
-  },
-  {
-    value: 'full_access',
-    label: 'Full access',
-    hint: 'Read + write + shell + network. Approvals still fire for each action.'
   }
 ]
+
+function workSessionPermissionPreset(value: PermissionPresetId | undefined): PermissionPresetId {
+  return value === 'read_only' || value === 'plan' || value === 'default' || value === 'workspace_write'
+    ? value
+    : 'workspace_write'
+}
 
 const DEFAULT_MAX_ROUNDS = 38
 const DEFAULT_MAX_DURATION_MS = 6 * 60 * 60 * 1000
@@ -145,7 +146,7 @@ export function WorkSessionSetupSheet({
     (isRestartMode ? undefined : initial?.leadParticipantId) || enabledParticipants[0]?.id
   )
   const [permissionPresetId, setPermissionPresetId] = useState<PermissionPresetId>(
-    (isRestartMode ? undefined : initial?.permissionPresetId) || 'workspace_write'
+    workSessionPermissionPreset(isRestartMode ? undefined : initial?.permissionPresetId)
   )
   const [maxRoundsPerProvider, setMaxRoundsPerProvider] = useState<number>(
     isRestartMode ? DEFAULT_MAX_ROUNDS : (initial?.maxRoundsPerProvider ?? DEFAULT_MAX_ROUNDS)
@@ -186,7 +187,7 @@ export function WorkSessionSetupSheet({
         (isRestartMode ? undefined : initial?.leadParticipantId) || enabledParticipants[0]?.id
       )
       setPermissionPresetId(
-        (isRestartMode ? undefined : initial?.permissionPresetId) || 'workspace_write'
+        workSessionPermissionPreset(isRestartMode ? undefined : initial?.permissionPresetId)
       )
       setMaxRoundsPerProvider(
         isRestartMode ? DEFAULT_MAX_ROUNDS : (initial?.maxRoundsPerProvider ?? DEFAULT_MAX_ROUNDS)
@@ -381,7 +382,7 @@ export function WorkSessionSetupSheet({
                     if (!found) return
                     const o = found.overrides
                     if (o.permissionPresetId !== undefined) {
-                      setPermissionPresetId(o.permissionPresetId)
+                      setPermissionPresetId(workSessionPermissionPreset(o.permissionPresetId))
                     }
                     if (o.maxRoundsPerProvider !== undefined) {
                       setMaxRoundsPerProvider(o.maxRoundsPerProvider)

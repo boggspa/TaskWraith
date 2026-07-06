@@ -10,8 +10,9 @@
  * Tiers (mirrors the Claude / Codex desktop failsafes):
  *  - Tier 1 — raising up to Default Approval ('default'): a small, reassuring
  *    notice, shown ONCE per (workspace, provider).
- *  - Tier 2 — raising up to Full Workspace Access ('auto_edit'): a larger, stern
- *    notice, shown EVERY time the mode is raised to it (no suppression).
+ *  - Tier 2 — raising up to a write-capable preset (`workspace_write` or
+ *    `full_access`, both provider `auto_edit`): a larger, stern notice, shown
+ *    EVERY time the mode is raised to it (no suppression).
  * De-escalations (auto_edit → default, default → plan, …) never warn.
  */
 
@@ -71,7 +72,7 @@ export function decideApprovalElevation(
 
   const ackKey = approvalElevationAckKey(workspacePath, provider)
 
-  // Tier 2 — landing on Full Workspace Access. Always warn; never suppressed.
+  // Tier 2 — landing on a write-capable preset. Always warn; never suppressed.
   if (to === 'auto_edit') {
     return { tier: 2, ackKey, persistAckOnConfirm: false }
   }
