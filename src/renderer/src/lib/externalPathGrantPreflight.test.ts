@@ -75,6 +75,36 @@ describe('externalPathGrantPreflight', () => {
     ).toEqual(['codex', 'claude'])
   })
 
+  it('treats read grants as missing when a write grant is requested', () => {
+    const chat = ensembleChat()
+    expect(
+      missingExternalPathGrantProviders({
+        chat,
+        grants: [
+          grant({ provider: 'codex', path: '/new/workspace', access: 'read' }),
+          grant({ provider: 'claude', path: '/new/workspace', access: 'write' })
+        ],
+        path: '/new/workspace',
+        access: 'write'
+      })
+    ).toEqual(['codex'])
+  })
+
+  it('reports write gaps when a path has mixed read and write provider grants', () => {
+    const chat = ensembleChat()
+    const result = findExternalPathGrantGaps({
+      chat,
+      grants: [
+        grant({ provider: 'codex', path: '/extra/repo', access: 'read' }),
+        grant({ provider: 'claude', path: '/extra/repo', access: 'write' })
+      ],
+      primaryWorkspacePath: '/primary'
+    })
+    expect(result.gaps).toEqual([
+      { path: '/extra/repo', access: 'write', missingProviders: ['codex'] }
+    ])
+  })
+
   it('returns no gaps when every dispatch panelist has a grant', () => {
     const chat = ensembleChat()
     const grants = [

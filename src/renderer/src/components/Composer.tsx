@@ -238,6 +238,7 @@ export interface ComposerProps {
   ensembleEnabledParticipantsForCurrent: any
   ensembleOllamaContextWarning: any
   externalGitSnapshots: any
+  onExternalGitSnapshotRefresh: any
   externalPrByPath: any
   externalPathGrantPrompt: any
   externalPathGrantPromptBusy: any
@@ -532,6 +533,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     ensembleEnabledParticipantsForCurrent,
     ensembleOllamaContextWarning,
     externalGitSnapshots,
+    onExternalGitSnapshotRefresh,
     externalPrByPath,
     externalPathGrantPrompt,
     externalPathGrantPromptBusy,
@@ -1955,7 +1957,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                         <ExternalPathAboveRow
                           key={group.path}
                           grant={group.representative}
-                          access={group.access}
                           providers={group.providers}
                           repoMetadata={externalPathRepoMetadata[group.representative.id] || null}
                           snapshot={externalGitSnapshots[group.path] ?? null}
@@ -1979,6 +1980,9 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               workspacePath: group.path
                             })
                           }
+                          onSnapshotRefresh={(snapshot) =>
+                            onExternalGitSnapshotRefresh?.(group.path, snapshot)
+                          }
                           composerStyle={appearance.composerStyle}
                           cursorLeadDetached={aboveRowsFloatAboveStack}
                         />
@@ -1996,11 +2000,10 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                     decides whether the row shows branch+repo-name or a
                     bare basename.
 
-                    1.0.6-EW66-1d — WRITE grants now also get a per-path
-                    Create-PR action (matching the primary workspace row).
-                    PR state is keyed by `grant.path`, so an ensemble's
-                    several same-path write grants share one repo's PR
-                    progress. READ grants keep the reference-only banner. */}
+                    1.0.6-EW66-1d — repo rows now also get a per-path
+                    commit/push/PR action menu matching the primary workspace
+                    row. PR state is keyed by `grant.path`, so an ensemble's
+                    several same-path grants share one repo's PR progress. */}
                       {!aboveRowsFloatAboveStack && externalWorkspaceAboveRows}
                 {/*
                   Slice F (1.0.3) — ensemble participants live in the
@@ -2633,8 +2636,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                         gaps={externalPathGrantPrompt.gaps}
                         trigger={externalPathGrantPrompt.trigger}
                         busy={externalPathGrantPromptBusy}
-                        onGrantRead={() => void persistExternalPathGrantPrompt('read')}
-                        onGrantEdit={() => void persistExternalPathGrantPrompt('write')}
+                        onGrant={() => void persistExternalPathGrantPrompt()}
                         onDismiss={() => clearExternalPathGrantPrompt()}
                       />
                     )}

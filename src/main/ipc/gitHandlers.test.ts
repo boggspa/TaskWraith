@@ -269,6 +269,80 @@ describe('registerGitHandlers', () => {
     )
   })
 
+  it('allows mutating git actions for signed write-granted external repos', async () => {
+    const { deps } = createDeps()
+    const grant = createGrant({ path: '/granted/repo', access: 'write' })
+    const chat = createChat()
+    deps.getChats.mockReturnValue([chat])
+    deps.externalPathGrantMetadataLists.mockReturnValue([grant])
+    registerGitHandlers(deps)
+
+    await expect(
+      handlerFor('git:create-branch')({}, { repoPath: '/granted/repo', branch: 'feature/new' })
+    ).resolves.toEqual({
+      ok: true,
+      snapshot: { repoPath: '/granted/repo', branch: 'feature/new', from: undefined }
+    })
+    await expect(
+      handlerFor('git:stage')({}, { repoPath: '/granted/repo', all: true })
+    ).resolves.toEqual({
+      ok: true,
+      data: {
+        repoPath: '/granted/repo',
+        paths: undefined,
+        all: true,
+        update: undefined,
+        patch: undefined
+      }
+    })
+    await expect(
+      handlerFor('create-github-pr')({}, { repoPath: '/granted/repo', title: 'Ship it' })
+    ).resolves.toEqual({
+      ok: true,
+      url: 'https://example.test/pr/1'
+    })
+    expect(deps.gitService.createBranch).toHaveBeenCalledWith({
+      repoPath: '/granted/repo',
+      branch: 'feature/new',
+      from: undefined
+    })
+    expect(deps.gitService.stage).toHaveBeenCalledWith({
+      repoPath: '/granted/repo',
+      paths: undefined,
+      all: true,
+      update: undefined,
+      patch: undefined
+    })
+    expect(deps.gitService.createPullRequest).toHaveBeenCalledWith({
+      repoPath: '/granted/repo',
+      title: 'Ship it',
+      body: undefined,
+      draft: undefined
+    })
+  })
+
+  it('keeps signed read-granted external repos inspection-only', async () => {
+    const { deps } = createDeps()
+    const grant = createGrant({ path: '/granted/repo', access: 'read' })
+    const chat = createChat()
+    deps.getChats.mockReturnValue([chat])
+    deps.externalPathGrantMetadataLists.mockReturnValue([grant])
+    registerGitHandlers(deps)
+
+    await expect(handlerFor('git:list-branches')({}, { repoPath: '/granted/repo' })).resolves.toEqual({
+      ok: true,
+      branches: [{ name: 'main', isCurrent: true }],
+      currentBranch: 'main'
+    })
+    await expect(
+      handlerFor('git:stage')({}, { repoPath: '/granted/repo', all: true })
+    ).resolves.toEqual({
+      ok: false,
+      error: 'Git actions require registered workspaces or signed write grants.'
+    })
+    expect(deps.gitService.stage).not.toHaveBeenCalled()
+  })
+
   it('selects only linked worktrees for a registered repository', async () => {
     const { deps } = createDeps()
     deps.findRegisteredWorkspace.mockReturnValue({ id: 'ws-1' })
@@ -366,7 +440,7 @@ describe('registerGitHandlers', () => {
 
     await expect(handlerFor('git:stage')({}, { repoPath: '/granted/repo/subdir' })).resolves.toEqual({
       ok: false,
-      error: 'Git actions are limited to registered workspaces.'
+      error: 'Git actions require registered workspaces or signed write grants.'
     })
   })
 

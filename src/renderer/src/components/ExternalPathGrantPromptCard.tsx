@@ -5,8 +5,7 @@ import type { ExternalPathGrantGap } from '../lib/externalPathGrantPreflight'
 export interface ExternalPathGrantPromptCardProps {
   gaps: ExternalPathGrantGap[]
   trigger: 'preflight' | 'attach'
-  onGrantRead: () => void
-  onGrantEdit: () => void
+  onGrant: () => void
   onDismiss: () => void
   busy?: boolean
 }
@@ -18,8 +17,7 @@ function formatMissingProviders(providers: ProviderId[]): string {
 export function ExternalPathGrantPromptCard({
   gaps,
   trigger,
-  onGrantRead,
-  onGrantEdit,
+  onGrant,
   onDismiss,
   busy = false
 }: ExternalPathGrantPromptCardProps): React.JSX.Element | null {
@@ -27,27 +25,26 @@ export function ExternalPathGrantPromptCard({
 
   const title =
     trigger === 'attach'
-      ? 'Grant access to additional workspace'
+      ? 'Attach additional workspace'
       : 'Additional workspace access required'
 
   const message =
     trigger === 'attach'
-      ? 'Panelists need a signed external-path grant before this workspace is attached to the chat.'
+      ? 'Confirm this workspace for the active panelists before it is attached to the chat.'
       : 'Some panelists still need signed grants for additional workspaces before this round can run.'
 
   return (
     <div className="composer-permission-card provider-external-path">
       <div className="composer-permission-title">
         <span>{title}</span>
-        <span className="composer-permission-source">Workspace access</span>
+        <span className="composer-permission-source">Secondary workspace</span>
       </div>
       <div className="composer-permission-message">{message}</div>
       <div className="composer-permission-paths">
         {gaps.map((gap) => (
           <div key={gap.path} className="composer-permission-external-path">
             <span className="composer-permission-external-path-label">
-              {gap.access === 'write' ? 'Edit' : 'Read'} · needs{' '}
-              {formatMissingProviders(gap.missingProviders)}
+              Needs {formatMissingProviders(gap.missingProviders)}
             </span>
             <code className="composer-permission-external-path-value">{gap.path}</code>
           </div>
@@ -58,12 +55,9 @@ export function ExternalPathGrantPromptCard({
           className="btn btn-sm btn-primary"
           type="button"
           disabled={busy}
-          onClick={onGrantRead}
+          onClick={onGrant}
         >
-          Grant read access
-        </button>
-        <button className="btn btn-sm" type="button" disabled={busy} onClick={onGrantEdit}>
-          Grant edit access
+          {trigger === 'attach' ? 'Attach workspace' : 'Grant workspace access'}
         </button>
         <button className="btn btn-sm btn-ghost" type="button" disabled={busy} onClick={onDismiss}>
           {trigger === 'attach' ? 'Cancel' : 'Dismiss'}

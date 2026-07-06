@@ -861,16 +861,16 @@
  * 1.0.5-AR12b — Composer-position workspace switcher popover.
  * Same outer popover styling as `welcome-workspace-popover`
  * (extends via `composer-workspace-popover` second class on the
- * portal root), with one composer-specific override: bounded
- * max-height + overflow-y so a user with many workspaces gets
- * a scrollable list rather than a popover that runs past the
- * viewport edge. Position is computed in the component (flip
- * above the trigger when there's no room below), so the
- * 360px cap matches the position calc's
- * `POPOVER_MAX_HEIGHT` constant.
+ * portal root), with composer-specific sizing so a user with
+ * many workspaces gets one scrollable surface rather than
+ * independently shrunken sections. Position is computed in the
+ * component (flip above the trigger when there's no room below),
+ * and the 520px cap matches the dynamic `POPOVER_MAX_HEIGHT`
+ * ceiling there.
  */
 .composer-workspace-popover {
-  max-height: 360px;
+  width: min(420px, calc(100vw - 16px));
+  max-height: min(520px, calc(100vh - 16px));
   overflow-y: auto;
   /* The popover sits above the composer (z-index 9999 from the
    * base rule); also bump above any potentially-stacked menu
@@ -881,6 +881,14 @@
   /* Tighter section padding inside the composer popover variant —
    * the welcome popover has more headroom; the composer popover
    * sits inside a denser part of the UI. */
+}
+.welcome-workspace-popover--portaled.composer-workspace-popover
+  > .welcome-workspace-popover-section:not(.welcome-workspace-popover-actions),
+.welcome-workspace-popover--portaled.composer-workspace-popover
+  > .welcome-workspace-popover-actions {
+  flex: 0 0 auto;
+  min-height: auto;
+  overflow: visible;
 }
 
 .welcome-workspace-popover-row-glyph {
@@ -902,10 +910,10 @@
  * 1.0.6-EW66 — Multi-workspace manager rows inside the composer
  * workspace popover. The "Current workspaces" section lists the
  * primary workspace (PRIMARY badge, fixed) plus any additional
- * folders attached via grants — each with a READ/WRITE badge, a
- * remove (×), and a drag handle for reordering. Colours track the
- * popover's existing theme vars; EW67 makes the whole popover
- * theme-immune for the Obsidian/Alabaster composer shells.
+ * folders attached via grants — each with a remove (×), and a
+ * drag handle for reordering. Colours track the popover's existing
+ * theme vars; EW67 makes the whole popover theme-immune for the
+ * Obsidian/Alabaster composer shells.
  */
 .composer-workspace-row {
   display: flex;
@@ -972,8 +980,7 @@
   direction: rtl;
   text-align: left;
 }
-.composer-workspace-badge,
-.composer-workspace-access-badge {
+.composer-workspace-badge {
   flex: 0 0 auto;
   font-size: 9px;
   font-weight: 700;
@@ -987,20 +994,6 @@
   color: var(--accent, var(--text-primary));
   background: color-mix(in srgb, var(--accent) 16%, transparent);
   border-color: color-mix(in srgb, var(--accent) 36%, transparent);
-}
-.composer-workspace-access-badge.access-read {
-  color: var(--text-secondary);
-  background: color-mix(in srgb, var(--text-secondary) 14%, transparent);
-  border-color: color-mix(in srgb, var(--text-secondary) 30%, transparent);
-}
-.composer-workspace-access-badge.access-write {
-  color: #b46a00;
-  background: color-mix(in srgb, #f0a020 22%, transparent);
-  border-color: color-mix(in srgb, #f0a020 46%, transparent);
-}
-:is([data-theme="dark"], [data-theme="midnight"], [data-theme="obsidian"])
-  .composer-workspace-access-badge.access-write {
-  color: #ffcf85;
 }
 .composer-workspace-row-remove {
   flex: 0 0 auto;
@@ -1099,15 +1092,6 @@
   color: var(--text-primary);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
 }
-/*
- * 1.0.6-EW69 — one-click "add known workspace as secondary" rows in
- * the "Add a workspace" section. The trailing access badge echoes the
- * Read/Write toggle so the user can see what access the click grants.
- */
-.composer-workspace-add-known .composer-workspace-access-badge {
-  margin-left: auto;
-}
-
 .welcome-hero h1 {
   margin: 0;
   color: var(--text-primary);
@@ -12081,11 +12065,11 @@ button.diff-file-row {
  * expanded diff text tokens, so compact tool-call +N / -M counters do not glow
  * brighter than the surrounding transcript chrome. */
 .activity-line-stat-add {
-  color: #2db777;
+  color: var(--diff-stat-add-color, #2db777);
 }
 
 .activity-line-stat-delete {
-  color: #ec3d35;
+  color: var(--diff-stat-del-color, #ec3d35);
 }
 
 .activity-line-stat-divider {

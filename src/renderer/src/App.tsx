@@ -2143,6 +2143,16 @@ function App(): React.JSX.Element {
     },
     []
   )
+  const handleExternalGitSnapshotRefresh = useCallback(
+    (path: string, snapshot: GitRepositorySnapshot | null): void => {
+      setExternalGitSnapshots((prev) => ({
+        ...prev,
+        [path]: snapshot
+      }))
+      refreshExternalPrStatus(path, snapshot)
+    },
+    [refreshExternalPrStatus]
+  )
   const handleComposerWorktreeChange = useCallback(
     (selection: ComposerWorktreeSelection | null, snapshot: GitRepositorySnapshot | null) => {
       const basePath =
@@ -6775,7 +6785,7 @@ function App(): React.JSX.Element {
     }))
   }
 
-  const persistExternalPathGrantPrompt = async (access: ExternalPathGrant['access']) => {
+  const persistExternalPathGrantPrompt = async () => {
     const chatId = currentChat?.appChatId
     const prompt = chatId ? externalPathGrantPromptByChatId[chatId] : null
     if (!chatId || !prompt || prompt.gaps.length === 0) return
@@ -6784,7 +6794,7 @@ function App(): React.JSX.Element {
       for (const gap of prompt.gaps) {
         const result = await window.api.pickAndPersistExternalPathGrant({
           chatId,
-          access,
+          access: gap.access,
           path: gap.path
         })
         if (!result.ok) return
@@ -6819,7 +6829,8 @@ function App(): React.JSX.Element {
       const missingProviders = missingExternalPathGrantProviders({
         chat: currentChat,
         grants,
-        path: result.path
+        path: result.path,
+        access
       })
       if (missingProviders.length === 0) return
       openExternalPathGrantPrompt({
@@ -6835,7 +6846,7 @@ function App(): React.JSX.Element {
   /**
    * 1.0.6-EW69 — Attach an EXISTING known workspace as an additional
    * (secondary) workspace. Surfaces the composer permission card first
-   * so the user explicitly grants read/edit access for dispatch-capable
+   * so the user explicitly confirms signed grants for dispatch-capable
    * panelists before grants are issued.
    */
   const handleAddKnownWorkspaceAsSecondary = (
@@ -6850,7 +6861,8 @@ function App(): React.JSX.Element {
     const missingProviders = missingExternalPathGrantProviders({
       chat: currentChat,
       grants,
-      path: workspacePath
+      path: workspacePath,
+      access
     })
     if (missingProviders.length === 0) return
     openExternalPathGrantPrompt({
@@ -18361,28 +18373,25 @@ function App(): React.JSX.Element {
   // participant-provider for the same folder) into ONE group per unique path,
   // so the composer shows one native row per workspace instead of N duplicates.
   // Map insertion order follows externalPathGrants (already sorted by
-  // order/path), so first-seen path order is preserved. access = union (any
-  // write -> write); providers = the distinct list for the merged tooltip.
+  // order/path), so first-seen path order is preserved. providers = the
+  // distinct list for the merged tooltip.
   const externalWorkspaceGroups = useMemo(() => {
     const byPath = new Map<
       string,
       {
         path: string
         representative: ExternalPathGrant
-        access: 'read' | 'write'
         providers: ExternalPathGrant['provider'][]
       }
     >()
     for (const grant of externalPathGrants) {
       const existing = byPath.get(grant.path)
       if (existing) {
-        if (grant.access === 'write') existing.access = 'write'
         if (!existing.providers.includes(grant.provider)) existing.providers.push(grant.provider)
       } else {
         byPath.set(grant.path, {
           path: grant.path,
           representative: grant,
-          access: grant.access,
           providers: [grant.provider]
         })
       }
@@ -23448,6 +23457,7 @@ function App(): React.JSX.Element {
       ensembleEnabledParticipantsForCurrent,
       ensembleOllamaContextWarning,
       externalGitSnapshots,
+      onExternalGitSnapshotRefresh: handleExternalGitSnapshotRefresh,
       externalPrByPath,
       externalPathGrants,
       externalPathRepoMetadata,
@@ -23466,6 +23476,7 @@ function App(): React.JSX.Element {
       grokProviderAvailable,
       handleDeleteQueuedMessage,
       handleEditQueuedMessage,
+      handleExternalGitSnapshotRefresh,
       handleReorderQueuedMessages,
       handleSelectMultiviewLayout,
       handleSelectParticipant,

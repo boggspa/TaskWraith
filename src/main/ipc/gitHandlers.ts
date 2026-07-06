@@ -30,7 +30,7 @@ import type {
 type GitIpcPayload = { workspacePath?: string; repoPath?: string }
 type GitSnapshotSubscribePayload = GitIpcPayload & { subscriptionId?: string }
 type GitSnapshotInvalidatePayload = GitIpcPayload & { reason?: GitSnapshotInvalidationReason }
-type GitIpcScope = 'registered-workspace' | 'registered-or-granted-read'
+type GitIpcScope = 'registered-workspace' | 'registered-or-granted-read' | 'registered-or-granted-write'
 
 const GIT_SNAPSHOT_INVALIDATION_REASONS = new Set<GitSnapshotInvalidationReason>([
   'subscribe',
@@ -112,6 +112,14 @@ function externalGrantCoversPath(
   })
 }
 
+function gitScopeError(scope: GitIpcScope): string {
+  if (scope === 'registered-workspace') return 'Git actions are limited to registered workspaces.'
+  if (scope === 'registered-or-granted-write') {
+    return 'Git actions require registered workspaces or signed write grants.'
+  }
+  return 'Git inspection is limited to registered workspaces or signed external path grants.'
+}
+
 function gitPayloadPath(
   deps: GitHandlersDeps,
   payload: GitIpcPayload | undefined,
@@ -127,17 +135,19 @@ function gitPayloadPath(
   }
   if (deps.findRegisteredWorkspace(normalized)) return { ok: true, path: normalized }
   if (
-    scope === 'registered-or-granted-read' &&
-    externalGrantCoversPath(deps, normalized, allSignedExternalPathGrants(deps), 'read')
+    scope !== 'registered-workspace' &&
+    externalGrantCoversPath(
+      deps,
+      normalized,
+      allSignedExternalPathGrants(deps),
+      scope === 'registered-or-granted-write' ? 'write' : 'read'
+    )
   ) {
     return { ok: true, path: normalized }
   }
   return {
     ok: false,
-    error:
-      scope === 'registered-or-granted-read'
-        ? 'Git inspection is limited to registered workspaces or signed external path grants.'
-        : 'Git actions are limited to registered workspaces.'
+    error: gitScopeError(scope)
   }
 }
 
@@ -285,7 +295,7 @@ export function registerGitHandlers(deps: GitHandlersDeps): void {
       _event,
       payload?: GitIpcPayload & Pick<GitCreateBranchInput, 'branch'>
     ): Promise<{ ok: boolean; snapshot?: GitRepositorySnapshot; error?: string }> => {
-      const repo = gitPayloadPath(deps, payload, 'registered-workspace')
+      const repo = gitPayloadPath(deps, payload, 'registered-or-granted-write')
       if (!repo.ok) return { ok: false, error: repo.error }
       const result = await deps.gitService.checkoutBranch({
         repoPath: repo.path,
@@ -302,7 +312,7 @@ export function registerGitHandlers(deps: GitHandlersDeps): void {
       _event,
       payload?: GitIpcPayload & Pick<GitCreateBranchInput, 'branch' | 'from'>
     ): Promise<{ ok: boolean; snapshot?: GitRepositorySnapshot; error?: string }> => {
-      const repo = gitPayloadPath(deps, payload, 'registered-workspace')
+      const repo = gitPayloadPath(deps, payload, 'registered-or-granted-write')
       if (!repo.ok) return { ok: false, error: repo.error }
       const result = await deps.gitService.createBranch({
         repoPath: repo.path,
@@ -329,7 +339,7 @@ export function registerGitHandlers(deps: GitHandlersDeps): void {
       _event,
       payload?: GitIpcPayload & Pick<GitCreateWorktreeInput, 'name' | 'branch' | 'path'>
     ): Promise<{ ok: boolean; snapshot?: GitRepositorySnapshot; error?: string }> => {
-      const repo = gitPayloadPath(deps, payload, 'registered-workspace')
+      const repo = gitPayloadPath(deps, payload, 'registered-or-granted-write')
       if (!repo.ok) return { ok: false, error: repo.error }
       const result = await deps.gitService.createWorktree({
         repoPath: repo.path,
@@ -348,7 +358,7 @@ export function registerGitHandlers(deps: GitHandlersDeps): void {
       _event,
       payload?: GitIpcPayload & Pick<GitRemoveWorktreeInput, 'path' | 'force'>
     ): Promise<{ ok: boolean; snapshot?: GitRepositorySnapshot; error?: string }> => {
-      const repo = gitPayloadPath(deps, payload, 'registered-workspace')
+      const repo = gitPayloadPath(deps, payload, 'registered-or-granted-write')
       if (!repo.ok) return { ok: false, error: repo.error }
       const result = await deps.gitService.removeWorktree({
         repoPath: repo.path,
@@ -388,7 +398,7 @@ export function registerGitHandlers(deps: GitHandlersDeps): void {
       _event,
       payload?: GitIpcPayload & Pick<GitStageInput, 'paths' | 'all' | 'update' | 'patch'>
     ): Promise<GitResult<GitRepositorySnapshot> | { ok: false; error: string }> => {
-      const repo = gitPayloadPath(deps, payload, 'registered-workspace')
+      const repo = gitPayloadPath(deps, payload, 'registered-or-granted-write')
       if (!repo.ok) return repo
       const result = await deps.gitService.stage({
         repoPath: repo.path,
@@ -408,7 +418,7 @@ export function registerGitHandlers(deps: GitHandlersDeps): void {
       _event,
       payload?: GitIpcPayload & Pick<GitUnstageInput, 'paths'>
     ): Promise<GitResult<GitRepositorySnapshot> | { ok: false; error: string }> => {
-      const repo = gitPayloadPath(deps, payload, 'registered-workspace')
+      const repo = gitPayloadPath(deps, payload, 'registered-or-granted-write')
       if (!repo.ok) return repo
       const result = await deps.gitService.unstage({
         repoPath: repo.path,
@@ -425,7 +435,7 @@ export function registerGitHandlers(deps: GitHandlersDeps): void {
       _event,
       payload?: GitIpcPayload & Pick<GitCommitInput, 'message'>
     ): Promise<GitResult<GitRepositorySnapshot> | { ok: false; error: string }> => {
-      const repo = gitPayloadPath(deps, payload, 'registered-workspace')
+      const repo = gitPayloadPath(deps, payload, 'registered-or-granted-write')
       if (!repo.ok) return repo
       const result = await deps.gitService.commit({
         repoPath: repo.path,
@@ -442,7 +452,7 @@ export function registerGitHandlers(deps: GitHandlersDeps): void {
       _event,
       payload?: GitIpcPayload & Pick<GitPushInput, 'setUpstream' | 'remote'>
     ): Promise<GitResult<GitRepositorySnapshot> | { ok: false; error: string }> => {
-      const repo = gitPayloadPath(deps, payload, 'registered-workspace')
+      const repo = gitPayloadPath(deps, payload, 'registered-or-granted-write')
       if (!repo.ok) return repo
       const receipt = await beginDesktopExternalPublishReceipt(deps, {
         action: 'gitPush',
@@ -492,7 +502,7 @@ export function registerGitHandlers(deps: GitHandlersDeps): void {
       payload?: GitIpcPayload &
         Pick<GitCreatePrInput, 'title' | 'body' | 'draft'> & { openInBrowser?: boolean }
     ): Promise<GitResult<GitPrSummary> | ({ ok: true } & GitPrSummary) | { ok: false; error: string }> => {
-      const repo = gitPayloadPath(deps, payload, 'registered-workspace')
+      const repo = gitPayloadPath(deps, payload, 'registered-or-granted-write')
       if (!repo.ok) return repo
       const receipt = await beginDesktopExternalPublishReceipt(deps, {
         action: 'githubCreatePr',

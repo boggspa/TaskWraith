@@ -64,13 +64,22 @@ function isPersistedDispatchGrant(grant: ExternalPathGrant): boolean {
   )
 }
 
+function grantSatisfiesAccess(
+  grant: ExternalPathGrant,
+  requiredAccess: ExternalPathGrantGap['access']
+): boolean {
+  return requiredAccess === 'read' || grant.access === 'write'
+}
+
 export function missingExternalPathGrantProviders(input: {
   chat: ChatRecord | null | undefined
   grants: ExternalPathGrant[]
   path: string
+  access?: ExternalPathGrantGap['access']
 }): ProviderId[] {
   const targets = externalPathGrantTargetsForChat(input.chat)
   const path = input.path.trim()
+  const requiredAccess = input.access ?? 'read'
   if (!path || targets.length === 0) return []
   return targets.filter(
     (provider) =>
@@ -78,7 +87,8 @@ export function missingExternalPathGrantProviders(input: {
         (grant) =>
           isPersistedDispatchGrant(grant) &&
           grant.provider === provider &&
-          grant.path.trim() === path
+          grant.path.trim() === path &&
+          grantSatisfiesAccess(grant, requiredAccess)
       )
   )
 }
@@ -95,17 +105,20 @@ export function findExternalPathGrantGaps(input: {
     return { gaps, targets, paths }
   }
 
-  const granted = new Set(
-    input.grants
-      .filter(isPersistedDispatchGrant)
-      .map((grant) => `${grant.provider}:${grant.path.trim()}`)
-  )
-
   for (const path of paths) {
-    const missingProviders = targets.filter((provider) => !granted.has(`${provider}:${path}`))
-    if (missingProviders.length === 0) continue
     const pathGrants = input.grants.filter((grant) => grant.path?.trim() === path)
     const access = pathGrants.some((grant) => grant.access === 'write') ? 'write' : 'read'
+    const missingProviders = targets.filter(
+      (provider) =>
+        !input.grants.some(
+          (grant) =>
+            isPersistedDispatchGrant(grant) &&
+            grant.provider === provider &&
+            grant.path.trim() === path &&
+            grantSatisfiesAccess(grant, access)
+        )
+    )
+    if (missingProviders.length === 0) continue
     gaps.push({ path, access, missingProviders })
   }
 

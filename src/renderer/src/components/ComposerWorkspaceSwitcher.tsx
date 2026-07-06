@@ -72,19 +72,18 @@ export interface ComposerWorkspaceSwitcherProps {
   onRemoveWorkspacePath?: (path: string) => void
   /**
    * 1.0.6-EW66 — Open the OS folder picker and attach the chosen
-   * folder as an *additional* workspace with the given access.
-   * Generalizes the old read-only "Grant read access…" row into a
-   * READ-or-WRITE add. Optional because welcome-state chats have
-   * no chat record to attach grants to yet; when absent, the
-   * "Add a workspace" section stays hidden.
+   * folder as an *additional* workspace. Additional workspaces are
+   * explicit chat attachments, so the picker now requests write
+   * grants by default while per-agent policy still governs whether
+   * a participant may write.
    */
   onAddFolder?: (access: ExternalPathGrant['access']) => void
   /**
    * 1.0.6-EW69 — Attach an existing KNOWN workspace as an additional
-   * (secondary) workspace with the chosen access, without the OS
-   * folder dialog. Lets the "Add a workspace" section offer one-click
-   * adds for every registered workspace. Gated together with
-   * `onAddFolder` (both need a saved chat record).
+   * (secondary) workspace without the OS folder dialog. Lets the
+   * "Add a workspace" section offer one-click adds for every
+   * registered workspace. Gated together with `onAddFolder`
+   * (both need a saved chat record).
    */
   onAddKnownWorkspace?: (path: string, access: ExternalPathGrant['access']) => void
   /**
@@ -105,9 +104,10 @@ interface AdditionalWorkspaceEntry {
   basename: string
   branch?: string
   isRepo: boolean
-  access: ExternalPathGrant['access']
   order: number
 }
+
+const SECONDARY_WORKSPACE_ACCESS: ExternalPathGrant['access'] = 'write'
 
 function WorkspaceRevealButton({
   path,
@@ -152,8 +152,6 @@ export function ComposerWorkspaceSwitcher({
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const popoverRef = useRef<HTMLDivElement | null>(null)
   const [popoverPosition, setPopoverPosition] = useState<{ left: number; top: number } | null>(null)
-  // 1.0.6-EW66 — READ/WRITE choice for the "Add a workspace" action.
-  const [addAccess, setAddAccess] = useState<ExternalPathGrant['access']>('read')
   // 1.0.6-EW66 — pointer-drag reorder state for the additional-
   // workspace list (same pattern as QueuedMessagesAboveRow).
   const [dragPath, setDragPath] = useState<string | null>(null)
@@ -222,7 +220,7 @@ export function ComposerWorkspaceSwitcher({
       const trigger = triggerRef.current
       if (!trigger) return
       const rect = trigger.getBoundingClientRect()
-      const popoverWidth = 320
+      const popoverWidth = 420
       const margin = 8
       // Left-align to the trigger but keep on-screen.
       const idealLeft = rect.left
@@ -231,9 +229,9 @@ export function ComposerWorkspaceSwitcher({
         Math.min(window.innerWidth - popoverWidth - margin, idealLeft)
       )
       // Open ABOVE the button when the composer sits at the bottom
-      // of the viewport — flip if there's no room below. 360px is
-      // the popover's max-height estimate; leave a 6px gap.
-      const POPOVER_MAX_HEIGHT = 360
+      // of the viewport — flip if there's no room below. Match the
+      // CSS cap while allowing more room than the old 360px picker.
+      const POPOVER_MAX_HEIGHT = Math.min(520, Math.max(320, window.innerHeight - margin * 2))
       const wouldOverflowBottom = rect.bottom + 6 + POPOVER_MAX_HEIGHT > window.innerHeight - margin
       const top = wouldOverflowBottom
         ? Math.max(margin, rect.top - 6 - POPOVER_MAX_HEIGHT)
@@ -255,9 +253,9 @@ export function ComposerWorkspaceSwitcher({
 
   // 1.0.6-EW66 — collapse the per-provider grants into one entry
   // per PATH for the "Current workspaces" list. Order comes from
-  // the shared per-path `order` (assigned by the store); a path is
-  // WRITE if ANY of its grants is write. Branch/basename derive
-  // from whichever grant for the path has resolved git metadata.
+  // the shared per-path `order` (assigned by the store). Branch/
+  // basename derive from whichever grant for the path has resolved
+  // git metadata.
   const additionalEntries = useMemo<AdditionalWorkspaceEntry[]>(() => {
     const grants = additionalGrants || []
     const byPath = new Map<string, AdditionalWorkspaceEntry>()
@@ -271,14 +269,11 @@ export function ComposerWorkspaceSwitcher({
           basename: descriptor.basename,
           branch: descriptor.isRepo ? descriptor.branch : undefined,
           isRepo: descriptor.isRepo,
-          access: grant.access,
           order: typeof grant.order === 'number' ? grant.order : Number.MAX_SAFE_INTEGER
         })
         continue
       }
-      // Upgrade access to write if any grant for the path is write,
-      // and fill in repo metadata if a later grant resolved it.
-      if (grant.access === 'write') existing.access = 'write'
+      // Fill in repo metadata if a later grant resolved it.
       if (!existing.isRepo && descriptor.isRepo) {
         existing.isRepo = true
         existing.basename = descriptor.basename
@@ -310,7 +305,7 @@ export function ComposerWorkspaceSwitcher({
   // so it never widens a grant narrowed in Settings → Devices.
   const handleAddKnown = (ws: WorkspaceRecord): void => {
     handleSelectFromPopover(() => {
-      onAddKnownWorkspace?.(ws.path, addAccess)
+      onAddKnownWorkspace?.(ws.path, SECONDARY_WORKSPACE_ACCESS)
       if (addRemoteMode === 'off') return
       void (async () => {
         try {
@@ -450,8 +445,8 @@ export function ComposerWorkspaceSwitcher({
               workspace (PRIMARY badge, not removable) plus any
               additional folders attached via grants — de-duped by
               path, sorted by the shared per-path `order`, each with
-              a READ/WRITE badge, a remove (×), and a drag handle for
-              reordering (pointer-drag, persisted via onReorderWorkspaces).
+              a remove (×), and a drag handle for reordering
+              (pointer-drag, persisted via onReorderWorkspaces).
             */}
             <div className="welcome-workspace-popover-section composer-workspace-current">
               <div className="welcome-workspace-popover-header">Current workspaces</div>
@@ -511,16 +506,6 @@ export function ComposerWorkspaceSwitcher({
                     </span>
                     <span className="composer-workspace-row-path">{entry.path}</span>
                   </span>
-                  <span
-                    className={`composer-workspace-access-badge access-${entry.access}`}
-                    title={
-                      entry.access === 'write'
-                        ? 'Agents in this chat can read AND edit this folder'
-                        : 'Agents in this chat can read this folder'
-                    }
-                  >
-                    {entry.access === 'write' ? 'WRITE' : 'READ'}
-                  </span>
                   <WorkspaceRevealButton path={entry.path} label={entry.basename} />
                   {onRemoveWorkspacePath && (
                     <button
@@ -542,48 +527,15 @@ export function ComposerWorkspaceSwitcher({
             </div>
             {/*
               1.0.6-EW69 — "Add a workspace": attach an *additional*
-              (secondary) workspace with a per-add READ/WRITE choice.
-              The toggle governs both the one-click adds for existing
-              known workspaces AND the OS folder picker for arbitrary
-              folders. WRITE grants let agents edit the folder (and
-              surface a full diff + Create-PR row); READ grants are
-              reference-only. Hidden for welcome-state chats (no chat
+              (secondary) workspace. This is an explicit thread-level
+              attachment, so new secondary workspaces are write grants
+              by default and participant permission state remains the
+              write guard. Hidden for welcome-state chats (no chat
               record to attach grants to yet).
             */}
             {onAddFolder && (
               <div className="welcome-workspace-popover-section composer-workspace-add">
                 <div className="welcome-workspace-popover-header">Add a workspace</div>
-                <div className="composer-workspace-remote-caption">Agent access (this chat)</div>
-                <div
-                  className="composer-workspace-access-toggle"
-                  role="radiogroup"
-                  aria-label="Access for the workspace you add"
-                >
-                  <button
-                    type="button"
-                    role="radio"
-                    aria-checked={addAccess === 'read'}
-                    className={`composer-workspace-access-option ${
-                      addAccess === 'read' ? 'is-active' : ''
-                    }`}
-                    onClick={() => setAddAccess('read')}
-                    title="Read-only: agents can view files in the folder"
-                  >
-                    Read
-                  </button>
-                  <button
-                    type="button"
-                    role="radio"
-                    aria-checked={addAccess === 'write'}
-                    className={`composer-workspace-access-option ${
-                      addAccess === 'write' ? 'is-active' : ''
-                    }`}
-                    onClick={() => setAddAccess('write')}
-                    title="Read + write: agents can edit files and open PRs for the folder"
-                  >
-                    Write
-                  </button>
-                </div>
                 <div className="composer-workspace-remote-caption">Phone access (remote)</div>
                 <div
                   className="composer-workspace-access-toggle composer-workspace-remote-toggle"
@@ -624,7 +576,7 @@ export function ComposerWorkspaceSwitcher({
                 {/*
                   1.0.6-EW69 — one-click add for every KNOWN workspace
                   that isn't the primary and isn't already attached.
-                  Honours the access toggle; no OS dialog needed.
+                  No OS dialog needed.
                 */}
                 {onAddKnownWorkspace &&
                   addableWorkspaces.map((ws) => (
@@ -634,9 +586,7 @@ export function ComposerWorkspaceSwitcher({
                       role="menuitem"
                       className="welcome-workspace-popover-row composer-workspace-add-known"
                       onClick={() => handleAddKnown(ws)}
-                      title={`Attach ${ws.displayName || ws.path} as a ${
-                        addAccess === 'write' ? 'read + write' : 'read-only'
-                      } additional workspace`}
+                      title={`Attach ${ws.displayName || ws.path} as an additional workspace`}
                     >
                       <span className="welcome-workspace-popover-row-glyph" aria-hidden>
                         +
@@ -644,30 +594,22 @@ export function ComposerWorkspaceSwitcher({
                       <span className="welcome-workspace-popover-row-name">
                         {ws.displayName || ws.path.split('/').pop() || 'Workspace'}
                       </span>
-                      <span
-                        className={`composer-workspace-access-badge access-${addAccess}`}
-                        aria-hidden
-                      >
-                        {addAccess === 'write' ? 'WRITE' : 'READ'}
-                      </span>
                     </button>
                   ))}
                 <button
                   type="button"
                   role="menuitem"
                   className="welcome-workspace-popover-row welcome-workspace-popover-row-action"
-                  onClick={() => handleSelectFromPopover(() => onAddFolder(addAccess))}
-                  title={
-                    addAccess === 'write'
-                      ? 'Attach a folder agents in this chat can read AND edit'
-                      : 'Attach a folder agents in this chat can read'
+                  onClick={() =>
+                    handleSelectFromPopover(() => onAddFolder(SECONDARY_WORKSPACE_ACCESS))
                   }
+                  title="Attach a folder as an additional workspace"
                 >
                   <span className="welcome-workspace-popover-row-glyph" aria-hidden>
-                    {addAccess === 'write' ? '✎' : '👁'}
+                    +
                   </span>
                   <span className="welcome-workspace-popover-row-name">
-                    Add another folder ({addAccess === 'write' ? 'write' : 'read'} access)…
+                    Add another folder…
                   </span>
                 </button>
               </div>

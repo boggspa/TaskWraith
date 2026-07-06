@@ -1069,12 +1069,6 @@
   :is(.composer-workspace-access-inline, .composer-workspace-access) {
   order: 65;
 }
-/* Direct-child only — nested copies inside `.composer-above-bar-trailing-cluster`
- * keep DOM order + the cluster's own order ladder below. */
-:not([data-composer-style="cursor"]) .composer-above-bar > .composer-above-bar-secondary-access {
-  order: 70;
-  margin-left: 0;
-}
 :not([data-composer-style="cursor"]) .composer-above-bar > .composer-above-bar-secondary-revoke {
   order: 75;
 }
@@ -1103,9 +1097,8 @@
   margin-left: 0;
   margin-right: 0;
 }
-/* DOM order inside trailing cluster: action → access → revoke (icons after
- * Push/Review-changes at the far right). !important beats the global 70/75/80
- * order ladder when these flatten onto the secondary row. */
+/* DOM order inside trailing cluster: action → revoke. !important beats the
+ * global 70/75/80 order ladder when these flatten onto the secondary row. */
 .composer-above-bar-trailing-cluster > * {
   margin-left: 0;
   margin-right: 0;
@@ -1113,11 +1106,8 @@
 .composer-above-bar-trailing-cluster .composer-diff-action-menu-wrap {
   order: 1 !important;
 }
-.composer-above-bar-trailing-cluster .composer-above-bar-secondary-access {
-  order: 2 !important;
-}
 .composer-above-bar-trailing-cluster .composer-above-bar-secondary-revoke {
-  order: 3 !important;
+  order: 2 !important;
 }
 .composer-above-bar-center-cluster > .composer-above-bar-pill--changes,
 .composer-above-bar-center-cluster > .composer-above-bar-pill--stats {
@@ -1410,11 +1400,11 @@
    dark and light composer chrome. Per-shell/-theme overrides below keep these
    same hues in step. */
 .composer-diff-add {
-  color: #2db777;
+  color: var(--diff-stat-add-color, #2db777);
   font-feature-settings: 'tnum';
 }
 .composer-diff-del {
-  color: #ec3d35;
+  color: var(--diff-stat-del-color, #ec3d35);
   font-feature-settings: 'tnum';
 }
 .composer-above-bar-action {

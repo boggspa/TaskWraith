@@ -23,9 +23,10 @@ import { describeExternalPath } from '../lib/ExternalPathRepoDetect'
 import { getPoolIconAsset, preparePoolIconSvg } from '../lib/agentPoolIconAssets'
 import { getProviderName } from './Sidebar'
 import { useState } from 'react'
-import { branchTone, GitMergeBadge, GitPrLifecycleChip, GitSyncChip } from './GitStatusChips'
+import { GitMergeBadge, GitPrLifecycleChip, GitSyncChip } from './GitStatusChips'
 import { GitCommitControls } from './GitCommitControls'
 import { AnimatedDiffNumber } from './AnimatedDiffNumber'
+import { ComposerBranchWorktreePopover } from './ComposerBranchWorktreePopover'
 import type { GitPrSummary, GitRepositorySnapshot } from '../../../main/services/GitService'
 
 /**
@@ -58,10 +59,9 @@ import type { GitPrSummary, GitRepositorySnapshot } from '../../../main/services
  */
 export function buildExternalPathOriginTooltip(
   grant: ExternalPathGrant,
-  overrides?: { providerLabel?: string; access?: 'read' | 'write' }
+  overrides?: { providerLabel?: string }
 ): string {
   const providerName = overrides?.providerLabel ?? getProviderName(grant.provider)
-  const accessLabel = (overrides?.access ?? grant.access) === 'write' ? 'edit access' : 'read access'
   const origin = (() => {
     if (grant.id.startsWith('proactive-')) {
       return 'You granted this via the composer workspace switcher.'
@@ -80,7 +80,7 @@ export function buildExternalPathOriginTooltip(
       return grant.createdAt
     }
   })()
-  return `${providerName} · ${accessLabel} · ${when}\n${origin}`
+  return `${providerName} · secondary workspace · ${when}\n${origin}`
 }
 
 interface ExternalPathDiffStats {
@@ -93,11 +93,10 @@ interface ExternalPathAboveRowProps {
   grant: ExternalPathGrant
   /**
    * This row represents ALL provider-grants for one path (an ensemble mints
-   * one grant per participant-provider for the same folder). `access` is the
-   * union (write if ANY provider can write) and `providers` is the full list
-   * for the tooltip — so one folder reads as one native row, not N duplicates.
+   * one grant per participant-provider for the same folder). `providers` is
+   * the full list for the tooltip — so one folder reads as one native row,
+   * not N duplicates.
    */
-  access?: 'read' | 'write'
   providers?: ExternalPathGrant['provider'][]
   /** Live per-path git snapshot — drives the branch tone, merge badge + sync chip. */
   snapshot?: GitRepositorySnapshot | null
@@ -112,18 +111,17 @@ interface ExternalPathAboveRowProps {
   diffStats?: ExternalPathDiffStats
   onRevoke: (grant: ExternalPathGrant) => void
   /**
-   * 1.0.6-EW66-1d — Per-path Create-PR state + handler. When the
-   * grant is WRITE access and `onCreatePr` is supplied, the row
-   * gains a "Create PR" action (matching the primary workspace
-   * row) scoped to this grant's path. READ grants ignore both —
-   * they render the existing reference-only banner. State is keyed
-   * by path in the parent, so all of an ensemble's same-path write
-   * rows reflect one repo's PR progress together.
+   * 1.0.6-EW66-1d — Per-path Create-PR state + handler. Repo rows
+   * gain the same commit/push/PR action menu as the primary workspace
+   * row. State is keyed by path in the parent, so all of an ensemble's
+   * same-path rows reflect one repo's PR progress together.
    */
   createPrState?: { status: 'idle' | 'pending' | 'success' | 'error'; message?: string }
   onCreatePr?: (grant: ExternalPathGrant) => void
   /** Per-path "Review changes" — opens Diff Studio scoped to this path. */
   onReviewChanges?: () => void
+  /** Branch/worktree popover refresh hook for this external repository. */
+  onSnapshotRefresh?: (snapshot: GitRepositorySnapshot | null) => void
   /** Cursor shell — detached satellite pills above the merged stack. */
   cursorLeadDetached?: boolean
   composerStyle?: ComposerStyle
@@ -202,47 +200,8 @@ function RevokeGlyph(): React.JSX.Element {
   )
 }
 
-function ReadGlyph(): React.JSX.Element {
-  return (
-    <svg
-      width="12"
-      height="12"
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-    >
-      <circle cx="7" cy="7" r="4.3" />
-      <path d="M10.3 10.3L14 14" />
-    </svg>
-  )
-}
-
-function WriteGlyph(): React.JSX.Element {
-  return (
-    <svg
-      width="12"
-      height="12"
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-    >
-      <path d="M11.5 2.5l2 2" />
-      <path d="M3 13l1-3 7.5-7.5 2 2L6 12z" />
-    </svg>
-  )
-}
-
 export function ExternalPathAboveRow({
   grant,
-  access,
   providers,
   snapshot,
   pr,
@@ -252,17 +211,14 @@ export function ExternalPathAboveRow({
   createPrState,
   onCreatePr,
   onReviewChanges,
+  onSnapshotRefresh,
   cursorLeadDetached = false,
   composerStyle
 }: ExternalPathAboveRowProps): React.JSX.Element {
   const descriptor = describeExternalPath(grant.path, { gitMetadata: repoMetadata })
-  // Union access (write if ANY provider for this path can write) drives the
-  // single pill; falls back to the representative grant's own access.
-  const effectiveAccess = access ?? grant.access
-  const isWrite = effectiveAccess === 'write'
-  // 1.0.6-EW66-1d — WRITE grants pointing at a git repo get a
-  // Create-PR action matching the primary workspace row, scoped to
-  // this grant's path. Mirror the primary's label/state machine.
+  // 1.0.6-EW66-1d — repo rows get a Create-PR action matching the
+  // primary workspace row, scoped to this grant's path. Mirror the
+  // primary's label/state machine.
   const prStatus = createPrState?.status ?? 'idle'
   // First-class: every connected repo row gets the full action set (not just
   // write-access Create-PR). The read/write distinction now lives in the
@@ -276,11 +232,6 @@ export function ExternalPathAboveRow({
         : prStatus === 'error'
           ? 'Retry PR'
           : 'Create PR'
-  // 1.0.5-EW42b — `accessLabel` was used here pre-EW42b to build
-  // a minimal `<path> (<accessLabel> access)` title. EW42b
-  // replaces that with the richer multi-line tooltip below
-  // (provider + access verb + timestamp + origin source), so the
-  // separate variable is no longer needed.
   const hasDiff =
     diffStats && (diffStats.filesChanged > 0 || diffStats.additions > 0 || diffStats.deletions > 0)
   // Context-aware headline + per-row commit/push/PR menu, mirroring the primary
@@ -306,18 +257,13 @@ export function ExternalPathAboveRow({
   // 1.0.5-EW42b — Build a rich tooltip that explains what created
   // this grant (composer-proactive vs. agent-approval vs. legacy
   // manual picker), which provider it's scoped to, and when it
-  // was issued. Hover on the whole row shows the path + this
-  // origin block; hover on the access pill shows the same block
-  // narrowed to the access label so the most relevant signal sits
-  // where the user's eye lands.
+  // was issued. Secondary workspaces are explicit attachments now,
+  // so avoid surfacing a second read/write permission vocabulary here.
   const providerLabel =
     providers && providers.length > 0
       ? providers.map((provider) => getProviderName(provider)).join(', ')
       : getProviderName(grant.provider)
-  const originTooltip = buildExternalPathOriginTooltip(grant, {
-    providerLabel,
-    access: effectiveAccess
-  })
+  const originTooltip = buildExternalPathOriginTooltip(grant, { providerLabel })
 
   const diffCluster = hasDiff ? (
     <span className="composer-above-bar-center-cluster">
@@ -384,13 +330,6 @@ export function ExternalPathAboveRow({
           )}
         </span>
       )}
-      <span
-        className="composer-above-bar-secondary-access composer-above-bar-secondary-access-icon"
-        title={`${isWrite ? 'Edit' : 'Read'} access — ${originTooltip}`}
-        aria-label={isWrite ? 'Edit access' : 'Read access'}
-      >
-        {isWrite ? <WriteGlyph /> : <ReadGlyph />}
-      </span>
       <button
         type="button"
         className="composer-above-bar-secondary-revoke"
@@ -417,17 +356,17 @@ export function ExternalPathAboveRow({
           {descriptor.isRepo ? <BranchGlyph /> : <FileGlyph />}
           <span>
             {descriptor.basename}
-            {descriptor.isRepo && (snapshot?.branch || descriptor.branch) ? (
+            {descriptor.isRepo && (snapshot || descriptor.branch) ? (
               <>
                 {' · '}
-                <span
-                  className={`composer-above-bar-secondary-branch git-tone-${branchTone(
-                    snapshot?.detached ? undefined : (snapshot?.branch ?? descriptor.branch),
-                    snapshot?.detached ?? false
-                  )}`}
-                >
-                  {snapshot?.detached ? 'detached HEAD' : snapshot?.branch || descriptor.branch}
-                </span>
+                <ComposerBranchWorktreePopover
+                  workspacePath={grant.path}
+                  gitSnapshot={snapshot}
+                  fallbackBranch={descriptor.branch}
+                  detached={snapshot?.detached ?? false}
+                  composerStyle={composerStyle ?? 'default'}
+                  onSnapshotRefresh={onSnapshotRefresh}
+                />
               </>
             ) : null}
           </span>

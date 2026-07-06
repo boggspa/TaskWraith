@@ -992,8 +992,6 @@
     .composer-above-bar-branch svg,
     .composer-above-bar-files,
     .composer-above-bar-stats,
-    .composer-above-bar-secondary-access,
-    .composer-above-bar-secondary-access-icon,
     .composer-above-bar-secondary-revoke
   ) {
   color: rgba(255, 255, 255, 0.84) !important;
@@ -1078,7 +1076,7 @@
 [data-theme="alabaster"][data-composer-style="codex"]
   .composer-above-bar
   .composer-diff-add {
-  color: #2db777 !important;
+  color: var(--diff-stat-add-color, #2db777) !important;
 }
 
 [data-theme="alabaster"][data-composer-style="codex"]
@@ -1090,7 +1088,7 @@
 [data-theme="alabaster"][data-composer-style="codex"]
   .composer-above-bar
   .composer-diff-del {
-  color: #ec3d35 !important;
+  color: var(--diff-stat-del-color, #ec3d35) !important;
 }
 
 [data-theme="alabaster"][data-composer-style="codex"]
@@ -2156,11 +2154,11 @@
  * −N red (the canonical `.composer-diff-add/del` hues). Keep the
  * heavier Grok weight for crispness against the monochrome chrome. */
 [data-composer-style="grok"] .composer-diff-add {
-  color: #2db777 !important;
+  color: var(--diff-stat-add-color, #2db777) !important;
   font-weight: 600;
 }
 [data-composer-style="grok"] .composer-diff-del {
-  color: #ec3d35 !important;
+  color: var(--diff-stat-del-color, #ec3d35) !important;
   font-weight: 600;
 }
 
@@ -2940,11 +2938,11 @@
 
 /* Diff signal — canonical +N/−N hues (kept coloured across all shells). */
 [data-composer-style="cursor"] .composer-diff-add {
-  color: #2db777 !important;
+  color: var(--diff-stat-add-color, #2db777) !important;
   font-weight: 600;
 }
 [data-composer-style="cursor"] .composer-diff-del {
-  color: #ec3d35 !important;
+  color: var(--diff-stat-del-color, #ec3d35) !important;
   font-weight: 600;
 }
 
@@ -3074,11 +3072,13 @@
 }
 [data-composer-style="cursor"] .composer-above-bar-secondary .composer-above-bar-pill--git {
   order: 10;
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   min-width: 0;
+  max-width: min(100%, 38rem);
 }
 [data-composer-style="cursor"] .composer-above-bar-secondary .composer-above-bar-center-cluster {
   order: 30;
+  margin-left: auto;
 }
 [data-composer-style="cursor"] .composer-above-bar-secondary > .composer-above-bar-pill--action {
   /* Flatten so Review-changes / Push renders as its own pill, then
@@ -3099,10 +3099,6 @@
   border: 1px solid var(--cursor-shell-border) !important;
   color: var(--cursor-shell-fg) !important;
   box-shadow: none !important;
-}
-[data-composer-style="cursor"] .composer-above-bar-secondary .composer-above-bar-secondary-access {
-  order: 75 !important;
-  margin-right: 0;
 }
 [data-composer-style="cursor"] .composer-above-bar-secondary .composer-above-bar-secondary-revoke {
   order: 80 !important;
