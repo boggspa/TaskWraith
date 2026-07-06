@@ -4,12 +4,7 @@ Notable changes to TaskWraith, the local-first macOS desktop workbench for runni
 and reviewing AI coding agents. Entries are user-facing highlights; execution,
 history, and workspace state stay on your machine throughout.
 
-## Unreleased - source-ahead
-
-This section is reserved for changes committed after the latest tagged release.
-Entries here are source-ahead only: do not treat them as shipped until a
-matching GitHub tag, release notes, checksums, and platform artifacts are
-published.
+## 1.7.7 - 2026-07-06
 
 ### Added
 - **Thread Introspection — memory promotion (read-only MVP).** A retrospective
@@ -39,6 +34,48 @@ published.
   items, and preserve bidirectional provenance links. Lifecycle controls are
   internal for now; no Settings, IPC, MCP, or automatic lifecycle policy is
   exposed yet.
+- **Ensemble roster import/export.** Settings → Ensemble Roster can now save,
+  import, and export full roster presets as portable JSON so teams can swap
+  task-specific ensembles between installs. Imported/exported rosters preserve
+  participant shape without carrying live Trusted Session authority.
+- **iOS Ensemble parity.** The companion app can create/switch Ensemble chats via
+  the same chat-kind bridge as desktop, repairs thread-list/task-card metadata
+  when older Mac projections are sparse, and keeps ensemble status visible in
+  the mobile shell.
+- **Boss controls.** Bounded Boss control tools add quota reset summaries,
+  timeout expiry, user-response tracking, participant summons, and MCP coverage
+  for controlled multi-agent orchestration.
+- **Agent-pool and tool icon expansion.** The agent-pool icon catalog now covers
+  more workflow/tool families, including Diff Nice and release/CI-oriented
+  glyphs.
+
+### Changed
+- **Trusted Session replaces ambiguous YOLO trust.** Full local authority is now
+  granted per chat or per ensemble participant lane, not globally to every
+  participant in the session. Workspace Write is accented orange and Trusted
+  Session/Full Access is accented red in the picker and composer chip.
+- **Release-class shell posture is narrower.** Generic release shell commands no
+  longer receive blanket release approval; explicit publish/signing receipts
+  still carry their own authority.
+- **Live activity attribution is clearer.** Tool-call and thinking-trace stacks
+  show participant-style speaker headers, preserve model/reasoning boundaries,
+  and avoid rendering stale historical run cards in the transcript path.
+- **Composer and workspace controls are denser and steadier.** Git/worktree
+  rows, utility popovers, goal/plan popovers, diff counters, external-path rows,
+  and secondary workspace chrome were tightened for repeated operational use.
+- **Release packaging checks are more stable.** Gate A packaging excludes local
+  Cursor workspace state from the app bundle, reduces fixture IO, and keeps
+  optional macOS dependency installation scoped to the universal build path.
+
+### Fixed
+- **iOS thread-list recovery.** Task-card fallbacks, `chatKind` repair, and
+  metadata snapshot merge keep companion lists aligned with desktop state after
+  older or partial broadcasts.
+- **MCP bridge write hardening.** Safe-write paths and tool alias classification
+  better distinguish reasoning traces, shell/search aliases, and write-capable
+  bridge operations.
+- **Grok/Cursor composer glow parity.** Provider aura styling now matches the
+  current composer shell for Grok and Cursor.
 
 ## 1.7.6 - 2026-07-05
 
