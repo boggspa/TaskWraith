@@ -31,6 +31,16 @@ final class TranscriptFollowPin {
     var lastPinAt: Date = .distantPast
 }
 
+enum ThreadSnapshotRequestPolicy {
+    static func needsRefresh(_ snapshot: RemoteThreadSnapshot?) -> Bool {
+        guard let snapshot else { return true }
+        let rows = snapshot.rows ?? []
+        if !rows.isEmpty { return false }
+        if let totalRows = snapshot.totalRows { return totalRows > 0 }
+        return snapshot.rows == nil
+    }
+}
+
 @MainActor
 private final class ComposerDiffPillRefreshState: ObservableObject {
     @Published var snapshot: GitWorkspaceSnapshot?
@@ -227,7 +237,7 @@ struct ThreadDetailView: View {
     private var ensembleState: RemoteEnsembleState? { threadValue(model.ensembleStates) }
     private var diffSummary: MobileDiffSummary? { threadValue(model.diffSummaries) }
     private func requestSnapshotIfNeeded() {
-        guard snapshot == nil else { return }
+        guard ThreadSnapshotRequestPolicy.needsRefresh(snapshot) else { return }
         model.requestThreadSnapshot(taskId)
     }
     private var snapshotRequestTrigger: String {
@@ -242,6 +252,7 @@ struct ThreadDetailView: View {
             card?.id ?? "",
             card?.threadId ?? "",
             card?.workspaceId ?? "",
+            "\(snapshot?.rows?.count ?? -1):\(snapshot?.totalRows ?? -1)",
             phaseKey,
         ].joined(separator: "|")
     }

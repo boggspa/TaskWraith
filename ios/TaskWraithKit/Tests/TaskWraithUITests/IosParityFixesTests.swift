@@ -238,6 +238,30 @@ struct IosParityFixesTests {
     }
 
     @MainActor
+    @Test func threadDetailRefreshesMetadataOnlySnapshotWithHistory() throws {
+        let row = try decode(
+            RemoteThreadSnapshot.Row.self,
+            #"{"id":"row-1","role":"user","kind":"message","preview":"hello","truncated":false}"#)
+
+        #expect(ThreadSnapshotRequestPolicy.needsRefresh(nil) == true)
+        #expect(
+            ThreadSnapshotRequestPolicy.needsRefresh(
+                RemoteThreadSnapshot(threadId: "thread-1", rows: [], totalRows: 2)) == true)
+        #expect(
+            ThreadSnapshotRequestPolicy.needsRefresh(
+                RemoteThreadSnapshot(threadId: "thread-1", rows: nil, totalRows: nil)) == true)
+        #expect(
+            ThreadSnapshotRequestPolicy.needsRefresh(
+                RemoteThreadSnapshot(threadId: "thread-1", rows: [], totalRows: 0)) == false)
+        #expect(
+            ThreadSnapshotRequestPolicy.needsRefresh(
+                RemoteThreadSnapshot(
+                    threadId: "thread-1",
+                    rows: [row],
+                    totalRows: 1)) == false)
+    }
+
+    @MainActor
     @Test func questionAnsweringRequiresExplicitThreadCapability() throws {
         let canAnswer = try remoteTaskCard(
             #"{"id":"card-1","threadId":"thread-1","capabilities":{"answer":true}}"#)
