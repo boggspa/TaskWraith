@@ -45,7 +45,7 @@ export function TrustedSessionConfirmSheet({
         </header>
 
         <p className="creative-approval-modal-description">
-          Trusted Session raises only this chat or participant lane to TaskWraith's highest local
+          Trusted Session raises only this chat or participant lane to TaskWraith&apos;s highest local
           authority. It may allow shell commands without the workspace sandbox, signing or
           keychain-backed tools, and files outside the workspace when the provider adapter supports
           it.
@@ -65,7 +65,7 @@ export function TrustedSessionConfirmSheet({
           />
           <span>
             I understand this applies only to {subjectLabel} and stays active until I lower that
-            lane's permission.
+            lane&apos;s permission.
           </span>
         </label>
 
