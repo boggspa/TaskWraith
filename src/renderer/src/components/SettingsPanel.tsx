@@ -36,6 +36,11 @@ import type {
   UserMcpServerConfig,
   UserMcpServerTransport
 } from '../../../main/store/types'
+import type { DiffStatColors } from '../../../shared/diffStatColors'
+import {
+  DEFAULT_DIFF_STAT_COLORS,
+  normalizeDiffStatColors
+} from '../../../shared/diffStatColors'
 import { humaniseModelId } from '../lib/modelDisplayName'
 import { getDashboardStatsByGroup, isDashboardStatVisible } from '../lib/dashboardStatRegistry'
 import {
@@ -61,6 +66,13 @@ import {
   quoteInstalledFontFamily,
   type TypefaceOption
 } from '../lib/typefaceOptions'
+import {
+  accentFromHue,
+  normalizePoolIconBrightness,
+  normalizePoolIconSaturation,
+  parsePoolColorInput,
+  rgbStringFromHexColor
+} from '../lib/ensembleAgentPool'
 import { setFxRatesPerUsd } from '../lib/formatCost'
 import { formatResetShort } from '../lib/UsageFormat'
 import {
@@ -227,6 +239,7 @@ interface SettingsPanelProps {
   themeCornerStyle: ThemeCornerStyle
   themeAccentStyle: ThemeAccentStyle
   toolIconAccent: ToolIconAccent
+  diffStatColors: DiffStatColors
   userBubbleColor: UserBubbleColor
   appIconVariant: AppIconVariant
   promptSurfaceStyle: PromptSurfaceStyle
@@ -350,6 +363,7 @@ interface SettingsPanelProps {
     themeCornerStyle?: ThemeCornerStyle
     themeAccentStyle?: ThemeAccentStyle
     toolIconAccent?: ToolIconAccent
+    diffStatColors?: DiffStatColors
     userBubbleColor?: UserBubbleColor
     appIconVariant?: AppIconVariant
     promptSurfaceStyle?: PromptSurfaceStyle
@@ -2421,6 +2435,7 @@ const MCP_TOOL_GROUPED_NAMES: Record<McpToolGroup, readonly TaskWraithMcpToolNam
     'ensemble_send',
     'ensemble_fanout',
     'ensemble_bossman_control',
+    'ensemble_poll_response',
     'ensemble_roster_edit',
     'ensemble_brief_update',
     'list_ensemble_participants',
@@ -2453,7 +2468,11 @@ const MCP_TOOL_GROUPED_NAMES: Record<McpToolGroup, readonly TaskWraithMcpToolNam
     'cancel_wakeup',
     'tw_recall_find',
     'tw_recall_read',
-    'tw_recall_read_events'
+    'tw_recall_read_events',
+    'tw_introspection_run',
+    'tw_introspection_list',
+    'tw_introspection_read',
+    'tw_introspection_review'
   ],
   media: [
     'image_edit',
@@ -3523,6 +3542,165 @@ function applyOutOfUsage(
   }
 }
 
+type DiffStatColorTone = keyof DiffStatColors
+
+function normalizeHue(hue: number): number {
+  if (!Number.isFinite(hue)) return 0
+  return ((Math.round(hue) % 360) + 360) % 360
+}
+
+function SettingsDiffStatColorControl({
+  tone,
+  label,
+  value,
+  fallback,
+  onChange
+}: {
+  tone: DiffStatColorTone
+  label: string
+  value: string
+  fallback: string
+  onChange: (next: string) => void
+}): React.JSX.Element {
+  const safeColor = normalizeDiffStatColors({ [tone]: value })[tone] || fallback
+  const parsed = parsePoolColorInput(safeColor) || parsePoolColorInput(fallback)
+  const safeHue = normalizeHue(parsed?.hue ?? 0)
+  const safeSaturation = normalizePoolIconSaturation(parsed?.saturation ?? 70)
+  const safeBrightness = normalizePoolIconBrightness(parsed?.brightness ?? 45)
+  const rgbText = rgbStringFromHexColor(safeColor)
+  const [hexDraft, setHexDraft] = useState(safeColor)
+  const [rgbDraft, setRgbDraft] = useState(rgbText)
+
+  useEffect(() => {
+    setHexDraft(safeColor)
+    setRgbDraft(rgbText)
+  }, [safeColor, rgbText])
+
+  const applyColor = ({
+    hue = safeHue,
+    saturation = safeSaturation,
+    brightness = safeBrightness
+  }: {
+    hue?: number
+    saturation?: number
+    brightness?: number
+  }): void => {
+    const nextHue = normalizeHue(hue)
+    const nextSaturation = normalizePoolIconSaturation(saturation)
+    const nextBrightness = normalizePoolIconBrightness(brightness)
+    onChange(accentFromHue(nextHue, nextBrightness, nextSaturation))
+  }
+
+  const commitHexDraft = (): void => {
+    const next = parsePoolColorInput(hexDraft)
+    if (!next) {
+      setHexDraft(safeColor)
+      return
+    }
+    onChange(next.accent)
+  }
+
+  const commitRgbDraft = (): void => {
+    const next = parsePoolColorInput(rgbDraft)
+    if (!next) {
+      setRgbDraft(rgbText)
+      return
+    }
+    onChange(next.accent)
+  }
+
+  const blurOnEnter = (event: React.KeyboardEvent<HTMLInputElement>): void => {
+    if (event.key !== 'Enter') return
+    event.preventDefault()
+    event.currentTarget.blur()
+  }
+
+  return (
+    <section
+      className={`settings-diff-stat-color-card settings-diff-stat-color-card--${tone}`}
+      style={{ ['--settings-diff-stat-color' as string]: safeColor }}
+    >
+      <header className="settings-diff-stat-color-header">
+        <span className="agent-pool-color-swatch" style={{ backgroundColor: safeColor }} />
+        <span className="settings-diff-stat-color-name">{label}</span>
+        <span className="settings-diff-stat-color-hsl">
+          HSL {safeHue} / {safeSaturation}% / {safeBrightness}%
+        </span>
+        <button
+          type="button"
+          className="agent-pool-mini-btn settings-diff-stat-color-reset"
+          disabled={safeColor === fallback}
+          onClick={() => onChange(fallback)}
+        >
+          Reset
+        </button>
+      </header>
+      <div className="agent-pool-color-controls settings-diff-stat-color-controls">
+        <label className="agent-pool-color-slider">
+          <span className="agent-pool-hue-label">Hue</span>
+          <input
+            type="range"
+            min={0}
+            max={359}
+            value={safeHue}
+            onChange={(event) => applyColor({ hue: Number(event.target.value) })}
+            aria-label={`${label} hue`}
+          />
+        </label>
+        <label className="agent-pool-color-slider">
+          <span className="agent-pool-hue-label">Saturation</span>
+          <input
+            type="range"
+            min={0}
+            max={100}
+            value={safeSaturation}
+            onChange={(event) => applyColor({ saturation: Number(event.target.value) })}
+            aria-label={`${label} saturation`}
+          />
+        </label>
+        <label className="agent-pool-color-slider">
+          <span className="agent-pool-hue-label">Luma</span>
+          <input
+            type="range"
+            min={0}
+            max={100}
+            value={safeBrightness}
+            onChange={(event) => applyColor({ brightness: Number(event.target.value) })}
+            aria-label={`${label} luma`}
+          />
+        </label>
+        <div className="agent-pool-color-fields">
+          <span className="agent-pool-color-swatch" style={{ backgroundColor: safeColor }} />
+          <label className="agent-pool-color-field">
+            <span>Hex</span>
+            <input
+              type="text"
+              value={hexDraft}
+              onChange={(event) => setHexDraft(event.target.value)}
+              onBlur={commitHexDraft}
+              onKeyDown={blurOnEnter}
+              aria-label={`${label} hex color`}
+              spellCheck={false}
+            />
+          </label>
+          <label className="agent-pool-color-field agent-pool-color-field--rgb">
+            <span>RGB</span>
+            <input
+              type="text"
+              value={rgbDraft}
+              onChange={(event) => setRgbDraft(event.target.value)}
+              onBlur={commitRgbDraft}
+              onKeyDown={blurOnEnter}
+              aria-label={`${label} RGB color`}
+              spellCheck={false}
+            />
+          </label>
+        </div>
+      </div>
+    </section>
+  )
+}
+
 export function SettingsPanel({
   mode,
   visualEffectStyle,
@@ -3530,6 +3708,7 @@ export function SettingsPanel({
   themeCornerStyle,
   themeAccentStyle,
   toolIconAccent,
+  diffStatColors,
   appIconVariant,
   userBubbleColor,
   promptSurfaceStyle,
@@ -3658,6 +3837,7 @@ export function SettingsPanel({
   const requestedActiveTab = activeTabProp ?? internalActiveTab
   const activeTab = resolveVisibleSettingsTab(requestedActiveTab)
   const visibleSettingsTabs = getVisibleSettingsTabs()
+  const normalizedDiffStatColors = normalizeDiffStatColors(diffStatColors)
   const auditRetentionEnabled = auditRetention?.enabled === true
   const auditRetentionMaxAgeDays = auditRetention?.maxAgeDays || {}
   const updateAuditRetentionSurface = (surface: AuditRetentionSurface, rawDays: number): void => {
@@ -5274,6 +5454,43 @@ export function SettingsPanel({
                     </button>
                   ))}
                 </div>
+              </div>
+
+              <div className="settings-group settings-diff-stat-colors">
+                <label className="settings-label">Diff stat colors</label>
+                <div className="settings-diff-stat-color-grid">
+                  <SettingsDiffStatColorControl
+                    tone="additions"
+                    label="Additions"
+                    value={normalizedDiffStatColors.additions}
+                    fallback={DEFAULT_DIFF_STAT_COLORS.additions}
+                    onChange={(additions) =>
+                      onChange({
+                        diffStatColors: normalizeDiffStatColors({
+                          ...normalizedDiffStatColors,
+                          additions
+                        })
+                      })
+                    }
+                  />
+                  <SettingsDiffStatColorControl
+                    tone="deletions"
+                    label="Deletions"
+                    value={normalizedDiffStatColors.deletions}
+                    fallback={DEFAULT_DIFF_STAT_COLORS.deletions}
+                    onChange={(deletions) =>
+                      onChange({
+                        diffStatColors: normalizeDiffStatColors({
+                          ...normalizedDiffStatColors,
+                          deletions
+                        })
+                      })
+                    }
+                  />
+                </div>
+                <p className="settings-hint">
+                  Drives the +N / -N counters in composer rows, transcript file summaries, and tool-call rows.
+                </p>
               </div>
 
               <div className="settings-group">

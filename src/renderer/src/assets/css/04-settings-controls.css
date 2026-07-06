@@ -5158,11 +5158,11 @@ input:disabled, select:disabled, textarea:disabled {
 }
 
 .file-change-stat-add {
-  color: #2db777;
+  color: var(--diff-stat-add-color, #2db777);
 }
 
 .file-change-stat-delete {
-  color: #ec3d35;
+  color: var(--diff-stat-del-color, #ec3d35);
   text-align: left;
 }
 
@@ -7314,6 +7314,61 @@ input:disabled, select:disabled, textarea:disabled {
   outline: 2px solid color-mix(in srgb, var(--accent) 34%, transparent);
   outline-offset: 1px;
   border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+.settings-diff-stat-color-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 10px;
+}
+
+.settings-diff-stat-color-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid color-mix(in srgb, var(--settings-diff-stat-color) 28%, var(--panel-border));
+  border-radius: 8px;
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--settings-diff-stat-color) 8%, transparent),
+      transparent
+    ),
+    color-mix(in srgb, var(--text-primary) 3%, transparent);
+}
+
+.settings-diff-stat-color-header {
+  display: grid;
+  grid-template-columns: auto minmax(72px, max-content) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.settings-diff-stat-color-name {
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.settings-diff-stat-color-hsl {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-tertiary);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-diff-stat-color-reset {
+  justify-self: end;
+}
+
+.settings-diff-stat-color-controls {
+  min-width: 0;
 }
 
 .agent-pool-hue-toggle {

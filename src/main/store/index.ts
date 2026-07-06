@@ -3,6 +3,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 import { coerceLiveProvider, DEFAULT_PROVIDER } from '../../shared/retiredProviders'
 import { redactSecrets } from '../../shared/secretRedaction'
+import { DEFAULT_DIFF_STAT_COLORS, normalizeDiffStatColors } from '../../shared/diffStatColors'
 import { isRetiredExternalChannelInboundMessage } from '../LegacyExternalChannelHistory'
 import type { TaskWraithPluginResourceProvenance } from '../../shared/plugins/PluginTypes'
 import type { UnattendedElevationAck } from '../UnattendedPostureGate'
@@ -988,6 +989,7 @@ const defaultSettings: AppSettings = {
   themeAccentStyle: 'system',
   toolIconAccent: 'system',
   userBubbleColor: 'system',
+  diffStatColors: DEFAULT_DIFF_STAT_COLORS,
   appIconVariant: 'regular',
   promptSurfaceStyle: 'liquid_glass',
   composerStyle: 'default',
@@ -1954,6 +1956,7 @@ export class AppStore {
         ...defaultSettings.agenticServices,
         ...(stored.agenticServices || {})
       },
+      diffStatColors: normalizeDiffStatColors(stored.diffStatColors),
       auditRetention: normalizeAuditRetentionSettings(stored.auditRetention),
       dashboardStatPrefs: {
         ...(defaultSettings.dashboardStatPrefs || {}),

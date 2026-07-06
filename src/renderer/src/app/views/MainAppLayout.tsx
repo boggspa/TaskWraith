@@ -749,6 +749,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
               themeCornerStyle={appearance.themeCornerStyle}
               themeAccentStyle={appearance.themeAccentStyle}
               toolIconAccent={appearance.toolIconAccent}
+              diffStatColors={appearance.diffStatColors}
               appIconVariant={appearance.appIconVariant}
               userBubbleColor={appearance.userBubbleColor}
               promptSurfaceStyle={appearance.promptSurfaceStyle}

@@ -48,6 +48,7 @@ import {
   type ContextCompactionProgressEvent
 } from '../../shared/contextCompaction'
 import type { TaskWraithPluginActivationSnapshot } from '../../shared/plugins/PluginTypes'
+import { normalizeDiffStatColors } from '../../shared/diffStatColors'
 import {
   buildOllamaPullCommand,
   isOllamaModelInstalled,
@@ -5436,6 +5437,11 @@ function App(): React.JSX.Element {
     if (next.userBubbleColor !== undefined) {
       settingsPatch.userBubbleColor = next.userBubbleColor
       appearance.update({ userBubbleColor: next.userBubbleColor })
+    }
+    if (next.diffStatColors !== undefined) {
+      const diffStatColors = normalizeDiffStatColors(next.diffStatColors)
+      settingsPatch.diffStatColors = diffStatColors
+      appearance.update({ diffStatColors })
     }
     if (next.appIconVariant !== undefined) {
       settingsPatch.appIconVariant = next.appIconVariant

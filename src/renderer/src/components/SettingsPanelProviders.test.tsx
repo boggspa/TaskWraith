@@ -34,6 +34,7 @@ function makeSettingsProps(overrides: Partial<SettingsPanelProps> = {}): Setting
     themeCornerStyle: 'rounded',
     themeAccentStyle: 'blue',
     toolIconAccent: 'system',
+    diffStatColors: { additions: '#2DB777', deletions: '#EC3D35' },
     appIconVariant: 'regular',
     userBubbleColor: 'system',
     promptSurfaceStyle: 'theme',
@@ -148,6 +149,19 @@ function makeRuntimeProfile(overrides: Partial<RuntimeProfile> = {}): RuntimePro
 }
 
 describe('SettingsPanel provider cards', () => {
+  it('renders adjustable diff stat colors on the Appearance tab', () => {
+    const html = renderToStaticMarkup(
+      <SettingsPanel {...makeSettingsProps({ activeTab: 'appearance' })} />
+    )
+
+    expect(html).toContain('Diff stat colors')
+    expect(html).toContain('Additions')
+    expect(html).toContain('Deletions')
+    expect(html).toContain('#2DB777')
+    expect(html).toContain('#EC3D35')
+    expect(html).toContain('HSL')
+  })
+
   it('renders available Cursor and Grok cards without raw env flags and with ready LEDs', () => {
     const html = renderToStaticMarkup(<SettingsPanel {...makeSettingsProps()} />)
 

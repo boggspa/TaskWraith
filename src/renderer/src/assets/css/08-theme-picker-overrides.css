@@ -6273,10 +6273,10 @@
  * green / red towards their light-on-dark variants so they
  * pop against the obsidian fill. */
 [data-composer-style="obsidian"][data-composer-style="obsidian"] .composer-diff-add {
-  color: #2db777 !important;
+  color: var(--diff-stat-add-color, #2db777) !important;
 }
 [data-composer-style="obsidian"][data-composer-style="obsidian"] .composer-diff-del {
-  color: #ec3d35 !important;
+  color: var(--diff-stat-del-color, #ec3d35) !important;
 }
 
 /* 1.0.5-EW57 — Doubled-attribute selector specificity trick.
@@ -6727,10 +6727,10 @@
 }
 /* Diff +/- colors stay readable on cream — darker green / red. */
 [data-composer-style="alabaster"][data-composer-style="alabaster"] .composer-diff-add {
-  color: #2db777 !important;
+  color: var(--diff-stat-add-color, #2db777) !important;
 }
 [data-composer-style="alabaster"][data-composer-style="alabaster"] .composer-diff-del {
-  color: #ec3d35 !important;
+  color: var(--diff-stat-del-color, #ec3d35) !important;
 }
 
 /* Composer surface — same specificity trick (doubled
@@ -8602,16 +8602,16 @@
 /* Inner +/- spans keep their semantic green/red but lift contrast
  * against the new gray button bg. */
 [data-composer-style="claude"] .composer-above-bar .composer-above-bar-stats .composer-diff-add {
-  color: #2db777;
+  color: var(--diff-stat-add-color, #2db777);
 }
 [data-composer-style="claude"] .composer-above-bar .composer-above-bar-stats .composer-diff-del {
-  color: #ec3d35;
+  color: var(--diff-stat-del-color, #ec3d35);
 }
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="claude"] .composer-above-bar .composer-above-bar-stats .composer-diff-add {
-  color: #2db777;
+  color: var(--diff-stat-add-color, #2db777);
 }
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="claude"] .composer-above-bar .composer-above-bar-stats .composer-diff-del {
-  color: #ec3d35;
+  color: var(--diff-stat-del-color, #ec3d35);
 }
 
 /* 4) Permissions picker as a contained "Auto"-style button.

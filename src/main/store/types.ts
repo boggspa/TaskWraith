@@ -1,5 +1,6 @@
 import type { TodoItem } from '../TodoList'
 import type { AppIconVariant } from '../../shared/iconVariants'
+import type { DiffStatColors } from '../../shared/diffStatColors'
 import type { ClaudeWorkflowTelemetry } from '../../shared/claudeWorkflow'
 import type { CodexReviewTelemetry } from '../../shared/codexReview'
 import type { UnattendedElevationAck } from '../UnattendedPostureGate'
@@ -1937,6 +1938,8 @@ export interface AppSettings {
   themeAccentStyle: ThemeAccentStyle
   toolIconAccent: ToolIconAccent
   userBubbleColor: UserBubbleColor
+  /** Unified +N / -N diff stat colors for composer rows and transcript tool-call rows. */
+  diffStatColors?: DiffStatColors
   /** Selected app-icon variant; Dock/taskbar swap on desktop. See src/shared/iconVariants.ts. */
   appIconVariant: AppIconVariant
   promptSurfaceStyle: PromptSurfaceStyle

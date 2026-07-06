@@ -11,7 +11,9 @@ import type {
   UserBubbleColor,
   VisualEffectStyle
 } from '../../../main/store/types'
+import type { DiffStatColors } from '../../../shared/diffStatColors'
 import type { AppIconVariant } from '../../../shared/iconVariants'
+import { DEFAULT_DIFF_STAT_COLORS, normalizeDiffStatColors } from '../../../shared/diffStatColors'
 import {
   COMPOSER_FONT_MATCH_TRANSCRIPT,
   FONT_STACKS,
@@ -38,6 +40,7 @@ export interface AppearanceState {
   themeAccentStyle: ThemeAccentStyle
   toolIconAccent: ToolIconAccent
   userBubbleColor: UserBubbleColor
+  diffStatColors: DiffStatColors
   appIconVariant: AppIconVariant
   promptSurfaceStyle: PromptSurfaceStyle
   composerStyle: ComposerStyle
@@ -135,6 +138,7 @@ function getInitialState(): AppearanceState {
     themeAccentStyle: 'system',
     toolIconAccent: 'system',
     userBubbleColor: 'system',
+    diffStatColors: DEFAULT_DIFF_STAT_COLORS,
     appIconVariant: 'regular',
     promptSurfaceStyle: 'liquid_glass',
     composerStyle: 'default',
@@ -215,6 +219,7 @@ export function useAppearance() {
           toolIconAccent: settings.toolIconAccent || 'system',
           appIconVariant: settings.appIconVariant || 'regular',
           userBubbleColor: settings.userBubbleColor || 'system',
+          diffStatColors: normalizeDiffStatColors(settings.diffStatColors),
           promptSurfaceStyle: settings.promptSurfaceStyle || 'liquid_glass',
           composerStyle: settings.composerStyle || 'default',
           transcriptFontFamily: normalizeFontFamily(
@@ -294,6 +299,8 @@ export function useAppearance() {
     root.setAttribute('data-accent', next.themeAccentStyle)
     root.setAttribute('data-tool-icon-accent', next.toolIconAccent)
     root.setAttribute('data-user-bubble-color', next.userBubbleColor)
+    root.style.setProperty('--diff-stat-add-color', next.diffStatColors.additions)
+    root.style.setProperty('--diff-stat-del-color', next.diffStatColors.deletions)
     root.setAttribute('data-prompt-surface', next.promptSurfaceStyle)
     root.setAttribute('data-composer-style', next.composerStyle)
     root.setAttribute('data-interface-style', next.composerStyle)
@@ -387,6 +394,12 @@ export function useAppearance() {
         const next = {
           ...prev,
           ...partial,
+          diffStatColors: partial.diffStatColors
+            ? normalizeDiffStatColors({
+                ...prev.diffStatColors,
+                ...partial.diffStatColors
+              })
+            : prev.diffStatColors,
           advancedFx: partial.advancedFx
             ? normalizeAdvancedFx(partial.advancedFx, prev.advancedFx.intensity)
             : prev.advancedFx
@@ -415,6 +428,7 @@ export function useAppearance() {
             themeAccentStyle: next.themeAccentStyle,
             toolIconAccent: next.toolIconAccent,
             userBubbleColor: next.userBubbleColor,
+            diffStatColors: next.diffStatColors,
             appIconVariant: next.appIconVariant,
             promptSurfaceStyle: next.promptSurfaceStyle,
             composerStyle: next.composerStyle,

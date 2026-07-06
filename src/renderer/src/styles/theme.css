@@ -213,6 +213,8 @@
   --diff-add-text: #6ddfa8;
   --diff-del-bg: rgba(229, 77, 77, 0.10);
   --diff-del-text: #f08080;
+  --diff-stat-add-color: #2DB777;
+  --diff-stat-del-color: #EC3D35;
   --diff-hunk: #5a8cff;
 
   /* CodeMirror syntax + editor chrome (File Editor / popout).
