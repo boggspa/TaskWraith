@@ -2281,6 +2281,7 @@ export function Sidebar({
     return out
   }, [pendingAgentApprovalByChatId, pendingApprovalQueueByChatId])
   const hasPendingApprovals = pendingApprovalsFlat.length > 0
+  const footerPopoverActive = approvalsPopoverOpen || sharesPopoverOpen || devicesPopoverOpen
   // Stable so the Approvals popover doesn't re-fetch the ledger on every
   // unrelated Sidebar re-render (e.g. the 5s device poll) while it's open.
   const loadRecentApprovals = useCallback(
@@ -3576,7 +3577,11 @@ export function Sidebar({
   }
 
   return (
-    <div className={`app-sidebar${animationClassName ? ` ${animationClassName}` : ''}`}>
+    <div
+      className={`app-sidebar${animationClassName ? ` ${animationClassName}` : ''}${
+        footerPopoverActive ? ' has-footer-popover' : ''
+      }`}
+    >
       <div className="sidebar-content">
         {isUpdatePillVisible(updateSnapshot) && (onQuickUpdate || onOpenChangelog) ? (
           <div className="sidebar-update-pill-row">

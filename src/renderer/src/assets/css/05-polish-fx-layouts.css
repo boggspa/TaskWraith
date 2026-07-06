@@ -3228,6 +3228,19 @@
   min-width: min(360px, calc(100vw - 24px));
 }
 
+.app-sidebar.has-footer-popover,
+:root[data-fx-enabled="true"][data-fx-mode="epic"] .app-sidebar.has-footer-popover {
+  overflow: visible;
+  z-index: 160;
+}
+
+.app-sidebar.has-footer-popover .sidebar-content,
+:root[data-fx-enabled="true"][data-fx-mode="epic"]
+  .app-sidebar.has-footer-popover
+  .sidebar-content {
+  overflow: visible;
+}
+
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .sidebar-footer-popover {
   --sidebar-picker-bg-solid: var(--surface-1, #ffffff);
   border-color: var(--surface-border);
