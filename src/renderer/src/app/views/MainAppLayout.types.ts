@@ -63,6 +63,7 @@ type MainAppLayoutSidebarProps = {
   handleAddRunQueueJobToWorkspaceBoard: NonNullable<SidebarProps['onAddRunQueueJobToWorkspaceBoard']>
   handleAddWorkflowToWorkspaceBoard: NonNullable<SidebarProps['onAddWorkflowToWorkspaceBoard']>
   handleArchiveWorkspaceBoard: NonNullable<SidebarProps['onArchiveWorkspaceBoard']>
+  handleAgentApprovalAction: NonNullable<SidebarProps['onRespondAgentApproval']>
   handleCancelWorkflowExecution: NonNullable<SidebarProps['onCancelWorkflowExecution']>
   handleCreateWorkspaceBoard: NonNullable<SidebarProps['onCreateWorkspaceBoard']>
   handleDeleteChat: NonNullable<SidebarProps['onDeleteChat']>

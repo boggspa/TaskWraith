@@ -15851,12 +15851,27 @@ function App(): React.JSX.Element {
     []
   )
 
+  const findPendingApprovalRoute = (
+    requestId: string
+  ): { chatId: string; location: 'head' | 'queue' } | null => {
+    for (const [chatId, approval] of Object.entries(pendingAgentApprovalByChatId)) {
+      if (approval?.id === requestId) return { chatId, location: 'head' }
+    }
+    for (const [chatId, queue] of Object.entries(pendingApprovalQueueByChatId)) {
+      if ((queue || []).some((approval) => approval.id === requestId)) {
+        return { chatId, location: 'queue' }
+      }
+    }
+    return null
+  }
+
   const handleAgentApprovalAction = async (requestId: string, action: AgentApprovalAction) => {
     // Order-4 — capture the optional intent note (trimmed) at decision
     // time and pass it down to the IPC, which stamps it onto the ledger
     // row's metadata. Empty stays undefined so we never persist a blank
     // note. Always optional — never gates the decision.
     const noteForDecision = intentNote.trim() || undefined
+    const pendingRoute = findPendingApprovalRoute(requestId)
     try {
       await window.api.respondAgentApproval(requestId, action, noteForDecision)
       setRawLogs((prev) => [
@@ -15886,13 +15901,28 @@ function App(): React.JSX.Element {
       // new head. When the queue is empty the head goes to null
       // as before. Pre-AK4 each chat held at most one in-flight
       // approval so this distinction didn't matter.
-      const composerChatId = getCurrentComposerStateChatId()
-      setPendingAgentApproval((prev) => (prev?.id === requestId ? null : prev))
+      const targetChatId = pendingRoute?.chatId || getCurrentComposerStateChatId()
       // Order-4 — reset the intent note so the next queued approval
       // (or the next request entirely) starts with an empty field.
       setIntentNote('')
-      if (composerChatId) {
-        advanceApprovalQueueForChat(composerChatId)
+      if (!targetChatId) {
+        setPendingAgentApproval((prev) => (prev?.id === requestId ? null : prev))
+      } else if (pendingRoute?.location === 'queue') {
+        setPendingApprovalQueueByChatId((prev) => {
+          const existing = prev[targetChatId] || []
+          const next = existing.filter((approval) => approval.id !== requestId)
+          if (next.length === existing.length) return prev
+          if (next.length === 0) {
+            const { [targetChatId]: _omit, ...without } = prev
+            return without
+          }
+          return { ...prev, [targetChatId]: next }
+        })
+      } else {
+        setPendingAgentApprovalForChatId(targetChatId, (prev) =>
+          prev?.id === requestId ? null : prev
+        )
+        advanceApprovalQueueForChat(targetChatId)
       }
     }
   }
@@ -24651,6 +24681,7 @@ function App(): React.JSX.Element {
     handleAddRunQueueJobToWorkspaceBoard,
     handleAddWorkflowToWorkspaceBoard,
     handleAddWorkspaceBoardCard,
+    handleAgentApprovalAction,
     handleAgentQuestionDismiss,
     handleAgentQuestionSubmit,
     handleEnsemblePollVote,

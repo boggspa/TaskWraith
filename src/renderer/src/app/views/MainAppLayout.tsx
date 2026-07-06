@@ -205,6 +205,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   handleAddTranscriptMessageToPrompt,
   handleAddWorkflowToWorkspaceBoard,
   handleAddWorkspaceBoardCard,
+  handleAgentApprovalAction,
   handleAgentQuestionDismiss,
   handleAgentQuestionSubmit,
   handleArchiveHandoff,
@@ -705,6 +706,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                 }}
                 pendingAgentApprovalByChatId={pendingAgentApprovalByChatId}
                 pendingApprovalQueueByChatId={pendingApprovalQueueByChatId}
+                onRespondAgentApproval={handleAgentApprovalAction}
                 collaborationShares={humanCollaborationShares}
                 onRevokeShare={handleRevokeHumanShare}
                 hasConnectedCollaborator={connectedCollaborationChatIds.size > 0}

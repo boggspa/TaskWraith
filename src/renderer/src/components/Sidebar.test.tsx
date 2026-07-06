@@ -1308,6 +1308,29 @@ describe('ApprovalsFooterPopover', () => {
     expect(html).toContain('sidebar-footer-approval-row is-clickable')
   })
 
+  it('renders inline approval actions when a response handler is provided', () => {
+    const html = renderToStaticMarkup(
+      <ApprovalsFooterPopover
+        pendingApprovals={[
+          {
+            chatId: 'parent-1',
+            approval: makeApproval({
+              title: 'Approve shell command',
+              actions: ['accept', 'acceptForSession', 'decline']
+            })
+          }
+        ]}
+        onJumpToChat={() => {}}
+        onRespondApproval={() => {}}
+        onOpenSettings={() => {}}
+      />
+    )
+    expect(html).toContain('Approve')
+    expect(html).toContain('Always Allow')
+    expect(html).toContain('Deny')
+    expect(html).toContain('Actions for Approve shell command')
+  })
+
   it('renders a non-clickable row when no jump handler is provided', () => {
     const html = renderToStaticMarkup(
       <ApprovalsFooterPopover

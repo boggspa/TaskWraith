@@ -3191,8 +3191,7 @@
   bottom: calc(100% + 8px);
   z-index: 90;
   /* The sidebar inflates its font scale 1.17x; reset it locally so popover
-     rows read at a normal size and more of each title fits. Use the full
-     sidebar width too (the panel is clipped to the sidebar box). */
+     rows read at a normal size and more of each title fits. */
   --font-size-sm: 12.5px;
   --font-size-xs: 11px;
   width: calc(var(--sidebar-width, 260px) - 16px);
@@ -3213,6 +3212,11 @@
     0 0 0 1px color-mix(in srgb, var(--accent) 10%, transparent);
   animation: sidebar-new-menu-fade-in 140ms ease-out;
   transform-origin: bottom right;
+}
+
+.sidebar-footer-popover.is-approvals {
+  width: min(420px, calc(100vw - 24px));
+  min-width: min(360px, calc(100vw - 24px));
 }
 
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .sidebar-footer-popover {
@@ -3320,6 +3324,14 @@
 
 /* Approvals popover rows — pending (clickable, jumps to the thread) + recent
    resolved (informational). Shares the LED + name/meta layout with devices. */
+.sidebar-footer-approval-pending {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 2px 0 5px;
+  border-radius: 10px;
+}
+
 .sidebar-footer-approval-row {
   display: flex;
   align-items: flex-start;
@@ -3349,6 +3361,49 @@ button.sidebar-footer-approval-row.is-clickable:hover,
 button.sidebar-footer-approval-row.is-clickable:focus-visible {
   background: color-mix(in srgb, var(--accent) 14%, transparent);
   outline: none;
+}
+
+.sidebar-footer-approval-actions {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 8px 2px 24px;
+}
+
+.sidebar-footer-approval-action {
+  flex: 0 0 auto;
+  min-height: 24px;
+  padding: 3px 8px;
+  border: 1px solid color-mix(in srgb, var(--panel-border) 80%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--surface-2, #2a2a2f) 62%, transparent);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--font-size-xs, 11px);
+  font-weight: 600;
+  line-height: 1.2;
+  cursor: pointer;
+}
+
+.sidebar-footer-approval-action:hover,
+.sidebar-footer-approval-action:focus-visible {
+  outline: none;
+  background: color-mix(in srgb, var(--accent) 18%, var(--surface-2, #2a2a2f));
+  border-color: color-mix(in srgb, var(--accent) 42%, transparent);
+}
+
+.sidebar-footer-approval-action.is-approve {
+  background: color-mix(in srgb, var(--accent) 28%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 44%, transparent);
+}
+
+.sidebar-footer-approval-action.is-always {
+  background: color-mix(in srgb, var(--success, #34d399) 20%, transparent);
+  border-color: color-mix(in srgb, var(--success, #34d399) 42%, transparent);
+}
+
+.sidebar-footer-approval-action.is-deny {
+  color: color-mix(in srgb, var(--danger, #e2554f) 82%, var(--text-primary));
 }
 
 .sidebar-footer-approval-title {

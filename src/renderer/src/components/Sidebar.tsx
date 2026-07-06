@@ -56,7 +56,7 @@ import { ProviderGlyph } from './icons/ProviderGlyph'
 import { isSubThreadChat } from '../lib/chatScope'
 import { assignAgentIdentityFromSeed } from '../lib/agentIdentitySeed'
 import { AgentIdentityIcon } from './icons/AgentIdentityIcon'
-import type { AgentApprovalRequest } from '../lib/agentApprovalTypes'
+import type { AgentApprovalAction, AgentApprovalRequest } from '../lib/agentApprovalTypes'
 import type { HumanCollaborationShare } from '../../../main/collaboration/HumanCollaborationStore'
 import type { LocalServerEntry } from '../../../main/localServers/types'
 import { isEnsembleActiveRoundDispatchLive } from '../lib/chatBusyState'
@@ -282,6 +282,8 @@ interface SidebarProps {
    * Folded into the Approvals popover's pending list so the count is honest
    * under parallel fan-out. */
   pendingApprovalQueueByChatId?: Record<string, AgentApprovalRequest[]>
+  /** Resolve an approval directly from the Approvals footer popover. */
+  onRespondAgentApproval?: (requestId: string, action: AgentApprovalAction) => void | Promise<void>
   /** Enabled human-collaboration shares — populates the Shares footer popover
    * (chat + mode + active-collaborator count). */
   collaborationShares?: HumanCollaborationShare[]
@@ -1839,17 +1841,19 @@ function SidebarFooterPopover({
   navLabel,
   onNav,
   ariaLabel,
+  className,
   children
 }: {
   title: string
   navLabel: string
   onNav: () => void
   ariaLabel?: string
+  className?: string
   children?: ReactNode
 }) {
   return (
     <div
-      className="sidebar-footer-popover"
+      className={`sidebar-footer-popover${className ? ` ${className}` : ''}`}
       role="dialog"
       aria-modal="false"
       aria-label={ariaLabel ?? title}
@@ -1877,6 +1881,7 @@ const APPROVALS_POPOVER_PENDING_LIMIT = 6
 export function ApprovalsFooterPopover({
   pendingApprovals,
   onJumpToChat,
+  onRespondApproval,
   onOpenSettings,
   loadRecent
 }: {
@@ -1884,6 +1889,7 @@ export function ApprovalsFooterPopover({
    * target — see pendingApprovalsFlat). */
   pendingApprovals: Array<{ chatId: string; approval: AgentApprovalRequest }>
   onJumpToChat?: (chatId: string) => void
+  onRespondApproval?: (requestId: string, action: AgentApprovalAction) => void | Promise<void>
   onOpenSettings: () => void
   loadRecent?: () => Promise<ApprovalLedgerRecord[]>
 }) {
@@ -1914,6 +1920,7 @@ export function ApprovalsFooterPopover({
     <SidebarFooterPopover
       title="Approvals"
       ariaLabel="Pending and recent approvals"
+      className="is-approvals"
       navLabel="Approvals & Grants"
       onNav={onOpenSettings}
     >
@@ -1926,14 +1933,23 @@ export function ApprovalsFooterPopover({
         <>
           {pendingShown.map(({ chatId, approval }) => {
             const providerLabel = getProviderLabel(approval.provider)
+            const actions = approval.actions || []
+            const canApprove = actions.includes('accept')
+            const alwaysAllowAction: AgentApprovalAction | null = actions.includes('acceptForWorkspace')
+              ? 'acceptForWorkspace'
+              : actions.includes('acceptForSession')
+                ? 'acceptForSession'
+                : null
+            const canDeny = actions.includes('decline')
+            const hasInlineActions =
+              Boolean(onRespondApproval) && (canApprove || Boolean(alwaysAllowAction) || canDeny)
             const rowLabel = chatId && onJumpToChat
               ? `${approval.title}, ${providerLabel}, open thread`
               : `${approval.title}, ${providerLabel}`
-            return chatId && onJumpToChat ? (
+            const summary = chatId && onJumpToChat ? (
               <button
-                key={approval.id}
                 type="button"
-                className="sidebar-footer-approval-row is-clickable"
+                className="sidebar-footer-approval-row is-clickable sidebar-footer-approval-summary"
                 onClick={() => onJumpToChat(chatId)}
                 aria-label={rowLabel}
               >
@@ -1942,10 +1958,59 @@ export function ApprovalsFooterPopover({
                 <span className="sidebar-footer-approval-meta">{providerLabel}</span>
               </button>
             ) : (
-              <div className="sidebar-footer-approval-row" key={approval.id} aria-label={rowLabel}>
+              <div
+                className="sidebar-footer-approval-row sidebar-footer-approval-summary"
+                aria-label={rowLabel}
+              >
                 <span className="sidebar-footer-led is-pending" aria-hidden />
                 <span className="sidebar-footer-approval-title">{approval.title}</span>
                 <span className="sidebar-footer-approval-meta">{providerLabel}</span>
+              </div>
+            )
+            return (
+              <div className="sidebar-footer-approval-pending" key={approval.id}>
+                {summary}
+                {hasInlineActions && (
+                  <div
+                    className="sidebar-footer-approval-actions"
+                    aria-label={`Actions for ${approval.title}`}
+                  >
+                    {canApprove && (
+                      <button
+                        type="button"
+                        className="sidebar-footer-approval-action is-approve"
+                        title="Approve this request once."
+                        onClick={() => void onRespondApproval?.(approval.id, 'accept')}
+                      >
+                        Approve
+                      </button>
+                    )}
+                    {alwaysAllowAction && (
+                      <button
+                        type="button"
+                        className="sidebar-footer-approval-action is-always"
+                        title={
+                          alwaysAllowAction === 'acceptForWorkspace'
+                            ? 'Allow this kind of request for this workspace until revoked in Approvals & Grants.'
+                            : 'Allow matching requests for the rest of this app session.'
+                        }
+                        onClick={() => void onRespondApproval?.(approval.id, alwaysAllowAction)}
+                      >
+                        Always Allow
+                      </button>
+                    )}
+                    {canDeny && (
+                      <button
+                        type="button"
+                        className="sidebar-footer-approval-action is-deny"
+                        title="Deny this request."
+                        onClick={() => void onRespondApproval?.(approval.id, 'decline')}
+                      >
+                        Deny
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
             )
           })}
@@ -2169,6 +2234,7 @@ export function Sidebar({
   onOpenSettingsTab,
   pendingAgentApprovalByChatId = {},
   pendingApprovalQueueByChatId = {},
+  onRespondAgentApproval,
   collaborationShares = [],
   onRevokeShare,
   hasConnectedCollaborator = false,
@@ -5388,6 +5454,7 @@ export function Sidebar({
                   const chat = chats.find((candidate) => candidate.appChatId === chatId)
                   if (chat) onSelectChat(chat)
                 }}
+                onRespondApproval={onRespondAgentApproval}
                 loadRecent={loadRecentApprovals}
                 onOpenSettings={() => {
                   setApprovalsPopoverOpen(false)
