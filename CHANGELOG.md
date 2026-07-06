@@ -4,6 +4,28 @@ Notable changes to TaskWraith, the local-first macOS desktop workbench for runni
 and reviewing AI coding agents. Entries are user-facing highlights; execution,
 history, and workspace state stay on your machine throughout.
 
+## 1.7.8 - 2026-07-06
+
+### Fixed
+- **iOS transcript hydration.** The Mac bridge now avoids sending oversized rich
+  remote-projection frames that could exceed the relay's payload budget after
+  the phone had already received the lightweight chat list. Oversized projection
+  snapshots fan out through the existing single-envelope channel, and large
+  thread snapshots are trimmed to a safe latest-row window instead of leaving
+  mobile detail screens stuck on "Loading transcript from your Mac...".
+- **iOS thread detail refreshes.** Mobile detail views now re-request transcript
+  snapshots when a metadata-only snapshot says history exists but contains no
+  rows, and Mac-side request handling avoids races where an early request could
+  be ignored before the bridge connection was ready.
+- **iOS projection aliases.** Remote thread snapshots now carry the aliases the
+  Swift client expects, keeping transcript rows, ensemble metadata, and composer
+  context attached to the selected chat.
+- **iOS compact composer.** The mobile composer again collapses both the
+  above-row controls and the footer telemetry rail when the keyboard drops,
+  while preserving the compact diff access affordance.
+- **Windows CI portability.** Release/test scripts avoid POSIX-only assumptions
+  that broke the Windows lane.
+
 ## 1.7.7 - 2026-07-06
 
 ### Added
