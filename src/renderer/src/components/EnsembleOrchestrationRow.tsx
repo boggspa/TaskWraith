@@ -28,7 +28,11 @@
 
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
-import { ContinuousHopsLimitChip } from './ContinuousHopsLimitChip'
+import {
+  ContinuousHopsLimitChip,
+  type ContinuousHopsGoalStatus,
+  type ContinuousHopsRoundStatus
+} from './ContinuousHopsLimitChip'
 import { EnsembleModePicker, type EnsembleOrchestrationMode } from './EnsembleModePicker'
 import type { ComposerStyle, EnsembleFanoutPolicy } from '../../../main/store/types'
 
@@ -77,6 +81,8 @@ export function EnsembleOrchestrationRow({
   ollamaContextWarning,
   continuationHops,
   maxContinuationHops,
+  roundStatus,
+  activeGoalStatus,
   onMaxContinuationHopsChange
 }: {
   orchestrationMode: EnsembleOrchestrationMode
@@ -102,6 +108,8 @@ export function EnsembleOrchestrationRow({
   ollamaContextWarning?: EnsembleOllamaContextWarning | null
   continuationHops: number
   maxContinuationHops: number
+  roundStatus?: ContinuousHopsRoundStatus
+  activeGoalStatus?: ContinuousHopsGoalStatus | null
   onMaxContinuationHopsChange: (nextMax: number) => void
 }): React.JSX.Element {
   const configuredContextChars = contextChars ?? CONTEXT_DEFAULT
@@ -241,6 +249,8 @@ export function EnsembleOrchestrationRow({
           <ContinuousHopsLimitChip
             hops={continuationHops}
             maxHops={maxContinuationHops}
+            roundStatus={roundStatus}
+            activeGoalStatus={activeGoalStatus}
             onSave={onMaxContinuationHopsChange}
           />
         </span>

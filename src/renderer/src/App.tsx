@@ -24458,6 +24458,8 @@ function App(): React.JSX.Element {
     cumulativeRunBaseMs,
     currentActiveGoal,
     currentChat,
+    currentEnsembleRoundStatus: currentEnsembleRound?.status,
+    currentEnsembleActiveGoalStatus: currentChat?.activeGoal?.status ?? null,
     currentComposerChatId,
     humanCollaborationInviteActive: Boolean(currentChatHumanCollaborationShare),
     humanCollaborationShare: currentChatHumanCollaborationShare,

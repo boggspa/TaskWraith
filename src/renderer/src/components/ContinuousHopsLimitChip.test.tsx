@@ -3,7 +3,8 @@ import { describe, expect, it } from 'vitest'
 import {
   computeContinuousHopsPopoverPosition,
   CONTINUOUS_HOPS_RANGE,
-  ContinuousHopsLimitChip
+  ContinuousHopsLimitChip,
+  resolveContinuousHopsTone
 } from './ContinuousHopsLimitChip'
 
 /**
@@ -15,11 +16,19 @@ import {
  * running app before ship.
  */
 
-function render(props: { hops: number; maxHops: number; disabled?: boolean }): string {
+function render(props: {
+  hops: number
+  maxHops: number
+  disabled?: boolean
+  roundStatus?: 'running' | 'completed' | 'cancelled' | 'failed'
+  activeGoalStatus?: 'active' | 'paused' | 'blocked' | 'completed' | null
+}): string {
   return renderToStaticMarkup(
     <ContinuousHopsLimitChip
       hops={props.hops}
       maxHops={props.maxHops}
+      roundStatus={props.roundStatus}
+      activeGoalStatus={props.activeGoalStatus}
       onSave={() => {
         /* noop */
       }}
@@ -32,6 +41,45 @@ describe('ContinuousHopsLimitChip', () => {
   it('renders the hops/maxHops fraction in the chip text', () => {
     const html = render({ hops: 3, maxHops: 8 })
     expect(html).toContain('3/8')
+  })
+
+  it('uses the neutral tone below the final 30% of turns', () => {
+    const html = render({ hops: 15, maxHops: 64, roundStatus: 'running' })
+    expect(html).toContain('is-neutral')
+  })
+
+  it('turns warning in the final 30% and danger in the final 10%', () => {
+    expect(resolveContinuousHopsTone({ hops: 45, maxHops: 64, roundStatus: 'running' })).toBe(
+      'warning'
+    )
+    expect(resolveContinuousHopsTone({ hops: 58, maxHops: 64, roundStatus: 'running' })).toBe(
+      'danger'
+    )
+  })
+
+  it('shows success when a terminal round ended by completing or blocking the active goal', () => {
+    expect(
+      resolveContinuousHopsTone({
+        hops: 64,
+        maxHops: 64,
+        roundStatus: 'completed',
+        activeGoalStatus: 'completed'
+      })
+    ).toBe('success')
+    expect(
+      resolveContinuousHopsTone({
+        hops: 64,
+        maxHops: 64,
+        roundStatus: 'completed',
+        activeGoalStatus: 'blocked'
+      })
+    ).toBe('success')
+  })
+
+  it('leaves a terminal completed round at the cap in the danger tone without a goal stop', () => {
+    expect(resolveContinuousHopsTone({ hops: 64, maxHops: 64, roundStatus: 'completed' })).toBe(
+      'danger'
+    )
   })
 
   it('renders a <button> (so it is keyboard focusable + click-activatable)', () => {

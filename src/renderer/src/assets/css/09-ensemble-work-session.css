@@ -273,13 +273,22 @@
 }
 :root .composer-ensemble-orchestration-row .composer-ensemble-hop-meter {
   padding: 0 !important;
-  color: color-mix(in srgb, var(--accent-color) 82%, var(--text-primary)) !important;
+  color: var(--text-primary) !important;
   font-size: var(--font-size-xs) !important;
   font-weight: 700 !important;
   line-height: 1 !important;
 }
 :root .composer-ensemble-orchestration-row .composer-ensemble-hop-meter:is(:hover, .is-open) {
-  color: color-mix(in srgb, var(--accent-color) 96%, var(--text-primary)) !important;
+  color: var(--text-primary) !important;
+}
+:root .composer-ensemble-orchestration-row .composer-ensemble-hop-meter.is-warning {
+  color: #f59e0b !important;
+}
+:root .composer-ensemble-orchestration-row .composer-ensemble-hop-meter.is-danger {
+  color: #ef4444 !important;
+}
+:root .composer-ensemble-orchestration-row .composer-ensemble-hop-meter.is-success {
+  color: color-mix(in srgb, var(--status-success, #46a758) 88%, var(--text-primary) 12%) !important;
 }
 [data-composer-style="codex"]
   .composer-above-bar-stack:not(:has(.ensemble-above-row))

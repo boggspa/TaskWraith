@@ -40,6 +40,10 @@ import { ComposerTimecode } from '../components/ComposerTimecodes'
 import { ComposerWorkspaceSwitcher } from '../components/ComposerWorkspaceSwitcher'
 import { CopyTranscriptButton } from '../components/CopyTranscriptButton'
 import { EnsembleOrchestrationRow } from '../components/EnsembleOrchestrationRow'
+import type {
+  ContinuousHopsGoalStatus,
+  ContinuousHopsRoundStatus
+} from '../components/ContinuousHopsLimitChip'
 import { EnsembleParticipantOverflowPopover, EnsembleParticipantsAboveRow } from '../components/EnsembleParticipantsAboveRow'
 import { EnsembleRosterPresetPicker } from '../components/EnsembleRosterPresetPicker'
 import { ExternalPathAboveRow } from '../components/ExternalPathAboveRow'
@@ -212,6 +216,8 @@ export interface ComposerProps {
   currentEnsembleFanoutPolicy: EnsembleFanoutPolicy
   currentEnsembleContinuationHops: any
   currentEnsembleMaxContinuationHops: any
+  currentEnsembleRoundStatus?: ContinuousHopsRoundStatus
+  currentEnsembleActiveGoalStatus?: ContinuousHopsGoalStatus | null
   currentEnsembleOrchestrationMode: any
   currentGoalButtonTitle: any
   currentGoalModeLabel: any
@@ -508,6 +514,8 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     currentEnsembleFanoutPolicy,
     currentEnsembleContinuationHops,
     currentEnsembleMaxContinuationHops,
+    currentEnsembleRoundStatus,
+    currentEnsembleActiveGoalStatus,
     currentEnsembleOrchestrationMode,
     currentGoalButtonTitle,
     currentGoalModeLabel,
@@ -772,6 +780,8 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
         ollamaContextWarning={ensembleOllamaContextWarning}
         continuationHops={currentEnsembleContinuationHops}
         maxContinuationHops={currentEnsembleMaxContinuationHops}
+        roundStatus={currentEnsembleRoundStatus}
+        activeGoalStatus={currentEnsembleActiveGoalStatus}
         onMaxContinuationHopsChange={updateCurrentEnsembleMaxContinuationHops}
       />
     )

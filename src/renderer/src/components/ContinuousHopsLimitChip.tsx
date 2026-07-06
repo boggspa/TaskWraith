@@ -41,12 +41,20 @@ interface ContinuousHopsLimitChipProps {
   hops: number
   /** Current max (the denominator) — what the user is editing. */
   maxHops: number
+  /** Current round lifecycle. Used only for the color affordance. */
+  roundStatus?: ContinuousHopsRoundStatus
+  /** Active goal lifecycle. Terminal completed/blocked goals mean the round ended intentionally. */
+  activeGoalStatus?: ContinuousHopsGoalStatus | null
   /** Called with the validated new max when the user clicks Set. */
   onSave: (nextMax: number) => void
   /** Whether the chip is disabled (e.g. solo chat — rare; renderer already
    * gates the chip on continuous mode, but keep the prop for safety). */
   disabled?: boolean
 }
+
+export type ContinuousHopsRoundStatus = 'running' | 'completed' | 'cancelled' | 'failed'
+export type ContinuousHopsGoalStatus = 'active' | 'paused' | 'blocked' | 'completed'
+export type ContinuousHopsTone = 'neutral' | 'warning' | 'danger' | 'success'
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value))
@@ -71,9 +79,42 @@ export function computeContinuousHopsPopoverPosition(input: {
   }
 }
 
+export function resolveContinuousHopsTone(input: {
+  hops: number
+  maxHops: number
+  roundStatus?: ContinuousHopsRoundStatus
+  activeGoalStatus?: ContinuousHopsGoalStatus | null
+}): ContinuousHopsTone {
+  const isTerminalRound =
+    input.roundStatus === 'completed' ||
+    input.roundStatus === 'cancelled' ||
+    input.roundStatus === 'failed'
+  if (
+    isTerminalRound &&
+    (input.activeGoalStatus === 'completed' || input.activeGoalStatus === 'blocked')
+  ) {
+    return 'success'
+  }
+
+  const maxHops = Number.isFinite(input.maxHops) ? Math.max(1, Math.floor(input.maxHops)) : 1
+  const hops = Number.isFinite(input.hops) ? Math.max(0, Math.floor(input.hops)) : 0
+  const ratio = hops / maxHops
+
+  if (isTerminalRound) {
+    if (input.roundStatus === 'completed' && hops >= maxHops) return 'danger'
+    return ratio >= 0.7 ? 'warning' : 'neutral'
+  }
+
+  if (ratio >= 0.9) return 'danger'
+  if (ratio >= 0.7) return 'warning'
+  return 'neutral'
+}
+
 export function ContinuousHopsLimitChip({
   hops,
   maxHops,
+  roundStatus,
+  activeGoalStatus,
   onSave,
   disabled = false
 }: ContinuousHopsLimitChipProps): React.JSX.Element {
@@ -185,13 +226,16 @@ export function ContinuousHopsLimitChip({
     width: POPOVER_WIDTH,
     visibility: popoverPosition ? 'visible' : 'hidden'
   }
+  const tone = resolveContinuousHopsTone({ hops, maxHops, roundStatus, activeGoalStatus })
 
   return (
     <>
       <button
         ref={triggerRef}
         type="button"
-        className={`composer-ensemble-hop-meter is-clickable ${open ? 'is-open' : ''}`}
+        className={`composer-ensemble-hop-meter is-clickable is-${tone} ${
+          open ? 'is-open' : ''
+        }`}
         onClick={() => !disabled && setOpen((current) => !current)}
         disabled={disabled}
         aria-haspopup="dialog"
