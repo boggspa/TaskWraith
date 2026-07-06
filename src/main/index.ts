@@ -20878,6 +20878,21 @@ async function executeGeminiMcpTool(
             tool: toolName,
             error: 'Blocking an active goal requires a concrete reason.'
           })
+        } else if (
+          lifecycleStatus === 'completed' &&
+          chat.ensemble?.bossmanControlState?.reviewGates?.some(
+            (gate) => gate.status === 'required' || gate.status === 'failed'
+          )
+        ) {
+          const blockingGates = chat.ensemble.bossmanControlState.reviewGates
+            .filter((gate) => gate.status === 'required' || gate.status === 'failed')
+            .map((gate) => `${gate.id}: ${gate.scope} [${gate.status}]`)
+          toolIsError = true
+          text = mcpJson({
+            ok: false,
+            tool: toolName,
+            error: `Goal completion blocked by review gate(s): ${blockingGates.join('; ')}.`
+          })
         } else {
           const nextGoal = updateActiveGoalLifecycle(goal, lifecycleStatus, reason)
           const updatedChat: ChatRecord = {

@@ -4183,6 +4183,243 @@ Next action:
     expect(harness.chat.ensemble?.activeRound?.maxContinuationHops).toBe(5)
   })
 
+  it('blocks Boss Work Session completion while review gates are still required', async () => {
+    const initialChat = makeChat()
+    initialChat.ensemble!.bossmanParticipantId = 'claude'
+    initialChat.ensemble!.workSession = buildWorkSession()
+    const harness = makeHarness({ initialChat })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Plan and execute.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    await harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+      action: 'set_review_gate',
+      roundId: harness.chat.ensemble?.activeRound?.roundId,
+      gateId: 'gate-final-review',
+      targetParticipantId: 'codex',
+      scope: 'final diff',
+      acceptanceCriteria: 'Reviewer must approve before completion.'
+    })
+    const blocked = await harness.orchestrator.bossmanControlForRun(
+      harness.dispatched[0].appRunId,
+      {
+        action: 'complete_work_session',
+        roundId: harness.chat.ensemble?.activeRound?.roundId,
+        reason: 'Looks done.'
+      }
+    )
+    expect(blocked.ok).toBe(false)
+    expect(blocked.error).toBe('review_gate_blocked')
+
+    await harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+      action: 'set_review_gate',
+      roundId: harness.chat.ensemble?.activeRound?.roundId,
+      gateId: 'gate-final-review',
+      targetParticipantId: 'codex',
+      scope: 'final diff',
+      reviewStatus: 'passed'
+    })
+    const completed = await harness.orchestrator.bossmanControlForRun(
+      harness.dispatched[0].appRunId,
+      {
+        action: 'complete_work_session',
+        roundId: harness.chat.ensemble?.activeRound?.roundId,
+        reason: 'Review passed.'
+      }
+    )
+    expect(completed.ok).toBe(true)
+    expect(harness.chat.ensemble?.workSession?.status).toBe('completed')
+  })
+
+  it('enforces Boss extra-turn budgets on directed participant summons', async () => {
+    const initialChat = makeChat()
+    initialChat.ensemble!.orchestrationMode = 'continuous'
+    initialChat.ensemble!.bossmanParticipantId = 'claude'
+    initialChat.activeGoal = { ...buildActiveGoal('goal-x'), status: 'completed' }
+    const harness = makeHarness({ initialChat })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Plan and execute.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    await harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+      action: 'allocate_budget',
+      roundId: harness.chat.ensemble?.activeRound?.roundId,
+      targetParticipantId: 'codex',
+      maxExtraTurns: 0,
+      reason: 'Worker should not receive extra turns.'
+    })
+    harness.orchestrator.markYielded(
+      harness.dispatched[0].appRunId!,
+      'Worker should take this.',
+      'Worker'
+    )
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    harness.orchestrator.handleProviderOutput(
+      'codex',
+      { appRunId: harness.dispatched[1].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'content', text: 'Initial worker answer.' }
+    )
+    harness.orchestrator.handleProviderOutput(
+      'codex',
+      { appRunId: harness.dispatched[1].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'result', status: 'success' }
+    )
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
+
+    const result = await harness.orchestrator.bossmanControlForRun(
+      harness.dispatched[2].appRunId,
+      {
+        action: 'summon_participant',
+        roundId: harness.chat.ensemble?.activeRound?.roundId,
+        targetParticipantId: 'codex',
+        reason: 'Need one more pass.'
+      }
+    )
+
+    expect(result.ok).toBe(false)
+    expect(result.error).toBe('budget_exhausted')
+    expect(harness.dispatched).toHaveLength(3)
+  })
+
+  it('routes Boss-created polls to targeted voters before the natural order', async () => {
+    const initialChat = makeChat()
+    initialChat.ensemble!.bossmanParticipantId = 'claude'
+    initialChat.ensemble!.participants = [
+      initialChat.ensemble!.participants[0],
+      initialChat.ensemble!.participants[1],
+      {
+        id: 'kimi',
+        provider: 'kimi',
+        enabled: true,
+        role: 'TieBreaker',
+        instructions: 'Vote when asked.',
+        order: 3,
+        permissionPresetId: 'read_only'
+      }
+    ]
+    const harness = makeHarness({ initialChat })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Plan and execute.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    await harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+      action: 'create_poll',
+      roundId: harness.chat.ensemble?.activeRound?.roundId,
+      pollId: 'poll-route',
+      question: 'Which path?',
+      options: ['A', 'B'],
+      participantIds: ['kimi']
+    })
+    harness.orchestrator.handleProviderOutput(
+      'claude',
+      { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'result', status: 'success' }
+    )
+
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    expect(harness.dispatched[1].ensembleRun?.participantId).toBe('kimi')
+  })
+
+  it('closes targeted Boss status requests after the target responds', async () => {
+    const initialChat = makeChat()
+    initialChat.ensemble!.bossmanParticipantId = 'claude'
+    const harness = makeHarness({ initialChat })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Plan and execute.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    await harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+      action: 'request_status',
+      roundId: harness.chat.ensemble?.activeRound?.roundId,
+      targetParticipantId: 'codex',
+      question: 'Are you blocked?'
+    })
+    harness.orchestrator.handleProviderOutput(
+      'claude',
+      { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'result', status: 'success' }
+    )
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    expect(harness.chat.ensemble?.bossmanControlState?.statusRequests?.[0]?.status).toBe('open')
+
+    harness.orchestrator.handleProviderOutput(
+      'codex',
+      { appRunId: harness.dispatched[1].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'content', text: 'Not blocked.' }
+    )
+    harness.orchestrator.handleProviderOutput(
+      'codex',
+      { appRunId: harness.dispatched[1].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'result', status: 'success' }
+    )
+
+    await vi.waitFor(() =>
+      expect(harness.chat.ensemble?.bossmanControlState?.statusRequests?.[0]?.status).toBe(
+        'closed'
+      )
+    )
+  })
+
+  it('enforces Boss fan-out call budgets before dispatching lanes', async () => {
+    const initialChat = makeChat()
+    initialChat.ensemble!.fanoutPolicy = 'read_only'
+    initialChat.ensemble!.bossmanParticipantId = 'codex'
+    initialChat.ensemble!.participants = [
+      {
+        id: 'codex',
+        provider: 'codex',
+        enabled: true,
+        role: 'LeadBoss',
+        instructions: 'Coordinate.',
+        order: 1,
+        permissionPresetId: 'workspace_write'
+      },
+      {
+        id: 'claude',
+        provider: 'claude',
+        enabled: true,
+        role: 'Reviewer',
+        instructions: 'Review.',
+        order: 2,
+        permissionPresetId: 'read_only'
+      }
+    ]
+    const harness = makeHarness({ initialChat })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Plan and execute.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    await harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+      action: 'allocate_budget',
+      roundId: harness.chat.ensemble?.activeRound?.roundId,
+      targetParticipantId: 'claude',
+      maxFanoutCalls: 0,
+      reason: 'No fan-out calls for this reviewer.'
+    })
+
+    const result = await harness.orchestrator.fanoutForRun(harness.dispatched[0].appRunId, {
+      targets: ['Reviewer'],
+      prompt: 'Inspect in parallel.'
+    })
+
+    expect(result.ok).toBe(false)
+    expect(result.error).toBe('budget_exhausted')
+    expect(harness.dispatched).toHaveLength(1)
+  })
+
   it('requires an explicit minimum delay for Boss scheduled ensemble wakeups', async () => {
     const scheduled: EnsembleWakeupRecord[] = []
     const initialChat = makeChat()

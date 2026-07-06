@@ -26,6 +26,7 @@ import type {
   EnsembleConfig,
   EnsembleBossmanAssignmentDue,
   EnsembleBossmanAssignmentStatus,
+  EnsembleBossmanBudget,
   EnsembleBossmanControlScope,
   EnsembleBossmanPollVote,
   EnsembleBossmanQuarantine,
@@ -172,8 +173,9 @@ type ContinuationTurnResult =
   | { appended: true }
   | {
       appended: false
-      reason: 'not_continuous' | 'unreachable' | 'blocked_status' | 'hop_limit'
+      reason: 'not_continuous' | 'unreachable' | 'blocked_status' | 'hop_limit' | 'budget_exhausted'
       blockedStatus?: EnsembleParticipantStatus
+      budgetMessage?: string
     }
 export type EnsembleQueuedPromptMutationResult = {
   ok: boolean
@@ -585,6 +587,7 @@ export interface EnsembleFanoutResult {
     | 'missing_write_scope'
     | 'invalid_write_scope'
     | 'write_lanes_disabled'
+    | 'budget_exhausted'
     | 'dispatch_failed'
 }
 
@@ -704,6 +707,8 @@ export interface EnsembleBossmanControlResult {
     | 'invalid_state'
     | 'quota_unavailable'
     | 'wakeup_failed'
+    | 'budget_exhausted'
+    | 'review_gate_blocked'
     | 'queue_failed'
     | 'no_active_work_session'
     | 'baseline_exceeded'
@@ -4751,7 +4756,9 @@ export class EnsembleOrchestrator {
             ? 'summon_hop_limit'
             : continuation.reason === 'not_continuous'
               ? 'summon_not_continuous'
-              : 'summon_blocked_status'
+              : continuation.reason === 'budget_exhausted'
+                ? 'budget_exhausted'
+                : 'summon_blocked_status'
       }
     }
     runtime.bossmanSummonCountsByParticipantId.set(target.id, previousSummonCount + 1)
@@ -4990,6 +4997,13 @@ export class EnsembleOrchestrator {
         runtime.roundId,
         `${authorityLabel} assigned ${participantDisplayName(participant)}: ${objective}`
       )
+      if (assignment.due === 'next_turn' || assignment.due === 'this_round') {
+        this.routeBossmanTargets(
+          runtime,
+          [participant.id],
+          `${authorityLabel} routed assigned work to ${participantDisplayName(participant)}.`
+        )
+      }
       return {
         ok: true,
         tool: 'ensemble_bossman_control',
@@ -5042,6 +5056,14 @@ export class EnsembleOrchestrator {
         runtime.roundId,
         `${authorityLabel} requested status${targetLabel ? ` from ${targetLabel}` : ''}: ${prompt}`
       )
+      if (participantIds.length > 0) {
+        this.routeBossmanTargets(
+          runtime,
+          participantIds,
+          `${authorityLabel} routed status check-in${targetLabel ? ` to ${targetLabel}` : ''}.`,
+          { allowAnsweredParticipant: true }
+        )
+      }
       return { ok: true, tool: 'ensemble_bossman_control', action, roundId: runtime.roundId, message: `${authorityLabel} requested status.` }
     }
 
@@ -5136,6 +5158,9 @@ export class EnsembleOrchestrator {
     }
 
     if (action === 'allocate_budget') {
+      if (input.targetParticipantId && !this.findRuntimeParticipant(runtime, input.targetParticipantId)) {
+        return this.invalidBossmanTarget(action, runtime.roundId)
+      }
       const budget = {
         id: input.budgetId || this.nextBossmanControlId('budget'),
         participantId: input.targetParticipantId || undefined,
@@ -5177,11 +5202,21 @@ export class EnsembleOrchestrator {
       const options = normalizeBossmanTextArray(input.options, MAX_BOSSMAN_POLL_OPTIONS, 160)
       if (!question || options.length < 2) return this.missingBossmanField(action, runtime.roundId, 'create_poll requires question and at least two options.')
       const timeoutSeconds = clampOptionalInteger(input.timeoutSeconds, 30, 24 * 60 * 60)
+      const pollTargetIds = participantIds.length
+        ? participantIds
+        : (this.deps.getChat(runtime.chatId)?.ensemble?.participants || [])
+            .filter(
+              (participant) =>
+                participant.enabled &&
+                participant.id !== callerId &&
+                !runtime.unreachableParticipantIds?.has(participant.id)
+            )
+            .map((participant) => participant.id)
       const poll = {
         id: input.pollId || this.nextBossmanControlId('poll'),
         question,
         options,
-        targetParticipantIds: participantIds.length ? participantIds : undefined,
+        targetParticipantIds: pollTargetIds.length ? pollTargetIds : undefined,
         includeUser: input.includeUser === true,
         timeoutAt: timeoutSeconds
           ? new Date(this.deps.now() + timeoutSeconds * 1000).toISOString()
@@ -5200,6 +5235,14 @@ export class EnsembleOrchestrator {
         runtime.roundId,
         `${authorityLabel} opened poll ${poll.id}: ${question} Options: ${options.join(' / ')}`
       )
+      if (pollTargetIds.length > 0) {
+        this.routeBossmanTargets(
+          runtime,
+          pollTargetIds,
+          `${authorityLabel} routed poll ${poll.id} voters.`,
+          { allowAnsweredParticipant: true }
+        )
+      }
       return { ok: true, tool: 'ensemble_bossman_control', action, roundId: runtime.roundId, message: `${authorityLabel} opened poll ${poll.id}.` }
     }
 
@@ -5330,13 +5373,26 @@ export class EnsembleOrchestrator {
         ...poll,
         votes: [...poll.votes.filter((entry) => entry.voterParticipantId !== run.participant.id), vote]
       }
+      const expectedVoters = poll.targetParticipantIds || []
+      const hasAllTargetVotes =
+        expectedVoters.length > 0 &&
+        expectedVoters.every((participantId) =>
+          nextPoll.votes.some((entry) => entry.voterParticipantId === participantId)
+        )
       response = {
         ok: true,
         tool: 'ensemble_poll_response',
         pollId,
         message: `${participantDisplayName(run.participant)} voted "${choice}" in poll ${pollId}.`
       }
-      return { ...state, polls: [...polls.slice(0, index), nextPoll, ...polls.slice(index + 1)] }
+      return {
+        ...state,
+        polls: [
+          ...polls.slice(0, index),
+          hasAllTargetVotes ? { ...nextPoll, status: 'closed' as const } : nextPoll,
+          ...polls.slice(index + 1)
+        ]
+      }
     })
     if (response.ok) {
       this.appendRoundStatus(runtime.chatId, runtime.roundId, response.message)
@@ -5412,6 +5468,175 @@ export class EnsembleOrchestrator {
       if (quarantine.roundId === roundId) return quarantine
     }
     return null
+  }
+
+  private activeBossmanReviewGateBlocks(chat: ChatRecord): string[] {
+    const gates = chat.ensemble?.bossmanControlState?.reviewGates || []
+    return gates
+      .filter((gate) => gate.status === 'required' || gate.status === 'failed')
+      .map((gate) => `${gate.id}: ${gate.scope} [${gate.status}]`)
+  }
+
+  private bossmanBudgetBlock(
+    runtime: ActiveRoundRuntime,
+    participantId: string,
+    kind: 'extra_turn' | 'fanout_call'
+  ): string | null {
+    const chat = this.deps.getChat(runtime.chatId)
+    const budgets = chat?.ensemble?.bossmanControlState?.budgets || []
+    for (const budget of budgets) {
+      if (budget.participantId && budget.participantId !== participantId) continue
+      if (kind === 'extra_turn' && budget.maxExtraTurns !== undefined) {
+        const used = budget.extraTurnsUsed || 0
+        if (used >= budget.maxExtraTurns) {
+          return `extra-turn budget exhausted (${used}/${budget.maxExtraTurns})`
+        }
+      }
+      if (kind === 'fanout_call' && budget.maxFanoutCalls !== undefined) {
+        const used = budget.fanoutCallsUsed || 0
+        if (used >= budget.maxFanoutCalls) {
+          return `fan-out budget exhausted (${used}/${budget.maxFanoutCalls})`
+        }
+      }
+    }
+    return null
+  }
+
+  private incrementBossmanBudgetUsage(
+    runtime: ActiveRoundRuntime,
+    participantIds: string[],
+    usage: { extraTurns?: number; fanoutCalls?: number }
+  ): void {
+    if ((!usage.extraTurns && !usage.fanoutCalls) || participantIds.length === 0) return
+    const targetIds = new Set(participantIds)
+    const chat = this.deps.getChat(runtime.chatId)
+    const activeBudgets = chat?.ensemble?.bossmanControlState?.budgets || []
+    const hasRelevantBudget = activeBudgets.some(
+      (budget) =>
+        (!budget.participantId || targetIds.has(budget.participantId)) &&
+        ((usage.extraTurns && budget.maxExtraTurns !== undefined) ||
+          (usage.fanoutCalls && budget.maxFanoutCalls !== undefined))
+    )
+    if (!hasRelevantBudget) return
+    this.updateBossmanControlState(runtime, (state) => {
+      const budgets = state.budgets || []
+      let changed = false
+      const nextBudgets = budgets.map((budget): EnsembleBossmanBudget => {
+        if (budget.participantId && !targetIds.has(budget.participantId)) return budget
+        const next = { ...budget }
+        if (usage.extraTurns && budget.maxExtraTurns !== undefined) {
+          next.extraTurnsUsed = (budget.extraTurnsUsed || 0) + usage.extraTurns
+          changed = true
+        }
+        if (usage.fanoutCalls && budget.maxFanoutCalls !== undefined) {
+          next.fanoutCallsUsed = (budget.fanoutCallsUsed || 0) + usage.fanoutCalls
+          changed = true
+        }
+        return next
+      })
+      return changed ? { ...state, budgets: nextBudgets } : state
+    })
+  }
+
+  private reconcileBossmanControlAfterRun(
+    run: ActiveParticipantRun,
+    status: EnsembleParticipantStatus
+  ): void {
+    if (status !== 'answered' && status !== 'yielded' && status !== 'skipped') return
+    const runtime = this.roundsByChatId.get(run.chatId)
+    if (!runtime || runtime.roundId !== run.roundId) return
+    const chat = this.deps.getChat(run.chatId)
+    const roundParticipants = chat?.ensemble?.activeRound?.participants || []
+    const statusRequests = chat?.ensemble?.bossmanControlState?.statusRequests || []
+    if (
+      !statusRequests.some(
+        (request) =>
+          request.status === 'open' && request.targetParticipantIds?.includes(run.participant.id)
+      )
+    ) {
+      return
+    }
+    this.updateBossmanControlState(runtime, (state) => {
+      const requests = state.statusRequests || []
+      let changed = false
+      const nextRequests = requests.map((request) => {
+        if (request.status !== 'open') return request
+        const targets = request.targetParticipantIds || []
+        if (targets.length === 0 || !targets.includes(run.participant.id)) return request
+        const allTargetsSettled = targets.every((participantId) => {
+          const participant = roundParticipants.find(
+            (entry) => entry.participantId === participantId
+          )
+          return (
+            participant?.status === 'answered' ||
+            participant?.status === 'yielded' ||
+            participant?.status === 'skipped' ||
+            participant?.status === 'failed' ||
+            participant?.status === 'cancelled' ||
+            participant?.status === 'unreachable'
+          )
+        })
+        if (!allTargetsSettled) return request
+        changed = true
+        return { ...request, status: 'closed' as const }
+      })
+      return changed ? { ...state, statusRequests: nextRequests } : state
+    })
+  }
+
+  private routeBossmanTargets(
+    runtime: ActiveRoundRuntime,
+    participantIds: string[],
+    statusMessage: string,
+    options: { allowAnsweredParticipant?: boolean } = {}
+  ): number {
+    const chat = this.deps.getChat(runtime.chatId)
+    if (!chat?.ensemble || participantIds.length === 0) return 0
+    const remaining = runtime.remainingParticipants ?? (runtime.remainingParticipants = [])
+    const routed: EnsembleParticipant[] = []
+    const seen = new Set<string>()
+    for (const participantId of participantIds) {
+      if (seen.has(participantId)) continue
+      seen.add(participantId)
+      const participant = chat.ensemble.participants.find(
+        (entry) => entry.id === participantId && entry.enabled
+      )
+      if (!participant) continue
+      if (runtime.unreachableParticipantIds?.has(participant.id)) continue
+      if (this.activeBossmanQuarantine(chat, runtime.roundId, participant.id)) continue
+      const pendingIndex = remaining.findIndex((entry) => entry.id === participant.id)
+      if (pendingIndex >= 0) {
+        const [pending] = remaining.splice(pendingIndex, 1)
+        routed.push(pending)
+        continue
+      }
+      const status = this.activeRoundParticipantStatus(runtime, participant.id)
+      if (status === 'idle') {
+        routed.push(participant)
+        continue
+      }
+      if (options.allowAnsweredParticipant) {
+        const continuation = this.tryAppendContinuationTurn(
+          runtime,
+          remaining,
+          participant,
+          statusMessage,
+          { allowAnsweredParticipant: true, allowYieldedParticipant: true }
+        )
+        if (continuation.appended) continue
+      }
+    }
+    for (let index = routed.length - 1; index >= 0; index -= 1) {
+      remaining.unshift(routed[index])
+    }
+    if (routed.length > 0) {
+      this.appendRoundStatus(
+        runtime.chatId,
+        runtime.roundId,
+        `${statusMessage} Routed next: ${routed.map(participantDisplayName).join(', ')}.`
+      )
+    }
+    return routed.length
   }
 
   private nextBossmanControlId(prefix: string): string {
@@ -5576,6 +5801,21 @@ export class EnsembleOrchestrator {
         : 'Boss paused the Work Session.')
     const nowIso = this.deps.nowIso()
     const status = action === 'complete_work_session' ? 'completed' : 'paused'
+    if (status === 'completed') {
+      const blockingGates = this.activeBossmanReviewGateBlocks(chat)
+      if (blockingGates.length > 0) {
+        const message = `Boss Work Session completion blocked by review gate(s): ${blockingGates.join('; ')}.`
+        this.appendRoundStatus(runtime.chatId, runtime.roundId, message)
+        return {
+          ok: false,
+          tool: 'ensemble_bossman_control',
+          action,
+          roundId: runtime.roundId,
+          message,
+          error: 'review_gate_blocked'
+        }
+      }
+    }
     // If this session was started from a linked active Goal and that goal is
     // STILL the chat's current active goal, completing the session completes
     // the goal too. A different/absent active goal (the user moved on) is left
@@ -6032,6 +6272,29 @@ export class EnsembleOrchestrator {
       }
     }
 
+    const blockedByBudget = resolvedTargets.targets
+      .map((participant) => ({
+        participant,
+        reason: this.bossmanBudgetBlock(runtime, participant.id, 'fanout_call')
+      }))
+      .filter((entry): entry is { participant: EnsembleParticipant; reason: string } =>
+        Boolean(entry.reason)
+      )
+    if (blockedByBudget.length > 0) {
+      const message = `ensemble_fanout: Boss/Captain budget blocks ${blockedByBudget
+        .map((entry) => `${participantDisplayName(entry.participant)} (${entry.reason})`)
+        .join(', ')}.`
+      this.appendRoundStatus(run.chatId, run.roundId, message)
+      return {
+        ok: false,
+        tool: 'ensemble_fanout',
+        mode,
+        ...(targetStage ? { targetStage } : {}),
+        message,
+        error: 'budget_exhausted'
+      }
+    }
+
     let writeScopesByParticipantId: Map<string, ConcurrentLaneWriteScope[]> | undefined
     if (mode === 'locked_writers') {
       const resolvedScopes = this.resolveLockedWriterScopes(
@@ -6070,6 +6333,11 @@ export class EnsembleOrchestrator {
         sourceRunId: runId,
         writeScopesByParticipantId
       })
+      this.incrementBossmanBudgetUsage(
+        runtime,
+        resolvedTargets.targets.map((participant) => participant.id),
+        { fanoutCalls: 1 }
+      )
       if (!runtime.fannedOutParticipantIds) runtime.fannedOutParticipantIds = new Set()
       for (const participant of resolvedTargets.targets) {
         runtime.fannedOutParticipantIds.add(participant.id)
@@ -9463,8 +9731,18 @@ export class EnsembleOrchestrator {
       this.notifyContinuationLimitReached(runtime)
       return { appended: false, reason: 'hop_limit' }
     }
+    const budgetBlock = this.bossmanBudgetBlock(runtime, participant.id, 'extra_turn')
+    if (budgetBlock) {
+      this.appendRoundStatus(
+        runtime.chatId,
+        runtime.roundId,
+        `${participantDisplayName(participant)} was not given an extra turn: ${budgetBlock}.`
+      )
+      return { appended: false, reason: 'budget_exhausted', budgetMessage: budgetBlock }
+    }
     runtime.continuationHops += 1
     remaining.unshift(participant)
+    this.incrementBossmanBudgetUsage(runtime, [participant.id], { extraTurns: 1 })
     this.updateChatRound(runtime.chatId, (round) =>
       round?.roundId === runtime.roundId
         ? {
@@ -9495,6 +9773,8 @@ export class EnsembleOrchestrator {
         return 'continuation-hop budget exhausted'
       case 'unreachable':
         return 'it is unreachable this round'
+      case 'budget_exhausted':
+        return result.budgetMessage || 'its allocated extra-turn budget is exhausted'
       case 'blocked_status':
         switch (result.blockedStatus) {
           case 'failed':
@@ -9585,7 +9865,8 @@ export class EnsembleOrchestrator {
       (participant) =>
         participant.enabled &&
         !runtime.unreachableParticipantIds?.has(participant.id) &&
-        !this.activeBossmanQuarantine(chat, runtime.roundId, participant.id)
+        !this.activeBossmanQuarantine(chat, runtime.roundId, participant.id) &&
+        !this.bossmanBudgetBlock(runtime, participant.id, 'extra_turn')
     )
     if (roster.length === 0) return null
     const fresh: EnsembleParticipant[] = []
@@ -9598,6 +9879,11 @@ export class EnsembleOrchestrator {
       fresh.push(participant)
     }
     if (fresh.length === 0) return null
+    this.incrementBossmanBudgetUsage(
+      runtime,
+      fresh.map((participant) => participant.id),
+      { extraTurns: 1 }
+    )
     this.updateChatRound(runtime.chatId, (round) =>
       round?.roundId === runtime.roundId
         ? {
@@ -9693,6 +9979,7 @@ export class EnsembleOrchestrator {
   ): void {
     run.status = status
     this.flushRun(run, true, reason)
+    this.reconcileBossmanControlAfterRun(run, status)
     this.transitionParticipantRunQueueJob(run, status, reason)
     run.completion?.(status)
     if (run.laneId) {
