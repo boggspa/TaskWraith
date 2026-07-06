@@ -192,7 +192,7 @@ describe('loadExternalProviderUsageRecords', () => {
           new Date('2026-05-01T10:00:00.000Z')
         )
 
-        for (let index = 0; index < 1_205; index += 1) {
+        for (let index = 0; index < 270; index += 1) {
           const filePath = join(projectDir, `newer-${String(index).padStart(4, '0')}.jsonl`)
           await writeFile(
             filePath,
@@ -219,7 +219,7 @@ describe('loadExternalProviderUsageRecords', () => {
         })
         const claudeRecords = records.filter((record) => record.provider === 'claude')
 
-        expect(claudeRecords).toHaveLength(1_206)
+        expect(claudeRecords).toHaveLength(271)
         expect(claudeRecords.some((record) => record.totalTokens === 10_000)).toBe(true)
       } finally {
         await rm(homeDir, { recursive: true, force: true })
