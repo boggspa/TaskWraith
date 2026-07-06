@@ -72,6 +72,7 @@ export function DigitOdometer({
             <DigitSlot
               key={`place-${place}`}
               digit={digit}
+              place={place}
               previousDigit={previousDigit}
               direction={direction}
             />
@@ -84,10 +85,12 @@ export function DigitOdometer({
 
 function DigitSlot({
   digit,
+  place,
   previousDigit,
   direction
 }: {
   digit: number
+  place: number
   previousDigit: number
   direction: DigitRollDirection
 }): JSX.Element {
@@ -95,7 +98,8 @@ function DigitSlot({
   const isRolling = frame.startIndex !== frame.targetIndex
   const style = {
     '--digit-odometer-start': `-${frame.startIndex}em`,
-    '--digit-odometer-target': `-${frame.targetIndex}em`
+    '--digit-odometer-target': `-${frame.targetIndex}em`,
+    '--digit-odometer-delay': `${Math.min(place, 6) * 18}ms`
   } as CSSProperties
 
   return (

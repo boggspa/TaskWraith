@@ -124,11 +124,41 @@ describe('GitSnapshotPublisher', () => {
     expect(onChanges).toHaveLength(1)
     onChanges[0]('node_modules/package/index.js')
     onChanges[0]('.git/index.lock')
+    onChanges[0]('.git/objects/aa/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb')
     await vi.advanceTimersByTimeAsync(100)
     expect(gitService.snapshot).toHaveBeenCalledTimes(1)
 
     publisher.unsubscribe('sub-1')
     expect(close).toHaveBeenCalledTimes(1)
+  })
+
+  it('refreshes for git metadata changes that can happen without worktree writes', async () => {
+    const gitService = {
+      snapshot: vi.fn<Pick<GitService, 'snapshot'>['snapshot']>(async (path) => ({
+        ok: true,
+        data: makeSnapshot(path)
+      }))
+    }
+    const watchers: Array<(filename: string) => void> = []
+    const publisher = new GitSnapshotPublisher({
+      gitService,
+      debounceMs: 25,
+      minIntervalMs: 0,
+      watcherFactory: (_repoRoot, onChange) => {
+        watchers.push((filename) => onChange(filename))
+        return { on: vi.fn(), close: vi.fn() } as any
+      }
+    })
+    await publisher.subscribe({ subscriptionId: 'sub-1', requestedPath: '/repo', send: vi.fn() })
+
+    watchers[0]('.git/HEAD')
+    watchers[0]('.git/index')
+    watchers[0]('.git/refs/heads/main')
+    watchers[0]('.git/FETCH_HEAD')
+    watchers[0]('.git/config')
+    await vi.advanceTimersByTimeAsync(25)
+
+    expect(gitService.snapshot).toHaveBeenCalledTimes(2)
   })
 
   it('enforces the minimum refresh interval across invalidations', async () => {

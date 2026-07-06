@@ -38,7 +38,8 @@
 }
 
 .digit-odometer__column.is-rolling {
-  animation: digit-odometer-roll 320ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
+  animation: digit-odometer-roll 430ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
+  animation-delay: var(--digit-odometer-delay, 0ms);
   will-change: transform;
 }
 

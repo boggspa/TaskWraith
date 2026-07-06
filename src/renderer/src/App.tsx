@@ -930,6 +930,21 @@ interface OllamaModelInstallPrompt {
   error?: string
 }
 
+function gitPrStatusRefreshKey(snapshot: GitRepositorySnapshot | null | undefined): string | null {
+  if (!snapshot?.remoteUrl) return null
+  return [
+    snapshot.repoRoot,
+    snapshot.remoteUrl,
+    snapshot.branch || '',
+    snapshot.upstream || '',
+    snapshot.commit || ''
+  ].join('\u0000')
+}
+
+function hasGitSnapshotSubscriptionApi(): boolean {
+  return typeof (window.api as { gitSubscribeSnapshot?: unknown }).gitSubscribeSnapshot === 'function'
+}
+
 function App(): React.JSX.Element {
   // Shared copy-to-clipboard feedback for every in-app copy affordance
   // (message chips, latest-response button). One instance keeps the
@@ -2040,8 +2055,8 @@ function App(): React.JSX.Element {
   // above-bar header can surface real repo state (branch, changed-file
   // count, staged/unstaged, push/PR readiness) sourced from
   // `gitSnapshot` rather than the stale `currentWorkspace.branch` /
-  // tool-derived diff counts. Null until the menu opens (lazy fetch) or
-  // the repo read fails.
+  // tool-derived diff counts. Null until the live subscription handshake
+  // returns or the repo read fails.
   const [primaryGitSnapshot, setPrimaryGitSnapshot] = useState<GitRepositorySnapshot | null>(null)
   const [composerWorktreeByWorkspace, setComposerWorktreeByWorkspace] = useState<
     Record<string, ComposerWorktreeSelection | null>
@@ -2068,6 +2083,66 @@ function App(): React.JSX.Element {
   const currentComposerWorktreeSelection = currentWorkspacePath
     ? composerWorktreeByWorkspace[normalizeWorkspacePath(currentWorkspacePath)] || null
     : null
+  const primaryPrStatusKeyRef = useRef('')
+  const externalPrStatusKeyByPathRef = useRef<Record<string, string>>({})
+  const refreshPrimaryPrStatus = useCallback(
+    (snapshot: GitRepositorySnapshot | null): void => {
+      const key = gitPrStatusRefreshKey(snapshot)
+      if (!currentWorkspacePath || !key || typeof window.api.githubPrStatus !== 'function') {
+        primaryPrStatusKeyRef.current = ''
+        setPrimaryPr(null)
+        return
+      }
+      const requestKey = `${currentWorkspacePath}\u0000${key}`
+      if (primaryPrStatusKeyRef.current === requestKey) return
+      primaryPrStatusKeyRef.current = requestKey
+      void window.api.githubPrStatus({ workspacePath: currentWorkspacePath }).then(
+        (prRes) => {
+          if (primaryPrStatusKeyRef.current === requestKey) {
+            setPrimaryPr(prRes?.ok ? prRes.data : null)
+          }
+        },
+        () => {
+          if (primaryPrStatusKeyRef.current === requestKey) setPrimaryPr(null)
+        }
+      )
+    },
+    [currentWorkspacePath]
+  )
+  const refreshExternalPrStatus = useCallback(
+    (path: string, snapshot: GitRepositorySnapshot | null): void => {
+      const key = gitPrStatusRefreshKey(snapshot)
+      if (!key || typeof window.api.githubPrStatus !== 'function') {
+        const nextKeys = { ...externalPrStatusKeyByPathRef.current }
+        delete nextKeys[path]
+        externalPrStatusKeyByPathRef.current = nextKeys
+        setExternalPrByPath((prev) => ({ ...prev, [path]: null }))
+        return
+      }
+      const requestKey = `${path}\u0000${key}`
+      if (externalPrStatusKeyByPathRef.current[path] === requestKey) return
+      externalPrStatusKeyByPathRef.current = {
+        ...externalPrStatusKeyByPathRef.current,
+        [path]: requestKey
+      }
+      void window.api.githubPrStatus({ repoPath: path }).then(
+        (result) => {
+          if (externalPrStatusKeyByPathRef.current[path] === requestKey) {
+            setExternalPrByPath((prev) => ({
+              ...prev,
+              [path]: result?.ok ? result.data : null
+            }))
+          }
+        },
+        () => {
+          if (externalPrStatusKeyByPathRef.current[path] === requestKey) {
+            setExternalPrByPath((prev) => ({ ...prev, [path]: null }))
+          }
+        }
+      )
+    },
+    []
+  )
   const handleComposerWorktreeChange = useCallback(
     (selection: ComposerWorktreeSelection | null, snapshot: GitRepositorySnapshot | null) => {
       const basePath =
@@ -2093,20 +2168,16 @@ function App(): React.JSX.Element {
     }
     return acked
   }, [settings?.approvalModeElevationAcknowledgements])
-  // Eagerly fetch the live git snapshot for the current workspace so the
-  // above-bar shows real repo state (changed-file count, +/- lines, clean)
-  // WITHOUT waiting for the diff-action menu to open. Refetches on workspace
-  // change, on run-finish (runCompleteNotice.timestamp) so a just-finished
-  // edit shows immediately, and on window focus so an external commit that
-  // cleans the tree drops the count to 0 — the Codex/Claude-style git
-  // grounding. GitCommitControls' onSnapshot writes the SAME state, so
-  // opening/using the menu (incl. committing) just refreshes it.
+  // Live git snapshot for the current workspace. The subscription handshake
+  // returns the initial snapshot, so avoid a duplicate eager `gitSnapshot` call;
+  // focus/run-complete events invalidate the publisher instead.
   useEffect(() => {
     if (!currentWorkspacePath) {
       setPrimaryGitSnapshot(null)
       setPrimaryPr(null)
       return
     }
+    if (hasGitSnapshotSubscriptionApi()) return undefined
     let cancelled = false
     const fetchSnapshot = async (): Promise<void> => {
       try {
@@ -2114,17 +2185,7 @@ function App(): React.JSX.Element {
         const snap = res?.ok ? res.data : null
         if (cancelled) return
         setPrimaryGitSnapshot(snap)
-        // CI is best-effort + slower (gh CLI) — only when the repo has a remote.
-        if (!snap?.remoteUrl) {
-          setPrimaryPr(null)
-          return
-        }
-        try {
-          const prRes = await window.api.githubPrStatus({ workspacePath: currentWorkspacePath })
-          if (!cancelled) setPrimaryPr(prRes?.ok ? prRes.data : null)
-        } catch {
-          if (!cancelled) setPrimaryPr(null)
-        }
+        refreshPrimaryPrStatus(snap)
       } catch {
         /* keep the last good snapshot on a transient read failure */
       }
@@ -2140,16 +2201,40 @@ function App(): React.JSX.Element {
       cancelled = true
       window.removeEventListener('focus', onFocus)
     }
-  }, [currentWorkspacePath, runCompleteNotice?.timestamp])
+  }, [currentWorkspacePath, refreshPrimaryPrStatus, runCompleteNotice?.timestamp])
 
   useEffect(() => {
-    if (!currentWorkspacePath || !window.api.gitSubscribeSnapshot) return undefined
+    if (!currentWorkspacePath || !hasGitSnapshotSubscriptionApi()) return undefined
     return window.api.gitSubscribeSnapshot(
       { workspacePath: currentWorkspacePath },
       (payload) => {
         setPrimaryGitSnapshot(payload.snapshot)
+        refreshPrimaryPrStatus(payload.snapshot)
       }
     )
+  }, [currentWorkspacePath, refreshPrimaryPrStatus])
+
+  useEffect(() => {
+    if (!currentWorkspacePath || !runCompleteNotice?.timestamp || !window.api.gitInvalidateSnapshot) {
+      return
+    }
+    void window.api.gitInvalidateSnapshot({ workspacePath: currentWorkspacePath, reason: 'run-diff' })
+  }, [currentWorkspacePath, runCompleteNotice?.timestamp])
+
+  useEffect(() => {
+    if (!currentWorkspacePath || !hasGitSnapshotSubscriptionApi() || !window.api.gitInvalidateSnapshot) {
+      return undefined
+    }
+    const onFocus = (): void => {
+      if (typeof document === 'undefined' || document.visibilityState !== 'hidden') {
+        void window.api.gitInvalidateSnapshot({
+          workspacePath: currentWorkspacePath,
+          reason: 'manual'
+        })
+      }
+    }
+    window.addEventListener('focus', onFocus)
+    return () => window.removeEventListener('focus', onFocus)
   }, [currentWorkspacePath])
   type AttachedWindowSnapshot = {
     handleID: string
@@ -18304,9 +18389,9 @@ function App(): React.JSX.Element {
     }
     return Array.from(byPath.values())
   }, [externalPathGrants])
-  // Fetch a live git snapshot per unique external path on the same triggers as
-  // the primary (paths change, run-finish, window focus). gitSnapshot accepts an
-  // arbitrary repoPath; non-repos resolve to null and simply show no diff.
+  // Live git snapshot per unique external path. Normal builds use the
+  // subscription handshake as the initial read; the fetch effect below is only a
+  // fallback for hosts without live snapshot subscriptions.
   const externalWorkspacePathsKey = useMemo(
     () => externalWorkspaceGroups.map((group) => group.path).join('\n'),
     [externalWorkspaceGroups]
@@ -18316,8 +18401,10 @@ function App(): React.JSX.Element {
     if (paths.length === 0) {
       setExternalGitSnapshots({})
       setExternalPrByPath({})
+      externalPrStatusKeyByPathRef.current = {}
       return
     }
+    if (hasGitSnapshotSubscriptionApi()) return undefined
     let cancelled = false
     const fetchAll = async (): Promise<void> => {
       const entries = await Promise.all(
@@ -18358,41 +18445,56 @@ function App(): React.JSX.Element {
 
   useEffect(() => {
     const paths = externalWorkspacePathsKey ? externalWorkspacePathsKey.split('\n') : []
-    if (paths.length === 0 || !window.api.gitSubscribeSnapshot) return undefined
+    if (paths.length === 0 || !hasGitSnapshotSubscriptionApi()) return undefined
     const unsubscribers = paths.map((path) =>
       window.api.gitSubscribeSnapshot({ repoPath: path }, (payload) => {
         setExternalGitSnapshots((prev) => ({
           ...prev,
           [path]: payload.snapshot
         }))
-        if (payload.snapshot?.remoteUrl && typeof window.api.githubPrStatus === 'function') {
-          void window.api.githubPrStatus({ repoPath: path }).then(
-            (result) => {
-              setExternalPrByPath((prev) => ({
-                ...prev,
-                [path]: result?.ok ? result.data : null
-              }))
-            },
-            () => {
-              setExternalPrByPath((prev) => ({ ...prev, [path]: null }))
-            }
-          )
-        } else {
-          setExternalPrByPath((prev) => ({ ...prev, [path]: null }))
-        }
+        refreshExternalPrStatus(path, payload.snapshot)
       })
     )
     return () => {
       unsubscribers.forEach((unsubscribe) => unsubscribe())
     }
+  }, [externalWorkspacePathsKey, refreshExternalPrStatus])
+
+  useEffect(() => {
+    const paths = externalWorkspacePathsKey ? externalWorkspacePathsKey.split('\n') : []
+    if (paths.length === 0 || !hasGitSnapshotSubscriptionApi() || !window.api.gitInvalidateSnapshot) {
+      return undefined
+    }
+    const invalidateAll = (): void => {
+      paths.forEach((path) => {
+        void window.api.gitInvalidateSnapshot?.({ repoPath: path, reason: 'manual' })
+      })
+    }
+    const onFocus = (): void => {
+      if (typeof document === 'undefined' || document.visibilityState !== 'hidden') invalidateAll()
+    }
+    window.addEventListener('focus', onFocus)
+    return () => window.removeEventListener('focus', onFocus)
   }, [externalWorkspacePathsKey])
 
-  // Multiview — fetch a live git snapshot for every VISIBLE pane's workspace path
-  // so each pane's composer above-row reports its OWN diff stats. Mirrors the
-  // primary/external snapshot effects (refetch on the pane-paths set, run-finish,
-  // window focus). Keyed by raw path; non-repos resolve to null (zero stats). Two
-  // panes on the same workspace share one fetch; global/no-workspace panes add
-  // nothing (so they show no diff rather than the focused workspace's).
+  useEffect(() => {
+    const paths = externalWorkspacePathsKey ? externalWorkspacePathsKey.split('\n') : []
+    if (
+      paths.length === 0 ||
+      !runCompleteNotice?.timestamp ||
+      !hasGitSnapshotSubscriptionApi() ||
+      !window.api.gitInvalidateSnapshot
+    ) {
+      return
+    }
+    paths.forEach((path) => {
+      void window.api.gitInvalidateSnapshot?.({ repoPath: path, reason: 'run-diff' })
+    })
+  }, [externalWorkspacePathsKey, runCompleteNotice?.timestamp])
+
+  // Multiview — live git snapshot for every VISIBLE pane's workspace path so
+  // each pane's composer above-row reports its OWN diff stats. Normal builds use
+  // subscription initial snapshots; the fetch effect below is fallback only.
   const multiviewPaneWorkspacePathsKey = useMemo(() => {
     if (!isMultiviewSplit) return ''
     const seen = new Set<string>()
@@ -18410,6 +18512,7 @@ function App(): React.JSX.Element {
       setGitSnapshotByWorkspace({})
       return
     }
+    if (hasGitSnapshotSubscriptionApi()) return undefined
     let cancelled = false
     const fetchAll = async (): Promise<void> => {
       const entries = await Promise.all(
@@ -18437,7 +18540,7 @@ function App(): React.JSX.Element {
 
   useEffect(() => {
     const paths = multiviewPaneWorkspacePathsKey ? multiviewPaneWorkspacePathsKey.split('\n') : []
-    if (paths.length === 0 || !window.api.gitSubscribeSnapshot) return undefined
+    if (paths.length === 0 || !hasGitSnapshotSubscriptionApi()) return undefined
     const unsubscribers = paths.map((path) =>
       window.api.gitSubscribeSnapshot({ workspacePath: path }, (payload) => {
         setGitSnapshotByWorkspace((prev) => ({
@@ -18450,6 +18553,38 @@ function App(): React.JSX.Element {
       unsubscribers.forEach((unsubscribe) => unsubscribe())
     }
   }, [multiviewPaneWorkspacePathsKey])
+
+  useEffect(() => {
+    const paths = multiviewPaneWorkspacePathsKey ? multiviewPaneWorkspacePathsKey.split('\n') : []
+    if (paths.length === 0 || !hasGitSnapshotSubscriptionApi() || !window.api.gitInvalidateSnapshot) {
+      return undefined
+    }
+    const invalidateAll = (): void => {
+      paths.forEach((path) => {
+        void window.api.gitInvalidateSnapshot?.({ workspacePath: path, reason: 'manual' })
+      })
+    }
+    const onFocus = (): void => {
+      if (typeof document === 'undefined' || document.visibilityState !== 'hidden') invalidateAll()
+    }
+    window.addEventListener('focus', onFocus)
+    return () => window.removeEventListener('focus', onFocus)
+  }, [multiviewPaneWorkspacePathsKey])
+
+  useEffect(() => {
+    const paths = multiviewPaneWorkspacePathsKey ? multiviewPaneWorkspacePathsKey.split('\n') : []
+    if (
+      paths.length === 0 ||
+      !runCompleteNotice?.timestamp ||
+      !hasGitSnapshotSubscriptionApi() ||
+      !window.api.gitInvalidateSnapshot
+    ) {
+      return
+    }
+    paths.forEach((path) => {
+      void window.api.gitInvalidateSnapshot?.({ workspacePath: path, reason: 'run-diff' })
+    })
+  }, [multiviewPaneWorkspacePathsKey, runCompleteNotice?.timestamp])
 
   const currentProviderModelOptions = getProviderModelOptions(currentProvider)
   const composerTokenTally = chatTokenTally

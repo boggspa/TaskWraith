@@ -61,7 +61,6 @@ const DEFAULT_DEBOUNCE_MS = 250
 const DEFAULT_MIN_INTERVAL_MS = 1200
 
 const IGNORED_PATH_SEGMENTS = new Set([
-  '.git',
   'node_modules',
   '.next',
   'dist',
@@ -70,6 +69,18 @@ const IGNORED_PATH_SEGMENTS = new Set([
   'coverage',
   'DerivedData',
   '.taskwraith'
+])
+
+const GIT_SIGNAL_FILES = new Set([
+  'HEAD',
+  'FETCH_HEAD',
+  'ORIG_HEAD',
+  'MERGE_HEAD',
+  'CHERRY_PICK_HEAD',
+  'REBASE_HEAD',
+  'index',
+  'packed-refs',
+  'config'
 ])
 
 export class GitSnapshotPublisher {
@@ -275,8 +286,27 @@ export class GitSnapshotPublisher {
     const raw = filename.toString()
     if (!raw) return false
     const segments = raw.split(/[\\/]+/).filter(Boolean)
-    if (segments.some((segment) => IGNORED_PATH_SEGMENTS.has(segment))) return true
     const leaf = basename(raw)
-    return leaf.endsWith('.tmp') || leaf.endsWith('.swp') || leaf === '.DS_Store'
+    if (
+      leaf.endsWith('.lock') ||
+      leaf.endsWith('.tmp') ||
+      leaf.endsWith('.swp') ||
+      leaf === '.DS_Store'
+    ) {
+      return true
+    }
+    const gitSegmentIndex = segments.indexOf('.git')
+    if (gitSegmentIndex >= 0) {
+      return !this.isGitSignalPath(segments.slice(gitSegmentIndex + 1))
+    }
+    if (segments.some((segment) => IGNORED_PATH_SEGMENTS.has(segment))) return true
+    return false
+  }
+
+  private isGitSignalPath(gitSegments: string[]): boolean {
+    if (gitSegments.length === 0) return true
+    const [head, ...rest] = gitSegments
+    if (GIT_SIGNAL_FILES.has(head)) return rest.length === 0
+    return head === 'refs' && rest.length > 0
   }
 }
