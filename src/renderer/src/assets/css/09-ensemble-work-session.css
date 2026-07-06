@@ -3152,6 +3152,23 @@
   --popout-top-rim: color-mix(in srgb, var(--text-primary) 11%, transparent);
   --popout-shadow: color-mix(in srgb, #000 32%, transparent);
   --popout-primary-action-text: rgba(6, 8, 12, 0.92);
+  --diff-code-bg: color-mix(in srgb, var(--app-bg-sunken) 58%, #05070b 42%);
+  --diff-code-text: color-mix(in srgb, var(--text-primary) 92%, white 8%);
+  --diff-gutter-bg: color-mix(in srgb, var(--diff-code-bg) 88%, var(--text-primary) 7%);
+  --diff-gutter-text: color-mix(in srgb, var(--text-primary) 60%, transparent);
+  --diff-meta-bg: color-mix(in srgb, var(--diff-code-bg) 86%, var(--accent) 6%);
+  --diff-header-bg: color-mix(in srgb, var(--diff-code-bg) 74%, var(--popout-toolbar-bg) 26%);
+  --diff-line-border: color-mix(in srgb, var(--text-primary) 8%, transparent);
+  --diff-add-bg: color-mix(in srgb, #11633f 54%, var(--diff-code-bg));
+  --diff-add-gutter-bg: color-mix(in srgb, #0f7a4a 64%, var(--diff-code-bg));
+  --diff-add-text: #8ff7bd;
+  --diff-add-gutter-text: #42f08d;
+  --diff-del-bg: color-mix(in srgb, #74261f 56%, var(--diff-code-bg));
+  --diff-del-gutter-bg: color-mix(in srgb, #8a2c25 64%, var(--diff-code-bg));
+  --diff-del-text: #ffaca2;
+  --diff-del-gutter-text: #ff6f66;
+  --diff-hunk: #8ba4ff;
+  --diff-ui-font: "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
   color: var(--text-primary);
   background: var(--popout-window-bg) !important;
   background-image: none !important;
@@ -3180,6 +3197,22 @@
   --popout-top-rim: color-mix(in srgb, white 70%, transparent);
   --popout-shadow: color-mix(in srgb, #6f7480 18%, transparent);
   --popout-primary-action-text: #fff;
+  --diff-code-bg: #ffffff;
+  --diff-code-text: rgba(16, 22, 32, 0.94);
+  --diff-gutter-bg: #eef2f7;
+  --diff-gutter-text: rgba(16, 22, 32, 0.58);
+  --diff-meta-bg: #f3f6fb;
+  --diff-header-bg: #eef3f8;
+  --diff-line-border: rgba(16, 22, 32, 0.08);
+  --diff-add-bg: rgba(16, 135, 82, 0.16);
+  --diff-add-gutter-bg: rgba(16, 135, 82, 0.24);
+  --diff-add-text: #055f39;
+  --diff-add-gutter-text: #008d50;
+  --diff-del-bg: rgba(196, 45, 45, 0.14);
+  --diff-del-gutter-bg: rgba(196, 45, 45, 0.22);
+  --diff-del-text: #981f28;
+  --diff-del-gutter-text: #d33038;
+  --diff-hunk: #4264aa;
 }
 
 [data-theme="obsidian"] .popout-root[data-popout-family="workspace"] {
@@ -3188,6 +3221,22 @@
   --popout-toolbar-bg: #18161c;
   --popout-list-bg: #121016;
   --popout-editor-bg: #09080b;
+  --diff-code-bg: #070609;
+  --diff-code-text: rgba(248, 244, 238, 0.94);
+  --diff-gutter-bg: #120f16;
+  --diff-gutter-text: rgba(248, 244, 238, 0.46);
+  --diff-meta-bg: #15111a;
+  --diff-header-bg: #15121a;
+  --diff-line-border: rgba(255, 232, 214, 0.08);
+  --diff-add-bg: rgba(38, 164, 108, 0.28);
+  --diff-add-gutter-bg: rgba(38, 164, 108, 0.38);
+  --diff-add-text: #92f6c0;
+  --diff-add-gutter-text: #4dffa0;
+  --diff-del-bg: rgba(210, 68, 68, 0.28);
+  --diff-del-gutter-bg: rgba(210, 68, 68, 0.38);
+  --diff-del-text: #ffb0a8;
+  --diff-del-gutter-text: #ff8176;
+  --diff-hunk: #c8c0d2;
 }
 
 [data-theme="alabaster"] .popout-root[data-popout-family="workspace"] {
@@ -3196,6 +3245,11 @@
   --popout-toolbar-bg: #fffefa;
   --popout-list-bg: #fffefa;
   --popout-editor-bg: #efeee8;
+  --diff-code-bg: #fbfaf5;
+  --diff-header-bg: #f0eee6;
+  --diff-meta-bg: #f3f0e8;
+  --diff-gutter-bg: #ebe8de;
+  --diff-line-border: rgba(18, 21, 27, 0.09);
 }
 
 .popout-root[data-popout-family="workspace"] .popout-header {
@@ -3344,8 +3398,15 @@
 }
 
 .popout-root[data-popout-family="workspace"] .diff-stage-count-chip {
+  max-width: none;
+  min-width: max-content;
   cursor: pointer;
   font: inherit;
+}
+
+.popout-root[data-popout-family="workspace"] .diff-stage-count-chip > span {
+  overflow: visible;
+  text-overflow: clip;
 }
 
 .popout-root[data-popout-family="workspace"] .diff-stage-count-chip[data-active="true"] {
@@ -3390,6 +3451,32 @@
 .popout-root[data-popout-family="workspace"] .diff-file-badge.noise {
   color: var(--text-muted);
   background-color: var(--popout-pill-bg) !important;
+}
+
+.popout-root[data-popout-family="workspace"] .diff-file-row .diff-file-badge,
+.popout-root[data-popout-family="workspace"] .diff-detail-stat-badge {
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent !important;
+  box-shadow: none;
+}
+
+.popout-root[data-popout-family="workspace"] .diff-file-row .diff-file-badge {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  font-weight: 650;
+}
+
+.popout-root[data-popout-family="workspace"] .diff-file-row .diff-file-badge,
+.popout-root[data-popout-family="workspace"] .diff-file-row .diff-file-badge.created,
+.popout-root[data-popout-family="workspace"] .diff-file-row .diff-file-badge.modified,
+.popout-root[data-popout-family="workspace"] .diff-file-row .diff-file-badge.deleted,
+.popout-root[data-popout-family="workspace"] .diff-file-row .diff-file-badge.untracked,
+.popout-root[data-popout-family="workspace"] .diff-detail-stat-badge[data-status] {
+  background-color: transparent !important;
 }
 
 .popout-root[data-popout-family="workspace"]
@@ -3480,6 +3567,124 @@
 .popout-root[data-popout-family="workspace"]
   :is(.diff-line + .diff-line, .diff-file-row + .diff-file-row, .file-editor-row + .file-editor-row) {
   border-color: var(--popout-rim);
+}
+
+.popout-root[data-popout-family="workspace"]
+  :is(
+    .popout-title-block,
+    .workbench-navigator,
+    .workbench-toolbar,
+    .workbench-bottom-bar,
+    .diff-studio-toolbar,
+    .diff-file-list,
+    .diff-file-name,
+    .diff-file-badge,
+    .diff-file-state,
+    .diff-file-section-header,
+    .diff-file-list-floating-header,
+    .diff-detail-header,
+    .diff-detail-title,
+    .diff-detail-path,
+    .diff-detail-stat-badge,
+    .diff-detail-actions,
+    .diff-lines-column-header,
+    .diff-lines-floating-header,
+    .diff-lines-truncated,
+    .diff-lines-virtualization-note,
+    .diff-lines-show-more
+  ) {
+  font-family: var(--diff-ui-font);
+}
+
+.popout-root[data-popout-family="workspace"] .diff-detail,
+.popout-root[data-popout-family="workspace"] .diff-detail-body,
+.popout-root[data-popout-family="workspace"] .diff-lines-root {
+  color: var(--diff-code-text);
+  background: var(--diff-code-bg) !important;
+}
+
+.popout-root[data-popout-family="workspace"] .diff-lines-stack,
+.popout-root[data-popout-family="workspace"] .diff-lines-virtual-window {
+  background: var(--diff-code-bg);
+}
+
+.popout-root[data-popout-family="workspace"]
+  :is(.diff-lines-column-header, .diff-lines-floating-header) {
+  color: var(--text-secondary);
+  background-color: var(--diff-header-bg) !important;
+  border-color: var(--diff-line-border);
+  box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--text-primary) 5%, transparent);
+}
+
+.popout-root[data-popout-family="workspace"] .diff-lines-section-header {
+  color: var(--diff-hunk);
+  background-color: var(--diff-meta-bg) !important;
+  border-color: var(--diff-line-border);
+}
+
+.popout-root[data-popout-family="workspace"] .diff-line,
+.popout-root[data-popout-family="workspace"] .diff-line-split {
+  color: var(--diff-code-text);
+  background: var(--diff-code-bg);
+}
+
+.popout-root[data-popout-family="workspace"] .diff-line-gutter {
+  color: var(--diff-gutter-text);
+  background: var(--diff-gutter-bg);
+  border-color: var(--diff-line-border);
+}
+
+.popout-root[data-popout-family="workspace"] .diff-line-code,
+.popout-root[data-popout-family="workspace"] .diff-line-split-code {
+  color: var(--diff-code-text);
+  border-color: var(--diff-line-border);
+}
+
+.popout-root[data-popout-family="workspace"] :is(.diff-line.meta, .diff-line-split.meta) {
+  color: var(--text-muted);
+  background-color: var(--diff-meta-bg);
+}
+
+.popout-root[data-popout-family="workspace"] :is(.diff-line.hunk, .diff-line-split.hunk) {
+  color: var(--diff-hunk);
+  background-color: var(--diff-meta-bg);
+}
+
+.popout-root[data-popout-family="workspace"]
+  .diff-line.add
+  :is(.diff-line-code, .diff-line-gutter),
+.popout-root[data-popout-family="workspace"]
+  .diff-line-split.add
+  :is(.diff-line-gutter.new, .diff-line-split-code.new) {
+  background-color: var(--diff-add-bg);
+  color: var(--diff-add-text);
+}
+
+.popout-root[data-popout-family="workspace"] .diff-line.add .diff-line-gutter,
+.popout-root[data-popout-family="workspace"] .diff-line-split.add .diff-line-gutter.new {
+  background-color: var(--diff-add-gutter-bg);
+  color: var(--diff-add-gutter-text);
+}
+
+.popout-root[data-popout-family="workspace"]
+  .diff-line.del
+  :is(.diff-line-code, .diff-line-gutter),
+.popout-root[data-popout-family="workspace"]
+  .diff-line-split.del
+  :is(.diff-line-gutter.old, .diff-line-split-code.old) {
+  background-color: var(--diff-del-bg);
+  color: var(--diff-del-text);
+}
+
+.popout-root[data-popout-family="workspace"] .diff-line.del .diff-line-gutter,
+.popout-root[data-popout-family="workspace"] .diff-line-split.del .diff-line-gutter.old {
+  background-color: var(--diff-del-gutter-bg);
+  color: var(--diff-del-gutter-text);
+}
+
+.popout-root[data-popout-family="workspace"]
+  :is(.diff-line + .diff-line, .diff-line-split + .diff-line-split, .diff-line + .diff-line-split, .diff-line-split + .diff-line) {
+  border-color: var(--diff-line-border);
 }
 
 .settings-panel-header {

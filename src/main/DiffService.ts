@@ -16,6 +16,7 @@ const MAX_PREVIEW_SIZE = 1024 * 100 // 100KB
 const MAX_GIT_DIFF_PREVIEW_BYTES = 256 * 1024
 const MAX_GIT_DIFF_PREVIEW_LINES = 5000
 const MAX_GIT_DIFF_PREVIEW_LINE_CHARS = 1200
+const GIT_DIFF_PREVIEW_CONTEXT_LINES = 8
 const GIT_DIFF_PREVIEW_MAX_BUFFER = MAX_GIT_DIFF_PREVIEW_BYTES + 64 * 1024
 
 function isNoiseFile(filePath: string): boolean {
@@ -375,6 +376,7 @@ function buildCurrentFileSummary(
     const unstagedDiff = readGitDiffPreview(gitCwd, [
       'diff',
       '--no-ext-diff',
+      `--unified=${GIT_DIFF_PREVIEW_CONTEXT_LINES}`,
       '--',
       gitPath
     ])
@@ -382,6 +384,7 @@ function buildCurrentFileSummary(
       'diff',
       '--cached',
       '--no-ext-diff',
+      `--unified=${GIT_DIFF_PREVIEW_CONTEXT_LINES}`,
       '--',
       gitPath
     ])
