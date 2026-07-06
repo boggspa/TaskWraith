@@ -20285,12 +20285,25 @@ async function executeGeminiMcpTool(
       const result = await (ensembleOrchestratorRef?.bossmanControlForRun(context.appRunId, {
         action:
           args.action === 'skip_participant' ||
+          args.action === 'summon_participant' ||
           args.action === 'stop_round' ||
           args.action === 'replace_participant' ||
           args.action === 'reorder_remaining' ||
           args.action === 'queue_followup' ||
           args.action === 'pause_work_session' ||
-          args.action === 'complete_work_session'
+          args.action === 'complete_work_session' ||
+          args.action === 'assign_work' ||
+          args.action === 'set_round_plan' ||
+          args.action === 'request_status' ||
+          args.action === 'declare_decision' ||
+          args.action === 'set_review_gate' ||
+          args.action === 'quarantine_participant' ||
+          args.action === 'allocate_budget' ||
+          args.action === 'create_poll' ||
+          args.action === 'clear_goal' ||
+          args.action === 'adjust_hops' ||
+          args.action === 'ensemble_scheduled_wakeup' ||
+          args.action === 'check_quota_resets'
             ? args.action
             : undefined,
         roundId: optionalString(args.roundId || args.round_id),
@@ -20305,6 +20318,82 @@ async function executeGeminiMcpTool(
             : undefined,
         prompt: optionalString(args.prompt),
         reason: optionalString(args.reason),
+        objective: optionalString(args.objective),
+        acceptanceCriteria: optionalString(args.acceptanceCriteria || args.acceptance_criteria),
+        due: optionalString(args.due) as any,
+        assignmentStatus: optionalString(args.assignmentStatus || args.assignment_status) as any,
+        assignmentId: optionalString(args.assignmentId || args.assignment_id),
+        gateId: optionalString(args.gateId || args.gate_id),
+        pollId: optionalString(args.pollId || args.poll_id),
+        budgetId: optionalString(args.budgetId || args.budget_id),
+        goal: optionalString(args.goal),
+        phase: optionalString(args.phase),
+        blockers: Array.isArray(args.blockers)
+          ? args.blockers.filter((item: unknown): item is string => typeof item === 'string')
+          : undefined,
+        doneCriteria: optionalString(args.doneCriteria || args.done_criteria),
+        decision: optionalString(args.decision),
+        rationale: optionalString(args.rationale),
+        reopenCriteria: optionalString(args.reopenCriteria || args.reopen_criteria),
+        scope: optionalString(args.scope),
+        reviewStatus: optionalString(args.reviewStatus || args.review_status) as any,
+        category: optionalString(args.category) as any,
+        quarantineScope: optionalString(args.quarantineScope || args.quarantine_scope) as any,
+        clear: args.clear === true,
+        maxExtraTurns:
+          typeof args.maxExtraTurns === 'number'
+            ? args.maxExtraTurns
+            : typeof args.max_extra_turns === 'number'
+              ? args.max_extra_turns
+              : undefined,
+        maxFanoutCalls:
+          typeof args.maxFanoutCalls === 'number'
+            ? args.maxFanoutCalls
+            : typeof args.max_fanout_calls === 'number'
+              ? args.max_fanout_calls
+              : undefined,
+        maxDurationSeconds:
+          typeof args.maxDurationSeconds === 'number'
+            ? args.maxDurationSeconds
+            : typeof args.max_duration_seconds === 'number'
+              ? args.max_duration_seconds
+              : undefined,
+        maxTokens:
+          typeof args.maxTokens === 'number'
+            ? args.maxTokens
+            : typeof args.max_tokens === 'number'
+              ? args.max_tokens
+              : undefined,
+        question: optionalString(args.question),
+        options: Array.isArray(args.options)
+          ? args.options.filter((item: unknown): item is string => typeof item === 'string')
+          : undefined,
+        includeUser: args.includeUser === true || args.include_user === true,
+        timeoutSeconds:
+          typeof args.timeoutSeconds === 'number'
+            ? args.timeoutSeconds
+            : typeof args.timeout_seconds === 'number'
+              ? args.timeout_seconds
+              : undefined,
+        hopDelta:
+          typeof args.hopDelta === 'number'
+            ? args.hopDelta
+            : typeof args.hop_delta === 'number'
+              ? args.hop_delta
+              : undefined,
+        maxContinuationHops:
+          typeof args.maxContinuationHops === 'number'
+            ? args.maxContinuationHops
+            : typeof args.max_continuation_hops === 'number'
+              ? args.max_continuation_hops
+              : undefined,
+        delaySeconds:
+          typeof args.delaySeconds === 'number'
+            ? args.delaySeconds
+            : typeof args.delay_seconds === 'number'
+              ? args.delay_seconds
+              : undefined,
+        provider: optionalString(args.provider) as any,
         replacement:
           args.replacement && typeof args.replacement === 'object' && !Array.isArray(args.replacement)
             ? (args.replacement as Record<string, any>)
@@ -20315,6 +20404,19 @@ async function executeGeminiMcpTool(
         message: 'Ensemble orchestrator is not available.',
         error: 'no_active_run' as const
       }))
+      toolIsError = result.ok === false
+      text = mcpJson(result)
+    } else if (toolName === 'ensemble_poll_response') {
+      const result = ensembleOrchestratorRef?.pollResponseForRun(context.appRunId, {
+        pollId: optionalString(args.pollId || args.poll_id),
+        choice: optionalString(args.choice),
+        rationale: optionalString(args.rationale || args.reason)
+      }) || {
+        ok: false,
+        tool: 'ensemble_poll_response' as const,
+        message: 'Ensemble orchestrator is not available.',
+        error: 'no_active_run' as const
+      }
       toolIsError = result.ok === false
       text = mcpJson(result)
     } else if (toolName === 'ensemble_roster_edit') {

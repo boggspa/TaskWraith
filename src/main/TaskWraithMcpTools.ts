@@ -110,6 +110,7 @@ export const TASKWRAITH_MCP_TOOLS = [
   'ensemble_send',
   'ensemble_fanout',
   'ensemble_bossman_control',
+  'ensemble_poll_response',
   'ensemble_roster_edit',
   'ensemble_brief_update',
   'list_ensemble_participants',

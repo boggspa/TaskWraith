@@ -116,6 +116,7 @@ export const MCP_APP_STATE_MUTATION_TOOLS = new Set<TaskWraithMcpToolName>([
   'ensemble_send',
   'ensemble_fanout',
   'ensemble_bossman_control',
+  'ensemble_poll_response',
   'ensemble_roster_edit',
   'ensemble_brief_update',
   'schedule_wakeup',

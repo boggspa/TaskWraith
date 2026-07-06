@@ -2224,7 +2224,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
     {
       name: 'ensemble_bossman_control',
       description:
-        'In Ensemble Mode, allows the assigned Boss participant, or Captain only after Boss is unavailable, to make event-bound orchestration decisions: skip/stop participants, explicitly re-summon an already-answered participant in Continuous mode, replace a participant after provider health checks, reorder the remaining queue with cooldown, queue a follow-up, or pause/complete a managed Work Session. Non-authority callers and stale round/run/participant ids are rejected and audited.',
+        'In Ensemble Mode, allows the assigned Boss participant, or Captain only after Boss is unavailable, to make bounded event-bound orchestration decisions: assign work, set the round plan, request status, declare decisions, set review gates, quarantine noisy/unavailable participants, allocate budgets, create polls, adjust hops, schedule wakeups, check quota reset status, skip/stop participants, explicitly re-summon an already-answered participant in Continuous mode, replace a participant after provider health checks, reorder the remaining queue with cooldown, queue a follow-up, or pause/complete a managed Work Session. Non-authority callers and stale round/run/participant ids are rejected and audited.',
       annotations: {
         readOnlyHint: false,
         destructiveHint: false,
@@ -2244,7 +2244,19 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
               'reorder_remaining',
               'queue_followup',
               'pause_work_session',
-              'complete_work_session'
+              'complete_work_session',
+              'assign_work',
+              'set_round_plan',
+              'request_status',
+              'declare_decision',
+              'set_review_gate',
+              'quarantine_participant',
+              'allocate_budget',
+              'create_poll',
+              'clear_goal',
+              'adjust_hops',
+              'ensemble_scheduled_wakeup',
+              'check_quota_resets'
             ]
           },
           roundId: {
@@ -2268,12 +2280,97 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
           },
           prompt: {
             type: 'string',
-            description: 'For queue_followup: prompt for the next queued round.'
+            description:
+              'For queue_followup: prompt for the next queued round. Also accepted as the text/question fallback for plan, status, decision, gate, poll, and assignment actions.'
           },
           reason: {
             type: 'string',
             description:
               'Human-readable rationale recorded into the transcript/status metadata. Required in practice for summon_participant so the transcript states why the directed continuation was needed.'
+          },
+          objective: { type: 'string', description: 'For assign_work: owned work objective.' },
+          acceptanceCriteria: {
+            type: 'string',
+            description: 'For assign_work/set_review_gate: acceptance criteria or review criteria.'
+          },
+          due: {
+            type: 'string',
+            enum: ['next_turn', 'this_round', 'next_round', 'fanout', 'session'],
+            description: 'For assign_work: expected due point.'
+          },
+          assignmentStatus: {
+            type: 'string',
+            enum: ['open', 'in_progress', 'done', 'blocked', 'cancelled']
+          },
+          assignmentId: { type: 'string' },
+          gateId: { type: 'string' },
+          pollId: { type: 'string' },
+          budgetId: { type: 'string' },
+          goal: { type: 'string', description: 'For set_round_plan: active strategy goal.' },
+          phase: { type: 'string', description: 'For set_round_plan/allocate_budget.' },
+          blockers: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'For set_round_plan: known blockers.'
+          },
+          doneCriteria: { type: 'string', description: 'For set_round_plan.' },
+          decision: { type: 'string', description: 'For declare_decision.' },
+          rationale: { type: 'string', description: 'For declare_decision or poll response context.' },
+          reopenCriteria: { type: 'string', description: 'For declare_decision.' },
+          scope: { type: 'string', description: 'For set_review_gate: review scope.' },
+          reviewStatus: {
+            type: 'string',
+            enum: ['required', 'passed', 'failed', 'waived']
+          },
+          category: {
+            type: 'string',
+            enum: ['noisy', 'unavailable', 'looping', 'low_confidence', 'quota', 'other'],
+            description: 'For quarantine_participant.'
+          },
+          quarantineScope: {
+            type: 'string',
+            enum: ['round', 'session'],
+            description: 'For quarantine_participant. Defaults to round.'
+          },
+          clear: {
+            type: 'boolean',
+            description:
+              'For quarantine_participant: clear an active quarantine. For ensemble_scheduled_wakeup reserved.'
+          },
+          maxExtraTurns: { type: 'number', description: 'For allocate_budget.' },
+          maxFanoutCalls: { type: 'number', description: 'For allocate_budget.' },
+          maxDurationSeconds: { type: 'number', description: 'For allocate_budget.' },
+          maxTokens: { type: 'number', description: 'For allocate_budget.' },
+          question: { type: 'string', description: 'For create_poll or request_status.' },
+          options: {
+            type: 'array',
+            minItems: 2,
+            maxItems: 6,
+            items: { type: 'string', maxLength: 160 },
+            description: 'For create_poll: allowed poll choices.'
+          },
+          includeUser: {
+            type: 'boolean',
+            description: 'For create_poll: note that the user may also answer in chat.'
+          },
+          timeoutSeconds: {
+            type: 'number',
+            description: 'For create_poll: optional poll timeout in seconds.'
+          },
+          hopDelta: { type: 'number', description: 'For adjust_hops: relative change.' },
+          maxContinuationHops: {
+            type: 'number',
+            description: 'For adjust_hops: absolute max continuation hops, clamped 1..500.'
+          },
+          delaySeconds: {
+            type: 'number',
+            description:
+              'For ensemble_scheduled_wakeup: pause the active ensemble round and wake later.'
+          },
+          provider: {
+            type: 'string',
+            enum: selectableProviderIds(),
+            description: 'For check_quota_resets: optional provider filter.'
           },
           replacement: {
             type: 'object',
@@ -2476,6 +2573,30 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
               'Default true. When true, a new user message cancels this pending wake before the next user round starts.'
           }
         }
+      }
+    },
+    {
+      name: 'ensemble_poll_response',
+      description:
+        'In Ensemble Mode, cast or update this participant’s response to an open Boss/Captain poll created by ensemble_bossman_control({ action: "create_poll" }). Active participant runs only. The choice must match one of the poll options.',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          pollId: { type: 'string' },
+          choice: { type: 'string' },
+          rationale: {
+            type: 'string',
+            maxLength: 500,
+            description: 'Optional short reason for the vote.'
+          }
+        },
+        required: ['pollId', 'choice']
       }
     },
     {
