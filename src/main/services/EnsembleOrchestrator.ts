@@ -2430,6 +2430,7 @@ interface ActiveRoundRuntime {
 export class EnsembleOrchestrator {
   private roundsByChatId = new Map<string, ActiveRoundRuntime>()
   private runsByRunId = new Map<string, ActiveParticipantRun>()
+  private bossmanPollTimeoutsById = new Map<string, ReturnType<typeof setTimeout>>()
   private queuedPromptIdCounter = 0
 
   constructor(private deps: EnsembleOrchestratorDeps) {}
@@ -5264,6 +5265,7 @@ export class EnsembleOrchestrator {
         `${authorityLabel} opened poll ${poll.id}: ${question} Options: ${options.join(' / ')}`
       )
       this.appendBossmanPollMessage(runtime, poll.id, question, options, authorityLabel)
+      this.scheduleBossmanPollTimeout(runtime.chatId, poll.id, poll.timeoutAt)
       if (pollTargetIds.length > 0) {
         this.routeBossmanTargets(
           runtime,
@@ -5359,6 +5361,7 @@ export class EnsembleOrchestrator {
       }
       if (poll.timeoutAt && new Date(poll.timeoutAt).getTime() <= this.deps.now()) {
         const nextPoll = { ...poll, status: 'expired' as const }
+        this.clearBossmanPollTimeout(runtime.chatId, pollId)
         response = {
           ok: false,
           tool: 'ensemble_poll_response',
@@ -5408,6 +5411,7 @@ export class EnsembleOrchestrator {
         expectedVoters.every((participantId) =>
           nextPoll.votes.some((entry) => entry.voterParticipantId === participantId)
         )
+      if (hasAllTargetVotes) this.clearBossmanPollTimeout(runtime.chatId, pollId)
       response = {
         ok: true,
         tool: 'ensemble_poll_response',
@@ -5493,6 +5497,7 @@ export class EnsembleOrchestrator {
     }
     if (poll.timeoutAt && new Date(poll.timeoutAt).getTime() <= this.deps.now()) {
       const nextPoll = { ...poll, status: 'expired' as const }
+      this.clearBossmanPollTimeout(chatId, pollId)
       this.saveChatWithCheckpoint(
         {
           ...chat,
@@ -5618,6 +5623,67 @@ export class EnsembleOrchestrator {
       },
       'round-updated'
     )
+  }
+
+  private scheduleBossmanPollTimeout(
+    chatId: string,
+    pollId: string,
+    timeoutAt: string | undefined
+  ): void {
+    if (!timeoutAt) return
+    const key = `${chatId}:${pollId}`
+    const existing = this.bossmanPollTimeoutsById.get(key)
+    if (existing) clearTimeout(existing)
+    const dueMs = new Date(timeoutAt).getTime()
+    if (!Number.isFinite(dueMs)) return
+    const delayMs = Math.max(0, dueMs - this.deps.now())
+    const handle = setTimeout(() => {
+      this.bossmanPollTimeoutsById.delete(key)
+      this.expireBossmanPoll(chatId, pollId, timeoutAt)
+    }, delayMs)
+    handle.unref?.()
+    this.bossmanPollTimeoutsById.set(key, handle)
+  }
+
+  private clearBossmanPollTimeout(chatId: string, pollId: string): void {
+    const key = `${chatId}:${pollId}`
+    const existing = this.bossmanPollTimeoutsById.get(key)
+    if (!existing) return
+    clearTimeout(existing)
+    this.bossmanPollTimeoutsById.delete(key)
+  }
+
+  private expireBossmanPoll(chatId: string, pollId: string, timeoutAt: string): void {
+    const chat = this.deps.getChat(chatId)
+    const state = chat?.ensemble?.bossmanControlState
+    const polls = state?.polls || []
+    const index = polls.findIndex((poll) => poll.id === pollId)
+    if (!chat?.ensemble || !state || index < 0) return
+    const poll = polls[index]
+    if (poll.status !== 'open' || poll.timeoutAt !== timeoutAt) return
+    const nextPoll = { ...poll, status: 'expired' as const }
+    this.saveChatWithCheckpoint(
+      {
+        ...chat,
+        ensemble: {
+          ...chat.ensemble,
+          bossmanControlState: {
+            ...state,
+            polls: [...polls.slice(0, index), nextPoll, ...polls.slice(index + 1)]
+          },
+          updatedAt: this.deps.nowIso()
+        },
+        updatedAt: this.deps.now()
+      },
+      'round-updated'
+    )
+    if (chat.ensemble.activeRound?.status === 'running') {
+      this.appendRoundStatus(
+        chatId,
+        chat.ensemble.activeRound.roundId,
+        `Poll ${pollId} expired after reaching its timeout.`
+      )
+    }
   }
 
   private resolveBossmanTargetParticipantIds(

@@ -4608,6 +4608,47 @@ Next action:
     ])
   })
 
+  it('expires Boss-created polls on their scheduled timeout', async () => {
+    const initialChat = makeChat()
+    initialChat.ensemble!.bossmanParticipantId = 'claude'
+    const harness = makeHarness({ initialChat })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Plan and execute.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    vi.useFakeTimers()
+    try {
+      const poll = await harness.orchestrator.bossmanControlForRun(
+        harness.dispatched[0].appRunId,
+        {
+          action: 'create_poll',
+          roundId: harness.chat.ensemble?.activeRound?.roundId,
+          pollId: 'poll-timeout',
+          question: 'Which path should we take?',
+          options: ['A', 'B'],
+          timeoutSeconds: 30
+        }
+      )
+
+      expect(poll.ok).toBe(true)
+      expect(harness.chat.ensemble?.bossmanControlState?.polls?.[0]?.status).toBe('open')
+
+      await vi.advanceTimersByTimeAsync(29_999)
+      expect(harness.chat.ensemble?.bossmanControlState?.polls?.[0]?.status).toBe('open')
+
+      await vi.advanceTimersByTimeAsync(1)
+      expect(harness.chat.ensemble?.bossmanControlState?.polls?.[0]?.status).toBe('expired')
+      expect(harness.chat.messages.map((message) => message.content)).toContain(
+        'Poll poll-timeout expired after reaching its timeout.'
+      )
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('rejects Boss control from non-Boss callers and stale round ids', async () => {
     const initialChat = makeChat()
     initialChat.ensemble!.bossmanParticipantId = 'claude'
