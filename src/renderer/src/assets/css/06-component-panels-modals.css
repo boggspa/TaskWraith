@@ -1,17 +1,20 @@
 /* ── DigitOdometer ──────────────────────────────────────────────────
-   Skeuomorphic per-digit rolling counter. Each digit slot is a
-   1em-tall clipped window containing a 10-cell vertical column
-   (digits 0..9). Translating the column by `-digit * 1em` reveals
-   exactly one digit through the clip; transitioning that transform
-   gives the "roll" effect. Only the changing digit moves — leading
-   digits stay still — matching Codex / OpenAI's polished feel.
+   Skeuomorphic per-digit rolling counter. Each digit slot is a 1em-tall
+   clipped window containing only the short frame needed for the current
+   transition (for example 9→0 on a carry, not the full 9→8→...→0 rewind).
    See DigitOdometer.tsx for the rationale + a11y notes. */
 
 .digit-odometer {
   display: inline-flex;
   align-items: flex-end;
   font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum';
   line-height: 1;
+}
+
+.digit-odometer__visual {
+  display: inline-flex;
+  align-items: flex-end;
 }
 
 .digit-odometer__sign {
@@ -24,15 +27,18 @@
   height: 1em;
   overflow: hidden;
   vertical-align: bottom;
-  width: 0.62em; /* tabular-num width approximation; tweak per font */
+  width: 1ch;
   text-align: center;
 }
 
 .digit-odometer__column {
   display: flex;
   flex-direction: column;
-  /* The transform is set inline per render; transition runs the roll. */
-  transition: transform 320ms cubic-bezier(0.22, 0.61, 0.36, 1);
+  transform: translateY(var(--digit-odometer-target, 0));
+}
+
+.digit-odometer__column.is-rolling {
+  animation: digit-odometer-roll 320ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
   will-change: transform;
 }
 
@@ -42,8 +48,27 @@
   line-height: 1;
 }
 
-:root[data-reduce-motion="true"] .digit-odometer__column {
-  transition: none !important;
+@keyframes digit-odometer-roll {
+  from {
+    transform: translateY(var(--digit-odometer-start, 0));
+  }
+  to {
+    transform: translateY(var(--digit-odometer-target, 0));
+  }
+}
+
+:root[data-reduce-motion="true"] .digit-odometer__column,
+:root[data-reduce-motion="true"] .digit-odometer__column.is-rolling {
+  animation: none !important;
+  will-change: auto;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .digit-odometer__column,
+  .digit-odometer__column.is-rolling {
+    animation: none !important;
+    will-change: auto;
+  }
 }
 
 .activity-progress-note {

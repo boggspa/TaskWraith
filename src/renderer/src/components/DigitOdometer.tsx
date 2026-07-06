@@ -1,39 +1,35 @@
-import { useMemo, type JSX } from 'react'
-import { DIGITS, digitSlotsForValue } from './DigitOdometerModel'
+import { useEffect, useMemo, useRef, type CSSProperties, type JSX } from 'react'
+import {
+  digitRollDirection,
+  digitRollFrame,
+  digitSlotTransitions,
+  digitSlotsForValue,
+  type DigitRollDirection
+} from './DigitOdometerModel'
 
 /**
  * DigitOdometer — skeuomorphic per-digit rolling counter, matching the
  * "secret-sauce" approach used by OpenAI's Codex client.
  *
  * Trick: each digit position renders a CSS-clipped window (height: 1em,
- * overflow: hidden) containing a vertical column with all ten digits
- * stacked (0..9). The column is translated by `-digit * 1em` so the
- * clipped window reveals exactly one digit. When the digit prop
- * changes, React diffs the inline style; CSS transitions the
- * `transform` smoothly and the digit "rolls" to the new value. Only
- * the changing digit moves — leading digits that didn't change stay
- * visually static.
+ * overflow: hidden) containing only the short roll frame needed for the current
+ * transition. Stable digits render one cell. Changed digits render the previous
+ * digit through the next digit in the direction the whole number moved, so carry
+ * cases like 29 → 30 roll the ones slot 9 → 0 instead of rewinding through the
+ * full 0-9 strip. Slots are keyed by right-side place value, so the ones/tens
+ * wheels survive length changes such as 9 → 10 and 99 → 100.
  *
- * Side effect (intentional, cute): copy-pasting the rendered text
- * yields the full "0123456789" column per digit slot, which is why
- * Codex's UI also reveals this when you select-and-copy. The visual
- * frame is the illusion.
- *
- * When the value grows in length (9 → 10), the outer component
- * re-renders with one more slot. CSS layout shifts; we don't try to
- * animate the slot-count change (a future polish if anyone cares).
- *
- * Accessibility: the outer span carries an `aria-label` with the
- * spoken value (e.g. "+47"). The digit slots are aria-hidden because
- * the per-digit DOM (0-9 columns) is meaningless to screen readers.
+ * Accessibility: the visual wheels are aria-hidden. A real sr-only text node
+ * carries the spoken value (e.g. "+47") so assistive tech and copy/selection do
+ * not read the decorative roll-frame cells.
  *
  * Reduce-motion: respects `:root[data-reduce-motion="true"]` via CSS
- * (transitions are nulled out at the root selector).
+ * and `prefers-reduced-motion` via CSS (animations are nulled out).
  */
 
 export interface DigitOdometerProps {
-  /** Non-negative number to display. Negative values get the `-` sign
-   * automatically; for "+N" prepend with `sign="+"`. */
+  /** Number to display. Negative values get the `-` sign automatically unless
+   * `sign` is supplied; for "+N" prepend with `sign="+"`. */
   value: number
   /** Optional leading sign ('+' or '-'). When omitted, no sign is
    * rendered. When `sign="+"` and value is 0, renders "+0". */
@@ -50,39 +46,67 @@ export function DigitOdometer({
   ariaLabel,
   className
 }: DigitOdometerProps): JSX.Element {
-  const digits = useMemo(() => digitSlotsForValue(value), [value])
-  const label = ariaLabel ?? `${sign ?? ''}${digits.join('')}`
+  const numericValue = Number.isFinite(value) ? Math.trunc(value) : 0
+  const displayValue = Math.abs(numericValue)
+  const digits = useMemo(() => digitSlotsForValue(displayValue), [displayValue])
+  const previousDisplayValueRef = useRef(displayValue)
+  const transitions = useMemo(
+    () => digitSlotTransitions(previousDisplayValueRef.current, displayValue),
+    [displayValue]
+  )
+  const direction = digitRollDirection(previousDisplayValueRef.current, displayValue)
+  const effectiveSign = sign ?? (numericValue < 0 ? '-' : undefined)
+  const label = ariaLabel ?? `${effectiveSign ?? ''}${digits.join('')}`
+
+  useEffect(() => {
+    previousDisplayValueRef.current = displayValue
+  }, [displayValue])
 
   return (
-    <span className={`digit-odometer${className ? ' ' + className : ''}`} aria-label={label}>
-      {sign && (
-        <span className="digit-odometer__sign" aria-hidden>
-          {sign}
-        </span>
-      )}
-      {digits.map((d, i) => (
-        // Slot key includes the total digit count so a length change
-        // (e.g. 9 → 10) cleanly remounts the slot rather than
-        // attempting to animate from the prior digit at a different
-        // visual position. Within a stable length, the digit prop
-        // changes and CSS transitions handle the roll.
-        <DigitSlot key={`slot-${digits.length}-${i}`} digit={d} />
-      ))}
+    <span className={`digit-odometer${className ? ' ' + className : ''}`}>
+      <span className="sr-only">{label}</span>
+      <span className="digit-odometer__visual" aria-hidden>
+        {effectiveSign && <span className="digit-odometer__sign">{effectiveSign}</span>}
+        {transitions.map(({ digit, previousDigit, place }) => {
+          return (
+            <DigitSlot
+              key={`place-${place}`}
+              digit={digit}
+              previousDigit={previousDigit}
+              direction={direction}
+            />
+          )
+        })}
+      </span>
     </span>
   )
 }
 
-function DigitSlot({ digit }: { digit: number }): JSX.Element {
-  // CSS handles the transition: the column's translateY is the only
-  // thing that changes per render. Critical that this inline style
-  // is an inline `style` attribute (not a CSS variable) so the
-  // browser's transition engine actually interpolates the value.
-  const transform = `translateY(-${digit}em)`
+function DigitSlot({
+  digit,
+  previousDigit,
+  direction
+}: {
+  digit: number
+  previousDigit: number
+  direction: DigitRollDirection
+}): JSX.Element {
+  const frame = digitRollFrame(previousDigit, digit, direction)
+  const isRolling = frame.startIndex !== frame.targetIndex
+  const style = {
+    '--digit-odometer-start': `-${frame.startIndex}em`,
+    '--digit-odometer-target': `-${frame.targetIndex}em`
+  } as CSSProperties
+
   return (
-    <span className="digit-odometer__slot" aria-hidden>
-      <span className="digit-odometer__column" style={{ transform }}>
-        {DIGITS.map((d) => (
-          <span key={d} className="digit-odometer__cell">
+    <span className="digit-odometer__slot">
+      <span
+        key={`${previousDigit}-${digit}-${direction}`}
+        className={`digit-odometer__column${isRolling ? ' is-rolling' : ''}`}
+        style={style}
+      >
+        {frame.cells.map((d, index) => (
+          <span key={`${d}-${index}`} className="digit-odometer__cell">
             {d}
           </span>
         ))}

@@ -1386,10 +1386,9 @@
 }
 .composer-odometer-number {
   --composer-odometer-digits: 1;
-  display: inline-grid;
-  grid-template-areas: 'value';
-  min-width: calc(var(--composer-odometer-digits) * 0.62em);
-  overflow: hidden;
+  display: inline-flex;
+  align-items: baseline;
+  min-width: calc(var(--composer-odometer-digits) * 1ch);
   line-height: 1;
   text-align: right;
   vertical-align: -0.08em;
@@ -1397,40 +1396,14 @@
   font-feature-settings: 'tnum';
 }
 .composer-odometer-number-value {
-  grid-area: value;
+  display: inline-flex;
+  align-items: baseline;
   min-width: 100%;
-  will-change: transform, opacity;
+  justify-content: flex-end;
 }
-.composer-odometer-number.is-changing.is-up .composer-odometer-number-value {
-  animation: composer-odometer-up 180ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
-}
-.composer-odometer-number.is-changing.is-down .composer-odometer-number-value {
-  animation: composer-odometer-down 180ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
-}
-@keyframes composer-odometer-up {
-  from {
-    opacity: 0.35;
-    transform: translateY(0.72em);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-@keyframes composer-odometer-down {
-  from {
-    opacity: 0.35;
-    transform: translateY(-0.72em);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .composer-odometer-number.is-changing .composer-odometer-number-value {
-    animation: none;
-  }
+.composer-odometer-prefix {
+  display: inline-block;
+  margin-right: 0.05em;
 }
 /* Diff stat hues, shared by every composer shell: a darker, more saturated
    green/red than the old pastels so the +add/-del counts read clearly on both

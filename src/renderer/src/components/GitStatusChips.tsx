@@ -1,4 +1,5 @@
 import type { GitPrSummary, GitRepositorySnapshot } from '../../../main/services/GitService'
+import { DigitOdometer } from './DigitOdometer'
 
 /*
  * Shared Git-status chips for the composer workspace lines (the primary
@@ -233,8 +234,18 @@ export function GitSyncChip({
   }
   return (
     <span className="git-status-push" title={`${ahead} ahead · ${behind} behind`}>
-      {ahead > 0 && <span className="git-status-ahead">↑{ahead}</span>}
-      {behind > 0 && <span className="git-status-behind">↓{behind}</span>}
+      {ahead > 0 && (
+        <span className="git-status-ahead">
+          <span aria-hidden>↑</span>
+          <DigitOdometer value={ahead} ariaLabel={`${ahead} ahead`} />
+        </span>
+      )}
+      {behind > 0 && (
+        <span className="git-status-behind">
+          <span aria-hidden>↓</span>
+          <DigitOdometer value={behind} ariaLabel={`${behind} behind`} />
+        </span>
+      )}
     </span>
   )
 }

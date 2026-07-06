@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
+import type { CSSProperties } from 'react'
+import { DigitOdometer } from './DigitOdometer'
 
 interface AnimatedDiffNumberProps {
   value: number
@@ -14,40 +15,33 @@ export function AnimatedDiffNumber({
   className = ''
 }: AnimatedDiffNumberProps): React.JSX.Element {
   const normalizedValue = Number.isFinite(value) ? Math.max(0, Math.trunc(value)) : 0
-  const previousValueRef = useRef(normalizedValue)
-  const [displayValue, setDisplayValue] = useState(normalizedValue)
-  const [animationTick, setAnimationTick] = useState(0)
-  const [direction, setDirection] = useState<'up' | 'down' | 'steady'>('steady')
-
-  useEffect(() => {
-    const previousValue = previousValueRef.current
-    if (normalizedValue === previousValue) return
-    previousValueRef.current = normalizedValue
-    setDirection(normalizedValue > previousValue ? 'up' : 'down')
-    setDisplayValue(normalizedValue)
-    setAnimationTick((current) => current + 1)
-  }, [normalizedValue])
-
-  const digitCount = `${prefix}${displayValue}`.length
+  const digitCount = `${prefix}${normalizedValue}`.length
   const classNames = [
     'composer-odometer-number',
-    direction !== 'steady' ? `is-${direction}` : '',
-    animationTick > 0 ? 'is-changing' : '',
     className
   ]
     .filter(Boolean)
     .join(' ')
-  const valueText = `${prefix}${displayValue}`
+  const valueText = `${prefix}${normalizedValue}`
   const ValueTag = strong ? 'strong' : 'span'
+  const odometerSign = prefix === '+' || prefix === '-' ? prefix : undefined
 
   return (
     <span
       className={classNames}
-      style={{ '--composer-odometer-digits': digitCount } as React.CSSProperties}
-      aria-label={valueText}
+      style={{ '--composer-odometer-digits': digitCount } as CSSProperties}
     >
-      <ValueTag key={animationTick} className="composer-odometer-number-value">
-        {valueText}
+      <ValueTag className="composer-odometer-number-value">
+        {prefix && !odometerSign ? (
+          <span className="composer-odometer-prefix" aria-hidden>
+            {prefix}
+          </span>
+        ) : null}
+        <DigitOdometer
+          value={normalizedValue}
+          sign={odometerSign}
+          ariaLabel={valueText}
+        />
       </ValueTag>
     </span>
   )

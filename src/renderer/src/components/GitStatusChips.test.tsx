@@ -30,8 +30,18 @@ describe('GitSyncChip', () => {
     const html = renderToStaticMarkup(<GitSyncChip snapshot={snapshot({ ahead: 3 })} />)
 
     expect(html).toContain('git-status-ahead')
-    expect(html).toContain('↑3')
+    expect(html).toContain('<span class="sr-only">3 ahead</span>')
+    expect(html).toContain('digit-odometer')
     expect(html).not.toContain('synced')
+  })
+
+  it('renders both ahead and behind counts through digit odometers', () => {
+    const html = renderToStaticMarkup(<GitSyncChip snapshot={snapshot({ ahead: 3, behind: 2 })} />)
+
+    expect(html).toContain('git-status-ahead')
+    expect(html).toContain('git-status-behind')
+    expect(html).toContain('<span class="sr-only">3 ahead</span>')
+    expect(html).toContain('<span class="sr-only">2 behind</span>')
   })
 
   it('renders a green synced chip once the branch matches upstream', () => {
