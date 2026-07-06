@@ -1028,7 +1028,8 @@ const defaultSettings: AppSettings = {
   reduceMotion: false,
   compactDensity: false,
   liveActivityViewport: true,
-  showInspector: true,
+  // Session chrome default: right dock starts closed on cold launch.
+  showInspector: false,
   inspectorWidth: 380,
   sidebarWidth: 260,
   sidebarOpacity: 100,

@@ -147,7 +147,8 @@ function getInitialState(): AppearanceState {
     reduceMotion,
     compactDensity: false,
     liveActivityViewport: true,
-    showInspector: true,
+    // Inspector open/closed is session chrome, not a persisted appearance preference.
+    showInspector: false,
     inspectorWidth: DEFAULT_INSPECTOR_WIDTH,
     sidebarWidth: DEFAULT_SIDEBAR_WIDTH,
     sidebarOpacity: DEFAULT_PANE_OPACITY,
@@ -231,7 +232,9 @@ export function useAppearance() {
           reduceMotion: settings.reduceMotion || getInitialState().reduceMotion,
           compactDensity: settings.compactDensity || false,
           liveActivityViewport: settings.liveActivityViewport !== false,
-          showInspector: settings.showInspector !== false,
+          // Do not hydrate stale persisted `showInspector: true`; a cold launch should
+          // start with the right dock closed until the user explicitly opens it.
+          showInspector: false,
           inspectorWidth: normalizeAppearanceDimension(
             settings.inspectorWidth,
             DEFAULT_INSPECTOR_WIDTH,
@@ -424,7 +427,8 @@ export function useAppearance() {
             reduceMotion: next.reduceMotion,
             compactDensity: next.compactDensity,
             liveActivityViewport: next.liveActivityViewport,
-            showInspector: next.showInspector,
+            // Intentionally omit showInspector. The inspector dock is session-only;
+            // inspectorWidth remains persisted below.
             inspectorWidth: next.inspectorWidth,
             sidebarWidth: next.sidebarWidth,
             sidebarOpacity: next.sidebarOpacity,

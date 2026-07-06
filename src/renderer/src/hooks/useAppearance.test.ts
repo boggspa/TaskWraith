@@ -30,7 +30,7 @@ describe('Appearance settings validation', () => {
       reduceTransparency: false,
       reduceMotion: false,
       compactDensity: false,
-      showInspector: true,
+      showInspector: false,
       inspectorWidth: 380,
       sidebarWidth: 260
     }
@@ -39,7 +39,7 @@ describe('Appearance settings validation', () => {
     expect(defaults.themeAppearance).toBe('system')
     expect(defaults.reduceTransparency).toBe(false)
     expect(defaults.reduceMotion).toBe(false)
-    expect(defaults.showInspector).toBe(true)
+    expect(defaults.showInspector).toBe(false)
   })
 
   it('mode names are generic, not branded', () => {
