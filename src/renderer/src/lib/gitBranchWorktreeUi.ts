@@ -33,6 +33,12 @@ export interface GitBranchActionResult {
   snapshot?: GitRepositorySnapshot
 }
 
+export interface GitBranchWorktreeAvailabilityInput {
+  workspacePath?: string | null
+  apiAvailable: boolean
+  dirty: boolean
+}
+
 const IPC = {
   listBranches: 'git:list-branches',
   checkoutBranch: 'git:checkout-branch',
@@ -162,6 +168,23 @@ export function isWorktreeDirty(snapshot: GitRepositorySnapshot | null | undefin
   const staged = snapshot.counts?.staged ?? 0
   const conflicts = snapshot.conflicts ?? 0
   return changed > 0 || unstaged > 0 || staged > 0 || conflicts > 0
+}
+
+export function branchCheckoutDisabledReason(
+  input: GitBranchWorktreeAvailabilityInput
+): string {
+  if (!input.workspacePath) return 'No workspace'
+  if (!input.apiAvailable) return 'Branch controls unavailable until backend IPC lands'
+  if (input.dirty) return 'Commit or stash changes before switching branch'
+  return ''
+}
+
+export function worktreeActionDisabledReason(
+  input: Pick<GitBranchWorktreeAvailabilityInput, 'workspacePath' | 'apiAvailable'>
+): string {
+  if (!input.workspacePath) return 'No workspace'
+  if (!input.apiAvailable) return 'Worktree controls unavailable until backend IPC lands'
+  return ''
 }
 
 export function formatBranchLabel(

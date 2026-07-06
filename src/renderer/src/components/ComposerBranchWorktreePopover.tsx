@@ -5,6 +5,7 @@ import type { GitRepositorySnapshot } from '../../../main/services/GitService'
 import { XSymbolIcon } from './AppChromeSymbols'
 import { branchTone } from './GitStatusChips'
 import {
+  branchCheckoutDisabledReason,
   checkoutGitBranch,
   createGitBranch,
   createGitWorktree,
@@ -15,7 +16,8 @@ import {
   listGitWorktrees,
   selectGitWorktree,
   type GitBranchEntry,
-  type GitWorktreeEntry
+  type GitWorktreeEntry,
+  worktreeActionDisabledReason
 } from '../lib/gitBranchWorktreeUi'
 import {
   resolveWorktreeSelectionFromSnapshot,
@@ -217,13 +219,23 @@ export function ComposerBranchWorktreePopover({
     closePopover()
   }
 
-  const disabledReason = !workspacePath
+  const branchDisabledReason = branchCheckoutDisabledReason({
+    workspacePath,
+    apiAvailable,
+    dirty
+  })
+  const worktreeDisabledReason = worktreeActionDisabledReason({
+    workspacePath,
+    apiAvailable
+  })
+  const triggerDisabledReason = !workspacePath
     ? 'No workspace'
     : !apiAvailable
-      ? 'Branch controls unavailable until backend IPC lands'
-      : dirty
-        ? 'Commit or stash changes before switching branch'
-        : ''
+      ? 'Branch and worktree controls unavailable until backend IPC lands'
+      : ''
+  const dirtyStatus = dirty
+    ? 'Dirty worktree — branch checkout disabled; worktrees still available'
+    : ''
 
   const popover =
     open && position && typeof document !== 'undefined'
@@ -264,7 +276,7 @@ export function ComposerBranchWorktreePopover({
                       key={branch.name}
                       type="button"
                       className={`composer-branch-popover-item${branch.isCurrent ? ' is-current' : ''}`}
-                      disabled={working || branch.isCurrent || Boolean(disabledReason)}
+                      disabled={working || branch.isCurrent || Boolean(branchDisabledReason)}
                       onClick={() =>
                         void runAction(
                           () => checkoutGitBranch(workspacePath!, branch.name),
@@ -286,13 +298,13 @@ export function ComposerBranchWorktreePopover({
                     className="composer-branch-popover-input"
                     value={newBranchName}
                     placeholder="feature/my-branch"
-                    disabled={working || Boolean(disabledReason)}
+                    disabled={working || Boolean(branchDisabledReason)}
                     onChange={(event) => setNewBranchName(event.target.value)}
                   />
                   <button
                     type="button"
                     className="composer-branch-popover-create-button"
-                    disabled={working || !newBranchName.trim() || Boolean(disabledReason)}
+                    disabled={working || !newBranchName.trim() || Boolean(branchDisabledReason)}
                     onClick={() =>
                       void runAction(
                         () =>
@@ -314,7 +326,7 @@ export function ComposerBranchWorktreePopover({
                       key={worktree.path}
                       type="button"
                       className={`composer-branch-popover-item${worktree.isCurrent ? ' is-current' : ''}`}
-                      disabled={working || worktree.isCurrent || Boolean(disabledReason)}
+                      disabled={working || worktree.isCurrent || Boolean(worktreeDisabledReason)}
                       title={worktree.path}
                       onClick={() =>
                         void runAction(
@@ -332,19 +344,19 @@ export function ComposerBranchWorktreePopover({
                       className="composer-branch-popover-input"
                       value={newWorktreeName}
                       placeholder="task-isolation"
-                      disabled={working || Boolean(disabledReason)}
+                      disabled={working || Boolean(worktreeDisabledReason)}
                       onChange={(event) => setNewWorktreeName(event.target.value)}
                     />
                     <button
                       type="button"
                       className="composer-branch-popover-create-button"
-                      disabled={working || !newWorktreeName.trim() || Boolean(disabledReason)}
+                      disabled={working || !newWorktreeName.trim() || Boolean(worktreeDisabledReason)}
                       onClick={() =>
                         void runAction(
                           () =>
                             createGitWorktree(workspacePath!, {
                               name: newWorktreeName.trim(),
-                              branch: gitSnapshot?.branch
+                              branch: newWorktreeName.trim()
                             }),
                           'worktree'
                         )
@@ -363,12 +375,10 @@ export function ComposerBranchWorktreePopover({
                 }`}
               >
                 {status ||
-                  disabledReason ||
+                  triggerDisabledReason ||
                   (activeWorktreeLabel
                     ? `Runs use isolated worktree: ${composerWorktreeSelection?.effectiveWorkspacePath || activeWorktreeLabel}`
-                    : dirty
-                      ? 'Dirty worktree — checkout disabled'
-                      : '')}
+                    : dirtyStatus)}
               </span>
             </div>
           </div>,
@@ -386,14 +396,14 @@ export function ComposerBranchWorktreePopover({
         }`}
         disabled={!workspacePath}
         title={
-          disabledReason ||
+          triggerDisabledReason ||
           (activeWorktreeLabel
             ? `Isolated worktree active (${composerWorktreeSelection?.effectiveWorkspacePath || activeWorktreeLabel})`
             : 'Switch branch or worktree')
         }
         onClick={() => {
           if (dirty) {
-            setStatus('Commit or stash changes before switching branch.')
+            setStatus(dirtyStatus)
             setStatusTone('warning')
           }
           setOpen((prev) => !prev)

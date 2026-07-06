@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { formatBranchLabel, isWorktreeDirty } from './gitBranchWorktreeUi'
+import {
+  branchCheckoutDisabledReason,
+  formatBranchLabel,
+  isWorktreeDirty,
+  worktreeActionDisabledReason
+} from './gitBranchWorktreeUi'
 
 describe('gitBranchWorktreeUi', () => {
   it('detects dirty worktrees from snapshot counts', () => {
@@ -25,5 +30,37 @@ describe('gitBranchWorktreeUi', () => {
     expect(formatBranchLabel({ detached: true, branch: 'main' } as any)).toBe('detached HEAD')
     expect(formatBranchLabel({ detached: false, branch: 'feature/x' } as any)).toBe('feature/x')
     expect(formatBranchLabel(null, 'main')).toBe('main')
+  })
+
+  it('blocks dirty branch checkout without blocking worktree actions', () => {
+    expect(
+      branchCheckoutDisabledReason({
+        workspacePath: '/repo',
+        apiAvailable: true,
+        dirty: true
+      })
+    ).toBe('Commit or stash changes before switching branch')
+    expect(
+      worktreeActionDisabledReason({
+        workspacePath: '/repo',
+        apiAvailable: true
+      })
+    ).toBe('')
+  })
+
+  it('blocks both branch and worktree actions when workspace git controls are unavailable', () => {
+    expect(
+      branchCheckoutDisabledReason({
+        workspacePath: '',
+        apiAvailable: true,
+        dirty: false
+      })
+    ).toBe('No workspace')
+    expect(
+      worktreeActionDisabledReason({
+        workspacePath: '/repo',
+        apiAvailable: false
+      })
+    ).toBe('Worktree controls unavailable until backend IPC lands')
   })
 })
