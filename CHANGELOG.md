@@ -23,6 +23,9 @@ history, and workspace state stay on your machine throughout.
 - **iOS compact composer.** The mobile composer again collapses both the
   above-row controls and the footer telemetry rail when the keyboard drops,
   while preserving the compact diff access affordance.
+- **iOS Ollama brand parity.** Participant health cards now repair generic
+  Ollama display stamps with model-specific branding, so Laguna renders as
+  Poolside on mobile like it does on desktop.
 - **Windows CI portability.** Release/test scripts avoid POSIX-only assumptions
   that broke the Windows lane.
 
