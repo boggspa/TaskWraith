@@ -5,6 +5,7 @@ import type {
   ChatRecord,
   ChatRun,
   DiffFileSummary,
+  DiffFileSummaryOwner,
   ProviderId
 } from '../../../main/store/types'
 import { isEnsembleRoundDispatchLive } from '../../../shared/ensembleRoundLifecycle'
@@ -697,6 +698,66 @@ function runDetailsAccentStyle(providerClass: string): CSSProperties | undefined
   return {
     '--run-complete-token-accent': `var(--provider-${safeProviderClass}-color, var(--accent))`
   } as CSSProperties
+}
+
+function fileChangeOwnerLabel(owner: DiffFileSummaryOwner): string {
+  if (owner.role) return owner.role
+  if (owner.provider) return getProviderLabel(owner.provider)
+  return 'Agent'
+}
+
+function fileChangeOwnerTitle(owner: DiffFileSummaryOwner): string {
+  const provider = owner.provider ? getProviderLabel(owner.provider) : ''
+  const role = owner.role || ''
+  if (provider && role) return `${provider} / ${role}`
+  return role || provider || 'Agent'
+}
+
+function normalizeFileChangeOwners(
+  owners: DiffFileSummary['owners'] | undefined
+): DiffFileSummaryOwner[] {
+  if (!Array.isArray(owners)) return []
+  return owners.filter((owner) => owner && (owner.provider || owner.participantId || owner.role))
+}
+
+function FileChangeOwnerCell({ owners }: { owners?: DiffFileSummary['owners'] }): ReactElement {
+  const normalizedOwners = normalizeFileChangeOwners(owners)
+  if (normalizedOwners.length === 0) {
+    return <span className="file-change-summary-owner is-empty" aria-hidden="true" />
+  }
+  if (normalizedOwners.length === 1) {
+    const owner = normalizedOwners[0]
+    return (
+      <span className="file-change-summary-owner" title={fileChangeOwnerTitle(owner)}>
+        {owner.provider && (
+          <span className={`file-change-summary-owner-icon provider-${owner.provider}`} aria-hidden>
+            <ProviderGlyph provider={owner.provider} />
+          </span>
+        )}
+        <span className="file-change-summary-owner-label">{fileChangeOwnerLabel(owner)}</span>
+      </span>
+    )
+  }
+  return (
+    <span className="file-change-summary-owner is-multiple" tabIndex={0}>
+      <span className="file-change-summary-owner-label">Multiple</span>
+      <span className="file-change-summary-owner-popover" role="tooltip">
+        {normalizedOwners.map((owner, index) => (
+          <span key={`${owner.participantId || owner.provider || owner.role || 'owner'}-${index}`}>
+            {owner.provider && (
+              <span
+                className={`file-change-summary-owner-icon provider-${owner.provider}`}
+                aria-hidden
+              >
+                <ProviderGlyph provider={owner.provider} />
+              </span>
+            )}
+            <span>{fileChangeOwnerTitle(owner)}</span>
+          </span>
+        ))}
+      </span>
+    </span>
+  )
 }
 
 function runDetailsGridTemplate(participantCount: number): string {
@@ -3627,7 +3688,6 @@ export const TranscriptPanel = memo(
                         <span className="file-change-stat file-change-stat-add composer-diff-add">
                           +{fileChangeDisplayAdds}
                         </span>
-                        <span className="file-change-stat-divider">|</span>
                         <span className="file-change-stat file-change-stat-delete composer-diff-del">
                           -{fileChangeDisplayDels}
                         </span>
@@ -3653,12 +3713,12 @@ export const TranscriptPanel = memo(
                             <span className="file-change-summary-path" title={item.path}>
                               {item.path}
                             </span>
+                            <FileChangeOwnerCell owners={item.owners} />
                             {(item.additions !== undefined || item.deletions !== undefined) && (
                               <span className="file-change-summary-item-stats">
                                 <span className="file-change-stat file-change-stat-add composer-diff-add">
                                   +{item.additions || 0}
                                 </span>
-                                <span className="file-change-stat-divider">|</span>
                                 <span className="file-change-stat file-change-stat-delete composer-diff-del">
                                   -{item.deletions || 0}
                                 </span>

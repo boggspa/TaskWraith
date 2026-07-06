@@ -645,14 +645,19 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
               additions: 1,
               deletions: 1,
               previewKind: 'git_diff',
-              diffText: ['@@ -1,1 +1,1 @@', '-old', '+new'].join('\n')
+              diffText: ['@@ -1,1 +1,1 @@', '-old', '+new'].join('\n'),
+              owners: [
+                { provider: 'codex', participantId: 'codex-worker', role: 'Worker' },
+                { provider: 'claude', participantId: 'claude-reviewer', role: 'Reviewer' }
+              ]
             },
             {
               path: 'src/stats-only.ts',
               status: 'modified',
               additions: 2,
               deletions: 0,
-              previewKind: 'none'
+              previewKind: 'none',
+              owners: [{ provider: 'codex', participantId: 'codex-worker', role: 'Worker' }]
             }
           ],
           fileChangeSummaryText: 'Created 0 · Edited 2 · Deleted 0',
@@ -677,6 +682,11 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
     expect(html).not.toContain('title="Preview diff"')
     expect(html).toContain('Diff')
     expect(html).toContain('src/stats-only.ts')
+    expect(html).toContain('file-change-summary-owner is-multiple')
+    expect(html).toContain('Multiple')
+    expect(html).toContain('Codex / Worker')
+    expect(html).toContain('Claude / Reviewer')
+    expect(html).not.toContain('file-change-stat-divider')
     expect(html).toContain('file-change-stat file-change-stat-add composer-diff-add')
     expect(html).toContain('file-change-stat file-change-stat-delete composer-diff-del')
     expect(html).toContain(

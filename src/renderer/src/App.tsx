@@ -19477,9 +19477,27 @@ function App(): React.JSX.Element {
       workspaceFileChangeSummaries
     ]
   )
+  const exactFileChangeSummariesWithOwners = useMemo(() => {
+    if (
+      exactFileChangeSummaries.length === 0 ||
+      overlaidLiveToolFileChangeSummaries.length === 0
+    ) {
+      return exactFileChangeSummaries
+    }
+    const ownersByPath = new Map<string, DiffFileSummary['owners']>()
+    for (const summary of overlaidLiveToolFileChangeSummaries) {
+      if (summary.owners?.length) ownersByPath.set(summary.path, summary.owners)
+    }
+    if (ownersByPath.size === 0) return exactFileChangeSummaries
+    return exactFileChangeSummaries.map((summary) =>
+      summary.owners?.length || !ownersByPath.has(summary.path)
+        ? summary
+        : { ...summary, owners: ownersByPath.get(summary.path) }
+    )
+  }, [exactFileChangeSummaries, overlaidLiveToolFileChangeSummaries])
   const fileChangeSummaries =
     exactFileChangeSummaries.length > 0
-      ? exactFileChangeSummaries
+      ? exactFileChangeSummariesWithOwners
       : overlaidLiveToolFileChangeSummaries
   const fileChangeSummaryEstimated =
     exactFileChangeSummaries.length === 0 && overlaidLiveToolFileChangeSummaries.length > 0

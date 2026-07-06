@@ -22,12 +22,16 @@ const baseActivity = (overrides: Partial<ToolActivity> = {}): ToolActivity => ({
   affectedFilePath: overrides.affectedFilePath
 })
 
-const messageWith = (activities: ToolActivity[]): ChatMessage => ({
+const messageWith = (
+  activities: ToolActivity[],
+  metadata?: ChatMessage['metadata']
+): ChatMessage => ({
   id: 'm1',
   role: 'assistant',
   content: '',
   timestamp: new Date().toISOString(),
-  toolActivities: activities
+  toolActivities: activities,
+  ...(metadata ? { metadata } : {})
 })
 
 describe('LiveFileDiffSummary', () => {
@@ -365,6 +369,53 @@ describe('LiveFileDiffSummary', () => {
         additions: 6,
         deletions: 2
       })
+    })
+
+    it('keeps distinct participant owners for files touched by multiple agents', () => {
+      const summaries = getLiveToolFileDiffSummaries([
+        messageWith(
+          [
+            baseActivity({
+              id: 'a',
+              toolName: 'edit_file',
+              parameters: { file_path: 'src/feature.ts', old_string: 'a', new_string: 'b' },
+              metadata: {
+                ensembleProvider: 'codex',
+                ensembleParticipantId: 'codex-worker'
+              }
+            })
+          ],
+          {
+            ensembleProvider: 'codex',
+            ensembleParticipantId: 'codex-worker',
+            ensembleRole: 'Worker'
+          }
+        ),
+        messageWith(
+          [
+            baseActivity({
+              id: 'b',
+              toolName: 'edit_file',
+              parameters: { file_path: 'src/feature.ts', old_string: 'b', new_string: 'c' },
+              metadata: {
+                ensembleProvider: 'claude',
+                ensembleParticipantId: 'claude-reviewer'
+              }
+            })
+          ],
+          {
+            ensembleProvider: 'claude',
+            ensembleParticipantId: 'claude-reviewer',
+            ensembleRole: 'Reviewer'
+          }
+        )
+      ])
+
+      expect(summaries).toHaveLength(1)
+      expect(summaries[0].owners).toEqual([
+        { provider: 'codex', participantId: 'codex-worker', role: 'Worker' },
+        { provider: 'claude', participantId: 'claude-reviewer', role: 'Reviewer' }
+      ])
     })
 
     it('preserves undefined per-file counts when no contributor knows them', () => {

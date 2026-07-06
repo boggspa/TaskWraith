@@ -5118,6 +5118,13 @@ export interface DiffFileSummary {
   sizeBytes?: number
   staged?: boolean
   unstaged?: boolean
+  owners?: DiffFileSummaryOwner[]
+}
+
+export interface DiffFileSummaryOwner {
+  provider?: ProviderId
+  participantId?: string
+  role?: string
 }
 
 export interface WorkspaceSnapshot {

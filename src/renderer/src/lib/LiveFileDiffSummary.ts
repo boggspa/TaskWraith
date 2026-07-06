@@ -1,6 +1,7 @@
 import type {
   ChatMessage,
   DiffFileSummary,
+  DiffFileSummaryOwner,
   DiffFileStatus,
   ToolActivity,
   ToolDiffFileSummary
@@ -99,6 +100,7 @@ interface AccumulatorEntry {
   deletions?: number
   contributors: number
   statedContributors: number
+  owners: DiffFileSummaryOwner[]
 }
 
 function looksWriteLike(toolName: string): boolean {
@@ -501,12 +503,59 @@ function mergeNumeric(
   return existing + incoming
 }
 
+function readMetadataString(record: unknown, key: string): string | undefined {
+  if (!record || typeof record !== 'object' || Array.isArray(record)) return undefined
+  const value = (record as Record<string, unknown>)[key]
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined
+}
+
+function ownerFromActivity(
+  message: ChatMessage,
+  activity: ToolActivity
+): DiffFileSummaryOwner | null {
+  const messageMetadata = message.metadata || {}
+  const activityMetadata = activity.metadata || {}
+  const provider =
+    readMetadataString(activityMetadata, 'ensembleProvider') ||
+    readMetadataString(messageMetadata, 'ensembleProvider') ||
+    readMetadataString(activityMetadata, 'provider') ||
+    readMetadataString(messageMetadata, 'provider')
+  const participantId =
+    readMetadataString(activityMetadata, 'ensembleParticipantId') ||
+    readMetadataString(messageMetadata, 'ensembleParticipantId')
+  const role =
+    readMetadataString(messageMetadata, 'ensembleRole') ||
+    readMetadataString(messageMetadata, 'role') ||
+    readMetadataString(messageMetadata, 'guestRole')
+  if (!provider && !participantId && !role) return null
+  return {
+    ...(provider ? { provider: provider as DiffFileSummaryOwner['provider'] } : {}),
+    ...(participantId ? { participantId } : {}),
+    ...(role ? { role } : {})
+  }
+}
+
+function ownerKey(owner: DiffFileSummaryOwner): string {
+  return [owner.participantId || '', owner.provider || '', owner.role || ''].join('|')
+}
+
+function mergeOwners(
+  existing: DiffFileSummaryOwner[],
+  incoming: DiffFileSummaryOwner | null
+): DiffFileSummaryOwner[] {
+  if (!incoming) return existing
+  const key = ownerKey(incoming)
+  if (existing.some((owner) => ownerKey(owner) === key)) return existing
+  return [...existing, incoming]
+}
+
 function buildSummary(entry: AccumulatorEntry): DiffFileSummary {
   return {
     path: entry.path,
     status: entry.status,
     additions: entry.additions,
     deletions: entry.deletions,
+    ...(entry.owners.length > 0 ? { owners: entry.owners } : {}),
     previewKind: 'none'
   }
 }
@@ -602,6 +651,7 @@ export function getLiveToolFileDiffSummaries(
     if (!activities) continue
     for (const activity of activities) {
       const contributions = extractToolFileContributions(activity, workspacePath)
+      const owner = ownerFromActivity(message, activity)
       for (const contribution of contributions) {
         const existing = accumulator.get(contribution.path)
         const hasStat = contribution.additions !== undefined || contribution.deletions !== undefined
@@ -612,7 +662,8 @@ export function getLiveToolFileDiffSummaries(
             additions: contribution.additions,
             deletions: contribution.deletions,
             contributors: 1,
-            statedContributors: hasStat ? 1 : 0
+            statedContributors: hasStat ? 1 : 0,
+            owners: owner ? [owner] : []
           })
           continue
         }
@@ -622,7 +673,8 @@ export function getLiveToolFileDiffSummaries(
           additions: mergeNumeric(existing.additions, contribution.additions),
           deletions: mergeNumeric(existing.deletions, contribution.deletions),
           contributors: existing.contributors + 1,
-          statedContributors: existing.statedContributors + (hasStat ? 1 : 0)
+          statedContributors: existing.statedContributors + (hasStat ? 1 : 0),
+          owners: mergeOwners(existing.owners, owner)
         })
       }
     }
