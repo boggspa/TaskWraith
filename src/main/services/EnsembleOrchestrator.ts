@@ -677,6 +677,8 @@ export interface EnsembleBossmanControlResult {
   message: string
   roundId?: string
   participantId?: string
+  usage?: ProviderUsageSummary
+  providers?: Partial<Record<ProviderId, ProviderUsageSummary>>
   error?:
     | 'no_active_run'
     | 'not_ensemble'
@@ -4801,20 +4803,46 @@ export class EnsembleOrchestrator {
           error: 'invalid_target'
         }
       }
-      const snapshot = provider ? this.deps.getProviderUsageSnapshot?.(provider) : null
-      const message = provider
-        ? snapshot
-          ? `${authorityLabel} checked ${providerLabel(provider)} quota/reset status.`
+      if (provider) {
+        const snapshot = this.deps.getProviderUsageSnapshot?.(provider) || null
+        const usage = summarizeProviderUsage(provider, snapshot)
+        const resetWindows = usage.windows
+          .filter((window) => window.resetAt)
+          .map((window) => `${window.label}: ${window.resetAt}`)
+        const message = snapshot
+          ? `${authorityLabel} checked ${providerLabel(provider)} quota/reset status: ${usage.worstBand}${resetWindows.length ? `; resets ${resetWindows.join(', ')}` : ''}.`
           : `${authorityLabel} checked ${providerLabel(provider)} quota/reset status; no usage snapshot is available.`
-        : `${authorityLabel} requested provider quota/reset status. Use provider_usage_status for the full read-only snapshot.`
+        this.appendRoundStatus(runtime.chatId, runtime.roundId, message)
+        return {
+          ok: Boolean(snapshot),
+          tool: 'ensemble_bossman_control',
+          action,
+          roundId: runtime.roundId,
+          usage,
+          message,
+          ...(snapshot ? {} : { error: 'quota_unavailable' as const })
+        }
+      }
+      const providers = selectableProviderIds().reduce<Partial<Record<ProviderId, ProviderUsageSummary>>>(
+        (acc, candidate) => {
+          acc[candidate] = summarizeProviderUsage(
+            candidate,
+            this.deps.getProviderUsageSnapshot?.(candidate) || null
+          )
+          return acc
+        },
+        {}
+      )
+      const configuredCount = Object.values(providers).filter((entry) => entry?.configured).length
+      const message = `${authorityLabel} checked provider quota/reset status for ${configuredCount} configured provider(s).`
       this.appendRoundStatus(runtime.chatId, runtime.roundId, message)
       return {
-        ok: Boolean(!provider || snapshot),
+        ok: true,
         tool: 'ensemble_bossman_control',
         action,
         roundId: runtime.roundId,
-        message,
-        ...(provider && !snapshot ? { error: 'quota_unavailable' as const } : {})
+        providers,
+        message
       }
     }
 

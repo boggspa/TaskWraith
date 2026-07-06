@@ -4183,6 +4183,67 @@ Next action:
     expect(harness.chat.ensemble?.activeRound?.maxContinuationHops).toBe(5)
   })
 
+  it('returns quota bands and reset windows from Boss quota checks', async () => {
+    const initialChat = makeChat()
+    initialChat.ensemble!.bossmanParticipantId = 'claude'
+    const harness = makeHarness({
+      initialChat,
+      getProviderUsageSnapshot: (provider) =>
+        provider === 'codex'
+          ? {
+              provider: 'codex',
+              configured: true,
+              source: 'codex-account',
+              fetchedAt: '2026-05-24T00:00:00.000Z',
+              windows: [
+                {
+                  id: 'weekly',
+                  label: 'Weekly',
+                  usedPercent: 94,
+                  resetAt: '2026-05-31T00:00:00.000Z'
+                }
+              ]
+            }
+          : null
+    })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Plan and execute.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    const codex = await harness.orchestrator.bossmanControlForRun(
+      harness.dispatched[0].appRunId,
+      {
+        action: 'check_quota_resets',
+        roundId: harness.chat.ensemble?.activeRound?.roundId,
+        provider: 'codex'
+      }
+    )
+    const all = await harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+      action: 'check_quota_resets',
+      roundId: harness.chat.ensemble?.activeRound?.roundId
+    })
+
+    expect(codex.ok).toBe(true)
+    expect(codex.usage).toMatchObject({
+      provider: 'codex',
+      configured: true,
+      worstBand: 'critical',
+      windows: [
+        {
+          id: 'weekly',
+          label: 'Weekly',
+          usedPercent: 94,
+          resetAt: '2026-05-31T00:00:00.000Z'
+        }
+      ]
+    })
+    expect(codex.message).toContain('resets Weekly: 2026-05-31T00:00:00.000Z')
+    expect(all.providers?.codex?.worstBand).toBe('critical')
+  })
+
   it('blocks Boss Work Session completion while review gates are still required', async () => {
     const initialChat = makeChat()
     initialChat.ensemble!.bossmanParticipantId = 'claude'
