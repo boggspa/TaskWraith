@@ -15700,6 +15700,14 @@ function App(): React.JSX.Element {
     [pendingAgentQuestionsByChatId, setPendingAgentQuestionsForChat]
   )
 
+  const handleEnsemblePollVote = useCallback(
+    async (chatId: string, pollId: string, choice: string) => {
+      if (typeof window.api.answerEnsemblePoll !== 'function') return
+      await window.api.answerEnsemblePoll({ appChatId: chatId, pollId, choice })
+    },
+    []
+  )
+
   const handleAgentApprovalAction = async (requestId: string, action: AgentApprovalAction) => {
     // Order-4 — capture the optional intent note (trimmed) at decision
     // time and pass it down to the IPC, which stamps it onto the ledger
@@ -23037,6 +23045,7 @@ function App(): React.JSX.Element {
         }
         onAgentQuestionSubmit={handleAgentQuestionSubmit}
         onAgentQuestionDismiss={handleAgentQuestionDismiss}
+        onEnsemblePollVote={handleEnsemblePollVote}
         chats={chats}
         runningChatIds={runningChatIdsArray}
         compactDensity={appearance.compactDensity}
@@ -24370,6 +24379,7 @@ function App(): React.JSX.Element {
     handleAddWorkspaceBoardCard,
     handleAgentQuestionDismiss,
     handleAgentQuestionSubmit,
+    handleEnsemblePollVote,
     handleArchiveHandoff,
     handleArchiveWorkspaceBoard,
     handleCancelAuditRun,

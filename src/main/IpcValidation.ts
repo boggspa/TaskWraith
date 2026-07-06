@@ -248,6 +248,7 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   // Agent-question modal replies (the payload object carries questionId).
   'answer-agent-question': ['optionalObject'],
   'cancel-agent-question': ['optionalObject'],
+  'answer-ensemble-poll': ['optionalObject'],
   // Runtime profiles + handoff cards (store CRUD).
   'save-runtime-profile': ['optionalObject'],
   'delete-runtime-profile': ['nonEmptyString'],

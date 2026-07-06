@@ -4566,6 +4566,48 @@ Next action:
     ])
   })
 
+  it('persists a poll marker and records optional user poll votes', async () => {
+    const initialChat = makeChat()
+    initialChat.ensemble!.bossmanParticipantId = 'claude'
+    const harness = makeHarness({ initialChat })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Plan and execute.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    const poll = await harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+      action: 'create_poll',
+      roundId: harness.chat.ensemble?.activeRound?.roundId,
+      pollId: 'poll-user-path',
+      question: 'Which path should we take?',
+      options: ['A', 'B'],
+      participantIds: ['codex'],
+      includeUser: true
+    })
+    const vote = harness.orchestrator.userPollResponseForChat('ensemble-chat', {
+      pollId: 'poll-user-path',
+      choice: 'B'
+    })
+
+    expect(poll.ok).toBe(true)
+    expect(
+      harness.chat.messages.some(
+        (message) =>
+          message.metadata?.kind === 'ensembleBossmanPoll' &&
+          message.metadata.pollId === 'poll-user-path'
+      )
+    ).toBe(true)
+    expect(vote.ok).toBe(true)
+    expect(harness.chat.ensemble?.bossmanControlState?.polls?.[0]?.votes).toEqual([
+      expect.objectContaining({
+        voterLabel: 'User',
+        choice: 'B'
+      })
+    ])
+  })
+
   it('rejects Boss control from non-Boss callers and stale round ids', async () => {
     const initialChat = makeChat()
     initialChat.ensemble!.bossmanParticipantId = 'claude'

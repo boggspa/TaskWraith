@@ -220,6 +220,7 @@ export type TranscriptPanelProps = {
   contextCompactionProgress?: readonly ContextCompactionProgressEvent[]
   onAgentQuestionSubmit: (questionId: string, answer: string, isCustom: boolean) => void
   onAgentQuestionDismiss: (questionId: string) => void
+  onEnsemblePollVote?: (chatId: string, pollId: string, choice: string) => void
   runCompleteNotice: RunCompleteNotice | null
   runCompleteDurationText: string | null
   currentChat: ChatRecord | null
@@ -1371,6 +1372,56 @@ function useTranscriptVirtualization(params: {
 }
 /* eslint-enable react-hooks/refs */
 
+function EnsemblePollCard({
+  chat,
+  pollId,
+  onVote
+}: {
+  chat: ChatRecord | null
+  pollId: string
+  onVote?: (chatId: string, pollId: string, choice: string) => void
+}): ReactElement | null {
+  const poll = chat?.ensemble?.bossmanControlState?.polls?.find((entry) => entry.id === pollId)
+  if (!chat || !poll) return null
+  const userVote = poll.votes.find((vote) => vote.voterLabel === 'User')
+  const canVote = poll.includeUser === true && poll.status === 'open' && !userVote
+  const participantVotes = poll.votes.filter((vote) => vote.voterLabel !== 'User')
+  return (
+    <div className="plan-choice-card agent-question-card ensemble-poll-card">
+      <div className="plan-choice-question agent-question-card-question">{poll.question}</div>
+      {poll.timeoutAt && poll.status === 'open' && (
+        <div className="agent-question-card-context">Open until {poll.timeoutAt}</div>
+      )}
+      {canVote ? (
+        <div className="plan-choice-actions">
+          {poll.options.map((option) => (
+            <button
+              key={option}
+              type="button"
+              className="plan-choice-action-btn"
+              onClick={() => onVote?.(chat.appChatId, poll.id, option)}
+              aria-label={`Vote: ${option}`}
+            >
+              {option}
+            </button>
+          ))}
+        </div>
+      ) : (
+        <div className="agent-question-card-context">
+          {userVote ? `Your vote: ${userVote.choice}` : `Poll ${poll.status}`}
+        </div>
+      )}
+      {participantVotes.length > 0 && (
+        <div className="agent-question-card-context">
+          {participantVotes
+            .map((vote) => `${vote.voterLabel || 'Participant'}: ${vote.choice}`)
+            .join(' · ')}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export const TranscriptPanel = memo(
   function TranscriptPanel({
     scrollRef,
@@ -1385,6 +1436,7 @@ export const TranscriptPanel = memo(
     contextCompactionProgress = [],
     onAgentQuestionSubmit,
     onAgentQuestionDismiss,
+    onEnsemblePollVote,
     runCompleteNotice,
     runCompleteDurationText,
     currentChat,
@@ -3250,6 +3302,14 @@ export const TranscriptPanel = memo(
                         onDismiss={() => onAgentQuestionDismiss(question.questionId)}
                       />
                     ))}
+                    {msg.metadata?.kind === 'ensembleBossmanPoll' &&
+                      typeof msg.metadata.pollId === 'string' && (
+                        <EnsemblePollCard
+                          chat={currentChat}
+                          pollId={msg.metadata.pollId}
+                          onVote={onEnsemblePollVote}
+                        />
+                      )}
                   </div>
                 )}
                 <TranscriptMessageFooter
@@ -3775,6 +3835,7 @@ export const TranscriptPanel = memo(
     previous.pendingAgentQuestions === next.pendingAgentQuestions &&
     previous.onAgentQuestionSubmit === next.onAgentQuestionSubmit &&
     previous.onAgentQuestionDismiss === next.onAgentQuestionDismiss &&
+    previous.onEnsemblePollVote === next.onEnsemblePollVote &&
     previous.runCompleteNotice === next.runCompleteNotice &&
     previous.runCompleteDurationText === next.runCompleteDurationText &&
     previous.currentRun === next.currentRun &&

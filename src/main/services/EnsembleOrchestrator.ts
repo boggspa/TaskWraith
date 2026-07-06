@@ -5263,6 +5263,7 @@ export class EnsembleOrchestrator {
         runtime.roundId,
         `${authorityLabel} opened poll ${poll.id}: ${question} Options: ${options.join(' / ')}`
       )
+      this.appendBossmanPollMessage(runtime, poll.id, question, options, authorityLabel)
       if (pollTargetIds.length > 0) {
         this.routeBossmanTargets(
           runtime,
@@ -5428,6 +5429,139 @@ export class EnsembleOrchestrator {
     return response
   }
 
+  userPollResponseForChat(
+    chatId: string | undefined,
+    input: EnsemblePollResponseInput
+  ): EnsemblePollResponseResult {
+    if (!chatId) {
+      return {
+        ok: false,
+        tool: 'ensemble_poll_response',
+        message: 'ensemble_poll_response requires a chat id.',
+        error: 'no_active_round'
+      }
+    }
+    const chat = this.deps.getChat(chatId)
+    if (!chat?.ensemble) {
+      return {
+        ok: false,
+        tool: 'ensemble_poll_response',
+        message: 'No Ensemble chat matches this poll response.',
+        error: 'not_ensemble'
+      }
+    }
+    const pollId = normalizeBossmanText(input.pollId, 120)
+    const choice = normalizeBossmanText(input.choice, 160)
+    if (!pollId || !choice) {
+      return {
+        ok: false,
+        tool: 'ensemble_poll_response',
+        message: 'ensemble_poll_response requires pollId and choice.',
+        error: 'invalid_choice'
+      }
+    }
+    const state = chat.ensemble.bossmanControlState || {}
+    const polls = state.polls || []
+    const index = polls.findIndex((poll) => poll.id === pollId)
+    if (index < 0) {
+      return {
+        ok: false,
+        tool: 'ensemble_poll_response',
+        pollId,
+        message: `Poll ${pollId} was not found.`,
+        error: 'poll_not_found'
+      }
+    }
+    const poll = polls[index]
+    if (!poll.includeUser) {
+      return {
+        ok: false,
+        tool: 'ensemble_poll_response',
+        pollId,
+        message: `Poll ${pollId} is not accepting a user vote.`,
+        error: 'invalid_choice'
+      }
+    }
+    if (poll.status !== 'open') {
+      return {
+        ok: false,
+        tool: 'ensemble_poll_response',
+        pollId,
+        message: `Poll ${pollId} is ${poll.status}.`,
+        error: 'poll_closed'
+      }
+    }
+    if (poll.timeoutAt && new Date(poll.timeoutAt).getTime() <= this.deps.now()) {
+      const nextPoll = { ...poll, status: 'expired' as const }
+      this.saveChatWithCheckpoint(
+        {
+          ...chat,
+          ensemble: {
+            ...chat.ensemble,
+            bossmanControlState: {
+              ...state,
+              polls: [...polls.slice(0, index), nextPoll, ...polls.slice(index + 1)]
+            },
+            updatedAt: this.deps.nowIso()
+          },
+          updatedAt: this.deps.now()
+        },
+        'round-updated'
+      )
+      return {
+        ok: false,
+        tool: 'ensemble_poll_response',
+        pollId,
+        message: `Poll ${pollId} expired at ${poll.timeoutAt}.`,
+        error: 'poll_closed'
+      }
+    }
+    if (!poll.options.includes(choice)) {
+      return {
+        ok: false,
+        tool: 'ensemble_poll_response',
+        pollId,
+        message: `Poll ${pollId} choice must be one of: ${poll.options.join(', ')}.`,
+        error: 'invalid_choice'
+      }
+    }
+    const nowIso = this.deps.nowIso()
+    const vote: EnsembleBossmanPollVote = {
+      voterLabel: 'User',
+      choice,
+      rationale: normalizeBossmanText(input.rationale, 500) || undefined,
+      votedAt: nowIso
+    }
+    const nextPoll = {
+      ...poll,
+      votes: [...poll.votes.filter((entry) => entry.voterLabel !== 'User'), vote]
+    }
+    this.saveChatWithCheckpoint(
+      {
+        ...chat,
+        ensemble: {
+          ...chat.ensemble,
+          bossmanControlState: {
+            ...state,
+            polls: [...polls.slice(0, index), nextPoll, ...polls.slice(index + 1)]
+          },
+          updatedAt: nowIso
+        },
+        updatedAt: this.deps.now()
+      },
+      'round-updated'
+    )
+    if (chat.ensemble.activeRound?.status === 'running') {
+      this.appendRoundStatus(chatId, chat.ensemble.activeRound.roundId, `User voted "${choice}" in poll ${pollId}.`)
+    }
+    return {
+      ok: true,
+      tool: 'ensemble_poll_response',
+      pollId,
+      message: `User voted "${choice}" in poll ${pollId}.`
+    }
+  }
+
   private updateBossmanControlState(
     runtime: ActiveRoundRuntime,
     update: (
@@ -5445,6 +5579,41 @@ export class EnsembleOrchestrator {
           bossmanControlState: nextState,
           updatedAt: this.deps.nowIso()
         },
+        updatedAt: this.deps.now()
+      },
+      'round-updated'
+    )
+  }
+
+  private appendBossmanPollMessage(
+    runtime: ActiveRoundRuntime,
+    pollId: string,
+    question: string,
+    options: string[],
+    authorityLabel: string
+  ): void {
+    const chat = this.deps.getChat(runtime.chatId)
+    if (!chat?.ensemble) return
+    const messageId = `ensemble-poll-${runtime.roundId}-${pollId}`
+    if (chat.messages.some((message) => message.id === messageId)) return
+    const timestamp = this.deps.nowIso()
+    const message: ChatMessage = {
+      id: messageId,
+      role: 'system',
+      content: `${authorityLabel} opened a poll: ${question}`,
+      timestamp,
+      metadata: {
+        kind: 'ensembleBossmanPoll',
+        pollId,
+        pollQuestion: question,
+        pollOptions: options,
+        ensembleRoundId: runtime.roundId
+      }
+    }
+    this.saveChatWithCheckpoint(
+      {
+        ...chat,
+        messages: [...chat.messages, message],
         updatedAt: this.deps.now()
       },
       'round-updated'

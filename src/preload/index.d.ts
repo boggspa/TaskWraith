@@ -856,6 +856,11 @@ declare global {
         appRunId?: string
         workspaceId?: string | null
       }) => Promise<{ ok: boolean; error?: string }>
+      answerEnsemblePoll: (payload: {
+        appChatId: string
+        pollId: string
+        choice: string
+      }) => Promise<{ ok: boolean; error?: string }>
       openExternalOrPath: (href: string) => Promise<{ ok: boolean; error?: string }>
       revealPathInFinder: (path: string) => Promise<{ ok: boolean; error?: string }>
       revealMediaAsset: (sha256: string, mimeType: string) => Promise<{ ok: boolean }>

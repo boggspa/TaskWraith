@@ -28358,6 +28358,32 @@ if (isGeminiMcpBridgeProcess) {
 	      }
 	    )
 
+    ipcMain.handle(
+      'answer-ensemble-poll',
+      (
+        _event,
+        payload: {
+          appChatId?: string
+          pollId?: string
+          choice?: string
+        }
+      ) => {
+        const result = ensembleOrchestratorRef?.userPollResponseForChat(
+          optionalString(payload.appChatId),
+          {
+            pollId: optionalString(payload.pollId),
+            choice: optionalString(payload.choice)
+          }
+        ) || {
+          ok: false,
+          tool: 'ensemble_poll_response' as const,
+          message: 'Ensemble orchestrator is not available.',
+          error: 'no_active_round' as const
+        }
+        return result.ok ? { ok: true } : { ok: false, error: result.message }
+      }
+    )
+
     // Settings
     registerSettingsHandlers({
       settingsService,

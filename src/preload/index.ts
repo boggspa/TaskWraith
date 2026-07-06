@@ -583,6 +583,15 @@ const api = {
       ok: boolean
       error?: string
     }>,
+  answerEnsemblePoll: (payload: {
+    appChatId: string
+    pollId: string
+    choice: string
+  }) =>
+    ipcRenderer.invoke('answer-ensemble-poll', payload) as Promise<{
+      ok: boolean
+      error?: string
+    }>,
 
   // Phase K1: open external URLs / file paths from transcript markdown
   // clicks. Replaces the bare `<a href>` flow that would otherwise let
