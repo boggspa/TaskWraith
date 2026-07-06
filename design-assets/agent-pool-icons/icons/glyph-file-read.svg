@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-glyph-file-read-title agent-pool-icon-glyph-file-read-desc" data-agent-name="File Read" data-agent-accent="#2F80ED" data-agent-hue="214" style="color: #2F80ED; --agent-accent: #2F80ED;">
+  <title id="agent-pool-icon-glyph-file-read-title">File Read</title>
+  <desc id="agent-pool-icon-glyph-file-read-desc">Monoline tintable agent pool identity glyph for file read.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <path class="line" d="M190 78h156l84 84v316c0 25-20 45-45 45H190c-25 0-45-20-45-45V123c0-25 20-45 45-45Z"/>
+  <path class="fine" d="M344 80v82h83M204 218h170M204 270h148"/>
+  <path class="accent" d="M213 371c35-47 118-47 153 0-35 47-118 47-153 0Z"/>
+  <circle class="accent" cx="289.5" cy="371" r="27"/>
+</svg>

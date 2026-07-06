@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-glyph-boss-captain-title agent-pool-icon-glyph-boss-captain-desc" data-agent-name="Boss Captain" data-agent-accent="#EAB308" data-agent-hue="46" style="color: #EAB308; --agent-accent: #EAB308;">
+  <title id="agent-pool-icon-glyph-boss-captain-title">Boss Captain</title>
+  <desc id="agent-pool-icon-glyph-boss-captain-desc">Monoline tintable agent pool identity glyph for boss captain.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <circle class="accent" cx="300" cy="190" r="62"/>
+  <path class="accent" d="M236 148l64-54 64 54"/>
+  <path class="line" d="M214 394c16-66 54-104 86-104s70 38 86 104M180 438h240"/>
+  <circle class="fine" cx="156" cy="372" r="38"/><circle class="fine" cx="444" cy="372" r="38"/>
+  <path class="fine" d="M194 372h54M352 372h54M206 482h188"/>
+  <circle class="dot" cx="300" cy="190" r="11"/>
+</svg>

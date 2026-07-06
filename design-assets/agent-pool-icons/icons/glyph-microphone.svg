@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-glyph-microphone-title agent-pool-icon-glyph-microphone-desc" data-agent-name="Microphone" data-agent-accent="#A855F7" data-agent-hue="270" style="color: #A855F7; --agent-accent: #A855F7;">
+  <title id="agent-pool-icon-glyph-microphone-title">Microphone</title>
+  <desc id="agent-pool-icon-glyph-microphone-desc">Monoline tintable agent pool identity glyph for microphone.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <rect class="line" x="222" y="92" width="156" height="286" rx="78"/>
+  <path class="accent" d="M162 286c0 77 61 139 138 139s138-62 138-139"/>
+  <path class="fine" d="M300 425v70M236 496h128M256 170h88M256 232h88"/>
+</svg>

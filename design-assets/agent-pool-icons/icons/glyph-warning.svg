@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-glyph-warning-title agent-pool-icon-glyph-warning-desc" data-agent-name="Warning" data-agent-accent="#F59E0B" data-agent-hue="38" style="color: #F59E0B; --agent-accent: #F59E0B;">
+  <title id="agent-pool-icon-glyph-warning-title">Warning</title>
+  <desc id="agent-pool-icon-glyph-warning-desc">Monoline tintable agent pool identity glyph for warning.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <path class="line" d="M300 116 492 450H108Z"/>
+  <path class="accent" d="M300 226v112"/>
+  <circle class="dot" cx="300" cy="394" r="18"/>
+  <path class="fine" d="M222 450h156M170 450l130-226 130 226"/>
+</svg>

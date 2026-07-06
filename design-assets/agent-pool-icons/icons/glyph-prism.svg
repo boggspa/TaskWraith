@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-glyph-prism-title agent-pool-icon-glyph-prism-desc" data-agent-name="Prism" data-agent-accent="#7C5CFF" data-agent-hue="250" style="color: #7C5CFF; --agent-accent: #7C5CFF;">
+  <title id="agent-pool-icon-glyph-prism-title">Prism</title>
+  <desc id="agent-pool-icon-glyph-prism-desc">Monoline tintable agent pool identity glyph for prism.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <path class="line" d="M150 416 292 116l158 368-300-68Z"/>
+  <path class="fine" d="M292 116 300 375 450 484"/>
+  <path class="accent" d="M112 300h122"/>
+  <path class="fine" d="M365 242h114M386 306h92M407 370h70"/>
+  <circle class="dot" cx="300" cy="375" r="13"/>
+</svg>

@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-glyph-symbols-title agent-pool-icon-glyph-symbols-desc" data-agent-name="Symbols" data-agent-accent="#9B51E0" data-agent-hue="271" style="color: #9B51E0; --agent-accent: #9B51E0;">
+  <title id="agent-pool-icon-glyph-symbols-title">Symbols</title>
+  <desc id="agent-pool-icon-glyph-symbols-desc">Monoline tintable agent pool identity glyph for symbols.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <path class="line" d="M155 151h290v298H155V151Z"/>
+  <path class="fine" d="M208 231l-48 69 48 69M392 231l48 69-48 69"/>
+  <path class="accent" d="M283 398l34-196"/>
+  <circle class="dot" cx="300" cy="151" r="13"/>
+  <path class="fine" d="M239 151v-38h122v38M300 449v38"/>
+</svg>

@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-glyph-recall-loop-title agent-pool-icon-glyph-recall-loop-desc" data-agent-name="Recall Loop" data-agent-accent="#2563EB" data-agent-hue="221" style="color: #2563EB; --agent-accent: #2563EB;">
+  <title id="agent-pool-icon-glyph-recall-loop-title">Recall Loop</title>
+  <desc id="agent-pool-icon-glyph-recall-loop-desc">Monoline tintable agent pool identity glyph for recall loop.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <path class="line" d="M420 204a166 166 0 1 0 18 170"/>
+  <path class="accent" d="M420 204h-86M420 204v-86"/>
+  <path class="fine" d="M300 178v128l86 54"/>
+  <circle class="dot" cx="300" cy="306" r="18"/>
+  <path class="fine" d="M176 424c38-26 76-26 114 0s76 26 114 0"/>
+</svg>

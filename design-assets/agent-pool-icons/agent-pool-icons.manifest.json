@@ -642,5 +642,453 @@
     "file": "icons/yaml-yo-yo.svg",
     "accent": "#38BDF8",
     "hue": 199
+  },
+  {
+    "name": "File Read",
+    "slug": "glyph-file-read",
+    "file": "icons/glyph-file-read.svg",
+    "accent": "#2F80ED",
+    "hue": 214
+  },
+  {
+    "name": "File Write",
+    "slug": "glyph-file-write",
+    "file": "icons/glyph-file-write.svg",
+    "accent": "#F2994A",
+    "hue": 28
+  },
+  {
+    "name": "Patch",
+    "slug": "glyph-patch",
+    "file": "icons/glyph-patch.svg",
+    "accent": "#EB5757",
+    "hue": 0
+  },
+  {
+    "name": "Diff",
+    "slug": "glyph-diff",
+    "file": "icons/glyph-diff.svg",
+    "accent": "#27AE60",
+    "hue": 145
+  },
+  {
+    "name": "Symbols",
+    "slug": "glyph-symbols",
+    "file": "icons/glyph-symbols.svg",
+    "accent": "#9B51E0",
+    "hue": 271
+  },
+  {
+    "name": "Package",
+    "slug": "glyph-package",
+    "file": "icons/glyph-package.svg",
+    "accent": "#00A8A8",
+    "hue": 180
+  },
+  {
+    "name": "Schema",
+    "slug": "glyph-schema",
+    "file": "icons/glyph-schema.svg",
+    "accent": "#56CCF2",
+    "hue": 194
+  },
+  {
+    "name": "Markdown",
+    "slug": "glyph-markdown",
+    "file": "icons/glyph-markdown.svg",
+    "accent": "#BB6BD9",
+    "hue": 288
+  },
+  {
+    "name": "Git Commit",
+    "slug": "glyph-git-commit",
+    "file": "icons/glyph-git-commit.svg",
+    "accent": "#2F80ED",
+    "hue": 214
+  },
+  {
+    "name": "Git Branch",
+    "slug": "glyph-git-branch",
+    "file": "icons/glyph-git-branch.svg",
+    "accent": "#27AE60",
+    "hue": 145
+  },
+  {
+    "name": "Git Push",
+    "slug": "glyph-git-push",
+    "file": "icons/glyph-git-push.svg",
+    "accent": "#00A7A7",
+    "hue": 180
+  },
+  {
+    "name": "Pull Request",
+    "slug": "glyph-pull-request",
+    "file": "icons/glyph-pull-request.svg",
+    "accent": "#9B51E0",
+    "hue": 271
+  },
+  {
+    "name": "Merge",
+    "slug": "glyph-merge",
+    "file": "icons/glyph-merge.svg",
+    "accent": "#F2994A",
+    "hue": 28
+  },
+  {
+    "name": "CI Check",
+    "slug": "glyph-ci-check",
+    "file": "icons/glyph-ci-check.svg",
+    "accent": "#219653",
+    "hue": 145
+  },
+  {
+    "name": "Release",
+    "slug": "glyph-release",
+    "file": "icons/glyph-release.svg",
+    "accent": "#EB5757",
+    "hue": 0
+  },
+  {
+    "name": "Rollback",
+    "slug": "glyph-rollback",
+    "file": "icons/glyph-rollback.svg",
+    "accent": "#F2C94C",
+    "hue": 48
+  },
+  {
+    "name": "Terminal",
+    "slug": "glyph-terminal",
+    "file": "icons/glyph-terminal.svg",
+    "accent": "#22C55E",
+    "hue": 142
+  },
+  {
+    "name": "Process",
+    "slug": "glyph-process",
+    "file": "icons/glyph-process.svg",
+    "accent": "#F59E0B",
+    "hue": 38
+  },
+  {
+    "name": "Browser",
+    "slug": "glyph-browser",
+    "file": "icons/glyph-browser.svg",
+    "accent": "#3B82F6",
+    "hue": 217
+  },
+  {
+    "name": "Window Capture",
+    "slug": "glyph-window-capture",
+    "file": "icons/glyph-window-capture.svg",
+    "accent": "#06B6D4",
+    "hue": 189
+  },
+  {
+    "name": "API",
+    "slug": "glyph-api",
+    "file": "icons/glyph-api.svg",
+    "accent": "#8B5CF6",
+    "hue": 258
+  },
+  {
+    "name": "Webhook",
+    "slug": "glyph-webhook",
+    "file": "icons/glyph-webhook.svg",
+    "accent": "#EC4899",
+    "hue": 330
+  },
+  {
+    "name": "Socket",
+    "slug": "glyph-socket",
+    "file": "icons/glyph-socket.svg",
+    "accent": "#14B8A6",
+    "hue": 174
+  },
+  {
+    "name": "Cloud Runtime",
+    "slug": "glyph-cloud-runtime",
+    "file": "icons/glyph-cloud-runtime.svg",
+    "accent": "#60A5FA",
+    "hue": 213
+  },
+  {
+    "name": "Image",
+    "slug": "glyph-image",
+    "file": "icons/glyph-image.svg",
+    "accent": "#22C55E",
+    "hue": 142
+  },
+  {
+    "name": "Video",
+    "slug": "glyph-video",
+    "file": "icons/glyph-video.svg",
+    "accent": "#EF4444",
+    "hue": 0
+  },
+  {
+    "name": "Audio Waveform",
+    "slug": "glyph-audio-waveform",
+    "file": "icons/glyph-audio-waveform.svg",
+    "accent": "#06B6D4",
+    "hue": 189
+  },
+  {
+    "name": "Microphone",
+    "slug": "glyph-microphone",
+    "file": "icons/glyph-microphone.svg",
+    "accent": "#A855F7",
+    "hue": 270
+  },
+  {
+    "name": "Canvas",
+    "slug": "glyph-canvas",
+    "file": "icons/glyph-canvas.svg",
+    "accent": "#F59E0B",
+    "hue": 38
+  },
+  {
+    "name": "Timeline",
+    "slug": "glyph-timeline",
+    "file": "icons/glyph-timeline.svg",
+    "accent": "#3B82F6",
+    "hue": 217
+  },
+  {
+    "name": "Three-D",
+    "slug": "glyph-three-d",
+    "file": "icons/glyph-three-d.svg",
+    "accent": "#14B8A6",
+    "hue": 174
+  },
+  {
+    "name": "MIDI",
+    "slug": "glyph-midi",
+    "file": "icons/glyph-midi.svg",
+    "accent": "#EC4899",
+    "hue": 330
+  },
+  {
+    "name": "Delegation Arc",
+    "slug": "glyph-delegation-arc",
+    "file": "icons/glyph-delegation-arc.svg",
+    "accent": "#2F80ED",
+    "hue": 214
+  },
+  {
+    "name": "Subthread Branch",
+    "slug": "glyph-subthread-branch",
+    "file": "icons/glyph-subthread-branch.svg",
+    "accent": "#7C3AED",
+    "hue": 262
+  },
+  {
+    "name": "Fanout Routes",
+    "slug": "glyph-fanout-routes",
+    "file": "icons/glyph-fanout-routes.svg",
+    "accent": "#F97316",
+    "hue": 24
+  },
+  {
+    "name": "Yield Token",
+    "slug": "glyph-yield-token",
+    "file": "icons/glyph-yield-token.svg",
+    "accent": "#10B981",
+    "hue": 160
+  },
+  {
+    "name": "Agent Roster",
+    "slug": "glyph-agent-roster",
+    "file": "icons/glyph-agent-roster.svg",
+    "accent": "#06B6D4",
+    "hue": 189
+  },
+  {
+    "name": "Boss Captain",
+    "slug": "glyph-boss-captain",
+    "file": "icons/glyph-boss-captain.svg",
+    "accent": "#EAB308",
+    "hue": 46
+  },
+  {
+    "name": "Handoff Relay",
+    "slug": "glyph-handoff-relay",
+    "file": "icons/glyph-handoff-relay.svg",
+    "accent": "#EC4899",
+    "hue": 330
+  },
+  {
+    "name": "Blackboard Sync",
+    "slug": "glyph-blackboard-sync",
+    "file": "icons/glyph-blackboard-sync.svg",
+    "accent": "#14B8A6",
+    "hue": 174
+  },
+  {
+    "name": "Approval",
+    "slug": "glyph-approval",
+    "file": "icons/glyph-approval.svg",
+    "accent": "#22C55E",
+    "hue": 142
+  },
+  {
+    "name": "Blocked",
+    "slug": "glyph-blocked",
+    "file": "icons/glyph-blocked.svg",
+    "accent": "#EF4444",
+    "hue": 0
+  },
+  {
+    "name": "Success",
+    "slug": "glyph-success",
+    "file": "icons/glyph-success.svg",
+    "accent": "#10B981",
+    "hue": 160
+  },
+  {
+    "name": "Warning",
+    "slug": "glyph-warning",
+    "file": "icons/glyph-warning.svg",
+    "accent": "#F59E0B",
+    "hue": 38
+  },
+  {
+    "name": "Retry",
+    "slug": "glyph-retry",
+    "file": "icons/glyph-retry.svg",
+    "accent": "#3B82F6",
+    "hue": 217
+  },
+  {
+    "name": "Timeout",
+    "slug": "glyph-timeout",
+    "file": "icons/glyph-timeout.svg",
+    "accent": "#A855F7",
+    "hue": 270
+  },
+  {
+    "name": "Shield",
+    "slug": "glyph-shield",
+    "file": "icons/glyph-shield.svg",
+    "accent": "#06B6D4",
+    "hue": 189
+  },
+  {
+    "name": "Key Token",
+    "slug": "glyph-key-token",
+    "file": "icons/glyph-key-token.svg",
+    "accent": "#F97316",
+    "hue": 24
+  },
+  {
+    "name": "Memory Vault",
+    "slug": "glyph-memory-vault",
+    "file": "icons/glyph-memory-vault.svg",
+    "accent": "#7C3AED",
+    "hue": 262
+  },
+  {
+    "name": "Recall Loop",
+    "slug": "glyph-recall-loop",
+    "file": "icons/glyph-recall-loop.svg",
+    "accent": "#2563EB",
+    "hue": 221
+  },
+  {
+    "name": "Data Stack",
+    "slug": "glyph-data-stack",
+    "file": "icons/glyph-data-stack.svg",
+    "accent": "#0891B2",
+    "hue": 193
+  },
+  {
+    "name": "Cache Orbit",
+    "slug": "glyph-cache-orbit",
+    "file": "icons/glyph-cache-orbit.svg",
+    "accent": "#F59E0B",
+    "hue": 38
+  },
+  {
+    "name": "Vector Index",
+    "slug": "glyph-vector-index",
+    "file": "icons/glyph-vector-index.svg",
+    "accent": "#10B981",
+    "hue": 160
+  },
+  {
+    "name": "Graph Weave",
+    "slug": "glyph-graph-weave",
+    "file": "icons/glyph-graph-weave.svg",
+    "accent": "#EC4899",
+    "hue": 330
+  },
+  {
+    "name": "Evidence Lens",
+    "slug": "glyph-evidence-lens",
+    "file": "icons/glyph-evidence-lens.svg",
+    "accent": "#DC2626",
+    "hue": 0
+  },
+  {
+    "name": "Audit Trail",
+    "slug": "glyph-audit-trail",
+    "file": "icons/glyph-audit-trail.svg",
+    "accent": "#64748B",
+    "hue": 215
+  },
+  {
+    "name": "Prism",
+    "slug": "glyph-prism",
+    "file": "icons/glyph-prism.svg",
+    "accent": "#7C5CFF",
+    "hue": 250
+  },
+  {
+    "name": "Comet",
+    "slug": "glyph-comet",
+    "file": "icons/glyph-comet.svg",
+    "accent": "#FF6B4A",
+    "hue": 10
+  },
+  {
+    "name": "Gyroscope",
+    "slug": "glyph-gyroscope",
+    "file": "icons/glyph-gyroscope.svg",
+    "accent": "#20B8A8",
+    "hue": 174
+  },
+  {
+    "name": "Lantern",
+    "slug": "glyph-lantern",
+    "file": "icons/glyph-lantern.svg",
+    "accent": "#F0A629",
+    "hue": 38
+  },
+  {
+    "name": "Compass",
+    "slug": "glyph-compass",
+    "file": "icons/glyph-compass.svg",
+    "accent": "#3B82F6",
+    "hue": 217
+  },
+  {
+    "name": "Tuning Fork",
+    "slug": "glyph-tuning-fork",
+    "file": "icons/glyph-tuning-fork.svg",
+    "accent": "#D946EF",
+    "hue": 292
+  },
+  {
+    "name": "Circuit Flower",
+    "slug": "glyph-circuit-flower",
+    "file": "icons/glyph-circuit-flower.svg",
+    "accent": "#22C55E",
+    "hue": 142
+  },
+  {
+    "name": "Orbit",
+    "slug": "glyph-orbit",
+    "file": "icons/glyph-orbit.svg",
+    "accent": "#06B6D4",
+    "hue": 189
   }
 ]

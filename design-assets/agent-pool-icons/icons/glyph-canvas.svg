@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-glyph-canvas-title agent-pool-icon-glyph-canvas-desc" data-agent-name="Canvas" data-agent-accent="#F59E0B" data-agent-hue="38" style="color: #F59E0B; --agent-accent: #F59E0B;">
+  <title id="agent-pool-icon-glyph-canvas-title">Canvas</title>
+  <desc id="agent-pool-icon-glyph-canvas-desc">Monoline tintable agent pool identity glyph for canvas.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <rect class="line" x="110" y="104" width="380" height="312" rx="34"/>
+  <path class="fine" d="M182 496l72-80M418 496l-72-80M236 496h128"/>
+  <path class="accent" d="M204 282c24-58 76-86 127-64 40 18 68 6 86-34"/>
+  <circle class="dot" cx="202" cy="204" r="12"/>
+  <circle class="dot" cx="396" cy="290" r="12"/>
+</svg>

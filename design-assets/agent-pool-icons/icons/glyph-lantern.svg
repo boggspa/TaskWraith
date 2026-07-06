@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-glyph-lantern-title agent-pool-icon-glyph-lantern-desc" data-agent-name="Lantern" data-agent-accent="#F0A629" data-agent-hue="38" style="color: #F0A629; --agent-accent: #F0A629;">
+  <title id="agent-pool-icon-glyph-lantern-title">Lantern</title>
+  <desc id="agent-pool-icon-glyph-lantern-desc">Monoline tintable agent pool identity glyph for lantern.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <path class="fine" d="M248 142c8-42 96-42 104 0"/>
+  <path class="line" d="M204 178h192M232 178l-34 252c-4 32 20 60 52 60h100c32 0 56-28 52-60l-34-252"/>
+  <path class="fine" d="M236 490h128"/>
+  <path class="accent" d="M300 256c38 44 54 76 54 112 0 34-24 58-54 58s-54-24-54-58c0-36 16-68 54-112Z"/>
+  <path class="fine" d="M184 268h-52M416 268h52M174 356h-42M426 356h42"/>
+  <circle class="dot" cx="300" cy="360" r="12"/>
+</svg>

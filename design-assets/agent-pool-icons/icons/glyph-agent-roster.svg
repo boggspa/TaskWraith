@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-glyph-agent-roster-title agent-pool-icon-glyph-agent-roster-desc" data-agent-name="Agent Roster" data-agent-accent="#06B6D4" data-agent-hue="189" style="color: #06B6D4; --agent-accent: #06B6D4;">
+  <title id="agent-pool-icon-glyph-agent-roster-title">Agent Roster</title>
+  <desc id="agent-pool-icon-glyph-agent-roster-desc">Monoline tintable agent pool identity glyph for agent roster.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <rect class="line" x="150" y="112" width="300" height="376" rx="42"/>
+  <path class="fine" d="M216 178h168"/>
+  <circle class="accent" cx="230" cy="258" r="30"/>
+  <path class="fine" d="M286 258h84"/>
+  <circle class="line" cx="230" cy="340" r="30"/>
+  <path class="fine" d="M286 340h84"/>
+  <circle class="line" cx="230" cy="422" r="30"/>
+  <path class="fine" d="M286 422h84"/>
+  <path class="accent" d="M398 236l28 28 48-60"/>
+  <circle class="dot" cx="404" cy="154" r="10"/>
+</svg>

@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-glyph-data-stack-title agent-pool-icon-glyph-data-stack-desc" data-agent-name="Data Stack" data-agent-accent="#0891B2" data-agent-hue="193" style="color: #0891B2; --agent-accent: #0891B2;">
+  <title id="agent-pool-icon-glyph-data-stack-title">Data Stack</title>
+  <desc id="agent-pool-icon-glyph-data-stack-desc">Monoline tintable agent pool identity glyph for data stack.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <ellipse class="line" cx="300" cy="150" rx="168" ry="58"/>
+  <path class="line" d="M132 150v276c0 32 75 58 168 58s168-26 168-58V150"/>
+  <path class="fine" d="M132 242c0 32 75 58 168 58s168-26 168-58M132 334c0 32 75 58 168 58s168-26 168-58"/>
+  <path class="accent" d="M252 236h96M252 328h96M252 420h96"/>
+  <circle class="dot" cx="206" cy="236" r="12"/><circle class="dot" cx="206" cy="328" r="12"/><circle class="dot" cx="206" cy="420" r="12"/>
+</svg>

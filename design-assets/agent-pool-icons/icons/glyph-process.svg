@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-glyph-process-title agent-pool-icon-glyph-process-desc" data-agent-name="Process" data-agent-accent="#F59E0B" data-agent-hue="38" style="color: #F59E0B; --agent-accent: #F59E0B;">
+  <title id="agent-pool-icon-glyph-process-title">Process</title>
+  <desc id="agent-pool-icon-glyph-process-desc">Monoline tintable agent pool identity glyph for process.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <circle class="line" cx="190" cy="205" r="58"/>
+  <circle class="line" cx="410" cy="205" r="58"/>
+  <circle class="line" cx="300" cy="395" r="58"/>
+  <path class="fine" d="M248 205h104M220 255l52 90M380 255l-52 90"/>
+  <path class="accent" d="M300 126v42M300 432v42M132 302l37-21M468 302l-37-21"/>
+  <circle class="dot" cx="300" cy="300" r="13"/>
+</svg>

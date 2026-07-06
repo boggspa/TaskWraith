@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-glyph-delegation-arc-title agent-pool-icon-glyph-delegation-arc-desc" data-agent-name="Delegation Arc" data-agent-accent="#2F80ED" data-agent-hue="214" style="color: #2F80ED; --agent-accent: #2F80ED;">
+  <title id="agent-pool-icon-glyph-delegation-arc-title">Delegation Arc</title>
+  <desc id="agent-pool-icon-glyph-delegation-arc-desc">Monoline tintable agent pool identity glyph for delegation arc.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <circle class="line" cx="170" cy="300" r="58"/>
+  <circle class="accent" cx="430" cy="300" r="58"/>
+  <path class="line" d="M228 300h118"/>
+  <path class="accent" d="M324 244l64 56-64 56"/>
+  <path class="fine" d="M170 212c54-70 206-70 260 0M170 388c54 70 206 70 260 0"/>
+  <circle class="dot" cx="300" cy="300" r="10"/>
+</svg>

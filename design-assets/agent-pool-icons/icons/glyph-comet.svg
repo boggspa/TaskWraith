@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-glyph-comet-title agent-pool-icon-glyph-comet-desc" data-agent-name="Comet" data-agent-accent="#FF6B4A" data-agent-hue="10" style="color: #FF6B4A; --agent-accent: #FF6B4A;">
+  <title id="agent-pool-icon-glyph-comet-title">Comet</title>
+  <desc id="agent-pool-icon-glyph-comet-desc">Monoline tintable agent pool identity glyph for comet.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <path class="fine" d="M92 392c92-8 172-46 242-116M118 304c78 10 150-12 216-66"/>
+  <path class="accent" d="M154 460c76-30 142-78 198-144"/>
+  <circle class="line" cx="390" cy="218" r="78"/>
+  <path class="fine" d="M356 174c28-20 72-14 94 14"/>
+  <circle class="dot" cx="426" cy="244" r="14"/>
+</svg>

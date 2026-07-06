@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-glyph-tuning-fork-title agent-pool-icon-glyph-tuning-fork-desc" data-agent-name="Tuning Fork" data-agent-accent="#D946EF" data-agent-hue="292" style="color: #D946EF; --agent-accent: #D946EF;">
+  <title id="agent-pool-icon-glyph-tuning-fork-title">Tuning Fork</title>
+  <desc id="agent-pool-icon-glyph-tuning-fork-desc">Monoline tintable agent pool identity glyph for tuning fork.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <path class="line" d="M238 120v154c0 34 28 62 62 62s62-28 62-62V120M300 336v152"/>
+  <path class="fine" d="M250 488h100"/>
+  <path class="accent" d="M142 188c-26 32-26 82 0 114M458 188c26 32 26 82 0 114"/>
+  <path class="fine" d="M104 150c-46 60-46 140 0 200M496 150c46 60 46 140 0 200"/>
+  <circle class="dot" cx="300" cy="336" r="13"/>
+</svg>

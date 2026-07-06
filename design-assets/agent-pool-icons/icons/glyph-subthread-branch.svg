@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-glyph-subthread-branch-title agent-pool-icon-glyph-subthread-branch-desc" data-agent-name="Subthread Branch" data-agent-accent="#7C3AED" data-agent-hue="262" style="color: #7C3AED; --agent-accent: #7C3AED;">
+  <title id="agent-pool-icon-glyph-subthread-branch-title">Subthread Branch</title>
+  <desc id="agent-pool-icon-glyph-subthread-branch-desc">Monoline tintable agent pool identity glyph for subthread branch.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <path class="line" d="M180 172v256"/>
+  <circle class="line" cx="180" cy="150" r="44"/>
+  <circle class="line" cx="180" cy="450" r="44"/>
+  <path class="accent" d="M180 300c82 0 96-86 176-86h66"/>
+  <circle class="accent" cx="460" cy="214" r="44"/>
+  <path class="fine" d="M356 214l-34-34M356 214l-34 34M236 356c54 0 82 22 120 56"/>
+  <circle class="dot" cx="300" cy="258" r="10"/>
+</svg>

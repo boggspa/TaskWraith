@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-glyph-key-token-title agent-pool-icon-glyph-key-token-desc" data-agent-name="Key Token" data-agent-accent="#F97316" data-agent-hue="24" style="color: #F97316; --agent-accent: #F97316;">
+  <title id="agent-pool-icon-glyph-key-token-title">Key Token</title>
+  <desc id="agent-pool-icon-glyph-key-token-desc">Monoline tintable agent pool identity glyph for key token.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <circle class="line" cx="226" cy="286" r="82"/>
+  <path class="line" d="M300 286h166"/>
+  <path class="accent" d="M390 286v58M446 286v86"/>
+  <circle class="dot" cx="226" cy="286" r="22"/>
+  <path class="fine" d="M150 420h300M178 420c32 40 78 60 122 60s90-20 122-60"/>
+</svg>

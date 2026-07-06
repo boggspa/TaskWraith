@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="984" height="2848" viewBox="0 0 984 2848" fill="none">
+<svg xmlns="http://www.w3.org/2000/svg" width="984" height="4568" viewBox="0 0 984 4568" fill="none">
   <title>TaskWraith Agent pool icon catalogue</title>
   <desc>Standalone funky tech-themed SVG candidates for the Agent pool icon picker.</desc>
   <style>
@@ -9,7 +9,7 @@
     .tile-label { fill: #d9deea; font: 600 10px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; letter-spacing: 0; text-anchor: middle; }
     .tile-meta { fill: #7f889b; font: 8px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; letter-spacing: 0; text-anchor: middle; }
   </style>
-  <rect class="sheet-bg" width="984" height="2848" rx="0"/>
+  <rect class="sheet-bg" width="984" height="4568" rx="0"/>
   <text class="title" x="24" y="36">Agent pool icon catalogue</text>
   <text class="subtitle" x="24" y="58">Funky tech-themed SVGs kept separate from the subagent identicon catalogue.</text>
 
@@ -655,5 +655,453 @@
     <image href="icons/yaml-yo-yo.svg" x="16" y="10" width="100" height="100"/>
     <text class="tile-label" x="66" y="124">YAML Yo-Yo</text>
     <text class="tile-meta" x="66" y="138">#38BDF8</text>
+  </g>
+
+  <g transform="translate(336 2662)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/glyph-file-read.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">File Read</text>
+    <text class="tile-meta" x="66" y="138">#2F80ED</text>
+  </g>
+
+  <g transform="translate(492 2662)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/glyph-file-write.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">File Write</text>
+    <text class="tile-meta" x="66" y="138">#F2994A</text>
+  </g>
+
+  <g transform="translate(648 2662)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/glyph-patch.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Patch</text>
+    <text class="tile-meta" x="66" y="138">#EB5757</text>
+  </g>
+
+  <g transform="translate(804 2662)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/glyph-diff.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Diff</text>
+    <text class="tile-meta" x="66" y="138">#27AE60</text>
+  </g>
+
+  <g transform="translate(24 2834)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/glyph-symbols.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Symbols</text>
+    <text class="tile-meta" x="66" y="138">#9B51E0</text>
+  </g>
+
+  <g transform="translate(180 2834)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/glyph-package.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Package</text>
+    <text class="tile-meta" x="66" y="138">#00A8A8</text>
+  </g>
+
+  <g transform="translate(336 2834)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/glyph-schema.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Schema</text>
+    <text class="tile-meta" x="66" y="138">#56CCF2</text>
+  </g>
+
+  <g transform="translate(492 2834)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/glyph-markdown.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Markdown</text>
+    <text class="tile-meta" x="66" y="138">#BB6BD9</text>
+  </g>
+
+  <g transform="translate(648 2834)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/glyph-git-commit.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Git Commit</text>
+    <text class="tile-meta" x="66" y="138">#2F80ED</text>
+  </g>
+
+  <g transform="translate(804 2834)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/glyph-git-branch.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Git Branch</text>
+    <text class="tile-meta" x="66" y="138">#27AE60</text>
+  </g>
+
+  <g transform="translate(24 3006)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/glyph-git-push.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Git Push</text>
+    <text class="tile-meta" x="66" y="138">#00A7A7</text>
+  </g>
+
+  <g transform="translate(180 3006)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/glyph-pull-request.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Pull Request</text>
+    <text class="tile-meta" x="66" y="138">#9B51E0</text>
+  </g>
+
+  <g transform="translate(336 3006)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/glyph-merge.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Merge</text>
+    <text class="tile-meta" x="66" y="138">#F2994A</text>
+  </g>
+
+  <g transform="translate(492 3006)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/glyph-ci-check.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">CI Check</text>
+    <text class="tile-meta" x="66" y="138">#219653</text>
+  </g>
+
+  <g transform="translate(648 3006)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/glyph-release.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Release</text>
+    <text class="tile-meta" x="66" y="138">#EB5757</text>
+  </g>
+
+  <g transform="translate(804 3006)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/glyph-rollback.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Rollback</text>
+    <text class="tile-meta" x="66" y="138">#F2C94C</text>
+  </g>
+
+  <g transform="translate(24 3178)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/glyph-terminal.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Terminal</text>
+    <text class="tile-meta" x="66" y="138">#22C55E</text>
+  </g>
+
+  <g transform="translate(180 3178)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/glyph-process.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Process</text>
+    <text class="tile-meta" x="66" y="138">#F59E0B</text>
+  </g>
+
+  <g transform="translate(336 3178)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/glyph-browser.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Browser</text>
+    <text class="tile-meta" x="66" y="138">#3B82F6</text>
+  </g>
+
+  <g transform="translate(492 3178)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/glyph-window-capture.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Window Capture</text>
+    <text class="tile-meta" x="66" y="138">#06B6D4</text>
+  </g>
+
+  <g transform="translate(648 3178)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/glyph-api.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">API</text>
+    <text class="tile-meta" x="66" y="138">#8B5CF6</text>
+  </g>
+
+  <g transform="translate(804 3178)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/glyph-webhook.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Webhook</text>
+    <text class="tile-meta" x="66" y="138">#EC4899</text>
+  </g>
+
+  <g transform="translate(24 3350)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/glyph-socket.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Socket</text>
+    <text class="tile-meta" x="66" y="138">#14B8A6</text>
+  </g>
+
+  <g transform="translate(180 3350)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/glyph-cloud-runtime.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Cloud Runtime</text>
+    <text class="tile-meta" x="66" y="138">#60A5FA</text>
+  </g>
+
+  <g transform="translate(336 3350)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/glyph-image.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Image</text>
+    <text class="tile-meta" x="66" y="138">#22C55E</text>
+  </g>
+
+  <g transform="translate(492 3350)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/glyph-video.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Video</text>
+    <text class="tile-meta" x="66" y="138">#EF4444</text>
+  </g>
+
+  <g transform="translate(648 3350)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/glyph-audio-waveform.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Audio Waveform</text>
+    <text class="tile-meta" x="66" y="138">#06B6D4</text>
+  </g>
+
+  <g transform="translate(804 3350)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/glyph-microphone.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Microphone</text>
+    <text class="tile-meta" x="66" y="138">#A855F7</text>
+  </g>
+
+  <g transform="translate(24 3522)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/glyph-canvas.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Canvas</text>
+    <text class="tile-meta" x="66" y="138">#F59E0B</text>
+  </g>
+
+  <g transform="translate(180 3522)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/glyph-timeline.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Timeline</text>
+    <text class="tile-meta" x="66" y="138">#3B82F6</text>
+  </g>
+
+  <g transform="translate(336 3522)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/glyph-three-d.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Three-D</text>
+    <text class="tile-meta" x="66" y="138">#14B8A6</text>
+  </g>
+
+  <g transform="translate(492 3522)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/glyph-midi.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">MIDI</text>
+    <text class="tile-meta" x="66" y="138">#EC4899</text>
+  </g>
+
+  <g transform="translate(648 3522)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/glyph-delegation-arc.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Delegation Arc</text>
+    <text class="tile-meta" x="66" y="138">#2F80ED</text>
+  </g>
+
+  <g transform="translate(804 3522)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/glyph-subthread-branch.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Subthread Branch</text>
+    <text class="tile-meta" x="66" y="138">#7C3AED</text>
+  </g>
+
+  <g transform="translate(24 3694)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/glyph-fanout-routes.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Fanout Routes</text>
+    <text class="tile-meta" x="66" y="138">#F97316</text>
+  </g>
+
+  <g transform="translate(180 3694)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/glyph-yield-token.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Yield Token</text>
+    <text class="tile-meta" x="66" y="138">#10B981</text>
+  </g>
+
+  <g transform="translate(336 3694)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/glyph-agent-roster.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Agent Roster</text>
+    <text class="tile-meta" x="66" y="138">#06B6D4</text>
+  </g>
+
+  <g transform="translate(492 3694)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/glyph-boss-captain.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Boss Captain</text>
+    <text class="tile-meta" x="66" y="138">#EAB308</text>
+  </g>
+
+  <g transform="translate(648 3694)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/glyph-handoff-relay.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Handoff Relay</text>
+    <text class="tile-meta" x="66" y="138">#EC4899</text>
+  </g>
+
+  <g transform="translate(804 3694)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/glyph-blackboard-sync.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Blackboard Sync</text>
+    <text class="tile-meta" x="66" y="138">#14B8A6</text>
+  </g>
+
+  <g transform="translate(24 3866)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/glyph-approval.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Approval</text>
+    <text class="tile-meta" x="66" y="138">#22C55E</text>
+  </g>
+
+  <g transform="translate(180 3866)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/glyph-blocked.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Blocked</text>
+    <text class="tile-meta" x="66" y="138">#EF4444</text>
+  </g>
+
+  <g transform="translate(336 3866)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/glyph-success.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Success</text>
+    <text class="tile-meta" x="66" y="138">#10B981</text>
+  </g>
+
+  <g transform="translate(492 3866)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/glyph-warning.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Warning</text>
+    <text class="tile-meta" x="66" y="138">#F59E0B</text>
+  </g>
+
+  <g transform="translate(648 3866)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/glyph-retry.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Retry</text>
+    <text class="tile-meta" x="66" y="138">#3B82F6</text>
+  </g>
+
+  <g transform="translate(804 3866)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/glyph-timeout.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Timeout</text>
+    <text class="tile-meta" x="66" y="138">#A855F7</text>
+  </g>
+
+  <g transform="translate(24 4038)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/glyph-shield.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Shield</text>
+    <text class="tile-meta" x="66" y="138">#06B6D4</text>
+  </g>
+
+  <g transform="translate(180 4038)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/glyph-key-token.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Key Token</text>
+    <text class="tile-meta" x="66" y="138">#F97316</text>
+  </g>
+
+  <g transform="translate(336 4038)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/glyph-memory-vault.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Memory Vault</text>
+    <text class="tile-meta" x="66" y="138">#7C3AED</text>
+  </g>
+
+  <g transform="translate(492 4038)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/glyph-recall-loop.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Recall Loop</text>
+    <text class="tile-meta" x="66" y="138">#2563EB</text>
+  </g>
+
+  <g transform="translate(648 4038)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/glyph-data-stack.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Data Stack</text>
+    <text class="tile-meta" x="66" y="138">#0891B2</text>
+  </g>
+
+  <g transform="translate(804 4038)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/glyph-cache-orbit.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Cache Orbit</text>
+    <text class="tile-meta" x="66" y="138">#F59E0B</text>
+  </g>
+
+  <g transform="translate(24 4210)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/glyph-vector-index.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Vector Index</text>
+    <text class="tile-meta" x="66" y="138">#10B981</text>
+  </g>
+
+  <g transform="translate(180 4210)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/glyph-graph-weave.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Graph Weave</text>
+    <text class="tile-meta" x="66" y="138">#EC4899</text>
+  </g>
+
+  <g transform="translate(336 4210)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/glyph-evidence-lens.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Evidence Lens</text>
+    <text class="tile-meta" x="66" y="138">#DC2626</text>
+  </g>
+
+  <g transform="translate(492 4210)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/glyph-audit-trail.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Audit Trail</text>
+    <text class="tile-meta" x="66" y="138">#64748B</text>
+  </g>
+
+  <g transform="translate(648 4210)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/glyph-prism.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Prism</text>
+    <text class="tile-meta" x="66" y="138">#7C5CFF</text>
+  </g>
+
+  <g transform="translate(804 4210)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/glyph-comet.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Comet</text>
+    <text class="tile-meta" x="66" y="138">#FF6B4A</text>
+  </g>
+
+  <g transform="translate(24 4382)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/glyph-gyroscope.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Gyroscope</text>
+    <text class="tile-meta" x="66" y="138">#20B8A8</text>
+  </g>
+
+  <g transform="translate(180 4382)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/glyph-lantern.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Lantern</text>
+    <text class="tile-meta" x="66" y="138">#F0A629</text>
+  </g>
+
+  <g transform="translate(336 4382)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/glyph-compass.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Compass</text>
+    <text class="tile-meta" x="66" y="138">#3B82F6</text>
+  </g>
+
+  <g transform="translate(492 4382)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/glyph-tuning-fork.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Tuning Fork</text>
+    <text class="tile-meta" x="66" y="138">#D946EF</text>
+  </g>
+
+  <g transform="translate(648 4382)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/glyph-circuit-flower.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Circuit Flower</text>
+    <text class="tile-meta" x="66" y="138">#22C55E</text>
+  </g>
+
+  <g transform="translate(804 4382)">
+    <rect class="tile-bg" width="132" height="148" rx="8"/>
+    <image href="icons/glyph-orbit.svg" x="16" y="10" width="100" height="100"/>
+    <text class="tile-label" x="66" y="124">Orbit</text>
+    <text class="tile-meta" x="66" y="138">#06B6D4</text>
   </g>
 </svg>

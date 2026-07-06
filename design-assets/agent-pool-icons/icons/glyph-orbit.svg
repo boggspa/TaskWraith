@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-glyph-orbit-title agent-pool-icon-glyph-orbit-desc" data-agent-name="Orbit" data-agent-accent="#06B6D4" data-agent-hue="189" style="color: #06B6D4; --agent-accent: #06B6D4;">
+  <title id="agent-pool-icon-glyph-orbit-title">Orbit</title>
+  <desc id="agent-pool-icon-glyph-orbit-desc">Monoline tintable agent pool identity glyph for orbit.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <circle class="line" cx="300" cy="300" r="64"/>
+  <ellipse class="fine" cx="300" cy="300" rx="210" ry="78" transform="rotate(-18 300 300)"/>
+  <ellipse class="fine" cx="300" cy="300" rx="168" ry="58" transform="rotate(54 300 300)"/>
+  <path class="accent" d="M468 214c34 20 52 46 48 74-8 66-110 102-228 80"/>
+  <circle class="dot" cx="454" cy="206" r="18"/><circle class="dot" cx="196" cy="376" r="12"/>
+</svg>

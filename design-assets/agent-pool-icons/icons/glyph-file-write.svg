@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-glyph-file-write-title agent-pool-icon-glyph-file-write-desc" data-agent-name="File Write" data-agent-accent="#F2994A" data-agent-hue="28" style="color: #F2994A; --agent-accent: #F2994A;">
+  <title id="agent-pool-icon-glyph-file-write-title">File Write</title>
+  <desc id="agent-pool-icon-glyph-file-write-desc">Monoline tintable agent pool identity glyph for file write.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <path class="line" d="M178 78h162l82 82v318c0 25-20 45-45 45H178c-25 0-45-20-45-45V123c0-25 20-45 45-45Z"/>
+  <path class="fine" d="M338 80v81h82M194 219h166M194 271h122"/>
+  <path class="accent" d="M245 413l117-117 58 58-117 117-73 15 15-73Z"/>
+  <path class="fine" d="M335 323l58 58"/>
+</svg>

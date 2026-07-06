@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-glyph-ci-check-title agent-pool-icon-glyph-ci-check-desc" data-agent-name="CI Check" data-agent-accent="#219653" data-agent-hue="145" style="color: #219653; --agent-accent: #219653;">
+  <title id="agent-pool-icon-glyph-ci-check-title">CI Check</title>
+  <desc id="agent-pool-icon-glyph-ci-check-desc">Monoline tintable agent pool identity glyph for ci check.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <path class="line" d="M154 198 300 114l146 84v204l-146 84-146-84V198Z"/>
+  <path class="fine" d="M220 236h160M220 300h92"/>
+  <path class="accent" d="M238 360l48 48 88-96"/>
+  <circle class="dot" cx="300" cy="198" r="16"/>
+</svg>

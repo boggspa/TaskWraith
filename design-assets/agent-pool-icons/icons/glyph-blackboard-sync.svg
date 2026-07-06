@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-glyph-blackboard-sync-title agent-pool-icon-glyph-blackboard-sync-desc" data-agent-name="Blackboard Sync" data-agent-accent="#14B8A6" data-agent-hue="174" style="color: #14B8A6; --agent-accent: #14B8A6;">
+  <title id="agent-pool-icon-glyph-blackboard-sync-title">Blackboard Sync</title>
+  <desc id="agent-pool-icon-glyph-blackboard-sync-desc">Monoline tintable agent pool identity glyph for blackboard sync.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <rect class="line" x="132" y="138" width="336" height="254" rx="28"/>
+  <path class="line" d="M218 462h164M300 392v70"/>
+  <path class="accent" d="M214 248h62l42-50 68 104"/>
+  <path class="fine" d="M214 318h172M214 196h38M164 426h272"/>
+  <circle class="dot" cx="386" cy="302" r="12"/>
+  <circle class="dot" cx="318" cy="198" r="10"/>
+</svg>

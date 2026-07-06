@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-glyph-circuit-flower-title agent-pool-icon-glyph-circuit-flower-desc" data-agent-name="Circuit Flower" data-agent-accent="#22C55E" data-agent-hue="142" style="color: #22C55E; --agent-accent: #22C55E;">
+  <title id="agent-pool-icon-glyph-circuit-flower-title">Circuit Flower</title>
+  <desc id="agent-pool-icon-glyph-circuit-flower-desc">Monoline tintable agent pool identity glyph for circuit flower.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <circle class="line" cx="300" cy="300" r="52"/>
+  <path class="fine" d="M300 248V134M300 352v114M248 300H134M352 300h114"/>
+  <path class="accent" d="M264 264 186 186M336 264l78-78M264 336l-78 78M336 336l78 78"/>
+  <path class="fine" d="M300 134h54M466 300v-54M300 466h-54M134 300v54"/>
+  <circle class="dot" cx="300" cy="134" r="13"/><circle class="dot" cx="466" cy="300" r="13"/><circle class="dot" cx="300" cy="466" r="13"/><circle class="dot" cx="134" cy="300" r="13"/>
+</svg>

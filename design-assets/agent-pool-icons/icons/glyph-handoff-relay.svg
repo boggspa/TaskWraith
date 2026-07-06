@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-glyph-handoff-relay-title agent-pool-icon-glyph-handoff-relay-desc" data-agent-name="Handoff Relay" data-agent-accent="#EC4899" data-agent-hue="330" style="color: #EC4899; --agent-accent: #EC4899;">
+  <title id="agent-pool-icon-glyph-handoff-relay-title">Handoff Relay</title>
+  <desc id="agent-pool-icon-glyph-handoff-relay-desc">Monoline tintable agent pool identity glyph for handoff relay.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <path class="line" d="M150 350c42-40 84-60 126-60h42M450 250c-42 40-84 60-126 60h-42"/>
+  <path class="accent" d="M274 250l52 50-52 50"/>
+  <circle class="fine" cx="132" cy="370" r="40"/><circle class="fine" cx="468" cy="230" r="40"/>
+  <path class="fine" d="M190 218c68-54 152-54 220 0M190 430c68 54 152 54 220 0"/>
+  <circle class="dot" cx="300" cy="300" r="12"/>
+</svg>

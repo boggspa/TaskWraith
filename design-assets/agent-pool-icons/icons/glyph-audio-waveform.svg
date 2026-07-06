@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-glyph-audio-waveform-title agent-pool-icon-glyph-audio-waveform-desc" data-agent-name="Audio Waveform" data-agent-accent="#06B6D4" data-agent-hue="189" style="color: #06B6D4; --agent-accent: #06B6D4;">
+  <title id="agent-pool-icon-glyph-audio-waveform-title">Audio Waveform</title>
+  <desc id="agent-pool-icon-glyph-audio-waveform-desc">Monoline tintable agent pool identity glyph for audio waveform.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <path class="fine" d="M82 300h58M460 300h58M168 256v88M216 208v184M264 154v292"/>
+  <path class="accent" d="M312 118v364"/>
+  <path class="fine" d="M360 174v252M408 226v148"/>
+  <circle class="dot" cx="312" cy="300" r="13"/>
+</svg>

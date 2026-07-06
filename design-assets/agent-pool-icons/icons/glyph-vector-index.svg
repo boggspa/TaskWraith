@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-glyph-vector-index-title agent-pool-icon-glyph-vector-index-desc" data-agent-name="Vector Index" data-agent-accent="#10B981" data-agent-hue="160" style="color: #10B981; --agent-accent: #10B981;">
+  <title id="agent-pool-icon-glyph-vector-index-title">Vector Index</title>
+  <desc id="agent-pool-icon-glyph-vector-index-desc">Monoline tintable agent pool identity glyph for vector index.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <rect class="line" x="118" y="118" width="364" height="364" rx="54"/>
+  <path class="fine" d="M210 178v244M300 178v244M390 178v244M178 210h244M178 300h244M178 390h244"/>
+  <path class="accent" d="M214 386l86-166 90 110"/>
+  <circle class="dot" cx="214" cy="386" r="13"/><circle class="dot" cx="300" cy="220" r="13"/><circle class="dot" cx="390" cy="330" r="13"/>
+  <circle class="line" cx="398" cy="398" r="46"/>
+  <path class="line" d="M432 432l54 54"/>
+</svg>

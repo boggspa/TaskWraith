@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-glyph-gyroscope-title agent-pool-icon-glyph-gyroscope-desc" data-agent-name="Gyroscope" data-agent-accent="#20B8A8" data-agent-hue="174" style="color: #20B8A8; --agent-accent: #20B8A8;">
+  <title id="agent-pool-icon-glyph-gyroscope-title">Gyroscope</title>
+  <desc id="agent-pool-icon-glyph-gyroscope-desc">Monoline tintable agent pool identity glyph for gyroscope.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <circle class="line" cx="300" cy="300" r="152"/>
+  <ellipse class="fine" cx="300" cy="300" rx="214" ry="68" transform="rotate(-24 300 300)"/>
+  <ellipse class="accent" cx="300" cy="300" rx="88" ry="186" transform="rotate(28 300 300)"/>
+  <path class="fine" d="M300 88v64M300 448v64"/>
+  <circle class="dot" cx="300" cy="300" r="18"/>
+</svg>

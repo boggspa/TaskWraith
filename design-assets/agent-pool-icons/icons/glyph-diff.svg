@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-glyph-diff-title agent-pool-icon-glyph-diff-desc" data-agent-name="Diff" data-agent-accent="#27AE60" data-agent-hue="145" style="color: #27AE60; --agent-accent: #27AE60;">
+  <title id="agent-pool-icon-glyph-diff-title">Diff</title>
+  <desc id="agent-pool-icon-glyph-diff-desc">Monoline tintable agent pool identity glyph for diff.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <path class="line" d="M116 121h155c24 0 44 20 44 44v270c0 24-20 44-44 44H116V121Z"/>
+  <path class="line" d="M329 121h155v358H329c-24 0-44-20-44-44V165c0-24 20-44 44-44Z"/>
+  <path class="fine" d="M170 224h88M170 278h64M365 224h88M365 332h88"/>
+  <path class="accent" d="M170 361h91M216 315v92M365 278h91"/>
+</svg>

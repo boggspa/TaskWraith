@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-glyph-retry-title agent-pool-icon-glyph-retry-desc" data-agent-name="Retry" data-agent-accent="#3B82F6" data-agent-hue="217" style="color: #3B82F6; --agent-accent: #3B82F6;">
+  <title id="agent-pool-icon-glyph-retry-title">Retry</title>
+  <desc id="agent-pool-icon-glyph-retry-desc">Monoline tintable agent pool identity glyph for retry.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <path class="line" d="M438 236a154 154 0 0 0-274 40M162 364a154 154 0 0 0 274-40"/>
+  <path class="accent" d="M438 146v90h-90M162 454v-90h90"/>
+  <circle class="dot" cx="300" cy="300" r="24"/>
+  <path class="fine" d="M256 300h88"/>
+</svg>

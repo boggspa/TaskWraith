@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-glyph-shield-title agent-pool-icon-glyph-shield-desc" data-agent-name="Shield" data-agent-accent="#06B6D4" data-agent-hue="189" style="color: #06B6D4; --agent-accent: #06B6D4;">
+  <title id="agent-pool-icon-glyph-shield-title">Shield</title>
+  <desc id="agent-pool-icon-glyph-shield-desc">Monoline tintable agent pool identity glyph for shield.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <path class="line" d="M300 104l166 72v118c0 106-68 170-166 208-98-38-166-102-166-208V176Z"/>
+  <path class="accent" d="M300 184v226"/>
+  <path class="fine" d="M220 252h160M236 332h128M300 184c44 20 74 32 120 52"/>
+  <circle class="dot" cx="300" cy="454" r="14"/>
+</svg>

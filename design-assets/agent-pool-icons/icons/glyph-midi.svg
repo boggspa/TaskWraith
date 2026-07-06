@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-glyph-midi-title agent-pool-icon-glyph-midi-desc" data-agent-name="MIDI" data-agent-accent="#EC4899" data-agent-hue="330" style="color: #EC4899; --agent-accent: #EC4899;">
+  <title id="agent-pool-icon-glyph-midi-title">MIDI</title>
+  <desc id="agent-pool-icon-glyph-midi-desc">Monoline tintable agent pool identity glyph for midi.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <rect class="line" x="96" y="168" width="408" height="264" rx="42"/>
+  <path class="fine" d="M156 260v108M208 260v108M260 260v108"/>
+  <path class="accent" d="M340 252c34-32 77-32 112 0M340 348c34 32 77 32 112 0"/>
+  <circle class="dot" cx="396" cy="300" r="16"/>
+</svg>

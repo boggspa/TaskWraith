@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-glyph-yield-token-title agent-pool-icon-glyph-yield-token-desc" data-agent-name="Yield Token" data-agent-accent="#10B981" data-agent-hue="160" style="color: #10B981; --agent-accent: #10B981;">
+  <title id="agent-pool-icon-glyph-yield-token-title">Yield Token</title>
+  <desc id="agent-pool-icon-glyph-yield-token-desc">Monoline tintable agent pool identity glyph for yield token.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <path class="line" d="M178 178h244v244H178Z"/>
+  <path class="accent" d="M236 256h102c46 0 70 26 70 62s-24 62-70 62H236"/>
+  <path class="accent" d="M286 206l-58 50 58 50"/>
+  <path class="fine" d="M364 380l48 44M412 424l48-44M214 146h172M214 454h172"/>
+  <circle class="dot" cx="300" cy="318" r="10"/>
+</svg>

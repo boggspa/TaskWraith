@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-glyph-socket-title agent-pool-icon-glyph-socket-desc" data-agent-name="Socket" data-agent-accent="#14B8A6" data-agent-hue="174" style="color: #14B8A6; --agent-accent: #14B8A6;">
+  <title id="agent-pool-icon-glyph-socket-title">Socket</title>
+  <desc id="agent-pool-icon-glyph-socket-desc">Monoline tintable agent pool identity glyph for socket.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <path class="line" d="M210 170h180a56 56 0 0 1 56 56v148a56 56 0 0 1-56 56H210a56 56 0 0 1-56-56V226a56 56 0 0 1 56-56Z"/>
+  <path class="accent" d="M246 255v90M354 255v90"/>
+  <path class="line" d="M300 430v54M244 484h112"/>
+  <path class="fine" d="M154 300h-42M488 300h-42"/>
+  <circle class="dot" cx="300" cy="300" r="13"/>
+</svg>

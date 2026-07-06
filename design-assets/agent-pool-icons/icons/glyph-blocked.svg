@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-glyph-blocked-title agent-pool-icon-glyph-blocked-desc" data-agent-name="Blocked" data-agent-accent="#EF4444" data-agent-hue="0" style="color: #EF4444; --agent-accent: #EF4444;">
+  <title id="agent-pool-icon-glyph-blocked-title">Blocked</title>
+  <desc id="agent-pool-icon-glyph-blocked-desc">Monoline tintable agent pool identity glyph for blocked.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <circle class="line" cx="300" cy="300" r="176"/>
+  <path class="accent" d="M184 416 416 184"/>
+  <path class="fine" d="M218 224h164M218 300h164M252 376h96"/>
+  <circle class="dot" cx="450" cy="150" r="18"/>
+</svg>

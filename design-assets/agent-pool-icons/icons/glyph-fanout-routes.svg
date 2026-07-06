@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-glyph-fanout-routes-title agent-pool-icon-glyph-fanout-routes-desc" data-agent-name="Fanout Routes" data-agent-accent="#F97316" data-agent-hue="24" style="color: #F97316; --agent-accent: #F97316;">
+  <title id="agent-pool-icon-glyph-fanout-routes-title">Fanout Routes</title>
+  <desc id="agent-pool-icon-glyph-fanout-routes-desc">Monoline tintable agent pool identity glyph for fanout routes.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <circle class="accent" cx="300" cy="300" r="54"/>
+  <path class="line" d="M300 246V138M346 272l94-54M346 328l94 54M300 354v108M254 328l-94 54M254 272l-94-54"/>
+  <circle class="fine" cx="300" cy="104" r="34"/><circle class="fine" cx="476" cy="198" r="34"/><circle class="fine" cx="476" cy="402" r="34"/><circle class="fine" cx="300" cy="496" r="34"/><circle class="fine" cx="124" cy="402" r="34"/><circle class="fine" cx="124" cy="198" r="34"/>
+  <path class="fine" d="M214 214c48-48 124-48 172 0"/>
+</svg>

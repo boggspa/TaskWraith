@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-glyph-audit-trail-title agent-pool-icon-glyph-audit-trail-desc" data-agent-name="Audit Trail" data-agent-accent="#64748B" data-agent-hue="215" style="color: #64748B; --agent-accent: #64748B;">
+  <title id="agent-pool-icon-glyph-audit-trail-title">Audit Trail</title>
+  <desc id="agent-pool-icon-glyph-audit-trail-desc">Monoline tintable agent pool identity glyph for audit trail.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <rect class="line" x="138" y="108" width="324" height="384" rx="42"/>
+  <path class="fine" d="M214 198h172M214 266h172M214 334h112"/>
+  <path class="accent" d="M300 384c48-18 82-48 82-104v-42l-82-30-82 30v42c0 56 34 86 82 104Z"/>
+  <path class="accent" d="M264 286l28 30 54-66"/>
+  <circle class="dot" cx="182" cy="198" r="10"/><circle class="dot" cx="182" cy="266" r="10"/><circle class="dot" cx="182" cy="334" r="10"/>
+</svg>

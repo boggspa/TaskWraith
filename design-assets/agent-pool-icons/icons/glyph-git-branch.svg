@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-glyph-git-branch-title agent-pool-icon-glyph-git-branch-desc" data-agent-name="Git Branch" data-agent-accent="#27AE60" data-agent-hue="145" style="color: #27AE60; --agent-accent: #27AE60;">
+  <title id="agent-pool-icon-glyph-git-branch-title">Git Branch</title>
+  <desc id="agent-pool-icon-glyph-git-branch-desc">Monoline tintable agent pool identity glyph for git branch.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <path class="line" d="M210 140v320"/>
+  <path class="accent" d="M210 300c0-62 50-90 120-90h60"/>
+  <circle class="line" cx="210" cy="140" r="48"/>
+  <circle class="line" cx="210" cy="460" r="48"/>
+  <circle class="accent" cx="430" cy="210" r="48"/>
+  <path class="fine" d="M370 170l60 40-60 40"/>
+</svg>

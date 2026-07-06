@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-glyph-approval-title agent-pool-icon-glyph-approval-desc" data-agent-name="Approval" data-agent-accent="#22C55E" data-agent-hue="142" style="color: #22C55E; --agent-accent: #22C55E;">
+  <title id="agent-pool-icon-glyph-approval-title">Approval</title>
+  <desc id="agent-pool-icon-glyph-approval-desc">Monoline tintable agent pool identity glyph for approval.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <path class="accent" d="M170 316l72 72 188-188"/>
+  <path class="line" d="M150 138h210l82 82v242H150Z"/>
+  <path class="fine" d="M360 138v86h82M196 452h208"/>
+  <circle class="dot" cx="462" cy="138" r="22"/>
+</svg>

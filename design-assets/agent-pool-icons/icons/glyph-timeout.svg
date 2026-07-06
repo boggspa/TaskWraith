@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-glyph-timeout-title agent-pool-icon-glyph-timeout-desc" data-agent-name="Timeout" data-agent-accent="#A855F7" data-agent-hue="270" style="color: #A855F7; --agent-accent: #A855F7;">
+  <title id="agent-pool-icon-glyph-timeout-title">Timeout</title>
+  <desc id="agent-pool-icon-glyph-timeout-desc">Monoline tintable agent pool identity glyph for timeout.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <circle class="line" cx="300" cy="314" r="168"/>
+  <path class="fine" d="M246 104h108M300 104v42"/>
+  <path class="accent" d="M300 222v104l76 54"/>
+  <path class="fine" d="M184 198l-38-38M416 198l38-38"/>
+  <circle class="dot" cx="300" cy="314" r="16"/>
+</svg>

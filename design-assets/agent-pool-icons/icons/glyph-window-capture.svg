@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-glyph-window-capture-title agent-pool-icon-glyph-window-capture-desc" data-agent-name="Window Capture" data-agent-accent="#06B6D4" data-agent-hue="189" style="color: #06B6D4; --agent-accent: #06B6D4;">
+  <title id="agent-pool-icon-glyph-window-capture-title">Window Capture</title>
+  <desc id="agent-pool-icon-glyph-window-capture-desc">Monoline tintable agent pool identity glyph for window capture.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <rect class="line" x="118" y="132" width="364" height="300" rx="46"/>
+  <path class="fine" d="M118 206h364"/>
+  <path class="accent" d="M185 300v-42h42M415 300v42h-42M373 258h42v42M227 342h-42v-42"/>
+  <path class="line" d="M255 484h90M300 432v52"/>
+  <circle class="dot" cx="166" cy="169" r="10"/>
+</svg>

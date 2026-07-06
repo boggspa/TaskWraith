@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-glyph-browser-title agent-pool-icon-glyph-browser-desc" data-agent-name="Browser" data-agent-accent="#3B82F6" data-agent-hue="217" style="color: #3B82F6; --agent-accent: #3B82F6;">
+  <title id="agent-pool-icon-glyph-browser-title">Browser</title>
+  <desc id="agent-pool-icon-glyph-browser-desc">Monoline tintable agent pool identity glyph for browser.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <rect class="line" x="98" y="128" width="404" height="344" rx="54"/>
+  <path class="fine" d="M98 218h404M170 173h92"/>
+  <path class="accent" d="M210 346c28-58 152-58 180 0M230 308c42-30 98-30 140 0"/>
+  <path class="line" d="M300 278v136"/>
+  <circle class="dot" cx="430" cy="173" r="12"/>
+</svg>

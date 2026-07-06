@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-glyph-git-commit-title agent-pool-icon-glyph-git-commit-desc" data-agent-name="Git Commit" data-agent-accent="#2F80ED" data-agent-hue="214" style="color: #2F80ED; --agent-accent: #2F80ED;">
+  <title id="agent-pool-icon-glyph-git-commit-title">Git Commit</title>
+  <desc id="agent-pool-icon-glyph-git-commit-desc">Monoline tintable agent pool identity glyph for git commit.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <path class="fine" d="M92 300h126M382 300h126"/>
+  <circle class="line" cx="300" cy="300" r="82"/>
+  <circle class="accent" cx="300" cy="300" r="34"/>
+  <path class="fine" d="M245 219 208 182M355 381l37 37"/>
+</svg>

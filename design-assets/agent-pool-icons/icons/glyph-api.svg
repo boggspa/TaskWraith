@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-glyph-api-title agent-pool-icon-glyph-api-desc" data-agent-name="API" data-agent-accent="#8B5CF6" data-agent-hue="258" style="color: #8B5CF6; --agent-accent: #8B5CF6;">
+  <title id="agent-pool-icon-glyph-api-title">API</title>
+  <desc id="agent-pool-icon-glyph-api-desc">Monoline tintable agent pool identity glyph for api.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <rect class="line" x="135" y="145" width="330" height="310" rx="52"/>
+  <path class="accent" d="M235 250l-44 50 44 50M365 250l44 50-44 50"/>
+  <path class="line" d="M320 240l-40 120"/>
+  <path class="fine" d="M195 405h210"/>
+  <circle class="dot" cx="300" cy="195" r="13"/>
+</svg>

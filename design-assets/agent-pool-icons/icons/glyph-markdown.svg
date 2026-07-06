@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-glyph-markdown-title agent-pool-icon-glyph-markdown-desc" data-agent-name="Markdown" data-agent-accent="#BB6BD9" data-agent-hue="288" style="color: #BB6BD9; --agent-accent: #BB6BD9;">
+  <title id="agent-pool-icon-glyph-markdown-title">Markdown</title>
+  <desc id="agent-pool-icon-glyph-markdown-desc">Monoline tintable agent pool identity glyph for markdown.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <rect class="line" x="91" y="126" width="418" height="348" rx="44"/>
+  <path class="accent" d="M154 372V231l69 86 69-86v141"/>
+  <path class="accent" d="M357 231v141M315 331l42 42 42-42"/>
+  <path class="fine" d="M450 201v198"/>
+</svg>

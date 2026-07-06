@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-glyph-success-title agent-pool-icon-glyph-success-desc" data-agent-name="Success" data-agent-accent="#10B981" data-agent-hue="160" style="color: #10B981; --agent-accent: #10B981;">
+  <title id="agent-pool-icon-glyph-success-title">Success</title>
+  <desc id="agent-pool-icon-glyph-success-desc">Monoline tintable agent pool identity glyph for success.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <path class="line" d="M300 108l158 70v122c0 96-62 154-158 192-96-38-158-96-158-192V178Z"/>
+  <path class="accent" d="M222 300l58 58 108-126"/>
+  <path class="fine" d="M214 198c42-20 62-29 86-40 24 11 44 20 86 40"/>
+  <circle class="dot" cx="300" cy="432" r="16"/>
+</svg>

@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-glyph-rollback-title agent-pool-icon-glyph-rollback-desc" data-agent-name="Rollback" data-agent-accent="#F2C94C" data-agent-hue="48" style="color: #F2C94C; --agent-accent: #F2C94C;">
+  <title id="agent-pool-icon-glyph-rollback-title">Rollback</title>
+  <desc id="agent-pool-icon-glyph-rollback-desc">Monoline tintable agent pool identity glyph for rollback.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <path class="accent" d="M238 190l-78 78 78 78"/>
+  <path class="accent" d="M166 268h178c63 0 114 51 114 114S407 496 344 496h-72"/>
+  <path class="line" d="M300 104c98 0 178 80 178 178"/>
+  <path class="fine" d="M300 104c-72 0-134 42-162 103"/>
+  <circle class="line" cx="300" cy="104" r="34"/>
+  <circle class="dot" cx="272" cy="496" r="16"/>
+</svg>

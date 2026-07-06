@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-glyph-evidence-lens-title agent-pool-icon-glyph-evidence-lens-desc" data-agent-name="Evidence Lens" data-agent-accent="#DC2626" data-agent-hue="0" style="color: #DC2626; --agent-accent: #DC2626;">
+  <title id="agent-pool-icon-glyph-evidence-lens-title">Evidence Lens</title>
+  <desc id="agent-pool-icon-glyph-evidence-lens-desc">Monoline tintable agent pool identity glyph for evidence lens.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <path class="line" d="M170 98h194l66 66v154"/>
+  <path class="line" d="M170 98v404h260V164h-66V98"/>
+  <path class="fine" d="M226 214h132M226 270h132M226 326h82"/>
+  <circle class="line" cx="364" cy="380" r="70"/>
+  <path class="line" d="M414 430l76 76"/>
+  <path class="accent" d="M328 380l26 26 52-58"/>
+  <circle class="dot" cx="226" cy="386" r="12"/>
+</svg>

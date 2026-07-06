@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-glyph-terminal-title agent-pool-icon-glyph-terminal-desc" data-agent-name="Terminal" data-agent-accent="#22C55E" data-agent-hue="142" style="color: #22C55E; --agent-accent: #22C55E;">
+  <title id="agent-pool-icon-glyph-terminal-title">Terminal</title>
+  <desc id="agent-pool-icon-glyph-terminal-desc">Monoline tintable agent pool identity glyph for terminal.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <rect class="line" x="105" y="135" width="390" height="330" rx="54"/>
+  <path class="accent" d="M175 235l62 58-62 58"/>
+  <path class="line" d="M280 355h112"/>
+  <path class="fine" d="M145 195h310"/>
+  <circle class="dot" cx="170" cy="165" r="11"/>
+  <circle class="dot" cx="212" cy="165" r="11"/>
+</svg>

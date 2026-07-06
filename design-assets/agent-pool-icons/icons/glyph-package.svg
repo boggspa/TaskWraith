@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-glyph-package-title agent-pool-icon-glyph-package-desc" data-agent-name="Package" data-agent-accent="#00A8A8" data-agent-hue="180" style="color: #00A8A8; --agent-accent: #00A8A8;">
+  <title id="agent-pool-icon-glyph-package-title">Package</title>
+  <desc id="agent-pool-icon-glyph-package-desc">Monoline tintable agent pool identity glyph for package.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <path class="line" d="M300 82l178 94v248L300 518 122 424V176L300 82Z"/>
+  <path class="fine" d="M122 176l178 94 178-94M300 270v248M210 129l178 95"/>
+  <path class="accent" d="M211 310l61 32M211 364l61 32M389 310l-61 32M389 364l-61 32"/>
+</svg>

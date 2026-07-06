@@ -18,12 +18,16 @@ describe('agent pool icon assets', () => {
 
   it('includes the featured agent-pool icons keyed by pool: slug', () => {
     const pool = POOL_ICON_ASSETS.filter((a) => a.group === 'Agent pool')
-    expect(pool.length).toBeGreaterThanOrEqual(90)
+    expect(pool.length).toBeGreaterThanOrEqual(150)
     for (const asset of pool) {
       expect(asset.key.startsWith('pool:')).toBe(true)
       expect(asset.raw).toContain('<svg')
       expect(asset.recolor).toBe(true) // they use currentColor / --agent-accent
     }
+
+    expect(getPoolIconAsset('pool:glyph-file-read')?.label).toBe('File Read')
+    expect(getPoolIconAsset('pool:glyph-pull-request')?.accent).toBe('#9B51E0')
+    expect(getPoolIconAsset('pool:glyph-memory-vault')?.hue).toBe(262)
   })
 
   it('provider glyphs are namespaced and carry brand accents', () => {

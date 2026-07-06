@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-glyph-webhook-title agent-pool-icon-glyph-webhook-desc" data-agent-name="Webhook" data-agent-accent="#EC4899" data-agent-hue="330" style="color: #EC4899; --agent-accent: #EC4899;">
+  <title id="agent-pool-icon-glyph-webhook-title">Webhook</title>
+  <desc id="agent-pool-icon-glyph-webhook-desc">Monoline tintable agent pool identity glyph for webhook.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <circle class="line" cx="205" cy="245" r="58"/>
+  <circle class="line" cx="395" cy="245" r="58"/>
+  <circle class="line" cx="300" cy="410" r="58"/>
+  <path class="accent" d="M250 245h100M370 296l-44 76M230 296l44 76"/>
+  <path class="fine" d="M300 146c76 0 138 62 138 138M186 371c-30-52-21-118 21-160"/>
+  <circle class="dot" cx="300" cy="300" r="12"/>
+</svg>

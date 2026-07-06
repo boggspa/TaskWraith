@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-glyph-git-push-title agent-pool-icon-glyph-git-push-desc" data-agent-name="Git Push" data-agent-accent="#00A7A7" data-agent-hue="180" style="color: #00A7A7; --agent-accent: #00A7A7;">
+  <title id="agent-pool-icon-glyph-git-push-title">Git Push</title>
+  <desc id="agent-pool-icon-glyph-git-push-desc">Monoline tintable agent pool identity glyph for git push.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <path class="line" d="M170 410h260M210 410v58h180v-58"/>
+  <path class="accent" d="M300 360V132M222 210l78-78 78 78"/>
+  <path class="fine" d="M205 322h190"/>
+  <circle class="dot" cx="300" cy="410" r="18"/>
+</svg>

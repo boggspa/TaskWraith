@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-glyph-schema-title agent-pool-icon-glyph-schema-desc" data-agent-name="Schema" data-agent-accent="#56CCF2" data-agent-hue="194" style="color: #56CCF2; --agent-accent: #56CCF2;">
+  <title id="agent-pool-icon-glyph-schema-title">Schema</title>
+  <desc id="agent-pool-icon-glyph-schema-desc">Monoline tintable agent pool identity glyph for schema.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <rect class="line" x="205" y="78" width="190" height="100" rx="28"/>
+  <rect class="line" x="102" y="365" width="160" height="100" rx="28"/>
+  <rect class="line" x="338" y="365" width="160" height="100" rx="28"/>
+  <path class="fine" d="M300 178v78M182 365v-45c0-35 28-64 64-64h108c35 0 64 29 64 64v45"/>
+  <path class="accent" d="M250 128h100M151 415h62M387 415h62"/>
+  <circle class="dot" cx="300" cy="256" r="12"/>
+</svg>

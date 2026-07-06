@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-glyph-graph-weave-title agent-pool-icon-glyph-graph-weave-desc" data-agent-name="Graph Weave" data-agent-accent="#EC4899" data-agent-hue="330" style="color: #EC4899; --agent-accent: #EC4899;">
+  <title id="agent-pool-icon-glyph-graph-weave-title">Graph Weave</title>
+  <desc id="agent-pool-icon-glyph-graph-weave-desc">Monoline tintable agent pool identity glyph for graph weave.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <path class="line" d="M300 92l180 104v208L300 508 120 404V196Z"/>
+  <path class="fine" d="M214 234l86-58 92 78M214 234l32 132M392 254l-48 142M246 366l98 30M300 176l44 220"/>
+  <circle class="dot" cx="300" cy="176" r="18"/><circle class="dot" cx="214" cy="234" r="18"/><circle class="dot" cx="392" cy="254" r="18"/><circle class="dot" cx="246" cy="366" r="18"/><circle class="dot" cx="344" cy="396" r="18"/>
+  <path class="accent" d="M214 234c70 22 116 28 178 20"/>
+</svg>

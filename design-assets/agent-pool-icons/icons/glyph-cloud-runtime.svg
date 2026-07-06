@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-glyph-cloud-runtime-title agent-pool-icon-glyph-cloud-runtime-desc" data-agent-name="Cloud Runtime" data-agent-accent="#60A5FA" data-agent-hue="213" style="color: #60A5FA; --agent-accent: #60A5FA;">
+  <title id="agent-pool-icon-glyph-cloud-runtime-title">Cloud Runtime</title>
+  <desc id="agent-pool-icon-glyph-cloud-runtime-desc">Monoline tintable agent pool identity glyph for cloud runtime.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <path class="line" d="M206 405h205c48 0 87-39 87-87s-39-87-87-87h-8c-18-55-70-95-132-95-73 0-133 56-139 128-39 12-68 49-68 92 0 27 11 51 29 69"/>
+  <path class="accent" d="M250 322h100M350 322l-42-42M350 322l-42 42"/>
+  <path class="fine" d="M214 220c28-30 72-42 112-29"/>
+  <circle class="dot" cx="210" cy="405" r="12"/>
+</svg>

@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="agent-pool-icon-glyph-cache-orbit-title agent-pool-icon-glyph-cache-orbit-desc" data-agent-name="Cache Orbit" data-agent-accent="#F59E0B" data-agent-hue="38" style="color: #F59E0B; --agent-accent: #F59E0B;">
+  <title id="agent-pool-icon-glyph-cache-orbit-title">Cache Orbit</title>
+  <desc id="agent-pool-icon-glyph-cache-orbit-desc">Monoline tintable agent pool identity glyph for cache orbit.</desc>
+  <style>.line{fill:none;stroke:currentColor;stroke-width:22;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.72}.accent{fill:none;stroke:var(--agent-accent,currentColor);stroke-width:18;stroke-linecap:round;stroke-linejoin:round}.soft{fill:var(--agent-accent,currentColor);opacity:.14}.dot{fill:var(--agent-accent,currentColor)}</style>
+  <circle class="soft" cx="300" cy="300" r="206"/>
+  <rect class="line" x="150" y="194" width="300" height="76" rx="28"/>
+  <rect class="line" x="150" y="330" width="300" height="76" rx="28"/>
+  <path class="fine" d="M204 270v60M396 270v60"/>
+  <path class="accent" d="M432 132a202 202 0 0 1 16 242M448 374h-76M448 374v-76"/>
+  <path class="fine" d="M168 468a202 202 0 0 1-16-242"/>
+  <circle class="dot" cx="214" cy="232" r="12"/><circle class="dot" cx="214" cy="368" r="12"/>
+</svg>
