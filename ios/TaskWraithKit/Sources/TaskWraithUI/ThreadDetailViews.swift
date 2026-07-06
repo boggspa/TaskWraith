@@ -2426,18 +2426,9 @@ struct ParticipantHealthSummaryCard: View {
     {
         let status = entry.status?.lowercased()
         let reachable = status == "ok"
-        let provider = entry.provider
-        // Prefer frozen stamp-time presentation; fall back to stamped model only.
-        let providerAccent = TWTheme.providerAccent(entry.brandProviderKey)
-        let providerName: String = {
-            if let label = entry.displayProviderLabel?.trimmingCharacters(
-                in: .whitespacesAndNewlines),
-                !label.isEmpty
-            {
-                return label
-            }
-            return TWTheme.providerLabel(provider, modelId: entry.model, modelLabel: entry.model)
-        }()
+        let presentation = participantHealthEntryPresentation(entry)
+        let providerAccent = TWTheme.providerAccent(presentation.providerClass)
+        let providerName = presentation.providerName
         let chipAccent = reachable ? providerAccent : TWTheme.statusColor("failed")
         let role = entry.role?.isEmpty == false ? entry.role ?? "Participant" : "Participant"
         return VStack(alignment: .leading, spacing: 3) {
@@ -2473,6 +2464,45 @@ struct ParticipantHealthSummaryCard: View {
                 .strokeBorder(chipAccent.opacity(reachable ? 0.24 : 0.42), lineWidth: 1)
         )
     }
+}
+
+struct ParticipantHealthEntryPresentation: Equatable {
+    let providerName: String
+    let providerClass: String
+}
+
+func participantHealthEntryPresentation(
+    _ entry: RemoteThreadSnapshot.Row.ParticipantHealth.Entry
+) -> ParticipantHealthEntryPresentation {
+    let provider = entry.provider
+    let model = entry.model
+    let stampedLabel = entry.displayProviderLabel?.trimmingCharacters(in: .whitespacesAndNewlines)
+    let stampedClass = entry.displayHueClass?.trimmingCharacters(in: .whitespacesAndNewlines)
+    let hasStampedLabel = stampedLabel?.isEmpty == false
+    let hasStampedClass = stampedClass?.isEmpty == false
+    let isOllama = provider?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "ollama"
+
+    if isOllama, let brand = OllamaDisplayBrands.resolve(modelId: model, modelLabel: model) {
+        let labelIsGeneric = stampedLabel?.lowercased() == "ollama"
+        let classIsGeneric = stampedClass?.lowercased() == "ollama"
+        if !hasStampedLabel || !hasStampedClass || labelIsGeneric || classIsGeneric {
+            return ParticipantHealthEntryPresentation(
+                providerName: labelIsGeneric || !hasStampedLabel
+                    ? brand.providerLabel : stampedLabel!,
+                providerClass: classIsGeneric || !hasStampedClass
+                    ? brand.providerClass : stampedClass!)
+        }
+    }
+
+    let providerName =
+        hasStampedLabel
+        ? stampedLabel!
+        : TWTheme.providerLabel(provider, modelId: model, modelLabel: model)
+    let providerClass =
+        hasStampedClass
+        ? stampedClass!
+        : OllamaDisplayBrands.providerHueClass(provider: provider, modelId: model, modelLabel: model)
+    return ParticipantHealthEntryPresentation(providerName: providerName, providerClass: providerClass)
 }
 
 struct SubThreadReturnSummaryCard: View {

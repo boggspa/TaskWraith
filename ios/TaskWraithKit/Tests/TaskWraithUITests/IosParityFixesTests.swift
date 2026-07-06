@@ -359,6 +359,27 @@ struct IosParityFixesTests {
     }
 
     @MainActor
+    @Test func participantHealthRepairsGenericOllamaStampForLaguna() throws {
+        let entry = try decode(
+            RemoteThreadSnapshot.Row.ParticipantHealth.Entry.self,
+            """
+            {
+              "participantId":"p-laguna",
+              "provider":"ollama",
+              "model":"laguna-xs-2.1:q8_0",
+              "displayProviderLabel":"Ollama",
+              "displayHueClass":"ollama",
+              "role":"Laguna",
+              "status":"ok"
+            }
+            """)
+
+        let presentation = participantHealthEntryPresentation(entry)
+        #expect(presentation.providerName == "Poolside")
+        #expect(presentation.providerClass == "poolside")
+    }
+
+    @MainActor
     @Test func workingParticipantLabelUsesProviderRoleAndHumanModelVariant() {
         #expect(
             twWorkingParticipantLabel(provider: "ollama", role: "Qwen35", model: "qwen3.5:9b")
