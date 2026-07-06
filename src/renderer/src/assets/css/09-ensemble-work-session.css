@@ -2479,9 +2479,9 @@
 [data-composer-style="kimi"] .ensemble-above-row,
 [data-composer-style="kimi"] .composer-above-bar-stack > .ensemble-roster-preset-picker.is-compact {
   border-radius: 18px;
-  background: color-mix(in srgb, #0a0a0c 96%, transparent);
-  border: 1px solid color-mix(in srgb, #ffffff 8%, transparent);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+  background: color-mix(in srgb, #1f2227 92%, transparent);
+  border: 1px solid color-mix(in srgb, #ffffff 14%, transparent);
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.34);
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
@@ -2622,7 +2622,8 @@
 /* Terminal shell — mirror the existing `.composer-above-bar`
  * terminal styling exactly: 2px radius, #0a0e0a bg, #00ff88
  * lime hairline, monospace, 4px 10px padding, no shadow. */
-[data-composer-style="terminal"] .ensemble-above-row {
+[data-composer-style="terminal"] .ensemble-above-row,
+[data-composer-style="terminal"] .composer-above-bar-stack > .ensemble-roster-preset-picker.is-compact {
   background: color-mix(in srgb, #0a0e0a 78%, transparent);
   border: 1px solid color-mix(in srgb, #00ff88 18%, transparent);
   border-radius: 2px;
@@ -2635,6 +2636,14 @@
   -webkit-backdrop-filter: none;
 }
 [data-composer-style="terminal"] .ensemble-above-chip {
+  border-radius: 2px;
+  border-color: color-mix(in srgb, #00ff88 22%, transparent);
+  font-family: var(--font-mono);
+}
+[data-composer-style="terminal"]
+  .composer-above-bar-stack
+  > .ensemble-roster-preset-picker.is-compact
+  .ensemble-roster-preset-picker-chip {
   border-radius: 2px;
   border-color: color-mix(in srgb, #00ff88 22%, transparent);
   font-family: var(--font-mono);
