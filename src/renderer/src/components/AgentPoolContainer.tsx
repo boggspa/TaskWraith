@@ -6,7 +6,13 @@ import type {
   PooledAgentStatsSummary
 } from '../../../main/store/types'
 import {
+  accentFromHue,
+  DEFAULT_POOL_ICON_BRIGHTNESS,
+  DEFAULT_POOL_ICON_SATURATION,
+  hueForSeed,
   listPooledAgents,
+  normalizePoolIconBrightness,
+  normalizePoolIconSaturation,
   pooledAgentConfigFromLike,
   POOLED_AGENT_DRAG_MIME,
   removePooledAgent,
@@ -58,6 +64,7 @@ export function AgentPoolContainer({
   const [stats, setStats] = useState<Record<string, PooledAgentStatsSummary>>({})
   const [isDropTarget, setIsDropTarget] = useState(false)
   const [nickRejectNonce, setNickRejectNonce] = useState(0)
+  const [iconPickerOpen, setIconPickerOpen] = useState(false)
 
   useEffect(() => {
     const refresh = (): void => setAgents(listPooledAgents())
@@ -117,6 +124,32 @@ export function AgentPoolContainer({
       })
     },
     []
+  )
+
+  const shuffleIdentity = useCallback(
+    (agent: PooledAgent): void => {
+      const seed = `${agent.agentId}#${Date.now().toString(36)}-${Math.random()
+        .toString(36)
+        .slice(2, 8)}`
+      const hue = hueForSeed(seed)
+      const saturation = normalizePoolIconSaturation(
+        agent.identity.saturation ?? DEFAULT_POOL_ICON_SATURATION
+      )
+      const brightness = normalizePoolIconBrightness(
+        agent.identity.brightness ?? DEFAULT_POOL_ICON_BRIGHTNESS
+      )
+      updateIdentity(agent, {
+        iconKind: 'seed',
+        seed,
+        slug: undefined,
+        assetKey: undefined,
+        hue,
+        saturation,
+        brightness,
+        accent: accentFromHue(hue, brightness, saturation)
+      })
+    },
+    [updateIdentity]
   )
 
   const handleDelete = useCallback((agent: PooledAgent): void => {
@@ -213,26 +246,56 @@ export function AgentPoolContainer({
           <div className="agent-pool-editor-identity">
             <PooledAgentIcon agent={editing} size={40} />
             <div className="agent-pool-editor-identity-fields">
-              <CommittedDraftField
-                // Remount on a rejected (empty) commit so the field snaps back to
-                // the stored nickname instead of lingering visually blank — its
-                // `committed` prop is unchanged, so it won't otherwise re-sync.
-                key={`${editing.agentId}:${nickRejectNonce}`}
-                className="settings-roster-input agent-pool-nickname"
-                committed={editing.identity.nickname}
-                onCommit={(value) => {
-                  const next = value.trim()
-                  if (next) updateIdentity(editing, { nickname: next })
-                  else setNickRejectNonce((n) => n + 1)
-                }}
-                aria-label="Agent nickname"
-                placeholder="Nickname"
-                spellCheck={false}
-              />
+              <div className="agent-pool-editor-name-row">
+                <CommittedDraftField
+                  // Remount on a rejected (empty) commit so the field snaps back to
+                  // the stored nickname instead of lingering visually blank — its
+                  // `committed` prop is unchanged, so it won't otherwise re-sync.
+                  key={`${editing.agentId}:${nickRejectNonce}`}
+                  className="settings-roster-input agent-pool-nickname"
+                  committed={editing.identity.nickname}
+                  onCommit={(value) => {
+                    const next = value.trim()
+                    if (next) updateIdentity(editing, { nickname: next })
+                    else setNickRejectNonce((n) => n + 1)
+                  }}
+                  aria-label="Agent nickname"
+                  placeholder="Nickname"
+                  spellCheck={false}
+                />
+                <span className="agent-pool-icon-actions">
+                  <button
+                    type="button"
+                    className="agent-pool-mini-btn"
+                    onClick={() => setIconPickerOpen((open) => !open)}
+                    aria-expanded={iconPickerOpen}
+                    aria-label="Toggle icon picker"
+                  >
+                    Icon…
+                  </button>
+                  <button
+                    type="button"
+                    className="agent-pool-mini-btn"
+                    title="Reroll the procedural glyph + colour"
+                    onClick={() => shuffleIdentity(editing)}
+                  >
+                    Shuffle
+                  </button>
+                </span>
+                <button
+                  type="button"
+                  className="agent-pool-editor-close"
+                  onClick={() => setEditId(null)}
+                  aria-label="Close editor"
+                >
+                  Done
+                </button>
+              </div>
               <IdentityIconPicker
                 value={{
                   iconKind: editing.identity.iconKind,
                   hue: editing.identity.hue,
+                  saturation: editing.identity.saturation,
                   slug: editing.identity.slug,
                   seed: editing.identity.seed,
                   assetKey: editing.identity.assetKey,
@@ -245,6 +308,7 @@ export function AgentPoolContainer({
                   updateIdentity(editing, {
                     iconKind: next.iconKind,
                     hue: next.hue,
+                    saturation: next.saturation,
                     brightness: next.brightness,
                     slug: next.slug,
                     seed: next.seed,
@@ -252,10 +316,13 @@ export function AgentPoolContainer({
                     accent: next.accent
                   })
                 }
+                hideActions
+                isOpen={iconPickerOpen}
+                onOpenChange={setIconPickerOpen}
               />
               <label
                 className="agent-pool-hue-toggle"
-                title="Tint this icon with the selected hue and brightness. Off = monochrome."
+                title="Tint this icon with the selected hue, saturation, and luma. Off = monochrome."
               >
                 <input
                   type="checkbox"
@@ -268,14 +335,6 @@ export function AgentPoolContainer({
                 <span>Tint icon</span>
               </label>
             </div>
-            <button
-              type="button"
-              className="agent-pool-editor-close"
-              onClick={() => setEditId(null)}
-              aria-label="Close editor"
-            >
-              Done
-            </button>
           </div>
 
           <div className="agent-pool-editor-controls">

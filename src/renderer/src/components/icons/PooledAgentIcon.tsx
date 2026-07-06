@@ -12,6 +12,7 @@ import type { PooledAgentIdentitySnapshot } from '../../../../main/store/types'
 
 type IdentityColorSource = (PooledAgent['identity'] | PooledAgentIdentitySnapshot) & {
   brightness?: number
+  saturation?: number
 }
 
 interface PooledAgentIconProps {
@@ -24,13 +25,15 @@ interface PooledAgentIconProps {
 }
 
 function resolvedTintColor(identity: IdentityColorSource): string {
-  const hasUserBrightness =
-    typeof identity.brightness === 'number' && Number.isFinite(identity.brightness)
+  const hasUserTone =
+    (typeof identity.saturation === 'number' && Number.isFinite(identity.saturation)) ||
+    (typeof identity.brightness === 'number' && Number.isFinite(identity.brightness))
   return pooledIconColor(
-    hasUserBrightness ? identity.accent : undefined,
+    hasUserTone ? identity.accent : undefined,
     identity.hue,
     identity.hueEnabled,
-    identity.brightness
+    identity.brightness,
+    identity.saturation
   )
 }
 

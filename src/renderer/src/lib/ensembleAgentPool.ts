@@ -64,6 +64,8 @@ export type PooledAgentIdentity = {
   seed?: string
   /** 0-359, drives the accent (mirrors the manifest hue spirit). */
   hue: number
+  /** 0-100 HSL saturation control for the derived accent. Absent => legacy 65. */
+  saturation?: number
   /** 0-100 lightness control for the derived accent. Absent => legacy 58. */
   brightness?: number
   /** Optional explicit #RRGGBB override; otherwise derived from hue. */
@@ -141,6 +143,7 @@ export function hueForSeed(seed: string | null | undefined): number {
 }
 
 export const DEFAULT_POOL_ICON_BRIGHTNESS = 58
+export const DEFAULT_POOL_ICON_SATURATION = 65
 
 export type RgbColor = {
   r: number
@@ -151,11 +154,17 @@ export type RgbColor = {
 export type ParsedPoolColor = {
   accent: string
   hue: number
+  saturation: number
   brightness: number
 }
 
 export function normalizePoolIconBrightness(value: number | null | undefined): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) return DEFAULT_POOL_ICON_BRIGHTNESS
+  return Math.max(0, Math.min(100, Math.round(value)))
+}
+
+export function normalizePoolIconSaturation(value: number | null | undefined): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return DEFAULT_POOL_ICON_SATURATION
   return Math.max(0, Math.min(100, Math.round(value)))
 }
 
@@ -220,7 +229,7 @@ function parseRgbColorInput(value: string): RgbColor | undefined {
   }
 }
 
-function hueBrightnessFromRgb({ r, g, b }: RgbColor): Pick<ParsedPoolColor, 'hue' | 'brightness'> {
+function hslFromRgb({ r, g, b }: RgbColor): Pick<ParsedPoolColor, 'hue' | 'saturation' | 'brightness'> {
   const rn = r / 255
   const gn = g / 255
   const bn = b / 255
@@ -229,13 +238,16 @@ function hueBrightnessFromRgb({ r, g, b }: RgbColor): Pick<ParsedPoolColor, 'hue
   const delta = max - min
   const lightness = (max + min) / 2
   let hue = 0
+  let saturation = 0
   if (delta !== 0) {
     if (max === rn) hue = 60 * (((gn - bn) / delta) % 6)
     else if (max === gn) hue = 60 * ((bn - rn) / delta + 2)
     else hue = 60 * ((rn - gn) / delta + 4)
+    saturation = delta / (1 - Math.abs(2 * lightness - 1))
   }
   return {
     hue: normalizedHue(hue),
+    saturation: normalizePoolIconSaturation(saturation * 100),
     brightness: normalizePoolIconBrightness(lightness * 100)
   }
 }
@@ -247,17 +259,18 @@ export function parsePoolColorInput(value: string | null | undefined): ParsedPoo
   if (!rgb) return undefined
   return {
     accent: rgbToHex(rgb),
-    ...hueBrightnessFromRgb(rgb)
+    ...hslFromRgb(rgb)
   }
 }
 
-/** HSL(hue, 65%, brightness%) -> uppercase #RRGGBB. AgentIdentityIcon only accepts hex. */
+/** HSL(hue, saturation%, brightness%) -> uppercase #RRGGBB. AgentIdentityIcon only accepts hex. */
 export function accentFromHue(
   hue: number,
-  brightness = DEFAULT_POOL_ICON_BRIGHTNESS
+  brightness = DEFAULT_POOL_ICON_BRIGHTNESS,
+  saturation = DEFAULT_POOL_ICON_SATURATION
 ): string {
   const h = normalizedHue(hue)
-  const s = 0.65
+  const s = normalizePoolIconSaturation(saturation) / 100
   const l = normalizePoolIconBrightness(brightness) / 100
   const c = (1 - Math.abs(2 * l - 1)) * s
   const x = c * (1 - Math.abs(((h / 60) % 2) - 1))
@@ -286,10 +299,11 @@ export function pooledIconColor(
   accent: string | undefined,
   hue: number,
   hueEnabled?: boolean,
-  brightness?: number
+  brightness?: number,
+  saturation?: number
 ): string {
   if (hueEnabled === false) return POOL_ICON_NEUTRAL
-  return normalizeHexColor(accent) || accentFromHue(hue, brightness)
+  return normalizeHexColor(accent) || accentFromHue(hue, brightness, saturation)
 }
 
 export function pooledAgentIdentitySnapshot(agent: PooledAgent): PooledAgentIdentitySnapshot {
@@ -302,6 +316,9 @@ export function pooledAgentIdentitySnapshot(agent: PooledAgent): PooledAgentIden
     nickname,
     iconKind: identity.iconKind,
     hue: normalizedHue(identity.hue),
+    ...(typeof identity.saturation === 'number' && Number.isFinite(identity.saturation)
+      ? { saturation: normalizePoolIconSaturation(identity.saturation) }
+      : {}),
     ...(typeof identity.brightness === 'number' && Number.isFinite(identity.brightness)
       ? { brightness: normalizePoolIconBrightness(identity.brightness) }
       : {}),
@@ -357,7 +374,8 @@ export function pooledAgentIconProps(agent: PooledAgent): {
           identity.accent,
           identity.hue,
           identity.hueEnabled,
-          identity.brightness
+          identity.brightness,
+          identity.saturation
         )
       }
     }
@@ -369,7 +387,8 @@ export function pooledAgentIconProps(agent: PooledAgent): {
       identity.accent,
       identity.hue,
       identity.hueEnabled,
-      identity.brightness
+      identity.brightness,
+      identity.saturation
     )
   }
 }
@@ -474,6 +493,8 @@ function isPooledAgentIdentity(value: unknown): value is PooledAgentIdentity {
     (entry.iconKind === 'named' || entry.iconKind === 'seed' || entry.iconKind === 'asset') &&
     typeof entry.hue === 'number' &&
     Number.isFinite(entry.hue) &&
+    (entry.saturation === undefined ||
+      (typeof entry.saturation === 'number' && Number.isFinite(entry.saturation))) &&
     (entry.brightness === undefined ||
       (typeof entry.brightness === 'number' && Number.isFinite(entry.brightness)))
   )

@@ -89,6 +89,11 @@ const pooledAgentIdentityForMessage = (
     nickname,
     iconKind,
     hue: ((Math.round(hue) % 360) + 360) % 360,
+    ...(Number.isFinite(Number(record.saturation))
+      ? {
+          saturation: Math.max(0, Math.min(100, Math.round(Number(record.saturation))))
+        }
+      : {}),
     ...(Number.isFinite(Number(record.brightness))
       ? {
           brightness: Math.max(0, Math.min(100, Math.round(Number(record.brightness))))

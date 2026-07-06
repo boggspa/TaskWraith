@@ -697,6 +697,8 @@ export interface PooledAgentIdentitySnapshot {
   nickname: string
   iconKind: PooledAgentIconKind
   hue: number
+  /** 0-100 HSL saturation control for the derived accent. Absent => legacy 65. */
+  saturation?: number
   /** 0-100 lightness control for the derived accent. Absent => legacy 58. */
   brightness?: number
   accent?: string

@@ -11499,6 +11499,11 @@ function pooledAgentTranscriptMetadata(participant: EnsembleParticipant): Record
     nickname,
     iconKind,
     hue: ((Math.round(hue) % 360) + 360) % 360,
+    ...(Number.isFinite(Number(snapshot.saturation))
+      ? {
+          saturation: Math.max(0, Math.min(100, Math.round(Number(snapshot.saturation))))
+        }
+      : {}),
     ...(Number.isFinite(Number(snapshot.brightness))
       ? {
           brightness: Math.max(0, Math.min(100, Math.round(Number(snapshot.brightness))))

@@ -14,6 +14,8 @@ export type ProjectIcon = {
   seed?: string
   assetKey?: string
   accent?: string
+  saturation?: number
+  brightness?: number
 }
 
 export type Project = {
@@ -56,6 +58,13 @@ function normalizeHue(value: unknown): number {
   return ((Math.round(value) % 360) + 360) % 360
 }
 
+function normalizePercent(value: unknown): number | undefined {
+  if (typeof value !== 'number' || Number.isNaN(value) || !Number.isFinite(value)) {
+    return undefined
+  }
+  return Math.max(0, Math.min(100, Math.round(value)))
+}
+
 function normalizeParentId(parentId: unknown): string | null {
   if (parentId === null) return null
   if (typeof parentId === 'string' && parentId.trim().length > 0) return parentId.trim()
@@ -69,12 +78,16 @@ function normalizeIcon(icon?: ProjectIcon, seed = ''): ProjectIcon {
   if (icon.iconKind !== 'named' && icon.iconKind !== 'seed' && icon.iconKind !== 'asset') {
     return { iconKind: DEFAULT_PROJECT_ICON_KIND, seed }
   }
+  const saturation = normalizePercent(icon.saturation)
+  const brightness = normalizePercent(icon.brightness)
   return {
     iconKind: icon.iconKind,
     ...(icon.slug ? { slug: icon.slug } : {}),
     ...(icon.seed ? { seed: icon.seed } : {}),
     ...(icon.assetKey ? { assetKey: icon.assetKey } : {}),
-    ...(icon.accent ? { accent: icon.accent } : {})
+    ...(icon.accent ? { accent: icon.accent } : {}),
+    ...(saturation !== undefined ? { saturation } : {}),
+    ...(brightness !== undefined ? { brightness } : {})
   }
 }
 
@@ -96,7 +109,9 @@ function cloneIcon(icon: ProjectIcon): ProjectIcon {
     ...(icon.slug ? { slug: icon.slug } : {}),
     ...(icon.seed ? { seed: icon.seed } : {}),
     ...(icon.assetKey ? { assetKey: icon.assetKey } : {}),
-    ...(icon.accent ? { accent: icon.accent } : {})
+    ...(icon.accent ? { accent: icon.accent } : {}),
+    ...(typeof icon.saturation === 'number' ? { saturation: icon.saturation } : {}),
+    ...(typeof icon.brightness === 'number' ? { brightness: icon.brightness } : {})
   }
 }
 
@@ -116,7 +131,11 @@ function isProjectIcon(value: unknown): value is ProjectIcon {
     (typeof candidate.slug === 'undefined' || typeof candidate.slug === 'string') &&
     (typeof candidate.seed === 'undefined' || typeof candidate.seed === 'string') &&
     (typeof candidate.assetKey === 'undefined' || typeof candidate.assetKey === 'string') &&
-    (typeof candidate.accent === 'undefined' || typeof candidate.accent === 'string')
+    (typeof candidate.accent === 'undefined' || typeof candidate.accent === 'string') &&
+    (typeof candidate.saturation === 'undefined' ||
+      (typeof candidate.saturation === 'number' && Number.isFinite(candidate.saturation))) &&
+    (typeof candidate.brightness === 'undefined' ||
+      (typeof candidate.brightness === 'number' && Number.isFinite(candidate.brightness)))
   )
 }
 

@@ -169,6 +169,8 @@ function projectIdentity(project: Project): PooledAgentIdentitySnapshot {
     iconKind: project.icon.iconKind,
     hue: project.hue,
     accent: project.icon.accent,
+    saturation: project.icon.saturation,
+    brightness: project.icon.brightness,
     slug: project.icon.slug,
     assetKey: project.icon.assetKey,
     seed: project.icon.seed || project.id,
@@ -645,6 +647,8 @@ export function ProjectsSidebarView({
               value={{
                 iconKind: project.icon.iconKind,
                 hue: project.hue,
+                saturation: project.icon.saturation,
+                brightness: project.icon.brightness,
                 slug: project.icon.slug,
                 seed: project.icon.seed,
                 assetKey: project.icon.assetKey,
@@ -659,7 +663,9 @@ export function ProjectsSidebarView({
                       slug: next.slug,
                       seed: next.seed,
                       assetKey: next.assetKey,
-                      accent: next.accent
+                      accent: next.accent,
+                      saturation: next.saturation,
+                      brightness: next.brightness
                     },
                     hue: next.hue
                   })

@@ -7168,7 +7168,7 @@ input:disabled, select:disabled, textarea:disabled {
 
 .agent-pool-editor-identity {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 12px;
 }
 
@@ -7181,7 +7181,15 @@ input:disabled, select:disabled, textarea:disabled {
 }
 
 .agent-pool-nickname {
+  flex: 1 1 220px;
   max-width: 280px;
+}
+
+.agent-pool-editor-name-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
 }
 
 .agent-pool-icon-controls {
@@ -7189,6 +7197,13 @@ input:disabled, select:disabled, textarea:disabled {
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.agent-pool-icon-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
 }
 
 .agent-pool-mini-btn {
@@ -7220,11 +7235,16 @@ input:disabled, select:disabled, textarea:disabled {
 
 .agent-pool-color-controls {
   display: grid;
-  grid-template-columns: minmax(150px, 1fr) minmax(150px, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   align-items: center;
   gap: 8px 10px;
-  flex: 1 1 340px;
-  min-width: min(100%, 340px);
+  flex: 1 1 100%;
+  width: 100%;
+  min-width: min(100%, 520px);
+}
+
+.agent-pool-editor .agent-pool-color-controls {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .agent-pool-color-slider {
@@ -7236,13 +7256,17 @@ input:disabled, select:disabled, textarea:disabled {
 
 .agent-pool-color-slider input[type='range'] {
   flex: 1 1 auto;
-  min-width: 90px;
+  min-width: 76px;
+}
+
+.agent-pool-editor .agent-pool-color-slider input[type='range'] {
+  min-width: 104px;
 }
 
 .agent-pool-color-fields {
   grid-column: 1 / -1;
   display: grid;
-  grid-template-columns: 18px minmax(96px, 0.75fr) minmax(148px, 1fr);
+  grid-template-columns: 18px minmax(110px, 0.85fr) minmax(160px, 1fr);
   align-items: center;
   gap: 6px;
   min-width: 0;
@@ -7312,7 +7336,7 @@ input:disabled, select:disabled, textarea:disabled {
 
 .agent-pool-editor-close {
   flex: 0 0 auto;
-  align-self: flex-start;
+  margin-left: auto;
   border: 1px solid color-mix(in srgb, var(--text-primary) 16%, transparent);
   border-radius: 7px;
   background: transparent;

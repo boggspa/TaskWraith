@@ -243,9 +243,14 @@ describe('projectsStore membership', () => {
     const project = createProject({ name: 'Visualized' })
     const next = setProjectIconAndHue(project.id, {
       hue: 42,
-      icon: { iconKind: 'named', slug: 'demo-project-icon' }
+      icon: { iconKind: 'named', slug: 'demo-project-icon', saturation: 72.4, brightness: 41.6 }
     })
     expect(next.hue).toBe(42)
-    expect(next.icon).toEqual({ iconKind: 'named', slug: 'demo-project-icon' })
+    expect(next.icon).toEqual({
+      iconKind: 'named',
+      slug: 'demo-project-icon',
+      saturation: 72,
+      brightness: 42
+    })
   })
 })

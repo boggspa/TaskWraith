@@ -2,9 +2,11 @@ import { useEffect, useState, type KeyboardEvent, type JSX } from 'react'
 import {
   accentFromHue,
   DEFAULT_POOL_ICON_BRIGHTNESS,
+  DEFAULT_POOL_ICON_SATURATION,
   hueForSeed,
   normalizeHexColor,
   normalizePoolIconBrightness,
+  normalizePoolIconSaturation,
   parsePoolColorInput,
   POOL_ICON_NEUTRAL,
   rgbStringFromHexColor
@@ -28,6 +30,7 @@ export type IdentityIconKind = 'named' | 'seed' | 'asset'
 export type IdentityIconValue = {
   iconKind: IdentityIconKind
   hue: number
+  saturation?: number
   brightness?: number
   slug?: string
   seed?: string
@@ -64,22 +67,37 @@ function PoolAssetSwatch({
 export function IdentityIconPicker({
   value,
   seedBase,
+  hideActions = false,
+  isOpen: controlledIsOpen,
+  onOpenChange,
   onChange
 }: {
   value: IdentityIconValue
   seedBase?: string
+  hideActions?: boolean
+  isOpen?: boolean
+  onOpenChange?: (isOpen: boolean) => void
   onChange: (next: IdentityIconValue) => void
 }): JSX.Element {
-  const [isOpen, setIsOpen] = useState(false)
+  const [uncontrolledIsOpen, setUncontrolledIsOpen] = useState(false)
+  const isOpen = controlledIsOpen ?? uncontrolledIsOpen
+  const setIsOpen = (next: boolean | ((open: boolean) => boolean)): void => {
+    const resolved = typeof next === 'function' ? next(isOpen) : next
+    if (controlledIsOpen === undefined) setUncontrolledIsOpen(resolved)
+    onOpenChange?.(resolved)
+  }
   const safeHue = normalizeHue(value.hue)
   const tintEnabled = value.hueEnabled !== false
-  const fallbackBrightness =
-    parsePoolColorInput(value.accent)?.brightness ?? DEFAULT_POOL_ICON_BRIGHTNESS
+  const fallbackColorParts = parsePoolColorInput(value.accent)
+  const fallbackSaturation = fallbackColorParts?.saturation ?? DEFAULT_POOL_ICON_SATURATION
+  const fallbackBrightness = fallbackColorParts?.brightness ?? DEFAULT_POOL_ICON_BRIGHTNESS
+  const safeSaturation = normalizePoolIconSaturation(value.saturation ?? fallbackSaturation)
   const safeBrightness = normalizePoolIconBrightness(value.brightness ?? fallbackBrightness)
-  const hasUserBrightness =
-    typeof value.brightness === 'number' && Number.isFinite(value.brightness)
-  const explicitAccent = hasUserBrightness ? normalizeHexColor(value.accent) : undefined
-  const selectedAccent = explicitAccent ?? accentFromHue(safeHue, safeBrightness)
+  const hasUserTone =
+    (typeof value.saturation === 'number' && Number.isFinite(value.saturation)) ||
+    (typeof value.brightness === 'number' && Number.isFinite(value.brightness))
+  const explicitAccent = hasUserTone ? normalizeHexColor(value.accent) : undefined
+  const selectedAccent = explicitAccent ?? accentFromHue(safeHue, safeBrightness, safeSaturation)
   const previewAccent = tintEnabled ? selectedAccent : POOL_ICON_NEUTRAL
   const selectedRgbText = rgbStringFromHexColor(selectedAccent)
   const [hexDraft, setHexDraft] = useState(selectedAccent)
@@ -94,22 +112,37 @@ export function IdentityIconPicker({
     onChange({ ...value, ...next })
   }
 
-  const applyColor = (hue: number, brightness = safeBrightness): void => {
+  const applyColor = ({
+    hue = safeHue,
+    saturation = safeSaturation,
+    brightness = safeBrightness
+  }: {
+    hue?: number
+    saturation?: number
+    brightness?: number
+  }): void => {
     const nextHue = normalizeHue(hue)
+    const nextSaturation = normalizePoolIconSaturation(saturation)
     const nextBrightness = normalizePoolIconBrightness(brightness)
     apply({
       hue: nextHue,
+      saturation: nextSaturation,
       brightness: nextBrightness,
-      accent: accentFromHue(nextHue, nextBrightness)
+      accent: accentFromHue(nextHue, nextBrightness, nextSaturation)
     })
   }
 
   const colorPatchForPickedIcon = (
     bakedHue: number | undefined,
     bakedAccent: string | undefined
-  ): Pick<IdentityIconValue, 'hue' | 'brightness' | 'accent'> => {
+  ): Pick<IdentityIconValue, 'hue' | 'saturation' | 'brightness' | 'accent'> => {
     if (tintEnabled) {
-      return { hue: safeHue, brightness: safeBrightness, accent: selectedAccent }
+      return {
+        hue: safeHue,
+        saturation: safeSaturation,
+        brightness: safeBrightness,
+        accent: selectedAccent
+      }
     }
     const fallbackAccent = normalizeHexColor(bakedAccent)
     const fallbackHue = Number.isFinite(bakedHue) ? normalizeHue(bakedHue ?? safeHue) : safeHue
@@ -117,6 +150,7 @@ export function IdentityIconPicker({
     const fallbackColorParts = parsePoolColorInput(fallbackColor)
     return {
       hue: fallbackHue,
+      saturation: fallbackColorParts?.saturation ?? DEFAULT_POOL_ICON_SATURATION,
       brightness: fallbackColorParts?.brightness ?? DEFAULT_POOL_ICON_BRIGHTNESS,
       accent: fallbackColor
     }
@@ -128,7 +162,12 @@ export function IdentityIconPicker({
       setHexDraft(selectedAccent)
       return
     }
-    apply({ hue: next.hue, brightness: next.brightness, accent: next.accent })
+    apply({
+      hue: next.hue,
+      saturation: next.saturation,
+      brightness: next.brightness,
+      accent: next.accent
+    })
   }
 
   const commitRgbDraft = (): void => {
@@ -137,7 +176,12 @@ export function IdentityIconPicker({
       setRgbDraft(selectedRgbText)
       return
     }
-    apply({ hue: next.hue, brightness: next.brightness, accent: next.accent })
+    apply({
+      hue: next.hue,
+      saturation: next.saturation,
+      brightness: next.brightness,
+      accent: next.accent
+    })
   }
 
   const blurOnEnter =
@@ -151,35 +195,40 @@ export function IdentityIconPicker({
   return (
     <div>
       <div className="agent-pool-icon-controls">
-        <button
-          type="button"
-          className="agent-pool-mini-btn"
-          onClick={() => setIsOpen((open) => !open)}
-          aria-expanded={isOpen}
-          aria-label="Toggle icon picker"
-        >
-          Icon…
-        </button>
-        <button
-          type="button"
-          className="agent-pool-mini-btn"
-          title="Reroll the procedural glyph + colour"
-          onClick={() => {
-            const seed = shuffleIdentitySeed(seedBase)
-            const hue = hueForSeed(seed)
-            apply({
-              iconKind: 'seed',
-              seed,
-              slug: undefined,
-              assetKey: undefined,
-              hue,
-              brightness: safeBrightness,
-              accent: accentFromHue(hue, safeBrightness)
-            })
-          }}
-        >
-          Shuffle
-        </button>
+        {!hideActions && (
+          <span className="agent-pool-icon-actions">
+            <button
+              type="button"
+              className="agent-pool-mini-btn"
+              onClick={() => setIsOpen((open) => !open)}
+              aria-expanded={isOpen}
+              aria-label="Toggle icon picker"
+            >
+              Icon…
+            </button>
+            <button
+              type="button"
+              className="agent-pool-mini-btn"
+              title="Reroll the procedural glyph + colour"
+              onClick={() => {
+                const seed = shuffleIdentitySeed(seedBase)
+                const hue = hueForSeed(seed)
+                apply({
+                  iconKind: 'seed',
+                  seed,
+                  slug: undefined,
+                  assetKey: undefined,
+                  hue,
+                  saturation: safeSaturation,
+                  brightness: safeBrightness,
+                  accent: accentFromHue(hue, safeBrightness, safeSaturation)
+                })
+              }}
+            >
+              Shuffle
+            </button>
+          </span>
+        )}
         <div className="agent-pool-color-controls">
           <label className="agent-pool-color-slider">
             <span className="agent-pool-hue-label">Hue</span>
@@ -190,20 +239,31 @@ export function IdentityIconPicker({
               value={safeHue}
               onChange={(event) => {
                 const hue = Number(event.target.value)
-                applyColor(hue)
+                applyColor({ hue })
               }}
               aria-label="Icon hue"
             />
           </label>
           <label className="agent-pool-color-slider">
-            <span className="agent-pool-hue-label">Brightness</span>
+            <span className="agent-pool-hue-label">Saturation</span>
+            <input
+              type="range"
+              min={0}
+              max={100}
+              value={safeSaturation}
+              onChange={(event) => applyColor({ saturation: Number(event.target.value) })}
+              aria-label="Icon saturation"
+            />
+          </label>
+          <label className="agent-pool-color-slider">
+            <span className="agent-pool-hue-label">Luma</span>
             <input
               type="range"
               min={0}
               max={100}
               value={safeBrightness}
-              onChange={(event) => applyColor(safeHue, Number(event.target.value))}
-              aria-label="Icon brightness"
+              onChange={(event) => applyColor({ brightness: Number(event.target.value) })}
+              aria-label="Icon luma"
             />
           </label>
           <div className="agent-pool-color-fields">
