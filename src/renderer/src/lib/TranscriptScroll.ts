@@ -352,6 +352,35 @@ export function shouldTreatScrollAsUserScrollAway(input: {
 }
 
 /**
+ * Synchronous DOM guard for layout-effect and rAF snap paths. The scroll
+ * listener coalesces its evaluate pass, so `autoFollowRef` can still read
+ * "follow" when a committed message update runs before the listener has
+ * recorded the user's new scroll position. Compare the last recorded
+ * scrollTop against the live scroller using the same predicate as the
+ * scroll listener's immediate scroll-away branch.
+ */
+export function shouldAbortAutoFollowSnap(input: {
+  lastRecordedScrollTop: number
+  currentScrollTop: number
+  scrollHeight: number
+  clientHeight: number
+  expectedProgrammaticScrollTop: number | null | undefined
+}): boolean {
+  const distanceFromBottom =
+    input.scrollHeight - input.currentScrollTop - input.clientHeight
+  const isProgrammatic = isExpectedProgrammaticScroll({
+    expectedScrollTop: input.expectedProgrammaticScrollTop,
+    nextScrollTop: input.currentScrollTop
+  })
+  return shouldTreatScrollAsUserScrollAway({
+    previousScrollTop: input.lastRecordedScrollTop,
+    nextScrollTop: input.currentScrollTop,
+    distanceFromBottom,
+    isProgrammatic
+  })
+}
+
+/**
  * Decide whether a post-frame re-pin should fire after a messages
  * update. Re-pinning is only valuable when auto-follow is still
  * engaged _and_ we have not observed a deliberate user scroll-away

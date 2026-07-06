@@ -8,6 +8,7 @@ import {
   expectedBottomScrollTop,
   isExpectedProgrammaticScroll,
   restoreChatScrollStateWhenReady,
+  shouldAbortAutoFollowSnap,
   shouldDisengageAutoFollow,
   shouldReengageAutoFollowAfterScroll,
   shouldRepinAfterCodeBlockResize,
@@ -179,6 +180,31 @@ export function useTranscriptScrollState({
       scheduleProgrammaticScrollTargetClear()
     },
     [scheduleProgrammaticScrollTargetClear]
+  )
+
+  const disengageIfLiveScrollShowsUserAway = useCallback(
+    (scroller: HTMLElement): boolean => {
+      const nextScrollTop = scroller.scrollTop
+      if (
+        !shouldAbortAutoFollowSnap({
+          lastRecordedScrollTop: lastTranscriptScrollTopRef.current,
+          currentScrollTop: nextScrollTop,
+          scrollHeight: scroller.scrollHeight,
+          clientHeight: scroller.clientHeight,
+          expectedProgrammaticScrollTop: programmaticScrollTargetRef.current
+        })
+      ) {
+        return false
+      }
+      clearProgrammaticScrollTarget()
+      autoFollowRef.current = false
+      userScrolledAwayInFrameRef.current = true
+      jumpInFlightRef.current = false
+      downwardIntentAtRef.current = 0
+      lastTranscriptScrollTopRef.current = nextScrollTop
+      return true
+    },
+    [clearProgrammaticScrollTarget]
   )
 
   const beginManualTranscriptJump = useCallback(() => {
@@ -382,6 +408,7 @@ export function useTranscriptScrollState({
         rafId = null
         const node = transcriptScrollRef.current
         if (!node) return
+        if (disengageIfLiveScrollShowsUserAway(node)) return
         if (
           !shouldRepinAfterCodeBlockResize({
             autoFollow: autoFollowRef.current,
@@ -399,7 +426,7 @@ export function useTranscriptScrollState({
       scroller.removeEventListener(CODE_BLOCK_RESIZE_EVENT, onCodeBlockResize)
       if (rafId !== null) cancelAnimationFrame(rafId)
     }
-  }, [chatId, snapScrollToBottom])
+  }, [chatId, disengageIfLiveScrollShowsUserAway, snapScrollToBottom])
 
   useEffect(() => {
     const scroller = transcriptScrollRef.current
@@ -414,6 +441,7 @@ export function useTranscriptScrollState({
         rafId = null
         const node = transcriptScrollRef.current
         if (!node) return
+        if (disengageIfLiveScrollShowsUserAway(node)) return
         if (
           !shouldRepinAfterTranscriptResize({
             autoFollow: autoFollowRef.current,
@@ -431,7 +459,7 @@ export function useTranscriptScrollState({
       observer.disconnect()
       if (rafId !== null) cancelAnimationFrame(rafId)
     }
-  }, [chatId, snapScrollToBottom])
+  }, [chatId, disengageIfLiveScrollShowsUserAway, snapScrollToBottom])
 
   useLayoutEffect(() => {
     const currentMessageCount = messages?.length ?? 0
@@ -464,12 +492,17 @@ export function useTranscriptScrollState({
       incrementUnreadIfNewMessagesArrived()
       return
     }
+    if (disengageIfLiveScrollShowsUserAway(scroller)) {
+      incrementUnreadIfNewMessagesArrived()
+      return
+    }
     userScrolledAwayInFrameRef.current = false
     snapScrollToBottom(scroller)
     repinRafIdRef.current = requestAnimationFrame(() => {
       repinRafIdRef.current = null
       const node = transcriptScrollRef.current
       if (!node) return
+      if (disengageIfLiveScrollShowsUserAway(node)) return
       if (
         !shouldRepinAfterFrame({
           autoFollow: autoFollowRef.current,
@@ -486,7 +519,7 @@ export function useTranscriptScrollState({
         repinRafIdRef.current = null
       }
     }
-  }, [chatId, messages, runCompleteNotice, snapScrollToBottom])
+  }, [chatId, disengageIfLiveScrollShowsUserAway, messages, runCompleteNotice, snapScrollToBottom])
 
   useEffect(() => {
     const scroller = transcriptScrollRef.current

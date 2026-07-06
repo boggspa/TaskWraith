@@ -14,6 +14,7 @@ import {
   shouldReengageAutoFollowAfterScroll,
   shouldDisengageAutoFollow,
   shouldTreatScrollAsUserScrollAway,
+  shouldAbortAutoFollowSnap,
   shouldRepinAfterFrame,
   shouldRepinAfterCodeBlockResize,
   shouldRepinAfterTranscriptResize,
@@ -553,6 +554,56 @@ describe('TranscriptScroll', () => {
           nextScrollTop: 4700,
           distanceFromBottom: Number.NaN,
           isProgrammatic: false
+        })
+      ).toBe(false)
+    })
+  })
+
+  describe('shouldAbortAutoFollowSnap', () => {
+    it('allows pinned streaming growth when scrollTop moves down at the live edge', () => {
+      expect(
+        shouldAbortAutoFollowSnap({
+          lastRecordedScrollTop: 4800,
+          currentScrollTop: 5200,
+          scrollHeight: 5400,
+          clientHeight: 200,
+          expectedProgrammaticScrollTop: null
+        })
+      ).toBe(false)
+    })
+
+    it('blocks a snap when live scrollTop moved upward before the layout effect', () => {
+      expect(
+        shouldAbortAutoFollowSnap({
+          lastRecordedScrollTop: 5200,
+          currentScrollTop: 4700,
+          scrollHeight: 5400,
+          clientHeight: 200,
+          expectedProgrammaticScrollTop: null
+        })
+      ).toBe(true)
+    })
+
+    it('does not treat a programmatic anchor write as user scroll-away', () => {
+      expect(
+        shouldAbortAutoFollowSnap({
+          lastRecordedScrollTop: 5200,
+          currentScrollTop: 4700,
+          scrollHeight: 5400,
+          clientHeight: 200,
+          expectedProgrammaticScrollTop: 4700
+        })
+      ).toBe(false)
+    })
+
+    it('does not block a deliberate downward return near the live edge', () => {
+      expect(
+        shouldAbortAutoFollowSnap({
+          lastRecordedScrollTop: 4700,
+          currentScrollTop: 5180,
+          scrollHeight: 5400,
+          clientHeight: 200,
+          expectedProgrammaticScrollTop: null
         })
       ).toBe(false)
     })
