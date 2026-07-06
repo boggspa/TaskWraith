@@ -49,7 +49,7 @@ function pack(id: string, proposals: MemoryProposal[], over: Partial<MemoryPropo
 }
 
 function makeStore(seedPacks: MemoryProposalPack[]) {
-  let packs = seedPacks.map((item) => ({ ...item, proposals: [...item.proposals] }))
+  const packs = seedPacks.map((item) => ({ ...item, proposals: [...item.proposals] }))
 
   return {
     getMemoryProposalPacks: vi.fn((workspaceId?: string) =>

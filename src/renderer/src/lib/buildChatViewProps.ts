@@ -33,6 +33,7 @@ export interface BuildChatViewPropsInput {
   contextCompactionProgress?: TranscriptPanelProps['contextCompactionProgress']
   onAgentQuestionSubmit?: TranscriptPanelProps['onAgentQuestionSubmit']
   onAgentQuestionDismiss?: TranscriptPanelProps['onAgentQuestionDismiss']
+  onEnsemblePollVote?: TranscriptPanelProps['onEnsemblePollVote']
   chats: TranscriptPanelProps['chats']
   runningChatIds: TranscriptPanelProps['runningChatIds']
   compactDensity: boolean
@@ -91,6 +92,7 @@ export function buildChatViewProps(input: BuildChatViewPropsInput): TranscriptPa
     contextCompactionProgress: input.contextCompactionProgress ?? [],
     onAgentQuestionSubmit: input.onAgentQuestionSubmit ?? NOOP_AGENT_QUESTION,
     onAgentQuestionDismiss: input.onAgentQuestionDismiss ?? NOOP,
+    onEnsemblePollVote: input.onEnsemblePollVote,
     runCompleteNotice: input.runCompleteNotice,
     runCompleteDurationText: null,
     currentChat: input.chat,

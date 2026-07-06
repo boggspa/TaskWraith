@@ -25,7 +25,11 @@ describe('TaskWraith MCP tool registry', () => {
     const bossmanControl = createTaskWraithMcpToolDefinitions().find(
       (tool) => tool.name === 'ensemble_bossman_control'
     )
-    const actionEnum = bossmanControl?.inputSchema.properties?.action?.enum
+    expect(bossmanControl).toBeDefined()
+    const inputSchema = bossmanControl!.inputSchema as {
+      properties?: { action?: { enum?: string[] } }
+    }
+    const actionEnum = inputSchema.properties?.action?.enum
 
     expect(actionEnum).toEqual(
       expect.arrayContaining([

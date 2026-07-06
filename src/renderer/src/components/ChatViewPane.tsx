@@ -191,6 +191,7 @@ export function chatViewPanePropsEqual(a: ChatViewPaneProps, b: ChatViewPaneProp
     // Transcript handlers (the composer's own handlers moved into <Composer>).
     a.onAgentQuestionSubmit === b.onAgentQuestionSubmit &&
     a.onAgentQuestionDismiss === b.onAgentQuestionDismiss &&
+    a.onEnsemblePollVote === b.onEnsemblePollVote &&
     a.onPlanChoiceSubmit === b.onPlanChoiceSubmit &&
     a.onOpenSubThreadInSidePanel === b.onOpenSubThreadInSidePanel &&
     a.onOpenSideChatFromMessage === b.onOpenSideChatFromMessage &&

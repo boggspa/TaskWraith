@@ -11,7 +11,7 @@ Local Ollama models call any tool by emitting exactly one JSON object per turn:
 {"taskwraith_tool":{"name":"<tool>","arguments":{ ... }}}
 ```
 
-The 154 tools below are the full TaskWraith surface, generated from the tool catalog so this reference cannot drift from what the app actually grants. Every mutating tool (file edits, shell, publishing) is gated by your run's permission role, and paths must stay inside the active workspace.
+The 155 tools below are the full TaskWraith surface, generated from the tool catalog so this reference cannot drift from what the app actually grants. Every mutating tool (file edits, shell, publishing) is gated by your run's permission role, and paths must stay inside the active workspace.
 
 ## run_shell_command
 
@@ -779,12 +779,21 @@ In Ensemble Mode, ask multiple participants to run in parallel lanes and wait fo
 
 ## ensemble_bossman_control
 
-In Ensemble Mode, allows the assigned Boss participant, or Captain only after Boss is unavailable, to make event-bound orchestration decisions: skip/stop participants, replace a participant after provider health checks, reorder the remaining queue with cooldown, queue a follow-up, or pause/complete a managed Work Session. Non-authority callers and stale round/run/participant ids are rejected and audited.
+In Ensemble Mode, allows the assigned Boss participant, or Captain only after Boss is unavailable, to make bounded event-bound orchestration decisions: assign work, set the round plan, request status, declare decisions, set review gates, quarantine noisy/unavailable participants, allocate budgets, create polls, adjust hops, schedule wakeups, check quota reset status, skip/stop participants, explicitly re-summon an already-answered participant in Continuous mode, replace a participant after provider health checks, reorder the remaining queue with cooldown, queue a follow-up, or pause/complete a managed Work Session. Non-authority callers and stale round/run/participant ids are rejected and audited.
 
 - Access: governed by your run permission role
 - Required args: action
-- Optional args: roundId, targetParticipantId, targetRunId, participantIds, prompt, reason, replacement
+- Optional args: roundId, targetParticipantId, targetRunId, participantIds, prompt, reason, objective, acceptanceCriteria, due, assignmentStatus, assignmentId, gateId, pollId, budgetId, goal, phase, blockers, doneCriteria, decision, rationale, reopenCriteria, scope, reviewStatus, category, quarantineScope, clear, maxExtraTurns, maxFanoutCalls, maxDurationSeconds, maxTokens, question, options, includeUser, timeoutSeconds, hopDelta, maxContinuationHops, delaySeconds, provider, replacement
 - Example: `{"taskwraith_tool":{"name":"ensemble_bossman_control","arguments":{"action":"text"}}}`
+
+## ensemble_poll_response
+
+In Ensemble Mode, cast or update this participant’s response to an open Boss/Captain poll created by ensemble_bossman_control({ action: "create_poll" }). Active participant runs only. The choice must match one of the poll options.
+
+- Access: governed by your run permission role
+- Required args: pollId, choice
+- Optional args: rationale
+- Example: `{"taskwraith_tool":{"name":"ensemble_poll_response","arguments":{"pollId":"text","choice":"text"}}}`
 
 ## ensemble_roster_edit
 

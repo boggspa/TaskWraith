@@ -13,6 +13,6 @@ for (const dir of directories) {
     console.error(`[clean-dist] refusing to remove path outside repo: ${absolute}`)
     process.exit(2)
   }
-  fs.rmSync(absolute, { recursive: true, force: true })
+  fs.rmSync(absolute, { recursive: true, force: true, maxRetries: 10, retryDelay: 250 })
   console.log(`[clean-dist] removed ${path.relative(repoRoot, absolute) || absolute}`)
 }

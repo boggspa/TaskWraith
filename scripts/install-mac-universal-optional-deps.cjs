@@ -10,6 +10,18 @@ const DARWIN_CLAUDE_SDK_PACKAGES = [
   '@anthropic-ai/claude-agent-sdk-darwin-x64'
 ]
 
+const DARWIN_NODE_PTY_PREBUILDS = [
+  path.join('prebuilds', 'darwin-arm64', 'pty.node'),
+  path.join('prebuilds', 'darwin-arm64', 'spawn-helper'),
+  path.join('prebuilds', 'darwin-x64', 'pty.node'),
+  path.join('prebuilds', 'darwin-x64', 'spawn-helper')
+]
+
+const DARWIN_NODE_PTY_EXECUTABLE_PREBUILDS = [
+  path.join('prebuilds', 'darwin-arm64', 'spawn-helper'),
+  path.join('prebuilds', 'darwin-x64', 'spawn-helper')
+]
+
 function resolveDarwinClaudeSdkPackages(lock) {
   const packages = lock && typeof lock === 'object' ? lock.packages || {} : {}
   return DARWIN_CLAUDE_SDK_PACKAGES.map((name) => {
@@ -27,6 +39,31 @@ function missingPackageSpecs(repoRoot, packages) {
 
 function packageDir(repoRoot, name) {
   return path.join(repoRoot, 'node_modules', ...name.split('/'))
+}
+
+function ensureDarwinNodePtyPrebuilds(repoRoot) {
+  const nodePtyDir = packageDir(repoRoot, 'node-pty')
+  const missing = DARWIN_NODE_PTY_PREBUILDS.filter((relativePath) => {
+    return !fs.existsSync(path.join(nodePtyDir, relativePath))
+  })
+  if (missing.length > 0) {
+    throw new Error(`Missing node-pty Darwin prebuilds: ${missing.join(', ')}`)
+  }
+  for (const relativePath of DARWIN_NODE_PTY_EXECUTABLE_PREBUILDS) {
+    const helperPath = path.join(nodePtyDir, relativePath)
+    const mode = fs.statSync(helperPath).mode & 0o777
+    if ((mode & 0o111) !== 0o111) {
+      fs.chmodSync(helperPath, mode | 0o755)
+    }
+  }
+  return DARWIN_NODE_PTY_PREBUILDS
+}
+
+function pruneMacNodePtyHostBuild(repoRoot) {
+  const buildDir = path.join(packageDir(repoRoot, 'node-pty'), 'build')
+  const existed = fs.existsSync(buildDir)
+  fs.rmSync(buildDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 250 })
+  return existed
 }
 
 function missingPackages(repoRoot, packages) {
@@ -92,16 +129,24 @@ function ensureMacUniversalOptionalDeps({
   const lock = JSON.parse(fs.readFileSync(lockPath, 'utf8'))
   const packages = resolveDarwinClaudeSdkPackages(lock)
   const missing = missingPackages(repoRoot, packages)
-  if (missing.length === 0) {
-    return { installed: false, reason: 'already present', specs: [] }
-  }
 
   for (const packageInfo of missing) {
     installPackageFromPack({ repoRoot, npmCommand, exec, packageInfo })
   }
+  ensureDarwinNodePtyPrebuilds(repoRoot)
+  const prunedNodePtyHostBuild = pruneMacNodePtyHostBuild(repoRoot)
+  if (missing.length === 0) {
+    return {
+      installed: false,
+      reason: prunedNodePtyHostBuild ? 'already present; pruned node-pty host build' : 'already present',
+      prunedNodePtyHostBuild,
+      specs: []
+    }
+  }
   return {
     installed: true,
     reason: 'installed missing packages',
+    prunedNodePtyHostBuild,
     specs: missing.map(({ spec }) => spec)
   }
 }
@@ -121,10 +166,14 @@ if (require.main === module) {
 
 module.exports = {
   DARWIN_CLAUDE_SDK_PACKAGES,
+  DARWIN_NODE_PTY_EXECUTABLE_PREBUILDS,
+  DARWIN_NODE_PTY_PREBUILDS,
+  ensureDarwinNodePtyPrebuilds,
   ensureMacUniversalOptionalDeps,
   installPackageFromPack,
   missingPackageSpecs,
   missingPackages,
   parseNpmPackOutput,
+  pruneMacNodePtyHostBuild,
   resolveDarwinClaudeSdkPackages
 }

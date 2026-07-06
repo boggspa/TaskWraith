@@ -80,6 +80,15 @@ function assertFile(filePath, label) {
   }
 }
 
+function assertExecutable(filePath, label) {
+  assertFile(filePath, label)
+  try {
+    fs.accessSync(filePath, fs.constants.X_OK)
+  } catch {
+    fail(`${label} is not executable: ${filePath}`)
+  }
+}
+
 function assertDir(dirPath, label) {
   if (!fs.existsSync(dirPath) || !fs.statSync(dirPath).isDirectory()) {
     fail(`Missing ${label}: ${dirPath}`)
@@ -444,8 +453,15 @@ function validateMacNodePtyBindings(unpackedDir, expectedArchs) {
     ]
     for (const prebuild of requiredPrebuilds) {
       const prebuildPath = path.join(nodePtyDir, 'prebuilds', prebuild.pathArch, 'pty.node')
+      const spawnHelperPath = path.join(
+        nodePtyDir,
+        'prebuilds',
+        prebuild.pathArch,
+        'spawn-helper'
+      )
       assertFile(prebuildPath, `node-pty ${prebuild.pathArch} prebuild`)
       verifyMachOArchitectures(prebuildPath, [prebuild.machArch], `node-pty ${prebuild.pathArch}`)
+      assertExecutable(spawnHelperPath, `node-pty ${prebuild.pathArch} spawn-helper`)
     }
   }
 }

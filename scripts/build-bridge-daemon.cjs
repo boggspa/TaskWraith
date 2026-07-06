@@ -131,7 +131,9 @@ function showBinPath(scratchPath, triple) {
 }
 
 function runSwift(args, options = {}) {
-  return spawnSync('swift', args, {
+  const swiftArgs =
+    args[0] === 'build' ? ['build', '--disable-sandbox', ...args.slice(1)] : args
+  return spawnSync('swift', swiftArgs, {
     ...options,
     env: {
       ...process.env,
