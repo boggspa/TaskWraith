@@ -281,6 +281,20 @@ export function AgentPoolContainer({
                   >
                     Shuffle
                   </button>
+                  <label
+                    className="agent-pool-hue-toggle"
+                    title="Tint this icon with the selected hue, saturation, and luma. Off = monochrome."
+                  >
+                    <input
+                      type="checkbox"
+                      checked={editing.identity.hueEnabled ?? true}
+                      onChange={(event) =>
+                        updateIdentity(editing, { hueEnabled: event.target.checked })
+                      }
+                      aria-label="Tint icon with accent colour"
+                    />
+                    <span>Tint icon</span>
+                  </label>
                 </span>
                 <button
                   type="button"
@@ -320,20 +334,6 @@ export function AgentPoolContainer({
                 isOpen={iconPickerOpen}
                 onOpenChange={setIconPickerOpen}
               />
-              <label
-                className="agent-pool-hue-toggle"
-                title="Tint this icon with the selected hue, saturation, and luma. Off = monochrome."
-              >
-                <input
-                  type="checkbox"
-                  checked={editing.identity.hueEnabled ?? true}
-                  onChange={(event) =>
-                    updateIdentity(editing, { hueEnabled: event.target.checked })
-                  }
-                  aria-label="Tint icon with accent colour"
-                />
-                <span>Tint icon</span>
-              </label>
             </div>
           </div>
 

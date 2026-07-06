@@ -7313,11 +7313,12 @@ input:disabled, select:disabled, textarea:disabled {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  margin-top: 6px;
+  margin: 0 0 0 2px;
   font-size: 11px;
   color: var(--text-secondary);
   cursor: pointer;
   user-select: none;
+  white-space: nowrap;
 }
 
 .agent-pool-hue-toggle input {
