@@ -4,6 +4,10 @@ import * as path from 'path'
 import { coerceLiveProvider, DEFAULT_PROVIDER } from '../../shared/retiredProviders'
 import { redactSecrets } from '../../shared/secretRedaction'
 import { DEFAULT_DIFF_STAT_COLORS, normalizeDiffStatColors } from '../../shared/diffStatColors'
+import {
+  normalizeSystemThemeAppearance,
+  resolveSystemThemeAppearance
+} from '../../shared/systemThemeAppearance'
 import { isRetiredExternalChannelInboundMessage } from '../LegacyExternalChannelHistory'
 import type { TaskWraithPluginResourceProvenance } from '../../shared/plugins/PluginTypes'
 import type { UnattendedElevationAck } from '../UnattendedPostureGate'
@@ -1914,9 +1918,14 @@ export class AppStore {
     const storedApprovalTimeouts = objectOrUndefined(stored.approvalTimeouts)
     const storedApprovalTimeoutProviderMs = objectOrUndefined(storedApprovalTimeouts?.perProviderMs)
     const pendingUpdateChangelog = normalizeUpdateChangelog(stored.pendingUpdateChangelog)
+    const themeAppearance = resolveSystemThemeAppearance(
+      stored.themeAppearance,
+      defaultSettings.themeAppearance
+    ) as AppSettings['themeAppearance']
     return {
       ...defaultSettings,
       ...stored,
+      themeAppearance,
       providerRunPauses: sanitizeProviderRunPauses(stored.providerRunPauses),
       advancedFx: {
         ...defaultSettings.advancedFx,
@@ -2017,6 +2026,9 @@ export class AppStore {
   static updateSettings(partial: Partial<AppSettings>) {
     const current = this.getSettings()
     const next = stripRetiredSettingsKeys({ ...current, ...partial } as Record<string, unknown>)
+    if (typeof next.themeAppearance === 'string') {
+      next.themeAppearance = normalizeSystemThemeAppearance(next.themeAppearance)
+    }
     const localHistoryDisabled =
       Object.prototype.hasOwnProperty.call(partial, 'storeLocalChatHistory') &&
       current.storeLocalChatHistory !== false &&

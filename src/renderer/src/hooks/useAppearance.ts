@@ -15,6 +15,10 @@ import type { DiffStatColors } from '../../../shared/diffStatColors'
 import type { AppIconVariant } from '../../../shared/iconVariants'
 import { DEFAULT_DIFF_STAT_COLORS, normalizeDiffStatColors } from '../../../shared/diffStatColors'
 import {
+  normalizeSystemThemeAppearance,
+  resolveSystemThemeAppearance
+} from '../../../shared/systemThemeAppearance'
+import {
   COMPOSER_FONT_MATCH_TRANSCRIPT,
   FONT_STACKS,
   normalizeComposerFontFamily,
@@ -210,10 +214,17 @@ export function useAppearance() {
           typeof settings.funFxEnabled === 'boolean'
             ? settings.funFxEnabled
             : legacyFunFx.funFxEnabled
+        const themeAppearance = resolveSystemThemeAppearance(
+          settings.themeAppearance,
+          'system'
+        ) as ThemeAppearance
+        if (settings.themeAppearance && settings.themeAppearance !== themeAppearance) {
+          window.api.updateSettings({ themeAppearance }).catch(() => {})
+        }
         setState({
           mode: settings.appearanceMode || 'soft_glass',
           visualEffectStyle: settings.visualEffectStyle || 'auto',
-          themeAppearance: settings.themeAppearance || 'system',
+          themeAppearance,
           themeCornerStyle: settings.themeCornerStyle || 'rounded',
           themeAccentStyle: settings.themeAccentStyle || 'system',
           toolIconAccent: settings.toolIconAccent || 'system',
@@ -404,6 +415,7 @@ export function useAppearance() {
             ? normalizeAdvancedFx(partial.advancedFx, prev.advancedFx.intensity)
             : prev.advancedFx
         }
+        next.themeAppearance = normalizeSystemThemeAppearance(next.themeAppearance) as ThemeAppearance
         next.inspectorWidth = normalizeAppearanceDimension(
           next.inspectorWidth,
           DEFAULT_INSPECTOR_WIDTH,

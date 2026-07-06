@@ -520,9 +520,7 @@ const SIDEBAR_SYSTEM_THEME_OPTIONS: Array<{ value: ThemeAppearance; label: strin
   { value: 'cyber', label: 'Cyber' },
   { value: 'candy', label: 'Candy' },
   { value: 'mist', label: 'Mist' },
-  { value: 'sage', label: 'Sage' },
-  { value: 'obsidian', label: 'Obsidian' },
-  { value: 'alabaster', label: 'Alabaster' }
+  { value: 'sage', label: 'Sage' }
 ]
 
 const SIDEBAR_TOOL_ICON_OPTIONS: Array<{ value: ToolIconAccent; label: string }> = [

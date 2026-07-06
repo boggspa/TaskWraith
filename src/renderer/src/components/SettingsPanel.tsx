@@ -503,16 +503,7 @@ const THEME_OPTIONS: Array<{ value: ThemeAppearance; label: string }> = [
   { value: 'cyber', label: 'Cyber' },
   { value: 'candy', label: 'Candy' },
   { value: 'mist', label: 'Mist' },
-  { value: 'sage', label: 'Sage' },
-  // 1.0.5-EW54 — "Obsidian": charcoal base + warm dusk halos +
-  // crisp lit rim borders. The "premium postmodern" reading of
-  // dark mode (vs Graphite's colder old-aqua palette).
-  { value: 'obsidian', label: 'Obsidian' },
-  // 1.0.5-EW61 — "Alabaster": polar inverse of obsidian. Cream
-  // near-white base, cool lavender halos, crisp charcoal rim
-  // borders, dark-translucent sidebar (the inverse bizarre
-  // twin to obsidian's light-on-dark sidebar move).
-  { value: 'alabaster', label: 'Alabaster' }
+  { value: 'sage', label: 'Sage' }
 ]
 const ACCENT_OPTIONS: Array<{ value: ThemeAccentStyle; label: string }> = [
   { value: 'system', label: 'System' },
@@ -646,26 +637,24 @@ const COMPOSER_STYLE_OPTIONS: Array<{ value: ComposerStyle; label: string; helpe
     (Ensemble chip strip, queued messages, Create-PR, secondary
     workspace pill) inherit the same chrome + corner radius, so
     the composer area reads as one black-with-white-rim family.
-    Pairs natively with the Obsidian theme.
   */
   {
     value: 'obsidian',
     label: 'Obsidian',
     helper:
-      'Pure black fill with a crisp white rim highlight, slow rim shimmer chase, and matching chrome on the detached rows above. Pairs with the Obsidian theme.'
+      'Pure black fill with a crisp white rim highlight, slow rim shimmer chase, and matching chrome on the detached rows above.'
   },
   /*
     1.0.5-EW61 — "Alabaster" composer style. Polar inverse of
     obsidian: cream fill, charcoal 2px rim, slow black/charcoal
     rim-chase, warm-cream outer glow. Theme-immune subtree
-    (locks light-mode tokens regardless of app theme). Pairs
-    with the Alabaster theme.
+    (locks light-mode tokens regardless of app theme).
   */
   {
     value: 'alabaster',
     label: 'Alabaster',
     helper:
-      'Cream fill with a crisp charcoal rim, slow black rim shimmer chase, and matching chrome on the detached rows above. Pairs with the Alabaster theme.'
+      'Cream fill with a crisp charcoal rim, slow black rim shimmer chase, and matching chrome on the detached rows above.'
   }
 ]
 

@@ -1,5 +1,6 @@
 import type { WebContentsConsoleMessageEventParams } from 'electron'
 import type { AppearanceMode } from '../store/types'
+import { normalizeSystemThemeAppearance } from '../../shared/systemThemeAppearance'
 import type {
   AppSettings,
   AuditOrchestrationSettings,
@@ -1318,6 +1319,9 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
     }
     if ('providerRunPauses' in sanitized) {
       sanitized.providerRunPauses = sanitizeProviderRunPauses(sanitized.providerRunPauses)
+    }
+    if ('themeAppearance' in sanitized && typeof sanitized.themeAppearance === 'string') {
+      sanitized.themeAppearance = normalizeSystemThemeAppearance(sanitized.themeAppearance)
     }
     if ('auditRetention' in sanitized) {
       sanitized.auditRetention = sanitizeAuditRetentionSettings(
