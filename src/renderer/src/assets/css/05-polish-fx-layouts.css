@@ -3072,6 +3072,14 @@
   flex: 0 0 auto;
 }
 
+.sidebar-footer-control-anchor {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+
 .sidebar-footer-icon-btn {
   appearance: none;
   -webkit-appearance: none;
@@ -3181,13 +3189,14 @@
   filter: drop-shadow(0 0 5px color-mix(in srgb, var(--success, #34d399) 60%, transparent));
 }
 
-/* Footer popover — shared shell for all three control buttons. Anchored to the
-   cluster's right edge so it stays inside the sidebar regardless of which
-   button opened it. Reuses the settings-menu item styles for rows + nav. */
+/* Footer popover — shared shell for all three control buttons. In the expanded
+   sidebar each popover is nested inside the summoning icon's anchor, so its
+   bottom-left corner tracks that button instead of the wider footer cluster.
+   Reuses the settings-menu item styles for rows + nav. */
 .sidebar-footer-popover {
   --sidebar-picker-bg-solid: var(--panel-bg-solid, var(--surface-1, #1c1c20));
   position: absolute;
-  right: 0;
+  left: 0;
   bottom: calc(100% + 8px);
   z-index: 90;
   /* The sidebar inflates its font scale 1.17x; reset it locally so popover
@@ -3211,7 +3220,7 @@
     0 18px 46px rgba(0, 0, 0, 0.38),
     0 0 0 1px color-mix(in srgb, var(--accent) 10%, transparent);
   animation: sidebar-new-menu-fade-in 140ms ease-out;
-  transform-origin: bottom right;
+  transform-origin: bottom left;
 }
 
 .sidebar-footer-popover.is-approvals {

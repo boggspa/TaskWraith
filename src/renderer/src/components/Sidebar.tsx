@@ -1834,8 +1834,9 @@ function buildSidebarChatRowA11y(args: {
 // Shared shell for the three footer control popovers (Approvals / Shares /
 // Devices). Mirrors the SidebarSettingsMenu philosophy: a small anchored panel
 // whose body lists live state and whose bottom item deep-links to the matching
-// Settings tab. Anchored to the right of the footer control cluster (see CSS)
-// so it stays inside the sidebar regardless of which button opened it.
+// Settings tab. The expanded sidebar wraps each trigger + popover in its own
+// anchor so widened panels can grow from the summoning icon instead of the
+// whole footer cluster. The collapsed corner pill keeps its own CSS override.
 function SidebarFooterPopover({
   title,
   navLabel,
@@ -2321,9 +2322,8 @@ export function Sidebar({
   const sharedCreateMenuWrapRef = useRef<HTMLDivElement | null>(null)
   const settingsMenuWrapRef = useRef<HTMLDivElement | null>(null)
   // One wrap around the whole footer control cluster (Approvals/Shares/Devices
-  // buttons + their popovers) so a single outside-click/Escape listener
-  // dismisses whichever popover is open. The popovers anchor to this cluster's
-  // right edge, keeping them inside the sidebar regardless of which opened.
+  // anchors + their popovers) so a single outside-click/Escape listener
+  // dismisses whichever popover is open.
   const footerControlsWrapRef = useRef<HTMLDivElement | null>(null)
   // Ref to the sidebar search <input>. App.tsx owns the editable key command
   // and bumps `focusSearchRequestId` when it should focus this field.
@@ -5381,114 +5381,122 @@ export function Sidebar({
             )}
           </div>
           {/* Traffic-light control cluster: Approvals (red) / Shares (yellow) /
-              Devices (green). Each opens a popover anchored to this cluster's
-              right edge; the bottom item deep-links to the matching Settings
-              tab. Settings stays flex:1 so it dominates the row. */}
+              Devices (green). Each opens a popover anchored to its own icon;
+              the bottom item deep-links to the matching Settings tab. Settings
+              stays flex:1 so it dominates the row. */}
           <div className="sidebar-footer-controls" ref={footerControlsWrapRef}>
-            <button
-              type="button"
-              className={`sidebar-footer-icon-btn${hasPendingApprovals ? ' glow-red' : ''}${
-                approvalsPopoverOpen ? ' is-open' : ''
-              }`}
-              onClick={() => {
-                setSettingsMenuOpen(false)
-                setSharesPopoverOpen(false)
-                setDevicesPopoverOpen(false)
-                setApprovalsPopoverOpen((open) => !open)
-              }}
-              title={hasPendingApprovals ? 'Approvals — pending approval' : 'Approvals'}
-              aria-label={
-                hasPendingApprovals ? 'Approvals, a pending approval is waiting' : 'Approvals'
-              }
-              aria-haspopup="dialog"
-              aria-expanded={approvalsPopoverOpen}
-            >
-              <ApprovalsShieldIcon />
-            </button>
-            <button
-              type="button"
-              className={`sidebar-footer-icon-btn${hasConnectedCollaborator ? ' glow-yellow' : ''}${
-                sharesPopoverOpen ? ' is-open' : ''
-              }`}
-              onClick={() => {
-                setSettingsMenuOpen(false)
-                setApprovalsPopoverOpen(false)
-                setDevicesPopoverOpen(false)
-                setSharesPopoverOpen((open) => !open)
-              }}
-              title={hasConnectedCollaborator ? 'Shares — collaborator connected' : 'Shares'}
-              aria-label={
-                hasConnectedCollaborator ? 'Shares, a collaborator is connected' : 'Shares'
-              }
-              aria-haspopup="dialog"
-              aria-expanded={sharesPopoverOpen}
-            >
-              <ShareNetworkIcon />
-            </button>
-            {IOS_REMOTE_ENABLED && (
+            <div className="sidebar-footer-control-anchor">
+              <button
+                type="button"
+                className={`sidebar-footer-icon-btn${hasPendingApprovals ? ' glow-red' : ''}${
+                  approvalsPopoverOpen ? ' is-open' : ''
+                }`}
+                onClick={() => {
+                  setSettingsMenuOpen(false)
+                  setSharesPopoverOpen(false)
+                  setDevicesPopoverOpen(false)
+                  setApprovalsPopoverOpen((open) => !open)
+                }}
+                title={hasPendingApprovals ? 'Approvals — pending approval' : 'Approvals'}
+                aria-label={
+                  hasPendingApprovals ? 'Approvals, a pending approval is waiting' : 'Approvals'
+                }
+                aria-haspopup="dialog"
+                aria-expanded={approvalsPopoverOpen}
+              >
+                <ApprovalsShieldIcon />
+              </button>
+
+              {approvalsPopoverOpen && (
+                <ApprovalsFooterPopover
+                  pendingApprovals={pendingApprovalsFlat}
+                  onJumpToChat={(chatId) => {
+                    setApprovalsPopoverOpen(false)
+                    const chat = chats.find((candidate) => candidate.appChatId === chatId)
+                    if (chat) onSelectChat(chat)
+                  }}
+                  onRespondApproval={onRespondAgentApproval}
+                  loadRecent={loadRecentApprovals}
+                  onOpenSettings={() => {
+                    setApprovalsPopoverOpen(false)
+                    openSettingsTab('approval-ledger')
+                  }}
+                />
+              )}
+            </div>
+            <div className="sidebar-footer-control-anchor">
               <button
                 type="button"
                 className={`sidebar-footer-icon-btn${
-                  remoteDeviceConnected ? ' glow-green' : ''
-                }${devicesPopoverOpen ? ' is-open' : ''}`}
+                  hasConnectedCollaborator ? ' glow-yellow' : ''
+                }${sharesPopoverOpen ? ' is-open' : ''}`}
                 onClick={() => {
                   setSettingsMenuOpen(false)
                   setApprovalsPopoverOpen(false)
-                  setSharesPopoverOpen(false)
-                  setDevicesPopoverOpen((open) => !open)
-                }}
-                title={remoteDeviceConnected ? 'Devices — connected' : 'Devices'}
-                aria-label={remoteDeviceConnected ? 'Devices, a device is connected' : 'Devices'}
-                aria-haspopup="dialog"
-                aria-expanded={devicesPopoverOpen}
-              >
-                <RemoteConnectionSymbolIcon />
-              </button>
-            )}
-
-            {approvalsPopoverOpen && (
-              <ApprovalsFooterPopover
-                pendingApprovals={pendingApprovalsFlat}
-                onJumpToChat={(chatId) => {
-                  setApprovalsPopoverOpen(false)
-                  const chat = chats.find((candidate) => candidate.appChatId === chatId)
-                  if (chat) onSelectChat(chat)
-                }}
-                onRespondApproval={onRespondAgentApproval}
-                loadRecent={loadRecentApprovals}
-                onOpenSettings={() => {
-                  setApprovalsPopoverOpen(false)
-                  openSettingsTab('approval-ledger')
-                }}
-              />
-            )}
-            {sharesPopoverOpen && (
-              <SharesFooterPopover
-                shares={collaborationShares}
-                resolveChatTitle={(chatId) =>
-                  chats.find((candidate) => candidate.appChatId === chatId)?.title
-                }
-                connectedShareChatIds={collaboratingChatIds}
-                onJumpToChat={(chatId) => {
-                  setSharesPopoverOpen(false)
-                  const chat = chats.find((candidate) => candidate.appChatId === chatId)
-                  if (chat) onSelectChat(chat)
-                }}
-                onRevokeShare={onRevokeShare}
-                onOpenSettings={() => {
-                  setSharesPopoverOpen(false)
-                  openSettingsTab('shares')
-                }}
-              />
-            )}
-            {devicesPopoverOpen && (
-              <DevicesFooterPopover
-                devices={pairedDevices}
-                onOpenSettings={() => {
                   setDevicesPopoverOpen(false)
-                  openSettingsTab('pairing')
+                  setSharesPopoverOpen((open) => !open)
                 }}
-              />
+                title={hasConnectedCollaborator ? 'Shares — collaborator connected' : 'Shares'}
+                aria-label={
+                  hasConnectedCollaborator ? 'Shares, a collaborator is connected' : 'Shares'
+                }
+                aria-haspopup="dialog"
+                aria-expanded={sharesPopoverOpen}
+              >
+                <ShareNetworkIcon />
+              </button>
+
+              {sharesPopoverOpen && (
+                <SharesFooterPopover
+                  shares={collaborationShares}
+                  resolveChatTitle={(chatId) =>
+                    chats.find((candidate) => candidate.appChatId === chatId)?.title
+                  }
+                  connectedShareChatIds={collaboratingChatIds}
+                  onJumpToChat={(chatId) => {
+                    setSharesPopoverOpen(false)
+                    const chat = chats.find((candidate) => candidate.appChatId === chatId)
+                    if (chat) onSelectChat(chat)
+                  }}
+                  onRevokeShare={onRevokeShare}
+                  onOpenSettings={() => {
+                    setSharesPopoverOpen(false)
+                    openSettingsTab('shares')
+                  }}
+                />
+              )}
+            </div>
+            {IOS_REMOTE_ENABLED && (
+              <div className="sidebar-footer-control-anchor">
+                <button
+                  type="button"
+                  className={`sidebar-footer-icon-btn${
+                    remoteDeviceConnected ? ' glow-green' : ''
+                  }${devicesPopoverOpen ? ' is-open' : ''}`}
+                  onClick={() => {
+                    setSettingsMenuOpen(false)
+                    setApprovalsPopoverOpen(false)
+                    setSharesPopoverOpen(false)
+                    setDevicesPopoverOpen((open) => !open)
+                  }}
+                  title={remoteDeviceConnected ? 'Devices — connected' : 'Devices'}
+                  aria-label={remoteDeviceConnected ? 'Devices, a device is connected' : 'Devices'}
+                  aria-haspopup="dialog"
+                  aria-expanded={devicesPopoverOpen}
+                >
+                  <RemoteConnectionSymbolIcon />
+                </button>
+
+                {devicesPopoverOpen && (
+                  <DevicesFooterPopover
+                    devices={pairedDevices}
+                    onOpenSettings={() => {
+                      setDevicesPopoverOpen(false)
+                      openSettingsTab('pairing')
+                    }}
+                  />
+                )}
+              </div>
             )}
           </div>
         </div>
