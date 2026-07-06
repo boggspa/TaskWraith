@@ -469,7 +469,7 @@ export function registerGitHandlers(deps: GitHandlersDeps): void {
   ipcMain.handle(
     'github:pr-status',
     async (_event, payload?: GitIpcPayload): Promise<GitResult<GitPrSummary> | { ok: false; error: string }> => {
-      const repo = gitPayloadPath(deps, payload, 'registered-workspace')
+      const repo = gitPayloadPath(deps, payload, 'registered-or-granted-read')
       return repo.ok ? deps.gitService.pullRequestStatus(repo.path) : repo
     }
   )
@@ -480,7 +480,7 @@ export function registerGitHandlers(deps: GitHandlersDeps): void {
       _event,
       payload?: GitIpcPayload
     ): Promise<GitResult<GitPrReadiness> | { ok: false; error: string }> => {
-      const repo = gitPayloadPath(deps, payload, 'registered-workspace')
+      const repo = gitPayloadPath(deps, payload, 'registered-or-granted-read')
       return repo.ok ? deps.gitService.pullRequestReadiness(repo.path) : repo
     }
   )

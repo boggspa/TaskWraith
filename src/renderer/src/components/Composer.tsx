@@ -48,7 +48,7 @@ import { GhostCompanion } from '../components/FxLayers'
 import { NotificationZone } from '../components/NotificationZone'
 import { GitCommitControls } from '../components/GitCommitControls'
 import { ComposerBranchWorktreePopover } from '../components/ComposerBranchWorktreePopover'
-import { GitCiChip, GitMergeBadge, GitSyncChip } from '../components/GitStatusChips'
+import { GitCiChip, GitMergeBadge, GitPrLifecycleChip, GitSyncChip } from '../components/GitStatusChips'
 import { LiveThreadTokenTally } from '../components/LiveThreadTokenTally'
 import { MultiviewLayoutPicker } from '../components/MultiviewLayoutPicker'
 import { CanvasComposerButton } from '../components/CanvasComposerButton'
@@ -219,6 +219,7 @@ export interface ComposerProps {
   ensembleEnabledParticipantsForCurrent: any
   ensembleOllamaContextWarning: any
   externalGitSnapshots: any
+  externalPrByPath: any
   externalPathGrantPrompt: any
   externalPathGrantPromptBusy: any
   externalPathGrants: any
@@ -512,6 +513,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     ensembleEnabledParticipantsForCurrent,
     ensembleOllamaContextWarning,
     externalGitSnapshots,
+    externalPrByPath,
     externalPathGrantPrompt,
     externalPathGrantPromptBusy,
     externalPathGrants,
@@ -1797,6 +1799,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                       </span>
                       {primaryGitSnapshot && <GitMergeBadge snapshot={primaryGitSnapshot} />}
                       {primaryGitSnapshot && <GitSyncChip snapshot={primaryGitSnapshot} />}
+                      <GitPrLifecycleChip pr={primaryPr} snapshot={primaryGitSnapshot} />
                       <GitCiChip pr={primaryPr} />
                       </div>
                       <div className="composer-above-bar-pill composer-above-bar-pill--changes">
@@ -1931,6 +1934,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                           providers={group.providers}
                           repoMetadata={externalPathRepoMetadata[group.representative.id] || null}
                           snapshot={externalGitSnapshots[group.path] ?? null}
+                          pr={externalPrByPath?.[group.path] ?? null}
                           diffStats={(() => {
                             const snap = externalGitSnapshots[group.path]
                             return snap

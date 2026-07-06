@@ -2055,6 +2055,7 @@ function App(): React.JSX.Element {
   const [externalGitSnapshots, setExternalGitSnapshots] = useState<
     Record<string, GitRepositorySnapshot | null>
   >({})
+  const [externalPrByPath, setExternalPrByPath] = useState<Record<string, GitPrSummary | null>>({})
   // Multiview — live git snapshot per VISIBLE pane workspace path, so each pane's
   // composer above-row shows its OWN "N files changed +A −B" instead of the
   // focused workspace's global `workspaceDiffStats` (which leaked into every
@@ -18314,6 +18315,7 @@ function App(): React.JSX.Element {
     const paths = externalWorkspacePathsKey ? externalWorkspacePathsKey.split('\n') : []
     if (paths.length === 0) {
       setExternalGitSnapshots({})
+      setExternalPrByPath({})
       return
     }
     let cancelled = false
@@ -18322,13 +18324,26 @@ function App(): React.JSX.Element {
         paths.map(async (path) => {
           try {
             const res = await window.api.gitSnapshot({ repoPath: path })
-            return [path, res?.ok ? res.data : null] as const
+            const snapshot = res?.ok ? res.data : null
+            let pr: GitPrSummary | null = null
+            if (snapshot?.remoteUrl && typeof window.api.githubPrStatus === 'function') {
+              try {
+                const prRes = await window.api.githubPrStatus({ repoPath: path })
+                pr = prRes?.ok ? prRes.data : null
+              } catch {
+                pr = null
+              }
+            }
+            return [path, snapshot, pr] as const
           } catch {
-            return [path, null] as const
+            return [path, null, null] as const
           }
         })
       )
-      if (!cancelled) setExternalGitSnapshots(Object.fromEntries(entries))
+      if (!cancelled) {
+        setExternalGitSnapshots(Object.fromEntries(entries.map(([path, snapshot]) => [path, snapshot])))
+        setExternalPrByPath(Object.fromEntries(entries.map(([path, , pr]) => [path, pr])))
+      }
     }
     void fetchAll()
     const onFocus = (): void => {
@@ -18350,6 +18365,21 @@ function App(): React.JSX.Element {
           ...prev,
           [path]: payload.snapshot
         }))
+        if (payload.snapshot?.remoteUrl && typeof window.api.githubPrStatus === 'function') {
+          void window.api.githubPrStatus({ repoPath: path }).then(
+            (result) => {
+              setExternalPrByPath((prev) => ({
+                ...prev,
+                [path]: result?.ok ? result.data : null
+              }))
+            },
+            () => {
+              setExternalPrByPath((prev) => ({ ...prev, [path]: null }))
+            }
+          )
+        } else {
+          setExternalPrByPath((prev) => ({ ...prev, [path]: null }))
+        }
       })
     )
     return () => {
@@ -20454,6 +20484,21 @@ function App(): React.JSX.Element {
           status: 'success',
           message: result.url ? `Opened ${result.url}` : 'Pull request created.'
         })
+        const refreshPr = async (): Promise<GitPrSummary | null> => {
+          if (typeof window.api.githubPrStatus !== 'function') return result as GitPrSummary
+          try {
+            const prRes = await window.api.githubPrStatus({ workspacePath })
+            return prRes?.ok ? prRes.data : (result as GitPrSummary)
+          } catch {
+            return result as GitPrSummary
+          }
+        }
+        const pr = await refreshPr()
+        if (workspacePath === currentWorkspacePath) {
+          setPrimaryPr(pr)
+        } else {
+          setExternalPrByPath((prev) => ({ ...prev, [workspacePath]: pr }))
+        }
       } else {
         setCreatePrStateFor(workspacePath, {
           status: 'error',
@@ -22958,6 +23003,7 @@ function App(): React.JSX.Element {
       onComposerWorktreeChange: handleComposerWorktreeChange,
       // Pane PR/CI rollup stays focused-only for now (no per-pane gh fetch).
       primaryPr: null,
+      externalPrByPath: {},
       pendingPlanImport: null,
       externalPathGrantPrompt: null,
       externalPathGrantPromptBusy: false,
@@ -23249,6 +23295,7 @@ function App(): React.JSX.Element {
       ensembleEnabledParticipantsForCurrent,
       ensembleOllamaContextWarning,
       externalGitSnapshots,
+      externalPrByPath,
       externalPathGrants,
       externalPathRepoMetadata,
       externalWorkspaceGroups,
@@ -23379,6 +23426,7 @@ function App(): React.JSX.Element {
       ensembleEnabledParticipantsForCurrent,
       ensembleOllamaContextWarning,
       externalGitSnapshots,
+      externalPrByPath,
       externalPathGrants,
       externalPathRepoMetadata,
       externalWorkspaceGroups,
@@ -24054,6 +24102,7 @@ function App(): React.JSX.Element {
         onComposerWorktreeChange: handleComposerWorktreeChange,
         // Pane PR/CI rollup stays focused-only for now (no per-pane gh fetch).
         primaryPr: null,
+        externalPrByPath: {},
         pendingPlanImport: null,
         externalPathGrantPrompt: null,
         externalPathGrantPromptBusy: false,

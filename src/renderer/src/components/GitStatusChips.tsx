@@ -45,6 +45,120 @@ export function summarizeChecks(checks: GitPrSummary['checks']): CiSummary {
   return out
 }
 
+function GitPullRequestGlyph(): React.JSX.Element {
+  return (
+    <svg
+      width="12"
+      height="12"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.45"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <circle cx="4" cy="3.5" r="1.55" />
+      <circle cx="4" cy="12.5" r="1.55" />
+      <circle cx="12" cy="7" r="1.55" />
+      <path d="M4 5.1v5.8" />
+      <path d="M5.5 7H10" />
+    </svg>
+  )
+}
+
+function GitMergeGlyph(): React.JSX.Element {
+  return (
+    <svg
+      width="12"
+      height="12"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.45"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <circle cx="4" cy="3.5" r="1.55" />
+      <circle cx="4" cy="12.5" r="1.55" />
+      <circle cx="12" cy="12.5" r="1.55" />
+      <path d="M4 5.1v5.8" />
+      <path d="M5.4 7.2c3.7 0 5.4 1.7 6.1 3.8" />
+    </svg>
+  )
+}
+
+function normalisePrState(value: string | undefined): string {
+  return (value || '').trim().toUpperCase()
+}
+
+type PrLifecycleTone = 'open' | 'ready' | 'draft' | 'merged' | 'stale' | 'blocked' | 'closed'
+
+function prLifecycle(pr: GitPrSummary, snapshot?: GitRepositorySnapshot | null): {
+  tone: PrLifecycleTone
+  label: string
+  title: string
+  merged: boolean
+} {
+  const state = normalisePrState(pr.state)
+  const mergeState = normalisePrState(pr.mergeStateStatus)
+  const numberLabel = typeof pr.number === 'number' ? `#${pr.number}` : 'PR'
+  const headMatchesLocal =
+    Boolean(snapshot?.commit && pr.headRefOid) && snapshot?.commit === pr.headRefOid
+  const headDiffersFromLocal =
+    Boolean(snapshot?.commit && pr.headRefOid) && snapshot?.commit !== pr.headRefOid
+
+  if (state === 'MERGED') {
+    return {
+      tone: 'merged',
+      label: `${numberLabel} merged`,
+      title: `${numberLabel} merged${pr.baseRefName ? ` into ${pr.baseRefName}` : ''}`,
+      merged: true
+    }
+  }
+  if (state === 'CLOSED') {
+    return {
+      tone: 'closed',
+      label: `${numberLabel} closed`,
+      title: `${numberLabel} closed without merge`,
+      merged: false
+    }
+  }
+  if (pr.isDraft) {
+    return {
+      tone: 'draft',
+      label: `${numberLabel} draft`,
+      title: `${numberLabel} is a draft pull request`,
+      merged: false
+    }
+  }
+  if (['BLOCKED', 'UNKNOWN'].includes(mergeState)) {
+    return {
+      tone: 'blocked',
+      label: `${numberLabel} blocked`,
+      title: `${numberLabel} is blocked from merging${mergeState ? ` (${mergeState})` : ''}`,
+      merged: false
+    }
+  }
+  if (headDiffersFromLocal || ['DIRTY', 'BEHIND', 'UNSTABLE'].includes(mergeState)) {
+    return {
+      tone: 'stale',
+      label: `${numberLabel} stale`,
+      title: headDiffersFromLocal
+        ? `${numberLabel} head differs from local HEAD`
+        : `${numberLabel} needs attention${mergeState ? ` (${mergeState})` : ''}`,
+      merged: false
+    }
+  }
+  return {
+    tone: headMatchesLocal || mergeState === 'CLEAN' ? 'ready' : 'open',
+    label: numberLabel,
+    title: `${numberLabel} is open${mergeState ? ` (${mergeState})` : ''}`,
+    merged: false
+  }
+}
+
 /** In-progress merge / rebase / cherry-pick + unmerged-file count. */
 export function GitMergeBadge({
   snapshot
@@ -104,11 +218,66 @@ export function GitSyncChip({
   }
   const ahead = snapshot.ahead ?? 0
   const behind = snapshot.behind ?? 0
-  if (ahead === 0 && behind === 0) return null
+  if (ahead === 0 && behind === 0) {
+    return (
+      <span
+        className="git-status-push git-status-synced"
+        title={`Branch matches ${snapshot.upstream}`}
+      >
+        <span className="git-status-sync-glyph" aria-hidden>
+          ✓
+        </span>
+        synced
+      </span>
+    )
+  }
   return (
     <span className="git-status-push" title={`${ahead} ahead · ${behind} behind`}>
       {ahead > 0 && <span className="git-status-ahead">↑{ahead}</span>}
       {behind > 0 && <span className="git-status-behind">↓{behind}</span>}
+    </span>
+  )
+}
+
+export function GitPrLifecycleChip({
+  pr,
+  snapshot
+}: {
+  pr: GitPrSummary | null
+  snapshot?: GitRepositorySnapshot | null
+}): React.JSX.Element | null {
+  if (!pr) return null
+  const lifecycle = prLifecycle(pr, snapshot)
+  const clickable = Boolean(pr.url)
+  const open = (): void => {
+    if (pr.url && typeof window.api.openExternalOrPath === 'function') {
+      void window.api.openExternalOrPath(pr.url)
+    }
+  }
+  return (
+    <span
+      className={`git-status-pr git-pr-${lifecycle.tone}${
+        clickable ? ' git-status-pr-clickable' : ''
+      }`}
+      title={`${lifecycle.title}${clickable ? ' — open' : ''}`}
+      role={clickable ? 'button' : undefined}
+      tabIndex={clickable ? 0 : undefined}
+      onClick={clickable ? open : undefined}
+      onKeyDown={
+        clickable
+          ? (e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault()
+                open()
+              }
+            }
+          : undefined
+      }
+    >
+      <span className="git-status-pr-glyph" aria-hidden>
+        {lifecycle.merged ? <GitMergeGlyph /> : <GitPullRequestGlyph />}
+      </span>
+      <span>{lifecycle.label}</span>
     </span>
   )
 }

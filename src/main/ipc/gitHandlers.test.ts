@@ -345,7 +345,7 @@ describe('registerGitHandlers', () => {
     expect(deps.gitSnapshotPublisher.unsubscribe).toHaveBeenCalledWith('sub-1')
   })
 
-  it('allows signed external grants only for git:snapshot and rejects mutating actions', async () => {
+  it('allows signed external grants for read-only git/PR inspection and rejects mutating actions', async () => {
     const { deps } = createDeps()
     deps.getChats.mockReturnValue([createChat()])
     deps.externalPathGrantMetadataLists.mockReturnValue([createGrant()])
@@ -354,6 +354,14 @@ describe('registerGitHandlers', () => {
     await expect(handlerFor('git:snapshot')({}, { repoPath: '/granted/repo/subdir' })).resolves.toEqual({
       ok: true,
       data: { requestedPath: '/granted/repo/subdir' }
+    })
+    await expect(handlerFor('github:pr-status')({}, { repoPath: '/granted/repo/subdir' })).resolves.toEqual({
+      ok: true,
+      data: { url: 'status:/granted/repo/subdir' }
+    })
+    await expect(handlerFor('github:pr-readiness')({}, { repoPath: '/granted/repo/subdir' })).resolves.toEqual({
+      ok: true,
+      data: { reason: 'ready:/granted/repo/subdir' }
     })
 
     await expect(handlerFor('git:stage')({}, { repoPath: '/granted/repo/subdir' })).resolves.toEqual({

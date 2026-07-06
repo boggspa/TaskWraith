@@ -22,10 +22,10 @@ import type { ExternalPathGitMetadata } from '../lib/ExternalPathRepoDetect'
 import { describeExternalPath } from '../lib/ExternalPathRepoDetect'
 import { getProviderName } from './Sidebar'
 import { useState } from 'react'
-import { branchTone, GitMergeBadge, GitSyncChip } from './GitStatusChips'
+import { branchTone, GitMergeBadge, GitPrLifecycleChip, GitSyncChip } from './GitStatusChips'
 import { GitCommitControls } from './GitCommitControls'
 import { AnimatedDiffNumber } from './AnimatedDiffNumber'
-import type { GitRepositorySnapshot } from '../../../main/services/GitService'
+import type { GitPrSummary, GitRepositorySnapshot } from '../../../main/services/GitService'
 
 /**
  * 1.0.5-EW42b — Derive a human-readable "where did this grant
@@ -100,6 +100,8 @@ interface ExternalPathAboveRowProps {
   providers?: ExternalPathGrant['provider'][]
   /** Live per-path git snapshot — drives the branch tone, merge badge + sync chip. */
   snapshot?: GitRepositorySnapshot | null
+  /** Best-effort PR lifecycle for this path, when GitHub/gh can resolve it. */
+  pr?: GitPrSummary | null
   repoMetadata: ExternalPathGitMetadata | null
   /**
    * Per-repo diff stats from `externalPathDiffStatsByGrant` (slice 6).
@@ -226,6 +228,7 @@ export function ExternalPathAboveRow({
   access,
   providers,
   snapshot,
+  pr,
   repoMetadata,
   diffStats,
   onRevoke,
@@ -412,6 +415,7 @@ export function ExternalPathAboveRow({
         </span>
         {snapshot && <GitMergeBadge snapshot={snapshot} />}
         {snapshot && <GitSyncChip snapshot={snapshot} />}
+        <GitPrLifecycleChip pr={pr ?? null} snapshot={snapshot} />
       </div>
       {diffCluster}
       <div className="composer-above-bar-pill composer-above-bar-pill--action">{trailingCluster}</div>

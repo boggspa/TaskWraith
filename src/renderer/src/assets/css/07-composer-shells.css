@@ -1850,6 +1850,14 @@
   color: #ffc248;
   font-weight: 600;
 }
+.git-status-push.git-status-synced {
+  color: #6ddfa8;
+  font-weight: 650;
+}
+.git-status-sync-glyph {
+  font-size: 0.95em;
+  line-height: 1;
+}
 :is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"])
   .composer-above-bar-secondary-branch.git-tone-main {
   color: #1a5ceb;
@@ -1869,6 +1877,10 @@
 :is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"])
   .git-status-push.git-status-unpublished {
   color: #c38b00;
+}
+:is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"])
+  .git-status-push.git-status-synced {
+  color: #138a59;
 }
 .git-status-push {
   display: inline-flex;
@@ -1907,6 +1919,51 @@
 }
 .git-status-ci.git-ci-pending {
   color: #f0c674;
+}
+.git-status-pr {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.git-status-pr-glyph {
+  display: inline-flex;
+  width: 12px;
+  height: 12px;
+}
+.git-status-pr-glyph svg {
+  display: block;
+}
+.git-status-pr.git-pr-open {
+  color: #a78bfa;
+}
+.git-status-pr.git-pr-ready,
+.git-status-pr.git-pr-merged {
+  color: #6ddfa8;
+}
+.git-status-pr.git-pr-draft {
+  color: color-mix(in srgb, var(--text-secondary) 82%, transparent);
+}
+.git-status-pr.git-pr-stale {
+  color: #f0c674;
+}
+.git-status-pr.git-pr-blocked,
+.git-status-pr.git-pr-closed {
+  color: #ff6b7a;
+}
+.git-status-pr.git-status-pr-clickable {
+  cursor: pointer;
+  transition: opacity 0.12s ease;
+}
+.git-status-pr.git-status-pr-clickable:hover {
+  opacity: 0.82;
+}
+.git-status-pr.git-status-pr-clickable:focus-visible {
+  outline: 1px solid currentColor;
+  outline-offset: 2px;
+  border-radius: 4px;
 }
 /* Clickable CI chip — opens the PR page (or a failing check's URL). Only gets
  * the affordance when GitStatusAboveRow resolved a URL (.git-status-ci-clickable). */
@@ -1978,6 +2035,20 @@
 }
 :is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"]) .git-status-ci.git-ci-pending {
   color: #b8860b;
+}
+:is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"]) .git-status-pr.git-pr-open {
+  color: #6d4fe0;
+}
+:is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"]) .git-status-pr.git-pr-ready,
+:is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"]) .git-status-pr.git-pr-merged {
+  color: #138a59;
+}
+:is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"]) .git-status-pr.git-pr-stale {
+  color: #b8860b;
+}
+:is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"]) .git-status-pr.git-pr-blocked,
+:is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"]) .git-status-pr.git-pr-closed {
+  color: #d23b4e;
 }
 
 /* Respect reduce-motion — drop the control transitions entirely. */
