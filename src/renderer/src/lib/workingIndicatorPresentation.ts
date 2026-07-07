@@ -1,6 +1,7 @@
 import type {
   ChatRecord,
   EnsembleParticipant,
+  EnsembleParticipantStatus,
   EnsembleRoundParticipantState,
   ProviderId
 } from '../../../main/store/types'
@@ -19,6 +20,10 @@ export type WorkingIndicatorPresentation = {
 
 const LIVE_ROUND_PARTICIPANT_STATUSES = new Set(['idle', 'running', 'sleeping'])
 const LIVE_LANE_STATUSES = new Set(['pending', 'running', 'blocked', 'awaiting-approval'])
+
+function isLiveRoundParticipantStatus(status: EnsembleParticipantStatus | undefined): boolean {
+  return Boolean(status && LIVE_ROUND_PARTICIPANT_STATUSES.has(status))
+}
 
 function modelBadgeForParticipant(participant: EnsembleParticipant): string | null {
   const model = participant.model || ''
@@ -41,8 +46,7 @@ function modelBadgeForParticipant(participant: EnsembleParticipant): string | nu
       participant.provider === 'codex' ? participant.reasoningEffort : undefined,
     claudeReasoningEffort:
       participant.provider === 'claude' ? participant.reasoningEffort : undefined,
-    kimiThinkingEnabled:
-      participant.provider === 'kimi' ? participant.thinkingEnabled : undefined
+    kimiThinkingEnabled: participant.provider === 'kimi' ? participant.thinkingEnabled : undefined
   })
   return reasoningSuffix ? `${baseModelName} ${reasoningSuffix}` : baseModelName
 }
@@ -50,16 +54,20 @@ function modelBadgeForParticipant(participant: EnsembleParticipant): string | nu
 function activeParticipantId(chat: ChatRecord): string | undefined {
   const round = chat.ensemble?.activeRound
   if (!round || round.status !== 'running') return undefined
-  if (round.activeParticipantId) return round.activeParticipantId
+  if (round.activeParticipantId) {
+    const participant = roundParticipantForId(chat, round.activeParticipantId)
+    if (!participant || isLiveRoundParticipantStatus(participant.status)) {
+      return round.activeParticipantId
+    }
+  }
 
   const activeLane = Object.values(round.lanes || {}).find((lane) =>
     LIVE_LANE_STATUSES.has(lane.status)
   )
   if (activeLane?.participantId) return activeLane.participantId
 
-  return round.participants.find((participant) =>
-    LIVE_ROUND_PARTICIPANT_STATUSES.has(participant.status)
-  )?.participantId
+  return round.participants.find((participant) => isLiveRoundParticipantStatus(participant.status))
+    ?.participantId
 }
 
 function participantOrder(chat: ChatRecord, participantId: string): number {
@@ -125,6 +133,12 @@ export function deriveActiveEnsembleWorkingPresentations(
   if (round.fanoutPolicy === 'off') return []
 
   const liveParticipantIds = new Set<string>()
+  if (round.activeParticipantId) {
+    const activeParticipant = roundParticipantForId(chat, round.activeParticipantId)
+    if (!activeParticipant || isLiveRoundParticipantStatus(activeParticipant.status)) {
+      liveParticipantIds.add(round.activeParticipantId)
+    }
+  }
   for (const lane of lanes) {
     if (LIVE_LANE_STATUSES.has(lane.status)) {
       liveParticipantIds.add(lane.participantId)

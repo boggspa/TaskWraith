@@ -386,6 +386,71 @@ function getRuntimeQueuedPrompts(
   return internal?.queuedPrompts ? [...internal.queuedPrompts] : []
 }
 
+function makeFanoutRaceHarness() {
+  const harness = makeHarness()
+  harness.chat.ensemble!.fanoutPolicy = 'read_only'
+  harness.chat.ensemble!.participants = [
+    {
+      id: 'codex',
+      provider: 'codex',
+      enabled: true,
+      role: 'Lead',
+      instructions: 'Lead.',
+      order: 1,
+      permissionPresetId: 'workspace_write'
+    },
+    {
+      id: 'claude',
+      provider: 'claude',
+      enabled: true,
+      role: 'Reviewer',
+      instructions: 'Review.',
+      order: 2,
+      permissionPresetId: 'read_only'
+    },
+    {
+      id: 'gemini',
+      provider: 'gemini',
+      enabled: true,
+      role: 'Researcher',
+      instructions: 'Research.',
+      order: 3,
+      permissionPresetId: 'workspace_write'
+    }
+  ]
+  return harness
+}
+
+async function startUnresolvedReviewerFanout(harness: ReturnType<typeof makeHarness>) {
+  harness.orchestrator.startRound({
+    chatId: 'ensemble-chat',
+    prompt: 'Lead starts, reviewer fans out.',
+    event: { sender: {} as Electron.WebContents }
+  })
+  await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1), { timeout: 1000 })
+  const fanout = harness.orchestrator.fanoutForRun(harness.dispatched[0].appRunId, {
+    targets: ['Reviewer'],
+    prompt: 'Inspect this while the lead continues.'
+  })
+  await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2), { timeout: 1000 })
+  expect(harness.dispatched[1].ensembleRun?.participantId).toBe('claude')
+  expect(harness.dispatched[1].ensembleRun?.laneId).toBeTruthy()
+  return { fanout }
+}
+
+function completeDispatchedRun(
+  harness: ReturnType<typeof makeHarness>,
+  index: number,
+  status: 'success' | 'failed' = 'success'
+) {
+  const payload = harness.dispatched[index]
+  harness.orchestrator.handleProviderOutput(
+    payload.provider,
+    { appRunId: payload.appRunId, appChatId: 'ensemble-chat' },
+    { type: 'result', status }
+  )
+}
+
 describe('EnsembleOrchestrator', () => {
   it('dispatches participants serially in configured order', async () => {
     const harness = makeHarness()
@@ -10226,6 +10291,101 @@ Next action:
       { type: 'result', status: 'success' }
     )
     await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('completed'))
+  })
+
+  it('skips an active fan-out lane participant during the default serial pass', async () => {
+    const harness = makeFanoutRaceHarness()
+    const { fanout } = await startUnresolvedReviewerFanout(harness)
+
+    completeDispatchedRun(harness, 0)
+
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3), { timeout: 1000 })
+    expect(harness.dispatched[2].ensembleRun?.participantId).toBe('gemini')
+    expect(
+      harness.dispatched.filter((payload) => payload.ensembleRun?.participantId === 'claude')
+    ).toHaveLength(1)
+    expect(harness.chat.messages.some((message) => message.content.includes('already running in a fan-out lane'))).toBe(
+      true
+    )
+
+    completeDispatchedRun(harness, 1)
+    await expect(fanout).resolves.toMatchObject({ ok: true })
+    completeDispatchedRun(harness, 2)
+  })
+
+  it('does not let ensemble_yield target a participant already active in fan-out', async () => {
+    const harness = makeFanoutRaceHarness()
+    const { fanout } = await startUnresolvedReviewerFanout(harness)
+
+    expect(
+      harness.orchestrator.markYielded(
+        harness.dispatched[0].appRunId!,
+        'Reviewer should take it.',
+        'Reviewer'
+      )
+    ).toBe(true)
+
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3), { timeout: 1000 })
+    expect(harness.dispatched[2].ensembleRun?.participantId).toBe('gemini')
+    expect(
+      harness.dispatched.filter((payload) => payload.ensembleRun?.participantId === 'claude')
+    ).toHaveLength(1)
+
+    completeDispatchedRun(harness, 1)
+    await expect(fanout).resolves.toMatchObject({ ok: true })
+    completeDispatchedRun(harness, 2)
+  })
+
+  it('does not let an @mention promote a participant already active in fan-out', async () => {
+    const harness = makeFanoutRaceHarness()
+    const { fanout } = await startUnresolvedReviewerFanout(harness)
+
+    harness.orchestrator.handleProviderOutput(
+      'codex',
+      { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'content', text: '@Reviewer please take the next pass.' }
+    )
+    completeDispatchedRun(harness, 0)
+
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3), { timeout: 1000 })
+    expect(harness.dispatched[2].ensembleRun?.participantId).toBe('gemini')
+    expect(
+      harness.dispatched.filter((payload) => payload.ensembleRun?.participantId === 'claude')
+    ).toHaveLength(1)
+
+    completeDispatchedRun(harness, 1)
+    await expect(fanout).resolves.toMatchObject({ ok: true })
+    completeDispatchedRun(harness, 2)
+  })
+
+  it('does not let a fan-out lane yield poison the parent serial routing target', async () => {
+    const harness = makeFanoutRaceHarness()
+    const { fanout } = await startUnresolvedReviewerFanout(harness)
+
+    expect(
+      harness.orchestrator.markYielded(
+        harness.dispatched[1].appRunId!,
+        'Lane is done.',
+        'Researcher'
+      )
+    ).toBe(true)
+    const runtime = (
+      harness.orchestrator as unknown as {
+        roundsByChatId: Map<
+          string,
+          { yieldTarget?: string; yieldReturnStack?: Array<{ targetParticipantId: string }> }
+        >
+      }
+    ).roundsByChatId.get('ensemble-chat')
+    expect(runtime?.yieldTarget).toBeUndefined()
+    expect(runtime?.yieldReturnStack || []).toHaveLength(0)
+    await expect(fanout).resolves.toMatchObject({ ok: true })
+
+    completeDispatchedRun(harness, 0)
+
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3), { timeout: 1000 })
+    expect(harness.dispatched[2].ensembleRun?.participantId).toBe('gemini')
+    completeDispatchedRun(harness, 2)
   })
 
   it('1.0.8: ensemble_fanout locked_writers mode is feature-gated', async () => {

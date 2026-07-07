@@ -176,7 +176,13 @@ type ContinuationTurnResult =
   | { appended: true }
   | {
       appended: false
-      reason: 'not_continuous' | 'unreachable' | 'blocked_status' | 'hop_limit' | 'budget_exhausted'
+      reason:
+        | 'not_continuous'
+        | 'unreachable'
+        | 'active_fanout'
+        | 'blocked_status'
+        | 'hop_limit'
+        | 'budget_exhausted'
       blockedStatus?: EnsembleParticipantStatus
       budgetMessage?: string
     }
@@ -2358,6 +2364,13 @@ interface ActiveRoundRuntime {
    */
   fannedOutParticipantIds?: Set<string>
   /**
+   * Participant ids currently reserved for an explicit `ensemble_fanout`
+   * lane whose promise has not settled yet. This closes the race where the
+   * caller yields/finishes while fan-out lanes are still running and the
+   * serial queue still contains those targets.
+   */
+  fanoutReservedParticipantIds?: Set<string>
+  /**
    * 1.0.4-AK6 — structured briefs recorded by participants during
    * the parallel fan-out pass via the `scout_brief` MCP tool. After
    * the fan-out pass closes, the serial writer's prompt builder
@@ -3061,18 +3074,17 @@ export class EnsembleOrchestrator {
     const run = this.runsByRunId.get(runId)
     if (!run) return false
     run.status = 'yielded'
+    const runtime = this.roundsByChatId.get(run.chatId)
+    const isFanoutLane = Boolean(run.laneId) || Boolean(runtime?.activeScoutRunIds?.has(runId))
     // Slice C extension (1.0.3) — if the participant named a target,
     // remember it on the round runtime so `runRound` can reorder
     // remaining participants before the next turn. We always set
     // runtime.yieldTarget on the round that owns this run, regardless
     // of how the orchestrator's loop resolves it (resolution + clear
     // happens in runRound after the current turn finalises).
-    if (target) {
-      const runtime = this.roundsByChatId.get(run.chatId)
-      if (runtime) {
-        runtime.yieldTarget = target
-        this.pushYieldReturnFrame(runtime, run, target)
-      }
+    if (target && runtime && !isFanoutLane) {
+      runtime.yieldTarget = target
+      this.pushYieldReturnFrame(runtime, run, target)
     }
     this.completePendingYieldActivity(run, reason, target)
     this.finalizeRun(run, 'yielded', reason || 'Participant yielded.')
@@ -6060,6 +6072,7 @@ export class EnsembleOrchestrator {
       if (!participant) continue
       if (runtime.unreachableParticipantIds?.has(participant.id)) continue
       if (this.activeBossmanQuarantine(chat, runtime.roundId, participant.id)) continue
+      if (this.participantFanoutDispatchState(runtime, participant.id)) continue
       const pendingIndex = remaining.findIndex((entry) => entry.id === participant.id)
       if (pendingIndex >= 0) {
         const [pending] = remaining.splice(pendingIndex, 1)
@@ -6781,6 +6794,10 @@ export class EnsembleOrchestrator {
       run.roundId,
       `${label}: ${run.participant.role || run.participant.provider} requested ${resolvedTargets.targets.length} lane(s).${input.reason ? ` ${input.reason}` : ''}`
     )
+    if (!runtime.fanoutReservedParticipantIds) runtime.fanoutReservedParticipantIds = new Set()
+    for (const participant of resolvedTargets.targets) {
+      runtime.fanoutReservedParticipantIds.add(participant.id)
+    }
     try {
       const laneIds = await this.runParallelFanoutPass(runtime, chat, resolvedTargets.targets, {
         prompt,
@@ -6818,6 +6835,13 @@ export class EnsembleOrchestrator {
         ...(targetStage ? { targetStage } : {}),
         message,
         error: 'dispatch_failed'
+      }
+    } finally {
+      for (const participant of resolvedTargets.targets) {
+        runtime.fanoutReservedParticipantIds?.delete(participant.id)
+      }
+      if (runtime.fanoutReservedParticipantIds?.size === 0) {
+        runtime.fanoutReservedParticipantIds = undefined
       }
     }
   }
@@ -8857,7 +8881,15 @@ export class EnsembleOrchestrator {
         }
       }
       const participant = remaining.shift()!
-      if (runtime.fannedOutParticipantIds?.has(participant.id)) {
+      const fanoutDispatchState = this.participantFanoutDispatchState(runtime, participant.id)
+      if (fanoutDispatchState) {
+        if (fanoutDispatchState === 'active') {
+          this.appendRoundStatus(
+            runtime.chatId,
+            runtime.roundId,
+            `${participantDisplayName(participant)} is already running in a fan-out lane; skipping duplicate serial dispatch.`
+          )
+        }
         continue
       }
       // Spike 4 — defer stage-role reviewers while any non-reviewer still
@@ -10139,6 +10171,32 @@ export class EnsembleOrchestrator {
     return round.participants.find((participant) => participant.participantId === participantId)?.status
   }
 
+  private activeFanoutRunForParticipant(
+    runtime: ActiveRoundRuntime,
+    participantId: string
+  ): ActiveParticipantRun | undefined {
+    for (const runId of runtime.activeScoutRunIds || []) {
+      const run = this.runsByRunId.get(runId)
+      if (run?.participant.id === participantId) return run
+    }
+    return undefined
+  }
+
+  private participantFanoutDispatchState(
+    runtime: ActiveRoundRuntime,
+    participantId: string
+  ): 'handled' | 'active' | null {
+    if (runtime.fannedOutParticipantIds?.has(participantId)) return 'handled'
+    if (runtime.fanoutReservedParticipantIds?.has(participantId)) return 'active'
+    if (this.activeFanoutRunForParticipant(runtime, participantId)) return 'active'
+    const round = this.deps.getChat(runtime.chatId)?.ensemble?.activeRound
+    if (!round || round.roundId !== runtime.roundId) return null
+    const activeLane = Object.values(round.lanes || {}).find(
+      (lane) => lane.participantId === participantId && !isTerminalLaneStatus(lane.status)
+    )
+    return activeLane ? 'active' : null
+  }
+
   private tryRouteYieldReturn(
     runtime: ActiveRoundRuntime,
     remaining: EnsembleParticipant[],
@@ -10181,6 +10239,9 @@ export class EnsembleOrchestrator {
     if (runtime.orchestrationMode !== 'continuous') return { appended: false, reason: 'not_continuous' }
     if (runtime.unreachableParticipantIds?.has(participant.id))
       return { appended: false, reason: 'unreachable' }
+    if (this.participantFanoutDispatchState(runtime, participant.id)) {
+      return { appended: false, reason: 'active_fanout' }
+    }
     const participantStatus = this.activeRoundParticipantStatus(runtime, participant.id)
     if (
       participantStatus &&
@@ -10236,6 +10297,8 @@ export class EnsembleOrchestrator {
         return 'continuation-hop budget exhausted'
       case 'unreachable':
         return 'it is unreachable this round'
+      case 'active_fanout':
+        return 'it is already reserved for or handled by a fan-out lane'
       case 'budget_exhausted':
         return result.budgetMessage || 'its allocated extra-turn budget is exhausted'
       case 'blocked_status':

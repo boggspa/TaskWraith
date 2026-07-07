@@ -161,6 +161,75 @@ describe('deriveActiveEnsembleWorkingPresentation', () => {
     ])
   })
 
+  it('keeps the active non-lane participant visible during fan-out', () => {
+    const chat = ensembleChat(
+      [
+        participant({ id: 'boss-captain', provider: 'claude', role: 'Captain', order: 0 }),
+        participant({ id: 'swift-worker', provider: 'cursor', role: 'WriteSwift', order: 1 }),
+        participant({ id: 'main-worker', provider: 'claude', role: 'WriteMain', order: 2 })
+      ],
+      'boss-captain'
+    )
+    chat.ensemble!.activeRound!.concurrentMode = true
+    chat.ensemble!.activeRound!.fanoutPolicy = 'read_only'
+    chat.ensemble!.activeRound!.lanes = {
+      lane1: {
+        laneId: 'lane1',
+        participantId: 'main-worker',
+        provider: 'claude',
+        status: 'running',
+        intent: 'read',
+        startedAt: '2026-07-01T00:00:01.000Z'
+      },
+      lane2: {
+        laneId: 'lane2',
+        participantId: 'swift-worker',
+        provider: 'cursor',
+        status: 'pending',
+        intent: 'read',
+        startedAt: '2026-07-01T00:00:02.000Z'
+      }
+    }
+
+    expect(deriveActiveEnsembleWorkingPresentations(chat).map((item) => item.roleLabel)).toEqual([
+      'Captain',
+      'WriteSwift',
+      'WriteMain'
+    ])
+  })
+
+  it('drops a stale active participant after it yielded during fan-out', () => {
+    const chat = ensembleChat(
+      [
+        participant({ id: 'boss-captain', provider: 'claude', role: 'Captain', order: 0 }),
+        participant({ id: 'swift-worker', provider: 'cursor', role: 'WriteSwift', order: 1 })
+      ],
+      'boss-captain'
+    )
+    chat.ensemble!.activeRound!.concurrentMode = true
+    chat.ensemble!.activeRound!.fanoutPolicy = 'read_only'
+    chat.ensemble!.activeRound!.participants = chat.ensemble!.activeRound!.participants.map(
+      (item) =>
+        item.participantId === 'boss-captain'
+          ? { ...item, status: 'yielded', endedAt: '2026-07-01T00:00:03.000Z' }
+          : item
+    )
+    chat.ensemble!.activeRound!.lanes = {
+      lane1: {
+        laneId: 'lane1',
+        participantId: 'swift-worker',
+        provider: 'cursor',
+        status: 'running',
+        intent: 'read',
+        startedAt: '2026-07-01T00:00:01.000Z'
+      }
+    }
+
+    expect(deriveActiveEnsembleWorkingPresentations(chat).map((item) => item.roleLabel)).toEqual([
+      'WriteSwift'
+    ])
+  })
+
   it('does not return a stacked participant list for serial rounds', () => {
     const chat = ensembleChat([participant()])
     chat.ensemble!.activeRound!.lanes = {
