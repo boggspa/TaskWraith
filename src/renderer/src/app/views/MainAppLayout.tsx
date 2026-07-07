@@ -1,4 +1,4 @@
-import type { CSSProperties, ReactNode } from 'react'
+import { useCallback, type CSSProperties, type ReactNode } from 'react'
 import { EMPTY_CHAT_MESSAGES } from '../../lib/stableEmpties'
 import { isRetiredProvider } from '../../../../shared/retiredProviders'
 import { handleSideChatComposerKeyDown } from '../../lib/sideChatComposer'
@@ -90,6 +90,12 @@ import { Composer } from '../../components/Composer'
 import { WorkspaceBoardCreatorSheet } from '../../components/WorkspaceBoardCreatorSheet'
 
 import type { MainAppLayoutProps } from './MainAppLayout.types'
+
+const EMPTY_TRANSCRIPT_FILE_SUMMARIES = []
+const noopAgentQuestionSubmit = () => {}
+const noopMessageAction = () => {}
+const noopPlanChoiceSubmit = () => {}
+const noopProposedPlanCustom = () => {}
 
 export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   const {
@@ -564,6 +570,81 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
     typeof sidePendingProviderChange?.providerMetadata?.selectedModelType === 'string'
       ? sidePendingProviderChange.providerMetadata.selectedModelType
       : null
+  const currentChatAppChatId = currentChat?.appChatId || null
+  const handleTranscriptInspectRun = useCallback(
+    (runId: string) => {
+      setInspectingRunId(runId)
+      activateRightDockTab('run')
+    },
+    [activateRightDockTab, setInspectingRunId]
+  )
+  const handleTranscriptAddMessageToPrompt = useCallback(
+    (_messageId: string, content: string) => {
+      if (!currentChatAppChatId) return
+      handleAddTranscriptMessageToPrompt(currentChatAppChatId, content)
+    },
+    [currentChatAppChatId, handleAddTranscriptMessageToPrompt]
+  )
+  const handleTranscriptTogglePinMessage = useCallback(
+    (messageId: string) => {
+      togglePinMessageInChat(currentChat, messageId)
+    },
+    [currentChat, togglePinMessageInChat]
+  )
+  const handleTranscriptMessageFeedback = useCallback(
+    (messageId: string, vote: 'up' | 'down', details?: unknown) => {
+      toggleFeedbackMessageInChat(currentChat, messageId, vote, details)
+    },
+    [currentChat, toggleFeedbackMessageInChat]
+  )
+  const handleTranscriptPromoteCollaboratorComment = useCallback(
+    (messageId: string) => {
+      handlePromoteCollaboratorComment(currentChatAppChatId, messageId)
+    },
+    [currentChatAppChatId, handlePromoteCollaboratorComment]
+  )
+  const handleSideTranscriptInspectRun = useCallback(
+    (runId: string) => {
+      if (!sideChat) return
+      void openLinkedChatAsMain(sideChat).then(() => {
+        setInspectingRunId(runId)
+        activateRightDockTab('run')
+      })
+    },
+    [activateRightDockTab, openLinkedChatAsMain, setInspectingRunId, sideChat]
+  )
+  const handleSideTranscriptAddMessageToPrompt = useCallback(
+    (_messageId: string, content: string) => {
+      if (!sideChat) return
+      handleAddTranscriptMessageToPrompt(sideChat.appChatId, content)
+    },
+    [handleAddTranscriptMessageToPrompt, sideChat]
+  )
+  const handleSideTranscriptDeleteMessage = useCallback(
+    (messageId: string) => {
+      deleteMessageFromChat(sideChat, messageId)
+    },
+    [deleteMessageFromChat, sideChat]
+  )
+  const handleSideTranscriptTogglePinMessage = useCallback(
+    (messageId: string) => {
+      togglePinMessageInChat(sideChat, messageId)
+    },
+    [sideChat, togglePinMessageInChat]
+  )
+  const handleSideTranscriptMessageFeedback = useCallback(
+    (messageId: string, vote: 'up' | 'down', details?: unknown) => {
+      toggleFeedbackMessageInChat(sideChat, messageId, vote, details)
+    },
+    [sideChat, toggleFeedbackMessageInChat]
+  )
+  const handleSideTranscriptPromoteCollaboratorComment = useCallback(
+    (messageId: string) => {
+      if (!sideChat) return
+      handlePromoteCollaboratorComment(sideChat.appChatId, messageId)
+    },
+    [handlePromoteCollaboratorComment, sideChat]
+  )
 
   return (
       <div
@@ -1813,10 +1894,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                 onOpenSubThread={handleOpenCockpitThread}
                 onOpenSubThreadInSidePanel={handleOpenLinkedChatInSidePanelById}
                 onOpenFileChangeInWorkbench={openFileChangeInWorkbench}
-                onInspectRun={(runId) => {
-                  setInspectingRunId(runId)
-                  activateRightDockTab('run')
-                }}
+                onInspectRun={handleTranscriptInspectRun}
                 onOpenSideChatFromRun={
                   canCreateSideChatFromCurrent ? handleOpenSideChatFromRunResult : undefined
                 }
@@ -1825,19 +1903,12 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                 pendingQueuedAppRunIds={pendingQueuedAppRunIds}
                 onCopyMessage={handleCopyMessage}
                 onAddMessageToPrompt={
-                  currentChat
-                    ? (_messageId, content) =>
-                        handleAddTranscriptMessageToPrompt(currentChat.appChatId, content)
-                    : undefined
+                  currentChatAppChatId ? handleTranscriptAddMessageToPrompt : undefined
                 }
                 onDeleteMessage={handleDeleteMessage}
-                onTogglePinMessage={(messageId) => togglePinMessageInChat(currentChat, messageId)}
-                onMessageFeedback={(messageId, vote, details) =>
-                  toggleFeedbackMessageInChat(currentChat, messageId, vote, details)
-                }
-                onPromoteCollaboratorComment={(messageId) =>
-                  handlePromoteCollaboratorComment(currentChat?.appChatId, messageId)
-                }
+                onTogglePinMessage={handleTranscriptTogglePinMessage}
+                onMessageFeedback={handleTranscriptMessageFeedback}
+                onPromoteCollaboratorComment={handleTranscriptPromoteCollaboratorComment}
                 onMessageSelectionCandidate={
                   canCreateSideChatFromCurrent ? handleMessageSelectionCandidate : undefined
                 }
@@ -2110,8 +2181,8 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
               pendingAgentQuestions={
                 pendingAgentQuestionsByChatId[sideChat.appChatId] || EMPTY_AGENT_QUESTION_QUEUE
               }
-              onAgentQuestionSubmit={() => {}}
-              onAgentQuestionDismiss={() => {}}
+              onAgentQuestionSubmit={noopAgentQuestionSubmit}
+              onAgentQuestionDismiss={noopMessageAction}
               runCompleteNotice={sideRunCompleteNotice}
               runCompleteDurationText={null}
               queuedRunStatusByAppRunId={queuedRunStatusByAppRunId}
@@ -2125,41 +2196,30 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
               thinkingProvider={sideThinkingProvider}
               thinkingProviderClass={sideThinkingProviderClass}
               thinkingModelBadge={sideThinkingModelBadge}
-              displayFileChangeSummaries={[]}
+              displayFileChangeSummaries={EMPTY_TRANSCRIPT_FILE_SUMMARIES}
               fileChangeSummaryText=""
               fileChangeShouldShowStats={false}
               fileChangeDisplayAdds={0}
               fileChangeDisplayDels={0}
               chats={chats}
               runningChatIds={runningChatIdsArray}
-              onPlanChoiceSubmit={() => {}}
+              onPlanChoiceSubmit={noopPlanChoiceSubmit}
               pendingProposedPlan={null}
-              onProposedPlanApprove={() => {}}
-              onProposedPlanDismiss={() => {}}
-              onProposedPlanCustom={() => {}}
+              onProposedPlanApprove={noopMessageAction}
+              onProposedPlanDismiss={noopMessageAction}
+              onProposedPlanCustom={noopProposedPlanCustom}
               onOpenSubThread={handleOpenCockpitThread}
               onOpenSubThreadInSidePanel={handleOpenLinkedChatInSidePanelById}
-              onInspectRun={(runId) => {
-                void openLinkedChatAsMain(sideChat).then(() => {
-                  setInspectingRunId(runId)
-                  activateRightDockTab('run')
-                })
-              }}
+              onInspectRun={handleSideTranscriptInspectRun}
               compactDensity={appearance.compactDensity}
               liveActivityViewport={appearance.liveActivityViewport}
               pendingQueuedAppRunIds={pendingQueuedAppRunIds}
               onCopyMessage={handleCopyMessage}
-              onAddMessageToPrompt={(_messageId, content) =>
-                handleAddTranscriptMessageToPrompt(sideChat.appChatId, content)
-              }
-              onDeleteMessage={(messageId) => deleteMessageFromChat(sideChat, messageId)}
-              onTogglePinMessage={(messageId) => togglePinMessageInChat(sideChat, messageId)}
-              onMessageFeedback={(messageId, vote, details) =>
-                toggleFeedbackMessageInChat(sideChat, messageId, vote, details)
-              }
-              onPromoteCollaboratorComment={(messageId) =>
-                handlePromoteCollaboratorComment(sideChat.appChatId, messageId)
-              }
+              onAddMessageToPrompt={handleSideTranscriptAddMessageToPrompt}
+              onDeleteMessage={handleSideTranscriptDeleteMessage}
+              onTogglePinMessage={handleSideTranscriptTogglePinMessage}
+              onMessageFeedback={handleSideTranscriptMessageFeedback}
+              onPromoteCollaboratorComment={handleSideTranscriptPromoteCollaboratorComment}
               onPreviewImage={setPreviewChatMediaRef}
               onDetachToPane={openMediaPane}
               jumpToMessageRequest={
