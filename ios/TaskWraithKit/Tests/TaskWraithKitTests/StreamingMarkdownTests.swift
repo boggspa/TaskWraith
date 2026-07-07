@@ -49,6 +49,46 @@ struct StreamingMarkdownSplitterTests {
         #expect(split.settled == "Plan:\n\n")
         #expect(split.tail == "- one\n- two\n- thr")
     }
+
+    @Test func incrementalSplitExtendsTailWithoutRescanningSettled() {
+        let first = "First paragraph.\n\nSecond grow"
+        let firstSplit = StreamingMarkdownSplitter.split(first)
+        let second = first + "ing token"
+        let incremental = StreamingMarkdownSplitter.splitIncremental(
+            previousSettled: firstSplit.settled,
+            previousText: first,
+            text: second)
+        #expect(incremental.settled == firstSplit.settled)
+        #expect(incremental.tail == "Second growing token")
+        #expect(incremental == StreamingMarkdownSplitter.split(second))
+    }
+
+    @Test func incrementalSplitResplitsWhenParagraphBoundaryCrosses() {
+        let growing = "Done paragraph."
+        let beforeBoundary = StreamingMarkdownSplitter.splitIncremental(
+            previousSettled: "",
+            previousText: "",
+            text: growing)
+        #expect(beforeBoundary == ("", growing))
+
+        let afterBoundary = growing + "\n\nNext"
+        let incremental = StreamingMarkdownSplitter.splitIncremental(
+            previousSettled: beforeBoundary.settled,
+            previousText: growing,
+            text: afterBoundary)
+        #expect(incremental == StreamingMarkdownSplitter.split(afterBoundary))
+    }
+
+    @Test func incrementalSplitRewindsOnNonPrefixUpdate() {
+        let previous = "First paragraph.\n\nTail"
+        let split = StreamingMarkdownSplitter.split(previous)
+        let replaced = "Different text"
+        let incremental = StreamingMarkdownSplitter.splitIncremental(
+            previousSettled: split.settled,
+            previousText: previous,
+            text: replaced)
+        #expect(incremental == StreamingMarkdownSplitter.split(replaced))
+    }
 }
 
 @Suite("StreamingInterleave")

@@ -31,6 +31,95 @@ public enum StreamingMarkdownSplitter {
         guard let boundary = lastBoundary else { return ("", text) }
         return (String(text[..<boundary]), String(text[boundary...]))
     }
+
+    /// Incremental split for live streaming: re-scan the full text only when
+    /// `text` is not an append-only growth of `previousText`, or when the
+    /// growth crosses a new fence-aware paragraph boundary.
+    public static func splitIncremental(
+        previousSettled: String,
+        previousText: String,
+        text: String
+    ) -> (settled: String, tail: String) {
+        guard !text.isEmpty else { return ("", "") }
+        if previousText.isEmpty || text.count < previousText.count || !text.hasPrefix(previousText) {
+            return split(text)
+        }
+        if text == previousText {
+            if previousSettled.isEmpty { return ("", text) }
+            guard text.hasPrefix(previousSettled) else { return split(text) }
+            return (previousSettled, String(text[previousSettled.endIndex...]))
+        }
+
+        let growth = String(text[previousText.endIndex...])
+        if growthContainsNewSettlingBoundary(since: previousText, growth: growth) {
+            return split(text)
+        }
+
+        if previousSettled.isEmpty {
+            return ("", text)
+        }
+        guard text.hasPrefix(previousSettled) else { return split(text) }
+        return (previousSettled, String(text[previousSettled.endIndex...]))
+    }
+
+    /// Whether `growth` (the suffix appended since `previousText`) introduces
+    /// a new blank-line paragraph boundary outside an open ``` fence.
+    static func growthContainsNewSettlingBoundary(since previousText: String, growth: String) -> Bool {
+        guard !growth.isEmpty else { return false }
+        if !growth.contains("\n\n") {
+            if !(previousText.hasSuffix("\n") && growth.hasPrefix("\n")) { return false }
+        }
+        let inFence = fenceOpen(atEndOf: previousText)
+        var scanningFence = inFence
+        var lineStart = growth.startIndex
+        while lineStart < growth.endIndex {
+            let lineEnd = growth[lineStart...].firstIndex(of: "\n") ?? growth.endIndex
+            let line = growth[lineStart..<lineEnd]
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.hasPrefix("```") {
+                scanningFence.toggle()
+            } else if trimmed.isEmpty, !scanningFence, lineEnd < growth.endIndex {
+                return true
+            }
+            if lineEnd == growth.endIndex { break }
+            lineStart = growth.index(after: lineEnd)
+        }
+        return false
+    }
+
+    /// True when `text` ends inside an unclosed ``` fence.
+    static func fenceOpen(atEndOf text: String) -> Bool {
+        var inFence = false
+        var lineStart = text.startIndex
+        while lineStart < text.endIndex {
+            let lineEnd = text[lineStart...].firstIndex(of: "\n") ?? text.endIndex
+            let trimmed = text[lineStart..<lineEnd].trimmingCharacters(in: .whitespaces)
+            if trimmed.hasPrefix("```") { inFence.toggle() }
+            if lineEnd == text.endIndex { break }
+            lineStart = text.index(after: lineEnd)
+        }
+        return inFence
+    }
+}
+
+/// Holds the last incremental streaming split so token deltas extend the tail
+/// without re-scanning the full growing bubble on every SwiftUI body eval.
+@MainActor
+public final class StreamingMarkdownSplitCacheBox {
+    private var settledPrefix = ""
+    private var lastText = ""
+
+    public init() {}
+
+    public func parts(for text: String) -> (settled: String, tail: String) {
+        let result = StreamingMarkdownSplitter.splitIncremental(
+            previousSettled: settledPrefix,
+            previousText: lastText,
+            text: text)
+        settledPrefix = result.settled
+        lastText = text
+        return result
+    }
 }
 
 /// Plans the LIVE transcript interleave: which stream text segment renders

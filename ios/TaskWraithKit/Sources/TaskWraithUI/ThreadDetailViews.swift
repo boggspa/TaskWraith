@@ -3447,6 +3447,7 @@ struct StreamingRowView: View {
     var model: String? = nil
     var role: String? = nil
     var agentIdentity: ThreadAgentIdentity? = nil
+    @State private var streamingSplitCache = StreamingMarkdownSplitCacheBox()
 
     private var accent: Color {
         agentIdentity?.accent ?? TWTheme.providerAccent(provider, modelId: model, modelLabel: model)
@@ -3457,7 +3458,7 @@ struct StreamingRowView: View {
         // StreamingSegmentRow) so a half-typed `**bold` / `| cell` / ``` fence
         // never reveals as literal syntax in side chats; only the plain growing
         // tail gets the token-reveal shimmer.
-        let parts = StreamingMarkdownSplitter.split(text)
+        let parts = streamingSplitCache.parts(for: text)
         HStack(alignment: .top, spacing: 8) {
             AgentTranscriptLeadingMark(
                 identity: agentIdentity,
@@ -3555,11 +3556,12 @@ struct StreamingSegmentRow: View {
     var agentIdentity: ThreadAgentIdentity? = nil
     var participants: [RemoteEnsembleState.Participant] = []
     var onRevealFrame: (() -> Void)? = nil
+    @State private var streamingSplitCache = StreamingMarkdownSplitCacheBox()
 
     var body: some View {
         let parts =
             isTail
-            ? StreamingMarkdownSplitter.split(text)
+            ? streamingSplitCache.parts(for: text)
             : (settled: text, tail: "")
         HStack(alignment: .top, spacing: 8) {
             AgentTranscriptLeadingMark(

@@ -2374,7 +2374,49 @@ public struct MarkdownLite: View {
         case divider
     }
 
+    /// Parsed block cache keyed by `(text, participantsSignature)` so settled
+    /// rows and streaming prefixes skip the line-scan on every body eval.
+    @MainActor
+    private enum BlockCache {
+        private struct Key: Hashable {
+            let text: String
+            let participantsSignature: String
+        }
+
+        private static var store: [Key: [Block]] = [:]
+        private static var order: [Key] = []
+        private static let maxEntries = 96
+
+        static func blocks(text: String, participants: [RemoteEnsembleState.Participant]) -> [Block] {
+            let key = Key(text: text, participantsSignature: twParticipantsSignature(participants))
+            if let hit = store[key] { return hit }
+            let parsed = parseBlocks(from: text)
+            store[key] = parsed
+            order.append(key)
+            if order.count > maxEntries, let evict = order.first {
+                order.removeFirst()
+                store.removeValue(forKey: evict)
+            }
+            return parsed
+        }
+
+        static func parseBlocks(from text: String) -> [Block] {
+            parseBlocksImpl(from: text)
+        }
+
+        #if DEBUG
+            static func _resetForTesting() {
+                store = [:]
+                order = []
+            }
+        #endif
+    }
+
     private var blocks: [Block] {
+        BlockCache.blocks(text: text, participants: participants)
+    }
+
+    private static func parseBlocksImpl(from text: String) -> [Block] {
         var out: [Block] = []
         var paragraph: [String] = []
         var bullets: [String] = []
@@ -2454,13 +2496,13 @@ public struct MarkdownLite: View {
                 flushLists()
                 continue
             }
-            if let heading = headingLevel(trimmed) {
+            if let heading = Self.headingLevel(trimmed) {
                 flushParagraph()
                 flushLists()
                 out.append(.heading(level: heading.level, text: heading.text))
                 continue
             }
-            if isThematicBreak(trimmed) {
+            if Self.isThematicBreak(trimmed) {
                 flushParagraph()
                 flushLists()
                 out.append(.divider)
@@ -2476,7 +2518,7 @@ public struct MarkdownLite: View {
                 bullets.append(String(trimmed.dropFirst(2)))
                 continue
             }
-            if let numbered = numberedItem(trimmed) {
+            if let numbered = Self.numberedItem(trimmed) {
                 flushParagraph()
                 numbers.append(numbered)
                 continue
@@ -2496,7 +2538,7 @@ public struct MarkdownLite: View {
         return out
     }
 
-    private func headingLevel(_ line: String) -> (level: Int, text: String)? {
+    private static func headingLevel(_ line: String) -> (level: Int, text: String)? {
         var level = 0
         for character in line {
             if character == "#" { level += 1 } else { break }
@@ -2507,7 +2549,7 @@ public struct MarkdownLite: View {
         return (level, body)
     }
 
-    private func numberedItem(_ line: String) -> String? {
+    private static func numberedItem(_ line: String) -> String? {
         guard let dot = line.firstIndex(of: "."), line.startIndex < dot,
             line.index(after: dot) < line.endIndex,
             line[line.index(after: dot)] == " ",
@@ -2519,7 +2561,7 @@ public struct MarkdownLite: View {
     /// `---` / `***` / `___` (3+ of one marker) — the separator the Mac
     /// inserts between Codex agent-message items; renders as a hairline
     /// instead of literal dashes.
-    private func isThematicBreak(_ line: String) -> Bool {
+    private static func isThematicBreak(_ line: String) -> Bool {
         guard line.count >= 3, let first = line.first,
             first == "-" || first == "*" || first == "_"
         else { return false }
@@ -2535,7 +2577,7 @@ public struct MarkdownLite: View {
     }
 
     static func _markdownLiteBlockKindsForTesting(_ text: String) -> [String] {
-        MarkdownLite(text).blocks.map { block in
+        BlockCache.parseBlocks(from: text).map { block in
             switch block {
             case .heading: return "heading"
             case .bullet: return "bullet"
