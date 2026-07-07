@@ -9,6 +9,7 @@ import {
   soloSpeakerForMessage,
   REMOTE_IOS_PREVIEW_MAX,
   REMOTE_IOS_ROW_EXPAND_MAX,
+  REMOTE_IOS_THINKING_MAX,
   REMOTE_RUN_SUMMARY_MAX,
   type RemoteThreadSnapshot
 } from './RemoteThreadProjection'
@@ -945,6 +946,70 @@ describe('RemoteThreadProjection', () => {
         additions: 2,
         deletions: 1
       })
+    })
+  })
+
+  describe('thinking trace projection', () => {
+    it('projects provider thinking tool activity as a distinct bounded field', () => {
+      const trace = `${'Thinking through the host publish path. '.repeat(160)}tail sentinel`
+      const snap = project(
+        { kind: 'latestN', n: 1 },
+        [
+          msg(1, {
+            role: 'tool',
+            content: '',
+            toolActivities: [
+              activity({
+                id: 'think-1',
+                toolName: 'grok_thinking',
+                displayName: 'Grok thinking',
+                resultSummary: trace
+              })
+            ]
+          })
+        ],
+        [],
+        { previewMaxChars: REMOTE_IOS_PREVIEW_MAX }
+      )
+
+      const row = snap.rows[0]
+      expect(row.thinking).toMatchObject({
+        title: 'Grok thinking',
+        toolName: 'grok_thinking',
+        status: 'success',
+        truncated: true
+      })
+      expect(row.thinking?.preview.length ?? 0).toBeLessThanOrEqual(REMOTE_IOS_THINKING_MAX)
+      expect(row.thinking?.preview).not.toContain('tail sentinel')
+      // Backward clients still get the activity card.
+      expect(row.toolSummary?.tools?.[0]?.toolName).toBe('grok_thinking')
+    })
+
+    it('uses the existing row expand ceiling for expanded thinking rows', () => {
+      const trace = `${'Expanded thinking. '.repeat(400)}tail sentinel`
+      const snap = project(
+        { kind: 'aroundRow', rowId: 'thinking-row', radius: 0 },
+        [
+          msg(1, {
+            id: 'thinking-row',
+            role: 'tool',
+            content: '',
+            toolActivities: [
+              activity({
+                id: 'think-1',
+                toolName: 'kimi_reasoning',
+                displayName: 'Kimi thinking',
+                resultSummary: trace
+              })
+            ]
+          })
+        ],
+        [],
+        { previewMaxChars: REMOTE_IOS_ROW_EXPAND_MAX }
+      )
+
+      expect(snap.rows[0].thinking?.truncated).toBe(false)
+      expect(snap.rows[0].thinking?.preview).toContain('tail sentinel')
     })
   })
 

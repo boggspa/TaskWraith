@@ -70,6 +70,8 @@ export interface RemoteCostDisplayOptions {
 export const REMOTE_IOS_PREVIEW_MAX = 2400
 /** Upper bound when the phone explicitly expands a clipped row. */
 export const REMOTE_IOS_ROW_EXPAND_MAX = 32000
+/** Routine thinking trace cap. The expand-row path lifts this to the row ceiling. */
+export const REMOTE_IOS_THINKING_MAX = 4000
 /** Per-run summaries carried for mobile completion cards. Needs to cover a
  * full 20-seat ensemble round plus nearby runs without making snapshots
  * unbounded. */
@@ -439,6 +441,14 @@ export interface RemoteToolEntry {
   detail?: string
 }
 
+export interface RemoteThinkingTrace {
+  title: string
+  preview: string
+  truncated: boolean
+  toolName?: string
+  status?: 'running' | 'success' | 'error'
+}
+
 export interface RemoteParticipantHealthEntry {
   participantId: string
   provider: ProviderId
@@ -577,6 +587,9 @@ export interface RemoteThreadRow {
      * result line. Capped at 12 entries; activityCount stays the truth. */
     tools?: RemoteToolEntry[]
   }
+  /** Distinct bounded thinking/reasoning trace for mobile's expandable viewport.
+   * Older clients still see the same activity inside `toolSummary`. */
+  thinking?: RemoteThinkingTrace
   /** Structured ensemble pre-flight participant reachability summary. */
   participantHealth?: RemoteParticipantHealthSummary
   /** Structured metadata for returned TaskWraith sub-thread output. */
@@ -1054,6 +1067,49 @@ function buildToolSummary(message: ChatMessage): RemoteThreadRow['toolSummary'] 
     return entry
   })
   return { activityCount: activities.length, status, tools }
+}
+
+function normalizedToolName(toolName: string | undefined): string {
+  return (toolName || '').trim().toLowerCase().replace(/^mcp__[^_]+__/i, '')
+}
+
+function isThinkingTraceToolName(toolName: string | undefined): boolean {
+  const name = normalizedToolName(toolName)
+  return (
+    name === 'thinking' ||
+    name === 'reasoning' ||
+    name.endsWith('_thinking') ||
+    name.endsWith('_reasoning')
+  )
+}
+
+function buildThinkingTrace(
+  message: ChatMessage,
+  previewMax: number
+): RemoteThreadRow['thinking'] | undefined {
+  if (message.role !== 'tool') return undefined
+  const activity = (message.toolActivities || [])
+    .filter((entry) => isThinkingTraceToolName(entry.toolName))
+    .slice(-1)[0]
+  const raw = activity?.resultSummary || activity?.outputPreview
+  if (!activity || !raw?.trim()) return undefined
+  const limit =
+    previewMax >= REMOTE_IOS_ROW_EXPAND_MAX ? REMOTE_IOS_ROW_EXPAND_MAX : REMOTE_IOS_THINKING_MAX
+  const { preview, truncated } = sanitizePreview(raw, limit)
+  if (!preview) return undefined
+  const status =
+    activity.status === 'running' || activity.status === 'pending'
+      ? 'running'
+      : activity.status === 'error'
+        ? 'error'
+        : 'success'
+  return {
+    title: activity.displayName || 'Thinking',
+    preview,
+    truncated,
+    toolName: activity.toolName,
+    status
+  }
 }
 
 function stringField(value: unknown, max = 160): string | undefined {
@@ -1541,6 +1597,8 @@ function buildRow(
   }
   const toolSummary = buildToolSummary(message)
   if (toolSummary) row.toolSummary = toolSummary
+  const thinking = buildThinkingTrace(message, previewMax)
+  if (thinking) row.thinking = thinking
   const participantHealth = buildParticipantHealth(message)
   if (participantHealth) row.participantHealth = participantHealth
   if (subThreadReturn) row.subThreadReturn = subThreadReturn.summary
