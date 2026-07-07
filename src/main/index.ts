@@ -148,6 +148,11 @@ import {
   LIGHT_THEME_POPOUT_BACKDROPS,
   RUN_MANAGER_PROVIDERS
 } from './index.constants'
+import {
+  createRemoteLiveSnapshotScheduler,
+  hasStreamingRemoteRunSessions,
+  remoteProjectionSnapshotThrottleMsForStreaming
+} from './RemoteBridgePerfTuning'
 import type {
   McpToolContentBlock,
   McpToolExecutionResult,
@@ -5106,6 +5111,12 @@ function getActiveTaskWraithThreadCount(): number {
     }
   }
   return chatIds.size + anonymousRuns
+}
+
+function hasActiveStreamingTaskWraithRun(): boolean {
+  return hasStreamingRemoteRunSessions(
+    RUN_MANAGER_PROVIDERS.flatMap((provider) => runManager.getActiveByProvider(provider))
+  )
 }
 
 const appShellStatsService = new AppShellStatsService({
@@ -23490,7 +23501,7 @@ if (isGeminiMcpBridgeProcess) {
       const broadcastRemoteComposerQueueChange = (chat: ChatRecord, workspaceId: string) => {
         broadcastThreadUpdate(chat.appChatId)
         pushRemoteThreadSnapshot(chat, workspaceId)
-        bridgeBroadcasterRef?.resetThrottle()
+        // Queue changes already publish a targeted thread delta; let the full projection coalesce.
         bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
       }
       const queueRemoteComposerPrompt = async (action: {
@@ -24254,7 +24265,7 @@ if (isGeminiMcpBridgeProcess) {
             broadcastThreadUpdate(chat.appChatId)
             const canonical = canonicalRemoteWorkspaceId(chat.workspaceId)
             if (canonical) pushRemoteThreadSnapshot(chat, canonical)
-            bridgeBroadcasterRef?.resetThrottle()
+            // Side-chat creation has a thread delta; the feed-wide projection can ride the throttle.
             bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
             return { ok: true, threadId: chat.appChatId }
           } catch (err) {
@@ -24432,9 +24443,7 @@ if (isGeminiMcpBridgeProcess) {
           broadcastChatUpdated(updated)
           const canonical = canonicalRemoteWorkspaceId(updated.workspaceId)
           if (canonical) pushRemoteThreadSnapshot(updated, canonical)
-          // Force the confirming projection snapshot through: roster edits are
-          // user-driven and should beat any pending coalesced full snapshot.
-          bridgeBroadcasterRef?.resetThrottle()
+          // Roster edits publish the thread delta immediately; coalesce the full projection.
           bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
           return { ok: true }
         },
@@ -24494,7 +24503,7 @@ if (isGeminiMcpBridgeProcess) {
           broadcastChatUpdated(updated)
           const canonical = canonicalRemoteWorkspaceId(updated.workspaceId)
           if (canonical) pushRemoteThreadSnapshot(updated, canonical)
-          bridgeBroadcasterRef?.resetThrottle()
+          // Settings edits publish the thread delta immediately; coalesce the full projection.
           bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
           return {
             ok: true,
@@ -25840,7 +25849,19 @@ if (isGeminiMcpBridgeProcess) {
       })
     }
 
-    const remoteLiveSnapshotLastPush = new Map<string, number>()
+    const pushRemoteLiveSnapshotDeltas = (threadId: string): boolean => {
+      const chat = AppStore.getChat(threadId)
+      if (!chat) return false
+      const workspaceId = canonicalRemoteWorkspaceId(chat.workspaceId)
+      if (!workspaceId) return false
+      pushRemoteThreadSnapshot(chat, workspaceId)
+      pushRemoteDiffSummaryDeltaForChat(chat.appChatId)
+      scheduleRemoteGitSnapshotRefresh(workspaceId)
+      return true
+    }
+    const remoteLiveSnapshotScheduler = createRemoteLiveSnapshotScheduler({
+      push: pushRemoteLiveSnapshotDeltas
+    })
     runEventBus.subscribe({
       id: 'remote-ios-live-snapshots',
       handle(event) {
@@ -25848,6 +25869,7 @@ if (isGeminiMcpBridgeProcess) {
         const threadId = extractThreadId(event.payload)
         if (!threadId || !bridgeBroadcasterRef) return
         if (event.channel === 'agent-exit') {
+          remoteLiveSnapshotScheduler.clear(threadId)
           // Terminal status for DESKTOP-initiated runs persists via the
           // renderer's save shortly after exit — re-push once the record
           // settles, with the throttle cleared so the running→terminal
@@ -25865,17 +25887,7 @@ if (isGeminiMcpBridgeProcess) {
           }, 900).unref?.()
           return
         }
-        const now = Date.now()
-        const last = remoteLiveSnapshotLastPush.get(threadId) ?? 0
-        if (now - last < 350) return
-        remoteLiveSnapshotLastPush.set(threadId, now)
-        const chat = AppStore.getChat(threadId)
-        if (!chat) return
-        const workspaceId = canonicalRemoteWorkspaceId(chat.workspaceId)
-        if (!workspaceId) return
-        pushRemoteThreadSnapshot(chat, workspaceId)
-        pushRemoteDiffSummaryDeltaForChat(chat.appChatId)
-        scheduleRemoteGitSnapshotRefresh(workspaceId)
+        remoteLiveSnapshotScheduler.schedule(threadId)
       }
     })
 
@@ -26779,7 +26791,7 @@ if (isGeminiMcpBridgeProcess) {
           projectionSource: { listRemoteProjectionEnvelopes },
           canonicalChatWorkspaceId: canonicalRemoteWorkspaceId,
           remoteProjectionSnapshotThrottleMs: () =>
-            getActiveTaskWraithThreadCount() > 0 ? 2_500 : 1_000,
+            remoteProjectionSnapshotThrottleMsForStreaming(hasActiveStreamingTaskWraithRun()),
           routeAction: (method, params) => transportActionRouter.route(method, params),
           subscribeRunEvents: (sink) => runEventBus.subscribe(sink),
           onPairingPrompt: (prompt) => {
@@ -29361,7 +29373,7 @@ if (isGeminiMcpBridgeProcess) {
           canonicalRemoteWorkspaceId(saved.workspaceId) ??
           (!saved.workspaceId || saved.scope === 'global' ? GLOBAL_REMOTE_SCOPE : null)
         if (workspaceId) {
-          bridgeBroadcasterRef?.resetThrottle()
+          // First diff availability rides a targeted thread delta; keep full snapshots coalesced.
           pushRemoteThreadSnapshot(saved, workspaceId)
         }
       }
