@@ -3875,6 +3875,35 @@
   -webkit-text-fill-color: inherit !important;
 }
 
+/* Claude-shell Stop glyph — the light-mode pass above covered the voice
+ * cluster, and the run/send arrow is carried by the Claude-orange
+ * `[data-interface-style="claude"]` rule in shard 07, but Stop kept the
+ * shell's dark-native `color-mix(in srgb, #ffffff 58%, …)` base from
+ * `[data-composer-style="claude"] .composer-action-btn` — an invisible
+ * white square on light themes while a run is active. Same dark-neutral
+ * ink the Obsidian/Alabaster pairs use for run+stop (shard 10 ~line 906);
+ * no `:not(:disabled)` guard on the idle rule so the steer-busy disabled
+ * moment dims but never vanishes. */
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="claude"]
+  .composer-action-btn.stop-btn {
+  color: rgba(29, 29, 31, 0.72) !important;
+}
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="claude"]
+  .composer-action-btn.stop-btn:disabled {
+  color: rgba(29, 29, 31, 0.38) !important;
+}
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="claude"]
+  .composer-action-btn.stop-btn:hover:not(:disabled) {
+  background: rgba(29, 29, 31, 0.08) !important;
+  color: rgba(29, 29, 31, 0.95) !important;
+}
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="claude"]
+  .composer-action-btn.stop-btn
+  :is(.sf-symbol-icon, .sf-symbol-icon svg) {
+  color: inherit !important;
+  -webkit-text-fill-color: inherit !important;
+}
+
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"])[data-composer-style="kimi"]
   .app-transcript.chat-kind-ensemble
   .composer-above-bar-stack

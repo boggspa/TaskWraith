@@ -7,6 +7,11 @@ history, and workspace state stay on your machine throughout.
 ## Unreleased
 
 ### Fixed
+- **Claude composer shell: visible Stop button on light themes.** While a run
+  was active, the Claude shell's Stop glyph kept its dark-native white ink on
+  the Light, Mist, and Sage themes — an invisible white square in the send
+  slot. It now uses the same dark-neutral ink as the shell's other light-mode
+  controls, with a dimmed disabled state and a soft hover fill.
 - **The phone's git pill no longer lags the Mac.** Paired phones now ride the
   same git watcher lane as the desktop pill: while at least one phone is
   connected, the Mac lands every filesystem/run-driven git recompute (terminal
