@@ -3,7 +3,7 @@
 > Round: Cross-platform perf session — **pass-5** epic perf + de-vibe (H5/H6/H7 host, iOS5 pull audit)
 > Scope: solidity of **existing iOS features only**, plus Batch-1 parity, Track-A resolution, and perf-session residuals.
 > Compiled from: Scout1/Scout2 recon, pass-1/2/2.5/3/4/5 implementation, adversary review, and `ios/TaskWraithKit` source walk.
-> Updated: Pass-9 ledger open (2026-07-07) — pass-4 fully banked (`47512fb91` iOS + `f6be9a9b0` docs); pass-5 active.
+> Updated: Pass-10 ledger (2026-07-07) — iOS5 banked (`042e33a15` + `2bed1864c`); host H5/H6/H7 landed uncommitted, Adversary2-approved; awaiting CheckCommit hunk-safe staging on `index.ts`.
 
 ## Legend
 
@@ -182,6 +182,16 @@ Gates at commit time: typecheck node+web, vitest 8761/8761, swift 316/316, lint+
 | `47512fb91` | **S3-batching+B2 — iOS** | `Models.swift`, `RemoteSessionModel.swift`, `AppShell.swift`, `IosParityFixesTests.swift` | `StreamingPublishGate` 80ms; `setWatchedThread` assertion |
 | `f6be9a9b0` | **Docs pass-8** | `docs/ios-feature-audit.md` | Pass-4 gate ledger |
 
+## Perf pass-5 (committed + landed, 2026-07-07)
+
+| SHA | Track | Files | Trigger cut | State |
+|-----|-------|-------|-------------|-------|
+| `042e33a15` | **iOS5 — pull-path audit** | `RemoteSessionModel.swift`, `IosParityFixesTests.swift` | User-initiated pulls bypass visible+streaming suppression; passive `runEvent` unchanged | **Committed** (local) |
+| `2bed1864c` | **Docs pass-9** | `docs/ios-feature-audit.md` | Pass-5 ledger open | **Committed** (local) |
+| *(pending)* | **H5+H6+H7 — host** | `RemoteBridgePerfTuning.{ts,test.ts}`, `scheduledWorkflowHandlers.ts`, `index.ts` (hunk-stage) | Agent-exit delta convergence; honest `requestThrottled*` naming; H7 residual map | **Landed uncommitted** — Adversary2 ✅; CheckCommit owns hunk-safe `index.ts` staging |
+
+Gates at iOS5 bank: swift **342/342**. Gates at host land: focused vitest **63/63** + adjacent run-event **31/31** + `typecheck:node` clean.
+
 ## Pass-5 gate ledger (active, 2026-07-07)
 
 User opened pass-5 ("another epic performance and de-vibe code pass"). Do **not** redo pass-2.5, pass-1, H2, IF3, S3 pull-audit, S3-batching, or B2 wire — all closed. Pass-5 targets what pass-4 explicitly kept or deferred.
@@ -195,18 +205,52 @@ User opened pass-5 ("another epic performance and de-vibe code pass"). Do **not*
 | Pass-4 host (B2/F3/H4) | `c87eb98b8` |
 | Pass-4 iOS (S3 batching + B2 phone) | `47512fb91` |
 | Pass-8 ledger | `f6be9a9b0` |
+| Pass-5 iOS5 | `042e33a15` |
+| Pass-9 ledger | `2bed1864c` |
 
-Standing: no push, no stash, pathspec-only commits, iOS landmines ①–⑥. Branch ~33 commits ahead of origin.
+Standing: no push, no stash, pathspec-only commits, iOS landmines ①–⑥. Branch ~35 commits ahead of origin.
 
-### Priority stack
+### Landed detail (pass-5)
 
-| Track | Owner | Amplifier | Binding | Notes |
-|-------|-------|-----------|---------|-------|
-| **H5** agent-exit full rebuild | WriteMain | #1 host amplifier | Drop `index.ts` `:25927` **only** with airtight terminal-convergence test | Every run end: thread+diff deltas then inline `broadcastRemoteProjectionSnapshot()`. Test seam: extend `RemoteBridgePerfTuning.test.ts` — grep finds **no** terminal-convergence test in `src/main/**/*.test.ts` today |
-| **H6** dishonest "coalesced" helpers | WriteMain | De-vibe + encode storm | Rename and/or dedupe — **do not** add second coalesce beside `BridgeBroadcaster` | `index.ts:1160-1162` `broadcastCoalescedRemoteProjectionSnapshot` (6 sites: `:5371`, `:9770`, `:27756`, `:29641`, `:31603`, `:32064`); `scheduledWorkflowHandlers.ts:131-135` `broadcastCoalescedRemoteProjectionAfterIpcMutation` (11× IPC saves). `BridgeBroadcaster.broadcastRemoteProjectionSnapshot()` already trailing-coalesces at `:505-514` |
-| **H7** residual full-snapshot map | WriteMain | ~11 encode attempts | Refresh Scout1 classification post-`c87eb98b8` | 5 direct `broadcastRemoteProjectionSnapshot()` in `index.ts` (`:22980`, `:22999`, `:25927`, `:27567` + meta-helper chain) plus 6 via H6 wrapper |
-| **iOS5** pull-path audit round 2 | WriteSwift | 27 `scheduleThreadRefresh(` sites | Extend pass-3 `shouldSuppressOnDemandSnapshotPull` discipline | Central gate `:2281-2285`; debounce `:3288-3307` (450ms). Scout2 suspects composer-send, media acks, pin/archive bypass streaming buffer |
-| **B2-follow** bandwidth validation | Scout1/Scout2 | Measurement | Read-only | Filter landed; validate encode reduction on device (home screen + background thread streaming) |
+#### iOS5 — user-initiated pull bypass (`042e33a15`)
+
+Pass-3 `shouldSuppressOnDemandSnapshotPull` correctly suppressed passive amplification during visible+streaming, but it also blocked **user-initiated** convergence (composer send, approvals, roster edits, goals, canvas, etc.). Fix: `scheduleThreadRefreshAfterUserAction` routes **25 call sites** through `bypassVisibleStreamSuppression: true`. Passive `runEvent` path unchanged (suppress agent-output when visible+streaming; agent-exit fire-through). Reconnect on `.established` reasserts visible thread with bypass.
+
+Site inventory (27 referenced): 25 user-action bypass + 1 passive `runEvent` + 1 gate seam. Named tests: bypass policy, inventory count, user-initiated schedules while streaming.
+
+#### H5 — agent-exit delta convergence (uncommitted)
+
+Dropped inline `resetThrottle()` + `broadcastRemoteProjectionSnapshot()` on agent-exit settle (`index.ts:25988-26005`). Replacement: `publishRemoteAgentExitConvergenceDeltas` sends `threadSnapshot` + `taskCard` (which internally emits `diffSummary` when present) + forced git refresh + composer queue pump. Regression in `RemoteBridgePerfTuning.test.ts` proves helper contract (no `remoteProjectionSnapshot` in delta list). **Future strengthener:** integration test of `agent-exit` subscriber wiring (Adversary2 non-blocker).
+
+#### H6 — honest naming / de-vibe (uncommitted)
+
+Renamed misleading "coalesced" wrappers — **no second coalesce layer**; `BridgeBroadcaster.broadcastRemoteProjectionSnapshot()` remains sole throttle owner:
+
+- `index.ts`: `broadcastCoalescedRemoteProjectionSnapshot` → `requestThrottledRemoteProjectionSnapshot` (6 call sites)
+- `scheduledWorkflowHandlers.ts`: `broadcastCoalescedRemoteProjectionAfterIpcMutation` → `requestThrottledRemoteProjectionAfterIpcMutation` (11 IPC save sites)
+
+#### H7 — residual full-snapshot map (uncommitted, declared kept)
+
+Remaining direct `broadcastRemoteProjectionSnapshot()` calls are appropriate:
+
+| Location | Why kept |
+|----------|----------|
+| `index.ts:1168` | Renamed wrapper itself |
+| `index.ts:23054`, `23073` | Meta-helpers `broadcastThreadUpdate` / `broadcastThreadList` — membership/global changes need full snapshot |
+| `index.ts:27642` | Allowlist handler dependency injection |
+| `ipc/bridgeAllowlistHandlers.ts:55` | Allowlist visibility → global workspace/thread list projection |
+| `ipc/scheduledWorkflowHandlers.ts:134` | Inside renamed honest wrapper |
+
+#### Staging caveat — `index.ts` mixed with foreign MCP work
+
+`index.ts` contains **both** approved H5/H6/H7 hunks and concurrent-session MCP route-guard / `TASKWRAITH_WORKSPACE_PATH` env hunks. **Do not whole-file stage.** CheckCommit must hunk-stage only OURS regions (import, wrapper rename + call sites, agent-exit delta block) or hold. Clean files stage normally: `RemoteBridgePerfTuning.{ts,test.ts}`, `scheduledWorkflowHandlers.ts`.
+
+### Remaining (pass-5 closeout)
+
+| Track | Owner | State | Notes |
+|-------|-------|-------|-------|
+| **H5+H6+H7 host commit** | CheckCommit | Blocked on hunk-safe `index.ts` | Adversary2 approved substance; 3 clean files + selective `index.ts` hunks |
+| **B2-follow** bandwidth validation | Scout1/Scout2 | Read-only | Filter landed; device encode reduction measurement deferred |
 
 ### Closed before pass-5 opens (do not re-assign)
 
@@ -214,6 +258,10 @@ Standing: no push, no stash, pathspec-only commits, iOS landmines ①–⑥. Bra
 |------|-----|------|
 | IF3 stale-generation `finishDecode` branch | `f765f4ad9` | `drainIfIdle` on stale-gen when `pending != nil`; test `coalescerResetThenEnqueueDuringInFlightDecodeStillDrains` |
 | Pass-4 iOS S3-batching + B2 phone | `47512fb91` | 339/339 swift green |
+| iOS5 user-initiated pull bypass | `042e33a15` | 342/342 swift; 25 `scheduleThreadRefreshAfterUserAction` sites |
+| H5 agent-exit full rebuild | *(pending commit)* | Delta convergence via `publishRemoteAgentExitConvergenceDeltas`; no inline full snapshot |
+| H6 misnamed coalesced helpers | *(pending commit)* | `requestThrottled*` rename; zero `broadcastCoalesced*` in `src/` |
+| H7 residual full-snapshot map | *(pending commit)* | 5 appropriate direct sites declared kept |
 
 ## Batch-1 landed summary
 
@@ -251,7 +299,8 @@ Pair **TestFlight build 74** with a Mac host running this checkout (pass-2.5 + p
 | Thinking rows | Collapsed 8-line fade; expand in-place | `ThinkingViewportView` |
 | Diff pill / git refresh | Pill updates without full-snapshot stall | Delta-only git publish (`3a49cd83c`) |
 | Reconnect after theme change | Snapshot applies; no indefinite stale UI | IF3 committed — off-MainActor decode |
-| Agent-exit handoff prompt (visible thread) | Terminal re-pull reaches wire; final bubble not stale | F-S1 fixed (`7670c38fd`); S3-batching exit-flush (`flushBeforeTerminal`) landed `47512fb91` |
+| Agent-exit handoff prompt (visible thread) | Terminal re-pull reaches wire; final bubble not stale | F-S1 fixed (`7670c38fd`); S3-batching exit-flush (`47512fb91`); host H5 delta convergence pending bank |
+| User-initiated action during streaming | Composer send / approval / roster edit converges on phone while bubble streams | iOS5 `scheduleThreadRefreshAfterUserAction` (`042e33a15`) |
 | S3-batching type-out feel | First token immediate; burst coalesced ≤80ms staleness | `StreamingPublishGate` leading-edge + window tests (`47512fb91`) |
 | B2 bandwidth (home screen) | Unwatched thread agent-output not encoded | Host filter (`c87eb98b8`) + phone assert (`47512fb91`); re-assert on `.established` |
 | Ensemble roster edit ack | Roster change visible on phone ≤2.5s during unrelated streaming | Adversary1 flag: `resetThrottle` removal on roster edit may lag full-projection readers |
@@ -278,6 +327,7 @@ Pair **TestFlight build 74** with a Mac host running this checkout (pass-2.5 + p
 | `ThreadRowView` / `ToolBurstRowView` Equatable gates | ✅ solid | landmine ① — load-bearing streaming perf |
 | IF1 coalescer newest-only | ✅ solid | burst test in `IosParityFixesTests.swift` |
 | IF2 + S3 on-demand pull suppression | ✅ solid | F-S1 fire-through fixed (`7670c38fd`); centralized gate at `:2281` |
+| iOS5 user-initiated pull bypass | ✅ committed | `042e33a15`; `scheduleThreadRefreshAfterUserAction` — 25 sites bypass visible+streaming gate |
 | S3-batching `StreamingPublishGate` | ✅ committed | `47512fb91`; exit-flush before terminal capture |
 | B2 `setWatchedThread` assertion | ✅ committed | `47512fb91`; model-owned; teardown via `clearCachedProjectionState.resetAll()` |
 | IF3 off-MainActor decode | ✅ committed | `f765f4ad9` |
@@ -302,10 +352,10 @@ Pair **TestFlight build 74** with a Mac host running this checkout (pass-2.5 + p
 | H4 | Pin/archive dedupe | **Closed** — `c87eb98b8` |
 | S3-DELTA | Off-main ordered envelopes | **Killed** — Design verdict |
 | IF3 stale-gen drain | `finishDecode` stale branch | **Closed** — `f765f4ad9` |
-| H5 | Agent-exit full rebuild | **Active** — Pass-5 Track #1 (`index.ts` `:25927`) |
-| H6 | Misnamed coalesced helpers | **Active** — Pass-5 de-vibe |
-| H7 | Residual full-snapshot map | **Active** — Pass-5 refresh |
-| iOS5 | Residual pull amplification | **Active** — Pass-5; 27 `scheduleThreadRefresh` sites |
+| H5 | Agent-exit full rebuild | **Landed** — delta convergence; pending CheckCommit (`index.ts:25988-26005`) |
+| H6 | Misnamed coalesced helpers | **Landed** — `requestThrottled*` rename; pending CheckCommit |
+| H7 | Residual full-snapshot map | **Landed** — 5 sites declared kept; pending CheckCommit |
+| iOS5 | User-initiated pull bypass | **Closed** — `042e33a15`; 25 bypass + passive path unchanged |
 | B3 | `resetThrottle` caller audit (H2) | Deferred |
 | Socket-close banner copy | Polish | Deferred |
 
@@ -313,8 +363,8 @@ Pair **TestFlight build 74** with a Mac host running this checkout (pass-2.5 + p
 
 - **Track-A stall is resolved** across all three surfaces. Pass-2.5 cut the host flood; pass-1 tightened cadence/throttle/memo/LRU; pass-3 added residual rebuild cuts + pull-audit; pass-4 added B2 bandwidth filter, S3 invalidation-coalesce, E2 renderer memo, F3 git coalesce, H4 dedupe. User reports heavy ensemble runs now "chug" smoothly (19:02–19:03 smoke tests).
 - **Pass-4 is closed.** iOS slice banked at `47512fb91` (339/339 swift); ledger at `f6be9a9b0` / this pass-9 update.
-- **Pass-5 is active** — priority: H5 agent-exit rebuild (WriteMain + convergence test), H6 honest naming/dedupe, H7 residual map, iOS5 pull audit (WriteSwift). @Captain stands assignments; @Adversary1 pre-commit on judgment-call slices; @CheckCommit LOCAL waves only.
-- **Done criteria (pass-5):** H5 dropped-or-kept with test evidence; H6 renamed/deduped without double-coalesce; H7 every site converted-or-declared; iOS5 inventory with per-site verdicts; gates green; this ledger updated; @General summary → user acceptance → `goal_complete`.
+- **Pass-5 implementation is complete in working tree.** iOS5 banked (`042e33a15` + `2bed1864c`). Host H5/H6/H7 landed and Adversary2-approved; sole blocker is hunk-safe `index.ts` staging (foreign MCP hunks interleaved). @CheckCommit owns host commit wave.
+- **Done criteria (pass-5):** ✅ H5 dropped with helper regression; ✅ H6 renamed without double-coalesce; ✅ H7 every site converted-or-declared; ✅ iOS5 inventory + bypass; ✅ gates green; ✅ this ledger updated (pass-10). Remaining: host commit banked locally → @Captain session summary → user acceptance → `goal_complete`.
 - **TestFlight build 74** is committed locally (`fd4c63e29`) and uploaded; device validation verdict **pending** user input on build 74 + updated Mac host pairing.
 - **Batch-2** is unblocked by Track-A but still needs explicit user go/no-go.
 - **No high-severity holes** remain in the current iOS feature set.
