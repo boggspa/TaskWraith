@@ -6,6 +6,13 @@ import TaskWraithKit
 
 @Suite("iOS parity fixes")
 struct IosParityFixesTests {
+    @Test func transcriptTouchTrackerDoesNotInstallZeroDistanceDragOnIPad() {
+        #expect(
+            TranscriptTouchTrackingPolicy.usesZeroDistanceDragTracker(isPadInterface: false))
+        #expect(
+            !TranscriptTouchTrackingPolicy.usesZeroDistanceDragTracker(isPadInterface: true))
+    }
+
     @MainActor
     @Test func settingsProviderSnapshotsPreferFirstLaunchReadinessCards() throws {
         let cards = try decode(

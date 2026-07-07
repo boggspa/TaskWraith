@@ -31,6 +31,26 @@ final class TranscriptFollowPin {
     var lastPinAt: Date = .distantPast
 }
 
+enum TranscriptTouchTrackingPolicy {
+    static func usesZeroDistanceDragTracker(isPadInterface: Bool) -> Bool {
+        !isPadInterface
+    }
+}
+
+private extension View {
+    @ViewBuilder
+    func transcriptTouchTracking(enabled: Bool, onTouch: @escaping () -> Void) -> some View {
+        if enabled {
+            self.simultaneousGesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { _ in onTouch() }
+            )
+        } else {
+            self
+        }
+    }
+}
+
 enum ThreadSnapshotRequestPolicy {
     static func needsRefresh(_ snapshot: RemoteThreadSnapshot?) -> Bool {
         guard let snapshot else { return true }
@@ -261,6 +281,13 @@ struct ThreadDetailView: View {
     private var transcriptColumnMaxWidth: CGFloat? {
         guard isGlobalChat, hSizeClass == .regular else { return nil }
         return 760
+    }
+    private var isPadInterface: Bool {
+        #if os(iOS)
+            return UIDevice.current.userInterfaceIdiom == .pad
+        #else
+            return false
+        #endif
     }
     private var snapshot: RemoteThreadSnapshot? { threadValue(model.threadSnapshots) }
     private var ensembleState: RemoteEnsembleState? { threadValue(model.ensembleStates) }
@@ -1234,14 +1261,18 @@ struct ThreadDetailView: View {
             .frame(maxWidth: .infinity, alignment: .center)
         }
         .background(TWTheme.appBg)
-        // Observe-only touch tracker (never claims the gesture, so it can't
-        // reproduce the old "tap read as drag" bug): stamps `lastUserTouchAt`
-        // on every touch-down/move anywhere in the transcript so a forced
-        // follow-pin's settle pass can tell a live gesture from stale state.
-        .simultaneousGesture(
-            DragGesture(minimumDistance: 0)
-                .onChanged { _ in lastUserTouchAt = Date() }
-        )
+        // Observe-only touch tracker (never claims the gesture on iPhone):
+        // stamps `lastUserTouchAt` on every touch-down/move anywhere in the
+        // transcript so a forced follow-pin's settle pass can tell a live
+        // gesture from stale state. iPad disables this zero-distance recognizer
+        // because inside NavigationSplitView it can starve the scroll view pan
+        // recognizer and make the transcript immovable.
+        .transcriptTouchTracking(
+            enabled: TranscriptTouchTrackingPolicy.usesZeroDistanceDragTracker(
+                isPadInterface: isPadInterface)
+        ) {
+            lastUserTouchAt = Date()
+        }
         .safeAreaInset(edge: .top, spacing: 0) {
             VStack(spacing: 4) {
                 topActionBanner
