@@ -531,21 +531,6 @@ struct IosParityFixesTests {
         #expect(payload["appChatId"] as? String == "chat-9")
     }
 
-    // ── Batch-1: C1 orchestration-mode chip derivation ─────────────────────
-
-    @Test func ensembleModeChipHopsOnlyInContinuousWithData() {
-        let continuous = EnsembleModeChipState(mode: "continuous", hopsUsed: 3, hopsMax: 14)
-        #expect(continuous.hopsText == "3/14")
-        #expect(continuous.label == "Continuous")
-        let turn = EnsembleModeChipState(mode: "turn_bound", hopsUsed: 3, hopsMax: 14)
-        #expect(turn.hopsText == nil)
-        #expect(turn.label == "Turn")
-        let missing = EnsembleModeChipState(mode: "continuous", hopsUsed: nil, hopsMax: 14)
-        #expect(missing.hopsText == nil)
-        let zeroCap = EnsembleModeChipState(mode: "continuous", hopsUsed: 0, hopsMax: 0)
-        #expect(zeroCap.hopsText == nil)
-    }
-
     // ── Pass-2.5 Track-A: IF2 stream-pull suppression gate ─────────────────
 
     @Test func agentOutputPullSuppressedOnlyForVisibleStreamingThread() {

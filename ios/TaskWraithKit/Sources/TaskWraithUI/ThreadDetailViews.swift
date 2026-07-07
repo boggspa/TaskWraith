@@ -1593,25 +1593,6 @@ struct ThreadDetailView: View {
                                                 for: card, enabled: enabled,
                                                 composerProvider: card.provider)
                                         },
-                                        // C1 — inline Turn/Continuous chip + hops.
-                                        // Data is already published on ensembleState;
-                                        // the roster sheet keeps the canonical picker.
-                                        ensembleModeChip: card.isEnsemble
-                                            ? EnsembleModeChipState(
-                                                mode: ensembleState?.orchestrationMode
-                                                    == "continuous"
-                                                    ? "continuous" : "turn_bound",
-                                                hopsUsed: ensembleState?.continuationHops,
-                                                hopsMax: ensembleState?.maxContinuationHops)
-                                            : nil,
-                                        onOrchestrationModeSelect: { mode in
-                                            guard let ws = card.workspaceId,
-                                                let thread = card.threadId
-                                            else { return }
-                                            model.updateEnsembleSettings(
-                                                workspaceId: ws, threadId: thread,
-                                                orchestrationMode: mode)
-                                        },
                                         activeGoal: card.activeGoal,
                                         onGoalUpdate: { op, objective, reason in
                                             model.updateGoal(

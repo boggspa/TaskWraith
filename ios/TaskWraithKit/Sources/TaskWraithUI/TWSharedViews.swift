@@ -4028,11 +4028,6 @@ public struct TelemetryFooterRail: View {
     var ensembleToggleDisabled: Bool = false
     var ensembleToggleTitle: String = "Ensemble"
     var onEnsembleToggle: ((Bool) -> Void)? = nil
-    /// C1 — inline orchestration-mode chip (ensemble chats only). Mode is the
-    /// wire value ("turn_bound" | "continuous"); hops render only in
-    /// continuous mode with data present (ios-batch1-ux-spec).
-    var ensembleModeChip: EnsembleModeChipState? = nil
-    var onOrchestrationModeSelect: ((String) -> Void)? = nil
     @State private var compactTelemetryShowsCost = false
     @State private var railWidth: CGFloat = 0
 
@@ -4048,8 +4043,6 @@ public struct TelemetryFooterRail: View {
         ensembleToggleDisabled: Bool = false,
         ensembleToggleTitle: String = "Ensemble",
         onEnsembleToggle: ((Bool) -> Void)? = nil,
-        ensembleModeChip: EnsembleModeChipState? = nil,
-        onOrchestrationModeSelect: ((String) -> Void)? = nil,
         activeGoal: RemoteActiveGoal? = nil,
         onGoalUpdate: ((String, String?, String?) -> Void)? = nil,
         planLanes: [RemoteTodoLane] = []
@@ -4069,8 +4062,6 @@ public struct TelemetryFooterRail: View {
         self.ensembleToggleDisabled = ensembleToggleDisabled
         self.ensembleToggleTitle = ensembleToggleTitle
         self.onEnsembleToggle = onEnsembleToggle
-        self.ensembleModeChip = ensembleModeChip
-        self.onOrchestrationModeSelect = onOrchestrationModeSelect
     }
 
     private var isRunning: Bool { run?.status == "running" }
@@ -4277,10 +4268,6 @@ public struct TelemetryFooterRail: View {
                         title: ensembleToggleTitle,
                         onSelect: onEnsembleToggle)
                 }
-                if let chip = ensembleModeChip {
-                    EnsembleModeChipControl(
-                        state: chip, onSelect: onOrchestrationModeSelect)
-                }
                 if let onGoalUpdate {
                     GoalRailControl(goal: activeGoal, onUpdate: onGoalUpdate)
                 }
@@ -4316,79 +4303,6 @@ private struct TelemetryFooterRailWidthKey: PreferenceKey {
 
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
         value = max(value, nextValue())
-    }
-}
-
-/// C1 chip inputs — a value type so the rail stays a dumb Equatable-friendly view.
-public struct EnsembleModeChipState: Equatable {
-    public let mode: String
-    public let hopsUsed: Int?
-    public let hopsMax: Int?
-
-    public init(mode: String, hopsUsed: Int?, hopsMax: Int?) {
-        self.mode = mode
-        self.hopsUsed = hopsUsed
-        self.hopsMax = hopsMax
-    }
-
-    var isContinuous: Bool { mode == "continuous" }
-    var label: String { isContinuous ? "Continuous" : "Turn" }
-    var hopsText: String? {
-        guard isContinuous, let hopsUsed, let hopsMax, hopsMax > 0 else { return nil }
-        return "\(hopsUsed)/\(hopsMax)"
-    }
-}
-
-/// C1 — capsule chip beside GoalRailControl. Tap opens an EXPLICIT two-item
-/// menu rather than a blind toggle (mode has cost implications); the roster
-/// sheet keeps its picker as the canonical editor.
-private struct EnsembleModeChipControl: View {
-    let state: EnsembleModeChipState
-    let onSelect: ((String) -> Void)?
-
-    var body: some View {
-        Menu {
-            Button {
-                if state.mode != "turn_bound" { onSelect?("turn_bound") }
-            } label: {
-                if state.isContinuous {
-                    Text("Turn-based")
-                } else {
-                    Label("Turn-based", systemImage: "checkmark")
-                }
-            }
-            Button {
-                if state.mode != "continuous" { onSelect?("continuous") }
-            } label: {
-                if state.isContinuous {
-                    Label("Continuous", systemImage: "checkmark")
-                } else {
-                    Text("Continuous")
-                }
-            }
-        } label: {
-            HStack(spacing: 4) {
-                Image(systemName: state.isContinuous ? "arrow.triangle.2.circlepath" : "person.wave.2")
-                    .font(.system(size: 9, weight: .semibold))
-                Text(state.label)
-                    .font(.system(size: 10, weight: .semibold))
-                if let hops = state.hopsText {
-                    Text(hops)
-                        .font(.system(size: 10, design: .monospaced))
-                        .foregroundStyle(TWTheme.textTertiary)
-                }
-            }
-            .foregroundStyle(state.isContinuous ? TWTheme.chroma2 : TWTheme.textSecondary)
-            .padding(.horizontal, 7)
-            .padding(.vertical, 3)
-            .background(
-                Capsule().fill(
-                    (state.isContinuous ? TWTheme.chroma2 : TWTheme.textTertiary).opacity(0.10)))
-        }
-        .buttonStyle(.plain)
-        .disabled(onSelect == nil)
-        .accessibilityLabel("Orchestration mode: \(state.label)")
-        .accessibilityHint("Switches between turn-based and continuous rounds.")
     }
 }
 
