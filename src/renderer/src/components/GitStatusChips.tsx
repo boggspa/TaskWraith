@@ -213,7 +213,7 @@ export function GitSyncChip({
         className="git-status-push git-status-unpublished"
         title="No upstream — push to publish this branch"
       >
-        no upstream
+        N/A
       </span>
     )
   }

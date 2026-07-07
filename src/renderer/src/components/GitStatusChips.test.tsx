@@ -26,6 +26,14 @@ function snapshot(overrides: Partial<GitRepositorySnapshot> = {}): GitRepository
 }
 
 describe('GitSyncChip', () => {
+  it('renders N/A when a branch has no upstream', () => {
+    const html = renderToStaticMarkup(<GitSyncChip snapshot={snapshot({ upstream: undefined })} />)
+
+    expect(html).toContain('git-status-unpublished')
+    expect(html).toContain('N/A')
+    expect(html).toContain('No upstream')
+  })
+
   it('preserves numeric ahead counts instead of replacing them with PR state', () => {
     const html = renderToStaticMarkup(<GitSyncChip snapshot={snapshot({ ahead: 3 })} />)
 
